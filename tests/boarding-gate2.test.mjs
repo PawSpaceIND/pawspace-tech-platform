@@ -123,7 +123,8 @@ test("Boarding customer care plan and extension use canonical stay actions",()=>
   assert.match(panel,/commercial quote required/i);
   assert.match(panel,/paid checkout does not move/i);
   assert.match(panel,/stay\.events/);
-  assert.match(panel,/not live in Boarding UAT/);
+  assert.match(panel,/Boarding media is private, scan-gated and booking\/provider scoped/);
+  assert.match(panel,/remain disconnected in UAT/);
 });
 
 test("Boarding customer journey is truthful before host acceptance",()=>{
