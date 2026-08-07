@@ -5,8 +5,8 @@ import{readFile}from"node:fs/promises";
 const source=async path=>readFile(new URL("../"+path,import.meta.url),"utf8");
 
 test("Grooming closure uses one canonical transaction across Customer Partner Team and Finance",async()=>{
-  const[customer,canonical,change,partnerApi,partnerUi,lifecycle,finance,security,governance]=await Promise.all([
-    source("app/page.tsx"),source("app/api/canonical-bookings/route.ts"),source("app/api/grooming-booking-change/route.ts"),source("app/api/partner-grooming-jobs/route.ts"),source("app/partner-app/canonical-grooming-jobs.tsx"),source("app/api/grooming-lifecycle/route.ts"),source("app/api/grooming-finance/route.ts"),source("lib/server-auth.ts"),source("lib/grooming-governance.ts"),
+  const[customer,canonical,change,partnerApi,partnerUi,lifecycle,finance,security,governance,mediaSecurity,mediaApi]=await Promise.all([
+    source("app/page.tsx"),source("app/api/canonical-bookings/route.ts"),source("app/api/grooming-booking-change/route.ts"),source("app/api/partner-grooming-jobs/route.ts"),source("app/partner-app/canonical-grooming-jobs.tsx"),source("app/api/grooming-lifecycle/route.ts"),source("app/api/grooming-finance/route.ts"),source("lib/server-auth.ts"),source("lib/grooming-governance.ts"),source("lib/service-media-security.ts"),source("app/api/service-media/route.ts"),
   ]);
   assert.match(customer,/createCanonicalLifecycle/);
   assert.match(customer,/reserveUatSchedule/);
@@ -33,8 +33,17 @@ test("Grooming closure uses one canonical transaction across Customer Partner Te
   assert.match(lifecycle,/customer_grooming_subscriptions/);
   assert.match(lifecycle,/booking_tax_readiness/);
   assert.match(lifecycle,/provider_settlement_readiness/);
-  assert.match(lifecycle,/arbitrary URLs and data URIs are not accepted/);
+  assert.match(lifecycle,/assertServiceProofRef/);
   assert.match(lifecycle,/repeat_booking_tasks/);
+  assert.match(mediaSecurity,/Service media asset belongs to another booking/);
+  assert.match(mediaSecurity,/Service media asset belongs to another provider/);
+  assert.match(mediaSecurity,/Service media asset purpose does not match the proof slot/);
+  assert.match(mediaSecurity,/scan_status/);
+  assert.match(mediaSecurity,/access_status/);
+  assert.match(mediaSecurity,/retention_status/);
+  assert.match(mediaApi,/SHA-256 checksum/);
+  assert.match(mediaApi,/10 MB/);
+  assert.match(mediaApi,/synthetic:true/);
   assert.match(finance,/booking_invoices/);
   assert.match(finance,/booking_subscription_usage/);
   assert.match(security,/security_audit_events/);
