@@ -8,7 +8,7 @@ import CouponField from "./coupon-field";
 import { reserveUatSchedule } from "../../lib/uat-scheduling-client";
 import { createCanonicalLifecycle } from "../../lib/canonical-lifecycle-client";
 import { loadTrainingProgramme, materializeTrainingProgramme, type CustomerTrainingProgramme } from "../../lib/training-programme-client";
-import { loadTrainingPackages, quoteTraining, type TrainingPackage, type TrainingQuote } from "../../lib/training-commercial-client";
+import { loadTrainingPackages, loadTrainingTrainers, quoteTraining, type TrainingPackage, type TrainingQuote, type TrainingTrainer } from "../../lib/training-commercial-client";
 const styles = { ...baseStyles, ...extraStyles };
 type Plan = {
   packageCode: string;
@@ -54,22 +54,6 @@ const planMarketing = [
   { packageCode:"training-16-pro",name:"Pro Training Plan",detail:"High-level obedience, heel work, distance control and complex behaviour.",bonus:true,level:"Professional",idealFor:"Families seeking the most complete obedience programme",outcomes:["Off-leash control","Complex behaviour","Handler mastery"] },
 ] as const;
 const emptyPlan:Plan={packageCode:"training-8-basic",name:"Basic Obedience Plan",sessions:0,sessionLabel:"Loading…",validity:"Loading…",validityDays:0,price:0,directMinutes:0,coachingMinutes:0,splitDuePercent:50,detail:"Loading the canonical Training catalogue.",bonus:true,level:"Core programme",idealFor:"Everyday manners, focus and reliable basic commands",outcomes:[],recommended:true};
-const trainers = [
-  {
-    name: "Kiran S.",
-    score: "4.9",
-    jobs: "1,180 dogs",
-    match: "98% match",
-    model: "Commission partner",
-  },
-  {
-    name: "Ramesh P.",
-    score: "4.8",
-    jobs: "860 dogs",
-    match: "94% match",
-    model: "Commission partner",
-  },
-];
 const money = (n: number) =>
   new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -86,6 +70,10 @@ function buildPlans(packages:TrainingPackage[]):Plan[]{return planMarketing.flat
 function jsonObject(value:string){try{return JSON.parse(value) as Record<string,unknown>}catch{return{}}}
 export default function TrainingFlow() {
   const [plans,setPlans]=useState<Plan[]>([]);
+  const [trainers,setTrainers]=useState<TrainingTrainer[]>([]);
+  const [trainerId,setTrainerId]=useState("");
+  const [confirmedTrainerName,setConfirmedTrainerName]=useState("");
+  const [meetTrainerName,setMeetTrainerName]=useState("");
   const [meetPackage,setMeetPackage]=useState<TrainingPackage|null>(null);
   const [checkoutQuote,setCheckoutQuote]=useState<TrainingQuote|null>(null);
   const [startDateIndex,setStartDateIndex]=useState(0);
@@ -97,7 +85,6 @@ export default function TrainingFlow() {
     ]),
     [selectedPets, setSelectedPets] = useState(["Bruno"]),
     [plan, setPlan] = useState(emptyPlan),
-    [trainer, setTrainer] = useState(trainers[0]),
     [frequency, setFrequency] = useState("Tue & Sat"),
     [time, setTime] = useState("5:00 PM"),
     [attendanceMode, setAttendanceMode] = useState<"parent" | "trainer-led">("parent"),
@@ -134,6 +121,8 @@ export default function TrainingFlow() {
   const discount=checkoutQuote?.discount??0;
   const payableNow=(checkoutQuote?.amountDueNow??0)+meetFee;
   const recommendedPlan=plans.find(item=>item.packageCode==="training-8-basic")||plan;
+  const selectedTrainer=trainers.find(item=>item.id===trainerId)||trainers[0]||null;
+  useEffect(()=>{let active=true;void loadTrainingTrainers({cityId:"blr",zoneId:"blr-east",at:selectedStartIso}).then(result=>{if(!active)return;setTrainers(result.providers);setTrainerId(current=>result.providers.some(item=>item.id===current)?current:result.providers[0]?.id||"");}).catch(problem=>{if(active){setTrainers([]);setTrainerId("");setScheduleError(problem instanceof Error?problem.message:"Unable to load eligible Training trainers");}});return()=>{active=false;};},[selectedStartIso]);
   useEffect(()=>{if(stage!==5||!plan.sessions)return;let active=true;const mode=paymentMode==="full"?"prepaid":"split";void quoteTraining({packageCode:plan.packageCode,petCount:selectedPets.length,scheduledStart:selectedStartIso,paymentMode:mode,couponCode:mode==="prepaid"&&couponCode?couponCode:undefined}).then(value=>{if(active){setCheckoutQuote(value);setScheduleError("");}}).catch(problem=>{if(active){setCheckoutQuote(null);setScheduleError(problem instanceof Error?problem.message:"Unable to refresh Training quote");}});return()=>{active=false;};},[stage,plan.packageCode,plan.sessions,selectedPets.length,paymentMode,couponCode,frequency,time,startDateIndex,selectedStartIso]);
   const togglePet = (pet: string) =>
     setSelectedPets((current) =>
@@ -161,21 +150,22 @@ export default function TrainingFlow() {
       setScheduling(true);setScheduleError("");
       try {
         const start=new Date(meetSlot),quote=await quoteTraining({packageCode:"trainer-meet-greet",petCount:selectedPets.length,scheduledStart:start.toISOString(),paymentMode:"prepaid"}),end=new Date(start.getTime()+quote.minutesPerSession*60_000);
-        const requestId=`training-meet-TST101-${trainer.name.replaceAll(" ","")}-${start.toISOString()}`;
-        const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:"TST-101",petIds:selectedPets,serviceCode:"dog_training",zoneId:"blr-east",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,preferredProviderId:trainer.name==="Kiran S."?"train_kiran":"train_ramesh"});
+        const requestId=`training-meet-TST101-${selectedTrainer?.id||"auto"}-${start.toISOString()}`;
+        const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:"TST-101",petIds:selectedPets,serviceCode:"dog_training",zoneId:"blr-east",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,preferredProviderId:selectedTrainer?.id});
         const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:"TST-101",name:"Karthik P.",primaryPhone:"9996999505",secondaryPhone:"9880222741"},pets:selectedPets.map(name=>({sourceId:name,name,species:"dog"})),cityId:"blr",zoneId:"blr-east",serviceCode:"dog_training",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"upi",mode:"prepaid",status:"captured",detail:"UAT trainer Meet & Greet sandbox payment"},pricing:{discount:quote.discount,trainingQuoteId:quote.quoteId}});
-        setMeetBookingId(canonical.bookingId);setMeet(false);setCheckoutQuote(null);
+        setMeetBookingId(canonical.bookingId);setMeetTrainerName(decision.provider.name);setMeet(false);setCheckoutQuote(null);
       } catch(error){setScheduleError(error instanceof Error?error.message:"This Meet & Greet slot is no longer available");} finally {setScheduling(false);}
     },
     confirm = async () => {
       setScheduling(true);setScheduleError("");
       try {
         let linkedMeetBookingId=meetBookingId;
-        if(meet&&!linkedMeetBookingId){const meetStart=new Date(meetSlot),meetQuote=await quoteTraining({packageCode:"trainer-meet-greet",petCount:selectedPets.length,scheduledStart:meetStart.toISOString(),paymentMode:"prepaid"}),meetEnd=new Date(meetStart.getTime()+meetQuote.minutesPerSession*60_000),meetRequestId=`training-meet-TST101-${trainer.name.replaceAll(" ","")}-${meetStart.toISOString()}`,meetDecision=await reserveUatSchedule({clientRequestId:meetRequestId,customerId:"TST-101",petIds:selectedPets,serviceCode:"dog_training",zoneId:"blr-east",scheduledStart:meetStart.toISOString(),scheduledEnd:meetEnd.toISOString(),occurrences:1,preferredProviderId:trainer.name==="Kiran S."?"train_kiran":"train_ramesh"}),meetCanonical=await createCanonicalLifecycle({idempotencyKey:meetRequestId,scheduleGroupId:meetDecision.groupId,customer:{id:"TST-101",name:"Karthik P.",primaryPhone:"9996999505",secondaryPhone:"9880222741"},pets:selectedPets.map(name=>({sourceId:name,name,species:"dog"})),cityId:"blr",zoneId:"blr-east",serviceCode:"dog_training",packageCode:meetQuote.packageCode,packageName:meetQuote.packageName,scheduledStart:meetStart.toISOString(),scheduledEnd:meetEnd.toISOString(),provider:meetDecision.provider,totalAmount:meetQuote.totalAmount,amountDueNow:meetQuote.amountDueNow,payment:{method:"upi",mode:"prepaid",status:"captured",detail:"UAT trainer Meet & Greet sandbox payment"},pricing:{discount:meetQuote.discount,trainingQuoteId:meetQuote.quoteId}});linkedMeetBookingId=meetCanonical.bookingId;setMeetBookingId(linkedMeetBookingId);}
+        if(meet&&!linkedMeetBookingId){const meetStart=new Date(meetSlot),meetQuote=await quoteTraining({packageCode:"trainer-meet-greet",petCount:selectedPets.length,scheduledStart:meetStart.toISOString(),paymentMode:"prepaid"}),meetEnd=new Date(meetStart.getTime()+meetQuote.minutesPerSession*60_000),meetRequestId=`training-meet-TST101-${selectedTrainer?.id||"auto"}-${meetStart.toISOString()}`,meetDecision=await reserveUatSchedule({clientRequestId:meetRequestId,customerId:"TST-101",petIds:selectedPets,serviceCode:"dog_training",zoneId:"blr-east",scheduledStart:meetStart.toISOString(),scheduledEnd:meetEnd.toISOString(),occurrences:1,preferredProviderId:selectedTrainer?.id}),meetCanonical=await createCanonicalLifecycle({idempotencyKey:meetRequestId,scheduleGroupId:meetDecision.groupId,customer:{id:"TST-101",name:"Karthik P.",primaryPhone:"9996999505",secondaryPhone:"9880222741"},pets:selectedPets.map(name=>({sourceId:name,name,species:"dog"})),cityId:"blr",zoneId:"blr-east",serviceCode:"dog_training",packageCode:meetQuote.packageCode,packageName:meetQuote.packageName,scheduledStart:meetStart.toISOString(),scheduledEnd:meetEnd.toISOString(),provider:meetDecision.provider,totalAmount:meetQuote.totalAmount,amountDueNow:meetQuote.amountDueNow,payment:{method:"upi",mode:"prepaid",status:"captured",detail:"UAT trainer Meet & Greet sandbox payment"},pricing:{discount:meetQuote.discount,trainingQuoteId:meetQuote.quoteId}});linkedMeetBookingId=meetCanonical.bookingId;setMeetBookingId(linkedMeetBookingId);setMeetTrainerName(meetDecision.provider.name);}
         const mode=paymentMode==="full"?"prepaid":"split",quote=await quoteTraining({packageCode:plan.packageCode,petCount:selectedPets.length,scheduledStart:selectedStart.toISOString(),paymentMode:mode,couponCode:mode==="prepaid"&&couponCode?couponCode:undefined}),end=new Date(selectedStart.getTime()+quote.minutesPerSession*60_000),requestId=`training-TST101-${quote.packageCode}-${selectedStart.toISOString()}-${frequency.replaceAll(" ","")}`;
-        const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:"TST-101",petIds:selectedPets,serviceCode:"dog_training",zoneId:"blr-east",scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,weekdays:weekdayMap[frequency],cadenceDays:frequency==="Choose each session myself"?7:undefined,preferredProviderId:trainer.name==="Kiran S."?"train_kiran":"train_ramesh"});
+        const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:"TST-101",petIds:selectedPets,serviceCode:"dog_training",zoneId:"blr-east",scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,weekdays:weekdayMap[frequency],cadenceDays:frequency==="Choose each session myself"?7:undefined,preferredProviderId:selectedTrainer?.id});
         const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:"TST-101",name:"Karthik P.",primaryPhone:"9996999505",secondaryPhone:"9880222741"},pets:selectedPets.map(name=>({sourceId:name,name,species:"dog"})),cityId:"blr",zoneId:"blr-east",serviceCode:"dog_training",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"upi",mode,status:"captured",detail:`UAT ${mode} Training sandbox payment`},pricing:{discount:quote.discount,couponCode:couponCode||undefined,subscription:`${quote.sessions} sessions`,requirements:selectedGoals,trainingQuoteId:quote.quoteId}});
         await materializeTrainingProgramme({bookingId:canonical.bookingId,meetBookingId:linkedMeetBookingId||undefined});
+        setConfirmedTrainerName(decision.provider.name);
         const booking=createTestTransaction({customerId:"TST-101",customerName:"Karthik P.",primary:"9996999505",secondary:"9880222741",pets:selectedPets.join(", "),petCount:selectedPets.length,service:"Dog Training",packageName:quote.packageName,area:"Bengaluru",slot:`${frequency} · ${time}`,duration:`${quote.sessions} sessions · ${quote.minutesPerSession} min/session · ${quote.validityDays} days`,amount:quote.totalAmount,offerCode:couponCode||undefined,discount:quote.discount,payment:`${mode==="prepaid"?"100% package paid in sandbox":"Configured split payment in sandbox"}${linkedMeetBookingId?` · Meet booking ${linkedMeetBookingId}`:""}`,provider:decision.provider.name,providerModel:"Commission",subscription:`${quote.packageName} · ${quote.sessions} sessions`,creditsBefore:quote.sessions,crmOwner:"Rahul",crmNextAction:attendanceMode==="parent"?"Trainer acceptance; parent/caretaker coaching required":"Trainer acceptance; confirm package allows trainer-led outdoor practice",reminder:"Session reminders queued"},canonical.bookingId);
         setBookingId(booking.id);setConfirmed(true);
       } catch(error){setScheduleError(error instanceof Error?error.message:"No trainer can cover the full programme calendar");} finally {setScheduling(false);}
@@ -185,7 +175,7 @@ export default function TrainingFlow() {
       <TrainingDashboard
         bookingId={bookingId}
         plan={plan}
-        trainer={trainer}
+        trainerName={confirmedTrainerName||selectedTrainer?.name||"Assigned trainer"}
         pets={selectedPets}
         serviceMinutes={serviceMinutes}
         view={view}
@@ -439,27 +429,17 @@ export default function TrainingFlow() {
             <small>Trainer · 3 of 5</small>
           </div>
           <div className={styles.trainers}>
+            {trainers.length===0&&<p>No eligible trainer is currently available for this start date and zone.</p>}
             {trainers.map((item) => (
-              <button
-                key={item.name}
-                className={trainer.name === item.name ? styles.selected : ""}
-                onClick={() => setTrainer(item)}
-              >
-                <i>
-                  {item.name
-                    .split(" ")
-                    .map((x) => x[0])
-                    .join("")}
-                </i>
+              <button key={item.id} className={trainerId===item.id?styles.selected:""} onClick={()=>setTrainerId(item.id)}>
+                <i>{item.name.split(" ").map((x)=>x[0]).join("")}</i>
                 <div>
-                  <span>{item.match}</span>
-                  <h4>
-                    {item.name} · {item.score} ★
-                  </h4>
-                  <p>{item.jobs} trained · English, Kannada, Hindi</p>
-                  <small>{item.model} · accepts before confirmation</small>
+                  <span>Canonical capacity roster</span>
+                  <h4>{item.name} · {item.rating.toFixed(1)} ★</h4>
+                  <p>Quality {item.qualityScore}/100 · capacity {item.capacity} · {item.travelBufferMinutes} min travel buffer</p>
+                  <small>{item.model.replaceAll("_"," ")} · final assignment after whole-calendar conflict checks</small>
                 </div>
-                <em>{trainer.name === item.name ? "✓" : ""}</em>
+                <em>{trainerId===item.id?"✓":""}</em>
               </button>
             ))}
           </div>
@@ -516,13 +496,13 @@ export default function TrainingFlow() {
                 </button>
               </>
             )}
-            {meetBookingId && <article className={styles.meetConfirmed}><b>✓ Meet & Greet booked</b><span>{slotLabel(new Date(meetSlot))} · {trainer.name} · {meetBookingId}</span><small>You can decide on the training package after the meeting.</small></article>}
+            {meetBookingId && <article className={styles.meetConfirmed}><b>✓ Meet & Greet booked</b><span>{slotLabel(new Date(meetSlot))} · {meetTrainerName||selectedTrainer?.name||"Assigned trainer"} · {meetBookingId}</span><small>You can decide on the training package after the meeting.</small></article>}
             {scheduleError && <p role="alert">{scheduleError}</p>}
           </section>
           <button className={styles.back} onClick={() => setStage(2)}>
             ← Package
           </button>
-          <button className={styles.primary} onClick={() => setStage(4)}>
+          <button className={styles.primary} disabled={!selectedTrainer} onClick={() => setStage(4)}>
             Build session calendar
           </button>
         </section>
@@ -617,8 +597,8 @@ export default function TrainingFlow() {
               </b>
             </div>
             <div>
-              <span>Trainer</span>
-              <b>{trainer.name} · acceptance required</b>
+              <span>Preferred trainer</span>
+              <b>{selectedTrainer?`${selectedTrainer.name} · final assignment checked server-side`:"No eligible trainer selected"}</b>
             </div>
             <div>
               <span>Schedule</span>
@@ -714,12 +694,12 @@ export default function TrainingFlow() {
     </>
   );
 }
-function TrainingDashboard({bookingId,plan,trainer,pets,serviceMinutes,view,setView}:{bookingId:string;plan:Plan;trainer:(typeof trainers)[number];pets:string[];serviceMinutes:number;view:"plan"|"homework"|"progress";setView:(v:"plan"|"homework"|"progress")=>void;}) {
+function TrainingDashboard({bookingId,plan,trainerName,pets,serviceMinutes,view,setView}:{bookingId:string;plan:Plan;trainerName:string;pets:string[];serviceMinutes:number;view:"plan"|"homework"|"progress";setView:(v:"plan"|"homework"|"progress")=>void;}) {
   const[ledger,setLedger]=useState<CustomerTrainingProgramme|null>(null),[ledgerError,setLedgerError]=useState("");
   useEffect(()=>{let active=true;void loadTrainingProgramme(bookingId).then(value=>{if(active)setLedger(value);}).catch(problem=>{if(active)setLedgerError(problem instanceof Error?problem.message:"Unable to load programme");});return()=>{active=false;};},[bookingId]);
   const sessions=ledger?.sessions||[],programme=ledger?.programme,completed=sessions.filter(item=>item.status==="completed").length,nextSession=sessions.find(item=>!["completed","cancelled","no_show"].includes(item.status))||null,latestCompleted=[...sessions].reverse().find(item=>item.status==="completed")||null,latestProgress=latestCompleted?jsonObject(latestCompleted.progress_json):{};
   return <section>
-    <article className={styles.trainingSuccess}><i>✓</i><div><small>CANONICAL PROGRAMME · {bookingId}</small><h3>{pets.join(" + ")}&apos;s plan is ready.</h3><p>{programme?`${programme.plan_name} · ${programme.total_sessions} sessions · ${trainer.name}`:`Loading canonical programme · ${trainer.name}`}</p></div></article>
+    <article className={styles.trainingSuccess}><i>✓</i><div><small>CANONICAL PROGRAMME · {bookingId}</small><h3>{pets.join(" + ")}&apos;s plan is ready.</h3><p>{programme?`${programme.plan_name} · ${programme.total_sessions} sessions · ${trainerName}`:`Loading canonical programme · ${trainerName}`}</p></div></article>
     {ledgerError&&<article className={styles.cancelRule}><b>Programme ledger unavailable</b><span>{ledgerError}</span></article>}
     <div className={styles.trainingSummary}><div><span>Completed<b>{completed}</b></span><span>Remaining<b>{Math.max(0,(programme?.total_sessions??plan.sessions)-completed)}</b></span><span>Next session<b>{nextSession?slotLabel(new Date(nextSession.scheduled_start)):"None"}</b></span></div><progress max={(programme?.total_sessions??plan.sessions)||1} value={completed}/><small>{programme?`${programme.status.replaceAll("_"," ")} · ${programme.total_sessions} canonical sessions`:"Reading canonical session calendar"}</small></div>
     <article className={styles.balance}><div><b>Payment linked to canonical booking</b><span>Amounts and trainer earnings are reconciled by Finance; this customer view does not invent a balance.</span></div><em>Booking {bookingId}</em></article>
