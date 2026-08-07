@@ -49,16 +49,16 @@ The Grooming transaction path now uses one canonical booking/work-order/payment/
 - Completion creates an issued UAT invoice, consumes the reserved subscription session when applicable and creates a repeat-booking task.
 - Team Operations Booking Command Center reads canonical booking/work-order/payment/event data and remains the consolidated Ops front door.
 - Team Finance projects canonical Grooming payment, invoice, collected/receivable and subscription usage state.
-- Partner Grooming job projection is protected by the existing `bookings.view` RBAC permission; customer cancel/reschedule additionally checks booking ownership by customer ID.
+- Partner Grooming job projection is protected by `bookings.view` plus exact provider ownership; customer booking creation/cancel/reschedule is protected by customer ownership for non-managing identities.
 - Permanent closure CI runs web build/regressions/lint/artifact validation plus backend typecheck/tests.
-- Expanded Grooming closure regression covers Customer -> Partner -> lifecycle/proof -> Finance, cancel/reschedule/refund, subscription reserve/consume/reverse and the UAT/live-integration boundary.
+- Expanded Grooming closure regression covers Customer -> Partner -> lifecycle/proof -> Finance, cancel/reschedule/refund, subscription reserve/consume/reverse, identity ownership and the UAT/live-integration boundary.
 - Final closure CI passed web tests, lint, Sites artifact validation, backend typecheck and backend tests.
 
 ### Deliberately still UAT / not production-complete
 - Provider proof references in UAT can still be synthetic `uat://` references; secure production media upload/storage is not connected.
 - Razorpay/RazorpayX, OTP, WhatsApp/SMS, Exotel, Maps/GPS, production media, payouts and accounting exports remain disconnected.
-- Production customer authentication/identity binding is not yet the final customer-auth implementation.
-- Partner provider-identity-to-provider-ID ownership enforcement still needs production identity mapping; RBAC alone is not the final provider-ownership gate.
+- The application-layer identity binding and ownership model is implemented, but the production customer/provider OTP/session authentication adapter that supplies verified identity subjects is not yet connected.
+- Legacy email ownership-link tables remain temporarily as migration fallback while canonical identity bindings are introduced.
 - Partner Home, Earnings, Calendar and some surrounding dashboard statistics remain prototype/fixture content even though Grooming Bookings is canonical.
 - GST/tax calculation is not production tax logic; UAT invoices currently record booking gross/net without the final tax engine.
 - The per-booking subscription ledger now reserves, consumes and reverses usage; subscription plan commercial values are now configurable and frozen per purchase, while deeper production freeze/extension/expiry operations still require integration.
@@ -90,6 +90,26 @@ The remaining Grooming commercial rules are now governed as versioned city/zone 
 - Final subscription plan values per launch city/zone.
 - Explicit approval to switch the approved city/zone policy from `observe` to `enforce`.
 
+## Production-readiness Gate 5 — identity binding and ownership
+
+**Status: APPLICATION OWNERSHIP MODEL CLOSED. PRODUCTION OTP/SESSION ADAPTER PENDING.**
+
+- A canonical `identity_bindings` registry now maps a verified principal to a PawSpace customer or provider subject, with identity source, principal type/key, subject ID, city, verification state, expiry, status and metadata.
+- Bindings support verified/pending state, revocation and a dedicated audit history. Identity administration is protected by `users.manage`.
+- Current workspace identities use normalized email principals. The same binding contract reserves `customer_otp` and `partner_otp` identity sources so the production auth adapter can supply opaque verified identity subjects without redesigning booking ownership.
+- Existing `customer_identity_links` and `provider_identity_links` remain only as migration fallback while UAT records are transitioned.
+- `requireCustomerOwnership` and `requireProviderOwnership` consult canonical verified active bindings first and retain staff/manage bypasses for legitimate operational booking-on-behalf work.
+- A restricted `customer` role exists for controlled self-service UAT and only carries pricing/self-booking permission; ownership checks determine which customer record it can act on.
+- Canonical booking creation now resolves the authenticated actor and requires ownership of the submitted customer ID for non-managing identities.
+- Customer cancel/reschedule already uses the same customer-ownership guard.
+- Partner Grooming job reads require both `bookings.view` and exact provider ownership; provider lifecycle and assignment accept/decline already use exact provider ownership.
+- Clean permanent CI passed at commit `702c5a51f7285273ecf5e9c75d7211a38bb16abb`: web tests, lint, Sites artifact validation, backend typecheck and backend tests.
+
+### Remaining identity dependency
+- Connect the production customer/provider OTP/session authentication layer to issue or resolve the verified identity subject used by the canonical binding registry.
+- Migrate active legacy email bindings into the canonical registry and remove fallback only after UAT evidence confirms no orphaned customer/provider identities.
+- Test revoked, disabled, mismatched, expired and cross-provider/cross-customer access on real authenticated sessions before pilot launch.
+
 ## Closure sequence status
 1. ✅ Import recovered Site v67 source without redesigning it.
 2. 🟡 Catalogue, subscription and booking-change policy governance/versioning are implemented and CI-green; final Bengaluru business values/sign-off and switch from `observe` to `enforce` remain.
@@ -97,11 +117,11 @@ The remaining Grooming commercial rules are now governed as versioned city/zone 
 4. ✅ Main customer booking confirmation connected with scheduling and idempotency.
 5. ✅ Customer, pet, schedule/provider, work-order and payment state persisted for the UAT path.
 6. ✅ Partner Grooming Bookings, Team Operations and Team Finance project the canonical transaction.
-7. ✅ UAT provider lifecycle connected through completion; governed capacity/acceptance/recovery are implemented, while production GPS/provider identity remain launch work.
+7. ✅ UAT provider lifecycle connected through completion; governed capacity/acceptance/recovery are implemented, while production GPS remains launch work.
 8. ✅ Completion proof gate implemented; production secure media remains.
 9. ✅ UAT payment reconciliation, policy-aware cancellation refund case and invoice state implemented; gateway/GST/accounting remain production integrations.
 10. ✅ Per-booking subscription reserve, consume and cancellation reversal implemented; subscription commercial configuration is versioned/frozen per purchase; deeper production subscription freeze/extension/expiry operations remain.
-11. 🟡 Existing RBAC is applied to Partner projection and customer ownership is enforced for booking changes; production provider ownership/identity enforcement remains.
+11. ✅ Canonical customer/provider identity binding and application ownership enforcement are implemented and CI-green; production OTP/session adapter and legacy-binding migration remain launch integration work.
 12. ⏳ External integrations remain deliberately disconnected pending UAT approval.
 13. 🟡 Automated internal closure regression passes; real-device UAT, employee pilot and one-zone Bengaluru pilot remain.
 
@@ -109,10 +129,10 @@ The remaining Grooming commercial rules are now governed as versioned city/zone 
 Do not add major new product modules. Convert the closed internal UAT path into a controlled production candidate in this order:
 
 1. 🟡 Grooming catalogue/subscription/change-policy governance infrastructure is complete in `observe` mode; finalize and sign off Bengaluru commercial values, then enable `enforce` only after approval.
-2. Implement final customer identity and provider identity/ownership mapping.
+2. ✅ Customer/provider identity binding and application ownership enforcement are implemented; production OTP/session adapter remains under integration step 5.
 3. Replace synthetic proof references with secure media upload/storage and access controls.
 4. Integrate Razorpay payment/refund webhooks and reconciliation in sandbox.
-5. Integrate OTP/WhatsApp/SMS, then Exotel, then Maps/GPS.
+5. Integrate OTP/session authentication plus WhatsApp/SMS, then Exotel, then Maps/GPS.
 6. Add production GST/invoice/accounting rules and payout flow.
 7. Complete subscription-master freeze/extension/expiry integration.
 8. Run real-device cross-role UAT and exception testing.
