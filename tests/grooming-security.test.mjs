@@ -5,11 +5,13 @@ import{readFile}from"node:fs/promises";
 const source=async path=>readFile(new URL("../"+path,import.meta.url),"utf8");
 
 test("Grooming security uses explicit gateway permissions and trusted identity ownership",async()=>{
-  const[gateway,auth,binding,bindingApi,change,lifecycle,partner]=await Promise.all([
+  const[gateway,auth,binding,bindingApi,roles,canonical,change,lifecycle,partner]=await Promise.all([
     source("lib/api-gateway.ts"),
     source("lib/server-auth.ts"),
     source("lib/identity-binding.ts"),
     source("app/api/identity-bindings/route.ts"),
+    source("lib/platform-security.ts"),
+    source("app/api/canonical-bookings/route.ts"),
     source("app/api/grooming-booking-change/route.ts"),
     source("app/api/grooming-lifecycle/route.ts"),
     source("app/api/partner-grooming-jobs/route.ts"),
@@ -31,6 +33,9 @@ test("Grooming security uses explicit gateway permissions and trusted identity o
   assert.match(binding,/status='revoked'/);
   assert.match(bindingApi,/requirePermission\(actor,"users\.manage"\)/);
   assert.match(bindingApi,/"workspace","customer_otp","partner_otp","migration"/);
+  assert.match(roles,/code:"customer"[\s\S]{0,260}permissions:\["pricing\.view","scheduling\.book"\]/);
+  assert.match(canonical,/resolveActor\(request\)/);
+  assert.match(canonical,/requireCustomerOwnership\(db,actor,input\.customer\.id\)/);
   assert.match(change,/resolveActor\(request\)/);
   assert.match(change,/requireCustomerOwnership\(db,actor,input\.customerId\)/);
   assert.match(change,/securityAudit/);
