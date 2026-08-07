@@ -25,7 +25,8 @@ test("Grooming closure uses one canonical transaction across Customer Partner Te
   assert.match(change,/capacityRevalidated/);
   assert.match(change,/refund_pending/);
   assert.match(change,/subscriptionSessionsReleased/);
-  assert.match(partnerApi,/authorize\(request,"bookings\.view"\)/);
+  assert.match(partnerApi,/requirePermission\(actor,"bookings\.view"\)/);
+  assert.match(partnerApi,/requireProviderOwnership\(db,actor,providerId\)/);
   assert.match(partnerApi,/provider_work_orders/);
   assert.match(partnerUi,/\/api\/partner-grooming-jobs/);
   assert.match(partnerUi,/\/api\/grooming-lifecycle/);
