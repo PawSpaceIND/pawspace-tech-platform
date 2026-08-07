@@ -116,6 +116,35 @@ test("Grooming Gate 3 governs provider capacity acceptance and same-booking reco
   assert.match(gateway,/\/api\/provider-assignment-recovery/);
 });
 
+test("Grooming production-readiness policy is city-configurable, frozen per booking and observe-first",async()=>{
+  const[policy,control,canonical,change,gateway]=await Promise.all([
+    source("lib/grooming-policy-governance.ts"),source("app/api/grooming-commercial-policy/route.ts"),source("app/api/canonical-bookings/route.ts"),source("app/api/grooming-booking-change/route.ts"),source("lib/api-gateway.ts"),
+  ]);
+  assert.match(policy,/grooming_commercial_policies/);
+  assert.match(policy,/cancellation_cutoff_minutes/);
+  assert.match(policy,/refund_percent_before_cutoff/);
+  assert.match(policy,/refund_percent_after_cutoff/);
+  assert.match(policy,/reschedule_cutoff_minutes/);
+  assert.match(policy,/max_reschedules/);
+  assert.match(policy,/reschedule_fee_type/);
+  assert.match(policy,/no_show_refund_percent/);
+  assert.match(policy,/multi_pet_max/);
+  assert.match(policy,/enforcement_mode TEXT NOT NULL DEFAULT 'observe'/);
+  assert.match(policy,/grooming_commercial_policy_audit/);
+  assert.match(policy,/ORDER BY CASE WHEN zone_id=\? THEN 0 ELSE 1 END,version DESC/);
+  assert.match(policy,/Observe mode: policy would block this change but UAT behavior is preserved/);
+  assert.match(control,/pricing\.manage/);
+  assert.match(control,/"observe","enforce"/);
+  assert.match(canonical,/resolveGroomingPolicy/);
+  assert.match(canonical,/commercialPolicy:commercialPolicy\?policySnapshot/);
+  assert.match(canonical,/commercialPolicyVersion/);
+  assert.match(change,/parsePolicySnapshot/);
+  assert.match(change,/evaluateBookingChange/);
+  assert.match(change,/refundAmount/);
+  assert.match(change,/rescheduleFeeAmount/);
+  assert.match(gateway,/\/api\/grooming-commercial-policy/);
+});
+
 test("Grooming closure keeps live integrations explicitly outside the UAT transaction",async()=>{
   const[lifecycle,finance,plan]=await Promise.all([source("app/api/grooming-lifecycle/route.ts"),source("app/team/finance/page.tsx"),source("docs/GROOMING_CLOSURE_PLAN.md")]);
   assert.match(lifecycle,/uat_sandbox/);
