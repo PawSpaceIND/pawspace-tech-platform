@@ -2,6 +2,7 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 import { auditApiResponse, authorizeApiRequest } from "../lib/api-gateway";
+import {authorizePlatformSessionRequest} from "../lib/session-api-gateway";
 
 interface Env {
   ASSETS: Fetcher;
@@ -27,20 +28,21 @@ interface ExecutionContext {
 // dangerouslyAllowSVG: true in next.config.js and uncomment below:
 // const imageConfig: ImageConfig = { dangerouslyAllowSVG: true };
 
+function secureApiResponse(response:Response){const secured=new Response(response.body,response);secured.headers.set("cache-control","no-store");secured.headers.set("x-content-type-options","nosniff");secured.headers.set("referrer-policy","same-origin");return secured;}
+
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
     if (url.pathname.startsWith("/api/")) {
-      const access = await authorizeApiRequest(request, env);
+      if(url.pathname==="/api/identity-session")return secureApiResponse(await handler.fetch(request,env,ctx));
+      const sessionAccess=await authorizePlatformSessionRequest(request,env.DB);
+      if(sessionAccess instanceof Response)return sessionAccess;
+      const access=sessionAccess??await authorizeApiRequest(request, env);
       if (access instanceof Response) return access;
       const response = await handler.fetch(request, env, ctx);
       ctx.waitUntil(auditApiResponse(env, access.actor, access.permission, request, response.clone()));
-      const secured = new Response(response.body, response);
-      secured.headers.set("cache-control", "no-store");
-      secured.headers.set("x-content-type-options", "nosniff");
-      secured.headers.set("referrer-policy", "same-origin");
-      return secured;
+      return secureApiResponse(response);
     }
 
     if (url.pathname === "/_vinext/image") {
