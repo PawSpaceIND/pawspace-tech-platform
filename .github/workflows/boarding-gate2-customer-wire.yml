@@ -1,4 +1,4 @@
-name: Boarding Gate 2 customer wire verifier
+name: Boarding Gate 2 customer regression diagnostic
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  verify:
+  diagnose:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
@@ -23,31 +23,20 @@ jobs:
         with:
           node-version: 22.13.0
           cache: npm
-      - name: Apply customer Boarding wiring
-        run: python3 scripts/boarding-gate2-customer-wire.py
-      - name: Install web dependencies
-        run: npm ci
-      - name: Run web tests
-        run: npm test
-      - name: Run lint
-        run: npm run lint
-      - name: Validate artifact
-        run: npm run validate:artifact
-      - name: Install backend dependencies
-        working-directory: backend
-        run: npm ci
-      - name: Backend typecheck
-        working-directory: backend
-        run: npm run typecheck
-      - name: Backend tests
-        working-directory: backend
-        run: npm test
-      - name: Commit verified customer wiring
+      - run: npm ci
+      - name: Capture web test output
+        shell: bash
+        run: |
+          set +e
+          npm test > boarding-gate2-customer-test-output.txt 2>&1
+          code=$?
+          echo "EXIT_CODE=$code" >> boarding-gate2-customer-test-output.txt
+          exit 0
+      - name: Commit diagnostic output
         shell: bash
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add app/mobile-app/stay-flow.tsx
-          git diff --cached --quiet && exit 0
-          git commit -m "Wire canonical Boarding customer stay UX [skip ci]"
+          git add boarding-gate2-customer-test-output.txt
+          git commit -m "Capture Boarding customer regression failure [skip ci]"
           git push origin HEAD:grooming-integration-closure
