@@ -42,26 +42,26 @@ The Grooming transaction path now uses one canonical booking/work-order/payment/
 - Subscription bookings create a reserved usage entry at booking creation.
 - Customer reschedule keeps the same booking and schedule group, revalidates assigned-provider capacity, updates the canonical schedule/work order and records a lifecycle event.
 - Customer cancellation releases scheduling capacity, cancels the work order, reverses an unconsumed subscription reservation and creates a refund case when a captured payment must be returned.
-- Partner Grooming Bookings now reads canonical provider work orders instead of the previous hard-coded Grooming job list.
+- Partner Grooming Bookings reads canonical provider work orders instead of the previous hard-coded Grooming job list.
 - Partner job detail projects canonical customer, masked contact, pets, payment, proof, invoice and lifecycle timeline.
 - Provider lifecycle supports acceptance, on-the-way, arrival, service start, proof and completion.
 - Completion is blocked until before proof, after proof and a completion checklist exist.
 - Completion creates an issued UAT invoice, consumes the reserved subscription session when applicable and creates a repeat-booking task.
 - Team Operations Booking Command Center reads canonical booking/work-order/payment/event data and remains the consolidated Ops front door.
-- Team Finance projects canonical Grooming payment, invoice, collected/receivable and subscription usage state.
+- Team Finance projects canonical Grooming payment, gateway reconciliation, invoice, collected/refunded/receivable and subscription state.
 - Partner Grooming job projection is protected by `bookings.view` plus exact provider ownership; customer booking creation/cancel/reschedule is protected by customer ownership for non-managing identities.
 - Permanent closure CI runs web build/regressions/lint/artifact validation plus backend typecheck/tests.
-- Expanded Grooming closure regression covers Customer -> Partner -> lifecycle/proof -> Finance, cancel/reschedule/refund, subscription reserve/consume/reverse, identity ownership and the UAT/live-integration boundary.
-- Final closure CI passed web tests, lint, Sites artifact validation, backend typecheck and backend tests.
+- Expanded Grooming closure regression covers Customer -> Partner -> lifecycle/proof -> Finance, cancel/reschedule/refund, subscription reserve/consume/reverse, identity ownership, payment reconciliation and the UAT/live-integration boundary.
 
 ### Deliberately still UAT / not production-complete
-- Partner UAT can still use exact `uat://proof/<booking>/<before|after>` proof references. Real registered media now has a secure trust-state gate, but external object storage and scanner integrations are not connected yet.
-- Razorpay/RazorpayX, OTP, WhatsApp/SMS, Exotel, Maps/GPS, production object storage/scanning, payouts and accounting exports remain disconnected.
+- Partner UAT can still use exact `uat://proof/<booking>/<before|after>` proof references. Real registered media has a secure trust-state gate, but external object storage and scanner integrations are not connected yet.
+- Razorpay-compatible sandbox order/refund/webhook/reconciliation code is implemented, but actual Razorpay test credentials and external sandbox execution have not been enabled. Razorpay production credentials, live refunds and RazorpayX remain OFF.
+- OTP, WhatsApp/SMS, Exotel, Maps/GPS, production object storage/scanning, payouts and accounting exports remain disconnected.
 - The application-layer identity binding and ownership model is implemented, but the production customer/provider OTP/session authentication adapter that supplies verified identity subjects is not yet connected.
 - Legacy email ownership-link tables remain temporarily as migration fallback while canonical identity bindings are introduced.
 - Partner Home, Earnings, Calendar and some surrounding dashboard statistics remain prototype/fixture content even though Grooming Bookings is canonical.
 - GST/tax calculation is not production tax logic; UAT invoices currently record booking gross/net without the final tax engine.
-- The per-booking subscription ledger now reserves, consumes and reverses usage; subscription plan commercial values are configurable and frozen per purchase, while deeper production freeze/extension/expiry operations still require integration.
+- The per-booking subscription ledger reserves, consumes and reverses usage; subscription plan commercial values are configurable and frozen per purchase, while deeper production freeze/extension/expiry operations still require integration.
 - Real-device UAT, employee pilot, one-zone Bengaluru pilot, domain cutover, monitoring, backups and support SOP remain launch gates.
 - External integrations must be added one at a time in sandbox and verified before production credentials are enabled.
 
@@ -75,7 +75,7 @@ Historical customer files were reviewed and converted into a protected Customer 
 - Recommended demo cohort: 4,304 customer rows — all 1,304 historical Grooming subscription customers plus 3,000 non-subscriber Grooming subscription targets.
 - Demo cohort includes 3,214 repeat customers, 1,090 one-time customers and 4,043 contactable records.
 - 400 demo-cohort customers have current activity enriched from the July Grooming master.
-- Customer Data now tracks current customer type, approximate order count, current last service/dormancy, historical revenue, Grooming order count, historical subscription orders, subscription target score, latest Grooming package, pet breed, payment status, groomer/team and address/service-area data where available.
+- Customer Data tracks current customer type, approximate order count, current last service/dormancy, historical revenue, Grooming order count, historical subscription orders, subscription target score, latest Grooming package, pet breed, payment status, groomer/team and address/service-area data where available.
 - Historical subscription orders prove that a customer previously bought a Grooming subscription, but do not prove the current remaining-session balance or exact expiry. Those records are explicitly marked `legacy_balance_pending_migration` rather than inventing a balance or due date.
 - New platform subscriptions continue to use the canonical subscription ledger for exact reserve/consume/reverse and expiry state.
 - Current activity/dormancy is recalculated from the current last-service date instead of trusting the stale imported `Days Since Last Service Today` column.
@@ -89,7 +89,7 @@ The source branch can validate, transform and display the protected cohort, but 
 
 **Status: ENGINEERING CLOSED IN OBSERVE MODE. BUSINESS SIGN-OFF PENDING. ENFORCEMENT OFF.**
 
-The remaining Grooming commercial rules are now governed as versioned city/zone configuration instead of being scattered or permanently hard-coded.
+The remaining Grooming commercial rules are governed as versioned city/zone configuration instead of being scattered or permanently hard-coded.
 
 - Grooming subscription price, session/credit count, validity value/unit, eligible pet types, service package mapping, max pets, credits per pet, family-wallet behavior, pause/grace days, renewal window, benefits/terms, active state and effective dates are configurable by city and optional zone.
 - Subscription purchases retain a frozen configuration snapshot so later business changes do not rewrite existing customer wallets.
@@ -144,6 +144,29 @@ The remaining Grooming commercial rules are now governed as versioned city/zone 
 - External object storage, signed upload/download URLs, malware/content scanning callbacks and production retention/deletion jobs remain integration work.
 - Clean permanent CI passed at commit `870350bb5f68f88b5c82744241857e4151b67d23`.
 
+## Production-readiness Gate 7 — payment, refund and gateway reconciliation
+
+**Status: APPLICATION + SANDBOX CONTRACT CLOSED. RAZORPAY TEST-CREDENTIAL EXECUTION PENDING. LIVE OFF.**
+
+- Canonical payment state, gateway-event state and reconciliation state are now separate records; a payment being `captured` no longer automatically means it is reconciled.
+- `payment_gateway_events` deduplicates Razorpay events by provider/event ID and retains processing status, payload hash, signature-verification result and failure reason.
+- The Razorpay-compatible webhook route validates `X-Razorpay-Signature` over the raw request body, requires an event ID and is locked to sandbox configuration. It is intentionally not protected by a PawSpace employee session because the webhook signature is the server-to-server trust boundary.
+- Capture reconciliation validates the canonical amount and currency before changing the canonical payment to captured. Amount/currency mismatch creates a Finance exception instead of silently accepting the payment.
+- Out-of-order authorization/failure events cannot downgrade a payment that has already reached a settled captured/refunded state.
+- Refund processing requires a matching internal refund case. Orphan refunds, refund amount mismatch, failed refunds and refund overage become reconciliation exceptions.
+- Duplicate webhook event IDs and logical refund replays are prevented from double-applying money movement.
+- A staff-only `payments.manage` sandbox endpoint can link a synthetic order and simulate signed-after-verification gateway events before external credentials are configured.
+- A Razorpay test-mode adapter is ready to create sandbox Orders and initiate idempotent sandbox refunds. Without `RAZORPAY_KEY_ID_SANDBOX`, `RAZORPAY_KEY_SECRET_SANDBOX` and sandbox webhook secret, real external calls remain `configuration_required`.
+- Team Finance now exposes reconciled/unreconciled counts, open exceptions, captured amount, refunded amount, receivable and per-payment variance instead of treating captured payment as implicit reconciliation.
+- No Razorpay production key/secret path is enabled and no live payment/refund execution is activated.
+- Permanent CI passed at commit `2787594ac849ac2f6321c55d892e006c6f80b831`: web tests, lint, Sites artifact validation, backend typecheck and backend tests.
+
+### Remaining payment dependency
+- Add Razorpay **test-mode** key ID, key secret and webhook secret only in the UAT environment.
+- Execute controlled test-mode order -> payment -> signed webhook -> reconciliation and cancellation -> refund -> signed webhook -> Finance reconciliation scenarios.
+- Prove duplicate delivery, out-of-order delivery, mismatch and failed-refund handling against Razorpay test mode before considering production credentials.
+- Keep production Razorpay/RazorpayX credentials disabled until the wider launch gates are approved.
+
 ## Closure sequence status
 1. ✅ Import recovered Site v67 source without redesigning it.
 2. 🟡 Catalogue, subscription and booking-change policy governance/versioning are implemented and CI-green; final Bengaluru business values/sign-off and switch from `observe` to `enforce` remain.
@@ -153,10 +176,10 @@ The remaining Grooming commercial rules are now governed as versioned city/zone 
 6. ✅ Partner Grooming Bookings, Team Operations and Team Finance project the canonical transaction.
 7. ✅ UAT provider lifecycle connected through completion; governed capacity/acceptance/recovery are implemented, while production GPS remains launch work.
 8. ✅ Completion proof gate plus secure real-media trust-state/ownership checks are implemented; object storage/scanner integration remains.
-9. ✅ UAT payment reconciliation, policy-aware cancellation refund case and invoice state implemented; gateway/GST/accounting remain production integrations.
+9. ✅ Payment/refund gateway event and reconciliation application contract is implemented and CI-green; actual Razorpay test-mode credential execution remains an external sandbox step, and GST/accounting remain production work.
 10. ✅ Per-booking subscription reserve, consume and cancellation reversal implemented; subscription commercial configuration is versioned/frozen per purchase; deeper production subscription freeze/extension/expiry operations remain.
 11. ✅ Canonical customer/provider identity binding and application ownership enforcement are implemented and CI-green; production OTP/session adapter and legacy-binding migration remain launch integration work.
-12. ⏳ External integrations remain deliberately disconnected pending UAT approval.
+12. ⏳ External integrations remain deliberately disconnected or sandbox-credential-pending until UAT approval.
 13. 🟡 Automated internal closure regression passes; real-device UAT, employee pilot and one-zone Bengaluru pilot remain.
 
 ## Next phase — production readiness
@@ -165,7 +188,7 @@ Do not add major new product modules. Convert the closed internal UAT path into 
 1. 🟡 Grooming catalogue/subscription/change-policy governance infrastructure is complete in `observe` mode; finalize and sign off Bengaluru commercial values, then enable `enforce` only after approval.
 2. ✅ Customer/provider identity binding and application ownership enforcement are implemented; production OTP/session adapter remains under integration step 5.
 3. 🟡 Secure service-media trust state is implemented; connect object storage, signed upload flow and scanning before replacing Partner synthetic UAT proof.
-4. Integrate Razorpay payment/refund webhooks and reconciliation in sandbox.
+4. 🟡 Razorpay sandbox application/webhook/reconciliation contract is complete; add test-mode credentials and execute external sandbox capture/refund/replay/mismatch UAT before any live keys.
 5. Integrate OTP/session authentication plus WhatsApp/SMS, then Exotel, then Maps/GPS.
 6. Add production GST/invoice/accounting rules and payout flow.
 7. Complete subscription-master freeze/extension/expiry integration, including reconciliation of legacy subscription balances before showing exact legacy sessions remaining/expiry.
