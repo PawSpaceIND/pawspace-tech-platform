@@ -1,0 +1,255 @@
+.trainingPlans button > em {
+  display: block;
+  margin-top: 7px;
+  color: #118059;
+  font-size: 7px;
+  font-style: normal;
+  font-weight: 900;
+}
+.policy {
+  background: #fff7e6;
+  border: 1px solid #f0d395;
+  border-radius: 12px;
+  padding: 10px;
+  margin-top: 10px;
+}
+.policy b {
+  font-size: 8px;
+}
+.policy p {
+  font-size: 7px;
+  line-height: 1.45;
+  color: #817469;
+  margin: 4px 0;
+}
+.attendanceChoice {
+  display: grid;
+  gap: 7px;
+  margin: 10px 0;
+}
+.attendanceChoice > b {
+  font-size: 9px;
+}
+.attendanceChoice > button {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 8px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid #ded7e5;
+  border-radius: 11px;
+  background: white;
+  color: #2f2635;
+  text-align: left;
+}
+.attendanceChoice > button.selected {
+  border-color: #14825a;
+  background: #eff8f3;
+  box-shadow: inset 0 0 0 1px #14825a;
+}
+.attendanceChoice i {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #e8e3eb;
+  color: white;
+  font-size: 8px;
+  font-style: normal;
+}
+.attendanceChoice .selected i {
+  background: #14825a;
+}
+.attendanceChoice span {
+  display: grid;
+  gap: 3px;
+}
+.attendanceChoice strong {
+  font-size: 8px;
+}
+.attendanceChoice small {
+  color: #746a7b;
+  font-size: 7px;
+  line-height: 1.45;
+}
+.balance {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #fff7e6;
+  border: 1px solid #efd18e;
+  border-radius: 12px;
+  padding: 10px;
+  margin-top: 8px;
+}
+.balance div {
+  display: grid;
+}
+.balance b {
+  font-size: 8px;
+}
+.balance span {
+  font-size: 7px;
+  color: #827367;
+}
+.balance em {
+  font-size: 6px;
+  color: #9b6704;
+  font-style: normal;
+}
+.bonus,
+.feedback {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  background: #e8f7ef;
+  border: 1px solid #bde4ce;
+  border-radius: 12px;
+  padding: 10px;
+  margin-top: 8px;
+}
+.bonus > i,
+.feedback > i {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: #14825a;
+  color: white;
+  display: grid;
+  place-items: center;
+  font-style: normal;
+}
+.bonus div,
+.feedback div {
+  display: grid;
+}
+.bonus b,
+.feedback b {
+  font-size: 8px;
+}
+.bonus span,
+.feedback span {
+  font-size: 7px;
+  color: #617b70;
+}
+.bonus button,
+.feedback button {
+  border: 0;
+  background: #14825a;
+  color: white;
+  padding: 7px;
+  border-radius: 8px;
+  font-size: 7px;
+  font-weight: 900;
+}
+.trainerChecklist {
+  display: grid;
+  gap: 5px;
+  background: white;
+  border-radius: 12px;
+  padding: 10px;
+  margin-top: 8px;
+}
+.trainerChecklist b {
+  font-size: 8px;
+  margin-bottom: 2px;
+}
+.trainerChecklist span {
+  font-size: 7px;
+  color: #6e6377;
+}
+.feedback {
+  background: #fff7e6;
+  border-color: #efd394;
+}
+.feedback > i {
+  background: #f0a51e;
+}
+.feedback button {
+  background: #f0a51e;
+  color: #351c00;
+}
+.task {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 9px;
+  font-size: 7px;
+  font-weight: 900;
+}
+.practiceDays {
+  display: grid !important;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 5px;
+}
+.practiceDays i {
+  height: 26px;
+  border-radius: 8px;
+  background: #eee8f1;
+  color: #81768a;
+  display: grid;
+  place-items: center;
+  font-size: 7px;
+  font-style: normal;
+}
+.practiceDays i.checked {
+  background: #14825a;
+  color: white;
+}
+.certificate {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 9px;
+  background: linear-gradient(135deg, #fff6dd, #ffedbd);
+  border: 1px solid #edc56d;
+  border-radius: 13px;
+  padding: 11px;
+  margin-top: 8px;
+}
+.certificate > i {
+  width: 31px;
+  height: 31px;
+  border-radius: 9px;
+  background: #d99d22;
+  color: white;
+  display: grid;
+  place-items: center;
+  font-style: normal;
+}
+.certificate div {
+  display: grid;
+}
+.certificate b {
+  font-size: 9px;
+}
+.certificate span {
+  font-size: 7px;
+  color: #776443;
+  line-height: 1.45;
+}
+.crossSell {
+  background: white;
+  border-radius: 13px;
+  padding: 11px;
+  margin-top: 8px;
+}
+.crossSell > b {
+  font-size: 9px;
+}
+.crossSell > div {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+  margin-top: 8px;
+}
+.crossSell button {
+  border: 0;
+  background: #eee5f8;
+  color: #6422a8;
+  border-radius: 8px;
+  padding: 8px 3px;
+  font-size: 7px;
+  font-weight: 900;
+}

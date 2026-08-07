@@ -1,0 +1,35 @@
+.meetRequest {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 9px;
+  padding: 11px;
+  border: 1px solid #efd08d;
+  border-radius: 11px;
+  background: #fff7e5;
+}
+.meetRequest > span {
+  color: #9a6400;
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+.meetRequest > b {
+  font-size: 9px;
+}
+.meetRequest > small {
+  color: #766a5f;
+  font-size: 7px;
+}
+.meetRequest > div {
+  display: flex;
+  gap: 6px;
+}
+.meetRequest button {
+  padding: 7px;
+  border: 0;
+  border-radius: 7px;
+  background: #f0a21f;
+  color: #321800;
+  font-size: 7px;
+  font-weight: 900;
+}

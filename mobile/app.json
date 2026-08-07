@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "PawSpace",
+    "slug": "pawspace-pet-care",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "pawspace",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "in.pawspace.app"
+    },
+    "android": {
+      "package": "in.pawspace.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#55208C"
+      }
+    },
+    "plugins": [],
+    "extra": {
+      "environment": "prototype"
+    }
+  }
+}

@@ -1,0 +1,46 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import css from "./grooming-subscriptions.module.css";
+
+type Stage="All"|"Active"|"Renewal due"|"Expired"|"Future";
+type View="Customers"|"Renewal queue"|"Automation"|"Communications";
+type Subscriber={id:string;customer:string;pet:string;plan:string;stage:Exclude<Stage,"All">;used:number;total:number;renewal:string;days:number;last:string;next:string;owner:string};
+
+const subscribers:Subscriber[]=[
+  {id:"SUB-48291",customer:"A••••• R•",pet:"Bruno",plan:"12-session Plus",stage:"Active",used:8,total:12,renewal:"18 Mar 2027",days:226,last:"28 Jul · Completed",next:"12 Aug · WhatsApp",owner:"Retention East"},
+  {id:"SUB-41708",customer:"M•••• S•",pet:"Milo",plan:"6-session Essential",stage:"Renewal due",used:6,total:6,renewal:"9 Aug 2026",days:5,last:"24 Jul · Completed",next:"Today · Bot call",owner:"Asha"},
+  {id:"SUB-39842",customer:"R•••• K•",pet:"Rio",plan:"3-session Starter",stage:"Expired",used:3,total:3,renewal:"29 Jul 2026",days:-6,last:"14 Jul · Completed",next:"Today · Associate call",owner:"Rahul"},
+  {id:"SUB-50117",customer:"D•••• P•",pet:"Coco",plan:"12-session Complete",stage:"Future",used:0,total:12,renewal:"4 Aug 2027",days:365,last:"Starts 8 Aug",next:"7 Aug · Welcome",owner:"Unassigned"},
+  {id:"SUB-44621",customer:"K•••• N•",pet:"Max",plan:"6-session Essential",stage:"Renewal due",used:5,total:6,renewal:"22 Aug 2026",days:18,last:"2 Aug · Completed",next:"7 Aug · Push + WA",owner:"Priya"},
+];
+const automations=[
+  ["Service cadence","10, 15 and 20 days after completed grooming","Push → WhatsApp → task","Active"],
+  ["Low session balance","When two sessions remain","In-app + WhatsApp renewal prompt","Active"],
+  ["Renewal countdown","30, 15, 7 and 1 day before expiry","Push + WhatsApp + email","Active"],
+  ["Expired recovery","1, 7 and 30 days after expiry","WhatsApp → consented bot call → human","Pilot"],
+  ["Failed payment","Immediately, +1 day and +3 days","Payment link + Accounts task","Ready"],
+  ["Dormant subscriber","No completed service for 35 days","Wellness check + priority slot","Active"],
+];
+
+export default function GroomingSubscriptionsPanel({notify}:{notify:(message:string)=>void}){
+  const[view,setView]=useState<View>("Customers"),[stage,setStage]=useState<Stage>("All"),[query,setQuery]=useState(""),[botEnabled,setBotEnabled]=useState(false),[quietHours,setQuietHours]=useState(true);
+  const filtered=useMemo(()=>subscribers.filter(s=>(stage==="All"||s.stage===stage)&&(!query||`${s.customer} ${s.pet} ${s.id} ${s.plan}`.toLowerCase().includes(query.toLowerCase()))),[stage,query]);
+  return <div className={css.stack}>
+    <section className={css.hero}><div><span>GROOMING SUBSCRIPTION MANAGEMENT</span><h2>Past, present and future plans—one renewal desk.</h2><p>Manage customer wallets, session usage, days to renew, scheduled reminders, notifications and consented automated calls without exposing phone numbers.</p></div><div className={css.heroActions}><button onClick={()=>notify("New grooming subscription form opened")}>＋ Add subscription</button><button onClick={()=>notify("Renewal worklist exported with masked customer data")}>Export queue</button></div></section>
+    <section className={css.metrics}>{[["Active plans","6,482","4,930 customer households"],["Due in 7 days","128","42 need personal follow-up"],["Expiring in 30 days","386","₹8.7L renewal opportunity"],["Expired / win-back","742","Prioritised by value and usage"]].map(x=><article key={x[0]}><span>{x[0]}</span><strong>{x[1]}</strong><small>{x[2]}</small></article>)}</section>
+    <nav className={css.tabs}>{(["Customers","Renewal queue","Automation","Communications"] as View[]).map(x=><button key={x} className={view===x?css.activeTab:""} onClick={()=>setView(x)}>{x}</button>)}</nav>
+
+    {(view==="Customers"||view==="Renewal queue")&&<section className={css.panel}>
+      <header className={css.panelHead}><div><span>{view==="Customers"?"SUBSCRIPTION CUSTOMER 360":"PRIORITISED RENEWAL QUEUE"}</span><h3>{view==="Customers"?"Every plan and customer state":"Who needs action today"}</h3></div><div className={css.filters}><input aria-label="Search subscriptions" placeholder="Search plan, pet or ID" value={query} onChange={e=>setQuery(e.target.value)}/><select value={stage} onChange={e=>setStage(e.target.value as Stage)}><option>All</option><option>Active</option><option>Renewal due</option><option>Expired</option><option>Future</option></select></div></header>
+      <div className={css.tableHead}><span>Customer / plan</span><span>Usage</span><span>Renewal</span><span>Last + next action</span><span>Owner</span><span>Action</span></div>
+      {filtered.map(s=><article className={css.row} key={s.id}><div><strong>{s.customer} · {s.pet}</strong><small>{s.id} · {s.plan}</small><b className={css[s.stage.replace(" ","").toLowerCase()]}>{s.stage}</b></div><div><strong>{s.total-s.used} remaining</strong><i><span style={{width:`${s.used/s.total*100}%`}}/></i><small>{s.used} of {s.total} used</small></div><div><strong>{s.days<0?`${Math.abs(s.days)} days overdue`:`${s.days} days to renew`}</strong><small>{s.renewal}</small></div><div><strong>{s.last}</strong><small>Next: {s.next}</small></div><div><strong>{s.owner}</strong><small>Masked contact</small></div><div className={css.actions}><button onClick={()=>notify(`${s.id} complete timeline opened`)}>Open</button><button onClick={()=>notify(`Reminder queued for ${s.pet}; consent and quiet hours will be checked`)}>Remind</button><button onClick={()=>notify(`${s.id} renewal checkout created`)}>Renew</button></div></article>)}
+    </section>}
+
+    {view==="Automation"&&<div className={css.automationGrid}><section className={css.panel}><header className={css.panelHead}><div><span>LIFECYCLE RULES</span><h3>From first session to renewal</h3></div><button className={css.primary} onClick={()=>notify("Automation rule builder opened")}>＋ Create rule</button></header>{automations.map(a=><article className={css.rule} key={a[0]}><i>⚡</i><div><strong>{a[0]}</strong><small>{a[1]}</small><p>{a[2]}</p></div><b>{a[3]}</b><button onClick={()=>notify(`${a[0]} rule editor opened`)}>Edit</button></article>)}</section><aside className={css.panel}><span className={css.kicker}>CONTACT SAFETY</span><h3>Automation guardrails</h3><label className={css.switch}><input type="checkbox" checked={quietHours} onChange={e=>setQuietHours(e.target.checked)}/><span><strong>Respect quiet hours</strong><small>Contact only 9 AM–8 PM IST</small></span></label><label className={css.switch}><input type="checkbox" checked={botEnabled} onChange={e=>setBotEnabled(e.target.checked)}/><span><strong>Automated bot calls</strong><small>{botEnabled?"Pilot enabled for consented customers":"Off until provider and consent review"}</small></span></label><div className={css.guardrail}>{["Check marketing and calling consent","Maximum two automated attempts per renewal","Stop when customer replies, books or opts out","Transfer interested or upset customers to an associate","Record disposition; recording only with required notice","Try secondary number only when permission exists"].map(x=><p key={x}>✓ {x}</p>)}</div><button className={css.fullButton} onClick={()=>notify("Automation safeguards saved in test mode")}>Save safeguards</button></aside></div>}
+
+    {view==="Communications"&&<div className={css.commGrid}><section className={css.panel}><span className={css.kicker}>TODAY&apos;S ORCHESTRATION</span><h3>Reminder and renewal delivery</h3>{[["Push notifications","284","278 delivered","Healthy"],["WhatsApp reminders","216","198 delivered","18 retrying"],["SMS fallback","42","39 delivered","Healthy"],["Email summaries","88","84 delivered","Healthy"],["Automated bot calls","0","Consent pilot off","Ready"],["Human call tasks","42","18 completed","24 open"]].map(x=><article className={css.channel} key={x[0]}><div><strong>{x[0]}</strong><small>{x[2]}</small></div><b>{x[1]}</b><span>{x[3]}</span><button onClick={()=>notify(`${x[0]} delivery log opened`)}>Logs</button></article>)}</section><aside className={css.panel}><span className={css.kicker}>MESSAGE TIMELINE</span><h3>One customer, no duplicate chasing</h3><div className={css.timeline}>{[["9:05 AM","Push","Renewal due in 7 days","Delivered"],["9:07 AM","WhatsApp","Plan summary + booking link","Read"],["11:30 AM","Customer","Asked for Sunday slot","Replied"],["11:31 AM","System","Bot call and SMS suppressed","Stopped"],["11:34 AM","Associate","Sunday options shared","Open"]].map(x=><article key={x[0]+x[1]}><i/><div><strong>{x[1]} · {x[2]}</strong><small>{x[0]} · {x[3]}</small></div></article>)}</div></aside></div>}
+
+    <section className={css.footer}><div><span>CONNECTED RECORD</span><h3>Customer app ↔ booking ↔ subscription wallet ↔ CRM ↔ notification queue</h3><p>Session credit is deducted only after completed service. Cancellation restores eligible credit. Renewal payment creates the next plan without overwriting the past plan or its audit history.</p></div><button onClick={()=>notify("Subscription audit trail opened")}>Review audit trail →</button></section>
+  </div>;
+}

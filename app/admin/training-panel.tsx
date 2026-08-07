@@ -1,0 +1,23 @@
+"use client";
+
+import { useState } from "react";
+import styles from "./admin.module.css";
+
+const cases = [
+  { id: "TR-481", dog: "Bruno", parent: "Ananya Rao", plan: "Everyday Obedience", progress: 68, session: "3 / 12", trainer: "Arjun Kumar", next: "5 Aug · 9:00 AM", status: "Active" },
+  { id: "TR-482", dog: "Milo", parent: "Nisha Patel", plan: "Puppy assessment", progress: 0, session: "Consultation", trainer: "Arjun Kumar", next: "Today · 11:30 AM", status: "Assessment" },
+  { id: "TR-477", dog: "Rocky", parent: "Vikram Reddy", plan: "Leash Reactivity", progress: 61, session: "7 / 12", trainer: "Sneha Rao", next: "Today · 3:00 PM", status: "Active" },
+  { id: "TR-469", dog: "Pepper", parent: "Sonia Das", plan: "Advanced Recall", progress: 84, session: "10 / 12", trainer: "Kiran Shah", next: "6 Aug · 5:00 PM", status: "Active" },
+];
+
+export default function TrainingPanel({ notify }: { notify: (message: string) => void }) {
+  const [selected, setSelected] = useState(cases[0]);
+  return <>
+    <section className={styles.trainingMetrics}><article><span>Active training dogs</span><strong>284</strong><small>Across 23 trainers</small></article><article><span>Sessions today</span><strong>42</strong><small>38 confirmed · 4 assessment</small></article><article><span>Parent homework</span><strong>76%</strong><small>7-day completion rate</small></article><article><span>Renewal pipeline</span><strong>₹3.8L</strong><small>63 plans near completion</small></article></section>
+    <section className={styles.trainingOpsGrid}>
+      <div className={styles.trainingCases}><div className={styles.panelHead}><div><span className={styles.kicker}>Live programmes</span><h2>Training journeys</h2></div><div><button onClick={() => notify("Assessment queue opened")}>Assessments 8</button><button onClick={() => notify("New training plan opened")}>＋ New plan</button></div></div><div className={styles.trainingTableHead}><span>Dog & parent</span><span>Programme</span><span>Progress</span><span>Trainer / next</span></div>{cases.map((item) => <button key={item.id} className={selected.id === item.id ? styles.selectedTraining : ""} onClick={() => setSelected(item)}><div><i>{item.dog.slice(0,2).toUpperCase()}</i><span><strong>{item.dog}</strong><small>{item.parent} · {item.id}</small></span></div><div><strong>{item.plan}</strong><small>{item.session} sessions</small></div><div className={styles.progressCell}><span><i style={{width:`${item.progress}%`}}></i></span><strong>{item.progress ? `${item.progress}%` : "New"}</strong></div><div><strong>{item.trainer}</strong><small>{item.next}</small></div></button>)}</div>
+      <aside className={styles.trainingDetail}><div className={styles.panelHead}><div><span className={styles.kicker}>{selected.id}</span><h2>{selected.dog}’s roadmap</h2></div><span className={styles.activeTag}>{selected.status}</span></div><div className={styles.trainingParent}><span>{selected.dog.slice(0,2).toUpperCase()}</span><div><strong>{selected.dog}</strong><small>Parent: {selected.parent}</small></div><button onClick={() => notify("Customer 360 opened")}>CRM</button></div><dl><div><dt>Programme</dt><dd>{selected.plan}</dd></div><div><dt>Progress</dt><dd>{selected.progress}% · {selected.session}</dd></div><div><dt>Trainer</dt><dd>{selected.trainer}</dd></div><div><dt>Next session</dt><dd>{selected.next}</dd></div></dl><div className={styles.trainingQuality}><span>Latest quality checks</span><div><b>Session report</b><strong>Complete ✓</strong></div><div><b>Photo/video proof</b><strong>4 files ✓</strong></div><div><b>Homework assigned</b><strong>3 tasks ✓</strong></div><div><b>Parent viewed report</b><strong>Yesterday ✓</strong></div></div><div className={styles.detailActions}><button onClick={() => notify("Trainer schedule opened")}>Reschedule</button><button onClick={() => notify("Training report opened")}>View reports</button><button onClick={() => notify("Trainer reassignment opened")}>Reassign</button></div></aside>
+    </section>
+    <section className={styles.trainingBottom}><article><div><span>Trainer capacity</span><strong>82%</strong><small>196 of 240 weekly slots assigned</small></div><button onClick={() => notify("Trainer calendar opened")}>View capacity →</button></article><article><div><span>At-risk programmes</span><strong>17</strong><small>Missed sessions, low homework or no progress</small></div><button onClick={() => notify("At-risk cases opened")}>Resolve cases →</button></article><article><div><span>Assessment conversion</span><strong>64%</strong><small>53 of 83 assessments became packages</small></div><button onClick={() => notify("Conversion funnel opened")}>Open funnel →</button></article></section>
+  </>;
+}
