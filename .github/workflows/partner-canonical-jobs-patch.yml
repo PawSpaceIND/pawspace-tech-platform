@@ -1,0 +1,53 @@
+name: Connect Partner Bookings to canonical jobs
+
+on:
+  push:
+    branches:
+      - grooming-integration-closure
+    paths:
+      - .github/workflows/partner-canonical-jobs-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: grooming-integration-closure
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - name: Replace Partner fixture booking panel
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          path=Path('app/partner-app/page.tsx')
+          text=path.read_text()
+          anchor='import TestSyncPanel from "../components/test-sync-panel";\n'
+          if 'CanonicalGroomingJobs' not in text:
+              if anchor not in text: raise SystemExit('Partner import anchor not found')
+              text=text.replace(anchor,anchor+'import CanonicalGroomingJobs from "./canonical-grooming-jobs";\n',1)
+          pattern=r'        \{view === "Bookings" && \(.*?\n        \)\}\n\n        \{view === "Calendar" && \('
+          replacement='''        {view === "Bookings" && (\n          role === "Groomer" ? (\n            <CanonicalGroomingJobs />\n          ) : (\n            <section className={styles.pageCard}>\n              <small>CANONICAL SERVICE QUEUE</small>\n              <h2>{role} assignments</h2>\n              <p>This closure step connects the Grooming provider queue first. Existing non-Grooming service prototypes remain unchanged until their canonical projection pass.</p>\n            </section>\n          )\n        )}\n\n        {view === "Calendar" && ('''
+          next_text,count=re.subn(pattern,replacement,text,flags=re.S)
+          if count!=1: raise SystemExit(f'Expected one Bookings block, found {count}')
+          path.write_text(next_text)
+          PY
+      - run: npm ci
+      - run: npm test
+      - run: npm run lint
+      - run: npm run validate:artifact
+      - name: Commit verified Partner canonical queue
+        run: |
+          git config user.name "PawSpace Closure Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add app/partner-app/page.tsx
+          git commit -m "Connect Partner Grooming bookings to canonical work orders [skip ci]"
+          git pull --rebase origin grooming-integration-closure
+          git push origin HEAD:grooming-integration-closure
