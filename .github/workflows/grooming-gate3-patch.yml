@@ -1,0 +1,72 @@
+name: Wire Grooming Gate 3 provider governance
+
+on:
+  push:
+    branches:
+      - grooming-integration-closure
+    paths:
+      - .github/workflows/grooming-gate3-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: grooming-integration-closure
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - name: Wire governed provider profiles into scheduler
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          path=Path('app/api/uat-scheduling/route.ts')
+          text=path.read_text()
+          anchor='import { schedule, type CustomScheduleRule, type ScheduleDecision, type ScheduleRequest, type SchedulingService } from "../../../backend/src/scheduling";\n'
+          extra='import {createAssignmentOffer,getGovernedProvider,loadGovernedProviders,seedProviderCapacityDefaults} from "../../../lib/provider-capacity-governance";\n'
+          if extra not in text:
+              if anchor not in text: raise SystemExit('import anchor missing')
+              text=text.replace(anchor,anchor+extra,1)
+          text,count=re.subn(r'\nconst providers:Provider\[\]=\[.*?\n\];\n','\n',text,count=1,flags=re.S)
+          if count!=1 and 'const providers:Provider[]=' in text: raise SystemExit('provider seed removal failed')
+          old='const matching=providers.filter(p=>p.cityId==="blr"&&p.zones.includes(input.zoneId)&&p.services.includes(input.serviceCode));'
+          new='const matching=await loadGovernedProviders(db,"blr",input.zoneId,input.serviceCode,new Date(input.scheduledStart));'
+          if old in text: text=text.replace(old,new,1)
+          old='async listEligibleProviders(cityId,zoneId,serviceCode){return providers.filter(p=>p.cityId===cityId&&p.zones.includes(zoneId)&&p.services.includes(serviceCode)&&p.live);},'
+          new='async listEligibleProviders(cityId,zoneId,serviceCode){return loadGovernedProviders(db,cityId,zoneId,serviceCode);},'
+          if old in text: text=text.replace(old,new,1)
+          old='if(prior){const provider=providers.find(item=>item.id===prior.selected_provider_id);return json({data:{groupId:input.clientRequestId,status:prior.status,provider,duplicatePrevented:true}});'
+          new='if(prior){const provider=prior.selected_provider_id?await getGovernedProvider(db,String(prior.selected_provider_id)):null;return json({data:{groupId:input.clientRequestId,status:prior.status,provider,duplicatePrevented:true}});'
+          if old in text: text=text.replace(old,new,1)
+          old='export async function POST(request:Request){try{const db=await database();const input=await request.json() as RequestBody;'
+          new='export async function POST(request:Request){try{const db=await database();await seedProviderCapacityDefaults(db);const input=await request.json() as RequestBody;'
+          if old in text: text=text.replace(old,new,1)
+          old='await insertReservations(db,input.clientRequestId,input,decision);await saveDecision(db,input.clientRequestId,strategy,input,decision,"assigned",decision.provider.id,"system","Auto-assigned by ranked rules");return json({data:{groupId:input.clientRequestId,status:"assigned",provider:decision.provider,mode:decision.mode,occurrences:decision.occurrences,shortlist:decision.shortlist,explanation:decision.explanation,evaluations:decision.evaluations}});'
+          new='await insertReservations(db,input.clientRequestId,input,decision);await saveDecision(db,input.clientRequestId,strategy,input,decision,"assigned",decision.provider.id,"system","Auto-assigned by ranked rules");const offer=decision.provider.model==="commission"?await createAssignmentOffer(db,{groupId:input.clientRequestId,providerId:decision.provider.id}):null;return json({data:{groupId:input.clientRequestId,status:"assigned",provider:decision.provider,mode:decision.mode,offer,occurrences:decision.occurrences,shortlist:decision.shortlist,explanation:decision.explanation,evaluations:decision.evaluations}});'
+          if old not in text: raise SystemExit('auto assignment anchor missing')
+          text=text.replace(old,new,1)
+          old='await insertReservations(db,groupId,original,decision);await saveDecision(db,groupId,String(stored.strategy) as "auto"|"admin_choice",original,decision,"assigned",decision.provider.id,"ops_uat",input.reason??`${input.action} assignment`);return json({data:{groupId,status:"assigned",provider:decision.provider,shortlist:decision.shortlist,explanation:decision.explanation}});'
+          new='await insertReservations(db,groupId,original,decision);await saveDecision(db,groupId,String(stored.strategy) as "auto"|"admin_choice",original,decision,"assigned",decision.provider.id,"ops_uat",input.reason??`${input.action} assignment`);const offer=decision.provider.model==="commission"?await createAssignmentOffer(db,{groupId,providerId:decision.provider.id,attemptNo:Number((await db.prepare("SELECT attempt_no FROM provider_assignment_offers WHERE group_id=?").bind(groupId).first<{attempt_no:number}>())?.attempt_no||0)+1}):null;return json({data:{groupId,status:"assigned",provider:decision.provider,offer,shortlist:decision.shortlist,explanation:decision.explanation}});'
+          if old not in text: raise SystemExit('ops assignment anchor missing')
+          text=text.replace(old,new,1)
+          path.write_text(text)
+          PY
+      - run: npm ci
+      - run: npm test
+      - run: npm run lint
+      - run: npm run validate:artifact
+      - name: Commit verified Gate 3 scheduler patch
+        run: |
+          git config user.name "PawSpace Closure Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add app/api/uat-scheduling/route.ts
+          git commit -m "Use governed provider capacity in scheduler [skip ci]"
+          git pull --rebase origin grooming-integration-closure
+          git push origin HEAD:grooming-integration-closure
