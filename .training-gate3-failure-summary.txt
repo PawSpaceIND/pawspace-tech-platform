@@ -1,0 +1,13 @@
+not ok 30 - uses 60 minutes per training pet and one GPS policy for doorstep providers
+  ---
+  duration_ms: 9.924362
+  location: '/home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/rendered-html.test.mjs:262:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The input did not match the regular expression /role="Trainer"/. Input:
+    
+    '"use client";\n' +
+      'import { useEffect, useState } from "react";\n' +
+      'import baseStyles from "./training.module.css";\n' +
+      'import extraStyles from "./training-extra.module.css";\n' +
+      'import planStyles from "./training-plans.module.css";\n' +
