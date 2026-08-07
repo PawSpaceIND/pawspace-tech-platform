@@ -6,6 +6,7 @@ import Link from "next/link";
 import TestSyncPanel from "./components/test-sync-panel";
 import { reserveUatSchedule } from "../lib/uat-scheduling-client";
 import { createCanonicalLifecycle } from "../lib/canonical-lifecycle-client";
+import { saveGroomingServiceLocation } from "../lib/grooming-location-client";
 import { createTestTransaction } from "../lib/test-transaction";
 
 type PetType = "dog" | "cat";
@@ -81,6 +82,7 @@ export default function Home() {
   const [showDetails, setShowDetails] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [phone, setPhone] = useState("");
+  const [serviceAddress, setServiceAddress] = useState("");
   const [payment, setPayment] = useState("after");
   const [trainingLead, setTrainingLead] = useState(false);
   const [petDropdownOpen, setPetDropdownOpen] = useState(false);
@@ -150,6 +152,7 @@ export default function Home() {
         payment:{method:payment==="after"?"cash":"upi",mode:payment==="after"?"pay_after_service":"prepaid",status:payment==="after"?"created":"captured",detail:payment==="after"?"Pay after service · UAT":"Online payment captured · UAT"},
         pricing:{discount:0,subscription:offerType==="subscription"?selectedPackage.name:undefined},
       });
+      await saveGroomingServiceLocation({bookingId:canonical.bookingId,customerId,address:serviceAddress});
       createTestTransaction({customerId,customerName:`PawSpace Customer ${digits.slice(-4)||"UAT"}`,primary:digits||"9999999999",secondary:"",pets:chosenPets.map(pet=>pet.name).join(", "),petCount,service:"Grooming",packageName:selectedPackage.name,area:"Bengaluru",slot:`${dates[selectedDate].date} · ${selectedSlot}`,duration,amount:total,payment:payment==="after"?"Pay after service":"Paid online",provider:decision.provider.name,providerModel:decision.provider.model==="full_time"?"Full-time":"Commission",subscription:offerType==="subscription"?selectedPackage.name:"No active plan",creditsBefore:offerType==="subscription"?Number(selectedPackage.id.match(/\d+/)?.[0]||1):0,crmOwner:"Unassigned",crmNextAction:"Post-booking care follow-up",reminder:"Booking confirmation queued"},canonical.bookingId);
       setShowDetails(false);
       setConfirmed(true);
@@ -278,7 +281,7 @@ export default function Home() {
       {showDetails && <div className="modal-backdrop details-backdrop"><section className="modal details-modal" role="dialog" aria-modal="true"><button className="modal-close" onClick={() => setShowDetails(false)} aria-label="Close">×</button>
         <p className="eyebrow">Final details</p><h2>Tell us where to come</h2><form onSubmit={finishBooking} className="details-form">
           <div className="field-row"><label>Customer name<input required placeholder="Your name" /></label><label>Secondary number<input required inputMode="numeric" placeholder="Alternative contact" /></label></div>
-          <label>Doorstep address<input required placeholder="Search Bengaluru address or use current location" /></label>
+          <label>Doorstep address<input required value={serviceAddress} onChange={(event) => setServiceAddress(event.target.value)} placeholder="Search Bengaluru address or use current location" /></label>
           <div className="pet-select-wrap">
             <label>Select {petCount} registered {petCount === 1 ? "pet" : "pets"}</label>
             <button type="button" className={`pet-select-trigger ${petDropdownOpen ? "open" : ""}`} onClick={() => setPetDropdownOpen((open) => !open)} aria-expanded={petDropdownOpen}>
