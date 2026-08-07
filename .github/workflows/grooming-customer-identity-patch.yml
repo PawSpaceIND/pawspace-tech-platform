@@ -10,6 +10,7 @@ on:
 permissions:
   contents: write
 
+# Retry after permanent regression was aligned to exact provider ownership.
 jobs:
   patch-and-verify:
     runs-on: ubuntu-latest
