@@ -101,3 +101,54 @@ test("Boarding Host workspace does not restore unapproved commercial or dated fi
   assert.match(page,/Config required/);
   assert.match(page,/new Intl\.DateTimeFormat/);
 });
+
+test("Boarding customer stay read is booking-scoped and ownership checked",()=>{
+  const api=read("app/api/boarding-stays/route.ts"),gateway=read("lib/api-gateway.ts"),client=read("lib/boarding-stay-client.ts");
+  assert.match(api,/scope\)===\"customer\"|scope\)==\"customer\"|scope\)==='customer'|scope\)===\'customer\'/);
+  assert.match(api,/Customer Boarding stay reads require only a booking ID/);
+  assert.match(api,/listBoardingStays\(db,\{bookingId\}\)/);
+  assert.match(api,/requireCustomerOwnership\(db,actor,ownedCustomerId\)/);
+  assert.match(gateway,/url\.searchParams\.get\(\"scope\"\)===\"customer\"\?\"scheduling\.book\":\"bookings\.view\"/);
+  assert.match(client,/loadCustomerBoardingStay/);
+  assert.match(client,/scope=customer&bookingId=/);
+});
+
+test("Boarding customer care plan and extension use canonical stay actions",()=>{
+  const panel=read("app/mobile-app/boarding-customer-stay-panel.tsx");
+  assert.match(panel,/loadCustomerBoardingStay/);
+  assert.match(panel,/action:\"submit_care_plan\"/);
+  assert.match(panel,/action:\"request_extension\"/);
+  assert.match(panel,/emergencyContact/);
+  assert.match(panel,/vet/);
+  assert.match(panel,/commercial quote required/i);
+  assert.match(panel,/paid checkout does not move/i);
+  assert.match(panel,/stay\.events/);
+  assert.match(panel,/not live in Boarding UAT/);
+});
+
+test("Boarding customer journey is truthful before host acceptance",()=>{
+  const flow=read("app/mobile-app/stay-flow.tsx"),status=read("app/mobile-app/boarding-customer-stay-status.tsx");
+  assert.match(flow,/BoardingCustomerStayPanel/);
+  assert.match(flow,/BoardingCustomerStayStatus/);
+  assert.match(flow,/Server-priced verified Boarding hosts/);
+  assert.match(flow,/Hosts cannot send a different Boarding price/);
+  assert.match(flow,/BOARDING BOOKING CREATED/);
+  assert.match(flow,/Awaiting host/);
+  assert.match(flow,/Host acceptance follows the canonical booking request/);
+  assert.match(status,/awaiting_host_acceptance/);
+  assert.match(status,/Awaiting host acceptance/);
+  assert.doesNotMatch(flow,/2026-08-24/);
+  assert.doesNotMatch(flow,/2026-08-31/);
+  assert.match(flow,/useState\(\(\) => dateOffset\(3\)\)/);
+  assert.match(flow,/useState\(\(\) => dateOffset\(10\)\)/);
+});
+
+test("Boarding keeps split payment and coupons disabled while Pet Sitting fixtures remain isolated",()=>{
+  const flow=read("app/mobile-app/stay-flow.tsx");
+  assert.match(flow,/splitEligible = mode !== \"boarding\"/);
+  assert.match(flow,/mode === \"boarding\" \? boardingQuote\?\.amountDueNow\?\?0/);
+  assert.match(flow,/Boarding coupons are disabled until a canonical coupon policy is configured/);
+  assert.match(flow,/Long-stay split payment remains disabled until a Boarding payment policy is explicitly configured/);
+  assert.match(flow,/mode === \"boarding\" \? \(/);
+  assert.match(flow,/Verified commission partners receive the request, review the Care Card and send an acceptance or flexible offer/);
+});
