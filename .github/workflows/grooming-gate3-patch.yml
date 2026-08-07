@@ -22,51 +22,34 @@ jobs:
         with:
           node-version: '22.13.0'
           cache: npm
-      - name: Wire governed provider profiles into scheduler
+      - name: Make future provider blackouts scheduling conflicts
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import re
           path=Path('app/api/uat-scheduling/route.ts')
           text=path.read_text()
-          anchor='import { schedule, type CustomScheduleRule, type ScheduleDecision, type ScheduleRequest, type SchedulingService } from "../../../backend/src/scheduling";\n'
-          extra='import {createAssignmentOffer,getGovernedProvider,loadGovernedProviders,seedProviderCapacityDefaults} from "../../../lib/provider-capacity-governance";\n'
-          if extra not in text:
-              if anchor not in text: raise SystemExit('import anchor missing')
-              text=text.replace(anchor,anchor+extra,1)
-          text,count=re.subn(r'\nconst providers:Provider\[\]=\[.*?\n\];\n','\n',text,count=1,flags=re.S)
-          if count!=1 and 'const providers:Provider[]=' in text: raise SystemExit('provider seed removal failed')
-          old='const matching=providers.filter(p=>p.cityId==="blr"&&p.zones.includes(input.zoneId)&&p.services.includes(input.serviceCode));'
-          new='const matching=await loadGovernedProviders(db,"blr",input.zoneId,input.serviceCode,new Date(input.scheduledStart));'
-          if old in text: text=text.replace(old,new,1)
-          old='async listEligibleProviders(cityId,zoneId,serviceCode){return providers.filter(p=>p.cityId===cityId&&p.zones.includes(zoneId)&&p.services.includes(serviceCode)&&p.live);},'
-          new='async listEligibleProviders(cityId,zoneId,serviceCode){return loadGovernedProviders(db,cityId,zoneId,serviceCode);},'
-          if old in text: text=text.replace(old,new,1)
-          old='if(prior){const provider=providers.find(item=>item.id===prior.selected_provider_id);return json({data:{groupId:input.clientRequestId,status:prior.status,provider,duplicatePrevented:true}});'
-          new='if(prior){const provider=prior.selected_provider_id?await getGovernedProvider(db,String(prior.selected_provider_id)):null;return json({data:{groupId:input.clientRequestId,status:prior.status,provider,duplicatePrevented:true}});'
-          if old in text: text=text.replace(old,new,1)
-          old='export async function POST(request:Request){try{const db=await database();const input=await request.json() as RequestBody;'
-          new='export async function POST(request:Request){try{const db=await database();await seedProviderCapacityDefaults(db);const input=await request.json() as RequestBody;'
-          if old in text: text=text.replace(old,new,1)
-          old='await insertReservations(db,input.clientRequestId,input,decision);await saveDecision(db,input.clientRequestId,strategy,input,decision,"assigned",decision.provider.id,"system","Auto-assigned by ranked rules");return json({data:{groupId:input.clientRequestId,status:"assigned",provider:decision.provider,mode:decision.mode,occurrences:decision.occurrences,shortlist:decision.shortlist,explanation:decision.explanation,evaluations:decision.evaluations}});'
-          new='await insertReservations(db,input.clientRequestId,input,decision);await saveDecision(db,input.clientRequestId,strategy,input,decision,"assigned",decision.provider.id,"system","Auto-assigned by ranked rules");const offer=decision.provider.model==="commission"?await createAssignmentOffer(db,{groupId:input.clientRequestId,providerId:decision.provider.id}):null;return json({data:{groupId:input.clientRequestId,status:"assigned",provider:decision.provider,mode:decision.mode,offer,occurrences:decision.occurrences,shortlist:decision.shortlist,explanation:decision.explanation,evaluations:decision.evaluations}});'
-          if old not in text: raise SystemExit('auto assignment anchor missing')
-          text=text.replace(old,new,1)
-          old='await insertReservations(db,groupId,original,decision);await saveDecision(db,groupId,String(stored.strategy) as "auto"|"admin_choice",original,decision,"assigned",decision.provider.id,"ops_uat",input.reason??`${input.action} assignment`);return json({data:{groupId,status:"assigned",provider:decision.provider,shortlist:decision.shortlist,explanation:decision.explanation}});'
-          new='await insertReservations(db,groupId,original,decision);await saveDecision(db,groupId,String(stored.strategy) as "auto"|"admin_choice",original,decision,"assigned",decision.provider.id,"ops_uat",input.reason??`${input.action} assignment`);const offer=decision.provider.model==="commission"?await createAssignmentOffer(db,{groupId,providerId:decision.provider.id,attemptNo:Number((await db.prepare("SELECT attempt_no FROM provider_assignment_offers WHERE group_id=?").bind(groupId).first<{attempt_no:number}>())?.attempt_no||0)+1}):null;return json({data:{groupId,status:"assigned",provider:decision.provider,offer,shortlist:decision.shortlist,explanation:decision.explanation}});'
-          if old not in text: raise SystemExit('ops assignment anchor missing')
-          text=text.replace(old,new,1)
-          path.write_text(text)
+          if 'provider_unavailability WHERE provider_id=?' not in text:
+              pattern=r'  async listBookings\(cityId,providerId\)\{.*?\},\n  async listAvailability'
+              replacement='''  async listBookings(cityId,providerId){const [rows,blocks]=await Promise.all([db.prepare("SELECT * FROM scheduling_reservations WHERE city_id=? AND provider_id=? AND status!='cancelled'").bind(cityId,providerId??"").all<Record<string,unknown>>(),db.prepare("SELECT * FROM provider_unavailability WHERE provider_id=? AND status='active'").bind(providerId??"").all<Record<string,unknown>>()]);const reservations=rows.results.map(row=>({id:String(row.id),legacyIds:[],idempotencyKey:String(row.id),cityId:String(row.city_id),zoneId:String(row.zone_id),customerId:String(row.customer_id),petIds:JSON.parse(String(row.pet_ids_json)),serviceCode:String(row.service_code),packageCode:"uat",addonCodes:[],scheduledStart:String(row.scheduled_start),scheduledEnd:String(row.scheduled_end),status:String(row.status) as Booking["status"],channel:"customer_app",totalAmount:0,providerId:String(row.provider_id),assignmentMode:"automatic",scheduleGroupId:String(row.group_id),occurrenceNumber:Number(row.occurrence_number),capacityUnits:Number(row.capacity_units),careMode:row.care_mode as Booking["careMode"],createdBy:String(row.customer_id),createdAt:new Date(Number(row.created_at)).toISOString(),updatedAt:new Date(Number(row.created_at)).toISOString()}));const blackouts=blocks.results.map(row=>({id:`BLOCK-${String(row.id)}`,legacyIds:[],idempotencyKey:String(row.id),cityId,zoneId:"provider_blackout",customerId:"OPS-BLOCK",petIds:[],serviceCode:"grooming",packageCode:"provider_unavailable",addonCodes:[],scheduledStart:String(row.starts_at),scheduledEnd:String(row.ends_at),status:"assigned" as Booking["status"],channel:"operations_assisted" as const,totalAmount:0,providerId:String(providerId??""),assignmentMode:"automatic" as const,scheduleGroupId:`BLOCK-${String(row.id)}`,occurrenceNumber:1,capacityUnits:1,createdBy:String(row.created_by||"operations"),createdAt:new Date(Number(row.created_at||Date.now())).toISOString(),updatedAt:new Date(Number(row.updated_at||row.created_at||Date.now())).toISOString()}));return [...reservations,...blackouts];},
+  async listAvailability'''
+              text,count=re.subn(pattern,replacement,text,count=1,flags=re.S)
+              if count!=1: raise SystemExit('listBookings scheduler anchor missing')
+              path.write_text(text)
           PY
       - run: npm ci
       - run: npm test
       - run: npm run lint
       - run: npm run validate:artifact
-      - name: Commit verified Gate 3 scheduler patch
+      - name: Commit verified blackout patch
         run: |
           git config user.name "PawSpace Closure Bot"
           git config user.email "actions@users.noreply.github.com"
           git add app/api/uat-scheduling/route.ts
-          git commit -m "Use governed provider capacity in scheduler [skip ci]"
-          git pull --rebase origin grooming-integration-closure
-          git push origin HEAD:grooming-integration-closure
+          if git diff --cached --quiet; then
+            echo "Gate 3 blackout patch already present"
+          else
+            git commit -m "Respect provider blackout intervals in scheduling [skip ci]"
+            git pull --rebase origin grooming-integration-closure
+            git push origin HEAD:grooming-integration-closure
+          fi
