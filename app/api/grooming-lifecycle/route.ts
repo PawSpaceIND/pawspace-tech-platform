@@ -1,3 +1,5 @@
+import{authError,requirePermission,requireProviderOwnership,resolveActor,securityAudit}from"../../../lib/server-auth";
+
 type Db=Awaited<ReturnType<typeof database>>;
 type Row=Record<string,unknown>;
 
@@ -38,20 +40,22 @@ async function bundle(db:Db,bookingId:string){const booking=await db.prepare("SE
   db.prepare("SELECT * FROM booking_lifecycle_events WHERE booking_id=? ORDER BY occurred_at DESC LIMIT 50").bind(bookingId).all<Row>(),
 ]);return{booking,proof,invoice,subscriptionUsage:usage,repeatTask:repeat,events:events.results};}
 
-export async function GET(request:Request){try{const bookingId=new URL(request.url).searchParams.get("bookingId");if(!bookingId)return json({error:"Booking ID is required"},400);const db=await database();await ensureTables(db);const data=await bundle(db,bookingId);return data?json({data}):json({error:"Booking not found"},404);}catch(error){return json({error:error instanceof Error?error.message:"Unable to load grooming lifecycle"},500);}}
+export async function GET(request:Request){try{const bookingId=new URL(request.url).searchParams.get("bookingId");if(!bookingId)return json({error:"Booking ID is required"},400);const db=await database();await ensureTables(db);const actor=await resolveActor(request);requirePermission(actor,"bookings.view");const work=await db.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id=?").bind(bookingId).first<Row>();if(work)await requireProviderOwnership(db,actor,String(work.provider_id));const data=await bundle(db,bookingId);return data?json({data}):json({error:"Booking not found"},404);}catch(error){return authError(error,"Unable to load grooming lifecycle");}}
 
-export async function POST(request:Request){try{const input=await request.json() as LifecycleInput;if(!input.bookingId||!input.action)return json({error:"Booking ID and action are required"},400);const db=await database();await ensureTables(db);const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=? AND service_code='grooming'").bind(input.bookingId).first<Row>();if(!booking)return json({error:"Grooming booking not found"},404);const work=await db.prepare("SELECT * FROM provider_work_orders WHERE booking_id=?").bind(input.bookingId).first<Row>();if(!work)return json({error:"Provider work order not found"},409);const current=String(booking.status),next=transition(current,input.action);if(!next)return json({error:`Action ${input.action} is not allowed from ${current}`},409);const actor=input.actorId||String(work.provider_id||"system"),now=Date.now();
+export async function POST(request:Request){try{const input=await request.json() as LifecycleInput;if(!input.bookingId||!input.action)return json({error:"Booking ID and action are required"},400);const db=await database();await ensureTables(db);const actorIdentity=await resolveActor(request);if(input.action==="mark_paid")requirePermission(actorIdentity,"payments.manage");else requirePermission(actorIdentity,"bookings.view");const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=? AND service_code='grooming'").bind(input.bookingId).first<Row>();if(!booking)return json({error:"Grooming booking not found"},404);const work=await db.prepare("SELECT * FROM provider_work_orders WHERE booking_id=?").bind(input.bookingId).first<Row>();if(!work)return json({error:"Provider work order not found"},409);if(input.action!=="mark_paid")await requireProviderOwnership(db,actorIdentity,String(work.provider_id));const current=String(booking.status),next=transition(current,input.action);if(!next)return json({error:`Action ${input.action} is not allowed from ${current}`},409);const actor=actorIdentity.email,now=Date.now();
 
   if(input.action==="add_proof"){
     if(!input.beforePhotoRef&&!input.afterPhotoRef&&!(input.checklist?.length))return json({error:"Photo reference or checklist evidence is required"},400);
     await db.prepare("INSERT INTO grooming_service_proof (booking_id,before_photo_ref,after_photo_ref,checklist_json,completion_notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(booking_id) DO UPDATE SET before_photo_ref=COALESCE(excluded.before_photo_ref,before_photo_ref),after_photo_ref=COALESCE(excluded.after_photo_ref,after_photo_ref),checklist_json=CASE WHEN excluded.checklist_json!='[]' THEN excluded.checklist_json ELSE checklist_json END,completion_notes=COALESCE(excluded.completion_notes,completion_notes),updated_at=excluded.updated_at").bind(input.bookingId,input.beforePhotoRef??null,input.afterPhotoRef??null,JSON.stringify(input.checklist??[]),input.completionNotes??null,now,now).run();
-    await event(db,input.bookingId,"service_proof_updated",actor,{beforePhotoRef:input.beforePhotoRef,afterPhotoRef:input.afterPhotoRef,checklist:input.checklist??[]},now);
+    await event(db,input.bookingId,"service_proof_updated",actor,{providerId:work.provider_id,beforePhotoRef:input.beforePhotoRef,afterPhotoRef:input.afterPhotoRef,checklist:input.checklist??[]},now);
+    await securityAudit(db,actorIdentity,"grooming.add_proof","booking",input.bookingId,"completed",{providerId:work.provider_id});
     return json({data:await bundle(db,input.bookingId)});
   }
 
   if(input.action==="mark_paid"){
     await db.prepare("UPDATE booking_payments SET status='captured',gateway=CASE WHEN gateway='uat_sandbox' THEN gateway ELSE gateway END,detail_json=json_set(detail_json,'$.paymentReference',?),updated_at=? WHERE booking_id=?").bind(input.paymentReference??"manual-reconciliation",now,input.bookingId).run();
     await event(db,input.bookingId,"payment_captured",actor,{paymentReference:input.paymentReference??"manual-reconciliation"},now);
+    await securityAudit(db,actorIdentity,"grooming.mark_paid","booking",input.bookingId,"completed",{paymentReference:input.paymentReference??"manual-reconciliation"});
     return json({data:await bundle(db,input.bookingId)});
   }
 
@@ -71,7 +75,8 @@ export async function POST(request:Request){try{const input=await request.json()
     ];
     if(subscription){statements.push(db.prepare("INSERT INTO booking_subscription_usage (id,booking_id,customer_id,plan_code,sessions_reserved,sessions_consumed,status,created_at,updated_at) VALUES (?,?,?,?,1,1,'consumed',?,?) ON CONFLICT(booking_id) DO UPDATE SET sessions_consumed=1,status='consumed',updated_at=excluded.updated_at").bind(crypto.randomUUID(),input.bookingId,booking.customer_id,subscription,now,now));}
     await db.batch(statements);
-    await event(db,input.bookingId,"service_completed",actor,{invoiceNumber,paymentStatus:String(payment?.status||"unknown"),subscriptionConsumed:Boolean(subscription),repeatEligibleAt:now+21*86_400_000},now);
+    await event(db,input.bookingId,"service_completed",actor,{providerId:work.provider_id,invoiceNumber,paymentStatus:String(payment?.status||"unknown"),subscriptionConsumed:Boolean(subscription),repeatEligibleAt:now+21*86_400_000},now);
+    await securityAudit(db,actorIdentity,"grooming.complete","booking",input.bookingId,"completed",{providerId:work.provider_id,invoiceNumber});
     return json({data:await bundle(db,input.bookingId)});
   }
 
@@ -79,6 +84,7 @@ export async function POST(request:Request){try{const input=await request.json()
     db.prepare("UPDATE canonical_bookings SET status=?,updated_at=? WHERE id=?").bind(next,now,input.bookingId),
     db.prepare("UPDATE provider_work_orders SET status=?,updated_at=? WHERE booking_id=?").bind(next,now,input.bookingId),
   ]);
-  await event(db,input.bookingId,`booking_${next}`,actor,{from:current,to:next},now);
+  await event(db,input.bookingId,`booking_${next}`,actor,{providerId:work.provider_id,from:current,to:next},now);
+  await securityAudit(db,actorIdentity,`grooming.${input.action}`,"booking",input.bookingId,"completed",{providerId:work.provider_id,from:current,to:next});
   return json({data:await bundle(db,input.bookingId)});
-}catch(error){return json({error:error instanceof Error?error.message:"Unable to update grooming lifecycle"},500);}}
+}catch(error){return authError(error,"Unable to update grooming lifecycle");}}
