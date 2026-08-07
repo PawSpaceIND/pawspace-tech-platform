@@ -78,3 +78,17 @@ test("Boarding finance API separates customer requests from finance authority",(
  assert.match(gateway,/\[\"request_cancel\",\"request_date_change\"\]/);
  assert.match(gateway,/\?\"scheduling\.book\":\"finance\.manage\"/);
 });
+
+test("Boarding customer panel uses governed cancellation and date-change requests",()=>{
+ const client=read("lib/boarding-finance-client.ts"),panel=read("app/mobile-app/boarding-customer-stay-panel.tsx");
+ assert.match(client,/\/api\/boarding-finance/);
+ assert.match(client,/request_cancel/);
+ assert.match(client,/request_date_change/);
+ assert.match(panel,/requestBoardingFinanceChange/);
+ assert.match(panel,/action:\"request_cancel\"/);
+ assert.match(panel,/action:\"request_date_change\"/);
+ assert.match(panel,/No refund amount is calculated automatically/);
+ assert.match(panel,/The paid stay window is unchanged/);
+ assert.match(panel,/lower-priced change is blocked until refund policy is approved/);
+ assert.match(panel,/live payment\/refund execution/);
+});
