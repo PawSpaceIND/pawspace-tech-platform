@@ -1,0 +1,73 @@
+name: Boarding Gate 1 wire fix
+
+on:
+  push:
+    branches:
+      - grooming-integration-closure
+    paths:
+      - .github/workflows/boarding-gate1-wire-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: grooming-integration-closure
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - name: Apply Gate 1 transformation and syntax correction
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          workflow=Path('.github/workflows/boarding-gate1-wire.yml').read_text()
+          marker="python3 - <<'PY'\n"
+          if marker not in workflow:
+              raise SystemExit('original Boarding Gate 1 patch body not found')
+          body=workflow.split(marker,1)[1].split('\n          PY',1)[0]
+          lines=[]
+          for line in body.splitlines():
+              lines.append(line[10:] if line.startswith('          ') else line)
+          exec('\n'.join(lines),{})
+          p=Path('app/mobile-app/stay-flow.tsx')
+          text=p.read_text()
+          broken='''            {mode !== "boarding" && <span>\n              PawSpace protection & 24/7 support<b>{money(protection)}</b>\n            </span>\n            {false && taxi && mode === "boarding" && ('''
+          fixed='''            {mode !== "boarding" && <span>\n              PawSpace protection & 24/7 support<b>{money(protection)}</b>\n            </span>}\n            {false && taxi && mode === "boarding" && ('''
+          if broken not in text:
+              raise SystemExit('expected Boarding protection JSX patch not found')
+          p.write_text(text.replace(broken,fixed,1))
+          PY
+      - name: Install web dependencies
+        run: npm ci
+      - name: Run web tests
+        run: npm test
+      - name: Run lint
+        run: npm run lint
+      - name: Validate artifact
+        run: npm run validate:artifact
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+      - name: Backend typecheck
+        working-directory: backend
+        run: npm run typecheck
+      - name: Backend tests
+        working-directory: backend
+        run: npm test
+      - name: Commit verified Boarding Gate 1 wiring
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/api/canonical-bookings/route.ts lib/api-gateway.ts app/mobile-app/stay-flow.tsx tests/boarding-gate1.test.mjs
+          git diff --cached --quiet && exit 0
+          git commit -m "Wire Boarding Gate 1 canonical path [skip ci]"
+          git push origin HEAD:grooming-integration-closure
