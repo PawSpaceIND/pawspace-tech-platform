@@ -134,7 +134,7 @@ test("Grooming production-readiness policy is city-configurable, frozen per book
   assert.match(policy,/ORDER BY CASE WHEN zone_id=\? THEN 0 ELSE 1 END,version DESC/);
   assert.match(policy,/Observe mode: policy would block this change but UAT behavior is preserved/);
   assert.match(control,/pricing\.manage/);
-  assert.match(control,/"observe","enforce"/);
+  assert.match(control,/'observe','enforce'/);
   assert.match(canonical,/resolveGroomingPolicy/);
   assert.match(canonical,/commercialPolicy:commercialPolicy\?policySnapshot/);
   assert.match(canonical,/commercialPolicyVersion/);
