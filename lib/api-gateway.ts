@@ -11,6 +11,7 @@ async function ensureGatewayTables(env:GatewayEnv){const now=Date.now();await en
 
 async function requiredPermission(request:Request):Promise<Permission|null>{const url=new URL(request.url),method=request.method.toUpperCase();if(url.pathname==="/api/pricing-quote")return null;
   if(url.pathname==="/api/platform-governance"){if(method==="GET")return "dashboard.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="save_role"?"roles.manage":"users.manage";}
+  if(url.pathname==="/api/identity-bindings")return "users.manage";
   if(url.pathname==="/api/customer-contact")return "communications.call";
   if(url.pathname==="/api/subscription-customers")return method==="GET"?"customers.view":"data.import";
   if(url.pathname==="/api/crm")return method==="GET"?"customers.view":"customers.manage";
