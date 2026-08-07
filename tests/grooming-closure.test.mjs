@@ -158,5 +158,5 @@ test("Grooming closure keeps live integrations explicitly outside the UAT transa
   assert.match(lifecycle,/Provider payout percentage\/travel\/incentive\/penalty rule must be approved/);
   assert.match(finance,/Razorpay production credentials, live refunds/);
   assert.match(plan,/Deliberately still UAT \/ not production-complete/);
-  assert.match(plan,/Do not connect live customer data or live payment\/communication integrations/);
+  assert.match(plan,/Do not connect live operational customer feeds, live payment\/communication integrations or production credentials/);
 });
