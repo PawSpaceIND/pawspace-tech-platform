@@ -1,7 +1,7 @@
 # PawSpace Grooming Integration Closure
 
 ## Goal
-Close one real Grooming transaction end-to-end using a single canonical booking record:
+Close one Grooming transaction end-to-end using a single canonical booking record:
 
 Customer -> Pet -> Package -> Slot -> Booking -> Payment -> Assignment -> Provider -> Service Proof -> Completion -> Invoice -> Finance -> Repeat/Subscription
 
@@ -18,7 +18,7 @@ The latest deployed prototype source has been recovered and checksum-verified.
 - Secrets excluded; `.env.example` files included
 - Export README included
 
-The source export README records 27/27 web tests and 28/28 backend tests passing at export time, plus lint/type-check success. The deployed Site was not modified by the export.
+The deployed Site was not modified by the source export or this closure branch.
 
 ## Four-front-door architecture — locked
 Do not create new standalone command centres. Preserve four unified experiences backed by one authentication system, one canonical database/event model and shared APIs:
@@ -30,56 +30,69 @@ Do not create new standalone command centres. Preserve four unified experiences 
 
 Existing CRM, Booking Command Center, CX, Operations, Finance, HR, Marketing, integrations, security and reporting modules remain routes/modules inside the correct Team or Control shell. Legacy URLs may remain temporarily for UAT redirects.
 
-## UAT closure slice — 7 Aug 2026
-The first canonical Grooming UAT slice is now implemented on `grooming-integration-closure`.
+## Internal UAT transaction closure — 7 Aug 2026
 
-### Completed in this slice
-- Recovered Site v67 source is fully imported into GitHub.
-- Persistent CI is active for web tests/build/lint/artifact validation and backend build/typecheck/tests.
-- Main customer Grooming confirmation now reserves the UAT schedule and creates an idempotent canonical booking before showing success.
-- Existing mobile Grooming flow continues to use the same scheduling + canonical booking APIs.
-- Canonical provider lifecycle API supports acceptance, on-the-way, arrival, service start, proof, completion and payment reconciliation.
+**Status: CLOSED FOR INTERNAL UAT. NOT PRODUCTION-CLOSED.**
+
+The Grooming transaction path now uses one canonical booking/work-order/payment/event record across the customer, Partner, Team Operations and Team Finance experiences.
+
+### Closed internal UAT path
+- Main customer Grooming confirmation reserves the UAT schedule and creates an idempotent canonical booking before showing success.
+- Customer, pet, schedule group, provider work order and payment state are persisted server-side for the UAT path.
+- Subscription bookings create a reserved usage entry at booking creation.
+- Customer reschedule keeps the same booking and schedule group, revalidates assigned-provider capacity, updates the canonical schedule/work order and records a lifecycle event.
+- Customer cancellation releases scheduling capacity, cancels the work order, reverses an unconsumed subscription reservation and creates a refund case when a captured payment must be returned.
+- Partner Grooming Bookings now reads canonical provider work orders instead of the previous hard-coded Grooming job list.
+- Partner job detail projects canonical customer, masked contact, pets, payment, proof, invoice and lifecycle timeline.
+- Provider lifecycle supports acceptance, on-the-way, arrival, service start, proof and completion.
 - Completion is blocked until before proof, after proof and a completion checklist exist.
-- Completion creates an issued UAT invoice, records subscription consumption when applicable and creates a repeat-booking task.
-- Shared Partner UAT controls now advance the canonical server record rather than only browser state; the browser ledger remains as a visible UAT projection.
-- Shared Accounts UAT control now reconciles the canonical booking payment.
-- `team.pawspace.in/finance` now has a Grooming ledger projection for booking, payment, invoice, collected/receivable and subscription usage.
-- Temporary one-time import/patch workflows were removed after use.
-- Latest verified base before the customer patch passed web CI, backend CI, lint and artifact validation; the customer patch itself separately passed all 27 web tests, lint and artifact validation before commit.
+- Completion creates an issued UAT invoice, consumes the reserved subscription session when applicable and creates a repeat-booking task.
+- Team Operations Booking Command Center reads canonical booking/work-order/payment/event data and remains the consolidated Ops front door.
+- Team Finance projects canonical Grooming payment, invoice, collected/receivable and subscription usage state.
+- Partner Grooming job projection is protected by the existing `bookings.view` RBAC permission; customer cancel/reschedule additionally checks booking ownership by customer ID.
+- Permanent closure CI runs web build/regressions/lint/artifact validation plus backend typecheck/tests.
+- Expanded Grooming closure regression covers Customer -> Partner -> lifecycle/proof -> Finance, cancel/reschedule/refund, subscription reserve/consume/reverse and the UAT/live-integration boundary.
+- Final closure CI passed web tests, lint, Sites artifact validation, backend typecheck and backend tests.
 
 ### Deliberately still UAT / not production-complete
-- Provider proof references used by the test-sync completion action are synthetic `uat://` references; secure media upload/storage is not connected yet.
-- Razorpay/RazorpayX, OTP, WhatsApp/SMS, Exotel, Maps/GPS, production media storage, payouts and accounting exports remain disconnected.
-- The Partner home still contains fixture/dashboard content around the canonical synchronized record; it needs full canonical job-list projection.
-- Some CRM/Ops/customer actions such as reschedule/cancel remain browser-local or use operational case APIs instead of a single canonical state transition.
-- Production customer/provider authentication, provider ownership checks and lifecycle RBAC enforcement remain launch gates.
-- Subscription reservation/reversal/expiry needs to be tied to the existing subscription master; this slice records canonical consumption on completion but does not replace the full subscription engine.
-- GST/tax calculation is not yet production tax logic; UAT invoices currently record the booking gross/net amount without live tax computation.
+- Provider proof references in UAT can still be synthetic `uat://` references; secure production media upload/storage is not connected.
+- Razorpay/RazorpayX, OTP, WhatsApp/SMS, Exotel, Maps/GPS, production media, payouts and accounting exports remain disconnected.
+- Production customer authentication/identity binding is not yet the final customer-auth implementation.
+- Partner provider-identity-to-provider-ID ownership enforcement still needs production identity mapping; RBAC alone is not the final provider-ownership gate.
+- Partner Home, Earnings, Calendar and some surrounding dashboard statistics remain prototype/fixture content even though Grooming Bookings is canonical.
+- GST/tax calculation is not production tax logic; UAT invoices currently record booking gross/net without the final tax engine.
+- The per-booking subscription ledger now reserves, consumes and reverses usage, but full subscription-master freeze/extension/expiry rules still need production integration.
+- Real-device UAT, employee pilot, one-zone Bengaluru pilot, domain cutover, monitoring, backups and support SOP remain launch gates.
+- External integrations must be added one at a time in sandbox and verified before production credentials are enabled.
 
 ## Closure sequence status
-1. ✅ Import recovered current source without redesigning it.
-2. ⏳ Freeze Grooming catalogue, pricing, validity, add-ons and multi-pet rules as governed versioned data.
-3. ✅ Establish canonical booking aggregate for the Grooming UAT path.
-4. ✅ Connect main customer booking confirmation to canonical scheduling + booking with idempotency.
-5. ✅ Persist customer, pet, booking, slot/provider decision and payment state for the UAT booking path.
-6. 🟡 Team Finance and shared Partner/Accounts projection connected; remaining CRM/Ops/Partner fixture views still need conversion.
-7. 🟡 Provider lifecycle connected through completion; production availability/ownership/GPS/rerouting still remains.
-8. ✅ Completion proof gate implemented for UAT; production secure media storage remains.
-9. 🟡 Payment reconciliation + invoice state implemented for UAT; gateway/refund/GST/accounting integrations remain.
-10. 🟡 Subscription consumption + repeat task implemented; reservation/reversal/expiry/master-ledger integration remains.
-11. ⏳ Complete RBAC/ownership checks, audit enforcement and sensitive-data boundaries on all new lifecycle actions.
-12. ⏳ Add external integrations one at a time in sandbox, then production credentials after UAT approval.
-13. ⏳ Pass cross-role canonical regression, real-device UAT, employee pilot and one-zone Bengaluru pilot.
+1. ✅ Import recovered Site v67 source without redesigning it.
+2. 🟡 Grooming catalogue/pricing rules exist; production governance/version freeze still requires business sign-off.
+3. ✅ Canonical booking aggregate established for Grooming UAT.
+4. ✅ Main customer booking confirmation connected with scheduling and idempotency.
+5. ✅ Customer, pet, schedule/provider, work-order and payment state persisted for the UAT path.
+6. ✅ Partner Grooming Bookings, Team Operations and Team Finance project the canonical transaction.
+7. ✅ UAT provider lifecycle connected through completion; production GPS/provider-identity controls remain launch work.
+8. ✅ Completion proof gate implemented; production secure media remains.
+9. ✅ UAT payment reconciliation, cancellation refund case and invoice state implemented; gateway/GST/accounting remain production integrations.
+10. ✅ Per-booking subscription reserve, consume and cancellation reversal implemented; production subscription-master expiry/freeze/extension remains.
+11. 🟡 Existing RBAC is applied to Partner projection and customer ownership is enforced for booking changes; production provider ownership/identity enforcement remains.
+12. ⏳ External integrations remain deliberately disconnected pending UAT approval.
+13. 🟡 Automated internal closure regression passes; real-device UAT, employee pilot and one-zone Bengaluru pilot remain.
 
-## Immediate next milestone
-Remove the remaining browser-local/fixture handoffs from the Grooming path in this order:
+## Next phase — production readiness
+Do not add major new product modules. Convert the closed internal UAT path into a controlled production candidate in this order:
 
-1. Partner job list/detail -> canonical work order and lifecycle bundle.
-2. Customer reschedule/cancel -> canonical scheduling/booking transition and credit/payment reversal rules.
-3. Ops/CRM screens -> canonical booking/event projection.
-4. Subscription master -> reserve/consume/reverse/expire against one ledger.
-5. Secure lifecycle permissions + provider ownership checks.
-6. Cross-role automated test proving one booking from customer confirmation through invoice/finance/repeat task.
+1. Finalize Grooming catalogue, pricing, validity, cancellation/reschedule/refund and multi-pet rules with business sign-off.
+2. Implement final customer identity and provider identity/ownership mapping.
+3. Replace synthetic proof references with secure media upload/storage and access controls.
+4. Integrate Razorpay payment/refund webhooks and reconciliation in sandbox.
+5. Integrate OTP/WhatsApp/SMS, then Exotel, then Maps/GPS.
+6. Add production GST/invoice/accounting rules and payout flow.
+7. Complete subscription-master freeze/extension/expiry integration.
+8. Run real-device cross-role UAT and exception testing.
+9. Employee pilot -> invited beta -> one-zone Bengaluru pilot.
+10. Only after sign-off: production domain cutover, monitoring, backups and launch.
 
 ## Rule
-Do not connect live customer data or live payment/communication integrations until the shared API-backed transaction passes synthetic regression, idempotency, role/ownership and reconciliation tests.
+Do not connect live customer data or live payment/communication integrations until the shared API-backed transaction passes synthetic regression, idempotency, role/ownership and reconciliation tests and the corresponding integration has passed sandbox UAT.
