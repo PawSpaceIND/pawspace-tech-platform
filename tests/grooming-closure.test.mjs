@@ -23,7 +23,7 @@ test("Grooming closure uses one canonical transaction across Customer Partner Te
   assert.match(partnerApi,/authorize\(request,"bookings\.view"\)/);
   assert.match(partnerApi,/provider_work_orders/);
   assert.match(partnerUi,/\/api\/partner-grooming-jobs/);
-  assert.match(partnerUi,/updateGroomingLifecycle/);
+  assert.match(partnerUi,/\/api\/grooming-lifecycle/);
   assert.match(lifecycle,/Before photo, after photo and completion checklist are required/);
   assert.match(lifecycle,/booking_invoices/);
   assert.match(lifecycle,/sessions_consumed=1/);
