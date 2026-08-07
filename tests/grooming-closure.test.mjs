@@ -15,7 +15,9 @@ test("Grooming closure uses one canonical transaction across Customer Partner Te
   assert.match(canonical,/booking_payments/);
   assert.match(canonical,/booking_subscription_usage/);
   assert.match(canonical,/customer_grooming_subscriptions/);
+  assert.match(canonical,/grooming_subscription_purchase_snapshots/);
   assert.match(canonical,/governGroomingBooking/);
+  assert.match(canonical,/cityId:input\.cityId,zoneId:input\.zoneId/);
   assert.match(canonical,/Grooming subscription purchases must be prepaid and captured/);
   assert.match(canonical,/subscription_reserved/);
   assert.match(change,/booking_cancelled/);
@@ -50,17 +52,31 @@ test("Grooming closure uses one canonical transaction across Customer Partner Te
   assert.match(governance,/GROOMING_CATALOGUE_VERSION/);
 });
 
-test("Grooming governance freezes published UAT prices and validity before live integration",async()=>{
-  const governance=await source("lib/grooming-governance.ts");
-  for(const [code,price] of [["dog-basic",1899],["dog-makeover",2399],["sub-3-dog",3597],["sub-6",6594],["sub-12",11988],["sub-trim",4197]]){
-    assert.match(governance,new RegExp(`code:\\"${code}\\"[\\s\\S]{0,220}singlePrice:${price}`));
+test("Grooming subscription commercial rules are city-configurable with audited defaults",async()=>{
+  const[governance,plansApi,gateway]=await Promise.all([source("lib/grooming-governance.ts"),source("app/api/grooming-subscription-plans/route.ts"),source("lib/api-gateway.ts")]);
+  assert.match(governance,/CREATE TABLE IF NOT EXISTS grooming_subscription_plans/);
+  assert.match(governance,/city_id TEXT NOT NULL/);
+  assert.match(governance,/zone_id TEXT/);
+  assert.match(governance,/session_count INTEGER NOT NULL/);
+  assert.match(governance,/validity_value INTEGER NOT NULL/);
+  assert.match(governance,/validity_unit TEXT NOT NULL/);
+  assert.match(governance,/credits_per_pet INTEGER NOT NULL/);
+  assert.match(governance,/family_wallet INTEGER NOT NULL/);
+  assert.match(governance,/pause_days INTEGER NOT NULL/);
+  assert.match(governance,/grace_days INTEGER NOT NULL/);
+  assert.match(governance,/renewal_window_days INTEGER NOT NULL/);
+  assert.match(governance,/effective_from TEXT NOT NULL/);
+  assert.match(governance,/grooming_subscription_plan_audit/);
+  for(const [code,price,sessions,validity] of [["sub-3-dog",3597,3,4],["sub-6",6594,6,8],["sub-12",11988,12,15],["sub-trim",4197,3,4]]){
+    assert.match(governance,new RegExp(`planCode:\\"${code}\\"[\\s\\S]{0,180}price:${price}[\\s\\S]{0,80}sessions:${sessions}[\\s\\S]{0,80}validityValue:${validity}`));
   }
-  assert.match(governance,/code:"sub-3-dog"[\s\S]{0,260}sessions:3[\s\S]{0,80}validityMonths:4/);
-  assert.match(governance,/code:"sub-6"[\s\S]{0,260}sessions:6[\s\S]{0,80}validityMonths:8/);
-  assert.match(governance,/code:"sub-12"[\s\S]{0,260}sessions:12[\s\S]{0,80}validityMonths:15/);
-  assert.match(governance,/code:"sub-trim"[\s\S]{0,260}sessions:3[\s\S]{0,80}validityMonths:4/);
-  assert.match(governance,/petCount<1\|\|petCount>4/);
-  assert.match(governance,/reserveSessions:petCount/);
+  assert.match(governance,/resolveGroomingSubscriptionPlan/);
+  assert.match(governance,/ORDER BY CASE WHEN zone_id=\? THEN 0 ELSE 1 END,version DESC/);
+  assert.match(governance,/reserveSessions=petCount\*\(item\.creditsPerPet\?\?1\)/);
+  assert.match(plansApi,/"price","currency","session_count","validity_value","validity_unit"/);
+  assert.match(plansApi,/"max_pets_per_booking","credits_per_pet","family_wallet","pause_days","grace_days","renewal_window_days"/);
+  assert.match(plansApi,/pricing\.manage/);
+  assert.match(gateway,/\/api\/grooming-subscription-plans/);
 });
 
 test("Grooming closure keeps live integrations explicitly outside the UAT transaction",async()=>{
