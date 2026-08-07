@@ -29,6 +29,8 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/uat-scheduling"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action&&body.action!=="reserve"?"scheduling.manage":"scheduling.book";}
   if(url.pathname==="/api/canonical-bookings")return method==="GET"?"bookings.view":"scheduling.book";
   if(url.pathname==="/api/training-programmes")return "scheduling.book";
+  if(url.pathname==="/api/training-session-media")return "bookings.view";
+  if(url.pathname==="/api/training-sessions"){if(method==="GET")return "bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["reschedule","replace_provider","cancel_session"].includes(String(body.action))?"bookings.manage":"bookings.view";}
   if(url.pathname==="/api/grooming-service-location")return "scheduling.book";
   if(url.pathname==="/api/grooming-route")return "bookings.view";
   if(url.pathname==="/api/booking-command-center")return method==="GET"?"bookings.view":"bookings.manage";
