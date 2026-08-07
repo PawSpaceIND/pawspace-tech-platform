@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import styles from "./partner.module.css";
 import TestSyncPanel from "../components/test-sync-panel";
+import CanonicalGroomingJobs from "./canonical-grooming-jobs";
 
 const roles = [
   "Groomer",
@@ -356,90 +357,15 @@ export default function PartnerApp() {
         )}
 
         {view === "Bookings" && (
-          <div className={styles.twoColWide}>
+          role === "Groomer" ? (
+            <CanonicalGroomingJobs />
+          ) : (
             <section className={styles.pageCard}>
-              <div className={styles.titleRow}>
-                <div>
-                  <small>LIVE BOOKING QUEUE</small>
-                  <h2>Today’s assignments</h2>
-                </div>
-                <span className={styles.tag}>3 confirmed</span>
-              </div>
-              {jobs.map((j, i) => (
-                <button
-                  className={`${styles.job} ${i === 0 ? styles.selected : ""}`}
-                  key={j.time}
-                >
-                  <time>{j.time}</time>
-                  <div>
-                    <b>{j.title}</b>
-                    <small>
-                      {j.pet} · {j.area}
-                    </small>
-                    <em>{j.state}</em>
-                  </div>
-                  <strong>
-                    {j.pay}
-                    <small>earnings</small>
-                  </strong>
-                </button>
-              ))}
+              <small>CANONICAL SERVICE QUEUE</small>
+              <h2>{role} assignments</h2>
+              <p>This closure step connects the Grooming provider queue first. Existing non-Grooming service prototypes remain unchanged until their canonical projection pass.</p>
             </section>
-            <section className={styles.pageCard}>
-              <small>BOOKING PS-GR-8432</small>
-              <h2>{active.title}</h2>
-              <div className={styles.petProfile}>
-                <span>🐕</span>
-                <div>
-                  <b>Bruno</b>
-                  <small>Golden Retriever · Male · 3 years</small>
-                  <p>Friendly. Sensitive skin. Vaccinations verified.</p>
-                </div>
-              </div>
-              <div className={styles.infoGrid}>
-                <div>
-                  <small>Customer</small>
-                  <b>Meera S. · 4.9 ★</b>
-                </div>
-                <div>
-                  <small>Contact</small>
-                  <b>Masked until accepted</b>
-                </div>
-                <div>
-                  <small>Address</small>
-                  <b>Indiranagar · 4.2 km</b>
-                </div>
-                <div>
-                  <small>Payment</small>
-                  <b>Pay after service</b>
-                </div>
-                <div>
-                  <small>Package value</small>
-                  <b>₹1,899</b>
-                </div>
-                <div>
-                  <small>Your earning</small>
-                  <b>₹760 + incentive</b>
-                </div>
-              </div>
-              <div className={styles.actions}>
-                <button
-                  onClick={() => {
-                    setStage(1);
-                    setView("Tracking");
-                  }}
-                >
-                  Start journey
-                </button>
-                <button
-                  className={styles.light}
-                  onClick={() => action("Admin support ticket created")}
-                >
-                  Report issue
-                </button>
-              </div>
-            </section>
-          </div>
+          )
         )}
 
         {view === "Calendar" && (
