@@ -230,9 +230,9 @@ test("keeps long-stay payment, paid meeting and home media rules explicit", asyn
   assert.match(training, /45 minutes of direct training/);
   assert.match(training, /outdoor leash walking and toilet-routine practice/);
   assert.match(training, /30–45 minute travel buffer/);
-  assert.match(trainer, /60 MINUTES PER PET/);
-  assert.match(trainer, /Package permits trainer-led outdoor leash\/toilet practice/);
-  assert.match(trainer, /Approve slot/);
+  assert.match(trainer, /CANONICAL SESSION LEDGER/);
+  assert.match(trainer, /Trainer-led permitted programme/);
+  assert.match(trainer, /Complete & consume one session/);
   assert.match(host, /15 KM MARKETPLACE/);
   assert.match(host, /Approve booking/);
 });
@@ -264,8 +264,8 @@ test("uses 60 minutes per training pet and one GPS policy for doorstep providers
   );
   assert.match(training, /selectedPets.length \* 15/);
   assert.match(training, /Every pet has one paid 60-minute session/);
-  assert.match(trainer, /dog.pets \* 60/);
-  assert.match(trainer, /selected.pets \* 60/);
+  assert.match(trainer, /loadTrainerSessions/);
+  assert.match(trainer, /selected.total_sessions/);
   assert.match(tracking, /Tracking starts when the/);
   assert.match(tracking, /Primary and secondary contacts/);
   assert.match(grooming, /role="Groomer"/);
