@@ -57,3 +57,5 @@ jobs:
           git commit -m "Require booking-owned scanned media for Grooming proof [skip ci]"
           git pull --rebase origin grooming-integration-closure
           git push origin HEAD:grooming-integration-closure
+
+# rerun after regression was updated to assert the stronger media-security helper
