@@ -8,6 +8,7 @@ import ProviderTrackingCard from "./provider-tracking-card";
 import CouponField from "./coupon-field";
 import { reserveUatSchedule } from "../../lib/uat-scheduling-client";
 import { createCanonicalLifecycle } from "../../lib/canonical-lifecycle-client";
+import { materializeTrainingProgramme } from "../../lib/training-programme-client";
 const styles = { ...baseStyles, ...extraStyles };
 type Plan = {
   name: string;
@@ -231,6 +232,7 @@ export default function TrainingFlow() {
       try {
       const hour=time.startsWith("9")?9:time.startsWith("3")?15:17;const start=new Date(Date.UTC(2026,7,9,hour-5,30));const end=new Date(start.getTime()+serviceMinutes*60_000);const weekdayMap:Record<string,number[]>={"Tue & Sat":[2,6],"Wed & Sun":[3,0],"Every Saturday":[6]};const requestId=`training-TST101-${plan.sessions}-${hour}-${frequency.replaceAll(" ","")}`;const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:"TST-101",petIds:selectedPets,serviceCode:"dog_training",zoneId:"blr-east",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),occurrences:plan.sessions,weekdays:weekdayMap[frequency],cadenceDays:frequency==="Choose each session myself"?7:undefined,preferredProviderId:trainer.name==="Kiran S."?"train_kiran":"train_ramesh"});
       const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:"TST-101",name:"Karthik P.",primaryPhone:"9996999505",secondaryPhone:"9880222741"},pets:selectedPets.map(name=>({sourceId:name,name,species:"dog"})),cityId:"blr",zoneId:"blr-east",serviceCode:"dog_training",packageCode:`training-${plan.sessions}`,packageName:plan.name,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:packagePayable+meetFee,amountDueNow:payableNow,payment:{method:"upi",mode:paymentMode==="full"?"prepaid":"split",status:"captured",detail:`UAT ${paymentMode} training payment`},pricing:{discount,couponCode:couponCode||undefined,subscription:`${plan.sessions} sessions`,requirements:selectedGoals}});
+      await materializeTrainingProgramme({bookingId:canonical.bookingId,meetBookingId:meetBookingId||undefined});
       const booking = createTestTransaction({
         customerId: "TST-101",
         customerName: "Karthik P.",
