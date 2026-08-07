@@ -4,6 +4,9 @@
 import { FormEvent, useMemo, useState } from "react";
 import Link from "next/link";
 import TestSyncPanel from "./components/test-sync-panel";
+import { reserveUatSchedule } from "../lib/uat-scheduling-client";
+import { createCanonicalLifecycle } from "../lib/canonical-lifecycle-client";
+import { createTestTransaction } from "../lib/test-transaction";
 
 type PetType = "dog" | "cat";
 type OfferType = "regular" | "young" | "subscription";
@@ -116,15 +119,44 @@ export default function Home() {
     setShowDetails(true);
   }
 
-  function finishBooking(event: FormEvent) {
+  async function finishBooking(event: FormEvent) {
     event.preventDefault();
     if (selectedPetIds.length !== petCount) {
       setPetSelectionError(`Please select exactly ${petCount} ${petCount === 1 ? "pet" : "pets"} for this booking.`);
       return;
     }
-    setShowDetails(false);
-    setConfirmed(true);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    if (!selectedSlot) {
+      setPetSelectionError("Please select a live grooming slot before confirming.");
+      return;
+    }
+    setPetSelectionError("");
+    try {
+      const slotIndex=Math.max(0,slots.indexOf(selectedSlot));
+      const start=new Date(Date.UTC(2026,7,3+selectedDate,3+slotIndex*2,30));
+      const durationMinutes=petCount<=2?120:petCount===3?150:240;
+      const end=new Date(start.getTime()+durationMinutes*60_000);
+      const digits=phone.replace(/\D/g,"").slice(-10);
+      const customerId=`WEB-${digits||"UAT"}`;
+      const chosenPets=selectedPetIds.map(id=>savedPets.find(pet=>pet.id===id)).filter((pet):pet is SavedPet=>Boolean(pet));
+      const requestId=`web-groom-${customerId}-${selectedDate}-${slotIndex}-${selectedPackage.id}-${selectedPetIds.slice().sort().join("-")}`;
+      const decision=await reserveUatSchedule({clientRequestId:requestId,customerId,petIds:selectedPetIds,serviceCode:"grooming",zoneId:"blr-east",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),preferredProviderId:"groom_arun"});
+      const canonical=await createCanonicalLifecycle({
+        idempotencyKey:requestId,
+        scheduleGroupId:decision.groupId,
+        customer:{id:customerId,name:`PawSpace Customer ${digits.slice(-4)||"UAT"}`,primaryPhone:digits||"9999999999"},
+        pets:chosenPets.map(pet=>({sourceId:pet.id,name:pet.name,species:pet.type,breed:pet.breed,vaccinationStatus:"not_provided"})),
+        cityId:"blr",zoneId:"blr-east",serviceCode:"grooming",packageCode:selectedPackage.id,packageName:selectedPackage.name,
+        scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:total,amountDueNow:payment==="after"?0:total,
+        payment:{method:payment==="after"?"cash":"upi",mode:payment==="after"?"pay_after_service":"prepaid",status:payment==="after"?"created":"captured",detail:payment==="after"?"Pay after service · UAT":"Online payment captured · UAT"},
+        pricing:{discount:0,subscription:offerType==="subscription"?selectedPackage.name:undefined},
+      });
+      createTestTransaction({customerId,customerName:`PawSpace Customer ${digits.slice(-4)||"UAT"}`,primary:digits||"9999999999",secondary:"",pets:chosenPets.map(pet=>pet.name).join(", "),petCount,service:"Grooming",packageName:selectedPackage.name,area:"Bengaluru",slot:`${dates[selectedDate].date} · ${selectedSlot}`,duration,amount:total,payment:payment==="after"?"Pay after service":"Paid online",provider:decision.provider.name,providerModel:decision.provider.model==="full_time"?"Full-time":"Commission",subscription:offerType==="subscription"?selectedPackage.name:"No active plan",creditsBefore:offerType==="subscription"?Number(selectedPackage.id.match(/\d+/)?.[0]||1):0,crmOwner:"Unassigned",crmNextAction:"Post-booking care follow-up",reminder:"Booking confirmation queued"},canonical.bookingId);
+      setShowDetails(false);
+      setConfirmed(true);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (error) {
+      setPetSelectionError(error instanceof Error?error.message:"Unable to confirm this grooming booking");
+    }
   }
 
   function toggleSavedPet(id: string) {
