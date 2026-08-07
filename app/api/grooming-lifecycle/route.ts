@@ -1,0 +1,84 @@
+type Db=Awaited<ReturnType<typeof database>>;
+type Row=Record<string,unknown>;
+
+type LifecycleAction="accept"|"on_the_way"|"arrived"|"start_service"|"add_proof"|"complete"|"mark_paid";
+type LifecycleInput={bookingId:string;action:LifecycleAction;actorId?:string;beforePhotoRef?:string;afterPhotoRef?:string;checklist?:string[];completionNotes?:string;paymentReference?:string};
+
+const json=(value:unknown,status=200)=>Response.json(value,{status});
+async function database(){const{env}=await import("cloudflare:workers");return env.DB;}
+
+async function ensureTables(db:Db){await db.batch([
+  db.prepare("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,pet_ids_json TEXT NOT NULL,source_pet_ids_json TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,service_code TEXT NOT NULL,package_code TEXT NOT NULL,package_name TEXT NOT NULL,schedule_group_id TEXT NOT NULL UNIQUE,provider_id TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'confirmed',channel TEXT NOT NULL DEFAULT 'customer_app',total_amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',pricing_json TEXT NOT NULL DEFAULT '{}',created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+  db.prepare("CREATE TABLE IF NOT EXISTS provider_work_orders (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,schedule_group_id TEXT NOT NULL,provider_id TEXT NOT NULL,provider_name TEXT NOT NULL,provider_model TEXT NOT NULL,service_code TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,occurrence_count INTEGER NOT NULL DEFAULT 1,status TEXT NOT NULL DEFAULT 'assigned',assignment_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+  db.prepare("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,amount_due_now REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',method TEXT NOT NULL,mode TEXT NOT NULL,status TEXT NOT NULL,gateway TEXT NOT NULL DEFAULT 'uat_sandbox',idempotency_key TEXT NOT NULL UNIQUE,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+  db.prepare("CREATE TABLE IF NOT EXISTS booking_lifecycle_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,event_type TEXT NOT NULL,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',occurred_at INTEGER NOT NULL)"),
+  db.prepare("CREATE TABLE IF NOT EXISTS grooming_service_proof (booking_id TEXT PRIMARY KEY,before_photo_ref TEXT,after_photo_ref TEXT,checklist_json TEXT NOT NULL DEFAULT '[]',completion_notes TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+  db.prepare("CREATE TABLE IF NOT EXISTS booking_invoices (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,invoice_number TEXT NOT NULL UNIQUE,status TEXT NOT NULL DEFAULT 'draft',currency TEXT NOT NULL DEFAULT 'INR',gross_amount REAL NOT NULL,tax_amount REAL NOT NULL DEFAULT 0,net_amount REAL NOT NULL,issued_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+  db.prepare("CREATE TABLE IF NOT EXISTS booking_subscription_usage (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,plan_code TEXT NOT NULL,sessions_reserved INTEGER NOT NULL DEFAULT 1,sessions_consumed INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'reserved',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+  db.prepare("CREATE TABLE IF NOT EXISTS repeat_booking_tasks (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,service_code TEXT NOT NULL,eligible_at INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'open',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+]);}
+
+function transition(current:string,action:LifecycleAction){const map:Record<LifecycleAction,Record<string,string>>={
+  accept:{awaiting_acceptance:"assigned",confirmed:"assigned"},
+  on_the_way:{assigned:"on_the_way",confirmed:"on_the_way"},
+  arrived:{on_the_way:"arrived"},
+  start_service:{arrived:"in_service"},
+  add_proof:{assigned:"assigned",on_the_way:"on_the_way",arrived:"arrived",in_service:"in_service"},
+  complete:{in_service:"completed"},
+  mark_paid:{confirmed:"confirmed",assigned:"assigned",on_the_way:"on_the_way",arrived:"arrived",in_service:"in_service",completed:"completed"},
+};return map[action][current];}
+
+async function event(db:Db,bookingId:string,eventType:string,actorId:string,detail:unknown,now:number){await db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),bookingId,eventType,"booking",bookingId,actorId,JSON.stringify(detail),now).run();}
+
+async function bundle(db:Db,bookingId:string){const booking=await db.prepare("SELECT b.*,w.id work_order_id,w.provider_name,w.provider_model,w.status work_order_status,p.id payment_id,p.status payment_status,p.method payment_method,p.mode payment_mode,p.amount,p.amount_due_now FROM canonical_bookings b JOIN provider_work_orders w ON w.booking_id=b.id JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=?").bind(bookingId).first<Row>();if(!booking)return null;const[proof,invoice,usage,repeat,events]=await Promise.all([
+  db.prepare("SELECT * FROM grooming_service_proof WHERE booking_id=?").bind(bookingId).first<Row>(),
+  db.prepare("SELECT * FROM booking_invoices WHERE booking_id=?").bind(bookingId).first<Row>(),
+  db.prepare("SELECT * FROM booking_subscription_usage WHERE booking_id=?").bind(bookingId).first<Row>(),
+  db.prepare("SELECT * FROM repeat_booking_tasks WHERE booking_id=?").bind(bookingId).first<Row>(),
+  db.prepare("SELECT * FROM booking_lifecycle_events WHERE booking_id=? ORDER BY occurred_at DESC LIMIT 50").bind(bookingId).all<Row>(),
+]);return{booking,proof,invoice,subscriptionUsage:usage,repeatTask:repeat,events:events.results};}
+
+export async function GET(request:Request){try{const bookingId=new URL(request.url).searchParams.get("bookingId");if(!bookingId)return json({error:"Booking ID is required"},400);const db=await database();await ensureTables(db);const data=await bundle(db,bookingId);return data?json({data}):json({error:"Booking not found"},404);}catch(error){return json({error:error instanceof Error?error.message:"Unable to load grooming lifecycle"},500);}}
+
+export async function POST(request:Request){try{const input=await request.json() as LifecycleInput;if(!input.bookingId||!input.action)return json({error:"Booking ID and action are required"},400);const db=await database();await ensureTables(db);const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=? AND service_code='grooming'").bind(input.bookingId).first<Row>();if(!booking)return json({error:"Grooming booking not found"},404);const work=await db.prepare("SELECT * FROM provider_work_orders WHERE booking_id=?").bind(input.bookingId).first<Row>();if(!work)return json({error:"Provider work order not found"},409);const current=String(booking.status),next=transition(current,input.action);if(!next)return json({error:`Action ${input.action} is not allowed from ${current}`},409);const actor=input.actorId||String(work.provider_id||"system"),now=Date.now();
+
+  if(input.action==="add_proof"){
+    if(!input.beforePhotoRef&&!input.afterPhotoRef&&!(input.checklist?.length))return json({error:"Photo reference or checklist evidence is required"},400);
+    await db.prepare("INSERT INTO grooming_service_proof (booking_id,before_photo_ref,after_photo_ref,checklist_json,completion_notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(booking_id) DO UPDATE SET before_photo_ref=COALESCE(excluded.before_photo_ref,before_photo_ref),after_photo_ref=COALESCE(excluded.after_photo_ref,after_photo_ref),checklist_json=CASE WHEN excluded.checklist_json!='[]' THEN excluded.checklist_json ELSE checklist_json END,completion_notes=COALESCE(excluded.completion_notes,completion_notes),updated_at=excluded.updated_at").bind(input.bookingId,input.beforePhotoRef??null,input.afterPhotoRef??null,JSON.stringify(input.checklist??[]),input.completionNotes??null,now,now).run();
+    await event(db,input.bookingId,"service_proof_updated",actor,{beforePhotoRef:input.beforePhotoRef,afterPhotoRef:input.afterPhotoRef,checklist:input.checklist??[]},now);
+    return json({data:await bundle(db,input.bookingId)});
+  }
+
+  if(input.action==="mark_paid"){
+    await db.prepare("UPDATE booking_payments SET status='captured',gateway=CASE WHEN gateway='uat_sandbox' THEN gateway ELSE gateway END,detail_json=json_set(detail_json,'$.paymentReference',?),updated_at=? WHERE booking_id=?").bind(input.paymentReference??"manual-reconciliation",now,input.bookingId).run();
+    await event(db,input.bookingId,"payment_captured",actor,{paymentReference:input.paymentReference??"manual-reconciliation"},now);
+    return json({data:await bundle(db,input.bookingId)});
+  }
+
+  if(input.action==="complete"){
+    const proof=await db.prepare("SELECT * FROM grooming_service_proof WHERE booking_id=?").bind(input.bookingId).first<Row>();
+    const checklist=proof?JSON.parse(String(proof.checklist_json||"[]")) as unknown[]:[];
+    if(!proof?.before_photo_ref||!proof?.after_photo_ref||checklist.length===0)return json({error:"Before photo, after photo and completion checklist are required"},409);
+    const payment=await db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Row>();
+    const invoiceId=`INV-${crypto.randomUUID().slice(0,8).toUpperCase()}`,invoiceNumber=`PS-${new Date(now).getUTCFullYear()}-${String(now).slice(-8)}`;
+    const pricing=(()=>{try{return JSON.parse(String(booking.pricing_json||"{}")) as Record<string,unknown>;}catch{return{};}})();
+    const subscription=String(pricing.subscription||"");
+    const statements=[
+      db.prepare("UPDATE canonical_bookings SET status='completed',updated_at=? WHERE id=?").bind(now,input.bookingId),
+      db.prepare("UPDATE provider_work_orders SET status='completed',updated_at=? WHERE booking_id=?").bind(now,input.bookingId),
+      db.prepare("INSERT OR IGNORE INTO booking_invoices (id,booking_id,customer_id,invoice_number,status,currency,gross_amount,tax_amount,net_amount,issued_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").bind(invoiceId,input.bookingId,booking.customer_id,invoiceNumber,"issued","INR",Number(booking.total_amount),0,Number(booking.total_amount),now,now,now),
+      db.prepare("INSERT OR IGNORE INTO repeat_booking_tasks (id,booking_id,customer_id,service_code,eligible_at,status,created_at,updated_at) VALUES (?,?,?,?,?,'open',?,?)").bind(crypto.randomUUID(),input.bookingId,booking.customer_id,"grooming",now+21*86_400_000,now,now),
+    ];
+    if(subscription){statements.push(db.prepare("INSERT INTO booking_subscription_usage (id,booking_id,customer_id,plan_code,sessions_reserved,sessions_consumed,status,created_at,updated_at) VALUES (?,?,?,?,1,1,'consumed',?,?) ON CONFLICT(booking_id) DO UPDATE SET sessions_consumed=1,status='consumed',updated_at=excluded.updated_at").bind(crypto.randomUUID(),input.bookingId,booking.customer_id,subscription,now,now));}
+    await db.batch(statements);
+    await event(db,input.bookingId,"service_completed",actor,{invoiceNumber,paymentStatus:String(payment?.status||"unknown"),subscriptionConsumed:Boolean(subscription),repeatEligibleAt:now+21*86_400_000},now);
+    return json({data:await bundle(db,input.bookingId)});
+  }
+
+  await db.batch([
+    db.prepare("UPDATE canonical_bookings SET status=?,updated_at=? WHERE id=?").bind(next,now,input.bookingId),
+    db.prepare("UPDATE provider_work_orders SET status=?,updated_at=? WHERE booking_id=?").bind(next,now,input.bookingId),
+  ]);
+  await event(db,input.bookingId,`booking_${next}`,actor,{from:current,to:next},now);
+  return json({data:await bundle(db,input.bookingId)});
+}catch(error){return json({error:error instanceof Error?error.message:"Unable to update grooming lifecycle"},500);}}
