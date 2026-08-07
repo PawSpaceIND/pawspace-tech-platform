@@ -1,4 +1,4 @@
-import{authorize,authError}from"../../../lib/server-auth";
+import{authError,requirePermission,requireProviderOwnership,resolveActor}from"../../../lib/server-auth";
 
 type Db=Awaited<ReturnType<typeof database>>;
 type Row=Record<string,unknown>;
@@ -22,10 +22,10 @@ function parseJson<T>(value:unknown,fallback:T):T{try{return JSON.parse(String(v
 
 export async function GET(request:Request){
   try{
-    await authorize(request,"bookings.view");
+    const actor=await resolveActor(request);requirePermission(actor,"bookings.view");
     const providerId=new URL(request.url).searchParams.get("providerId")?.trim();
     if(!providerId)return json({error:"Provider ID is required"},400);
-    const db=await database();await ensureTables(db);
+    const db=await database();await ensureTables(db);await requireProviderOwnership(db,actor,providerId);
     const rows=await db.prepare(`SELECT w.id work_order_id,w.booking_id,w.provider_id,w.provider_name,w.provider_model,w.status work_order_status,w.occurrence_count,
       b.status booking_status,b.package_code,b.package_name,b.zone_id,b.city_id,b.scheduled_start,b.scheduled_end,b.total_amount,b.currency,b.pricing_json,b.customer_id,b.pet_ids_json,
       c.name customer_name,c.primary_phone,p.method payment_method,p.mode payment_mode,p.status payment_status,p.amount payment_amount,p.amount_due_now
