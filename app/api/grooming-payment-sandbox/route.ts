@@ -1,0 +1,17 @@
+import{authError,authorize,database,securityAudit}from"../../../lib/server-auth";
+import{linkSandboxGatewayOrder,processGatewayEvent}from"../../../lib/grooming-payment-reconciliation";
+
+type Input={action:"link_order"|"simulate_event";bookingId:string;gatewayOrderId?:string;eventType?:"payment.authorized"|"payment.captured"|"payment.failed"|"order.paid"|"refund.created"|"refund.processed"|"refund.failed";eventId?:string;gatewayPaymentId?:string;gatewayRefundId?:string;amount?:number;currency?:string};
+const json=(value:unknown,status=200)=>Response.json(value,{status});
+
+export async function POST(request:Request){try{
+  const actor=await authorize(request,"payments.manage");const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;if(String(runtime.PAWSPACE_PAYMENT_ENV||"sandbox").toLowerCase()!=="sandbox")return json({error:"Payment simulator is disabled outside sandbox"},403);
+  const input=await request.json() as Input;if(!input.bookingId||!input.action)return json({error:"Booking and action are required"},400);const db=await database();
+  if(input.action==="link_order"){
+    const gatewayOrderId=(input.gatewayOrderId||`order_uat_${crypto.randomUUID().replaceAll("-","").slice(0,14)}`).trim();const result=await linkSandboxGatewayOrder(db,{bookingId:input.bookingId,gatewayOrderId,actorId:actor.email});await securityAudit(db,actor,"grooming.payment_sandbox.link_order","booking",input.bookingId,"completed",{gatewayOrderId});return json({data:{...result,environment:"sandbox"}},201);
+  }
+  if(!input.eventType)return json({error:"Event type is required"},400);const payment=await db.prepare("SELECT id,amount,currency FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Record<string,unknown>>();if(!payment)return json({error:"Canonical payment record not found"},404);const link=await db.prepare("SELECT gateway_order_id,gateway_payment_id FROM payment_gateway_links WHERE booking_id=?").bind(input.bookingId).first<Record<string,unknown>>();if(!link)return json({error:"Link a sandbox gateway order first"},409);
+  const amount=Number.isFinite(Number(input.amount))?Number(input.amount):Number(payment.amount||0);const eventId=(input.eventId||`evt_uat_${crypto.randomUUID().replaceAll("-","").slice(0,16)}`).trim();const gatewayPaymentId=(input.gatewayPaymentId||String(link.gateway_payment_id||`pay_uat_${crypto.randomUUID().replaceAll("-","").slice(0,14)}`)).trim();const gatewayRefundId=input.eventType.startsWith("refund.")?(input.gatewayRefundId||`rfnd_uat_${crypto.randomUUID().replaceAll("-","").slice(0,14)}`).trim():undefined;
+  const result=await processGatewayEvent(db,{provider:"razorpay",environment:"sandbox",eventId,eventType:input.eventType,bookingId:input.bookingId,gatewayOrderId:String(link.gateway_order_id),gatewayPaymentId,gatewayRefundId,amountSubunits:Math.round(amount*100),currency:input.currency||String(payment.currency||"INR"),createdAt:Date.now(),signatureVerified:true,payloadHash:`uat:${eventId}`,detail:{source:"staff_sandbox_simulator",actor:actor.email}});
+  await securityAudit(db,actor,"grooming.payment_sandbox.simulate","booking",input.bookingId,"completed",{eventId,eventType:input.eventType,result});return json({data:{eventId,eventType:input.eventType,result,environment:"sandbox"}},201);
+}catch(error){return authError(error,"Unable to run Grooming payment sandbox");}}
