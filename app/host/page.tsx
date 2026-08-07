@@ -36,7 +36,7 @@ export default function HostPage(){
  const isBusy=(stay:BoardingStay,action:BoardingStayAction)=>busy===`${stay.id}:${action}`;
  const decline=async(stay:BoardingStay)=>{const reason=window.prompt("Reason for declining this stay");if(!reason)return;await act(stay,"decline",{reason});};
  const unavailable=async(stay:BoardingStay)=>{const reason=window.prompt("Why are you unavailable for this stay?");if(!reason)return;await act(stay,"host_unavailable",{reason});};
- const care=async(stay:BoardingStay,eventType:string)=>{let note="";if(eventType==="incident"){const response=window.prompt("Describe the concern or incident");if(!response)return;note=response;}await act(stay,"care_event",{careEventType:eventType,detail:{source:"host_workspace",note}});};
+ const care=async(stay:BoardingStay,eventType:"meal"|"walk")=>{await act(stay,"care_event",{careEventType:eventType,detail:{source:"host_workspace"}});};
  return <main className={styles.shell}>
   <aside>
    <Link href="/boarding"><img src="/assets/pawspace-logo.jpeg" alt="PawSpace" /></Link>
@@ -68,8 +68,9 @@ export default function HostPage(){
        </div>
        <div className={styles.quick}>
         {liveStay.status==="confirmed"&&<button disabled={liveStay.care_plan_status!=="ready"||isBusy(liveStay,"check_in")} onClick={()=>act(liveStay,"check_in")}>✓ Check in</button>}
-        {liveStay.status==="in_progress"&&<><button onClick={()=>care(liveStay,"meal")}>🍲 Log meal</button><button onClick={()=>care(liveStay,"walk")}>🦮 Log walk</button><button onClick={()=>care(liveStay,"medication")}>💊 Medication</button><button onClick={()=>care(liveStay,"photo_update")}>📷 Log photo update</button><button className={styles.emergency} onClick={()=>care(liveStay,"incident")}>⚠ Incident</button><button disabled={isBusy(liveStay,"check_out")} onClick={()=>window.confirm("Complete checkout for this stay?")&&void act(liveStay,"check_out")}>✓ Check out</button></>}
+        {liveStay.status==="in_progress"&&<><button onClick={()=>care(liveStay,"meal")}>🍲 Log meal</button><button onClick={()=>care(liveStay,"walk")}>🦮 Log walk</button><Link href={`/host/proof?stayId=${encodeURIComponent(liveStay.id)}`}>📷 Proof · medication · incident</Link><button disabled={isBusy(liveStay,"check_out")} onClick={()=>window.confirm("Complete checkout for this stay?")&&void act(liveStay,"check_out")}>✓ Check out</button></>}
        </div>
+       {liveStay.status==="in_progress"&&<div className={styles.marketSync}><b>Evidence workflow</b><span>Medication, photo proof and incidents use the secure Gate 4 proof workspace. Generic care events cannot bypass evidence, scan or incident governance.</span></div>}
        {liveStay.extension&&<div className={styles.marketSync}><b>Extension request</b><span>Requested checkout: {formatDateTime(liveStay.extension.requested_end)}. Status: {statusLabel(liveStay.extension.status)}. The paid stay window is unchanged until a governed quote is approved.</span></div>}
       </>:<p>No canonical accepted or active Boarding stay is assigned to this host.</p>}
      </div>
