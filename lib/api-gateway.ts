@@ -23,6 +23,14 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/uat-scheduling"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action&&body.action!=="reserve"?"scheduling.manage":"scheduling.book";}
   if(url.pathname==="/api/canonical-bookings")return method==="GET"?"bookings.view":"scheduling.book";
   if(url.pathname==="/api/booking-command-center")return method==="GET"?"bookings.view":"bookings.manage";
+  if(url.pathname==="/api/partner-grooming-jobs")return "bookings.view";
+  if(url.pathname==="/api/grooming-booking-change")return "scheduling.book";
+  if(url.pathname==="/api/grooming-finance")return "finance.view";
+  if(url.pathname==="/api/grooming-lifecycle"){
+    if(method==="GET")return "bookings.view";
+    const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;
+    return body.action==="mark_paid"?"payments.manage":"bookings.view";
+  }
   if(url.pathname==="/api/booking-operations"){if(method==="GET")return "bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;if(body.action==="refund_status")return "payments.manage";return ["package_upgrade","service_overrun","running_late","vehicle_issue"].includes(String(body.action))?"communications.message":"bookings.manage";}
   return "dashboard.view";
 }
