@@ -1,3 +1,5 @@
+import{authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
+
 type Db=Awaited<ReturnType<typeof database>>;
 type Row=Record<string,unknown>;
 type Input={bookingId:string;customerId:string;action:"cancel"|"reschedule";reason?:string;scheduledStart?:string;scheduledEnd?:string};
@@ -16,15 +18,17 @@ export async function POST(request:Request){
     const input=await request.json() as Input;
     if(!input.bookingId||!input.customerId||!input.action)return json({error:"Booking, customer and action are required"},400);
     const db=await database();await ensureTables(db);
+    const actor=await resolveActor(request);requirePermission(actor,"scheduling.book");
     const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=? AND service_code='grooming'").bind(input.bookingId).first<Row>();
     if(!booking)return json({error:"Grooming booking not found"},404);
     if(String(booking.customer_id)!==input.customerId)return json({error:"This customer does not own the booking"},403);
+    await requireCustomerOwnership(db,actor,input.customerId);
     const status=String(booking.status);
     if(["completed","cancelled"].includes(status))return json({error:`Booking cannot be changed from ${status}`},409);
     const work=await db.prepare("SELECT * FROM provider_work_orders WHERE booking_id=?").bind(input.bookingId).first<Row>();
     const payment=await db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Row>();
     if(!work||!payment)return json({error:"Booking work order or payment record is missing"},409);
-    const now=Date.now();
+    const now=Date.now(),auditActor=actor.email;
 
     if(input.action==="cancel"){
       const reason=(input.reason||"Customer cancelled from PawSpace").trim();
@@ -34,13 +38,14 @@ export async function POST(request:Request){
         db.prepare("UPDATE canonical_bookings SET status='cancelled',updated_at=? WHERE id=?").bind(now,input.bookingId),
         db.prepare("UPDATE provider_work_orders SET status='cancelled',updated_at=? WHERE booking_id=?").bind(now,input.bookingId),
         db.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=?").bind(booking.schedule_group_id),
-        db.prepare("UPDATE scheduling_assignment_decisions SET status='cancelled',actor_id=?,reason=?,updated_at=? WHERE group_id=?").bind(input.customerId,reason,now,booking.schedule_group_id),
+        db.prepare("UPDATE scheduling_assignment_decisions SET status='cancelled',actor_id=?,reason=?,updated_at=? WHERE group_id=?").bind(auditActor,reason,now,booking.schedule_group_id),
         db.prepare("UPDATE booking_payments SET status=?,detail_json=json_set(detail_json,'$.cancelReason',?),updated_at=? WHERE booking_id=?").bind(captured?"refund_pending":"cancelled",reason,now,input.bookingId),
         db.prepare("UPDATE booking_subscription_usage SET sessions_reserved=0,status=CASE WHEN sessions_consumed=0 THEN 'reversed' ELSE status END,updated_at=? WHERE booking_id=?").bind(now,input.bookingId),
       ];
-      if(refundId)statements.push(db.prepare("INSERT OR IGNORE INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,created_at,updated_at) VALUES (?,?,?,?,?,'requested',?,?,?)").bind(refundId,input.bookingId,payment.id,Number(payment.amount||0),reason,input.customerId,now,now));
+      if(refundId)statements.push(db.prepare("INSERT OR IGNORE INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,created_at,updated_at) VALUES (?,?,?,?,?,'requested',?,?,?)").bind(refundId,input.bookingId,payment.id,Number(payment.amount||0),reason,auditActor,now,now));
       await db.batch(statements);
-      await event(db,input.bookingId,"booking_cancelled",input.customerId,{reason,capacityReleased:true,paymentStatus:captured?"refund_pending":"cancelled",refundCaseId:refundId,subscriptionReservationReversed:true},now);
+      await event(db,input.bookingId,"booking_cancelled",auditActor,{customerId:input.customerId,reason,capacityReleased:true,paymentStatus:captured?"refund_pending":"cancelled",refundCaseId:refundId,subscriptionReservationReversed:true},now);
+      await securityAudit(db,actor,"grooming.cancel","booking",input.bookingId,"completed",{customerId:input.customerId,refundCaseId:refundId});
       return json({data:{bookingId:input.bookingId,status:"cancelled",paymentStatus:captured?"refund_pending":"cancelled",refundCaseId:refundId,capacityReleased:true}});
     }
 
@@ -55,9 +60,10 @@ export async function POST(request:Request){
       db.prepare("UPDATE canonical_bookings SET scheduled_start=?,scheduled_end=?,status='assigned',updated_at=? WHERE id=?").bind(start.toISOString(),end.toISOString(),now,input.bookingId),
       db.prepare("UPDATE provider_work_orders SET scheduled_start=?,scheduled_end=?,status='assigned',updated_at=? WHERE booking_id=?").bind(start.toISOString(),end.toISOString(),now,input.bookingId),
       db.prepare("UPDATE scheduling_reservations SET scheduled_start=?,scheduled_end=?,status='assigned' WHERE group_id=?").bind(start.toISOString(),end.toISOString(),booking.schedule_group_id),
-      db.prepare("UPDATE scheduling_assignment_decisions SET status='assigned',actor_id=?,reason=?,updated_at=? WHERE group_id=?").bind(input.customerId,input.reason||"Customer rescheduled",now,booking.schedule_group_id),
+      db.prepare("UPDATE scheduling_assignment_decisions SET status='assigned',actor_id=?,reason=?,updated_at=? WHERE group_id=?").bind(auditActor,input.reason||"Customer rescheduled",now,booking.schedule_group_id),
     ]);
-    await event(db,input.bookingId,"booking_rescheduled",input.customerId,{from:{scheduledStart:oldStart,scheduledEnd:oldEnd},to:{scheduledStart:start.toISOString(),scheduledEnd:end.toISOString()},providerId,capacityRevalidated:true},now);
+    await event(db,input.bookingId,"booking_rescheduled",auditActor,{customerId:input.customerId,from:{scheduledStart:oldStart,scheduledEnd:oldEnd},to:{scheduledStart:start.toISOString(),scheduledEnd:end.toISOString()},providerId,capacityRevalidated:true},now);
+    await securityAudit(db,actor,"grooming.reschedule","booking",input.bookingId,"completed",{customerId:input.customerId,providerId});
     return json({data:{bookingId:input.bookingId,status:"assigned",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),providerId}});
-  }catch(error){return json({error:error instanceof Error?error.message:"Unable to change Grooming booking"},500);}
+  }catch(error){return authError(error,"Unable to change Grooming booking");}
 }
