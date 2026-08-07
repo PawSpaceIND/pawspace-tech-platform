@@ -400,7 +400,10 @@ test("provides protected customer import, configurable roles and routed contact 
   assert.match(governance, /create_user/);
   assert.match(governance, /Founder is protected/);
   assert.match(importer, /ON CONFLICT\(customer_key\)/);
-  assert.match(contact, /Exotel sandbox/);
+  assert.match(contact, /enqueueCommunication/);
+  assert.match(contact, /governed_outbox/);
+  assert.match(contact, /provider:"not_dispatched"/);
+  assert.doesNotMatch(contact, /EXOTEL_API_KEY/);
   assert.match(contact, /nextFallback/);
   for (const role of ["founder", "superuser", "admin", "manager", "associate", "service_provider", "finance", "auditor"]) assert.match(security, new RegExp(`code:\\"${role}\\"`));
 });
