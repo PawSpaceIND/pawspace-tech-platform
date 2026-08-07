@@ -1,0 +1,55 @@
+name: Training Gate 3 customer patch v3
+on:
+  push:
+    branches: [grooming-integration-closure]
+    paths:
+      - .github/workflows/training-gate3-customer-patch-v3.yml
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: grooming-integration-closure
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - name: Apply canonical Training customer flow with lint-safe quote refresh
+        run: |
+          awk "/python3 - <<'PY'/{flag=1;next}/^          PY$/{flag=0}flag{sub(/^          /,\"\");print}" .github/workflows/training-gate3-customer-patch.yml > /tmp/training-customer-patch.py
+          python3 /tmp/training-customer-patch.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path=Path('app/mobile-app/training-flow.tsx')
+          text=path.read_text()
+          old='programme?.total_sessions??plan.sessions||1'
+          assert old in text
+          text=text.replace(old,'(programme?.total_sessions??plan.sessions)||1',1)
+          text=text.replace('import ProviderTrackingCard from "./provider-tracking-card";\n','',1)
+          text=text.replace('  const packagePayable=checkoutQuote?.totalAmount??plan.price;\n','',1)
+          old_start='  const selectedStart=startOptions[startDateIndex]||startOptions[0]||futureIst(1,time.startsWith("9")?9:time.startsWith("3")?15:17);\n'
+          assert old_start in text
+          text=text.replace(old_start,old_start+'  const selectedStartIso=selectedStart.toISOString();\n',1)
+          old_effect='  useEffect(()=>{if(stage!==5||!plan.sessions)return;let active=true;setCheckoutQuote(null);const mode=paymentMode==="full"?"prepaid":"split";void quoteTraining({packageCode:plan.packageCode,petCount:selectedPets.length,scheduledStart:selectedStart.toISOString(),paymentMode:mode,couponCode:mode==="prepaid"&&couponCode?couponCode:undefined}).then(value=>{if(active){setCheckoutQuote(value);setScheduleError("");}}).catch(problem=>{if(active){setCheckoutQuote(null);setScheduleError(problem instanceof Error?problem.message:"Unable to refresh Training quote");}});return()=>{active=false;};},[stage,plan.packageCode,plan.sessions,selectedPets.length,paymentMode,couponCode,frequency,time,startDateIndex]);'
+          new_effect='  useEffect(()=>{if(stage!==5||!plan.sessions)return;let active=true;const mode=paymentMode==="full"?"prepaid":"split";void quoteTraining({packageCode:plan.packageCode,petCount:selectedPets.length,scheduledStart:selectedStartIso,paymentMode:mode,couponCode:mode==="prepaid"&&couponCode?couponCode:undefined}).then(value=>{if(active){setCheckoutQuote(value);setScheduleError("");}}).catch(problem=>{if(active){setCheckoutQuote(null);setScheduleError(problem instanceof Error?problem.message:"Unable to refresh Training quote");}});return()=>{active=false;};},[stage,plan.packageCode,plan.sessions,selectedPets.length,paymentMode,couponCode,frequency,time,startDateIndex,selectedStartIso]);'
+          assert old_effect in text
+          text=text.replace(old_effect,new_effect,1)
+          path.write_text(text)
+          PY
+      - run: npm ci
+      - run: npm run build
+      - run: npm run lint
+      - run: npm run validate:artifact
+      - name: Commit verified canonical Training customer flow
+        run: |
+          git config user.name "PawSpaceIND"
+          git config user.email "karthik@pawspace.in"
+          git add app/mobile-app/training-flow.tsx
+          git diff --cached --quiet && exit 0
+          git commit -m "Move Training customer journey to canonical quote and programme truth [skip ci]"
+          git pull --rebase origin grooming-integration-closure
+          git push origin grooming-integration-closure
