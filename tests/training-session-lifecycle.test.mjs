@@ -49,14 +49,16 @@ test("Training recovery preserves paid-session integrity",async()=>{
  assert.doesNotMatch(lifecycle,/UPDATE training_session_consumptions SET/);
 });
 
-test("Trainer workspace is canonical-session driven and does not present fixture earnings",async()=>{
+test("Trainer workspace is canonical-session and canonical-earnings driven",async()=>{
  const[page,client]=await Promise.all([read("app/trainer/page.tsx"),read("lib/training-session-client.ts")]);
  assert.match(page,/currentProviderIdentity/);
  assert.match(page,/loadTrainerSessions/);
  assert.match(page,/trainingSessionAction/);
  assert.match(page,/Complete & consume one session/);
- assert.match(page,/Not yet canonical/);
- assert.match(page,/No unverified money shown/);
+ assert.match(page,/CANONICAL TRAINING PAYOUT LEDGER/);
+ assert.match(page,/providerEarnings/);
+ assert.match(page,/Live payout is not connected/);
+ assert.match(page,/sandbox_not_connected/);
  assert.doesNotMatch(page,/const dogs =/);
  assert.doesNotMatch(page,/₹42,680/);
  assert.doesNotMatch(page,/Bank ending 2481/);
