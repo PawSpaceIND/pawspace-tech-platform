@@ -18,6 +18,9 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/crm")return method==="GET"?"customers.view":"customers.manage";
   if(url.pathname==="/api/revenue-crm")return method==="GET"?"customers.view":"customers.manage";
   if(url.pathname==="/api/finance-control")return method==="GET"?"finance.view":"finance.manage";
+  if(url.pathname==="/api/training-finance")return method==="GET"?"finance.view":"finance.manage";
+  if(url.pathname==="/api/training-ops")return "bookings.view";
+  if(url.pathname==="/api/training-provider-earnings")return "bookings.view";
   if(url.pathname==="/api/marketing-control")return method==="GET"?"marketing.view":"marketing.manage";
   if(url.pathname==="/api/pricing-control")return method==="GET"?"pricing.view":"pricing.manage";
   if(url.pathname==="/api/grooming-subscription-plans")return method==="GET"?"pricing.view":"pricing.manage";
