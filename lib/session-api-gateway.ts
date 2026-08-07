@@ -8,6 +8,7 @@ async function sessionScope(request:Request):Promise<Scope|undefined>{const url=
   if(url.pathname==="/api/uat-scheduling"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return !body.action||body.action==="reserve"?{permission:"scheduling.book",subjectType:"customer",subjectId:String(body.customerId||"")}:undefined;}
   if(url.pathname==="/api/canonical-bookings"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as {customer?:{id?:string}};return{permission:"scheduling.book",subjectType:"customer",subjectId:String(body.customer?.id||"")};}
   if(url.pathname==="/api/training-programmes"&&["GET","POST"].includes(method))return{permission:"scheduling.book",subjectType:"customer"};
+  if(url.pathname==="/api/training-provider-earnings"&&method==="GET")return{permission:"bookings.view",subjectType:"provider",subjectId:String(url.searchParams.get("providerId")||"")};
   if(url.pathname==="/api/training-sessions"&&method==="GET")return{permission:"bookings.view",subjectType:"provider",subjectId:String(url.searchParams.get("providerId")||"")};
   if(url.pathname==="/api/training-sessions"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["reschedule","replace_provider","cancel_session"].includes(String(body.action))?undefined:{permission:"bookings.view",subjectType:"provider"};}
   if(url.pathname==="/api/training-session-media"&&["GET","POST"].includes(method))return{permission:"bookings.view",subjectType:"provider"};
