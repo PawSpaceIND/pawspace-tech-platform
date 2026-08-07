@@ -1,0 +1,50 @@
+name: Import recovered PawSpace source
+
+on:
+  push:
+    branches:
+      - grooming-integration-closure
+    paths:
+      - pawspace-tech-platform-current-source.zip
+      - .github/workflows/import-source.yml
+
+permissions:
+  contents: write
+
+jobs:
+  import-source:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: grooming-integration-closure
+          fetch-depth: 0
+
+      - name: Verify source archive exists
+        run: test -f pawspace-tech-platform-current-source.zip
+
+      - name: Extract recovered source
+        run: |
+          rm -rf .source-import
+          mkdir -p .source-import
+          unzip -q pawspace-tech-platform-current-source.zip -d .source-import
+          test -d .source-import/pawspace-tech-platform-current-source
+
+      - name: Copy source into repository root
+        run: |
+          cp -a .source-import/pawspace-tech-platform-current-source/. ./
+          rm -rf .source-import
+          rm -f pawspace-tech-platform-current-source.zip
+
+      - name: Commit recovered source
+        run: |
+          git config user.name "PawSpace Source Import"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No source changes to commit"
+            exit 0
+          fi
+          git commit -m "Import recovered Site v67 source [skip ci]"
+          git push origin HEAD:grooming-integration-closure
