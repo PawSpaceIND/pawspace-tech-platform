@@ -14,7 +14,7 @@ export type CanonicalLifecycleInput={
   totalAmount:number;
   amountDueNow:number;
   payment:{method:"upi"|"card"|"netbanking"|"payment_link"|"cash";mode:"prepaid"|"pay_after_service"|"split";status:"created"|"authorised"|"captured";detail:string};
-  pricing:{discount:number;couponCode?:string;subscription?:string;requirements?:string[]};
+  pricing:{discount:number;couponCode?:string;subscription?:string;requirements?:string[];trainingQuoteId?:string};
 };
 
 export type CanonicalLifecycleResult={bookingId:string;customerId:string;petIds:string[];scheduleGroupId:string;workOrderId:string;paymentId:string;status:string;duplicatePrevented:boolean};
