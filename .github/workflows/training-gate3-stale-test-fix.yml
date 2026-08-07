@@ -45,26 +45,11 @@ jobs:
           p = Path("tests/rendered-html.test.mjs")
           text = p.read_text()
           replacements = [
-              (
-                  '  const [mobileHome, stays, training, trainer, host] = await Promise.all(',
-                  '  const [mobileHome, stays, training, trainer, host, trainingCommercial] = await Promise.all(',
-              ),
-              (
-                  '["app/mobile-app/page.tsx", "app/mobile-app/stay-flow.tsx", "app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/host/page.tsx"].map((path) =>',
-                  '["app/mobile-app/page.tsx", "app/mobile-app/stay-flow.tsx", "app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/host/page.tsx", "lib/training-commercial-governance.ts"].map((path) =>',
-              ),
-              (
-                  '  assert.match(training, /45-minute trainer Meet & Greet · ₹500/);',
-                  '  assert.match(training, /meetPackage\\.direct_minutes_per_pet/);\n  assert.match(training, /meetPackage\\.coaching_minutes_per_pet/);\n  assert.match(training, /meetPackage\\.base_price/);\n  assert.match(trainingCommercial, /code:"trainer-meet-greet",name:"Trainer Meet & Greet",sessions:1,validityDays:7,price:500/);',
-              ),
-              (
-                  '  assert.match(training, /directTrainingMinutes = selectedPets.length \\* 45/);\n  assert.match(training, /closeoutMinutes = selectedPets.length \\* 15/);',
-                  '  assert.match(training, /serviceMinutes=selectedPets\\.length\\*\\(plan\\.directMinutes\\+plan\\.coachingMinutes\\)/);\n  assert.match(trainingCommercial, /direct:45,coaching:15/);',
-              ),
-              (
-                  '  assert.match(training, /selectedPets.length \\* 15/);',
-                  '  assert.match(training, /serviceMinutes=selectedPets\\.length\\*\\(plan\\.directMinutes\\+plan\\.coachingMinutes\\)/);',
-              ),
+              ('  const [mobileHome, stays, training, trainer, host] = await Promise.all(', '  const [mobileHome, stays, training, trainer, host, trainingCommercial] = await Promise.all('),
+              ('["app/mobile-app/page.tsx", "app/mobile-app/stay-flow.tsx", "app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/host/page.tsx"].map((path) =>', '["app/mobile-app/page.tsx", "app/mobile-app/stay-flow.tsx", "app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/host/page.tsx", "lib/training-commercial-governance.ts"].map((path) =>'),
+              ('  assert.match(training, /45-minute trainer Meet & Greet · ₹500/);', '  assert.match(training, /meetPackage\\.direct_minutes_per_pet/);\n  assert.match(training, /meetPackage\\.coaching_minutes_per_pet/);\n  assert.match(training, /meetPackage\\.base_price/);\n  assert.match(trainingCommercial, /code:"trainer-meet-greet",name:"Trainer Meet & Greet",sessions:1,validityDays:7,price:500/);'),
+              ('  assert.match(training, /directTrainingMinutes = selectedPets.length \\* 45/);\n  assert.match(training, /closeoutMinutes = selectedPets.length \\* 15/);', '  assert.match(training, /serviceMinutes=selectedPets\\.length\\*\\(plan\\.directMinutes\\+plan\\.coachingMinutes\\)/);\n  assert.match(trainingCommercial, /direct:45,coaching:15/);'),
+              ('  assert.match(training, /selectedPets.length \\* 15/);', '  assert.match(training, /serviceMinutes=selectedPets\\.length\\*\\(plan\\.directMinutes\\+plan\\.coachingMinutes\\)/);'),
           ]
           for old, new in replacements:
               if old not in text:
@@ -72,27 +57,39 @@ jobs:
               text = text.replace(old, new, 1)
           p.write_text(text)
 
-          replace_exact(
-              "tests/training-programme.test.mjs",
-              ' assert.match(flow,/meetBookingId:meetBookingId\\|\\|undefined/);',
-              ' assert.match(flow,/meetBookingId:linkedMeetBookingId\\|\\|undefined/);',
-          )
-
-          replace_exact(
-              "tests/training-session-lifecycle.test.mjs",
-              ' assert.match(page,/sandbox_not_connected/);',
-              ' assert.match(page,/executionMode/);\n assert.match(page,/livePayout:false/);',
-          )
+          replace_exact("tests/training-programme.test.mjs", ' assert.match(flow,/meetBookingId:meetBookingId\\|\\|undefined/);', ' assert.match(flow,/meetBookingId:linkedMeetBookingId\\|\\|undefined/);')
+          replace_exact("tests/training-session-lifecycle.test.mjs", ' assert.match(page,/sandbox_not_connected/);', ' assert.match(page,/executionMode/);\n assert.match(page,/livePayout:false/);')
           PY
       - name: Install web dependencies
         run: npm ci
-      - name: Run web tests
-        run: npm test
+      - name: Run web tests and capture output
+        id: tests
+        shell: bash
+        run: |
+          set +e
+          npm test > .training-gate3-test-output.txt 2>&1
+          code=$?
+          cat .training-gate3-test-output.txt
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Commit diagnostic on failure
+        if: steps.tests.outputs.exit_code != '0'
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .training-gate3-test-output.txt
+          git commit -m "Capture Training Gate 3 failing test [skip ci]"
+          git push origin HEAD:grooming-integration-closure
+          exit 1
       - name: Run lint
+        if: steps.tests.outputs.exit_code == '0'
         run: npm run lint
       - name: Validate artifact
+        if: steps.tests.outputs.exit_code == '0'
         run: npm run validate:artifact
       - name: Commit verified regression fixes
+        if: steps.tests.outputs.exit_code == '0'
         shell: bash
         run: |
           git config user.name github-actions[bot]
