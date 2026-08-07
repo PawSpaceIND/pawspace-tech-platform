@@ -1,0 +1,554 @@
+
+> pawspace-grooming@0.1.0 test
+> npm run build && node --test tests/*.test.mjs
+
+
+> pawspace-grooming@0.1.0 build
+> bash scripts/build-verified.sh
+
+Running bounded vinext build...
+
+  vinext build  (Vite 8.0.13)
+
+(node:2218) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[34m[1/5] analyze client references...[39m
+[2Ktransforming...(node:2218) ExperimentalWarning: glob is an experimental feature and might change at any time
+✓ 242 modules transformed.
+rendering chunks...
+[32m✓ built in 1.93s[39m
+[34m[2/5] analyze server references...[39m
+[2Ktransforming...✓ 182 modules transformed.
+rendering chunks...
+[32m✓ built in 1.97s[39m
+[34m[3/5] build rsc environment...[39m
+[2Ktransforming...✓ 248 modules transformed.
+rendering chunks...
+computing gzip size...
+[32m✓ built in 1.22s[39m
+[34m[4/5] build client environment...[39m
+[2Ktransforming...✓ 189 modules transformed.
+rendering chunks...
+computing gzip size...
+[32m✓ built in 1.70s[39m
+[34m[5/5] build ssr environment...[39m
+[2Ktransforming...✓ 188 modules transformed.
+rendering chunks...
+computing gzip size...
+[32m✓ built in 1.57s[39m
+[0m
+  Route (app)
+  ┌ ? /                                    
+  ├ ? /account                             
+  ├ ? /admin                               
+  ├ λ /api/boarding-commercial             
+  ├ λ /api/boarding-stays                  
+  ├ λ /api/booking-command-center          
+  ├ λ /api/booking-operations              
+  ├ λ /api/canonical-bookings              
+  ├ λ /api/communications                  
+  ├ λ /api/crm                             
+  ├ λ /api/customer-contact                
+  ├ λ /api/finance-control                 
+  ├ λ /api/grooming-booking-change         
+  ├ λ /api/grooming-commercial-policy      
+  ├ λ /api/grooming-finance                
+  ├ λ /api/grooming-lifecycle              
+  ├ λ /api/grooming-payment-sandbox        
+  ├ λ /api/grooming-route                  
+  ├ λ /api/grooming-service-location       
+  ├ λ /api/grooming-subscription-plans     
+  ├ λ /api/identity-bindings               
+  ├ λ /api/identity-session                
+  ├ λ /api/launch-readiness                
+  ├ λ /api/marketing-control               
+  ├ λ /api/partner-grooming-jobs           
+  ├ λ /api/platform-governance             
+  ├ λ /api/pricing-control                 
+  ├ λ /api/pricing-quote                   
+  ├ λ /api/provider-assignment-recovery    
+  ├ λ /api/provider-capacity-control       
+  ├ λ /api/razorpay-webhook                
+  ├ λ /api/revenue-crm                     
+  ├ λ /api/scheduling-rules                
+  ├ λ /api/service-media                   
+  ├ λ /api/subscription-customers          
+  ├ λ /api/system-integration              
+  ├ λ /api/training-cancellation           
+  ├ λ /api/training-commercial             
+  ├ λ /api/training-customer-session-change
+  ├ λ /api/training-finance                
+  ├ λ /api/training-ops                    
+  ├ λ /api/training-programmes             
+  ├ λ /api/training-provider-earnings      
+  ├ λ /api/training-reconciliation         
+  ├ λ /api/training-requirements           
+  ├ λ /api/training-session-media          
+  ├ λ /api/training-sessions               
+  ├ λ /api/training-trainers               
+  ├ λ /api/uat-scheduling                  
+  ├ ? /assisted-booking                    
+  ├ ? /boarding                            
+  ├ ? /booking-command-center              
+  ├ ? /control                             
+  ├ ? /control/integrations                
+  ├ ? /crm                                 
+  ├ ? /driver                              
+  ├ ? /food                                
+  ├ ? /groomer                             
+  ├ ? /host                                
+  ├ ? /mobile-app                          
+  ├ ? /ops                                 
+  ├ ? /partner                             
+  ├ ? /partner-app                         
+  ├ ? /platform-api                        
+  ├ ? /regression-lab                      
+  ├ ? /sitting                             
+  ├ ? /system-integration                  
+  ├ ? /taxi                                
+  ├ ? /team                                
+  ├ ? /team/customer-experience            
+  ├ ? /team/finance                        
+  ├ ? /team/finance/training               
+  ├ ? /team/marketing                      
+  ├ ? /team/operations                     
+  ├ ? /team/operations/bookings            
+  ├ ? /team/people                         
+  ├ ? /team/sales                          
+  ├ ? /test-lab                            
+  ├ ? /trainer                             
+  ├ ? /training                            
+  ├ ? /walker                              
+  └ ? /walking                             
+
+  λ API  ? Unknown
+
+  ? Some routes could not be classified. vinext currently uses static analysis
+    and cannot detect dynamic API usage (headers(), cookies(), etc.) at build time.
+    Automatic classification will be improved in a future release.
+
+  Build complete. Run `vinext start` to start the production server.
+
+Validated Sites artifact: ESM Worker default.fetch and hosting manifest are present.
+TAP version 13
+# Subtest: Boarding Gate 1 owns catalogue quotes verified hosts and canonical stay creation
+ok 1 - Boarding Gate 1 owns catalogue quotes verified hosts and canonical stay creation
+  ---
+  duration_ms: 6.34551
+  ...
+# Subtest: Boarding Gate 2 owns stay acceptance capacity and idempotency
+ok 2 - Boarding Gate 2 owns stay acceptance capacity and idempotency
+  ---
+  duration_ms: 2.143813
+  ...
+# Subtest: Boarding Gate 2 requires care plan before check in and records canonical care events
+ok 3 - Boarding Gate 2 requires care plan before check in and records canonical care events
+  ---
+  duration_ms: 0.306795
+  ...
+# Subtest: Boarding Gate 2 keeps extension commercial truth blocked and preserves the paid stay window
+ok 4 - Boarding Gate 2 keeps extension commercial truth blocked and preserves the paid stay window
+  ---
+  duration_ms: 0.361417
+  ...
+# Subtest: Boarding Gate 2 escalates decline unavailable and no show without losing the booking
+ok 5 - Boarding Gate 2 escalates decline unavailable and no show without losing the booking
+  ---
+  duration_ms: 0.24586
+  ...
+# Subtest: Boarding Gate 2 checkout closes capacity but leaves tax and payout policy un-invented
+ok 6 - Boarding Gate 2 checkout closes capacity but leaves tax and payout policy un-invented
+  ---
+  duration_ms: 0.315471
+  ...
+# Subtest: Boarding stay API enforces provider customer and staff ownership boundaries
+ok 7 - Boarding stay API enforces provider customer and staff ownership boundaries
+  ---
+  duration_ms: 0.301664
+  ...
+# Subtest: Boarding Host workspace resolves trusted provider identity and governed city scope
+ok 8 - Boarding Host workspace resolves trusted provider identity and governed city scope
+  ---
+  duration_ms: 0.383058
+  ...
+# Subtest: Boarding Host workspace performs canonical stay actions instead of fixture toasts
+ok 9 - Boarding Host workspace performs canonical stay actions instead of fixture toasts
+  ---
+  duration_ms: 0.314269
+  ...
+# Subtest: Boarding Host workspace does not restore unapproved commercial or dated fixtures
+ok 10 - Boarding Host workspace does not restore unapproved commercial or dated fixtures
+  ---
+  duration_ms: 0.632224
+  ...
+# Subtest: Boarding customer stay read is booking-scoped and ownership checked
+not ok 11 - Boarding customer stay read is booking-scoped and ownership checked
+  ---
+  duration_ms: 1.920636
+  location: '/home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/boarding-gate2.test.mjs:105:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The input did not match the regular expression /scope\)===\"customer\"|scope\)==\"customer\"|scope\)==='customer'|scope\)===\'customer\'/. Input:
+    
+    'import{authError,database,requireCustomerOwnership,requirePermission,requireProviderOwnership,resolveActor,securityAudit,type AuthenticatedActor}from"../../../lib/server-auth";\n' +
+      'import{findIdentityBinding}from"../../../lib/identity-binding";\n' +
+      'import{hasPermission}from"../../../lib/platform-security";\n' +
+      'import{getBoardingStay,listBoardingStays,mutateBoardingStay,type BoardingStayAction,type BoardingCarePlan}from"../../../lib/boarding-stay-lifecycle";\n' +
+      '\n' +
+      'type Body={stayId?:string;action?:BoardingStayAction;idempotencyKey?:string;reason?:string;carePlan?:BoardingCarePlan;careEventType?:string;detail?:Record<string,unknown>;requestedEnd?:string};\n' +
+      'const json=(value:unknown,status=200)=>Response.json(value,{status});\n' +
+      'const providerActions=new Set<BoardingStayAction>(["accept","decline","check_in","care_event","host_unavailable","check_out"]);\n' +
+      'const customerActions=new Set<BoardingStayAction>(["submit_care_plan","request_extension"]);\n' +
+      '\n' +
+      'async function ownProviderId(db:D1Database,actor:AuthenticatedActor){if(actor.developmentPreview)return"host_maya_rohan";const binding=await findIdentityBinding(db,{identitySource:actor.identitySource,principalType:actor.principalType,principalKey:actor.principalKey,subjectType:"provider"});if(binding)return String(binding.subject_id);const legacy=await db.prepare("SELECT provider_id,status FROM provider_identity_links WHERE email=?").bind(actor.email).first<Record<string,unknown>>();return legacy&&legacy.status==="active"?String(legacy.provider_id):null;}\n' +
+      'async function providerScope(db:D1Database,providerId:string){if(!providerId)return{providerId:null,cityId:null,zoneId:null};const row=await db.prepare("SELECT city_id,zone_id FROM boarding_host_profiles WHERE provider_id=?").bind(providerId).first<Record<string,unknown>>();return{providerId,cityId:row?String(row.city_id):null,zoneId:row?String(row.zone_id):null};}\n' +
+      '\n' +
+      'export async function GET(request:Request){try{const url=new URL(request.url);let providerId=String(url.searchParams.get("providerId")||"").trim();const customerId=String(url.searchParams.get("customerId")||"").trim(),bookingId=String(url.searchParams.get("bookingId")||"").trim(),customerScope=url.searchParams.get("scope")==="customer";const db=await database(),actor=await resolveActor(request);\n' +
+      ' if(customerScope){requirePermission(actor,"scheduling.book");if(!bookingId||providerId||customerId)return json({error:"Customer Boarding stay reads require only a booking ID"},400);const rows=await listBoardingStays(db,{bookingId});if(!rows.length)return json({data:[],scope:{providerId:null,cityId:null,zoneId:null,customerId:null,bookingId}});const ownedCustomerId=String((rows[0] as Record<string,unknown>).customer_id||"");await requireCustomerOwnership(db,actor,ownedCustomerId);return json({data:rows,scope:{providerId:null,cityId:null,zoneId:null,customerId:ownedCustomerId,bookingId}});}\n' +
+      ' requirePermission(actor,"bookings.view");if(!providerId&&!customerId&&!bookingId){if(hasPermission(actor.permissions,"bookings.manage"))return json({error:"Staff requests require a provider, customer or booking filter"},400);providerId=String(await ownProviderId(db,actor)||"");if(!providerId)return json({error:"No active provider identity is linked to this session"},403);}if(providerId)await requireProviderOwnership(db,actor,providerId);if(customerId)await requireCustomerOwnership(db,actor,customerId);if(bookingId&&!providerId&&!customerId&&!hasPermission(actor.permissions,"bookings.manage")){const stay=(await listBoardingStays(db,{bookingId}))[0];if(!stay)return json({data:[],scope:{providerId:null,cityId:null,zoneId:null}});const provider=String((stay as Record<string,unknown>).host_provider_id||""),customer=String((stay as Record<string,unknown>).customer_id||"");try{await requireProviderOwnership(db,actor,provider);}catch{await requireCustomerOwnership(db,actor,customer);}}const rows=await listBoardingStays(db,{providerId:providerId||undefined,customerId:customerId||undefined,bookingId:bookingId||undefined}),scope=providerId?await providerScope(db,providerId):{providerId:null,cityId:null,zoneId:null};return json({data:rows,scope:{...scope,customerId:customerId||null,bookingId:bookingId||null}});}catch(error){return authError(error,"Unable to load Boarding stays");}}\n' +
+      '\n' +
+      'export async function POST(request:Request){try{const body=await request.json() as Body,stayId=String(body.stayId||"").trim(),action=body.action,idempotencyKey=String(body.idempotencyKey||"").trim();if(!stayId||!action||!idempotencyKey)return json({error:"Stay, action and idempotency key are required"},400);const db=await database(),actor=await resolveActor(request),stay=await getBoardingStay(db,stayId);if(!stay)return json({error:"Boarding stay not found"},404);const providerId=String(stay.host_provider_id),customerId=String(stay.customer_id),staff=hasPermission(actor.permissions,"bookings.manage");if(action==="no_show"){requirePermission(actor,"bookings.manage");}else if(providerActions.has(action)){requirePermission(actor,"bookings.view");if(!staff)await requireProviderOwnership(db,actor,providerId);}else if(customerActions.has(action)){if(!staff){requirePermission(actor,"scheduling.book");await requireCustomerOwnership(db,actor,customerId);}}else return json({error:"Unsupported Boarding stay action"},400);const result=await mutateBoardingStay(db,{stayId,action,actorId:actor.email,idempotencyKey,reason:body.reason,carePlan:body.carePlan,careEventType:body.careEventType,detail:body.detail,requestedEnd:body.requestedEnd});await securityAudit(db,actor,`boarding.stay.${action}`,"boarding_stay",stayId,"completed",{bookingId:stay.booking_id,providerId,customerId,staffOverride:staff,duplicatePrevented:Boolean((result as Record<string,unknown>).duplicatePrevented)});return json({data:result},String((result as Record<string,unknown>).status)==="ops_escalation"?202:200);}catch(error){return authError(error,"Unable to update Boarding stay");}}\n'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+  actual: |-
+    import{authError,database,requireCustomerOwnership,requirePermission,requireProviderOwnership,resolveActor,securityAudit,type AuthenticatedActor}from"../../../lib/server-auth";
+    import{findIdentityBinding}from"../../../lib/identity-binding";
+    import{hasPermission}from"../../../lib/platform-security";
+    import{getBoardingStay,listBoardingStays,mutateBoardingStay,type BoardingStayAction,type BoardingCarePlan}from"../../../lib/boarding-stay-lifecycle";
+    
+    type Body={stayId?:string;action?:BoardingStayAction;idempotencyKey?:string;reason?:string;carePlan?:BoardingCarePlan;careEventType?:string;detail?:Record<string,unknown>;requestedEnd?:string};
+    const json=(value:unknown,status=200)=>Response.json(value,{status});
+    const providerActions=new Set<BoardingStayAction>(["accept","decline","check_in","care_event","host_unavailable","check_out"]);
+    const customerActions=new Set<BoardingStayAction>(["submit_care_plan","request_extension"]);
+    
+    async function ownProviderId(db:D1Database,actor:AuthenticatedActor){if(actor.developmentPreview)return"host_maya_rohan";const binding=await findIdentityBinding(db,{identitySource:actor.identitySource,principalType:actor.principalType,principalKey:actor.principalKey,subjectType:"provider"});if(binding)return String(binding.subject_id);const legacy=await db.prepare("SELECT provider_id,status FROM provider_identity_links WHERE email=?").bind(actor.email).first<Record<string,unknown>>();return legacy&&legacy.status==="active"?String(legacy.provider_id):null;}
+    async function providerScope(db:D1Database,providerId:string){if(!providerId)return{providerId:null,cityId:null,zoneId:null};const row=await db.prepare("SELECT city_id,zone_id FROM boarding_host_profiles WHERE provider_id=?").bind(providerId).first<Record<string,unknown>>();return{providerId,cityId:row?String(row.city_id):null,zoneId:row?String(row.zone_id):null};}
+    
+    export async function GET(request:Request){try{const url=new URL(request.url);let providerId=String(url.searchParams.get("providerId")||"").trim();const customerId=String(url.searchParams.get("customerId")||"").trim(),bookingId=String(url.searchParams.get("bookingId")||"").trim(),customerScope=url.searchParams.get("scope")==="customer";const db=await database(),actor=await resolveActor(request);
+     if(customerScope){requirePermission(actor,"scheduling.book");if(!bookingId||providerId||customerId)return json({error:"Customer Boarding stay reads require only a booking ID"},400);const rows=await listBoardingStays(db,{bookingId});if(!rows.length)return json({data:[],scope:{providerId:null,cityId:null,zoneId:null,customerId:null,bookingId}});const ownedCustomerId=String((rows[0] as Record<string,unknown>).customer_id||"");await requireCustomerOwnership(db,actor,ownedCustomerId);return json({data:rows,scope:{providerId:null,cityId:null,zoneId:null,customerId:ownedCustomerId,bookingId}});}
+     requirePermission(actor,"bookings.view");if(!providerId&&!customerId&&!bookingId){if(hasPermission(actor.permissions,"bookings.manage"))return json({error:"Staff requests require a provider, customer or booking filter"},400);providerId=String(await ownProviderId(db,actor)||"");if(!providerId)return json({error:"No active provider identity is linked to this session"},403);}if(providerId)await requireProviderOwnership(db,actor,providerId);if(customerId)await requireCustomerOwnership(db,actor,customerId);if(bookingId&&!providerId&&!customerId&&!hasPermission(actor.permissions,"bookings.manage")){const stay=(await listBoardingStays(db,{bookingId}))[0];if(!stay)return json({data:[],scope:{providerId:null,cityId:null,zoneId:null}});const provider=String((stay as Record<string,unknown>).host_provider_id||""),customer=String((stay as Record<string,unknown>).customer_id||"");try{await requireProviderOwnership(db,actor,provider);}catch{await requireCustomerOwnership(db,actor,customer);}}const rows=await listBoardingStays(db,{providerId:providerId||undefined,customerId:customerId||undefined,bookingId:bookingId||undefined}),scope=providerId?await providerScope(db,providerId):{providerId:null,cityId:null,zoneId:null};return json({data:rows,scope:{...scope,customerId:customerId||null,bookingId:bookingId||null}});}catch(error){return authError(error,"Unable to load Boarding stays");}}
+    
+    export async function POST(request:Request){try{const body=await request.json() as Body,stayId=String(body.stayId||"").trim(),action=body.action,idempotencyKey=String(body.idempotencyKey||"").trim();if(!stayId||!action||!idempotencyKey)return json({error:"Stay, action and idempotency key are required"},400);const db=await database(),actor=await resolveActor(request),stay=await getBoardingStay(db,stayId);if(!stay)return json({error:"Boarding stay not found"},404);const providerId=String(stay.host_provider_id),customerId=String(stay.customer_id),staff=hasPermission(actor.permissions,"bookings.manage");if(action==="no_show"){requirePermission(actor,"bookings.manage");}else if(providerActions.has(action)){requirePermission(actor,"bookings.view");if(!staff)await requireProviderOwnership(db,actor,providerId);}else if(customerActions.has(action)){if(!staff){requirePermission(actor,"scheduling.book");await requireCustomerOwnership(db,actor,customerId);}}else return json({error:"Unsupported Boarding stay action"},400);const result=await mutateBoardingStay(db,{stayId,action,actorId:actor.email,idempotencyKey,reason:body.reason,carePlan:body.carePlan,careEventType:body.careEventType,detail:body.detail,requestedEnd:body.requestedEnd});await securityAudit(db,actor,`boarding.stay.${action}`,"boarding_stay",stayId,"completed",{bookingId:stay.booking_id,providerId,customerId,staffOverride:staff,duplicatePrevented:Boolean((result as Record<string,unknown>).duplicatePrevented)});return json({data:result},String((result as Record<string,unknown>).status)==="ops_escalation"?202:200);}catch(error){return authError(error,"Unable to update Boarding stay");}}
+    
+  operator: 'match'
+  stack: |-
+    TestContext.<anonymous> (file:///home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/boarding-gate2.test.mjs:107:10)
+    Test.runInAsyncScope (node:async_hooks:211:14)
+    Test.run (node:internal/test_runner/test:931:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:629:18)
+    Test.postRun (node:internal/test_runner/test:1042:19)
+    Test.run (node:internal/test_runner/test:970:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:629:7)
+  ...
+# Subtest: Boarding customer care plan and extension use canonical stay actions
+ok 12 - Boarding customer care plan and extension use canonical stay actions
+  ---
+  duration_ms: 0.402494
+  ...
+# Subtest: Boarding customer journey is truthful before host acceptance
+ok 13 - Boarding customer journey is truthful before host acceptance
+  ---
+  duration_ms: 0.366967
+  ...
+# Subtest: Boarding keeps split payment and coupons disabled while Pet Sitting fixtures remain isolated
+ok 14 - Boarding keeps split payment and coupons disabled while Pet Sitting fixtures remain isolated
+  ---
+  duration_ms: 0.324528
+  ...
+# Subtest: unified communications uses canonical threads outbox delivery events and dead letters
+ok 15 - unified communications uses canonical threads outbox delivery events and dead letters
+  ---
+  duration_ms: 5.372468
+  ...
+# Subtest: communication adapters are provider-independent and sandbox-first
+ok 16 - communication adapters are provider-independent and sandbox-first
+  ---
+  duration_ms: 1.824395
+  ...
+# Subtest: communications API separates staff actions by permission and keeps policy configurable
+ok 17 - communications API separates staff actions by permission and keeps policy configurable
+  ---
+  duration_ms: 1.922359
+  ...
+# Subtest: legacy customer contact cannot bypass canonical communication governance
+ok 18 - legacy customer contact cannot bypass canonical communication governance
+  ---
+  duration_ms: 2.272745
+  ...
+# Subtest: protected customer demo tracks repeat activity without inventing legacy subscription balances
+ok 19 - protected customer demo tracks repeat activity without inventing legacy subscription balances
+  ---
+  duration_ms: 4.629677
+  ...
+# Subtest: Grooming closure uses one canonical transaction across Customer Partner Team and Finance
+ok 20 - Grooming closure uses one canonical transaction across Customer Partner Team and Finance
+  ---
+  duration_ms: 9.57703
+  ...
+# Subtest: Grooming subscription commercial rules are city-configurable with audited defaults
+ok 21 - Grooming subscription commercial rules are city-configurable with audited defaults
+  ---
+  duration_ms: 2.241146
+  ...
+# Subtest: Grooming Gate 3 governs provider capacity acceptance and same-booking recovery
+ok 22 - Grooming Gate 3 governs provider capacity acceptance and same-booking recovery
+  ---
+  duration_ms: 4.300151
+  ...
+# Subtest: Grooming production-readiness policy is city-configurable, frozen per booking and observe-first
+ok 23 - Grooming production-readiness policy is city-configurable, frozen per booking and observe-first
+  ---
+  duration_ms: 3.806364
+  ...
+# Subtest: Grooming closure keeps live integrations explicitly outside the UAT transaction
+ok 24 - Grooming closure keeps live integrations explicitly outside the UAT transaction
+  ---
+  duration_ms: 1.68262
+  ...
+# Subtest: Grooming Maps keeps doorstep location canonical and provider-owned
+ok 25 - Grooming Maps keeps doorstep location canonical and provider-owned
+  ---
+  duration_ms: 6.248589
+  ...
+# Subtest: Grooming Maps UAT uses server-only sandbox Routes credentials
+ok 26 - Grooming Maps UAT uses server-only sandbox Routes credentials
+  ---
+  duration_ms: 2.994967
+  ...
+# Subtest: Grooming payment integration is sandbox-locked signed idempotent and reconciled
+ok 27 - Grooming payment integration is sandbox-locked signed idempotent and reconciled
+  ---
+  duration_ms: 7.4766
+  ...
+# Subtest: Grooming payment code does not embed production secrets or enable live payment mode
+ok 28 - Grooming payment code does not embed production secrets or enable live payment mode
+  ---
+  duration_ms: 2.60666
+  ...
+# Subtest: Grooming security uses explicit gateway permissions and trusted identity ownership
+ok 29 - Grooming security uses explicit gateway permissions and trusted identity ownership
+  ---
+  duration_ms: 6.871596
+  ...
+# Subtest: OTP identity exchange issues a bounded HttpOnly canonical session
+ok 30 - OTP identity exchange issues a bounded HttpOnly canonical session
+  ---
+  duration_ms: 5.24505
+  ...
+# Subtest: customer and provider sessions are scoped before reaching self-service APIs
+ok 31 - customer and provider sessions are scoped before reaching self-service APIs
+  ---
+  duration_ms: 3.297255
+  ...
+# Subtest: renders development preview metadata
+ok 32 - renders development preview metadata
+  ---
+  duration_ms: 303.58552
+  ...
+# Subtest: server-enforces privileged API access before route handlers
+ok 33 - server-enforces privileged API access before route handlers
+  ---
+  duration_ms: 3.122333
+  ...
+# Subtest: rejects an anonymous privileged API request at the worker boundary
+ok 34 - rejects an anonymous privileged API request at the worker boundary
+  ---
+  duration_ms: 32.595833
+  ...
+# Subtest: renders the isolated 100-customer PawSpace test lab
+ok 35 - renders the isolated 100-customer PawSpace test lab
+  ---
+  duration_ms: 68.210812
+  ...
+# Subtest: wires the synthetic transaction engine into every operating surface
+ok 36 - wires the synthetic transaction engine into every operating surface
+  ---
+  duration_ms: 97.015213
+  ...
+# Subtest: renders the 100-customer regression command centre
+ok 37 - renders the 100-customer regression command centre
+  ---
+  duration_ms: 50.311963
+  ...
+# Subtest: renders the PawSpace customer mobile-app foundation
+ok 38 - renders the PawSpace customer mobile-app foundation
+  ---
+  duration_ms: 51.167103
+  ...
+# Subtest: renders the connected Booking Command Center
+ok 39 - renders the connected Booking Command Center
+  ---
+  duration_ms: 57.073194
+  ...
+# Subtest: renders the evidence-based System Integration Control
+ok 40 - renders the evidence-based System Integration Control
+  ---
+  duration_ms: 49.34882
+  ...
+# Subtest: keeps the four-vertical closure UX explicit and partner-connected
+ok 41 - keeps the four-vertical closure UX explicit and partner-connected
+  ---
+  duration_ms: 3.05129
+  ...
+# Subtest: keeps long-stay payment, paid meeting and home media rules explicit
+ok 42 - keeps long-stay payment, paid meeting and home media rules explicit
+  ---
+  duration_ms: 2.619271
+  ...
+# Subtest: keeps payment timing, confidence meetings and delay recovery explicit
+ok 43 - keeps payment timing, confidence meetings and delay recovery explicit
+  ---
+  duration_ms: 2.589716
+  ...
+# Subtest: uses 60 minutes per training pet and one GPS policy for doorstep providers
+ok 44 - uses 60 minutes per training pet and one GPS policy for doorstep providers
+  ---
+  duration_ms: 2.887363
+  ...
+# Subtest: keeps coupon and referral management as separate full control modules
+ok 45 - keeps coupon and referral management as separate full control modules
+  ---
+  duration_ms: 2.376958
+  ...
+# Subtest: provides a city geofence and city price-book launch control
+ok 46 - provides a city geofence and city price-book launch control
+  ---
+  duration_ms: 1.740006
+  ...
+# Subtest: provides governed package, slot and dynamic pricing controls
+ok 47 - provides governed package, slot and dynamic pricing controls
+  ---
+  duration_ms: 2.671018
+  ...
+# Subtest: provides an end-to-end governed marketing command center
+ok 48 - provides an end-to-end governed marketing command center
+  ---
+  duration_ms: 2.404931
+  ...
+# Subtest: provides a unified finance, expenses and accounting command center
+ok 49 - provides a unified finance, expenses and accounting command center
+  ---
+  duration_ms: 3.316847
+  ...
+# Subtest: provides governed launch gates, UAT evidence and an exception queue
+ok 50 - provides governed launch gates, UAT evidence and an exception queue
+  ---
+  duration_ms: 5.061682
+  ...
+# Subtest: provides protected customer import, configurable roles and routed contact actions
+ok 51 - provides protected customer import, configurable roles and routed contact actions
+  ---
+  duration_ms: 3.498005
+  ...
+# Subtest: persists one canonical customer-to-payment lifecycle across all four journeys
+ok 52 - persists one canonical customer-to-payment lifecycle across all four journeys
+  ---
+  duration_ms: 7.174535
+  ...
+# Subtest: supports configurable requirements and contained training plan cards
+ok 53 - supports configurable requirements and contained training plan cards
+  ---
+  duration_ms: 2.427973
+  ...
+# Subtest: provides one governed business, accounts, customer and report centre
+ok 54 - provides one governed business, accounts, customer and report centre
+  ---
+  duration_ms: 6.375409
+  ...
+# Subtest: publishes an evidence-based full-platform audit without false production health claims
+ok 55 - publishes an evidence-based full-platform audit without false production health claims
+  ---
+  duration_ms: 3.471666
+  ...
+# Subtest: runs a persistent Revenue 100, lead SLA, RNR and customer-ticket foundation
+ok 56 - runs a persistent Revenue 100, lead SLA, RNR and customer-ticket foundation
+  ---
+  duration_ms: 3.985277
+  ...
+# Subtest: closes the revenue engine with reopening, incentives, reporting, accounts and ops enforcement
+ok 57 - closes the revenue engine with reopening, incentives, reporting, accounts and ops enforcement
+  ---
+  duration_ms: 2.011605
+  ...
+# Subtest: consolidates PawSpace into four role-based entry points
+ok 58 - consolidates PawSpace into four role-based entry points
+  ---
+  duration_ms: 124.13534
+  ...
+# Subtest: Training commercial truth is server-quoted and consumed exactly once
+ok 59 - Training commercial truth is server-quoted and consumed exactly once
+  ---
+  duration_ms: 7.175326
+  ...
+# Subtest: Training customer trainer choice comes from canonical capacity and final scheduling truth
+ok 60 - Training customer trainer choice comes from canonical capacity and final scheduling truth
+  ---
+  duration_ms: 4.020984
+  ...
+# Subtest: Training Ops uses canonical programme session recovery and payment records
+ok 61 - Training Ops uses canonical programme session recovery and payment records
+  ---
+  duration_ms: 1.812231
+  ...
+# Subtest: Training Finance blocks invented tax and trainer rates and keeps payout sandbox-only
+ok 62 - Training Finance blocks invented tax and trainer rates and keeps payout sandbox-only
+  ---
+  duration_ms: 3.108877
+  ...
+# Subtest: Training cancellation refund and credit-note flow is policy governed and customer owned
+ok 63 - Training cancellation refund and credit-note flow is policy governed and customer owned
+  ---
+  duration_ms: 3.166425
+  ...
+# Subtest: Training reconciliation spans quote booking programme sessions payment invoice and earnings
+ok 64 - Training reconciliation spans quote booking programme sessions payment invoice and earnings
+  ---
+  duration_ms: 1.845272
+  ...
+# Subtest: Training materializes one programme and one canonical row per reserved session
+ok 65 - Training materializes one programme and one canonical row per reserved session
+  ---
+  duration_ms: 5.755178
+  ...
+# Subtest: Training programme API is customer-owned and session-safe
+ok 66 - Training programme API is customer-owned and session-safe
+  ---
+  duration_ms: 2.195568
+  ...
+# Subtest: Training customer confirmation materializes the programme before showing success
+ok 67 - Training customer confirmation materializes the programme before showing success
+  ---
+  duration_ms: 2.680275
+  ...
+# Subtest: Training Gate 2 owns each trainer session and consumes completion exactly once
+ok 68 - Training Gate 2 owns each trainer session and consumes completion exactly once
+  ---
+  duration_ms: 6.198549
+  ...
+# Subtest: Training completion requires attendance homework progress and exact-session secure media
+ok 69 - Training completion requires attendance homework progress and exact-session secure media
+  ---
+  duration_ms: 3.483468
+  ...
+# Subtest: Training recovery preserves paid-session integrity
+ok 70 - Training recovery preserves paid-session integrity
+  ---
+  duration_ms: 3.196128
+  ...
+# Subtest: Trainer workspace is canonical-session and canonical-earnings driven
+ok 71 - Trainer workspace is canonical-session and canonical-earnings driven
+  ---
+  duration_ms: 2.607398
+  ...
+1..71
+# tests 71
+# suites 0
+# pass 70
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1615.935284
+EXIT_CODE=1
