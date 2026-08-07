@@ -1,0 +1,166 @@
+name: Boarding Gate 2 customer wire verifier
+
+on:
+  push:
+    branches:
+      - grooming-integration-closure
+    paths:
+      - .github/workflows/boarding-gate2-customer-wire.yml
+
+permissions:
+  contents: write
+
+jobs:
+  wire-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: grooming-integration-closure
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - name: Wire canonical Boarding customer stay UX
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path=Path('app/mobile-app/stay-flow.tsx')
+          text=path.read_text()
+          def one(old,new,label):
+            global text
+            if text.count(old)!=1:
+              raise SystemExit(f'{label}: expected one match, found {text.count(old)}')
+            text=text.replace(old,new,1)
+          one('import { loadBoardingCommercial, quoteBoarding, type BoardingQuote } from "../../lib/boarding-commercial-client";','import { loadBoardingCommercial, quoteBoarding, type BoardingQuote } from "../../lib/boarding-commercial-client";\nimport BoardingCustomerStayPanel from "./boarding-customer-stay-panel";\nimport BoardingCustomerStayStatus from "./boarding-customer-stay-status";','imports')
+          one('''const shortDate = (value: string) =>
+            new Date(`${value}T00:00:00`).toLocaleDateString("en-IN", {
+              day: "numeric",
+              month: "short",
+            });
+
+          export default function StayFlow''','''const shortDate = (value: string) =>
+            new Date(`${value}T00:00:00`).toLocaleDateString("en-IN", {
+              day: "numeric",
+              month: "short",
+            });
+          const dateOffset = (days: number) => {
+            const date = new Date();
+            date.setHours(0, 0, 0, 0);
+            date.setDate(date.getDate() + days);
+            return date.toISOString().slice(0, 10);
+          };
+
+          export default function StayFlow''','dynamic date helper')
+          one('[start, setStart] = useState("2026-08-24"),\n    [end, setEnd] = useState("2026-08-31"),','[start, setStart] = useState(() => dateOffset(3)),\n    [end, setEnd] = useState(() => dateOffset(10)),','dynamic default dates')
+          one('''          <article className={styles.matchIntro}>
+            <i>✦</i>
+            <div>
+              <b>Request shared within a 15 km service radius</b>
+              <span>
+                Verified commission partners receive the request, review the
+                Care Card and send an acceptance or flexible offer.
+              </span>
+            </div>
+          </article>
+          <label className={styles.field}>
+            Pricing preference
+            <select value={pricing} onChange={(e) => setPricing(e.target.value)}>
+              <option>Best available offer</option>
+              <option>Fixed PawSpace rate only</option>
+              <option>Premium-care offers welcome</option>
+            </select>
+          </label>
+          <div className={styles.offerStatus}>
+            <span><b>3</b> eligible partners</span>
+            <span><b>2</b> accepted</span>
+            <span><b>1</b> flexible offer</span>
+          </div>''','''          {mode === "boarding" ? (
+            <article className={styles.matchIntro}>
+              <i>✦</i>
+              <div>
+                <b>Server-priced verified Boarding hosts</b>
+                <span>Host profiles can be selected here, but PawSpace rechecks verification, species eligibility and capacity at confirmation. Hosts cannot send a different Boarding price.</span>
+              </div>
+            </article>
+          ) : <>
+            <article className={styles.matchIntro}>
+              <i>✦</i>
+              <div>
+                <b>Request shared within a 15 km service radius</b>
+                <span>Verified commission partners receive the request, review the Care Card and send an acceptance or flexible offer.</span>
+              </div>
+            </article>
+            <label className={styles.field}>
+              Pricing preference
+              <select value={pricing} onChange={(e) => setPricing(e.target.value)}>
+                <option>Best available offer</option>
+                <option>Fixed PawSpace rate only</option>
+                <option>Premium-care offers welcome</option>
+              </select>
+            </label>
+            <div className={styles.offerStatus}>
+              <span><b>3</b> eligible partners</span>
+              <span><b>2</b> accepted</span>
+              <span><b>1</b> flexible offer</span>
+            </div>
+          </>}''','boarding pricing UI')
+          one('''                {i < 2 && (
+                  <label>
+                    ✓ Partner accepted · live calendar verified
+                  </label>
+                )}
+                {i === 2 && <label>Flexible offer · awaiting your response</label>}''','''                {mode === "boarding" ? (
+                  <label>Governed host profile · capacity rechecked at confirmation</label>
+                ) : <>
+                  {i < 2 && <label>✓ Partner accepted · live calendar verified</label>}
+                  {i === 2 && <label>Flexible offer · awaiting your response</label>}
+                </>}''','boarding offer badges')
+          one('<p><b>You:</b> Can you also arrange pickup and share a flexible all-inclusive price?</p>','<p><b>You:</b> {mode === "boarding" ? "Can you confirm medication and routine support for this stay?" : "Can you also arrange pickup and share a flexible all-inclusive price?"}</p>','boarding chat pricing')
+          one('''            <span>
+              Partner approval<b>Accepted offer · final calendar approval required</b>
+            </span>''','''            <span>
+              Partner approval<b>{mode === "boarding" ? "Host acceptance follows the canonical booking request" : "Accepted offer · final calendar approval required"}</b>
+            </span>''','partner approval truth')
+          one('{scheduling ? "Locking care capacity…" : `Pay ${money(reserveAmount)} & request final partner approval`}','{scheduling ? "Locking care capacity…" : mode === "boarding" ? `Pay ${money(reserveAmount)} & create canonical stay` : `Pay ${money(reserveAmount)} & request final partner approval`}','confirm CTA')
+          one('{mode === "boarding" ? "STAY" : "SITTING"} CONFIRMED · {bookingId}','{mode === "boarding" ? "BOARDING BOOKING CREATED" : "SITTING CONFIRMED"} · {bookingId}','success truth')
+          one('<span className={styles.done}>Confirmed</span>','<span className={styles.done}>{mode === "boarding" ? "Booking created" : "Confirmed"}</span>','status first')
+          one('{taxi && mode === "boarding" ? "Taxi assigned" : "Care shared"}','{taxi && mode === "boarding" ? "Taxi assigned" : mode === "boarding" ? "Awaiting host" : "Care shared"}','status second')
+          one('''      {view === "stay" && (
+        <>''','''      {view === "stay" && (
+        mode === "boarding" ? <BoardingCustomerStayStatus bookingId={bookingId} caregiverName={caregiver.name} /> : <>''','booking canonical status')
+          one('''      {view === "care" && (
+        <>''','''      {view === "care" && (
+        mode === "boarding" ? <BoardingCustomerStayPanel bookingId={bookingId} caregiverName={caregiver.name} /> : <>''','care canonical panel')
+          if '2026-08-24' in text or '2026-08-31' in text:
+            raise SystemExit('fixed Boarding default dates remain')
+          path.write_text(text)
+          PY
+      - run: npm ci
+      - name: Run web tests
+        run: npm test
+      - name: Run lint
+        run: npm run lint
+      - name: Validate artifact
+        run: npm run validate:artifact
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+      - name: Backend typecheck
+        working-directory: backend
+        run: npm run typecheck
+      - name: Backend tests
+        working-directory: backend
+        run: npm test
+      - name: Commit verified Boarding customer wiring
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/mobile-app/stay-flow.tsx
+          git diff --cached --quiet && exit 0
+          git commit -m "Wire canonical Boarding customer stay UX [skip ci]"
+          git push origin HEAD:grooming-integration-closure
