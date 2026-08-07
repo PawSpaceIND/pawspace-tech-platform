@@ -18,8 +18,8 @@ export default function TeamFinance(){
   return <main style={{minHeight:"100vh",background:"#f7f4fb",padding:"32px",fontFamily:"Arial, sans-serif",color:"#24133f"}}>
     <div style={{maxWidth:1420,margin:"0 auto"}}>
       <header style={{display:"flex",justifyContent:"space-between",gap:20,alignItems:"center",marginBottom:24}}>
-        <div><small style={{fontWeight:800,letterSpacing:1.4,color:"#6c39a8"}}>PAWSPACE TEAM · FINANCE</small><h1 style={{fontSize:36,margin:"8px 0"}}>Grooming finance & reconciliation</h1><p style={{margin:0,color:"#6d6379"}}>Booking → payment → gateway event → reconciliation → refund → invoice, all linked to the canonical Grooming transaction.</p></div>
-        <div style={{display:"flex",gap:10}}><button onClick={()=>void load()} style={{padding:"11px 16px",borderRadius:10,border:"1px solid #d9cde8",background:"white",fontWeight:700}}>Refresh</button><Link href="/team" style={{padding:"11px 16px",borderRadius:10,background:"#4b168c",color:"white",textDecoration:"none",fontWeight:700}}>Team home</Link></div>
+        <div><small style={{fontWeight:800,letterSpacing:1.4,color:"#6c39a8"}}>PAWSPACE TEAM · FINANCE</small><h1 style={{fontSize:36,margin:"8px 0"}}>Service finance & reconciliation</h1><p style={{margin:0,color:"#6d6379"}}>Canonical service ledgers, reconciliation, invoices and settlement readiness from one Team Finance shell.</p></div>
+        <div style={{display:"flex",gap:10}}><button onClick={()=>void load()} style={{padding:"11px 16px",borderRadius:10,border:"1px solid #d9cde8",background:"white",fontWeight:700}}>Refresh</button><Link href="/team/finance/training" style={{padding:"11px 16px",borderRadius:10,border:"1px solid #d9cde8",background:"white",fontWeight:700,textDecoration:"none",color:"#4b168c"}}>Training finance</Link><Link href="/team" style={{padding:"11px 16px",borderRadius:10,background:"#4b168c",color:"white",textDecoration:"none",fontWeight:700}}>Team home</Link></div>
       </header>
 
       {error&&<section style={{padding:18,borderRadius:12,background:"#fff1f1",border:"1px solid #efc2c2",marginBottom:20}}><b>Finance ledger unavailable</b><div>{error}</div></section>}
