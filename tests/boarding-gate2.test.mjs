@@ -104,7 +104,7 @@ test("Boarding Host workspace does not restore unapproved commercial or dated fi
 
 test("Boarding customer stay read is booking-scoped and ownership checked",()=>{
   const api=read("app/api/boarding-stays/route.ts"),gateway=read("lib/api-gateway.ts"),client=read("lib/boarding-stay-client.ts");
-  assert.match(api,/scope\)===\"customer\"|scope\)==\"customer\"|scope\)==='customer'|scope\)===\'customer\'/);
+  assert.match(api,/customerScope=url\.searchParams\.get\(\"scope\"\)===\"customer\"/);
   assert.match(api,/Customer Boarding stay reads require only a booking ID/);
   assert.match(api,/listBoardingStays\(db,\{bookingId\}\)/);
   assert.match(api,/requireCustomerOwnership\(db,actor,ownedCustomerId\)/);
