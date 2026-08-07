@@ -1,9 +1,9 @@
 export type BoardingStayEvent={id:string;event_type:string;actor_id:string;detail:Record<string,unknown>;created_at:number};
 export type BoardingStay={id:string;booking_id:string;customer_id:string;host_provider_id:string;city_id:string;zone_id:string;package_code:string;package_name?:string;provider_name?:string;check_in_at:string;check_out_at:string;billed_units:number;pet_count:number;status:string;care_plan_status:string;check_in_status:string;check_out_status:string;extension_status:string;booking_status?:string;total_amount?:number;amount_due_now?:number;carePlan?:{status:string;plan:Record<string,unknown>;updatedAt:number}|null;extension?:{id:string;requested_end:string;status:string;reason:string;created_at:number}|null;events:BoardingStayEvent[]};
 export type BoardingStayAction="accept"|"decline"|"submit_care_plan"|"check_in"|"care_event"|"request_extension"|"host_unavailable"|"no_show"|"check_out";
+type BoardingStayScope={providerId?:string|null;cityId?:string|null;zoneId?:string|null};
+type StayList={data:BoardingStay[];scope?:BoardingStayScope};
+async function body<T>(response:Response){const payload=await response.json() as {data?:T;error?:string;scope?:BoardingStayScope};if(!response.ok)throw new Error(payload.error||"Boarding stay request failed");return payload;}
 
-type StayList={data:BoardingStay[];scope?:{providerId?:string|null}};
-async function body<T>(response:Response){const payload=await response.json() as {data?:T;error?:string;scope?:StayList["scope"]};if(!response.ok)throw new Error(payload.error||"Boarding stay request failed");return payload;}
-
-export async function loadOwnBoardingStays(){const response=await fetch("/api/boarding-stays",{cache:"no-store"}),payload=await body<BoardingStay[]>(response);return{stays:payload.data??[],providerId:payload.scope?.providerId??null};}
+export async function loadOwnBoardingStays(){const response=await fetch("/api/boarding-stays",{cache:"no-store"}),payload=await body<BoardingStay[]>(response);return{stays:payload.data??[],providerId:payload.scope?.providerId??null,cityId:payload.scope?.cityId??null,zoneId:payload.scope?.zoneId??null};}
 export async function updateBoardingStay(input:{stayId:string;action:BoardingStayAction;idempotencyKey:string;reason?:string;careEventType?:string;detail?:Record<string,unknown>;requestedEnd?:string;carePlan?:Record<string,string>}){const payload=await body<Record<string,unknown>>(await fetch("/api/boarding-stays",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)}));return payload.data??{};}
