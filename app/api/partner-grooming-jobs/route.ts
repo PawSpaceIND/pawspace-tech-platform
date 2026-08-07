@@ -1,3 +1,5 @@
+import{authorize,authError}from"../../../lib/server-auth";
+
 type Db=Awaited<ReturnType<typeof database>>;
 type Row=Record<string,unknown>;
 
@@ -20,6 +22,7 @@ function parseJson<T>(value:unknown,fallback:T):T{try{return JSON.parse(String(v
 
 export async function GET(request:Request){
   try{
+    await authorize(request,"bookings.view");
     const providerId=new URL(request.url).searchParams.get("providerId")?.trim();
     if(!providerId)return json({error:"Provider ID is required"},400);
     const db=await database();await ensureTables(db);
@@ -55,5 +58,5 @@ export async function GET(request:Request){
       });
     }
     return json({source:"canonical UAT provider work orders",providerId,jobs});
-  }catch(error){return json({error:error instanceof Error?error.message:"Unable to load Partner Grooming jobs"},500);}
+  }catch(error){return authError(error,"Unable to load Partner Grooming jobs");}
 }
