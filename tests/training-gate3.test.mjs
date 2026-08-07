@@ -73,7 +73,12 @@ test("Training Finance blocks invented tax and trainer rates and keeps payout sa
  assert.match(finance,/issueTrainingInvoice/);
  assert.match(finance,/issued_uat/);
  assert.match(finance,/liveTaxFiling:false/);
+ assert.match(finance,/captured_amount/);
+ assert.match(finance,/requiredCoverage/);
+ assert.match(finance,/captured\+0\.01>=requiredCoverage/);
+ assert.match(finance,/does not yet cover delivered Training value/);
  assert.doesNotMatch(finance,/founder_seed/);
+ assert.doesNotMatch(finance,/booking_status\)!==\"cancelled\"\?\"earned\"/);
  assert.match(api,/finance\.manage/);
  assert.match(api,/issue_invoice/);
  assert.match(providerApi,/requireProviderOwnership/);
@@ -96,6 +101,8 @@ test("Training cancellation refund and credit-note flow is policy governed and c
  assert.match(cancel,/capturedAmount=String\(row\.payment_status\)===\"captured\"\?Number\(row\.amount_due_now\|\|0\):0/);
  assert.match(cancel,/outstandingServiceValue/);
  assert.match(cancel,/waiveOutstanding/);
+ assert.match(cancel,/status IN \('arrived','in_session'\)/);
+ assert.match(cancel,/cannot be cancelled while session/);
  assert.match(cancel,/training_refund_instructions/);
  assert.match(cancel,/instruction_ready_sandbox/);
  assert.match(cancel,/sandbox_not_connected/);
@@ -116,7 +123,7 @@ test("Training cancellation refund and credit-note flow is policy governed and c
  assert.match(financePage,/Configure cancellation policy/);
  assert.match(financePage,/Training cancellation & refund cases/);
  assert.match(financePage,/Issue UAT credit note/);
- assert.match(finance,/status=String\(p\.payment_status\)===\"captured\"\?\"earned\":\"held_payment\"/);
+ assert.match(finance,/captured\+0\.01>=requiredCoverage/);
  assert.doesNotMatch(finance,/booking_status\)!==\"cancelled\"\?\"earned\"/);
 });
 
