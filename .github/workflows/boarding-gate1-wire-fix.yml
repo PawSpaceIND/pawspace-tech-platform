@@ -23,7 +23,7 @@ jobs:
         with:
           node-version: 22.13.0
           cache: npm
-      - name: Apply Gate 1 transformation and syntax correction
+      - name: Apply Gate 1 transformation and lint correction
         shell: bash
         run: |
           python3 - <<'PY'
@@ -43,7 +43,12 @@ jobs:
           fixed='''            {mode !== "boarding" && <span>\n              PawSpace protection & 24/7 support<b>{money(protection)}</b>\n            </span>}\n            {false && taxi && mode === "boarding" && ('''
           if broken not in text:
               raise SystemExit('expected Boarding protection JSX patch not found')
-          p.write_text(text.replace(broken,fixed,1))
+          text=text.replace(broken,fixed,1)
+          lint_bad='useEffect(()=>{if(mode!=="boarding"){setBoardingQuote(null);return;}let active=true;'
+          lint_good='useEffect(()=>{if(mode!=="boarding")return;let active=true;'
+          if lint_bad not in text:
+              raise SystemExit('expected Boarding quote effect lint target not found')
+          p.write_text(text.replace(lint_bad,lint_good,1))
           PY
       - name: Install web dependencies
         run: npm ci
