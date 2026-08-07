@@ -30,6 +30,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/grooming-commercial-policy")return method==="GET"?"pricing.view":"pricing.manage";
   if(url.pathname==="/api/provider-capacity-control")return method==="GET"?"scheduling.view":"scheduling.manage";
   if(url.pathname==="/api/provider-assignment-recovery"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["accept","decline"].includes(String(body.action))?"bookings.view":"bookings.manage";}
+  if(url.pathname==="/api/boarding-stays"){if(method==="GET")return "bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");if(["submit_care_plan","request_extension"].includes(action))return "scheduling.book";if(action==="no_show")return "bookings.manage";return "bookings.view";}
   if(url.pathname==="/api/scheduling-rules")return method==="GET"?"scheduling.view":"scheduling.manage";
   if(url.pathname==="/api/launch-readiness")return method==="GET"?"launch.view":"launch.manage";
   if(url.pathname==="/api/uat-scheduling"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action&&body.action!=="reserve"?"scheduling.manage":"scheduling.book";}
