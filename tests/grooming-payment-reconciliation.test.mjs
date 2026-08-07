@@ -41,7 +41,8 @@ test("Grooming payment integration is sandbox-locked signed idempotent and recon
   assert.match(financeUi,/Unreconciled/);
   assert.match(financeUi,/Open exceptions/);
   assert.match(financeUi,/Variance/);
-  assert.match(gateway,/url\.pathname==="\/api\/pricing-quote"\|\|url\.pathname==="\/api\/razorpay-webhook"/);
+  assert.match(gateway,/url\.pathname==="\/api\/pricing-quote"/);
+  assert.match(gateway,/url\.pathname==="\/api\/razorpay-webhook"/);
   assert.match(gateway,/\/api\/grooming-payment-sandbox/);
   assert.match(gateway,/payments\.manage/);
 });

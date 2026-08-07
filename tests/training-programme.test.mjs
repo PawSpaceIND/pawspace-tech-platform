@@ -32,7 +32,7 @@ test("Training customer confirmation materializes the programme before showing s
  const[flow,client]=await Promise.all([source("app/mobile-app/training-flow.tsx"),source("lib/training-programme-client.ts")]);
  assert.match(flow,/materializeTrainingProgramme/);
  assert.match(flow,/bookingId:canonical\.bookingId/);
- assert.match(flow,/meetBookingId:meetBookingId\|\|undefined/);
+ assert.match(flow,/meetBookingId:linkedMeetBookingId\|\|undefined/);
  assert.ok(flow.indexOf("materializeTrainingProgramme")<flow.indexOf("setConfirmed(true)"));
  assert.match(client,/\/api\/training-programmes/);
 });

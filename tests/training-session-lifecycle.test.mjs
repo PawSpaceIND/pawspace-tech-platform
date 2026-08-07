@@ -58,7 +58,8 @@ test("Trainer workspace is canonical-session and canonical-earnings driven",asyn
  assert.match(page,/CANONICAL TRAINING PAYOUT LEDGER/);
  assert.match(page,/providerEarnings/);
  assert.match(page,/Live payout is not connected/);
- assert.match(page,/sandbox_not_connected/);
+ assert.match(page,/executionMode/);
+ assert.match(page,/livePayout:false/);
  assert.doesNotMatch(page,/const dogs =/);
  assert.doesNotMatch(page,/₹42,680/);
  assert.doesNotMatch(page,/Bank ending 2481/);

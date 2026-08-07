@@ -204,8 +204,8 @@ test("keeps the four-vertical closure UX explicit and partner-connected", async 
 });
 
 test("keeps long-stay payment, paid meeting and home media rules explicit", async () => {
-  const [mobileHome, stays, training, trainer, host] = await Promise.all(
-    ["app/mobile-app/page.tsx", "app/mobile-app/stay-flow.tsx", "app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/host/page.tsx"].map((path) =>
+  const [mobileHome, stays, training, trainer, host, trainingCommercial] = await Promise.all(
+    ["app/mobile-app/page.tsx", "app/mobile-app/stay-flow.tsx", "app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/host/page.tsx", "lib/training-commercial-governance.ts"].map((path) =>
       readFile(new URL("../" + path, import.meta.url), "utf8"),
     ),
   );
@@ -224,10 +224,13 @@ test("keeps long-stay payment, paid meeting and home media rules explicit", asyn
   assert.match(stays, /Flexible offer/);
   assert.match(stays, /Three walks/);
   assert.match(stays, /1-hour play time/);
-  assert.match(training, /45-minute trainer Meet & Greet · ₹500/);
-  assert.match(training, /directTrainingMinutes = selectedPets.length \* 45/);
-  assert.match(training, /closeoutMinutes = selectedPets.length \* 15/);
-  assert.match(training, /45 minutes of direct training/);
+  assert.match(training, /meetPackage\.direct_minutes_per_pet/);
+  assert.match(training, /meetPackage\.coaching_minutes_per_pet/);
+  assert.match(training, /meetPackage\.base_price/);
+  assert.match(trainingCommercial, /code:"trainer-meet-greet",name:"Trainer Meet & Greet",sessions:1,validityDays:7,price:500/);
+  assert.match(training, /serviceMinutes=selectedPets\.length\*\(plan\.directMinutes\+plan\.coachingMinutes\)/);
+  assert.match(trainingCommercial, /direct:45,coaching:15/);
+  assert.match(training, /\{plan\.directMinutes\} minutes of direct training/);
   assert.match(training, /outdoor leash walking and toilet-routine practice/);
   assert.match(training, /30–45 minute travel buffer/);
   assert.match(trainer, /CANONICAL SESSION LEDGER/);
@@ -262,14 +265,15 @@ test("uses 60 minutes per training pet and one GPS policy for doorstep providers
       readFile(new URL("../" + path, import.meta.url), "utf8"),
     ),
   );
-  assert.match(training, /selectedPets.length \* 15/);
-  assert.match(training, /Every pet has one paid 60-minute session/);
+  assert.match(training, /serviceMinutes=selectedPets\.length\*\(plan\.directMinutes\+plan\.coachingMinutes\)/);
+  assert.match(training, /Every pet has one paid \{plan\.directMinutes\+plan\.coachingMinutes\}-minute session/);
   assert.match(trainer, /loadTrainerSessions/);
   assert.match(trainer, /selected.total_sessions/);
   assert.match(tracking, /Tracking starts when the/);
   assert.match(tracking, /Primary and secondary contacts/);
   assert.match(grooming, /role="Groomer"/);
-  assert.match(training, /role="Trainer"/);
+  assert.match(training, /loadTrainingTrainers/);
+  assert.match(training, /confirmedTrainerName/);
   assert.match(stays, /role="Sitter"/);
 });
 
