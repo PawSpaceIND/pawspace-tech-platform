@@ -61,21 +61,46 @@ The Grooming transaction path now uses one canonical booking/work-order/payment/
 - Partner provider-identity-to-provider-ID ownership enforcement still needs production identity mapping; RBAC alone is not the final provider-ownership gate.
 - Partner Home, Earnings, Calendar and some surrounding dashboard statistics remain prototype/fixture content even though Grooming Bookings is canonical.
 - GST/tax calculation is not production tax logic; UAT invoices currently record booking gross/net without the final tax engine.
-- The per-booking subscription ledger now reserves, consumes and reverses usage, but full subscription-master freeze/extension/expiry rules still need production integration.
+- The per-booking subscription ledger now reserves, consumes and reverses usage; subscription plan commercial values are now configurable and frozen per purchase, while deeper production freeze/extension/expiry operations still require integration.
 - Real-device UAT, employee pilot, one-zone Bengaluru pilot, domain cutover, monitoring, backups and support SOP remain launch gates.
 - External integrations must be added one at a time in sandbox and verified before production credentials are enabled.
 
+## Production-readiness Gate 4 — commercial policy governance
+
+**Status: ENGINEERING CLOSED IN OBSERVE MODE. BUSINESS SIGN-OFF PENDING. ENFORCEMENT OFF.**
+
+The remaining Grooming commercial rules are now governed as versioned city/zone configuration instead of being scattered or permanently hard-coded.
+
+- Grooming subscription price, session/credit count, validity value/unit, eligible pet types, service package mapping, max pets, credits per pet, family-wallet behavior, pause/grace days, renewal window, benefits/terms, active state and effective dates are configurable by city and optional zone.
+- Subscription purchases retain a frozen configuration snapshot so later business changes do not rewrite existing customer wallets.
+- Grooming cancellation cutoff, refund percentage before/after cutoff, reschedule cutoff, late-reschedule permission, maximum reschedules, reschedule fee type/value, no-show refund percentage, multi-pet maximum, multi-pet pricing mode and locked booking statuses are configurable by city/zone with effective dates, versions and audit history.
+- Every new Grooming booking freezes the applicable commercial-policy version inside the canonical booking pricing snapshot.
+- Cancellation and reschedule evaluate the frozen booking policy, not whatever policy happens to be current later.
+- Commercial policy has explicit `observe` and `enforce` modes. `observe` is the default and preserves current UAT behavior while exposing the policy decision for validation. `enforce` must not be enabled until business values are signed off.
+- Current Bengaluru seed values are behavior-preserving defaults only; they are not represented as final PawSpace commercial policy.
+- Permanent regression verifies city/zone governance, per-booking policy freeze, observe-first behavior, refund calculation path and reschedule policy output.
+- Clean permanent CI passed at commit `d5706b193dc93b81b870b5a56fdd78ecf422657f`: web tests, lint, Sites artifact validation, backend typecheck and backend tests.
+
+### Business sign-off still required before enforcement
+- Final Bengaluru cancellation cutoff.
+- Refund percentages/fees inside and outside the cutoff.
+- Final reschedule cutoff, maximum reschedule count and any reschedule charge.
+- No-show refund/credit policy.
+- Final multi-pet commercial rule and pricing behavior.
+- Final subscription plan values per launch city/zone.
+- Explicit approval to switch the approved city/zone policy from `observe` to `enforce`.
+
 ## Closure sequence status
 1. ✅ Import recovered Site v67 source without redesigning it.
-2. 🟡 Grooming catalogue/pricing rules exist; production governance/version freeze still requires business sign-off.
+2. 🟡 Catalogue, subscription and booking-change policy governance/versioning are implemented and CI-green; final Bengaluru business values/sign-off and switch from `observe` to `enforce` remain.
 3. ✅ Canonical booking aggregate established for Grooming UAT.
 4. ✅ Main customer booking confirmation connected with scheduling and idempotency.
 5. ✅ Customer, pet, schedule/provider, work-order and payment state persisted for the UAT path.
 6. ✅ Partner Grooming Bookings, Team Operations and Team Finance project the canonical transaction.
-7. ✅ UAT provider lifecycle connected through completion; production GPS/provider-identity controls remain launch work.
+7. ✅ UAT provider lifecycle connected through completion; governed capacity/acceptance/recovery are implemented, while production GPS/provider identity remain launch work.
 8. ✅ Completion proof gate implemented; production secure media remains.
-9. ✅ UAT payment reconciliation, cancellation refund case and invoice state implemented; gateway/GST/accounting remain production integrations.
-10. ✅ Per-booking subscription reserve, consume and cancellation reversal implemented; production subscription-master expiry/freeze/extension remains.
+9. ✅ UAT payment reconciliation, policy-aware cancellation refund case and invoice state implemented; gateway/GST/accounting remain production integrations.
+10. ✅ Per-booking subscription reserve, consume and cancellation reversal implemented; subscription commercial configuration is versioned/frozen per purchase; deeper production subscription freeze/extension/expiry operations remain.
 11. 🟡 Existing RBAC is applied to Partner projection and customer ownership is enforced for booking changes; production provider ownership/identity enforcement remains.
 12. ⏳ External integrations remain deliberately disconnected pending UAT approval.
 13. 🟡 Automated internal closure regression passes; real-device UAT, employee pilot and one-zone Bengaluru pilot remain.
@@ -83,7 +108,7 @@ The Grooming transaction path now uses one canonical booking/work-order/payment/
 ## Next phase — production readiness
 Do not add major new product modules. Convert the closed internal UAT path into a controlled production candidate in this order:
 
-1. Finalize Grooming catalogue, pricing, validity, cancellation/reschedule/refund and multi-pet rules with business sign-off.
+1. 🟡 Grooming catalogue/subscription/change-policy governance infrastructure is complete in `observe` mode; finalize and sign off Bengaluru commercial values, then enable `enforce` only after approval.
 2. Implement final customer identity and provider identity/ownership mapping.
 3. Replace synthetic proof references with secure media upload/storage and access controls.
 4. Integrate Razorpay payment/refund webhooks and reconciliation in sandbox.
