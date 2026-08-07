@@ -24,7 +24,7 @@ jobs:
           node-version: 22.13.0
           cache: npm
       - name: Apply governed Boarding host discovery UI
-        run: python3 scripts/boarding-host-discovery-wire.py
+        run: python3 scripts/boarding-host-discovery-wire-v2.py
       - run: npm ci
       - name: Run web tests
         run: npm test
