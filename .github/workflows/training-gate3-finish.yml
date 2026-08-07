@@ -18,7 +18,7 @@ jobs:
         with:
           node-version: 22.13.0
           cache: npm
-      - run: python3 scripts/training-gate3-finish.py
+      - run: python3 scripts/training-gate3-finish-v2.py
       - run: npm ci
       - run: npm run build
       - run: npm run lint
