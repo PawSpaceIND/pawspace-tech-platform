@@ -1,7 +1,8 @@
 import { defaultRoles, hasPermission, parsePermissions, type Permission } from "./platform-security";
+import {ensureIdentityBindingTables,findIdentityBinding,type IdentitySource,type PrincipalType} from "./identity-binding";
 
 type Db = Awaited<ReturnType<typeof database>>;
-export type AuthenticatedActor = { email:string; name:string; roleCode:string; permissions:string[]; developmentPreview:boolean };
+export type AuthenticatedActor = { email:string; name:string; roleCode:string; permissions:string[]; developmentPreview:boolean; identitySource:IdentitySource; principalType:PrincipalType; principalKey:string };
 
 export async function database(){const {env}=await import("cloudflare:workers");return env.DB;}
 
@@ -27,6 +28,7 @@ export async function ensureSecurityTables(db:Db){
     db.prepare("CREATE TABLE IF NOT EXISTS customer_identity_links (email TEXT PRIMARY KEY, customer_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', verified_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS provider_identity_links (email TEXT PRIMARY KEY, provider_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', verified_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)"),
   ]);
+  await ensureIdentityBindingTables(db);
   for(const role of defaultRoles){
     await db.prepare("INSERT INTO role_definitions (code,name,description,permissions_json,system_role,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(code) DO UPDATE SET name=excluded.name,description=excluded.description,system_role=excluded.system_role")
       .bind(role.code,role.name,role.description,JSON.stringify(role.permissions),1,now).run();
@@ -35,7 +37,7 @@ export async function ensureSecurityTables(db:Db){
 
 export async function resolveActor(request:Request):Promise<AuthenticatedActor>{
   const db=await database(); await ensureSecurityTables(db);
-  if(isDevelopmentPreview(request))return {email:"preview@pawspace.test",name:"Preview operator",roleCode:"superuser",permissions:["*"],developmentPreview:true};
+  if(isDevelopmentPreview(request))return {email:"preview@pawspace.test",name:"Preview operator",roleCode:"superuser",permissions:["*"],developmentPreview:true,identitySource:"workspace",principalType:"email",principalKey:"preview@pawspace.test"};
   const identity=forwardedIdentity(request);
   if(!identity.email)throw new Response("Authentication required",{status:401});
   let user=await db.prepare("SELECT email,name,role_code,status FROM app_users WHERE email=?").bind(identity.email).first<Record<string,unknown>>();
@@ -48,7 +50,7 @@ export async function resolveActor(request:Request):Promise<AuthenticatedActor>{
   if(user.status!=="active")throw new Response("Identity is disabled",{status:403});
   const role=await db.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(String(user.role_code)).first<{permissions_json:string}>();
   if(!role)throw new Response("Assigned role is unavailable",{status:403});
-  return {email:identity.email,name:String(user.name||identity.name),roleCode:String(user.role_code),permissions:parsePermissions(role.permissions_json),developmentPreview:false};
+  return {email:identity.email,name:String(user.name||identity.name),roleCode:String(user.role_code),permissions:parsePermissions(role.permissions_json),developmentPreview:false,identitySource:"workspace",principalType:"email",principalKey:identity.email};
 }
 
 export function requirePermission(actor:AuthenticatedActor,permission:Permission){
@@ -60,15 +62,19 @@ export async function authorize(request:Request,permission:Permission){return re
 
 export async function requireCustomerOwnership(db:Db,actor:AuthenticatedActor,customerId:string){
   if(actor.developmentPreview||hasPermission(actor.permissions,"customers.manage")||hasPermission(actor.permissions,"bookings.manage"))return actor;
-  const link=await db.prepare("SELECT customer_id,status FROM customer_identity_links WHERE email=?").bind(actor.email).first<Record<string,unknown>>();
-  if(!link||link.status!=="active"||String(link.customer_id)!==customerId)throw new Response("Customer ownership denied",{status:403});
+  const binding=await findIdentityBinding(db,{identitySource:actor.identitySource,principalType:actor.principalType,principalKey:actor.principalKey,subjectType:"customer"});
+  if(binding){if(String(binding.subject_id)!==customerId)throw new Response("Customer ownership denied",{status:403});return actor;}
+  const legacy=await db.prepare("SELECT customer_id,status FROM customer_identity_links WHERE email=?").bind(actor.email).first<Record<string,unknown>>();
+  if(!legacy||legacy.status!=="active"||String(legacy.customer_id)!==customerId)throw new Response("Customer ownership denied",{status:403});
   return actor;
 }
 
 export async function requireProviderOwnership(db:Db,actor:AuthenticatedActor,providerId:string){
   if(actor.developmentPreview||hasPermission(actor.permissions,"providers.manage")||hasPermission(actor.permissions,"grooming.manage")||hasPermission(actor.permissions,"bookings.manage"))return actor;
-  const link=await db.prepare("SELECT provider_id,status FROM provider_identity_links WHERE email=?").bind(actor.email).first<Record<string,unknown>>();
-  if(!link||link.status!=="active"||String(link.provider_id)!==providerId)throw new Response("Provider ownership denied",{status:403});
+  const binding=await findIdentityBinding(db,{identitySource:actor.identitySource,principalType:actor.principalType,principalKey:actor.principalKey,subjectType:"provider"});
+  if(binding){if(String(binding.subject_id)!==providerId)throw new Response("Provider ownership denied",{status:403});return actor;}
+  const legacy=await db.prepare("SELECT provider_id,status FROM provider_identity_links WHERE email=?").bind(actor.email).first<Record<string,unknown>>();
+  if(!legacy||legacy.status!=="active"||String(legacy.provider_id)!==providerId)throw new Response("Provider ownership denied",{status:403});
   return actor;
 }
 
