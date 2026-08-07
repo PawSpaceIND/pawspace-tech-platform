@@ -4,18 +4,23 @@ import baseStyles from "./training.module.css";
 import extraStyles from "./training-extra.module.css";
 import planStyles from "./training-plans.module.css";
 import { createTestTransaction } from "../../lib/test-transaction";
-import ProviderTrackingCard from "./provider-tracking-card";
 import CouponField from "./coupon-field";
 import { reserveUatSchedule } from "../../lib/uat-scheduling-client";
 import { createCanonicalLifecycle } from "../../lib/canonical-lifecycle-client";
-import { materializeTrainingProgramme } from "../../lib/training-programme-client";
+import { loadTrainingProgramme, materializeTrainingProgramme, type CustomerTrainingProgramme } from "../../lib/training-programme-client";
+import { loadTrainingPackages, quoteTraining, type TrainingPackage, type TrainingQuote } from "../../lib/training-commercial-client";
 const styles = { ...baseStyles, ...extraStyles };
 type Plan = {
+  packageCode: string;
   name: string;
   sessions: number;
   sessionLabel: string;
   validity: string;
+  validityDays: number;
   price: number;
+  directMinutes: number;
+  coachingMinutes: number;
+  splitDuePercent: number;
   detail: string;
   bonus: boolean;
   level: string;
@@ -39,97 +44,16 @@ const trainingPets = [
   { name: "Luna", detail: "Indie · 3 years", icon: "🐕" },
   { name: "Toby", detail: "Shih Tzu · 1 year", icon: "🐶" },
 ];
-const plans: Plan[] = [
-  {
-    name: "Starter Plan",
-    sessions: 2,
-    sessionLabel: "2 sessions",
-    validity: "1 month",
-    price: 3500,
-    detail:
-      "Professional guidance and a clear starting structure for dogs of any age.",
-    bonus: false,
-    level: "Assessment start",
-    idealFor: "Parents who need a professional plan before committing long-term",
-    outcomes: ["Behaviour assessment", "Home routine", "Action plan"],
-  },
-  {
-    name: "Puppy Training Plan",
-    sessions: 4,
-    sessionLabel: "4 sessions",
-    validity: "1 month",
-    price: 6000,
-    detail:
-      "Early habits, confidence, socialisation and essential puppy foundations.",
-    bonus: false,
-    level: "Puppy foundation",
-    idealFor: "Puppies up to 8 months building their first routines",
-    outcomes: ["Toilet routine", "Biting control", "Social confidence"],
-  },
-  {
-    name: "Basic Obedience Plan",
-    sessions: 8,
-    sessionLabel: "8 sessions",
-    validity: "2 months",
-    price: 12000,
-    detail: "Obedience, impulse control, home manners and communication.",
-    bonus: true,
-    level: "Core programme",
-    idealFor: "Everyday manners, focus and reliable basic commands",
-    outcomes: ["Sit, stay and recall", "Impulse control", "Home manners"],
-    recommended: true,
-  },
-  {
-    name: "Leash Obedience Plan · 8",
-    sessions: 8,
-    sessionLabel: "8 sessions",
-    validity: "2 months",
-    price: 12000,
-    detail:
-      "Pulling, reactivity, heel positioning and real-world walking control.",
-    bonus: true,
-    level: "Leash focus",
-    idealFor: "Dogs who pull, lunge or lose focus outdoors",
-    outcomes: ["Loose-leash walk", "Heel position", "Calm passing"],
-  },
-  {
-    name: "Leash Obedience Plan · 12",
-    sessions: 12,
-    sessionLabel: "12 sessions",
-    validity: "3 months",
-    price: 16500,
-    detail: "Extended leash, recall and distraction-control programme.",
-    bonus: true,
-    level: "Leash intensive",
-    idealFor: "Persistent pulling or reactivity needing more practice",
-    outcomes: ["Leash control", "Outdoor recall", "Distraction work"],
-  },
-  {
-    name: "Advanced Obedience Plan",
-    sessions: 12,
-    sessionLabel: "10–12 sessions",
-    validity: "3 months",
-    price: 16500,
-    detail: "Reliable commands, impulse control and real-world manners.",
-    bonus: true,
-    level: "Advanced",
-    idealFor: "Dogs ready to work reliably around real-world distractions",
-    outcomes: ["Distance commands", "Advanced recall", "Public manners"],
-  },
-  {
-    name: "Pro Training Plan",
-    sessions: 16,
-    sessionLabel: "14–16 sessions",
-    validity: "3 months",
-    price: 20000,
-    detail:
-      "High-level obedience, heel work, distance control and complex behaviour.",
-    bonus: true,
-    level: "Professional",
-    idealFor: "Families seeking the most complete obedience programme",
-    outcomes: ["Off-leash control", "Complex behaviour", "Handler mastery"],
-  },
-];
+const planMarketing = [
+  { packageCode:"training-2-starter",name:"Starter Plan",detail:"Professional guidance and a clear starting structure for dogs of any age.",bonus:false,level:"Assessment start",idealFor:"Parents who need a professional plan before committing long-term",outcomes:["Behaviour assessment","Home routine","Action plan"] },
+  { packageCode:"training-4-puppy",name:"Puppy Training Plan",detail:"Early habits, confidence, socialisation and essential puppy foundations.",bonus:false,level:"Puppy foundation",idealFor:"Puppies up to 8 months building their first routines",outcomes:["Toilet routine","Biting control","Social confidence"] },
+  { packageCode:"training-8-basic",name:"Basic Obedience Plan",detail:"Obedience, impulse control, home manners and communication.",bonus:true,level:"Core programme",idealFor:"Everyday manners, focus and reliable basic commands",outcomes:["Sit, stay and recall","Impulse control","Home manners"],recommended:true },
+  { packageCode:"training-8-leash",name:"Leash Obedience Plan · 8",detail:"Pulling, reactivity, heel positioning and real-world walking control.",bonus:true,level:"Leash focus",idealFor:"Dogs who pull, lunge or lose focus outdoors",outcomes:["Loose-leash walk","Heel position","Calm passing"] },
+  { packageCode:"training-12-leash",name:"Leash Obedience Plan · 12",detail:"Extended leash, recall and distraction-control programme.",bonus:true,level:"Leash intensive",idealFor:"Persistent pulling or reactivity needing more practice",outcomes:["Leash control","Outdoor recall","Distraction work"] },
+  { packageCode:"training-12-advanced",name:"Advanced Obedience Plan",detail:"Reliable commands, impulse control and real-world manners.",bonus:true,level:"Advanced",idealFor:"Dogs ready to work reliably around real-world distractions",outcomes:["Distance commands","Advanced recall","Public manners"] },
+  { packageCode:"training-16-pro",name:"Pro Training Plan",detail:"High-level obedience, heel work, distance control and complex behaviour.",bonus:true,level:"Professional",idealFor:"Families seeking the most complete obedience programme",outcomes:["Off-leash control","Complex behaviour","Handler mastery"] },
+] as const;
+const emptyPlan:Plan={packageCode:"training-8-basic",name:"Basic Obedience Plan",sessions:0,sessionLabel:"Loading…",validity:"Loading…",validityDays:0,price:0,directMinutes:0,coachingMinutes:0,splitDuePercent:50,detail:"Loading the canonical Training catalogue.",bonus:true,level:"Core programme",idealFor:"Everyday manners, focus and reliable basic commands",outcomes:[],recommended:true};
 const trainers = [
   {
     name: "Kiran S.",
@@ -152,7 +76,19 @@ const money = (n: number) =>
     currency: "INR",
     maximumFractionDigits: 0,
   }).format(n);
+const IST_OFFSET=330*60_000;
+const weekdayMap:Record<string,number[]>={"Tue & Sat":[2,6],"Wed & Sun":[3,0],"Every Saturday":[6],"Choose each session myself":[0,1,2,3,4,5,6]};
+function futureIst(days:number,hour:number,minute=0){const now=new Date(),shifted=new Date(now.getTime()+IST_OFFSET);return new Date(Date.UTC(shifted.getUTCFullYear(),shifted.getUTCMonth(),shifted.getUTCDate()+days,hour,minute)-IST_OFFSET);}
+function nextTrainingStarts(frequency:string,time:string,count=3){const hour=time.startsWith("9")?9:time.startsWith("3")?15:17,days=weekdayMap[frequency]||weekdayMap["Choose each session myself"],result:Date[]=[];for(let offset=1;offset<=28&&result.length<count;offset++){const candidate=futureIst(offset,hour),weekday=new Date(candidate.getTime()+IST_OFFSET).getUTCDay();if(days.includes(weekday))result.push(candidate);}return result;}
+function slotLabel(value:Date){return new Intl.DateTimeFormat("en-IN",{timeZone:"Asia/Kolkata",weekday:"short",day:"numeric",month:"short",hour:"numeric",minute:"2-digit"}).format(value);}
+function calendarDates(start:Date,frequency:string,time:string,count=4){const hour=time.startsWith("9")?9:time.startsWith("3")?15:17,days=weekdayMap[frequency]||weekdayMap["Choose each session myself"],result:Date[]=[start];for(let offset=1;offset<=40&&result.length<count;offset++){const shifted=new Date(start.getTime()+IST_OFFSET),candidate=new Date(Date.UTC(shifted.getUTCFullYear(),shifted.getUTCMonth(),shifted.getUTCDate()+offset,hour,0)-IST_OFFSET),weekday=new Date(candidate.getTime()+IST_OFFSET).getUTCDay();if(days.includes(weekday))result.push(candidate);}return result;}
+function buildPlans(packages:TrainingPackage[]):Plan[]{return planMarketing.flatMap(marketing=>{const pkg=packages.find(item=>item.package_code===marketing.packageCode);if(!pkg)return[];return[{...marketing,sessions:Number(pkg.sessions),sessionLabel:`${Number(pkg.sessions)} sessions`,validityDays:Number(pkg.validity_days),validity:`${Number(pkg.validity_days)} days`,price:Number(pkg.base_price),directMinutes:Number(pkg.direct_minutes_per_pet),coachingMinutes:Number(pkg.coaching_minutes_per_pet),splitDuePercent:Number(pkg.split_due_percent)}];});}
+function jsonObject(value:string){try{return JSON.parse(value) as Record<string,unknown>}catch{return{}}}
 export default function TrainingFlow() {
+  const [plans,setPlans]=useState<Plan[]>([]);
+  const [meetPackage,setMeetPackage]=useState<TrainingPackage|null>(null);
+  const [checkoutQuote,setCheckoutQuote]=useState<TrainingQuote|null>(null);
+  const [startDateIndex,setStartDateIndex]=useState(0);
   const [stage, setStage] = useState(1),
     [goals, setGoals] = useState(fallbackGoals),
     [selectedGoals, setSelectedGoals] = useState([
@@ -160,16 +96,15 @@ export default function TrainingFlow() {
       "Leash walking",
     ]),
     [selectedPets, setSelectedPets] = useState(["Bruno"]),
-    [plan, setPlan] = useState(plans[2]),
+    [plan, setPlan] = useState(emptyPlan),
     [trainer, setTrainer] = useState(trainers[0]),
     [frequency, setFrequency] = useState("Tue & Sat"),
     [time, setTime] = useState("5:00 PM"),
     [attendanceMode, setAttendanceMode] = useState<"parent" | "trainer-led">("parent"),
     [meet, setMeet] = useState(true),
-    [meetSlot, setMeetSlot] = useState("7 Aug · 6:00 PM"),
+    [meetSlot, setMeetSlot] = useState(() => futureIst(1,18).toISOString()),
     [meetBookingId, setMeetBookingId] = useState(""),
     [paymentMode, setPaymentMode] = useState<"half" | "full">("half"),
-    [discount, setDiscount] = useState(0),
     [couponCode, setCouponCode] = useState(""),
     [confirmed, setConfirmed] = useState(false),
     [agreed, setAgreed] = useState(true),
@@ -188,12 +123,18 @@ export default function TrainingFlow() {
       })
       .catch(() => undefined);
   }, []);
-  const directTrainingMinutes = selectedPets.length * 45;
-  const closeoutMinutes = selectedPets.length * 15;
-  const serviceMinutes = directTrainingMinutes + closeoutMinutes;
-  const meetFee = meet ? 500 : 0;
-  const packagePayable = Math.max(0, plan.price - discount);
-  const payableNow = paymentMode === "full" ? packagePayable + meetFee : plan.price / 2 + meetFee;
+  useEffect(()=>{let active=true;void loadTrainingPackages().then(result=>{if(!active)return;const next=buildPlans(result.packages);setPlans(next);setMeetPackage(result.packages.find(item=>item.package_code==="trainer-meet-greet")||null);setPlan(current=>next.find(item=>item.packageCode===current.packageCode)||next.find(item=>item.recommended)||next[0]||emptyPlan);}).catch(problem=>{if(active)setScheduleError(problem instanceof Error?problem.message:"Unable to load Training catalogue");});return()=>{active=false;};},[]);
+
+  const startOptions=nextTrainingStarts(frequency,time);
+  const selectedStart=startOptions[startDateIndex]||startOptions[0]||futureIst(1,time.startsWith("9")?9:time.startsWith("3")?15:17);
+  const selectedStartIso=selectedStart.toISOString();
+  const calendarPreview=calendarDates(selectedStart,frequency,time);
+  const serviceMinutes=selectedPets.length*(plan.directMinutes+plan.coachingMinutes);
+  const meetFee=meet&&!meetBookingId?Number(meetPackage?.base_price||0):0;
+  const discount=checkoutQuote?.discount??0;
+  const payableNow=(checkoutQuote?.amountDueNow??0)+meetFee;
+  const recommendedPlan=plans.find(item=>item.packageCode==="training-8-basic")||plan;
+  useEffect(()=>{if(stage!==5||!plan.sessions)return;let active=true;const mode=paymentMode==="full"?"prepaid":"split";void quoteTraining({packageCode:plan.packageCode,petCount:selectedPets.length,scheduledStart:selectedStartIso,paymentMode:mode,couponCode:mode==="prepaid"&&couponCode?couponCode:undefined}).then(value=>{if(active){setCheckoutQuote(value);setScheduleError("");}}).catch(problem=>{if(active){setCheckoutQuote(null);setScheduleError(problem instanceof Error?problem.message:"Unable to refresh Training quote");}});return()=>{active=false;};},[stage,plan.packageCode,plan.sessions,selectedPets.length,paymentMode,couponCode,frequency,time,startDateIndex,selectedStartIso]);
   const togglePet = (pet: string) =>
     setSelectedPets((current) =>
       current.includes(pet)
@@ -219,49 +160,24 @@ export default function TrainingFlow() {
     confirmMeetFirst = async () => {
       setScheduling(true);setScheduleError("");
       try {
-        const start=new Date("2026-08-07T12:30:00.000Z");
-        const end=new Date(start.getTime()+45*60_000);
-        const requestId=`training-meet-TST101-${trainer.name.replaceAll(" ","")}-${meetSlot.replaceAll(" ","")}`;
-        const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:"TST-101",petIds:selectedPets,serviceCode:"dog_training",zoneId:"blr-east",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),occurrences:1,preferredProviderId:trainer.name==="Kiran S."?"train_kiran":"train_ramesh"});
-        const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:"TST-101",name:"Karthik P.",primaryPhone:"9996999505",secondaryPhone:"9880222741"},pets:selectedPets.map(name=>({sourceId:name,name,species:"dog"})),cityId:"blr",zoneId:"blr-east",serviceCode:"dog_training",packageCode:"trainer-meet-greet",packageName:"Trainer Meet & Greet",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:500,amountDueNow:500,payment:{method:"upi",mode:"prepaid",status:"captured",detail:"UAT trainer Meet & Greet payment"},pricing:{discount:0}});
-        setMeetBookingId(canonical.bookingId);setMeet(false);
+        const start=new Date(meetSlot),quote=await quoteTraining({packageCode:"trainer-meet-greet",petCount:selectedPets.length,scheduledStart:start.toISOString(),paymentMode:"prepaid"}),end=new Date(start.getTime()+quote.minutesPerSession*60_000);
+        const requestId=`training-meet-TST101-${trainer.name.replaceAll(" ","")}-${start.toISOString()}`;
+        const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:"TST-101",petIds:selectedPets,serviceCode:"dog_training",zoneId:"blr-east",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,preferredProviderId:trainer.name==="Kiran S."?"train_kiran":"train_ramesh"});
+        const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:"TST-101",name:"Karthik P.",primaryPhone:"9996999505",secondaryPhone:"9880222741"},pets:selectedPets.map(name=>({sourceId:name,name,species:"dog"})),cityId:"blr",zoneId:"blr-east",serviceCode:"dog_training",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"upi",mode:"prepaid",status:"captured",detail:"UAT trainer Meet & Greet sandbox payment"},pricing:{discount:quote.discount,trainingQuoteId:quote.quoteId}});
+        setMeetBookingId(canonical.bookingId);setMeet(false);setCheckoutQuote(null);
       } catch(error){setScheduleError(error instanceof Error?error.message:"This Meet & Greet slot is no longer available");} finally {setScheduling(false);}
     },
     confirm = async () => {
       setScheduling(true);setScheduleError("");
       try {
-      const hour=time.startsWith("9")?9:time.startsWith("3")?15:17;const start=new Date(Date.UTC(2026,7,9,hour-5,30));const end=new Date(start.getTime()+serviceMinutes*60_000);const weekdayMap:Record<string,number[]>={"Tue & Sat":[2,6],"Wed & Sun":[3,0],"Every Saturday":[6]};const requestId=`training-TST101-${plan.sessions}-${hour}-${frequency.replaceAll(" ","")}`;const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:"TST-101",petIds:selectedPets,serviceCode:"dog_training",zoneId:"blr-east",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),occurrences:plan.sessions,weekdays:weekdayMap[frequency],cadenceDays:frequency==="Choose each session myself"?7:undefined,preferredProviderId:trainer.name==="Kiran S."?"train_kiran":"train_ramesh"});
-      const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:"TST-101",name:"Karthik P.",primaryPhone:"9996999505",secondaryPhone:"9880222741"},pets:selectedPets.map(name=>({sourceId:name,name,species:"dog"})),cityId:"blr",zoneId:"blr-east",serviceCode:"dog_training",packageCode:`training-${plan.sessions}`,packageName:plan.name,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:packagePayable+meetFee,amountDueNow:payableNow,payment:{method:"upi",mode:paymentMode==="full"?"prepaid":"split",status:"captured",detail:`UAT ${paymentMode} training payment`},pricing:{discount,couponCode:couponCode||undefined,subscription:`${plan.sessions} sessions`,requirements:selectedGoals}});
-      await materializeTrainingProgramme({bookingId:canonical.bookingId,meetBookingId:meetBookingId||undefined});
-      const booking = createTestTransaction({
-        customerId: "TST-101",
-        customerName: "Karthik P.",
-        primary: "9996999505",
-        secondary: "9880222741",
-        pets: selectedPets.join(", "),
-        petCount: selectedPets.length,
-        service: "Dog Training",
-        packageName: plan.name,
-        area: "Bengaluru",
-        slot: `${frequency} · ${time}`,
-        duration: `${plan.sessions} sessions · ${serviceMinutes} min/session (${selectedPets.length} × 60 min; each pet receives 45 min training + 15 min coaching/report) · ${plan.validity}`,
-        amount: packagePayable + meetFee,
-        offerCode: couponCode || undefined,
-        discount,
-        payment: `${paymentMode === "full" ? "100% package paid upfront" : "50% package paid upfront · no discount"}${meet ? " + ₹500 trainer Meet & Greet" : ""}${couponCode ? ` · Coupon ${couponCode}` : ""}`,
-        provider: decision.provider.name,
-        providerModel: "Commission",
-        subscription: `${plan.name} · ${plan.sessions} sessions`,
-        creditsBefore: plan.sessions,
-        crmOwner: "Rahul",
-        crmNextAction:
-          attendanceMode === "parent"
-            ? "Trainer acceptance; parent/caretaker coaching required"
-            : "Trainer acceptance; confirm package allows trainer-led outdoor practice",
-        reminder: "Session reminders queued",
-      },canonical.bookingId);
-      setBookingId(booking.id);
-      setConfirmed(true);
+        let linkedMeetBookingId=meetBookingId;
+        if(meet&&!linkedMeetBookingId){const meetStart=new Date(meetSlot),meetQuote=await quoteTraining({packageCode:"trainer-meet-greet",petCount:selectedPets.length,scheduledStart:meetStart.toISOString(),paymentMode:"prepaid"}),meetEnd=new Date(meetStart.getTime()+meetQuote.minutesPerSession*60_000),meetRequestId=`training-meet-TST101-${trainer.name.replaceAll(" ","")}-${meetStart.toISOString()}`,meetDecision=await reserveUatSchedule({clientRequestId:meetRequestId,customerId:"TST-101",petIds:selectedPets,serviceCode:"dog_training",zoneId:"blr-east",scheduledStart:meetStart.toISOString(),scheduledEnd:meetEnd.toISOString(),occurrences:1,preferredProviderId:trainer.name==="Kiran S."?"train_kiran":"train_ramesh"}),meetCanonical=await createCanonicalLifecycle({idempotencyKey:meetRequestId,scheduleGroupId:meetDecision.groupId,customer:{id:"TST-101",name:"Karthik P.",primaryPhone:"9996999505",secondaryPhone:"9880222741"},pets:selectedPets.map(name=>({sourceId:name,name,species:"dog"})),cityId:"blr",zoneId:"blr-east",serviceCode:"dog_training",packageCode:meetQuote.packageCode,packageName:meetQuote.packageName,scheduledStart:meetStart.toISOString(),scheduledEnd:meetEnd.toISOString(),provider:meetDecision.provider,totalAmount:meetQuote.totalAmount,amountDueNow:meetQuote.amountDueNow,payment:{method:"upi",mode:"prepaid",status:"captured",detail:"UAT trainer Meet & Greet sandbox payment"},pricing:{discount:meetQuote.discount,trainingQuoteId:meetQuote.quoteId}});linkedMeetBookingId=meetCanonical.bookingId;setMeetBookingId(linkedMeetBookingId);}
+        const mode=paymentMode==="full"?"prepaid":"split",quote=await quoteTraining({packageCode:plan.packageCode,petCount:selectedPets.length,scheduledStart:selectedStart.toISOString(),paymentMode:mode,couponCode:mode==="prepaid"&&couponCode?couponCode:undefined}),end=new Date(selectedStart.getTime()+quote.minutesPerSession*60_000),requestId=`training-TST101-${quote.packageCode}-${selectedStart.toISOString()}-${frequency.replaceAll(" ","")}`;
+        const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:"TST-101",petIds:selectedPets,serviceCode:"dog_training",zoneId:"blr-east",scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,weekdays:weekdayMap[frequency],cadenceDays:frequency==="Choose each session myself"?7:undefined,preferredProviderId:trainer.name==="Kiran S."?"train_kiran":"train_ramesh"});
+        const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:"TST-101",name:"Karthik P.",primaryPhone:"9996999505",secondaryPhone:"9880222741"},pets:selectedPets.map(name=>({sourceId:name,name,species:"dog"})),cityId:"blr",zoneId:"blr-east",serviceCode:"dog_training",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"upi",mode,status:"captured",detail:`UAT ${mode} Training sandbox payment`},pricing:{discount:quote.discount,couponCode:couponCode||undefined,subscription:`${quote.sessions} sessions`,requirements:selectedGoals,trainingQuoteId:quote.quoteId}});
+        await materializeTrainingProgramme({bookingId:canonical.bookingId,meetBookingId:linkedMeetBookingId||undefined});
+        const booking=createTestTransaction({customerId:"TST-101",customerName:"Karthik P.",primary:"9996999505",secondary:"9880222741",pets:selectedPets.join(", "),petCount:selectedPets.length,service:"Dog Training",packageName:quote.packageName,area:"Bengaluru",slot:`${frequency} · ${time}`,duration:`${quote.sessions} sessions · ${quote.minutesPerSession} min/session · ${quote.validityDays} days`,amount:quote.totalAmount,offerCode:couponCode||undefined,discount:quote.discount,payment:`${mode==="prepaid"?"100% package paid in sandbox":"Configured split payment in sandbox"}${linkedMeetBookingId?` · Meet booking ${linkedMeetBookingId}`:""}`,provider:decision.provider.name,providerModel:"Commission",subscription:`${quote.packageName} · ${quote.sessions} sessions`,creditsBefore:quote.sessions,crmOwner:"Rahul",crmNextAction:attendanceMode==="parent"?"Trainer acceptance; parent/caretaker coaching required":"Trainer acceptance; confirm package allows trainer-led outdoor practice",reminder:"Session reminders queued"},canonical.bookingId);
+        setBookingId(booking.id);setConfirmed(true);
       } catch(error){setScheduleError(error instanceof Error?error.message:"No trainer can cover the full programme calendar");} finally {setScheduling(false);}
     };
   if (confirmed)
@@ -318,7 +234,7 @@ export default function TrainingFlow() {
           <p className={styles.durationRule}>
             {selectedPets.length} {selectedPets.length === 1 ? "pet" : "pets"} · {serviceMinutes} minutes per session
             <span>
-              Every pet receives 45 minutes of direct training + 15 minutes
+              Every pet receives {plan.directMinutes} minutes of direct training + {plan.coachingMinutes} minutes
               for coaching, homework, video and the app update.
             </span>
           </p>
@@ -424,7 +340,7 @@ export default function TrainingFlow() {
                 {selectedGoals.slice(0, 2).join(" + ")}.
               </p>
             </div>
-            <b>8 sessions</b>
+            <b>{recommendedPlan.sessionLabel}</b>
           </article>
           <div className={styles.goalSummary}>
             <b>Selected requirements</b>
@@ -475,7 +391,7 @@ export default function TrainingFlow() {
                 <div className={planStyles.metrics}>
                   <span><b>{item.sessionLabel}</b><small>at home</small></span>
                   <span><b>{item.validity}</b><small>validity</small></span>
-                  <span><b>60 minutes</b><small>per pet session</small></span>
+                  <span><b>{item.directMinutes+item.coachingMinutes} minutes</b><small>per pet session</small></span>
                   <span><b>Video + homework</b><small>after every session</small></span>
                 </div>
                 <small className={planStyles.includes}>
@@ -581,7 +497,7 @@ export default function TrainingFlow() {
                 onChange={(e) => setMeet(e.target.checked)}
               />
               <span>
-                <b>45-minute trainer Meet & Greet · ₹500</b>
+                <b>{meetPackage?`${Number(meetPackage.direct_minutes_per_pet)+Number(meetPackage.coaching_minutes_per_pet)}-minute trainer Meet & Greet · ${money(Number(meetPackage.base_price))}`:"Loading Meet & Greet…"}</b>
                 <small>
                   A separate, no-pressure appointment. Meet the trainer, discuss goals and see how they communicate before booking training.
                 </small>
@@ -590,28 +506,17 @@ export default function TrainingFlow() {
             {meet && (
               <>
                 <div className={styles.meetSlots}>
-                  {["7 Aug · 6:00 PM", "8 Aug · 11:00 AM", "8 Aug · 5:00 PM"].map(
-                    (slot) => (
-                      <button
-                        key={slot}
-                        className={meetSlot === slot ? styles.selected : ""}
-                        onClick={() => setMeetSlot(slot)}
-                      >
-                        {slot}
-                        <small>{meetSlot === slot ? "Selected" : "Available"}</small>
-                      </button>
-                    ),
-                  )}
+                  {[futureIst(1,18),futureIst(2,11),futureIst(2,17)].map((date)=>{const slot=date.toISOString();return <button key={slot} className={meetSlot===slot?styles.selected:""} onClick={()=>setMeetSlot(slot)}>{slotLabel(date)}<small>{meetSlot===slot?"Selected":"Available"}</small></button>;})}
                 </div>
                 <p>
-                  Trainer availability is checked before the slot is offered. If you continue now, the ₹500 meeting is collected with the programme checkout.
+                  Trainer availability is checked before the slot is offered. If you continue now, the canonical Meet & Greet is created as its own paid booking before the programme booking.
                 </p>
                 <button className={styles.meetOnly} onClick={confirmMeetFirst} disabled={scheduling}>
                   {scheduling ? "Reserving Meet & Greet…" : "Book only the Meet & Greet"}
                 </button>
               </>
             )}
-            {meetBookingId && <article className={styles.meetConfirmed}><b>✓ Meet & Greet booked</b><span>{meetSlot} · {trainer.name} · {meetBookingId}</span><small>You can decide on the training package after the meeting.</small></article>}
+            {meetBookingId && <article className={styles.meetConfirmed}><b>✓ Meet & Greet booked</b><span>{slotLabel(new Date(meetSlot))} · {trainer.name} · {meetBookingId}</span><small>You can decide on the training package after the meeting.</small></article>}
             {scheduleError && <p role="alert">{scheduleError}</p>}
           </section>
           <button className={styles.back} onClick={() => setStage(2)}>
@@ -630,10 +535,8 @@ export default function TrainingFlow() {
           </div>
           <label className={styles.field}>
             Service start date
-            <select>
-              <option>Saturday, 9 August</option>
-              <option>Sunday, 10 August</option>
-              <option>Tuesday, 12 August</option>
+            <select value={startDateIndex} onChange={(event)=>setStartDateIndex(Number(event.target.value))}>
+              {startOptions.map((date,index)=><option value={index} key={date.toISOString()}>{slotLabel(date)}</option>)}
             </select>
           </label>
           <label className={styles.field}>
@@ -662,23 +565,15 @@ export default function TrainingFlow() {
           </div>
           <article className={styles.calendarPreview}>
             <b>First four sessions</b>
-            {["Sat, 9 Aug", "Tue, 12 Aug", "Sat, 16 Aug", "Tue, 19 Aug"].map(
-              (d, i) => (
-                <span key={d}>
-                  <i>{i + 1}</i>
-                  {d}
-                  <em>{time} · {serviceMinutes} min</em>
-                </span>
-              ),
-            )}
+            {calendarPreview.map((date,i)=><span key={date.toISOString()}><i>{i+1}</i>{slotLabel(date)}<em>{serviceMinutes} min</em></span>)}
           </article>
           <article className={styles.sessionLogic}>
             <b>
               {selectedPets.length} {selectedPets.length === 1 ? "pet" : "pets"} · {serviceMinutes}-minute calendar block
             </b>
             <span>
-              Every pet has one paid 60-minute session: 45 minutes of hands-on
-              training plus its own 15-minute closeout for parent/caretaker
+              Every pet has one paid {plan.directMinutes+plan.coachingMinutes}-minute session: {plan.directMinutes} minutes of hands-on
+              training plus its own {plan.coachingMinutes}-minute closeout for parent/caretaker
               coaching, homework, a short reference video and the app update.
             </span>
             <span>
@@ -735,13 +630,13 @@ export default function TrainingFlow() {
               <span>Parent/caretaker participation</span>
               <b>
                 {attendanceMode === "parent"
-                  ? "Joining · 15-minute coaching and homework handoff"
+                  ? `Joining · ${plan.coachingMinutes}-minute coaching and homework handoff`
                   : "Unavailable · eligible trainer-led outdoor practice"}
               </b>
             </div>
             <div>
               <span>Trainer Meet & Greet</span>
-              <b>{meet ? `${meetSlot} · 45 min · ₹500` : "Skipped"}</b>
+              <b>{meet&&!meetBookingId ? `${slotLabel(new Date(meetSlot))} · ${meetPackage?Number(meetPackage.direct_minutes_per_pet)+Number(meetPackage.coaching_minutes_per_pet):"—"} min · ${money(meetFee)}` : meetBookingId?`Booked separately · ${meetBookingId}`:"Skipped"}</b>
             </div>
             <div>
               <span>Validity</span>
@@ -755,19 +650,18 @@ export default function TrainingFlow() {
           <div className={styles.paymentOptions}>
             <button className={paymentMode === "half" ? styles.selected : ""} onClick={() => {
               setPaymentMode("half");
-              setDiscount(0);
               setCouponCode("");
+              setCheckoutQuote(null);
             }}>
               <i>{paymentMode === "half" ? "✓" : ""}</i>
               <div>
                 <b>Pay 50% upfront · no discount</b>
                 <span>
-                  {money(plan.price / 2 + meetFee)} now · {money(plan.price / 2)} after{" "}
-                  {Math.ceil(plan.sessions / 2)} sessions
+                  {money(Math.round(plan.price*plan.splitDuePercent/100)+meetFee)} now · {money(plan.price-Math.round(plan.price*plan.splitDuePercent/100))} later under the canonical split schedule
                 </span>
               </div>
             </button>
-            <button className={paymentMode === "full" ? styles.selected : ""} onClick={() => setPaymentMode("full")}>
+            <button className={paymentMode === "full" ? styles.selected : ""} onClick={() => {setPaymentMode("full");setCheckoutQuote(null);}}>
               <i>{paymentMode === "full" ? "✓" : ""}</i>
               <div>
                 <b>Pay 100% upfront · coupon eligible</b>
@@ -781,9 +675,9 @@ export default function TrainingFlow() {
             orderValue={plan.price}
             customerKind="existing"
             paymentMode={paymentMode === "full" ? "full" : "partial"}
-            onDiscountChange={(value, code) => {
-              setDiscount(value);
+            onDiscountChange={(_value, code) => {
               setCouponCode(code);
+              setCheckoutQuote(null);
             }}
           />
           {discount > 0 && <article className={styles.couponSaving}>Coupon saving <b>−{money(discount)}</b></article>}
@@ -808,11 +702,11 @@ export default function TrainingFlow() {
             ← Calendar
           </button>
           <button
-            disabled={!agreed || scheduling}
+            disabled={!agreed || scheduling || !checkoutQuote}
             className={styles.primary}
             onClick={confirm}
           >
-            {scheduling ? "Reserving all sessions…" : `Pay ${money(payableNow)} & request trainer approval`}
+            {scheduling ? "Reserving all sessions…" : !checkoutQuote ? "Refreshing server quote…" : `Pay ${money(payableNow)} & request trainer approval`}
           </button>
           {scheduleError && <p role="alert">{scheduleError}</p>}
         </section>
@@ -820,233 +714,19 @@ export default function TrainingFlow() {
     </>
   );
 }
-function TrainingDashboard({
-  bookingId,
-  plan,
-  trainer,
-  pets,
-  serviceMinutes,
-  view,
-  setView,
-}: {
-  bookingId: string;
-  plan: Plan;
-  trainer: (typeof trainers)[number];
-  pets: string[];
-  serviceMinutes: number;
-  view: "plan" | "homework" | "progress";
-  setView: (v: "plan" | "homework" | "progress") => void;
-}) {
-  const halfway = Math.ceil(plan.sessions / 2);
-  return (
-    <section>
-      <article className={styles.trainingSuccess}>
-        <i>✓</i>
-        <div>
-          <small>PROGRAMME ACTIVE · {bookingId}</small>
-          <h3>{pets.join(" + ")}&apos;s plan is ready.</h3>
-          <p>
-            {plan.sessionLabel} · {plan.validity} · {trainer.name}
-          </p>
-        </div>
-      </article>
-      <div className={styles.trainingSummary}>
-        <div>
-          <span>
-            Completed<b>2</b>
-          </span>
-          <span>
-            Remaining<b>{plan.sessions - 2}</b>
-          </span>
-          <span>
-            Next session<b>9 Aug</b>
-          </span>
-        </div>
-        <progress max={plan.sessions} value={2} />
-        <small>
-          Session 2 of {plan.sessions} · validity begins on first service date
-        </small>
-      </div>
-      <article className={styles.balance}>
-        <div>
-          <b>50% paid</b>
-          <span>
-            Balance {money(plan.price / 2)} will be requested after Session{" "}
-            {halfway}
-          </span>
-        </div>
-        <em>{halfway - 2} sessions until reminder</em>
-      </article>
-      {plan.bonus && (
-        <article className={styles.bonus}>
-          <i>✦</i>
-          <div>
-            <b>Complimentary grooming unlocked</b>
-            <span>
-              1 Bath & Basic session · book anytime within plan validity
-            </span>
-          </div>
-          <button>Book</button>
-        </article>
-      )}
-      <div className={styles.trainingTabs}>
-        <button
-          className={view === "plan" ? styles.selected : ""}
-          onClick={() => setView("plan")}
-        >
-          Plan
-        </button>
-        <button
-          className={view === "homework" ? styles.selected : ""}
-          onClick={() => setView("homework")}
-        >
-          Homework
-        </button>
-        <button
-          className={view === "progress" ? styles.selected : ""}
-          onClick={() => setView("progress")}
-        >
-          Progress
-        </button>
-      </div>
-      {view === "plan" && (
-        <>
-          <article className={styles.nextSession}>
-            <span>NEXT SESSION · 3 OF {plan.sessions}</span>
-            <h4>Loose-leash walking</h4>
-            <p>
-              Sat, 9 Aug · 5:00 PM · {serviceMinutes} min · {trainer.name}
-            </p>
-            <div>
-              <button>Reschedule</button>
-              <button>Message trainer</button>
-            </div>
-          </article>
-          <ProviderTrackingCard role="Trainer" name={trainer.name} eta="22 min" />
-          <article className={styles.trainerChecklist}>
-            <b>Trainer must close every session with</b>
-            <span>✓ Attendance and session notes</span>
-            <span>✓ One video, maximum 30 seconds</span>
-            <span>✓ Homework assigned to customer</span>
-            <span>✓ Milestone and behaviour update</span>
-          </article>
-          <article className={styles.feedback}>
-            <i>★</i>
-            <div>
-              <b>Two-session feedback is due</b>
-              <span>
-                Rate trainer, progress and experience after Session 2.
-              </span>
-            </div>
-            <button>Share</button>
-          </article>
-          <article className={styles.cancelRule}>
-            <b>Reschedule, cancellation and refund protection</b>
-            <span>
-              Trainer cancellation opens the same-trainer or replacement
-              calendar. Customer cancellation requires approval; unused-session
-              value is refunded after reconciliation.
-            </span>
-          </article>
-          <div className={styles.sessionList}>
-            {[
-              "Name response & focus",
-              "Sit, stay and release",
-              "Loose-leash walking",
-              "Recall with distractions",
-            ].map((s, i) => (
-              <span key={s}>
-                <i>{i < 2 ? "✓" : i + 1}</i>
-                <b>{s}</b>
-                <em>{i < 2 ? "Video + notes" : "Scheduled"}</em>
-              </span>
-            ))}
-          </div>
-        </>
-      )}
-      {view === "homework" && (
-        <>
-          <article className={styles.homework}>
-            <span>ASSIGNED AFTER SESSION 2</span>
-            <h4>Five-minute focus routine</h4>
-            <p>
-              Practise “look at me” twice daily before meals. Reward calm eye
-              contact within two seconds.
-            </p>
-            <div>
-              <button>▶ Trainer video · 00:24</button>
-              <button>＋ Upload practice video</button>
-            </div>
-            <label className={styles.task}>
-              <input type="checkbox" /> Mark today’s practice complete
-            </label>
-          </article>
-          <article className={styles.homework}>
-            <span>7-DAY PRACTICE STREAK</span>
-            <h4>Customer task tracker</h4>
-            <div className={styles.practiceDays}>
-              {["M", "T", "W", "T", "F", "S", "S"].map((d, i) => (
-                <i key={i} className={i < 4 ? styles.checked : ""}>
-                  {i < 4 ? "✓" : d}
-                </i>
-              ))}
-            </div>
-            <p>
-              4 of 7 practice tasks closed. The trainer sees this status before
-              the next session.
-            </p>
-          </article>
-        </>
-      )}
-      {view === "progress" && (
-        <>
-          <div className={styles.milestones}>
-            {[
-              ["Focus & engagement", 72],
-              ["Leash manners", 48],
-              ["Recall", 36],
-              ["Home behaviour", 65],
-            ].map((m) => (
-              <article key={m[0] as string}>
-                <div>
-                  <b>{m[0]}</b>
-                  <span>{m[1]}%</span>
-                </div>
-                <progress max="100" value={m[1] as number} />
-              </article>
-            ))}
-          </div>
-          <article className={styles.report}>
-            <b>Trainer’s latest note</b>
-            <p>
-              Bruno responds well to food rewards. Family consistency is
-              improving; continue short sessions near mild distractions.
-            </p>
-            <span>2 mandatory videos · session notes updated</span>
-          </article>
-          <article className={styles.certificate}>
-            <i>♛</i>
-            <div>
-              <b>Completion certificate</b>
-              <span>
-                After the final session, PawSpace generates Bruno’s named
-                certificate with Karthik’s signature and the trainer’s
-                signature, then sends it by email and WhatsApp.
-              </span>
-            </div>
-          </article>
-          <section className={styles.crossSell}>
-            <b>Continue Bruno’s care</b>
-            <div>
-              <button>Bath & Basic</button>
-              <button>Fresh Food</button>
-              <button>Pet Boarding</button>
-            </div>
-          </section>
-          <button className={styles.primary}>View full progress report</button>
-          <button className={styles.renew}>Renew or upgrade programme</button>
-        </>
-      )}
-    </section>
-  );
+function TrainingDashboard({bookingId,plan,trainer,pets,serviceMinutes,view,setView}:{bookingId:string;plan:Plan;trainer:(typeof trainers)[number];pets:string[];serviceMinutes:number;view:"plan"|"homework"|"progress";setView:(v:"plan"|"homework"|"progress")=>void;}) {
+  const[ledger,setLedger]=useState<CustomerTrainingProgramme|null>(null),[ledgerError,setLedgerError]=useState("");
+  useEffect(()=>{let active=true;void loadTrainingProgramme(bookingId).then(value=>{if(active)setLedger(value);}).catch(problem=>{if(active)setLedgerError(problem instanceof Error?problem.message:"Unable to load programme");});return()=>{active=false;};},[bookingId]);
+  const sessions=ledger?.sessions||[],programme=ledger?.programme,completed=sessions.filter(item=>item.status==="completed").length,nextSession=sessions.find(item=>!["completed","cancelled","no_show"].includes(item.status))||null,latestCompleted=[...sessions].reverse().find(item=>item.status==="completed")||null,latestProgress=latestCompleted?jsonObject(latestCompleted.progress_json):{};
+  return <section>
+    <article className={styles.trainingSuccess}><i>✓</i><div><small>CANONICAL PROGRAMME · {bookingId}</small><h3>{pets.join(" + ")}&apos;s plan is ready.</h3><p>{programme?`${programme.plan_name} · ${programme.total_sessions} sessions · ${trainer.name}`:`Loading canonical programme · ${trainer.name}`}</p></div></article>
+    {ledgerError&&<article className={styles.cancelRule}><b>Programme ledger unavailable</b><span>{ledgerError}</span></article>}
+    <div className={styles.trainingSummary}><div><span>Completed<b>{completed}</b></span><span>Remaining<b>{Math.max(0,(programme?.total_sessions??plan.sessions)-completed)}</b></span><span>Next session<b>{nextSession?slotLabel(new Date(nextSession.scheduled_start)):"None"}</b></span></div><progress max={(programme?.total_sessions??plan.sessions)||1} value={completed}/><small>{programme?`${programme.status.replaceAll("_"," ")} · ${programme.total_sessions} canonical sessions`:"Reading canonical session calendar"}</small></div>
+    <article className={styles.balance}><div><b>Payment linked to canonical booking</b><span>Amounts and trainer earnings are reconciled by Finance; this customer view does not invent a balance.</span></div><em>Booking {bookingId}</em></article>
+    {plan.bonus&&<article className={styles.bonus}><i>✦</i><div><b>Complimentary grooming benefit</b><span>Benefit fulfilment remains subject to the canonical package terms.</span></div><button>View terms</button></article>}
+    <div className={styles.trainingTabs}><button className={view==="plan"?styles.selected:""} onClick={()=>setView("plan")}>Plan</button><button className={view==="homework"?styles.selected:""} onClick={()=>setView("homework")}>Homework</button><button className={view==="progress"?styles.selected:""} onClick={()=>setView("progress")}>Progress</button></div>
+    {view==="plan"&&<><article className={styles.nextSession}><span>{nextSession?`NEXT SESSION · ${nextSession.sequence_no} OF ${programme?.total_sessions??plan.sessions}`:"PROGRAMME CALENDAR"}</span><h4>{nextSession?"Training session":"No upcoming active session"}</h4><p>{nextSession?`${slotLabel(new Date(nextSession.scheduled_start))} · ${serviceMinutes} min · ${nextSession.provider_id}`:"All sessions are terminal or the programme is awaiting recovery."}</p><div><button>Request reschedule</button><button>Message trainer</button></div></article><article className={styles.trainerChecklist}><b>Trainer closure requirements</b><span>✓ Attendance and session notes</span><span>✓ Secure proof linked to the exact session</span><span>✓ Homework assigned</span><span>✓ Progress scores recorded</span></article><article className={styles.cancelRule}><b>Recovery protection</b><span>Trainer cancellation, replacement, customer cancellation and no-show states remain linked to the same canonical programme. Session consumption changes only through governed lifecycle actions.</span></article><div className={styles.sessionList}>{sessions.map(item=><span key={item.id}><i>{item.status==="completed"?"✓":item.sequence_no}</i><b>Session {item.sequence_no}</b><em>{item.status.replaceAll("_"," ")} · {slotLabel(new Date(item.scheduled_start))}</em></span>)}</div></>}
+    {view==="homework"&&<>{sessions.filter(item=>item.status==="completed").map(item=>{const homework=jsonObject(item.homework_json),text=String(homework.text||"");return <article className={styles.homework} key={item.id}><span>SESSION {item.sequence_no}</span><h4>{text||"No homework text recorded"}</h4><p>Homework shown here comes from the canonical trainer session report.</p></article>;})}{completed===0&&<article className={styles.homework}><span>CANONICAL HOMEWORK</span><h4>No completed-session homework yet</h4><p>Homework appears only after a trainer closes a session with the required evidence and report.</p></article>}</>}
+    {view==="progress"&&<><div className={styles.milestones}>{Object.entries(latestProgress).filter(([,value])=>typeof value==="number").map(([name,value])=><article key={name}><div><b>{name.replaceAll("_"," ")}</b><span>{Number(value)}/10</span></div><progress max="10" value={Number(value)}/></article>)}</div><article className={styles.report}><b>Latest canonical progress</b><p>{latestCompleted?`From completed Session ${latestCompleted.sequence_no}.`:"No completed session has produced progress scores yet."}</p><span>{latestCompleted?"Trainer evidence and homework are linked to the same session record.":"No synthetic progress score is displayed."}</span></article><article className={styles.certificate}><i>♛</i><div><b>Completion certificate readiness</b><span>{programme?.status==="completed"?"Programme is canonically complete; certificate generation can be triggered by the later communications/document gate.":"Certificate remains locked until all required sessions are canonically completed."}</span></div></article><section className={styles.crossSell}><b>Continue care</b><div><button>Bath & Basic</button><button>Fresh Food</button><button>Pet Boarding</button></div></section></>}
+  </section>;
 }
