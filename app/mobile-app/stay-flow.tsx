@@ -1,16 +1,17 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import styles from "./stay-flow.module.css";
 import { createTestTransaction } from "../../lib/test-transaction";
 import ProviderTrackingCard from "./provider-tracking-card";
 import CouponField from "./coupon-field";
 import { reserveUatSchedule } from "../../lib/uat-scheduling-client";
 import { createCanonicalLifecycle } from "../../lib/canonical-lifecycle-client";
+import { loadBoardingCommercial, quoteBoarding, type BoardingQuote } from "../../lib/boarding-commercial-client";
 
 type Mode = "boarding" | "sitting";
 type View = "stay" | "care" | "support";
-type CareWindow = "4 hours" | "12 hours" | "24 hours";
+type CareWindow = "4 hours" | "10 hours" | "12 hours" | "24 hours";
 type Caregiver = {
   name: string;
   initials: string;
@@ -174,7 +175,7 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
     ),
     [meet, setMeet] = useState(true),
     [meetFormat, setMeetFormat] = useState<"visit" | "call">("visit"),
-    [taxi, setTaxi] = useState(initialMode === "boarding"),
+    [taxi, setTaxi] = useState(false),
     [confirmed, setConfirmed] = useState(false),
     [agreed, setAgreed] = useState(true),
     [start, setStart] = useState("2026-08-24"),
@@ -186,6 +187,7 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
     [splitPayment, setSplitPayment] = useState(true),
     [discount, setDiscount] = useState(0),
     [couponCode, setCouponCode] = useState(""),
+    [boardingQuote, setBoardingQuote] = useState<BoardingQuote | null>(null),
     [chatOpen, setChatOpen] = useState(false),
     [view, setView] = useState<View>("stay");
   const caregivers = mode === "boarding" ? boardingHosts : sitters;
@@ -200,22 +202,24 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
   const datesValid = careWindow === "24 hours" ? nights > 0 : Boolean(start);
   const durationMultiplier = careWindow === "4 hours" ? 0.4 : careWindow === "12 hours" ? 0.7 : nights;
   const extraPets = Math.max(0, selectedPets.length - 1);
-  const base = Math.round(caregiver.price * durationMultiplier);
-  const extra = Math.round(extraPets * (mode === "boarding" ? 699 : 399) * durationMultiplier);
-  const protection = 249;
-  const taxiFee = taxi && mode === "boarding" ? 499 : 0;
+  const boardingUnitPrice=boardingQuote?.basePricePerPet??0,boardingUnits=boardingQuote?.stayUnits??0;
+  const base = mode === "boarding" ? boardingUnitPrice*boardingUnits : Math.round(caregiver.price * durationMultiplier);
+  const extra = mode === "boarding" ? extraPets*boardingUnitPrice*boardingUnits : Math.round(extraPets * 399 * durationMultiplier);
+  const protection = mode === "boarding" ? 0 : 249;
+  const taxiFee = 0;
   const stayTotal = base + extra + protection + taxiFee;
   const meetFee = meet && mode === "sitting" && meetFormat === "visit" ? 500 : 0;
   const totalBeforeCoupon = stayTotal + meetFee;
-  const total = Math.max(0, totalBeforeCoupon - discount);
-  const splitEligible = careWindow === "24 hours" && nights > 5;
+  const total = mode === "boarding" ? boardingQuote?.totalAmount??0 : Math.max(0, totalBeforeCoupon - discount);
+  const splitEligible = mode !== "boarding" && careWindow === "24 hours" && nights > 5;
   const discountedStay = Math.max(0, stayTotal - discount);
-  const reserveAmount = splitEligible && splitPayment
+  const reserveAmount = mode === "boarding" ? boardingQuote?.amountDueNow??0 : splitEligible && splitPayment
     ? Math.ceil(discountedStay / 2) + meetFee
     : total;
-  const balanceAmount = splitEligible && splitPayment
+  const balanceAmount = mode === "boarding" ? 0 : splitEligible && splitPayment
     ? discountedStay - Math.ceil(discountedStay / 2)
     : 0;
+  useEffect(()=>{if(mode!=="boarding")return;let active=true;const scheduleStart=new Date(`${start}T03:30:00.000Z`),scheduleEnd=careWindow==="24 hours"?new Date(`${end}T03:30:00.000Z`):new Date(scheduleStart.getTime()+(careWindow==="10 hours"?10:4)*3_600_000),packageCode=careWindow==="4 hours"?"boarding-4h":careWindow==="10 hours"?"boarding-10h":"boarding-24h";void quoteBoarding({packageCode,petCount:selectedPets.length,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),paymentMode:"prepaid"}).then(value=>{if(active){setBoardingQuote(value);setScheduleError("");}}).catch(problem=>{if(active){setBoardingQuote(null);setScheduleError(problem instanceof Error?problem.message:"Unable to refresh Boarding quote");}});return()=>{active=false;};},[mode,careWindow,start,end,selectedPets.length]);
   const togglePet = (name: string) =>
     setSelectedPets((current) =>
       current.includes(name)
@@ -241,15 +245,17 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
   const switchMode = (next: Mode) => {
     setMode(next);
     setCaregiver((next === "boarding" ? boardingHosts : sitters)[0]);
-    setTaxi(next === "boarding");
+    if(next==="boarding"&&careWindow==="12 hours")setCareWindow("10 hours");
+    if(next==="sitting"&&careWindow==="10 hours")setCareWindow("12 hours");
+    setTaxi(false);
     setProfileOpen(true);
   };
   const confirm = async () => {
     if (!datesValid || !agreed) return;
     setScheduling(true);setScheduleError("");
     try {
-    const scheduleStart=new Date(`${start}T03:30:00.000Z`);const scheduleEnd=careWindow==="24 hours"?new Date(`${end}T03:30:00.000Z`):new Date(scheduleStart.getTime()+(careWindow==="12 hours"?12:4)*3_600_000);const providerIds:Record<string,string>={"Maya & Rohan":"host_maya_rohan","Sana F.":mode==="boarding"?"host_sana":"sit_sana","Neha P.":"sit_neha"};const requestId=`${mode}-TST101-${start}-${end}-${careWindow.replaceAll(" ","")}-${selectedPets.length}`;const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:"TST-101",petIds:selectedPets,serviceCode:mode==="boarding"?"boarding":"pet_sitting",zoneId:"blr-east",scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),careMode:careWindow==="24 hours"?"overnight":"visit",preferredProviderId:providerIds[caregiver.name]});
-    const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:"TST-101",name:"Karthik P.",primaryPhone:"9996999505",secondaryPhone:"9880222741"},pets:selectedPets.map(name=>({sourceId:name,name,species:name==="Coco"?"cat":"dog",vaccinationStatus:mode==="boarding"?"verified":"not_provided"})),cityId:"blr",zoneId:"blr-east",serviceCode:mode==="boarding"?"boarding":"pet_sitting",packageCode:mode==="boarding"?"home-boarding":careWindow==="24 hours"?"overnight-sitting":"home-visit",packageName:mode==="boarding"?"Home Boarding":"Pet Sitting",scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),provider:decision.provider,totalAmount:total,amountDueNow:reserveAmount,payment:{method:"upi",mode:splitEligible&&splitPayment?"split":"prepaid",status:"captured",detail:splitEligible&&splitPayment?"UAT 50% stay deposit captured":"UAT payment captured"},pricing:{discount,couponCode:couponCode||undefined}});
+    const scheduleStart=new Date(`${start}T03:30:00.000Z`);const scheduleEnd=careWindow==="24 hours"?new Date(`${end}T03:30:00.000Z`):new Date(scheduleStart.getTime()+(careWindow==="10 hours"?10:careWindow==="12 hours"?12:4)*3_600_000);const providerIds:Record<string,string>={"Sana F.":"sit_sana","Neha P.":"sit_neha"};const boardingCommercial=mode==="boarding"?await loadBoardingCommercial({cityId:"blr",zoneId:"blr-east"}):null,governedHost=boardingCommercial?.hosts.find(item=>item.name===caregiver.name);if(mode==="boarding"&&!governedHost)throw new Error("Selected Boarding host is no longer active or verified");const packageCode=careWindow==="4 hours"?"boarding-4h":careWindow==="10 hours"?"boarding-10h":"boarding-24h",governedBoardingQuote=mode==="boarding"?await quoteBoarding({packageCode,petCount:selectedPets.length,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),paymentMode:"prepaid"}):null;const requestId=`${mode}-TST101-${start}-${end}-${careWindow.replaceAll(" ","")}-${selectedPets.length}`;const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:"TST-101",petIds:selectedPets,serviceCode:mode==="boarding"?"boarding":"pet_sitting",zoneId:"blr-east",scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),careMode:careWindow==="24 hours"?"overnight":"visit",preferredProviderId:mode==="boarding"?governedHost?.providerId:providerIds[caregiver.name]});
+    const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:"TST-101",name:"Karthik P.",primaryPhone:"9996999505",secondaryPhone:"9880222741"},pets:selectedPets.map(name=>({sourceId:name,name,species:name==="Coco"?"cat":"dog",vaccinationStatus:mode==="boarding"?"verified":"not_provided"})),cityId:"blr",zoneId:"blr-east",serviceCode:mode==="boarding"?"boarding":"pet_sitting",packageCode:governedBoardingQuote?.packageCode??(careWindow==="24 hours"?"overnight-sitting":"home-visit"),packageName:governedBoardingQuote?.packageName??"Pet Sitting",scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),provider:decision.provider,totalAmount:governedBoardingQuote?.totalAmount??total,amountDueNow:governedBoardingQuote?.amountDueNow??reserveAmount,payment:{method:"upi",mode:mode==="boarding"?"prepaid":splitEligible&&splitPayment?"split":"prepaid",status:"captured",detail:mode==="boarding"?"UAT Boarding payment captured from server quote":splitEligible&&splitPayment?"UAT 50% stay deposit captured":"UAT payment captured"},pricing:{discount:mode==="boarding"?0:discount,couponCode:mode==="boarding"?undefined:couponCode||undefined,boardingQuoteId:governedBoardingQuote?.quoteId}});
     const booking = createTestTransaction({
       customerId: "TST-101",
       customerName: "Karthik P.",
@@ -266,13 +272,15 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
           ? `${shortDate(start)}–${shortDate(end)}`
           : `${shortDate(start)} · ${careWindow}`,
       duration: careWindow === "24 hours" ? `${nights} nights` : careWindow,
-      amount: total,
-      offerCode: couponCode || undefined,
-      discount,
+      amount: governedBoardingQuote?.totalAmount ?? total,
+      offerCode: mode === "boarding" ? undefined : couponCode || undefined,
+      discount: mode === "boarding" ? 0 : discount,
       payment:
-        splitEligible && splitPayment
-          ? `50% stay deposit + Meet & Greet paid · ${money(balanceAmount)} due 24 hours before check-in`
-          : `Paid online in full${couponCode ? ` · Coupon ${couponCode}` : ""}`,
+        mode === "boarding"
+          ? "Paid in UAT sandbox from canonical Boarding quote"
+          : splitEligible && splitPayment
+            ? `50% stay deposit + Meet & Greet paid · ${money(balanceAmount)} due 24 hours before check-in`
+            : `Paid online in full${couponCode ? ` · Coupon ${couponCode}` : ""}`,
       provider: decision.provider.name,
       providerModel: "Commission",
       subscription: "No active plan",
@@ -336,7 +344,7 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
             <span>Choose one</span>
           </div>
           <div className={styles.careWindows}>
-            {(["4 hours", "12 hours", "24 hours"] as CareWindow[]).map((window) => (
+            {(mode === "boarding" ? (["4 hours", "10 hours", "24 hours"] as CareWindow[]) : (["4 hours", "12 hours", "24 hours"] as CareWindow[])).map((window) => (
               <button
                 key={window}
                 className={careWindow === window ? styles.selected : ""}
@@ -346,8 +354,8 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
                 <small>
                   {window === "4 hours"
                     ? "Short care"
-                    : window === "12 hours"
-                      ? "Day or night"
+                    : window === "10 hours" || window === "12 hours"
+                      ? "Day care"
                       : "Overnight / multi-day"}
                 </small>
               </button>
@@ -527,8 +535,8 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
                     {c.reviews} reviews · {c.repeat} repeats
                   </span>
                   <strong>
-                    {money(c.price)}
-                    <small> / night</small>
+                    {money(mode === "boarding" ? (boardingQuote?.basePricePerPet ?? 0) : c.price)}
+                    <small>{mode === "boarding" ? " / pet / stay unit" : " / night"}</small>
                   </strong>
                 </div>
                 {i < 2 && (
@@ -691,21 +699,7 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
                 </button>
               </div>
             )}
-            {mode === "boarding" && (
-              <label>
-                <input
-                  type="checkbox"
-                  checked={taxi}
-                  onChange={(e) => setTaxi(e.target.checked)}
-                />
-                <span>
-                  <b>Add Pet Taxi · ₹499</b>
-                  <small>
-                    Tracked pickup and drop · three-hour arrival window
-                  </small>
-                </span>
-              </label>
-            )}
+            {mode === "boarding" && <p className={styles.hint}>Pet Taxi pricing is not enabled in Boarding Gate 1 and is excluded from the canonical quote.</p>}
             <label>
               <input type="checkbox" defaultChecked />
               <span>
@@ -786,10 +780,10 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
                 <b>{money(extra)}</b>
               </span>
             )}
-            <span>
+            {mode !== "boarding" && <span>
               PawSpace protection & 24/7 support<b>{money(protection)}</b>
-            </span>
-            {taxi && mode === "boarding" && (
+            </span>}
+            {false && taxi && mode === "boarding" && (
               <span>
                 Tracked Pet Taxi<b>{money(taxiFee)}</b>
               </span>
@@ -851,16 +845,15 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
             <article className={styles.fullPaymentNote}>
               <i>₹</i>
               <div>
-                <b>Full payment for hourly care and stays up to 5 nights</b>
+                <b>{mode === "boarding" ? "Full prepaid UAT payment from the canonical Boarding quote" : "Full payment for hourly care and stays up to 5 nights"}</b>
                 <span>
-                  Partial payment becomes available automatically for bookings
-                  longer than five nights.
+                  {mode === "boarding" ? "Long-stay split payment remains disabled until a Boarding payment policy is explicitly configured." : "Partial payment becomes available automatically for bookings longer than five nights."}
                 </span>
               </div>
             </article>
           )}
-          <CouponField
-            service={mode === "boarding" ? "Boarding" : "Pet Sitting"}
+          {mode !== "boarding" && <CouponField
+            service="Pet Sitting"
             orderValue={totalBeforeCoupon}
             customerKind="existing"
             paymentMode={splitEligible && splitPayment ? "partial" : "full"}
@@ -868,8 +861,9 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
               setDiscount(value);
               setCouponCode(code);
             }}
-          />
-          {discount > 0 && (
+          />}
+          {mode === "boarding" && <p className={styles.hint}>Boarding coupons are disabled until a canonical coupon policy is configured.</p>}
+          {mode !== "boarding" && discount > 0 && (
             <article className={styles.couponSaving}>Coupon saving <b>−{money(discount)}</b></article>
           )}
           <article className={styles.protection}>

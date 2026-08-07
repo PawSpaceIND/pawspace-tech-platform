@@ -1,0 +1,37 @@
+import assert from"node:assert/strict";
+import test from"node:test";
+import{readFile}from"node:fs/promises";
+const read=(path)=>readFile(new URL("../"+path,import.meta.url),"utf8");
+
+test("Boarding Gate 1 owns catalogue quotes verified hosts and canonical stay creation",async()=>{
+ const[governance,api,booking,client,flow,gateway]=await Promise.all([read("lib/boarding-governance.ts"),read("app/api/boarding-commercial/route.ts"),read("app/api/canonical-bookings/route.ts"),read("lib/boarding-commercial-client.ts"),read("app/mobile-app/stay-flow.tsx"),read("lib/api-gateway.ts")]);
+ for(const value of ["boarding_commercial_packages","boarding_commercial_quotes","boarding_booking_quote_links","boarding_host_profiles","boarding_stays","boarding_stay_events"])assert.match(governance,new RegExp(value));
+ assert.match(governance,/code:"boarding-4h".*basePrice:499/);
+ assert.match(governance,/code:"boarding-10h".*basePrice:599/);
+ assert.match(governance,/code:"boarding-24h".*basePrice:699/);
+ assert.match(governance,/Boarding split or long-stay payment policy is not approved/);
+ assert.match(governance,/Boarding coupon policy is not enabled/);
+ assert.match(governance,/Boarding requires verified vaccination for every pet/);
+ assert.match(governance,/home_verified/);
+ assert.match(governance,/kyc_status/);
+ assert.match(governance,/background_check_status/);
+ assert.match(governance,/Selected Boarding host capacity is lower than the pet count/);
+ assert.match(api,/canonical_boarding_governance/);
+ assert.match(api,/liveAvailability:false/);
+ assert.match(api,/liveMoney:false/);
+ assert.match(client,/\/api\/boarding-commercial/);
+ assert.match(booking,/governBoardingBooking/);
+ assert.match(booking,/boardingQuoteLinkStatement/);
+ assert.match(booking,/boardingStayStatement/);
+ assert.match(booking,/consumeBoardingQuote/);
+ assert.match(booking,/boardingQuoteId/);
+ assert.match(flow,/loadBoardingCommercial/);
+ assert.match(flow,/quoteBoarding/);
+ assert.match(flow,/boardingQuoteId:governedBoardingQuote\?\.quoteId/);
+ assert.match(flow,/splitEligible = mode !== "boarding"/);
+ assert.match(flow,/Boarding coupons are disabled until a canonical coupon policy is configured/);
+ assert.match(flow,/Pet Taxi pricing is not enabled in Boarding Gate 1/);
+ assert.match(flow,/Full prepaid UAT payment from the canonical Boarding quote/);
+ assert.doesNotMatch(flow,/mode==="boarding"\?"home-boarding"/);
+ assert.match(gateway,/\/api\/boarding-commercial/);
+});
