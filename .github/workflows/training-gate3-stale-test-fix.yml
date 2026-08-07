@@ -42,6 +42,7 @@ jobs:
             ('  assert.match(training, /45 minutes of direct training/);','  assert.match(training, /\\{plan\\.directMinutes\\} minutes of direct training/);'),
             ('  assert.match(training, /selectedPets.length \\* 15/);','  assert.match(training, /serviceMinutes=selectedPets\\.length\\*\\(plan\\.directMinutes\\+plan\\.coachingMinutes\\)/);'),
             ('  assert.match(training, /Every pet has one paid 60-minute session/);','  assert.match(training, /Every pet has one paid \\{plan\\.directMinutes\\+plan\\.coachingMinutes\\}-minute session/);'),
+            ('  assert.match(training, /role="Trainer"/);','  assert.match(training, /loadTrainingTrainers/);\n  assert.match(training, /confirmedTrainerName/);'),
           ]
           for old,new in replacements:
               if old not in text: raise SystemExit(f"expected rendered-html assertion not found: {old}")
@@ -53,37 +54,12 @@ jobs:
       - name: Install web dependencies
         run: npm ci
       - name: Run web tests
-        id: tests
-        shell: bash
-        run: |
-          set +e
-          npm test > /tmp/training-gate3-test-output.txt 2>&1
-          code=$?
-          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-          if [ "$code" -ne 0 ]; then
-            awk '/^not ok /{print; keep=12; next} keep>0{print; keep--}' /tmp/training-gate3-test-output.txt > .training-gate3-failure-summary.txt
-            cat .training-gate3-failure-summary.txt
-          fi
-          exit 0
-      - name: Commit diagnostic on failure
-        if: steps.tests.outputs.exit_code != '0'
-        shell: bash
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git rm -f .training-gate3-test-output.txt || true
-          git add .training-gate3-failure-summary.txt
-          git commit -m "Summarize Training Gate 3 failing tests [skip ci]"
-          git push origin HEAD:grooming-integration-closure
-          exit 1
+        run: npm test
       - name: Run lint
-        if: steps.tests.outputs.exit_code == '0'
         run: npm run lint
       - name: Validate artifact
-        if: steps.tests.outputs.exit_code == '0'
         run: npm run validate:artifact
       - name: Commit verified regression fixes
-        if: steps.tests.outputs.exit_code == '0'
         shell: bash
         run: |
           git config user.name github-actions[bot]
