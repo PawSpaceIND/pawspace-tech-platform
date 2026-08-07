@@ -79,6 +79,43 @@ test("Grooming subscription commercial rules are city-configurable with audited 
   assert.match(gateway,/\/api\/grooming-subscription-plans/);
 });
 
+test("Grooming Gate 3 governs provider capacity acceptance and same-booking recovery",async()=>{
+  const[capacity,scheduler,scheduling,recovery,partner,operations,gateway]=await Promise.all([
+    source("lib/provider-capacity-governance.ts"),source("app/api/uat-scheduling/route.ts"),source("backend/src/scheduling.ts"),source("app/api/provider-assignment-recovery/route.ts"),source("app/partner-app/canonical-grooming-jobs.tsx"),source("app/api/booking-operations/route.ts"),source("lib/api-gateway.ts"),
+  ]);
+  const control=await source("app/api/provider-capacity-control/route.ts");
+  assert.match(capacity,/provider_capacity_profiles/);
+  assert.match(capacity,/travel_buffer_minutes/);
+  assert.match(capacity,/max_daily_jobs/);
+  assert.match(capacity,/acceptance_timeout_minutes/);
+  assert.match(capacity,/provider_assignment_offers/);
+  assert.match(capacity,/provider_recovery_cases/);
+  assert.match(capacity,/provider_performance_events/);
+  assert.match(capacity,/provider_unavailability/);
+  assert.match(scheduler,/loadGovernedProviders/);
+  assert.match(scheduler,/createAssignmentOffer/);
+  assert.match(scheduling,/Existing booking conflicts with travel\/service buffer/);
+  assert.match(scheduling,/Daily job limit/);
+  assert.match(control,/"set_availability"\|"block_time"\|"unblock_time"/);
+  assert.match(control,/"provider_unavailable"/);
+  assert.match(control,/capacityLocked:true/);
+  assert.match(control,/UPDATE scheduling_reservations SET status='cancelled'/);
+  assert.match(recovery,/"accept"\|"decline"\|"timeout"\|"unavailable"\|"no_show"/);
+  assert.match(recovery,/UPDATE canonical_bookings SET provider_id=\?/);
+  assert.match(recovery,/UPDATE provider_work_orders SET provider_id=\?/);
+  assert.match(recovery,/provider_replacement_selected/);
+  assert.match(recovery,/ops_escalation/);
+  assert.match(recovery,/recordProviderPerformance/);
+  assert.match(recovery,/booking ID and scheduled slot remain unchanged/);
+  assert.match(partner,/\/api\/provider-assignment-recovery/);
+  assert.match(partner,/Decline job/);
+  assert.match(operations,/"running_late"/);
+  assert.match(operations,/"vehicle_issue"/);
+  assert.match(operations,/rebookingAvailable/);
+  assert.match(gateway,/\/api\/provider-capacity-control/);
+  assert.match(gateway,/\/api\/provider-assignment-recovery/);
+});
+
 test("Grooming closure keeps live integrations explicitly outside the UAT transaction",async()=>{
   const[lifecycle,finance,plan]=await Promise.all([source("app/api/grooming-lifecycle/route.ts"),source("app/team/finance/page.tsx"),source("docs/GROOMING_CLOSURE_PLAN.md")]);
   assert.match(lifecycle,/uat_sandbox/);
