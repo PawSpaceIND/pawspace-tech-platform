@@ -1,5 +1,6 @@
 import { defaultRoles, hasPermission, parsePermissions, type Permission } from "./platform-security";
 import {ensureIdentityBindingTables,findIdentityBinding,type IdentitySource,type PrincipalType} from "./identity-binding";
+import {resolvePlatformSession} from "./platform-session";
 
 type Db = Awaited<ReturnType<typeof database>>;
 export type AuthenticatedActor = { email:string; name:string; roleCode:string; permissions:string[]; developmentPreview:boolean; identitySource:IdentitySource; principalType:PrincipalType; principalKey:string };
@@ -38,6 +39,8 @@ export async function ensureSecurityTables(db:Db){
 export async function resolveActor(request:Request):Promise<AuthenticatedActor>{
   const db=await database(); await ensureSecurityTables(db);
   if(isDevelopmentPreview(request))return {email:"preview@pawspace.test",name:"Preview operator",roleCode:"superuser",permissions:["*"],developmentPreview:true,identitySource:"workspace",principalType:"email",principalKey:"preview@pawspace.test"};
+  const session=await resolvePlatformSession(db,request);
+  if(session)return {email:session.auditId,name:`${session.subjectType==="customer"?"Customer":"Provider"} ${session.subjectId}`,roleCode:session.roleCode,permissions:session.permissions,developmentPreview:false,identitySource:session.identitySource,principalType:session.principalType,principalKey:session.principalKey};
   const identity=forwardedIdentity(request);
   if(!identity.email)throw new Response("Authentication required",{status:401});
   let user=await db.prepare("SELECT email,name,role_code,status FROM app_users WHERE email=?").bind(identity.email).first<Record<string,unknown>>();
