@@ -90,5 +90,6 @@ test("Boarding customer panel uses governed cancellation and date-change request
  assert.match(panel,/No refund amount is calculated automatically/);
  assert.match(panel,/The paid stay window is unchanged/);
  assert.match(panel,/lower-priced change is blocked until refund policy is approved/);
- assert.match(panel,/live payment\/refund execution/);
+ assert.match(panel,/payment\/refund execution/);
+ assert.match(panel,/payout execution remain disconnected in UAT/);
 });
