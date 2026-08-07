@@ -66,3 +66,38 @@ test("Boarding stay API enforces provider customer and staff ownership boundarie
   assert.match(gateway,/\[\"submit_care_plan\",\"request_extension\"\]/);
   assert.match(gateway,/action===\"no_show\"/);
 });
+
+test("Boarding Host workspace resolves trusted provider identity and governed city scope",()=>{
+  const api=read("app/api/boarding-stays/route.ts"),client=read("lib/boarding-stay-client.ts"),page=read("app/host/page.tsx");
+  assert.match(api,/findIdentityBinding/);
+  assert.match(api,/ownProviderId/);
+  assert.match(api,/providerScope/);
+  assert.match(api,/city_id,zone_id FROM boarding_host_profiles/);
+  assert.match(client,/loadOwnBoardingStays/);
+  assert.match(client,/cityId/);
+  assert.match(client,/zoneId/);
+  assert.match(page,/loadOwnBoardingStays/);
+  assert.match(page,/loadBoardingCommercial/);
+  assert.doesNotMatch(page,/host_maya_rohan/);
+});
+
+test("Boarding Host workspace performs canonical stay actions instead of fixture toasts",()=>{
+  const page=read("app/host/page.tsx");
+  assert.match(page,/updateBoardingStay/);
+  for(const action of ["accept","decline","check_in","care_event","host_unavailable","check_out"])assert.match(page,new RegExp(`\\"${action}\\"`));
+  assert.match(page,/care_plan_status/);
+  assert.match(page,/extension_status/);
+  assert.match(page,/Canonical Care Card/);
+  assert.match(page,/Stay timeline/);
+  assert.match(page,/Settlement not calculated/);
+});
+
+test("Boarding Host workspace does not restore unapproved commercial or dated fixtures",()=>{
+  const page=read("app/host/page.tsx");
+  for(const stale of ["Flexible offer allowed","Send price offer","48 hrs after checkout","₹28,740","₹18,420","MONDAY · 3 AUGUST","AUGUST 2026"])assert.doesNotMatch(page,new RegExp(stale.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")));
+  assert.match(page,/Host price override/);
+  assert.match(page,/Disabled/);
+  assert.match(page,/Rule pending/);
+  assert.match(page,/Config required/);
+  assert.match(page,/new Intl\.DateTimeFormat/);
+});
