@@ -1,0 +1,42 @@
+name: Boarding Gate 2 diagnostic
+
+on:
+  push:
+    branches:
+      - grooming-integration-closure
+    paths:
+      - .github/workflows/boarding-gate2-diagnostic.yml
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: grooming-integration-closure
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - run: npm ci
+      - name: Capture test output
+        shell: bash
+        run: |
+          set +e
+          npm test > boarding-gate2-test-output.txt 2>&1
+          code=$?
+          echo "EXIT_CODE=$code" >> boarding-gate2-test-output.txt
+          exit 0
+      - name: Commit diagnostic output
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add boarding-gate2-test-output.txt
+          git commit -m "Capture Boarding Gate 2 test failure [skip ci]"
+          git push origin HEAD:grooming-integration-closure
