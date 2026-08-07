@@ -8,6 +8,8 @@ import CouponField from "./coupon-field";
 import { reserveUatSchedule } from "../../lib/uat-scheduling-client";
 import { createCanonicalLifecycle } from "../../lib/canonical-lifecycle-client";
 import { loadBoardingCommercial, quoteBoarding, type BoardingQuote } from "../../lib/boarding-commercial-client";
+import BoardingCustomerStayPanel from "./boarding-customer-stay-panel";
+import BoardingCustomerStayStatus from "./boarding-customer-stay-status";
 
 type Mode = "boarding" | "sitting";
 type View = "stay" | "care" | "support";
@@ -153,6 +155,12 @@ const shortDate = (value: string) =>
     day: "numeric",
     month: "short",
   });
+const dateOffset = (days: number) => {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+};
 
 export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
   const [mode, setMode] = useState<Mode>(initialMode),
@@ -178,8 +186,8 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
     [taxi, setTaxi] = useState(false),
     [confirmed, setConfirmed] = useState(false),
     [agreed, setAgreed] = useState(true),
-    [start, setStart] = useState("2026-08-24"),
-    [end, setEnd] = useState("2026-08-31"),
+    [start, setStart] = useState(() => dateOffset(3)),
+    [end, setEnd] = useState(() => dateOffset(10)),
     [bookingId, setBookingId] = useState(""),
     [scheduling, setScheduling] = useState(false),
     [scheduleError, setScheduleError] = useState(""),
@@ -465,29 +473,36 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
             title={`Choose your ${mode === "boarding" ? "host" : "sitter"}`}
             note="Match · 2 of 4"
           />
-          <article className={styles.matchIntro}>
-            <i>✦</i>
-            <div>
-              <b>Request shared within a 15 km service radius</b>
-              <span>
-                Verified commission partners receive the request, review the
-                Care Card and send an acceptance or flexible offer.
-              </span>
+          {mode === "boarding" ? (
+            <article className={styles.matchIntro}>
+              <i>✦</i>
+              <div>
+                <b>Server-priced verified Boarding hosts</b>
+                <span>Host profiles can be selected here, but PawSpace rechecks verification, species eligibility and capacity at confirmation. Hosts cannot send a different Boarding price.</span>
+              </div>
+            </article>
+          ) : <>
+            <article className={styles.matchIntro}>
+              <i>✦</i>
+              <div>
+                <b>Request shared within a 15 km service radius</b>
+                <span>Verified commission partners receive the request, review the Care Card and send an acceptance or flexible offer.</span>
+              </div>
+            </article>
+            <label className={styles.field}>
+              Pricing preference
+              <select value={pricing} onChange={(e) => setPricing(e.target.value)}>
+                <option>Best available offer</option>
+                <option>Fixed PawSpace rate only</option>
+                <option>Premium-care offers welcome</option>
+              </select>
+            </label>
+            <div className={styles.offerStatus}>
+              <span><b>3</b> eligible partners</span>
+              <span><b>2</b> accepted</span>
+              <span><b>1</b> flexible offer</span>
             </div>
-          </article>
-          <label className={styles.field}>
-            Pricing preference
-            <select value={pricing} onChange={(e) => setPricing(e.target.value)}>
-              <option>Best available offer</option>
-              <option>Fixed PawSpace rate only</option>
-              <option>Premium-care offers welcome</option>
-            </select>
-          </label>
-          <div className={styles.offerStatus}>
-            <span><b>3</b> eligible partners</span>
-            <span><b>2</b> accepted</span>
-            <span><b>1</b> flexible offer</span>
-          </div>
+          </>}
           <div className={styles.caregivers}>
             {caregivers.map((c, i) => (
               <button
@@ -539,12 +554,12 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
                     <small>{mode === "boarding" ? " / pet / stay unit" : " / night"}</small>
                   </strong>
                 </div>
-                {i < 2 && (
-                  <label>
-                    ✓ Partner accepted · live calendar verified
-                  </label>
-                )}
-                {i === 2 && <label>Flexible offer · awaiting your response</label>}
+                {mode === "boarding" ? (
+                  <label>Governed host profile · capacity rechecked at confirmation</label>
+                ) : <>
+                  {i < 2 && <label>✓ Partner accepted · live calendar verified</label>}
+                  {i === 2 && <label>Flexible offer · awaiting your response</label>}
+                </>}
               </button>
             ))}
           </div>
@@ -569,7 +584,7 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
             <article className={styles.secureChat}>
               <header><b>Chat with {caregiver.name}</b><span>Numbers stay masked</span></header>
               <p><b>{caregiver.name.split(" ")[0]}:</b> I can support medication, three walks and the one-hour play routine.</p>
-              <p><b>You:</b> Can you also arrange pickup and share a flexible all-inclusive price?</p>
+              <p><b>You:</b> {mode === "boarding" ? "Can you confirm medication and routine support for this stay?" : "Can you also arrange pickup and share a flexible all-inclusive price?"}</p>
               <label><input placeholder="Type a message" /><button>Send</button></label>
             </article>
           )}
@@ -746,7 +761,7 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
               </b>
             </span>
             <span>
-              Partner approval<b>Accepted offer · final calendar approval required</b>
+              Partner approval<b>{mode === "boarding" ? "Host acceptance follows the canonical booking request" : "Accepted offer · final calendar approval required"}</b>
             </span>
             <span>
               Care benefits<b>{selectedBenefits.join(" · ")}</b>
@@ -900,7 +915,7 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
             className={styles.primary}
             onClick={confirm}
           >
-            {scheduling ? "Locking care capacity…" : `Pay ${money(reserveAmount)} & request final partner approval`}
+            {scheduling ? "Locking care capacity…" : mode === "boarding" ? `Pay ${money(reserveAmount)} & create canonical stay` : `Pay ${money(reserveAmount)} & request final partner approval`}
           </button>
           {scheduleError && <p role="alert">{scheduleError}</p>}
         </>
@@ -1132,7 +1147,7 @@ function LiveStay({
         <i>✓</i>
         <div>
           <small>
-            {mode === "boarding" ? "STAY" : "SITTING"} CONFIRMED · {bookingId}
+            {mode === "boarding" ? "BOARDING BOOKING CREATED" : "SITTING CONFIRMED"} · {bookingId}
           </small>
           <h3>{pets.join(" + ")} are all set.</h3>
           <p>
@@ -1142,10 +1157,10 @@ function LiveStay({
         </div>
       </article>
       <div className={styles.status}>
-        <span className={styles.done}>Confirmed</span>
+        <span className={styles.done}>{mode === "boarding" ? "Booking created" : "Confirmed"}</span>
         <i />
         <span className={styles.done}>
-          {taxi && mode === "boarding" ? "Taxi assigned" : "Care shared"}
+          {taxi && mode === "boarding" ? "Taxi assigned" : mode === "boarding" ? "Awaiting host" : "Care shared"}
         </span>
         <i />
         <span>Check-in</span>
@@ -1188,7 +1203,7 @@ function LiveStay({
         </button>
       </div>
       {view === "stay" && (
-        <>
+        mode === "boarding" ? <BoardingCustomerStayStatus bookingId={bookingId} caregiverName={caregiver.name} /> : <>
           <article className={styles.next}>
             <span>NEXT STEP</span>
             <h4>Meet & Greet · 20 Aug, 6:00 PM</h4>
@@ -1223,7 +1238,7 @@ function LiveStay({
         </>
       )}
       {view === "care" && (
-        <>
+        mode === "boarding" ? <BoardingCustomerStayPanel bookingId={bookingId} caregiverName={caregiver.name} /> : <>
           <article className={styles.careLive}>
             <span>● LIVE CARE CARD · DAY 2 OF 4</span>
             <h4>Everything is on routine</h4>
