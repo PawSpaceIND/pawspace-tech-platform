@@ -1,4 +1,5 @@
 import{authError,requirePermission,requireProviderOwnership,resolveActor,securityAudit}from"../../../lib/server-auth";
+import{assertServiceProofRef}from"../../../lib/service-media-security";
 
 type Db=Awaited<ReturnType<typeof database>>;
 type Row=Record<string,unknown>;
@@ -33,7 +34,6 @@ function transition(current:string,action:LifecycleAction){const map:Record<Life
   mark_paid:{confirmed:"confirmed",assigned:"assigned",on_the_way:"on_the_way",arrived:"arrived",in_service:"in_service",completed:"completed"},
 };return map[action][current];}
 
-function validProofRef(value:string|undefined){if(!value)return true;return value.startsWith("uat://proof/")||value.startsWith("media://asset/");}
 async function event(db:Db,bookingId:string,eventType:string,actorId:string,detail:unknown,now:number){await db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),bookingId,eventType,"booking",bookingId,actorId,JSON.stringify(detail),now).run();}
 
 async function bundle(db:Db,bookingId:string){const booking=await db.prepare("SELECT b.*,w.id work_order_id,w.provider_name,w.provider_model,w.status work_order_status,p.id payment_id,p.status payment_status,p.method payment_method,p.mode payment_mode,p.amount,p.amount_due_now FROM canonical_bookings b JOIN provider_work_orders w ON w.booking_id=b.id JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=?").bind(bookingId).first<Row>();if(!booking)return null;const[proof,invoice,usage,repeat,tax,payout,events]=await Promise.all([
@@ -52,7 +52,7 @@ export async function POST(request:Request){try{const input=await request.json()
 
   if(input.action==="add_proof"){
     if(!input.beforePhotoRef&&!input.afterPhotoRef&&!(input.checklist?.length))return json({error:"Photo reference or checklist evidence is required"},400);
-    if(!validProofRef(input.beforePhotoRef)||!validProofRef(input.afterPhotoRef))return json({error:"Proof media must use a PawSpace media asset reference; arbitrary URLs and data URIs are not accepted"},400);
+    await assertServiceProofRef(db,{ref:input.beforePhotoRef,bookingId:input.bookingId,providerId:String(work.provider_id),purpose:"before_service"});await assertServiceProofRef(db,{ref:input.afterPhotoRef,bookingId:input.bookingId,providerId:String(work.provider_id),purpose:"after_service"});
     await db.prepare("INSERT INTO grooming_service_proof (booking_id,before_photo_ref,after_photo_ref,checklist_json,completion_notes,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(booking_id) DO UPDATE SET before_photo_ref=COALESCE(excluded.before_photo_ref,before_photo_ref),after_photo_ref=COALESCE(excluded.after_photo_ref,after_photo_ref),checklist_json=CASE WHEN excluded.checklist_json!='[]' THEN excluded.checklist_json ELSE checklist_json END,completion_notes=COALESCE(excluded.completion_notes,completion_notes),updated_at=excluded.updated_at").bind(input.bookingId,input.beforePhotoRef??null,input.afterPhotoRef??null,JSON.stringify(input.checklist??[]),input.completionNotes??null,now,now).run();
     await event(db,input.bookingId,"service_proof_updated",actor,{providerId:work.provider_id,beforePhotoRef:input.beforePhotoRef,afterPhotoRef:input.afterPhotoRef,checklist:input.checklist??[]},now);
     await securityAudit(db,actorIdentity,"grooming.add_proof","booking",input.bookingId,"completed",{providerId:work.provider_id});
@@ -70,7 +70,7 @@ export async function POST(request:Request){try{const input=await request.json()
     const proof=await db.prepare("SELECT * FROM grooming_service_proof WHERE booking_id=?").bind(input.bookingId).first<Row>();
     const checklist=proof?JSON.parse(String(proof.checklist_json||"[]")) as unknown[]:[];
     if(!proof?.before_photo_ref||!proof?.after_photo_ref||checklist.length===0)return json({error:"Before photo, after photo and completion checklist are required"},409);
-    if(!validProofRef(String(proof.before_photo_ref))||!validProofRef(String(proof.after_photo_ref)))return json({error:"Completion proof contains an invalid media reference"},409);
+    await assertServiceProofRef(db,{ref:String(proof.before_photo_ref),bookingId:input.bookingId,providerId:String(work.provider_id),purpose:"before_service"});await assertServiceProofRef(db,{ref:String(proof.after_photo_ref),bookingId:input.bookingId,providerId:String(work.provider_id),purpose:"after_service"});
     const payment=await db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Row>();
     const usage=await db.prepare("SELECT * FROM booking_subscription_usage WHERE booking_id=?").bind(input.bookingId).first<Row>();
     const invoiceId=`INV-${crypto.randomUUID().slice(0,8).toUpperCase()}`,invoiceNumber=`PS-${new Date(now).getUTCFullYear()}-${String(now).slice(-8)}`,eligibleAfter=now+24*60*60*1000;
