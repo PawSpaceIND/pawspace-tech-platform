@@ -19,6 +19,8 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/revenue-crm")return method==="GET"?"customers.view":"customers.manage";
   if(url.pathname==="/api/finance-control")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/training-finance")return method==="GET"?"finance.view":"finance.manage";
+  if(url.pathname==="/api/training-cancellation"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action)==="request"?"scheduling.book":"finance.manage";}
+  if(url.pathname==="/api/training-customer-session-change")return "scheduling.book";
   if(url.pathname==="/api/training-ops")return "bookings.view";
   if(url.pathname==="/api/training-provider-earnings")return "bookings.view";
   if(url.pathname==="/api/training-reconciliation")return "reports.view";
