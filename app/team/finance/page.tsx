@@ -12,7 +12,14 @@ export default function TeamFinance(){
   const[error,setError]=useState("");
   const[loading,setLoading]=useState(true);
   const load=async()=>{setLoading(true);setError("");try{const response=await fetch("/api/grooming-finance",{cache:"no-store"});const body=await response.json() as LedgerResponse;if(!response.ok)throw new Error(body.error||"Unable to load finance ledger");setData(body);}catch(err){setError(err instanceof Error?err.message:"Unable to load finance ledger");}finally{setLoading(false);}};
-  useEffect(()=>{void load();},[]);
+  useEffect(()=>{
+    let active=true;
+    fetch("/api/grooming-finance",{cache:"no-store"})
+      .then(async response=>{const body=await response.json() as LedgerResponse;if(!response.ok)throw new Error(body.error||"Unable to load finance ledger");if(active)setData(body);})
+      .catch(err=>{if(active)setError(err instanceof Error?err.message:"Unable to load finance ledger");})
+      .finally(()=>{if(active)setLoading(false);});
+    return()=>{active=false;};
+  },[]);
 
   return <main style={{minHeight:"100vh",background:"#f7f4fb",padding:"32px",fontFamily:"Arial, sans-serif",color:"#24133f"}}>
     <div style={{maxWidth:1320,margin:"0 auto"}}>
