@@ -1,0 +1,15 @@
+import{authError,database,requireCustomerOwnership,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
+import{hasPermission}from"../../../lib/platform-security";
+import{getBoardingFinanceSnapshot,mutateBoardingFinance,type BoardingFinanceAction}from"../../../lib/boarding-finance-governance";
+
+type Body={bookingId?:string;action?:BoardingFinanceAction;idempotencyKey?:string;reason?:string;requestedStart?:string;requestedEnd?:string;quoteId?:string;approvedRefundAmount?:number;refundReference?:string;paymentAdjustmentReference?:string};
+const json=(value:unknown,status=200)=>Response.json(value,{status});
+const customerActions=new Set<BoardingFinanceAction>(["request_cancel","request_date_change"]);
+const financeActions=new Set<BoardingFinanceAction>(["approve_cancel","apply_date_change","record_refund","prepare_settlement","reconcile"]);
+
+export async function GET(request:Request){try{const url=new URL(request.url),bookingId=String(url.searchParams.get("bookingId")||"").trim();if(!bookingId)return json({error:"Boarding finance read requires a booking ID"},400);const db=await database(),actor=await resolveActor(request);requirePermission(actor,"finance.view");const snapshot=await getBoardingFinanceSnapshot(db,bookingId);return json({data:snapshot});}catch(error){return authError(error,"Unable to load Boarding finance snapshot");}}
+
+export async function POST(request:Request){try{const body=await request.json() as Body,bookingId=String(body.bookingId||"").trim(),action=body.action,idempotencyKey=String(body.idempotencyKey||"").trim();if(!bookingId||!action||!idempotencyKey)return json({error:"Booking, action and idempotency key are required"},400);if(!customerActions.has(action)&&!financeActions.has(action))return json({error:"Unsupported Boarding finance action"},400);const db=await database(),actor=await resolveActor(request),snapshot=await getBoardingFinanceSnapshot(db,bookingId),stay=snapshot.stay as Record<string,unknown>,customerId=String(stay.customer_id||"");
+ if(customerActions.has(action)){const financeOverride=hasPermission(actor.permissions,"finance.manage")||hasPermission(actor.permissions,"bookings.manage");if(!financeOverride){requirePermission(actor,"scheduling.book");await requireCustomerOwnership(db,actor,customerId);}}
+ else requirePermission(actor,"finance.manage");
+ const result=await mutateBoardingFinance(db,{bookingId,action,actorId:actor.email,idempotencyKey,reason:body.reason,requestedStart:body.requestedStart,requestedEnd:body.requestedEnd,quoteId:body.quoteId,approvedRefundAmount:body.approvedRefundAmount,refundReference:body.refundReference,paymentAdjustmentReference:body.paymentAdjustmentReference});await securityAudit(db,actor,`boarding.finance.${action}`,"boarding_booking",bookingId,"completed",{customerId,duplicatePrevented:Boolean((result as Record<string,unknown>).duplicatePrevented),sandboxOnly:true});return json({data:result},String((result as Record<string,unknown>).status).includes("required")?202:200);}catch(error){return authError(error,"Unable to update Boarding finance");}}

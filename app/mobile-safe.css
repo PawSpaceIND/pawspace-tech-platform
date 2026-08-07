@@ -1,0 +1,7 @@
+@media (max-width: 480px) {
+  [class*="mobile_stage"] { min-height: 100dvh; overflow-x: hidden; }
+  [class*="mobile_phone"] { height: 100dvh !important; padding-top: calc(14px + env(safe-area-inset-top)) !important; padding-bottom: calc(82px + env(safe-area-inset-bottom)) !important; }
+  [class*="mobile_phone"] > nav { height: calc(70px + env(safe-area-inset-bottom)) !important; padding-bottom: calc(10px + env(safe-area-inset-bottom)) !important; }
+  [class*="mobile_phone"] button, [class*="mobile_phone"] select, [class*="mobile_phone"] input { touch-action: manipulation; }
+  [class*="mobile_screen"] { overscroll-behavior: contain; }
+}

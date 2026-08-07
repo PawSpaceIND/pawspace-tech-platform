@@ -1,0 +1,96 @@
+.mediaBanner {
+  min-height: 142px;
+  border-radius: 20px;
+  padding: 15px 16px 12px;
+  background: linear-gradient(135deg, #173f35, #216e58);
+  color: white;
+  box-shadow: 0 9px 24px #2f154216;
+  overflow: hidden;
+  position: relative;
+}
+.mediaBanner.training {
+  background: linear-gradient(135deg, #351051, #7527ad);
+}
+.mediaBanner.sponsored {
+  background: linear-gradient(135deg, #1b314f, #2878a9);
+}
+.mediaMeta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.mediaMeta span {
+  font-size: 6.5px;
+  color: #ffd475;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+.mediaMeta em {
+  font-size: 6px;
+  color: #ffffffb8;
+  font-style: normal;
+}
+.mediaBody {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+.mediaBody h3 {
+  max-width: 235px;
+  margin: 7px 0 4px;
+  font-size: 18px;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+.mediaBody p {
+  max-width: 245px;
+  margin: 0;
+  color: #e2f0eb;
+  font-size: 7.5px;
+  line-height: 1.45;
+}
+.mediaBody button {
+  margin-top: 9px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 8px;
+  background: #ffb52c;
+  color: #321b03;
+  font-size: 7px;
+  font-weight: 900;
+}
+.mediaBody > i {
+  width: 50px;
+  height: 50px;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  background: #ffffff18;
+  font-size: 21px;
+  font-style: normal;
+  font-weight: 900;
+}
+.mediaDots {
+  display: flex;
+  gap: 4px;
+  margin-top: 9px;
+}
+.mediaDots button {
+  width: 13px;
+  height: 3px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: #ffffff4a;
+}
+.mediaDots button.active {
+  width: 25px;
+  background: #ffbe43;
+}
+.mediaDisclosure {
+  margin: 5px 3px 10px;
+  color: #8a7f91;
+  font-size: 6px;
+  text-align: center;
+}

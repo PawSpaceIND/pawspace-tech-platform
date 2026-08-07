@@ -1,0 +1,23 @@
+"use client";
+
+import{useEffect,useState}from"react";
+
+type RouteData={bookingId:string;providerId:string;destinationAddress:string;destinationCoordinates:{lat:number;lng:number}|null;providerLocation:{lat:number;lng:number;accuracyMeters?:number;capturedAt?:number}|null;navigationUrl:string;route?:{status:string;distanceMeters?:number;durationSeconds?:number;error?:string}};
+type ApiResponse={data?:RouteData;error?:string};
+
+const km=(meters:unknown)=>`${(Number(meters||0)/1000).toFixed(1)} km`;
+const mins=(seconds:unknown)=>`${Math.max(1,Math.round(Number(seconds||0)/60))} min`;
+
+export default function GroomingRouteCard({bookingId,providerId}:{bookingId:string;providerId:string}){
+  const[data,setData]=useState<RouteData|null>(null);const[busy,setBusy]=useState(false);const[error,setError]=useState("");
+  const load=async()=>{try{const response=await fetch(`/api/grooming-route?bookingId=${encodeURIComponent(bookingId)}&providerId=${encodeURIComponent(providerId)}`,{cache:"no-store"});const body=await response.json() as ApiResponse;if(response.ok&&body.data)setData(body.data);else if(response.status!==404)throw new Error(body.error||"Unable to load route");}catch(err){setError(err instanceof Error?err.message:"Unable to load route");}};
+  useEffect(()=>{let active=true;fetch(`/api/grooming-route?bookingId=${encodeURIComponent(bookingId)}&providerId=${encodeURIComponent(providerId)}`,{cache:"no-store"}).then(async response=>({response,body:await response.json() as ApiResponse})).then(({response,body})=>{if(!active)return;if(response.ok&&body.data)setData(body.data);else if(response.status!==404)setError(body.error||"Unable to load route");}).catch(()=>{});return()=>{active=false};},[bookingId,providerId]);
+  const updateGps=()=>{if(!navigator.geolocation){setError("Location is not supported on this device");return;}setBusy(true);setError("");navigator.geolocation.getCurrentPosition(async position=>{try{const response=await fetch("/api/grooming-route",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({bookingId,providerId,latitude:position.coords.latitude,longitude:position.coords.longitude,accuracyMeters:position.coords.accuracy,capturedAt:position.timestamp})});const body=await response.json() as ApiResponse;if(!response.ok||!body.data)throw new Error(body.error||"Unable to calculate route");setData(body.data);}catch(err){setError(err instanceof Error?err.message:"Unable to calculate route");}finally{setBusy(false);}},geoError=>{setBusy(false);setError(geoError.message||"Location permission was not granted");},{enableHighAccuracy:true,timeout:15000,maximumAge:30000});};
+  return <div style={{marginTop:18,padding:14,borderRadius:12,border:"1px solid #e7dcef",background:"#fff"}}>
+    <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"flex-start"}}><div><small style={{fontWeight:800,color:"#7540aa"}}>MAPS UAT</small><b style={{display:"block",marginTop:4}}>Doorstep navigation & ETA</b></div><button onClick={()=>void load()} style={{border:"1px solid #d8cae7",background:"white",borderRadius:9,padding:"7px 10px",fontWeight:700}}>Reload</button></div>
+    {!data&&!error&&<p style={{fontSize:13,color:"#746b7d"}}>Doorstep address will appear after the customer booking saves its canonical service location.</p>}
+    {data&&<><p style={{fontSize:13,margin:"10px 0 7px"}}><b>Destination:</b> {data.destinationAddress}</p>{data.route?.status==="configured"&&<p style={{fontSize:13,margin:"0 0 7px"}}><b>Google ETA:</b> {mins(data.route.durationSeconds)} · {km(data.route.distanceMeters)}</p>}{data.route?.status==="configuration_required"&&<p style={{fontSize:13,margin:"0 0 7px",color:"#7a5b20"}}>Navigation link is ready. Google Routes ETA waits for the UAT server key.</p>}{data.route?.status==="route_unavailable"&&<p style={{fontSize:13,margin:"0 0 7px",color:"#9a3d32"}}>Routes API could not calculate ETA: {data.route.error}</p>}<div style={{display:"flex",gap:9,flexWrap:"wrap",marginTop:10}}><button disabled={busy} onClick={updateGps} style={{padding:"9px 12px",border:0,borderRadius:9,background:"#4b168c",color:"white",fontWeight:800}}>{busy?"Locating…":"Use my GPS & calculate ETA"}</button><a href={data.navigationUrl} target="_blank" rel="noreferrer" style={{padding:"9px 12px",borderRadius:9,border:"1px solid #d8cae7",textDecoration:"none",color:"#4b168c",fontWeight:800}}>Open Google Maps</a></div></>}
+    {error&&<p style={{fontSize:13,color:"#9a3d32",marginBottom:0}}>{error}</p>}
+    <p style={{fontSize:11,color:"#817887",margin:"10px 0 0"}}>GPS is captured only when you tap the button. Background/live tracking is not enabled in this UAT gate.</p>
+  </div>;
+}

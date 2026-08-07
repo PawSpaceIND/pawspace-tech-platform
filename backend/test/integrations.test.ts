@@ -1,0 +1,17 @@
+import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
+import { test } from "node:test";
+import { buildApp } from "../src/app.js";
+import { buildIntegrationGateway, processNotificationOutbox, verifyHmac } from "../src/integrations.js";
+import { enqueueNotification } from "../src/notifications.js";
+import { MemoryRepository } from "../src/repository.js";
+
+const ops={"x-user-id":"ops_karthik","x-role":"operations","x-city-id":"blr"};
+
+test("integration registry exposes safe sandbox adapters",async()=>{const app=buildApp(new MemoryRepository());const response=await app.inject({method:"GET",url:"/v1/integrations/health",headers:ops});assert.equal(response.statusCode,200);assert.equal(response.json().data.length,9);assert.equal(response.json().meta.sandboxReady,true);assert.equal(response.json().meta.productionReady,false);await app.close();});
+
+test("HMAC webhook verification rejects tampering",()=>{const payload=JSON.stringify({event:"payment.captured",id:"pay_123"});const secret="test-secret";const signature=createHmac("sha256",secret).update(payload).digest("hex");assert.equal(verifyHmac(payload,signature,secret),true);assert.equal(verifyHmac(`${payload}x`,signature,secret),false);});
+
+test("Razorpay webhook accepts only a verified payload",async()=>{process.env.RAZORPAY_WEBHOOK_SECRET="test-webhook-secret";const app=buildApp(new MemoryRepository());const payload=JSON.stringify({event:"payment.captured",id:"pay_123"});const signature=createHmac("sha256",process.env.RAZORPAY_WEBHOOK_SECRET).update(payload).digest("hex");const accepted=await app.inject({method:"POST",url:"/v1/webhooks/razorpay",payload:{payload,signature}});assert.equal(accepted.statusCode,202);const denied=await app.inject({method:"POST",url:"/v1/webhooks/razorpay",payload:{payload,signature:`${signature.slice(0,-1)}0`}});assert.equal(denied.statusCode,401);await app.close();delete process.env.RAZORPAY_WEBHOOK_SECRET;});
+
+test("outbox runner preserves successful channels and retries failures",async()=>{const repository=new MemoryRepository();const event=await enqueueNotification(repository,{eventType:"booking.confirmed",customerId:"cus_10428",channels:["push","whatsapp"],templateCode:"booking_confirmation",payload:{}});const gateway=buildIntegrationGateway({failChannels:new Set(["whatsapp"])});const result=await processNotificationOutbox(repository,gateway);assert.equal(result.evaluated,1);const saved=(await repository.listNotifications()).find(x=>x.id===event.id);assert.equal(saved?.status,"partially_sent");assert.deepEqual(saved?.payload.deliveredChannels,["push"]);assert.equal(saved?.attempts,1);});

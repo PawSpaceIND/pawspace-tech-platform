@@ -1,0 +1,14 @@
+import{database}from"../../../lib/server-auth";
+import{upsertIdentityBinding}from"../../../lib/identity-binding";
+import{clearPlatformSessionCookie,issuePlatformSession,platformSessionCookie,resolvePlatformSession,revokePlatformSession}from"../../../lib/platform-session";
+import{verifyIdentityAssertion}from"../../../lib/verified-identity-assertion";
+
+const json=(value:unknown,status=200,headers?:HeadersInit)=>Response.json(value,{status,headers});
+function sameOriginWrite(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin write blocked",{status:403});}
+function failure(error:unknown){if(error instanceof Response)return error;return json({error:error instanceof Error?error.message:"Identity session request failed"},500);}
+
+export async function GET(request:Request){try{const db=await database(),actor=await resolvePlatformSession(db,request);if(!actor)return json({error:"Identity session required"},401);return json({data:{subjectType:actor.subjectType,subjectId:actor.subjectId,roleCode:actor.roleCode,identitySource:actor.identitySource,expiresAt:actor.expiresAt}});}catch(error){return failure(error);}}
+
+export async function POST(request:Request){try{sameOriginWrite(request);const body=await request.json() as {assertion?:string},assertion=String(body.assertion||"").trim();if(!assertion)return json({error:"Verified identity assertion is required"},400);const db=await database(),verified=await verifyIdentityAssertion(db,assertion);const binding=await upsertIdentityBinding(db,{identitySource:verified.identitySource,principalType:verified.principalType,principalKey:verified.principalKey,subjectType:verified.subjectType,subjectId:verified.subjectId,cityId:verified.cityId??null,verificationState:"verified",expiresAt:null,metadata:{verifiedBy:"otp_adapter",assertionIssuedAt:verified.issuedAt},actorId:`otp_adapter:${verified.identitySource}`,reason:"Verified OTP identity assertion exchange"});const issued=await issuePlatformSession(db,{bindingId:String(binding?.id||""),identitySource:verified.identitySource,principalType:verified.principalType,principalKey:verified.principalKey,subjectType:verified.subjectType,subjectId:verified.subjectId,ttlSeconds:28_800,metadata:{cityId:verified.cityId??null,assertionNonce:verified.nonce}});return json({data:{subjectType:verified.subjectType,subjectId:verified.subjectId,roleCode:issued.session.roleCode,expiresAt:issued.session.expiresAt}},201,{"set-cookie":platformSessionCookie(issued.token,issued.ttlSeconds),"cache-control":"no-store"});}catch(error){return failure(error);}}
+
+export async function DELETE(request:Request){try{sameOriginWrite(request);const db=await database();await revokePlatformSession(db,request,"user_logout");return json({data:{loggedOut:true}},200,{"set-cookie":clearPlatformSessionCookie(),"cache-control":"no-store"});}catch(error){return failure(error);}}
