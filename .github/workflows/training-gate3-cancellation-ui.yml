@@ -1,0 +1,99 @@
+name: Training Gate 3 cancellation UI
+on:
+  push:
+    branches: [grooming-integration-closure]
+    paths:
+      - .github/workflows/training-gate3-cancellation-ui.yml
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: grooming-integration-closure
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - name: Wire customer recovery and Finance cancellation controls
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          gateway=Path('lib/api-gateway.ts')
+          text=gateway.read_text()
+          old='  if(url.pathname==="/api/training-finance")return method==="GET"?"finance.view":"finance.manage";'
+          new='''  if(url.pathname==="/api/training-finance")return method==="GET"?"finance.view":"finance.manage";
+  if(url.pathname==="/api/training-cancellation"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action)==="request"?"scheduling.book":"finance.manage";}
+  if(url.pathname==="/api/training-customer-session-change")return "scheduling.book";'''
+          assert old in text
+          gateway.write_text(text.replace(old,new,1))
+
+          session=Path('lib/session-api-gateway.ts')
+          text=session.read_text()
+          old='  if(url.pathname==="/api/training-programmes"&&["GET","POST"].includes(method))return{permission:"scheduling.book",subjectType:"customer"};'
+          new='''  if(url.pathname==="/api/training-programmes"&&["GET","POST"].includes(method))return{permission:"scheduling.book",subjectType:"customer"};
+  if(url.pathname==="/api/training-cancellation"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action)==="request"?{permission:"scheduling.book",subjectType:"customer"}:undefined;}
+  if(url.pathname==="/api/training-customer-session-change"&&method==="POST")return{permission:"scheduling.book",subjectType:"customer"};'''
+          assert old in text
+          session.write_text(text.replace(old,new,1))
+
+          flow=Path('app/mobile-app/training-flow.tsx')
+          text=flow.read_text()
+          old='import { loadTrainingPackages, loadTrainingTrainers, quoteTraining, type TrainingPackage, type TrainingQuote, type TrainingTrainer } from "../../lib/training-commercial-client";'
+          new=old+'\nimport { requestTrainingCancellation, requestTrainingSessionReschedule } from "../../lib/training-cancellation-client";'
+          assert old in text
+          text=text.replace(old,new,1)
+          old_state='  const[ledger,setLedger]=useState<CustomerTrainingProgramme|null>(null),[ledgerError,setLedgerError]=useState("");'
+          new_state='  const[ledger,setLedger]=useState<CustomerTrainingProgramme|null>(null),[ledgerError,setLedgerError]=useState(""),[recoveryBusy,setRecoveryBusy]=useState(false),[recoveryStatus,setRecoveryStatus]=useState("");'
+          assert old_state in text
+          text=text.replace(old_state,new_state,1)
+          derived='  const sessions=ledger?.sessions||[],programme=ledger?.programme,completed=sessions.filter(item=>item.status==="completed").length,nextSession=sessions.find(item=>!["completed","cancelled","no_show"].includes(item.status))||null,latestCompleted=[...sessions].reverse().find(item=>item.status==="completed")||null,latestProgress=latestCompleted?jsonObject(latestCompleted.progress_json):{};'
+          assert derived in text
+          functions=derived+'''\n  async function requestReschedule(){if(!nextSession)return;const reason=window.prompt("Why do you need to reschedule this Training session?")||"";if(reason.trim().length<8)return;setRecoveryBusy(true);try{const result=await requestTrainingSessionReschedule({bookingId,sessionId:nextSession.id,reason});setRecoveryStatus(`Reschedule request: ${result.status.replaceAll("_"," ")}`);setLedger(await loadTrainingProgramme(bookingId));}catch(problem){setRecoveryStatus(problem instanceof Error?problem.message:"Unable to request reschedule");}finally{setRecoveryBusy(false);}}\n  async function requestCancellation(){const reason=window.prompt("Why are you requesting programme cancellation/refund review?")||"";if(reason.trim().length<8)return;setRecoveryBusy(true);try{const result=await requestTrainingCancellation({bookingId,reason});setRecoveryStatus(result.status==="blocked_policy_configuration"?"Cancellation request recorded; Finance policy configuration is required before a refund can be calculated.":`Cancellation case ${result.caseId}: ${result.status.replaceAll("_"," ")}`);}catch(problem){setRecoveryStatus(problem instanceof Error?problem.message:"Unable to request programme cancellation");}finally{setRecoveryBusy(false);}}'''
+          text=text.replace(derived,functions,1)
+          old_buttons='<p>{nextSession?`${slotLabel(new Date(nextSession.scheduled_start))} · ${serviceMinutes} min · ${nextSession.provider_id}`:"All sessions are terminal or the programme is awaiting recovery."}</p><div><button>Request reschedule</button><button>Message trainer</button></div></article>'
+          new_buttons='<p>{nextSession?`${slotLabel(new Date(nextSession.scheduled_start))} · ${serviceMinutes} min · ${nextSession.provider_id}`:"All sessions are terminal or the programme is awaiting recovery."}</p><div><button disabled={recoveryBusy||!nextSession} onClick={()=>void requestReschedule()}>Request reschedule</button><button>Message trainer</button></div></article>'
+          assert old_buttons in text
+          text=text.replace(old_buttons,new_buttons,1)
+          old_recovery='<article className={styles.cancelRule}><b>Recovery protection</b><span>Trainer cancellation, replacement, customer cancellation and no-show states remain linked to the same canonical programme. Session consumption changes only through governed lifecycle actions.</span></article>'
+          new_recovery='<article className={styles.cancelRule}><b>Recovery protection</b><span>Trainer cancellation, replacement, customer cancellation and no-show states remain linked to the same canonical programme. Session consumption changes only through governed lifecycle actions.</span><button disabled={recoveryBusy||programme?.status==="completed"||programme?.status==="cancelled"} onClick={()=>void requestCancellation()}>Request programme cancellation / refund review</button>{recoveryStatus&&<small>{recoveryStatus}</small>}</article>'
+          assert old_recovery in text
+          flow.write_text(text.replace(old_recovery,new_recovery,1))
+
+          finance=Path('app/team/finance/training/page.tsx')
+          text=finance.read_text()
+          old_type='type FinanceData={invoices:Row[];earnings:Row[];payouts:Row[];taxPolicies:Row[];compensationRules:Row[];events:Row[];livePayout:false;executionMode:string};'
+          new_type='type CancellationFinance={policies:Row[];cases:Row[];refunds:Row[];creditNotes:Row[];liveRefund:false;liveTaxFiling:false};\ntype FinanceData={invoices:Row[];earnings:Row[];payouts:Row[];taxPolicies:Row[];compensationRules:Row[];events:Row[];livePayout:false;executionMode:string;cancellation:CancellationFinance};'
+          assert old_type in text
+          text=text.replace(old_type,new_type,1)
+          old_issue='function issueInvoice(row:Row){const reason=window.prompt(`Issue UAT Training invoice for ${String(row.booking_id)}? Add reason / approval reference.`)||"";if(reason)void action({action:"issue_invoice",bookingId:row.booking_id,reason});}'
+          extra=old_issue+'''async function cancellationAction(payload:Record<string,unknown>){setBusy(true);setError("");try{const response=await fetch("/api/training-cancellation",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)}),body=await response.json() as {error?:string};if(!response.ok)throw new Error(body.error||"Training cancellation finance action failed");await load();}catch(problem){setError(problem instanceof Error?problem.message:"Training cancellation finance action failed");}finally{setBusy(false);}}function configureCancellation(){const feeType=window.prompt("Cancellation fee type: none, flat, percent_captured","none")||"",feeValue=feeType==="none"?0:Number(window.prompt(feeType==="flat"?"Flat cancellation fee (INR)":"Cancellation fee % of captured amount")||0),noShowTreatment=window.prompt("No-show treatment for customer refund: chargeable or refundable","chargeable")||"",reason=window.prompt("Policy approval reference / reason")||"";if(["none","flat","percent_captured"].includes(feeType)&&["chargeable","refundable"].includes(noShowTreatment)&&reason)void cancellationAction({action:"configure_policy",cityId:"blr",feeType,feeValue,noShowTreatment,effectiveFrom:new Date().toISOString().slice(0,10),reason});}function approveCancellation(row:Row){const outstanding=Number(row.outstanding_service_value||0),waiveOutstanding=outstanding>0?window.confirm(`Consumed value exceeds captured payment by ${money(outstanding)}. Explicitly waive this outstanding amount to continue?`):false;if(outstanding>0&&!waiveOutstanding)return;const reason=window.prompt(`Approve cancellation for ${String(row.booking_id)}? Calculated refund ${money(row.calculated_refund)}. Add approval reason.`)||"";if(reason)void cancellationAction({action:"approve",caseId:row.id,reason,waiveOutstanding});}function refundStatus(row:Row,nextStatus:string){const providerReference=nextStatus==="completed_sandbox"?window.prompt("Sandbox refund provider/reference ID")||"":undefined,reason=window.prompt(`Move sandbox refund to ${nextStatus.replaceAll("_"," ")}? Add reason.`)||"";if(reason&&(nextStatus!=="completed_sandbox"||providerReference))void cancellationAction({action:"refund_status",caseId:row.case_id,nextStatus,providerReference,reason});}function issueCredit(row:Row){const reason=window.prompt(`Issue UAT credit note for cancellation ${String(row.case_id)}? Add reason.`)||"";if(reason)void cancellationAction({action:"issue_credit_note",caseId:row.case_id,reason});}'''
+          assert old_issue in text
+          text=text.replace(old_issue,extra,1)
+          old_controls='<button disabled={busy} onClick={configureTax}>Configure tax policy</button><span style={{fontSize:12,color:"#746b7d",alignSelf:"center"}}>No live payout execution. Finance approvals create sandbox-ready instructions only.</span>'
+          new_controls='<button disabled={busy} onClick={configureTax}>Configure tax policy</button><button disabled={busy} onClick={configureCancellation}>Configure cancellation policy</button><span style={{fontSize:12,color:"#746b7d",alignSelf:"center"}}>No live payout/refund execution. Finance approvals create sandbox-ready instructions only.</span>'
+          assert old_controls in text
+          text=text.replace(old_controls,new_controls,1)
+          payout_marker='<section style={{background:"white",border:"1px solid #e5dcef",borderRadius:14,overflow:"hidden",marginBottom:18}}><div style={{padding:16,borderBottom:"1px solid #eee6f5"}}><b>Trainer payout statements</b></div>'
+          assert payout_marker in text
+          cancel_section='''<section style={{background:"white",border:"1px solid #e5dcef",borderRadius:14,overflow:"hidden",marginBottom:18}}><div style={{padding:16,borderBottom:"1px solid #eee6f5"}}><b>Training cancellation & refund cases</b> · <small>{label(data?.cancellation.policies[0]?.status||"configuration_required")}</small></div><div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}><thead><tr>{["Booking","Usage","Captured","Calculated refund","Outstanding","Status","Action"].map(h=><th key={h} style={{textAlign:"left",padding:11}}>{h}</th>)}</tr></thead><tbody>{data?.cancellation.cases.map(row=><tr key={String(row.id)}><td style={{padding:11}}>{String(row.booking_id)}</td><td style={{padding:11}}>{String(row.chargeable_sessions)}/{String(row.total_sessions)} chargeable</td><td style={{padding:11}}>{money(row.captured_amount)}</td><td style={{padding:11}}>{money(row.calculated_refund)}</td><td style={{padding:11}}>{money(row.outstanding_service_value)}</td><td style={{padding:11}}>{label(row.status)}</td><td style={{padding:11}}><button disabled={busy||!["calculated","calculated_outstanding_review"].includes(String(row.status))} onClick={()=>approveCancellation(row)}>Approve</button></td></tr>)}</tbody></table></div>{data?.cancellation.refunds.map(row=><div key={String(row.id)} style={{padding:12,borderTop:"1px solid #eee6f5"}}><b>{String(row.booking_id)} · {money(row.amount)}</b> · {label(row.status)} <button disabled={busy||!["instruction_ready_sandbox","failed_sandbox"].includes(String(row.status))} onClick={()=>refundStatus(row,"processing_sandbox")}>Process sandbox</button> <button disabled={busy||String(row.status)!=="processing_sandbox"} onClick={()=>refundStatus(row,"completed_sandbox")}>Complete sandbox</button></div>)}{data?.cancellation.creditNotes.map(row=><div key={String(row.id)} style={{padding:12,borderTop:"1px solid #eee6f5"}}><b>Credit note · {money(row.amount)}</b> · {String(row.credit_note_number||label(row.status))} <button disabled={busy||Boolean(row.credit_note_number)||String(row.status)!=="draft_ready_for_number"} onClick={()=>issueCredit(row)}>Issue UAT credit note</button></div>)}</section>'''
+          text=text.replace(payout_marker,cancel_section+payout_marker,1)
+          finance.write_text(text)
+          PY
+      - run: npm ci
+      - run: npm run build
+      - run: npm run lint
+      - run: npm run validate:artifact
+      - name: Commit cancellation recovery UI
+        run: |
+          git config user.name "PawSpaceIND"
+          git config user.email "karthik@pawspace.in"
+          git add lib/api-gateway.ts lib/session-api-gateway.ts app/mobile-app/training-flow.tsx app/team/finance/training/page.tsx
+          git diff --cached --quiet && exit 0
+          git commit -m "Wire Training cancellation refund and customer recovery controls [skip ci]"
+          git pull --rebase origin grooming-integration-closure
+          git push origin grooming-integration-closure
