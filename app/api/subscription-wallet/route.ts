@@ -1,4 +1,5 @@
-import{authError,database,hasPermission,requireCustomerOwnership,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
+import{authError,database,requireCustomerOwnership,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
+import{hasPermission}from"../../../lib/platform-security";
 import{listCustomerSubscriptionWallets,mutateSubscriptionWallet,readSubscriptionWallet,type SubscriptionWalletAction}from"../../../lib/subscription-wallet";
 
 type Row=Record<string,unknown>;
