@@ -9,4 +9,6 @@ test("Walking commercial API is same-origin and explicitly UAT only",async()=>{c
 
 test("Walking client consumes canonical quote API",async()=>{const source=await read("lib/walking-commercial-client.ts");assert.match(source,/\/api\/walking-commercial/);assert.match(source,/createWalkingQuote/);assert.match(source,/paymentMode:input\.paymentMode\|\|"prepaid"/);});
 
-test("Walking prototype still needs customer UI and scheduler closure before Gate 1 is complete",async()=>{const page=await read("app/walking/page.tsx");assert.match(page,/PSW-4912/);assert.match(page,/selected\.price/);const scheduling=await read("backend/src/scheduling.ts");assert.doesNotMatch(scheduling,/dog_walking/);});
+test("Walking UI renders canonical quote truth and removes fake booking confirmation",async()=>{const page=await read("app/walking/page.tsx");assert.match(page,/createWalkingQuote/);assert.match(page,/loadWalkingCatalogue/);assert.match(page,/Canonical Walking quote/);assert.match(page,/Recurring schedule · policy pending/);assert.doesNotMatch(page,/PSW-4912/);assert.doesNotMatch(page,/selected\.price/);assert.doesNotMatch(page,/pay after each completed walk/i);});
+
+test("Walking scheduler remains the next Gate 1 boundary",async()=>{const scheduling=await read("backend/src/scheduling.ts");assert.doesNotMatch(scheduling,/dog_walking/);const page=await read("app/walking/page.tsx");assert.match(page,/Scheduler \+ canonical booking wiring next/);});
