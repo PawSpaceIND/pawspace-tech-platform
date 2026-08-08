@@ -3,7 +3,9 @@ export const permissionCatalog = [
   "customers.manage", "bookings.view", "bookings.manage", "grooming.manage", "providers.manage",
   "scheduling.view", "scheduling.book", "scheduling.manage", "pricing.view", "pricing.manage",
   "marketing.view", "marketing.manage", "finance.view", "finance.manage",
-  "people.view", "people.manage", "payroll.view", "payroll.manage",
+  "people.view", "people.manage", "attendance.view", "attendance.manage", "leave.view", "leave.manage",
+  "compensation.view", "compensation.manage", "payroll.view", "payroll.manage", "payroll.approve",
+  "incentives.view", "incentives.manage", "performance.view", "performance.manage",
   "launch.view", "launch.manage",
   "communications.call", "communications.message", "payments.view", "payments.manage",
   "reports.view", "data.import", "data.delete", "users.manage", "roles.manage",
@@ -15,13 +17,13 @@ export type Permission = (typeof permissionCatalog)[number];
 export const defaultRoles = [
   { code:"founder", name:"Founder", description:"Permanent owner-level identity with complete oversight and protected founder controls.", permissions:["*"] },
   { code:"superuser", name:"Superuser", description:"Runs the full platform; cannot remove or downgrade the founder.", permissions:["*"] },
-  { code:"admin", name:"Admin", description:"Manages operations, customers, providers and service settings.", permissions:["dashboard.view","customers.view","customers.view_full_phone","customers.manage","bookings.view","bookings.manage","grooming.manage","providers.manage","scheduling.view","scheduling.book","scheduling.manage","pricing.view","pricing.manage","marketing.view","marketing.manage","finance.view","people.view","people.manage","payroll.view","launch.view","launch.manage","communications.call","communications.message","payments.view","reports.view","data.import","users.manage","audit.view"] },
-  { code:"manager", name:"Manager", description:"Runs a team or city with customer and booking controls.", permissions:["dashboard.view","customers.view","customers.manage","bookings.view","bookings.manage","grooming.manage","providers.manage","scheduling.view","scheduling.book","scheduling.manage","pricing.view","marketing.view","people.view","launch.view","launch.manage","communications.call","communications.message","reports.view"] },
-  { code:"associate", name:"Associate", description:"Handles assigned customers and bookings with masked contact data.", permissions:["dashboard.view","customers.view","bookings.view","scheduling.book","pricing.view","communications.call","communications.message"] },
+  { code:"admin", name:"Admin", description:"Manages operations, customers, providers and service settings.", permissions:["dashboard.view","customers.view","customers.view_full_phone","customers.manage","bookings.view","bookings.manage","grooming.manage","providers.manage","scheduling.view","scheduling.book","scheduling.manage","pricing.view","pricing.manage","marketing.view","marketing.manage","finance.view","people.view","people.manage","attendance.view","attendance.manage","leave.view","leave.manage","payroll.view","performance.view","performance.manage","launch.view","launch.manage","communications.call","communications.message","payments.view","reports.view","data.import","users.manage","audit.view"] },
+  { code:"manager", name:"Manager", description:"Runs a team or city with customer and booking controls.", permissions:["dashboard.view","customers.view","customers.manage","bookings.view","bookings.manage","grooming.manage","providers.manage","scheduling.view","scheduling.book","scheduling.manage","pricing.view","marketing.view","people.view","attendance.view","attendance.manage","leave.view","leave.manage","performance.view","launch.view","launch.manage","communications.call","communications.message","reports.view"] },
+  { code:"associate", name:"Associate", description:"Handles assigned customers and bookings with masked contact data plus own employee self-service when linked to an employee record.", permissions:["dashboard.view","customers.view","bookings.view","scheduling.book","pricing.view","communications.call","communications.message","attendance.view","leave.view","performance.view"] },
   { code:"customer", name:"Customer", description:"Self-service customer identity limited to pricing and creating/changing its own bookings through ownership checks.", permissions:["pricing.view","scheduling.book"] },
   { code:"service_provider", name:"Service provider", description:"Sees assigned jobs only; calls and messages without seeing the customer number.", permissions:["bookings.view","scheduling.view","communications.call","communications.message"] },
-  { code:"finance", name:"Finance", description:"Payment, refund, invoice and reconciliation access without customer contact exposure.", permissions:["dashboard.view","payments.view","payments.manage","finance.view","finance.manage","payroll.view","payroll.manage","reports.view","audit.view"] },
-  { code:"auditor", name:"Auditor", description:"Read-only compliance and audit access with masked personal data.", permissions:["dashboard.view","reports.view","people.view","payroll.view","audit.view"] },
+  { code:"finance", name:"Finance", description:"Payment, refund, invoice, payroll and reconciliation access without customer contact exposure.", permissions:["dashboard.view","payments.view","payments.manage","finance.view","finance.manage","compensation.view","payroll.view","payroll.manage","reports.view","audit.view"] },
+  { code:"auditor", name:"Auditor", description:"Read-only compliance and audit access with masked personal data.", permissions:["dashboard.view","reports.view","people.view","attendance.view","leave.view","payroll.view","incentives.view","performance.view","audit.view"] },
 ] as const;
 
 export function parsePermissions(value:unknown):string[]{
