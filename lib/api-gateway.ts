@@ -17,6 +17,13 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/subscription-customers")return method==="GET"?"customers.view":"data.import";
   if(url.pathname==="/api/crm")return method==="GET"?"customers.view":"customers.manage";
   if(url.pathname==="/api/revenue-crm")return method==="GET"?"customers.view":"customers.manage";
+  if(url.pathname==="/api/revenue-mission-control")return method==="GET"?"reports.view":"customers.manage";
+  if(url.pathname==="/api/lead-assignment-governance"){if(method==="GET")return "customers.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="accept_assignment"?"customers.view":"customers.manage";}
+  if(url.pathname==="/api/lead-sla-governance"){if(method==="GET")return "customers.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="record_action"?"customers.view":"customers.manage";}
+  if(url.pathname==="/api/revenue-opportunity-governance")return method==="GET"?"customers.view":"customers.manage";
+  if(url.pathname==="/api/sales-productivity-governance")return method==="GET"?"reports.view":"customers.manage";
+  if(url.pathname==="/api/revenue-mission-command-center")return "reports.view";
+  if(url.pathname==="/api/revenue-leadership-reporting")return method==="GET"?"reports.view":"customers.manage";
   if(url.pathname==="/api/finance-control")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/training-finance")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/training-cancellation"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action)==="request"?"scheduling.book":"finance.manage";}
