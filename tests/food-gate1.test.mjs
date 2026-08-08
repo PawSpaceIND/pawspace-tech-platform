@@ -1,0 +1,14 @@
+import test from"node:test";
+import assert from"node:assert/strict";
+import{readFile}from"node:fs/promises";
+const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
+
+test("Food Gate 1 owns explicit UAT catalogue and inventory truth",async()=>{const source=await read("lib/food-governance.ts");assert.match(source,/food_catalogue_items/);assert.match(source,/food_inventory_uat/);assert.match(source,/commercial_status TEXT NOT NULL DEFAULT 'uat_only'/);assert.match(source,/inventory_mode TEXT NOT NULL DEFAULT 'uat_seed'/);assert.match(source,/productionInventoryVerified:false/);assert.match(source,/Food coupon policy is not enabled/);assert.match(source,/sandbox-deferred UAT payment only/);});
+
+test("Food quote checks UAT inventory and keeps production delivery policy un-invented",async()=>{const source=await read("lib/food-governance.ts"),api=await read("app/api/food-commercial/route.ts");assert.match(source,/UAT Food inventory is insufficient for this quote/);assert.match(source,/deliveryFee=0/);assert.match(source,/amountDueNow:0/);assert.match(source,/expiresAt=now\+15\*60_000/);assert.match(api,/canonical_food_uat_governance/);assert.match(api,/deliveryFeePolicy:\"configuration_required\"/);assert.match(api,/liveMoney:false/);});
+
+test("Food order atomically reserves UAT stock and creates canonical order/payment ledgers",async()=>{const source=await read("lib/food-governance.ts"),api=await read("app/api/food-orders/route.ts");assert.match(source,/food_orders/);assert.match(source,/food_order_lines/);assert.match(source,/food_inventory_reservations/);assert.match(source,/food_order_payments/);assert.match(source,/reserved_units=reserved_units\+\?/);assert.match(source,/fulfilment_review_required/);assert.match(source,/productionInventoryVerified:false/);assert.match(source,/liveMoney:false/);assert.match(source,/Food quote is already linked to an order/);assert.match(api,/requireCustomerOwnership/);assert.match(api,/securityAudit/);});
+
+test("Food customer UI consumes server catalogue quote and canonical order APIs",async()=>{const page=await read("app/food/canonical-food-page.tsx");assert.match(page,/loadFoodCatalogue/);assert.match(page,/createFoodQuote/);assert.match(page,/createCanonicalFoodOrder/);assert.match(page,/production inventory not verified/i);assert.match(page,/Delivery fee is ₹0 in UAT/);assert.match(page,/not a production sale/i);assert.match(page,/Reserve canonical UAT order/);});
+
+test("Food Gate 1 does not claim production stock logistics or payment",async()=>{const page=await read("app/food/canonical-food-page.tsx"),source=await read("lib/food-governance.ts");assert.match(page,/production SKU master/);assert.match(page,/live warehouse stock/);assert.match(page,/live payment remain disconnected/);assert.match(source,/productionPaymentPolicy:\"pending\"/);assert.match(source,/deliveryFeePolicy:\"configuration_required\"/);});
