@@ -42,5 +42,5 @@ export default function TeamFinance(){
         <p style={{fontSize:12,color:"#746b7d",marginTop:12}}>UAT/sandbox only. Razorpay production credentials, live refunds, RazorpayX payouts, GST filing and accounting export are not activated by this screen.</p>
       </>}
     </div>
-  </main>;
+  <p><a href="/team/finance/walking">Open Dog Walking Finance workspace -></a></p></main>;
 }
