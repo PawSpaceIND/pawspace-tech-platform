@@ -1,0 +1,7 @@
+import test from"node:test";
+import assert from"node:assert/strict";
+import fs from"node:fs";
+const read=p=>fs.readFileSync(p,"utf8");
+test("provider achievement uses canonical operational and money truth",()=>{const src=read("lib/provider-achievement.ts");for(const token of ["provider_work_orders","canonical_bookings","booking_payments","booking_refund_cases","booking_lifecycle_events","unified_cases"])assert.match(src,new RegExp(token));assert.match(src,/package_upgrade/);assert.match(src,/netRevenue/);assert.match(src,/rankingAuthoritative:false/);assert.match(src,/payrollAuthority:false/);});
+test("provider achievement API is reports permissioned and shared-gateway protected",()=>{const api=read("app/api/provider-achievement/route.ts"),gateway=read("lib/api-gateway.ts");assert.match(api,/authorize\(request,"reports\.view"\)/);assert.match(gateway,/url\.pathname==="\/api\/provider-achievement"/);assert.match(gateway,/return "reports\.view"/);});
+test("groomer achievement UI exposes real booking drilldown and no fabricated rank",()=>{const page=read("app/team/provider-achievement/page.tsx");assert.match(page,/Completed/);assert.match(page,/Collected/);assert.match(page,/Refunded/);assert.match(page,/Net revenue/);assert.match(page,/Upgrade value/);assert.match(page,/Booking drill-down/);assert.match(page,/Ranking:<\/b> not authoritative/);assert.match(page,/Production ready:<\/b> NO/);});
