@@ -1,0 +1,3 @@
+import{authError,authorize,database}from"../../../lib/server-auth";
+import{peopleReports}from"../../../lib/people-reports";
+export async function GET(request:Request){try{const actor=await authorize(request,"reports.view"),db=await database(),url=new URL(request.url),start=url.searchParams.get("start"),end=url.searchParams.get("end");return Response.json({data:await peopleReports(db,{actorEmail:actor.email,roleCode:actor.roleCode,permissions:actor.permissions,periodStart:start?Number(start):null,periodEnd:end?Number(end):null}),productionReady:false});}catch(error){return authError(error,"Unable to load People reports");}}

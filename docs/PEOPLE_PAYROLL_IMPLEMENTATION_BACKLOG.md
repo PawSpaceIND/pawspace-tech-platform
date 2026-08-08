@@ -2,7 +2,7 @@
 
 This backlog accompanies `docs/PEOPLE_PAYROLL_UAT_SPEC.md`.
 
-**Status: implementation backlog only. PRODUCTION READY = FALSE.**
+**Status: Gates 1–6 engineering implemented for UAT on PR #22. PRODUCTION READY = FALSE.**
 
 ## Recommended build sequence
 
