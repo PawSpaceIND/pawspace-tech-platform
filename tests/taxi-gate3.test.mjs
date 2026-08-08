@@ -1,0 +1,20 @@
+import test from"node:test";
+import assert from"node:assert/strict";
+import{readFile}from"node:fs/promises";
+const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
+
+test("Pet Taxi Gate 3 keeps completed-trip payment due until sandbox payment is recorded",async()=>{const source=await read("lib/taxi-finance-governance.ts");assert.match(source,/taxi_trip_payment_events/);assert.match(source,/record_trip_payment/);assert.match(source,/sandbox_paid/);assert.match(source,/Pet Taxi sandbox payment reference was already used/);assert.match(source,/idx_taxi_payment_reference/);assert.match(source,/liveMoney:false/);assert.match(source,/productionPaymentTimingPolicy:\"pending\"/);});
+
+test("Pet Taxi cancellation is request-only and never invents refund",async()=>{const source=await read("lib/taxi-finance-governance.ts");assert.match(source,/taxi_cancellation_requests/);assert.match(source,/policy_review_required/);assert.match(source,/refundPolicy:\"configuration_required\"/);assert.match(source,/Approved Pet Taxi refund must be explicit/);assert.match(source,/cannot exceed sandbox-paid trip value/);assert.match(source,/explicit_finance_approval/);assert.match(source,/active Pet Taxi trip must use the Operations safety workflow/i);});
+
+test("Pet Taxi refund ledger is sandbox-only and replay resistant",async()=>{const source=await read("lib/taxi-finance-governance.ts");assert.match(source,/taxi_refund_ledger/);assert.match(source,/sandbox_pending/);assert.match(source,/sandbox_recorded/);assert.match(source,/idx_taxi_refund_reference/);assert.match(source,/refund reference was already used/);});
+
+test("Pet Taxi settlement waits for completed paid trip without inventing payout or tax",async()=>{const source=await read("lib/taxi-finance-governance.ts");assert.match(source,/taxi_driver_settlement_ledger/);assert.match(source,/Driver settlement can be prepared only after canonical Pet Taxi completion/);assert.match(source,/must be sandbox-paid before settlement readiness/);assert.match(source,/payout_rule_status TEXT NOT NULL DEFAULT 'rule_pending'/);assert.match(source,/tax_status TEXT NOT NULL DEFAULT 'configuration_required'/);assert.match(source,/payout_status TEXT NOT NULL DEFAULT 'not_instructed'/);});
+
+test("Pet Taxi reconciliation exposes due paid refund settlement and tax truth",async()=>{const source=await read("lib/taxi-finance-governance.ts");assert.match(source,/taxi_finance_reconciliation/);assert.match(source,/tripDueTotal/);assert.match(source,/paidTotal/);assert.match(source,/unpaidTripTotal/);assert.match(source,/refundTotal/);assert.match(source,/netPaidTotal/);assert.match(source,/attention_required/);});
+
+test("Pet Taxi Finance API separates customer request from Finance authority",async()=>{const api=await read("app/api/taxi-finance/route.ts");assert.match(api,/customerActions=new Set<TaxiFinanceAction>\(\[\"request_cancel\"\]\)/);assert.match(api,/requireCustomerOwnership/);assert.match(api,/requirePermission\(actor,\"finance\.manage\"\)/);assert.match(api,/ensureTaxiFinanceTables/);assert.match(api,/securityAudit/);});
+
+test("Pet Taxi customer management is request-only for cancellation money",async()=>{const page=await read("app/taxi/manage/taxi-customer-management.tsx");assert.match(page,/loadCustomerTaxiLifecycle/);assert.match(page,/requestTaxiCancellation/);assert.match(page,/No refund was calculated automatically/);assert.match(page,/Finance must review/);assert.doesNotMatch(page,/approve_cancel/);assert.doesNotMatch(page,/record_refund/);});
+
+test("Pet Taxi Finance workspace owns payment refund settlement and reconciliation actions",async()=>{const page=await read("app/team/finance/taxi/taxi-finance-workspace.tsx");for(const action of["record_trip_payment","approve_cancel","record_refund","prepare_settlement","reconcile"])assert.match(page,new RegExp(`\\"${action}\\"`));assert.match(page,/Payout amount, travel allowance, incentives, penalties and GST remain policy\/configuration gated/);assert.match(page,/Live charges, refunds, payouts and tax filing remain disconnected/);});
