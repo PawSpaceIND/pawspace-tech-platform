@@ -3,7 +3,6 @@ import{buildRevenueMissionCommandCenter}from"./revenue-mission-command-center";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
-const text=(value:unknown)=>String(value??"").trim();
 const uid=(prefix:string)=>`${prefix}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
 
 export async function ensureRevenueLeadershipReportingTables(db:Db){await ensureRevenueMissionTables(db);await db.batch([
