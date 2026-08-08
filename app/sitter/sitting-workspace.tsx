@@ -1,13 +1,13 @@
 "use client";
 import Link from"next/link";
-import{useCallback,useEffect,useState}from"react";
+import{useEffect,useState}from"react";
 import{loadSittingLifecycle,updateSittingLifecycle,type SittingLifecycleBooking}from"../../lib/sitting-lifecycle-client";
 
 export default function SittingWorkspace({bookingId}:{bookingId:string}){
  const[booking,setBooking]=useState<SittingLifecycleBooking|null>(null),[error,setError]=useState(""),[busy,setBusy]=useState(false);
- const refresh=useCallback(async()=>{if(!bookingId)return;try{setError("");const rows=await loadSittingLifecycle({bookingId});setBooking(rows[0]||null);}catch(e){setError(e instanceof Error?e.message:"Unable to load Sitting booking")}},[bookingId]);
- useEffect(()=>{void refresh()},[refresh]);
- async function act(action:"accept"|"check_in"|"care_event"|"check_out"|"decline"|"sitter_unavailable",extra:Record<string,unknown>={}){if(!bookingId||busy)return;setBusy(true);setError("");try{await updateSittingLifecycle({bookingId,action,idempotencyKey:`sitter:${bookingId}:${action}:${Date.now()}`,...extra});await refresh();}catch(e){setError(e instanceof Error?e.message:"Unable to update Sitting booking")}finally{setBusy(false)}}
+ async function refresh(){if(!bookingId)return;try{setError("");const rows=await loadSittingLifecycle({bookingId});setBooking(rows[0]||null)}catch(e){setError(e instanceof Error?e.message:"Unable to load Sitting booking")}}
+ useEffect(()=>{if(!bookingId)return;let active=true;void loadSittingLifecycle({bookingId}).then(rows=>{if(!active)return;setError("");setBooking(rows[0]||null)}).catch(e=>{if(active)setError(e instanceof Error?e.message:"Unable to load Sitting booking")});return()=>{active=false}},[bookingId]);
+ async function act(action:"accept"|"check_in"|"care_event"|"check_out"|"decline"|"sitter_unavailable",extra:Record<string,unknown>={}){if(!bookingId||busy)return;setBusy(true);setError("");try{await updateSittingLifecycle({bookingId,action,idempotencyKey:`sitter:${bookingId}:${action}:${Date.now()}`,...extra});await refresh()}catch(e){setError(e instanceof Error?e.message:"Unable to update Sitting booking")}finally{setBusy(false)}}
  if(!bookingId)return <main><h1>PawSpace Sitting workspace</h1><p>Open this workspace from a confirmed Sitting booking so the canonical booking ID is carried through.</p><Link href="/sitting">Open Sitting customer flow</Link></main>;
  if(error&&!booking)return <main><h1>PawSpace Sitting workspace</h1><p>{error}</p><button onClick={()=>void refresh()}>Retry</button></main>;
  if(!booking)return <main><h1>PawSpace Sitting workspace</h1><p>Loading canonical Sitting booking…</p></main>;
