@@ -1,86 +1,63 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import {
-  readOfferConfig,
-  saveOfferConfig,
-  type CouponRule,
-  type CustomerKind,
-  type OfferChannel,
-  type PawspaceCity,
-  type PawspaceService,
-} from "../../lib/offer-engine";
+import { useEffect, useMemo, useState } from "react";
+import { loadCouponCampaigns, saveGovernedCoupon } from "../../lib/coupon-governance-client";
+import type { CouponCampaign, CouponChannel, CouponCustomerKind, CouponService } from "../../lib/coupon-governance";
 import baseStyles from "./control.module.css";
 import offerStyles from "./offers-control-panel.module.css";
 
 const styles = { ...baseStyles, ...offerStyles };
 const money = (value:number) => `₹${value.toLocaleString("en-IN")}`;
-const services:PawspaceService[] = ["Grooming","Dog Training","Boarding","Pet Sitting"];
-const cities:PawspaceCity[] = ["Bengaluru","Mumbai","Delhi NCR","Hyderabad","Chennai","Pune"];
-const channels:OfferChannel[] = ["Customer app","Website","CRM assisted","WhatsApp","Partner app"];
-const customers:{id:CustomerKind;label:string}[] = [{id:"new",label:"New"},{id:"existing",label:"Existing"},{id:"subscriber",label:"Subscriber"}];
+const serviceOptions:{id:CouponService;label:string}[]=[{id:"grooming",label:"Grooming"},{id:"dog_training",label:"Dog Training"},{id:"boarding",label:"Boarding"},{id:"pet_sitting",label:"Pet Sitting"}];
+const channelOptions:{id:CouponChannel;label:string}[]=[{id:"customer_app",label:"Customer app"},{id:"website",label:"Website"},{id:"assisted_staff",label:"CRM assisted"},{id:"whatsapp",label:"WhatsApp"},{id:"partner_app",label:"Partner app"}];
+const customerOptions:{id:CouponCustomerKind;label:string}[]=[{id:"new",label:"New"},{id:"existing",label:"Existing"},{id:"subscriber",label:"Subscriber"}];
+type GovernedCampaign=CouponCampaign&{used:number};
+type Draft=Omit<CouponCampaign,"id"|"createdAt"|"updatedAt"|"testOnly">&{id?:string};
+const day=(value:string)=>new Date(`${value}T00:00:00.000Z`).getTime();
+const dateInput=(value:number)=>new Date(value).toISOString().slice(0,10);
+function blankCoupon():Draft{return{code:"",name:"",status:"paused",serviceCodes:["grooming"],cityIds:["blr"],channels:["customer_app","assisted_staff"],customerKinds:["new","existing"],packageScope:"all",packageCodes:[],firstOrderOnly:false,minOrder:999,maxOrder:null,subscriptionEligible:false,fullPaymentOnly:false,discountType:"fixed",discountValue:200,maxDiscount:200,perCustomerLimit:1,totalLimit:100,validFrom:day("2026-08-08"),validUntil:day("2026-12-31")};}
+function toDraft(campaign:CouponCampaign):Draft{return{id:campaign.id,code:campaign.code,name:campaign.name,status:campaign.status,serviceCodes:[...campaign.serviceCodes],cityIds:[...campaign.cityIds],channels:[...campaign.channels],customerKinds:[...campaign.customerKinds],packageScope:campaign.packageScope,packageCodes:[...campaign.packageCodes],firstOrderOnly:campaign.firstOrderOnly,minOrder:campaign.minOrder,maxOrder:campaign.maxOrder,subscriptionEligible:campaign.subscriptionEligible,fullPaymentOnly:campaign.fullPaymentOnly,discountType:campaign.discountType,discountValue:campaign.discountValue,maxDiscount:campaign.maxDiscount,perCustomerLimit:campaign.perCustomerLimit,totalLimit:campaign.totalLimit,validFrom:campaign.validFrom,validUntil:campaign.validUntil};}
+const toggle=<T,>(items:T[],value:T)=>items.includes(value)?items.filter(item=>item!==value):[...items,value];
 
-function blankCoupon():CouponRule {
-  return {
-    id:`coupon-${Date.now()}`,code:"",name:"",active:false,customerKinds:["new","existing"],services:["Grooming"],cities:["Bengaluru"],channels:["Customer app","Website","CRM assisted"],packageScope:"all",packageNames:[],crossSellFromServices:[],firstOrderOnly:false,orderNumberFrom:null,orderNumberTo:null,minOrder:999,maxOrder:null,subscriptionEligible:false,fullPaymentOnly:false,discountType:"fixed",discountValue:200,maxDiscount:200,perCustomerLimit:1,totalLimit:1000,used:0,validUntil:"2026-12-31",
-  };
-}
-
-export default function CouponsControlPanel({notify}:{notify:(message:string)=>void}) {
-  const [config,setConfig] = useState(()=>readOfferConfig());
-  const [query,setQuery] = useState("");
-  const [status,setStatus] = useState<"all"|"active"|"paused">("all");
-  const [editing,setEditing] = useState<CouponRule|null>(null);
-  const [draft,setDraft] = useState<CouponRule>(()=>blankCoupon());
-  const persist = (next:typeof config,message:string) => {setConfig(next);saveOfferConfig(next);notify(message);};
-  const filtered = useMemo(()=>config.coupons.filter(c=>(!query||`${c.code} ${c.name}`.toLowerCase().includes(query.toLowerCase()))&&(status==="all"||(status==="active"?c.active:!c.active))),[config.coupons,query,status]);
-  const toggle = <T,>(list:T[],value:T)=>list.includes(value)?list.filter(item=>item!==value):[...list,value];
-  const openCreate=()=>{setEditing(null);setDraft(blankCoupon());};
-  const openEdit=(coupon:CouponRule)=>{setEditing(coupon);setDraft({...coupon,customerKinds:[...coupon.customerKinds],services:[...coupon.services],cities:[...coupon.cities],channels:[...coupon.channels],packageNames:[...coupon.packageNames],crossSellFromServices:[...coupon.crossSellFromServices]});};
-  const save=()=>{
-    const code=draft.code.trim().toUpperCase().replace(/\s+/g,"");
-    if(!code||!draft.name.trim()) return notify("Add a coupon code and campaign name");
-    if(!draft.services.length||!draft.cities.length||!draft.customerKinds.length) return notify("Select at least one service, city and customer type");
-    if(config.coupons.some(c=>c.code===code&&c.id!==editing?.id)) return notify("That coupon code already exists");
-    const next={...draft,code,name:draft.name.trim(),active:true};
-    const coupons=editing?config.coupons.map(c=>c.id===editing.id?next:c):[next,...config.coupons];
-    persist({...config,coupons},editing?"Coupon changes published to test rules":"New coupon created in test mode");setEditing(null);setDraft(blankCoupon());
-  };
-  const clone=(coupon:CouponRule)=>{setEditing(null);setDraft({...coupon,id:`coupon-${Date.now()}`,code:`${coupon.code}COPY`,name:`${coupon.name} copy`,active:false,used:0});};
-  const changeStatus=(coupon:CouponRule)=>persist({...config,coupons:config.coupons.map(c=>c.id===coupon.id?{...c,active:!c.active}:c)},coupon.active?"Coupon paused":"Coupon activated");
-  const redemptions=config.coupons.reduce((sum,c)=>sum+c.used,0);
+export default function CouponsControlPanel({notify}:{notify:(message:string)=>void}){
+  const [campaigns,setCampaigns]=useState<GovernedCampaign[]>([]),[query,setQuery]=useState(""),[status,setStatus]=useState<"all"|"active"|"paused">("all"),[draft,setDraft]=useState<Draft>(()=>blankCoupon()),[loading,setLoading]=useState(true),[saving,setSaving]=useState(false);
+  const refresh=async()=>{setLoading(true);try{setCampaigns(await loadCouponCampaigns());}catch(error){notify(error instanceof Error?error.message:"Unable to load governed coupons");}finally{setLoading(false);}};
+  useEffect(()=>{void refresh();},[]);
+  const filtered=useMemo(()=>campaigns.filter(c=>(!query||`${c.code} ${c.name}`.toLowerCase().includes(query.toLowerCase()))&&(status==="all"||c.status===status)),[campaigns,query,status]);
+  const activeCount=campaigns.filter(c=>c.status==="active").length,redemptions=campaigns.reduce((sum,c)=>sum+c.used,0);
+  const save=async()=>{const code=draft.code.trim().toUpperCase().replace(/\s+/g,"");if(!code||!draft.name.trim())return notify("Add a coupon code and campaign name");if(!draft.serviceCodes.length||!draft.cityIds.length||!draft.channels.length||!draft.customerKinds.length)return notify("Select service, city, channel and customer eligibility");setSaving(true);try{await saveGovernedCoupon({...draft,code,name:draft.name.trim()});notify(draft.id?"Governed UAT coupon updated":"Governed UAT coupon created");setDraft(blankCoupon());await refresh();}catch(error){notify(error instanceof Error?error.message:"Unable to save governed coupon");}finally{setSaving(false);}};
+  const changeStatus=async(campaign:GovernedCampaign)=>{setSaving(true);try{await saveGovernedCoupon({...toDraft(campaign),status:campaign.status==="active"?"paused":"active"});notify(campaign.status==="active"?"UAT coupon paused":"UAT coupon activated");await refresh();}catch(error){notify(error instanceof Error?error.message:"Unable to update coupon status");}finally{setSaving(false);}};
   return <>
-    <section className={styles.offerHero}><div><span>COUPON MANAGEMENT · TEST MODE</span><h2>Create, target and control every PawSpace offer.</h2><p>Run acquisition, retention, subscription and cross-sell coupons by service, city, customer, order, package, channel and payment rule.</p></div><button onClick={openCreate}>＋ Create coupon</button></section>
-    <section className={styles.metrics}>{[["Active coupons",String(config.coupons.filter(c=>c.active).length),`${config.coupons.length} total campaigns`],["Redemptions",redemptions.toLocaleString("en-IN"),"Test usage across services"],["Cross-sell rules",String(config.coupons.filter(c=>c.crossSellFromServices.length).length),"Previous service → next service"],["Cities enabled",String(new Set(config.coupons.flatMap(c=>c.cities)).size),"Location-level eligibility"]].map(x=><article key={x[0]}><span>{x[0]}</span><strong>{x[1]}</strong><small>{x[2]}</small></article>)}</section>
+    <section className={styles.offerHero}><div><span>COUPON GOVERNANCE · UAT ONLY</span><h2>Server-owned coupon campaigns and redemption limits.</h2><p>Campaign rules are persisted on the canonical API. Browser localStorage is no longer commercial authority.</p></div><button onClick={()=>setDraft(blankCoupon())}>＋ Create UAT coupon</button></section>
+    <section className={styles.metrics}>{[["Active UAT coupons",String(activeCount),`${campaigns.length} governed campaigns`],["Consumed redemptions",redemptions.toLocaleString("en-IN"),"Canonical redemption ledger"],["Live money","OFF","Discount testing only"],["Production ready","NO","Staff UAT required"]].map(x=><article key={x[0]}><span>{x[0]}</span><strong>{x[1]}</strong><small>{x[2]}</small></article>)}</section>
     <section className={styles.couponWorkspace}>
       <div className={styles.panel}>
-        <div className={styles.toolbar}><div><span>COUPON DIRECTORY</span><h2>Campaigns and rules</h2></div><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search code or campaign" aria-label="Search coupons"/><select value={status} onChange={e=>setStatus(e.target.value as typeof status)}><option value="all">All statuses</option><option value="active">Active</option><option value="paused">Paused</option></select></div>
+        <div className={styles.toolbar}><div><span>GOVERNED DIRECTORY</span><h2>Campaigns and canonical usage</h2></div><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search code or campaign" aria-label="Search coupons"/><select value={status} onChange={e=>setStatus(e.target.value as typeof status)}><option value="all">All statuses</option><option value="active">Active</option><option value="paused">Paused</option></select></div>
         <div className={styles.couponHead}><span>Campaign</span><span>Offer</span><span>Eligibility</span><span>Usage</span><span>Status</span><span>Actions</span></div>
-        {filtered.map(c=><article className={styles.couponRow} key={c.id}>
-          <div><b>{c.code}</b><strong>{c.name}</strong><small>Until {new Date(`${c.validUntil}T00:00:00`).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric"})}</small></div>
-          <div><strong>{c.discountType==="fixed"?money(c.discountValue):`${c.discountValue}% off`}</strong><small>{c.maxDiscount?`Cap ${money(c.maxDiscount)}`:"No cap"} · Min {money(c.minOrder)}</small></div>
-          <div><strong>{c.services.length===services.length?"All services":c.services.join(", ")}</strong><small>{c.cities.length===cities.length?"All cities":c.cities.join(", ")} · {c.customerKinds.map(k=>customers.find(x=>x.id===k)?.label).join(" / ")}</small>{c.crossSellFromServices.length>0&&<em>Cross-sell from {c.crossSellFromServices.join(", ")}</em>}</div>
-          <div><strong>{c.used.toLocaleString("en-IN")} / {c.totalLimit.toLocaleString("en-IN")}</strong><i><span style={{width:`${Math.min(100,c.used/c.totalLimit*100)}%`}}/></i><small>{Math.round(c.used/c.totalLimit*100)}% consumed</small></div>
-          <button className={c.active?styles.liveStatus:styles.pausedStatus} onClick={()=>changeStatus(c)}>{c.active?"● Active":"Paused"}</button>
-          <div className={styles.rowActions}><button onClick={()=>openEdit(c)}>Edit</button><button onClick={()=>clone(c)}>Duplicate</button></div>
+        {loading&&<div className={styles.empty}>Loading canonical coupons…</div>}
+        {!loading&&filtered.map(c=><article className={styles.couponRow} key={c.id}>
+          <div><b>{c.code}</b><strong>{c.name}</strong><small>Until {new Date(c.validUntil).toLocaleDateString("en-IN",{day:"numeric",month:"short",year:"numeric",timeZone:"UTC"})}</small></div>
+          <div><strong>{c.discountType==="fixed"?money(c.discountValue):`${c.discountValue}% off`}</strong><small>{c.maxDiscount!=null?`Cap ${money(c.maxDiscount)}`:"No cap"} · Min {money(c.minOrder)}</small></div>
+          <div><strong>{c.serviceCodes.map(id=>serviceOptions.find(x=>x.id===id)?.label||id).join(", ")}</strong><small>{c.cityIds.join(", ")} · {c.customerKinds.map(id=>customerOptions.find(x=>x.id===id)?.label||id).join(" / ")}</small></div>
+          <div><strong>{c.used.toLocaleString("en-IN")} / {c.totalLimit.toLocaleString("en-IN")}</strong><i><span style={{width:`${Math.min(100,c.totalLimit?c.used/c.totalLimit*100:0)}%`}}/></i><small>Canonical consumed uses</small></div>
+          <button disabled={saving} className={c.status==="active"?styles.liveStatus:styles.pausedStatus} onClick={()=>void changeStatus(c)}>{c.status==="active"?"● Active":"Paused"}</button>
+          <div className={styles.rowActions}><button onClick={()=>setDraft(toDraft(c))}>Edit</button><button onClick={()=>setDraft({...toDraft(c),id:undefined,code:`${c.code}COPY`,name:`${c.name} copy`,status:"paused"})}>Duplicate</button></div>
         </article>)}
-        {!filtered.length&&<div className={styles.empty}>No coupons match these filters.</div>}
+        {!loading&&!filtered.length&&<div className={styles.empty}>No governed coupons match these filters.</div>}
       </div>
       <aside className={styles.panel}>
-        <div className={styles.builderHead}><div><span>{editing?"EDIT COUPON":"COUPON BUILDER"}</span><h2>{editing?editing.code:"New campaign"}</h2></div>{(editing||draft.code||draft.name)&&<button onClick={()=>{setEditing(null);setDraft(blankCoupon())}}>Clear</button>}</div>
+        <div className={styles.builderHead}><div><span>{draft.id?"EDIT GOVERNED COUPON":"UAT COUPON BUILDER"}</span><h2>{draft.code||"New campaign"}</h2></div><button onClick={()=>setDraft(blankCoupon())}>Clear</button></div>
         <div className={styles.builderScroll}>
-          <div className={styles.formPair}><label>Coupon code<input value={draft.code} onChange={e=>setDraft({...draft,code:e.target.value.toUpperCase()})} placeholder="E.g. BNGGROOM300"/></label><label>Campaign name<input value={draft.name} onChange={e=>setDraft({...draft,name:e.target.value})} placeholder="Bengaluru grooming win-back"/></label></div>
-          <h3>Discount and order</h3><div className={styles.formPair}><label>Discount type<select value={draft.discountType} onChange={e=>setDraft({...draft,discountType:e.target.value as "fixed"|"percent"})}><option value="fixed">Fixed ₹ off</option><option value="percent">Percentage off</option></select></label><label>Discount value<input type="number" min="1" value={draft.discountValue} onChange={e=>setDraft({...draft,discountValue:Number(e.target.value)})}/></label><label>Maximum discount<input type="number" min="0" value={draft.maxDiscount??""} onChange={e=>setDraft({...draft,maxDiscount:e.target.value?Number(e.target.value):null})}/></label><label>Minimum order<input type="number" min="0" value={draft.minOrder} onChange={e=>setDraft({...draft,minOrder:Number(e.target.value)})}/></label></div>
-          <h3>Customer eligibility</h3><div className={styles.choiceGrid}>{customers.map(x=><button key={x.id} className={draft.customerKinds.includes(x.id)?styles.selectedChoice:""} onClick={()=>setDraft({...draft,customerKinds:toggle(draft.customerKinds,x.id)})}>{x.label} customer</button>)}</div>
-          <div className={styles.checkRows}><label><input type="checkbox" checked={draft.firstOrderOnly} onChange={e=>setDraft({...draft,firstOrderOnly:e.target.checked})}/> First order only</label><label><input type="checkbox" checked={draft.subscriptionEligible} onChange={e=>setDraft({...draft,subscriptionEligible:e.target.checked})}/> Allow on subscriptions</label><label><input type="checkbox" checked={draft.fullPaymentOnly} onChange={e=>setDraft({...draft,fullPaymentOnly:e.target.checked})}/> 100% payment only</label></div>
-          <h3>Service receiving the coupon</h3><div className={styles.choiceGrid}>{services.map(x=><button key={x} className={draft.services.includes(x)?styles.selectedChoice:""} onClick={()=>setDraft({...draft,services:toggle(draft.services,x)})}>{x}</button>)}</div>
-          <h3>Cross-sell source <small>Optional</small></h3><p className={styles.help}>Example: choose Grooming here and Dog Training above to reward a grooming customer who books training.</p><div className={styles.choiceGrid}>{services.map(x=><button key={x} className={draft.crossSellFromServices.includes(x)?styles.crossChoice:""} onClick={()=>setDraft({...draft,crossSellFromServices:toggle(draft.crossSellFromServices,x)})}>{x}</button>)}</div>
-          <h3>City availability</h3><div className={styles.choiceGrid}>{cities.map(x=><button key={x} className={draft.cities.includes(x)?styles.selectedChoice:""} onClick={()=>setDraft({...draft,cities:toggle(draft.cities,x)})}>{x}</button>)}</div>
-          <h3>Booking channels</h3><div className={styles.choiceGrid}>{channels.map(x=><button key={x} className={draft.channels.includes(x)?styles.selectedChoice:""} onClick={()=>setDraft({...draft,channels:toggle(draft.channels,x)})}>{x}</button>)}</div>
-          <h3>Package scope</h3><label className={styles.fullField}>Applies to<select value={draft.packageScope} onChange={e=>setDraft({...draft,packageScope:e.target.value as CouponRule["packageScope"]})}><option value="all">All eligible packages</option><option value="single_session">Single sessions only</option><option value="subscription">Subscriptions only</option><option value="selected">Selected package names</option></select></label>{draft.packageScope==="selected"&&<label className={styles.fullField}>Package names<input value={draft.packageNames.join(", ")} onChange={e=>setDraft({...draft,packageNames:e.target.value.split(",").map(x=>x.trim()).filter(Boolean)})} placeholder="Bath & Basic, Foundation Training"/></label>}
-          <h3>Limits and schedule</h3><div className={styles.formPair}><label>Per customer<input type="number" min="1" value={draft.perCustomerLimit} onChange={e=>setDraft({...draft,perCustomerLimit:Number(e.target.value)})}/></label><label>Overall uses<input type="number" min="1" value={draft.totalLimit} onChange={e=>setDraft({...draft,totalLimit:Number(e.target.value)})}/></label><label>Valid until<input type="date" value={draft.validUntil} onChange={e=>setDraft({...draft,validUntil:e.target.value})}/></label><label>Maximum order<input type="number" value={draft.maxOrder??""} onChange={e=>setDraft({...draft,maxOrder:e.target.value?Number(e.target.value):null})} placeholder="No maximum"/></label></div>
+          <div className={styles.formPair}><label>Coupon code<input value={draft.code} onChange={e=>setDraft({...draft,code:e.target.value.toUpperCase()})} placeholder="UATCARE100"/></label><label>Campaign name<input value={draft.name} onChange={e=>setDraft({...draft,name:e.target.value})} placeholder="UAT retention test"/></label></div>
+          <h3>Discount and order</h3><div className={styles.formPair}><label>Discount type<select value={draft.discountType} onChange={e=>setDraft({...draft,discountType:e.target.value as Draft["discountType"]})}><option value="fixed">Fixed ₹ off</option><option value="percent">Percentage off</option></select></label><label>Discount value<input type="number" min="1" value={draft.discountValue} onChange={e=>setDraft({...draft,discountValue:Number(e.target.value)})}/></label><label>Maximum discount<input type="number" min="0" value={draft.maxDiscount??""} onChange={e=>setDraft({...draft,maxDiscount:e.target.value?Number(e.target.value):null})}/></label><label>Minimum order<input type="number" min="0" value={draft.minOrder} onChange={e=>setDraft({...draft,minOrder:Number(e.target.value)})}/></label></div>
+          <h3>Customer eligibility</h3><div className={styles.choiceGrid}>{customerOptions.map(x=><button type="button" key={x.id} className={draft.customerKinds.includes(x.id)?styles.selectedChoice:""} onClick={()=>setDraft({...draft,customerKinds:toggle(draft.customerKinds,x.id)})}>{x.label}</button>)}</div>
+          <div className={styles.checkRows}><label><input type="checkbox" checked={draft.firstOrderOnly} onChange={e=>setDraft({...draft,firstOrderOnly:e.target.checked})}/> First booking only</label><label><input type="checkbox" checked={draft.subscriptionEligible} onChange={e=>setDraft({...draft,subscriptionEligible:e.target.checked})}/> Allow on subscriptions</label><label><input type="checkbox" checked={draft.fullPaymentOnly} onChange={e=>setDraft({...draft,fullPaymentOnly:e.target.checked})}/> Full payment only</label></div>
+          <h3>Services</h3><div className={styles.choiceGrid}>{serviceOptions.map(x=><button type="button" key={x.id} className={draft.serviceCodes.includes(x.id)?styles.selectedChoice:""} onClick={()=>setDraft({...draft,serviceCodes:toggle(draft.serviceCodes,x.id)})}>{x.label}</button>)}</div>
+          <h3>Booking channels</h3><div className={styles.choiceGrid}>{channelOptions.map(x=><button type="button" key={x.id} className={draft.channels.includes(x.id)?styles.selectedChoice:""} onClick={()=>setDraft({...draft,channels:toggle(draft.channels,x.id)})}>{x.label}</button>)}</div>
+          <h3>Package scope</h3><label className={styles.fullField}>Applies to<select value={draft.packageScope} onChange={e=>setDraft({...draft,packageScope:e.target.value as Draft["packageScope"]})}><option value="all">All eligible packages</option><option value="single_session">Single sessions only</option><option value="subscription">Subscriptions only</option><option value="selected">Selected package codes</option></select></label>{draft.packageScope==="selected"&&<label className={styles.fullField}>Package codes<input value={draft.packageCodes.join(", ")} onChange={e=>setDraft({...draft,packageCodes:e.target.value.split(",").map(x=>x.trim()).filter(Boolean)})}/></label>}
+          <h3>Limits and validity</h3><div className={styles.formPair}><label>Per customer<input type="number" min="1" value={draft.perCustomerLimit} onChange={e=>setDraft({...draft,perCustomerLimit:Number(e.target.value)})}/></label><label>Overall uses<input type="number" min="1" value={draft.totalLimit} onChange={e=>setDraft({...draft,totalLimit:Number(e.target.value)})}/></label><label>Valid from<input type="date" value={dateInput(draft.validFrom)} onChange={e=>setDraft({...draft,validFrom:day(e.target.value)})}/></label><label>Valid until<input type="date" value={dateInput(draft.validUntil)} onChange={e=>setDraft({...draft,validUntil:day(e.target.value)})}/></label><label>Maximum order<input type="number" value={draft.maxOrder??""} onChange={e=>setDraft({...draft,maxOrder:e.target.value?Number(e.target.value):null})} placeholder="No maximum"/></label><label>Status<select value={draft.status} onChange={e=>setDraft({...draft,status:e.target.value as Draft["status"]})}><option value="paused">Paused</option><option value="active">Active UAT</option></select></label></div>
         </div>
-        <div className={styles.builderFooter}><div><span>Test impact</span><strong>{draft.services.length} services · {draft.cities.length} cities · {draft.customerKinds.length} segments</strong></div><button onClick={save}>{editing?"Save changes":"Create coupon"}</button></div>
+        <div className={styles.builderFooter}><div><span>Governed UAT impact</span><strong>{draft.serviceCodes.length} services · {draft.channels.length} channels · {draft.customerKinds.length} segments</strong></div><button disabled={saving} onClick={()=>void save()}>{saving?"Saving…":draft.id?"Save governed changes":"Create governed coupon"}</button></div>
       </aside>
     </section>
   </>;
