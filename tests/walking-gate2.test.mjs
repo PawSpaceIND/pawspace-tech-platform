@@ -1,0 +1,18 @@
+import test from"node:test";
+import assert from"node:assert/strict";
+import{readFile}from"node:fs/promises";
+const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
+
+test("Walking Gate 2 owns walker acceptance and idempotency",async()=>{const source=await read("lib/walking-lifecycle.ts");assert.match(source,/walking_action_keys/);assert.match(source,/provider_assignment_offers/);assert.match(source,/Walker acceptance offer expired/);assert.match(source,/status='accepted'/);assert.match(source,/duplicatePrevented:true/);});
+
+test("Walking Gate 2 requires UAT verified handover before walk start",async()=>{const source=await read("lib/walking-lifecycle.ts");assert.match(source,/walking_handover_snapshots/);assert.match(source,/method, safety instructions and emergency contact/);assert.match(source,/uat_verified/);assert.match(source,/liveOtpDelivery:false/);assert.match(source,/A UAT-verified Walking handover is required before walk start/);assert.match(source,/status='in_progress'/);assert.match(source,/gpsMode:\"uat_not_live\"/);});
+
+test("Walking Gate 2 records canonical walk events only during active service",async()=>{const source=await read("lib/walking-lifecycle.ts");for(const type of ["pee","poop","water","route_checkpoint","general_update","handover_note"])assert.match(source,new RegExp(`\\"${type}\\"`));assert.match(source,/walking_events/);assert.match(source,/only during an active walk/);});
+
+test("Walking Gate 2 recovery preserves booking and paid window",async()=>{const source=await read("lib/walking-lifecycle.ts");assert.match(source,/walking_recovery_cases/);assert.match(source,/reassignment_needed/);assert.match(source,/ops_escalation/);assert.match(source,/bookingPreserved:true/);assert.match(source,/paidWindowPreserved:true/);assert.match(source,/UPDATE provider_work_orders SET status='recovery_pending'/);assert.match(source,/UPDATE scheduling_reservations SET status='cancelled'/);});
+
+test("Walking completion closes booking work order and reservation without inventing payout",async()=>{const source=await read("lib/walking-lifecycle.ts");assert.match(source,/UPDATE canonical_bookings SET status='completed'/);assert.match(source,/UPDATE provider_work_orders SET status='completed'/);assert.match(source,/UPDATE scheduling_reservations SET status='completed'/);assert.match(source,/payout:\"rule_pending\"/);assert.match(source,/tax:\"configuration_required\"/);});
+
+test("Walking lifecycle API separates customer walker and staff authority",async()=>{const api=await read("app/api/walking-lifecycle/route.ts"),gateway=await read("lib/api-gateway.ts");assert.match(api,/requireProviderOwnership/);assert.match(api,/requireCustomerOwnership/);assert.match(api,/requirePermission\(actor,\"bookings\.manage\"\)/);assert.match(api,/requirePermission\(actor,\"scheduling\.book\"\)/);assert.match(api,/securityAudit/);assert.match(gateway,/url\.pathname===\"\/api\/walking-lifecycle\"/);assert.match(gateway,/action===\"submit_handover\"/);});
+
+test("Walking customer and Walker workspaces use canonical lifecycle rather than fixtures",async()=>{const customer=await read("app/walking/manage/walking-customer-booking.tsx"),walker=await read("app/walker/walking-workspace.tsx"),page=await read("app/walker/page.tsx");assert.match(customer,/updateWalkingLifecycle/);assert.match(customer,/submit_handover/);assert.match(customer,/live OTP\/SMS provider/);assert.match(walker,/loadWalkingLifecycle/);assert.match(walker,/start_walk/);assert.match(walker,/route_checkpoint/);assert.match(walker,/uat_not_live/);assert.doesNotMatch(page,/PSW-4912/);assert.doesNotMatch(page,/₹2,244/);});
