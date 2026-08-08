@@ -1,0 +1,9 @@
+import{database}from"../../../lib/server-auth";
+import{createWalkingQuote,listWalkingPackages}from"../../../lib/walking-governance";
+
+const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
+function sameOriginWrite(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin Walking quote blocked",{status:403});}
+async function failure(error:unknown){if(error instanceof Response){const message=await error.text().catch(()=>"");return json({error:message||"Walking commercial request failed"},error.status||500);}return json({error:error instanceof Error?error.message:"Walking commercial request failed"},500);}
+
+export async function GET(request:Request){try{const url=new URL(request.url),scheduledStart=url.searchParams.get("scheduledStart")||new Date().toISOString();const packages=await listWalkingPackages(await database(),scheduledStart);return json({data:{packages,source:"canonical_walking_governance",availabilityMode:"uat_scheduler",availabilityVerified:false,liveAvailability:false,liveMoney:false}});}catch(error){return failure(error);}}
+export async function POST(request:Request){try{sameOriginWrite(request);const body=await request.json() as {packageCode?:string;petCount?:number;scheduledStart?:string;scheduledEnd?:string;paymentMode?:"prepaid";recurring?:boolean;couponCode?:string};if(!body.packageCode||!body.scheduledStart||!body.scheduledEnd)return json({error:"Walking package and exact service window are required"},400);const quote=await createWalkingQuote(await database(),{packageCode:body.packageCode,petCount:Number(body.petCount||1),scheduledStart:body.scheduledStart,scheduledEnd:body.scheduledEnd,paymentMode:body.paymentMode||"prepaid",recurring:Boolean(body.recurring),couponCode:body.couponCode});return json({data:{...quote,liveMoney:false}},201);}catch(error){return failure(error);}}
