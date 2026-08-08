@@ -6,11 +6,13 @@ const read=path=>fs.readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
 const route=read("app/api/assisted-orders/route.ts");
 const page=read("app/assisted-booking/page.tsx");
 const client=read("lib/assisted-orders-client.ts");
+const gateway=read("lib/api-gateway.ts");
 const assistedInput=client.match(/export type AssistedOrderInput=\{([\s\S]*?)\};/)?.[1]??"";
 
 test("assisted orders stays staff-only and test-only",()=>{
   assert.match(route,/staffRoles=new Set\(\["founder","superuser","admin","manager","associate"\]\)/);
   assert.match(route,/requirePermission\(await resolveActor\(request\),"scheduling\.book"\)/);
+  assert.match(gateway,/url\.pathname==="\/api\/assisted-orders"\)return "scheduling\.book"/);
   assert.match(route,/Assisted Orders is staff-only/);
   assert.match(route,/testOnly:true/);
   assert.match(route,/liveMoney:false/);
