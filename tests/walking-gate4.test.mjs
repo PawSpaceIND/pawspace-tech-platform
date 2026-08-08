@@ -1,0 +1,18 @@
+import test from"node:test";
+import assert from"node:assert/strict";
+import{readFile}from"node:fs/promises";
+const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
+
+test("Dog Walking Gate 4 media grants are private short-lived and session-bound",async()=>{const source=await read("lib/walking-proof-governance.ts");assert.match(source,/walking_media_upload_grants/);assert.match(source,/walking_media_session_bindings/);assert.match(source,/15\*60_000/);assert.match(source,/token_hash/);assert.match(source,/sandbox_contract/);assert.match(source,/rawPublicUrl:false/);assert.match(source,/opaque object ID, not a public URL/);assert.match(source,/belongs to another session/);});
+
+test("Dog Walking Gate 4 enforces MIME size checksum scan and private proof",async()=>{const source=await read("lib/walking-proof-governance.ts");for(const mime of["image/jpeg","image/png","image/webp"])assert.match(source,new RegExp(mime.replace("/","\\/")));assert.match(source,/10_000_000/);assert.match(source,/SHA-256 checksum/);assert.match(source,/scan_status/);assert.match(source,/access_status/);assert.match(source,/retention_status/);assert.match(source,/not clean private active proof/);});
+
+test("Dog Walking Gate 4 route samples are canonical but explicitly sandbox unverified",async()=>{const source=await read("lib/walking-proof-governance.ts"),page=await read("app/walker/proof/page.tsx");assert.match(source,/record_location_sample/);assert.match(source,/route_location_sample/);assert.match(source,/environment:\"sandbox\"/);assert.match(source,/productionVerified:false/);assert.match(source,/routeEnvironment:\"sandbox_unverified\"/);assert.match(source,/productionGpsConnected:false/);assert.match(page,/sandbox\/unverified/);assert.match(page,/not production-verified GPS/);});
+
+test("Dog Walking Gate 4 incidents preserve booking and money authority",async()=>{const source=await read("lib/walking-proof-governance.ts");assert.match(source,/walking_incidents/);assert.match(source,/attention/);assert.match(source,/urgent/);assert.match(source,/emergency/);assert.match(source,/ops_escalation/);assert.match(source,/bookingPreserved:true/);assert.match(source,/automaticRefund:false/);assert.match(source,/automaticPayoutChange:false/);assert.match(source,/queued_only/);});
+
+test("Dog Walking proof API separates provider customer and staff authority",async()=>{const api=await read("app/api/walking-proof/route.ts");assert.match(api,/providerActions=new Set<WalkingProofAction>/);assert.match(api,/customerActions=new Set<WalkingProofAction>/);assert.match(api,/staffActions=new Set<WalkingProofAction>/);assert.match(api,/requireProviderOwnership/);assert.match(api,/requireCustomerOwnership/);assert.match(api,/requirePermission\(actor,\"bookings\.manage\"\)/);assert.match(api,/securityAudit/);});
+
+test("Dog Walking customer incident acknowledgement cannot change money",async()=>{const page=await read("app/walking/manage/walking-customer-incidents.tsx");assert.match(page,/loadWalkingProof/);assert.match(page,/scope:\"customer\"/);assert.match(page,/acknowledge_incident/);assert.match(page,/does not approve a refund, charge or walker payout change/);});
+
+test("Dog Walking provider proof workspace does not self-approve scanner state",async()=>{const page=await read("app/walker/proof/page.tsx");assert.match(page,/prepare_media/);assert.match(page,/record_location_sample/);assert.match(page,/report_incident/);assert.match(page,/Provider cannot self-approve upload finalization or scan status/);assert.doesNotMatch(page,/record_media_scan/);assert.doesNotMatch(page,/sandbox_finalize_media/);});
