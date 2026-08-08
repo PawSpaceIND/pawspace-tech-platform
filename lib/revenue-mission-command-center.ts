@@ -12,7 +12,6 @@ const rows=<T=Row>(result:{results?:unknown[]})=>(result.results||[]) as T[];
 
 async function ensureCommandCenterDependencies(db:Db){await ensureRevenueMissionTables(db);await ensureLeadAssignmentTables(db);await ensureLeadSlaTables(db);await ensureRevenueOpportunityTables(db);await ensureSalesProductivityTables(db);}
 async function latestMission(db:Db,missionId?:string){if(missionId)return db.prepare("SELECT * FROM revenue_missions WHERE id=?").bind(missionId).first<Row>();return db.prepare("SELECT * FROM revenue_missions WHERE status='active_uat' ORDER BY period_start DESC,updated_at DESC LIMIT 1").first<Row>();}
-function safeJson(value:unknown){try{return JSON.parse(String(value||"{}")) as Record<string,unknown>}catch{return{} as Record<string,unknown>}}
 function progress(periodStart:number,periodEnd:number,asOf:number){const total=Math.max(1,periodEnd-periodStart),elapsed=Math.min(total,Math.max(0,asOf-periodStart));return Math.round((elapsed/total)*10000)/100;}
 
 export async function buildRevenueMissionCommandCenter(db:Db,input:{missionId?:string;asOf?:number}={}){await ensureCommandCenterDependencies(db);const asOf=input.asOf??Date.now(),mission=await latestMission(db,input.missionId);if(!mission)return{mission:null,generatedAt:asOf,status:"configuration_required",warnings:[{severity:"critical",code:"mission_missing",message:"No active Revenue Mission is configured."}],truth:{pipelineIsAchievedRevenue:false,syntheticOpportunityCredit:false,legacyLeaderboardAuthority:false,productionReady:false}};
