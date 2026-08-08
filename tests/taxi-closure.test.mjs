@@ -1,0 +1,16 @@
+import test from"node:test";
+import assert from"node:assert/strict";
+import{readFile}from"node:fs/promises";
+const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
+
+test("Pet Taxi closes one canonical customer to driver to Ops to Finance path",async()=>{const customer=await read("app/taxi/canonical-taxi-page.tsx"),booking=await read("app/api/taxi-bookings/route.ts"),driver=await read("app/driver/canonical-driver-page.tsx"),ops=await read("app/team/operations/taxi/page.tsx"),finance=await read("app/team/finance/taxi/taxi-finance-workspace.tsx");assert.match(customer,/createCanonicalTaxiBooking/);assert.match(booking,/taxi_trips/);assert.match(driver,/loadTaxiLifecycle/);assert.match(ops,/loadTaxiOps/);assert.match(finance,/loadTaxiFinance/);});
+
+test("Pet Taxi completion is server-gated by canonical route evidence",async()=>{const lifecycle=await read("lib/taxi-lifecycle.ts"),driver=await read("app/driver/canonical-driver-page.tsx");assert.match(lifecycle,/Pet Taxi UAT completion requires at least two canonical sandbox route samples/);assert.match(lifecycle,/event_type='route_location_sample'/);assert.match(lifecycle,/routeSamples/);assert.match(driver,/routeSamples<2/);assert.match(driver,/Record 2 route samples before completion/);assert.match(driver,/\/driver\/proof\?bookingId=/);});
+
+test("Pet Taxi customer confirmation reaches canonical management and incidents",async()=>{const customer=await read("app/taxi/canonical-taxi-page.tsx"),manage=await read("app/taxi/manage/page.tsx");assert.match(customer,/\/taxi\/manage\?bookingId=/);assert.match(customer,/Manage trip/);assert.match(manage,/TaxiCustomerIncidents/);});
+
+test("Pet Taxi recovery acceptance is explicit and preserves route truth",async()=>{const recovery=await read("lib/taxi-recovery-governance.ts"),page=await read("app/driver/recovery/page.tsx"),ops=await read("lib/taxi-ops-governance.ts");assert.match(recovery,/replacement_accepted/);assert.match(recovery,/routePreserved:true/);assert.match(page,/Accept replacement Taxi trip/);assert.match(ops,/Replacement driver must accept before Operations can close recovery/);});
+
+test("Pet Taxi gateway routes every gate to the correct authority",async()=>{const gateway=await read("lib/api-gateway.ts");for(const path of["taxi-commercial","taxi-bookings","taxi-lifecycle","taxi-finance","taxi-proof","taxi-ops","taxi-recovery"])assert.match(gateway,new RegExp(`/api/${path}`));assert.match(gateway,/taxi-finance[\s\S]*finance\.view/);assert.match(gateway,/taxi-proof[\s\S]*acknowledge_incident[\s\S]*scheduling\.book/);assert.match(gateway,/taxi-ops[\s\S]*bookings\.manage/);});
+
+test("Pet Taxi closure remains UAT-only and does not claim production launch",async()=>{const doc=await read("docs/TAXI_CLOSURE_PLAN.md"),ops=await read("lib/taxi-ops-governance.ts"),proof=await read("lib/taxi-proof-governance.ts");assert.match(doc,/not a production-launch declaration/i);assert.match(ops,/productionReady:false/);assert.match(ops,/productionMaps:\"disconnected\"/);assert.match(ops,/productionGps:\"disconnected\"/);assert.match(proof,/productionGpsConnected:false/);assert.match(proof,/productionMapsVerified:false/);assert.match(proof,/sandbox_unverified/);});
