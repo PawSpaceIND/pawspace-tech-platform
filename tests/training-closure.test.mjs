@@ -5,12 +5,18 @@ import { readFile } from 'node:fs/promises';
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
 
 test('Training keeps one canonical programme/session commercial boundary', async () => {
-  const [commercial, programmes, sessions] = await Promise.all([
+  const [commercialRoute, commercialGovernance, programmes, sessions] = await Promise.all([
     read('app/api/training-commercial/route.ts'),
+    read('lib/training-commercial-governance.ts'),
     read('app/api/training-programmes/route.ts'),
     read('lib/training-session-lifecycle.ts'),
   ]);
-  assert.match(commercial, /training_commercial_quotes/);
+  assert.match(commercialRoute, /createTrainingQuote/);
+  assert.match(commercialRoute, /listTrainingPackages/);
+  assert.match(commercialRoute, /canonical_training_commercial/);
+  assert.match(commercialGovernance, /training_commercial_quotes/);
+  assert.match(commercialGovernance, /training_booking_quote_links/);
+  assert.match(commercialGovernance, /consumeTrainingQuote/);
   assert.match(programmes, /training_programmes/);
   assert.match(sessions, /training_sessions/);
   assert.match(sessions, /training_session_recovery_cases/);
