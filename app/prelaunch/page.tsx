@@ -11,6 +11,7 @@ const surfaces:Surface[]=[
  {label:"Finance",href:"/team/finance",audience:"Finance",note:"Collections, payouts, refunds, reconciliation and close."},
  {label:"People / HR",href:"/team/people",audience:"People",note:"Employees, attendance, payroll and performance."},
  {label:"Revenue Mission UAT",href:"/team/revenue-mission",audience:"Sales leadership",note:"Governed ₹2 lakh mission UAT and source-derived revenue truth."},
+ {label:"Layer 2 Live Swarm",href:"/prelaunch/layer2-swarm",audience:"Founder / Launch UAT",note:"Run 60 real D1 sandbox bookings, failure injection and cross-system reconciliation."},
  {label:"Test Lab",href:"/test-lab",audience:"UAT",note:"Synthetic end-to-end test environment."},
  {label:"Regression Lab",href:"/regression-lab",audience:"UAT",note:"Cross-flow regression workspace."},
 ];
