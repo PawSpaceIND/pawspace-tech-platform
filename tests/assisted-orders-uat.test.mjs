@@ -6,6 +6,7 @@ const read=path=>fs.readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
 const route=read("app/api/assisted-orders/route.ts");
 const page=read("app/assisted-booking/page.tsx");
 const client=read("lib/assisted-orders-client.ts");
+const assistedInput=client.match(/export type AssistedOrderInput=\{([\s\S]*?)\};/)?.[1]??"";
 
 test("assisted orders stays staff-only and test-only",()=>{
   assert.match(route,/staffRoles=new Set\(\["founder","superuser","admin","manager","associate"\]\)/);
@@ -18,8 +19,9 @@ test("assisted orders stays staff-only and test-only",()=>{
 });
 
 test("browser cannot submit a final assisted-order price",()=>{
-  assert.doesNotMatch(client,/totalAmount:number/);
-  assert.doesNotMatch(client,/amountDueNow:number.*AssistedOrderInput/);
+  assert.ok(assistedInput,"AssistedOrderInput type must remain explicit");
+  assert.doesNotMatch(assistedInput,/totalAmount/);
+  assert.doesNotMatch(assistedInput,/amountDueNow/);
   assert.match(route,/const total=pets\.length===1\?item\.singlePrice:/);
   assert.match(route,/groomingCatalogue\.find/);
   assert.match(page,/Browser does not set final price/);
