@@ -1,0 +1,29 @@
+name: Walking crosscut patch
+on:
+  push:
+    branches:
+      - agent/walking-gates1-5
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/walking-gates1-5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply Walking closure patch
+        run: python scripts/walking-crosscut-patch.py
+      - name: Commit patched files and remove helper
+        run: |
+          rm -f .github/workflows/walking-crosscut-patch.yml scripts/walking-crosscut-patch.py
+          git config user.name "PawSpace Walking Closure"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "Close Walking cross-cutting gates"
+          git push origin HEAD:agent/walking-gates1-5
