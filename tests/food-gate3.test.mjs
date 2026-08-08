@@ -1,0 +1,20 @@
+import test from"node:test";
+import assert from"node:assert/strict";
+import{readFile}from"node:fs/promises";
+const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
+
+test("Food Gate 3 keeps delivered-order payment due until sandbox payment is recorded",async()=>{const source=await read("lib/food-finance-governance.ts");assert.match(source,/food_order_payment_events/);assert.match(source,/record_order_payment/);assert.match(source,/sandbox_paid/);assert.match(source,/Food sandbox payment reference was already used/);assert.match(source,/idx_food_payment_reference/);assert.match(source,/liveMoney:false/);});
+
+test("Food cancellation is request-only and packed or dispatched orders require Operations first",async()=>{const source=await read("lib/food-finance-governance.ts");assert.match(source,/food_cancellation_requests/);assert.match(source,/policy_review_required/);assert.match(source,/refundPolicy:\"configuration_required\"/);assert.match(source,/Packed\/dispatched Food order must use Operations fulfilment review before cancellation/);assert.match(source,/Approved Food refund must be explicit/);assert.match(source,/cannot exceed sandbox-paid order value/);});
+
+test("Food cancellation releases only still-reserved UAT inventory",async()=>{const source=await read("lib/food-finance-governance.ts");assert.match(source,/releaseReservedInventory/);assert.match(source,/reserved_units=MAX\(0,reserved_units-\?\)/);assert.match(source,/UPDATE food_inventory_reservations SET status='released'/);});
+
+test("Food refund ledger is sandbox-only and replay resistant",async()=>{const source=await read("lib/food-finance-governance.ts");assert.match(source,/food_refund_ledger/);assert.match(source,/sandbox_pending/);assert.match(source,/sandbox_recorded/);assert.match(source,/idx_food_refund_reference/);assert.match(source,/Food refund reference was already used/);});
+
+test("Food supplier settlement never invents COGS supplier amount or tax",async()=>{const source=await read("lib/food-finance-governance.ts");assert.match(source,/food_supplier_settlement_ledger/);assert.match(source,/Supplier settlement can be prepared only after canonical UAT Food delivery/);assert.match(source,/must be sandbox-paid before supplier settlement readiness/);assert.match(source,/cogs_status TEXT NOT NULL DEFAULT 'configuration_required'/);assert.match(source,/supplier_settlement_policy TEXT NOT NULL DEFAULT 'rule_pending'/);assert.match(source,/tax_status TEXT NOT NULL DEFAULT 'configuration_required'/);assert.match(source,/settlement_status TEXT NOT NULL DEFAULT 'not_instructed'/);});
+
+test("Food reconciliation exposes due paid refund net supplier COGS and tax truth",async()=>{const source=await read("lib/food-finance-governance.ts");assert.match(source,/food_finance_reconciliation/);assert.match(source,/deliveryDueTotal/);assert.match(source,/paidTotal/);assert.match(source,/refundTotal/);assert.match(source,/unpaidTotal/);assert.match(source,/netPaidTotal/);assert.match(source,/cogsState/);assert.match(source,/supplierSettlementState/);assert.match(source,/taxState/);});
+
+test("Food Finance API separates customer cancellation request from Finance authority",async()=>{const api=await read("app/api/food-finance/route.ts");assert.match(api,/customerActions=new Set<FoodFinanceAction>\(\[\"request_cancel\"\]\)/);assert.match(api,/requireCustomerOwnership/);assert.match(api,/requirePermission\(actor,\"finance\.manage\"\)/);assert.match(api,/securityAudit/);});
+
+test("Food customer and Finance surfaces preserve specialist money authority",async()=>{const customer=await read("app/food/manage/food-customer-management.tsx"),finance=await read("app/team/finance/food/food-finance-workspace.tsx");assert.match(customer,/requestFoodCancellation/);assert.match(customer,/Refund is not calculated in the customer UI/);assert.doesNotMatch(customer,/approve_cancel/);for(const action of["record_order_payment","approve_cancel","record_refund","prepare_supplier_settlement","reconcile"])assert.match(finance,new RegExp(`\\"${action}\\"`));assert.match(finance,/without inventing supplier cost, payout or tax/);});
