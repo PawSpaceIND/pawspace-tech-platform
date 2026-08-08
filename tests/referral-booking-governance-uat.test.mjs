@@ -1,0 +1,15 @@
+import test from"node:test";
+import assert from"node:assert/strict";
+import fs from"node:fs";
+const read=path=>fs.readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
+const bridge=read("lib/referral-booking-governance.ts"),governance=read("lib/referral-governance.ts"),booking=read("app/api/canonical-bookings/route.ts"),grooming=read("app/api/grooming-lifecycle/route.ts"),change=read("app/api/grooming-booking-change/route.ts");
+
+test("referral booking bridge creates a unique canonical claim-to-booking link",()=>{assert.match(bridge,/referral_claim_booking_links/);assert.match(bridge,/claim_id TEXT PRIMARY KEY/);assert.match(bridge,/booking_id TEXT NOT NULL UNIQUE/);assert.match(bridge,/referral_first_booking_customer_programme_idx/);});
+test("booking preparation rechecks customer, service, city and first-booking eligibility",()=>{assert.match(bridge,/Referral claim does not belong to this customer/);assert.match(bridge,/Referral claim does not match this booking service\/city/);assert.match(bridge,/SELECT COUNT\(\*\) count FROM canonical_bookings WHERE customer_id/);assert.match(bridge,/first canonical booking/);});
+test("booking preparation blocks unapproved stacking and subscription policy",()=>{assert.match(bridge,/Referral stacking with another coupon\/offer is configuration_required/);assert.match(bridge,/Referral subscription eligibility is configuration_required/);});
+test("booking preparation recalculates fraud identity from canonical customer and booking identity",()=>{assert.match(bridge,/share the same booking phone/);assert.match(bridge,/share the same booking email/);assert.match(bridge,/Referral claim requires identity review/);});
+test("friend discount is derived from frozen referral policy and bounded by canonical base price",()=>{assert.match(bridge,/snapshot\.friendDiscount/);assert.match(bridge,/Math\.max\(0,Math\.min\(configuredDiscount,input\.baseAmount\)\)/);assert.match(bridge,/baseAmount:input\.baseAmount/);});
+test("qualification is driven from booking link and remains idempotent",()=>{assert.match(bridge,/tryQualifyLinkedReferral/);assert.match(bridge,/referral-qualify:\$\{input\.bookingId\}/);assert.match(bridge,/qualifyReferralClaim/);assert.match(governance,/SELECT \* FROM referral_rewards WHERE claim_id/);});
+test("cancellation never invents reward reuse or reversal policy",()=>{assert.match(bridge,/Referral retry\/reuse after cancellation is configuration_required/);assert.match(bridge,/Referral refund\/reversal policy/);assert.match(bridge,/reverseReferralReward/);});
+test("canonical route is still not allowed to trust referral browser pricing before bridge integration",()=>{assert.doesNotMatch(booking,/referralClaimId/);});
+test("lifecycle integration remains an explicit pending closure until the bridge is called",()=>{assert.doesNotMatch(grooming,/tryQualifyLinkedReferral/);assert.doesNotMatch(change,/handleReferralBookingCancellation/);});
