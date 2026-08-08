@@ -46,7 +46,7 @@ export default function SittingPage(){
 
  useEffect(()=>{
   let cancelled=false;
-  setQuoteLoading(true);setQuoteError("");setQuote(null);setBookingError("");
+  queueMicrotask(()=>{if(cancelled)return;setQuoteLoading(true);setQuoteError("");setQuote(null);setBookingError("");});
   Promise.all([
    loadSittingCatalogue({scheduledStart}),
    createSittingQuote({packageCode,petCount,scheduledStart,scheduledEnd,paymentMode:"prepaid"}),
