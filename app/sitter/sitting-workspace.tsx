@@ -1,0 +1,16 @@
+"use client";
+import Link from"next/link";
+import{useCallback,useEffect,useState}from"react";
+import{loadSittingLifecycle,updateSittingLifecycle,type SittingLifecycleBooking}from"../../lib/sitting-lifecycle-client";
+
+export default function SittingWorkspace({bookingId}:{bookingId:string}){
+ const[booking,setBooking]=useState<SittingLifecycleBooking|null>(null),[error,setError]=useState(""),[busy,setBusy]=useState(false);
+ const refresh=useCallback(async()=>{if(!bookingId)return;try{setError("");const rows=await loadSittingLifecycle({bookingId});setBooking(rows[0]||null);}catch(e){setError(e instanceof Error?e.message:"Unable to load Sitting booking")}},[bookingId]);
+ useEffect(()=>{void refresh()},[refresh]);
+ async function act(action:"accept"|"check_in"|"care_event"|"check_out"|"decline"|"sitter_unavailable",extra:Record<string,unknown>={}){if(!bookingId||busy)return;setBusy(true);setError("");try{await updateSittingLifecycle({bookingId,action,idempotencyKey:`sitter:${bookingId}:${action}:${Date.now()}`,...extra});await refresh();}catch(e){setError(e instanceof Error?e.message:"Unable to update Sitting booking")}finally{setBusy(false)}}
+ if(!bookingId)return <main><h1>PawSpace Sitting workspace</h1><p>Open this workspace from a confirmed Sitting booking so the canonical booking ID is carried through.</p><Link href="/sitting">Open Sitting customer flow</Link></main>;
+ if(error&&!booking)return <main><h1>PawSpace Sitting workspace</h1><p>{error}</p><button onClick={()=>void refresh()}>Retry</button></main>;
+ if(!booking)return <main><h1>PawSpace Sitting workspace</h1><p>Loading canonical Sitting booking…</p></main>;
+ const status=String(booking.status||"");
+ return <main><header><Link href="/">PawSpace</Link><strong>Sitting provider workspace</strong></header><section><p>Canonical booking</p><h1>{booking.id}</h1><p>Status: <strong>{status}</strong></p><p>Provider: {String(booking.provider_id||"")}</p><p>Window: {String(booking.scheduled_start||"")} → {String(booking.scheduled_end||"")}</p>{booking.carePlan?<p>Care plan: ready</p>:<p>Care plan: waiting for customer</p>}{error&&<p>{error}</p>}<div><button disabled={busy||!["confirmed","awaiting_provider_acceptance"].includes(status)} onClick={()=>void act("accept")}>Accept booking</button><button disabled={busy||status!=="assigned"||!booking.carePlan} onClick={()=>void act("check_in")}>Check in</button><button disabled={busy||status!=="in_progress"} onClick={()=>void act("care_event",{careEventType:"general_update",detail:{message:"Pets settled and care routine is on track"}})}>Log care update</button><button disabled={busy||status!=="in_progress"} onClick={()=>void act("care_event",{careEventType:"meal",detail:{message:"Meal completed"}})}>Log meal</button><button disabled={busy||status!=="in_progress"} onClick={()=>void act("check_out")}>Check out</button><button disabled={busy||["completed","cancelled"].includes(status)} onClick={()=>void act("sitter_unavailable",{reason:"Sitter unavailable during UAT lifecycle"})}>Mark unavailable</button></div><h2>Care timeline</h2><ul>{(booking.events||[]).map((event,index)=><li key={String(event.id||index)}><strong>{String(event.event_type||"event")}</strong> · {new Date(Number(event.created_at||0)).toLocaleString("en-IN")}</li>)}</ul></section></main>;
+}
