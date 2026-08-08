@@ -1,0 +1,95 @@
+name: Food closure certification
+on:
+  push:
+    branches:
+      - agent/food-certify
+permissions:
+  contents: write
+  pull-requests: write
+concurrency:
+  group: food-closure-certification
+  cancel-in-progress: false
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/food-certify
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Require certified Taxi on main and freeze Food source
+        run: |
+          git fetch origin main agent/food-gates1-5
+          git show origin/main:docs/TAXI_CLOSURE_PLAN.md >/dev/null
+          git show origin/main:backend/src/scheduling.ts | grep -q '"pet_taxi"'
+          echo "SOURCE_SHA=$(git rev-parse origin/agent/food-gates1-5)" >> "$GITHUB_ENV"
+      - name: Apply any pending Food closure helpers
+        run: |
+          if [ -f scripts/food-gate1-patch.py ]; then python scripts/food-gate1-patch.py; fi
+          if [ -f scripts/food-crosscut-patch.py ]; then python scripts/food-crosscut-patch.py; fi
+      - name: Remove temporary Food helpers
+        run: |
+          rm -f .github/workflows/food-gate1-patch.yml scripts/food-gate1-patch.py
+          rm -f scripts/food-crosscut-patch.py
+          rm -f .github/workflows/food-certify.yml
+      - name: Verify Food closure markers
+        run: |
+          grep -q 'CanonicalFoodPage' app/food/page.tsx
+          grep -q '/food/manage?orderId=' app/food/canonical-food-page.tsx
+          grep -q 'FoodCustomerIncidents' app/food/manage/page.tsx
+          grep -q 'substitutionAllowed:false' lib/food-ops-governance.ts
+          grep -q 'priceChangeAllowed:false' lib/food-ops-governance.ts
+          grep -q '/api/food-fulfilment' lib/api-gateway.ts
+          grep -q '/api/food-finance' lib/api-gateway.ts
+          grep -q '/api/food-proof' lib/api-gateway.ts
+          grep -q '/api/food-ops' lib/api-gateway.ts
+          grep -q 'productionReady:false' lib/food-ops-governance.ts
+          grep -q 'not a production-launch declaration' docs/FOOD_CLOSURE_PLAN.md
+      - name: Install web dependencies
+        run: npm ci
+      - name: Build and run full web regression
+        run: npm test
+      - name: Lint
+        run: npm run lint
+      - name: Validate Sites artifact
+        run: npm run validate:artifact
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+      - name: Backend typecheck
+        working-directory: backend
+        run: npm run typecheck
+      - name: Backend tests
+        working-directory: backend
+        run: npm test
+      - name: Commit exact certified tree
+        run: |
+          git config user.name "PawSpace Food Closure"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "Certify Food closure"
+      - name: Fast-forward Food PR branch if source stayed frozen
+        run: |
+          git fetch origin agent/food-gates1-5
+          REMOTE_SHA=$(git rev-parse origin/agent/food-gates1-5)
+          if [ "$REMOTE_SHA" != "$SOURCE_SHA" ]; then
+            echo "Food source branch changed during certification; refusing to overwrite it."
+            exit 1
+          fi
+          git push origin HEAD:agent/food-gates1-5
+      - name: Retarget, promote and squash-merge the Food PR
+        run: |
+          PR=$(gh pr list --repo PawSpaceIND/pawspace-tech-platform --head agent/food-gates1-5 --state open --json number --jq '.[0].number')
+          test -n "$PR"
+          gh pr edit "$PR" --repo PawSpaceIND/pawspace-tech-platform --base main
+          gh pr ready "$PR" --repo PawSpaceIND/pawspace-tech-platform
+          gh pr merge "$PR" --repo PawSpaceIND/pawspace-tech-platform --squash --delete-branch=false --subject "Close canonical Food UAT path across Gates 1-5" --body "Certified canonical Food internal-UAT closure across Customer, Fulfilment/Operations, Quality/Proof and Finance. Production catalogue/inventory/lot traceability/logistics/live money and launch dependencies remain explicitly disconnected or policy-gated."
