@@ -1,0 +1,18 @@
+import test from"node:test";
+import assert from"node:assert/strict";
+import{readFile}from"node:fs/promises";
+const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
+
+test("Dog Walking Gate 2 owns walker acceptance and idempotency",async()=>{const source=await read("lib/walking-lifecycle.ts");assert.match(source,/walking_action_keys/);assert.match(source,/provider_assignment_offers/);assert.match(source,/Walker acceptance offer expired/);assert.match(source,/UPDATE canonical_bookings SET status='assigned'/);assert.match(source,/UPDATE provider_work_orders SET status='accepted'/);assert.match(source,/duplicatePrevented:true/);});
+
+test("Dog Walking Gate 2 requires governed handover before start",async()=>{const source=await read("lib/walking-lifecycle.ts");assert.match(source,/walking_handover_events/);assert.match(source,/A governed Dog Walking handover method is required/);assert.match(source,/uatAttestation:true/);assert.match(source,/otpConnected:false/);assert.match(source,/Confirmed handover is required before a walk starts/);assert.match(source,/status='in_progress'/);assert.match(source,/gpsConnected:false/);});
+
+test("Dog Walking Gate 2 restricts lifecycle events and leaves evidence to proof governance",async()=>{const source=await read("lib/walking-lifecycle.ts");for(const event of["pee","poop","water","general_update"])assert.match(source,new RegExp(`\\"${event}\\"`));assert.match(source,/Photo, route and incident evidence must use the governed Walking proof workflow/);assert.match(source,/walking_session_events/);});
+
+test("Dog Walking completion creates a payment-due event instead of fake capture",async()=>{const source=await read("lib/walking-lifecycle.ts");assert.match(source,/walking_session_payment_events/);assert.match(source,/canonical_walk_completion/);assert.match(source,/status='due'/);assert.match(source,/captureRequired:true/);assert.match(source,/liveMoney:false/);assert.match(source,/UPDATE scheduling_reservations SET status='completed'/);assert.match(source,/walk_completed/);assert.doesNotMatch(source,/status='captured'.*walking_session_payment_events/s);});
+
+test("Dog Walking recovery preserves booking and completed sessions",async()=>{const source=await read("lib/walking-lifecycle.ts");assert.match(source,/walking_recovery_cases/);assert.match(source,/reassignment_needed/);assert.match(source,/recovery_pending/);assert.match(source,/status='cancelled'.*scheduling_reservations/s);assert.match(source,/bookingPreserved:true/);assert.match(source,/completedSessionsPreserved:true/);assert.match(source,/same booking and completed walks/);});
+
+test("Dog Walking lifecycle API enforces provider and staff authority",async()=>{const api=await read("app/api/walking-lifecycle/route.ts");assert.match(api,/requireProviderOwnership/);assert.match(api,/requireCustomerOwnership/);assert.match(api,/requirePermission\(actor,\"bookings\.manage\"\)/);assert.match(api,/requirePermission\(actor,\"bookings\.view\"\)/);assert.match(api,/securityAudit/);assert.match(api,/walking\.lifecycle/);});
+
+test("Walker workspace uses canonical sessions and does not restore fixture earnings or GPS",async()=>{const page=await read("app/walker/page.tsx");assert.match(page,/loadWalkingLifecycle/);assert.match(page,/updateWalkingLifecycle/);for(const action of["accept","confirm_handover","start_walk","walk_event","complete_walk","walker_unavailable"])assert.match(page,new RegExp(`\\"${action}\\"`));assert.match(page,/Payment due/);assert.match(page,/no live capture/);assert.match(page,/GPS proof/);assert.match(page,/Not live/);assert.doesNotMatch(page,/₹2,244/);assert.doesNotMatch(page,/Walks today<\/span><strong>6/);assert.doesNotMatch(page,/GPS route opened/);});
