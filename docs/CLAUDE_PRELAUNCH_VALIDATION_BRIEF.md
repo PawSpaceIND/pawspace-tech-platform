@@ -5,8 +5,8 @@
 Act as an independent adversarial release tester for PawSpace. Do **not** trust prior ChatGPT conclusions, CI summaries, screenshots, comments or stated PASS results. Attempt to falsify them from source, tests and UAT evidence.
 
 Repository: `PawSpaceIND/pawspace-tech-platform`
-PR: `#20 Build governed Revenue Mission Control UAT platform`
-Branch: `agent/revenue-mission-control-uat`
+PR: current Revenue Mission reconciliation draft PR
+Branch: `agent/revenue-mission-reconciliation`
 
 Always pin your report to the exact commit SHA you actually tested. If the branch head changes during your review, stop and re-run against the new exact head before issuing a closure result.
 
