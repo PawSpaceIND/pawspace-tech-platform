@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - grooming-integration-closure
+      - agent/food-gates1-5
   pull_request:
     branches:
       - main

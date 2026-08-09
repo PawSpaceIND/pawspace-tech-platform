@@ -1,6 +1,6 @@
 import type { Booking, Pet, PlatformRepository, Provider } from "./domain.js";
 
-export type SchedulingService = "grooming" | "dog_training" | "boarding" | "pet_sitting";
+export type SchedulingService = "grooming" | "dog_training" | "boarding" | "pet_sitting" | "pet_taxi";
 export type CareMode = "visit" | "overnight";
 export interface CustomScheduleRule { code:string; field:"rating"|"qualityScore"|"model"|"providerId"|"zone"|"capacity"; operator:"eq"|"neq"|"gte"|"lte"|"in"|"not_in"; value:string|number|string[]; }
 
@@ -40,6 +40,7 @@ export const scheduleRules = {
   dog_training: { label:"Training", durationMinutes:60, bufferMinutes:30, maxOccurrences:12, capacityMode:"appointment" },
   boarding: { label:"Boarding", durationMinutes:1440, bufferMinutes:0, maxOccurrences:1, capacityMode:"overnight" },
   pet_sitting: { label:"Pet Sitting", durationMinutes:60, bufferMinutes:30, maxOccurrences:1, capacityMode:"care_mode" },
+  pet_taxi: { label:"Pet Taxi", durationMinutes:45, bufferMinutes:20, maxOccurrences:1, capacityMode:"appointment" },
 } as const;
 
 const activeStatuses = new Set<Booking["status"]>(["confirmed","assigned","on_the_way","arrived","in_service"]);
