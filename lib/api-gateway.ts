@@ -16,6 +16,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/conversations")return "communications.message";
   if(url.pathname==="/api/customer-contact"){const body=method==="POST"?await request.clone().json().catch(()=>({})) as Record<string,unknown>:{};return String(body.channel||"call")==="message"?"communications.message":"communications.call";}
   if(url.pathname==="/api/subscription-customers")return method==="GET"?"customers.view":"data.import";
+  if(url.pathname==="/api/subscription-wallet"){if(method==="GET")return url.searchParams.get("customerId")?"customers.view":"scheduling.book";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["reserve","pause","resume"].includes(String(body.action))?"scheduling.book":"bookings.manage";}
   if(url.pathname==="/api/crm")return method==="GET"?"customers.view":"customers.manage";
   if(url.pathname==="/api/customer-360")return method==="GET"?"customers.view":"customers.manage";
   if(url.pathname==="/api/revenue-crm")return method==="GET"?"customers.view":"customers.manage";
@@ -29,6 +30,9 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/revenue-leadership-reporting")return method==="GET"?"reports.view":"customers.manage";
   if(url.pathname==="/api/prelaunch-booking-swarm")return method==="GET"?"launch.view":"launch.manage";
   if(url.pathname==="/api/crm-automation"){if(method==="GET")return "customers.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="save_policy"?"settings.manage":"customers.manage";}
+  if(url.pathname==="/api/unified-cases")return method==="GET"?"bookings.view":"bookings.manage";
+  if(url.pathname==="/api/staff-alerts")return method==="GET"?"reports.view":"customers.manage";
+  if(url.pathname==="/api/staff-alert-runner")return "settings.manage";
   if(url.pathname==="/api/finance-control")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/partner-finance")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/company-analytics")return "reports.view";
@@ -41,10 +45,12 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/training-reconciliation")return "reports.view";
   if(url.pathname==="/api/marketing-control")return method==="GET"?"marketing.view":"marketing.manage";
   if(url.pathname==="/api/pricing-control")return method==="GET"?"pricing.view":"pricing.manage";
+  if(url.pathname==="/api/coupon-governance"){if(method==="GET")return "pricing.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");if(action==="quote")return "scheduling.book";if(action==="save_campaign")return "pricing.manage";if(action==="consume")return "bookings.manage";return "dashboard.view";}
   if(url.pathname==="/api/grooming-subscription-plans")return method==="GET"?"pricing.view":"pricing.manage";
   if(url.pathname==="/api/grooming-commercial-policy")return method==="GET"?"pricing.view":"pricing.manage";
   if(url.pathname==="/api/provider-capacity-control")return method==="GET"?"scheduling.view":"scheduling.manage";
   if(url.pathname==="/api/provider-assignment-recovery"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["accept","decline"].includes(String(body.action))?"bookings.view":"bookings.manage";}
+  if(url.pathname==="/api/assisted-orders")return "scheduling.book";
   if(url.pathname==="/api/walking-bookings")return "scheduling.book";
   if(url.pathname==="/api/walking-lifecycle"){if(method==="GET")return url.searchParams.get("scope")==="customer"?"scheduling.book":"bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");return action==="no_show"?"bookings.manage":"bookings.view";}
   if(url.pathname==="/api/walking-finance"){if(method==="GET")return "finance.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");return action==="request_cancel"?"scheduling.book":"finance.manage";}
@@ -76,6 +82,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/boarding-ops")return method==="GET"?"bookings.view":"bookings.manage";
   if(url.pathname==="/api/scheduling-rules")return method==="GET"?"scheduling.view":"scheduling.manage";
   if(url.pathname==="/api/launch-readiness")return method==="GET"?"launch.view":"launch.manage";
+  if(url.pathname==="/api/integration-readiness")return method==="GET"?"launch.view":"launch.manage";
   if(url.pathname==="/api/uat-scheduling"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action&&body.action!=="reserve"?"scheduling.manage":"scheduling.book";}
   if(url.pathname==="/api/canonical-bookings")return method==="GET"?"bookings.view":"scheduling.book";
   if(url.pathname==="/api/referral-governance"){if(method==="GET")return "pricing.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");if(action==="save_programme")return "pricing.manage";if(["qualify","review"].includes(action))return "bookings.manage";if(action==="reverse_reward")return "finance.manage";return "scheduling.book";}

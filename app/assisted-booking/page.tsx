@@ -1,62 +1,67 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { createAssistedOrder, loadAssistedOrderConfig, type AssistedOrderConfig, type AssistedOrderResult } from "../../lib/assisted-orders-client";
 import styles from "./assisted.module.css";
 
-const customers = [
-  { name:"Meera Shah", phone:"+91 98••• ••418", type:"Subscription", pets:"Bruno, Misty", city:"Bengaluru", due:"Session due today", value:"₹26,440" },
-  { name:"Rohan Rao", phone:"+91 99••• ••072", type:"Repeat", pets:"Oreo", city:"Bengaluru", due:"Last service 31 days ago", value:"₹9,594" },
-  { name:"Ananya Iyer", phone:"+91 97••• ••622", type:"New", pets:"New pet", city:"Bengaluru", due:"Google Ads lead · 8 min", value:"₹0" },
-];
-
-const services = ["Grooming","Dog Training","Boarding","Pet Sitting","Dog Walking","Pet Taxi","Fresh Food"];
-const slots = ["9–11 AM","11 AM–1 PM","1–3 PM","3–5 PM","5–7 PM"];
+function localInput(days:number,hour:number){const date=new Date();date.setDate(date.getDate()+days);date.setHours(hour,0,0,0);const pad=(value:number)=>String(value).padStart(2,"0");return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;}
+const money=(value:number)=>`₹${value.toLocaleString("en-IN")}`;
 
 export default function AssistedBooking(){
-  const [query,setQuery]=useState("");
+  const [config,setConfig]=useState<AssistedOrderConfig|null>(null);
   const [selected,setSelected]=useState(0);
-  const [step,setStep]=useState(1);
-  const [service,setService]=useState("Grooming");
-  const [petCount,setPetCount]=useState(1);
-  const [slot,setSlot]=useState("9–11 AM");
+  const [packageCode,setPackageCode]=useState("");
+  const [scheduledStart,setScheduledStart]=useState(()=>localInput(1,10));
+  const [scheduledEnd,setScheduledEnd]=useState(()=>localInput(1,12));
+  const [consentMethod,setConsentMethod]=useState<"recorded_call"|"whatsapp"|"email"|"in_person">("recorded_call");
+  const [consentReference,setConsentReference]=useState("UAT-CALL-REF-001");
+  const [consentCaptured,setConsentCaptured]=useState(true);
+  const [busy,setBusy]=useState(false);
   const [notice,setNotice]=useState("");
-  const [mask,setMask]=useState(true);
-  const customer=customers[selected] ?? customers[0];
-  const filtered=useMemo(()=>customers.filter(c=>`${c.name} ${c.phone} ${c.pets}`.toLowerCase().includes(query.toLowerCase())),[query]);
-  const action=(message:string)=>{setNotice(message);setTimeout(()=>setNotice(""),2400)};
+  const [error,setError]=useState("");
+  const [result,setResult]=useState<AssistedOrderResult|null>(null);
+
+  useEffect(()=>{let active=true;void loadAssistedOrderConfig().then(data=>{if(!active)return;setConfig(data);setPackageCode(data.packages[0]?.code??"");}).catch(err=>{if(active)setError(err instanceof Error?err.message:"Unable to load Assisted Orders UAT")});return()=>{active=false};},[]);
+  const customer=config?.customers[selected]??null;
+  const eligiblePackages=useMemo(()=>{const species=customer?.pets[0]?.species;return config?.packages.filter(item=>!species||item.eligiblePetTypes.includes(species))??[];},[config,customer]);
+  const selectedPackage=eligiblePackages.find(item=>item.code===packageCode)??eligiblePackages[0];
+  const effectivePackageCode=selectedPackage?.code??"";
+
+  async function submit(event:FormEvent){event.preventDefault();if(!customer||!selectedPackage)return;setBusy(true);setError("");setNotice("");setResult(null);try{
+    const idempotencyKey=`uat-${customer.id}-${selectedPackage.code}-${scheduledStart}`.replace(/[^A-Za-z0-9:_-]/g,"-");
+    const created=await createAssistedOrder({idempotencyKey,customer:{id:customer.id,name:customer.name,primaryPhone:customer.primaryPhone,secondaryPhone:customer.secondaryPhone,email:customer.email},pets:customer.pets,cityId:"blr",zoneId:"blr-east",packageCode:selectedPackage.code,scheduledStart:new Date(scheduledStart).toISOString(),scheduledEnd:new Date(scheduledEnd).toISOString(),consent:{captured:consentCaptured,method:consentMethod,reference:consentReference}});
+    setResult(created);setNotice(created.duplicatePrevented?"Existing UAT assisted order returned safely":"Canonical UAT assisted order created");
+  }catch(err){setError(err instanceof Error?err.message:"Unable to create Assisted Order UAT");}finally{setBusy(false);}}
+
   return <div className={styles.shell}>
     <aside>
       <Link href="/admin" className={styles.brand}><span>paw</span>space <small>OPS</small></Link>
-      <nav><Link href="/admin">Overview</Link><Link href="/crm">Customer 360</Link><Link className={styles.active} href="/assisted-booking">Assisted booking</Link><Link href="/ops">Finance & People</Link><Link href="/control">Platform control</Link><Link href="/partner-app">Partner app</Link></nav>
-      <div className={styles.access}><b>Role: Sales Executive</b><small>Can create bookings</small><small>Cannot export customer data</small><small>Cannot view full phone numbers</small></div>
+      <nav><Link href="/admin">Overview</Link><Link href="/crm">Customer 360</Link><Link className={styles.active} href="/assisted-booking">Assisted orders</Link><Link href="/ops">Finance & People</Link><Link href="/control">Platform control</Link><Link href="/partner-app">Partner app</Link></nav>
+      <div className={styles.access}><b>UAT ONLY</b><small>Staff identity required</small><small>Canonical booking + scheduler</small><small>No live money</small></div>
     </aside>
     <main>
       {notice&&<div className={styles.toast}>✓ {notice}</div>}
-      <header><div><small>SALES & OPERATIONS WORKSPACE</small><h1>Book for a customer</h1><p>One assisted flow for new, repeat and subscription customers.</p></div><div className={styles.headerMeta}><span>⌾ Bengaluru</span><button onClick={()=>setMask(!mask)}>{mask?"Masked data on":"Supervisor reveal"}</button></div></header>
-      <section className={styles.stats}><article><small>Due today</small><b>48</b><em>Subscription sessions</em></article><article><small>Repeat overdue</small><b>126</b><em>30+ days since service</em></article><article><small>New leads</small><b>31</b><em>Median response 6 min</em></article><article><small>Today’s assisted GMV</small><b>₹1.42L</b><em>74 bookings</em></article></section>
+      <header><div><small>ASSISTED ORDERS · TESTING GATE</small><h1>Create an order for a customer</h1><p>Staff-assisted Grooming orders now use the same canonical scheduler and booking ledger as the governed customer flow. This page is for testing only.</p></div><div className={styles.headerMeta}><span>⌾ Bengaluru UAT</span><button disabled>{config?.environment??"Loading"}</button></div></header>
+      <section className={styles.stats}><article><small>Live money</small><b>OFF</b><em>Pay-after-service test state</em></article><article><small>Commercial truth</small><b>SERVER</b><em>Browser does not set final price</em></article><article><small>Assignment</small><b>CANONICAL</b><em>Existing UAT scheduler</em></article><article><small>Audit</small><b>ON</b><em>Staff + consent evidence</em></article></section>
       <div className={styles.grid}>
         <section className={styles.customerPanel}>
-          <div className={styles.panelHead}><div><small>STEP 1</small><h2>Find or create customer</h2></div><button onClick={()=>action("Quick customer creation opened")}>+ New customer</button></div>
-          <input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search name, primary number or pet…" />
-          <div className={styles.filters}><button className={styles.on}>All</button><button>New</button><button>Repeat</button><button>Subscription</button><button>Renewal due</button></div>
-          <div className={styles.customerList}>{filtered.map((c)=><button key={c.name} className={customers[selected]?.name===c.name?styles.selected:""} onClick={()=>setSelected(customers.indexOf(c))}><span>{c.name.split(" ").map(x=>x[0]).join("")}</span><div><b>{c.name}</b><small>{mask?c.phone:c.phone.replace("••• ••","876 54")} · {c.pets}</small><em className={styles[c.type.toLowerCase()]}>{c.type}</em></div><strong>{c.due}</strong></button>)}</div>
-          <div className={styles.security}>⌾ Every view, search, reveal and booking action is written to the audit log.</div>
+          <div className={styles.panelHead}><div><small>STEP 1</small><h2>Select UAT customer</h2></div></div>
+          <div className={styles.security}>Synthetic test identities only. Production customer migration is not part of this gate.</div>
+          <div className={styles.customerList}>{config?.customers.map((item,index)=><button key={item.id} className={selected===index?styles.selected:""} onClick={()=>{setSelected(index);setPackageCode("");setResult(null)}}><span>{item.name.split(" ").map(part=>part[0]).join("")}</span><div><b>{item.name}</b><small>{item.primaryPhone.replace(/(\d{5})\d{3}(\d{2})$/, "$1•••$2")} · {item.pets.map(p=>p.name).join(", ")}</small><em className={styles.repeat}>UAT fixture</em></div><strong>{item.id}</strong></button>)}</div>
         </section>
         <section className={styles.workspace}>
-          <div className={styles.customerHead}><div className={styles.avatar}>MS</div><div><small>CUSTOMER 360 · PS-C-10428</small><h2>{customer?.name}</h2><p>{customer?.phone} · {customer?.city} · Lifetime value {customer?.value}</p></div><span className={styles.health}>Healthy account</span></div>
-          <div className={styles.customerTabs}><button className={styles.on}>Create booking</button><button>History 18</button><button>Subscriptions 1</button><button>Communication</button><button>Tickets</button></div>
-          <div className={styles.builder}>
-            <div className={styles.steps}>{["Service","Pets & package","Schedule","Confirm"].map((s,i)=><button key={s} className={step>=i+1?styles.done:""} onClick={()=>setStep(i+1)}><span>{step>i+1?"✓":i+1}</span>{s}</button>)}</div>
-            {step===1&&<div className={styles.stage}><small>CHOOSE VERTICAL</small><h3>What does the customer need?</h3><div className={styles.serviceGrid}>{services.map((s,i)=><button className={service===s?styles.chosen:""} key={s} onClick={()=>setService(s)}><span>{["✂","⌁","⌂","♡","♟","↗","♨"][i]}</span><b>{s}</b><small>Live availability</small></button>)}</div><button className={styles.primary} onClick={()=>setStep(2)}>Continue with {service}</button></div>}
-            {step===2&&<div className={styles.stage}><small>PETS & PACKAGE</small><h3>Build the service</h3><div className={styles.two}><label>Number of pets<select value={petCount} onChange={e=>setPetCount(Number(e.target.value))}><option>1</option><option>2</option><option>3</option><option>4</option><option value="5">5+ · Create enquiry</option></select></label><label>Customer type<select><option>{customer?.type}</option><option>One-time</option><option>Subscription</option></select></label><label>Package<select><option>Bath & Basic · ₹1,899</option><option>Essential Bath · ₹1,349</option><option>Complete Makeover · ₹2,399</option><option>Just Trim · ₹1,399</option></select></label><label>Sessions<select><option>1 session</option><option>3 sessions</option><option>6 sessions</option><option>12 sessions</option></select></label></div><div className={styles.info}>Pricing engine applied Bengaluru rates, {petCount}-pet rules, active subscription credits and eligible coupons.</div><button className={styles.primary} onClick={()=>setStep(3)}>Check live calendar</button></div>}
-            {step===3&&<div className={styles.stage}><small>LIVE AVAILABILITY</small><h3>Select one or all subscription sessions</h3><div className={styles.scheduleMode}><button className={styles.on}>Book this session</button><button>Schedule every 15 days</button><button>Plan all sessions</button><button>Reminder only</button></div><div className={styles.dates}>{["Thu 6","Fri 7","Sat 8","Sun 9","Mon 10","Tue 11","Wed 12"].map((d,i)=><button className={i===2?styles.dateOn:""} key={d}>{d}<small>{i===2?"Selected":"3–8 slots"}</small></button>)}</div><div className={styles.slots}>{slots.map((s,i)=><button disabled={i===1} className={slot===s?styles.slotOn:""} key={s} onClick={()=>setSlot(s)}>{s}<small>{i===1?"Full":i===3?"2 groomers":"Available"}</small></button>)}</div><div className={styles.assignment}><div><b>Assignment preview</b><p>Full-time groomer: auto-assigned without acceptance. Commission groomer: offer expires in 3 minutes, then auto-routes to the next eligible partner.</p></div><span>3 eligible</span></div><button className={styles.primary} onClick={()=>setStep(4)}>Review booking</button></div>}
-            {step===4&&<div className={styles.stage}><small>FINAL REVIEW</small><h3>Confirm on behalf of {customer?.name}</h3><div className={styles.review}><div><small>Service</small><b>{service} · Bath & Basic</b></div><div><small>Pets</small><b>{petCount} · Bruno</b></div><div><small>Slot</small><b>8 Aug · {slot}</b></div><div><small>Channel</small><b>Assisted · Sales</b></div><div><small>Payment</small><b>Pay after service</b></div><div><small>Total</small><b>₹{(1899*petCount).toLocaleString("en-IN")}</b></div></div><label className={styles.consent}><input type="checkbox" defaultChecked/> Customer consent captured on recorded call; confirmation goes to the primary number.</label><div className={styles.confirmActions}><button className={styles.primary} onClick={()=>action("Booking PS-GR-8518 confirmed; customer and provider notified")}>Confirm & send</button><button onClick={()=>action("Secure payment link sent to primary number")}>Send payment link</button><button onClick={()=>action("Booking saved as draft")}>Save draft</button></div></div>}
-          </div>
+          <div className={styles.customerHead}><div className={styles.avatar}>{customer?.name.split(" ").map(part=>part[0]).join("")||"UAT"}</div><div><small>CANONICAL ASSISTED ORDER · GROOMING ONLY</small><h2>{customer?.name??"Loading test customer…"}</h2><p>{customer?.pets.map(p=>`${p.name} · ${p.species}`).join(" · ")}</p></div><span className={styles.health}>Test only</span></div>
+          <form className={styles.builder} onSubmit={submit}>
+            <div className={styles.stage}><small>SERVER-GOVERNED PACKAGE</small><h3>Choose the Grooming service to test</h3><div className={styles.serviceGrid}>{eligiblePackages.map(item=><button type="button" className={effectivePackageCode===item.code?styles.chosen:""} key={item.code} onClick={()=>setPackageCode(item.code)}><span>✂</span><b>{item.name}</b><small>{money(item.singlePrice)} single · {money(item.multiPetPrice)} multi-pet</small></button>)}</div><div className={styles.info}>Displayed catalogue values come from the server. The server recomputes the final governed amount when the assisted order is created.</div></div>
+            <div className={styles.stage}><small>CANONICAL SCHEDULE</small><h3>Choose the UAT service window</h3><div className={styles.two}><label>Start<input type="datetime-local" value={scheduledStart} onChange={e=>setScheduledStart(e.target.value)} required/></label><label>End<input type="datetime-local" value={scheduledEnd} onChange={e=>setScheduledEnd(e.target.value)} required/></label></div><div className={styles.assignment}><div><b>Assignment rule</b><p>The staff member does not choose or fabricate a provider. The existing canonical UAT scheduler selects and reserves the eligible provider.</p></div><span>Auto</span></div></div>
+            <div className={styles.stage}><small>CUSTOMER AUTHORITY</small><h3>Capture consent evidence</h3><div className={styles.two}><label>Consent method<select value={consentMethod} onChange={e=>setConsentMethod(e.target.value as typeof consentMethod)}><option value="recorded_call">Recorded call</option><option value="whatsapp">WhatsApp</option><option value="email">Email</option><option value="in_person">In person</option></select></label><label>Evidence reference<input value={consentReference} onChange={e=>setConsentReference(e.target.value)} required minLength={5}/></label></div><label className={styles.consent}><input type="checkbox" checked={consentCaptured} onChange={e=>setConsentCaptured(e.target.checked)}/> Customer explicitly authorized PawSpace staff to create this test booking.</label></div>
+            <div className={styles.stage}><small>FINAL TEST BOUNDARY</small><h3>Create canonical UAT order</h3><div className={styles.review}><div><small>Service</small><b>Grooming · {selectedPackage?.name??"—"}</b></div><div><small>Customer</small><b>{customer?.name??"—"}</b></div><div><small>Payment</small><b>Pay after service · ₹0 due now</b></div><div><small>Channel</small><b>assisted_staff</b></div><div><small>Pricing</small><b>Server governed</b></div><div><small>Environment</small><b>UAT only</b></div></div><div className={styles.confirmActions}><button className={styles.primary} disabled={busy||!customer||!selectedPackage||!consentCaptured}>{busy?"Creating canonical test order…":"Create UAT assisted order"}</button></div>{error&&<div className={styles.security}>{error}</div>}</div>
+          </form>
+          {result&&<div className={styles.stage}><small>CANONICAL RESULT</small><h3>{result.bookingId}</h3><div className={styles.review}><div><small>Assisted order</small><b>{result.assistedOrderId}</b></div><div><small>Provider</small><b>{result.provider.name}</b></div><div><small>Governed total</small><b>{money(result.totalAmount)}</b></div><div><small>Due now</small><b>{money(result.amountDueNow)}</b></div><div><small>Duplicate safe</small><b>{result.duplicatePrevented?"Existing order reused":"New order"}</b></div><div><small>Live money</small><b>{result.liveMoney?"Unexpected":"No"}</b></div></div></div>}
         </section>
       </div>
-      <section className={styles.automation}><div className={styles.panelHead}><div><small>AUTOMATION & GROWTH</small><h2>Customer lifecycle running in the background</h2></div><Link href="/crm">Open CRM automation →</Link></div><div className={styles.automationGrid}>{[["15-day care reminder","App + WhatsApp + optional call","8,420 enrolled"],["Subscription session due","Calendar deep-link","1,126 due"],["Renewal journey","15, 7, 1 days before expiry","284 active"],["App adoption","Assisted customers without app","63% opportunity"],["Cross-sell engine","Pet, history and lifecycle based","12 live journeys"],["Service recovery","Delay, cancellation and low rating","24×7 routing"]].map(x=><article key={x[0]}><span>⚡</span><b>{x[0]}</b><p>{x[1]}</p><small>{x[2]}</small></article>)}</div></section>
-      <section className={styles.truth}><div><small>ONE SOURCE OF TRUTH</small><h2>MongoDB continuity and future-ready integration layer</h2><p>Existing customers, pets, subscriptions and bookings are migrated with immutable legacy IDs. New apps use versioned APIs so mobile, web, CRM, partner, finance and reporting always read the same record.</p></div><div className={styles.truthGrid}><span>Customer 360</span><span>Pet health timeline</span><span>Booking ledger</span><span>Subscription wallet</span><span>Provider & payout ledger</span><span>Consent & audit log</span><span>City pricing rules</span><span>Communication events</span></div></section>
+      <section className={styles.truth}><div><small>TEST-FIRST RULE</small><h2>This module is built to be tested, not launched.</h2><p>After CI is green we still require staff UAT, permission-negative tests, booking/retry/idempotency checks and controlled test evidence before the Assisted Orders gate can be called closed.</p></div><div className={styles.truthGrid}><span>Staff-only boundary</span><span>Consent evidence</span><span>Canonical scheduler</span><span>Canonical booking</span><span>Server pricing</span><span>No live money</span><span>Idempotency</span><span>Security audit</span></div></section>
     </main>
-  </div>
+  </div>;
 }

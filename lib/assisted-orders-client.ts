@@ -1,0 +1,9 @@
+export type AssistedOrderPet={sourceId:string;name:string;species:"dog"|"cat"|"other";breed?:string;vaccinationStatus?:string};
+export type AssistedOrderCustomer={id:string;name:string;primaryPhone:string;secondaryPhone?:string;email?:string;pets:AssistedOrderPet[]};
+export type AssistedOrderPackage={code:string;name:string;eligiblePetTypes:Array<"dog"|"cat"|"other">;singlePrice:number;multiPetPrice:number;version:string};
+export type AssistedOrderConfig={environment:"UAT";testOnly:true;liveMoney:false;serviceCode:"grooming";customers:AssistedOrderCustomer[];packages:AssistedOrderPackage[]};
+export type AssistedOrderInput={idempotencyKey:string;customer:Omit<AssistedOrderCustomer,"pets">;pets:AssistedOrderPet[];cityId:string;zoneId:string;packageCode:string;scheduledStart:string;scheduledEnd:string;consent:{captured:boolean;method:"recorded_call"|"whatsapp"|"email"|"in_person";reference:string;note?:string}};
+export type AssistedOrderResult={assistedOrderId:string;bookingId:string;customerId:string;scheduleGroupId:string;provider:{id:string;name:string;model:"full_time"|"commission"};totalAmount:number;amountDueNow:number;status:string;duplicatePrevented:boolean;testOnly:true;liveMoney:false};
+
+export async function loadAssistedOrderConfig(){const response=await fetch("/api/assisted-orders",{cache:"no-store"});const body=await response.json() as {data?:AssistedOrderConfig;error?:string};if(!response.ok||!body.data)throw new Error(body.error??"Assisted Orders UAT configuration is unavailable");return body.data;}
+export async function createAssistedOrder(input:AssistedOrderInput){const response=await fetch("/api/assisted-orders",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)});const body=await response.json() as {data?:AssistedOrderResult;error?:string};if(!response.ok||!body.data)throw new Error(body.error??"Assisted Order UAT could not be created");return body.data;}
