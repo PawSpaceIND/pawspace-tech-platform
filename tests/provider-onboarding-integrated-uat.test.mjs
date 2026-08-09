@@ -1,0 +1,14 @@
+import test from"node:test";import assert from"node:assert/strict";import fs from"node:fs";
+const read=p=>fs.readFileSync(new URL(`../${p}`,import.meta.url),"utf8"),ops=read("app/team/provider-onboarding/page.tsx"),partner=read("app/partner/onboarding/page.tsx"),route=read("app/api/provider-onboarding/route.ts"),transactional=read("lib/provider-onboarding-transactional.ts"),activation=read("lib/provider-onboarding-human-activation.ts");
+
+test("integrated Ops surface reads canonical provider onboarding state",()=>{assert.match(ops,/fetch\("\/api\/provider-onboarding"/);for(const token of["applications","documents","attempts","humanActivation","interviews","agreements","profiles","activationRuns"])assert.match(ops,new RegExp(token));assert.match(ops,/activation_evaluation/);});
+
+test("integrated flow preserves all canonical onboarding gates",()=>{for(const token of["provider_onboarding_applications","provider_onboarding_documents","provider_onboarding_verifications","provider_quiz_attempts"])assert.match(transactional,new RegExp(token));for(const token of["provider_onboarding_interviews","provider_onboarding_agreements","provider_onboarding_profiles","provider_onboarding_profile_media","provider_onboarding_activation_runs"])assert.match(activation,new RegExp(token));});
+
+test("qualification and interview decisions stay deterministic and human controlled",()=>{assert.match(transactional,/deterministicScoring:true/);assert.match(transactional,/finalProviderDecision:false/);assert.match(activation,/decisionAuthority:\"human_ops\"/);assert.match(activation,/aiDecision:false/);assert.match(activation,/autonomousDecision:false/);});
+
+test("activation remains UAT only and cannot make provider order eligible",()=>{assert.match(activation,/status='uat_ready'/);assert.match(activation,/live=0/);assert.match(activation,/marketplaceLive:false/);assert.match(activation,/orderEligible:false/);assert.match(activation,/productionReady:false/);assert.doesNotMatch(activation,/marketplaceLive:true|orderEligible:true/);});
+
+test("provider onboarding surface does not fabricate completed onboarding",()=>{assert.match(partner,/PRODUCTION READY = FALSE/);assert.match(partner,/does not display synthetic approvals/);assert.match(partner,/Production KYC, live e-sign, marketplace admission, order eligibility and live money are not enabled/);assert.doesNotMatch(partner,/100%|Ready to take bookings|Partner activated|Digitally signed|Police verification.*Approved/);});
+
+test("canonical onboarding API exposes integrated snapshot and activation evaluation",()=>{assert.match(route,/onboardingTransactionalSnapshot/);assert.match(route,/onboardingHumanActivationSnapshot/);assert.match(route,/activation_evaluation/);assert.match(route,/authorize\(request,\"settings\.manage\"\)/);assert.match(route,/securityAudit/);});
