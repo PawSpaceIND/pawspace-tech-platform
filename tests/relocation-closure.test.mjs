@@ -2,6 +2,22 @@ import test from"node:test";
 import assert from"node:assert/strict";
 import{readFile}from"node:fs/promises";
 const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
-test("Relocation implements the original lead-to-delivery lifecycle with trackable manual operations",async()=>{const source=await read("lib/relocation-governance.ts");for(const token of["relocation_cases","relocation_documents","relocation_quotes","relocation_milestones","relocation_payments","relocation_refunds","lead_captured","documents_review","quote_issued","payment_confirmed","transport_booked","in_transit","delivery_confirmed","manualOperationsTrackable:true"])assert.equal(source.includes(token),true,token)});
-test("Relocation preserves production boundaries for vendor APIs regulations documents and money",async()=>{const source=await read("lib/relocation-governance.ts");for(const token of["externalVendorApi:false","liveRegulationFeed:false","liveMoney:false","productionDocumentStorage:false","externalApiConnected:false","externalRefundExecution:false","internal_uat"])assert.equal(source.includes(token),true,token)});
-test("Relocation exposes customer agent operations finance and explicit gateway authority",async()=>{const customer=await read("app/relocation/page.tsx"),agent=await read("app/team/relocation/page.tsx"),finance=await read("app/team/finance/relocation/page.tsx"),route=await read("app/api/relocation/route.ts"),gateway=await read("lib/api-gateway.ts");for(const token of["Create relocation inquiry","Document checklist","Quote & payment","Milestones","Support & refund"])assert.equal(customer.includes(token),true,token);for(const token of["Qualify lead","Assign UAT vendor","Issue ₹75,000 UAT quote","Confirm delivery"])assert.equal(agent.includes(token),true,token);for(const token of["Record UAT payment","Approve","Reject"])assert.equal(finance.includes(token),true,token);for(const token of["scheduling.book","bookings.manage","finance.manage","requireCustomerOwnership","securityAudit"])assert.equal(route.includes(token),true,token);for(const token of["/api/relocation","scope")=="customer"?"scheduling.book":"bookings.view"","record_payment","resolve_refund","finance.manage","bookings.manage"])assert.equal(gateway.includes(token),true,token)});
+
+test("Relocation implements the original lead-to-delivery lifecycle with trackable manual operations",async()=>{
+ const source=await read("lib/relocation-governance.ts");
+ for(const token of["relocation_cases","relocation_documents","relocation_quotes","relocation_milestones","relocation_payments","relocation_refunds","lead_captured","documents_review","quote_issued","payment_confirmed","transport_booked","in_transit","delivery_confirmed","manualOperationsTrackable:true"])assert.equal(source.includes(token),true,token);
+});
+
+test("Relocation preserves production boundaries for vendor APIs regulations documents and money",async()=>{
+ const source=await read("lib/relocation-governance.ts");
+ for(const token of["externalVendorApi:false","liveRegulationFeed:false","liveMoney:false","productionDocumentStorage:false","externalApiConnected:false","externalRefundExecution:false","internal_uat"])assert.equal(source.includes(token),true,token);
+});
+
+test("Relocation exposes customer agent operations finance and explicit gateway authority",async()=>{
+ const customer=await read("app/relocation/page.tsx"),agent=await read("app/team/relocation/page.tsx"),finance=await read("app/team/finance/relocation/page.tsx"),route=await read("app/api/relocation/route.ts"),gateway=await read("lib/api-gateway.ts");
+ for(const token of["Create relocation inquiry","Document checklist","Quote & payment","Milestones","Support & refund"])assert.equal(customer.includes(token),true,token);
+ for(const token of["Qualify lead","Assign UAT vendor","Issue ₹75,000 UAT quote","Confirm delivery"])assert.equal(agent.includes(token),true,token);
+ for(const token of["Record UAT payment","Approve","Reject"])assert.equal(finance.includes(token),true,token);
+ for(const token of["scheduling.book","bookings.manage","finance.manage","requireCustomerOwnership","securityAudit"])assert.equal(route.includes(token),true,token);
+ for(const token of["/api/relocation","url.searchParams.get(\"scope\")==\"customer\"?\"scheduling.book\":\"bookings.view\"","record_payment","resolve_refund","finance.manage","bookings.manage"])assert.equal(gateway.includes(token),true,token);
+});
