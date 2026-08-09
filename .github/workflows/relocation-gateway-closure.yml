@@ -1,0 +1,47 @@
+name: Relocation gateway closure
+on:
+  push:
+    branches:
+      - agent/platform-stack-recertification
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/platform-stack-recertification
+      - name: Add explicit Relocation gateway authority and regression coverage
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          gateway = Path('lib/api-gateway.ts')
+          source = gateway.read_text()
+          marker = '  if(url.pathname==="/api/sitting-payment-sandbox"||url.pathname==="/api/sitting-bookings")return "scheduling.book";\n'
+          clause = '''  if(url.pathname==="/api/relocation"){if(method==="GET")return url.searchParams.get("scope")==="customer"?"scheduling.book":"bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"create");if(["create","register_document","accept_quote","request_refund","open_support"].includes(action))return "scheduling.book";if(["record_payment","resolve_refund"].includes(action))return "finance.manage";return "bookings.manage";}\n'''
+          if '/api/relocation' not in source:
+              if marker not in source:
+                  raise SystemExit('Gateway insertion marker not found')
+              source = source.replace(marker, clause + marker, 1)
+              gateway.write_text(source)
+
+          test = Path('tests/relocation-closure.test.mjs')
+          body = test.read_text()
+          old = 'test("Relocation exposes customer agent operations and finance surfaces",async()=>{const customer=await read("app/relocation/page.tsx"),agent=await read("app/team/relocation/page.tsx"),finance=await read("app/team/finance/relocation/page.tsx"),route=await read("app/api/relocation/route.ts");for(const token of["Create relocation inquiry","Document checklist","Quote & payment","Milestones","Support & refund"])assert.equal(customer.includes(token),true,token);for(const token of["Qualify lead","Assign UAT vendor","Issue ₹75,000 UAT quote","Confirm delivery"])assert.equal(agent.includes(token),true,token);for(const token of["Record UAT payment","Approve","Reject"])assert.equal(finance.includes(token),true,token);for(const token of["scheduling.book","bookings.manage","finance.manage","requireCustomerOwnership","securityAudit"])assert.equal(route.includes(token),true,token)});'
+          new = 'test("Relocation exposes customer agent operations finance and explicit gateway authority",async()=>{const customer=await read("app/relocation/page.tsx"),agent=await read("app/team/relocation/page.tsx"),finance=await read("app/team/finance/relocation/page.tsx"),route=await read("app/api/relocation/route.ts"),gateway=await read("lib/api-gateway.ts");for(const token of["Create relocation inquiry","Document checklist","Quote & payment","Milestones","Support & refund"])assert.equal(customer.includes(token),true,token);for(const token of["Qualify lead","Assign UAT vendor","Issue ₹75,000 UAT quote","Confirm delivery"])assert.equal(agent.includes(token),true,token);for(const token of["Record UAT payment","Approve","Reject"])assert.equal(finance.includes(token),true,token);for(const token of["scheduling.book","bookings.manage","finance.manage","requireCustomerOwnership","securityAudit"])assert.equal(route.includes(token),true,token);for(const token of["/api/relocation","scope\")==\"customer\"?\"scheduling.book\":\"bookings.view\"","record_payment","resolve_refund","finance.manage","bookings.manage"])assert.equal(gateway.includes(token),true,token)});'
+          if old not in body:
+              raise SystemExit('Relocation test replacement marker not found')
+          test.write_text(body.replace(old, new, 1))
+          PY
+      - name: Commit closure and remove helper
+        run: |
+          rm -f .github/workflows/relocation-gateway-closure.yml
+          git config user.name "PawSpace Relocation Closure"
+          git config user.email "actions@users.noreply.github.com"
+          git add lib/api-gateway.ts tests/relocation-closure.test.mjs .github/workflows/relocation-gateway-closure.yml
+          git diff --cached --quiet && exit 0
+          git commit -m "fix(relocation): add explicit gateway authority"
+          git push origin HEAD:agent/platform-stack-recertification
