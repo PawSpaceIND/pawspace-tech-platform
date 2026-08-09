@@ -4,6 +4,7 @@ import fs from"node:fs";
 
 const read=path=>fs.readFileSync(path,"utf8");
 const orchestrator=read("lib/ai-conversation-orchestrator.ts");
+const handoff=read("lib/ai-human-handoff.ts");
 const route=read("app/api/ai-conversation/route.ts");
 
 test("AI conversation Gate 1 persists canonical session and turn records",()=>{
@@ -23,7 +24,8 @@ test("AI conversation Gate 1 uses canonical conversation and minimum customer co
 
 test("AI conversation Gate 1 has explicit confidence fallback and human handoff",()=>{
  assert.match(orchestrator,/intent\.confidence<0\.65/);
- assert.match(orchestrator,/assignConversation/);
+ assert.match(orchestrator,/requestAiHumanHandoff/);
+ assert.match(handoff,/assignConversation/);
  assert.match(orchestrator,/human_handoff/);
  assert.match(orchestrator,/provider_unavailable/);
  assert.match(orchestrator,/provider_error/);
