@@ -20,6 +20,14 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/customer-360")return method==="GET"?"customers.view":"customers.manage";
   if(url.pathname==="/api/revenue-crm")return method==="GET"?"customers.view":"customers.manage";
   if(url.pathname==="/api/revenue-intelligence")return method==="GET"?"customers.view":"customers.manage";
+  if(url.pathname==="/api/revenue-mission-control")return method==="GET"?"reports.view":"customers.manage";
+  if(url.pathname==="/api/lead-assignment-governance"){if(method==="GET")return "customers.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="accept_assignment"?"customers.view":"customers.manage";}
+  if(url.pathname==="/api/lead-sla-governance"){if(method==="GET")return "customers.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="record_action"?"customers.view":"customers.manage";}
+  if(url.pathname==="/api/revenue-opportunity-governance")return method==="GET"?"customers.view":"customers.manage";
+  if(url.pathname==="/api/sales-productivity-governance")return method==="GET"?"reports.view":"customers.manage";
+  if(url.pathname==="/api/revenue-mission-command-center")return "reports.view";
+  if(url.pathname==="/api/revenue-leadership-reporting")return method==="GET"?"reports.view":"customers.manage";
+  if(url.pathname==="/api/prelaunch-booking-swarm")return method==="GET"?"launch.view":"launch.manage";
   if(url.pathname==="/api/crm-automation"){if(method==="GET")return "customers.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="save_policy"?"settings.manage":"customers.manage";}
   if(url.pathname==="/api/finance-control")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/partner-finance")return method==="GET"?"finance.view":"finance.manage";
