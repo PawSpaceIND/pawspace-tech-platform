@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 
 type Thread = {
   id: string;
@@ -42,6 +42,24 @@ const box = {
 
 const label = (value: unknown) => String(value || "—").replaceAll("_", " ");
 
+async function fetchThreads(): Promise<Thread[]> {
+  const response = await fetch("/api/conversations?status=open", { cache: "no-store" });
+  const body = (await response.json()) as { data?: { threads: Thread[] }; error?: string };
+  if (!response.ok) throw new Error(body.error || "Unable to load conversations");
+  return body.data?.threads || [];
+}
+
+async function fetchHandoff(thread: Thread): Promise<Handoff | null> {
+  if (!thread.customer_id) return null;
+  const response = await fetch(
+    `/api/ai-human-handoff?threadId=${encodeURIComponent(thread.id)}&customerId=${encodeURIComponent(thread.customer_id)}`,
+    { cache: "no-store" },
+  );
+  const body = (await response.json()) as { data?: Handoff; error?: string };
+  if (!response.ok) throw new Error(body.error || "Unable to load handoff");
+  return body.data || null;
+}
+
 export default function AiHandoffPage() {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [selected, setSelected] = useState<Thread | null>(null);
@@ -49,43 +67,40 @@ export default function AiHandoffPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const loadThreads = useCallback(async () => {
-    const response = await fetch("/api/conversations?status=open", { cache: "no-store" });
-    const body = (await response.json()) as { data?: { threads: Thread[] }; error?: string };
-    if (!response.ok) throw new Error(body.error || "Unable to load conversations");
-    const rows = body.data?.threads || [];
-    setThreads(rows);
-    return rows;
-  }, []);
-
-  const loadHandoff = useCallback(async (thread: Thread) => {
-    if (!thread.customer_id) {
-      setHandoff(null);
-      return;
-    }
-    const response = await fetch(
-      `/api/ai-human-handoff?threadId=${encodeURIComponent(thread.id)}&customerId=${encodeURIComponent(thread.customer_id)}`,
-      { cache: "no-store" },
-    );
-    const body = (await response.json()) as { data?: Handoff; error?: string };
-    if (!response.ok) throw new Error(body.error || "Unable to load handoff");
-    setHandoff(body.data || null);
-  }, []);
-
   useEffect(() => {
-    void loadThreads()
+    let cancelled = false;
+    void fetchThreads()
       .then((rows) => {
-        if (rows[0]) setSelected(rows[0]);
+        if (cancelled) return;
+        setThreads(rows);
+        setSelected((current) => current || rows[0] || null);
       })
-      .catch((cause) => setError(cause instanceof Error ? cause.message : "Unable to load conversations"));
-  }, [loadThreads]);
+      .catch((cause) => {
+        if (!cancelled) {
+          setError(cause instanceof Error ? cause.message : "Unable to load conversations");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!selected) return;
-    void loadHandoff(selected).catch((cause) =>
-      setError(cause instanceof Error ? cause.message : "Unable to load handoff"),
-    );
-  }, [selected, loadHandoff]);
+    let cancelled = false;
+    void fetchHandoff(selected)
+      .then((nextHandoff) => {
+        if (!cancelled) setHandoff(nextHandoff);
+      })
+      .catch((cause) => {
+        if (!cancelled) {
+          setError(cause instanceof Error ? cause.message : "Unable to load handoff");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected]);
 
   async function act(action: "take_over" | "resume_ai") {
     if (!selected?.customer_id) return;
@@ -108,7 +123,12 @@ export default function AiHandoffPage() {
       });
       const body = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(body.error || "Handoff action failed");
-      await Promise.all([loadThreads(), loadHandoff(selected)]);
+
+      const [rows, nextHandoff] = await Promise.all([fetchThreads(), fetchHandoff(selected)]);
+      setThreads(rows);
+      setHandoff(nextHandoff);
+      const refreshedSelected = rows.find((thread) => thread.id === selected.id);
+      if (refreshedSelected) setSelected(refreshedSelected);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Handoff action failed");
     } finally {
