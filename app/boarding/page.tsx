@@ -1,77 +1,92 @@
 "use client";
-/* eslint-disable @next/next/no-img-element */
+import Link from"next/link";
+import{useEffect,useMemo,useState}from"react";
+import{loadBoardingCommercial,quoteBoarding,type BoardingHost,type BoardingPackage,type BoardingQuote}from"../../lib/boarding-commercial-client";
+import{reserveUatSchedule}from"../../lib/uat-scheduling-client";
+import{createCanonicalBoardingBooking,type BoardingBookingResult}from"../../lib/boarding-booking-client";
+import{loadCustomerBoardingStay,updateBoardingStay,type BoardingStay}from"../../lib/boarding-stay-client";
 
-import Link from "next/link";
-import { useMemo, useState } from "react";
-import styles from "./stay.module.css";
-
-type Service = "boarding" | "sitting";
-type Host = { id: string; name: string; initials: string; area: string; rating: string; reviews: number; repeat: number; price: number; response: string; badge: string; tags: string[]; pets: string; home: string; tone: string };
-
-const hosts: Host[] = [
-  { id: "maya", name: "Maya & Rohan", initials: "MR", area: "Indiranagar", rating: "4.9", reviews: 184, repeat: 63, price: 1299, response: "Replies in 8 min", badge: "PawSpace Elite", tags: ["24/7 supervision", "Fenced terrace", "Senior care"], pets: "Dogs up to 30 kg · 2 guests max", home: "Calm, pet-only home", tone: "violet" },
-  { id: "sana", name: "Sana F.", initials: "SF", area: "HSR Layout", rating: "5.0", reviews: 96, repeat: 41, price: 1499, response: "Replies in 5 min", badge: "Top repeat host", tags: ["Medication", "No resident pets", "Pickup available"], pets: "Dogs & cats · one family at a time", home: "Quiet independent home", tone: "green" },
-  { id: "arjun", name: "Arjun & Tara", initials: "AT", area: "Koramangala", rating: "4.8", reviews: 212, repeat: 78, price: 1099, response: "Replies in 14 min", badge: "Great for social pets", tags: ["Daily long walks", "Resident beagle", "Camera updates"], pets: "Dogs up to 20 kg · 3 guests max", home: "Lively home with a garden", tone: "orange" },
+const customer={id:"TST-101",name:"PawSpace UAT Customer",primaryPhone:"+919880222741",secondaryPhone:"+919880222742",email:"uat.customer@pawspace.test"};
+const pets=[
+ {sourceId:"TST-PET-BRUNO",name:"Bruno",species:"dog" as const,breed:"Golden Retriever",vaccinationStatus:"verified"},
+ {sourceId:"TST-PET-PEPPER",name:"Pepper",species:"dog" as const,breed:"Indie",vaccinationStatus:"verified"},
 ];
+const box={background:"white",border:"1px solid #e2e2e2",borderRadius:16,padding:18} as const;
+const money=(value:number|undefined)=>value==null?"—":`₹${Number(value).toLocaleString("en-IN")}`;
+const label=(value:unknown)=>String(value||"—").replaceAll("_"," ");
+const todayPlus=(days:number)=>new Date(Date.now()+days*86_400_000).toISOString().slice(0,10);
+const plusDays=(date:string,days:number)=>{const[y,m,d]=date.split("-").map(Number);return new Date(Date.UTC(y,m-1,d+days)).toISOString().slice(0,10)};
 
-const careEvents = [
-  { time: "7:42 AM", icon: "🍲", title: "Breakfast finished", note: "Ate the full portion · fresh water topped up" },
-  { time: "8:25 AM", icon: "🦮", title: "Morning walk", note: "32 minutes · pee ✓ · poop ✓" },
-  { time: "10:10 AM", icon: "📸", title: "Happy update", note: "Bruno is relaxing after playtime with Maya" },
-  { time: "12:30 PM", icon: "💊", title: "Medication given", note: "1 tablet after food · confirmed by host" },
-];
+function stayWindow(packageCode:string,startDate:string,nights:number){
+ if(packageCode==="boarding-4h")return{start:`${startDate}T10:00:00+05:30`,end:`${startDate}T14:00:00+05:30`,careMode:"visit" as const};
+ if(packageCode==="boarding-10h")return{start:`${startDate}T10:00:00+05:30`,end:`${startDate}T20:00:00+05:30`,careMode:"visit" as const};
+ return{start:`${startDate}T10:00:00+05:30`,end:`${plusDays(startDate,nights)}T10:00:00+05:30`,careMode:"overnight" as const};
+}
 
-export default function BoardingPage() {
-  const [service, setService] = useState<Service>("boarding");
-  const [petCount, setPetCount] = useState(1);
-  const [selectedHost, setSelectedHost] = useState(hosts[0]);
-  const [stage, setStage] = useState<"search" | "profile" | "care" | "confirmed">("search");
-  const [meet, setMeet] = useState(true);
-  const [toast, setToast] = useState("");
-  const [filters, setFilters] = useState<string[]>(["24/7 supervision"]);
-  const nights = 3;
-  const total = useMemo(() => selectedHost.price * nights + Math.max(0, petCount - 1) * 699 * nights + 249, [selectedHost, petCount]);
-  const notify = (message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2200); };
-  const toggleFilter = (filter: string) => setFilters((current) => current.includes(filter) ? current.filter((item) => item !== filter) : [...current, filter]);
+export default function BoardingPage(){
+ const[startDate,setStartDate]=useState(()=>todayPlus(5));
+ const[nights,setNights]=useState(3);
+ const[petCount,setPetCount]=useState(1);
+ const[packageCode,setPackageCode]=useState("boarding-24h");
+ const[packages,setPackages]=useState<BoardingPackage[]>([]);
+ const[hosts,setHosts]=useState<BoardingHost[]>([]);
+ const[hostId,setHostId]=useState("");
+ const[quote,setQuote]=useState<BoardingQuote|null>(null);
+ const[loading,setLoading]=useState(true);
+ const[busy,setBusy]=useState(false);
+ const[error,setError]=useState("");
+ const[booking,setBooking]=useState<BoardingBookingResult|null>(null);
+ const[stay,setStay]=useState<BoardingStay|null>(null);
+ const[careBusy,setCareBusy]=useState(false);
+ const window=useMemo(()=>stayWindow(packageCode,startDate,nights),[packageCode,startDate,nights]);
+ const selectedHost=useMemo(()=>hosts.find(item=>item.providerId===hostId)||hosts[0],[hosts,hostId]);
+ const selectedPackage=useMemo(()=>packages.find(item=>item.package_code===packageCode),[packages,packageCode]);
+ const overnight=packageCode==="boarding-24h";
 
-  if (stage === "confirmed") return <main className={styles.shell}>
-    <header className={styles.header}><Link href="/"><img src="/assets/pawspace-logo.jpeg" alt="PawSpace" /></Link><span className={styles.safe}>✓ Protected booking</span></header>
-    <section className={styles.confirmed}>
-      <span className={styles.success}>✓</span><p className={styles.kicker}>Stay PSB-1048 confirmed</p><h1>Bruno&apos;s stay is all set.</h1>
-      <p>24–27 August · {selectedHost.name} · {selectedHost.area}</p>
-      <div className={styles.confirmHost}><span className={`${styles.avatar} ${styles[selectedHost.tone]}`}>{selectedHost.initials}</span><div><strong>{selectedHost.name}</strong><small>{selectedHost.badge} · {selectedHost.rating} ★</small></div><button onClick={() => notify("Secure chat opened")}>Message host</button></div>
-      <div className={styles.confirmGrid}><article><span>Next step</span><strong>{meet ? "Meet & Greet · 20 Aug, 5 PM" : "Share final care notes"}</strong><small>We&apos;ll remind both sides</small></article><article><span>Payment protected</span><strong>₹{total.toLocaleString("en-IN")}</strong><small>Released after check-in</small></article><article><span>Emergency support</span><strong>24/7 PawSpace Care</strong><small>One-tap escalation</small></article></div>
-      <div className={styles.careCard}><div><p className={styles.kicker}>PawSpace Care Card</p><h2>Every detail, while you&apos;re away.</h2></div>{careEvents.map((event) => <article key={event.time}><span>{event.icon}</span><div><strong>{event.title}</strong><small>{event.time} · {event.note}</small></div></article>)}</div>
-      <div className={styles.confirmActions}><Link href="/account">View in My PawSpace</Link><button onClick={() => setStage("search")}>Book another stay</button></div>
-    </section>{toast && <div className={styles.toast}>✓ {toast}</div>}
-  </main>;
+ useEffect(()=>{
+  let active=true;
+  queueMicrotask(()=>{if(!active)return;setLoading(true);setQuote(null);setError("")});
+  void Promise.all([
+   loadBoardingCommercial({cityId:"blr",zoneId:"blr-east",scheduledStart:window.start,scheduledEnd:window.end,petCount,species:["dog"]}),
+   quoteBoarding({packageCode,petCount,scheduledStart:window.start,scheduledEnd:window.end,paymentMode:"prepaid"}),
+  ]).then(([commercial,nextQuote])=>{
+   if(!active)return;
+   setPackages(commercial.packages);
+   setHosts(commercial.hosts);
+   setHostId(current=>commercial.hosts.some(item=>item.providerId===current)?current:commercial.hosts[0]?.providerId||"");
+   setQuote(nextQuote);
+  }).catch(problem=>{if(active)setError(problem instanceof Error?problem.message:"Unable to load canonical Boarding availability")})
+   .finally(()=>{if(active)setLoading(false)});
+  return()=>{active=false};
+ },[packageCode,petCount,window.start,window.end]);
 
-  return <main className={styles.shell}>
-    <header className={styles.header}><Link href="/"><img src="/assets/pawspace-logo.jpeg" alt="PawSpace" /></Link><nav><Link href="/sitting">Pet Sitting</Link><Link href="/">Grooming</Link><Link href="/training">Dog training</Link><Link href="/account">My PawSpace</Link><Link href="/host">Become a host</Link></nav><button onClick={() => notify("Login opens only when you book")}>Log in</button></header>
+ async function confirm(){
+  if(!quote||!selectedHost||busy)return;
+  setBusy(true);setError("");
+  try{
+   const selectedPets=pets.slice(0,petCount),requestId=`boarding:${quote.quoteId}:${customer.id}`;
+   const schedule=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.id,petIds:selectedPets.map(pet=>pet.sourceId),serviceCode:"boarding",zoneId:"blr-east",scheduledStart:quote.scheduledStart,scheduledEnd:quote.scheduledEnd,occurrences:1,careMode:window.careMode,preferredProviderId:selectedHost.providerId});
+   const result=await createCanonicalBoardingBooking({idempotencyKey:requestId,scheduleGroupId:schedule.groupId,boardingQuote:quote,customer,pets:selectedPets,cityId:"blr",zoneId:"blr-east",provider:schedule.provider});
+   const canonicalStay=await loadCustomerBoardingStay(result.bookingId);
+   if(!canonicalStay)throw new Error("Canonical Boarding stay was not materialized from the booking");
+   setBooking(result);setStay(canonicalStay);windowGlobalScroll();
+  }catch(problem){setError(problem instanceof Error?problem.message:"Unable to create canonical Boarding booking")}
+  finally{setBusy(false)}
+ }
 
-    <section className={styles.hero}>
-      <div><span className={styles.trust}>PAWSPACE STAYS · VERIFIED CARE</span><h1>A second home,<br/><em>chosen by you.</em></h1><p>Compare trusted caregivers, meet them first and follow every meal, walk and happy moment while you&apos;re away.</p><div className={styles.proof}><span>✓ Identity & home verified</span><span>✓ Secure payments</span><span>✓ 24/7 care support</span></div></div>
-      <aside><div className={styles.heroPet}>🐕</div><div className={styles.updateBubble}><span>New update from Maya</span><strong>Bruno finished breakfast ✓</strong><small>Photo added · 2 min ago</small></div></aside>
-    </section>
+ async function submitCarePlan(){
+  if(!stay||careBusy)return;
+  setCareBusy(true);setError("");
+  try{
+   await updateBoardingStay({stayId:stay.id,action:"submit_care_plan",idempotencyKey:`boarding-care:${stay.id}:${Date.now()}`,carePlan:{feeding:"Use the registered food routine; no unapproved treats.",medication:"Follow only the registered medication instructions.",emergencyContact:"UAT secondary contact +91 98802 22742",vet:"PawSpace UAT vet contact",specialInstructions:"Escalate any health or behaviour concern to PawSpace Operations."}});
+   setStay(await loadCustomerBoardingStay(stay.booking_id));
+  }catch(problem){setError(problem instanceof Error?problem.message:"Unable to save canonical Boarding care plan")}
+  finally{setCareBusy(false)}
+ }
 
-    <section className={styles.searchCard}>
-      <div className={styles.serviceSwitch}><button className={service === "boarding" ? styles.active : ""} onClick={() => setService("boarding")}><span>🏡</span><strong>Home Boarding</strong><small>Your pet stays in a host&apos;s home</small></button><button className={service === "sitting" ? styles.active : ""} onClick={() => setService("sitting")}><span>🛋️</span><strong>Pet Sitting</strong><small>A sitter cares for pets at your home</small></button></div>
-      <div className={styles.searchFields}><label><span>Where in Bangalore?</span><select><option>Indiranagar</option><option>Koramangala</option><option>HSR Layout</option><option>Whitefield</option><option>JP Nagar</option></select></label><label><span>Drop-off</span><input type="date" defaultValue="2026-08-24" /></label><label><span>Pick-up</span><input type="date" defaultValue="2026-08-27" /></label><label><span>Pets</span><select value={petCount} onChange={(event) => setPetCount(Number(event.target.value))}><option value="1">Bruno · 1 pet</option><option value="2">Bruno + Milo · 2 pets</option><option value="3">3 registered pets</option><option value="4">4 registered pets</option></select></label><button onClick={() => document.getElementById("matches")?.scrollIntoView({ behavior: "smooth" })}>Find trusted care →</button></div>
-      <p>No pincode needed · Browse homes and availability before OTP</p>
-    </section>
+ function windowGlobalScroll(){if(typeof window!=="undefined")window.scrollTo(0,0)}
 
-    <section className={styles.flow}><span><b>1</b> Compare verified hosts</span><i></i><span><b>2</b> Meet before booking</span><i></i><span><b>3</b> Book securely</span><i></i><span><b>4</b> Get live Care Cards</span></section>
+ if(booking&&stay)return <main style={{maxWidth:980,margin:"0 auto",padding:28,fontFamily:"system-ui",display:"grid",gap:16}}><header><Link href="/">PawSpace</Link><p>BOARDING · CANONICAL UAT</p><h1>Boarding stay created</h1><p>The customer booking, governed host assignment and Boarding stay ledger now share the same canonical booking identity.</p></header>{error&&<p role="alert">{error}</p>}<section style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}><article style={box}><small>Booking</small><strong style={{display:"block"}}>{booking.bookingId}</strong><span>{label(stay.booking_status||booking.status)}</span></article><article style={box}><small>Stay</small><strong style={{display:"block"}}>{stay.id}</strong><span>{label(stay.status)}</span></article><article style={box}><small>Host</small><strong style={{display:"block"}}>{stay.provider_name||stay.host_provider_id}</strong><span>Governed scheduler assignment</span></article></section><section style={box}><h2>Stay window and commercial truth</h2><p>{new Date(stay.check_in_at).toLocaleString("en-IN")} → {new Date(stay.check_out_at).toLocaleString("en-IN")}</p><p>{stay.billed_units} billed unit(s) · {stay.pet_count} pet(s) · {money(stay.total_amount)} full prepaid UAT amount.</p><p><small>Live payment is disabled. Production payout, tax/GST, external messaging and production host inventory remain launch/configuration dependencies.</small></p></section><section style={box}><h2>Customer care plan</h2><p>Status: <strong>{label(stay.care_plan_status)}</strong>. Host acceptance is a separate governed provider action; the customer cannot simulate it from this screen.</p>{stay.carePlan?<div><strong>Canonical care plan ready</strong><p>Emergency contact, vet and instructions are stored against this exact stay.</p></div>:<button disabled={careBusy} onClick={()=>void submitCarePlan()}>{careBusy?"Saving care plan…":"Submit UAT care plan"}</button>}</section><section style={box}><h2>What happens next</h2><p>The governed host must accept the stay before check-in. Care events, proof, incidents, extensions, Finance and Operations continue through the existing Boarding lifecycle APIs rather than browser-local state.</p><div style={{display:"flex",gap:10,flexWrap:"wrap"}}><Link href="/account">My PawSpace</Link><button onClick={()=>{setBooking(null);setStay(null)}}>Book another stay</button></div></section></main>;
 
-    <section className={styles.market} id="matches">
-      <aside className={styles.filters}><p className={styles.kicker}>MATCH BRUNO&apos;S NEEDS</p><h2>Care preferences</h2>{["24/7 supervision", "No resident pets", "Fenced outdoor space", "Medication support", "Pickup & drop", "One family at a time"].map((filter) => <button key={filter} className={filters.includes(filter) ? styles.filterOn : ""} onClick={() => toggleFilter(filter)}><i>{filters.includes(filter) ? "✓" : ""}</i>{filter}</button>)}<div><strong>Bruno&apos;s profile</strong><span>Golden Retriever · 4 years</span><span>Friendly · daily medication</span><Link href="/account">Edit care profile →</Link></div></aside>
-      <div className={styles.results}><div className={styles.resultsHead}><div><p className={styles.kicker}>12 AVAILABLE MATCHES</p><h2>Homes selected for Bruno</h2></div><select><option>Best match</option><option>Top rated</option><option>Lowest price</option></select></div>
-        {hosts.map((host, index) => <article className={styles.hostCard} key={host.id}><div className={`${styles.hostVisual} ${styles[host.tone]}`}><span>{host.initials}</span><small>{index === 0 ? "98% care match" : `${95-index * 3}% care match`}</small></div><div className={styles.hostInfo}><div><span className={styles.hostBadge}>{host.badge}</span><h3>{host.name}</h3><p>📍 {host.area} · {host.response}</p></div><div className={styles.rating}><strong>{host.rating} ★</strong><small>{host.reviews} reviews</small></div><p>{host.home} · {host.pets}</p><div className={styles.tags}>{host.tags.map((tag) => <span key={tag}>✓ {tag}</span>)}</div><div className={styles.hostFoot}><span><b>{host.repeat}</b> repeat families</span><strong>₹{host.price.toLocaleString("en-IN")}<small> / night</small></strong><button onClick={() => { setSelectedHost(host); setStage("profile"); window.scrollTo({ top: 0, behavior: "smooth" }); }}>View home</button></div></div></article>)}
-      </div>
-    </section>
-
-    {stage === "profile" && <div className={styles.modalBack} onMouseDown={() => setStage("search")}><section className={styles.modal} onMouseDown={(event) => event.stopPropagation()}><button className={styles.close} onClick={() => setStage("search")}>×</button><div className={styles.profileHero}><div className={`${styles.profilePortrait} ${styles[selectedHost.tone]}`}>{selectedHost.initials}</div><div><span className={styles.hostBadge}>{selectedHost.badge}</span><h2>{selectedHost.name}</h2><p>{selectedHost.rating} ★ · {selectedHost.reviews} reviews · {selectedHost.repeat} repeat families</p></div></div><div className={styles.gallery}><span>Sunny pet room</span><span>Secure balcony</span><span>Daily walks</span></div><div className={styles.profileCols}><div><h3>Why pets feel at home</h3><p>{selectedHost.home}. A calm routine, supervised play and updates tailored to your preferences.</p><h3>A typical day</h3><ul><li>7:30 AM · Breakfast and medication</li><li>8:15 AM · Neighbourhood walk</li><li>Afternoon · Rest, enrichment and photo update</li><li>6:30 PM · Evening walk and dinner</li></ul></div><aside><span>Your stay · 3 nights</span><strong>₹{selectedHost.price.toLocaleString("en-IN")} / night</strong><small>24–27 August · Bruno</small><label><input type="checkbox" checked={meet} onChange={(event) => setMeet(event.target.checked)} /> Meet & Greet before booking</label><button onClick={() => setStage("care")}>Continue with {selectedHost.name.split(" ")[0]} →</button><em>No charge until you confirm</em></aside></div></section></div>}
-
-    {stage === "care" && <div className={styles.modalBack}><section className={`${styles.modal} ${styles.careModal}`}><button className={styles.close} onClick={() => setStage("profile")}>←</button><p className={styles.kicker}>FINAL CARE PLAN</p><h2>Make Bruno feel at home</h2><div className={styles.careForm}><label>Food routine<textarea defaultValue="1 cup dry food at 7:30 AM and 6:30 PM. Treats are okay after walks." /></label><label>Walk & toilet routine<textarea defaultValue="Two 30-minute walks. Toilet break before bedtime." /></label><label>Medication & health<textarea defaultValue="One tablet after breakfast. Vet: Cessna Lifeline, Domlur." /></label><label>Emergency contact<input defaultValue="Rahul · +91 98802 22741" /></label></div><div className={styles.addons}><button>✓ Pickup & drop · ₹499</button><button>＋ Groom before return · from ₹1,349</button><button>＋ Extra long walk · ₹249</button></div><div className={styles.payBox}><div><span>{selectedHost.name} · 3 nights</span><span>PawSpace protection & support</span><strong>Total</strong></div><div><span>₹{(total-249).toLocaleString("en-IN")}</span><span>₹249</span><strong>₹{total.toLocaleString("en-IN")}</strong></div></div><button className={styles.confirmBtn} onClick={() => { setStage("confirmed"); window.scrollTo({ top: 0 }); }}>Verify mobile & confirm securely →</button><small className={styles.otpNote}>OTP is requested only now. Primary and secondary contacts receive the booking and emergency details.</small></section></div>}
-    {toast && <div className={styles.toast}>✓ {toast}</div>}
-  </main>;
+ return <main style={{maxWidth:1080,margin:"0 auto",padding:28,fontFamily:"system-ui",display:"grid",gap:16,background:"#fafafa",minHeight:"100vh"}}><header><Link href="/">PawSpace</Link><p>HOME BOARDING · CANONICAL UAT</p><h1>Choose a governed stay and verified host</h1><p>Catalogue, pricing, host eligibility and availability come from PawSpace governance. The browser no longer invents host ratings, secure-payment claims or live Care Card events.</p></header>{error&&<p role="alert">{error}</p>}<section style={box}><h2>1. Stay</h2><div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}><label>Check-in date<input type="date" value={startDate} onChange={event=>setStartDate(event.target.value)} style={{display:"block",width:"100%",padding:10}}/></label><label>Pets<select value={petCount} onChange={event=>setPetCount(Number(event.target.value))} style={{display:"block",width:"100%",padding:10}}><option value={1}>Bruno · 1 dog</option><option value={2}>Bruno + Pepper · 2 dogs</option></select></label>{overnight&&<label>Nights<select value={nights} onChange={event=>setNights(Number(event.target.value))} style={{display:"block",width:"100%",padding:10}}>{[1,2,3,4,5].map(value=><option key={value} value={value}>{value}</option>)}</select></label>}</div></section><section style={box}><h2>2. Canonical package</h2>{loading?<p>Loading Boarding catalogue…</p>:<div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>{packages.map(item=><button key={item.package_code} onClick={()=>setPackageCode(item.package_code)} aria-pressed={packageCode===item.package_code} style={{...box,textAlign:"left",outline:packageCode===item.package_code?"2px solid #222":"none"}}><strong>{item.name}</strong><div>{item.care_kind} · up to {item.max_hours}h package</div><b>{money(item.base_price_per_pet)} / pet / unit</b></button>)}</div>}</section><section style={box}><h2>3. Eligible host</h2>{hosts.length===0?<p>No governed Boarding host is available for this window and pet count.</p>:<div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10}}>{hosts.map(host=><button key={host.providerId} onClick={()=>setHostId(host.providerId)} aria-pressed={selectedHost?.providerId===host.providerId} style={{...box,textAlign:"left",outline:selectedHost?.providerId===host.providerId?"2px solid #222":"none"}}><strong>{host.name}</strong><div>{host.area} · {host.rating.toFixed(1)} ★ · quality {host.qualityScore}</div><small>{host.homeVerified&&host.kycStatus==="verified"&&host.backgroundCheckStatus==="verified"?"Home + identity checks verified":"Verification incomplete"} · available guest pets {host.availableGuestPets??host.capacity}</small></button>)}</div>}</section><section style={{...box,position:"sticky",bottom:10,display:"flex",justifyContent:"space-between",alignItems:"center",gap:16}}><div><strong>{quote?money(quote.totalAmount):"—"}</strong><div>{quote?`${quote.packageName} · ${quote.stayUnits} billed unit(s) · ${quote.petCount} pet(s)`:selectedPackage?.name||"Canonical quote unavailable"}</div><small>{quote?`${money(quote.amountDueNow)} full prepaid UAT amount · live money disabled`:"Refresh availability to continue"}</small></div><button disabled={!quote||!selectedHost||busy||loading} onClick={()=>void confirm()}>{busy?"Creating canonical stay…":"Reserve host + create stay →"}</button></section></main>;
 }
