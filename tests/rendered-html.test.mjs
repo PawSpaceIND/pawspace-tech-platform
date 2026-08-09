@@ -121,8 +121,8 @@ test("renders the PawSpace customer mobile-app foundation", async () => {
   );
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /Four complete care journeys/i);
-  assert.match(html, /Complete care journeys/i);
+  assert.match(html, /Eight care services/i);
+  for (const service of ["Grooming", "Training", "Boarding", "Pet Sitting", "Pet Taxi", "Dog Walking", "Fresh Food", "Relocation"]) assert.match(html, new RegExp(service, "i"), service);
   assert.match(html, /PawCare Wallet/i);
   assert.match(html, /My Pets/i);
 });
@@ -211,7 +211,7 @@ test("keeps long-stay payment, paid meeting and home media rules explicit", asyn
     ),
   );
 
-  assert.match(mobileHome, /SPONSORED · TEST CREATIVE/);
+  assert.match(mobileHome, /PAWSPACE MEDIA/);
   assert.match(mobileHome, /TRAINING VIDEO/);
   assert.match(mobileHome, /PawSpace Media slot/);
   assert.match(stays, /nights > 5/);
