@@ -2,11 +2,11 @@ import test from"node:test";
 import assert from"node:assert/strict";
 import fs from"node:fs";
 const read=path=>fs.readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
-const whatsapp=read("lib/whatsapp-uat-adapter.ts"),web=read("lib/ai-web-chat-adapter.ts"),voice=read("lib/ai-voice-uat.ts"),orchestrator=read("lib/ai-conversation-orchestrator.ts"),tools=read("lib/ai-tool-registry.ts"),handoff=read("lib/ai-human-handoff.ts"),evaluation=read("lib/ai-evaluation-security.ts"),analytics=read("lib/ai-analytics.ts"),evidence=read("docs/AI_ENGAGEMENT_INTEGRATED_UAT.md");
+const whatsapp=read("lib/whatsapp-uat-adapter.ts"),whatsappRoute=read("app/api/whatsapp-uat-webhook/route.ts"),web=read("lib/ai-web-chat-adapter.ts"),voice=read("lib/ai-voice-uat.ts"),orchestrator=read("lib/ai-conversation-orchestrator.ts"),tools=read("lib/ai-tool-registry.ts"),handoff=read("lib/ai-human-handoff.ts"),evaluation=read("lib/ai-evaluation-security.ts"),analytics=read("lib/ai-analytics.ts"),evidence=read("docs/AI_ENGAGEMENT_INTEGRATED_UAT.md");
 
 test("Integrated AI UAT keeps one canonical conversation and orchestrator across channels",()=>{
  for(const source of[whatsapp,web,voice])assert.match(source,/communication_threads|communication_messages/);
- assert.match(whatsapp,/orchestrateAiTurn/);assert.match(whatsapp,/channel:"whatsapp"/);
+ assert.match(whatsappRoute,/orchestrateAiTurn/);assert.match(whatsappRoute,/channel:"whatsapp"/);
  assert.match(web,/orchestrateAiTurn/);assert.match(web,/channel:"chat"/);
  assert.match(voice,/orchestrateAiTurn/);assert.match(voice,/channel:"voice"/);
  assert.match(orchestrator,/AiConversationChannel="whatsapp"\|"chat"\|"voice"/);
