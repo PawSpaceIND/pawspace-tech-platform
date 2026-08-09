@@ -17,7 +17,7 @@ Do not connect production KYC, production e-sign, external AI/model traffic, mar
 7. Save interview notes. Optionally save an AI summary draft with provider/model provenance. Confirm the AI draft does not alter the human decision field.
 8. Record an explicit human `approved` decision with notes and actor audit.
 9. Create the SLA from the frozen onboarding policy. Confirm the agreement pins active legally approved content ID, version and locale, and that e-sign remains UAT/disconnected.
-10. Record provider UAT acceptance. Confirm no live e-sign execution occurred.
+10. Record provider UAT acceptance from `/partner/onboarding`. Confirm acceptance is derived from the provider identity session and no live e-sign execution occurred.
 11. Complete provider/business/services/service areas/languages/package/facility/reference profile fields and upload policy-required media through secure file references.
 12. Evaluate activation. Confirm every prerequisite is visible and any unsupported policy requirement blocks eligibility.
 13. Run UAT activation only after all checks pass. Confirm the canonical provider capacity record is `uat_ready`, `live=0`, `marketplaceLive=false`, and `orderEligible=false`.
@@ -49,10 +49,16 @@ Open `/team/provider-onboarding` with a staff identity that has `settings.manage
 - deterministic activation checklist;
 - audit trail for state transitions and post-activation edits.
 
+Use `/control/provider-onboarding` to prepare only UAT fixtures: locale, draft/review/approved/active onboarding policy and legally approved localized content. Keep verification adapters `not_connected` unless a separately approved sandbox adapter is being exercised.
+
 ## Provider-facing truthfulness
 
-Use `/partner/onboarding` for the new onboarding UAT route. It intentionally does not claim a provider is verified, approved, signed, activated, marketplace-live, or ready to take orders without canonical evidence. Provider self-service identity scoping remains a subsequent UAT pass.
+Use `/partner` as the canonical Partner UAT entry and `/partner/onboarding` for identity-scoped provider onboarding. Provider self-service is implemented and must derive provider ownership from `/api/identity-session`; the browser must not choose another provider ID.
+
+The legacy `/partner-app` surface is a quarantined synthetic regression prototype only. It must not be used as evidence of provider verification, approval, SLA acceptance, activation, marketplace availability, earnings, payouts, ratings, or live booking eligibility.
+
+The canonical Partner UAT path must continue to show `marketplace live = No`, `order eligible = No`, `live money = No`, and `PRODUCTION READY = FALSE` unless a separate controlled-live approval explicitly changes those boundaries.
 
 ## Closure rule
 
-An exact-head green CI makes this slice engineering-ready. It is UAT-closed only after staff run the scenarios above and retain the evidence. Production activation remains a separate security/privacy/legal/integration/pilot decision.
+An exact-head green CI makes this slice engineering-ready. It is UAT-closed only after staff and provider-role testers run the scenarios above and retain the evidence. Production activation remains a separate security/privacy/legal/integration/pilot decision.
