@@ -21,6 +21,9 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/revenue-crm")return method==="GET"?"customers.view":"customers.manage";
   if(url.pathname==="/api/revenue-intelligence")return method==="GET"?"customers.view":"customers.manage";
   if(url.pathname==="/api/crm-automation"){if(method==="GET")return "customers.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="save_policy"?"settings.manage":"customers.manage";}
+  if(url.pathname==="/api/unified-cases")return method==="GET"?"bookings.view":"bookings.manage";
+  if(url.pathname==="/api/staff-alerts")return method==="GET"?"reports.view":"customers.manage";
+  if(url.pathname==="/api/staff-alert-runner")return "settings.manage";
   if(url.pathname==="/api/finance-control")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/partner-finance")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/company-analytics")return "reports.view";
