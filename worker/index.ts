@@ -3,6 +3,7 @@ import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } fr
 import handler from "vinext/server/app-router-entry";
 import { auditApiResponse, authorizeApiRequest } from "../lib/api-gateway";
 import {authorizePlatformSessionRequest} from "../lib/session-api-gateway";
+import {blockDisabledServiceRequest} from "../lib/service-control";
 
 interface Env {
   ASSETS: Fetcher;
@@ -40,6 +41,8 @@ const worker = {
       if(sessionAccess instanceof Response)return sessionAccess;
       const access=sessionAccess??await authorizeApiRequest(request, env);
       if (access instanceof Response) return access;
+      const serviceBlock=await blockDisabledServiceRequest(request,env.DB);
+      if(serviceBlock){ctx.waitUntil(auditApiResponse(env,access.actor,access.permission,request,serviceBlock.clone()));return secureApiResponse(serviceBlock);}
       const response = await handler.fetch(request, env, ctx);
       ctx.waitUntil(auditApiResponse(env, access.actor, access.permission, request, response.clone()));
       return secureApiResponse(response);
