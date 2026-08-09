@@ -1,0 +1,4 @@
+import{authError,authorize,database}from"../../../lib/server-auth";
+import{buildAiAnalytics}from"../../../lib/ai-analytics";
+const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
+export async function GET(request:Request){try{await authorize(request,"reports.view");const url=new URL(request.url),channel=url.searchParams.get("channel"),from=Number(url.searchParams.get("from")||0)||null,to=Number(url.searchParams.get("to")||0)||null,intent=url.searchParams.get("intent")||null;if(channel&&!(["whatsapp","chat","voice"] as string[]).includes(channel))return json({error:"Unsupported channel filter"},400);const data=await buildAiAnalytics(await database(),{from,to,channel:channel as "whatsapp"|"chat"|"voice"|null,intent});return json({data});}catch(error){return authError(error,"Unable to load AI analytics");}}
