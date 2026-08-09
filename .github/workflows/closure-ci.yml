@@ -5,6 +5,7 @@ on:
     branches:
       - grooming-integration-closure
       - agent/food-gates1-5
+      - agent/platform-stack-recertification
   pull_request:
     branches:
       - main
