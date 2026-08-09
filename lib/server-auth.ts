@@ -31,7 +31,7 @@ export async function ensureSecurityTables(db:Db){
   ]);
   await ensureIdentityBindingTables(db);
   for(const role of defaultRoles){
-    await db.prepare("INSERT INTO role_definitions (code,name,description,permissions_json,system_role,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(code) DO UPDATE SET name=excluded.name,description=excluded.description,system_role=excluded.system_role")
+    await db.prepare("INSERT INTO role_definitions (code,name,description,permissions_json,system_role,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(code) DO UPDATE SET name=excluded.name,description=excluded.description,permissions_json=CASE WHEN role_definitions.system_role=1 THEN excluded.permissions_json ELSE role_definitions.permissions_json END,system_role=excluded.system_role,updated_at=excluded.updated_at")
       .bind(role.code,role.name,role.description,JSON.stringify(role.permissions),1,now).run();
   }
 }
