@@ -1,6 +1,6 @@
 import type { Booking, Pet, PlatformRepository, Provider } from "./domain.js";
 
-export type SchedulingService = "grooming" | "dog_training" | "boarding" | "pet_sitting" | "pet_taxi";
+export type SchedulingService = "grooming" | "dog_training" | "boarding" | "pet_sitting" | "pet_taxi" | "dog_walking";
 export type CareMode = "visit" | "overnight";
 export interface CustomScheduleRule { code:string; field:"rating"|"qualityScore"|"model"|"providerId"|"zone"|"capacity"; operator:"eq"|"neq"|"gte"|"lte"|"in"|"not_in"; value:string|number|string[]; }
 
@@ -41,6 +41,7 @@ export const scheduleRules = {
   boarding: { label:"Boarding", durationMinutes:1440, bufferMinutes:0, maxOccurrences:1, capacityMode:"overnight" },
   pet_sitting: { label:"Pet Sitting", durationMinutes:60, bufferMinutes:30, maxOccurrences:1, capacityMode:"care_mode" },
   pet_taxi: { label:"Pet Taxi", durationMinutes:45, bufferMinutes:20, maxOccurrences:1, capacityMode:"appointment" },
+  dog_walking: { label:"Dog Walking", durationMinutes:30, bufferMinutes:20, maxOccurrences:12, capacityMode:"appointment" },
 } as const;
 
 const activeStatuses = new Set<Booking["status"]>(["confirmed","assigned","on_the_way","arrived","in_service"]);
@@ -54,11 +55,11 @@ const overlaps = (aStart:number,aEnd:number,bStart:number,bEnd:number) => aStart
 const windowCovers=(window:string,start:number,end:number)=>{const match=/^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/.exec(window);if(!match)return false;const from=Number(match[1])*60+Number(match[2]);const to=Number(match[3])*60+Number(match[4]);return start>=from&&end<=to;};
 
 function buildOccurrences(input:ScheduleRequest):ScheduleOccurrence[] {
-  const rule=scheduleRules[input.serviceCode];
-  const requested=input.serviceCode==="dog_training"?(input.occurrences??1):1;
+  const rule=scheduleRules[input.serviceCode],recurring=input.serviceCode==="dog_training"||input.serviceCode==="dog_walking";
+  const requested=recurring?(input.occurrences??1):1;
   if(requested<1||requested>rule.maxOccurrences)throw Object.assign(new Error(`Occurrences must be between 1 and ${rule.maxOccurrences}`),{statusCode:422});
-  if(input.serviceCode==="dog_training"&&(input.cadenceDays??7)<1)throw Object.assign(new Error("Training cadence must be at least one day"),{statusCode:422});
-  if(input.weekdays&&(input.weekdays.length<1||input.weekdays.some(day=>day<0||day>6)))throw Object.assign(new Error("Training weekdays must use values 0–6"),{statusCode:422});
+  if(recurring&&(input.cadenceDays??7)<1)throw Object.assign(new Error("Recurring cadence must be at least one day"),{statusCode:422});
+  if(input.weekdays&&(input.weekdays.length<1||input.weekdays.some(day=>day<0||day>6)))throw Object.assign(new Error("Recurring weekdays must use values 0–6"),{statusCode:422});
   const startMs=new Date(input.scheduledStart).getTime(); const endMs=new Date(input.scheduledEnd).getTime();
   if(!Number.isFinite(startMs)||!Number.isFinite(endMs)||endMs<=startMs)throw Object.assign(new Error("Scheduled end must be after start"),{statusCode:422});
   if(input.serviceCode!=="boarding"&&!(input.serviceCode==="pet_sitting"&&input.careMode==="overnight")){
@@ -66,7 +67,7 @@ function buildOccurrences(input:ScheduleRequest):ScheduleOccurrence[] {
     const required=input.serviceCode==="grooming"?(input.petIds.length>=4?240:input.petIds.length===3?150:120):input.serviceCode==="dog_training"?Math.max(60,input.petIds.length*60):rule.durationMinutes;
     if(duration<required)throw Object.assign(new Error(`${rule.label} requires at least ${required} minutes for ${input.petIds.length} pet${input.petIds.length===1?"":"s"}`),{statusCode:422});
   }
-  if(input.serviceCode==="dog_training"&&input.weekdays?.length){const wanted=new Set(input.weekdays);const result:ScheduleOccurrence[]=[];let offset=0;while(result.length<requested&&offset<180){const candidate=addDays(input.scheduledStart,offset);if(wanted.has(localDate(candidate,input.cityId).getUTCDay()))result.push({start:candidate,end:addDays(input.scheduledEnd,offset),occurrenceNumber:result.length+1});offset++;}if(result.length!==requested)throw Object.assign(new Error("Unable to generate the requested training calendar"),{statusCode:422});return result;}
+  if(recurring&&input.weekdays?.length){const wanted=new Set(input.weekdays);const result:ScheduleOccurrence[]=[];let offset=0;while(result.length<requested&&offset<180){const candidate=addDays(input.scheduledStart,offset);if(wanted.has(localDate(candidate,input.cityId).getUTCDay()))result.push({start:candidate,end:addDays(input.scheduledEnd,offset),occurrenceNumber:result.length+1});offset++;}if(result.length!==requested)throw Object.assign(new Error("Unable to generate the requested recurring calendar"),{statusCode:422});return result;}
   return Array.from({length:requested},(_,index)=>({start:addDays(input.scheduledStart,index*(input.cadenceDays??7)),end:addDays(input.scheduledEnd,index*(input.cadenceDays??7)),occurrenceNumber:index+1}));
 }
 
@@ -103,7 +104,7 @@ async function evaluateProvider(repository:PlatformRepository,provider:Provider,
     } else {
       const buffer=(provider.travelBufferMinutes??scheduleRules[input.serviceCode].bufferMinutes)*msMinute;
       const conflict=existing.some(b=>overlaps(new Date(occurrence.start).getTime()-buffer,new Date(occurrence.end).getTime()+buffer,new Date(b.scheduledStart).getTime(),new Date(b.scheduledEnd).getTime()));
-      if(conflict){eligible=false;reasons.push(`Existing booking conflicts with travel/service buffer`);}
+      if(conflict){eligible=false;reasons.push("Existing booking conflicts with travel/service buffer");}
       const sameDay=existing.filter(b=>dateKey(b.scheduledStart,input.cityId)===dateKey(occurrence.start,input.cityId)).length;
       if(sameDay>=(provider.maxDailyJobs??6)){eligible=false;reasons.push(`Daily job limit ${provider.maxDailyJobs??6} reached`);}
     }

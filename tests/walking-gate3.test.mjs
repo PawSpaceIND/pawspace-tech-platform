@@ -1,0 +1,20 @@
+import test from"node:test";
+import assert from"node:assert/strict";
+import{readFile}from"node:fs/promises";
+const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
+
+test("Dog Walking Gate 3 treats completed walks as payment-due until sandbox payment is recorded",async()=>{const source=await read("lib/walking-finance-governance.ts");assert.match(source,/walking_session_payment_events/);assert.match(source,/record_session_payment/);assert.match(source,/sandbox_paid/);assert.match(source,/Dog Walking sandbox payment reference was already used/);assert.match(source,/idx_walking_payment_reference/);assert.match(source,/liveMoney:false/);});
+
+test("Dog Walking cancellation preserves completed charges and never invents refund",async()=>{const source=await read("lib/walking-finance-governance.ts");assert.match(source,/walking_cancellation_requests/);assert.match(source,/policy_review_required/);assert.match(source,/refundPolicy:\"configuration_required\"/);assert.match(source,/approvedRefundAmount/);assert.match(source,/cannot exceed sandbox-paid completed walks/);assert.match(source,/completedWalkChargesPreserved:true/);assert.match(source,/explicit_finance_approval/);});
+
+test("Dog Walking refund ledger is sandbox-only and replay resistant",async()=>{const source=await read("lib/walking-finance-governance.ts");assert.match(source,/walking_refund_ledger/);assert.match(source,/sandbox_pending/);assert.match(source,/sandbox_recorded/);assert.match(source,/idx_walking_refund_reference/);assert.match(source,/refund reference was already used/);});
+
+test("Dog Walking settlement waits for completed and paid sessions without inventing payout or tax",async()=>{const source=await read("lib/walking-finance-governance.ts");assert.match(source,/walking_walker_settlement_ledger/);assert.match(source,/Walker settlement can be prepared only after all canonical walks complete/);assert.match(source,/must be sandbox-paid before settlement readiness/);assert.match(source,/payout_rule_status TEXT NOT NULL DEFAULT 'rule_pending'/);assert.match(source,/tax_status TEXT NOT NULL DEFAULT 'configuration_required'/);assert.match(source,/payout_status TEXT NOT NULL DEFAULT 'not_instructed'/);});
+
+test("Dog Walking reconciliation exposes paid unpaid refund settlement and tax truth",async()=>{const source=await read("lib/walking-finance-governance.ts");assert.match(source,/walking_finance_reconciliation/);assert.match(source,/completedDue/);assert.match(source,/paid/);assert.match(source,/unpaid/);assert.match(source,/refund/);assert.match(source,/attention_required/);assert.match(source,/netPaidTotal/);});
+
+test("Dog Walking Finance API separates customer request from Finance authority",async()=>{const api=await read("app/api/walking-finance/route.ts");assert.match(api,/customerActions=new Set<WalkingFinanceAction>\(\[\"request_cancel\"\]\)/);assert.match(api,/financeActions=new Set<WalkingFinanceAction>/);assert.match(api,/requireCustomerOwnership/);assert.match(api,/requirePermission\(actor,\"finance\.manage\"\)/);assert.match(api,/ensureWalkingFinanceTables/);assert.match(api,/securityAudit/);});
+
+test("Dog Walking customer management is request-only for cancellation money",async()=>{const page=await read("app/walking/manage/walking-customer-management.tsx");assert.match(page,/loadCustomerWalkingLifecycle/);assert.match(page,/requestWalkingCancellation/);assert.match(page,/No refund was calculated automatically/);assert.match(page,/completed-walk charges remain canonical/);assert.doesNotMatch(page,/approve_cancel/);assert.doesNotMatch(page,/record_refund/);});
+
+test("Dog Walking Finance workspace owns payment refund settlement and reconciliation actions",async()=>{const page=await read("app/team/finance/walking/walking-finance-workspace.tsx");for(const action of["record_session_payment","approve_cancel","record_refund","prepare_settlement","reconcile"])assert.match(page,new RegExp(`\\"${action}\\"`));assert.match(page,/Payout amount, commission, incentives, penalties and GST remain policy\/configuration gated/);assert.match(page,/Live charges, refunds, payouts and tax filing remain disconnected/);});
