@@ -1,0 +1,10 @@
+import{authError,database,resolveActor,securityAudit}from"../../../lib/server-auth";
+import{aiConversationSnapshot,orchestrateAiTurn}from"../../../lib/ai-conversation-orchestrator";
+
+type Body={threadId?:string;customerId?:string;inputMessageId?:string;idempotencyKey?:string;channel?:string};
+const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
+function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin AI conversation write blocked",{status:403});}
+
+export async function GET(request:Request){try{const actor=await resolveActor(request),db=await database(),url=new URL(request.url),threadId=url.searchParams.get("threadId")||"",customerId=url.searchParams.get("customerId")||"";if(!threadId||!customerId)return json({error:"Thread ID and customer ID are required"},400);const data=await aiConversationSnapshot(db,{actor,threadId,customerId});return json({data});}catch(error){return authError(error,"Unable to load AI conversation state");}}
+
+export async function POST(request:Request){try{sameOrigin(request);const actor=await resolveActor(request),db=await database(),body=await request.json() as Body;if(!body.threadId||!body.customerId||!body.inputMessageId||!body.idempotencyKey||!body.channel)return json({error:"Thread, customer, canonical input message, idempotency key and channel are required"},400);const data=await orchestrateAiTurn(db,{actor,threadId:body.threadId,customerId:body.customerId,inputMessageId:body.inputMessageId,idempotencyKey:body.idempotencyKey,channel:body.channel});await securityAudit(db,actor,"ai.conversation.turn","communication_thread",body.threadId,"completed",{turnId:data.turn&&typeof data.turn==="object"?String((data.turn as Record<string,unknown>).id||""):null,duplicatePrevented:data.duplicatePrevented,autonomousExecution:false});return json({data},data.duplicatePrevented?200:201);}catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);return authError(error,"Unable to run AI conversation turn");}}
