@@ -1,5 +1,6 @@
 import{authError,requirePermission,requireProviderOwnership,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{assertServiceProofRef}from"../../../lib/service-media-security";
+import{tryQualifyLinkedReferral}from"../../../lib/referral-booking-governance";
 
 type Db=Awaited<ReturnType<typeof database>>;
 type Row=Record<string,unknown>;
@@ -35,6 +36,7 @@ function transition(current:string,action:LifecycleAction){const map:Record<Life
 };return map[action][current];}
 
 async function event(db:Db,bookingId:string,eventType:string,actorId:string,detail:unknown,now:number){await db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),bookingId,eventType,"booking",bookingId,actorId,JSON.stringify(detail),now).run();}
+async function referralQualification(db:Db,bookingId:string,actorId:string){try{return await tryQualifyLinkedReferral(db,{bookingId,actorId});}catch(error){const reason=error instanceof Error?error.message:"Referral qualification requires review";await event(db,bookingId,"referral_qualification_review_required",actorId,{reason},Date.now());return{applicable:true,status:"review_required",reason};}}
 
 async function bundle(db:Db,bookingId:string){const booking=await db.prepare("SELECT b.*,w.id work_order_id,w.provider_name,w.provider_model,w.status work_order_status,p.id payment_id,p.status payment_status,p.method payment_method,p.mode payment_mode,p.amount,p.amount_due_now FROM canonical_bookings b JOIN provider_work_orders w ON w.booking_id=b.id JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=?").bind(bookingId).first<Row>();if(!booking)return null;const[proof,invoice,usage,repeat,tax,payout,events]=await Promise.all([
   db.prepare("SELECT * FROM grooming_service_proof WHERE booking_id=?").bind(bookingId).first<Row>(),
@@ -61,9 +63,10 @@ export async function POST(request:Request){try{const input=await request.json()
 
   if(input.action==="mark_paid"){
     await db.prepare("UPDATE booking_payments SET status='captured',gateway=CASE WHEN gateway='uat_sandbox' THEN gateway ELSE gateway END,detail_json=json_set(detail_json,'$.paymentReference',?),updated_at=? WHERE booking_id=?").bind(input.paymentReference??"manual-reconciliation",now,input.bookingId).run();
-    await event(db,input.bookingId,"payment_captured",actor,{paymentReference:input.paymentReference??"manual-reconciliation"},now);
-    await securityAudit(db,actorIdentity,"grooming.mark_paid","booking",input.bookingId,"completed",{paymentReference:input.paymentReference??"manual-reconciliation"});
-    return json({data:await bundle(db,input.bookingId)});
+    const referral=await referralQualification(db,input.bookingId,actor);
+    await event(db,input.bookingId,"payment_captured",actor,{paymentReference:input.paymentReference??"manual-reconciliation",referral},now);
+    await securityAudit(db,actorIdentity,"grooming.mark_paid","booking",input.bookingId,"completed",{paymentReference:input.paymentReference??"manual-reconciliation",referral});
+    return json({data:await bundle(db,input.bookingId),referral});
   }
 
   if(input.action==="complete"){
@@ -88,9 +91,10 @@ export async function POST(request:Request){try{const input=await request.json()
       db.prepare("UPDATE customer_grooming_subscriptions SET sessions_reserved=MAX(0,sessions_reserved-?),sessions_consumed=sessions_consumed+?,status=CASE WHEN sessions_consumed+?>=total_sessions THEN 'exhausted' ELSE status END,updated_at=? WHERE id=? AND status IN ('active','exhausted')").bind(sessionsToConsume,sessionsToConsume,sessionsToConsume,now,usage.plan_code)
     );}
     await db.batch(statements);
-    await event(db,input.bookingId,"service_completed",actor,{providerId:work.provider_id,invoiceNumber,paymentStatus:String(payment?.status||"unknown"),subscriptionSessionsConsumed:sessionsToConsume,repeatEligibleAt:now+21*86_400_000,taxRuleStatus:"configuration_required",payoutReadiness:String(work.provider_model)==="commission"?"rule_pending":"not_applicable"},now);
-    await securityAudit(db,actorIdentity,"grooming.complete","booking",input.bookingId,"completed",{providerId:work.provider_id,invoiceNumber,sessionsToConsume});
-    return json({data:await bundle(db,input.bookingId)});
+    const referral=await referralQualification(db,input.bookingId,actor);
+    await event(db,input.bookingId,"service_completed",actor,{providerId:work.provider_id,invoiceNumber,paymentStatus:String(payment?.status||"unknown"),subscriptionSessionsConsumed:sessionsToConsume,repeatEligibleAt:now+21*86_400_000,taxRuleStatus:"configuration_required",payoutReadiness:String(work.provider_model)==="commission"?"rule_pending":"not_applicable",referral},now);
+    await securityAudit(db,actorIdentity,"grooming.complete","booking",input.bookingId,"completed",{providerId:work.provider_id,invoiceNumber,sessionsToConsume,referral});
+    return json({data:await bundle(db,input.bookingId),referral});
   }
 
   await db.batch([

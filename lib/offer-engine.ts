@@ -97,7 +97,7 @@ export const defaultOfferConfig: OfferConfig = {
     { ...commonCouponRules, id: "sub500", code: "SUB500", name: "Subscription retention", active: true, customerKinds: ["subscriber"], services: allServices, packageScope: "subscription", minOrder: 2999, maxOrder: null, subscriptionEligible: true, fullPaymentOnly: true, discountType: "fixed", discountValue: 500, maxDiscount: 500, perCustomerLimit: 1, totalLimit: 1000, used: 214, validUntil: "2026-11-30" },
     { ...commonCouponRules, id: "groom2train", code: "TRAINNEXT", name: "Grooming to training cross-sell", active: true, customerKinds: ["existing", "subscriber"], services: ["Dog Training"], crossSellFromServices: ["Grooming"], cities: ["Bengaluru"], minOrder: 3500, maxOrder: null, subscriptionEligible: false, fullPaymentOnly: true, discountType: "fixed", discountValue: 400, maxDiscount: 400, perCustomerLimit: 1, totalLimit: 1200, used: 318, validUntil: "2026-09-30" },
   ],
-  referral: { programmeName: "Refer a Pet Parent", active: true, friendDiscount: 300, referrerReward: 500, rewardChoices: [300, 400, 500, 600], minFirstOrder: 999, rewardsPerMonth: 5, rewardValidityDays: 60, releaseOn: "completed_first_booking", oneRewardPerFriend: true, stackable: false, eligibleServices: allServices, eligibleCities: allCities, referrerKinds: ["existing", "subscriber"], rewardUseServices: allServices, validFrom: "2026-08-01", validUntil: "2027-03-31", reversalOnRefund: true, fraudReviewEnabled: true },
+  referral: { programmeName: "Legacy referral UI only", active: false, friendDiscount: 0, referrerReward: 300, rewardChoices: [300, 400, 500, 600], minFirstOrder: 0, rewardsPerMonth: 1, rewardValidityDays: 1, releaseOn: "completed_first_booking", oneRewardPerFriend: true, stackable: false, eligibleServices: [], eligibleCities: [], referrerKinds: [], rewardUseServices: [], validFrom: "2026-08-01", validUntil: "2026-08-01", reversalOnRefund: false, fraudReviewEnabled: true },
 };
 
 export function readOfferConfig(): OfferConfig {
@@ -111,32 +111,22 @@ export function readOfferConfig(): OfferConfig {
       ...defaultOfferConfig,
       ...parsed,
       coupons: parsed.coupons.map((coupon) => ({ ...commonCouponRules, ...coupon })),
-      referral: { ...defaultOfferConfig.referral, ...parsed.referral },
+      referral: defaultOfferConfig.referral,
     };
   } catch { return defaultOfferConfig; }
 }
 
 export function saveOfferConfig(config: OfferConfig) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(offerStorageKey, JSON.stringify(config));
-  window.dispatchEvent(new CustomEvent(offerChangeEvent, { detail: config }));
+  window.localStorage.setItem(offerStorageKey, JSON.stringify({...config, referral:defaultOfferConfig.referral}));
+  window.dispatchEvent(new CustomEvent(offerChangeEvent, { detail: {...config, referral:defaultOfferConfig.referral} }));
 }
 
 export function validateOffer(context: OfferContext, config = readOfferConfig()) {
   const code = context.code.trim().toUpperCase();
   const kind = context.customerKind ?? "existing";
-  if (code === "KARTHIK") {
-    const policy = config.referral;
-    if (!policy.active) return { valid: false, discount: 0, code: "", message: "Referral rewards are currently paused" };
-    if ((context.orderCount ?? 0) > 0 || kind !== "new" || context.wasReferredBefore) return { valid: false, discount: 0, code: "", message: "Referral codes are valid on a friend’s first booking only" };
-    if ((context.referralRewardsThisMonth ?? 0) >= policy.rewardsPerMonth) return { valid: false, discount: 0, code: "", message: "This referrer has reached the monthly reward limit" };
-    if (!policy.eligibleServices.includes(context.service)) return { valid: false, discount: 0, code: "", message: `Referrals are not available for ${context.service}` };
-    if (context.city && !policy.eligibleCities.includes(context.city)) return { valid: false, discount: 0, code: "", message: `Referrals are not available in ${context.city}` };
-    if (context.orderValue < policy.minFirstOrder) return { valid: false, discount: 0, code: "", message: `Add ₹${policy.minFirstOrder - context.orderValue} more to use this referral` };
-    return { valid: true, discount: Math.min(policy.friendDiscount, context.orderValue), code, message: `Referral applied · you save ₹${policy.friendDiscount}; referrer earns ₹${policy.referrerReward} after completion`, referral: true };
-  }
   const rule = config.coupons.find((item) => item.code === code);
-  if (!rule || !rule.active) return { valid: false, discount: 0, code: "", message: "Enter a valid active PawSpace coupon or referral code" };
+  if (!rule || !rule.active) return { valid: false, discount: 0, code: "", message: "Enter a valid active PawSpace coupon. Referral codes use the governed referral flow." };
   if (new Date(`${rule.validUntil}T23:59:59`).getTime() < Date.now()) return { valid: false, discount: 0, code: "", message: "This coupon has expired" };
   if (!rule.services.includes(context.service)) return { valid: false, discount: 0, code: "", message: `This coupon is not valid for ${context.service}` };
   if (context.city && !rule.cities.includes(context.city)) return { valid: false, discount: 0, code: "", message: `This coupon is not available in ${context.city}` };
