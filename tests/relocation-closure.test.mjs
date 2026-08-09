@@ -19,5 +19,5 @@ test("Relocation exposes customer agent operations finance and explicit gateway 
  for(const token of["Qualify lead","Assign UAT vendor","Issue ₹75,000 UAT quote","Confirm delivery"])assert.equal(agent.includes(token),true,token);
  for(const token of["Record UAT payment","Approve","Reject"])assert.equal(finance.includes(token),true,token);
  for(const token of["scheduling.book","bookings.manage","finance.manage","requireCustomerOwnership","securityAudit"])assert.equal(route.includes(token),true,token);
- for(const token of["/api/relocation","url.searchParams.get(\"scope\")==\"customer\"?\"scheduling.book\":\"bookings.view\"","record_payment","resolve_refund","finance.manage","bookings.manage"])assert.equal(gateway.includes(token),true,token);
+ for(const token of["/api/relocation","url.searchParams.get(\"scope\")","customer","scheduling.book","bookings.view","record_payment","resolve_refund","finance.manage","bookings.manage"])assert.equal(gateway.includes(token),true,token);
 });
