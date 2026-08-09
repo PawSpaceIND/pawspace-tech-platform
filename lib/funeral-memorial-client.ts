@@ -1,0 +1,21 @@
+export type FuneralServiceType="cremation"|"burial"|"memorial";
+export type MemorialOption="none"|"ash_collection"|"plantation"|"digital_memorial";
+export type FuneralMilestone={code:string;status:string;note?:string|null;completed_at?:number|null};
+export type FuneralPayment={amount:number;status:string;payment_mode:string;payment_reference?:string|null;paid_at?:number|null};
+export type FuneralRefund={id:string;amount:number;reason:string;status:string;resolution_mode?:string|null;decision_note?:string|null};
+export type FuneralCase={id:string;customer_id:string;pet_name:string;pet_species:string;pickup_address:string;alternate_contact?:string|null;service_type:FuneralServiceType;memorial_option:MemorialOption;urgency:string;status:string;assigned_agent_id?:string|null;vendor_id?:string|null;support_status:string;certificate_status:string;closure_note?:string|null;created_at:number;updated_at:number;media?:Array<Record<string,unknown>>;milestones?:FuneralMilestone[];ashCollection?:Record<string,unknown>|null;payment?:FuneralPayment|null;invoice?:Record<string,unknown>|null;refunds?:FuneralRefund[];supportTickets?:Array<Record<string,unknown>>;memorialRecords?:Array<Record<string,unknown>>;acknowledgement?:Record<string,unknown>|null;settlement?:Record<string,unknown>|null};
+export type FuneralServiceConfig={service_type:FuneralServiceType;enabled:number;base_amount:number|null;cash_allowed:number;updated_at:number};
+export type FuneralReadiness=Record<string,boolean|string|number|null>;
+export type FuneralReport={requestsByType:Array<{serviceType:string;count:number}>;serviceFulfillment:Array<{status:string;count:number}>;turnaroundTime:{averageMs:number;basis:string};plantationMemorialRecords:number;revenueAndAverageOrderValue:{sandboxPaidAmount:number;currency:string;liveMoney:false};generatedAt:number};
+
+type Envelope<T>={data?:T;readiness?:FuneralReadiness;templates?:Record<string,string>;error?:string};
+async function envelope<T>(response:Response,fallback:string){const body=await response.json() as Envelope<T>;if(!response.ok||body.data===undefined)throw new Error(body.error||fallback);return{data:body.data,readiness:body.readiness||{},templates:body.templates||{}};}
+
+export async function loadMyFuneralRequests(customerId:string){return envelope<FuneralCase[]>(await fetch(`/api/funeral-memorial?scope=customer&customerId=${encodeURIComponent(customerId)}`),"Unable to load funeral or memorial requests");}
+export async function loadFuneralStaff(){return envelope<FuneralCase[]>(await fetch("/api/funeral-memorial"),"Unable to load funeral or memorial queue");}
+export async function loadFuneralCase(caseId:string,scope:"customer"|"staff"="staff"){return envelope<FuneralCase>(await fetch(`/api/funeral-memorial?caseId=${encodeURIComponent(caseId)}${scope==="customer"?"&scope=customer":""}`),"Unable to load funeral or memorial request");}
+export async function loadFuneralConfig(){return envelope<FuneralServiceConfig[]>(await fetch("/api/funeral-memorial?config=1"),"Unable to load funeral service configuration");}
+export async function loadFuneralReport(){return envelope<FuneralReport>(await fetch("/api/funeral-memorial?report=summary"),"Unable to load funeral fulfillment report");}
+export async function createFuneralRequest(input:{customerId:string;petName:string;petSpecies:string;pickupAddress:string;alternateContact?:string;serviceType:FuneralServiceType;memorialOption:MemorialOption}){return envelope<FuneralCase>(await fetch("/api/funeral-memorial",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"create",...input,urgency:"urgent"})}),"Unable to create funeral or memorial request");}
+export async function mutateFuneralRequest(input:Record<string,unknown>){return envelope<FuneralCase>(await fetch("/api/funeral-memorial",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)}),"Unable to update funeral or memorial request");}
+export async function saveFuneralConfig(input:{serviceType:FuneralServiceType;enabled:boolean;baseAmount?:number|null;cashAllowed:boolean}){return envelope<FuneralServiceConfig[]>(await fetch("/api/funeral-memorial",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"save_service_config",...input})}),"Unable to save funeral service configuration");}
