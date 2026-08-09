@@ -1,0 +1,15 @@
+import{authError,authorize,database,securityAudit}from"../../../lib/server-auth";
+import{activateRevenueMission,backfillRevenueMissionFromCanonicalSources,closeRevenueMission,listRevenueMissions,revenueMissionAudit,revenueMissionSummary,saveRevenueMission}from"../../../lib/revenue-mission-control";
+
+type Row=Record<string,unknown>;
+const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
+
+export async function GET(request:Request){try{await authorize(request,"reports.view");const db=await database(),url=new URL(request.url),missionId=String(url.searchParams.get("missionId")||"").trim();if(missionId){const[summary,audit]=await Promise.all([revenueMissionSummary(db,missionId),revenueMissionAudit(db,missionId)]);return json({summary,audit,productionReady:false});}return json({...(await listRevenueMissions(db)),productionReady:false});}catch(error){return authError(error,"Unable to load Revenue Mission Control");}}
+
+export async function POST(request:Request){try{const actor=await authorize(request,"customers.manage"),db=await database(),body=await request.json() as Row,action=String(body.action||"").trim();
+ if(action==="save_mission"){const data=await saveRevenueMission(db,{id:String(body.id||"")||undefined,name:String(body.name||""),targetAmount:Number(body.targetAmount),currency:String(body.currency||"INR"),periodStart:Number(body.periodStart),periodEnd:Number(body.periodEnd),scope:(body.scope&&typeof body.scope==="object"?body.scope:{type:"company"}) as {type:"company"|"city"|"service";value?:string},revenueBasis:String(body.revenueBasis||"") as "booked"|"collected"|"net_collected",reason:String(body.reason||""),actorId:actor.email});await securityAudit(db,actor,"revenue.mission.save","revenue_mission",data.id,"completed",{configVersion:data.configVersion,status:data.status,productionReady:false});return json({data,productionReady:false},201);}
+ if(action==="activate_mission"){const missionId=String(body.missionId||""),data=await activateRevenueMission(db,{missionId,approvalReference:String(body.approvalReference||""),actorId:actor.email,reason:String(body.reason||"")});await securityAudit(db,actor,"revenue.mission.activate","revenue_mission",missionId,"completed",{approvalReference:data.approvalReference,status:data.status});return json({data,productionReady:false});}
+ if(action==="close_mission"){const missionId=String(body.missionId||""),data=await closeRevenueMission(db,{missionId,actorId:actor.email,reason:String(body.reason||"")});await securityAudit(db,actor,"revenue.mission.close","revenue_mission",missionId,"completed",{status:data.status});return json({data,productionReady:false});}
+ if(action==="backfill_canonical_sources"){const missionId=String(body.missionId||"");const data=await backfillRevenueMissionFromCanonicalSources(db,missionId,actor.email);await securityAudit(db,actor,"revenue.mission.backfill","revenue_mission",missionId,"completed",data);return json({data,productionReady:false});}
+ return json({error:"Unknown Revenue Mission Control action"},400);
+}catch(error){return authError(error,"Unable to update Revenue Mission Control");}}
