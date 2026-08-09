@@ -16,6 +16,9 @@ const defaults=[
   {id:"sit_sana",cityId:"blr",name:"Sana F.",model:"commission",services:["pet_sitting"],zones:["blr-east"],rating:4.9,qualityScore:95,capacity:4,travelBufferMinutes:30,maxDailyJobs:6,acceptanceTimeoutMinutes:3},
   {id:"sit_neha",cityId:"blr",name:"Neha P.",model:"commission",services:["pet_sitting"],zones:["blr-east"],rating:4.8,qualityScore:92,capacity:4,travelBufferMinutes:30,maxDailyJobs:6,acceptanceTimeoutMinutes:3},
   {id:"sit_asha",cityId:"blr",name:"Asha R.",model:"commission",services:["pet_sitting"],zones:["blr-east"],rating:4.7,qualityScore:89,capacity:4,travelBufferMinutes:30,maxDailyJobs:6,acceptanceTimeoutMinutes:3},
+  {id:"taxi_rahul",cityId:"blr",name:"Rahul K.",model:"full_time",services:["pet_taxi"],zones:["blr-east"],rating:4.9,qualityScore:96,capacity:1,travelBufferMinutes:20,maxDailyJobs:8,acceptanceTimeoutMinutes:3},
+  {id:"taxi_meera",cityId:"blr",name:"Meera S.",model:"full_time",services:["pet_taxi"],zones:["blr-east"],rating:4.8,qualityScore:92,capacity:1,travelBufferMinutes:20,maxDailyJobs:8,acceptanceTimeoutMinutes:3},
+  {id:"taxi_imran",cityId:"blr",name:"Imran A.",model:"full_time",services:["pet_taxi"],zones:["blr-east"],rating:4.9,qualityScore:94,capacity:1,travelBufferMinutes:20,maxDailyJobs:8,acceptanceTimeoutMinutes:3},
 ] as const;
 
 export async function ensureProviderCapacityTables(db:Db){await db.batch([
