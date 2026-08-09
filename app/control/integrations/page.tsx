@@ -11,7 +11,7 @@ const pretty=(value:string)=>value.replaceAll("_"," ").replace(/\b\w/g,letter=>l
 export default function IntegrationReadinessControl(){
  const[data,setData]=useState<Payload|null>(null),[error,setError]=useState("");
  const load=async()=>{try{setError("");const response=await fetch("/api/integration-readiness",{cache:"no-store"}),payload=await response.json() as Payload&{error?:string};if(!response.ok)throw new Error(payload.error||"Unable to load integration readiness");setData(payload);}catch(cause){setError(cause instanceof Error?cause.message:"Unable to load integration readiness");}};
- useEffect(()=>{void load();},[]);
+ useEffect(()=>{let active=true;void fetch("/api/integration-readiness",{cache:"no-store"}).then(async response=>{const payload=await response.json() as Payload&{error?:string};if(!response.ok)throw new Error(payload.error||"Unable to load integration readiness");if(active){setData(payload);setError("");}}).catch(cause=>{if(active)setError(cause instanceof Error?cause.message:"Unable to load integration readiness");});return()=>{active=false};},[]);
  const p0=useMemo(()=>data?.data.items.filter(item=>item.priority==="P0")??[],[data]);
  if(!data)return <main className={styles.loading}>{error||"Loading canonical integration readiness…"}</main>;
  return <main className={styles.shell}>
