@@ -1,0 +1,6 @@
+export type RelocationCase=Record<string,unknown>&{id:string;status:string;customer_id:string;documents:Array<Record<string,unknown>>;milestones:Array<Record<string,unknown>>;quote?:Record<string,unknown>|null;payment?:Record<string,unknown>|null;refunds:Array<Record<string,unknown>>;events:Array<Record<string,unknown>>};
+async function payload<T>(response:Response){const body=await response.json() as {data?:T;error?:string};if(!response.ok||body.data===undefined)throw new Error(body.error||"Relocation request failed");return body.data;}
+export async function createRelocationCase(input:Record<string,unknown>){return payload<RelocationCase>(await fetch("/api/relocation",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"create",...input})}));}
+export async function loadRelocationCase(caseId:string){return payload<RelocationCase>(await fetch(`/api/relocation?scope=customer&caseId=${encodeURIComponent(caseId)}`,{cache:"no-store"}));}
+export async function loadRelocationQueue(){return payload<Array<Record<string,unknown>>>(await fetch("/api/relocation",{cache:"no-store"}));}
+export async function updateRelocationCase(input:Record<string,unknown>){return payload<RelocationCase>(await fetch("/api/relocation",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)}));}
