@@ -25,8 +25,11 @@ test("renders the Partner Mobile field app route", async () => {
   assert.equal(response.status, 200);
   const html = await response.text();
   assert.match(html, /PawSpace Partner/i);
-  assert.match(html, /GPS & ETA/i);
-  assert.match(html, /Track journey/i);
+  assert.match(html, /Good morning/i);
+  assert.match(html, /Next assignment/i);
+  assert.match(html, />Track</i);
+  assert.match(html, />Jobs</i);
+  assert.match(html, />Earnings</i);
 });
 
 test("Partner Mobile uses governed provider identity and GPS APIs", async () => {
@@ -35,6 +38,8 @@ test("Partner Mobile uses governed provider identity and GPS APIs", async () => 
     "utf8",
   );
 
+  assert.match(source, /GPS & ETA/);
+  assert.match(source, /Track journey/);
   assert.match(source, /\/api\/identity-session/);
   assert.match(source, /\/api\/partner-grooming-jobs/);
   assert.match(source, /\/api\/grooming-route/);
