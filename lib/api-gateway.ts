@@ -82,6 +82,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/boarding-ops")return method==="GET"?"bookings.view":"bookings.manage";
   if(url.pathname==="/api/scheduling-rules")return method==="GET"?"scheduling.view":"scheduling.manage";
   if(url.pathname==="/api/launch-readiness")return method==="GET"?"launch.view":"launch.manage";
+  if(url.pathname==="/api/city-governance")return method==="GET"?"launch.view":"launch.manage";
   if(url.pathname==="/api/integration-readiness")return method==="GET"?"launch.view":"launch.manage";
   if(url.pathname==="/api/uat-scheduling"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action&&body.action!=="reserve"?"scheduling.manage":"scheduling.book";}
   if(url.pathname==="/api/canonical-bookings")return method==="GET"?"bookings.view":"scheduling.book";
