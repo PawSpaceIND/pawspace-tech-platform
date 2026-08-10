@@ -9,6 +9,69 @@
   --line: #e9e1f4;
   --muted: #6f687b;
   --green: #11885b;
+
+  /* Premium design system tokens — additive; existing tokens above are untouched */
+  --ds-primary-50: #f3edf9;
+  --ds-primary-100: #e4d5f3;
+  --ds-primary-400: #7d35cb;
+  --ds-primary-500: #5d22a8;
+  --ds-primary-600: #4a1b87;
+  --ds-primary-700: #34106f;
+  --ds-primary-900: #1b1231;
+
+  --ds-accent-400: #f8b04a;
+  --ds-accent-500: #f59d19;
+  --ds-accent-600: #d9840a;
+
+  --ds-success-50: #e9faf3;
+  --ds-success-500: #11885b;
+  --ds-success-600: #0d6b46;
+  --ds-warning-50: #fff4df;
+  --ds-warning-500: #d9840a;
+  --ds-warning-600: #a3620a;
+  --ds-danger-50: #fdecec;
+  --ds-danger-500: #c92f3f;
+  --ds-danger-600: #a4232f;
+  --ds-info-50: #eaf1fd;
+  --ds-info-500: #2563c9;
+
+  --ds-surface: #ffffff;
+  --ds-surface-sunken: #f6f2fb;
+  --ds-border: #e9e1f4;
+  --ds-border-strong: #ddd2e5;
+  --ds-text: #1b1231;
+  --ds-text-muted: #6f687b;
+  --ds-text-faint: #8b818f;
+
+  --ds-space-1: 4px;
+  --ds-space-2: 8px;
+  --ds-space-3: 12px;
+  --ds-space-4: 16px;
+  --ds-space-5: 20px;
+  --ds-space-6: 24px;
+  --ds-space-8: 32px;
+  --ds-space-10: 40px;
+  --ds-space-12: 48px;
+
+  --ds-radius-sm: 8px;
+  --ds-radius-md: 14px;
+  --ds-radius-lg: 20px;
+  --ds-radius-xl: 28px;
+  --ds-radius-full: 999px;
+
+  --ds-shadow-sm: 0 2px 8px rgba(27,18,49,.06);
+  --ds-shadow-md: 0 10px 30px rgba(40,17,76,.08);
+  --ds-shadow-lg: 0 24px 60px rgba(40,17,76,.14);
+
+  --ds-text-xs: 11px;
+  --ds-text-sm: 13px;
+  --ds-text-base: 15px;
+  --ds-text-lg: 18px;
+  --ds-text-xl: 22px;
+  --ds-text-2xl: 28px;
+  --ds-text-3xl: 36px;
+
+  --ds-transition: 160ms ease;
 }
 
 * { box-sizing: border-box; }

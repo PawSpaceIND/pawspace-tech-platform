@@ -1,0 +1,54 @@
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; border: 0; border-radius: var(--ds-radius-full); font-weight: 850; letter-spacing: -.01em; cursor: pointer; transition: transform var(--ds-transition), box-shadow var(--ds-transition), background var(--ds-transition), opacity var(--ds-transition); white-space: nowrap; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn:active:not(:disabled) { transform: translateY(1px) scale(.99); }
+
+.btnPrimary { background: linear-gradient(135deg, var(--ds-primary-500), var(--ds-primary-400)); color: #fff; box-shadow: var(--ds-shadow-md); }
+.btnPrimary:hover:not(:disabled) { box-shadow: var(--ds-shadow-lg); }
+
+.btnAccent { background: linear-gradient(135deg, var(--ds-accent-600), var(--ds-accent-400)); color: #2a1600; box-shadow: var(--ds-shadow-md); }
+.btnAccent:hover:not(:disabled) { box-shadow: var(--ds-shadow-lg); }
+
+.btnSecondary { background: var(--ds-surface); color: var(--ds-primary-500); border: 1px solid var(--ds-border-strong); }
+.btnSecondary:hover:not(:disabled) { background: var(--ds-primary-50); }
+
+.btnGhost { background: transparent; color: var(--ds-text-muted); }
+.btnGhost:hover:not(:disabled) { background: var(--ds-surface-sunken); color: var(--ds-text); }
+
+.btnDanger { background: var(--ds-danger-50); color: var(--ds-danger-600); }
+.btnDanger:hover:not(:disabled) { background: #fbdada; }
+
+.sizeSm { padding: 8px 14px; font-size: var(--ds-text-sm); }
+.sizeMd { padding: 12px 20px; font-size: var(--ds-text-base); }
+.sizeLg { padding: 15px 26px; font-size: var(--ds-text-lg); }
+
+.card { background: var(--ds-surface); border: 1px solid var(--ds-border); border-radius: var(--ds-radius-lg); box-shadow: var(--ds-shadow-sm); }
+.cardPadded { padding: var(--ds-space-6); }
+.cardElevated { box-shadow: var(--ds-shadow-md); }
+.cardInteractive { transition: box-shadow var(--ds-transition), transform var(--ds-transition); cursor: pointer; }
+.cardInteractive:hover { box-shadow: var(--ds-shadow-lg); transform: translateY(-2px); }
+
+.badge { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: var(--ds-radius-full); font-size: var(--ds-text-xs); font-weight: 850; letter-spacing: .02em; }
+.badgeSuccess { background: var(--ds-success-50); color: var(--ds-success-600); }
+.badgeWarning { background: var(--ds-warning-50); color: var(--ds-warning-600); }
+.badgeDanger { background: var(--ds-danger-50); color: var(--ds-danger-600); }
+.badgeInfo { background: var(--ds-info-50); color: var(--ds-info-500); }
+.badgeNeutral { background: var(--ds-surface-sunken); color: var(--ds-text-muted); }
+.badgeDot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+
+.statCard { background: var(--ds-surface); border: 1px solid var(--ds-border); border-radius: var(--ds-radius-lg); padding: var(--ds-space-5); box-shadow: var(--ds-shadow-sm); display: flex; flex-direction: column; gap: 6px; }
+.statLabel { font-size: var(--ds-text-xs); font-weight: 850; letter-spacing: .06em; text-transform: uppercase; color: var(--ds-text-faint); }
+.statValue { font-size: var(--ds-text-2xl); font-weight: 900; letter-spacing: -.02em; color: var(--ds-text); }
+.statMeta { font-size: var(--ds-text-sm); color: var(--ds-text-muted); display: flex; align-items: center; gap: 6px; }
+.statTrendUp { color: var(--ds-success-600); font-weight: 850; }
+.statTrendDown { color: var(--ds-danger-600); font-weight: 850; }
+
+.pageHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ds-space-5); flex-wrap: wrap; margin-bottom: var(--ds-space-6); }
+.pageHeaderEyebrow { margin: 0; font-size: var(--ds-text-xs); font-weight: 900; letter-spacing: .14em; text-transform: uppercase; color: var(--ds-primary-500); }
+.pageHeaderTitle { margin: 6px 0 4px; font-size: var(--ds-text-3xl); letter-spacing: -.03em; color: var(--ds-text); }
+.pageHeaderDescription { margin: 0; color: var(--ds-text-muted); font-size: var(--ds-text-base); line-height: 1.6; max-width: 620px; }
+.pageHeaderActions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+
+.emptyState { display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--ds-space-2); padding: var(--ds-space-10) var(--ds-space-6); color: var(--ds-text-muted); }
+.emptyStateIcon { font-size: 34px; opacity: .55; }
+.emptyStateTitle { color: var(--ds-text); font-weight: 850; font-size: var(--ds-text-lg); margin: 4px 0 0; }
+.emptyStateBody { margin: 0; font-size: var(--ds-text-sm); max-width: 360px; }
