@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useEffect,useMemo,useState } from "react";
 import styles from "./booking-lifecycle-panel.module.css";
 
@@ -14,7 +15,7 @@ export default function BookingLifecyclePanel(){
   const visible=useMemo(()=>rows.filter(row=>`${row.id} ${row.customer_name} ${row.provider_name} ${row.service_code} ${row.package_name}`.toLowerCase().includes(query.toLowerCase())),[rows,query]);
   const complete=rows.filter(row=>row.work_order_id&&row.payment_id&&row.schedule_group_id).length;
   return <div className={styles.wrap}>
-    <section className={styles.hero}><div><span>CANONICAL UAT DATABASE</span><h2>One booking ID. Every operating record linked.</h2><p>Customer, pets, booking, schedule group, provider work order and payment are created together. The browser ledger is only a temporary display mirror.</p></div><button onClick={()=>void load()} disabled={loading}>{loading?"Checking…":"Refresh records"}</button></section>
+    <section className={styles.hero}><div><span>CANONICAL UAT DATABASE</span><h2>One booking ID. Every operating record linked.</h2><p>Customer, pets, booking, schedule group, provider work order and payment are created together. The browser ledger is only a temporary display mirror.</p><Link href="/booking-command-center" style={{display:"inline-block",marginTop:8,fontWeight:700}}>Open the full Booking Command Center for deep operational work &rarr;</Link></div><button onClick={()=>void load()} disabled={loading}>{loading?"Checking…":"Refresh records"}</button></section>
     <section className={styles.metrics}>
       <article><span>Persistent bookings</span><strong>{rows.length}</strong><small>Across all four journeys</small></article>
       <article><span>Complete record chains</span><strong>{complete}/{rows.length||0}</strong><small>Schedule + work order + payment</small></article>
