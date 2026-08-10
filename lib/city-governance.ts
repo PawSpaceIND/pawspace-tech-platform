@@ -5,27 +5,27 @@ export type CityLaunchStatus="Draft"|"Pilot"|"Live"|"Paused";
 export type CityLaunchService="Grooming"|"Training"|"Boarding"|"Pet Sitting";
 export type CityServicePrice={enabled:boolean;price:number};
 export type CityLaunchConfig={
-  id:string;city:string;state:string;status:CityLaunchStatus;centre:string;radiusKm:number;pincodes:string;gstIncluded:boolean;
+  id:string;cityCode:string;city:string;state:string;status:CityLaunchStatus;centre:string;radiusKm:number;pincodes:string;gstIncluded:boolean;
   services:Record<CityLaunchService,CityServicePrice>;version:number;updatedBy:string;createdAt:number;updatedAt:number;
 };
-export type CityLaunchConfigInput={id?:string;city:string;state:string;status:CityLaunchStatus;centre:string;radiusKm:number;pincodes:string;gstIncluded:boolean;services:Record<CityLaunchService,CityServicePrice>};
+export type CityLaunchConfigInput={id?:string;cityCode:string;city:string;state:string;status:CityLaunchStatus;centre:string;radiusKm:number;pincodes:string;gstIncluded:boolean;services:Record<CityLaunchService,CityServicePrice>};
 
 const serviceNames:CityLaunchService[]=["Grooming","Training","Boarding","Pet Sitting"];
 const parse=<T,>(value:unknown,fallback:T):T=>{try{return JSON.parse(String(value??""))as T;}catch{return fallback;}};
 
 export async function ensureCityLaunchTables(db:Db){await db.batch([
-  db.prepare("CREATE TABLE IF NOT EXISTS city_launch_configs (id TEXT PRIMARY KEY,city TEXT NOT NULL,state TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'Draft',centre TEXT NOT NULL DEFAULT '',radius_km REAL NOT NULL DEFAULT 15,pincodes TEXT NOT NULL DEFAULT '',gst_included INTEGER NOT NULL DEFAULT 1,services_json TEXT NOT NULL DEFAULT '{}',version INTEGER NOT NULL DEFAULT 1,updated_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+  db.prepare("CREATE TABLE IF NOT EXISTS city_launch_configs (id TEXT PRIMARY KEY,city_code TEXT NOT NULL UNIQUE,city TEXT NOT NULL,state TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'Draft',centre TEXT NOT NULL DEFAULT '',radius_km REAL NOT NULL DEFAULT 15,pincodes TEXT NOT NULL DEFAULT '',gst_included INTEGER NOT NULL DEFAULT 1,services_json TEXT NOT NULL DEFAULT '{}',version INTEGER NOT NULL DEFAULT 1,updated_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_city_launch_status ON city_launch_configs(status)"),
   db.prepare("CREATE TABLE IF NOT EXISTS city_launch_config_audit (id TEXT PRIMARY KEY,city_config_id TEXT NOT NULL,city TEXT NOT NULL,action TEXT NOT NULL,before_json TEXT,after_json TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
 ]);}
 
 export async function seedDefaultCityLaunchConfigs(db:Db){await ensureCityLaunchTables(db);const now=Date.now();
   const services:Record<CityLaunchService,CityServicePrice>={Grooming:{enabled:true,price:1349},Training:{enabled:true,price:3500},Boarding:{enabled:true,price:899},"Pet Sitting":{enabled:true,price:699}};
-  await db.prepare("INSERT OR IGNORE INTO city_launch_configs (id,city,state,status,centre,radius_km,pincodes,gst_included,services_json,version,updated_by,created_at,updated_at) VALUES ('bengaluru','Bengaluru','Karnataka','Live','12.9716, 77.5946',35,'560001–560110',1,?,1,'founder_seed',?,?)").bind(JSON.stringify(services),now,now).run();
+  await db.prepare("INSERT OR IGNORE INTO city_launch_configs (id,city_code,city,state,status,centre,radius_km,pincodes,gst_included,services_json,version,updated_by,created_at,updated_at) VALUES ('bengaluru','blr','Bengaluru','Karnataka','Live','12.9716, 77.5946',35,'560001–560110',1,?,1,'founder_seed',?,?)").bind(JSON.stringify(services),now,now).run();
 }
 
 function rowToConfig(row:Row):CityLaunchConfig{return{
-  id:String(row.id),city:String(row.city),state:String(row.state),status:["Draft","Pilot","Live","Paused"].includes(String(row.status))?String(row.status)as CityLaunchStatus:"Draft",
+  id:String(row.id),cityCode:String(row.city_code||""),city:String(row.city),state:String(row.state),status:["Draft","Pilot","Live","Paused"].includes(String(row.status))?String(row.status)as CityLaunchStatus:"Draft",
   centre:String(row.centre||""),radiusKm:Number(row.radius_km||15),pincodes:String(row.pincodes||""),gstIncluded:Boolean(row.gst_included),
   services:parse<Record<CityLaunchService,CityServicePrice>>(row.services_json,{Grooming:{enabled:false,price:0},Training:{enabled:false,price:0},Boarding:{enabled:false,price:0},"Pet Sitting":{enabled:false,price:0}}),
   version:Number(row.version||1),updatedBy:String(row.updated_by||""),createdAt:Number(row.created_at||0),updatedAt:Number(row.updated_at||0),
@@ -34,6 +34,9 @@ function rowToConfig(row:Row):CityLaunchConfig{return{
 export async function listCityLaunchConfigs(db:Db):Promise<CityLaunchConfig[]>{await seedDefaultCityLaunchConfigs(db);const rows=await db.prepare("SELECT * FROM city_launch_configs ORDER BY created_at ASC").all<Row>();return rows.results.map(rowToConfig);}
 
 function validate(input:CityLaunchConfigInput):string|null{
+  const code=input.cityCode.trim().toLowerCase();
+  if(!code)return "City code is required (short lowercase code used across pricing, tax and coupons, e.g. 'blr')";
+  if(!/^[a-z][a-z0-9]{1,7}$/.test(code))return "City code must be 2-8 lowercase letters/numbers, starting with a letter (e.g. 'blr', 'chn')";
   if(!input.city.trim())return "City name is required";
   if(!input.state.trim())return "State is required";
   if(!["Draft","Pilot","Live","Paused"].includes(input.status))return "Invalid launch status";
@@ -56,13 +59,16 @@ function validate(input:CityLaunchConfigInput):string|null{
 export async function saveCityLaunchConfig(db:Db,input:CityLaunchConfigInput,actorId:string):Promise<CityLaunchConfig>{
   await seedDefaultCityLaunchConfigs(db);
   const problem=validate(input);if(problem)throw new Error(problem);
+  const code=input.cityCode.trim().toLowerCase();
   const now=Date.now();
   const existing=input.id?await db.prepare("SELECT * FROM city_launch_configs WHERE id=?").bind(input.id).first<Row>():null;
   const before=existing?rowToConfig(existing):null;
+  const codeConflict=await db.prepare("SELECT id FROM city_launch_configs WHERE city_code=? AND id!=?").bind(code,input.id??"").first<Row>();
+  if(codeConflict)throw new Error(`City code '${code}' is already used by another city`);
   const id=input.id??`city-${crypto.randomUUID().slice(0,10)}`;
   const version=before?before.version+1:1;
-  await db.prepare("INSERT INTO city_launch_configs (id,city,state,status,centre,radius_km,pincodes,gst_included,services_json,version,updated_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET city=excluded.city,state=excluded.state,status=excluded.status,centre=excluded.centre,radius_km=excluded.radius_km,pincodes=excluded.pincodes,gst_included=excluded.gst_included,services_json=excluded.services_json,version=excluded.version,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
-    .bind(id,input.city.trim(),input.state.trim(),input.status,input.centre.trim(),input.radiusKm,input.pincodes.trim(),input.gstIncluded?1:0,JSON.stringify(input.services),version,actorId,now,now).run();
+  await db.prepare("INSERT INTO city_launch_configs (id,city_code,city,state,status,centre,radius_km,pincodes,gst_included,services_json,version,updated_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET city_code=excluded.city_code,city=excluded.city,state=excluded.state,status=excluded.status,centre=excluded.centre,radius_km=excluded.radius_km,pincodes=excluded.pincodes,gst_included=excluded.gst_included,services_json=excluded.services_json,version=excluded.version,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
+    .bind(id,code,input.city.trim(),input.state.trim(),input.status,input.centre.trim(),input.radiusKm,input.pincodes.trim(),input.gstIncluded?1:0,JSON.stringify(input.services),version,actorId,now,now).run();
   const row=await db.prepare("SELECT * FROM city_launch_configs WHERE id=?").bind(id).first<Row>();
   if(!row)throw new Error("City launch configuration could not be saved");
   const saved=rowToConfig(row);

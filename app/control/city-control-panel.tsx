@@ -11,14 +11,14 @@ const styles = { ...baseStyles, ...offerStyles, ...cityStyles };
 const serviceNames: CityLaunchService[] = ["Grooming", "Training", "Boarding", "Pet Sitting"];
 
 const blankDraft = (): CityLaunchConfigInput => ({
-  city: "", state: "", status: "Draft", centre: "", radiusKm: 15, pincodes: "", gstIncluded: true,
+  cityCode: "", city: "", state: "", status: "Draft", centre: "", radiusKm: 15, pincodes: "", gstIncluded: true,
   services: {
     Grooming: { enabled: true, price: 1349 }, Training: { enabled: true, price: 3500 },
     Boarding: { enabled: true, price: 899 }, "Pet Sitting": { enabled: true, price: 699 },
   },
 });
 const toDraft = (config: CityLaunchConfig): CityLaunchConfigInput => ({
-  id: config.id, city: config.city, state: config.state, status: config.status, centre: config.centre,
+  id: config.id, cityCode: config.cityCode, city: config.city, state: config.state, status: config.status, centre: config.centre,
   radiusKm: config.radiusKm, pincodes: config.pincodes, gstIncluded: config.gstIncluded, services: { ...config.services },
 });
 
@@ -89,11 +89,12 @@ export default function CityControlPanel({ notify }: { notify: (message: string)
       ["Production ready", "NO", "UAT governance only"],
     ].map(item => <article key={item[0]}><span>{item[0]}</span><strong>{item[1]}</strong><small>{item[2]}</small></article>)}</section>
     <section className={styles.cityLayout}>
-      <aside className={styles.cityList}><div className={styles.head}><div><span>CITY DIRECTORY</span><h2>Launch markets</h2></div></div>{cities.map(city => <button key={city.id} className={selectedId === city.id && !creating ? styles.citySelected : ""} onClick={() => choose(city)}><div><strong>{city.city}</strong><small>{city.state} · {city.radiusKm} km geofence</small></div><b>{city.status}</b></button>)}</aside>
+      <aside className={styles.cityList}><div className={styles.head}><div><span>CITY DIRECTORY</span><h2>Launch markets</h2></div></div>{cities.map(city => <button key={city.id} className={selectedId === city.id && !creating ? styles.citySelected : ""} onClick={() => choose(city)}><div><strong>{city.city}</strong><small>{city.cityCode} · {city.state} · {city.radiusKm} km geofence</small></div><b>{city.status}</b></button>)}</aside>
       <section className={styles.cityEditor}>
         <div className={styles.head}><div><span>{creating ? "NEW CITY DRAFT" : "CITY CONFIGURATION"}</span><h2>{creating ? "Add launch city" : selected?.city}</h2></div><b className={styles.testBadge}>No live Maps connection</b></div>
         <div className={styles.cityFields}>
           <label>City<input value={draft.city} placeholder="e.g. Chennai" onChange={e => setDraft({ ...draft, city: e.target.value })} /></label>
+          <label>City code · used across pricing, tax &amp; coupons<input value={draft.cityCode} placeholder="e.g. chn" onChange={e => setDraft({ ...draft, cityCode: e.target.value.toLowerCase() })} /></label>
           <label>State<input value={draft.state} placeholder="e.g. Tamil Nadu" onChange={e => setDraft({ ...draft, state: e.target.value })} /></label>
           <label>Launch status<select value={draft.status} onChange={e => setDraft({ ...draft, status: e.target.value as CityLaunchStatus })}><option>Draft</option><option>Pilot</option><option>Live</option><option>Paused</option></select></label>
           <label>Coverage radius (km)<input type="number" min="1" value={draft.radiusKm} onChange={e => setDraft({ ...draft, radiusKm: Number(e.target.value) })} /></label>

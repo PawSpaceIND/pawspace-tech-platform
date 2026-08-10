@@ -3,13 +3,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { loadCouponCampaigns, saveGovernedCoupon } from "../../lib/coupon-governance-client";
 import type { CouponCampaign, CouponChannel, CouponCustomerKind, CouponService } from "../../lib/coupon-governance";
+import { loadCityLaunchConfigs } from "../../lib/city-governance-client";
 import baseStyles from "./control.module.css";
 import offerStyles from "./offers-control-panel.module.css";
 
 const styles = { ...baseStyles, ...offerStyles };
 const money = (value:number) => `₹${value.toLocaleString("en-IN")}`;
 const serviceOptions:{id:CouponService;label:string}[]=[{id:"grooming",label:"Grooming"},{id:"dog_training",label:"Dog Training"},{id:"boarding",label:"Boarding"},{id:"pet_sitting",label:"Pet Sitting"}];
-const cityOptions=[{id:"blr",label:"Bengaluru"}];
 const channelOptions:{id:CouponChannel;label:string}[]=[{id:"customer_app",label:"Customer app"},{id:"website",label:"Website"},{id:"assisted_staff",label:"CRM assisted"},{id:"whatsapp",label:"WhatsApp"},{id:"partner_app",label:"Partner app"}];
 const customerOptions:{id:CouponCustomerKind;label:string}[]=[{id:"new",label:"New"},{id:"existing",label:"Existing"},{id:"subscriber",label:"Subscriber"}];
 type GovernedCampaign=CouponCampaign&{used:number};
@@ -22,8 +22,10 @@ const toggle=<T,>(items:T[],value:T)=>items.includes(value)?items.filter(item=>i
 
 export default function CouponsControlPanel({notify}:{notify:(message:string)=>void}){
   const [campaigns,setCampaigns]=useState<GovernedCampaign[]>([]),[query,setQuery]=useState(""),[status,setStatus]=useState<"all"|"active"|"paused">("all"),[draft,setDraft]=useState<Draft>(()=>blankCoupon()),[loading,setLoading]=useState(true),[saving,setSaving]=useState(false);
+  const [cityOptions,setCityOptions]=useState<{id:string;label:string}[]>([{id:"blr",label:"Bengaluru"}]);
   const refresh=async()=>{setLoading(true);try{setCampaigns(await loadCouponCampaigns());}catch(error){notify(error instanceof Error?error.message:"Unable to load governed coupons");}finally{setLoading(false);}};
   useEffect(()=>{let active=true;void loadCouponCampaigns().then(value=>{if(active){setCampaigns(value);setLoading(false);}}).catch(()=>{if(active)setLoading(false);});return()=>{active=false};},[]);
+  useEffect(()=>{let active=true;void loadCityLaunchConfigs().then(cities=>{if(active&&cities.length)setCityOptions(cities.map(city=>({id:city.cityCode,label:city.city})));}).catch(()=>{});return()=>{active=false};},[]);
   const filtered=useMemo(()=>campaigns.filter(c=>(!query||`${c.code} ${c.name}`.toLowerCase().includes(query.toLowerCase()))&&(status==="all"||c.status===status)),[campaigns,query,status]);
   const activeCount=campaigns.filter(c=>c.status==="active").length,redemptions=campaigns.reduce((sum,c)=>sum+c.used,0),crossSellCount=campaigns.filter(c=>c.crossSellFromServices.length).length;
   const save=async()=>{const code=draft.code.trim().toUpperCase().replace(/\s+/g,"");if(!code||!draft.name.trim())return notify("Add a coupon code and campaign name");if(!draft.serviceCodes.length||!draft.cityIds.length||!draft.channels.length||!draft.customerKinds.length)return notify("Select service, city, channel and customer eligibility");setSaving(true);try{await saveGovernedCoupon({...draft,code,name:draft.name.trim()});notify(draft.id?"Governed UAT coupon updated":"Governed UAT coupon created");setDraft(blankCoupon());await refresh();}catch(error){notify(error instanceof Error?error.message:"Unable to save governed coupon");}finally{setSaving(false);}};
