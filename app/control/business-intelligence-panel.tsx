@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import css from "./business-intelligence.module.css";
+import { TrendChart } from "../components/ui";
 
 type View = "Overview" | "Verticals" | "Accounts" | "Customers" | "Subscriptions" | "Reports";
 type ReportFormat = "CSV" | "Excel" | "PDF" | "JSON";
@@ -189,7 +190,7 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
         <article><span>Old-customer opportunity</span><strong>742</strong><small>Expired / dormant high-value profiles</small></article>
       </section>
       <section className={css.grid}>
-        <div className={css.panel}><header><div><span>VERTICAL PERFORMANCE</span><h3>Revenue and contribution</h3><p>GST-inclusive revenue; contribution before fixed overhead.</p></div><button onClick={() => setView("Verticals")}>Drill down →</button></header><div className={css.barChart}>{shownVerticals.map(item => <article key={item.name}><div><strong>{item.name}</strong><span>{money(item.revenue)} · {item.margin}% margin</span></div><i><b style={{ width: `${Math.max(8, item.revenue / Math.max(...shownVerticals.map(v => v.revenue)) * 100)}%` }} /></i></article>)}</div></div>
+        <div className={css.panel}><header><div><span>VERTICAL PERFORMANCE</span><h3>Revenue and contribution</h3><p>GST-inclusive revenue; contribution before fixed overhead.</p></div><button onClick={() => setView("Verticals")}>Drill down →</button></header><TrendChart type="bar" data={shownVerticals} xKey="name" series={[{ key: "revenue", label: "Revenue", color: "#5d22a8" }]} valueFormatter={(value) => money(value)} height={240} /></div>
         <aside className={css.panel}><header><div><span>ACTION CENTRE</span><h3>What needs attention</h3></div></header>{[
           ["Collections", "₹11.6L pending or unmatched", "Accounts"], ["Renewals", "128 plans due in seven days", "Subscriptions"], ["Win-back", "214 high-value dormant customers", "Customers"], ["Margin", "Boarding below 38% target", "Verticals"], ["Reports", "GST register due 5 Aug", "Reports"],
         ].map(item => <button className={css.action} key={item[0]} onClick={() => setView(item[2] as View)}><i>{item[0].slice(0, 1)}</i><span><strong>{item[0]}</strong><small>{item[1]}</small></span><b>Open →</b></button>)}</aside>
