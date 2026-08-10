@@ -3,6 +3,7 @@ type Row=Record<string,unknown>;
 
 import { monthlyPetrolAllowance } from "./provider-daily-travel";
 import { monthlySpecialIncentiveTotal } from "./employee-recognition-incentives";
+import { ensureFieldProductivityTables } from "./field-productivity";
 
 const text=(v:unknown)=>String(v??"").trim();
 const money=(v:unknown)=>Math.round(Number(v||0)*100)/100;
@@ -10,7 +11,9 @@ const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
 
 export type GroomerBracket="team"|"single";
 
-export async function ensureGroomingIncentiveTables(db:Db){await db.batch([
+export async function ensureGroomingIncentiveTables(db:Db){
+ await ensureFieldProductivityTables(db);
+ await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS groomer_incentive_brackets (id TEXT PRIMARY KEY,head_groomer_id TEXT NOT NULL,bracket TEXT NOT NULL,helper_id TEXT,effective_from TEXT NOT NULL,effective_until TEXT,reason TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
  db.prepare("CREATE INDEX IF NOT EXISTS idx_groomer_bracket_head ON groomer_incentive_brackets(head_groomer_id,effective_from)"),
  db.prepare("CREATE TABLE IF NOT EXISTS helper_daily_attendance (id TEXT PRIMARY KEY,helper_id TEXT NOT NULL,attendance_date TEXT NOT NULL,status TEXT NOT NULL,recorded_by TEXT NOT NULL,recorded_at INTEGER NOT NULL,UNIQUE(helper_id,attendance_date))"),
