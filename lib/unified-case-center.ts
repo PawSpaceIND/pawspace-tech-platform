@@ -5,7 +5,6 @@ export type CaseSeverity="low"|"medium"|"high"|"critical";
 export type CaseStatus="open"|"in_progress"|"waiting"|"resolved"|"closed";
 const text=(v:unknown)=>String(v??"").trim();
 const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
-const json=<T>(v:unknown,f:T):T=>{try{return JSON.parse(String(v??"")) as T}catch{return f}};
 const positive=(v:unknown,n:string)=>{const x=Number(v);if(!Number.isInteger(x)||x<1)throw new Error(`${n} must be a positive integer`);return x};
 
 export async function ensureUnifiedCaseTables(db:Db){await db.batch([

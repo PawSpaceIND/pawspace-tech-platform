@@ -1,5 +1,5 @@
 import{authError,authorize,securityAudit}from"../../../lib/server-auth";
-import{ensureProviderCapacityTables,seedProviderCapacityDefaults}from"../../../lib/provider-capacity-governance";
+import{seedProviderCapacityDefaults}from"../../../lib/provider-capacity-governance";
 
 type Row=Record<string,unknown>;
 const json=(value:unknown,status=200)=>Response.json(value,{status});

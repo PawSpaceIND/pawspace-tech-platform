@@ -1,5 +1,5 @@
 "use client";
-/* eslint-disable @next/next/no-img-element */
+/* eslint-disable react-hooks/exhaustive-deps */
 import Link from"next/link";
 import{useEffect,useMemo,useState}from"react";
 import styles from"./partner-mobile.module.css";

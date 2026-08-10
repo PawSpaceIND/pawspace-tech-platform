@@ -1,5 +1,5 @@
 "use client";
-
+/* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
 import {useEffect,useMemo,useState} from "react";
 import {loadBoardingCommercial,type BoardingHost} from "../../lib/boarding-commercial-client";
