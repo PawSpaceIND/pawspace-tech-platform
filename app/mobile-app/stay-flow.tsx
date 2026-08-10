@@ -191,7 +191,12 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
     [couponCode, setCouponCode] = useState(""),
     [boardingQuote, setBoardingQuote] = useState<BoardingQuote | null>(null),
     [chatOpen, setChatOpen] = useState(false),
-    [view, setView] = useState<View>("stay");
+    [view, setView] = useState<View>("stay"),
+    [toast, setToast] = useState("");
+  const flash = (message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(""), 2600);
+  };
   const selectedSpecies = [...new Set(selectedPets.map(name => pets.find(pet => pet.name === name)?.species).filter((value): value is string => Boolean(value)))];
   const boardingHostQueryKey = `${start}|${end}|${careWindow}|${selectedPets.slice().sort().join(",")}`;
   const caregivers = mode === "boarding" ? (boardingHostWindowKey === boardingHostQueryKey ? boardingHosts : []) : sitters;
@@ -300,19 +305,23 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
   };
   if (confirmed)
     return (
-      <LiveStay
-        bookingId={bookingId}
-        start={start}
-        end={end}
-        nights={nights}
-        mode={mode}
-        caregiver={caregiver}
-        pets={selectedPets}
-        total={total}
-        taxi={taxi}
-        view={view}
-        setView={setView}
-      />
+      <>
+        {toast && <div className={styles.toast}>{toast}</div>}
+        <LiveStay
+          bookingId={bookingId}
+          start={start}
+          end={end}
+          nights={nights}
+          mode={mode}
+          caregiver={caregiver}
+          pets={selectedPets}
+          total={total}
+          taxi={taxi}
+          view={view}
+          setView={setView}
+          flash={flash}
+        />
+      </>
     );
   return (
     <section className={styles.flow}>
@@ -422,7 +431,7 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
                 <em>{selectedPets.includes(p.name) ? "✓" : "＋"}</em>
               </button>
             ))}
-            <button className={styles.addPet}>
+            <button className={styles.addPet} onClick={() => flash("Add another pet is managed from My PawSpace \u2192 My Pets.")}>
               <i>＋</i>
               <span>
                 <b>Add another pet</b>
@@ -574,7 +583,7 @@ export default function StayFlow({ mode: initialMode }: { mode: Mode }) {
               <header><b>Chat with {caregiver.name}</b><span>Numbers stay masked</span></header>
               <p><b>{caregiver.name.split(" ")[0]}:</b> I can support medication, three walks and the one-hour play routine.</p>
               <p><b>You:</b> Can you also arrange pickup and share a flexible all-inclusive price?</p>
-              <label><input placeholder="Type a message" /><button>Send</button></label>
+              <label><input placeholder="Type a message" /><button onClick={() => flash("Live masked chat is not connected yet in UAT.")}>Send</button></label>
             </article>
           )}
           {profileOpen && (
@@ -1108,6 +1117,7 @@ function LiveStay({
   taxi,
   view,
   setView,
+  flash,
 }: {
   bookingId: string;
   start: string;
@@ -1120,6 +1130,7 @@ function LiveStay({
   taxi: boolean;
   view: View;
   setView: (v: View) => void;
+  flash: (message: string) => void;
 }) {
   return (
     <section className={styles.flow}>
@@ -1159,7 +1170,7 @@ function LiveStay({
               Pickup window 7:00–10:00 AM · live tracking starts on arrival
             </span>
           </div>
-          <button>Track</button>
+          <button onClick={() => flash("Live Pet Taxi tracking starts once the driver arrives. UAT does not simulate live GPS.")}>Track</button>
         </article>
       )}
       <div className={styles.tabs}>
@@ -1192,8 +1203,8 @@ function LiveStay({
               reminders.
             </p>
             <div>
-              <button>Reschedule</button>
-              <button>Secure chat</button>
+              <button onClick={() => flash("Reschedule request logged. UAT does not update the caregiver's live calendar.")}>Reschedule</button>
+              <button onClick={() => flash(`Opening secure chat with ${caregiver.name.split(" ")[0]}. UAT does not deliver a live message yet.`)}>Secure chat</button>
             </div>
           </article>
           <article className={styles.person}>
@@ -1205,7 +1216,7 @@ function LiveStay({
               </b>
               <small>{caregiver.area} · identity and background verified</small>
             </div>
-            <button>Profile</button>
+            <button onClick={() => flash(`Opening ${caregiver.name.split(" ")[0]}'s full profile.`)}>Profile</button>
           </article>
           <article className={styles.rules}>
             <b>Change of plans?</b>
@@ -1251,7 +1262,7 @@ function LiveStay({
               </article>
             ))}
           </div>
-          <button className={styles.primary}>
+          <button className={styles.primary} onClick={() => flash(`Opening secure chat with ${caregiver.name.split(" ")[0]}. UAT does not deliver a live message yet.`)}>
             Message {caregiver.name.split(" ")[0]}
           </button>
         </>
@@ -1271,16 +1282,16 @@ function LiveStay({
             </div>
           </article>
           <div className={styles.safetyActions}>
-            <button>
+            <button onClick={() => flash("Care Desk notified about a pet health concern. In production this connects you to a live agent within minutes; UAT does not place a real call.")}>
               ⚕ Pet health concern<small>Connect Care Desk</small>
             </button>
-            <button>
+            <button onClick={() => flash("Priority ticket logged: unable to reach caregiver. In production this pages PawSpace Operations immediately; UAT does not send a live alert.")}>
               ! Cannot reach caregiver<small>Open priority ticket</small>
             </button>
-            <button>
+            <button onClick={() => flash("Early pickup request logged for coordination with your caregiver. UAT does not send a live message.")}>
               ↻ Need early pickup<small>Coordinate safely</small>
             </button>
-            <button>
+            <button onClick={() => flash("Payment/refund query logged for Finance review. UAT does not open a live case yet.")}>
               ₹ Payment or refund<small>Track resolution</small>
             </button>
           </div>

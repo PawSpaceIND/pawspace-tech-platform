@@ -1,3 +1,4 @@
+import { useState } from "react";
 import styles from "./provider-tracking-card.module.css";
 
 type ProviderRole = "Groomer" | "Trainer" | "Sitter";
@@ -11,8 +12,14 @@ export default function ProviderTrackingCard({
   name: string;
   eta?: string;
 }) {
+  const [toast, setToast] = useState("");
+  const flash = (message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(""), 2600);
+  };
   return (
     <article className={styles.card} data-provider-tracking={role.toLowerCase()}>
+      {toast && <div className={styles.toast}>{toast}</div>}
       <div className={styles.map} aria-label={`${role} live GPS route preview`}>
         <span>A</span>
         <i>{role === "Groomer" ? "✦" : role === "Trainer" ? "⌁" : "♡"}</i>
@@ -34,9 +41,9 @@ export default function ProviderTrackingCard({
         </em>
       </div>
       <div className={styles.actions}>
-        <button>Open live route</button>
-        <button>Message {role.toLowerCase()}</button>
-        <button className={styles.help}>Safety help</button>
+        <button onClick={() => flash("Live route map is not connected in UAT yet.")}>Open live route</button>
+        <button onClick={() => flash(`Opening secure chat with your ${role.toLowerCase()}. UAT does not deliver a live message yet.`)}>Message {role.toLowerCase()}</button>
+        <button className={styles.help} onClick={() => flash("Safety help logged. In production this connects you to PawSpace Ops immediately.")}>Safety help</button>
       </div>
     </article>
   );

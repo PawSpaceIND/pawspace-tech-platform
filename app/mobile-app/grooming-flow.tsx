@@ -259,7 +259,12 @@ export default function GroomingFlow() {
     [bookedId, setBookedId] = useState(""),
     [scheduling, setScheduling] = useState(false),
     [scheduleError, setScheduleError] = useState(""),
-    [view, setView] = useState("status");
+    [view, setView] = useState("status"),
+    [toast, setToast] = useState("");
+  const flash = (message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(""), 2600);
+  };
   const list = packages[type],
     pack = list.find((p) => p.id === packId) || list[0],
     sub = subs.find((s) => s.id === plan),
@@ -322,6 +327,7 @@ export default function GroomingFlow() {
   if (done)
     return (
       <section className={styles.flow}>
+        {toast && <div className={styles.toast}>{toast}</div>}
         <article className={styles.success}>
           <i>✓</i>
           <small>BOOKING CONFIRMED · {bookedId}</small>
@@ -350,7 +356,7 @@ export default function GroomingFlow() {
                 <b>Arun R. · 4.9 ★</b>
                 <small>Identity verified · 842 completed services</small>
               </div>
-              <button>Track ETA</button>
+              <button onClick={() => flash("Live ETA tracking is shown below in the route card.")}>Track ETA</button>
             </article>
             <ProviderTrackingCard role="Groomer" name="Arun R." eta="14 min" />
             <div className={styles.timeline}>
@@ -372,10 +378,10 @@ export default function GroomingFlow() {
         {view === "photos" && (
           <>
             <div className={styles.photos}>
-              <button>
+              <button onClick={() => flash("Photo upload is not connected in UAT yet.")}>
                 ＋<span>Before-service photos</span>
               </button>
-              <button>
+              <button onClick={() => flash("Photo upload is not connected in UAT yet.")}>
                 ＋<span>After-service photos</span>
               </button>
             </div>
@@ -404,6 +410,7 @@ export default function GroomingFlow() {
     );
   return (
     <section className={styles.flow}>
+      {toast && <div className={styles.toast}>{toast}</div>}
       <div className={styles.steps}>
         {[1, 2, 3, 4].map((n) => (
           <span key={n} className={step >= n ? styles.active : ""}>
@@ -456,7 +463,7 @@ export default function GroomingFlow() {
             </span>
             <em>✓</em>
           </article>
-          <button className={styles.add}>＋ Add or edit pet details</button>
+          <button className={styles.add} onClick={() => flash("Add or edit pet details is managed from My PawSpace \u2192 My Pets.")}>＋ Add or edit pet details</button>
           <p className={styles.hint}>
             Book 1–4 pets. More than 4 opens a PawSpace team enquiry.
           </p>
