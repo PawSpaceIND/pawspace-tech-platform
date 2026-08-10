@@ -5,17 +5,22 @@ const text=(v:unknown)=>String(v??"").trim();
 const money=(v:unknown)=>Math.round(Number(v||0)*100)/100;
 const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
 
-export type SalesVertical="training"|"grooming_outbound"|"grooming_inbound";
+export type SalesVertical="training"|"grooming_outbound"|"grooming_inbound"|"grooming_both";
 
 const dailyTiers:Record<SalesVertical,Array<{target:number;incentive:number}>>={
  training:[{target:25000,incentive:500},{target:36000,incentive:1000},{target:48000,incentive:1500},{target:60000,incentive:2000},{target:75000,incentive:2500}],
  grooming_outbound:[{target:20000,incentive:1000},{target:35000,incentive:1500},{target:50000,incentive:2500},{target:65000,incentive:3500}],
  grooming_inbound:[{target:25000,incentive:1000},{target:40000,incentive:1500},{target:55000,incentive:2500},{target:70000,incentive:3500}],
+ // Only "pure outbound" allocation gets the lower 20k ladder. An employee allocated to BOTH inbound
+ // and outbound defaults to the same 25k-start ladder as pure inbound, per explicit instruction -
+ // deliberately not a blended/dynamic ladder, to keep this simple rather than guess at a formula.
+ grooming_both:[{target:25000,incentive:1000},{target:40000,incentive:1500},{target:55000,incentive:2500},{target:70000,incentive:3500}],
 };
 const monthlyTiers:Record<SalesVertical,Array<{target:number;incentive:number}>>={
  training:[{target:300000,incentive:4500},{target:650000,incentive:8500},{target:750000,incentive:5000},{target:900000,incentive:6000}],
  grooming_outbound:[{target:250000,incentive:4500},{target:500000,incentive:8500},{target:600000,incentive:5000},{target:700000,incentive:6000}],
  grooming_inbound:[{target:300000,incentive:4500},{target:600000,incentive:8500},{target:600000,incentive:5000},{target:700000,incentive:6000}],
+ grooming_both:[{target:300000,incentive:4500},{target:600000,incentive:8500},{target:600000,incentive:5000},{target:700000,incentive:6000}],
 };
 const blitzMultiplier=2;
 const crossSellServiceCodes=["grooming","dog_training","boarding","pet_sitting"];
