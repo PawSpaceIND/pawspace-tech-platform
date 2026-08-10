@@ -80,6 +80,11 @@ export default function Home() {
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
   const [showOtp, setShowOtp] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+  const [toast, setToast] = useState("");
+  const flash = (message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(""), 2400);
+  };
   const [confirmed, setConfirmed] = useState(false);
   const [phone, setPhone] = useState("");
   const [serviceAddress, setServiceAddress] = useState("");
@@ -176,6 +181,7 @@ export default function Home() {
   if (confirmed) {
     return (
       <main className="app-shell confirmation-shell">
+        {toast && <p className="toast-pill">✓ {toast}</p>}
         <header className="topbar compact"><img src="/assets/pawspace-logo.jpeg" alt="PawSpace" /><span className="secure-pill">✓ Booking confirmed</span></header>
         <TestSyncPanel surface="customer" />
         <section className="confirmation-card">
@@ -186,7 +192,7 @@ export default function Home() {
           <div className="groomer-card">
             <div className="avatar">AR</div>
             <div><strong>Arun R.</strong><span>4.9 ★ · 1,248 services · 4 years with PawSpace</span></div>
-            <button type="button">Message</button>
+            <button type="button" onClick={() => flash("Opening secure chat with Arun R. Live messaging is not connected in this preview.")}>Message</button>
           </div>
           <div className="booking-summary">
             <div><span>Package</span><strong>{selectedPackage.name}</strong></div>
@@ -203,7 +209,7 @@ export default function Home() {
               <button className={trainingLead ? "secondary-button selected" : "primary-button"} onClick={() => setTrainingLead(true)}>{trainingLead ? "✓ Consultation requested" : "Get a free consultation"}</button>
             </div>
           )}
-          <div className="confirmation-actions"><button className="secondary-button">Add to calendar</button><button className="primary-button" onClick={() => setConfirmed(false)}>View booking</button></div>
+          <div className="confirmation-actions"><button className="secondary-button" onClick={() => flash("Calendar download is not connected in this preview.")}>Add to calendar</button><button className="primary-button" onClick={() => setConfirmed(false)}>View booking</button></div>
         </section>
       </main>
     );
@@ -211,6 +217,7 @@ export default function Home() {
 
   return (
     <main className="app-shell">
+      {toast && <p className="toast-pill">✓ {toast}</p>}
       <header className="topbar">
         <img src="/assets/pawspace-logo.jpeg" alt="PawSpace" />
         <div className="location"><span>Doorstep grooming in</span><strong>📍 Bengaluru</strong></div>
@@ -295,7 +302,7 @@ export default function Home() {
                   <span className="pet-avatar">{pet.type === "dog" ? "🐶" : "🐱"}</span><span><strong>{pet.name}</strong><small>{pet.breed} · {pet.age}</small></span><i>{checked ? "✓" : ""}</i>
                 </button>;
               })}
-              <button type="button" className="add-pet-option"><span className="pet-avatar">＋</span><span><strong>Add a new pet</strong><small>Create another pet profile</small></span><i>→</i></button>
+              <button type="button" className="add-pet-option" onClick={() => flash("Add a new pet is managed from My PawSpace \u2192 My Pets.")}><span className="pet-avatar">＋</span><span><strong>Add a new pet</strong><small>Create another pet profile</small></span><i>→</i></button>
             </div>}
             {petSelectionError && <p className="field-error">{petSelectionError}</p>}
           </div>
