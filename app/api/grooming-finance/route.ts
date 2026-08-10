@@ -1,5 +1,6 @@
-import{authError,authorize,database}from"../../../lib/server-auth";
+import{authError,authorize,database,securityAudit}from"../../../lib/server-auth";
 import{ensurePaymentReconciliationTables}from"../../../lib/grooming-payment-reconciliation";
+import{issueGroomingInvoice,saveGroomingTaxPolicy}from"../../../lib/grooming-invoice";
 
 type Row=Record<string,unknown>;
 
@@ -36,3 +37,16 @@ export async function GET(request:Request){try{
   const recentExceptions=await db.prepare("SELECT id,booking_id,payment_id,event_id,exception_type,severity,status,detail_json,created_at FROM payment_reconciliation_exceptions WHERE status='open' ORDER BY created_at DESC LIMIT 50").all<Row>();
   return Response.json({source:"canonical Grooming booking/payment/invoice/reconciliation ledger",summary,items,reconciliationExceptions:recentExceptions.results});
 }catch(error){return authError(error,"Unable to load Grooming finance ledger");}}
+
+export async function POST(request:Request){try{
+  const body=await request.json() as Record<string,unknown>;
+  const actor=await authorize(request,"finance.manage");
+  const db=await database();await ensureTables(db);
+  const action=String(body.action||""),reason=String(body.reason||"");
+  let data:unknown;
+  if(action==="save_tax_policy")data=await saveGroomingTaxPolicy(db,{cityId:String(body.cityId||"blr"),taxMode:String(body.taxMode||"") as"inclusive"|"exclusive",taxRate:Number(body.taxRate),effectiveFrom:String(body.effectiveFrom||new Date().toISOString().slice(0,10)),reason,actorId:actor.email});
+  else if(action==="issue_invoice")data=await issueGroomingInvoice(db,{bookingId:String(body.bookingId||""),reason,actorId:actor.email});
+  else return Response.json({error:"Unsupported Grooming finance action"},{status:400});
+  await securityAudit(db,actor,`grooming.finance.${action}`,"grooming_finance",String(body.bookingId||body.cityId||"blr"),"completed",{liveMoney:false,executionMode:"sandbox_not_connected"});
+  return Response.json({data});
+}catch(error){return authError(error,"Unable to update Grooming finance ledger");}}
