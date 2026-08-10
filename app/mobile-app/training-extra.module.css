@@ -244,7 +244,8 @@
   gap: 5px;
   margin-top: 8px;
 }
-.crossSell button {
+.crossSell button,
+.crossSell a {
   border: 0;
   background: #eee5f8;
   color: #6422a8;
@@ -252,4 +253,8 @@
   padding: 8px 3px;
   font-size: 7px;
   font-weight: 900;
+  text-decoration: none;
+  text-align: center;
+  display: block;
 }
+.toast{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:9;background:#281140;color:#fff;padding:11px 16px;border-radius:10px;font-size:10px;box-shadow:0 10px 28px #0005;max-width:320px;text-align:center}
