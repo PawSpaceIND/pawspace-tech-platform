@@ -5,7 +5,7 @@ const source=async path=>readFile(new URL("../"+path,import.meta.url),"utf8");
 
 test("unified communications uses canonical threads outbox delivery events and dead letters",async()=>{
  const engine=await source("lib/communication-engine.ts");
- for(const table of["communication_policies","communication_threads","communication_participants","communication_messages","communication_outbox","communication_delivery_events","communication_dead_letters","communication_preferences"])assert.match(engine,new RegExp(table));
+ for(const table of["communication_policies","communication_threads","communication_participants","communication_messages","communication_outbox","communication_message_delivery_events","communication_dead_letters","communication_preferences"])assert.match(engine,new RegExp(table));
  assert.match(engine,/idempotency_key TEXT NOT NULL UNIQUE/);
  assert.match(engine,/UNIQUE\(provider,event_id\)/);
  assert.match(engine,/marketing_opt_out|marketing_consent_unknown/);
