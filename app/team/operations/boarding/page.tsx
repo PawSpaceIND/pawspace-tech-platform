@@ -1,6 +1,7 @@
 "use client";
 
 import Link from"next/link";
+import{StatCard}from"../../../components/ui";
 import{useEffect,useMemo,useState}from"react";
 import{loadBoardingOps,updateBoardingOps,type BoardingOpsSnapshot,type BoardingOpsStay}from"../../../../lib/boarding-ops-client";
 
@@ -17,7 +18,7 @@ export default function BoardingOperationsPage(){
  const run=async(action:"assign_replacement"|"close_recovery"|"add_note",providerId?:string)=>{if(!selected)return;setBusy(action+(providerId||""));setError("");setMessage("");try{const result=await updateBoardingOps({stayId:selected.id,action,idempotencyKey:`boarding:${selected.id}:ops:${action}:${providerId||crypto.randomUUID()}`,providerId,reason,note});setMessage(`${label(action)} · ${label(result.status)}`);if(action==="add_note")setNote("");await load();}catch(problem){setError(problem instanceof Error?problem.message:"Boarding Operations action failed");}finally{setBusy("");}};
  return <main style={{maxWidth:1480,margin:"0 auto",padding:24,fontFamily:"system-ui",display:"grid",gap:18}}>
   <header style={{display:"flex",justifyContent:"space-between",gap:16,alignItems:"flex-start"}}><div><Link href="/team/operations/bookings">← Booking Command Center</Link><p style={{fontSize:12,fontWeight:800,letterSpacing:1}}>TEAM OS · BOARDING · UAT CONTROL</p><h1 style={{margin:"4px 0"}}>Boarding Operations exception queue</h1><p>One canonical queue for host recovery, care incidents, finance review, proof/media blocks and stay timing exceptions.</p></div><button onClick={()=>void load()}>↻ Refresh</button></header>
-  {snapshot&&<section style={{display:"grid",gridTemplateColumns:"repeat(7,minmax(120px,1fr))",gap:10}}>{[["Total",snapshot.metrics.total],["Needs attention",snapshot.metrics.needsAttention],["Clear",snapshot.metrics.clear],["Recovery",snapshot.metrics.recovery],["Open incidents",snapshot.metrics.openIncidents],["Finance review",snapshot.metrics.financeReview],["Media blocked",snapshot.metrics.mediaBlocked]].map(([name,value])=><article key={String(name)} style={{border:"1px solid #ddd",borderRadius:14,padding:14}}><small>{name}</small><strong style={{display:"block",fontSize:24}}>{value}</strong></article>)}</section>}
+  {snapshot&&<section style={{display:"grid",gridTemplateColumns:"repeat(7,minmax(120px,1fr))",gap:10}}>{[["Total",snapshot.metrics.total],["Needs attention",snapshot.metrics.needsAttention],["Clear",snapshot.metrics.clear],["Recovery",snapshot.metrics.recovery],["Open incidents",snapshot.metrics.openIncidents],["Finance review",snapshot.metrics.financeReview],["Media blocked",snapshot.metrics.mediaBlocked]].map(([name,value])=><StatCard key={String(name)} label={String(name)} value={value as number} />)}</section>}
   <section style={{display:"flex",gap:8}}>{(["attention","all","clear"] as const).map(item=><button key={item} onClick={()=>setFilter(item)} disabled={filter===item}>{label(item)}</button>)}</section>
   {loading&&<p>Loading canonical Boarding exception state…</p>}{error&&<p role="alert">{error}</p>}{message&&<p>{message}</p>}
   {!loading&&snapshot&&<section style={{display:"grid",gridTemplateColumns:"minmax(360px,.8fr) minmax(560px,1.2fr)",gap:18,alignItems:"start"}}>
