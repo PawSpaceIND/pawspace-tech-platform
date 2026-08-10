@@ -11,4 +11,40 @@ const linkStyle = {
 
 export default function PartnerUatHub() {
   return (
-    <main style={{ padding: 24, maxWidth: 1200, margin: "0 auto", font
+    <main style={{ padding: 24, maxWidth: 1200, margin: "0 auto", fontFamily: "system-ui" }}>
+      <header>
+        <small>PAWSPACE PARTNER · CANONICAL UAT</small>
+        <h1>Partner UAT hub</h1>
+        <p>
+          Provider onboarding and assigned work below use canonical server-owned state. This surface does not infer verification, approval, activation, marketplace availability, or booking eligibility from prototype data.
+        </p>
+        <p>
+          <strong>PRODUCTION READY = FALSE.</strong> Marketplace live: No · Order eligible: No · Live money: No.
+        </p>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 16 }}>
+          <Link
+            href="/partner-mobile"
+            style={{ ...linkStyle, background: "#5b21b6", color: "white" }}
+          >
+            Open Partner Mobile App →
+          </Link>
+          <Link
+            href="/partner/onboarding"
+            style={{ ...linkStyle, border: "1px solid #d8cbea", color: "#5b21b6" }}
+          >
+            Open canonical provider onboarding →
+          </Link>
+        </div>
+      </header>
+
+      <section style={{ marginTop: 28 }}>
+        <small>IDENTITY-SCOPED PROVIDER WORK</small>
+        <h2>Canonical Grooming assignments</h2>
+        <p>
+          Work orders resolve from the verified provider identity session. A provider cannot select another provider ID in the browser.
+        </p>
+        <CanonicalGroomingJobs />
+      </section>
+    </main>
+  );
+}
