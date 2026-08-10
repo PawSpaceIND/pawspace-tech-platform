@@ -194,6 +194,18 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .pet-dropdown .selected i { border-color: var(--purple); background: var(--purple); }
 .pet-dropdown .add-pet-option { margin-top: 5px; border-top: 1px solid var(--line); border-radius: 0 0 11px 11px; color: var(--purple); }
 .field-error { margin: 6px 0 0; color: #bd1f33; font-size: 11px; font-weight: 750; }
+.address-field { position: relative; }
+.address-input-row { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
+.address-input-row input { flex: 1; margin-top: 0; }
+.use-location-btn { flex: 0 0 auto; width: 44px; height: 44px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 12px; background: white; color: var(--purple); font-size: 16px; }
+.use-location-btn:disabled { opacity: .5; }
+.address-suggestions { position: absolute; z-index: 8; left: 0; right: 0; top: 100%; margin: 5px 0 0; padding: 7px; border: 1px solid var(--line); border-radius: 15px; background: white; box-shadow: 0 18px 45px rgba(32,9,67,.16); list-style: none; }
+.address-suggestions li { margin: 0; }
+.address-suggestions button { width: 100%; display: block; padding: 10px; border: 0; border-radius: 11px; background: transparent; color: var(--ink); text-align: left; }
+.address-suggestions button:hover { background: #f6effc; }
+.address-suggestions b { display: block; font-size: 13px; }
+.address-suggestions small { display: block; margin-top: 2px; color: var(--muted); font-size: 11px; }
+.address-note { display: block; margin-top: 6px; color: var(--muted); font-size: 11px; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .details-form fieldset { border: 0; padding: 0; margin: 20px 0 0; }
 .details-form legend { font-size: 12px; font-weight: 900; margin-bottom: 8px; }

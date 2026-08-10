@@ -91,6 +91,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/training-session-media")return "bookings.view";
   if(url.pathname==="/api/training-sessions"){if(method==="GET")return "bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["reschedule","replace_provider","cancel_session"].includes(String(body.action))?"bookings.manage":"bookings.view";}
   if(url.pathname==="/api/grooming-service-location")return "scheduling.book";
+  if(url.pathname==="/api/address-autocomplete")return "scheduling.book";
   if(url.pathname==="/api/grooming-route")return "bookings.view";
   if(url.pathname==="/api/booking-command-center")return method==="GET"?"bookings.view":"bookings.manage";
   if(url.pathname==="/api/partner-grooming-jobs")return "bookings.view";

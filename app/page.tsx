@@ -1,12 +1,13 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import TestSyncPanel from "./components/test-sync-panel";
 import { reserveUatSchedule } from "../lib/uat-scheduling-client";
 import { createCanonicalLifecycle } from "../lib/canonical-lifecycle-client";
 import { saveGroomingServiceLocation } from "../lib/grooming-location-client";
+import { searchAddresses, resolveAddress, reverseGeocodeCoordinates, type AddressSuggestion } from "../lib/address-autocomplete-client";
 import { createTestTransaction } from "../lib/test-transaction";
 
 type PetType = "dog" | "cat";
@@ -88,6 +89,11 @@ export default function Home() {
   const [confirmed, setConfirmed] = useState(false);
   const [phone, setPhone] = useState("");
   const [serviceAddress, setServiceAddress] = useState("");
+  const [addressSuggestions, setAddressSuggestions] = useState<AddressSuggestion[]>([]);
+  const [addressSuggestionsOpen, setAddressSuggestionsOpen] = useState(false);
+  const [addressSessionToken] = useState(() => crypto.randomUUID());
+  const [locatingAddress, setLocatingAddress] = useState(false);
+  const [addressLookupNote, setAddressLookupNote] = useState("");
   const [payment, setPayment] = useState("after");
   const [trainingLead, setTrainingLead] = useState(false);
   const [petDropdownOpen, setPetDropdownOpen] = useState(false);
@@ -124,6 +130,43 @@ export default function Home() {
     setPetSelectionError("");
     setShowOtp(false);
     setShowDetails(true);
+  }
+
+  const addressSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function onAddressInput(value: string) {
+    setServiceAddress(value);
+    setAddressLookupNote("");
+    if (addressSearchTimer.current) window.clearTimeout(addressSearchTimer.current);
+    if (value.trim().length < 3) { setAddressSuggestions([]); setAddressSuggestionsOpen(false); return; }
+    addressSearchTimer.current = window.setTimeout(async () => {
+      try {
+        const result = await searchAddresses(value, addressSessionToken);
+        if (result.status === "configuration_required") { setAddressSuggestions([]); setAddressSuggestionsOpen(false); return; }
+        if (result.status === "provider_error") { setAddressLookupNote(result.error || "Address search is temporarily unavailable"); setAddressSuggestions([]); setAddressSuggestionsOpen(false); return; }
+        setAddressSuggestions(result.suggestions);
+        setAddressSuggestionsOpen(result.suggestions.length > 0);
+      } catch { setAddressSuggestions([]); setAddressSuggestionsOpen(false); }
+    }, 350);
+  }
+  async function chooseAddressSuggestion(suggestion: AddressSuggestion) {
+    setAddressSuggestionsOpen(false);
+    setServiceAddress(suggestion.fullText);
+    try {
+      const resolved = await resolveAddress(suggestion.placeId, addressSessionToken);
+      if (resolved.status === "configured" && resolved.address) setServiceAddress(resolved.address);
+    } catch { /* keep the suggestion text if resolving details fails */ }
+  }
+  function useCurrentLocation() {
+    if (!navigator.geolocation) { setAddressLookupNote("Location is not supported on this device"); return; }
+    setLocatingAddress(true); setAddressLookupNote(""); setAddressSuggestionsOpen(false);
+    navigator.geolocation.getCurrentPosition(async (position) => {
+      try {
+        const resolved = await reverseGeocodeCoordinates(position.coords.latitude, position.coords.longitude);
+        if (resolved.status === "configured" && resolved.address) setServiceAddress(resolved.address);
+        else setAddressLookupNote(resolved.error || "Could not determine an address for your current location");
+      } catch { setAddressLookupNote("Could not determine an address for your current location"); }
+      finally { setLocatingAddress(false); }
+    }, (geoError) => { setLocatingAddress(false); setAddressLookupNote(geoError.message || "Location permission denied"); }, { enableHighAccuracy: true, timeout: 15000 });
   }
 
   async function finishBooking(event: FormEvent) {
@@ -288,7 +331,16 @@ export default function Home() {
       {showDetails && <div className="modal-backdrop details-backdrop"><section className="modal details-modal" role="dialog" aria-modal="true"><button className="modal-close" onClick={() => setShowDetails(false)} aria-label="Close">×</button>
         <p className="eyebrow">Final details</p><h2>Tell us where to come</h2><form onSubmit={finishBooking} className="details-form">
           <div className="field-row"><label>Customer name<input required placeholder="Your name" /></label><label>Secondary number<input required inputMode="numeric" placeholder="Alternative contact" /></label></div>
-          <label>Doorstep address<input required value={serviceAddress} onChange={(event) => setServiceAddress(event.target.value)} placeholder="Search Bengaluru address or use current location" /></label>
+          <label className="address-field">Doorstep address
+            <div className="address-input-row">
+              <input required value={serviceAddress} onChange={(event) => onAddressInput(event.target.value)} onFocus={() => { if (addressSuggestions.length) setAddressSuggestionsOpen(true); }} onBlur={() => window.setTimeout(() => setAddressSuggestionsOpen(false), 150)} placeholder="Search Bengaluru address or use current location" autoComplete="off" />
+              <button type="button" className="use-location-btn" onClick={useCurrentLocation} disabled={locatingAddress} aria-label="Use current location">{locatingAddress ? "…" : "⌖"}</button>
+            </div>
+            {addressSuggestionsOpen && addressSuggestions.length > 0 && <ul className="address-suggestions" role="listbox">
+              {addressSuggestions.map((suggestion) => <li key={suggestion.placeId}><button type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => void chooseAddressSuggestion(suggestion)}><b>{suggestion.mainText}</b>{suggestion.secondaryText && <small>{suggestion.secondaryText}</small>}</button></li>)}
+            </ul>}
+            {addressLookupNote && <small className="address-note">{addressLookupNote}</small>}
+          </label>
           <div className="pet-select-wrap">
             <label>Select {petCount} registered {petCount === 1 ? "pet" : "pets"}</label>
             <button type="button" className={`pet-select-trigger ${petDropdownOpen ? "open" : ""}`} onClick={() => setPetDropdownOpen((open) => !open)} aria-expanded={petDropdownOpen}>
