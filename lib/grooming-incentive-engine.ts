@@ -1,6 +1,9 @@
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
+import { monthlyPetrolAllowance } from "./provider-daily-travel";
+import { monthlySpecialIncentiveTotal } from "./employee-recognition-incentives";
+
 const text=(v:unknown)=>String(v??"").trim();
 const money=(v:unknown)=>Math.round(Number(v||0)*100)/100;
 const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
@@ -198,9 +201,13 @@ export async function computeGroomerMonthlyIncentive(db:Db,input:{headGroomerId:
  const gpayPending=Number(gpayRow?.gpay_pending||0),gpayFine=gpayFineForPending(gpayPending);
 
  const specialRow=await db.prepare("SELECT COALESCE(SUM(amount),0) total FROM groomer_special_incentives WHERE head_groomer_id=? AND month_start=?").bind(input.headGroomerId,input.monthStart).first<Row>();
- const specialIncentive=money(specialRow?.total);
+ const groomerSpecificSpecialIncentive=money(specialRow?.total);
+ const genericSpecialIncentive=await monthlySpecialIncentiveTotal(db,{employeeId:input.headGroomerId,monthStart:input.monthStart});
+ const specialIncentive=money(groomerSpecificSpecialIncentive+genericSpecialIncentive);
 
- const headTotal=money(dailyOrderHeadTotal+upgradeBonus.headAmount+offlineSubBonus+achievement.headAmount+soloDayBonus+specialIncentive-gpayFine);
+ const petrol=await monthlyPetrolAllowance(db,{providerId:input.headGroomerId,monthStartDate:input.monthStart,monthEndDate});
+
+ const headTotal=money(dailyOrderHeadTotal+upgradeBonus.headAmount+offlineSubBonus+achievement.headAmount+soloDayBonus+specialIncentive+petrol.totalAllowance-gpayFine);
  const helperTotal=money(dailyOrderHelperTotal+upgradeBonus.helperAmount+achievement.helperAmount);
 
  return{
@@ -210,7 +217,7 @@ export async function computeGroomerMonthlyIncentive(db:Db,input:{headGroomerId:
    components:{
      dailyOrderHeadTotal,dailyOrderHelperTotal,dailyOrderResults,
      upgradeBonus,offlineSubBonus,achievementTierBonus:achievement,
-     soloDayBonus,soloDayCount,gpayPending,gpayFine,specialIncentive,
+     soloDayBonus,soloDayCount,gpayPending,gpayFine,specialIncentive,petrolAllowance:petrol.totalAllowance,petrolQualifyingDays:petrol.qualifyingDayCount,
    },
    headTotal,helperTotal,
  };

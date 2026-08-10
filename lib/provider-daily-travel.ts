@@ -84,3 +84,18 @@ export async function monthlyTravelSummary(db:Db,input:{providerId:string;monthS
    .bind(input.providerId,input.monthStartDate,input.monthEndDate).first<Row>();
  return{providerId:input.providerId,monthStartDate:input.monthStartDate,monthEndDate:input.monthEndDate,daysWithConfiguredRoutes:Number(row?.days||0),totalDistanceKm:money(Number(row?.total_distance||0)),totalDurationMinutes:money(Number(row?.total_duration||0))};
 }
+
+/**
+ * Daily petrol top-up for real long-distance days: any day where the provider's real computed
+ * total travel (home -> jobs -> home) exceeds the threshold gets a flat allowance for that day.
+ * Applies to both Groomer and Trainer identically. Sourced entirely from the real legs already
+ * persisted by computeDailyTravel() - never a separate manual entry.
+ */
+export async function monthlyPetrolAllowance(db:Db,input:{providerId:string;monthStartDate:string;monthEndDate:string;thresholdKm?:number;amountPerDay?:number}){
+ await ensureProviderDailyTravelTables(db);
+ const thresholdKm=input.thresholdKm??70,amountPerDay=input.amountPerDay??200;
+ const rows=await db.prepare("SELECT travel_date,SUM(distance_km) total_km FROM provider_daily_travel_legs WHERE provider_id=? AND travel_date>=? AND travel_date<=? AND route_status='configured' GROUP BY travel_date HAVING SUM(distance_km)>?")
+   .bind(input.providerId,input.monthStartDate,input.monthEndDate,thresholdKm).all<Row>();
+ const qualifyingDays=rows.results.map(r=>({travelDate:String(r.travel_date),totalKm:money(r.total_km)}));
+ return{providerId:input.providerId,monthStartDate:input.monthStartDate,monthEndDate:input.monthEndDate,thresholdKm,amountPerDay,qualifyingDayCount:qualifyingDays.length,qualifyingDays,totalAllowance:money(qualifyingDays.length*amountPerDay)};
+}
