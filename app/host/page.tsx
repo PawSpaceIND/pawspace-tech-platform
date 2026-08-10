@@ -61,10 +61,10 @@ export default function HostPage(){
       {liveStay?<>
        <div className={styles.petHero}><span>{liveStay.pet_count}</span><div><h3>{liveStay.pet_count} pet{liveStay.pet_count===1?"":"s"}</h3><p>{stayWindow(liveStay)}</p></div><button onClick={()=>notify("Live customer messaging is not connected in Boarding UAT")}>Messaging status</button></div>
        <div className={styles.tasks}>
-        <button><i>{liveStay.care_plan_status==="ready"?"✓":"!"}</i><div><strong>Care plan</strong><small>{statusLabel(liveStay.care_plan_status)}</small></div><span>›</span></button>
-        <button><i>{liveStay.check_in_status==="complete"?"✓":"○"}</i><div><strong>Check-in</strong><small>{statusLabel(liveStay.check_in_status)}</small></div><span>›</span></button>
-        <button><i>{liveStay.extension_status==="none"?"○":"!"}</i><div><strong>Extension</strong><small>{statusLabel(liveStay.extension_status)}</small></div><span>›</span></button>
-        <button><i>{liveStay.check_out_status==="complete"?"✓":"○"}</i><div><strong>Check-out</strong><small>{statusLabel(liveStay.check_out_status)}</small></div><span>›</span></button>
+        <button onClick={()=>notify(`Care plan status: ${statusLabel(liveStay.care_plan_status)}. Use the quick actions below to update it.`)}><i>{liveStay.care_plan_status==="ready"?"✓":"!"}</i><div><strong>Care plan</strong><small>{statusLabel(liveStay.care_plan_status)}</small></div><span>›</span></button>
+        <button onClick={()=>notify(`Check-in status: ${statusLabel(liveStay.check_in_status)}. Use the quick actions below to update it.`)}><i>{liveStay.check_in_status==="complete"?"✓":"○"}</i><div><strong>Check-in</strong><small>{statusLabel(liveStay.check_in_status)}</small></div><span>›</span></button>
+        <button onClick={()=>notify(`Extension status: ${statusLabel(liveStay.extension_status)}.`)}><i>{liveStay.extension_status==="none"?"○":"!"}</i><div><strong>Extension</strong><small>{statusLabel(liveStay.extension_status)}</small></div><span>›</span></button>
+        <button onClick={()=>notify(`Check-out status: ${statusLabel(liveStay.check_out_status)}. Use the quick actions below to update it.`)}><i>{liveStay.check_out_status==="complete"?"✓":"○"}</i><div><strong>Check-out</strong><small>{statusLabel(liveStay.check_out_status)}</small></div><span>›</span></button>
        </div>
        <div className={styles.quick}>
         {liveStay.status==="confirmed"&&<button disabled={liveStay.care_plan_status!=="ready"||isBusy(liveStay,"check_in")} onClick={()=>act(liveStay,"check_in")}>✓ Check in</button>}

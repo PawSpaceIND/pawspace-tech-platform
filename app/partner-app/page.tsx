@@ -73,6 +73,22 @@ export default function PartnerApp() {
   const [live, setLive] = useState(true);
   const [stage, setStage] = useState(1);
   const [notice, setNotice] = useState("");
+  const [blockedSlots, setBlockedSlots] = useState<Set<string>>(
+    new Set(
+      ["Mon 3", "Tue 4", "Wed 5", "Thu 6", "Fri 7", "Sat 8", "Sun 9"].flatMap((d, i) =>
+        ["9–11", "11–1", "1–3", "3–5", "5–7"]
+          .filter((_, j) => (i + j) % 4 === 0)
+          .map((t) => `${d}|${t}`),
+      ),
+    ),
+  );
+  const toggleSlot = (key: string) =>
+    setBlockedSlots((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   const active = jobs[0];
   const careRole = role === "Boarding Host" || role === "Pet Sitter";
   const partnerName =
@@ -166,7 +182,7 @@ export default function PartnerApp() {
               <span />
               {live ? "Live & available" : "You are offline"}
             </button>
-            <button className={styles.bell}>
+            <button className={styles.bell} onClick={() => action("3 unread updates")}>
               ♢<i>3</i>
             </button>
           </div>
@@ -395,17 +411,20 @@ export default function PartnerApp() {
               ].map((d, i) => (
                 <article key={d} className={i === 0 ? styles.today : ""}>
                   <b>{d}</b>
-                  {["9–11", "11–1", "1–3", "3–5", "5–7"].map((t, j) => (
-                    <button
-                      key={t}
-                      className={(i + j) % 4 === 0 ? styles.blocked : ""}
-                    >
-                      {t}
-                      <small>
-                        {(i + j) % 4 === 0 ? "Blocked" : "Available"}
-                      </small>
-                    </button>
-                  ))}
+                  {["9–11", "11–1", "1–3", "3–5", "5–7"].map((t) => {
+                    const key = `${d}|${t}`;
+                    const blocked = blockedSlots.has(key);
+                    return (
+                      <button
+                        key={t}
+                        className={blocked ? styles.blocked : ""}
+                        onClick={() => toggleSlot(key)}
+                      >
+                        {t}
+                        <small>{blocked ? "Blocked" : "Available"}</small>
+                      </button>
+                    );
+                  })}
                 </article>
               ))}
             </div>
@@ -568,7 +587,7 @@ export default function PartnerApp() {
                   <small>ORDER-WISE LEDGER</small>
                   <h2>Transparent earnings</h2>
                 </div>
-                <button className={styles.textBtn}>Raise payout dispute</button>
+                <button className={styles.textBtn} onClick={() => action("Payout dispute logged for Finance review. UAT does not open a live case yet.")}>Raise payout dispute</button>
               </div>
               <div className={styles.table}>
                 <b>Date</b>
@@ -815,7 +834,7 @@ export default function PartnerApp() {
                   "Partner agreement",
                   "Emergency contact",
                 ].map((d) => (
-                  <button key={d}>
+                  <button key={d} onClick={() => action(`${d} is verified. Document detail view is not yet available in UAT.`)}>
                     <span>✓</span>
                     <b>{d}</b>
                     <small>Verified</small>
@@ -834,7 +853,7 @@ export default function PartnerApp() {
                 ["Language", "English"],
                 ["Device security", "PIN + biometric enabled"],
               ].map((x) => (
-                <button className={styles.preference} key={x[0]}>
+                <button className={styles.preference} key={x[0]} onClick={() => action(`${x[0]} settings are not yet editable in UAT.`)}>
                   <div>
                     <b>{x[0]}</b>
                     <small>{x[1]}</small>
