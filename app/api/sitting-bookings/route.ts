@@ -1,6 +1,7 @@
 import{database,requireCustomerOwnership,resolveActor}from"../../../lib/server-auth";
 import{governSittingBooking}from"../../../lib/sitting-governance";
 import{requireSittingQuoteSandboxCapture}from"../../../lib/sitting-payment-governance";
+import{attributeBookingToOpenLead}from"../../../lib/lead-conversion-attribution";
 
 type Row=Record<string,unknown>;
 type Input={
@@ -53,5 +54,5 @@ export async function POST(request:Request){try{
   db.prepare("INSERT INTO sitting_booking_quote_links (quote_id,booking_id,created_at) VALUES (?,?,?)").bind(input.sittingQuoteId,bookingId,now),
   db.prepare("UPDATE sitting_commercial_quotes SET status='used',used_at=?,used_booking_id=? WHERE id=? AND status='open'").bind(now,bookingId,input.sittingQuoteId),
  ];
- await db.batch(statements);return json({data:{bookingId,customerId:input.customer.id,petIds:ids,scheduleGroupId:input.scheduleGroupId,workOrderId,paymentId,status:"confirmed",duplicatePrevented:false,liveMoney:false}},201);
+ await db.batch(statements);await attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId});return json({data:{bookingId,customerId:input.customer.id,petIds:ids,scheduleGroupId:input.scheduleGroupId,workOrderId,paymentId,status:"confirmed",duplicatePrevented:false,liveMoney:false}},201);
 }catch(error){return failure(error);}}
