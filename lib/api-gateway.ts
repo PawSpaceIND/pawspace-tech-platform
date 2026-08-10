@@ -34,6 +34,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/staff-alerts")return method==="GET"?"reports.view":"customers.manage";
   if(url.pathname==="/api/staff-alert-runner")return "settings.manage";
   if(url.pathname==="/api/finance-control")return method==="GET"?"finance.view":"finance.manage";
+  if(url.pathname==="/api/pnl-reporting")return "finance.view";
   if(url.pathname==="/api/partner-finance")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/company-analytics")return "reports.view";
   if(url.pathname==="/api/ai-intelligence")return method==="GET"?"reports.view":"customers.manage";
