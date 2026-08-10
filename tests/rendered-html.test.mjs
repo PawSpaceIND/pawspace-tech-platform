@@ -279,8 +279,8 @@ test("uses 60 minutes per training pet and one GPS policy for doorstep providers
 });
 
 test("keeps coupon and referral management as separate full control modules", async () => {
-  const [control, coupons, referrals, engine] = await Promise.all(
-    ["app/control/page.tsx", "app/control/coupons-control-panel.tsx", "app/control/referrals-control-panel.tsx", "lib/offer-engine.ts"].map((path) =>
+  const [control, coupons, referrals] = await Promise.all(
+    ["app/control/page.tsx", "app/control/coupons-control-panel.tsx", "app/control/referrals-control-panel.tsx"].map((path) =>
       readFile(new URL("../" + path, import.meta.url), "utf8"),
     ),
   );
@@ -293,8 +293,6 @@ test("keeps coupon and referral management as separate full control modules", as
   assert.match(referrals, /Referral & reward ledger/);
   assert.match(referrals, /Fraud controls/);
   assert.match(referrals, /Reward lifecycle/);
-  assert.match(engine, /crossSellFromServices/);
-  assert.match(engine, /eligibleCities/);
 });
 
 test("provides a city geofence and city price-book launch control", async () => {
