@@ -1,0 +1,91 @@
+name: Walking closure certification
+on:
+  push:
+    branches:
+      - agent/walking-certify
+permissions:
+  contents: write
+  pull-requests: write
+concurrency:
+  group: walking-closure-certification
+  cancel-in-progress: false
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/walking-certify
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Freeze source head
+        run: echo "BASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Apply any pending Walking hardening
+        run: |
+          if [ -f scripts/walking-crosscut-patch.py ]; then python scripts/walking-crosscut-patch.py; fi
+          if [ -f scripts/walking-final-hardening.py ]; then python scripts/walking-final-hardening.py; fi
+      - name: Remove temporary closure helpers
+        run: |
+          rm -f .github/workflows/walking-crosscut-patch.yml
+          rm -f scripts/walking-crosscut-patch.py
+          rm -f .github/workflows/walking-final-hardening.yml
+          rm -f scripts/walking-final-hardening.py
+          rm -f .github/workflows/walking-certify.yml
+      - name: Verify Walking closure markers
+        run: |
+          grep -q "Dog Walking UAT completion requires at least two canonical sandbox route samples" lib/walking-lifecycle.ts
+          grep -q "routeSamples<2" app/walker/page.tsx
+          grep -q "/walker/proof?bookingId=" app/walker/page.tsx
+          grep -q "/walker/recovery?bookingId=" app/walker/page.tsx
+          grep -q "/walking/manage?bookingId=" app/walking/page.tsx
+          grep -q "/api/walking-lifecycle" lib/api-gateway.ts
+          grep -q "/api/walking-finance" lib/api-gateway.ts
+          grep -q "/api/walking-proof" lib/api-gateway.ts
+          grep -q "/api/walking-ops" lib/api-gateway.ts
+          grep -q "/api/walking-recovery" lib/api-gateway.ts
+          grep -q "crypto.randomUUID" lib/walking-recovery-client.ts
+          grep -q "bufferedStart" lib/walking-ops-governance.ts
+      - name: Install web dependencies
+        run: npm ci
+      - name: Build and run full web regression
+        run: npm test
+      - name: Lint
+        run: npm run lint
+      - name: Validate Sites artifact
+        run: npm run validate:artifact
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+      - name: Backend typecheck
+        working-directory: backend
+        run: npm run typecheck
+      - name: Backend tests
+        working-directory: backend
+        run: npm test
+      - name: Commit exact certified tree
+        run: |
+          git config user.name "PawSpace Walking Closure"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "Certify Walking closure"
+      - name: Fast-forward PR branch only if source head stayed frozen
+        run: |
+          git fetch origin agent/walking-gates1-5
+          REMOTE_SHA=$(git rev-parse origin/agent/walking-gates1-5)
+          if [ "$REMOTE_SHA" != "$BASE_SHA" ]; then
+            echo "Walking source branch changed during certification; refusing to overwrite it."
+            exit 1
+          fi
+          git push origin HEAD:agent/walking-gates1-5
+      - name: Promote and squash-merge PR 4
+        run: |
+          gh pr ready 4 --repo PawSpaceIND/pawspace-tech-platform
+          gh pr merge 4 --repo PawSpaceIND/pawspace-tech-platform --squash --delete-branch=false --subject "Close canonical Dog Walking UAT path across Gates 1-5" --body "Certified canonical Dog Walking internal-UAT closure across Customer, Walker, Operations and Finance. Production GPS, live money and launch dependencies remain explicitly disabled or policy-gated."
