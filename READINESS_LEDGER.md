@@ -77,7 +77,6 @@ plan against current `main`, not `fd6af2a`, before assigning today's work.
 |---|---|---|
 | AI cannot issue refunds/capture payments/release payouts/override prices/assign providers/activate campaigns | ✅ | Real execution, all confirmed `approval_gated` |
 | AI conversation orchestrator (Customer 360 context, handoff routing) | ✅ | Verified early this session |
-
 ## Lead management (built + verified this session, not pre-existing)
 
 | Item | Status | Notes |
@@ -181,29 +180,39 @@ session, untested" as the previous entry said).
   Every seeded row is inserted `active:0` - nothing goes live just by seeding, matching the same
   safety principle used for Grooming single-pet. **Do not start a competing implementation of
   this - check the branch for updates before touching pricing wiring for these 4 items.**
-- Canonical Customer account/app data (ChatGPT P0-4) — **DONE by Claude for login/identity.**
-  Built the real customer OTP login flow end to end: `lib/customer-otp.ts` +
-  `app/api/customer-otp/route.ts` (commit `3db2e69`), then the login screen and wiring every
-  hardcoded `TST-101`/"Karthik P." reference across grooming-flow.tsx, stay-flow.tsx,
-  training-flow.tsx, referral-card.tsx, coupon-field.tsx, page.tsx off the fake identity onto the
-  real session (commit `9a006fc`). Verified with a full real integration test (OTP request → verify
-  → session issued → a genuine follow-up Request with that cookie resolving back to the same
-  customer; no-cookie and tampered-cookie requests both correctly rejected).
-  **A separate, complementary piece is still open and actively being built by ChatGPT** on branch
-  `fix/p0-4-canonical-customer-account` (commits `50bdc3f`, `a917d6e`, not yet merged as of this
-  update): `lib/customer-account.ts` + `app/api/customer-account/route.ts` - real profile/address/
-  pet/booking-history read+mutate, idempotent, ownership-checked. Reviewed directly: no file overlap
-  with Claude's login work, genuinely complementary (this is the "real order history" piece Claude
-  had explicitly flagged as not done). **One real, minor bug found before merging**: `ownedContext`'s
-  auto-detect fallback reads `actor.subjectId`, which does not exist on the real `AuthenticatedActor`
-  type (confirmed by direct execution: `actor.subjectId` is always `undefined`) - the endpoint still
-  correctly enforces ownership when a customerId is explicitly passed, so this isn't a security
-  issue, but the "infer my own customer ID from my session" convenience path silently never fires.
-  Fix: use the same composite-auditId parsing Claude's `app/api/customer-profile/route.ts` already
-  does (`actor.email` is `"customer:CUS-XXXXX"` for a platform-session actor), or thread a real
-  subjectId through `resolveActor`'s return type. **Not fixed by Claude - it's an unmerged branch
-  belonging to another session; flagging here rather than editing someone else's in-progress work.**
-- Promotions backend + Marketing automation execution (ChatGPT P1-8) — not yet checked by Claude
+- Canonical Customer account/app data (ChatGPT P0-4) — 🔧 **CLOSED as a combined Claude + ChatGPT closure.**
+  Claude closed the real customer identity/login half with `lib/customer-otp.ts`,
+  `app/api/customer-otp/route.ts` and the customer-app/session wiring (commits `3db2e69`, `9a006fc`),
+  including real OTP request → verify → session resolution plus no-cookie/tampered-cookie rejection.
+  ChatGPT closed the complementary canonical account-data half in PR #60, merged as `592dc407`:
+  `lib/customer-account.ts` + `app/api/customer-account/route.ts` now provide ownership-enforced,
+  idempotent profile/address/pet reads and writes over the canonical customer record; My Pets and
+  Account no longer use hardcoded pets/fake saved-address data; Customer 360 reads the same canonical
+  addresses/pets/profile. The pre-merge bug Claude flagged — own-customer auto-detection reading the
+  nonexistent `actor.subjectId` — was fixed by resolving the verified platform session directly via
+  `resolvePlatformSession`, preserving the existing ownership primitive rather than weakening auth.
+  Real local D1 execution proved booking-created customer/pet → customer account read → profile,
+  address and pet mutations → replay prevention → staff Customer 360 sees the same records, while
+  existing booking/payment/work-order/invoice/reservation cardinalities remain singular. Expected
+  account cardinalities were exactly 1 customer, 1 address, 2 pets and 3 mutation records after
+  replay. PR Release CI #944 passed all five gates, then exact merged `main@592dc407` passed all five
+  gates again in Release CI #945. **Do not re-test P0-4 unless a later commit touches these exact
+  account/session/customer-360/runtime-D1 paths.**
+- Promotions backend + Marketing automation execution (ChatGPT P1-8) — **DONE by Claude.**
+  Confirmed precisely before building: the panel's own source was honestly self-disclosing
+  ("PROMOTION CONTROL · NOT YET BUILT", `createPromotion` just notifying no backend existed; same
+  for Automation Rules). Built `lib/promotion-governance.ts` (real lifecycle, margin-floor
+  validation rejecting a discount that would breach it, real audience suppression reusing the exact
+  Campaign pattern, real budget-cap enforcement on redemption, real holdout bucketing) and
+  `lib/marketing-automation-rules.ts` (real rule definitions + enable/disable toggle, deliberately
+  not an execution engine, matching the panel's own stated guardrails - rejects any attempt to
+  configure autonomous execution outright). Wired both into `app/api/marketing-control/route.ts`
+  and the real panel UI, replacing the fake "NOT YET BUILT" labels with accurate ones.
+  **Also found and fixed a separate, unrelated real bug along the way**: the panel's campaign
+  pause/complete button called `PATCH`, but no `PATCH` handler existed on the route at all - fully
+  broken, with a misleading fallback error message. Added a real handler for both campaigns and
+  promotions. Commit `85e2855`. Verified with real execution throughout; 638/638 tests, 0 lint
+  errors, no dead buttons.
 - Founder BI → canonical analytics/P&L (ChatGPT P1-9) — 🟡 **partially closed by Claude**. Found
   `app/control/business-intelligence-panel.tsx` (the actual Founder BI UI) was 100% fabricated
   static data across all 6 tabs (Overview, Verticals, Accounts, Customers, Subscriptions, Reports)
