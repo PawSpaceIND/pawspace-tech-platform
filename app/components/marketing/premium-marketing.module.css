@@ -1,4 +1,6 @@
 :root{--ps-green:#0b5c34;--ps-green-dark:#064326;--ps-green-soft:#eaf4ee;--ps-ivory:#fbfaf6;--ps-cream:#f5f0e7;--ps-ink:#17201b;--ps-muted:#647067;--ps-gold:#d7a63b;--ps-border:#dfe7e1;--ps-white:#fff;--ps-shadow:0 18px 48px rgba(23,53,34,.10)}
+.page :focus-visible{outline:3px solid var(--ps-gold);outline-offset:2px;border-radius:6px}
+.page a:focus-visible,.page button:focus-visible{outline:3px solid var(--ps-gold);outline-offset:3px}
 .page{background:var(--ps-ivory);color:var(--ps-ink);min-height:100vh;font-family:var(--font-geist-sans),system-ui,sans-serif}
 .utility{background:var(--ps-green-dark);color:#fff;font-size:12px;padding:8px 20px;text-align:center;letter-spacing:.01em}
 .header{position:sticky;top:0;z-index:30;background:rgba(255,255,255,.96);backdrop-filter:blur(14px);border-bottom:1px solid var(--ps-border)}
