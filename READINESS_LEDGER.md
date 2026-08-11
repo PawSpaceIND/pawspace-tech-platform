@@ -169,6 +169,56 @@ session, untested" as the previous entry said).
 | Root domain `/` opens the Grooming booking flow directly, not `/discover` (the multi-vertical homepage linked as "Home" in nav) | ⬜ open question | Flagged to owner as a possible intentional design (ads/QR codes may point at Grooming directly) vs. oversight — not yet resolved either way |
 | `grooming-integration-closure` branch (331 commits, 263 conflicts vs main) | ⬜ open | Restored after an accidental deletion mid-session (`git ref` recreated from cached SHA, no data lost) — still needs dedicated review, has not been attempted |
 
+## Provider self-onboarding: real login was missing entirely (Claude, this session)
+
+Investigated whether provider self-onboarding is "complete and launchable." Found a genuinely
+fundamental gap beyond just unbranded UI: `app/careers` → "Start your application →" → 
+`/partner/onboarding`, whose very first step calls `GET /api/identity-session` to check for an
+existing session - **but nothing anywhere let a new applicant create one.** No login/OTP screen
+existed under `/partner/*` at all. A brand-new applicant saw a raw 401 error with nowhere to go.
+
+`lib/verified-identity-assertion.ts` already anticipated this (`identitySource:"partner_otp"`,
+`subjectType:"provider"` were already valid, distinct from `"customer_otp"`/`"customer"`) - the
+verification side was built, but nothing ever generated a `partner_otp` assertion.
+
+Built `lib/partner-otp.ts` + `app/api/partner-otp/route.ts`, mirroring the real, working
+`lib/customer-otp.ts` pattern exactly (same sandbox-code-returned-in-response approach, same
+replay/attempt/expiry protections, no real SMS gateway - same honest sandboxed state as the
+customer flow). Creates a real `canonical_providers` table (didn't exist before) on first
+verified login. Built `app/partner/partner-login.tsx` (styled with the site's existing
+premium-marketing theme) and wired `/partner/onboarding` to show it instead of a bare error
+when no session exists.
+
+**Real execution proof, not just static tests**: extended `tests/runtime-d1-worker.ts` to request
+a real OTP, verify it with the real sandbox code, confirm a real `canonical_providers` row was
+created, confirm the resulting session cookie genuinely authenticates `/api/identity-session` and
+`/api/provider-onboarding-self-service` (both against real handlers, real D1), and confirm an
+unauthenticated request is genuinely rejected with 401. This also caught a second real gap along
+the way: `PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT` was configured nowhere for this runtime-d1
+worker config, meaning `verifyIdentityAssertion` - the function underlying **both** the customer
+and provider OTP flows - had never actually been exercised end-to-end by any real-execution test
+before this. Added the secret to `wrangler.runtime-d1.jsonc` (test-only value, 32+ chars, clearly
+not a real secret) so this now runs for real on every CI run via the existing `runtime-d1` gate.
+
+**Real infrastructure blocker found and correctly left unresolved, not routed around**: also
+investigated real document/photo upload for KYC documents. Started building client-side image
+compression + base64 storage, then found a pre-existing test
+(`tests/provider-onboarding-transactional.test.mjs`, "PO2 stores secure document references")
+that deliberately forbids storing base64/raw bytes in `provider_onboarding_documents` - a real,
+intentional compliance boundary (sensitive KYC documents need dedicated, audited storage, not raw
+bytes in a general D1 table). Reverted that approach rather than dodge the test. Real document
+upload needs object storage (e.g. R2) provisioned first - this deployment's hosting config shows
+`r2: null`, an infrastructure decision outside what either agent can do from here. Kept what's
+real and non-conflicting: a genuine per-document list with an audit-logged staff "View" action
+(previously staff only saw a meaningless count).
+
+**Still open**: the branded, polished applicant-facing UI (currently still the bare
+`PAWSPACE PARTNER · ONBOARDING UAT` dev-harness look, now at least reachable); self-service
+interview scheduling was investigated and found to conflict with an existing, apparently
+intentional design (Ops schedules based on their own calendar, not an open slot picker) - flagged
+to the human rather than built against that design; real document/photo upload, blocked on R2
+provisioning.
+
 ## Still open — genuinely not started, not a duplicate-risk
 
 - **Pricing Control wiring for Grooming multi-pet, Training, Boarding, Pet Sitting — ChatGPT is
