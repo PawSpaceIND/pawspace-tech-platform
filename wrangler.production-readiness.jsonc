@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "pawspace-production-readiness-regression",
+  "main": "tests/production-readiness-worker.ts",
+  "compatibility_date": "2026-05-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pawspace-production-readiness-regression",
+      "database_id": "00000000-0000-0000-0000-000000000001",
+      "preview_database_id": "pawspace-production-readiness-local"
+    }
+  ]
+}
