@@ -29,6 +29,7 @@ export function verifySession(token:string):RequestActor{
 
 export function authenticate(request:FastifyRequest):RequestActor{
   if(process.env.AUTH_MODE!=="token"){
+    if(process.env.NODE_ENV==="production")throw Object.assign(new Error("Header-trust authentication is disabled in production; deploy with AUTH_MODE=token and signed sessions"),{statusCode:500});
     const role=String(request.headers["x-role"]??"customer") as Role;
     if(!roles.includes(role))throw Object.assign(new Error("Invalid role"),{statusCode:401});
     return {id:String(request.headers["x-user-id"]??"anonymous"),role,cityId:String(request.headers["x-city-id"]??"blr")};
