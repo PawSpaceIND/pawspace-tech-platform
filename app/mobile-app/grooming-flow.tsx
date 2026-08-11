@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import styles from "./grooming-flow.module.css";
 import { createTestTransaction } from "../../lib/test-transaction";
 import ProviderTrackingCard from "./provider-tracking-card";
@@ -253,6 +253,12 @@ function catalogueCode(t: PetType, packId: string) {
 function subscriptionPrice(id: string, t: PetType, price: number) {
   return id === "3" && t === "cat" ? 2999 : price;
 }
+function scheduledWindow(date: string, slot: string, count: number) {
+  const dateIndex = Math.max(0, dates.indexOf(date)), slotIndex = Math.max(0, slots.indexOf(slot));
+  const start = new Date(Date.UTC(2026, 7, 4 + dateIndex, 3 + slotIndex * 2, 30));
+  const end = new Date(start.getTime() + (count >= 4 ? 240 : count === 3 ? 150 : 120) * 60_000);
+  return { start, end, dateIndex, slotIndex };
+}
 
 export default function GroomingFlow() {
   const [step, setStep] = useState(1),
@@ -272,22 +278,43 @@ export default function GroomingFlow() {
     [scheduling, setScheduling] = useState(false),
     [scheduleError, setScheduleError] = useState(""),
     [view, setView] = useState("status"),
-    [toast, setToast] = useState("");
+    [toast, setToast] = useState(""),
+    [livePrice, setLivePrice] = useState<number | null>(null);
   const flash = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
   };
   const list = packages[type],
     pack = list.find((p) => p.id === packId) || list[0],
-    sub = subs.find((s) => s.id === plan),
-    addonTotal = addons.reduce(
+    sub = subs.find((s) => s.id === plan);
+  // Only single-pet, non-subscription bookings check for a live Pricing Control override, matching
+  // governGroomingBooking's current real scope exactly - multi-pet pricing still uses the local
+  // catalogue (a real, documented limitation, not something to silently diverge on here).
+  useEffect(() => {
+    if (sub || count !== 1) {
+      const timer = window.setTimeout(() => setLivePrice(null), 0);
+      return () => window.clearTimeout(timer);
+    }
+    let active = true;
+    const { start } = scheduledWindow(date, slot, count);
+    fetch("/api/live-price-quote", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ packageCode: catalogueCode(type, pack.id), fallbackPrice: pack.price, scheduledStart: start.toISOString(), cityId: "blr", zoneId: "blr-east" }),
+    })
+      .then((r) => r.json())
+      .then((p) => { if (active && p.data) setLivePrice(p.data.price); })
+      .catch(() => { if (active) setLivePrice(null); });
+    return () => { active = false; };
+  }, [type, packId, count, date, slot, sub, pack.id, pack.price]);
+  const addonTotal = addons.reduce(
       (n, a) => n + (a === "Tick & flea treatment" ? 499 : 299),
       0,
     ),
     subtotal =
       (sub
         ? subscriptionPrice(sub.id, type, sub.price) * count
-        : bundle(pack, count, type)) + addonTotal,
+        : count === 1 && livePrice != null ? livePrice : bundle(pack, count, type)) + addonTotal,
     total = Math.max(0, subtotal - discount),
     duration =
       count <= 2
@@ -306,7 +333,7 @@ export default function GroomingFlow() {
     confirm = async () => {
       setScheduling(true);setScheduleError("");
       try {
-      const dateIndex=Math.max(0,dates.indexOf(date));const slotIndex=Math.max(0,slots.indexOf(slot));const start=new Date(Date.UTC(2026,7,4+dateIndex,3+slotIndex*2,30));const end=new Date(start.getTime()+(count>=4?240:count===3?150:120)*60_000);const petNames=["Bruno","Coco","Milo","Luna"].slice(0,count);const requestId=`groom-TST101-${dateIndex}-${slotIndex}-${count}`;const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:"TST-101",petIds:petNames,serviceCode:"grooming",zoneId:"blr-east",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),preferredProviderId:preferred?"groom_arun":undefined});
+      const { start, end, dateIndex, slotIndex } = scheduledWindow(date, slot, count);const petNames=["Bruno","Coco","Milo","Luna"].slice(0,count);const requestId=`groom-TST101-${dateIndex}-${slotIndex}-${count}`;const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:"TST-101",petIds:petNames,serviceCode:"grooming",zoneId:"blr-east",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),preferredProviderId:preferred?"groom_arun":undefined});
       const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:"TST-101",name:"Karthik P.",primaryPhone:"9996999505",secondaryPhone:"9880222741"},pets:petNames.map(name=>({sourceId:name,name,species:name==="Coco"?"cat":"dog"})),cityId:"blr",zoneId:"blr-east",serviceCode:"grooming",packageCode:sub?`subscription-${sub.id}`:catalogueCode(type,pack.id),packageName:sub?`${sub.name} grooming plan`:pack.name,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:total,amountDueNow:pay==="online"?total:0,payment:{method:pay==="online"?"upi":"cash",mode:pay==="online"?"prepaid":"pay_after_service",status:pay==="online"?"captured":"created",detail:pay==="online"?"UAT online payment captured":"Pay after service"},pricing:{discount,couponCode:couponCode||undefined,subscription:sub?.name}});
       const booking = createTestTransaction({
         customerId: "TST-101",

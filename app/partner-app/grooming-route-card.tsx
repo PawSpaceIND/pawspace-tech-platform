@@ -46,7 +46,7 @@ export default function GroomingRouteCard({bookingId,providerId}:{bookingId:stri
   };
 
   useEffect(()=>()=>{if(watchId.current!==null&&typeof navigator!=="undefined"&&navigator.geolocation)navigator.geolocation.clearWatch(watchId.current);},[]);
-  useEffect(()=>{stopTracking();void load();},[bookingId,providerId]);
+  useEffect(()=>{const timer=window.setTimeout(()=>{stopTracking();void load();},0);return()=>window.clearTimeout(timer);},[bookingId,providerId]);
 
   return <section style={{marginTop:14,padding:16,borderRadius:18,border:"1px solid #e7dcef",background:"#fff"}}>
     <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"flex-start"}}><div><small style={{fontWeight:900,color:"#7540aa",letterSpacing:1}}>FOREGROUND GPS UAT</small><b style={{display:"block",marginTop:4,fontSize:16}}>Route, GPS & ETA</b></div><button onClick={()=>void load()} style={{border:"1px solid #d8cae7",background:"white",borderRadius:10,padding:"8px 10px",fontWeight:800}}>↻</button></div>
