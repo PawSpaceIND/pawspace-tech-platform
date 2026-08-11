@@ -47,3 +47,6 @@ next-env.d.ts
 
 .dev.vars
 .dev.vars.*
+
+# Local throwaway test harnesses / scratch work
+/scratchpad/
