@@ -213,26 +213,37 @@ session, untested" as the previous entry said).
   broken, with a misleading fallback error message. Added a real handler for both campaigns and
   promotions. Commit `85e2855`. Verified with real execution throughout; 638/638 tests, 0 lint
   errors, no dead buttons.
-- Founder BI → canonical analytics/P&L (ChatGPT P1-9) — 🟡 **partially closed by Claude**. Found
-  `app/control/business-intelligence-panel.tsx` (the actual Founder BI UI) was 100% fabricated
-  static data across all 6 tabs (Overview, Verticals, Accounts, Customers, Subscriptions, Reports)
-  - zero fetch calls, zero real backend connection anywhere in the file. A real, well-built P&L
-  engine already existed (`lib/pnl-reporting.ts`, `generatePnlReport`, computing from real
-  `canonical_bookings` + `finance_journal_entries`) but nothing in the UI ever called it.
-  Verified the engine itself with **real execution** first (extended `tests/runtime-d1-worker.ts`'s
-  existing E2E scenario to call `generatePnlReport` against the real ₹1200 completed pet_sitting
-  booking that scenario creates, asserting the P&L revenue line for that service/month correctly
-  reflects it - ran via `wrangler dev --config wrangler.runtime-d1.jsonc`, confirmed `{"ok":true}` end
-  to end) before wiring any UI to it.
-  Then wired Overview + Verticals tabs to real live revenue via `/api/pnl-reporting` (confirmed this
-  route requires `finance.view` via the central gateway in `lib/api-gateway.ts` - not unauthenticated,
-  despite the route file itself having no visible auth check; enforcement is centralized in
-  `worker/index.ts`). Collected/cost/margin/bookings-count/repeat%/cancelled% have no real aggregate
-  anywhere in the codebase - rather than fabricate plausible-looking numbers for these, they now
-  honestly show "Not tracked yet". Accounts, Customers and Subscriptions tabs still have zero real
-  backend (would need real payment-reconciliation, customer-LTV and subscription-analytics
-  aggregates that don't exist yet - meaningfully larger scope) - added a visible "⚠️ Demo data" banner
-  to each so a founder can never mistake the remaining fabricated figures for real business numbers.
+- Founder BI → canonical analytics/P&L (ChatGPT P1-9) — **CLOSED, reconciling two independent
+  fixes for the same real gap.** A colleague's separate Claude session found and precisely scoped
+  the gap first (a network issue prevented pushing their patch, so it was rebuilt here from their
+  description and independently re-verified rather than trusted at face value), and then their
+  patch landed separately once the network issue resolved - both fixes hit the same underlying bug:
+  `app/control/business-intelligence-panel.tsx` had zero fetch calls anywhere - every number across
+  all 6 tabs was a hardcoded static array, including fake customer names and fake payment IDs.
+  Two real, already-built engines existed unused: `lib/pnl-reporting.ts` and
+  `lib/company-analytics.ts` (both built and verified earlier this session).
+  Reconciled the two approaches by comparing real data coverage, not by picking a side blindly: the
+  version using `/api/company-analytics` + `/api/pnl-reporting` together surfaces genuinely more
+  real data (bookings count, collected amount, and cancellation rate per vertical, plus customer
+  repeat rate, all real and live) than the version using `/api/pnl-reporting` alone, which left
+  those fields as "Not tracked yet" even though they are trackable via company-analytics - that
+  session's version won the merge for the panel's data-wiring. Kept the other session's real,
+  additive verification improvement regardless: the `tests/runtime-d1-worker.ts` E2E extension
+  calling `generatePnlReport` against the real ₹1200 completed pet_sitting booking that scenario
+  creates, asserting the P&L revenue line for that service/month correctly reflects it - this merged
+  in cleanly with no conflict and strengthens the underlying engine's real test coverage regardless
+  of which panel-wiring approach was kept. Also kept that session's confirmation that
+  `/api/pnl-reporting` requires `finance.view` via the central gateway in `lib/api-gateway.ts` (not
+  unauthenticated despite the route file itself having no visible auth check - enforcement is
+  centralized in `worker/index.ts`).
+  Direct cost, margin and repeat-rate per vertical still have no real source anywhere - honestly
+  show "Not tracked yet" rather than fabricated numbers. A "⚠️ Demo data" banner remains on Accounts,
+  Customers and Subscriptions tabs - no real backend exists for any of those yet.
+  Caught a real dangling-reference bug during verification (this project's build does not catch it
+  - confirmed earlier this session) before it could ship. Verified with real execution throughout:
+  replicated the exact mapping logic against a realistic API response, fetched the actual `/control`
+  page through the real built worker (200 OK, no fake numbers present), and ran the full merged test
+  suite clean.
   **Real gap still open**: building the Accounts/Customers/Subscriptions real backends.
 - Real scheduler/worker boundary, independent of page loads (ChatGPT P1-10) — 🔧 **CLOSED in PR #62.**
   Before this work, `worker/index.ts` had only `fetch()`, `vite.config.ts` had no cron trigger, and
