@@ -7,11 +7,10 @@ import{governGroomingBookingWithLiveMultiPet}from"../lib/live-grooming-governanc
 
 type Env={DB:D1Database};
 const eq=(actual:number,expected:number,label:string)=>{if(Math.round(actual)!==Math.round(expected))throw new Error(`${label}: expected ${expected}, got ${actual}`);};
-const future=(hours:number)=>new Date(Date.now()+hours*3_600_000).toISOString();
 
 async function run(db:D1Database){
  await ensurePricingControlRuntime(db);
- const scheduledStart=future(48),scheduledEnd=future(72);
+ const base=Date.now(),scheduledStart=new Date(base+48*3_600_000).toISOString(),scheduledEnd=new Date(base+72*3_600_000).toISOString();
  // Seeded canonical rows are intentionally inactive: deploying the bridge must preserve current money.
  const trainingFallback=await createTrainingQuote(db,{packageCode:"training-8-basic",petCount:1,scheduledStart,paymentMode:"prepaid"});eq(trainingFallback.totalAmount,12000,"Training fallback");
  const boardingFallback=await createLiveBoardingQuote(db,{packageCode:"boarding-24h",petCount:2,scheduledStart,scheduledEnd,paymentMode:"prepaid"});eq(boardingFallback.totalAmount,1398,"Boarding fallback");
