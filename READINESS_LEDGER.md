@@ -323,6 +323,31 @@ session, untested" as the previous entry said).
   six gates including the new `Background scheduler D1` gate. **Do not re-test P1-10 unless a later
   commit touches `lib/background-scheduler.ts`, `worker/index.ts`, `vite.config.ts` or the scheduler
   D1 release gate.**
+- **Production Readiness Truth contract + CI gate — CLOSED, commit `2f113d6`.** Investigated before
+  building: `lib/integration-readiness.ts` already IS a mature version of exactly this contract - 24
+  real integration entries, real credential-presence detection, a real 10-state readiness state
+  machine, and `updateIntegrationReadiness()` already refuses `controlled_live_verified` without
+  every evidence column genuinely verified plus an evidence + approval reference, and already
+  refuses to store an actual secret value in `secret_reference`. Already wired to a real, env-reading
+  API (`app/api/integration-readiness/route.ts`, `app/api/launch-readiness/route.ts`) and a real UI
+  (`app/control/launch-readiness-panel.tsx`). Separately confirmed the exact real hard-lock
+  architecture behind Razorpay/Maps/Identity: each is deliberately locked to sandbox in code (the
+  adapters throw if their env-mode flag is ever set to anything but "sandbox"), so going live needs
+  both real credentials AND a real live-mode code path that doesn't exist yet for any of them -
+  explaining why the registry correctly shows `environment:"sandbox"` for all three, not a gap.
+  The one real missing piece: nothing enforced any of this in CI. Added two gates: a static check
+  that no code may hardcode `productionReady:true` as a literal (confirmed zero violations exist);
+  and a real D1 regression proving the registry's own safety enforcement cannot be bypassed - a
+  direct attempt to force `controlled_live_verified` without real evidence is genuinely rejected, a
+  direct attempt to smuggle an actual secret value into `secret_reference` is genuinely rejected,
+  real credential detection correctly reports Razorpay as missing with no env configured, and the
+  registry's own `summary.productionReady` honestly computes `false`. Ran against the real
+  wrangler/miniflare/D1 stack locally before wiring into CI, not just asserted it would work.
+  **Genuinely still open, and correctly so - needs the user or ops, not more code:** branch
+  protection (a GitHub repository setting, not a git operation - needs direct GitHub UI action or a
+  token with Administration scope); actually obtaining and configuring live Razorpay/WhatsApp/
+  Exotel/Maps/KYC credentials; production monitoring/alerting/backup-restore/penetration testing;
+  full human/device UAT.
 
 ## Cannot be code-closed by either agent (genuinely needs external creds/human/infra)
 
