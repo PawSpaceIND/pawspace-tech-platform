@@ -15,16 +15,10 @@ const serviceCodeByVertical: Record<string, string> = { Grooming: "grooming", Tr
 type SegmentStats = { count: number; households: number; utilisationPct: number | null };
 type SubscriptionBusinessView = { unusedCreditLiability: number | null; liabilityStatus: string; priceCoverage: { known: number; unknown: number }; pauseCancelRate: number | null; segments: { active: SegmentStats; renewalDue7: SegmentStats; expiring30: SegmentStats; expiredWinback: SegmentStats; paused: { count: number; households: number }; cancelled: { count: number; households: number } } };
 type CustomerBusinessRow = { customerId: string; name: string; pet: string; createdAt: number | null; segment: string; lastServiceAt: string | null; daysSinceLastService: number | null; orders: number; revenue: number; margin: null; nextAction: string; risk: string };
+type LedgerRow = { bookingId: string; vertical: string; invoiceNumber: string | null; gross: number; tax: number; net: number; status: string; method: string | null };
+type AccountsBusinessView = { receivable: number; gstPayable: number; refundQueue: { amount: number; count: number; verticalsCovered: string[] }; providerPayable: { amount: number; count: number; verticalsCovered: string[] }; unmatched: number; ledger: LedgerRow[] };
 type VerticalRow = { name: string; bookings: number; revenue: number; collected: number; cancelled: number | null; cost: number | null; margin: number | null; repeat: number | null };
 const emptyVerticals: VerticalRow[] = Object.keys(serviceCodeByVertical).map(name => ({ name, bookings: 0, revenue: 0, collected: 0, cancelled: null, cost: null, margin: null, repeat: null }));
-const accountRows = [
-  { id: "PAY-240331", type: "Customer collection", vertical: "Grooming", gross: 1899, fee: 38, tax: 290, net: 1571, status: "Reconciled" },
-  { id: "PAY-240330", type: "Subscription sale", vertical: "Grooming", gross: 6594, fee: 132, tax: 1006, net: 5456, status: "Reconciled" },
-  { id: "PAY-240329", type: "Partial payment", vertical: "Boarding", gross: 4547, fee: 91, tax: 694, net: 3762, status: "Balance due" },
-  { id: "PAY-240328", type: "Refund", vertical: "Training", gross: -2500, fee: 0, tax: -381, net: -2119, status: "Approval due" },
-  { id: "PAY-240327", type: "Partner payout", vertical: "Pet Sitting", gross: -1800, fee: 0, tax: 0, net: -1800, status: "Scheduled" },
-];
-
 
 const reports: ReportDefinition[] = [
   { name:"Founder daily business pulse", category:"Company", description:"Revenue, collections, margin, bookings, cancellations and critical exceptions", schedule:"Daily · 8:30 AM", dateBasis:"Booking date" },
@@ -44,7 +38,6 @@ const reports: ReportDefinition[] = [
 const dateBases: DateBasis[] = ["Customer created date", "Booking date", "Service date", "Payment / collection date", "Subscription start date", "Subscription expiry date", "Subscription renewal date", "Cancellation / refund date", "Invoice date", "Import / record date"];
 
 const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
-const DemoDataBanner = () => <p style={{ padding: "10px 14px", margin: "0 0 12px", background: "#fff3e0", border: "1px solid #f0b429", borderRadius: 10, fontSize: 13, fontWeight: 600, color: "#7a5b20" }}>⚠️ Demo data — no real backend is connected to this view yet. Nothing shown here reflects real accounts.</p>;
 const safe = (value: string | number) => `"${String(value).replaceAll('"', '""')}"`;
 
 export default function BusinessIntelligencePanel({ notify }: { notify: (message: string) => void }) {
@@ -75,6 +68,16 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
   const [subscriptionView, setSubscriptionView] = useState<SubscriptionBusinessView | null>(null);
   const [customers, setCustomers] = useState<CustomerBusinessRow[]>([]);
   const [customersLoaded, setCustomersLoaded] = useState(false);
+  const [accountsView, setAccountsView] = useState<AccountsBusinessView | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/accounts-business-view", { cache: "no-store" }).then(r => r.json()).then(body => {
+      if (!active) return;
+      if (!body.error && body.data) setAccountsView(body.data);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -238,8 +241,14 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
     {view === "Verticals" && <section className={css.panel}><header><div><span>SERVICE P&L</span><h3>Every vertical on the same definition</h3><p>Real bookings/revenue/collected from canonical booking and payment data. Direct cost, margin and repeat rate per vertical have no real aggregate source yet.</p></div><button onClick={() => openReportRun("Excel", "Vertical P&L", "Service date")}>Excel ↓</button></header><div className={css.table}><div className={css.tableHead}><span>Vertical</span><span>Bookings</span><span>Revenue</span><span>Collected</span><span>Direct cost</span><span>Contribution</span><span>Repeat</span><span>Cancel</span></div>{shownVerticals.map(item => <article key={item.name}><strong>{item.name}</strong><span>{item.bookings.toLocaleString("en-IN")}</span><span>{money(item.revenue)}</span><span>{money(item.collected)}</span><span>{item.cost != null ? money(item.cost) : "Not tracked yet"}</span><b>{item.margin != null ? `${item.margin}%` : "Not tracked yet"}</b><span>{item.repeat != null ? `${item.repeat}%` : "Not tracked yet"}</span><span>{item.cancelled != null ? `${item.cancelled}%` : "—"}</span></article>)}</div><footer><strong>Drill-down dimensions:</strong> city, zone, package, subscription, provider model, source, coupon, customer segment, payment mode and booking status.</footer></section>}
 
     {view === "Accounts" && <>
-      <DemoDataBanner />      <section className={css.metrics}>{[["Receivable", "₹11.6L", "Customer + balance payments"], ["Provider payable", "₹8.4L", "Approved, not released"], ["Refund queue", "₹1.84L", "9 approvals"], ["Unmatched", "₹42,680", "18 transactions"], ["GST payable", "₹3.21L", "Current filing period"]].map(item => <article key={item[0]}><span>{item[0]}</span><strong>{item[1]}</strong><small>{item[2]}</small></article>)}</section>
-      <section className={css.panel}><header><div><span>ACCOUNTS LEDGER</span><h3>Order to settlement</h3><p>Invoice, payment, refund, commission and payout stay linked to the booking.</p></div><div><button onClick={() => notify("Reconciliation workbench opened")}>Reconcile</button><button onClick={() => openReportRun("CSV", "Accounts ledger", "Payment / collection date")}>CSV ↓</button></div></header><div className={`${css.table} ${css.ledger}`}><div className={css.tableHead}><span>Reference</span><span>Type</span><span>Vertical</span><span>Gross</span><span>GST</span><span>Fee</span><span>Net</span><span>Status</span></div>{accountRows.map(row => <article key={row.id}><strong>{row.id}</strong><span>{row.type}</span><span>{row.vertical}</span><span>{money(row.gross)}</span><span>{money(row.tax)}</span><span>{money(row.fee)}</span><b>{money(row.net)}</b><em>{row.status}</em></article>)}</div></section>
+      {accountsView && <><section className={css.metrics}>{[
+        ["Receivable", money(accountsView.receivable), "Booked minus captured, across all bookings"],
+        ["Provider payable", money(accountsView.providerPayable.amount), `${accountsView.providerPayable.count} approved payout(s) - ${accountsView.providerPayable.verticalsCovered.join(", ")}`],
+        ["Refund queue", money(accountsView.refundQueue.amount), `${accountsView.refundQueue.count} pending - ${accountsView.refundQueue.verticalsCovered.join(", ")}`],
+        ["Unmatched", String(accountsView.unmatched), "Booking has an invoice with no captured payment, or the reverse"],
+        ["GST payable", money(accountsView.gstPayable), "From issued invoices, all verticals"],
+      ].map(item => <article key={item[0]}><span>{item[0]}</span><strong>{item[1]}</strong><small>{item[2]}</small></article>)}</section>
+      <section className={css.panel}><header><div><span>ACCOUNTS LEDGER</span><h3>Order to settlement</h3><p>Real invoice + payment records, joined to the booking. Provider payable and refund queue are real for Boarding, Pet Sitting, Pet Taxi and Dog Walking - Training and Grooming use different refund/settlement mechanisms not yet unioned into this view.</p></div><div><button onClick={() => notify("Reconciliation workbench opened")}>Reconcile</button><button onClick={() => openReportRun("CSV", "Accounts ledger", "Payment / collection date")}>CSV ↓</button></div></header><div className={`${css.table} ${css.ledger}`}><div className={css.tableHead}><span>Reference</span><span>Type</span><span>Vertical</span><span>Gross</span><span>GST</span><span>Fee</span><span>Net</span><span>Status</span></div>{accountsView.ledger.length ? accountsView.ledger.map(row => <article key={row.bookingId}><strong>{row.invoiceNumber || row.bookingId}</strong><span>{row.method || "—"}</span><span>{row.vertical}</span><span>{money(row.gross)}</span><span>{money(row.tax)}</span><span>—</span><b>{money(row.net)}</b><em>{row.status}</em></article>) : <p style={{ padding: 12 }}>No invoiced or paid bookings yet.</p>}</div></section></>}
     </>}
 
     {view === "Customers" && <><div className={css.customerGrid}>      <section className={css.panel}><header><div><span>CUSTOMER-LEVEL BUSINESS INTELLIGENCE</span><h3>Real customer 360 - orders, revenue, subscription-aware segment and risk</h3></div><input aria-label="Search customers" placeholder="Search masked customer, pet or ID" value={query} onChange={event => setQuery(event.target.value)} /></header>{!customersLoaded && <p style={{ padding: 12 }}>Loading real customer data…</p>}{customersLoaded && !shownCustomers.length && <p style={{ padding: 12 }}>No customers found.</p>}{shownCustomers.map(row => <button key={row.customerId} className={`${css.customerRow} ${selectedCustomer?.customerId === row.customerId ? css.selectedCustomer : ""}`} onClick={() => setSelectedCustomer(row)}><i>{row.name.split(" ").map(part => part[0]).join("")}</i><span><strong>{row.name} · {row.pet}</strong><small>{row.customerId} · {row.segment} · {row.createdAt ? `customer since ${new Date(row.createdAt).toLocaleDateString("en-IN")}` : "join date unknown"} · last service {row.lastServiceAt ? new Date(row.lastServiceAt).toLocaleDateString("en-IN") : "never"}</small></span><b>{money(row.revenue)} LTV</b><em>{row.risk}</em></button>)}</section>
