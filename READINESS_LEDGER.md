@@ -219,6 +219,29 @@ intentional design (Ops schedules based on their own calendar, not an open slot 
 to the human rather than built against that design; real document/photo upload, blocked on R2
 provisioning.
 
+## Provider onboarding branded UI (Claude, this session)
+
+Rebuilt `app/partner/onboarding/page.tsx` from a bare `PAWSPACE PARTNER · ONBOARDING UAT`
+dev-harness look to a real branded application flow (progress stepper, styled cards, matches the
+site theme) - PR #68, merged. Every existing action/state/API call preserved exactly, no behavior
+change. Kept every exact required safeguard string verbatim (`PRODUCTION READY = FALSE`, the
+synthetic-approvals disclosure, `20-question qualification`, `15-minute Ops interview`,
+`Marketplace live: <b>No</b>`, `Provider self-service cannot activate itself`) - two pre-existing
+tests assert these exact phrases to prevent the page from ever fabricating completed onboarding.
+First redesign pass softened this copy and broke both tests; caught and restored verbatim before
+committing - a real example of why those tests exist.
+
+## `grooming-integration-closure` branch — deleted, confirmed superseded
+
+Reviewed the last remaining stale branch from the original 21-PR triage. Despite the name, its
+most recent commits were actually about Boarding (Gates 2-5, host proof workspace, recovery
+normalization), not Grooming. Forked 331 commits ago; main has moved 502 commits past that same
+fork point, with 298 real conflicts. Confirmed main already has equivalent-or-better real
+functionality through its own independent path: `app/host/boarding-proof-workspace.tsx`,
+`app/team/operations/boarding`, `lib/boarding-recovery-finalizer.ts`, and a full boarding-proof/
+ops/finance stack. Same pattern as the ~28 branches closed earlier this session. No open PR
+existed for it (dangling branch reference only) - deleted directly.
+
 ## Still open — genuinely not started, not a duplicate-risk
 
 - **Pricing Control wiring for Grooming multi-pet, Training, Boarding, Pet Sitting — ChatGPT is
