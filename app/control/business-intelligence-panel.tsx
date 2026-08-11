@@ -12,6 +12,8 @@ type ReportDefinition = { name: string; category: string; description: string; s
 type ReportRun = { title: string; format: ReportFormat; dateBasis: DateBasis; from: string; to: string };
 
 const serviceCodeByVertical: Record<string, string> = { Grooming: "grooming", Training: "dog_training", Boarding: "boarding", "Pet Sitting": "pet_sitting" };
+type SegmentStats = { count: number; households: number; utilisationPct: number | null };
+type SubscriptionBusinessView = { unusedCreditLiability: number | null; liabilityStatus: string; priceCoverage: { known: number; unknown: number }; pauseCancelRate: number | null; segments: { active: SegmentStats; renewalDue7: SegmentStats; expiring30: SegmentStats; expiredWinback: SegmentStats; paused: { count: number; households: number }; cancelled: { count: number; households: number } } };
 type VerticalRow = { name: string; bookings: number; revenue: number; collected: number; cancelled: number | null; cost: number | null; margin: number | null; repeat: number | null };
 const emptyVerticals: VerticalRow[] = Object.keys(serviceCodeByVertical).map(name => ({ name, bookings: 0, revenue: 0, collected: 0, cancelled: null, cost: null, margin: null, repeat: null }));
 const accountRows = [
@@ -27,14 +29,6 @@ const customerRows = [
   { id: "C-00421", name: "Kabir Shah", pet: "Milo", created: "08 Nov 2024", segment: "Repeat", last: "18 Mar 2026", days: 139, orders: 9, revenue: 16291, margin: 5980, next: "Cross-sell training", risk: "Healthy" },
   { id: "C-00817", name: "Meera Nair", pet: "Coco", created: "19 Feb 2025", segment: "Dormant", last: "04 Jan 2026", days: 212, orders: 6, revenue: 10494, margin: 3318, next: "Win-back call", risk: "At risk" },
   { id: "C-01092", name: "Rahul Iyer", pet: "Luna", created: "03 Aug 2022", segment: "Subscriber", last: "30 Mar 2026", days: 127, orders: 14, revenue: 23186, margin: 8844, next: "Book unused session", risk: "Credits idle" },
-];
-
-const subscriptionRows = [
-  ["Active", 6482, 72, "₹1.84 Cr", "4,930 households"],
-  ["Renewal due ≤7 days", 128, 64, "₹8.7 L opportunity", "42 personal follow-ups"],
-  ["Expiring ≤30 days", 386, 51, "₹23.4 L opportunity", "Automations scheduled"],
-  ["Expired / win-back", 742, 34, "₹31.8 L historic value", "Prioritised by LTV"],
-  ["Future / scheduled", 214, 81, "₹12.6 L booked", "Starts after current plan"],
 ];
 
 
@@ -84,15 +78,18 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
   const [liveDataError, setLiveDataError] = useState("");
   const [netProfit, setNetProfit] = useState<number | null>(null);
   const [customerRepeatRate, setCustomerRepeatRate] = useState<number | null>(null);
+  const [subscriptionView, setSubscriptionView] = useState<SubscriptionBusinessView | null>(null);
 
   useEffect(() => {
     let active = true;
     Promise.all([
       fetch("/api/company-analytics", { cache: "no-store" }).then(r => r.json()),
       fetch("/api/pnl-reporting", { cache: "no-store" }).then(r => r.json()),
-    ]).then(([analyticsBody, pnlBody]) => {
+      fetch("/api/subscription-business-view", { cache: "no-store" }).then(r => r.json()),
+    ]).then(([analyticsBody, pnlBody, subscriptionBody]) => {
       if (!active) return;
       if (analyticsBody.error) throw new Error(analyticsBody.error);
+      if (!subscriptionBody.error && subscriptionBody.data) setSubscriptionView(subscriptionBody.data);
       const services = analyticsBody.data?.services || {};
       const rows: VerticalRow[] = Object.entries(serviceCodeByVertical).map(([name, code]) => {
         const s = services[code];
@@ -243,7 +240,24 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
       <aside className={css.panel}><span className={css.kicker}>SELECTED CUSTOMER</span><h3>{selectedCustomer.name} · {selectedCustomer.pet}</h3><p className={css.masked}>Primary + secondary numbers protected · purpose-based contact only</p><div className={css.customerMetrics}>{[["Lifetime orders", selectedCustomer.orders], ["Gross revenue", money(selectedCustomer.revenue)], ["Contribution", money(selectedCustomer.margin)], ["Days inactive", selectedCustomer.days]].map(item => <article key={item[0] as string}><span>{item[0] as string}</span><strong>{item[1]}</strong></article>)}</div>{[["Lifecycle", selectedCustomer.segment], ["Risk", selectedCustomer.risk], ["Next best action", selectedCustomer.next], ["Owner", "CRM renewal desk"]].map(item => <p className={css.detail} key={item[0]}><span>{item[0]}</span><strong>{item[1]}</strong></p>)}<div className={css.customerActions}><button onClick={() => notify("Masked call task created and audited")}>Call securely</button><button onClick={() => notify("Personalised offer builder opened")}>Create offer</button></div></aside>
     </div></>}
 
-    {view === "Subscriptions" && <><DemoDataBanner /><section className={css.panel}><header><div><span>SUBSCRIPTION BUSINESS VIEW</span><h3>Past, active, renewal and future value</h3><p>Operational work remains in Grooming subscriptions; this view measures the business outcome.</p></div><button onClick={() => notify("Opening the operational renewal queue")}>Open renewal operations →</button></header><TrendChart type="bar" data={subscriptionRows.map(row => ({ name: row[0], utilisation: row[2] }))} xKey="name" series={[{ key: "utilisation", label: "Utilisation %", color: "#11885b" }]} valueFormatter={(value) => `${value}%`} height={200} /><div className={css.subscriptionGrid}>{subscriptionRows.map(row => <article key={row[0] as string}><div><strong>{row[0]}</strong><span>{row[4]}</span></div><b>{Number(row[1]).toLocaleString("en-IN")}</b><small>{row[3]}</small></article>)}</div><footer><strong>Core measures:</strong> session utilisation, unused-credit liability, renewal rate, renewal revenue, cadence adherence, pause/cancel rate, reminder conversion, bot/human conversion and plan-level contribution.</footer></section></>}
+    {view === "Subscriptions" && <><section className={css.panel}><header><div><span>SUBSCRIPTION BUSINESS VIEW</span><h3>Past, active, renewal and future value</h3><p>Real segments from customer_grooming_subscriptions - counts, households and utilisation are live. Renewal revenue, cadence adherence, reminder conversion and plan-level contribution have no real aggregate yet.</p></div><button onClick={() => notify("Opening the operational renewal queue")}>Open renewal operations →</button></header>
+      {subscriptionView && <>
+      <TrendChart type="bar" data={[
+        { name: "Active", utilisation: subscriptionView.segments.active.utilisationPct ?? 0 },
+        { name: "Renewal due ≤7d", utilisation: subscriptionView.segments.renewalDue7.utilisationPct ?? 0 },
+        { name: "Expiring ≤30d", utilisation: subscriptionView.segments.expiring30.utilisationPct ?? 0 },
+        { name: "Expired/win-back", utilisation: subscriptionView.segments.expiredWinback.utilisationPct ?? 0 },
+      ]} xKey="name" series={[{ key: "utilisation", label: "Utilisation %", color: "#11885b" }]} valueFormatter={(value) => `${value}%`} height={200} />
+      <div className={css.subscriptionGrid}>
+        <article><div><strong>Active</strong><span>{subscriptionView.segments.active.households.toLocaleString("en-IN")} households</span></div><b>{subscriptionView.segments.active.count.toLocaleString("en-IN")}</b><small>{subscriptionView.segments.active.utilisationPct != null ? `${subscriptionView.segments.active.utilisationPct}% utilised` : "No utilisation data"}</small></article>
+        <article><div><strong>Renewal due ≤7 days</strong><span>{subscriptionView.segments.renewalDue7.households.toLocaleString("en-IN")} households</span></div><b>{subscriptionView.segments.renewalDue7.count.toLocaleString("en-IN")}</b><small>{subscriptionView.segments.renewalDue7.utilisationPct != null ? `${subscriptionView.segments.renewalDue7.utilisationPct}% utilised` : "No utilisation data"}</small></article>
+        <article><div><strong>Expiring ≤30 days</strong><span>{subscriptionView.segments.expiring30.households.toLocaleString("en-IN")} households</span></div><b>{subscriptionView.segments.expiring30.count.toLocaleString("en-IN")}</b><small>{subscriptionView.segments.expiring30.utilisationPct != null ? `${subscriptionView.segments.expiring30.utilisationPct}% utilised` : "No utilisation data"}</small></article>
+        <article><div><strong>Expired / win-back</strong><span>{subscriptionView.segments.expiredWinback.households.toLocaleString("en-IN")} households</span></div><b>{subscriptionView.segments.expiredWinback.count.toLocaleString("en-IN")}</b><small>{subscriptionView.segments.expiredWinback.utilisationPct != null ? `${subscriptionView.segments.expiredWinback.utilisationPct}% utilised` : "No utilisation data"}</small></article>
+        <article><div><strong>Paused</strong><span>{subscriptionView.segments.paused.households.toLocaleString("en-IN")} households</span></div><b>{subscriptionView.segments.paused.count.toLocaleString("en-IN")}</b><small>Pause/cancel rate {subscriptionView.pauseCancelRate != null ? `${subscriptionView.pauseCancelRate}%` : "—"}</small></article>
+        <article><div><strong>Unused-credit liability</strong><span>{subscriptionView.liabilityStatus === "partial_price_coverage" ? `Partial - ${subscriptionView.priceCoverage.unknown} plan(s) unpriced` : "All active plans priced"}</span></div><b>{subscriptionView.unusedCreditLiability != null ? money(subscriptionView.unusedCreditLiability) : "Not tracked yet"}</b><small>From real remaining sessions × real per-session plan price</small></article>
+      </div>
+      </>}
+      <footer><strong>Real today:</strong> segment counts, households, session utilisation, unused-credit liability, pause/cancel rate. <strong>Not yet real:</strong> renewal rate, renewal revenue, cadence adherence, reminder conversion, bot/human conversion, plan-level contribution.</footer></section></>}
     {view === "Reports" && <>
       <section className={css.reportHeader}><div><span>REPORT CENTRE</span><h3>One governed catalogue—download, attach or schedule.</h3><p>Every report inherits the selected period, city, vertical and customer filters, plus source lineage and export audit. New report definitions can be added whenever the business needs them.</p></div><button onClick={() => setBuilderOpen(value => !value)}>{builderOpen ? "Close builder" : "＋ Create report"}</button></section>
       {builderOpen && <section className={css.reportBuilder} aria-label="Create a new report">

@@ -49,3 +49,53 @@ export async function mutateSubscriptionWallet(db:Db,input:SubscriptionWalletMut
  throw new Error("Unsupported subscription wallet action");}
 
 export async function listCustomerSubscriptionWallets(db:Db,customerId:string){await ensureSubscriptionWalletTables(db);const rows=await db.prepare("SELECT id FROM customer_grooming_subscriptions WHERE customer_id=? ORDER BY created_at DESC").bind(customerId).all<{id:string}>();const wallets=[];for(const row of rows.results){const wallet=await readSubscriptionWallet(db,row.id);if(wallet)wallets.push(wallet);}return wallets;}
+
+/**
+ * Real business-level subscription metrics for Founder BI - segments by real expiry proximity,
+ * real utilisation (sessions_consumed/total_sessions), and real unused-credit liability computed
+ * from each subscription's own real per-session plan price (price/session_count), not an assumed
+ * average. A subscription whose plan_code no longer resolves to a real price is excluded from the
+ * liability total rather than silently valued at zero - missing price data should shrink the
+ * denominator, not understate the liability.
+ */
+export async function buildSubscriptionBusinessView(db:Db,asOf=Date.now()){
+  await ensureSubscriptionWalletTables(db);
+  const subs=await db.prepare("SELECT id,customer_id,plan_code,total_sessions,sessions_consumed,status,expires_at FROM customer_grooming_subscriptions").all<Row>();
+  const planCodes=[...new Set(subs.results.map(s=>String(s.plan_code)))];
+  const priceByPlan=new Map<string,{price:number;sessions:number}>();
+  if(planCodes.length){
+    const placeholders=planCodes.map(()=>"?").join(",");
+    const plans=await db.prepare(`SELECT plan_code,price,session_count FROM grooming_subscription_plans WHERE plan_code IN (${placeholders}) AND active=1`).bind(...planCodes).all<Row>();
+    for(const p of plans.results)if(!priceByPlan.has(String(p.plan_code)))priceByPlan.set(String(p.plan_code),{price:Number(p.price),sessions:Number(p.session_count)});
+  }
+  const day=86_400_000,segments={active:[] as Row[],renewalDue7:[] as Row[],expiring30:[] as Row[],expiredWinback:[] as Row[],paused:[] as Row[],cancelled:[] as Row[]};
+  let priceKnown=0,priceUnknown=0,liability=0;
+  for(const s of subs.results){
+    const expiresAt=Number(s.expires_at),status=String(s.status),remaining=Math.max(0,Number(s.total_sessions)-Number(s.sessions_consumed));
+    const plan=priceByPlan.get(String(s.plan_code));
+    if(plan&&plan.sessions>0){priceKnown++;liability+=remaining*(plan.price/plan.sessions);}else priceUnknown++;
+    if(status==="paused"){segments.paused.push(s);continue;}
+    if(status==="cancelled"){segments.cancelled.push(s);continue;}
+    if(expiresAt<asOf){segments.expiredWinback.push(s);continue;}
+    if(expiresAt<=asOf+7*day){segments.renewalDue7.push(s);continue;}
+    if(expiresAt<=asOf+30*day){segments.expiring30.push(s);continue;}
+    segments.active.push(s);
+  }
+  const utilisation=(rows:Row[])=>{const totals=rows.reduce((acc,s)=>({total:acc.total+Number(s.total_sessions),consumed:acc.consumed+Number(s.sessions_consumed)}),{total:0,consumed:0});return totals.total?Math.round((totals.consumed/totals.total)*1000)/10:null;};
+  const households=(rows:Row[])=>new Set(rows.map(s=>String(s.customer_id))).size;
+  return{
+    asOf,
+    liabilityStatus:priceUnknown>0?"partial_price_coverage":(priceKnown>0?"complete":"no_subscriptions"),
+    unusedCreditLiability:priceKnown>0?Math.round(liability):null,
+    priceCoverage:{known:priceKnown,unknown:priceUnknown},
+    segments:{
+      active:{count:segments.active.length,households:households(segments.active),utilisationPct:utilisation(segments.active)},
+      renewalDue7:{count:segments.renewalDue7.length,households:households(segments.renewalDue7),utilisationPct:utilisation(segments.renewalDue7)},
+      expiring30:{count:segments.expiring30.length,households:households(segments.expiring30),utilisationPct:utilisation(segments.expiring30)},
+      expiredWinback:{count:segments.expiredWinback.length,households:households(segments.expiredWinback),utilisationPct:utilisation(segments.expiredWinback)},
+      paused:{count:segments.paused.length,households:households(segments.paused)},
+      cancelled:{count:segments.cancelled.length,households:households(segments.cancelled)},
+    },
+    pauseCancelRate:subs.results.length?Math.round(((segments.paused.length+segments.cancelled.length)/subs.results.length)*1000)/10:null,
+  };
+}
