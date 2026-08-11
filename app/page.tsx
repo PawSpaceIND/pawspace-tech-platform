@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 
-import { FormEvent, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import TestSyncPanel from "./components/test-sync-panel";
 import { reserveUatSchedule } from "../lib/uat-scheduling-client";
@@ -81,6 +81,8 @@ export default function Home() {
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
   const [showOtp, setShowOtp] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
+  const [matchedProvider, setMatchedProvider] = useState<{ providerId: string; displayName: string; bio: string | null; businessName: string | null; services: string[]; photoUrl: string | null; verified: boolean; memberSince: string | null; stats: { completedServices: number; happyPets: number } | null; isNewProvider: boolean } | null>(null);
+  const [matchedProviderError, setMatchedProviderError] = useState("");
   const [toast, setToast] = useState("");
   const flash = (message: string) => {
     setToast(message);
@@ -221,6 +223,34 @@ export default function Home() {
 
   const selectedPetNames = selectedPetIds.map((id) => savedPets.find((pet) => pet.id === id)?.name).filter(Boolean).join(", ");
 
+  useEffect(() => {
+    if (!showDetails || !selectedSlot) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        setMatchedProviderError("");
+        const slotIndex = Math.max(0, slots.indexOf(selectedSlot));
+        const start = new Date(Date.UTC(2026, 7, 3 + selectedDate, 3 + slotIndex * 2, 30));
+        const durationMinutes = petCount <= 2 ? 120 : petCount === 3 ? 150 : 240;
+        const end = new Date(start.getTime() + durationMinutes * 60_000);
+        const digits = phone.replace(/\D/g, "").slice(-10);
+        const customerId = `WEB-${digits || "UAT"}`;
+        const requestId = `web-groom-${customerId}-${selectedDate}-${slotIndex}-${selectedPackage.id}-${selectedPetIds.slice().sort().join("-")}`;
+        // Same idempotency key finishBooking uses - this is a harmless, safe pre-fetch, not a second reservation.
+        const decision = await reserveUatSchedule({ clientRequestId: requestId, customerId, petIds: selectedPetIds, serviceCode: "grooming", zoneId: "blr-east", scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(), preferredProviderId: "groom_arun" });
+        if (cancelled) return;
+        const response = await fetch(`/api/provider-public-profile?providerId=${encodeURIComponent(decision.provider.id)}`);
+        const body = await response.json() as { data?: typeof matchedProvider; error?: string };
+        if (cancelled) return;
+        if (!response.ok || !body.data) { setMatchedProvider(null); setMatchedProviderError(body.error || "Unable to load provider details"); return; }
+        setMatchedProvider(body.data);
+      } catch (error) {
+        if (!cancelled) { setMatchedProvider(null); setMatchedProviderError(error instanceof Error ? error.message : "Unable to load provider details"); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [showDetails, selectedSlot, selectedDate, petCount, selectedPackage, selectedPetIds, phone]);
+
   if (confirmed) {
     return (
       <main className="app-shell confirmation-shell">
@@ -329,7 +359,26 @@ export default function Home() {
       </section></div>}
 
       {showDetails && <div className="modal-backdrop details-backdrop"><section className="modal details-modal" role="dialog" aria-modal="true"><button className="modal-close" onClick={() => setShowDetails(false)} aria-label="Close">×</button>
-        <p className="eyebrow">Final details</p><h2>Tell us where to come</h2><form onSubmit={finishBooking} className="details-form">
+        <p className="eyebrow">Final details</p><h2>Tell us where to come</h2>
+        {matchedProvider && (
+          <div className="matched-provider-card" style={{ display: "flex", gap: 14, alignItems: "flex-start", border: "1px solid #e6ddf1", borderRadius: 14, padding: 14, margin: "14px 0", background: "#faf8fd" }}>
+            {matchedProvider.photoUrl
+              ? <img src={matchedProvider.photoUrl} alt={matchedProvider.displayName} style={{ width: 56, height: 56, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
+              : <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#5d22a8", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 20, flexShrink: 0 }}>{matchedProvider.displayName.charAt(0)}</div>}
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <b>{matchedProvider.displayName}</b>
+                {matchedProvider.verified && <span style={{ fontSize: 11, color: "#1f4b3d", background: "#e4ede9", padding: "2px 7px", borderRadius: 100 }}>✓ Verified</span>}
+              </div>
+              {matchedProvider.bio && <p style={{ fontSize: 13, color: "#6f687b", margin: "4px 0 0" }}>{matchedProvider.bio}</p>}
+              {matchedProvider.stats
+                ? <p style={{ fontSize: 12, color: "#6f687b", margin: "6px 0 0" }}>{matchedProvider.stats.completedServices} services completed · {matchedProvider.stats.happyPets} pets cared for</p>
+                : matchedProvider.isNewProvider && <p style={{ fontSize: 12, color: "#6f687b", margin: "6px 0 0" }}>New to PawSpace</p>}
+            </div>
+          </div>
+        )}
+        {matchedProviderError && <p style={{ fontSize: 12, color: "#a33", margin: "8px 0" }}>{matchedProviderError}</p>}
+        <form onSubmit={finishBooking} className="details-form">
           <div className="field-row"><label>Customer name<input required placeholder="Your name" /></label><label>Secondary number<input required inputMode="numeric" placeholder="Alternative contact" /></label></div>
           <label className="address-field">Doorstep address
             <div className="address-input-row">
