@@ -284,10 +284,22 @@ session, untested" as the previous entry said).
     attribution logic already proven for Boarding/Sitting to aggregate correctly across a training
     booking's multiple sessions, with the identical safety property re-verified: one session still
     pending a compensation rule marks the whole booking's cost unknown, never partially summed.
-  **Genuinely still open**: Grooming direct cost/margin. Confirmed by checking directly - its
-  incentive system (`groomer_incentive_brackets`, `groomer_monthly_targets`, etc.) is aggregated at
-  the groomer-month level with no per-booking equivalent anywhere. This is a real structural gap in
-  that engine's own design, not a missed table - would need new architecture, not a query extension.
+  **UPDATE, commit `31e6087`: Grooming direct cost/margin is now closed too**, resolving the
+  "genuinely needs new architecture" scoping above. Found a real path anyway:
+  `computeGroomerMonthlyIncentive()` already computes a real, booking-derived monthly incentive
+  total against a real order-value total built from exactly the same real completed bookings.
+  Built `lib/grooming-cost-attribution.ts` to allocate that real monthly total proportionally
+  across the real bookings that contributed to it - a booking worth 40% of a groomer's monthly
+  order value carries 40% of that groomer's real monthly incentive as its cost (incentive/bonus
+  cost specifically, not base salary - the same honest scope as every other vertical's cost).
+  Same safety property as every other cost guardrail this session: a groomer/month with no bracket
+  configured is marked unknown, not silently zero; a groomer/month genuinely below the real
+  eligibility threshold or that never hits the real daily order-count tier returns a real, computed
+  zero - because that's what the incentive engine actually paid, not a data gap. Verified end to end
+  against the real engine's own actual result for the same scenario (not an assumed expected value),
+  and confirmed the real cost flows through the full `buildCompanyAnalytics` pipeline correctly.
+  **All four verticals now have real direct cost, margin, and repeat rate. Every item on the
+  original Founder BI gap list is closed.**
 - Real scheduler/worker boundary, independent of page loads (ChatGPT P1-10) — 🔧 **CLOSED in PR #62.**
   Before this work, `worker/index.ts` had only `fetch()`, `vite.config.ts` had no cron trigger, and
   the staff-alert truth explicitly reported `backgroundSchedulerConfigured:false`; meanwhile the
