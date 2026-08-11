@@ -113,12 +113,26 @@ plan against current `main`, not `fd6af2a`, before assigning today's work.
 
 - `revenue-intelligence.ts` (suppression safeguards, opportunity scoring, sort order) — ✅
 
-## Marketing / SEO / public site (built by other session, not tested by Claude)
+## Marketing / SEO / public site
 
-- Premium marketing/SEO pages, breed guides, landing pages, testimonials — built by other session.
-- One real issue caught and fixed by that same session: testimonials wrongly attributed to a
-  different business entirely (commit `4e6f772`) — correctly caught and pulled fast.
-- Claude has not independently tested this cluster; not this session's focus.
+Status as of this update: this cluster has now been actively worked and verified by a
+Claude session working directly with the business owner (not just "built by other
+session, untested" as the previous entry said).
+
+| Item | Status | Notes |
+|---|---|---|
+| PR #57 (premium marketing/SEO, real photography) merged to main | ✅ | commit `f04373b` — clean merge, verified build + full suite before merging, not just accepted blind |
+| PR #58 (partner mobile GPS UAT) merged to main | ✅ | commit `70716fb` — two stale pre-existing tests needed updating first (one required `getCurrentPosition`-only and no `watchPosition`, one required the old quarantine banner text); both updated to match the intentional new behavior, not silently overridden |
+| 7 breed guide hero images (Beagle, German Shepherd, Golden Retriever, Labrador Retriever, Persian Cat, Shih Tzu, Indie Cat) | 🔧 | commit `b23bafe` — confirmed via the page template that 10/11 breed guides rendered **zero image**, not an AI placeholder as assumed going in. Pomeranian, Pug, Rottweiler still have no matching real photo — genuinely open, not forgotten |
+| Fresh Food service page hero/trust images | 🔧 | commit `b23bafe` — page had no `image`/`trustImage` field at all before this |
+| Dog Walking hero image, Boarding trust image | 🔧 | commit `b23bafe` — upgraded from generic/stock-sourced to real branded photos |
+| Paid landing pages (19 total) — lead form was fake | 🔧 **real bug** | commit `8b8bd38` — form `action="/mobile-app"`, openly disclosed in the code as a Webflow-transfer demo, not wired to any real backend. Now posts to the same `/api/public-contact` CRM pipeline the real Contact page uses. **If any paid ad traffic was ever pointed at these pages before this commit, those leads went nowhere.** |
+| 3 "Doorstep Vet" landing pages | 🔧 paused | commit `8b8bd38` — no vet service/booking engine exists anywhere in the platform (checked: not in premium-public-content.ts, no vet API route, no vet vertical in booking flow). Paused via a `paused` flag rather than deleted — `getMarketingLanding`/`generateStaticParams` skip them, direct URLs 404, index no longer lists them |
+| Customer testimonials — wrong business initially used | 🔧 **caught and fixed same session** | commit `a2bee03` added reviews from "PawSpace - Home Pet Boarding" (HSR Layout, 3.1★/12 reviews) — owner confirmed this is a **different, unrelated business**, not this one. Fixed in `4e6f772` (reviews removed immediately) then `19a3b9a` (correct reviews added from the real listing, "PawSpace \| One-Stop Doorstep Pet-Care Platform", 4.5★/2,059 reviews, confirmed via owner-provided screenshots since this listing was not findable through available search tooling). **Lesson for any agent pulling real-world data (reviews, ratings, third-party listings) into this repo: verify the exact business identity before use — name collisions with unrelated businesses are real and easy to miss.** 7 real review excerpts now live, covering Pet Grooming, Cat Grooming, Dog Training, Pet Boarding, Pet Sitting, Pet Taxi. Still missing real reviews for Dog Walking, Fresh Food, Relocation — genuinely open. |
+| Real PawSpace GMB rating is 4.5★/2,059 reviews | 🟡 noted, not fully reconciled | The business's real rating is solid, but not independently spot-checked against the specific quotes' authenticity beyond the owner-provided screenshots — reasonable trust level, not machine-verified |
+| Stale root `layout.tsx` metadata ("PawSpace Grooming" title/description, used as fallback everywhere) | ⬜ open, deferred by owner | Not yet fixed — owner explicitly chose to prioritize other items first |
+| Root domain `/` opens the Grooming booking flow directly, not `/discover` (the multi-vertical homepage linked as "Home" in nav) | ⬜ open question | Flagged to owner as a possible intentional design (ads/QR codes may point at Grooming directly) vs. oversight — not yet resolved either way |
+| `grooming-integration-closure` branch (331 commits, 263 conflicts vs main) | ⬜ open | Restored after an accidental deletion mid-session (`git ref` recreated from cached SHA, no data lost) — still needs dedicated review, has not been attempted |
 
 ## Still open — genuinely not started, not a duplicate-risk
 
