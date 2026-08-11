@@ -11,6 +11,7 @@ export type Customer360Record={
   owner:string;
   source:string;
   consent:{marketing:boolean;service:boolean;whatsapp:boolean;sms:boolean;email:boolean;updatedAt:number|null};
+  addresses:Array<{id:string;label:string;line1:string;line2:string|null;area:string|null;city:string;postalCode:string|null;isDefault:boolean}>;
   pets:Array<{id:string;name:string;species:string;breed:string|null;vaccinationStatus:string}>;
   bookings:Array<{id:string;serviceCode:string;packageName:string;status:string;scheduledStart:string;scheduledEnd:string;totalAmount:number;currency:string}>;
   tickets:Array<{id:string;category:string;priority:string;status:string;subject:string;updatedAt:number}>;
@@ -42,7 +43,8 @@ export async function buildCustomer360(db:Db,customerId?:string):Promise<Custome
   const selected=[...source.entries()].filter(([id])=>!customerId||id===customerId);
   const result:Customer360Record[]=[];
   for(const [id,base] of selected){
-    const [pets,bookings,tickets,prefs]=await Promise.all([
+    const [addresses,pets,bookings,tickets,prefs]=await Promise.all([
+      safeAll(db,"SELECT id,label,line1,line2,area,city,postal_code,is_default FROM customer_addresses WHERE customer_id=? ORDER BY is_default DESC,created_at",[id]),
       safeAll(db,"SELECT id,name,species,breed,vaccination_status FROM canonical_pets WHERE customer_id=? ORDER BY created_at",[id]),
       safeAll(db,"SELECT id,service_code,package_name,status,scheduled_start,scheduled_end,total_amount,currency FROM canonical_bookings WHERE customer_id=? ORDER BY scheduled_start DESC LIMIT 100",[id]),
       safeAll(db,"SELECT id,category,priority,status,subject,updated_at FROM customer_experience_tickets WHERE customer_id=? ORDER BY updated_at DESC LIMIT 50",[id]),
@@ -66,6 +68,7 @@ export async function buildCustomer360(db:Db,customerId?:string):Promise<Custome
       area:base.area?String(base.area):base.city_id?String(base.city_id):null,
       crmStage:String(base.stage||'Active customer'),owner:String(base.owner||'Unassigned'),source:String(base.source||'canonical'),
       consent:{marketing:Boolean(Number(pref.marketing_consent||0)),service:pref.service_consent===undefined?true:Boolean(Number(pref.service_consent)),whatsapp:Boolean(Number(pref.whatsapp_consent||0)),sms:Boolean(Number(pref.sms_consent||0)),email:Boolean(Number(pref.email_consent||0)),updatedAt:pref.updated_at?Number(pref.updated_at):null},
+      addresses:addresses.map(row=>({id:String(row.id),label:String(row.label||'Address'),line1:String(row.line1||''),line2:row.line2?String(row.line2):null,area:row.area?String(row.area):null,city:String(row.city||''),postalCode:row.postal_code?String(row.postal_code):null,isDefault:Boolean(Number(row.is_default||0))})),
       pets:pets.map(row=>({id:String(row.id),name:String(row.name),species:String(row.species||'other'),breed:row.breed?String(row.breed):null,vaccinationStatus:String(row.vaccination_status||'not_provided')})),
       bookings:bookingRecords,
       tickets:tickets.map(row=>({id:String(row.id),category:String(row.category),priority:String(row.priority),status:String(row.status),subject:String(row.subject),updatedAt:Number(row.updated_at||0)})),
