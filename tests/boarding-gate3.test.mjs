@@ -36,7 +36,7 @@ test("Boarding Gate 3 date changes require fresh canonical quote and capacity",(
  assert.match(source,/A lower-priced date change requires an approved refund policy/);
  assert.match(source,/Additional sandbox payment reference is required/);
  assert.match(source,/UPDATE boarding_capacity_locks SET starts_at=\?,ends_at=\?/);
- assert.match(source,/UPDATE scheduling_reservations SET starts_at=\?,ends_at=\?/);
+ assert.match(source,/UPDATE scheduling_reservations SET scheduled_start=\?,scheduled_end=\?/);
  assert.match(source,/UPDATE boarding_commercial_quotes SET status='used'/);
 });
 
