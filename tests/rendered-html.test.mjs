@@ -516,12 +516,12 @@ test("runs a persistent Revenue 100, lead SLA, RNR and customer-ticket foundatio
   assert.match(crm, /Revenue & CX engine/);
   assert.match(panel, /Today’s 100 best revenue actions/);
   assert.match(panel, /10-MINUTE ACTION · 30-MINUTE ESCALATION/);
-  assert.match(panel, /Three calls \+ three WhatsApp attempts/);
+  assert.match(panel, /Four calls \+ four WhatsApp attempts/);
   assert.match(panel, /Tickets, refunds and escalations/);
   assert.match(panel, /WATI, SMS and calling actions remain UAT-queued/);
   assert.match(route, /generateDaily100/);
-  assert.match(route, /Three .* attempts are already recorded/);
-  assert.match(route, /Cold requires 3 calls, 3 WhatsApp attempts and three working days/);
+  assert.match(route, /Four .* attempts are already recorded/);
+  assert.match(route, /Cold requires 4 calls, 4 WhatsApp attempts and three working days/);
   assert.match(route, /30-minute lead response breached/);
   assert.match(route, /Resolution, root cause and evidence are mandatory/);
   for (const model of ["revenueOpportunities","leadWorkItems","leadAttempts","customerExperienceTickets","crmEngineAuditEvents"]) assert.match(schema, new RegExp(model));
