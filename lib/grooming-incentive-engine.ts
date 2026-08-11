@@ -108,7 +108,7 @@ function gpayFineForPending(pending:number){
 
 function dailyOrderBonus(bracket:GroomerBracket,orderCountThatDay:number,orderValueThatDay:number){
  if(orderCountThatDay<4)return{headAmount:0,helperAmount:0,tier:null as null|4|5};
- const tier=orderCountThatDay===4?4:5;
+ const tier:4|5=orderCountThatDay===4?4:5;
  if(bracket==="single"){
    const pct=tier===4?0.30:0.40,cap=tier===4?500:1000;
    return{headAmount:money(Math.min(orderValueThatDay*pct,cap)),helperAmount:0,tier};

@@ -138,7 +138,7 @@ export default function Home() {
     setAddressLookupNote("");
     if (addressSearchTimer.current) window.clearTimeout(addressSearchTimer.current);
     if (value.trim().length < 3) { setAddressSuggestions([]); setAddressSuggestionsOpen(false); return; }
-    addressSearchTimer.current = window.setTimeout(async () => {
+    addressSearchTimer.current = setTimeout(async () => {
       try {
         const result = await searchAddresses(value, addressSessionToken);
         if (result.status === "configuration_required") { setAddressSuggestions([]); setAddressSuggestionsOpen(false); return; }

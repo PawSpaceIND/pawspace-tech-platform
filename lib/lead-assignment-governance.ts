@@ -1,5 +1,5 @@
 export type LeadAssignmentPolicyStatus="draft"|"active_uat"|"retired";
-export type LeadAssignmentReason="new_lead"|"continuity"|"reassignment"|"reopened"|"manager_override";
+export type LeadAssignmentReason="new_lead"|"continuity"|"reassignment"|"reopened"|"manager_override"|"auto_workload";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;

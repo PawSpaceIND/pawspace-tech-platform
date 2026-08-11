@@ -50,8 +50,8 @@ export async function computeDailyTravel(db:Db,input:{providerId:string;travelDa
  for(let i=0;i<stops.length;i++){
    const stop=stops[i];
    const route=await computeGoogleRoute(origin,stop.label).catch(error=>({status:"route_unavailable" as const,error:error instanceof Error?error.message:"Route computation failed"}));
-   const distanceKm=route.distanceMeters!=null?money(route.distanceMeters/1000):null;
-   const durationMinutes=route.durationSeconds!=null?money(route.durationSeconds/60):null;
+   const distanceKm=("distanceMeters" in route&&route.distanceMeters!=null)?money(route.distanceMeters/1000):null;
+   const durationMinutes=("durationSeconds" in route&&route.durationSeconds!=null)?money(route.durationSeconds/60):null;
    legs.push({sequence:i+1,legType:stop.legType,bookingId:stop.bookingId,origin:originLabel,destination:stop.label,distanceKm,durationMinutes,routeStatus:route.status});
    const addressRow=stop.bookingId?await db.prepare("SELECT latitude,longitude FROM booking_service_addresses WHERE booking_id=?").bind(stop.bookingId).first<Row>():null;
    if(addressRow&&addressRow.latitude!=null&&addressRow.longitude!=null){origin={lat:Number(addressRow.latitude),lng:Number(addressRow.longitude)};}
@@ -96,6 +96,6 @@ export async function monthlyPetrolAllowance(db:Db,input:{providerId:string;mont
  const thresholdKm=input.thresholdKm??70,amountPerDay=input.amountPerDay??200;
  const rows=await db.prepare("SELECT travel_date,SUM(distance_km) total_km FROM provider_daily_travel_legs WHERE provider_id=? AND travel_date>=? AND travel_date<=? AND route_status='configured' GROUP BY travel_date HAVING SUM(distance_km)>?")
    .bind(input.providerId,input.monthStartDate,input.monthEndDate,thresholdKm).all<Row>();
- const qualifyingDays=rows.results.map(r=>({travelDate:String(r.travel_date),totalKm:money(r.total_km)}));
+ const qualifyingDays=rows.results.map(r=>({travelDate:String(r.travel_date),totalKm:money(Number(r.total_km))}));
  return{providerId:input.providerId,monthStartDate:input.monthStartDate,monthEndDate:input.monthEndDate,thresholdKm,amountPerDay,qualifyingDayCount:qualifyingDays.length,qualifyingDays,totalAllowance:money(qualifyingDays.length*amountPerDay)};
 }

@@ -145,7 +145,7 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
   function exportReport(run: ReportRun) {
     const customerReport = run.title.toLowerCase().includes("customer") || run.dateBasis === "Customer created date";
     const rows: (string | number)[][] = customerReport
-      ? [["Customer ID", "Customer", "Pet", "Customer created date", "Segment", "Last service date", "Orders", "Revenue", "Contribution", "Next best action"], ...shownCustomers.map(item => [item.id, item.name, item.pet, item.created, item.segment, item.last, item.orders, item.revenue, item.margin, item.next])]
+      ? [["Customer ID", "Customer", "Pet", "Customer created date", "Segment", "Last service date", "Orders", "Revenue", "Contribution", "Next best action"], ...shownCustomers.map(item => [item.customerId, item.name, item.pet, item.createdAt ?? "", item.segment, item.lastServiceAt ?? "", item.orders, item.revenue, item.margin ?? "", item.nextAction])]
       : [["Vertical", "Bookings", "Revenue", "Collected", "Direct cost", "Margin %", "Repeat %", "Cancellation %"], ...shownVerticals.map(item => [item.name, item.bookings ?? "Not tracked yet", item.revenue, item.collected ?? "Not tracked yet", item.cost ?? "Not tracked yet", item.margin ?? "Not tracked yet", item.repeat ?? "Not tracked yet", item.cancelled ?? "Not tracked yet"])];
     const { format, title, dateBasis, from, to } = run;
     if (format === "PDF") {

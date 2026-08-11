@@ -81,7 +81,7 @@ export async function buildSubscriptionBusinessView(db:Db,asOf=Date.now()){
     if(expiresAt<=asOf+30*day){segments.expiring30.push(s);continue;}
     segments.active.push(s);
   }
-  const utilisation=(rows:Row[])=>{const totals=rows.reduce((acc,s)=>({total:acc.total+Number(s.total_sessions),consumed:acc.consumed+Number(s.sessions_consumed)}),{total:0,consumed:0});return totals.total?Math.round((totals.consumed/totals.total)*1000)/10:null;};
+  const utilisation=(rows:Row[])=>{const totals=rows.reduce((acc:{total:number;consumed:number},s)=>({total:acc.total+Number(s.total_sessions),consumed:acc.consumed+Number(s.sessions_consumed)}),{total:0,consumed:0});return totals.total?Math.round((totals.consumed/totals.total)*1000)/10:null;};
   const households=(rows:Row[])=>new Set(rows.map(s=>String(s.customer_id))).size;
   return{
     asOf,
