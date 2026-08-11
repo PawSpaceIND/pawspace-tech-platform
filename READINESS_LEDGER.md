@@ -139,6 +139,15 @@ plan against current `main`, not `fd6af2a`, before assigning today's work.
   real snapshot immutability (a generated report does not retroactively change when more revenue
   is recorded afterward); real idempotency; delivery-status tracking correctly independent of the
   underlying metric truth.
+- Partner app's Available/Offline toggle (ChatGPT P1-5) — 🔧 **real bug, self-disclosed in the
+  code's own toast text**: `[available,setAvailable]=useState(true)` was pure local React state,
+  never persisted anywhere - a provider tapping Offline saw the UI change but could still be
+  assigned new jobs (`loadGovernedProviders()` has always correctly checked
+  `provider_unavailability`; nothing ever wrote to it from this toggle). Added
+  `setProviderAvailability()`, a real endpoint using the same `requireProviderOwnership` pattern
+  already established elsewhere, and wired the real client toggle. Verified end to end: toggling
+  offline genuinely removes real assignment eligibility, toggling back genuinely restores it,
+  correctly scoped to only the provider who toggled. Commit `611e9cb`.
 
 ## Marketing / SEO / public site
 
@@ -173,7 +182,6 @@ session, untested" as the previous entry said).
   safety principle used for Grooming single-pet. **Do not start a competing implementation of
   this - check the branch for updates before touching pricing wiring for these 4 items.**
 - Canonical Customer account/app data (ChatGPT P0-4) — not yet checked by Claude
-- Partner availability + profile truth (ChatGPT P1-5) — not yet checked by Claude
 - Promotions backend + Marketing automation execution (ChatGPT P1-8) — not yet checked by Claude
 - Founder BI → canonical analytics/P&L (ChatGPT P1-9) — partially adjacent to the manager/founder
   dashboard Claude built, but not confirmed identical scope — check before starting
