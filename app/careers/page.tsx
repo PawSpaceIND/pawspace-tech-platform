@@ -1,5 +1,5 @@
 import type{Metadata}from"next";
-import{Breadcrumbs,MarketingShell,ProofStrip,SectionHeader,JsonLd}from"../components/marketing/premium-marketing";
+import Image from"next/image";import{Breadcrumbs,MarketingShell,ProofStrip,SectionHeader,JsonLd}from"../components/marketing/premium-marketing";
 import styles from"../components/marketing/premium-marketing.module.css";
 
 export const metadata:Metadata={title:"Become a PawSpace Caregiver | Careers in Pet Care | PawSpace",description:"Turn your love for pets into meaningful work. Join PawSpace as a groomer, trainer, walker, sitter or host - flexible hours, real pay, real training.",alternates:{canonical:"https://pawspace.in/careers"},openGraph:{title:"Become a PawSpace Caregiver",description:"Flexible pet-care work in Bengaluru - grooming, training, walking, sitting and hosting.",url:"https://pawspace.in/careers",siteName:"PawSpace",type:"website"}};
@@ -24,7 +24,7 @@ export default function CareersPage(){
         <p>Join PawSpace and be part of a team that makes a real difference in pets&apos; lives every day - flexible hours, real training, and pay you can rely on.</p>
         <div className={styles.actions}><a className={styles.primary} href="#apply">Explore openings</a><a className={styles.secondary} href="#apply">Apply now</a></div>
       </div>
-      <div className={styles.heroVisual}/>
+      <div className={styles.heroVisual}><Image src="/assets/banners/sitter-hug-golden.jpg" alt="A PawSpace caregiver embracing a golden retriever" fill sizes="(max-width: 900px) 100vw, 50vw" style={{objectFit:"cover"}} priority/></div>
     </section>
     <ProofStrip/>
     <section className={styles.section}>

@@ -5,6 +5,7 @@ export type BreedGuide={
   slug:string;name:string;species:"dog"|"cat";
   seoTitle:string;seoDescription:string;
   eyebrow:string;headline:string;accent:string;intro:string;
+  image?:string;imageAlt?:string;
   rating:string;rankLabel:string;caredForLabel:string;
   facts:BreedFact[];
   whySpecial:{title:string;text:string}[];
@@ -55,6 +56,7 @@ export const breedGuides:BreedGuide[]=[
  seoTitle:"Siberian Husky Dog Breed Guide | Care & Exercise Needs | PawSpace",
  seoDescription:"A practical Siberian Husky breed guide covering temperament, exercise, grooming and training for Indian pet parents.",
  eyebrow:"Siberian Husky dog breed guide",headline:"Born to run,",accent:"loyal at heart.",
+ image:"/assets/banners/walking-husky-forest.jpg",imageAlt:"A man crouching with his Siberian Husky in a forest",
  intro:"Siberian Huskies are energetic, intelligent and friendly dogs known for their striking looks and adventurous spirit. They are loyal companions designed for active lifestyles.",
  rating:"4.8/5",rankLabel:"Ranked in Top 15 Most Popular Breeds",caredForLabel:"10,000+ Huskies Cared for",
  facts:[{label:"Origin",value:"Siberia, Russia"},{label:"Size",value:"Medium (20-23.5 in)"},{label:"Weight",value:"16-27 kg"},{label:"Lifespan",value:"12-15 Years"},{label:"Coat Type",value:"Thick Double Coat"},{label:"Temperament",value:"Friendly, Outgoing, Intelligent"}],

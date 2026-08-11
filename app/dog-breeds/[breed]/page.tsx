@@ -1,4 +1,4 @@
-import type{Metadata}from"next";import{notFound}from"next/navigation";
+import type{Metadata}from"next";import{notFound}from"next/navigation";import Image from"next/image";
 import{Breadcrumbs,MarketingShell,QuickFacts,DidYouKnow,SectionHeader,Faqs,JsonLd,services as allServices}from"../../components/marketing/premium-marketing";
 import styles from"../../components/marketing/premium-marketing.module.css";
 import{getBreedGuide,breedGuides}from"../../../lib/breed-content";
@@ -33,6 +33,7 @@ export default async function BreedPage({params}:{params:Promise<{breed:string}>
         <div className={styles.actions}><a className={styles.primary} href="/mobile-app">Book a service</a><a className={styles.secondary} href={`tel:+919876543210`}>Call Us: +91 98765 43210</a></div>
       </div>
       <div className={styles.heroVisual}>
+        {guide.image?<Image src={guide.image} alt={guide.imageAlt||`${guide.name}`} fill sizes="(max-width: 900px) 100vw, 50vw" style={{objectFit:"cover"}} priority/>:null}
         <div className={styles.breedStat}>
           <div className="row" style={{display:"flex",gap:10,alignItems:"flex-start"}}><span>⭐</span><div><b>{guide.rating}</b><span style={{display:"block",fontSize:"11.5px",color:"var(--ps-muted)"}}>Breed Rating</span></div></div>
           <div className="row" style={{display:"flex",gap:10,alignItems:"flex-start"}}><span>🏆</span><div><b style={{fontSize:13}}>{guide.rankLabel}</b></div></div>
