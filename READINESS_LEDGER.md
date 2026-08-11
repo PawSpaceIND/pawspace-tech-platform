@@ -203,7 +203,27 @@ session, untested" as the previous entry said).
   does (`actor.email` is `"customer:CUS-XXXXX"` for a platform-session actor), or thread a real
   subjectId through `resolveActor`'s return type. **Not fixed by Claude - it's an unmerged branch
   belonging to another session; flagging here rather than editing someone else's in-progress work.**
-- Promotions backend + Marketing automation execution (ChatGPT P1-8) — not yet checked by Claude
+  **UPDATE: fixed independently by ChatGPT in commit `ccd17e0`** - called `resolvePlatformSession`
+  directly instead of a non-existent `actor.subjectId`, a cleaner fix than the one suggested above.
+  Branch also gained real progress since: `b7a1238` wires the customer app to this canonical data,
+  `064dee0` removes placeholder account data, `c8ea31e` exposes canonical addresses in Customer 360,
+  `5f884a5` adds runtime D1 coverage. Still not merged to main as of this update - still the right
+  branch to track, not duplicate.
+- Promotions backend + Marketing automation execution (ChatGPT P1-8) — **DONE by Claude.**
+  Confirmed precisely before building: the panel's own source was honestly self-disclosing
+  ("PROMOTION CONTROL · NOT YET BUILT", `createPromotion` just notifying no backend existed; same
+  for Automation Rules). Built `lib/promotion-governance.ts` (real lifecycle, margin-floor
+  validation rejecting a discount that would breach it, real audience suppression reusing the exact
+  Campaign pattern, real budget-cap enforcement on redemption, real holdout bucketing) and
+  `lib/marketing-automation-rules.ts` (real rule definitions + enable/disable toggle, deliberately
+  not an execution engine, matching the panel's own stated guardrails - rejects any attempt to
+  configure autonomous execution outright). Wired both into `app/api/marketing-control/route.ts`
+  and the real panel UI, replacing the fake "NOT YET BUILT" labels with accurate ones.
+  **Also found and fixed a separate, unrelated real bug along the way**: the panel's campaign
+  pause/complete button called `PATCH`, but no `PATCH` handler existed on the route at all - fully
+  broken, with a misleading fallback error message. Added a real handler for both campaigns and
+  promotions. Commit `85e2855`. Verified with real execution throughout; 638/638 tests, 0 lint
+  errors, no dead buttons.
 - Founder BI → canonical analytics/P&L (ChatGPT P1-9) — partially adjacent to the manager/founder
   dashboard Claude built, but not confirmed identical scope — check before starting
 - Real scheduler/worker boundary, independent of page loads (ChatGPT P1-10) — not yet checked
