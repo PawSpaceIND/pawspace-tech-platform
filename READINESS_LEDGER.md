@@ -261,9 +261,33 @@ session, untested" as the previous entry said).
   resolution referenced an undefined variable - would have been a real ReferenceError crash on
   mount, undetected by this project's build or any existing test. Fixed, then verified by actually
   rendering `/control` through the real built worker (200 OK, no error-boundary text).
-  **Real gap still open**: building the Accounts/Customers/Subscriptions real backends, and Direct
-  cost/margin for Training and Grooming specifically (genuinely needs new cost-attribution
-  infrastructure for each, not achievable from data that exists today).
+  **UPDATE - all three tabs and Training cost now closed:**
+  - **Subscriptions** (commit `e727e9d`): real segments from `customer_grooming_subscriptions` by
+    real expiry proximity, real utilisation, real unused-credit liability from each subscription's
+    own real per-session plan price - verified partial price coverage correctly shrinks the
+    denominator rather than silently valuing an unpriced plan at zero.
+  - **Customers** (commit `da0db3a`): real segment/risk/next-action built on the already-real
+    `buildCustomer360`, all derived from real bookings/subscriptions - margin stays honestly null,
+    since attributing vertical-level cost down to an individual customer whose orders may span
+    multiple verticals would carry the same partial-coverage risk at a much finer grain. Found and
+    fixed a real bug during verification: dead state from an earlier merge referenced an undefined
+    variable, an undetected ReferenceError waiting to fire on mount.
+  - **Accounts** (commit `0b12faf`): real receivable and real GST payable universally (from the
+    genuinely shared `booking_invoices`/`booking_payments` tables, confirmed byte-identical schema
+    across all 5 verticals that issue them) - real refund queue and real provider payable
+    specifically for Boarding/Sitting/Taxi/Walking, the four verticals whose refund and settlement
+    ledgers share an identical, safely-unionable schema. Training's different status vocabulary and
+    Grooming's payment-reconciliation-based refunds were not forced into the same union.
+  - **Training direct cost** (commit `2233b88`): the original "not achievable from data that exists
+    today" scoping for Training was wrong - `training_session_earnings` (booking_id + gross_earning
+    per completed session) had been missed by an incomplete search. Extended the same cost-
+    attribution logic already proven for Boarding/Sitting to aggregate correctly across a training
+    booking's multiple sessions, with the identical safety property re-verified: one session still
+    pending a compensation rule marks the whole booking's cost unknown, never partially summed.
+  **Genuinely still open**: Grooming direct cost/margin. Confirmed by checking directly - its
+  incentive system (`groomer_incentive_brackets`, `groomer_monthly_targets`, etc.) is aggregated at
+  the groomer-month level with no per-booking equivalent anywhere. This is a real structural gap in
+  that engine's own design, not a missed table - would need new architecture, not a query extension.
 - Real scheduler/worker boundary, independent of page loads (ChatGPT P1-10) — 🔧 **CLOSED in PR #62.**
   Before this work, `worker/index.ts` had only `fetch()`, `vite.config.ts` had no cron trigger, and
   the staff-alert truth explicitly reported `backgroundSchedulerConfigured:false`; meanwhile the
