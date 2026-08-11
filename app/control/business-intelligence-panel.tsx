@@ -14,6 +14,7 @@ type ReportRun = { title: string; format: ReportFormat; dateBasis: DateBasis; fr
 const serviceCodeByVertical: Record<string, string> = { Grooming: "grooming", Training: "dog_training", Boarding: "boarding", "Pet Sitting": "pet_sitting" };
 type SegmentStats = { count: number; households: number; utilisationPct: number | null };
 type SubscriptionBusinessView = { unusedCreditLiability: number | null; liabilityStatus: string; priceCoverage: { known: number; unknown: number }; pauseCancelRate: number | null; segments: { active: SegmentStats; renewalDue7: SegmentStats; expiring30: SegmentStats; expiredWinback: SegmentStats; paused: { count: number; households: number }; cancelled: { count: number; households: number } } };
+type CustomerBusinessRow = { customerId: string; name: string; pet: string; createdAt: number | null; segment: string; lastServiceAt: string | null; daysSinceLastService: number | null; orders: number; revenue: number; margin: null; nextAction: string; risk: string };
 type VerticalRow = { name: string; bookings: number; revenue: number; collected: number; cancelled: number | null; cost: number | null; margin: number | null; repeat: number | null };
 const emptyVerticals: VerticalRow[] = Object.keys(serviceCodeByVertical).map(name => ({ name, bookings: 0, revenue: 0, collected: 0, cancelled: null, cost: null, margin: null, repeat: null }));
 const accountRows = [
@@ -22,13 +23,6 @@ const accountRows = [
   { id: "PAY-240329", type: "Partial payment", vertical: "Boarding", gross: 4547, fee: 91, tax: 694, net: 3762, status: "Balance due" },
   { id: "PAY-240328", type: "Refund", vertical: "Training", gross: -2500, fee: 0, tax: -381, net: -2119, status: "Approval due" },
   { id: "PAY-240327", type: "Partner payout", vertical: "Pet Sitting", gross: -1800, fee: 0, tax: 0, net: -1800, status: "Scheduled" },
-];
-
-const customerRows = [
-  { id: "C-00184", name: "Ananya Rao", pet: "Bruno", created: "12 Jun 2023", segment: "Subscriber", last: "28 Mar 2026", days: 129, orders: 18, revenue: 28482, margin: 10342, next: "Renew 6-session plan", risk: "Renewal due" },
-  { id: "C-00421", name: "Kabir Shah", pet: "Milo", created: "08 Nov 2024", segment: "Repeat", last: "18 Mar 2026", days: 139, orders: 9, revenue: 16291, margin: 5980, next: "Cross-sell training", risk: "Healthy" },
-  { id: "C-00817", name: "Meera Nair", pet: "Coco", created: "19 Feb 2025", segment: "Dormant", last: "04 Jan 2026", days: 212, orders: 6, revenue: 10494, margin: 3318, next: "Win-back call", risk: "At risk" },
-  { id: "C-01092", name: "Rahul Iyer", pet: "Luna", created: "03 Aug 2022", segment: "Subscriber", last: "30 Mar 2026", days: 127, orders: 14, revenue: 23186, margin: 8844, next: "Book unused session", risk: "Credits idle" },
 ];
 
 
@@ -58,7 +52,7 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
   const [city, setCity] = useState("Bengaluru");
   const [service, setService] = useState("All services");
   const [period, setPeriod] = useState("FY 2025–26 through Mar");
-  const [selectedCustomer, setSelectedCustomer] = useState(customerRows[0]);
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerBusinessRow | null>(null);
   const [query, setQuery] = useState("");
   const [sourceDetails, setSourceDetails] = useState(false);
   const [builderOpen, setBuilderOpen] = useState(false);
@@ -79,6 +73,18 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
   const [netProfit, setNetProfit] = useState<number | null>(null);
   const [customerRepeatRate, setCustomerRepeatRate] = useState<number | null>(null);
   const [subscriptionView, setSubscriptionView] = useState<SubscriptionBusinessView | null>(null);
+  const [customers, setCustomers] = useState<CustomerBusinessRow[]>([]);
+  const [customersLoaded, setCustomersLoaded] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/customer-business-view", { cache: "no-store" }).then(r => r.json()).then(body => {
+      if (!active) return;
+      if (!body.error && Array.isArray(body.data)) setCustomers(body.data);
+      setCustomersLoaded(true);
+    }).catch(() => { if (active) setCustomersLoaded(true); });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -111,7 +117,7 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
   }, []);
 
   const shownVerticals = useMemo(() => service === "All services" ? liveVerticals : liveVerticals.filter(item => item.name === service), [service, liveVerticals]);
-  const shownCustomers = useMemo(() => customerRows.filter(row => !query || `${row.name} ${row.pet} ${row.id} ${row.segment}`.toLowerCase().includes(query.toLowerCase())), [query]);
+  const shownCustomers = useMemo(() => customers.filter(row => !query || `${row.name} ${row.pet} ${row.customerId} ${row.segment}`.toLowerCase().includes(query.toLowerCase())), [query, customers]);
   const revenue = shownVerticals.reduce((sum, item) => sum + item.revenue, 0);
   const collected = shownVerticals.reduce((sum, item) => sum + item.collected, 0);
   const hasCost = shownVerticals.every(item => item.cost != null);
@@ -236,8 +242,8 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
       <section className={css.panel}><header><div><span>ACCOUNTS LEDGER</span><h3>Order to settlement</h3><p>Invoice, payment, refund, commission and payout stay linked to the booking.</p></div><div><button onClick={() => notify("Reconciliation workbench opened")}>Reconcile</button><button onClick={() => openReportRun("CSV", "Accounts ledger", "Payment / collection date")}>CSV ↓</button></div></header><div className={`${css.table} ${css.ledger}`}><div className={css.tableHead}><span>Reference</span><span>Type</span><span>Vertical</span><span>Gross</span><span>GST</span><span>Fee</span><span>Net</span><span>Status</span></div>{accountRows.map(row => <article key={row.id}><strong>{row.id}</strong><span>{row.type}</span><span>{row.vertical}</span><span>{money(row.gross)}</span><span>{money(row.tax)}</span><span>{money(row.fee)}</span><b>{money(row.net)}</b><em>{row.status}</em></article>)}</div></section>
     </>}
 
-    {view === "Customers" && <><DemoDataBanner /><div className={css.customerGrid}>      <section className={css.panel}><header><div><span>CUSTOMER-LEVEL BUSINESS INTELLIGENCE</span><h3>Customer 360 and old-customer desk</h3></div><input aria-label="Search customers" placeholder="Search masked customer, pet or ID" value={query} onChange={event => setQuery(event.target.value)} /></header>{shownCustomers.map(row => <button key={row.id} className={`${css.customerRow} ${selectedCustomer.id === row.id ? css.selectedCustomer : ""}`} onClick={() => setSelectedCustomer(row)}><i>{row.name.split(" ").map(part => part[0]).join("")}</i><span><strong>{row.name} · {row.pet}</strong><small>{row.id} · {row.segment} · customer since {row.created} · last service {row.last}</small></span><b>{money(row.revenue)} LTV</b><em>{row.risk}</em></button>)}</section>
-      <aside className={css.panel}><span className={css.kicker}>SELECTED CUSTOMER</span><h3>{selectedCustomer.name} · {selectedCustomer.pet}</h3><p className={css.masked}>Primary + secondary numbers protected · purpose-based contact only</p><div className={css.customerMetrics}>{[["Lifetime orders", selectedCustomer.orders], ["Gross revenue", money(selectedCustomer.revenue)], ["Contribution", money(selectedCustomer.margin)], ["Days inactive", selectedCustomer.days]].map(item => <article key={item[0] as string}><span>{item[0] as string}</span><strong>{item[1]}</strong></article>)}</div>{[["Lifecycle", selectedCustomer.segment], ["Risk", selectedCustomer.risk], ["Next best action", selectedCustomer.next], ["Owner", "CRM renewal desk"]].map(item => <p className={css.detail} key={item[0]}><span>{item[0]}</span><strong>{item[1]}</strong></p>)}<div className={css.customerActions}><button onClick={() => notify("Masked call task created and audited")}>Call securely</button><button onClick={() => notify("Personalised offer builder opened")}>Create offer</button></div></aside>
+    {view === "Customers" && <><div className={css.customerGrid}>      <section className={css.panel}><header><div><span>CUSTOMER-LEVEL BUSINESS INTELLIGENCE</span><h3>Real customer 360 - orders, revenue, subscription-aware segment and risk</h3></div><input aria-label="Search customers" placeholder="Search masked customer, pet or ID" value={query} onChange={event => setQuery(event.target.value)} /></header>{!customersLoaded && <p style={{ padding: 12 }}>Loading real customer data…</p>}{customersLoaded && !shownCustomers.length && <p style={{ padding: 12 }}>No customers found.</p>}{shownCustomers.map(row => <button key={row.customerId} className={`${css.customerRow} ${selectedCustomer?.customerId === row.customerId ? css.selectedCustomer : ""}`} onClick={() => setSelectedCustomer(row)}><i>{row.name.split(" ").map(part => part[0]).join("")}</i><span><strong>{row.name} · {row.pet}</strong><small>{row.customerId} · {row.segment} · {row.createdAt ? `customer since ${new Date(row.createdAt).toLocaleDateString("en-IN")}` : "join date unknown"} · last service {row.lastServiceAt ? new Date(row.lastServiceAt).toLocaleDateString("en-IN") : "never"}</small></span><b>{money(row.revenue)} LTV</b><em>{row.risk}</em></button>)}</section>
+      {selectedCustomer && <aside className={css.panel}><span className={css.kicker}>SELECTED CUSTOMER</span><h3>{selectedCustomer.name} · {selectedCustomer.pet}</h3><p className={css.masked}>Primary + secondary numbers protected · purpose-based contact only</p><div className={css.customerMetrics}>{[["Lifetime orders", selectedCustomer.orders], ["Gross revenue", money(selectedCustomer.revenue)], ["Contribution", "Not tracked yet"], ["Days inactive", selectedCustomer.daysSinceLastService ?? "—"]].map(item => <article key={item[0] as string}><span>{item[0] as string}</span><strong>{item[1]}</strong></article>)}</div>{[["Lifecycle", selectedCustomer.segment], ["Risk", selectedCustomer.risk], ["Next best action", selectedCustomer.nextAction], ["Owner", "CRM renewal desk"]].map(item => <p className={css.detail} key={item[0]}><span>{item[0]}</span><strong>{item[1]}</strong></p>)}<div className={css.customerActions}><button onClick={() => notify("Masked call task created and audited")}>Call securely</button><button onClick={() => notify("Personalised offer builder opened")}>Create offer</button></div></aside>}
     </div></>}
 
     {view === "Subscriptions" && <><section className={css.panel}><header><div><span>SUBSCRIPTION BUSINESS VIEW</span><h3>Past, active, renewal and future value</h3><p>Real segments from customer_grooming_subscriptions - counts, households and utilisation are live. Renewal revenue, cadence adherence, reminder conversion and plan-level contribution have no real aggregate yet.</p></div><button onClick={() => notify("Opening the operational renewal queue")}>Open renewal operations →</button></header>

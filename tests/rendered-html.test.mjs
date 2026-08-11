@@ -468,7 +468,7 @@ test("provides one governed business, accounts, customer and report centre", asy
   assert.match(business, /One number, every vertical, down to the customer/);
   for (const view of ["Overview", "Verticals", "Accounts", "Customers", "Subscriptions", "Reports"]) assert.match(business, new RegExp(`\\"${view}\\"`));
   assert.match(business, /Old customer win-back/);
-  assert.match(business, /Customer 360 and old-customer desk/);
+  assert.match(business, /Real customer 360 - orders, revenue, subscription-aware segment and risk/);
   for (const format of ["CSV", "Excel", "PDF", "JSON"]) assert.match(business, new RegExp(`\\"${format}\\"`));
   assert.match(business, /Create a customer or management report/);
   assert.match(business, /Google Sheets/);
