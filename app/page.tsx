@@ -324,7 +324,7 @@ export default function Home() {
       {showOtp && <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowOtp(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="otp-title" onMouseDown={e => e.stopPropagation()}>
         <button className="modal-close" onClick={() => setShowOtp(false)} aria-label="Close">×</button><div className="modal-icon">📱</div>
         <p className="eyebrow">Almost booked</p><h2 id="otp-title">Confirm your mobile number</h2><p>We’ll use it for booking updates, payment details and groomer tracking.</p>
-        <form onSubmit={verifyOtp}><label>Primary mobile number</label><div className="phone-input"><span>+91</span><input value={phone} onChange={e => setPhone(e.target.value)} inputMode="numeric" placeholder="99969 99505" autoFocus /></div><button className="primary-button" type="submit">Send & verify OTP</button></form>
+        <form onSubmit={verifyOtp}><label>Primary mobile number</label><div className="phone-input"><span>+91</span><input value={phone} onChange={e => setPhone(e.target.value)} inputMode="numeric" placeholder="99969 99505" autoFocus /></div><button className="primary-button" type="submit">Continue</button></form>
         <small>Prototype note: OTP verification is simulated for review.</small>
       </section></div>}
 
