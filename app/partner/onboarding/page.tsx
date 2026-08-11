@@ -35,8 +35,25 @@ export default function PartnerOnboardingUatPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [form, setForm] = useState({ verticalKey: "grooming", countryCode: "IN", regionCode: "KA", cityCode: "BLR", localeCode: "en", displayName: "", businessName: "" });
+  const [form, setForm] = useState({ verticalKey: "grooming", countryCode: "IN", regionCode: "KA", cityCode: "BLR", localeCode: "en", displayName: "", businessName: "", bio: "" });
   const [docType, setDocType] = useState("government_id");
+  const [bioBusy, setBioBusy] = useState(false);
+  const [bioError, setBioError] = useState("");
+
+  async function draftBioWithAi() {
+    setBioBusy(true);
+    setBioError("");
+    try {
+      const r = await fetch("/api/provider-onboarding-self-service", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "generate_profile_bio_ai", verticalKey: text(app?.vertical_key) || form.verticalKey, cityCode: text(app?.city_code) || form.cityCode, displayName: form.displayName, businessName: form.businessName }) });
+      const b = await r.json() as { bio?: string; error?: string; connected?: boolean };
+      if (!r.ok) throw new Error(b.error || "Unable to draft a bio right now");
+      setForm(f => ({ ...f, bio: b.bio || "" }));
+    } catch (e) {
+      setBioError(e instanceof Error ? e.message : "Unable to draft a bio right now");
+    } finally {
+      setBioBusy(false);
+    }
+  }
 
   function refresh() {
     return fetch("/api/provider-onboarding-self-service", { cache: "no-store" }).then(async r => { if (!r.ok) throw new Error(await r.text()); return r.json(); }).then(v => setData(v.data));
@@ -248,7 +265,15 @@ export default function PartnerOnboardingUatPage() {
               <label className={styles.field}><span>Business name</span>
                 <input value={form.businessName} onChange={e => setForm({ ...form, businessName: e.target.value })} />
               </label>
-              <button className={styles.btn} disabled={busy || !form.displayName || !form.businessName} onClick={() => void post({ action: "save_profile", applicationId: appId, payload: { displayName: form.displayName, businessName: form.businessName, services: [text(app?.vertical_key)], serviceAreas: [text(app?.city_code)], languages: [text(app?.locale_code) || "en"], businessDetails: {}, packageDetails: [], facilityDetails: {}, references: [] } })}>
+              <label className={styles.field}><span>Your bio</span>
+                <textarea rows={4} style={{ width: "100%", padding: "11px 13px", borderRadius: 10, border: "1px solid var(--ps-border)", fontSize: 14, fontFamily: "inherit", boxSizing: "border-box" }} value={form.bio} onChange={e => setForm({ ...form, bio: e.target.value })} placeholder="A short, friendly line about you - or draft one with AI below and edit it." />
+              </label>
+              <button className={styles.btnGhost} disabled={bioBusy || !form.displayName} onClick={() => void draftBioWithAi()}>
+                {bioBusy ? "Drafting…" : "✨ Draft with AI"}
+              </button>
+              {bioError ? <p className={styles.errorBox} role="alert" style={{ marginTop: 10 }}>{bioError}</p> : null}
+              <p style={{ fontSize: 12, color: "var(--ps-muted)" }}>AI can suggest a starting point, but it&apos;s only ever a draft - review and edit it before saving, and it&apos;s never shown to customers until you save your profile yourself.</p>
+              <button className={styles.btn} disabled={busy || !form.displayName || !form.businessName} onClick={() => void post({ action: "save_profile", applicationId: appId, payload: { displayName: form.displayName, businessName: form.businessName, bio: form.bio, services: [text(app?.vertical_key)], serviceAreas: [text(app?.city_code)], languages: [text(app?.locale_code) || "en"], businessDetails: {}, packageDetails: [], facilityDetails: {}, references: [] } })}>
                 Save profile
               </button>
               <p>Home or facility photos stay private by default. Saving your profile alone doesn&apos;t start bringing you bookings yet.</p>
