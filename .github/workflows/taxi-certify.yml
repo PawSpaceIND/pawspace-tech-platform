@@ -1,0 +1,96 @@
+name: Pet Taxi closure certification
+on:
+  push:
+    branches:
+      - agent/taxi-certify
+permissions:
+  contents: write
+  pull-requests: write
+concurrency:
+  group: taxi-closure-certification
+  cancel-in-progress: false
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/taxi-certify
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Freeze source branch head
+        run: |
+          git fetch origin agent/taxi-gates1-5
+          echo "SOURCE_SHA=$(git rev-parse origin/agent/taxi-gates1-5)" >> "$GITHUB_ENV"
+      - name: Apply any pending Taxi closure helpers
+        run: |
+          if [ -f scripts/taxi-gate1-patch.py ]; then python scripts/taxi-gate1-patch.py; fi
+          if [ -f scripts/taxi-gate2-patch.py ]; then python scripts/taxi-gate2-patch.py; fi
+          if [ -f scripts/taxi-crosscut-patch.py ]; then python scripts/taxi-crosscut-patch.py; fi
+      - name: Remove temporary Taxi helpers
+        run: |
+          rm -f .github/workflows/taxi-gate1-patch.yml scripts/taxi-gate1-patch.py
+          rm -f .github/workflows/taxi-gate2-patch.yml scripts/taxi-gate2-patch.py
+          rm -f .github/workflows/taxi-certify.yml
+          rm -f scripts/taxi-crosscut-patch.py
+      - name: Verify Taxi closure markers
+        run: |
+          grep -q '"pet_taxi"' backend/src/scheduling.ts
+          grep -q 'taxi_rahul' lib/provider-capacity-governance.ts
+          grep -q 'CanonicalTaxiPage' app/taxi/page.tsx
+          grep -q 'CanonicalDriverPage' app/driver/page.tsx
+          grep -q 'Pet Taxi UAT completion requires at least two canonical sandbox route samples' lib/taxi-lifecycle.ts
+          grep -q 'routeSamples<2' app/driver/canonical-driver-page.tsx
+          grep -q '/driver/proof?bookingId=' app/driver/canonical-driver-page.tsx
+          grep -q '/driver/recovery?bookingId=' app/driver/canonical-driver-page.tsx
+          grep -q '/taxi/manage?bookingId=' app/taxi/canonical-taxi-page.tsx
+          grep -q 'TaxiCustomerIncidents' app/taxi/manage/page.tsx
+          grep -q '/api/taxi-finance' lib/api-gateway.ts
+          grep -q '/api/taxi-proof' lib/api-gateway.ts
+          grep -q '/api/taxi-ops' lib/api-gateway.ts
+          grep -q '/api/taxi-recovery' lib/api-gateway.ts
+          grep -q 'productionReady:false' lib/taxi-ops-governance.ts
+      - name: Install web dependencies
+        run: npm ci
+      - name: Build and run full web regression
+        run: npm test
+      - name: Lint
+        run: npm run lint
+      - name: Validate Sites artifact
+        run: npm run validate:artifact
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+      - name: Backend typecheck
+        working-directory: backend
+        run: npm run typecheck
+      - name: Backend tests
+        working-directory: backend
+        run: npm test
+      - name: Commit exact certified tree
+        run: |
+          git config user.name "PawSpace Taxi Closure"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -m "Certify Pet Taxi closure"
+      - name: Fast-forward PR branch if source stayed frozen
+        run: |
+          git fetch origin agent/taxi-gates1-5
+          REMOTE_SHA=$(git rev-parse origin/agent/taxi-gates1-5)
+          if [ "$REMOTE_SHA" != "$SOURCE_SHA" ]; then
+            echo "Taxi source branch changed during certification; refusing to overwrite it."
+            exit 1
+          fi
+          git push origin HEAD:agent/taxi-gates1-5
+      - name: Promote and squash-merge PR 5
+        run: |
+          gh pr ready 5 --repo PawSpaceIND/pawspace-tech-platform
+          gh pr merge 5 --repo PawSpaceIND/pawspace-tech-platform --squash --delete-branch=false --subject "Close canonical Pet Taxi UAT path across Gates 1-5" --body "Certified canonical Pet Taxi internal-UAT closure across Customer, Driver, Operations and Finance. Production Maps/GPS, live money and production launch dependencies remain explicitly disconnected or policy-gated."
