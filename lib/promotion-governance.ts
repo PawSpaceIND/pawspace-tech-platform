@@ -49,6 +49,8 @@ export async function approvePromotion(db:Db,input:{promotionId:string;actor:str
  await ensurePromotionGovernance(db);
  if(input.reason.trim().length<8)throw new Error("A clear approval reason is required");
  const now=Date.now();
+ const existingPromotion=await db.prepare("SELECT created_by FROM governed_marketing_promotions WHERE id=?").bind(input.promotionId).first<{created_by?:unknown}>();
+ if(existingPromotion&&String(existingPromotion.created_by)===input.actor)throw new Error("Maker/checker: the promotion creator cannot approve their own promotion");
  const result=await db.prepare("UPDATE governed_marketing_promotions SET approval_status='approved',approved_by=?,approved_at=?,status=CASE WHEN status='draft' THEN 'approved' ELSE status END,updated_at=? WHERE id=? AND approval_status='approval_required'")
    .bind(input.actor,now,now,input.promotionId).run();
  if(!Number(result.meta?.changes||0))throw new Error("Promotion not found or already approved");
