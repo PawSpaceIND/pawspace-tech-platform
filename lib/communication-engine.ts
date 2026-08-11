@@ -1,6 +1,6 @@
 type Row=Record<string,unknown>;
 export type CommunicationChannel="whatsapp"|"sms"|"email"|"push"|"chat"|"voice";
-export type CommunicationPurpose="auth"|"transactional"|"service_recovery"|"marketing";
+export type CommunicationPurpose="auth"|"transactional"|"service_recovery"|"marketing"|"lifecycle";
 export type CommunicationInput={customerId:string;cityId:string;channel:CommunicationChannel;purpose:CommunicationPurpose;idempotencyKey:string;templateKey:string;payload:Record<string,unknown>;createdBy:string;bookingId?:string;leadId?:string;ticketId?:string;assignedTo?:string;scheduledAt?:number};
 
 export async function ensureCommunicationTables(db:D1Database){await db.batch([
@@ -34,6 +34,7 @@ export async function enqueueCommunication(db:D1Database,input:CommunicationInpu
  if(input.purpose==="marketing"&&c.marketing!==true){hardSuppressed=true;reasons.push(c.marketing===false?"marketing_opt_out":"marketing_consent_unknown");}
  if(["transactional","service_recovery"].includes(input.purpose)&&c.serviceUpdates===false){hardSuppressed=true;reasons.push("service_updates_opt_out");}
  if(["transactional","service_recovery"].includes(input.purpose)&&!input.bookingId){hardSuppressed=true;reasons.push("booking_link_required");}
+ if(input.purpose==="lifecycle"&&c.serviceUpdates===false){hardSuppressed=true;reasons.push("service_updates_opt_out");}
  const localHour=new Date(now+330*60_000).getUTCHours(),quiet=inQuietHours(localHour,Number(p.quiet_start_hour),Number(p.quiet_end_hour));if(input.purpose==="marketing"&&quiet)reasons.push("quiet_hours");
  const recent=input.purpose==="marketing"?await db.prepare("SELECT COUNT(*) count FROM communication_messages WHERE customer_id=? AND purpose='marketing' AND status NOT IN ('suppressed','dead_letter') AND created_at>=?").bind(input.customerId,now-7*86_400_000).first<{count:number}>():null;const capExceeded=Number(recent?.count||0)>=Number(p.promotional_cap_7d);if(capExceeded)reasons.push("frequency_cap_7d");
  const enforce=String(p.enforcement_mode)==="enforce";const delayMarketing=!hardSuppressed&&input.purpose==="marketing"&&enforce&&(quiet||capExceeded);const nextAttempt=input.scheduledAt??(delayMarketing?nextQuietEnd(now,Number(p.quiet_end_hour)):now);const status=hardSuppressed?"suppressed":delayMarketing?"scheduled":"queued";const threadId=await thread(db,input),messageId=`MSG-${crypto.randomUUID().slice(0,14).toUpperCase()}`;const policyDecision={policyId:p.id,policyVersion:p.version,enforcementMode:p.enforcement_mode,consentSource:c.source,serviceUpdates:c.serviceUpdates,marketing:c.marketing,quietHours:quiet,frequencyCapExceeded:capExceeded,reasons,wouldSuppress:hardSuppressed,wouldDelay:quiet||capExceeded,maxAttempts:Number(p.max_attempts),retryBaseMinutes:Number(p.retry_base_minutes)};
