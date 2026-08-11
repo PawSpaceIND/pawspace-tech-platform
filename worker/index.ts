@@ -4,6 +4,7 @@ import handler from "vinext/server/app-router-entry";
 import { auditApiResponse, authorizeApiRequest } from "../lib/api-gateway";
 import {authorizePlatformSessionRequest} from "../lib/session-api-gateway";
 import {blockDisabledServiceRequest} from "../lib/service-control";
+import {runBackgroundScheduler} from "../lib/background-scheduler";
 
 interface Env {
   ASSETS: Fetcher;
@@ -21,6 +22,12 @@ interface Env {
 interface ExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
   passThroughOnException(): void;
+}
+
+interface ScheduledControllerLike {
+  scheduledTime: number;
+  cron: string;
+  noRetry(): void;
 }
 
 // Image security config. SVG sources with .svg extension auto-skip the
@@ -60,6 +67,9 @@ const worker = {
     }
 
     return handler.fetch(request, env, ctx);
+  },
+  async scheduled(controller:ScheduledControllerLike,env:Env,ctx:ExecutionContext){
+    ctx.waitUntil(runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}).then(result=>{if(result.errors&&Array.isArray(result.errors)&&result.errors.length)throw new Error(`Background scheduler partial failure: ${result.errors.join(" | ")}`);}));
   },
 };
 

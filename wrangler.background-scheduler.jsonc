@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "pawspace-background-scheduler-regression",
+  "main": "tests/background-scheduler-worker.ts",
+  "compatibility_date": "2026-05-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "pawspace-background-scheduler-regression",
+      "database_id": "00000000-0000-0000-0000-000000000010",
+      "preview_database_id": "pawspace-background-scheduler-local"
+    }
+  ]
+}
