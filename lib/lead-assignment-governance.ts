@@ -85,3 +85,46 @@ export async function checkRnrAutoReassignment(db:Db,input:{leadId:string;actorI
 export async function leadAssignmentDirectory(db:Db){await ensureLeadAssignmentTables(db);const[policies,members,current,events]=await Promise.all([db.prepare("SELECT * FROM lead_assignment_policies ORDER BY updated_at DESC").all<Row>(),db.prepare("SELECT m.*,u.name user_name,u.status user_status FROM lead_assignment_memberships m LEFT JOIN app_users u ON u.email=m.employee_email ORDER BY m.team_code,m.employee_email").all<Row>(),db.prepare("SELECT a.*,l.customer_id,l.service,l.source,l.owner legacy_owner FROM lead_assignments a LEFT JOIN lead_work_items l ON l.id=a.lead_id WHERE a.status='current' ORDER BY a.assigned_at DESC").all<Row>(),db.prepare("SELECT * FROM lead_assignment_events ORDER BY created_at DESC LIMIT 200").all<Row>()]);return{policies:policies.results.map(policySnapshot),members:members.results,currentAssignments:current.results.map(row=>({...row,projectionMismatch:Boolean(row.employee_email)&&text(row.employee_email).toLowerCase()!==text(row.legacy_owner).toLowerCase()})),events:events.results,truth:{canonicalOwnerSource:"lead_assignments",legacyLeadOwnerField:"projection_only",hardCodedOwnerRotationAuthoritative:false,productionReady:false}};}
 
 export async function leadAssignmentIntegrity(db:Db){await ensureLeadAssignmentTables(db);const rows=await db.prepare("SELECT a.lead_id,a.employee_email canonical_owner,l.owner legacy_owner,a.policy_id,a.policy_version,a.assigned_at FROM lead_assignments a JOIN lead_work_items l ON l.id=a.lead_id WHERE a.status='current' AND COALESCE(a.employee_email,'Unassigned')!=COALESCE(l.owner,'Unassigned') ORDER BY a.assigned_at DESC").all<Row>();return{projectionMismatches:rows.results,count:rows.results.length,canonicalOwnerSource:"lead_assignments"};}
+
+/**
+ * The real outbound batching rule: a rep works a fixed batch (default 10) of outbound leads at a
+ * time. Once every lead in their current batch has a real logged attempt (the same "touched" check
+ * used by the daily-closure gate, for consistency), the next batch becomes available. Cross-vertical
+ * vs single-vertical batching is not a separate concept to configure - it's already exactly what a
+ * rep's existing lead_assignment_memberships.service_codes_json scope determines (one service or
+ * several), so this reuses that rather than adding a second, competing configuration surface.
+ */
+export async function outboundBatchStatus(db:Db,input:{repEmail:string}){
+  await ensureLeadAssignmentTables(db);
+  const rows=await db.prepare("SELECT a.lead_id FROM lead_assignments a JOIN lead_work_items l ON l.id=a.lead_id WHERE a.employee_email=? AND a.status='current' AND l.source LIKE 'outbound%'").bind(input.repEmail).all<Row>();
+  const leadIds=rows.results.map(r=>text(r.lead_id));
+  let untouched=0;
+  for(const leadId of leadIds){
+    const touch=await db.prepare("SELECT 1 FROM lead_attempts WHERE lead_id=? LIMIT 1").bind(leadId).first<Row>();
+    if(!touch)untouched++;
+  }
+  return{repEmail:input.repEmail,batchSize:leadIds.length,touched:leadIds.length-untouched,untouched,batchComplete:leadIds.length===0||untouched===0};
+}
+
+export async function assignNextOutboundBatch(db:Db,input:{repEmail:string;batchSize?:number;actorId:string;asOf?:number}){
+  await ensureLeadAssignmentTables(db);
+  const batchSize=input.batchSize??10,now=input.asOf??Date.now();
+  const status=await outboundBatchStatus(db,{repEmail:input.repEmail});
+  if(!status.batchComplete)return{assigned:0,reason:"batch_not_complete",untouched:status.untouched,batchSize:status.batchSize};
+  const membership=await db.prepare("SELECT service_codes_json,city_ids_json FROM lead_assignment_memberships WHERE employee_email=? AND active=1").bind(input.repEmail).first<Row>();
+  if(!membership)return{assigned:0,reason:"no_active_membership"};
+  const services=list(membership.service_codes_json),cities=list(membership.city_ids_json);
+  if(!services.length)return{assigned:0,reason:"no_service_scope_configured"};
+  const placeholders=services.map(()=>"?").join(",");
+  const candidates=await db.prepare(`SELECT l.id FROM lead_work_items l LEFT JOIN lead_assignments a ON a.lead_id=l.id AND a.status='current' WHERE a.id IS NULL AND l.source LIKE 'outbound%' AND l.service IN (${placeholders}) AND l.status NOT IN ('closed','converted') ORDER BY l.created_at ASC LIMIT ?`)
+    .bind(...services,batchSize).all<Row>();
+  let assigned=0;const assignedLeadIds:string[]=[];
+  for(const row of candidates.results){
+    const leadId=text(row.id);
+    try{
+      const result=await assignLead(db,{leadId,idempotencyKey:`outbound-batch:${leadId}`,reason:"auto_workload",actorId:input.actorId,asOf:now});
+      if(!(result as{duplicatePrevented?:boolean}).duplicatePrevented){assigned++;assignedLeadIds.push(leadId);}
+    }catch{/* a lead that fails to assign (e.g. city mismatch surfaced only at assignLead time) is simply skipped, not fatal to the rest of the batch */}
+  }
+  return{assigned,assignedLeadIds,requestedBatchSize:batchSize,citiesScoped:cities};
+}
