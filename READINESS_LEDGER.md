@@ -181,7 +181,28 @@ session, untested" as the previous entry said).
   Every seeded row is inserted `active:0` - nothing goes live just by seeding, matching the same
   safety principle used for Grooming single-pet. **Do not start a competing implementation of
   this - check the branch for updates before touching pricing wiring for these 4 items.**
-- Canonical Customer account/app data (ChatGPT P0-4) — not yet checked by Claude
+- Canonical Customer account/app data (ChatGPT P0-4) — **DONE by Claude for login/identity.**
+  Built the real customer OTP login flow end to end: `lib/customer-otp.ts` +
+  `app/api/customer-otp/route.ts` (commit `3db2e69`), then the login screen and wiring every
+  hardcoded `TST-101`/"Karthik P." reference across grooming-flow.tsx, stay-flow.tsx,
+  training-flow.tsx, referral-card.tsx, coupon-field.tsx, page.tsx off the fake identity onto the
+  real session (commit `9a006fc`). Verified with a full real integration test (OTP request → verify
+  → session issued → a genuine follow-up Request with that cookie resolving back to the same
+  customer; no-cookie and tampered-cookie requests both correctly rejected).
+  **A separate, complementary piece is still open and actively being built by ChatGPT** on branch
+  `fix/p0-4-canonical-customer-account` (commits `50bdc3f`, `a917d6e`, not yet merged as of this
+  update): `lib/customer-account.ts` + `app/api/customer-account/route.ts` - real profile/address/
+  pet/booking-history read+mutate, idempotent, ownership-checked. Reviewed directly: no file overlap
+  with Claude's login work, genuinely complementary (this is the "real order history" piece Claude
+  had explicitly flagged as not done). **One real, minor bug found before merging**: `ownedContext`'s
+  auto-detect fallback reads `actor.subjectId`, which does not exist on the real `AuthenticatedActor`
+  type (confirmed by direct execution: `actor.subjectId` is always `undefined`) - the endpoint still
+  correctly enforces ownership when a customerId is explicitly passed, so this isn't a security
+  issue, but the "infer my own customer ID from my session" convenience path silently never fires.
+  Fix: use the same composite-auditId parsing Claude's `app/api/customer-profile/route.ts` already
+  does (`actor.email` is `"customer:CUS-XXXXX"` for a platform-session actor), or thread a real
+  subjectId through `resolveActor`'s return type. **Not fixed by Claude - it's an unmerged branch
+  belonging to another session; flagging here rather than editing someone else's in-progress work.**
 - Promotions backend + Marketing automation execution (ChatGPT P1-8) — not yet checked by Claude
 - Founder BI → canonical analytics/P&L (ChatGPT P1-9) — partially adjacent to the manager/founder
   dashboard Claude built, but not confirmed identical scope — check before starting
