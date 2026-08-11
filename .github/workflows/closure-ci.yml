@@ -1,20 +1,27 @@
-name: Grooming closure CI
+name: Release CI
 
 on:
   push:
     branches:
+      - main
       - grooming-integration-closure
       - agent/food-gates1-5
       - agent/platform-stack-recertification
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  web:
+  web-tests:
+    name: Web tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,10 +31,33 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
       - run: npm run lint
+
+  artifact:
+    name: Artifact validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
       - run: npm run validate:artifact
 
   backend:
+    name: Backend
     runs-on: ubuntu-latest
     defaults:
       run:
