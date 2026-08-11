@@ -242,6 +242,40 @@ functionality through its own independent path: `app/host/boarding-proof-workspa
 ops/finance stack. Same pattern as the ~28 branches closed earlier this session. No open PR
 existed for it (dangling branch reference only) - deleted directly.
 
+## Provider onboarding AI-assist plumbing (Claude, this session)
+
+Per explicit direction: built real AI-assist for quiz generation, interview summary drafting and
+profile bio drafting - following the exact same "real code, fails closed until credentials exist"
+pattern as every other external integration here (Razorpay, WhatsApp, Maps). Found the master
+registry already tracked this: `lib/integration-readiness.ts` INT-AI-01, "External provider is not
+considered connected by default; autonomous governed actions remain prohibited" - added the
+missing `credentialDetector:"ai_provider"` (checks `PAWSPACE_AI_PROVIDER_API_KEY`), matching every
+other entry's detector pattern exactly.
+
+Built `lib/ai-provider-adapter.ts` - a real, callable adapter that makes a genuine Anthropic
+Messages API call the moment the key is configured, and fails closed with a clear, honest reason
+otherwise (never fabricates AI-looking output locally, never silently falls back to canned text).
+Three call-sites on top of it, each producing a DRAFT ONLY - the existing human-decision
+safeguards are untouched:
+- `lib/provider-quiz-ai-draft.ts` + `generate_quiz_draft_ai` (staff route) - generates 20 candidate
+  questions, still goes through the existing `createQuizDraft` (draft status) and unchanged
+  `approve_quiz` gate before it can ever be used.
+- `lib/provider-interview-ai-summary.ts` + `generate_interview_summary_ai` (staff route) - drafts a
+  neutral summary from the Ops interviewer's real notes, saved via the already-existing
+  `saveInterviewAiSummaryDraft` (already `finalDecisionAuthority:"human_ops"`, unchanged).
+- `lib/provider-profile-ai-bio.ts` + `generate_profile_bio_ai` (self-service route) - returns a
+  draft bio only (`draftOnly:true` in the response), never persisted - the provider must still
+  explicitly call the existing `save_profile` action themselves after reviewing/editing it.
+
+**Real execution proof, not just static tests**: extended `tests/runtime-d1-worker.ts` to call all
+three generators directly inside the real Cloudflare Workers runtime (real `cloudflare:workers`
+env resolution, not string-matched) with no API key configured - confirmed all three fail closed
+with a clear reason rather than crashing or fabricating output. This is exactly the boundary a
+static test cannot verify.
+
+**Still needs from the business, not code**: a real `PAWSPACE_AI_PROVIDER_API_KEY` to actually
+light this up. Until then this is intentionally inert, same as Razorpay/WhatsApp/Maps.
+
 ## Still open — genuinely not started, not a duplicate-risk
 
 - **Pricing Control wiring for Grooming multi-pet, Training, Boarding, Pet Sitting — ChatGPT is
