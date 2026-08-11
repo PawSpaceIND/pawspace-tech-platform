@@ -26,24 +26,36 @@ async function emit(db:Db,input:{callbackId:string;leadId:string;eventType:strin
  * Schedules a real callback for exactly when the customer asked to be called, not a generic SLA
  * delay. Also moves the lead's own next_action_at to this same real time, so the standard lead
  * worklist and this dedicated callback queue never disagree about when this lead is next due.
+ *
+ * Replaying the same scheduling request is safe. Existing callers do not need to change: when an
+ * explicit idempotency key is absent, the logical request itself provides a deterministic fallback.
  */
-export async function scheduleLeadCallback(db:Db,input:{leadId:string;requestedAt:number;reason:string;actorId:string}){
+export async function scheduleLeadCallback(db:Db,input:{leadId:string;requestedAt:number;reason:string;actorId:string;idempotencyKey?:string}){
  await ensureLeadCallbackTables(db);
- if(!text(input.leadId))throw new Error("Lead is required");
+ const leadId=text(input.leadId),reason=input.reason.trim(),actorId=text(input.actorId);
+ if(!leadId)throw new Error("Lead is required");
  if(!Number.isFinite(input.requestedAt)||input.requestedAt<=Date.now())throw new Error("Callback time must be a real, future time - not a placeholder");
- if(input.reason.trim().length<8)throw new Error("A real reason (what the customer actually asked for) is required to schedule a callback");
- const lead=await db.prepare("SELECT id FROM lead_work_items WHERE id=?").bind(input.leadId).first<Row>();
+ if(reason.length<8)throw new Error("A real reason (what the customer actually asked for) is required to schedule a callback");
+ const lead=await db.prepare("SELECT id FROM lead_work_items WHERE id=?").bind(leadId).first<Row>();
  if(!lead)throw new Error("Lead not found");
+ const requestKey=text(input.idempotencyKey)||`schedule:${leadId}:${input.requestedAt}:${actorId}:${reason}`;
+ const priorEvent=await db.prepare("SELECT callback_id FROM lead_callback_events WHERE idempotency_key=? AND event_type='scheduled'").bind(requestKey).first<Row>();
+ if(priorEvent){
+   const prior=await db.prepare("SELECT * FROM lead_callbacks WHERE id=?").bind(priorEvent.callback_id).first<Row>();
+   if(!prior)throw new Error("Callback replay record is missing its callback");
+   return{id:text(prior.id),leadId:text(prior.lead_id),requestedAt:Number(prior.requested_at),reason:text(prior.reason),status:text(prior.status),duplicatePrevented:true};
+ }
  // Superseding a still-open callback for the same lead, rather than letting two live promises
  // coexist and confuse whoever picks this lead up next.
  const now=Date.now();
- await db.prepare("UPDATE lead_callbacks SET status='superseded',updated_at=? WHERE lead_id=? AND status='scheduled'").bind(now,input.leadId).run();
+ await db.prepare("UPDATE lead_callbacks SET status='superseded',updated_at=? WHERE lead_id=? AND status='scheduled'").bind(now,leadId).run();
  const id=uid("LCB");
  await db.prepare("INSERT INTO lead_callbacks (id,lead_id,requested_at,reason,status,scheduled_by,created_at,updated_at) VALUES (?,?,?,?,'scheduled',?,?,?)")
-   .bind(id,input.leadId,input.requestedAt,input.reason.trim(),input.actorId,now,now).run();
- await db.prepare("UPDATE lead_work_items SET next_action_at=?,updated_at=? WHERE id=?").bind(input.requestedAt,now,input.leadId).run();
- await emit(db,{callbackId:id,leadId:input.leadId,eventType:"scheduled",actorId:input.actorId,idempotencyKey:`schedule:${id}`,detail:{requestedAt:input.requestedAt,reason:input.reason.trim()}});
- return{id,leadId:input.leadId,requestedAt:input.requestedAt,reason:input.reason.trim(),status:"scheduled"};
+   .bind(id,leadId,input.requestedAt,reason,actorId,now,now).run();
+ await db.prepare("UPDATE lead_work_items SET next_action_at=?,updated_at=? WHERE id=?").bind(input.requestedAt,now,leadId).run();
+ const emitted=await emit(db,{callbackId:id,leadId,eventType:"scheduled",actorId,idempotencyKey:requestKey,detail:{requestedAt:input.requestedAt,reason}});
+ if(!emitted)throw new Error("Callback schedule idempotency key was already consumed");
+ return{id,leadId,requestedAt:input.requestedAt,reason,status:"scheduled",duplicatePrevented:false};
 }
 
 /** A rep genuinely made the call - completes the real, open callback for this lead, real outcome required. */
