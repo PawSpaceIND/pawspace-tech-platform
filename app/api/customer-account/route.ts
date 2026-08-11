@@ -1,9 +1,10 @@
 import{authError,database,requireCustomerOwnership,resolveActor,securityAudit}from"../../../lib/server-auth";
+import{resolvePlatformSession}from"../../../lib/platform-session";
 import{mutateCustomerAccount,readCustomerAccount}from"../../../lib/customer-account";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin customer account write blocked",{status:403});}
-async function ownedContext(request:Request,requestedCustomerId?:string){const db=await database(),actor=await resolveActor(request);const customerId=String(requestedCustomerId||actor.subjectId||"").trim();if(!customerId)throw new Response("Customer identity is required",{status:400});await requireCustomerOwnership(db,actor,customerId);return{db,actor,customerId};}
+async function ownedContext(request:Request,requestedCustomerId?:string){const db=await database(),actor=await resolveActor(request),session=requestedCustomerId?null:await resolvePlatformSession(db,request);const customerId=String(requestedCustomerId||(session?.subjectType==="customer"?session.subjectId:"")).trim();if(!customerId)throw new Response("Verified customer identity is required",{status:401});await requireCustomerOwnership(db,actor,customerId);return{db,actor,customerId};}
 
 export async function GET(request:Request){try{const url=new URL(request.url),{db,customerId}=await ownedContext(request,url.searchParams.get("customerId")||undefined),record=await readCustomerAccount(db,customerId);if(!record)return json({error:"Canonical customer not found"},404);return json({data:record,source:"canonical_customer_account"});}catch(error){return authError(error,"Unable to load customer account");}}
 
