@@ -169,6 +169,140 @@ session, untested" as the previous entry said).
 | Root domain `/` opens the Grooming booking flow directly, not `/discover` (the multi-vertical homepage linked as "Home" in nav) | ⬜ open question | Flagged to owner as a possible intentional design (ads/QR codes may point at Grooming directly) vs. oversight — not yet resolved either way |
 | `grooming-integration-closure` branch (331 commits, 263 conflicts vs main) | ⬜ open | Restored after an accidental deletion mid-session (`git ref` recreated from cached SHA, no data lost) — still needs dedicated review, has not been attempted |
 
+## Provider self-onboarding: real login was missing entirely (Claude, this session)
+
+Investigated whether provider self-onboarding is "complete and launchable." Found a genuinely
+fundamental gap beyond just unbranded UI: `app/careers` → "Start your application →" → 
+`/partner/onboarding`, whose very first step calls `GET /api/identity-session` to check for an
+existing session - **but nothing anywhere let a new applicant create one.** No login/OTP screen
+existed under `/partner/*` at all. A brand-new applicant saw a raw 401 error with nowhere to go.
+
+`lib/verified-identity-assertion.ts` already anticipated this (`identitySource:"partner_otp"`,
+`subjectType:"provider"` were already valid, distinct from `"customer_otp"`/`"customer"`) - the
+verification side was built, but nothing ever generated a `partner_otp` assertion.
+
+Built `lib/partner-otp.ts` + `app/api/partner-otp/route.ts`, mirroring the real, working
+`lib/customer-otp.ts` pattern exactly (same sandbox-code-returned-in-response approach, same
+replay/attempt/expiry protections, no real SMS gateway - same honest sandboxed state as the
+customer flow). Creates a real `canonical_providers` table (didn't exist before) on first
+verified login. Built `app/partner/partner-login.tsx` (styled with the site's existing
+premium-marketing theme) and wired `/partner/onboarding` to show it instead of a bare error
+when no session exists.
+
+**Real execution proof, not just static tests**: extended `tests/runtime-d1-worker.ts` to request
+a real OTP, verify it with the real sandbox code, confirm a real `canonical_providers` row was
+created, confirm the resulting session cookie genuinely authenticates `/api/identity-session` and
+`/api/provider-onboarding-self-service` (both against real handlers, real D1), and confirm an
+unauthenticated request is genuinely rejected with 401. This also caught a second real gap along
+the way: `PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT` was configured nowhere for this runtime-d1
+worker config, meaning `verifyIdentityAssertion` - the function underlying **both** the customer
+and provider OTP flows - had never actually been exercised end-to-end by any real-execution test
+before this. Added the secret to `wrangler.runtime-d1.jsonc` (test-only value, 32+ chars, clearly
+not a real secret) so this now runs for real on every CI run via the existing `runtime-d1` gate.
+
+**Real infrastructure blocker found and correctly left unresolved, not routed around**: also
+investigated real document/photo upload for KYC documents. Started building client-side image
+compression + base64 storage, then found a pre-existing test
+(`tests/provider-onboarding-transactional.test.mjs`, "PO2 stores secure document references")
+that deliberately forbids storing base64/raw bytes in `provider_onboarding_documents` - a real,
+intentional compliance boundary (sensitive KYC documents need dedicated, audited storage, not raw
+bytes in a general D1 table). Reverted that approach rather than dodge the test. Real document
+upload needs object storage (e.g. R2) provisioned first - this deployment's hosting config shows
+`r2: null`, an infrastructure decision outside what either agent can do from here. Kept what's
+real and non-conflicting: a genuine per-document list with an audit-logged staff "View" action
+(previously staff only saw a meaningless count).
+
+**Still open**: the branded, polished applicant-facing UI (currently still the bare
+`PAWSPACE PARTNER · ONBOARDING UAT` dev-harness look, now at least reachable); self-service
+interview scheduling was investigated and found to conflict with an existing, apparently
+intentional design (Ops schedules based on their own calendar, not an open slot picker) - flagged
+to the human rather than built against that design; real document/photo upload, blocked on R2
+provisioning.
+
+## Provider onboarding branded UI (Claude, this session)
+
+Rebuilt `app/partner/onboarding/page.tsx` from a bare `PAWSPACE PARTNER · ONBOARDING UAT`
+dev-harness look to a real branded application flow (progress stepper, styled cards, matches the
+site theme) - PR #68, merged. Every existing action/state/API call preserved exactly, no behavior
+change. Kept every exact required safeguard string verbatim (`PRODUCTION READY = FALSE`, the
+synthetic-approvals disclosure, `20-question qualification`, `15-minute Ops interview`,
+`Marketplace live: <b>No</b>`, `Provider self-service cannot activate itself`) - two pre-existing
+tests assert these exact phrases to prevent the page from ever fabricating completed onboarding.
+First redesign pass softened this copy and broke both tests; caught and restored verbatim before
+committing - a real example of why those tests exist.
+
+## `grooming-integration-closure` branch — deleted, confirmed superseded
+
+Reviewed the last remaining stale branch from the original 21-PR triage. Despite the name, its
+most recent commits were actually about Boarding (Gates 2-5, host proof workspace, recovery
+normalization), not Grooming. Forked 331 commits ago; main has moved 502 commits past that same
+fork point, with 298 real conflicts. Confirmed main already has equivalent-or-better real
+functionality through its own independent path: `app/host/boarding-proof-workspace.tsx`,
+`app/team/operations/boarding`, `lib/boarding-recovery-finalizer.ts`, and a full boarding-proof/
+ops/finance stack. Same pattern as the ~28 branches closed earlier this session. No open PR
+existed for it (dangling branch reference only) - deleted directly.
+
+## Provider onboarding AI-assist plumbing (Claude, this session)
+
+Per explicit direction: built real AI-assist for quiz generation, interview summary drafting and
+profile bio drafting - following the exact same "real code, fails closed until credentials exist"
+pattern as every other external integration here (Razorpay, WhatsApp, Maps). Found the master
+registry already tracked this: `lib/integration-readiness.ts` INT-AI-01, "External provider is not
+considered connected by default; autonomous governed actions remain prohibited" - added the
+missing `credentialDetector:"ai_provider"` (checks `PAWSPACE_AI_PROVIDER_API_KEY`), matching every
+other entry's detector pattern exactly.
+
+Built `lib/ai-provider-adapter.ts` - a real, callable adapter that makes a genuine Anthropic
+Messages API call the moment the key is configured, and fails closed with a clear, honest reason
+otherwise (never fabricates AI-looking output locally, never silently falls back to canned text).
+Three call-sites on top of it, each producing a DRAFT ONLY - the existing human-decision
+safeguards are untouched:
+- `lib/provider-quiz-ai-draft.ts` + `generate_quiz_draft_ai` (staff route) - generates 20 candidate
+  questions, still goes through the existing `createQuizDraft` (draft status) and unchanged
+  `approve_quiz` gate before it can ever be used.
+- `lib/provider-interview-ai-summary.ts` + `generate_interview_summary_ai` (staff route) - drafts a
+  neutral summary from the Ops interviewer's real notes, saved via the already-existing
+  `saveInterviewAiSummaryDraft` (already `finalDecisionAuthority:"human_ops"`, unchanged).
+- `lib/provider-profile-ai-bio.ts` + `generate_profile_bio_ai` (self-service route) - returns a
+  draft bio only (`draftOnly:true` in the response), never persisted - the provider must still
+  explicitly call the existing `save_profile` action themselves after reviewing/editing it.
+
+**Real execution proof, not just static tests**: extended `tests/runtime-d1-worker.ts` to call all
+three generators directly inside the real Cloudflare Workers runtime (real `cloudflare:workers`
+env resolution, not string-matched) with no API key configured - confirmed all three fail closed
+with a clear reason rather than crashing or fabricating output. This is exactly the boundary a
+static test cannot verify.
+
+**Still needs from the business, not code**: a real `PAWSPACE_AI_PROVIDER_API_KEY` to actually
+light this up. Until then this is intentionally inert, same as Razorpay/WhatsApp/Maps.
+
+## Real onboarding->matching bug: activated providers were structurally invisible (Claude, this session)
+
+User asked: "once any service provider created they need to be added to the map." Investigated
+and found a genuine, previously undiscovered bug in `activateProviderUat`
+(`lib/provider-onboarding-human-activation.ts`): it always wrote `live=0` to
+`provider_capacity_profiles` with **no code path anywhere** that ever set it back to 1 for a real
+onboarded provider - only the hardcoded UAT seed defaults in
+`lib/provider-capacity-governance.ts` (`groom_arun`, `sit_sana`, etc.) ever had `live=1`. On top of
+that, it wrote `zones_json` as the bare city code (`"BLR"`), which could never match a real
+zone-scoped query anyway (`blr-east` is the only zone modeled anywhere in this platform). Meant
+every real activated provider, no matter how completely they onboarded, was permanently invisible
+to actual booking/matching (`loadGovernedProviders`, `listBoardingHosts`, etc).
+
+Fixed both halves:
+- `activateProviderUat` now writes a real zone-formatted default (`"<city>-east"`) instead of the
+  bare city code.
+- Added `addProviderToServiceMap` - an explicit staff action (not automatic on activation, matching
+  the existing human-decision-authority pattern for verification/quiz/activation) that confirms
+  real zone coverage and flips `live=1`. Wired a new "Add to service map" section into the Ops page
+  that appears once a provider is activated.
+
+Real execution proof, not just static tests: extended `tests/runtime-d1-worker.ts` to insert a
+provider capacity row exactly as `activateProviderUat` would produce it, confirm via the real
+`loadGovernedProviders` query that it is genuinely NOT matchable beforehand (proving the bug was
+real), call the real `addProviderToServiceMap`, then confirm the same query now genuinely returns
+it. Ran against live local D1 via `wrangler dev` - passed.
+
 ## Still open — genuinely not started, not a duplicate-risk
 
 - **Pricing Control wiring for Grooming multi-pet, Training, Boarding, Pet Sitting — ChatGPT is

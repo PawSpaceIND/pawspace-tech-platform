@@ -2,8 +2,6 @@
 
 # dependencies
 /node_modules
-backend/node_modules/
-backend/dist/
 /.pnp
 .pnp.*
 .yarn/*
@@ -38,7 +36,6 @@ yarn-error.log*
 
 # typescript
 next-env.d.ts
-*.tsbuildinfo
 /dist/
 /.wrangler/
 /.sites-runtime/
@@ -47,6 +44,6 @@ next-env.d.ts
 
 .dev.vars
 .dev.vars.*
-
-# Local throwaway test harnesses / scratch work
-/scratchpad/
+.runtime-d1/
+scratchpad/
+*.tsbuildinfo

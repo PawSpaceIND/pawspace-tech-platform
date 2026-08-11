@@ -1,0 +1,70 @@
+import { randomUUID } from "node:crypto";
+const id = (prefix) => `${prefix}_${randomUUID().replaceAll("-", "").slice(0, 16)}`;
+const now = () => new Date().toISOString();
+const roundMoney = (value) => Math.round(value * 100) / 100;
+export function calculateInclusiveGst(grossAmount, interstate = false) {
+    const taxableAmount = roundMoney(grossAmount / 1.18);
+    const gst = roundMoney(grossAmount - taxableAmount);
+    return { grossAmount: roundMoney(grossAmount), taxableAmount, cgst: interstate ? 0 : roundMoney(gst / 2), sgst: interstate ? 0 : roundMoney(gst / 2), igst: interstate ? gst : 0, gstRate: 18 };
+}
+export async function createPayment(repository, input) {
+    const existing = await repository.findPaymentByIdempotencyKey(input.idempotencyKey);
+    if (existing)
+        return { payment: existing, duplicatePrevented: true };
+    const timestamp = now();
+    const payment = { id: id("pay"), bookingId: input.booking.id, customerId: input.customerId, cityId: input.booking.cityId, amount: input.booking.totalAmount, currency: "INR", method: input.method, mode: input.mode, status: "created", gateway: input.method === "cash" ? "cash" : "razorpay", gatewayOrderId: input.gatewayOrderId, idempotencyKey: input.idempotencyKey, createdAt: timestamp, updatedAt: timestamp };
+    await repository.createPayment(payment);
+    return { payment, duplicatePrevented: false };
+}
+export async function capturePayment(repository, payment, gatewayPaymentId) {
+    const timestamp = now();
+    return repository.updatePayment(payment.id, { status: "captured", gatewayPaymentId, capturedAt: timestamp, updatedAt: timestamp });
+}
+export async function issueInvoice(repository, payment, placeOfSupply = "Karnataka", interstate = false) {
+    const existing = await repository.getInvoiceByBooking(payment.bookingId);
+    if (existing)
+        return existing;
+    const tax = calculateInclusiveGst(payment.amount, interstate);
+    const timestamp = now();
+    const invoice = { id: id("inv"), invoiceNumber: `PS/${new Date().getFullYear()}/${String(Date.now()).slice(-8)}`, bookingId: payment.bookingId, paymentId: payment.id, customerId: payment.customerId, cityId: payment.cityId, placeOfSupply, ...tax, issuedAt: timestamp, status: "issued" };
+    return repository.createInvoice(invoice);
+}
+export async function requestRefund(repository, payment, actor, amount, reason) {
+    const existingRefunds = await repository.listRefunds(payment.id);
+    const already = existingRefunds.filter(x => ["approved", "processing", "completed"].includes(x.status)).reduce((sum, x) => sum + x.amount, 0);
+    if (amount <= 0 || amount > payment.amount - already)
+        throw Object.assign(new Error("Refund exceeds refundable balance"), { statusCode: 422 });
+    const timestamp = now();
+    const refund = { id: id("refund"), paymentId: payment.id, bookingId: payment.bookingId, amount, reason, status: actor.role === "finance" || actor.role === "super_admin" ? "approved" : "requested", requestedBy: actor.id, approvedBy: actor.role === "finance" || actor.role === "super_admin" ? actor.id : undefined, createdAt: timestamp, updatedAt: timestamp };
+    return repository.createRefund(refund);
+}
+export async function recordCash(repository, input) {
+    const collection = { id: id("cash"), bookingId: input.booking.id, paymentId: input.payment.id, providerId: input.providerId, cityId: input.booking.cityId, amount: input.payment.amount, collectedAt: input.collectedAt, status: "collected" };
+    return repository.createCashCollection(collection);
+}
+export async function reconcileCash(repository, collection, depositedAmount, note) {
+    const status = depositedAmount === collection.amount ? "reconciled" : depositedAmount < collection.amount ? "short" : "excess";
+    return repository.updateCashCollection(collection.id, { status, depositedAt: now(), reconciledAt: now(), reconciliationNote: note });
+}
+export async function createProviderEarning(repository, booking, input) {
+    if (!booking.providerId)
+        throw Object.assign(new Error("Booking has no assigned provider"), { statusCode: 422 });
+    const incentive = input.incentive ?? 0, deductions = input.deductions ?? 0;
+    const timestamp = now();
+    const earning = { id: id("earn"), bookingId: booking.id, providerId: booking.providerId, cityId: booking.cityId, serviceValue: booking.totalAmount, baseEarning: input.baseEarning, incentive, deductions, netPayable: roundMoney(input.baseEarning + incentive - deductions), eligibleAt: new Date(new Date(input.completedAt).getTime() + 5 * 24 * 60 * 60 * 1000).toISOString(), status: "cooling", createdAt: timestamp, updatedAt: timestamp };
+    return repository.createEarning(earning);
+}
+export async function createPayout(repository, input) {
+    const existing = await repository.findPayoutByIdempotencyKey(input.idempotencyKey);
+    if (existing)
+        return { payout: existing, duplicatePrevented: true };
+    const asOf = new Date(input.asOf ?? now());
+    const earnings = (await repository.listEarnings(input.providerId)).filter(x => x.status === "eligible" || x.status === "cooling" && new Date(x.eligibleAt) <= asOf);
+    if (!earnings.length)
+        throw Object.assign(new Error("No eligible earnings for payout"), { statusCode: 422 });
+    const timestamp = now();
+    const payout = { id: id("payout"), providerId: input.providerId, cityId: input.cityId, earningIds: earnings.map(x => x.id), amount: roundMoney(earnings.reduce((sum, x) => sum + x.netPayable, 0)), gateway: "razorpayx", status: "queued", idempotencyKey: input.idempotencyKey, scheduledAt: timestamp, createdAt: timestamp, updatedAt: timestamp };
+    await repository.createPayout(payout);
+    await Promise.all(earnings.map(x => repository.updateEarning(x.id, { status: "scheduled", payoutId: payout.id, updatedAt: timestamp })));
+    return { payout, duplicatePrevented: false };
+}

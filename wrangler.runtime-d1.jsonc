@@ -4,6 +4,9 @@
   "main": "tests/runtime-d1-worker.ts",
   "compatibility_date": "2026-05-22",
   "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT": "runtime-d1-regression-only-not-a-real-secret-32chars"
+  },
   "d1_databases": [
     {
       "binding": "DB",
