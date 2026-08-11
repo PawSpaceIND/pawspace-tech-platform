@@ -46,3 +46,29 @@ export async function getProviderAcceptanceTimeout(db:Db,providerId:string){awai
 export async function createAssignmentOffer(db:Db,input:{groupId:string;bookingId?:string;providerId:string;attemptNo?:number}){await seedProviderCapacityDefaults(db);const timeout=await getProviderAcceptanceTimeout(db,input.providerId),now=Date.now(),expiresAt=now+timeout*60_000;await db.prepare("INSERT INTO provider_assignment_offers (group_id,booking_id,provider_id,status,offered_at,expires_at,responded_at,response_reason,attempt_no,updated_at) VALUES (?,?,?,'pending',?,?,NULL,NULL,?,?) ON CONFLICT(group_id) DO UPDATE SET booking_id=COALESCE(excluded.booking_id,booking_id),provider_id=excluded.provider_id,status='pending',offered_at=excluded.offered_at,expires_at=excluded.expires_at,responded_at=NULL,response_reason=NULL,attempt_no=excluded.attempt_no,updated_at=excluded.updated_at").bind(input.groupId,input.bookingId??null,input.providerId,now,expiresAt,input.attemptNo??1,now).run();return{timeoutMinutes:timeout,expiresAt};}
 
 export async function recordProviderPerformance(db:Db,input:{providerId:string;groupId?:string;bookingId?:string;eventType:string;impactScore:number;detail?:unknown}){await ensureProviderCapacityTables(db);await db.prepare("INSERT INTO provider_performance_events (id,provider_id,group_id,booking_id,event_type,impact_score,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.providerId,input.groupId??null,input.bookingId??null,input.eventType,input.impactScore,JSON.stringify(input.detail??{}),Date.now()).run();}
+
+/**
+ * The real write path the partner app's Available/Offline toggle should call. Before this
+ * function existed, that toggle was pure local UI state - loadGovernedProviders() has always
+ * correctly checked provider_unavailability, but nothing anywhere ever wrote a real row to it from
+ * the provider's own self-service toggle. Going offline creates a real, open-ended unavailability
+ * window (closed only by explicitly going available again, not auto-expiring) - matching how a real
+ * "I'm offline" toggle should behave: it stays off until the provider turns it back on themselves.
+ */
+export async function setProviderAvailability(db:Db,input:{providerId:string;available:boolean;reason:string;actorId:string}){
+  await ensureProviderCapacityTables(db);
+  if(!input.providerId.trim())throw new Error("Provider is required");
+  if(input.reason.trim().length<3)throw new Error("A real reason is required");
+  const now=Date.now();
+  if(input.available){
+    const nowIso=new Date(now).toISOString();
+    const result=await db.prepare("UPDATE provider_unavailability SET ends_at=?,status='cleared',updated_at=? WHERE provider_id=? AND status='active' AND starts_at<=? AND ends_at>?")
+      .bind(nowIso,now,input.providerId,nowIso,nowIso).run();
+    return{providerId:input.providerId,available:true,windowsCleared:Number(result.meta?.changes||0)};
+  }
+  const startsAt=new Date(now).toISOString(),endsAt=new Date(now+10*365*86400000).toISOString();
+  const id=`PUNAVAIL-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
+  await db.prepare("INSERT INTO provider_unavailability (id,provider_id,starts_at,ends_at,reason,status,created_by,created_at,updated_at) VALUES (?,?,?,?,?,'active',?,?,?)")
+    .bind(id,input.providerId,startsAt,endsAt,input.reason.trim(),input.actorId,now,now).run();
+  return{providerId:input.providerId,available:false,unavailabilityId:id};
+}
