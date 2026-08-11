@@ -1,3 +1,5 @@
+import { resolveLivePrice } from "./live-pricing-resolver";
+
 export type GroomingPetType="dog"|"cat"|"other";
 export type GroomingOfferType="regular"|"young"|"subscription";
 export type GroomingCatalogueItem={
@@ -48,7 +50,7 @@ export async function resolveGroomingSubscriptionPlan(db:Db,planCode:string,city
 
 export type GroomingGovernanceInput={
   packageCode:string;packageName?:string;pets:Array<{species?:GroomingPetType}>;submittedTotal:number;submittedAmountDueNow:number;
-  paymentMode:string;existingSubscriptionId?:string;cityId:string;zoneId?:string;
+  paymentMode:string;existingSubscriptionId?:string;cityId:string;zoneId?:string;scheduledStart?:string;
 };
 export type GroomingGovernanceResult={
   packageCode:string;packageName:string;catalogueVersion:string;offerType:GroomingOfferType;petCount:number;totalAmount:number;amountDueNow:number;
@@ -62,7 +64,15 @@ export async function governGroomingBooking(db:Db,input:GroomingGovernanceInput)
   const petCount=input.pets.length,maxPets=item.maxPetsPerBooking??4;
   if(petCount<1||petCount>maxPets)throw new Error(`Grooming supports between 1 and ${maxPets} pets for this plan`);
   for(const pet of input.pets){const species=pet.species??"other";if(!item.eligiblePetTypes.includes(species))throw new Error(`${item.name} is not eligible for ${species}`);}
-  const totalAmount=item.offerType==="subscription"?item.singlePrice:(petCount===1?item.singlePrice:(item.multiPetPrice??item.singlePrice)*petCount);
+  let totalAmount=item.offerType==="subscription"?item.singlePrice:(petCount===1?item.singlePrice:(item.multiPetPrice??item.singlePrice)*petCount);
+  // Live pricing only applies to the single-pet, non-subscription case for now. Multi-pet pricing
+  // has no equivalent live package_code to check against yet (it would need its own dedicated entry,
+  // not a multiplier on the single-pet live price) - staying on the existing hardcoded catalogue for
+  // multi-pet bookings is a real, deliberate, documented limitation of this pass, not a silent gap.
+  if(item.offerType!=="subscription"&&petCount===1&&input.scheduledStart){
+    const live=await resolveLivePrice(db,{packageCode:input.packageCode,fallbackPrice:totalAmount,scheduledStart:input.scheduledStart,cityId:input.cityId,zoneId:input.zoneId});
+    totalAmount=live.price;
+  }
   if(Math.round(input.submittedTotal)!==Math.round(totalAmount))throw new Error(`Submitted Grooming total does not match governed catalogue ${item.version}`);
   const amountDueNow=input.paymentMode==="prepaid"?totalAmount:0;
   if(Math.round(input.submittedAmountDueNow)!==Math.round(amountDueNow))throw new Error("Submitted amount due now does not match the governed payment mode");
