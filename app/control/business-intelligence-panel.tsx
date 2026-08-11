@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import css from "./business-intelligence.module.css";
 import { TrendChart } from "../components/ui";
 
@@ -11,12 +11,14 @@ type CustomReport = { name: string; category: string; scope: string; delivery: s
 type ReportDefinition = { name: string; category: string; description: string; schedule: string; dateBasis: DateBasis };
 type ReportRun = { title: string; format: ReportFormat; dateBasis: DateBasis; from: string; to: string };
 
-const verticals = [
-  { name: "Grooming", bookings: 3126, revenue: 18500000, collected: 17462000, cost: 11673500, margin: 36.9, repeat: 48, cancelled: 4.2 },
-  { name: "Training", bookings: 642, revenue: 4920000, collected: 4240000, cost: 2710000, margin: 44.9, repeat: 31, cancelled: 7.8 },
-  { name: "Boarding", bookings: 418, revenue: 3310000, collected: 2980000, cost: 2140000, margin: 35.3, repeat: 27, cancelled: 6.1 },
-  { name: "Pet Sitting", bookings: 284, revenue: 1680000, collected: 1460000, cost: 1020000, margin: 39.3, repeat: 24, cancelled: 5.6 },
-];
+// REAL data as of this session: revenue-by-vertical below is fetched live from /api/pnl-reporting,
+// which computes from real canonical_bookings + finance_journal_entries (see lib/pnl-reporting.ts,
+// verified with real execution against a local D1 instance - a completed booking's revenue was
+// confirmed to appear correctly under its service code and month).
+// Collected/cost/margin/repeat/cancelled % have NO real platform source yet - shown as "Not tracked
+// yet" rather than fabricated, since no aggregate exists anywhere in this codebase for them.
+const VERTICAL_SERVICE_CODES: Record<string, string> = { Grooming: "grooming", Training: "dog_training", Boarding: "boarding", "Pet Sitting": "pet_sitting" };
+type VerticalRow = { name: string; bookings: number | null; revenue: number; collected: number | null; cost: number | null; margin: number | null; repeat: number | null; cancelled: number | null };
 
 const accountRows = [
   { id: "PAY-240331", type: "Customer collection", vertical: "Grooming", gross: 1899, fee: 38, tax: 290, net: 1571, status: "Reconciled" },
@@ -40,6 +42,8 @@ const subscriptionRows = [
   ["Expired / win-back", 742, 34, "₹31.8 L historic value", "Prioritised by LTV"],
   ["Future / scheduled", 214, 81, "₹12.6 L booked", "Starts after current plan"],
 ];
+
+const DemoDataNotice = () => <p className={css.masked} style={{ background: "#fff3cd", border: "1px solid #e5c46b", borderRadius: 8, padding: "8px 12px", margin: "0 0 12px", fontWeight: 700 }}>⚠️ Demo data — this view is not yet connected to a real backend. Figures below are illustrative only, not live business numbers.</p>;
 
 const reports: ReportDefinition[] = [
   { name:"Founder daily business pulse", category:"Company", description:"Revenue, collections, margin, bookings, cancellations and critical exceptions", schedule:"Daily · 8:30 AM", dateBasis:"Booking date" },
@@ -80,13 +84,36 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
   const [reportRun, setReportRun] = useState<ReportRun | null>(null);
   const [scheduleReport, setScheduleReport] = useState<ReportDefinition | null>(null);
   const [schedulePeriod, setSchedulePeriod] = useState("Previous complete period");
+  const [verticals, setVerticals] = useState<VerticalRow[]>(Object.keys(VERTICAL_SERVICE_CODES).map(name => ({ name, bookings: null, revenue: 0, collected: null, cost: null, margin: null, repeat: null, cancelled: null })));
+  const [pnlLoaded, setPnlLoaded] = useState(false);
 
-  const shownVerticals = useMemo(() => service === "All services" ? verticals : verticals.filter(item => item.name === service), [service]);
+  useEffect(() => {
+    let active = true;
+    const now = new Date(), toMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+    const from = new Date(now); from.setUTCMonth(from.getUTCMonth() - 11);
+    const fromMonth = `${from.getUTCFullYear()}-${String(from.getUTCMonth() + 1).padStart(2, "0")}`;
+    fetch(`/api/pnl-reporting?fromMonth=${fromMonth}&toMonth=${toMonth}`, { cache: "no-store" })
+      .then(response => (response.ok ? response.json() : Promise.reject()))
+      .then((body: { data?: { revenue: { lines: { serviceCode: string | null; total: number }[] } } }) => {
+        if (!active || !body.data) return;
+        const byServiceCode = new Map<string, number>();
+        for (const line of body.data.revenue.lines) {
+          if (!line.serviceCode) continue;
+          byServiceCode.set(line.serviceCode, (byServiceCode.get(line.serviceCode) || 0) + line.total);
+        }
+        setVerticals(Object.entries(VERTICAL_SERVICE_CODES).map(([name, code]) => ({ name, bookings: null, revenue: byServiceCode.get(code) || 0, collected: null, cost: null, margin: null, repeat: null, cancelled: null })));
+        setPnlLoaded(true);
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
+
+  const shownVerticals = useMemo(() => service === "All services" ? verticals : verticals.filter(item => item.name === service), [service, verticals]);
   const shownCustomers = useMemo(() => customerRows.filter(row => !query || `${row.name} ${row.pet} ${row.id} ${row.segment}`.toLowerCase().includes(query.toLowerCase())), [query]);
   const revenue = shownVerticals.reduce((sum, item) => sum + item.revenue, 0);
-  const collected = shownVerticals.reduce((sum, item) => sum + item.collected, 0);
-  const cost = shownVerticals.reduce((sum, item) => sum + item.cost, 0);
-  const bookings = shownVerticals.reduce((sum, item) => sum + item.bookings, 0);
+  const collected: number | null = null; // not tracked yet - no real collections aggregate exists anywhere in the codebase
+  const cost: number | null = null; // not tracked yet - no real per-vertical cost aggregate exists anywhere in the codebase
+  const bookings: number | null = null; // not tracked yet - the real P&L engine reports revenue, not booking counts
 
   function openReportRun(format: ReportFormat, title = "PawSpace business intelligence", dateBasis: DateBasis = "Service date") {
     setReportRun({ title, format, dateBasis, from: "2026-03-01", to: "2026-03-31" });
@@ -108,7 +135,7 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
     const customerReport = run.title.toLowerCase().includes("customer") || run.dateBasis === "Customer created date";
     const rows: (string | number)[][] = customerReport
       ? [["Customer ID", "Customer", "Pet", "Customer created date", "Segment", "Last service date", "Orders", "Revenue", "Contribution", "Next best action"], ...shownCustomers.map(item => [item.id, item.name, item.pet, item.created, item.segment, item.last, item.orders, item.revenue, item.margin, item.next])]
-      : [["Vertical", "Bookings", "Revenue", "Collected", "Direct cost", "Margin %", "Repeat %", "Cancellation %"], ...shownVerticals.map(item => [item.name, item.bookings, item.revenue, item.collected, item.cost, item.margin, item.repeat, item.cancelled])];
+      : [["Vertical", "Bookings", "Revenue", "Collected", "Direct cost", "Margin %", "Repeat %", "Cancellation %"], ...shownVerticals.map(item => [item.name, item.bookings ?? "Not tracked yet", item.revenue, item.collected ?? "Not tracked yet", item.cost ?? "Not tracked yet", item.margin ?? "Not tracked yet", item.repeat ?? "Not tracked yet", item.cancelled ?? "Not tracked yet"])];
     const { format, title, dateBasis, from, to } = run;
     if (format === "PDF") {
       window.print();
@@ -182,35 +209,36 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
     <nav className={css.tabs}>{(["Overview", "Verticals", "Accounts", "Customers", "Subscriptions", "Reports"] as View[]).map(item => <button key={item} className={view === item ? css.active : ""} onClick={() => setView(item)}>{item}</button>)}</nav>
 
     {view === "Overview" && <>
+      <p className={css.masked} style={{ fontWeight: 700, margin: "0 0 12px" }}>{pnlLoaded ? "✅ Revenue below is live, computed from real completed bookings." : "Loading real revenue from the platform's P&L engine…"}</p>
       <section className={css.metrics}>
-        <article><span>Gross revenue</span><strong>{money(revenue)}</strong><small>GST-inclusive · completed and invoiced</small></article>
-        <article><span>Collected</span><strong>{money(collected)}</strong><small>{((collected / revenue) * 100).toFixed(1)}% collection rate</small></article>
-        <article><span>Contribution</span><strong>{money(revenue - cost)}</strong><small>{(((revenue - cost) / revenue) * 100).toFixed(1)}% before fixed overhead</small></article>
-        <article><span>Bookings</span><strong>{bookings.toLocaleString("en-IN")}</strong><small>Completed service records</small></article>
-        <article><span>Old-customer opportunity</span><strong>742</strong><small>Expired / dormant high-value profiles</small></article>
+        <article><span>Gross revenue</span><strong>{money(revenue)}</strong><small>Live · from real completed bookings by service code</small></article>
+        <article><span>Collected</span><strong>Not tracked yet</strong><small>No real collections aggregate exists yet</small></article>
+        <article><span>Contribution</span><strong>Not tracked yet</strong><small>No real per-vertical cost aggregate exists yet</small></article>
+        <article><span>Bookings</span><strong>Not tracked yet</strong><small>P&L engine reports revenue, not booking counts</small></article>
+        <article><span>Old-customer opportunity</span><strong>Demo data</strong><small>Not yet connected to a real backend</small></article>
       </section>
       <section className={css.grid}>
-        <div className={css.panel}><header><div><span>VERTICAL PERFORMANCE</span><h3>Revenue and contribution</h3><p>GST-inclusive revenue; contribution before fixed overhead.</p></div><button onClick={() => setView("Verticals")}>Drill down →</button></header><TrendChart type="bar" data={shownVerticals} xKey="name" series={[{ key: "revenue", label: "Revenue", color: "#5d22a8" }]} valueFormatter={(value) => money(value)} height={240} /></div>
+        <div className={css.panel}><header><div><span>VERTICAL PERFORMANCE</span><h3>Revenue and contribution</h3><p>Live revenue by vertical, from real completed bookings.</p></div><button onClick={() => setView("Verticals")}>Drill down →</button></header><TrendChart type="bar" data={shownVerticals} xKey="name" series={[{ key: "revenue", label: "Revenue", color: "#5d22a8" }]} valueFormatter={(value) => money(value)} height={240} /></div>
         <aside className={css.panel}><header><div><span>ACTION CENTRE</span><h3>What needs attention</h3></div></header>{[
           ["Collections", "₹11.6L pending or unmatched", "Accounts"], ["Renewals", "128 plans due in seven days", "Subscriptions"], ["Win-back", "214 high-value dormant customers", "Customers"], ["Margin", "Boarding below 38% target", "Verticals"], ["Reports", "GST register due 5 Aug", "Reports"],
         ].map(item => <button className={css.action} key={item[0]} onClick={() => setView(item[2] as View)}><i>{item[0].slice(0, 1)}</i><span><strong>{item[0]}</strong><small>{item[1]}</small></span><b>Open →</b></button>)}</aside>
       </section>
-      <section className={css.reconcile}><div><span>CONTROL TOTAL</span><strong>Bookings, invoices, payments and subscription credits reconcile to one transaction record.</strong></div>{[["Booking value", revenue], ["Less discounts/refunds", 1384000], ["Net billed", revenue - 1384000], ["Collected", collected]].map(item => <article key={item[0] as string}><span>{item[0] as string}</span><strong>{money(item[1] as number)}</strong></article>)}</section>
+      <section className={css.reconcile}><div><span>CONTROL TOTAL</span><strong>Real revenue total below. Discounts, net billed and collections need the accounts/collections backend built before they can be shown honestly.</strong></div>{[["Booking value (live)", revenue]].map(item => <article key={item[0] as string}><span>{item[0] as string}</span><strong>{money(item[1] as number)}</strong></article>)}</section>
     </>}
 
-    {view === "Verticals" && <section className={css.panel}><header><div><span>SERVICE P&L</span><h3>Every vertical on the same definition</h3><p>Use the same filters, revenue recognition and cost rules across the company.</p></div><button onClick={() => openReportRun("Excel", "Vertical P&L", "Service date")}>Excel ↓</button></header><div className={css.table}><div className={css.tableHead}><span>Vertical</span><span>Bookings</span><span>Revenue</span><span>Collected</span><span>Direct cost</span><span>Contribution</span><span>Repeat</span><span>Cancel</span></div>{shownVerticals.map(item => <article key={item.name}><strong>{item.name}</strong><span>{item.bookings.toLocaleString("en-IN")}</span><span>{money(item.revenue)}</span><span>{money(item.collected)}</span><span>{money(item.cost)}</span><b>{item.margin}%</b><span>{item.repeat}%</span><span>{item.cancelled}%</span></article>)}</div><footer><strong>Drill-down dimensions:</strong> city, zone, package, subscription, provider model, source, coupon, customer segment, payment mode and booking status.</footer></section>}
+    {view === "Verticals" && <section className={css.panel}><header><div><span>SERVICE P&L</span><h3>Live revenue by vertical</h3><p>Revenue is real, computed from completed bookings. Cost, margin, repeat and cancellation rates have no real aggregate yet.</p></div><button onClick={() => openReportRun("Excel", "Vertical P&L", "Service date")}>Excel ↓</button></header><div className={css.table}><div className={css.tableHead}><span>Vertical</span><span>Bookings</span><span>Revenue</span><span>Collected</span><span>Direct cost</span><span>Contribution</span><span>Repeat</span><span>Cancel</span></div>{shownVerticals.map(item => <article key={item.name}><strong>{item.name}</strong><span>—</span><span>{money(item.revenue)}</span><span>—</span><span>—</span><b>—</b><span>—</span><span>—</span></article>)}</div><footer><strong>Real today:</strong> revenue, by vertical, from completed bookings. <strong>Not yet real:</strong> bookings count, collections, cost, margin, repeat rate, cancellation rate - these need dedicated aggregates built before they can be shown here honestly.</footer></section>}
 
-    {view === "Accounts" && <>
+    {view === "Accounts" && <><DemoDataNotice />
       <section className={css.metrics}>{[["Receivable", "₹11.6L", "Customer + balance payments"], ["Provider payable", "₹8.4L", "Approved, not released"], ["Refund queue", "₹1.84L", "9 approvals"], ["Unmatched", "₹42,680", "18 transactions"], ["GST payable", "₹3.21L", "Current filing period"]].map(item => <article key={item[0]}><span>{item[0]}</span><strong>{item[1]}</strong><small>{item[2]}</small></article>)}</section>
       <section className={css.panel}><header><div><span>ACCOUNTS LEDGER</span><h3>Order to settlement</h3><p>Invoice, payment, refund, commission and payout stay linked to the booking.</p></div><div><button onClick={() => notify("Reconciliation workbench opened")}>Reconcile</button><button onClick={() => openReportRun("CSV", "Accounts ledger", "Payment / collection date")}>CSV ↓</button></div></header><div className={`${css.table} ${css.ledger}`}><div className={css.tableHead}><span>Reference</span><span>Type</span><span>Vertical</span><span>Gross</span><span>GST</span><span>Fee</span><span>Net</span><span>Status</span></div>{accountRows.map(row => <article key={row.id}><strong>{row.id}</strong><span>{row.type}</span><span>{row.vertical}</span><span>{money(row.gross)}</span><span>{money(row.tax)}</span><span>{money(row.fee)}</span><b>{money(row.net)}</b><em>{row.status}</em></article>)}</div></section>
     </>}
 
-    {view === "Customers" && <div className={css.customerGrid}>
+    {view === "Customers" && <div className={css.customerGrid}><DemoDataNotice />
       <section className={css.panel}><header><div><span>CUSTOMER-LEVEL BUSINESS INTELLIGENCE</span><h3>Customer 360 and old-customer desk</h3></div><input aria-label="Search customers" placeholder="Search masked customer, pet or ID" value={query} onChange={event => setQuery(event.target.value)} /></header>{shownCustomers.map(row => <button key={row.id} className={`${css.customerRow} ${selectedCustomer.id === row.id ? css.selectedCustomer : ""}`} onClick={() => setSelectedCustomer(row)}><i>{row.name.split(" ").map(part => part[0]).join("")}</i><span><strong>{row.name} · {row.pet}</strong><small>{row.id} · {row.segment} · customer since {row.created} · last service {row.last}</small></span><b>{money(row.revenue)} LTV</b><em>{row.risk}</em></button>)}</section>
       <aside className={css.panel}><span className={css.kicker}>SELECTED CUSTOMER</span><h3>{selectedCustomer.name} · {selectedCustomer.pet}</h3><p className={css.masked}>Primary + secondary numbers protected · purpose-based contact only</p><div className={css.customerMetrics}>{[["Lifetime orders", selectedCustomer.orders], ["Gross revenue", money(selectedCustomer.revenue)], ["Contribution", money(selectedCustomer.margin)], ["Days inactive", selectedCustomer.days]].map(item => <article key={item[0] as string}><span>{item[0] as string}</span><strong>{item[1]}</strong></article>)}</div>{[["Lifecycle", selectedCustomer.segment], ["Risk", selectedCustomer.risk], ["Next best action", selectedCustomer.next], ["Owner", "CRM renewal desk"]].map(item => <p className={css.detail} key={item[0]}><span>{item[0]}</span><strong>{item[1]}</strong></p>)}<div className={css.customerActions}><button onClick={() => notify("Masked call task created and audited")}>Call securely</button><button onClick={() => notify("Personalised offer builder opened")}>Create offer</button></div></aside>
     </div>}
 
-    {view === "Subscriptions" && <section className={css.panel}><header><div><span>SUBSCRIPTION BUSINESS VIEW</span><h3>Past, active, renewal and future value</h3><p>Operational work remains in Grooming subscriptions; this view measures the business outcome.</p></div><button onClick={() => notify("Opening the operational renewal queue")}>Open renewal operations →</button></header><TrendChart type="bar" data={subscriptionRows.map(row => ({ name: row[0], utilisation: row[2] }))} xKey="name" series={[{ key: "utilisation", label: "Utilisation %", color: "#11885b" }]} valueFormatter={(value) => `${value}%`} height={200} /><div className={css.subscriptionGrid}>{subscriptionRows.map(row => <article key={row[0] as string}><div><strong>{row[0]}</strong><span>{row[4]}</span></div><b>{Number(row[1]).toLocaleString("en-IN")}</b><small>{row[3]}</small></article>)}</div><footer><strong>Core measures:</strong> session utilisation, unused-credit liability, renewal rate, renewal revenue, cadence adherence, pause/cancel rate, reminder conversion, bot/human conversion and plan-level contribution.</footer></section>}
+    {view === "Subscriptions" && <section className={css.panel}><DemoDataNotice /><header><div><span>SUBSCRIPTION BUSINESS VIEW</span><h3>Past, active, renewal and future value</h3><p>Operational work remains in Grooming subscriptions; this view measures the business outcome.</p></div><button onClick={() => notify("Opening the operational renewal queue")}>Open renewal operations →</button></header><TrendChart type="bar" data={subscriptionRows.map(row => ({ name: row[0], utilisation: row[2] }))} xKey="name" series={[{ key: "utilisation", label: "Utilisation %", color: "#11885b" }]} valueFormatter={(value) => `${value}%`} height={200} /><div className={css.subscriptionGrid}>{subscriptionRows.map(row => <article key={row[0] as string}><div><strong>{row[0]}</strong><span>{row[4]}</span></div><b>{Number(row[1]).toLocaleString("en-IN")}</b><small>{row[3]}</small></article>)}</div><footer><strong>Core measures:</strong> session utilisation, unused-credit liability, renewal rate, renewal revenue, cadence adherence, pause/cancel rate, reminder conversion, bot/human conversion and plan-level contribution.</footer></section>}
 
     {view === "Reports" && <>
       <section className={css.reportHeader}><div><span>REPORT CENTRE</span><h3>One governed catalogue—download, attach or schedule.</h3><p>Every report inherits the selected period, city, vertical and customer filters, plus source lineage and export audit. New report definitions can be added whenever the business needs them.</p></div><button onClick={() => setBuilderOpen(value => !value)}>{builderOpen ? "Close builder" : "＋ Create report"}</button></section>

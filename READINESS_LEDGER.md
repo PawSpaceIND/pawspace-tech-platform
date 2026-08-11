@@ -204,8 +204,27 @@ session, untested" as the previous entry said).
   subjectId through `resolveActor`'s return type. **Not fixed by Claude - it's an unmerged branch
   belonging to another session; flagging here rather than editing someone else's in-progress work.**
 - Promotions backend + Marketing automation execution (ChatGPT P1-8) — not yet checked by Claude
-- Founder BI → canonical analytics/P&L (ChatGPT P1-9) — partially adjacent to the manager/founder
-  dashboard Claude built, but not confirmed identical scope — check before starting
+- Founder BI → canonical analytics/P&L (ChatGPT P1-9) — 🟡 **partially closed by Claude**. Found
+  `app/control/business-intelligence-panel.tsx` (the actual Founder BI UI) was 100% fabricated
+  static data across all 6 tabs (Overview, Verticals, Accounts, Customers, Subscriptions, Reports)
+  - zero fetch calls, zero real backend connection anywhere in the file. A real, well-built P&L
+  engine already existed (`lib/pnl-reporting.ts`, `generatePnlReport`, computing from real
+  `canonical_bookings` + `finance_journal_entries`) but nothing in the UI ever called it.
+  Verified the engine itself with **real execution** first (extended `tests/runtime-d1-worker.ts`'s
+  existing E2E scenario to call `generatePnlReport` against the real ₹1200 completed pet_sitting
+  booking that scenario creates, asserting the P&L revenue line for that service/month correctly
+  reflects it - ran via `wrangler dev --config wrangler.runtime-d1.jsonc`, confirmed `{"ok":true}` end
+  to end) before wiring any UI to it.
+  Then wired Overview + Verticals tabs to real live revenue via `/api/pnl-reporting` (confirmed this
+  route requires `finance.view` via the central gateway in `lib/api-gateway.ts` - not unauthenticated,
+  despite the route file itself having no visible auth check; enforcement is centralized in
+  `worker/index.ts`). Collected/cost/margin/bookings-count/repeat%/cancelled% have no real aggregate
+  anywhere in the codebase - rather than fabricate plausible-looking numbers for these, they now
+  honestly show "Not tracked yet". Accounts, Customers and Subscriptions tabs still have zero real
+  backend (would need real payment-reconciliation, customer-LTV and subscription-analytics
+  aggregates that don't exist yet - meaningfully larger scope) - added a visible "⚠️ Demo data" banner
+  to each so a founder can never mistake the remaining fabricated figures for real business numbers.
+  **Real gap still open**: building the Accounts/Customers/Subscriptions real backends.
 - Real scheduler/worker boundary, independent of page loads (ChatGPT P1-10) — not yet checked
 
 ## Cannot be code-closed by either agent (genuinely needs external creds/human/infra)
