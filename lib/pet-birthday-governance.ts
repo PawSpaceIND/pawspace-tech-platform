@@ -47,9 +47,11 @@ export async function runPetBirthdaySweep(db: Db, input: { today?: string } = {}
   const todayStr = input.today && isDate(input.today) ? input.today : new Date().toISOString().slice(0, 10);
   const year = Number(todayStr.slice(0, 4)), monthDay = todayStr.slice(5); // MM-DD
   const now = Date.now(), expiresAt = Date.parse(todayStr) + REWARD_VALID_DAYS * 86_400_000;
+  // canonical_pets is owned by another module; on a cold DB (e.g. the scheduled worker before any
+  // pet has been created) it may not exist yet - fail safe to "no birthdays today" rather than throw.
   const pets = await db.prepare(
     "SELECT b.pet_id,b.customer_id,p.name FROM pet_birthdays b JOIN canonical_pets p ON p.id=b.pet_id WHERE substr(b.date_of_birth,6)=?"
-  ).bind(monthDay).all<Row>();
+  ).bind(monthDay).all<Row>().catch(() => ({ results: [] as Row[] }));
   const issued: Array<Record<string, unknown>> = [];
   for (const pet of pets.results) {
     const already = await db.prepare("SELECT id FROM pet_birthday_rewards WHERE pet_id=? AND reward_year=?").bind(String(pet.pet_id), year).first<Row>();
