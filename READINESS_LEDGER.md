@@ -234,7 +234,29 @@ session, untested" as the previous entry said).
   aggregates that don't exist yet - meaningfully larger scope) - added a visible "⚠️ Demo data" banner
   to each so a founder can never mistake the remaining fabricated figures for real business numbers.
   **Real gap still open**: building the Accounts/Customers/Subscriptions real backends.
-- Real scheduler/worker boundary, independent of page loads (ChatGPT P1-10) — not yet checked
+- Real scheduler/worker boundary, independent of page loads (ChatGPT P1-10) — 🔧 **CLOSED in PR #62.**
+  Before this work, `worker/index.ts` had only `fetch()`, `vite.config.ts` had no cron trigger, and
+  the staff-alert truth explicitly reported `backgroundSchedulerConfigured:false`; meanwhile the
+  Revenue CRM GET path was still running reopening/SLA/ops/report/callback work as a page-load side
+  effect. Added `lib/background-scheduler.ts` with persisted five-minute run slots, completed-run
+  deduplication and retry-after-failure state; production `worker/index.ts` now has a real Cloudflare
+  `scheduled()` handler and the existing programmatic Worker config now declares `*/5 * * * *`.
+  The worker directly runs staff-alert/SLA governance, missed-callback sweeps, cold-lead reopening,
+  legacy SLA escalation, overdue ops escalation and 19:00+ command reports, so page/API reads are no
+  longer required for those jobs to execute (the old read-triggered calls remain only as an
+  idempotent fallback). Staff-alert API truth now separately reports `schedulerProductionReady:true`
+  while keeping `externalDelivery:false` / overall production readiness false until live external
+  credentials exist. Real isolated D1 proof uses Wrangler's actual scheduled-event handler, not an
+  HTTP imitation: a seeded cold lead reopened to cycle 1, an overdue SLA lead breached, overdue ops
+  escalated to level 1, a due callback became missed, and exactly 3 daily/weekly/monthly command
+  reports were generated; firing the identical scheduled event a second time left exactly one
+  completed scheduler run with one attempt. Two test-harness issues were caught before green: a cron
+  in the focused test config caused an unwanted startup event, and Wrangler's legacy `/__scheduled`
+  path ignored the scheduled-time override; the regression now explicitly fires the documented
+  `/cdn-cgi/handler/scheduled` endpoint. Implementation head `4a56ae4`; PR Release CI #953 passed all
+  six gates including the new `Background scheduler D1` gate. **Do not re-test P1-10 unless a later
+  commit touches `lib/background-scheduler.ts`, `worker/index.ts`, `vite.config.ts` or the scheduler
+  D1 release gate.**
 
 ## Cannot be code-closed by either agent (genuinely needs external creds/human/infra)
 

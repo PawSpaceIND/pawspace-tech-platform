@@ -88,6 +88,36 @@ jobs:
           test "$status" = 200
           node -e "const fs=require('fs');const r=JSON.parse(fs.readFileSync('/tmp/runtime-d1-result.json','utf8'));if(!r.ok)throw new Error(r.error||'Runtime D1 regression failed');const expected={canonicalPets:2,accountMutations:3};for(const [k,v] of Object.entries(r.assertions||{})){const want=expected[k]??1;if(v!==want)throw new Error(k+' cardinality was '+v+', expected '+want)}"
 
+  scheduler-d1:
+    name: Background scheduler D1
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Fire real scheduled handler against isolated local D1
+        shell: bash
+        run: |
+          rm -rf .scheduler-d1
+          npx wrangler dev --config wrangler.background-scheduler.jsonc --persist-to .scheduler-d1 --port 8789 --test-scheduled > /tmp/scheduler-d1-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'cat /tmp/scheduler-d1-worker.log; kill "$worker_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8789/health >/dev/null; then ready=1; break; fi
+            sleep 1
+          done
+          test "$ready" = 1
+          curl -fsS http://127.0.0.1:8789/seed
+          curl -fsS 'http://127.0.0.1:8789/cdn-cgi/handler/scheduled?cron=%2A%2F5+%2A+%2A+%2A+%2A&time=1786458600000&format=json'
+          curl -fsS 'http://127.0.0.1:8789/cdn-cgi/handler/scheduled?cron=%2A%2F5+%2A+%2A+%2A+%2A&time=1786458600000&format=json'
+          curl -fsS http://127.0.0.1:8789/assert > /tmp/scheduler-state.json
+          cat /tmp/scheduler-state.json
+          node -e "const s=require('/tmp/scheduler-state.json');if(s.cold?.status!=='active'||Number(s.cold?.recycle_cycle)!==1)throw Error('cold lead did not reopen');if(s.sla?.status!=='sla_breached')throw Error('SLA did not escalate');if(Number(s.ops?.escalation_level)!==1)throw Error('ops did not escalate');if(s.callback?.status!=='missed')throw Error('callback did not sweep');if(Number(s.reports?.count)!==3)throw Error('command reports were not generated');if(Number(s.runs?.count)!==1||Number(s.runs?.attempts)!==1||s.runs?.status!=='completed')throw Error('scheduled replay was not idempotent')"
+
   backend:
     name: Backend
     runs-on: ubuntu-latest
