@@ -113,6 +113,15 @@ plan against current `main`, not `fd6af2a`, before assigning today's work.
 
 - `revenue-intelligence.ts` (suppression safeguards, opportunity scoring, sort order) — ✅
 
+## Modules with real bugs found & fixed this session (beyond the two listed above)
+
+- `revenue-opportunity-governance.ts` — 🔧 **2 real bugs**: (1) `saveRevenueOpportunityPolicy`'s
+  INSERT had 19 value tokens for 18 columns — a misplaced NULL pushed `created_by` (NOT NULL) to
+  receive NULL, crashing every real policy creation; (2) the same `UNIQUE(policy_id,version)`
+  version-history bug already found twice elsewhere this session. Both fixed and verified with
+  real execution: consent/complaint/quiet-hours/frequency-cap suppression, idempotency, and
+  cross-customer conversion-ownership checks all hold correctly. Commit `d2379db`.
+
 ## Marketing / SEO / public site (built by other session, not tested by Claude)
 
 - Premium marketing/SEO pages, breed guides, landing pages, testimonials — built by other session.
@@ -130,8 +139,8 @@ plan against current `main`, not `fd6af2a`, before assigning today's work.
   dashboard Claude built, but not confirmed identical scope — check before starting
 - Real scheduler/worker boundary, independent of page loads (ChatGPT P1-10) — not yet checked
 - `ai-business-configuration.ts`, `ai-web-chat-adapter.ts`, `revenue-mission-control.ts`,
-  `revenue-mission-command-center.ts`, `revenue-leadership-reporting.ts`,
-  `revenue-opportunity-governance.ts` — never independently execution-tested by Claude
+  `revenue-mission-command-center.ts`, `revenue-leadership-reporting.ts`
+  — never independently execution-tested by Claude
 
 ## Cannot be code-closed by either agent (genuinely needs external creds/human/infra)
 
