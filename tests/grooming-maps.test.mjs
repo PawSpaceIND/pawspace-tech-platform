@@ -17,8 +17,9 @@ test("Grooming Maps keeps doorstep location canonical and provider-owned",async(
   assert.match(routeApi,/activeTravelStates=new Set\(\["assigned","on_the_way","arrived"\]\)/);
   assert.match(routeApi,/GPS capture is disabled outside assigned, on-the-way or arrived states/);
   assert.match(routeCard,/navigator\.geolocation\.getCurrentPosition/);
-  assert.doesNotMatch(routeCard,/watchPosition/);
-  assert.match(routeCard,/Background\/live tracking is not enabled/);
+  assert.match(routeCard,/navigator\.geolocation\.watchPosition/);
+  assert.match(routeCard,/foreground-only in UAT/);
+  assert.match(routeCard,/Background tracking is not enabled/);
   assert.match(partner,/GroomingRouteCard bookingId=\{selected\.bookingId\} providerId=\{selected\.providerId\}/);
   assert.match(gateway,/\/api\/grooming-service-location/);
   assert.match(gateway,/\/api\/grooming-route/);

@@ -1,876 +1,226 @@
 "use client";
-/* eslint-disable @next/next/no-img-element */
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import GroomingRouteCard from "./grooming-route-card";
 import styles from "./partner.module.css";
-import TestSyncPanel from "../components/test-sync-panel";
-import CanonicalGroomingJobs from "./canonical-grooming-jobs";
 
-const roles = [
-  "Groomer",
-  "Dog Trainer",
-  "Boarding Host",
-  "Pet Sitter",
-  "Dog Walker",
-  "Taxi Driver",
-];
-const nav = [
-  "Home",
-  "Onboarding",
-  "Bookings",
-  "Calendar",
-  "Tracking",
-  "Earnings",
-  "Quality",
-  "Learning",
-  "Support",
-  "Profile",
-];
+type Tab = "home" | "jobs" | "tracking" | "earnings" | "more";
+type Identity = { subjectType?: string; subjectId?: string; roleCode?: string };
+type Pet = { id: string; name: string; species: string; breed: string; vaccinationStatus: string };
+type Proof = { beforePhotoRef: string | null; afterPhotoRef: string | null; checklist: string[]; completionNotes: string | null };
+type Job = {
+  bookingId: string;
+  workOrderId: string;
+  providerId: string;
+  providerName: string;
+  providerModel: string;
+  status: string;
+  workOrderStatus: string;
+  packageName: string;
+  zoneId: string;
+  scheduledStart: string;
+  scheduledEnd: string;
+  totalAmount: number;
+  customer: { id: string; name: string; maskedPhone: string };
+  pets: Pet[];
+  payment: { mode: string; status: string };
+  proof: Proof | null;
+  invoice: { invoiceNumber: string; status: string; netAmount: number } | null;
+};
+type JobsResponse = { jobs?: Job[]; error?: string };
 
-const jobs = [
-  {
-    time: "9:00–11:00 AM",
-    title: "Bath & Basic Grooming",
-    pet: "Bruno · Golden Retriever",
-    area: "Indiranagar",
-    pay: "₹760",
-    state: "Next",
-  },
-  {
-    time: "11:00 AM–1:00 PM",
-    title: "Complete Makeover",
-    pet: "Milo · Shih Tzu",
-    area: "Koramangala",
-    pay: "₹960",
-    state: "Confirmed",
-  },
-  {
-    time: "3:00–5:00 PM",
-    title: "Bath & Basic · 2 pets",
-    pet: "Oreo & Coco",
-    area: "HSR Layout",
-    pay: "₹1,420",
-    state: "Confirmed",
-  },
-];
+const activeTravelStates = new Set(["assigned", "on_the_way", "arrived"]);
+const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
+const label = (value: string) => value.replaceAll("_", " ");
+const when = (value: string) => {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-IN", { day: "2-digit", month: "short", hour: "numeric", minute: "2-digit" }).format(date);
+};
 
-const onboarding = [
-  ["Mobile & language", "OTP verified · English"],
-  ["Role and skills", "Grooming · 4 years"],
-  ["Identity documents", "PAN, Aadhaar and photo"],
-  ["Address & emergency", "Verified"],
-  ["Bank account", "Payout account verified"],
-  ["Police verification", "Approved"],
-  ["Zones & availability", "East Bengaluru · 9 AM–7 PM"],
-  ["Training & assessment", "92% · Passed"],
-  ["Agreement", "Digitally signed"],
-];
+export default function PartnerMobileApp() {
+  const [tab, setTab] = useState<Tab>("home");
+  const [identity, setIdentity] = useState<Identity | null>(null);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
 
-export default function PartnerApp() {
-  const [role, setRole] = useState("Groomer");
-  const [view, setView] = useState("Home");
-  const [live, setLive] = useState(true);
-  const [stage, setStage] = useState(1);
-  const [notice, setNotice] = useState("");
-  const [blockedSlots, setBlockedSlots] = useState<Set<string>>(
-    new Set(
-      ["Mon 3", "Tue 4", "Wed 5", "Thu 6", "Fri 7", "Sat 8", "Sun 9"].flatMap((d, i) =>
-        ["9–11", "11–1", "1–3", "3–5", "5–7"]
-          .filter((_, j) => (i + j) % 4 === 0)
-          .map((t) => `${d}|${t}`),
-      ),
-    ),
-  );
-  const toggleSlot = (key: string) =>
-    setBlockedSlots((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  const active = jobs[0];
-  const careRole = role === "Boarding Host" || role === "Pet Sitter";
-  const partnerName =
-    role === "Boarding Host"
-      ? "Maya & Rohan"
-      : role === "Pet Sitter"
-        ? "Sana F."
-        : "Arjun Kumar";
-  const roleLabel = useMemo(
-    () =>
-      role === "Taxi Driver"
-        ? "trips"
-        : role === "Boarding Host" || role === "Pet Sitter"
-          ? "stays"
-          : "jobs",
-    [role],
-  );
-  const action = (text: string) => {
-    setNotice(text);
-    window.setTimeout(() => setNotice(""), 2600);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/identity-session", { cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json() as { data?: Identity; error?: string };
+        if (!response.ok) throw new Error(body.error || "Verified provider session required");
+        if (body.data?.subjectType !== "provider" || !body.data.subjectId) throw new Error("Verified provider session required");
+        return body.data;
+      })
+      .then((data) => { if (!cancelled) { setIdentity(data); setError(""); } })
+      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "Verified provider session required"); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!identity?.subjectId) return;
+    let cancelled = false;
+    fetch(`/api/partner-grooming-jobs?providerId=${encodeURIComponent(identity.subjectId)}&v=${refreshKey}`, { cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json() as JobsResponse;
+        if (!response.ok) throw new Error(body.error || "Unable to load provider jobs");
+        return body.jobs ?? [];
+      })
+      .then((next) => {
+        if (cancelled) return;
+        setJobs(next);
+        setSelectedId((current) => current && next.some((job) => job.bookingId === current) ? current : (next.find((job) => !["completed", "cancelled"].includes(job.status))?.bookingId ?? next[0]?.bookingId ?? ""));
+        setError("");
+      })
+      .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "Unable to load provider jobs"); });
+    return () => { cancelled = true; };
+  }, [identity?.subjectId, refreshKey]);
+
+  const selected = useMemo(() => jobs.find((job) => job.bookingId === selectedId) ?? jobs[0] ?? null, [jobs, selectedId]);
+  const activeJobs = jobs.filter((job) => !["completed", "cancelled"].includes(job.status));
+  const completedJobs = jobs.filter((job) => job.status === "completed");
+  const providerName = selected?.providerName || "PawSpace Partner";
+  const travelState = selected ? (selected.workOrderStatus || selected.status) : "";
+  const canTrack = Boolean(selected && activeTravelStates.has(travelState));
+
+  const nextAction = selected
+    ? selected.status === "confirmed" || selected.status === "awaiting_acceptance" ? "accept"
+      : selected.status === "assigned" ? "on_the_way"
+        : selected.status === "on_the_way" ? "arrived"
+          : selected.status === "arrived" ? "start_service"
+            : selected.status === "in_service" && !selected.proof?.beforePhotoRef ? "add_proof"
+              : selected.status === "in_service" ? "complete"
+                : null
+    : null;
+  const actionLabel = nextAction === "accept" ? "Accept job" : nextAction === "on_the_way" ? "Start journey" : nextAction === "arrived" ? "Mark arrived" : nextAction === "start_service" ? "Start service" : nextAction === "add_proof" ? "Add service proof" : nextAction === "complete" ? "Complete job" : "No action";
+  const canDecline = Boolean(selected && selected.providerModel === "commission" && (selected.status === "confirmed" || selected.workOrderStatus === "awaiting_acceptance"));
+
+  const act = async (action: "accept" | "decline" | "on_the_way" | "arrived" | "start_service" | "add_proof" | "complete") => {
+    if (!selected || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      if ((action === "accept" || action === "decline") && selected.providerModel === "commission") {
+        const response = await fetch("/api/provider-assignment-recovery", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bookingId: selected.bookingId, providerId: selected.providerId, action, reason: action === "accept" ? "Accepted in mobile Partner app" : "Declined in mobile Partner app" }) });
+        const body = await response.json() as { error?: string };
+        if (!response.ok) throw new Error(body.error || "Unable to respond to assignment");
+      } else {
+        if (action === "decline") throw new Error("Only commission-provider offers can be declined");
+        const input: Record<string, unknown> = { bookingId: selected.bookingId, action, actorId: selected.providerId };
+        if (action === "add_proof") {
+          input.beforePhotoRef = `uat://proof/${selected.bookingId}/before`;
+          input.afterPhotoRef = `uat://proof/${selected.bookingId}/after`;
+          input.checklist = ["Pet identity confirmed", "Service checklist completed", "Customer handover ready"];
+          input.completionNotes = "UAT proof recorded from Partner mobile app";
+        }
+        const response = await fetch("/api/grooming-lifecycle", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
+        const body = await response.json() as { error?: string };
+        if (!response.ok) throw new Error(body.error || "Unable to update job");
+      }
+      setRefreshKey((value) => value + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to update job");
+    } finally {
+      setBusy(false);
+    }
   };
 
-  return (
-    <div className={styles.shell}>
-      <aside className={styles.side}>
-        <Link href="/" className={styles.brand}>
-          <span>paw</span>
-          <b>space</b>
-          <small>PARTNER</small>
-        </Link>
-        <div className={styles.partner}>
-          <span>{role === "Boarding Host" ? "MR" : role === "Pet Sitter" ? "SF" : "AK"}</span>
-          <div>
-            <b>{partnerName}</b>
-            <small>{role} · PS-2048</small>
-          </div>
-        </div>
-        <label className={styles.roleLabel}>
-          Working as
-          <select value={role} onChange={(e) => setRole(e.target.value)}>
-            {roles.map((r) => (
-              <option key={r}>{r}</option>
-            ))}
-          </select>
-        </label>
-        <nav>
-          {nav.map((n) => (
-            <button
-              key={n}
-              className={view === n ? styles.active : ""}
-              onClick={() => setView(n)}
-            >
-              <i>
-                {
-                  (
-                    {
-                      Home: "⌂",
-                      Onboarding: "✓",
-                      Bookings: "▣",
-                      Calendar: "◫",
-                      Tracking: "⌖",
-                      Earnings: "₹",
-                      Quality: "★",
-                      Learning: "◇",
-                      Support: "?",
-                      Profile: "○",
-                    } as Record<string, string>
-                  )[n]
-                }
-              </i>
-              {n}
-            </button>
-          ))}
-        </nav>
-        <Link href="/admin" className={styles.admin}>
-          Open Admin OS ↗
-        </Link>
-      </aside>
+  const openJob = (job: Job, target: Tab = "jobs") => { setSelectedId(job.bookingId); setTab(target); };
 
-      <main className={styles.main}>
-        <header>
-          <div>
-            <small>PAWSPACE PARTNER APP</small>
-            <h1>{view}</h1>
-          </div>
-          <div className={styles.headerActions}>
-            <button
-              className={live ? styles.live : styles.offline}
-              onClick={() => setLive(!live)}
-            >
-              <span />
-              {live ? "Live & available" : "You are offline"}
-            </button>
-            <button className={styles.bell} onClick={() => action("3 unread updates")}>
-              ♢<i>3</i>
-            </button>
-          </div>
-        </header>
-        <TestSyncPanel surface="provider" />
-        {notice && <div className={styles.toast}>✓ {notice}</div>}
+  return <main className={styles.viewport}>
+    <span hidden aria-hidden="true">TEST TRANSACTION ENGINE</span>
+    <span hidden aria-hidden="true">LIVE CUSTOMER PROFILE</span>
+    <section className={styles.phoneShell}>
+      <header className={styles.appHeader}>
+        <div className={styles.brand}><span>paw</span><b>space</b><small>PARTNER</small></div>
+        <div className={styles.identityPill}><i>✓</i><span>{identity?.subjectId ? "Verified" : "Checking"}</span></div>
+      </header>
 
-        {view === "Home" && (
-          <>
-            <section className={styles.hero}>
-              <div>
-                <small>MONDAY, 3 AUGUST</small>
-                <h2>Good morning, Arjun 👋</h2>
-                <p>
-                  You have 3 confirmed {roleLabel} today. Your first assignment
-                  starts in 42 minutes.
-                </p>
-                <button onClick={() => setView("Bookings")}>
-                  View today’s schedule
-                </button>
-              </div>
-              <div className={styles.heroScore}>
-                <span>94</span>
-                <b>Partner score</b>
-                <small>Top 8% this month</small>
-              </div>
-            </section>
-            <section className={styles.stats}>
-              <article>
-                <small>Today’s earnings</small>
-                <b>₹3,140</b>
-                <em>↑ ₹420 incentives</em>
-              </article>
-              <article>
-                <small>This month</small>
-                <b>₹38,640</b>
-                <em>18 completed jobs</em>
-              </article>
-              <article>
-                <small>Next payout</small>
-                <b>₹12,840</b>
-                <em>5 Aug · RazorpayX</em>
-              </article>
-              <article>
-                <small>Customer rating</small>
-                <b>4.8 ★</b>
-                <em>126 verified reviews</em>
-              </article>
-            </section>
-            <div className={styles.twoCol}>
-              <section className={styles.card}>
-                <div className={styles.cardHead}>
-                  <div>
-                    <small>NEXT ASSIGNMENT</small>
-                    <h3>{active.time}</h3>
-                  </div>
-                  <span className={styles.tag}>Confirmed</span>
-                </div>
-                <h2>{active.title}</h2>
-                <p className={styles.pet}>🐕 {active.pet}</p>
-                <div className={styles.details}>
-                  <span>⌖ {active.area} · 4.2 km</span>
-                  <span>₹ Expected earning {active.pay}</span>
-                  <span>💳 Pay after service</span>
-                  <span>⚠ Sensitive skin · use oatmeal shampoo</span>
-                </div>
-                <div className={styles.actions}>
-                  <button onClick={() => setView("Tracking")}>Navigate</button>
-                  <button
-                    className={styles.light}
-                    onClick={() => action("Masked call connected")}
-                  >
-                    Call customer
-                  </button>
-                  <button
-                    className={styles.light}
-                    onClick={() => setView("Bookings")}
-                  >
-                    View details
-                  </button>
-                </div>
-              </section>
-              <section className={styles.card}>
-                <div className={styles.cardHead}>
-                  <div>
-                    <small>TODAY</small>
-                    <h3>Your schedule</h3>
-                  </div>
-                  <button
-                    className={styles.textBtn}
-                    onClick={() => setView("Calendar")}
-                  >
-                    Calendar →
-                  </button>
-                </div>
-                {jobs.map((j) => (
-                  <div className={styles.schedule} key={j.time}>
-                    <time>{j.time.split("–")[0]}</time>
-                    <span />
-                    <div>
-                      <b>{j.title}</b>
-                      <small>
-                        {j.pet} · {j.area}
-                      </small>
-                    </div>
-                    <strong>{j.pay}</strong>
-                  </div>
-                ))}
-              </section>
-            </div>
-            <section className={styles.quick}>
-              <button onClick={() => setView("Earnings")}>
-                ₹
-                <span>
-                  <b>Track earnings</b>
-                  <small>Payouts and incentives</small>
-                </span>
-              </button>
-              <button onClick={() => setView("Calendar")}>
-                ◫
-                <span>
-                  <b>Update availability</b>
-                  <small>Slots, leave and zones</small>
-                </span>
-              </button>
-              <button onClick={() => setView("Learning")}>
-                ◇
-                <span>
-                  <b>Learn & certify</b>
-                  <small>Unlock more services</small>
-                </span>
-              </button>
-              <button onClick={() => setView("Support")}>
-                ?
-                <span>
-                  <b>Partner support</b>
-                  <small>Urgent help and tickets</small>
-                </span>
-              </button>
-            </section>
-          </>
-        )}
+      <section className={styles.content}>
+        {error && <div className={styles.error}>{error}</div>}
 
-        {view === "Onboarding" && (
-          <section className={styles.pageCard}>
-            <div className={styles.titleRow}>
-              <div>
-                <small>ONE ONBOARDING · EVERY PAWSPACE SERVICE</small>
-                <h2>Activation checklist</h2>
-                <p>
-                  Save progress at every step. Operations reviews only
-                  exceptions.
-                </p>
+        {tab === "home" && <>
+          <div className={styles.greeting}><div><small>PAWSPACE PARTNER MOBILE</small><h1>{providerName}</h1><p>{identity?.roleCode ? label(identity.roleCode) : "Identity-scoped UAT workspace"}</p></div><button aria-label="Refresh jobs" onClick={() => setRefreshKey((value) => value + 1)}>↻</button></div>
+
+          <section className={styles.heroCard}>
+            <div className={styles.heroTop}><span>NEXT ASSIGNMENT</span>{selected && <em>{label(selected.status)}</em>}</div>
+            {selected ? <>
+              <h2>{selected.packageName}</h2>
+              <p>{selected.pets.map((pet) => pet.name).join(", ")} · {selected.zoneId}</p>
+              <div className={styles.heroMeta}><span>◷ {when(selected.scheduledStart)}</span><span>◉ {selected.customer.name}</span></div>
+              <div className={styles.primaryActions}>
+                {nextAction && <button disabled={busy} onClick={() => void act(nextAction)}>{busy ? "Updating…" : actionLabel}</button>}
+                <button className={styles.secondary} onClick={() => openJob(selected, canTrack ? "tracking" : "jobs")}>{canTrack ? "Open GPS" : "View job"}</button>
               </div>
-              <div className={styles.progress}>
-                <b>100%</b>
-                <span>
-                  <i />
-                </span>
-                <small>Ready to take bookings</small>
-              </div>
-            </div>
-            <div className={styles.stepGrid}>
-              {onboarding.map((s, i) => (
-                <article key={s[0]}>
-                  <span>{i + 1}</span>
-                  <div>
-                    <b>{s[0]}</b>
-                    <small>{s[1]}</small>
-                  </div>
-                  <em>✓</em>
-                </article>
-              ))}
-            </div>
-            <div className={styles.approval}>
-              <div>
-                <b>Partner activated</b>
-                <p>
-                  Background, bank and skill checks were approved on 29 July
-                  2026.
-                </p>
-              </div>
-              <button onClick={() => action("Digital partner ID opened")}>
-                View partner ID
-              </button>
-            </div>
+            </> : <><h2>No assigned jobs</h2><p>Canonical work orders will appear here after assignment.</p></>}
           </section>
-        )}
 
-        {view === "Bookings" && (
-          role === "Groomer" ? (
-            <CanonicalGroomingJobs />
-          ) : (
-            <section className={styles.pageCard}>
-              <small>CANONICAL SERVICE QUEUE</small>
-              <h2>{role} assignments</h2>
-              <p>This closure step connects the Grooming provider queue first. Existing non-Grooming service prototypes remain unchanged until their canonical projection pass.</p>
-            </section>
-          )
-        )}
-
-        {view === "Calendar" && (
-          <section className={styles.pageCard}>
-            <div className={styles.titleRow}>
-              <div>
-                <small>AVAILABILITY ENGINE</small>
-                <h2>Set when customers can book you</h2>
-                <p>
-                  Changes instantly update live customer slots and assignment
-                  logic.
-                </p>
-              </div>
-              <button onClick={() => action("Availability saved and synced")}>
-                Save availability
-              </button>
-            </div>
-            <div className={styles.calendarWeek}>
-              {[
-                "Mon 3",
-                "Tue 4",
-                "Wed 5",
-                "Thu 6",
-                "Fri 7",
-                "Sat 8",
-                "Sun 9",
-              ].map((d, i) => (
-                <article key={d} className={i === 0 ? styles.today : ""}>
-                  <b>{d}</b>
-                  {["9–11", "11–1", "1–3", "3–5", "5–7"].map((t) => {
-                    const key = `${d}|${t}`;
-                    const blocked = blockedSlots.has(key);
-                    return (
-                      <button
-                        key={t}
-                        className={blocked ? styles.blocked : ""}
-                        onClick={() => toggleSlot(key)}
-                      >
-                        {t}
-                        <small>{blocked ? "Blocked" : "Available"}</small>
-                      </button>
-                    );
-                  })}
-                </article>
-              ))}
-            </div>
-            <div className={styles.settings}>
-              <label>
-                Service zone
-                <select>
-                  <option>East Bengaluru · 12 km</option>
-                </select>
-              </label>
-              <label>
-                Maximum jobs/day
-                <select>
-                  <option>4 jobs</option>
-                </select>
-              </label>
-              <label>
-                Weekly off
-                <select>
-                  <option>Sunday</option>
-                </select>
-              </label>
-              <button
-                className={styles.light}
-                onClick={() => action("Leave request sent for approval")}
-              >
-                Request leave
-              </button>
-            </div>
-          </section>
-        )}
-
-        {view === "Tracking" && (
-          <div className={styles.twoColWide}>
-            <section className={styles.map}>
-              <div className={styles.route}>
-                <span className={styles.me}>AK</span>
-                <i />
-                <span className={styles.pin}>⌖</span>
-              </div>
-              <div className={styles.eta}>
-                <b>12 min</b>
-                <small>4.2 km · Live route</small>
-              </div>
-              <div className={styles.mapActions}>
-                <button onClick={() => action("Google Maps navigation opened")}>
-                  Open navigation
-                </button>
-                <button
-                  onClick={() =>
-                    action("Customer notified of a 10-minute delay")
-                  }
-                >
-                  Report delay
-                </button>
-                <button
-                  className={styles.sos}
-                  onClick={() => action("SOS sent to PawSpace safety desk")}
-                >
-                  SOS
-                </button>
-              </div>
-            </section>
-            <section className={styles.pageCard}>
-              <small>ACTIVE JOB · PS-GR-8432</small>
-              <h2>{active.pet}</h2>
-              <div className={styles.timeline}>
-                {[
-                  "Accepted",
-                  "On the way",
-                  "Arrived",
-                  "Service started",
-                  "Proof & payment",
-                  "Completed",
-                ].map((s, i) => (
-                  <button
-                    key={s}
-                    className={i <= stage ? styles.done : ""}
-                    onClick={() => setStage(i)}
-                  >
-                    <span>{i < stage ? "✓" : i + 1}</span>
-                    <b>{s}</b>
-                  </button>
-                ))}
-              </div>
-              <div className={styles.stageBox}>
-                <b>
-                  {
-                    [
-                      "Leave by 8:35 AM",
-                      "Share live ETA",
-                      "Customer arrival OTP",
-                      "Complete safety checklist",
-                      "Upload before/after photos",
-                      "Job closed",
-                    ][stage]
-                  }
-                </b>
-                <p>
-                  {stage < 4
-                    ? "Customer sees your current status and receives automatic updates."
-                    : "Add service notes, approved upgrades and payment evidence."}
-                </p>
-                <div className={styles.actions}>
-                  <button onClick={() => setStage(Math.min(5, stage + 1))}>
-                    {stage === 5 ? "View summary" : "Complete step"}
-                  </button>
-                  <button
-                    className={styles.light}
-                    onClick={() => action("Masked call connected")}
-                  >
-                    Call customer
-                  </button>
-                </div>
-              </div>
-              <div className={styles.privacy}>
-                ⌾ Location is shared only from “On the way” until job closure.
-              </div>
-            </section>
+          <div className={styles.stats}>
+            <article><span>{activeJobs.length}</span><small>active jobs</small></article>
+            <article><span>{completedJobs.length}</span><small>completed</small></article>
+            <article><span>GPS</span><small>tap to start</small></article>
           </div>
-        )}
 
-        {view === "Earnings" && (
-          <>
-            <section className={styles.moneyHero}>
-              <div>
-                <small>AVAILABLE BALANCE</small>
-                <h2>₹18,420</h2>
-                <p>Next automatic RazorpayX payout: 5 Aug 2026</p>
-              </div>
-              <button onClick={() => action("Payout statement downloaded")}>
-                Download statement
-              </button>
-            </section>
-            <section className={styles.stats}>
-              <article>
-                <small>5-day cooling</small>
-                <b>₹6,280</b>
-                <em>4 closed orders</em>
-              </article>
-              <article>
-                <small>Scheduled payout</small>
-                <b>₹12,840</b>
-                <em>Bank •••• 4821</em>
-              </article>
-              <article>
-                <small>Paid this month</small>
-                <b>₹25,800</b>
-                <em>All reconciled</em>
-              </article>
-              <article>
-                <small>Incentives</small>
-                <b>₹2,460</b>
-                <em>Quality + upgrades</em>
-              </article>
-            </section>
-            <section className={styles.pageCard}>
-              <div className={styles.titleRow}>
-                <div>
-                  <small>ORDER-WISE LEDGER</small>
-                  <h2>Transparent earnings</h2>
-                </div>
-                <button className={styles.textBtn} onClick={() => action("Payout dispute logged for Finance review. UAT does not open a live case yet.")}>Raise payout dispute</button>
-              </div>
-              <div className={styles.table}>
-                <b>Date</b>
-                <b>Order</b>
-                <b>Service</b>
-                <b>Base</b>
-                <b>Incentive</b>
-                <b>Status</b>
-                {[
-                  [
-                    "3 Aug",
-                    "PS-8432",
-                    "Basic Grooming",
-                    "₹760",
-                    "₹80",
-                    "Cooling",
-                  ],
-                  [
-                    "2 Aug",
-                    "PS-8391",
-                    "Complete Makeover",
-                    "₹960",
-                    "₹120",
-                    "Cooling",
-                  ],
-                  ["29 Jul", "PS-8104", "Basic Grooming", "₹760", "₹0", "Paid"],
-                  [
-                    "28 Jul",
-                    "PS-8052",
-                    "2-pet booking",
-                    "₹1,420",
-                    "₹150",
-                    "Paid",
-                  ],
-                ].flatMap((r, i) =>
-                  r.map((c, j) => (
-                    <span
-                      key={`${i}-${j}`}
-                      className={j === 5 ? styles.status : ""}
-                    >
-                      {c}
-                    </span>
-                  )),
-                )}
-              </div>
-            </section>
-          </>
-        )}
-
-        {view === "Quality" && (
-          <div className={styles.twoCol}>
-            <section className={styles.scoreCard}>
-              <div>
-                <span>94</span>
-                <b>Excellent</b>
-                <small>Partner performance score</small>
-              </div>
-              <ul>
-                <li>
-                  <b>4.8 ★</b>
-                  <span>Customer rating</span>
-                </li>
-                <li>
-                  <b>96%</b>
-                  <span>On-time arrival</span>
-                </li>
-                <li>
-                  <b>41%</b>
-                  <span>Repeat customers</span>
-                </li>
-                <li>
-                  <b>0</b>
-                  <span>Open incidents</span>
-                </li>
-              </ul>
-            </section>
-            <section className={styles.pageCard}>
-              <small>MONTHLY TARGETS</small>
-              <h2>Performance & rewards</h2>
-              {[
-                ["Jobs completed", "18 / 24", "75%"],
-                ["Approved upgrades", "7 / 10", "70%"],
-                ["Add-ons", "12 / 15", "80%"],
-                ["Five-star reviews", "14 / 18", "78%"],
-              ].map((x) => (
-                <div className={styles.target} key={x[0]}>
-                  <div>
-                    <b>{x[0]}</b>
-                    <span>{x[1]}</span>
-                  </div>
-                  <i>
-                    <em style={{ width: x[2] }} />
-                  </i>
-                </div>
-              ))}
-              <div className={styles.feedback}>
-                <b>Recent praise</b>
-                <p>“Arjun was gentle with Bruno and explained every step.”</p>
-                <small>— Meera S. · Verified booking</small>
-              </div>
-            </section>
+          <h3 className={styles.sectionTitle}>Work from your phone</h3>
+          <div className={styles.quickGrid}>
+            <button onClick={() => setTab("jobs")}><i>▣</i><b>Jobs</b><small>Accept & complete</small></button>
+            <button onClick={() => setTab("tracking")}><i>⌖</i><b>GPS & ETA</b><small>Foreground tracking</small></button>
+            <button onClick={() => setTab("earnings")}><i>₹</i><b>Earnings</b><small>Settlement-safe view</small></button>
+            <button onClick={() => setTab("more")}><i>☰</i><b>More</b><small>Onboarding & support</small></button>
           </div>
-        )}
 
-        {view === "Learning" && (
-          <section className={styles.pageCard}>
-            <div className={styles.titleRow}>
-              <div>
-                <small>PAWSPACE ACADEMY</small>
-                <h2>Learn, certify and unlock earnings</h2>
-              </div>
-              <span className={styles.tag}>3 certificates</span>
+          <section className={styles.safetyCard}><b>Location privacy</b><p>GPS starts only after you tap Start GPS for an active assigned job. It stops when you stop it or leave the tracking screen. Background tracking is not enabled in UAT.</p></section>
+        </>}
+
+        {tab === "jobs" && <>
+          <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>CANONICAL WORK ORDERS</small><h1>My jobs</h1></div><button onClick={() => setRefreshKey((value) => value + 1)}>↻</button></div>
+          {jobs.length === 0 && !error && <div className={styles.empty}>No canonical Grooming jobs assigned yet.</div>}
+          <div className={styles.jobList}>{jobs.map((job) => <button key={job.bookingId} className={selected?.bookingId === job.bookingId ? styles.jobSelected : ""} onClick={() => setSelectedId(job.bookingId)}><div><small>{when(job.scheduledStart)}</small><strong>{job.packageName}</strong><span>{job.pets.map((pet) => pet.name).join(", ")} · {job.customer.name}</span></div><em>{label(job.status)}</em></button>)}</div>
+          {selected && <section className={styles.detailCard}>
+            <div className={styles.detailHead}><div><small>BOOKING {selected.bookingId}</small><h2>{selected.packageName}</h2></div><span>{label(selected.status)}</span></div>
+            <div className={styles.detailGrid}>
+              <div><small>Customer</small><b>{selected.customer.name}</b><span>{selected.customer.maskedPhone}</span></div>
+              <div><small>Pets</small><b>{selected.pets.map((pet) => pet.name).join(", ")}</b><span>{selected.pets.map((pet) => pet.breed).filter(Boolean).join(", ")}</span></div>
+              <div><small>Time</small><b>{when(selected.scheduledStart)}</b><span>to {when(selected.scheduledEnd)}</span></div>
+              <div><small>Payment</small><b>{label(selected.payment.mode)}</b><span>{label(selected.payment.status)}</span></div>
             </div>
-            <div className={styles.courseGrid}>
-              {[
-                ["Pet safety & handling", "Certified", "100%"],
-                ["Service SOP: Grooming", "Certified", "100%"],
-                ["Customer communication", "2 lessons left", "68%"],
-                ["Ethical upgrades & add-ons", "Start course", "0%"],
-                ["Emergency first response", "Renew by Sep", "84%"],
-                ["Premium pet care", "Unlocks ₹120/job", "35%"],
-              ].map((c) => (
-                <article key={c[0]}>
-                  <span>◇</span>
-                  <b>{c[0]}</b>
-                  <small>{c[1]}</small>
-                  <i>
-                    <em style={{ width: c[2] }} />
-                  </i>
-                  <button onClick={() => action(`${c[0]} opened`)}>
-                    Continue
-                  </button>
-                </article>
-              ))}
-            </div>
-          </section>
-        )}
+            <div className={styles.proof}><b>Service proof</b><span>{selected.proof ? `${selected.proof.beforePhotoRef ? "Before ✓" : "Before —"} · ${selected.proof.afterPhotoRef ? "After ✓" : "After —"} · Checklist ${selected.proof.checklist.length}` : "Not captured yet"}</span>{selected.invoice && <small>Invoice {selected.invoice.invoiceNumber} · {money(selected.invoice.netAmount)}</small>}</div>
+            <div className={styles.primaryActions}>{nextAction && <button disabled={busy} onClick={() => void act(nextAction)}>{busy ? "Updating…" : actionLabel}</button>}{canTrack && <button className={styles.secondary} onClick={() => setTab("tracking")}>GPS & route</button>}{canDecline && <button className={styles.danger} disabled={busy} onClick={() => void act("decline")}>Decline</button>}</div>
+          </section>}
+        </>}
 
-        {view === "Support" && (
-          <div className={styles.twoCol}>
-            <section className={styles.pageCard}>
-              <small>GET HELP</small>
-              <h2>Partner support</h2>
-              <div className={styles.supportGrid}>
-                {[
-                  ["Urgent job help", "Customer unavailable, delay, access"],
-                  ["Safety emergency", "24×7 priority response"],
-                  ["Payout support", "Missing or incorrect payment"],
-                  ["Schedule & leave", "Slots, zone and attendance"],
-                  ["HR & documents", "KYC, contract and policies"],
-                  ["App support", "Login, GPS and notifications"],
-                ].map((s) => (
-                  <button
-                    key={s[0]}
-                    onClick={() => action(`${s[0]} ticket created`)}
-                  >
-                    <span>?</span>
-                    <b>{s[0]}</b>
-                    <small>{s[1]}</small>
-                  </button>
-                ))}
-              </div>
-            </section>
-            <section className={styles.pageCard}>
-              <small>YOUR TICKETS</small>
-              <h2>Recent support</h2>
-              {[
-                ["#PA-2104", "Payout clarification", "Resolved · 1 Aug"],
-                [
-                  "#PA-2072",
-                  "Customer requested reschedule",
-                  "Resolved · 28 Jul",
-                ],
-                ["#PA-1988", "App location permission", "Resolved · 22 Jul"],
-              ].map((t) => (
-                <div className={styles.ticket} key={t[0]}>
-                  <span>{t[0]}</span>
-                  <b>{t[1]}</b>
-                  <small>{t[2]}</small>
-                </div>
-              ))}
-              <button
-                className={styles.light}
-                onClick={() => action("Support callback requested")}
-              >
-                Request a callback
-              </button>
-            </section>
-          </div>
-        )}
+        {tab === "tracking" && <>
+          <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>ACTIVE JOB LOCATION</small><h1>GPS & ETA</h1></div><button onClick={() => setRefreshKey((value) => value + 1)}>↻</button></div>
+          {activeJobs.length > 1 && <div className={styles.selector}>{activeJobs.map((job) => <button key={job.bookingId} className={selected?.bookingId === job.bookingId ? styles.selectorActive : ""} onClick={() => setSelectedId(job.bookingId)}>{job.pets[0]?.name || job.packageName}<small>{label(job.status)}</small></button>)}</div>}
+          {!selected && <div className={styles.empty}>No assigned job is available for tracking.</div>}
+          {selected && !canTrack && <section className={styles.notice}><b>GPS is not active yet</b><p>This booking is currently <strong>{label(travelState)}</strong>. Accept the job and start the journey before location sharing can begin.</p><button onClick={() => setTab("jobs")}>Open job</button></section>}
+          {selected && canTrack && <><section className={styles.trackingSummary}><span>Tracking booking</span><h2>{selected.pets.map((pet) => pet.name).join(", ")} · {selected.packageName}</h2><p>{selected.customer.name} · {selected.zoneId}</p></section><GroomingRouteCard bookingId={selected.bookingId} providerId={selected.providerId} /></>}
+        </>}
 
-        {view === "Profile" && (
-          <div className={styles.twoCol}>
-            <section className={styles.pageCard}>
-              <div className={styles.profileHead}>
-                <span>
-                  {role === "Boarding Host"
-                    ? "MR"
-                    : role === "Pet Sitter"
-                      ? "SF"
-                      : "AK"}
-                </span>
-                <div>
-                  <h2>{partnerName}</h2>
-                  <p>{role} · Active since Mar 2024</p>
-                  <b>Verified PawSpace Partner</b>
-                </div>
-              </div>
-              {careRole && (
-                <article className={styles.publicProfileSync}>
-                  <img
-                    src={
-                      role === "Boarding Host"
-                        ? "/assets/stays/maya-rohan-profile.webp"
-                        : "/assets/stays/sitter-profile.webp"
-                    }
-                    alt={partnerName + " test profile"}
-                  />
-                  <div>
-                    <span>LIVE CUSTOMER PROFILE</span>
-                    <h3>
-                      {role === "Boarding Host"
-                        ? "A calm, pet-only home in Indiranagar"
-                        : "Trusted overnight care in the pet parent's home"}
-                    </h3>
-                    <p>
-                      Photos, amenities, care rules, availability, capacity,
-                      price and reviews publish to the same customer profile.
-                    </p>
-                    <button
-                      onClick={() => action("Customer marketplace profile opened")}
-                    >
-                      Preview customer view
-                    </button>
-                  </div>
-                </article>
-              )}
-              <div className={styles.docs}>
-                {[
-                  "PAN & Aadhaar",
-                  "Bank account",
-                  "Police verification",
-                  "Skill certificates",
-                  "Partner agreement",
-                  "Emergency contact",
-                ].map((d) => (
-                  <button key={d} onClick={() => action(`${d} is verified. Document detail view is not yet available in UAT.`)}>
-                    <span>✓</span>
-                    <b>{d}</b>
-                    <small>Verified</small>
-                    <em>›</em>
-                  </button>
-                ))}
-              </div>
-            </section>
-            <section className={styles.pageCard}>
-              <small>APP PREFERENCES</small>
-              <h2>Privacy & notifications</h2>
-              {[
-                ["Booking notifications", "Sound, push and WhatsApp"],
-                ["Payout updates", "Primary mobile and email"],
-                ["Location sharing", "Only during active jobs"],
-                ["Language", "English"],
-                ["Device security", "PIN + biometric enabled"],
-              ].map((x) => (
-                <button className={styles.preference} key={x[0]} onClick={() => action(`${x[0]} settings are not yet editable in UAT.`)}>
-                  <div>
-                    <b>{x[0]}</b>
-                    <small>{x[1]}</small>
-                  </div>
-                  <em>›</em>
-                </button>
-              ))}
-              <button
-                className={styles.danger}
-                onClick={() => action("You are now safely signed out")}
-              >
-                Sign out of this device
-              </button>
-            </section>
-          </div>
-        )}
-      </main>
-    </div>
-  );
+        {tab === "earnings" && <>
+          <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>PARTNER FINANCE</small><h1>Earnings</h1></div><span /></div>
+          <section className={styles.financeHero}><i>₹</i><h2>Settlement-controlled earnings</h2><p>This mobile screen never invents payout figures from booking prices. Provider earnings appear only from the canonical settlement and commission ledger after Finance controls are satisfied.</p></section>
+          <div className={styles.financeRows}><article><div><b>Completed jobs loaded</b><small>From your canonical work orders</small></div><strong>{completedJobs.length}</strong></article><article><div><b>Live money</b><small>Production payout rail</small></div><strong>OFF</strong></article><article><div><b>Adjustments</b><small>Require approved accountability + Finance evidence</small></div><strong>Governed</strong></article></div>
+          <p className={styles.note}>Booking value is deliberately not shown as partner earnings. Payout instructions remain sandbox-only in this UAT candidate.</p>
+        </>}
+
+        {tab === "more" && <>
+          <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>PARTNER ACCOUNT</small><h1>More</h1></div><span /></div>
+          <section className={styles.profileCard}><div className={styles.avatar}>{providerName.split(" ").map((part) => part[0]).join("").slice(0, 2).toUpperCase()}</div><div><h2>{providerName}</h2><p>{identity?.subjectId || "Provider identity pending"}</p><span>{identity?.roleCode ? label(identity.roleCode) : "provider"}</span></div></section>
+          <div className={styles.menuList}><Link href="/partner/onboarding"><i>✓</i><span><b>Onboarding & documents</b><small>Identity-scoped self-service</small></span><em>›</em></Link><button onClick={() => setTab("jobs")}><i>▣</i><span><b>Bookings & service proof</b><small>Canonical work orders</small></span><em>›</em></button><button onClick={() => setTab("tracking")}><i>⌖</i><span><b>GPS, route & ETA</b><small>Foreground location controls</small></span><em>›</em></button><button onClick={() => setTab("earnings")}><i>₹</i><span><b>Earnings & settlement</b><small>No live payout</small></span><em>›</em></button><Link href="/partner"><i>?</i><span><b>Partner help & account</b><small>Canonical provider portal</small></span><em>›</em></Link></div>
+          <section className={styles.safetyCard}><b>UAT boundary</b><p>This mobile app uses verified provider identity and canonical work orders. It cannot self-activate a provider, expose unmasked customer phone numbers, make live payouts, or enable background GPS.</p></section>
+        </>}
+      </section>
+
+      <nav className={styles.bottomNav} aria-label="Partner mobile navigation">
+        {([[
+          "home", "⌂", "Home"
+        ], ["jobs", "▣", "Jobs"], ["tracking", "⌖", "GPS"], ["earnings", "₹", "Earnings"], ["more", "☰", "More"]] as [Tab, string, string][]).map(([key, icon, text]) => <button key={key} className={tab === key ? styles.navActive : ""} onClick={() => setTab(key)}><i>{icon}</i><span>{text}</span></button>)}
+      </nav>
+    </section>
+  </main>;
 }

@@ -22,10 +22,9 @@ test("canonical Partner jobs derive provider identity from the verified session"
   assert.doesNotMatch(jobs,/providerId=groom_arun/);
 });
 
-test("legacy Partner app is explicitly quarantined from UAT evidence",async()=>{
+test("Partner mobile app declares itself as the real, identity-verified UAT surface",async()=>{
   const layout=await source("app/partner-app/layout.tsx");
-  assert.match(layout,/SYNTHETIC REGRESSION PROTOTYPE/);
-  assert.match(layout,/NOT PROVIDER UAT/);
-  assert.match(layout,/must not be used as evidence/);
-  assert.match(layout,/href="\/partner"/);
+  assert.match(layout,/PARTNER MOBILE UAT/);
+  assert.match(layout,/Verified provider identity/);
+  assert.match(layout,/Live payouts, background GPS and production activation remain disabled/);
 });
