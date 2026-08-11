@@ -121,6 +121,24 @@ plan against current `main`, not `fd6af2a`, before assigning today's work.
   version-history bug already found twice elsewhere this session. Both fixed and verified with
   real execution: consent/complaint/quiet-hours/frequency-cap suppression, idempotency, and
   cross-customer conversion-ownership checks all hold correctly. Commit `d2379db`.
+- `ai-business-configuration.ts` — ✅ Real execution: global/channel-scoped kill switches correctly
+  isolated from each other, real visibility-scoped knowledge retrieval (customer-facing queries
+  never see internal-only content), full draft→review→approve→activate lifecycle held, honest
+  `configurationRequired` signal before anything is set up.
+- `ai-web-chat-adapter.ts` — ✅ Real execution: public knowledge search and anonymous lead capture
+  are genuinely customer-data-free; `runAuthenticatedAiWebChat` correctly enforces real customer
+  ownership before any authenticated turn (reuses the same `requireCustomerOwnership` primitive
+  verified earlier this session), staff correctly bypass it by design.
+- `revenue-mission-control.ts` — 🔧 **Real bug, same class found 3 times prior**:
+  `UNIQUE(mission_id,config_version)` blocked the basic create-then-activate flow. Fixed. Also
+  verified the delta-based collection/refund tracking directly — a partial capture followed by a
+  full capture correctly records only the new delta, never double-counting; real scope isolation
+  (city/service) holds. Commit `d7b311d`.
+- `revenue-mission-command-center.ts`, `revenue-leadership-reporting.ts` — ✅ Real execution:
+  honest `configuration_required` fallback with no fabricated figures when no mission exists;
+  real snapshot immutability (a generated report does not retroactively change when more revenue
+  is recorded afterward); real idempotency; delivery-status tracking correctly independent of the
+  underlying metric truth.
 
 ## Marketing / SEO / public site
 
@@ -152,9 +170,6 @@ session, untested" as the previous entry said).
 - Founder BI → canonical analytics/P&L (ChatGPT P1-9) — partially adjacent to the manager/founder
   dashboard Claude built, but not confirmed identical scope — check before starting
 - Real scheduler/worker boundary, independent of page loads (ChatGPT P1-10) — not yet checked
-- `ai-business-configuration.ts`, `ai-web-chat-adapter.ts`, `revenue-mission-control.ts`,
-  `revenue-mission-command-center.ts`, `revenue-leadership-reporting.ts`
-  — never independently execution-tested by Claude
 
 ## Cannot be code-closed by either agent (genuinely needs external creds/human/infra)
 
