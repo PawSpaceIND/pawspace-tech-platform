@@ -276,6 +276,33 @@ static test cannot verify.
 **Still needs from the business, not code**: a real `PAWSPACE_AI_PROVIDER_API_KEY` to actually
 light this up. Until then this is intentionally inert, same as Razorpay/WhatsApp/Maps.
 
+## Real onboarding->matching bug: activated providers were structurally invisible (Claude, this session)
+
+User asked: "once any service provider created they need to be added to the map." Investigated
+and found a genuine, previously undiscovered bug in `activateProviderUat`
+(`lib/provider-onboarding-human-activation.ts`): it always wrote `live=0` to
+`provider_capacity_profiles` with **no code path anywhere** that ever set it back to 1 for a real
+onboarded provider - only the hardcoded UAT seed defaults in
+`lib/provider-capacity-governance.ts` (`groom_arun`, `sit_sana`, etc.) ever had `live=1`. On top of
+that, it wrote `zones_json` as the bare city code (`"BLR"`), which could never match a real
+zone-scoped query anyway (`blr-east` is the only zone modeled anywhere in this platform). Meant
+every real activated provider, no matter how completely they onboarded, was permanently invisible
+to actual booking/matching (`loadGovernedProviders`, `listBoardingHosts`, etc).
+
+Fixed both halves:
+- `activateProviderUat` now writes a real zone-formatted default (`"<city>-east"`) instead of the
+  bare city code.
+- Added `addProviderToServiceMap` - an explicit staff action (not automatic on activation, matching
+  the existing human-decision-authority pattern for verification/quiz/activation) that confirms
+  real zone coverage and flips `live=1`. Wired a new "Add to service map" section into the Ops page
+  that appears once a provider is activated.
+
+Real execution proof, not just static tests: extended `tests/runtime-d1-worker.ts` to insert a
+provider capacity row exactly as `activateProviderUat` would produce it, confirm via the real
+`loadGovernedProviders` query that it is genuinely NOT matchable beforehand (proving the bug was
+real), call the real `addProviderToServiceMap`, then confirm the same query now genuinely returns
+it. Ran against live local D1 via `wrangler dev` - passed.
+
 ## Still open — genuinely not started, not a duplicate-risk
 
 - **Pricing Control wiring for Grooming multi-pet, Training, Boarding, Pet Sitting — ChatGPT is
