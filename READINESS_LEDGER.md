@@ -163,7 +163,15 @@ session, untested" as the previous entry said).
 
 ## Still open — genuinely not started, not a duplicate-risk
 
-- Pricing Control wiring for: Grooming multi-pet, Training, Boarding, Pet Sitting (⬜)
+- **Pricing Control wiring for Grooming multi-pet, Training, Boarding, Pet Sitting — ChatGPT is
+  actively working on this** on branch `agent/pricing-control-closure` (not yet merged to main as
+  of this update). Reviewed both of its commits directly: `lib/grooming-pricing-code.ts` (a real,
+  correctly-designed multi-pet package-code suffix helper, e.g. `dog-basic__2_pets`) and
+  `lib/pricing-control-runtime.ts` (real seed data for all 4 verticals, cross-checked against the
+  existing hardcoded catalogue - the multi-pet math matches exactly, e.g. `1649 × 2 = 3298`).
+  Every seeded row is inserted `active:0` - nothing goes live just by seeding, matching the same
+  safety principle used for Grooming single-pet. **Do not start a competing implementation of
+  this - check the branch for updates before touching pricing wiring for these 4 items.**
 - Canonical Customer account/app data (ChatGPT P0-4) — not yet checked by Claude
 - Partner availability + profile truth (ChatGPT P1-5) — not yet checked by Claude
 - Promotions backend + Marketing automation execution (ChatGPT P1-8) — not yet checked by Claude
