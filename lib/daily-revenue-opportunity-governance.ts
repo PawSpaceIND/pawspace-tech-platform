@@ -14,6 +14,7 @@
 import { rankRevenueActions } from "./revenue-intelligence";
 import { buildCustomer360 } from "./customer-360";
 import { groomingCatalogue } from "./grooming-governance";
+import { ensureLeadWorkItemsTable } from "./lead-conversion-attribution";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
@@ -89,6 +90,7 @@ async function subscriptionRenewalOpportunities(db: Db, now: number): Promise<Da
 }
 
 export async function generateRealDailyOpportunities(db: Db, input: { date: string; actorId: string; now?: number }) {
+  await ensureLeadWorkItemsTable(db);
   const now = input.now ?? Date.now();
   const [customer360Records, leadOpps, renewalOpps] = await Promise.all([
     buildCustomer360(db),

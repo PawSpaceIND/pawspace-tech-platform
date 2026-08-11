@@ -4,7 +4,7 @@ type Db=D1Database;
 type Row=Record<string,unknown>;
 
 const text=(v:unknown)=>String(v??"").trim();
-const normalizePhone=(value:string)=>value.replace(/\D/g,"").slice(-10);
+const normalizePhone=(value:string)=>String(value??"").replace(/\D/g,"").slice(-10);
 const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
 
 /**
