@@ -244,7 +244,26 @@ session, untested" as the previous entry said).
   replicated the exact mapping logic against a realistic API response, fetched the actual `/control`
   page through the real built worker (200 OK, no fake numbers present), and ran the full merged test
   suite clean.
-  **Real gap still open**: building the Accounts/Customers/Subscriptions real backends.
+  **UPDATE, commit `a1f395a`**: Direct cost, margin and repeat-rate per vertical - the one
+  remaining honest disclosure this entry called out - are now real for the verticals where a clean
+  cost source genuinely exists. Investigated the landscape directly rather than assuming a single
+  fix would cover all 4 verticals: `finance_journal_entries.vertical` is a dead column (hardcoded
+  NULL at its only insertion point); Boarding and Pet Sitting have real, booking-level provider
+  payout data; Training's payout data is provider/period-level only, not attributable to a specific
+  booking; Grooming is incentive-based at groomer-month level with no clean per-booking figure at
+  all. Built real cost/margin for Boarding and Sitting specifically, verified the critical safety
+  property with real execution - partial payout coverage never silently produces a fake margin, it
+  collapses to "not tracked" for that vertical/period until every eligible booking has a known
+  payout. Training and Grooming honestly remain "not tracked" - no fabrication, no false
+  consistency forced across verticals that aren't equally ready. Real per-vertical repeat rate is
+  now computed for all 4 verticals uniformly (fully derivable from canonical_bookings alone).
+  Also found and fixed a real bug while wiring this in: dead state left over from the earlier merge
+  resolution referenced an undefined variable - would have been a real ReferenceError crash on
+  mount, undetected by this project's build or any existing test. Fixed, then verified by actually
+  rendering `/control` through the real built worker (200 OK, no error-boundary text).
+  **Real gap still open**: building the Accounts/Customers/Subscriptions real backends, and Direct
+  cost/margin for Training and Grooming specifically (genuinely needs new cost-attribution
+  infrastructure for each, not achievable from data that exists today).
 - Real scheduler/worker boundary, independent of page loads (ChatGPT P1-10) — 🔧 **CLOSED in PR #62.**
   Before this work, `worker/index.ts` had only `fetch()`, `vite.config.ts` had no cron trigger, and
   the staff-alert truth explicitly reported `backgroundSchedulerConfigured:false`; meanwhile the
