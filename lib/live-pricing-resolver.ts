@@ -1,18 +1,18 @@
 import { calculatePrice, type PricingPackage, type PricingRule } from "./pricing-engine";
+import { ensurePricingControlRuntime } from "./pricing-control-runtime";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
 /**
- * The real fix for the Pricing Control panel disconnect: if ops has published a real price for this
- * package in service_packages (via the Pricing Control panel), use it - including any published
- * dynamic pricing rule - through the exact same calculatePrice() the panel's own preview uses.
- * If nothing has ever been configured there for this package, return the caller's existing fallback
- * UNCHANGED - so every package nobody has touched in the panel behaves byte-for-byte identically to
- * before this fix, and only packages someone has actually gone and priced take on the new behavior.
- * This is deliberately additive, not a replacement of each vertical's own governance.
+ * Reads the operator-controlled package/rule state when that exact canonical package has been
+ * explicitly activated in Pricing Control. Canonical rows are self-provisioned inactive at their
+ * existing catalogue prices, so merely deploying this bridge cannot change a customer price.
+ * Existing operator edits are preserved by INSERT OR IGNORE. If the row remains inactive, callers
+ * get their pre-existing fallback unchanged.
  */
 export async function resolveLivePrice(db:Db,input:{packageCode:string;fallbackPrice:number;scheduledStart:string;cityId:string;zoneId?:string;quantity?:number}):Promise<{price:number;source:"pricing_control"|"fallback_default"}>{
+  await ensurePricingControlRuntime(db);
   const row=await db.prepare("SELECT * FROM service_packages WHERE package_code=? AND active=1").bind(input.packageCode).first<Row>();
   if(!row)return{price:input.fallbackPrice,source:"fallback_default"};
   const pkg:PricingPackage={
