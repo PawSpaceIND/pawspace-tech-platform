@@ -238,6 +238,18 @@ function bundle(p: Pack, n: number, t: PetType) {
   };
   return two[`${t}:${p.id}`] ? (two[`${t}:${p.id}`] / 2) * n : p.price * n;
 }
+// The real server-side catalogue (lib/grooming-governance.ts) uses "dog-basic", "cat-basic",
+// "young-basic" etc as package codes. Two mismatches exist between this component's pack ids and
+// the server's real suffixes, both confirmed by testing directly against the real server function:
+// (1) "young" covers both puppy and kitten pet types, not their own names; (2) this component's
+// "complete" pack id corresponds to the server's "makeover" suffix specifically - every other id
+// (bath/basic/trim/routine) happens to match directly, but that's not something to assume holds for
+// any future pack id added here, hence the explicit table rather than passing packId straight through.
+const catalogueSuffix: Record<string, string> = { complete: "makeover" };
+function catalogueCode(t: PetType, packId: string) {
+  const prefix = t === "puppy" || t === "kitten" ? "young" : t;
+  return `${prefix}-${catalogueSuffix[packId] ?? packId}`;
+}
 function subscriptionPrice(id: string, t: PetType, price: number) {
   return id === "3" && t === "cat" ? 2999 : price;
 }
@@ -295,7 +307,7 @@ export default function GroomingFlow() {
       setScheduling(true);setScheduleError("");
       try {
       const dateIndex=Math.max(0,dates.indexOf(date));const slotIndex=Math.max(0,slots.indexOf(slot));const start=new Date(Date.UTC(2026,7,4+dateIndex,3+slotIndex*2,30));const end=new Date(start.getTime()+(count>=4?240:count===3?150:120)*60_000);const petNames=["Bruno","Coco","Milo","Luna"].slice(0,count);const requestId=`groom-TST101-${dateIndex}-${slotIndex}-${count}`;const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:"TST-101",petIds:petNames,serviceCode:"grooming",zoneId:"blr-east",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),preferredProviderId:preferred?"groom_arun":undefined});
-      const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:"TST-101",name:"Karthik P.",primaryPhone:"9996999505",secondaryPhone:"9880222741"},pets:petNames.map(name=>({sourceId:name,name,species:name==="Coco"?"cat":"dog"})),cityId:"blr",zoneId:"blr-east",serviceCode:"grooming",packageCode:sub?`subscription-${sub.id}`:pack.id,packageName:sub?`${sub.name} grooming plan`:pack.name,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:total,amountDueNow:pay==="online"?total:0,payment:{method:pay==="online"?"upi":"cash",mode:pay==="online"?"prepaid":"pay_after_service",status:pay==="online"?"captured":"created",detail:pay==="online"?"UAT online payment captured":"Pay after service"},pricing:{discount,couponCode:couponCode||undefined,subscription:sub?.name}});
+      const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:"TST-101",name:"Karthik P.",primaryPhone:"9996999505",secondaryPhone:"9880222741"},pets:petNames.map(name=>({sourceId:name,name,species:name==="Coco"?"cat":"dog"})),cityId:"blr",zoneId:"blr-east",serviceCode:"grooming",packageCode:sub?`subscription-${sub.id}`:catalogueCode(type,pack.id),packageName:sub?`${sub.name} grooming plan`:pack.name,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:total,amountDueNow:pay==="online"?total:0,payment:{method:pay==="online"?"upi":"cash",mode:pay==="online"?"prepaid":"pay_after_service",status:pay==="online"?"captured":"created",detail:pay==="online"?"UAT online payment captured":"Pay after service"},pricing:{discount,couponCode:couponCode||undefined,subscription:sub?.name}});
       const booking = createTestTransaction({
         customerId: "TST-101",
         customerName: "Karthik P.",
