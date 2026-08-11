@@ -1,11 +1,11 @@
 import type{IdentitySource,IdentitySubjectType,PrincipalType}from"./identity-binding";
 
-type AssertionPayload={v:1;identitySource:"customer_otp"|"partner_otp";principalType:"identity_subject";principalKey:string;subjectType:IdentitySubjectType;subjectId:string;cityId?:string|null;issuedAt:number;expiresAt:number;nonce:string};
+export type AssertionPayload={v:1;identitySource:"customer_otp"|"partner_otp";principalType:"identity_subject";principalKey:string;subjectType:IdentitySubjectType;subjectId:string;cityId?:string|null;issuedAt:number;expiresAt:number;nonce:string};
 type Row=Record<string,unknown>;
 
 function base64UrlToBytes(value:string){const normalized=value.replaceAll("-","+").replaceAll("_","/")+"=".repeat((4-value.length%4)%4);const binary=atob(normalized),bytes=new Uint8Array(binary.length);for(let index=0;index<binary.length;index++)bytes[index]=binary.charCodeAt(index);return bytes;}
-function bytesToBase64Url(bytes:Uint8Array){let binary="";for(const byte of bytes)binary+=String.fromCharCode(byte);return btoa(binary).replaceAll("+","-").replaceAll("/","_").replace(/=+$/g,"");}
-async function hmac(value:string,secret:string){const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(secret),{name:"HMAC",hash:"SHA-256"},false,["sign"]);const signature=await crypto.subtle.sign("HMAC",key,new TextEncoder().encode(value));return bytesToBase64Url(new Uint8Array(signature));}
+export function bytesToBase64Url(bytes:Uint8Array){let binary="";for(const byte of bytes)binary+=String.fromCharCode(byte);return btoa(binary).replaceAll("+","-").replaceAll("/","_").replace(/=+$/g,"");}
+export async function hmac(value:string,secret:string){const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(secret),{name:"HMAC",hash:"SHA-256"},false,["sign"]);const signature=await crypto.subtle.sign("HMAC",key,new TextEncoder().encode(value));return bytesToBase64Url(new Uint8Array(signature));}
 function equalConstantTime(left:string,right:string){const a=new TextEncoder().encode(left),b=new TextEncoder().encode(right);if(a.length!==b.length)return false;let diff=0;for(let index=0;index<a.length;index++)diff|=a[index]^b[index];return diff===0;}
 
 export async function ensureIdentityAssertionTables(db:D1Database){await db.prepare("CREATE TABLE IF NOT EXISTS verified_identity_assertion_nonces (nonce TEXT PRIMARY KEY,identity_source TEXT NOT NULL,principal_key TEXT NOT NULL,subject_type TEXT NOT NULL,subject_id TEXT NOT NULL,used_at INTEGER NOT NULL,expires_at INTEGER NOT NULL)").run();}
