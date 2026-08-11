@@ -303,6 +303,43 @@ provider capacity row exactly as `activateProviderUat` would produce it, confirm
 real), call the real `addProviderToServiceMap`, then confirm the same query now genuinely returns
 it. Ran against live local D1 via `wrangler dev` - passed.
 
+## Two genuinely missing "must-have" modules found in a pre-training audit (Claude, this session)
+
+User asked for a final check for missing must-have modules before starting training/pilot. Found
+two real gaps that had never come up anywhere in this whole engagement:
+
+- **No customer-facing post-booking rating existed anywhere.** `provider_capacity_profiles.rating`
+  and `quality_score` - the exact fields the real matching engine
+  (`lib/provider-capacity-governance.ts`) sorts providers by - were permanently stuck at whatever
+  hardcoded seed value they started with. A newly onboarded provider would show `rating:0` forever
+  regardless of real service quality, with no feedback loop of any kind.
+- **No customer-facing complaint channel existed.** A real, well-built staff-side Unified Case
+  Center already existed (`lib/unified-case-center.ts`, with a `customer_complaint` case type
+  already modeled) but only ever auto-synced cases from refunds/SLA/reconciliation events - a
+  customer with a genuine service problem had no in-app way to report it.
+
+Built both as real, working features:
+- `lib/booking-rating.ts` + `app/api/booking-rating/route.ts`: universal across all verticals
+  (keyed off `canonical_bookings`, not a per-vertical table), one rating per completed booking,
+  ownership-enforced. A provider's rating is the live average of their real submitted ratings -
+  never fabricated, never a plausible default when no ratings exist yet. Wired into the customer
+  app's Activity → Completed tab (which was itself entirely hardcoded to show nothing - a related
+  pre-existing gap fixed along the way) with a real star-rating widget.
+- `lib/customer-support-case.ts` + `app/api/customer-support-case/route.ts`: a thin,
+  ownership-enforced wrapper reusing the real Unified Case Center end to end - no parallel
+  ticketing system. Wired a real "Report an issue" panel into the customer app's Account tab,
+  replacing a dead "24/7 help & support" button that previously just flashed a toast and did
+  nothing.
+
+Real execution proof, not just static tests: extended `tests/runtime-d1-worker.ts` to submit a real
+5-star rating against the scenario's real completed pet_sitting booking, confirm
+`provider_capacity_profiles.rating` genuinely updates from 0/seed to the real submitted value,
+confirm a booking cannot be rated twice, then submit a real customer complaint and confirm the real
+Unified Case Center genuinely receives it - correctly linked to the customer and booking, status
+`open`. Ran against live local D1 via `wrangler dev` - passed. Also caught and fixed a real syntax
+error while wiring the complaint panel's UI (a backtick template literal inside JSX that needed to
+be string concatenation instead) before it could ship.
+
 ## Still open — genuinely not started, not a duplicate-risk
 
 - **Pricing Control wiring for Grooming multi-pet, Training, Boarding, Pet Sitting — ChatGPT is
