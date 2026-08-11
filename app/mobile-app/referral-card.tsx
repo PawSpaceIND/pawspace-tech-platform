@@ -2,15 +2,15 @@
 import { useEffect, useState } from "react";
 import { ensureGovernedReferralCode, loadReferralDirectory } from "../../lib/referral-governance-client";
 import type { ReferralProgramme } from "../../lib/referral-governance";
+import type { LoggedInCustomer } from "./customer-login";
 import styles from "./referral-card.module.css";
 
-const UAT_CUSTOMER_ID = "TST-101";
 const monthStart = () => { const d = new Date(); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1); };
 const amount = (value: number | null | undefined) => value == null ? "Configuration required" : `₹${value}`;
 
 type Directory = { programmes: ReferralProgramme[]; rewards: Array<Record<string, unknown>> };
 
-export default function ReferralCard(){
+export default function ReferralCard({ customer }: { customer: LoggedInCustomer }){
   const [copied,setCopied]=useState(false);
   const [code,setCode]=useState("");
   const [programme,setProgramme]=useState<ReferralProgramme|null>(null);
@@ -21,7 +21,7 @@ export default function ReferralCard(){
   useEffect(()=>{
     let active=true;
     void Promise.all([
-      ensureGovernedReferralCode(UAT_CUSTOMER_ID),
+      ensureGovernedReferralCode(customer.customerId),
       loadReferralDirectory() as Promise<Directory>,
     ]).then(([codeResult,directory])=>{
       if(!active) return;
@@ -30,12 +30,12 @@ export default function ReferralCard(){
       setProgramme(active_programme);
       if(active_programme){
         const since=monthStart();
-        setUsedThisMonth(directory.rewards.filter(r=>String(r.referrer_customer_id)===UAT_CUSTOMER_ID && ["pending","released","uat_reserved"].includes(String(r.status)) && Number(r.created_at)>=since).length);
+        setUsedThisMonth(directory.rewards.filter(r=>String(r.referrer_customer_id)===customer.customerId && ["pending","released","uat_reserved"].includes(String(r.status)) && Number(r.created_at)>=since).length);
       }
     }).catch(err=>{ if(active) setError(err instanceof Error?err.message:"Unable to load referral programme"); })
       .finally(()=>{ if(active) setLoading(false); });
     return ()=>{ active=false; };
-  },[]);
+  },[customer.customerId]);
 
   const share=async()=>{ if(!code) return; try{await navigator.clipboard.writeText(code);}catch{} setCopied(true); setTimeout(()=>setCopied(false),1800); };
 

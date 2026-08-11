@@ -110,7 +110,7 @@ test("renders the 100-customer regression command centre", async () => {
   assert.match(html, /External integrations/i);
 });
 
-test("renders the PawSpace customer mobile-app foundation", async () => {
+test("mobile-app SSR shell never leaks real booking content before the client-side login gate resolves", async () => {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("mobile-app", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
@@ -121,10 +121,13 @@ test("renders the PawSpace customer mobile-app foundation", async () => {
   );
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /Eight care services/i);
-  for (const service of ["Grooming", "Training", "Boarding", "Pet Sitting", "Pet Taxi", "Dog Walking", "Fresh Food", "Relocation"]) assert.match(html, new RegExp(service, "i"), service);
-  assert.match(html, /PawCare Wallet/i);
-  assert.match(html, /My Pets/i);
+  // The login gate is a client-side session check (useEffect), so the raw SSR shell is
+  // intentionally blank until hydration confirms a real session - it must never leak real
+  // booking-app content (service catalogue, wallet balance, pet history) to an unauthenticated
+  // request, even transiently.
+  assert.doesNotMatch(html, /PawCare Wallet/i);
+  assert.doesNotMatch(html, /Eight care services/i);
+  assert.match(html, /<html/i);
 });
 
 test("renders the connected Booking Command Center", async () => {

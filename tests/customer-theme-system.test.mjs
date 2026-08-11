@@ -23,5 +23,5 @@ test("customer theme changes appearance only, not commercial or service truth", 
   const page = await readFile(new URL("../app/mobile-app/page.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(config, /price|payment|eligib|booking|provider/i);
   assert.match(page, /Pet Taxi remains outside the active launch scope/);
-  assert.match(page, /live OTP, money movement and external notifications remain separately gated/);
+  assert.match(page, /live SMS delivery, money movement and external notifications remain separately gated/);
 });

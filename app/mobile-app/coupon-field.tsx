@@ -32,7 +32,7 @@ export default function CouponField(props: {
     orderValue,
     isSubscription = false,
     paymentMode = "full",
-    customerId = "TST-101",
+    customerId,
     cityId = "blr",
     channel = "customer_app",
     packageCode = "uat-default",
@@ -46,6 +46,7 @@ export default function CouponField(props: {
   const apply = async () => {
     const normalized = code.trim().toUpperCase();
     if (!normalized || loading) return;
+    if (!customerId) { setError("Sign in required before applying a coupon"); return; }
     setLoading(true);
     try {
       const result = await quoteGovernedCoupon({

@@ -260,7 +260,8 @@ function scheduledWindow(date: string, slot: string, count: number) {
   return { start, end, dateIndex, slotIndex };
 }
 
-export default function GroomingFlow() {
+import type { LoggedInCustomer } from "./customer-login";
+export default function GroomingFlow({ customer }: { customer: LoggedInCustomer }) {
   const [step, setStep] = useState(1),
     [type, setType] = useState<PetType>("dog"),
     [count, setCount] = useState(1),
@@ -333,13 +334,13 @@ export default function GroomingFlow() {
     confirm = async () => {
       setScheduling(true);setScheduleError("");
       try {
-      const { start, end, dateIndex, slotIndex } = scheduledWindow(date, slot, count);const petNames=["Bruno","Coco","Milo","Luna"].slice(0,count);const requestId=`groom-TST101-${dateIndex}-${slotIndex}-${count}`;const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:"TST-101",petIds:petNames,serviceCode:"grooming",zoneId:"blr-east",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),preferredProviderId:preferred?"groom_arun":undefined});
-      const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:"TST-101",name:"Karthik P.",primaryPhone:"9996999505",secondaryPhone:"9880222741"},pets:petNames.map(name=>({sourceId:name,name,species:name==="Coco"?"cat":"dog"})),cityId:"blr",zoneId:"blr-east",serviceCode:"grooming",packageCode:sub?`subscription-${sub.id}`:catalogueCode(type,pack.id),packageName:sub?`${sub.name} grooming plan`:pack.name,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:total,amountDueNow:pay==="online"?total:0,payment:{method:pay==="online"?"upi":"cash",mode:pay==="online"?"prepaid":"pay_after_service",status:pay==="online"?"captured":"created",detail:pay==="online"?"UAT online payment captured":"Pay after service"},pricing:{discount,couponCode:couponCode||undefined,subscription:sub?.name}});
+      const { start, end, dateIndex, slotIndex } = scheduledWindow(date, slot, count);const petNames=["Bruno","Coco","Milo","Luna"].slice(0,count);const requestId=`groom-${customer.customerId}-${dateIndex}-${slotIndex}-${count}-${Date.now()}`;const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:petNames,serviceCode:"grooming",zoneId:"blr-east",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),preferredProviderId:preferred?"groom_arun":undefined});
+      const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:petNames.map(name=>({sourceId:name,name,species:name==="Coco"?"cat":"dog"})),cityId:"blr",zoneId:"blr-east",serviceCode:"grooming",packageCode:sub?`subscription-${sub.id}`:catalogueCode(type,pack.id),packageName:sub?`${sub.name} grooming plan`:pack.name,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:total,amountDueNow:pay==="online"?total:0,payment:{method:pay==="online"?"upi":"cash",mode:pay==="online"?"prepaid":"pay_after_service",status:pay==="online"?"captured":"created",detail:pay==="online"?"UAT online payment captured":"Pay after service"},pricing:{discount,couponCode:couponCode||undefined,subscription:sub?.name}});
       const booking = createTestTransaction({
-        customerId: "TST-101",
-        customerName: "Karthik P.",
-        primary: "9996999505",
-        secondary: "9880222741",
+        customerId: customer.customerId,
+        customerName: customer.customerName,
+        primary: customer.phone,
+        secondary: "",
         pets: ["Bruno", "Coco", "Milo", "Luna"].slice(0, count).join(", "),
         petCount: count,
         service: "Grooming",
@@ -777,6 +778,7 @@ export default function GroomingFlow() {
           <CouponField
             service="Grooming"
             orderValue={subtotal}
+            customerId={customer.customerId}
             customerKind={sub ? "subscriber" : "existing"}
             isSubscription={Boolean(sub)}
             paymentMode={pay === "online" ? "full" : "after_service"}
