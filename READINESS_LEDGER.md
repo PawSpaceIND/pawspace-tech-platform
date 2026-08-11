@@ -213,8 +213,22 @@ session, untested" as the previous entry said).
   broken, with a misleading fallback error message. Added a real handler for both campaigns and
   promotions. Commit `85e2855`. Verified with real execution throughout; 638/638 tests, 0 lint
   errors, no dead buttons.
-- Founder BI → canonical analytics/P&L (ChatGPT P1-9) — partially adjacent to the manager/founder
-  dashboard Claude built, but not confirmed identical scope — check before starting
+- Founder BI → canonical analytics/P&L (ChatGPT P1-9) — **CLOSED by Claude, commit `c0c93d3`.**
+  A colleague's separate Claude session found and precisely scoped the real gap first (network
+  issue prevented pushing their patch, so it was rebuilt here from their description, independently
+  re-verified rather than trusted at face value): `app/control/business-intelligence-panel.tsx` had
+  zero fetch calls anywhere - every number across all 6 tabs was a hardcoded static array, including
+  fake customer names and fake payment IDs. Two real, already-built engines existed unused:
+  `lib/pnl-reporting.ts` and `lib/company-analytics.ts` (both built and verified earlier this
+  session). Wired Overview + Verticals tabs to real data via `/api/company-analytics` +
+  `/api/pnl-reporting`. Direct cost, margin and repeat-rate per vertical have no real source
+  anywhere - honestly show "Not tracked yet" rather than fabricated numbers. Also found and removed
+  two additional fabricated numbers the original description hadn't flagged. Added a "⚠️ Demo data"
+  banner to Accounts, Customers and Subscriptions tabs - no real backend exists for any of those yet.
+  Caught a real dangling-reference bug during my own verification (this project's build does not
+  catch it - confirmed earlier this session) before it could ship. Verified with real execution:
+  replicated the exact mapping logic against a realistic API response, and fetched the actual
+  `/control` page through the real built worker (200 OK, no fake numbers present).
 - Real scheduler/worker boundary, independent of page loads (ChatGPT P1-10) — 🔧 **CLOSED in PR #62.**
   Before this work, `worker/index.ts` had only `fetch()`, `vite.config.ts` had no cron trigger, and
   the staff-alert truth explicitly reported `backgroundSchedulerConfigured:false`; meanwhile the
