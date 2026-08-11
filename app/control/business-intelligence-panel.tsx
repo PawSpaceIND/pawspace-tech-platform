@@ -78,8 +78,6 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
   const [reportRun, setReportRun] = useState<ReportRun | null>(null);
   const [scheduleReport, setScheduleReport] = useState<ReportDefinition | null>(null);
   const [schedulePeriod, setSchedulePeriod] = useState("Previous complete period");
-  const [verticals, setVerticals] = useState<VerticalRow[]>(Object.keys(VERTICAL_SERVICE_CODES).map(name => ({ name, bookings: null, revenue: 0, collected: null, cost: null, margin: null, repeat: null, cancelled: null })));
-  const [pnlLoaded, setPnlLoaded] = useState(false);
 
   const [liveVerticals, setLiveVerticals] = useState<VerticalRow[]>(emptyVerticals);
   const [liveDataLoaded, setLiveDataLoaded] = useState(false);
@@ -101,7 +99,8 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
         return {
           name, bookings: s?.bookings ?? 0, revenue: s?.gmv ?? 0, collected: s?.collected ?? 0,
           cancelled: s && s.bookings > 0 ? Math.round((s.cancelled / s.bookings) * 1000) / 10 : null,
-          cost: null, margin: null, repeat: null,
+          cost: s?.costAmount ?? null, margin: s?.marginPct ?? null,
+          repeat: s?.repeatRate != null ? Math.round(s.repeatRate * 1000) / 10 : null,
         };
       });
       setLiveVerticals(rows);
