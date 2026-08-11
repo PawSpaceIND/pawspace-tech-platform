@@ -1,5 +1,269 @@
 "use client";
-import Link from"next/link";import{useEffect,useState}from"react";import PartnerLogin,{type LoggedInProvider}from"../partner-login";
-type Row=Record<string,unknown>;type Snapshot={providerId?:string;applications?:Array<{application?:Row;documents?:Row[];verification?:Row|null;attempt?:Row|null;quiz?:Row|null;interview?:Row|null;agreement?:Row|null;agreementContent?:Row|null;profile?:Row|null;media?:Row[]}>;productionReady?:boolean;marketplaceLive?:boolean;orderEligible?:boolean};
-const text=(v:unknown)=>String(v??"");const card={border:"1px solid #ccc",borderRadius:12,padding:18,marginTop:16}as const;
-export default function PartnerOnboardingUatPage(){const[session,setSession]=useState<Row|null>(null),[sessionChecked,setSessionChecked]=useState(false),[data,setData]=useState<Snapshot|null>(null),[error,setError]=useState(""),[busy,setBusy]=useState(false),[answers,setAnswers]=useState<Record<string,string>>({}),[form,setForm]=useState({verticalKey:"grooming",countryCode:"IN",regionCode:"KA",cityCode:"BLR",localeCode:"en",displayName:"",businessName:""}),[docType,setDocType]=useState("government_id");function refresh(){return fetch("/api/provider-onboarding-self-service",{cache:"no-store"}).then(async r=>{if(!r.ok)throw new Error(await r.text());return r.json()}).then(v=>setData(v.data));}useEffect(()=>{let active=true;fetch("/api/identity-session",{cache:"no-store"}).then(async r=>{if(!r.ok)return null;return r.json()}).then(v=>{if(!active)return;setSessionChecked(true);if(!v)return;setSession(v.data);return fetch("/api/provider-onboarding-self-service",{cache:"no-store"})}).then(async r=>{if(!r)return;if(!r.ok)throw new Error(await r.text());return r.json()}).then(v=>{if(active&&v)setData(v.data)}).catch(e=>{if(active)setError(String((e as Error)?.message||e))});return()=>{active=false}},[]);function onLoggedIn(provider:LoggedInProvider){setSession({subjectId:provider.providerId,identitySource:"partner_otp"});void refresh();}async function post(payload:Record<string,unknown>){setBusy(true);setError("");try{const r=await fetch("/api/provider-onboarding-self-service",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)});if(!r.ok)throw new Error(await r.text());await refresh();}catch(e){setError(String((e as Error)?.message||e))}finally{setBusy(false)}}const current=data?.applications?.[0],app=current?.application,appId=text(app?.id),questions=Array.isArray(current?.quiz?.questions)?current?.quiz?.questions as Row[]:[];if(!sessionChecked)return <main style={{padding:24,maxWidth:900,margin:"0 auto"}}/>;if(!session)return <main style={{padding:24,maxWidth:900,margin:"0 auto",fontFamily:"system-ui"}}><PartnerLogin onLoggedIn={onLoggedIn}/><p style={{marginTop:20,textAlign:"center"}}><Link href="/partner">← Back to Partner app</Link></p></main>;return <main style={{padding:24,maxWidth:900,margin:"0 auto",fontFamily:"system-ui"}}><small>PAWSPACE PARTNER · ONBOARDING UAT</small><h1>Provider onboarding</h1><p>This route uses the verified provider identity session and canonical onboarding state. It does not display synthetic approvals, verification outcomes, signed agreements, or booking eligibility.</p><p><strong>PRODUCTION READY = FALSE.</strong> Production KYC, live e-sign, marketplace admission, order eligibility and live money are not enabled.</p>{error?<p role="alert" style={{...card,border:"1px solid currentColor"}}>{error}</p>:null}{session?<p>Signed in as provider <b>{text(session.subjectId)}</b> · identity source {text(session.identitySource)}</p>:null}{!current?<section style={card}><h2>Start application</h2><p>Create an identity-bound draft. Your provider ID is taken from the verified session, not from this form.</p>{(["verticalKey","countryCode","regionCode","cityCode","localeCode"]as const).map(k=><label key={k} style={{display:"block",margin:"10px 0"}}>{k}<input value={form[k]} onChange={e=>setForm({...form,[k]:e.target.value})} style={{display:"block",width:"100%",padding:8}}/></label>)}<button disabled={busy||!session} onClick={()=>void post({action:"create_application",payload:{verticalKey:form.verticalKey,countryCode:form.countryCode,regionCode:form.regionCode,cityCode:form.cityCode,localeCode:form.localeCode,basicInfo:{}}})}>{busy?"Saving…":"Create draft"}</button></section>:<><section style={card}><h2>Application {appId}</h2><p>Status: <b>{text(app?.status)}</b></p><p>Verification: <b>{text(app?.verification_status)||"not_started"}</b> · Quiz: <b>{text(app?.quiz_status)||"not_started"}</b> · Interview: <b>{text(app?.interview_status)||"not_started"}</b> · Human decision: <b>{text(app?.human_decision)||"pending"}</b></p><p>Documents: {current?.documents?.length||0}</p>{text(app?.status)==="draft"?<><label>Document type<select id="doc-type" value={docType} onChange={e=>setDocType(e.target.value)} style={{display:"block",width:"100%",padding:8}}><option value="government_id">Government ID</option><option value="address_proof">Address proof</option><option value="provider_photo">Your photo</option></select></label><p style={{background:"#fff3cd",border:"1px solid #e5c46b",borderRadius:8,padding:"8px 12px",fontSize:13}}>⚠️ Real document upload isn&apos;t available yet - it needs dedicated secure file storage to be provisioned first (not currently set up on this deployment). Uploading a photo directly into the database would put sensitive ID documents somewhere they don&apos;t belong. This is a real infrastructure gap, not a UI gap.</p><button disabled title="Real document storage is not provisioned yet">Upload document (not yet available)</button> <button disabled={busy} onClick={()=>void post({action:"submit_application",applicationId:appId})}>Submit application</button></>:null}</section><section style={card}><h2>Verification</h2><p>{text(current?.verification?.status)||"Waiting for governed verification."}</p><p>Providers cannot mark themselves verified or clear manual review. Those remain staff/integration-controlled gates.</p></section>{questions.length?<section style={card}><h2>20-question qualification</h2><p>Approved quiz version {text(current?.quiz?.id)}. Scoring is deterministic and is not final provider acceptance.</p>{questions.map((q,i)=><fieldset key={text(q.questionId)||String(i)} style={{margin:"12px 0"}}><legend>{i+1}. {text(q.prompt)}</legend>{(Array.isArray(q.options)?q.options:[]).map((o,j)=>{const option=o as Row,value=text(option.value||option.id||o);return <label key={`${value}-${j}`} style={{display:"block"}}><input type="radio" name={text(q.questionId)} checked={answers[text(q.questionId)]===value} onChange={()=>setAnswers({...answers,[text(q.questionId)]:value})}/>{text(option.label||o)}</label>})}</fieldset>)}<button disabled={busy||Object.keys(answers).length!==20} onClick={()=>void post({action:"score_quiz",applicationId:appId,quizVersionId:text(current?.quiz?.id),answers})}>Submit qualification</button></section>:null}<section style={card}><h2>15-minute Ops interview</h2><p>Status: {text(current?.interview?.status)||"Not scheduled"}</p>{current?.interview?<p>{text(current.interview.start_at)} · {text(current.interview.duration_minutes)} minutes</p>:null}<p>Interview scheduling, completion and approval are controlled by PawSpace Ops. AI cannot approve or reject a provider.</p></section>{current?.agreement?<section style={card}><h2>Service agreement</h2><p>Version {text(current.agreement.agreement_version)} · {text(current.agreement.status)}</p>{current.agreementContent?<div style={{whiteSpace:"pre-wrap",maxHeight:320,overflow:"auto",border:"1px solid #ddd",padding:12}}>{text(current.agreementContent.contentText)}</div>:null}{text(current.agreement.status)==="awaiting_acceptance"?<button disabled={busy} onClick={()=>void post({action:"accept_sla_uat",applicationId:appId,agreementId:text(current.agreement?.id)})}>Accept UAT agreement</button>:null}</section>:null}{text(app?.human_decision)==="approved"&&text(current?.agreement?.status)==="accepted"?<section style={card}><h2>Provider profile</h2><label>Display name<input value={form.displayName} onChange={e=>setForm({...form,displayName:e.target.value})} style={{display:"block",width:"100%",padding:8}}/></label><label>Business name<input value={form.businessName} onChange={e=>setForm({...form,businessName:e.target.value})} style={{display:"block",width:"100%",padding:8}}/></label><button disabled={busy||!form.displayName||!form.businessName} onClick={()=>void post({action:"save_profile",applicationId:appId,payload:{displayName:form.displayName,businessName:form.businessName,services:[text(app?.vertical_key)],serviceAreas:[text(app?.city_code)],languages:[text(app?.locale_code)||"en"],businessDetails:{},packageDetails:[],facilityDetails:{},references:[]}})}>Save profile</button><p>Home/facility images use secure references and remain sensitive by default. Profile completion does not activate marketplace ordering.</p></section>:null}<section style={card}><h2>Activation boundary</h2><p>Marketplace live: <b>No</b> · Order eligible: <b>No</b>.</p><p>Only staff can run deterministic UAT activation after all gates. Provider self-service cannot activate itself.</p></section></>}<p style={{marginTop:20}}><Link href="/partner">← Back to Partner app</Link></p></main>}
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import PartnerLogin, { type LoggedInProvider } from "../partner-login";
+import styles from "./onboarding.module.css";
+import shell from "../../components/marketing/premium-marketing.module.css";
+
+type Row = Record<string, unknown>;
+type Snapshot = {
+  providerId?: string;
+  applications?: Array<{
+    application?: Row;
+    documents?: Row[];
+    verification?: Row | null;
+    attempt?: Row | null;
+    quiz?: Row | null;
+    interview?: Row | null;
+    agreement?: Row | null;
+    agreementContent?: Row | null;
+    profile?: Row | null;
+    media?: Row[];
+  }>;
+  productionReady?: boolean;
+  marketplaceLive?: boolean;
+  orderEligible?: boolean;
+};
+
+const text = (v: unknown) => String(v ?? "");
+const STEPS = ["Application", "Verification", "Qualification", "Interview", "Agreement", "Profile", "Activation"];
+
+export default function PartnerOnboardingUatPage() {
+  const [session, setSession] = useState<Row | null>(null);
+  const [sessionChecked, setSessionChecked] = useState(false);
+  const [data, setData] = useState<Snapshot | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [form, setForm] = useState({ verticalKey: "grooming", countryCode: "IN", regionCode: "KA", cityCode: "BLR", localeCode: "en", displayName: "", businessName: "" });
+  const [docType, setDocType] = useState("government_id");
+
+  function refresh() {
+    return fetch("/api/provider-onboarding-self-service", { cache: "no-store" }).then(async r => { if (!r.ok) throw new Error(await r.text()); return r.json(); }).then(v => setData(v.data));
+  }
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/identity-session", { cache: "no-store" })
+      .then(async r => { if (!r.ok) return null; return r.json(); })
+      .then(v => {
+        if (!active) return;
+        setSessionChecked(true);
+        if (!v) return;
+        setSession(v.data);
+        return fetch("/api/provider-onboarding-self-service", { cache: "no-store" });
+      })
+      .then(async r => { if (!r) return; if (!r.ok) throw new Error(await r.text()); return r.json(); })
+      .then(v => { if (active && v) setData(v.data); })
+      .catch(e => { if (active) setError(String((e as Error)?.message || e)); });
+    return () => { active = false; };
+  }, []);
+
+  function onLoggedIn(provider: LoggedInProvider) {
+    setSession({ subjectId: provider.providerId, identitySource: "partner_otp" });
+    void refresh();
+  }
+
+  async function post(payload: Record<string, unknown>) {
+    setBusy(true);
+    setError("");
+    try {
+      const r = await fetch("/api/provider-onboarding-self-service", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      if (!r.ok) throw new Error(await r.text());
+      await refresh();
+    } catch (e) {
+      setError(String((e as Error)?.message || e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const current = data?.applications?.[0];
+  const app = current?.application;
+  const appId = text(app?.id);
+  const questions = Array.isArray(current?.quiz?.questions) ? current?.quiz?.questions as Row[] : [];
+  const agreementAccepted = text(current?.agreement?.status) === "accepted";
+  const approvedAndAccepted = text(app?.human_decision) === "approved" && agreementAccepted;
+
+  let stepIndex = 0;
+  if (current) stepIndex = 1;
+  if (text(current?.verification?.status) === "verified") stepIndex = 2;
+  if (questions.length && text(app?.quiz_status) === "completed") stepIndex = 3;
+  if (current?.interview) stepIndex = 4;
+  if (current?.agreement) stepIndex = 5;
+  if (agreementAccepted) stepIndex = 6;
+  if (approvedAndAccepted) stepIndex = 6;
+
+  if (!sessionChecked) return <main className={styles.page} />;
+
+  if (!session) {
+    return (
+      <main className={styles.page}>
+        <div className={styles.topBar}>
+          <Link className={styles.brand} href="/discover">🐾 PawSpace</Link>
+          <Link className={styles.backLink} href="/careers">← Back to Careers</Link>
+        </div>
+        <PartnerLogin onLoggedIn={onLoggedIn} />
+      </main>
+    );
+  }
+
+  return (
+    <main className={styles.page}>
+      <div className={styles.topBar}>
+        <Link className={styles.brand} href="/discover">🐾 PawSpace</Link>
+        <Link className={styles.backLink} href="/careers">← Back to Careers</Link>
+      </div>
+
+      <div className={styles.hero}>
+        <span className={shell.eyebrow}>Caregiver application</span>
+        <h1>Your PawSpace caregiver application</h1>
+        <p>This application uses your verified identity and canonical onboarding state. It does not display synthetic approvals, verification outcomes, signed agreements, or booking eligibility.</p>
+      </div>
+
+      <div className={styles.stepper}>
+        {STEPS.map((label, i) => (
+          <div key={label} className={`${styles.step} ${i < stepIndex ? styles.stepDone : ""} ${i === stepIndex ? styles.stepActive : ""}`}>
+            <b>{i < stepIndex ? "✓" : i + 1}</b>
+            {label}
+          </div>
+        ))}
+      </div>
+
+      <div className={styles.notice}>
+        <b>PRODUCTION READY = FALSE.</b> We&apos;re in a supervised pilot phase: Production KYC, live e-sign, marketplace admission, order eligibility and live money are not enabled. A real member of our Ops team personally reviews every verification, qualification and interview.
+      </div>
+
+      {error ? <p className={styles.errorBox} role="alert">{error}</p> : null}
+
+      {!current ? (
+        <div className={styles.card}>
+          <h2>Start your application</h2>
+          <p>Tell us where you&apos;d like to provide care. Your application is tied to your verified phone number, not this form.</p>
+          <label className={styles.field}><span>Service</span>
+            <select value={form.verticalKey} onChange={e => setForm({ ...form, verticalKey: e.target.value })}>
+              <option value="grooming">Grooming</option>
+              <option value="dog_training">Dog Training</option>
+              <option value="boarding">Boarding</option>
+              <option value="pet_sitting">Pet Sitting</option>
+              <option value="dog_walking">Dog Walking</option>
+            </select>
+          </label>
+          <label className={styles.field}><span>City</span>
+            <input value={form.cityCode} onChange={e => setForm({ ...form, cityCode: e.target.value })} />
+          </label>
+          <button className={styles.btn} disabled={busy || !session} onClick={() => void post({ action: "create_application", payload: { verticalKey: form.verticalKey, countryCode: form.countryCode, regionCode: form.regionCode, cityCode: form.cityCode, localeCode: form.localeCode, basicInfo: {} } })}>
+            {busy ? "Saving…" : "Start application"}
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className={styles.card}>
+            <h2>Application {appId}</h2>
+            <div className={styles.statusRow}>
+              <span>Verification: <b>{text(app?.verification_status) || "Not started"}</b></span>
+              <span>Qualification: <b>{text(app?.quiz_status) || "Not started"}</b></span>
+              <span>Interview: <b>{text(app?.interview_status) || "Not started"}</b></span>
+              <span>Decision: <b>{text(app?.human_decision) || "Pending"}</b></span>
+            </div>
+            <p>Documents on file: {current?.documents?.length || 0}</p>
+            {text(app?.status) === "draft" ? (
+              <>
+                <label className={styles.field}><span>Document type</span>
+                  <select value={docType} onChange={e => setDocType(e.target.value)}>
+                    <option value="government_id">Government ID</option>
+                    <option value="address_proof">Address proof</option>
+                    <option value="provider_photo">Your photo</option>
+                  </select>
+                </label>
+                <div className={styles.warnBox}>
+                  ⚠️ Document upload isn&apos;t available yet — it needs dedicated secure file storage to be provisioned first. Uploading a photo directly into the database would put sensitive ID documents somewhere they don&apos;t belong, so we&apos;re holding off until that&apos;s set up properly.
+                </div>
+                <button className={styles.btn} disabled title="Real document storage is not provisioned yet">Upload document (not yet available)</button>
+                <button className={styles.btnGhost} disabled={busy} onClick={() => void post({ action: "submit_application", applicationId: appId })}>Submit application</button>
+              </>
+            ) : null}
+          </div>
+
+          <div className={styles.card}>
+            <h2>Verification</h2>
+            <p>{text(current?.verification?.status) || "Waiting to begin."}</p>
+            <p>You can&apos;t mark yourself as verified — a real member of our team checks this personally.</p>
+          </div>
+
+          {questions.length ? (
+            <div className={styles.card}>
+              <h2>20-question qualification</h2>
+              <p>Answer all {questions.length} questions. This score is deterministic and never the final decision on its own.</p>
+              {questions.map((q, i) => {
+                const questionId = text(q.questionId);
+                return (
+                  <fieldset key={questionId || String(i)} className={styles.question}>
+                    <legend>{i + 1}. {text(q.prompt)}</legend>
+                    {(Array.isArray(q.options) ? q.options : []).map((o, j) => {
+                      const option = o as Row;
+                      const value = text(option.value || option.id || o);
+                      return (
+                        <label key={`${value}-${j}`} className={styles.option}>
+                          <input type="radio" name={questionId} checked={answers[questionId] === value} onChange={() => setAnswers({ ...answers, [questionId]: value })} />
+                          {text(option.label || o)}
+                        </label>
+                      );
+                    })}
+                  </fieldset>
+                );
+              })}
+              <button className={styles.btn} disabled={busy || Object.keys(answers).length !== questions.length} onClick={() => void post({ action: "score_quiz", applicationId: appId, quizVersionId: text(current?.quiz?.id), answers })}>
+                Submit answers
+              </button>
+            </div>
+          ) : null}
+
+          <div className={styles.card}>
+            <h2>15-minute Ops interview</h2>
+            <p>Status: {text(current?.interview?.status) || "Not scheduled yet"}</p>
+            {current?.interview ? <p>{text(current.interview.start_at)} · {text(current.interview.duration_minutes)} minutes</p> : null}
+            <p>Our Ops team schedules this personally once your qualification is submitted — we&apos;ll reach out with a time.</p>
+          </div>
+
+          {current?.agreement ? (
+            <div className={styles.card}>
+              <h2>Service agreement</h2>
+              <p>Version {text(current.agreement.agreement_version)} · {text(current.agreement.status)}</p>
+              {current.agreementContent ? <div className={styles.agreementText}>{text(current.agreementContent.contentText)}</div> : null}
+              {text(current.agreement.status) === "awaiting_acceptance" ? (
+                <button className={styles.btn} disabled={busy} onClick={() => void post({ action: "accept_sla_uat", applicationId: appId, agreementId: text(current.agreement?.id) })}>
+                  Accept agreement
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+
+          {approvedAndAccepted ? (
+            <div className={styles.card}>
+              <h2>Your profile</h2>
+              <label className={styles.field}><span>Display name</span>
+                <input value={form.displayName} onChange={e => setForm({ ...form, displayName: e.target.value })} />
+              </label>
+              <label className={styles.field}><span>Business name</span>
+                <input value={form.businessName} onChange={e => setForm({ ...form, businessName: e.target.value })} />
+              </label>
+              <button className={styles.btn} disabled={busy || !form.displayName || !form.businessName} onClick={() => void post({ action: "save_profile", applicationId: appId, payload: { displayName: form.displayName, businessName: form.businessName, services: [text(app?.vertical_key)], serviceAreas: [text(app?.city_code)], languages: [text(app?.locale_code) || "en"], businessDetails: {}, packageDetails: [], facilityDetails: {}, references: [] } })}>
+                Save profile
+              </button>
+              <p>Home or facility photos stay private by default. Saving your profile alone doesn&apos;t start bringing you bookings yet.</p>
+            </div>
+          ) : null}
+
+          <div className={styles.card}>
+            <h2>Activation</h2>
+            <p>Marketplace live: <b>No</b> · Order eligible: <b>No</b>.</p>
+            <p>Only staff can run deterministic UAT activation after all gates. Provider self-service cannot activate itself.</p>
+          </div>
+        </>
+      )}
+
+      <p style={{ marginTop: 24, textAlign: "center" }}><Link className={styles.backLink} href="/partner">← Back to Partner app</Link></p>
+    </main>
+  );
+}
