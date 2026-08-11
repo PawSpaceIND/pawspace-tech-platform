@@ -49,6 +49,39 @@ export async function acceptLeadAssignment(db:Db,input:{assignmentId:string;acto
 
 export async function endLeadAssignment(db:Db,input:{leadId:string;reason:string;actorId:string}){await ensureLeadAssignmentTables(db);if(input.reason.trim().length<4)throw new Error("Assignment end reason is required");const current=await currentAssignment(db,input.leadId);if(!current)return{leadId:input.leadId,ended:false};const now=Date.now();await db.prepare("UPDATE lead_assignments SET status='ended',ended_at=?,ended_reason=? WHERE id=?").bind(now,input.reason.trim(),current.id).run();await assignmentEvent(db,text(current.id),input.leadId,"ended",input.actorId,{reason:input.reason});return{leadId:input.leadId,assignmentId:text(current.id),ended:true};}
 
+/**
+ * The real "3 RNRs within 48 hours of assignment -> push to next person" rule. Called right after
+ * an RNR attempt is logged. Counts real logged attempts (lead_attempts), not a guess, against the
+ * real assignment timestamp, and only triggers on genuinely crossing the threshold - re-running this
+ * after the trigger already fired is a safe no-op (idempotencyKey is deterministic per lead+owner,
+ * so a repeat call just returns the already-completed reassignment rather than reassigning again).
+ * Wrapped so a missing assignment policy (nothing configured for this lead's service/city yet)
+ * cleanly reports why, rather than throwing and blocking the attempt-logging that triggered this.
+ */
+export async function checkRnrAutoReassignment(db:Db,input:{leadId:string;actorId:string;rnrThreshold?:number;windowHours?:number;asOf?:number}){
+  await ensureLeadAssignmentTables(db);
+  const threshold=input.rnrThreshold??3,windowHours=input.windowHours??48,now=input.asOf??Date.now();
+  const lead=await db.prepare("SELECT assigned_at,owner FROM lead_work_items WHERE id=?").bind(input.leadId).first<Row>();
+  if(!lead)return{triggered:false,reason:"lead_not_found"};
+  const assignedAt=Number(lead.assigned_at||0),windowStart=Math.max(assignedAt,now-windowHours*3600000);
+  const rnrCount=await db.prepare("SELECT COUNT(*) count FROM lead_attempts WHERE lead_id=? AND outcome='RNR' AND channel='call' AND created_at>=? AND created_at<=?").bind(input.leadId,windowStart,now).first<Row>();
+  if(Number(rnrCount?.count||0)<threshold)return{triggered:false,reason:"threshold_not_reached",rnrCount:Number(rnrCount?.count||0),threshold};
+  if(now-assignedAt>windowHours*3600000&&assignedAt>0){
+    // The RNRs counted are real, but if the assignment itself is already older than the window,
+    // the "within 48 hours of assignment" condition as stated no longer holds - don't trigger on a
+    // stale assignment just because 3 RNRs happen to exist somewhere in its full history.
+    const recentRnr=await db.prepare("SELECT COUNT(*) count FROM lead_attempts WHERE lead_id=? AND outcome='RNR' AND channel='call' AND created_at>=? AND created_at<=?").bind(input.leadId,assignedAt,assignedAt+windowHours*3600000).first<Row>();
+    if(Number(recentRnr?.count||0)<threshold)return{triggered:false,reason:"outside_assignment_window",rnrCount:Number(rnrCount?.count||0),threshold};
+  }
+  const currentOwner=text(lead.owner);
+  try{
+    const reassignment=await reassignLead(db,{leadId:input.leadId,idempotencyKey:`rnr-auto-reassign:${input.leadId}:${currentOwner}`,reason:`Automatic reassignment - ${threshold} RNR outcomes within ${windowHours} hours of assignment (previous owner: ${currentOwner||"unassigned"})`,actorId:input.actorId,excludeEmployeeEmail:currentOwner||null,asOf:now});
+    return{triggered:true,rnrCount:Number(rnrCount?.count||0),threshold,previousOwner:currentOwner,newOwner:(reassignment.assignment as Row)?.employee_email??null,duplicatePrevented:Boolean((reassignment as{duplicatePrevented?:boolean}).duplicatePrevented)};
+  }catch(error){
+    return{triggered:false,reason:"reassignment_failed",error:error instanceof Error?error.message:String(error),escalateToManager:true};
+  }
+}
+
 export async function leadAssignmentDirectory(db:Db){await ensureLeadAssignmentTables(db);const[policies,members,current,events]=await Promise.all([db.prepare("SELECT * FROM lead_assignment_policies ORDER BY updated_at DESC").all<Row>(),db.prepare("SELECT m.*,u.name user_name,u.status user_status FROM lead_assignment_memberships m LEFT JOIN app_users u ON u.email=m.employee_email ORDER BY m.team_code,m.employee_email").all<Row>(),db.prepare("SELECT a.*,l.customer_id,l.service,l.source,l.owner legacy_owner FROM lead_assignments a LEFT JOIN lead_work_items l ON l.id=a.lead_id WHERE a.status='current' ORDER BY a.assigned_at DESC").all<Row>(),db.prepare("SELECT * FROM lead_assignment_events ORDER BY created_at DESC LIMIT 200").all<Row>()]);return{policies:policies.results.map(policySnapshot),members:members.results,currentAssignments:current.results.map(row=>({...row,projectionMismatch:Boolean(row.employee_email)&&text(row.employee_email).toLowerCase()!==text(row.legacy_owner).toLowerCase()})),events:events.results,truth:{canonicalOwnerSource:"lead_assignments",legacyLeadOwnerField:"projection_only",hardCodedOwnerRotationAuthoritative:false,productionReady:false}};}
 
 export async function leadAssignmentIntegrity(db:Db){await ensureLeadAssignmentTables(db);const rows=await db.prepare("SELECT a.lead_id,a.employee_email canonical_owner,l.owner legacy_owner,a.policy_id,a.policy_version,a.assigned_at FROM lead_assignments a JOIN lead_work_items l ON l.id=a.lead_id WHERE a.status='current' AND COALESCE(a.employee_email,'Unassigned')!=COALESCE(l.owner,'Unassigned') ORDER BY a.assigned_at DESC").all<Row>();return{projectionMismatches:rows.results,count:rows.results.length,canonicalOwnerSource:"lead_assignments"};}
