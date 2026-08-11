@@ -112,8 +112,8 @@ jobs:
           done
           test "$ready" = 1
           curl -fsS http://127.0.0.1:8789/seed
-          curl -fsS 'http://127.0.0.1:8789/__scheduled?cron=%2A%2F5+%2A+%2A+%2A+%2A&time=1786458600000'
-          curl -fsS 'http://127.0.0.1:8789/__scheduled?cron=%2A%2F5+%2A+%2A+%2A+%2A&time=1786458600000'
+          curl -fsS 'http://127.0.0.1:8789/cdn-cgi/handler/scheduled?cron=%2A%2F5+%2A+%2A+%2A+%2A&time=1786458600000&format=json'
+          curl -fsS 'http://127.0.0.1:8789/cdn-cgi/handler/scheduled?cron=%2A%2F5+%2A+%2A+%2A+%2A&time=1786458600000&format=json'
           curl -fsS http://127.0.0.1:8789/assert > /tmp/scheduler-state.json
           cat /tmp/scheduler-state.json
           node -e "const s=require('/tmp/scheduler-state.json');if(s.cold?.status!=='active'||Number(s.cold?.recycle_cycle)!==1)throw Error('cold lead did not reopen');if(s.sla?.status!=='sla_breached')throw Error('SLA did not escalate');if(Number(s.ops?.escalation_level)!==1)throw Error('ops did not escalate');if(s.callback?.status!=='missed')throw Error('callback did not sweep');if(Number(s.reports?.count)!==3)throw Error('command reports were not generated');if(Number(s.runs?.count)!==1||Number(s.runs?.attempts)!==1||s.runs?.status!=='completed')throw Error('scheduled replay was not idempotent')"
