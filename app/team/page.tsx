@@ -3,6 +3,7 @@ import styles from "./team.module.css";
 
 const workspaces = [
   { group: "Sales", title: "Revenue & CRM", detail: "Daily Revenue 100, leads, RNR, renewals, cross-sell, incentives and leaderboard.", href: "/team/sales", metric: "100 actions today", tone: "purple" },
+  { group: "Sales", title: "Customer reminders", detail: "Grooming rebooking cadence, subscription unused-session prompts and renewal reminders - real, governed, queued into the outbox automatically.", href: "/team/customer-reminders", metric: "Auto every 5 min", tone: "purple" },
   { group: "Operations", title: "Bookings & delivery", detail: "Live bookings, assignments, delays, partner work orders, completion evidence and escalations.", href: "/team/operations", metric: "18 bookings today", tone: "orange" },
   { group: "Customer experience", title: "Tickets & recovery", detail: "Customer 360, complaints, refund cases, RNR compliance, SLA and resolution evidence.", href: "/team/customer-experience", metric: "3 need attention", tone: "rose" },
   { group: "Finance", title: "Accounts & collections", detail: "Collections, payouts, refunds, reconciliation and mandatory day closure.", href: "/team/finance", metric: "Day close pending", tone: "green" },
