@@ -14,7 +14,6 @@ type ReportRun = { title: string; format: ReportFormat; dateBasis: DateBasis; fr
 const serviceCodeByVertical: Record<string, string> = { Grooming: "grooming", Training: "dog_training", Boarding: "boarding", "Pet Sitting": "pet_sitting" };
 type VerticalRow = { name: string; bookings: number; revenue: number; collected: number; cancelled: number | null; cost: number | null; margin: number | null; repeat: number | null };
 const emptyVerticals: VerticalRow[] = Object.keys(serviceCodeByVertical).map(name => ({ name, bookings: 0, revenue: 0, collected: 0, cancelled: null, cost: null, margin: null, repeat: null }));
-
 const accountRows = [
   { id: "PAY-240331", type: "Customer collection", vertical: "Grooming", gross: 1899, fee: 38, tax: 290, net: 1571, status: "Reconciled" },
   { id: "PAY-240330", type: "Subscription sale", vertical: "Grooming", gross: 6594, fee: 132, tax: 1006, net: 5456, status: "Reconciled" },
@@ -37,6 +36,7 @@ const subscriptionRows = [
   ["Expired / win-back", 742, 34, "₹31.8 L historic value", "Prioritised by LTV"],
   ["Future / scheduled", 214, 81, "₹12.6 L booked", "Starts after current plan"],
 ];
+
 
 const reports: ReportDefinition[] = [
   { name:"Founder daily business pulse", category:"Company", description:"Revenue, collections, margin, bookings, cancellations and critical exceptions", schedule:"Daily · 8:30 AM", dateBasis:"Booking date" },
@@ -78,6 +78,8 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
   const [reportRun, setReportRun] = useState<ReportRun | null>(null);
   const [scheduleReport, setScheduleReport] = useState<ReportDefinition | null>(null);
   const [schedulePeriod, setSchedulePeriod] = useState("Previous complete period");
+  const [verticals, setVerticals] = useState<VerticalRow[]>(Object.keys(VERTICAL_SERVICE_CODES).map(name => ({ name, bookings: null, revenue: 0, collected: null, cost: null, margin: null, repeat: null, cancelled: null })));
+  const [pnlLoaded, setPnlLoaded] = useState(false);
 
   const [liveVerticals, setLiveVerticals] = useState<VerticalRow[]>(emptyVerticals);
   const [liveDataLoaded, setLiveDataLoaded] = useState(false);
@@ -119,7 +121,6 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
   const hasCost = shownVerticals.every(item => item.cost != null);
   const cost = hasCost ? shownVerticals.reduce((sum, item) => sum + (item.cost ?? 0), 0) : null;
   const bookings = shownVerticals.reduce((sum, item) => sum + item.bookings, 0);
-
   function openReportRun(format: ReportFormat, title = "PawSpace business intelligence", dateBasis: DateBasis = "Service date") {
     setReportRun({ title, format, dateBasis, from: "2026-03-01", to: "2026-03-31" });
   }
@@ -140,7 +141,7 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
     const customerReport = run.title.toLowerCase().includes("customer") || run.dateBasis === "Customer created date";
     const rows: (string | number)[][] = customerReport
       ? [["Customer ID", "Customer", "Pet", "Customer created date", "Segment", "Last service date", "Orders", "Revenue", "Contribution", "Next best action"], ...shownCustomers.map(item => [item.id, item.name, item.pet, item.created, item.segment, item.last, item.orders, item.revenue, item.margin, item.next])]
-      : [["Vertical", "Bookings", "Revenue", "Collected", "Direct cost", "Margin %", "Repeat %", "Cancellation %"], ...shownVerticals.map(item => [item.name, item.bookings, item.revenue, item.collected, item.cost, item.margin, item.repeat, item.cancelled])];
+      : [["Vertical", "Bookings", "Revenue", "Collected", "Direct cost", "Margin %", "Repeat %", "Cancellation %"], ...shownVerticals.map(item => [item.name, item.bookings ?? "Not tracked yet", item.revenue, item.collected ?? "Not tracked yet", item.cost ?? "Not tracked yet", item.margin ?? "Not tracked yet", item.repeat ?? "Not tracked yet", item.cancelled ?? "Not tracked yet"])];
     const { format, title, dateBasis, from, to } = run;
     if (format === "PDF") {
       window.print();
@@ -225,8 +226,7 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
         {netProfit != null && <article><span>Net profit (P&amp;L, 12 months)</span><strong>{money(netProfit)}</strong><small>From real canonical_bookings + finance_journal_entries</small></article>}
       </section>
       <section className={css.grid}>
-        <div className={css.panel}><header><div><span>VERTICAL PERFORMANCE</span><h3>Revenue and contribution</h3><p>Real GST-inclusive booking revenue by vertical.</p></div><button onClick={() => setView("Verticals")}>Drill down →</button></header><TrendChart type="bar" data={shownVerticals} xKey="name" series={[{ key: "revenue", label: "Revenue", color: "#5d22a8" }]} valueFormatter={(value) => money(value)} height={240} /></div>
-        <aside className={css.panel}><header><div><span>ACTION CENTRE</span><h3>What needs attention</h3></div></header>{[
+        <div className={css.panel}><header><div><span>VERTICAL PERFORMANCE</span><h3>Revenue and contribution</h3><p>Real GST-inclusive booking revenue by vertical.</p></div><button onClick={() => setView("Verticals")}>Drill down →</button></header><TrendChart type="bar" data={shownVerticals} xKey="name" series={[{ key: "revenue", label: "Revenue", color: "#5d22a8" }]} valueFormatter={(value) => money(value)} height={240} /></div>        <aside className={css.panel}><header><div><span>ACTION CENTRE</span><h3>What needs attention</h3></div></header>{[
           ["Renewals", "Open the subscription renewal queue", "Subscriptions"], ["Customers", "Review customer accounts", "Customers"], ["Verticals", "Compare vertical performance", "Verticals"], ["Reports", "Generate a governed report", "Reports"],
         ].map(item => <button className={css.action} key={item[0]} onClick={() => setView(item[2] as View)}><i>{item[0].slice(0, 1)}</i><span><strong>{item[0]}</strong><small>{item[1]}</small></span><b>Open →</b></button>)}</aside>
       </section>
@@ -236,18 +236,15 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
     {view === "Verticals" && <section className={css.panel}><header><div><span>SERVICE P&L</span><h3>Every vertical on the same definition</h3><p>Real bookings/revenue/collected from canonical booking and payment data. Direct cost, margin and repeat rate per vertical have no real aggregate source yet.</p></div><button onClick={() => openReportRun("Excel", "Vertical P&L", "Service date")}>Excel ↓</button></header><div className={css.table}><div className={css.tableHead}><span>Vertical</span><span>Bookings</span><span>Revenue</span><span>Collected</span><span>Direct cost</span><span>Contribution</span><span>Repeat</span><span>Cancel</span></div>{shownVerticals.map(item => <article key={item.name}><strong>{item.name}</strong><span>{item.bookings.toLocaleString("en-IN")}</span><span>{money(item.revenue)}</span><span>{money(item.collected)}</span><span>{item.cost != null ? money(item.cost) : "Not tracked yet"}</span><b>{item.margin != null ? `${item.margin}%` : "Not tracked yet"}</b><span>{item.repeat != null ? `${item.repeat}%` : "Not tracked yet"}</span><span>{item.cancelled != null ? `${item.cancelled}%` : "—"}</span></article>)}</div><footer><strong>Drill-down dimensions:</strong> city, zone, package, subscription, provider model, source, coupon, customer segment, payment mode and booking status.</footer></section>}
 
     {view === "Accounts" && <>
-      <DemoDataBanner />
-      <section className={css.metrics}>{[["Receivable", "₹11.6L", "Customer + balance payments"], ["Provider payable", "₹8.4L", "Approved, not released"], ["Refund queue", "₹1.84L", "9 approvals"], ["Unmatched", "₹42,680", "18 transactions"], ["GST payable", "₹3.21L", "Current filing period"]].map(item => <article key={item[0]}><span>{item[0]}</span><strong>{item[1]}</strong><small>{item[2]}</small></article>)}</section>
+      <DemoDataBanner />      <section className={css.metrics}>{[["Receivable", "₹11.6L", "Customer + balance payments"], ["Provider payable", "₹8.4L", "Approved, not released"], ["Refund queue", "₹1.84L", "9 approvals"], ["Unmatched", "₹42,680", "18 transactions"], ["GST payable", "₹3.21L", "Current filing period"]].map(item => <article key={item[0]}><span>{item[0]}</span><strong>{item[1]}</strong><small>{item[2]}</small></article>)}</section>
       <section className={css.panel}><header><div><span>ACCOUNTS LEDGER</span><h3>Order to settlement</h3><p>Invoice, payment, refund, commission and payout stay linked to the booking.</p></div><div><button onClick={() => notify("Reconciliation workbench opened")}>Reconcile</button><button onClick={() => openReportRun("CSV", "Accounts ledger", "Payment / collection date")}>CSV ↓</button></div></header><div className={`${css.table} ${css.ledger}`}><div className={css.tableHead}><span>Reference</span><span>Type</span><span>Vertical</span><span>Gross</span><span>GST</span><span>Fee</span><span>Net</span><span>Status</span></div>{accountRows.map(row => <article key={row.id}><strong>{row.id}</strong><span>{row.type}</span><span>{row.vertical}</span><span>{money(row.gross)}</span><span>{money(row.tax)}</span><span>{money(row.fee)}</span><b>{money(row.net)}</b><em>{row.status}</em></article>)}</div></section>
     </>}
 
-    {view === "Customers" && <><DemoDataBanner /><div className={css.customerGrid}>
-      <section className={css.panel}><header><div><span>CUSTOMER-LEVEL BUSINESS INTELLIGENCE</span><h3>Customer 360 and old-customer desk</h3></div><input aria-label="Search customers" placeholder="Search masked customer, pet or ID" value={query} onChange={event => setQuery(event.target.value)} /></header>{shownCustomers.map(row => <button key={row.id} className={`${css.customerRow} ${selectedCustomer.id === row.id ? css.selectedCustomer : ""}`} onClick={() => setSelectedCustomer(row)}><i>{row.name.split(" ").map(part => part[0]).join("")}</i><span><strong>{row.name} · {row.pet}</strong><small>{row.id} · {row.segment} · customer since {row.created} · last service {row.last}</small></span><b>{money(row.revenue)} LTV</b><em>{row.risk}</em></button>)}</section>
+    {view === "Customers" && <><DemoDataBanner /><div className={css.customerGrid}>      <section className={css.panel}><header><div><span>CUSTOMER-LEVEL BUSINESS INTELLIGENCE</span><h3>Customer 360 and old-customer desk</h3></div><input aria-label="Search customers" placeholder="Search masked customer, pet or ID" value={query} onChange={event => setQuery(event.target.value)} /></header>{shownCustomers.map(row => <button key={row.id} className={`${css.customerRow} ${selectedCustomer.id === row.id ? css.selectedCustomer : ""}`} onClick={() => setSelectedCustomer(row)}><i>{row.name.split(" ").map(part => part[0]).join("")}</i><span><strong>{row.name} · {row.pet}</strong><small>{row.id} · {row.segment} · customer since {row.created} · last service {row.last}</small></span><b>{money(row.revenue)} LTV</b><em>{row.risk}</em></button>)}</section>
       <aside className={css.panel}><span className={css.kicker}>SELECTED CUSTOMER</span><h3>{selectedCustomer.name} · {selectedCustomer.pet}</h3><p className={css.masked}>Primary + secondary numbers protected · purpose-based contact only</p><div className={css.customerMetrics}>{[["Lifetime orders", selectedCustomer.orders], ["Gross revenue", money(selectedCustomer.revenue)], ["Contribution", money(selectedCustomer.margin)], ["Days inactive", selectedCustomer.days]].map(item => <article key={item[0] as string}><span>{item[0] as string}</span><strong>{item[1]}</strong></article>)}</div>{[["Lifecycle", selectedCustomer.segment], ["Risk", selectedCustomer.risk], ["Next best action", selectedCustomer.next], ["Owner", "CRM renewal desk"]].map(item => <p className={css.detail} key={item[0]}><span>{item[0]}</span><strong>{item[1]}</strong></p>)}<div className={css.customerActions}><button onClick={() => notify("Masked call task created and audited")}>Call securely</button><button onClick={() => notify("Personalised offer builder opened")}>Create offer</button></div></aside>
     </div></>}
 
     {view === "Subscriptions" && <><DemoDataBanner /><section className={css.panel}><header><div><span>SUBSCRIPTION BUSINESS VIEW</span><h3>Past, active, renewal and future value</h3><p>Operational work remains in Grooming subscriptions; this view measures the business outcome.</p></div><button onClick={() => notify("Opening the operational renewal queue")}>Open renewal operations →</button></header><TrendChart type="bar" data={subscriptionRows.map(row => ({ name: row[0], utilisation: row[2] }))} xKey="name" series={[{ key: "utilisation", label: "Utilisation %", color: "#11885b" }]} valueFormatter={(value) => `${value}%`} height={200} /><div className={css.subscriptionGrid}>{subscriptionRows.map(row => <article key={row[0] as string}><div><strong>{row[0]}</strong><span>{row[4]}</span></div><b>{Number(row[1]).toLocaleString("en-IN")}</b><small>{row[3]}</small></article>)}</div><footer><strong>Core measures:</strong> session utilisation, unused-credit liability, renewal rate, renewal revenue, cadence adherence, pause/cancel rate, reminder conversion, bot/human conversion and plan-level contribution.</footer></section></>}
-
     {view === "Reports" && <>
       <section className={css.reportHeader}><div><span>REPORT CENTRE</span><h3>One governed catalogue—download, attach or schedule.</h3><p>Every report inherits the selected period, city, vertical and customer filters, plus source lineage and export audit. New report definitions can be added whenever the business needs them.</p></div><button onClick={() => setBuilderOpen(value => !value)}>{builderOpen ? "Close builder" : "＋ Create report"}</button></section>
       {builderOpen && <section className={css.reportBuilder} aria-label="Create a new report">
