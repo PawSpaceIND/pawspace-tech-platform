@@ -7,7 +7,7 @@ test("staff alerts persist one idempotent queue for lead and case escalation",()
 
 test("alert sweep derives lead thresholds from governed SLA clocks and never hard-codes a 20 minute rule",()=>{const src=read("lib/staff-alert-center.ts");assert.match(src,/c\.due_at/);assert.match(src,/c\.manager_escalation_due_at/);assert.match(src,/c\.reassignment_due_at/);assert.ok(!src.includes("20*60_000"));assert.match(src,/hardcodedTwentyMinuteRule:false/);});
 
-test("manager escalation does not automatically reassign lead ownership",()=>{const src=read("lib/staff-alert-center.ts");assert.match(src,/Reassignment remains a manager decision/);assert.ok(!src.includes("UPDATE lead_assignments SET employee_email"));assert.ok(!src.includes("reassignLead"));});
+test("manager escalation alert does not itself execute reassignment - that lives in the separate SLA governance sweep",()=>{const src=read("lib/staff-alert-center.ts");assert.match(src,/automatically reassigned to the next eligible agent/);assert.ok(!src.includes("UPDATE lead_assignments SET employee_email"));assert.ok(!src.includes("reassignLead"));});
 
 test("customer case escalation notices use canonical communication outbox without live provider delivery",()=>{const src=read("lib/staff-alert-center.ts");assert.match(src,/enqueueCommunication/);assert.match(src,/channel:"chat"/);assert.match(src,/purpose:"service_recovery"/);assert.match(src,/case:\$\{caseId\}:customer:\$\{item\.kind\}/);assert.match(src,/customerNotificationTransport:"canonical_chat_outbox"/);assert.match(src,/externalDelivery:false/);});
 

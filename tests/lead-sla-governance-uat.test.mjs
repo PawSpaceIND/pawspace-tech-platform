@@ -28,11 +28,12 @@ test("business-hour-aware SLA clocks are supported",()=>{
  assert.match(lib,/Outside configured business hours/);
 });
 
-test("breach escalation and reassignment-due events are idempotent",()=>{
+test("breach escalation and automatic reassignment are idempotent and real",()=>{
  assert.match(lib,/idempotency_key TEXT NOT NULL UNIQUE/);
  assert.match(lib,/manager_escalation_due/);
- assert.match(lib,/reassignment_due/);
- assert.match(lib,/automaticReassignment:false/);
+ assert.match(lib,/auto_reassigned/);
+ assert.match(lib,/automaticReassignment:true/);
+ assert.match(lib,/excludeEmployeeEmail:failingAgent/);
 });
 
 test("non-terminal outcomes require governed next actions",()=>{
