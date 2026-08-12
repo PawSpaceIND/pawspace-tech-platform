@@ -18,6 +18,9 @@ async function ensureTables(db:Db){await db.batch([
 ]);}
 
 function maskPhone(value:unknown){const digits=String(value||"").replace(/\D/g,"");return digits.length>=4?`+91 ••••••${digits.slice(-4)}`:"Masked";}
+// Partners get the customer's FIRST NAME only - full names, phone numbers and emails are customer
+// contact data and must never leave the customer surface unmasked.
+function partnerFirstName(value:unknown){const first=String(value||"").trim().split(/\s+/)[0];return first||"Customer";}
 function parseJson<T>(value:unknown,fallback:T):T{try{return JSON.parse(String(value??"")) as T;}catch{return fallback;}}
 
 export async function GET(request:Request){
@@ -48,7 +51,7 @@ export async function GET(request:Request){
         bookingId:String(row.booking_id),workOrderId:String(row.work_order_id),providerId:String(row.provider_id),providerName:String(row.provider_name),providerModel:String(row.provider_model),
         status:String(row.booking_status),workOrderStatus:String(row.work_order_status),occurrenceCount:Number(row.occurrence_count||1),packageCode:String(row.package_code),packageName:String(row.package_name),
         zoneId:String(row.zone_id),cityId:String(row.city_id),scheduledStart:String(row.scheduled_start),scheduledEnd:String(row.scheduled_end),totalAmount:Number(row.total_amount||0),currency:String(row.currency||"INR"),
-        customer:{id:String(row.customer_id),name:String(row.customer_name),maskedPhone:maskPhone(row.primary_phone)},
+        customer:{id:String(row.customer_id),name:partnerFirstName(row.customer_name),maskedPhone:maskPhone(row.primary_phone)},
         pets:pets.results.map(pet=>({id:String(pet.id),name:String(pet.name),species:String(pet.species),breed:String(pet.breed||""),vaccinationStatus:String(pet.vaccination_status)})),
         payment:{method:String(row.payment_method),mode:String(row.payment_mode),status:String(row.payment_status),amount:Number(row.payment_amount||0),amountDueNow:Number(row.amount_due_now||0)},
         subscription:pricing.subscription?String(pricing.subscription):null,
