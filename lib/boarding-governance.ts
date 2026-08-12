@@ -13,6 +13,9 @@ const hosts=[
  {providerId:"host_maya_rohan",cityId:"blr",zoneId:"blr-east",area:"Indiranagar",species:["dog"],maxGuestPets:2,oneFamilyOnly:1,medicationSupport:1,residentPets:"none",homeVerified:1,kyc:"verified",background:"verified"},
  {providerId:"host_sana",cityId:"blr",zoneId:"blr-east",area:"HSR Layout",species:["dog","cat"],maxGuestPets:2,oneFamilyOnly:1,medicationSupport:1,residentPets:"none",homeVerified:1,kyc:"verified",background:"verified"},
  {providerId:"host_arjun_tara",cityId:"blr",zoneId:"blr-east",area:"Koramangala",species:["dog"],maxGuestPets:3,oneFamilyOnly:0,medicationSupport:0,residentPets:"beagle",homeVerified:1,kyc:"verified",background:"verified"},
+ // Second cat-accepting host: host_sana is one_family_only, so without this any single overlapping
+ // commitment made dog+cat boarding (the app's default pet selection) fully unavailable.
+ {providerId:"host_priya_dev",cityId:"blr",zoneId:"blr-east",area:"Whitefield",species:["dog","cat"],maxGuestPets:4,oneFamilyOnly:0,medicationSupport:1,residentPets:"none",homeVerified:1,kyc:"verified",background:"verified"},
 ] as const;
 
 export async function ensureBoardingGovernanceTables(db:D1Database){await seedProviderCapacityDefaults(db);await db.batch([

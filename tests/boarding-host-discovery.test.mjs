@@ -72,3 +72,22 @@ test("Boarding customer search does not pretend an unimplemented area or product
   assert.match(flow,/Host profile \+ leave blocks \+ accepted stay locks \+ pending Boarding scheduler reservations/);
   assert.match(api,/liveAvailability:false/);
 });
+
+test("Boarding roster keeps dog+cat (the app's default pet selection) bookable under load",()=>{
+  // Regression guard for the UAT defect where host_sana was the ONLY cat-accepting host and is
+  // one_family_only, so a single overlapping commitment made every dog+cat stay unbookable.
+  const source=read("lib/boarding-governance.ts");
+  const rosterMatch=source.match(/const hosts=\[([\s\S]*?)\] as const;/);
+  assert.ok(rosterMatch,"boarding host roster not found");
+  const entries=[...rosterMatch[1].matchAll(/\{providerId:[\s\S]*?\}/g)].map(m=>m[0]);
+  const catHosts=entries.filter(entry=>/species:\[[^\]]*"cat"/.test(entry));
+  assert.ok(catHosts.length>=2,`need at least 2 cat-accepting boarding hosts, found ${catHosts.length}`);
+  const sharedCatHost=catHosts.filter(entry=>/oneFamilyOnly:0/.test(entry));
+  assert.ok(sharedCatHost.length>=1,"need at least one cat-accepting host that is not one_family_only");
+  // Every roster host must also exist in the capacity profile seed, or discovery's JOIN drops it.
+  const capacity=read("lib/provider-capacity-governance.ts");
+  for(const entry of entries){
+    const id=entry.match(/providerId:"([^"]+)"/)[1];
+    assert.match(capacity,new RegExp(`\\{id:"${id}"[^}]*services:\\["boarding"\\]`),`${id} missing boarding capacity profile`);
+  }
+});
