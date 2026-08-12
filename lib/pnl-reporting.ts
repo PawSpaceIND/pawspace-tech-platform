@@ -45,13 +45,22 @@ export async function generatePnlReport(db:D1,input:{fromMonth:string;toMonth:st
       addToMonthly(revenueByServiceMonth.get(service)!,month,amount);
     }
   }
+  // Several MIS sub-lines share one platform service_code (e.g. REV-GROOMING + REV-GROOMING-SUB are
+  // both "grooming"; five training lines are all "dog_training"). Each canonical booking must be
+  // counted exactly ONCE, so only the first chart line per service_code carries the platform total;
+  // later same-code lines are sub-format placeholders with no distinct platform source yet.
+  // Before this, grooming revenue was double-counted and training revenue counted five times over,
+  // so total turnover disagreed with the canonical_bookings truth every other view derives from.
+  const consumedServiceCodes=new Set<string>();
   const revenueLines:PnlLine[]=revenueChartOfAccounts.map(entry=>{
     const monthly=emptyMonthly(months);
-    if(entry.serviceCode){
+    const primaryForService=Boolean(entry.serviceCode)&&!consumedServiceCodes.has(entry.serviceCode as string);
+    if(entry.serviceCode&&primaryForService){
+      consumedServiceCodes.add(entry.serviceCode);
       const byMonth=revenueByServiceMonth.get(entry.serviceCode);
       if(byMonth)for(const month of months)if(month in byMonth)monthly[month]=byMonth[month];
     }
-    return{code:entry.code,category:entry.category,subCategory:entry.subCategory,serviceCode:entry.serviceCode,trackedByPlatform:entry.serviceCode!==null,monthly,total:sumMonthly(monthly),businessContributionPct:null};
+    return{code:entry.code,category:entry.category,subCategory:entry.subCategory,serviceCode:entry.serviceCode,trackedByPlatform:entry.serviceCode!==null&&primaryForService,monthly,total:sumMonthly(monthly),businessContributionPct:null};
   });
   const revenueTotal=revenueLines.reduce((sum,line)=>sum+line.total,0);
   for(const line of revenueLines)line.businessContributionPct=revenueTotal>0?Math.round((line.total/revenueTotal)*1000)/10:0;
