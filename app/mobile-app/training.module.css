@@ -32,7 +32,7 @@
   font-weight: 900;
 }
 .trainingSteps span.active {
-  background: #5d22a8;
+  background: #01261F;
   color: white;
 }
 .assessmentPet {
@@ -125,12 +125,12 @@
   font-weight: 900;
 }
 .goalGrid button.selected i {
-  background: #6422a8;
+  background: #01261F;
   color: white;
 }
 .goalGrid button b {
   border-radius: 999px;
-  background: #6422a8;
+  background: #01261F;
   color: white;
   padding: 3px 5px;
   font-size: 6px;
@@ -189,7 +189,7 @@
 .primary {
   width: 100%;
   border: 0;
-  background: #5d22a8;
+  background: #01261F;
   color: white;
   border-radius: 12px;
   padding: 12px;
@@ -254,7 +254,7 @@
   border-radius: 7px;
 }
 .trainingPlans strong {
-  color: #5d22a8;
+  color: #01261F;
 }
 .editable {
   font-size: 7px;
@@ -284,7 +284,7 @@
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: #5d22a8;
+  background: #01261F;
   color: white;
   font-style: normal;
   font-weight: 900;
@@ -314,7 +314,7 @@
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: #6422a8;
+  background: #01261F;
   color: white;
   font-style: normal;
 }
@@ -443,7 +443,7 @@
   color: white;
 }
 .paymentOptions > button.selected > i {
-  background: #6422a8;
+  background: #01261F;
 }
 .paymentOptions div {
   display: grid;
@@ -518,7 +518,7 @@
 .milestones progress {
   width: 100%;
   height: 6px;
-  accent-color: #5d22a8;
+  accent-color: #01261F;
 }
 .trainingSummary > small {
   font-size: 7px;
@@ -577,7 +577,7 @@
 .moods button {
   border: 0;
   background: #efe5f8;
-  color: #6422a8;
+  color: #01261F;
   padding: 7px;
   border-radius: 8px;
   font-size: 7px;
@@ -620,7 +620,7 @@
   height: 19px;
   border-radius: 6px;
   background: #eee5f8;
-  color: #6422a8;
+  color: #01261F;
   display: grid;
   place-items: center;
   font-style: normal;
@@ -648,7 +648,7 @@
   font-size: 8px;
 }
 .milestones article span {
-  color: #6522a8;
+  color: #01261F;
   font-weight: 900;
 }
 .report span {
@@ -657,9 +657,9 @@
 }
 .renew {
   width: 100%;
-  border: 1px solid #6522a8;
+  border: 1px solid #01261F;
   background: white;
-  color: #6522a8;
+  color: #01261F;
   padding: 11px;
   border-radius: 11px;
   margin-top: 8px;
@@ -741,7 +741,7 @@
   font-size: 6px;
 }
 .trainingPlans button.selected {
-  border: 2px solid #6423aa;
+  border: 2px solid #01261F;
   background: linear-gradient(180deg, #fcf9ff, #f6effc);
   box-shadow: 0 8px 20px rgba(100, 35, 170, .14);
 }
@@ -757,7 +757,7 @@
   font-weight: 900;
 }
 .trainingPlans button.selected > header > i {
-  background: #6423aa;
+  background: #01261F;
   color: white;
 }
 .couponSaving {
@@ -795,7 +795,7 @@
   place-items: center;
   border-radius: 6px;
   background: #eee5f8;
-  color: #6422a8;
+  color: #01261F;
   font-size: 6px;
   font-style: normal;
   font-weight: 900;
@@ -904,14 +904,14 @@
   font-style: normal;
 }
 .trainingPlans button.selected > header .planSelectState {
-  border-color: #6422a8;
-  background: #6422a8;
+  border-color: #01261F;
+  background: #01261F;
   color: #fff;
 }
 .trainingPlans button.selected .planSelectState i {
   border-color: #fff;
   background: #fff;
-  color: #6422a8;
+  color: #01261F;
 }
 .trainingPlans .planDescription {
   min-height: 0;
@@ -943,7 +943,7 @@
 }
 .planMetrics strong {
   align-self: center;
-  color: #5d22a8;
+  color: #01261F;
   font-size: 15px;
   white-space: nowrap;
 }
@@ -993,7 +993,7 @@
 .tapDetails {
   display: block;
   padding: 7px 11px 9px;
-  color: #6a25aa;
+  color: #0a4a3c;
   font-size: 7px;
   font-weight: 900;
 }
@@ -1254,7 +1254,7 @@
   border: 1px solid #d9cde1;
   border-radius: 10px;
   background: #faf7fc;
-  color: #6422a8;
+  color: #01261F;
   font-size: 7.5px;
   font-weight: 900;
 }
@@ -1324,7 +1324,7 @@
   font-size: 5.5px;
 }
 .trainingPetGrid em {
-  color: #6422a8;
+  color: #01261F;
   font-size: 8px;
   font-style: normal;
   font-weight: 900;
@@ -1336,7 +1336,7 @@
   padding: 8px 9px;
   border-radius: 10px;
   background: #eee5f8;
-  color: #6422a8;
+  color: #01261F;
   font-size: 7px;
   font-weight: 900;
 }
@@ -1361,7 +1361,7 @@
   align-items: center;
 }
 .meetTrainer input {
-  accent-color: #6422a8;
+  accent-color: #01261F;
 }
 .meetTrainer label span {
   display: grid;
