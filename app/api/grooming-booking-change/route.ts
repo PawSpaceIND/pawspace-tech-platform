@@ -65,15 +65,24 @@ export async function POST(request:Request){
 
     if(!input.scheduledStart||!input.scheduledEnd)return json({error:"New start and end times are required"},400);
     const start=new Date(input.scheduledStart),end=new Date(input.scheduledEnd);
-    if(Number.isNaN(start.getTime())||Number.isNaN(end.getTime())||end<=start)return json({error:"A valid future time range is required"},400);
+    if(Number.isNaN(start.getTime())||Number.isNaN(end.getTime())||end<=start||start.getTime()<=now)return json({error:"A valid future time range is required"},400);
     const providerId=String(work.provider_id);
+    // Fast pre-check for a friendly error; the authoritative check is the atomic guarded UPDATE below.
     const conflicts=await db.prepare("SELECT id,group_id FROM scheduling_reservations WHERE provider_id=? AND group_id!=? AND status!='cancelled' AND scheduled_start<? AND scheduled_end>? LIMIT 1").bind(providerId,booking.schedule_group_id,end.toISOString(),start.toISOString()).first<Row>();
     if(conflicts)return json({error:"The assigned provider is no longer available for that slot"},409);
     const oldStart=String(booking.scheduled_start),oldEnd=String(booking.scheduled_end);
+    // TOCTOU-safe move (same invariant as the scheduling engine's atomic double-booking guard):
+    // the reservation moves only if NO overlapping non-cancelled reservation exists for this
+    // provider at write time, so a reservation landing between the pre-check and this write
+    // cannot be double-booked.
+    const groupRows=await db.prepare("SELECT COUNT(*) count FROM scheduling_reservations WHERE group_id=? AND status!='cancelled'").bind(booking.schedule_group_id).first<Row>();
+    if(Number(groupRows?.count||0)>0){
+      const moved=await db.prepare("UPDATE scheduling_reservations SET scheduled_start=?,scheduled_end=?,status='assigned' WHERE group_id=? AND status!='cancelled' AND NOT EXISTS (SELECT 1 FROM scheduling_reservations other WHERE other.provider_id=scheduling_reservations.provider_id AND other.group_id!=? AND other.status!='cancelled' AND other.scheduled_start<? AND other.scheduled_end>?)").bind(start.toISOString(),end.toISOString(),booking.schedule_group_id,booking.schedule_group_id,end.toISOString(),start.toISOString()).run();
+      if(!Number(moved.meta?.changes||0))return json({error:"The assigned provider is no longer available for that slot"},409);
+    }
     await db.batch([
       db.prepare("UPDATE canonical_bookings SET scheduled_start=?,scheduled_end=?,status='assigned',updated_at=? WHERE id=?").bind(start.toISOString(),end.toISOString(),now,input.bookingId),
       db.prepare("UPDATE provider_work_orders SET scheduled_start=?,scheduled_end=?,status='assigned',updated_at=? WHERE booking_id=?").bind(start.toISOString(),end.toISOString(),now,input.bookingId),
-      db.prepare("UPDATE scheduling_reservations SET scheduled_start=?,scheduled_end=?,status='assigned' WHERE group_id=?").bind(start.toISOString(),end.toISOString(),booking.schedule_group_id),
       db.prepare("UPDATE scheduling_assignment_decisions SET status='assigned',actor_id=?,reason=?,updated_at=? WHERE group_id=?").bind(auditActor,input.reason||"Customer rescheduled",now,booking.schedule_group_id),
     ]);
     await event(db,input.bookingId,"booking_rescheduled",auditActor,{customerId:input.customerId,from:{scheduledStart:oldStart,scheduledEnd:oldEnd},to:{scheduledStart:start.toISOString(),scheduledEnd:end.toISOString()},providerId,capacityRevalidated:true,policy:policyEvaluation,rescheduleFeeAmount:policyEvaluation.feeAmount},now);

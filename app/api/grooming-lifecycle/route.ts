@@ -88,7 +88,11 @@ export async function POST(request:Request){try{const input=await request.json()
     ];
     if(usage&&sessionsToConsume>0){statements.push(
       db.prepare("UPDATE booking_subscription_usage SET sessions_consumed=sessions_reserved,status='consumed',updated_at=? WHERE booking_id=? AND status='reserved'").bind(now,input.bookingId),
-      db.prepare("UPDATE customer_grooming_subscriptions SET sessions_reserved=MAX(0,sessions_reserved-?),sessions_consumed=sessions_consumed+?,status=CASE WHEN sessions_consumed+?>=total_sessions THEN 'exhausted' ELSE status END,updated_at=? WHERE id=? AND status IN ('active','exhausted')").bind(sessionsToConsume,sessionsToConsume,sessionsToConsume,now,usage.plan_code)
+      // No status filter: a subscription paused or in expiry-grace AFTER the reservation must still
+      // settle its reserved credits at completion, or sessions_reserved leaks forever (wallet drift).
+      // Double-consumption stays impossible via the usage row's status='reserved' guard above; the
+      // exhausted CASE only promotes active subscriptions.
+      db.prepare("UPDATE customer_grooming_subscriptions SET sessions_reserved=MAX(0,sessions_reserved-?),sessions_consumed=sessions_consumed+?,status=CASE WHEN status='active' AND sessions_consumed+?>=total_sessions THEN 'exhausted' ELSE status END,updated_at=? WHERE id=?").bind(sessionsToConsume,sessionsToConsume,sessionsToConsume,now,usage.plan_code)
     );}
     await db.batch(statements);
     const referral=await referralQualification(db,input.bookingId,actor);
