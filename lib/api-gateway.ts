@@ -1,5 +1,6 @@
 import { defaultRoles, hasPermission, type Permission } from "./platform-security";
 import { resolveUatStaffActor } from "./uat-staging-auth";
+import { resolvePlatformSession } from "./platform-session";
 
 type GatewayEnv={DB:D1Database;FOUNDER_EMAIL?:string};
 export type GatewayActor={email:string;roleCode:string;permissions:string[];preview:boolean};
@@ -124,6 +125,13 @@ export async function authorizeApiRequest(request:Request,env:GatewayEnv):Promis
   // PAWSPACE_UAT_LOGIN is unset, so this falls straight through to the real header-based identity check).
   const uat=await resolveUatStaffActor(env.DB,request,env as unknown as Record<string,unknown>);
   if(uat){const actor={email:uat.email,roleCode:uat.roleCode,permissions:uat.permissions,preview:false};if(!hasPermission(uat.permissions,permission)){await audit(env,actor,request,"denied",{permission});return Response.json({error:"Permission denied"},{status:403});}return {actor,permission};}
+  // Customer/provider OTP identities hold a platform session cookie, not a staff header identity.
+  // Without this check the gateway 401s them on gated self-service endpoints (e.g. GET
+  // /api/boarding-stays?scope=customer) even though the route's own resolveActor supports the
+  // session; per-record ownership is still enforced by the route via requireCustomerOwnership/
+  // requireProviderOwnership - the gateway only maps the session to its limited role permissions.
+  const session=await resolvePlatformSession(env.DB,request).catch(()=>null);
+  if(session){const actor={email:session.auditId,roleCode:session.roleCode,permissions:session.permissions,preview:false};if(!hasPermission(session.permissions,permission)){await audit(env,actor,request,"denied",{permission});return Response.json({error:"Permission denied"},{status:403});}return {actor,permission};}
   const email=(request.headers.get("oai-authenticated-user-email")||"").trim().toLowerCase();if(!email)return Response.json({error:"Authentication required"},{status:401});await ensureGatewayTables(env);
   let user=await env.DB.prepare("SELECT name,role_code,status FROM app_users WHERE email=?").bind(email).first<Record<string,unknown>>();if(!user&&email===String(env.FOUNDER_EMAIL||"").trim().toLowerCase()){const now=Date.now();await env.DB.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),email,email.split("@")[0],"founder","active",now,now).run();user={role_code:"founder",status:"active"};}
   if(!user||user.status!=="active")return Response.json({error:"Access has not been provisioned or is disabled"},{status:403});const role=await env.DB.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(String(user.role_code)).first<{permissions_json:string}>();let permissions:string[]=[];try{permissions=JSON.parse(role?.permissions_json||"[]") as string[]}catch{}
