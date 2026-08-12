@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
-import {useEffect,useMemo,useState} from "react";
+import {useEffect,useMemo,useState,useSyncExternalStore} from "react";
 import {loadBoardingCommercial,type BoardingHost} from "../../lib/boarding-commercial-client";
 import {loadOwnBoardingStays,updateBoardingStay,type BoardingStay,type BoardingStayAction} from "../../lib/boarding-stay-client";
 import styles from "./host.module.css";
@@ -20,6 +20,11 @@ async function loadWorkspace():Promise<Workspace>{const scoped=await loadOwnBoar
 
 export default function HostPage(){
  const[tab,setTab]=useState<Tab>("today"),[stays,setStays]=useState<BoardingStay[]>([]),[profile,setProfile]=useState<BoardingHost|null>(null),[providerId,setProviderId]=useState<string|null>(null),[selectedId,setSelectedId]=useState(""),[busy,setBusy]=useState(""),[toast,setToast]=useState(""),[error,setError]=useState(""),[loading,setLoading]=useState(true);
+ // Localized date resolves on the client only: the server (UTC) and client (IST) render
+ // different weekday/day/month, so computing it during SSR causes a hydration mismatch
+ // (React #418). useSyncExternalStore keeps the server/first-client render empty, then swaps
+ // in the client value after hydration.
+ const today=useSyncExternalStore(()=>()=>{},()=>new Intl.DateTimeFormat("en-IN",{weekday:"long",day:"numeric",month:"long"}).format(new Date()),()=>"");
  useEffect(()=>{let active=true;void loadWorkspace().then(data=>{if(!active)return;setStays(data.stays);setProfile(data.profile);setProviderId(data.providerId);setSelectedId(current=>current&&data.stays.some(item=>item.id===current)?current:data.stays.find(item=>item.status==="awaiting_host_acceptance")?.id??data.stays[0]?.id??"");setError("");}).catch(problem=>{if(active)setError(problem instanceof Error?problem.message:"Unable to load Boarding workspace");}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;};},[]);
  const refresh=async()=>{const data=await loadWorkspace();setStays(data.stays);setProfile(data.profile);setProviderId(data.providerId);setSelectedId(current=>current&&data.stays.some(item=>item.id===current)?current:data.stays.find(item=>item.status==="awaiting_host_acceptance")?.id??data.stays[0]?.id??"");};
  const notify=(message:string)=>{setToast(message);window.setTimeout(()=>setToast(""),2400);};
@@ -32,7 +37,7 @@ export default function HostPage(){
  const selected=stays.find(item=>item.id===selectedId)??pending[0]??active[0]??stays[0];
  const liveStay=active.find(item=>item.status==="in_progress")??active[0];
  const currentGuests=active.filter(item=>item.status==="in_progress").reduce((sum,item)=>sum+Number(item.pet_count||0),0);
- const hostName=profile?.name||selected?.provider_name||"Boarding host",hostInitials=initials(hostName),today=new Intl.DateTimeFormat("en-IN",{weekday:"long",day:"numeric",month:"long"}).format(new Date());
+ const hostName=profile?.name||selected?.provider_name||"Boarding host",hostInitials=initials(hostName);
  const isBusy=(stay:BoardingStay,action:BoardingStayAction)=>busy===`${stay.id}:${action}`;
  const decline=async(stay:BoardingStay)=>{const reason=window.prompt("Reason for declining this stay");if(!reason)return;await act(stay,"decline",{reason});};
  const unavailable=async(stay:BoardingStay)=>{const reason=window.prompt("Why are you unavailable for this stay?");if(!reason)return;await act(stay,"host_unavailable",{reason});};

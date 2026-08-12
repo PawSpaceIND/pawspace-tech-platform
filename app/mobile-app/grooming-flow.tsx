@@ -11,7 +11,7 @@ import type { LoggedInCustomer } from "./customer-login";
 
 type PetType = "dog" | "cat" | "puppy" | "kitten";
 type Pack = {id:string;name:string;detail:string;price:number;badge:string;bestFor:string;includes:string[];missing:string[]};
-const dates=["Today, 4 Aug","Wed, 5 Aug","Thu, 6 Aug","Fri, 7 Aug"],slots=["9:00–11:00 AM","11:00 AM–1:00 PM","1:00–3:00 PM","3:00–5:00 PM","5:00–7:00 PM"];
+const dates=["Today, 4 Aug","Wed, 5 Aug","Thu, 6 Aug","Fri, 7 Aug"],slots=["9:00–11:00 AM","11:00 AM–1:00 PM","1:00–3:00 PM","3:00–5:00 PM"];
 const packages:Record<PetType,Pack[]>={
  dog:[
   {id:"bath",name:"Essential Bath",detail:"A complete clean-up for regular coat care.",price:1349,badge:"Fresh & clean",bestFor:"Routine freshness between full grooms",includes:["Shampoo bath","Deshedding","Blow dry","Coat brushing"],missing:["Nail clipping","Ear cleaning","Teeth cleaning","Hygiene trim","Full haircut"]},

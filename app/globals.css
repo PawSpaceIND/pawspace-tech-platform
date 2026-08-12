@@ -1,6 +1,11 @@
 @import "tailwindcss";
 
 :root {
+  /* Font stacks — no external webfont download; use the system UI stack so
+     consumers of these variables (e.g. marketing pages) render without 404s. */
+  --font-geist-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-geist-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
   /* PawSpace brand base theme — Emerald #01261F + Gold #E6B34E */
   --ink: #06231c;
   --purple: #01261F;

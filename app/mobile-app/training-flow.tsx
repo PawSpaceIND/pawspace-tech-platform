@@ -89,10 +89,10 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
     [selectedPets, setSelectedPets] = useState(["Bruno"]),
     [plan, setPlan] = useState(emptyPlan),
     [frequency, setFrequency] = useState("Tue & Sat"),
-    [time, setTime] = useState("5:00 PM"),
+    [time, setTime] = useState("3:00 PM"),
     [attendanceMode, setAttendanceMode] = useState<"parent" | "trainer-led">("parent"),
     [meet, setMeet] = useState(true),
-    [meetSlot, setMeetSlot] = useState(() => futureIst(1,18).toISOString()),
+    [meetSlot, setMeetSlot] = useState(() => futureIst(1,11).toISOString()),
     [meetBookingId, setMeetBookingId] = useState(""),
     [paymentMode, setPaymentMode] = useState<"half" | "full">("half"),
     [couponCode, setCouponCode] = useState(""),
@@ -495,7 +495,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
             {meet && (
               <>
                 <div className={styles.meetSlots}>
-                  {[futureIst(1,18),futureIst(2,11),futureIst(2,17)].map((date)=>{const slot=date.toISOString();return <button key={slot} className={meetSlot===slot?styles.selected:""} onClick={()=>setMeetSlot(slot)}>{slotLabel(date)}<small>{meetSlot===slot?"Selected":"Available"}</small></button>;})}
+                  {[futureIst(1,11),futureIst(2,15),futureIst(2,16)].map((date)=>{const slot=date.toISOString();return <button key={slot} className={meetSlot===slot?styles.selected:""} onClick={()=>setMeetSlot(slot)}>{slotLabel(date)}<small>{meetSlot===slot?"Selected":"Available"}</small></button>;})}
                 </div>
                 <p>
                   Trainer availability is checked before the slot is offered. If you continue now, the canonical Meet & Greet is created as its own paid booking before the programme booking.
@@ -541,7 +541,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
             </select>
           </label>
           <div className={styles.trainingTimes}>
-            {["9:00 AM", "3:00 PM", "5:00 PM"].map((item) => (
+            {["9:00 AM", "3:00 PM"].map((item) => (
               <button
                 key={item}
                 className={time === item ? styles.selected : ""}
