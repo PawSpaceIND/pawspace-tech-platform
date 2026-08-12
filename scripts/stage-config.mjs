@@ -23,12 +23,17 @@ const signingKey = String(process.env.PAWSPACE_UAT_SIGNING_KEY || "pawspace-stag
 cfg.name = "pawspace-staging";
 cfg.topLevelName = "pawspace-staging";
 cfg.d1_databases = [{ binding: "DB", database_name: "pawspace-staging", database_id: d1Id }];
+// Sandbox identity-assertion signing secret used by the customer OTP verify flow. Staging-only; a real
+// rotated secret is set via `wrangler secret put` for production. Overridable via a repo variable.
+const identitySecret = String(process.env.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT || "pawspace-staging-identity-assertion-uat-secret").trim();
+
 cfg.vars = {
   ...(cfg.vars || {}),
   PAWSPACE_PAYMENT_ENV: "sandbox",
   PAWSPACE_UAT_LOGIN: "on",
   PAWSPACE_UAT_ACCESS_CODE: accessCode,
   PAWSPACE_UAT_SIGNING_KEY: signingKey,
+  PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: identitySecret,
 };
 writeFileSync(path, JSON.stringify(cfg));
 console.log(`Staging config written → name=pawspace-staging, DB=${d1Id}, PAWSPACE_PAYMENT_ENV=sandbox, UAT_LOGIN=on, access code="${accessCode}"`);
