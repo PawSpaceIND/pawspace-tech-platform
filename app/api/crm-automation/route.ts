@@ -23,7 +23,11 @@ export async function POST(request:Request){try{sameOrigin(request);const actor=
   if(!body.dispatchId||!body.error)return json({error:"Dispatch ID and error are required"},400);return json({data:await recordAutomationFailure(db,body.dispatchId,body.error,actor.email)});
  }
  if(body.action==="delivered"){
-  if(!body.dispatchId)return json({error:"Dispatch ID is required"},400);await db.prepare("UPDATE crm_automation_dispatches SET status='delivered',provider_reference=?,last_error=NULL,next_attempt_at=NULL,updated_at=? WHERE id=?").bind(body.providerReference||null,now,body.dispatchId).run();await securityAudit(db,actor,"crm.automation.delivered","automation_dispatch",body.dispatchId,"completed",{providerReference:body.providerReference||null});return json({ok:true,id:body.dispatchId,status:"delivered"});
+  if(!body.dispatchId)return json({error:"Dispatch ID is required"},400);
+  // Previously this reported ok:true even when the dispatch id matched nothing — a silent lie.
+  const changed=await db.prepare("UPDATE crm_automation_dispatches SET status='delivered',provider_reference=?,last_error=NULL,next_attempt_at=NULL,updated_at=? WHERE id=?").bind(body.providerReference||null,now,body.dispatchId).run();
+  if(Number(changed.meta?.changes||0)===0)return json({error:"Automation dispatch not found"},404);
+  await securityAudit(db,actor,"crm.automation.delivered","automation_dispatch",body.dispatchId,"completed",{providerReference:body.providerReference||null});return json({ok:true,id:body.dispatchId,status:"delivered"});
  }
  return json({error:"Unsupported CRM automation action"},400);
 }catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);return authError(error,"Unable to update CRM automation governance");}}
