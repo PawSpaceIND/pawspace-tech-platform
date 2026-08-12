@@ -1,3 +1,6 @@
+import{convertLeadOnPaymentCaptured}from"./lead-conversion-attribution";
+import{cancelRecoveryEntitlements}from"./payment-recovery-governance";
+
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
@@ -35,6 +38,8 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
   }else if(event.eventType==="payment.captured"||event.eventType==="order.paid"){
     const variance=Math.round((amount-expected)*100)/100;if(Math.abs(variance)>0.009){await upsert("captured","amount_mismatch",amount,refundedCurrent,variance);await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"capture_amount_mismatch",detail:{expected,received:amount,variance}});await finish("exception","Capture amount mismatch");return{duplicate:false,status:"exception",reason:"capture_amount_mismatch"};}
     await db.prepare("UPDATE booking_payments SET status='captured',gateway=?,detail_json=json_set(detail_json,'$.gatewayPaymentId',?,'$.gatewayOrderId',?,'$.lastGatewayEventId',?),updated_at=? WHERE id=?").bind(event.environment==="sandbox"?"razorpay_sandbox":"razorpay",event.gatewayPaymentId??null,event.gatewayOrderId??null,event.eventId,now,paymentId).run();await upsert("captured","matched",amount,refundedCurrent,0);await lifecycle(db,bookingId,"payment_captured",{gateway:event.provider,environment:event.environment,gatewayPaymentId:event.gatewayPaymentId,eventId:event.eventId,amount});
+    // funnel closure: payment succeeded -> convert the Sales lead and cancel any ₹300 recovery entitlement (belt-and-braces; never breaks payment processing)
+    const paidCustomerId=String(payment.customer_id||"");if(paidCustomerId){await convertLeadOnPaymentCaptured(db,{customerId:paidCustomerId,bookingId}).catch(()=>{});await cancelRecoveryEntitlements(db,{customerId:paidCustomerId,bookingId,reason:"payment_captured",at:now}).catch(()=>{});}
   }else if(event.eventType==="payment.failed"){
     if(settled){await upsert(gatewayCurrent,reconCurrent,capturedCurrent,refundedCurrent,varianceCurrent);await finish("processed","Out-of-order failure ignored after settled state");return{duplicate:false,status:"processed",ignored:true,reason:"out_of_order_failed"};}
     await db.prepare("UPDATE booking_payments SET status='failed',gateway=?,detail_json=json_set(detail_json,'$.lastGatewayEventId',?),updated_at=? WHERE id=?").bind(event.environment==="sandbox"?"razorpay_sandbox":"razorpay",event.eventId,now,paymentId).run();await upsert("failed","gateway_failed",capturedCurrent,refundedCurrent,0);await lifecycle(db,bookingId,"payment_failed",{gateway:event.provider,eventId:event.eventId});

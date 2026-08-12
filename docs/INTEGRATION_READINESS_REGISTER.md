@@ -68,7 +68,7 @@ Only `controlled_live_verified` is acceptable for a required production integrat
 
 **Capability:** payment authorization/capture, payment status webhooks, refunds/reconciliation
 
-**Current repo evidence:** Razorpay sandbox webhook code exists. It requires an event ID and signature, verifies the HMAC, hashes the payload, sends normalized events to the payment reconciliation engine and is explicitly locked to sandbox unless production launch approval changes the payment environment. The sandbox webhook secret is runtime configuration, not repository data.
+**Current repo evidence:** Razorpay sandbox webhook code exists. It requires an event ID and signature, verifies the HMAC, hashes the payload, and sends normalized events to the payment reconciliation engine. The receiver defaults to sandbox; live mode is a deliberate, double-gated unlock (`lib/payment-webhook-gate.ts`) requiring BOTH an explicit approval flag (`PAWSPACE_PAYMENT_LIVE_APPROVED="true"`) AND a distinct live webhook secret (`RAZORPAY_WEBHOOK_SECRET_LIVE`) — either missing fails closed with 503, and sandbox/live secrets are never shared. `GET /api/payment-readiness` reports the state without exposing any secret. Secrets are runtime configuration, not repository data.
 
 **Current readiness:** `code_ready`
 
