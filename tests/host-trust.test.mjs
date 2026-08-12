@@ -1,0 +1,148 @@
+import test from"node:test";
+import assert from"node:assert/strict";
+import{readFile}from"node:fs/promises";
+const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
+
+test("host-reviews lib defines host_reviews table with UNIQUE booking_id constraint",async()=>{
+  const lib=await read("lib/host-reviews.ts");
+  assert.match(lib,/CREATE TABLE IF NOT EXISTS host_reviews/);
+  assert.match(lib,/booking_id TEXT NOT NULL UNIQUE/);
+  assert.match(lib,/rating INTEGER NOT NULL/);
+  assert.match(lib,/title TEXT NOT NULL/);
+  assert.match(lib,/body TEXT NOT NULL/);
+  assert.match(lib,/created_at INTEGER NOT NULL/);
+});
+
+test("host-reviews lib defines host_review_replies table with foreign key",async()=>{
+  const lib=await read("lib/host-reviews.ts");
+  assert.match(lib,/CREATE TABLE IF NOT EXISTS host_review_replies/);
+  assert.match(lib,/review_id TEXT NOT NULL/);
+  assert.match(lib,/FOREIGN KEY\(review_id\) REFERENCES host_reviews\(id\)/);
+});
+
+test("host-reviews lib exports submitHostReview with booking validation",async()=>{
+  const lib=await read("lib/host-reviews.ts");
+  assert.match(lib,/export async function submitHostReview/);
+  assert.match(lib,/const booking=await db.prepare\("SELECT.*FROM canonical_bookings WHERE id=\?"\)/);
+  assert.match(lib,/String\(booking\.customer_id\)!==customerId/);
+  assert.match(lib,/String\(booking\.provider_id\)!==hostProviderId/);
+  assert.match(lib,/String\(booking\.status\)!=="completed"/);
+  assert.match(lib,/const existing=await db.prepare\("SELECT id FROM host_reviews WHERE booking_id=\?"\)/);
+  assert.match(lib,/Review already submitted for this booking/);
+});
+
+test("host-reviews lib validates rating 1-5",async()=>{
+  const lib=await read("lib/host-reviews.ts");
+  assert.match(lib,/rating<1\|\|rating>5/);
+  assert.match(lib,/Rating must be an integer between 1 and 5/);
+});
+
+test("host-reviews lib exports listHostReviews with stats aggregation",async()=>{
+  const lib=await read("lib/host-reviews.ts");
+  assert.match(lib,/export async function listHostReviews/);
+  assert.match(lib,/AVG\(rating\) avg_rating/);
+  assert.match(lib,/ratingHistogram/);
+  assert.match(lib,/const histogram:Record<1\|2\|3\|4\|5,number>/);
+});
+
+test("host-reviews lib includes seedHostReviews with uat_seed_ prefix",async()=>{
+  const lib=await read("lib/host-reviews.ts");
+  assert.match(lib,/export async function seedHostReviews/);
+  assert.match(lib,/uat_seed_customer_/);
+  assert.match(lib,/"boarding":"pet_sitting"/);
+});
+
+test("host-badges lib exports computeHostBadges function",async()=>{
+  const lib=await read("lib/host-badges.ts");
+  assert.match(lib,/export function computeHostBadges\(stats:HostStats\):Badge\[\]/);
+});
+
+test("host-badges lib implements Superhost badge rule",async()=>{
+  const lib=await read("lib/host-badges.ts");
+  assert.match(lib,/stats\.completedStays>=10&&stats\.avgRating>=4\.8/);
+  assert.match(lib,/"superhost"/);
+  assert.match(lib,/Superhost/);
+});
+
+test("host-badges lib implements Medication Pro and Verified Home badges",async()=>{
+  const lib=await read("lib/host-badges.ts");
+  assert.match(lib,/stats\.medicationSupport/);
+  assert.match(lib,/"medication-pro"/);
+  assert.match(lib,/stats\.homeVerified/);
+  assert.match(lib,/"verified-home"/);
+});
+
+test("host-badges lib implements Zero Cancellations badge rule",async()=>{
+  const lib=await read("lib/host-badges.ts");
+  assert.match(lib,/stats\.completedStays>=5&&stats\.hostCancelledCount===0/);
+  assert.match(lib,/"zero-cancellations"/);
+});
+
+test("host-badges lib implements Quick Responder badge rule",async()=>{
+  const lib=await read("lib/host-badges.ts");
+  assert.match(lib,/stats\.acceptanceTimeout<=180/);
+  assert.match(lib,/"quick-responder"/);
+});
+
+test("host-badges lib exports computeHostStats with real queries",async()=>{
+  const lib=await read("lib/host-badges.ts");
+  assert.match(lib,/export async function computeHostStats/);
+  assert.match(lib,/canonical_bookings/);
+  assert.match(lib,/provider_capacity_profiles/);
+  assert.match(lib,/host_reviews/);
+});
+
+test("host-trust route is public (GET and POST, no authorize call)",async()=>{
+  const route=await read("app/api/host-trust/route.ts");
+  assert.match(route,/export async function GET/);
+  assert.match(route,/export async function POST/);
+  assert.equal(route.includes("authorize("),false,"host-trust must not call authorize() — it is public");
+  assert.match(route,/hostProviderId=url\.searchParams\.get\("hostProviderId"\)/);
+});
+
+test("host-trust route calls submitHostReview for reviews",async()=>{
+  const route=await read("app/api/host-trust/route.ts");
+  assert.match(route,/submitHostReview/);
+});
+
+test("host-trust route includes seed action for test data",async()=>{
+  const route=await read("app/api/host-trust/route.ts");
+  assert.match(route,/body\.action==="seed"/);
+  assert.match(route,/seedHostReviews/);
+});
+
+test("gateway allowlists host-trust as public",async()=>{
+  const gateway=await read("lib/api-gateway.ts");
+  assert.match(gateway,/url\.pathname===\"\/api\/host-trust\"/);
+});
+
+test("host-trust-panel component does not import flows",async()=>{
+  const panel=await read("app/mobile-app/host-trust-panel.tsx");
+  assert.match(panel,/"use client"/);
+  assert.match(panel,/\/api\/host-trust/);
+  assert.equal(panel.includes("stay-flow"),false,"host-trust-panel must not import stay-flow");
+  assert.equal(panel.includes("checkout"),false,"host-trust-panel must not import checkout flows");
+  assert.equal(panel.includes("grooming-flow"),false,"host-trust-panel must not import grooming-flow");
+});
+
+test("host-trust-panel displays badges, stats, and reviews",async()=>{
+  const panel=await read("app/mobile-app/host-trust-panel.tsx");
+  assert.match(panel,/Badge/);
+  assert.match(panel,/stats\.completedStays/);
+  assert.match(panel,/aggregateStats\.ratingHistogram/);
+  assert.match(panel,/Review\[/);
+});
+
+test("host-trust-panel uses Emerald and Gold theme colors",async()=>{
+  const panel=await read("app/mobile-app/host-trust-panel.tsx");
+  assert.match(panel,/var\(--ds-primary-500\)/);
+  assert.match(panel,/var\(--ds-surface\)/);
+  assert.match(panel,/var\(--ds-border\)/);
+});
+
+test("host-trust-panel includes pagination for reviews",async()=>{
+  const panel=await read("app/mobile-app/host-trust-panel.tsx");
+  assert.match(panel,/pagination/i);
+  assert.match(panel,/Previous/);
+  assert.match(panel,/Next/);
+});
