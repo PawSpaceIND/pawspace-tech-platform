@@ -1,0 +1,446 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+import * as nodeModule from "node:module";
+
+// ---------------------------------------------------------------------------
+// Module hooks: extensionless relative .ts imports + a live "cloudflare:workers"
+// shim so real API route handlers execute in-process against node:sqlite.
+// ---------------------------------------------------------------------------
+const WORKERS_SHIM = `export const env = new Proxy({}, { get: (_, key) => globalThis.__PAWSPACE_TEST_ENV?.[key] });`;
+const workersUrl = `data:text/javascript,${encodeURIComponent(WORKERS_SHIM)}`;
+
+if (typeof nodeModule.registerHooks === "function") {
+  nodeModule.registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
+      try {
+        return nextResolve(specifier, context);
+      } catch (error) {
+        if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
+        throw error;
+      }
+    },
+  });
+} else {
+  const hook = `const workersUrl = ${JSON.stringify(workersUrl)};
+  export async function resolve(specifier, context, nextResolve) {
+    if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
+    try { return await nextResolve(specifier, context); }
+    catch (error) {
+      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(specifier + ".ts", context);
+      throw error;
+    }
+  }`;
+  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
+}
+
+const serverAuth = await import("../lib/server-auth.ts");
+const peopleFoundation = await import("../lib/people-foundation.ts");
+const payroll = await import("../lib/payroll-engine.ts");
+const attendanceLeave = await import("../lib/attendance-leave.ts");
+const incentiveEngine = await import("../lib/incentive-engine.ts");
+const salesIncentive = await import("../lib/sales-incentive-engine.ts");
+const accrual = await import("../lib/daily-incentive-accrual.ts");
+const productivity = await import("../lib/sales-productivity-governance.ts");
+const selfService = await import("../lib/employee-self-service.ts");
+const leaderboardLib = await import("../lib/live-leaderboard.ts");
+const commercialTerms = await import("../lib/provider-commercial-terms.ts");
+const workspaceLib = await import("../lib/provider-workspace.ts");
+const tds = await import("../lib/tds-governance.ts");
+const capacity = await import("../lib/provider-capacity-governance.ts");
+const revenueCrmRoute = await import("../app/api/revenue-crm/route.ts");
+
+// ---------------------------------------------------------------------------
+// D1-over-node:sqlite shim + verbatim canonical DDL from its owning route.
+// ---------------------------------------------------------------------------
+function makeD1(sqlite) {
+  function statement(sql, args) {
+    return {
+      bind: (...boundArgs) => statement(sql, boundArgs),
+      first: async () => {
+        const row = sqlite.prepare(sql).get(...args);
+        return row === undefined ? null : row;
+      },
+      run: async () => {
+        const info = sqlite.prepare(sql).run(...args);
+        return { success: true, meta: { changes: Number(info.changes) } };
+      },
+      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
+    };
+  }
+  return {
+    prepare: (sql) => statement(sql, []),
+    batch: async (statements) => {
+      const results = [];
+      for (const stmt of statements) results.push(await stmt.run());
+      return results;
+    },
+  };
+}
+
+function statementsOf(source) {
+  const out = [];
+  const pattern = /\.prepare\(\s*(["'`])((?:\\.|(?!\1)[\s\S])*?)\1/g;
+  let match;
+  while ((match = pattern.exec(source))) out.push(match[2].replace(/\\(["'`\\])/g, "$1"));
+  return out;
+}
+const canonicalDDL = statementsOf(fs.readFileSync("app/api/walking-bookings/route.ts", "utf8")).filter((sql) => /^CREATE (TABLE|INDEX|UNIQUE INDEX)/i.test(sql.trim()));
+
+const DAY = 86_400_000;
+const NOW = Date.now();
+const istDate = (ms) => new Date(ms + 19_800_000).toISOString().slice(0, 10);
+
+async function peopleStack() {
+  const sqlite = new DatabaseSync(":memory:");
+  const db = makeD1(sqlite);
+  globalThis.__PAWSPACE_TEST_ENV = { DB: db };
+  for (const sql of canonicalDDL) sqlite.exec(sql);
+  await serverAuth.ensureSecurityTables(db);
+  await peopleFoundation.ensurePeopleTables(db);
+  await payroll.ensurePayrollTables(db);
+  await attendanceLeave.ensureAttendanceLeaveTables(db);
+  await incentiveEngine.ensureIncentiveTables(db);
+  await salesIncentive.ensureSalesIncentiveTables(db);
+  await accrual.ensureDailyIncentiveAccrualTables(db);
+  await productivity.ensureSalesProductivityTables(db);
+  await commercialTerms.ensureCommercialTermsTables(db);
+  await workspaceLib.ensureProviderWorkspaceTables(db);
+  await capacity.seedProviderCapacityDefaults(db);
+
+  const seedEmployee = (id, { workEmail, userEmail = null } = {}) =>
+    sqlite.prepare("INSERT INTO employees (id,user_email,employee_code,display_name,work_email,phone,employment_status,joined_at,ended_at,created_at,updated_at) VALUES (?,?,?,?,?,NULL,'active',?,NULL,?,?)")
+      .run(id, userEmail, `CODE-${id}`, `Employee ${id}`, workEmail, NOW - 90 * DAY, NOW, NOW);
+
+  const seedProviderProfile = (id, model) =>
+    sqlite.prepare("INSERT INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,?,1,4.5,90,1,0,10,3,'active',1,'2026-08-01',NULL,'test',?)")
+      .run(id, "tstcity", id, model, JSON.stringify(["grooming"]), JSON.stringify(["tst-zone"]), NOW);
+
+  const seedBooking = (bookingId, { providerId, serviceCode = "grooming", amount, customerId = "CUS-P1", start = new Date(NOW - 2 * DAY).toISOString() }) => {
+    sqlite.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(bookingId, `idem-${bookingId}`, customerId, "[]", "[]", "tstcity", "tst-zone", serviceCode, "pkg", "Package", `GRP-${bookingId}`, providerId, start, new Date(new Date(start).getTime() + 3_600_000).toISOString(), "completed", "customer_app", amount, "INR", "{}", "test", NOW, NOW);
+  };
+
+  return { sqlite, db, seedEmployee, seedProviderProfile, seedBooking };
+}
+
+// A governed commercial term (maker drafts, checker activates - self-activation refused).
+async function activeTerm(stack, { serviceCode = "grooming", model = "commission_standard", share } = {}) {
+  const draft = await commercialTerms.saveCommercialTerm(stack.db, { serviceCode, engagementModel: model, providerSharePct: share, effectiveFrom: "2026-01-01", reason: "UAT commercial baseline", actorId: "maker@test" });
+  await assert.rejects(
+    commercialTerms.activateCommercialTerm(stack.db, { termId: draft.id, approvalReference: "APPR-1", actorId: "maker@test" }),
+    /drafter cannot activate their own commercial term/,
+  );
+  await commercialTerms.activateCommercialTerm(stack.db, { termId: draft.id, approvalReference: "APPR-1", actorId: "checker@test" });
+  return draft;
+}
+
+// ---------------------------------------------------------------------------
+// 1. Payroll run lifecycle, real execution: calculated -> reviewed -> approved
+//    -> payment_prepared, with the audit trail and the self-approval guard.
+// ---------------------------------------------------------------------------
+test("payroll lifecycle: approval events recorded, creator/reviewer cannot approve, payslips idempotent per run+employee", async () => {
+  const stack = await peopleStack();
+  const { sqlite, db } = stack;
+  stack.seedEmployee("EMP-A", { workEmail: "a@pawspace.test" });
+  stack.seedEmployee("EMP-B", { workEmail: "b@pawspace.test" });
+  const structure = await payroll.saveSalaryStructure(db, { structureCode: "STD", effectiveFrom: NOW - 60 * DAY, components: [{ code: "BASIC", label: "Basic", kind: "earning", amount: 50_000 }, { code: "PF", label: "Provident fund", kind: "deduction", amount: 1_800 }], actorId: "hr@test" });
+  await payroll.assignCompensation(db, { employeeId: "EMP-A", structureId: String(structure.id), effectiveFrom: NOW - 30 * DAY, reason: "Initial UAT compensation", actorId: "hr@test" });
+  await payroll.assignCompensation(db, { employeeId: "EMP-B", structureId: String(structure.id), effectiveFrom: NOW - 30 * DAY, reason: "Initial UAT compensation", actorId: "hr@test" });
+
+  const run = await payroll.calculatePayroll(db, { periodStart: NOW - 14 * DAY, periodEnd: NOW - 1 * DAY, idempotencyKey: "PR-KEY-1", actorId: "maker@test" });
+  assert.equal(run.duplicatePrevented, false);
+  assert.equal(String(run.run.status), "calculated");
+  assert.equal(run.results.length, 2);
+  assert.equal(Number(run.results[0].net_pay), 48_200);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM payslips WHERE run_id=?").get(run.run.id).c, 2);
+
+  // Payslip generation is idempotent per run+employee: same key returns the prior run untouched.
+  const replay = await payroll.calculatePayroll(db, { periodStart: NOW - 14 * DAY, periodEnd: NOW - 1 * DAY, idempotencyKey: "PR-KEY-1", actorId: "maker@test" });
+  assert.equal(replay.duplicatePrevented, true);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM payslips WHERE run_id=?").get(run.run.id).c, 2, "replay must not duplicate payslips");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM payslips WHERE run_id=? AND employee_id='EMP-A'").get(run.run.id).c, 1);
+
+  const runId = String(run.run.id);
+  await assert.rejects(payroll.approvePayroll(db, { runId, actorId: "cfo@test" }), /Only reviewed payroll can be approved/);
+  await payroll.reviewPayroll(db, { runId, actorId: "reviewer@test" });
+  // Self-approval guard: neither the run creator nor its reviewer may approve.
+  await assert.rejects(payroll.approvePayroll(db, { runId, actorId: "maker@test" }), /Maker\/reviewer cannot approve their own payroll run/);
+  await assert.rejects(payroll.approvePayroll(db, { runId, actorId: "reviewer@test" }), /Maker\/reviewer cannot approve their own payroll run/);
+  await payroll.approvePayroll(db, { runId, actorId: "cfo@test" });
+  const batch = await payroll.prepareSandboxPaymentBatch(db, { runId, actorId: "cfo@test" });
+  assert.equal(batch.status, "sandbox_prepared");
+  assert.equal(batch.externalTransmission, false);
+  assert.equal(sqlite.prepare("SELECT status FROM payroll_runs WHERE id=?").get(runId).status, "payment_prepared");
+  assert.equal(Number(sqlite.prepare("SELECT total_amount FROM payroll_payment_batches WHERE run_id=?").get(runId).total_amount), 96_400);
+
+  // The audit trail covers every lifecycle transition, including the money-moving step.
+  const events = sqlite.prepare("SELECT event_type,actor_id FROM payroll_approval_events WHERE run_id=? ORDER BY created_at").all(runId);
+  assert.deepEqual(events.map((row) => String(row.event_type)), ["reviewed", "approved", "payment_prepared"], "payment_prepared must be recorded in payroll_approval_events");
+  assert.equal(String(events[2].actor_id), "cfo@test");
+});
+
+// ---------------------------------------------------------------------------
+// 2. /api/me: strictly own-record.
+// ---------------------------------------------------------------------------
+test("employee self-service is strictly own-record: employee A can never see employee B", async () => {
+  const stack = await peopleStack();
+  const { sqlite, db } = stack;
+  stack.seedEmployee("EMP-A", { workEmail: "a@pawspace.test" });
+  stack.seedEmployee("EMP-B", { workEmail: "b@pawspace.test" });
+  const structure = await payroll.saveSalaryStructure(db, { structureCode: "STD", effectiveFrom: NOW - 60 * DAY, components: [{ code: "BASIC", label: "Basic", kind: "earning", amount: 42_000 }], actorId: "hr@test" });
+  await payroll.assignCompensation(db, { employeeId: "EMP-A", structureId: String(structure.id), effectiveFrom: NOW - 30 * DAY, reason: "Initial UAT compensation", actorId: "hr@test" });
+  await payroll.assignCompensation(db, { employeeId: "EMP-B", structureId: String(structure.id), effectiveFrom: NOW - 30 * DAY, reason: "Initial UAT compensation", actorId: "hr@test" });
+  const run = await payroll.calculatePayroll(db, { periodStart: NOW - 14 * DAY, periodEnd: NOW - 1 * DAY, idempotencyKey: "PR-ME-1", actorId: "maker@test" });
+  const resultB = String(run.results.find((row) => String(row.employee_id) === "EMP-B").id);
+
+  const viewA = await selfService.employeeSelfServiceView(db, { email: "A@pawspace.TEST" }); // case-insensitive own match
+  assert.equal(viewA.linked, true);
+  assert.equal(viewA.employee.id, "EMP-A");
+  assert.equal(viewA.payslips.list.length, 1);
+  assert.equal(viewA.payslips.list[0].net, 42_000);
+  const serializedA = JSON.stringify(viewA);
+  assert.ok(!serializedA.includes("EMP-B"), "employee A's view must not contain employee B's id");
+  assert.ok(!serializedA.includes(resultB), "employee A's view must not contain employee B's payroll result");
+  assert.ok(!serializedA.includes("b@pawspace.test"), "employee A's view must not contain employee B's email");
+
+  const viewB = await selfService.employeeSelfServiceView(db, { email: "b@pawspace.test" });
+  assert.equal(viewB.employee.id, "EMP-B");
+  assert.equal(viewB.payslips.list.length, 1);
+
+  const stranger = await selfService.employeeSelfServiceView(db, { email: "nobody@pawspace.test" });
+  assert.equal(stranger.linked, false);
+
+  // The route can only ever ask for the AUTHENTICATED actor's email - no caller-supplied override.
+  const routeSource = fs.readFileSync("app/api/me/route.ts", "utf8");
+  assert.match(routeSource, /employeeSelfServiceView\(db,\{email:actor\.email\}\)/);
+  assert.doesNotMatch(routeSource, /searchParams/);
+  assert.match(routeSource, /authorize\(request,"self_service\.view"\)/);
+  void sqlite;
+});
+
+// ---------------------------------------------------------------------------
+// 3. Leave maker/checker + attendance idempotency through the self-service path.
+// ---------------------------------------------------------------------------
+test("leave requester cannot self-approve; self attendance is idempotent per key", async () => {
+  const stack = await peopleStack();
+  const { sqlite, db } = stack;
+  stack.seedEmployee("EMP-A", { workEmail: "a@pawspace.test" });
+  await attendanceLeave.saveLeavePolicy(db, { name: "Casual", leaveCode: "CL", allowNegative: false, entitlementUnits: 12, effectiveFrom: NOW - 60 * DAY, actorId: "hr@test" });
+  sqlite.prepare("INSERT INTO employee_leave_balances (employee_id,leave_code,balance,updated_at) VALUES ('EMP-A','CL',5,?)").run(NOW);
+
+  const request = await selfService.applyForLeave(db, { email: "a@pawspace.test", leaveCode: "CL", startDate: "2026-08-20", endDate: "2026-08-21", units: 2, reason: "Family visit" });
+  assert.equal(request.status, "pending");
+  await assert.rejects(attendanceLeave.decideLeave(db, { requestId: String(request.id), decision: "approved", reason: "self", actorId: "a@pawspace.test" }), /requester cannot approve their own leave request/);
+  const decided = await attendanceLeave.decideLeave(db, { requestId: String(request.id), decision: "approved", reason: "Approved by manager", actorId: "manager@test" });
+  assert.equal(decided.status, "approved");
+  assert.equal(Number(sqlite.prepare("SELECT balance FROM employee_leave_balances WHERE employee_id='EMP-A' AND leave_code='CL'").get().balance), 3);
+
+  const checkIn = await selfService.selfRecordAttendance(db, { email: "a@pawspace.test", eventType: "check_in", occurredAt: NOW, idempotencyKey: "att-key-1" });
+  assert.equal(checkIn.duplicatePrevented, false);
+  const dup = await selfService.selfRecordAttendance(db, { email: "a@pawspace.test", eventType: "check_in", occurredAt: NOW + 60_000, idempotencyKey: "att-key-1" });
+  assert.equal(dup.duplicatePrevented, true);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM attendance_events WHERE employee_id='EMP-A'").get().c, 1);
+  assert.equal(sqlite.prepare("SELECT exception_code FROM attendance_days WHERE employee_id='EMP-A'").get().exception_code, "missing_checkout");
+});
+
+// ---------------------------------------------------------------------------
+// 4. Daily incentive accrual sweep: idempotent per day.
+// ---------------------------------------------------------------------------
+test("daily incentive accrual sweep is idempotent per day and accrues from real attributed bookings", async () => {
+  const stack = await peopleStack();
+  const { sqlite, db } = stack;
+  const date = istDate(NOW - DAY);
+  await salesIncentive.saveSalesEmployeeBase(db, { employeeId: "EMP-S", baseVertical: "training", effectiveFrom: istDate(NOW - 30 * DAY), reason: "UAT sales base", actorId: "hr@test" });
+  stack.seedBooking("BK-SALES-1", { providerId: "prov_any", serviceCode: "dog_training", amount: 30_000, start: `${date}T10:00:00.000Z` });
+  await salesIncentive.attributeBookingToSalesEmployee(db, { bookingId: "BK-SALES-1", employeeId: "EMP-S", actorId: "hr@test" });
+
+  const first = await accrual.runDailyIncentiveAccrualSweep(db, { asOf: NOW, date });
+  assert.equal(first.skipped, false);
+  assert.equal(first.processed, 1);
+  assert.equal(first.accruedTotal, 500, "training tier 1 (>=25k) accrues 500");
+  const second = await accrual.runDailyIncentiveAccrualSweep(db, { asOf: NOW + 5 * 60_000, date });
+  assert.equal(second.skipped, true);
+  assert.equal(second.reason, "already_processed");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM daily_incentive_accruals WHERE employee_id='EMP-S' AND accrual_date=?").get(date).c, 1, "exactly one accrual per employee per day");
+  // Even a direct re-insert cannot duplicate the day's accrual (UNIQUE + DO NOTHING).
+  const clash = sqlite.prepare("INSERT INTO daily_incentive_accruals (id,employee_id,accrual_date,base_vertical,achieved_value,base_incentive,blitz,incentive,status,source,created_at) VALUES ('DIA-CLASH','EMP-S',?,'training',1,1,0,1,'accrued','auto_daily_sweep',1) ON CONFLICT(employee_id,accrual_date) DO NOTHING").run(date);
+  assert.equal(Number(clash.changes), 0);
+});
+
+// ---------------------------------------------------------------------------
+// 5. Leaderboards: live board ranks from real fact rows; the CRM daily board's
+//    seed refresh never clobbers a row a real module confirmed.
+// ---------------------------------------------------------------------------
+test("live leaderboard ranks employees from real productivity fact rows", async () => {
+  const stack = await peopleStack();
+  const { sqlite, db } = stack;
+  sqlite.prepare("INSERT INTO sales_productivity_fact_runs (id,idempotency_key,policy_id,policy_version,period_start,period_end,status,source_contract_version,generated_by,generated_at,detail_json) VALUES ('RUN-1','runkey-1','POL-1',1,?,?,'completed','v1','test',?,'{}')").run(NOW - 30 * DAY, NOW, NOW);
+  const insertFact = sqlite.prepare("INSERT INTO sales_productivity_facts (id,run_id,employee_email,team_code,period_start,period_end,booking_conversions,net_collected_revenue,qualified_leads,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)");
+  insertFact.run("F1", "RUN-1", "low@pawspace.test", "sales", NOW - 30 * DAY, NOW, 2, 5_000, 3, NOW);
+  insertFact.run("F2", "RUN-1", "high@pawspace.test", "sales", NOW - 30 * DAY, NOW, 4, 9_000, 6, NOW);
+
+  const board = await leaderboardLib.liveLeaderboard(db, {});
+  assert.equal(board.counts.employees, 2);
+  assert.deepEqual(board.employees.map((row) => [row.rank, row.email, row.netCollectedRevenue]), [[1, "high@pawspace.test", 9_000], [2, "low@pawspace.test", 5_000]]);
+  assert.equal(board.truth.payrollAuthority, false);
+});
+
+test("regression: the CRM daily leaderboard refresh never clobbers a row confirmed by a real module", async () => {
+  const stack = await peopleStack();
+  const { sqlite } = stack;
+  // First real GET bootstraps the CRM tables, seeds UAT leads and writes provisional leaderboard rows.
+  const first = await revenueCrmRoute.GET(new Request("http://localhost/api/revenue-crm"));
+  assert.equal(first.status, 200);
+  const owners = sqlite.prepare("SELECT id,employee_name,status FROM sales_performance_daily ORDER BY employee_name").all();
+  assert.ok(owners.length >= 2, "seeded CRM leads must produce leaderboard rows");
+  assert.ok(owners.every((row) => String(row.status) === "provisional"));
+
+  // A real module finalizes one owner's row; the next refresh must not clobber it.
+  const locked = owners[0];
+  sqlite.prepare("UPDATE sales_performance_daily SET status='confirmed',eligible_revenue=424242,incentive_amount=777 WHERE id=?").run(locked.id);
+  const second = await revenueCrmRoute.GET(new Request("http://localhost/api/revenue-crm"));
+  assert.equal(second.status, 200);
+  const after = sqlite.prepare("SELECT status,eligible_revenue,incentive_amount FROM sales_performance_daily WHERE id=?").get(locked.id);
+  assert.deepEqual([String(after.status), Number(after.eligible_revenue), Number(after.incentive_amount)], ["confirmed", 424242, 777], "a confirmed real row must win over the seed refresh");
+  const stillProvisional = sqlite.prepare("SELECT COUNT(*) c FROM sales_performance_daily WHERE status='provisional'").get().c;
+  assert.ok(Number(stillProvisional) >= 1, "other rows stay live provisional rows");
+});
+
+// ---------------------------------------------------------------------------
+// 6. Partner workspace: engagement classification, earnings reconciliation with
+//    provider_payout_computations, and the recompute-staleness regression.
+// ---------------------------------------------------------------------------
+test("partner workspace earnings reconcile with provider_payout_computations; commission providers see no earnings", async () => {
+  const stack = await peopleStack();
+  const { sqlite, db } = stack;
+  stack.seedProviderProfile("prov_contract", "full_time");
+  stack.seedProviderProfile("prov_comm", "commission");
+  sqlite.prepare("INSERT INTO provider_identity_links (email,provider_id,status,verified_at,updated_at) VALUES ('contract@pawspace.test','prov_contract','active',?,?)").run(NOW, NOW);
+  await activeTerm(stack, { serviceCode: "grooming", model: "commission_standard" });
+  stack.seedBooking("BK-C1", { providerId: "prov_contract", amount: 60_000 });
+  stack.seedBooking("BK-C2", { providerId: "prov_contract", amount: 60_000 });
+  stack.seedBooking("BK-M1", { providerId: "prov_comm", amount: 30_000 });
+
+  const one = await commercialTerms.computeOrderPayout(db, { bookingId: "BK-C1", actorId: "finance@test" });
+  const two = await commercialTerms.computeOrderPayout(db, { bookingId: "BK-C2", actorId: "finance@test" });
+  await commercialTerms.computeOrderPayout(db, { bookingId: "BK-M1", actorId: "finance@test" });
+  assert.equal(one.providerNetPayout, 31_200, "70% share of 60k minus 18% GST on the order");
+
+  // regression (workforce classification): the platform's real registries drive the engagement kind.
+  const contractWs = await workspaceLib.providerWorkspace(db, { providerId: "prov_contract" });
+  assert.equal(contractWs.engagement, "contract");
+  assert.equal(contractWs.features.surface, "partner_app");
+  assert.equal(contractWs.onboardingStatus, "active");
+  // Earnings reconcile exactly with provider_payout_computations for the same seeds.
+  const computed = sqlite.prepare("SELECT COALESCE(SUM(provider_net_payout),0) net,COALESCE(SUM(order_value),0) gross,COUNT(*) orders FROM provider_payout_computations WHERE provider_id='prov_contract'").get();
+  assert.equal(contractWs.earnings.netPayout, Number(computed.net));
+  assert.equal(contractWs.earnings.netPayout, one.providerNetPayout + two.providerNetPayout);
+  assert.equal(contractWs.earnings.grossOrderValue, 120_000);
+  assert.equal(contractWs.earnings.orders, 2);
+
+  const commissionWs = await workspaceLib.providerWorkspace(db, { providerId: "prov_comm" });
+  assert.equal(commissionWs.engagement, "commission", "commission providers must not be classified as direct employees");
+  assert.equal(commissionWs.features.surface, "commission_dashboard");
+  assert.equal(commissionWs.earnings.visible, false, "commission providers see no payslip/earnings ledger");
+
+  // regression: recomputing after an order-wise override refreshes EVERY summary column.
+  await commercialTerms.setOrderCommercialOverride(db, { bookingId: "BK-C1", providerSharePct: 0.5, reason: "Founder-approved order override", actorId: "finance@test" });
+  const recomputed = await commercialTerms.computeOrderPayout(db, { bookingId: "BK-C1", actorId: "finance@test" });
+  const row = sqlite.prepare("SELECT order_value,provider_net_payout,platform_fee,platform_gst,provider_gst_deducted FROM provider_payout_computations WHERE booking_id='BK-C1'").get();
+  assert.equal(Number(row.provider_net_payout), recomputed.providerNetPayout);
+  assert.equal(Number(row.platform_fee), recomputed.platformFee, "platform_fee must be refreshed on recompute, not left stale");
+  assert.equal(Number(row.platform_gst), recomputed.platformGst);
+  assert.equal(Number(row.provider_gst_deducted), recomputed.providerGstDeducted);
+  const wsAfter = await workspaceLib.providerWorkspace(db, { providerId: "prov_contract" });
+  assert.equal(wsAfter.earnings.netPayout, recomputed.providerNetPayout + two.providerNetPayout, "workspace earnings follow the recomputed payout");
+});
+
+// ---------------------------------------------------------------------------
+// 7. TDS: a payout visible in the partner workspace produces the matching
+//    194J (contract) / 194H (commission) deduction row for the month.
+// ---------------------------------------------------------------------------
+test("regression: partner payouts classify into 194J for contract providers and 194H for commission providers", async () => {
+  const stack = await peopleStack();
+  const { sqlite, db } = stack;
+  stack.seedProviderProfile("prov_contract", "full_time");
+  stack.seedProviderProfile("prov_comm", "commission");
+  await activeTerm(stack, { serviceCode: "grooming", model: "commission_standard" });
+  stack.seedBooking("BK-C1", { providerId: "prov_contract", amount: 60_000 });
+  stack.seedBooking("BK-C2", { providerId: "prov_contract", amount: 60_000 });
+  stack.seedBooking("BK-M1", { providerId: "prov_comm", amount: 60_000 });
+  await commercialTerms.computeOrderPayout(db, { bookingId: "BK-C1", actorId: "finance@test" });
+  await commercialTerms.computeOrderPayout(db, { bookingId: "BK-C2", actorId: "finance@test" });
+  await commercialTerms.computeOrderPayout(db, { bookingId: "BK-M1", actorId: "finance@test" });
+
+  const period = istDate(NOW).slice(0, 7);
+  const result = await tds.computeMonthlyTds(db, { period, actorId: "finance@test", asOf: NOW });
+
+  // Contract (full_time) provider: 62,400 net payouts cross the 194J Rs 50,000 FY threshold -> 10%.
+  const contractWs = await workspaceLib.providerWorkspace(db, { providerId: "prov_contract" });
+  assert.equal(result.sections["194J"].base, contractWs.earnings.netPayout, "the 194J base equals the payout the partner workspace shows");
+  assert.equal(result.sections["194J"].base, 62_400);
+  assert.equal(result.sections["194J"].tds, 6_240);
+  const jRow = sqlite.prepare("SELECT deductee_id,rate_pct FROM tds_deductions WHERE period=? AND section='194J'").get(period);
+  assert.equal(String(jRow.deductee_id), "prov_contract");
+  assert.equal(Number(jRow.rate_pct), 10);
+
+  // Commission provider: 31,200 crosses the 194H Rs 20,000 threshold -> 2%.
+  assert.equal(result.sections["194H"].base, 31_200);
+  assert.equal(result.sections["194H"].tds, 624);
+  const hRow = sqlite.prepare("SELECT deductee_id FROM tds_deductions WHERE period=? AND section='194H'").get(period);
+  assert.equal(String(hRow.deductee_id), "prov_comm");
+
+  // Recompute is idempotent (period rows replaced, not doubled).
+  const again = await tds.computeMonthlyTds(db, { period, actorId: "finance@test", asOf: NOW });
+  assert.equal(again.sections["194J"].tds, 6_240);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM tds_deductions WHERE period=?").get(period).c, 2);
+});
+
+// ---------------------------------------------------------------------------
+// 8. Provider workspace job offers stay own-record and first-accept-wins.
+// ---------------------------------------------------------------------------
+test("provider workspace: proof is own-bookings-only and job offers are first-accept-wins", async () => {
+  const stack = await peopleStack();
+  const { db } = stack;
+  stack.seedProviderProfile("prov_a", "full_time");
+  stack.seedProviderProfile("prov_b", "full_time");
+  stack.seedBooking("BK-J1", { providerId: "prov_a", serviceCode: "grooming", amount: 1_500 });
+  await assert.rejects(workspaceLib.submitJobProof(db, { providerId: "prov_b", bookingId: "BK-J1", proofType: "before_photo" }), /not assigned to you/);
+  const proof = await workspaceLib.submitJobProof(db, { providerId: "prov_a", bookingId: "BK-J1", proofType: "before_photo", objectId: "obj-1" });
+  assert.equal(proof.mirroredToCustomer, true);
+  assert.equal(stack.sqlite.prepare("SELECT COUNT(*) c FROM customer_job_updates WHERE booking_id='BK-J1'").get().c, 1);
+  await assert.rejects(workspaceLib.submitJobProof(db, { providerId: "prov_a", bookingId: "BK-J1", proofType: "walk_route" }), /not expected for grooming/);
+
+  stack.seedBooking("BK-J2", { providerId: "unassigned", amount: 900 });
+  await workspaceLib.offerJobToProvider(db, { providerId: "prov_a", bookingId: "BK-J2" });
+  await workspaceLib.offerJobToProvider(db, { providerId: "prov_b", bookingId: "BK-J2" });
+  const accepted = await workspaceLib.respondToJobOffer(db, { providerId: "prov_a", bookingId: "BK-J2", accept: true });
+  assert.equal(accepted.status, "accepted");
+  await assert.rejects(workspaceLib.respondToJobOffer(db, { providerId: "prov_b", bookingId: "BK-J2", accept: true }), /already been accepted by another provider/);
+  assert.equal(stack.sqlite.prepare("SELECT provider_id FROM canonical_bookings WHERE id='BK-J2'").get().provider_id, "prov_a");
+});
+
+// ---------------------------------------------------------------------------
+// 9. Route permission posture (source-level pins per surface).
+// ---------------------------------------------------------------------------
+test("people/partner routes keep their permission boundaries", () => {
+  const read = (path) => fs.readFileSync(path, "utf8");
+  const payrollRoute = read("app/api/payroll/route.ts");
+  assert.match(payrollRoute, /authorize\(request,"payroll\.view"\)/);
+  assert.match(payrollRoute, /authorize\(request,"payroll\.approve"\)/, "approval needs its own permission, not payroll.manage");
+  const leaderboardRoute = read("app/api/leaderboard/route.ts");
+  assert.match(leaderboardRoute, /authorize\(request,"self_service\.view"\)/);
+  const workspaceRoute = read("app/api/provider-workspace/route.ts");
+  assert.match(workspaceRoute, /resolveProviderForActor\(db,actor\.email\)/, "the workspace resolves ONLY the signed-in provider");
+  assert.doesNotMatch(workspaceRoute, /searchParams\.get\("providerId"\)/, "no caller-supplied provider override");
+  assert.match(workspaceRoute, /Cross-origin provider write blocked/);
+  const meRoute = read("app/api/me/route.ts");
+  assert.match(meRoute, /Cross-origin self-service write blocked/);
+  for (const path of ["app/api/me/route.ts", "app/api/leaderboard/route.ts", "app/api/provider-workspace/route.ts", "app/api/payroll/route.ts"]) {
+    const source = read(path);
+    assert.doesNotMatch(source, /globalThis/, `${path} must not use globalThis`);
+  }
+});

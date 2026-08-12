@@ -112,9 +112,35 @@ export async function computeMonthlyTds(db:Db,input:{period:string;actorId:strin
   if(at>=startMs&&at<endMs){entry.monthAmount+=amount;entry.monthRefs.push(ref);}
   providerAgg.set(key,entry);
  };
+ // The payout engine writes engagement_model values commission_groomer / commission_standard /
+ // direct_employee (lib/provider-commercial-terms.ts) - classify on that real vocabulary, then let
+ // the provider's workforce engagement (service_providers.engagement_type, the same source the
+ // partner workspace renders from) promote contract-engaged professionals to 194J.
+ const directModels=new Set(["direct","direct_employee"]),contractModels=new Set(["contract","contractor","contract_provider"]);
+ const workforceKindCache=new Map<string,string>();
+ const workforceKind=async(providerId:string)=>{
+  if(!workforceKindCache.has(providerId)){
+   // Same provider registries the partner workspace classifies from: service_providers when present,
+   // else provider_capacity_profiles.provider_model / provider_compensation_profiles.engagement_model
+   // (full_time = contract-engaged professional -> 194J; commission -> 194H).
+   const fromServiceProviders=await safeAll(db,"SELECT engagement_type FROM service_providers WHERE id=?",[providerId]);
+   let kind=String(fromServiceProviders[0]?.engagement_type??"").trim().toLowerCase();
+   if(!kind){
+    const fromCapacity=await safeAll(db,"SELECT provider_model FROM provider_capacity_profiles WHERE id=?",[providerId]);
+    const fromCompensation=fromCapacity.length?fromCapacity:await safeAll(db,"SELECT engagement_model provider_model FROM provider_compensation_profiles WHERE provider_id=?",[providerId]);
+    const model=String(fromCompensation[0]?.provider_model??"").trim().toLowerCase();
+    if(model)kind=model.startsWith("commission")?"commission":"contract";
+   }
+   workforceKindCache.set(providerId,kind);
+  }
+  return workforceKindCache.get(providerId)||"";
+ };
  for(const row of fyPayouts){
-  const model=String(row.engagement_model);if(model==="direct")continue;
-  accumulate(model==="contract"?"194J":"194H",String(row.provider_id),Number(row.provider_net_payout||0),Number(row.computed_at||0),String(row.booking_id));
+  const model=String(row.engagement_model).trim().toLowerCase();
+  if(directModels.has(model))continue; // salaried delivery is taxed under s192, never provider TDS
+  const providerId=String(row.provider_id);
+  const section=contractModels.has(model)||contractModels.has(await workforceKind(providerId))?"194J":"194H";
+  accumulate(section,providerId,Number(row.provider_net_payout||0),Number(row.computed_at||0),String(row.booking_id));
  }
  for(const row of fySettlements)accumulate("194H",String(row.provider_id),Number(row.payout_amount||0),Number(row.eligible_at||0),String(row.booking_id));
  const fyMonths=fyMonthsThrough(input.period).filter(month=>month!==input.period);
