@@ -30,6 +30,7 @@ const DDL_SOURCES = [
   read("lib/unified-case-center.ts"), // unified_cases
   read("lib/lead-callback-governance.ts"),
   read("lib/daily-revenue-opportunity-governance.ts"),
+  read("lib/grooming-payment-reconciliation.ts"), // payment_reconciliation_records (leaderboard collections/refunds)
 ];
 
 function schemaDb() {
