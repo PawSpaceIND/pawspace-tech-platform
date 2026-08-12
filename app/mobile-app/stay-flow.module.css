@@ -28,7 +28,7 @@
   background: #e7e0eb;
 }
 .steps .active {
-  background: #5d22a8;
+  background: #01261F;
   color: #fff;
 }
 .steps .active:not(:last-child):after {
@@ -46,7 +46,7 @@
 }
 .head small {
   font-size: 8px;
-  color: #6a25aa;
+  color: #0a4a3c;
   font-weight: 900;
 }
 .modeSwitch {
@@ -103,7 +103,7 @@
 }
 .selected {
   border-color: #6424a8 !important;
-  background: #faf6ff !important;
+  background: #f2f7f5 !important;
 }
 .field {
   display: grid;
@@ -206,7 +206,7 @@
   width: 100%;
   border: 0;
   border-radius: 11px;
-  background: #5d22a8;
+  background: #01261F;
   color: #fff;
   padding: 12px;
   font-size: 9px;
@@ -536,7 +536,7 @@
 }
 .review b {
   text-align: right;
-  color: #30233a;
+  color: #0b2b24;
   font-size: 8px;
 }
 .bill {
@@ -602,7 +602,7 @@
   border: 1px solid #e4ddea;
   border-radius: 11px;
   background: #fff;
-  color: #30233a;
+  color: #0b2b24;
   text-align: left;
 }
 .paymentChoice button > i {
@@ -1232,7 +1232,7 @@
   left: 50%;
   transform: translateX(-50%);
   z-index: 9;
-  background: #281140;
+  background: #012a22;
   color: white;
   padding: 11px 16px;
   border-radius: 10px;
