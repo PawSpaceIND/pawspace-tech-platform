@@ -1,0 +1,442 @@
+/* Pet Food flow — Emerald #01261F / Gold #E6B34E, system fonts, mobile-first. */
+
+.flow {
+  padding-bottom: 10px;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: #01261f;
+}
+
+.steps {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 5px;
+  margin: 2px 0 14px;
+}
+
+.steps span {
+  height: 24px;
+  border-radius: 15px;
+  background: #e8e2ec;
+  color: #8c8195;
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.steps .active {
+  background: #01261f;
+  color: white;
+}
+
+.head,
+.section {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  gap: 8px;
+}
+
+.head h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.head small,
+.section span {
+  font-size: 8px;
+  color: #0a4a3c;
+  font-weight: 900;
+  letter-spacing: 0.4px;
+}
+
+.section {
+  margin: 14px 2px 7px;
+}
+
+.section b {
+  font-size: 11px;
+}
+
+.petRow {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.petRow button {
+  border: 1px solid #e5deea;
+  background: white;
+  color: #0b2b24;
+  border-radius: 13px;
+  padding: 10px 4px;
+  display: grid;
+  place-items: center;
+  gap: 2px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.petRow button i {
+  font-style: normal;
+  font-size: 18px;
+}
+
+.petRow button b {
+  font-size: 12px;
+}
+
+.petRow button small {
+  font-size: 8px;
+  color: #71667c;
+  text-align: center;
+}
+
+.petRow .selected {
+  border: 2px solid #e6b34e;
+  background: #01261f;
+  color: white;
+}
+
+.petRow .selected small {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #e5deea;
+  border-radius: 13px;
+  padding: 11px 12px;
+  margin-bottom: 8px;
+  background: white;
+}
+
+.item > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.item b {
+  font-size: 13px;
+}
+
+.item small {
+  font-size: 10px;
+  color: #71667c;
+}
+
+.item em {
+  font-style: normal;
+  font-size: 13px;
+  font-weight: 800;
+  color: #01261f;
+  white-space: nowrap;
+}
+
+.forPets {
+  font-size: 9px;
+  font-weight: 800;
+  color: #01261f;
+  background: rgba(230, 179, 78, 0.25);
+  border: 1px solid rgba(230, 179, 78, 0.6);
+  border-radius: 8px;
+  padding: 2px 7px;
+  justify-self: start;
+}
+
+.itemBuy {
+  display: grid;
+  gap: 6px;
+  justify-items: end;
+}
+
+.addBtn {
+  border: none;
+  background: #01261f;
+  color: #e6b34e;
+  border-radius: 9px;
+  padding: 6px 16px;
+  font-size: 11px;
+  font-weight: 800;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.addBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #01261f;
+  border-radius: 9px;
+  padding: 3px 8px;
+}
+
+.stepper button {
+  border: none;
+  background: none;
+  color: #01261f;
+  font-size: 14px;
+  font-weight: 800;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0 3px;
+}
+
+.stepper b {
+  font-size: 13px;
+  min-width: 14px;
+  text-align: center;
+}
+
+.planRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 7px;
+  margin-bottom: 10px;
+}
+
+.planRow button {
+  border: 1px solid #e5deea;
+  background: white;
+  color: #0b2b24;
+  border-radius: 13px;
+  padding: 11px 8px;
+  display: grid;
+  gap: 3px;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.planRow button b {
+  font-size: 12px;
+}
+
+.planRow button span {
+  font-size: 9px;
+  color: #71667c;
+}
+
+.planRow .selected {
+  border: 2px solid #e6b34e;
+  background: #01261f;
+  color: white;
+}
+
+.planRow .selected span {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.field {
+  display: grid;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.field input {
+  border: 1px solid #e5deea;
+  border-radius: 11px;
+  padding: 11px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  color: #01261f;
+}
+
+.field input:focus {
+  outline: none;
+  border-color: #e6b34e;
+  box-shadow: 0 0 0 2px rgba(230, 179, 78, 0.35);
+}
+
+.review {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #e5deea;
+  border-radius: 13px;
+  padding: 12px;
+  margin-bottom: 8px;
+  background: white;
+}
+
+.review span {
+  display: grid;
+  gap: 1px;
+  font-size: 9px;
+  font-weight: 800;
+  color: #71667c;
+  text-transform: uppercase;
+}
+
+.review span b {
+  font-size: 12px;
+  color: #01261f;
+  text-transform: none;
+}
+
+.totalRow {
+  border: 1px solid rgba(230, 179, 78, 0.6);
+  background: rgba(230, 179, 78, 0.12);
+  border-radius: 13px;
+  padding: 12px;
+  margin-bottom: 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.totalRow span {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.totalRow span b {
+  font-size: 15px;
+}
+
+.totalRow small {
+  font-size: 9px;
+  color: #4c5b52;
+}
+
+.primary {
+  width: 100%;
+  border: none;
+  background: #01261f;
+  color: #e6b34e;
+  border-radius: 13px;
+  padding: 14px;
+  font-size: 14px;
+  font-weight: 800;
+  font-family: inherit;
+  cursor: pointer;
+  margin-top: 6px;
+}
+
+.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.back {
+  border: none;
+  background: none;
+  color: #0a4a3c;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 8px 0;
+}
+
+.hint {
+  font-size: 10px;
+  color: #71667c;
+  margin: 8px 2px;
+}
+
+.error {
+  font-size: 12px;
+  color: #9c2b1f;
+  margin: 8px 2px;
+}
+
+.success {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  text-align: center;
+  padding: 18px 12px;
+  border: 1px solid rgba(230, 179, 78, 0.6);
+  background: rgba(230, 179, 78, 0.1);
+  border-radius: 15px;
+  margin-bottom: 10px;
+}
+
+.success i {
+  font-style: normal;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #01261f;
+  color: #e6b34e;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+}
+
+.success small {
+  font-size: 8px;
+  font-weight: 900;
+  color: #0a4a3c;
+  letter-spacing: 0.5px;
+}
+
+.success h3 {
+  margin: 2px 0;
+  font-size: 16px;
+}
+
+.success p {
+  margin: 0;
+  font-size: 11px;
+  color: #4c5b52;
+}
+
+.orderCard {
+  border: 1px solid #e5deea;
+  border-radius: 13px;
+  padding: 12px;
+  margin-bottom: 8px;
+  background: white;
+  display: grid;
+  gap: 5px;
+}
+
+.orderCard header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.orderCard header b {
+  font-size: 12px;
+}
+
+.orderCard header em {
+  font-style: normal;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.orderCard p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.orderCard small {
+  font-size: 10px;
+  color: #71667c;
+}
+
+.subBadge {
+  font-size: 10px;
+  font-weight: 700;
+  color: #01261f;
+  background: rgba(230, 179, 78, 0.25);
+  border: 1px solid rgba(230, 179, 78, 0.6);
+  border-radius: 9px;
+  padding: 5px 9px;
+}
