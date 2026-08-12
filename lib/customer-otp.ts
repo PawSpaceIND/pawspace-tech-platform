@@ -38,10 +38,13 @@ export async function verifyCustomerOtp(db:Db,input:{challengeId:string;code:str
  if(Date.now()>Number(row.expires_at))throw new Error("OTP has expired - request a new one");
  if(Number(row.attempts)>=5)throw new Error("Too many incorrect attempts - request a new OTP");
  if(text(row.code)!==text(input.code)){
-   await db.prepare("UPDATE customer_otp_challenges SET attempts=attempts+1 WHERE id=?").bind(input.challengeId).run();
+   await db.prepare("UPDATE customer_otp_challenges SET attempts=attempts+1 WHERE id=? AND attempts<5").bind(input.challengeId).run();
    throw new Error("Incorrect OTP code");
  }
- await db.prepare("UPDATE customer_otp_challenges SET consumed=1 WHERE id=?").bind(input.challengeId).run();
+ // Atomic consume: without the consumed=0 guard two concurrent verifies of the same challenge
+ // both passed the read-side check and each minted a signed assertion from one OTP.
+ const claim=await db.prepare("UPDATE customer_otp_challenges SET consumed=1 WHERE id=? AND consumed=0").bind(input.challengeId).run();
+ if(!Number(claim.meta.changes))throw new Error("This OTP has already been used");
  const phone=text(row.phone);
  let customer=await db.prepare("SELECT id,name,primary_phone,city_id FROM canonical_customers WHERE primary_phone=? OR secondary_phone=?").bind(phone,phone).first<Row>();
  if(!customer){
