@@ -2,7 +2,7 @@ import{assignConversation,ensureConversationGovernance}from"./conversation-gover
 import{requireCustomerOwnership,type AuthenticatedActor}from"./server-auth";
 
 type Row=Record<string,unknown>;
-export type AiHandoffReason="customer_requested_human"|"low_confidence"|"provider_unavailable"|"provider_error"|"provider_unsupported"|"policy_risk"|"complaint"|"safety"|"refund_payment_dispute"|"urgent_funeral_memorial"|"sensitive_relocation"|"unsupported_request";
+export type AiHandoffReason="customer_requested_human"|"low_confidence"|"provider_unavailable"|"provider_error"|"provider_unsupported"|"policy_risk"|"complaint"|"safety"|"refund_payment_dispute"|"urgent_funeral_memorial"|"sensitive_relocation"|"unsupported_request"|"rollout_gated";
 export type AiHandoffAction="take_over"|"resume_ai";
 
 const text=(value:unknown)=>String(value??"").trim();
