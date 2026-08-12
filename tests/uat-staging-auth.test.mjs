@@ -28,3 +28,10 @@ test("the login route requires the access code and only works when enabled", () 
   assert.match(route, /Invalid access code/);
   assert.match(route, /clearUatCookie/);                                // logout
 });
+
+test("the API gateway allowlists the login endpoint and honours the UAT cookie", async () => {
+  const gw = await read("../lib/api-gateway.ts");
+  assert.match(gw, /\/api\/staging-login"\)return null/);   // login endpoint is public
+  assert.match(gw, /resolveUatStaffActor\(env\.DB,request/); // gateway resolves the UAT cookie
+  assert.match(gw, /a no-op in production/);
+});
