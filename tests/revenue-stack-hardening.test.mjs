@@ -56,6 +56,7 @@ const leadershipRoute = await import("../app/api/revenue-leadership-reporting/ro
 const intelligenceRoute = await import("../app/api/revenue-intelligence/route.ts");
 const crmEngineRoute = await import("../app/api/revenue-crm/route.ts");
 const { generatePnlReport } = await import("../lib/pnl-reporting.ts");
+const { buildCompanyAnalytics } = await import("../lib/company-analytics.ts");
 
 const call = async (handler, method, bodyOrQuery) => {
   const url = `http://localhost/api/x${method === "GET" && bodyOrQuery ? `?${bodyOrQuery}` : ""}`;
@@ -147,6 +148,12 @@ test("reconciliation: mission booked === P&L revenue for the same seeded canonic
   // Pre-fix the P&L reported 4500 here: grooming revenue was counted on BOTH grooming chart lines.
   assert.equal(pnl.totalTurnoverAmount, 3500, "P&L revenue = canonical_bookings pricing excluding cancelled/draft, each booking counted once");
   assert.equal(summary.body.summary.metrics.booked, pnl.totalTurnoverAmount, "revenue-mission and the finance P&L view agree on the same seeds");
+  // Three-way reconciliation: company-analytics revenue must agree with both views for the same
+  // seeds. Pre-fix company GMV was 5800 here — it counted the cancelled 1500 and draft 800.
+  const company = await buildCompanyAnalytics(globalThis.__REV_DB__, {});
+  assert.equal(company.money.gmv, 3500, "company-analytics GMV excludes cancelled and draft bookings");
+  assert.equal(company.money.gmv, pnl.totalTurnoverAmount, "company-analytics revenue === P&L turnover");
+  assert.equal(company.money.gmv, summary.body.summary.metrics.booked, "company-analytics revenue === mission booked");
   // dog_training maps to FIVE chart sub-lines — a confirmed 2000 training booking must add exactly
   // 2000 to both views (pre-fix the P&L added 10000).
   const createdAt = NOW - 2 * DAY;
@@ -157,6 +164,9 @@ test("reconciliation: mission booked === P&L revenue for the same seeded canonic
   assert.equal(pnl2.totalTurnoverAmount, 5500, "training booking adds exactly 2000, not 5×2000");
   assert.equal(summary2.body.summary.metrics.booked, 5500);
   assert.equal(summary2.body.summary.metrics.booked, pnl2.totalTurnoverAmount, "views still agree after new canonical data");
+  const company2 = await buildCompanyAnalytics(globalThis.__REV_DB__, {});
+  assert.equal(company2.money.gmv, 5500, "company-analytics follows the same canonical delta");
+  assert.equal(company2.money.gmv, pnl2.totalTurnoverAmount, "three-way reconciliation still holds after new canonical data");
 });
 
 test("reconciliation: revenue-crm team revenue === mission net collected — the fabricated leaderboard array is gone", async () => {
