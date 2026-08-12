@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { quoteGovernedCoupon } from "../../lib/coupon-governance-client";
 import type { CustomerKind, PawspaceService } from "../../lib/offer-engine";
 import styles from "./coupon-field.module.css";
@@ -11,6 +11,8 @@ const serviceCodes: Record<PawspaceService, "grooming" | "dog_training" | "board
   Boarding: "boarding",
   "Pet Sitting": "pet_sitting",
 };
+
+type AvailableOffer = { code: string; name: string; description: string; autoApply: boolean };
 
 export default function CouponField(props: {
   eligible?: boolean;
@@ -42,9 +44,12 @@ export default function CouponField(props: {
   const [applied, setApplied] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [offers, setOffers] = useState<AvailableOffer[]>([]);
+  const [showOffers, setShowOffers] = useState(false);
+  const autoApplied = useRef(false);
 
-  const apply = async () => {
-    const normalized = code.trim().toUpperCase();
+  const apply = async (rawCode?: string) => {
+    const normalized = (rawCode ?? code).trim().toUpperCase();
     if (!normalized || loading) return;
     if (!customerId) { setMessage("Sign in required before applying a coupon"); return; }
     setLoading(true);
@@ -78,6 +83,28 @@ export default function CouponField(props: {
     }
   };
 
+  // Founder ask: available codes pop up here, and a NEW customer's welcome coupon auto-populates
+  // and applies without typing. Listing comes from the governed /api/customer-offers browse
+  // surface; the discount itself is still only ever decided by the server quote above.
+  useEffect(() => {
+    if (!customerId || !eligible) return;
+    let active = true;
+    void fetch(`/api/customer-offers?customerId=${encodeURIComponent(customerId)}`, { cache: "no-store" })
+      .then(async (response) => {
+        const body = (await response.json()) as { data?: { coupons: AvailableOffer[]; autoApply: AvailableOffer | null } };
+        if (!active || !body.data) return;
+        setOffers(body.data.coupons);
+        if (body.data.autoApply && !autoApplied.current && !applied && !code) {
+          autoApplied.current = true;
+          setCode(body.data.autoApply.code);
+          void apply(body.data.autoApply.code);
+        }
+      })
+      .catch(() => {});
+    return () => { active = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId, eligible]);
+
   return (
     <section className={`${styles.coupon} ${!eligible ? styles.disabled : ""}`}>
       <header>
@@ -95,10 +122,28 @@ export default function CouponField(props: {
           placeholder={eligible ? "UATCARE100" : "Choose 100% payment to apply"}
           aria-label="Coupon code"
         />
-        <button type="button" disabled={!eligible || !code.trim() || loading} onClick={apply}>
+        <button type="button" disabled={!eligible || !code.trim() || loading} onClick={() => void apply()}>
           {loading ? "Checking…" : "Apply"}
         </button>
       </label>
+      {offers.length > 0 && eligible && (
+        <div className={styles.offersRow}>
+          <button type="button" className={styles.offersToggle} onClick={() => setShowOffers(value => !value)}>
+            {showOffers ? "Hide available codes" : `View ${offers.length} available code${offers.length === 1 ? "" : "s"} ›`}
+          </button>
+          {showOffers && (
+            <div className={styles.offersList} role="list">
+              {offers.map(offer => (
+                <button type="button" key={offer.code} role="listitem" className={applied === offer.code ? styles.offerApplied : ""} onClick={() => { setCode(offer.code); void apply(offer.code); setShowOffers(false); }}>
+                  <b>{offer.code}</b>
+                  <span>{offer.description}</span>
+                  {offer.autoApply && <em>For you</em>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       {message && <small className={applied ? styles.success : styles.error}>{message}</small>}
     </section>
   );
