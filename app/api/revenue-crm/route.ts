@@ -58,12 +58,36 @@ async function generateDaily100(db:Db,actorEmail:string){
 }
 
 async function refreshLeaderboard(db:Db){
-  const date=dayKey(),now=Date.now(),stats=[
-    ["Priya",25000,28750,27400,7,3,96,91,0],["Rahul",25000,25100,23900,6,2,89,100,500],["Neha",25000,22400,21600,5,4,98,84,0],["Sanjay",25000,19850,18750,4,1,82,76,0],
-  ] as const;
-  // UAT seed only: OR IGNORE so a row written or updated by the real productivity/attribution
-  // modules is never clobbered back to seed values on every GET.
-  for(let index=0;index<stats.length;index++){const [name,target,revenue,collections,conversions,renewals,sla,rnr,refunds]=stats[index],eligible=Math.max(0,revenue-refunds),incentive=eligible>=target?Math.round((eligible-target)*.08+1250):0;await db.prepare("INSERT OR IGNORE INTO sales_performance_daily (id,performance_date,employee_name,target_revenue,eligible_revenue,collections,conversions,renewals,sla_percent,rnr_percent,refunds,incentive_amount,rank,status,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'provisional',?)").bind(`PERF-${date}-${name}`,date,name,target,eligible,collections,conversions,renewals,sla,rnr,refunds,incentive,index+1,now).run()}
+  const date=dayKey(),now=Date.now();
+  // Canonical leaderboard: every number is derived from real sources — conversions and booked value
+  // from lead_work_items.converted_booking_id -> canonical_bookings pricing (cancelled/draft
+  // excluded, matching the P&L revenue predicate), collections/refunds from
+  // payment_reconciliation_records (the same captured/refunded truth Revenue Mission Control uses),
+  // SLA/RNR from the owner's own lead rows, and the target from the governed daily revenue target.
+  // The previous fixed demo array fabricated per-owner revenue figures and an invented commission
+  // formula; incentives now stay 0/provisional until a governed incentive policy exists.
+  const ownerRows=rows<Row>(await db.prepare("SELECT DISTINCT owner FROM lead_work_items WHERE owner IS NOT NULL AND owner!='' ORDER BY owner").all());
+  if(!ownerRows.length)return;
+  const dailyTarget=await currentDailyRevenueTarget(db,date),perOwnerTarget=Math.round(dailyTarget/ownerRows.length);
+  // Explicit existence probe (same pattern as lib/pnl-reporting.ts) instead of a swallow-all .catch:
+  // on a fresh staging DB where booking modules have not run yet, attribution simply reports zeros.
+  const canonicalTables=rows<Row>(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('canonical_bookings','booking_payments','payment_reconciliation_records')").all());
+  const canAttribute=canonicalTables.length===3;
+  const facts:Array<{name:string;booked:number;collections:number;refunds:number;conversions:number;slaPercent:number;rnrPercent:number}>=[];
+  for(const ownerRow of ownerRows){
+    const owner=String(ownerRow.owner);
+    const revenue=canAttribute?await db.prepare("SELECT COUNT(DISTINCT l.converted_booking_id) conversions,COALESCE(SUM(b.total_amount),0) booked,COALESCE(SUM(r.captured_amount),0) collections,COALESCE(SUM(r.refunded_amount),0) refunds FROM lead_work_items l JOIN canonical_bookings b ON b.id=l.converted_booking_id AND b.status NOT IN ('cancelled','draft') LEFT JOIN booking_payments p ON p.booking_id=b.id LEFT JOIN payment_reconciliation_records r ON r.payment_id=p.id WHERE l.owner=? AND l.converted_booking_id IS NOT NULL").bind(owner).first<Row>():null;
+    const sla=await db.prepare("SELECT COUNT(*) total,SUM(CASE WHEN first_action_at IS NOT NULL AND first_action_at<=first_action_due_at THEN 1 ELSE 0 END) met,SUM(CASE WHEN call_attempts>=4 AND whatsapp_attempts>=4 THEN 1 ELSE 0 END) rnr_complete FROM lead_work_items WHERE owner=?").bind(owner).first<Row>();
+    const total=Number(sla?.total||0);
+    facts.push({name:owner,booked:Number(revenue?.booked||0),collections:Number(revenue?.collections||0),refunds:Number(revenue?.refunds||0),conversions:Number(revenue?.conversions||0),slaPercent:total?Math.round((Number(sla?.met||0)/total)*100):0,rnrPercent:total?Math.round((Number(sla?.rnr_complete||0)/total)*100):0});
+  }
+  facts.sort((a,b)=>(b.collections-b.refunds)-(a.collections-a.refunds));
+  // INSERT OR IGNORE so a row written by a real module is never clobbered; the follow-up UPDATE
+  // refreshes only rows still in 'provisional' state so the day's canonical numbers stay live.
+  for(let index=0;index<facts.length;index++){const fact=facts[index],eligible=Math.max(0,fact.collections-fact.refunds);
+    await db.prepare("INSERT OR IGNORE INTO sales_performance_daily (id,performance_date,employee_name,target_revenue,eligible_revenue,collections,conversions,renewals,sla_percent,rnr_percent,refunds,incentive_amount,rank,status,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'provisional',?)").bind(`PERF-${date}-${fact.name}`,date,fact.name,perOwnerTarget,eligible,fact.collections,fact.conversions,0,fact.slaPercent,fact.rnrPercent,fact.refunds,0,index+1,now).run();
+    await db.prepare("UPDATE sales_performance_daily SET target_revenue=?,eligible_revenue=?,collections=?,conversions=?,sla_percent=?,rnr_percent=?,refunds=?,rank=?,updated_at=? WHERE id=? AND status='provisional' AND updated_at<?").bind(perOwnerTarget,eligible,fact.collections,fact.conversions,fact.slaPercent,fact.rnrPercent,fact.refunds,index+1,now,`PERF-${date}-${fact.name}`,now).run();
+  }
 }
 
 async function runLeadReopening(db:Db,actorEmail:string,asOf=Date.now()){

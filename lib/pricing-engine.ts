@@ -2,7 +2,10 @@ export type PricingPackage={id:string;serviceCode:string;packageCode:string;name
 export type PricingRule={id:string;name:string;serviceCode:string;packageCode?:string|null;cityId:string;zoneId?:string|null;ruleType:"weekday"|"weekend"|"time_band"|"season"|"date_range";days:number[];startTime?:string|null;endTime?:string|null;effectiveFrom:string;effectiveTo?:string|null;adjustmentType:"percent"|"fixed"|"override";adjustmentValue:number;couponPolicy:"stackable"|"exclusive"|"blocked";priority:number;status:"draft"|"approved"|"published"|"paused";version:number};
 export type CouponInput={code:string;discountType:"percent"|"fixed";value:number;maxDiscount?:number};
 export type PriceQuote={packageCode:string;packageName:string;basePrice:number;dynamicAdjustment:number;priceBeforeCoupon:number;couponDiscount:number;finalPrice:number;taxInclusive:boolean;slotMinutes:number;blockingMinutes:number;couponStatus:"not_applied"|"applied"|"blocked";appliedRules:Array<{id:string;name:string;version:number;amount:number}>;explanation:string[]};
-const isoDay=(value:string)=>new Date(value).getDay();
+// Day-of-week must be evaluated in the SAME timezone as the time band (Asia/Kolkata), not the
+// server's local zone - otherwise an IST Saturday before 05:30 counts as Friday on a UTC runtime.
+const weekdayNames=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+const isoDay=(value:string)=>weekdayNames.indexOf(new Date(value).toLocaleDateString("en-GB",{timeZone:"Asia/Kolkata",weekday:"short"}).slice(0,3));
 const dateOnly=(value:string)=>value.slice(0,10);
 const timeOnly=(value:string)=>new Date(value).toLocaleTimeString("en-GB",{timeZone:"Asia/Kolkata",hour:"2-digit",minute:"2-digit",hour12:false});
 const activeOn=(rule:PricingRule,at:string)=>dateOnly(at)>=rule.effectiveFrom&&(!rule.effectiveTo||dateOnly(at)<=rule.effectiveTo);

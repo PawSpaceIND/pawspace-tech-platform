@@ -1,4 +1,5 @@
 import { buildCustomer360 } from "./customer-360";
+import { saveCouponCampaign, type CouponService } from "./coupon-governance";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -20,7 +21,32 @@ export async function ensurePromotionGovernance(db:Db){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS promotion_audience_members (snapshot_id TEXT NOT NULL,promotion_id TEXT NOT NULL,customer_id TEXT NOT NULL,cohort TEXT NOT NULL,suppression_reason TEXT,PRIMARY KEY(snapshot_id,customer_id))"),
  db.prepare("CREATE TABLE IF NOT EXISTS promotion_redemptions (id TEXT PRIMARY KEY,promotion_id TEXT NOT NULL,customer_id TEXT NOT NULL,booking_id TEXT,discount_amount REAL NOT NULL,idempotency_key TEXT NOT NULL UNIQUE,created_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS promotion_governance_events (id TEXT PRIMARY KEY,promotion_id TEXT NOT NULL,event_type TEXT NOT NULL,actor_email TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),
-]);}
+]);
+ const columns=await db.prepare("PRAGMA table_info(governed_marketing_promotions)").all<Row>();
+ if(!columns.results.some(row=>String(row.name)==="coupon_campaign_id")){
+  await db.prepare("ALTER TABLE governed_marketing_promotions ADD COLUMN coupon_campaign_id TEXT").run();
+  await db.prepare("ALTER TABLE governed_marketing_promotions ADD COLUMN coupon_code TEXT").run();
+ }
+}
+
+const COUPON_SERVICES:CouponService[]=["grooming","dog_training","boarding","pet_sitting"];
+function verticalToCouponServices(vertical:string):CouponService[]{
+ const value=vertical.trim().toLowerCase();
+ if(value.includes("groom"))return["grooming"];
+ if(value.includes("train"))return["dog_training"];
+ if(value.includes("board"))return["boarding"];
+ if(value.includes("sit"))return["pet_sitting"];
+ return COUPON_SERVICES;
+}
+/** Budget-guaranteed coupon limits, by declared policy (documented, not estimated):
+ *  flat: each redemption costs exactly `value`, so totalLimit = floor(cap/value).
+ *  percent: per-redemption discount is capped at floor(cap/100) across at most 100 redemptions,
+ *  so the worst-case total spend is exactly the budget cap. */
+export function promotionCouponLimits(promotionType:string,value:number,budgetCap:number){
+ if(promotionType==="flat_discount"){const per=Math.min(value,budgetCap);return{discountType:"fixed" as const,maxDiscount:per,totalLimit:Math.max(1,Math.floor(budgetCap/per))};}
+ return{discountType:"percent" as const,maxDiscount:Math.max(1,Math.floor(budgetCap/100)),totalLimit:100};
+}
+function promotionCouponCode(promotionId:string){return`PROMO${promotionId.replace(/[^A-Z0-9]/gi,"").slice(-8).toUpperCase()}`;}
 
 function validatePromotion(input:{name:string;promotionType:string;vertical:string;audience:string;value:number;budgetCap:number;marginFloorPercent:number;holdoutPercent:number}){
  if(!input.name.trim())throw new Error("Promotion name is required");
@@ -95,11 +121,23 @@ export async function activatePromotion(db:Db,input:{promotionId:string;actor:st
  const snapshot=await db.prepare("SELECT id FROM promotion_audience_snapshots WHERE promotion_id=? ORDER BY snapshot_at DESC LIMIT 1").bind(input.promotionId).first<Row>();
  if(!snapshot)throw new Error("Promotion requires a governed audience snapshot before activation");
  const now=Date.now();
+ // Link discount promotions to the governed coupon table the customer surfaces actually read
+ // (quoteCoupon in coupon-governance) - otherwise an "active" promotion is invisible to customers.
+ const promotionType=String(row.promotion_type);
+ let couponCampaignId:string|null=null,couponCode:string|null=null;
+ if(["percent_discount","flat_discount"].includes(promotionType)){
+  const value=Number(row.value),budgetCap=Number(row.budget_cap),limits=promotionCouponLimits(promotionType,value,budgetCap);
+  couponCampaignId=`coupon-promo-${input.promotionId}`;couponCode=promotionCouponCode(input.promotionId);
+  const validFrom=row.start_at?Date.parse(`${String(row.start_at)}T00:00:00Z`):now;
+  const parsedEnd=row.end_at?Date.parse(`${String(row.end_at)}T23:59:59Z`):NaN;
+  const validUntil=Number.isFinite(parsedEnd)&&parsedEnd>Math.max(validFrom,now)?parsedEnd:Math.max(validFrom,now)+90*86_400_000;
+  await saveCouponCampaign(db,{id:couponCampaignId,code:couponCode,name:`Promotion: ${String(row.name)}`,status:"active",serviceCodes:verticalToCouponServices(String(row.vertical)),cityIds:["blr"],channels:["customer_app","website"],customerKinds:["new","existing","subscriber"],packageScope:"all",packageCodes:[],crossSellFromServices:[],firstOrderOnly:false,minOrder:0,maxOrder:null,subscriptionEligible:false,fullPaymentOnly:false,discountType:limits.discountType,discountValue:value,maxDiscount:limits.maxDiscount,perCustomerLimit:1,totalLimit:limits.totalLimit,validFrom:Number.isFinite(validFrom)?validFrom:now,validUntil});
+ }
  await db.batch([
-   db.prepare("UPDATE governed_marketing_promotions SET status='active',updated_at=? WHERE id=?").bind(now,input.promotionId),
-   db.prepare("INSERT INTO promotion_governance_events (id,promotion_id,event_type,actor_email,detail_json,created_at) VALUES (?,?,?,?,?,?)").bind(uid("PROMOEVT"),input.promotionId,"activated",input.actor,JSON.stringify({snapshotId:snapshot.id}),now),
+   db.prepare("UPDATE governed_marketing_promotions SET status='active',coupon_campaign_id=?,coupon_code=?,updated_at=? WHERE id=?").bind(couponCampaignId,couponCode,now,input.promotionId),
+   db.prepare("INSERT INTO promotion_governance_events (id,promotion_id,event_type,actor_email,detail_json,created_at) VALUES (?,?,?,?,?,?)").bind(uid("PROMOEVT"),input.promotionId,"activated",input.actor,JSON.stringify({snapshotId:snapshot.id,couponCampaignId,couponCode,couponLinkage:couponCampaignId?"governed_coupon_campaign":"not_applicable_promotion_type"}),now),
  ]);
- return{promotionId:input.promotionId,status:"active"};
+ return{promotionId:input.promotionId,status:"active",couponCampaignId,couponCode};
 }
 
 /** Real redemption tracking against the real budget cap - a redemption that would exceed the cap is rejected, not silently allowed. */
@@ -122,7 +160,10 @@ export async function setPromotionStatus(db:Db,input:{promotionId:string;status:
  await ensurePromotionGovernance(db);
  const now=Date.now();
  await db.prepare("UPDATE governed_marketing_promotions SET status=?,updated_at=? WHERE id=?").bind(input.status,now,input.promotionId).run();
- await event(db,input.promotionId,"status_changed",input.actor,{status:input.status});
+ // Pausing/completing a promotion must also stop its customer-facing coupon immediately.
+ const row=await db.prepare("SELECT coupon_campaign_id FROM governed_marketing_promotions WHERE id=?").bind(input.promotionId).first<Row>();
+ if(row?.coupon_campaign_id)await db.prepare("UPDATE coupon_campaigns SET status='paused',updated_at=? WHERE id=?").bind(now,String(row.coupon_campaign_id)).run();
+ await event(db,input.promotionId,"status_changed",input.actor,{status:input.status,couponPaused:Boolean(row?.coupon_campaign_id)});
  return{id:input.promotionId,status:input.status};
 }
 
