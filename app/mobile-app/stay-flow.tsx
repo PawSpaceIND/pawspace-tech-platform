@@ -221,15 +221,17 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
   const meetFee = meet && mode === "sitting" && meetFormat === "visit" ? 500 : 0;
   const totalBeforeCoupon = stayTotal + meetFee;
   const total = mode === "boarding" ? boardingQuote?.totalAmount??0 : Math.max(0, totalBeforeCoupon - discount);
-  const splitEligible = mode !== "boarding" && careWindow === "24 hours" && nights > 5;
+  const splitEligible = careWindow === "24 hours" && nights > 4;
   const discountedStay = Math.max(0, stayTotal - discount);
   const reserveAmount = mode === "boarding" ? boardingQuote?.amountDueNow??0 : splitEligible && splitPayment
     ? Math.ceil(discountedStay / 2) + meetFee
     : total;
-  const balanceAmount = mode === "boarding" ? 0 : splitEligible && splitPayment
+  const balanceAmount = mode === "boarding"
+    ? Math.max(0, (boardingQuote?.totalAmount??0) - (boardingQuote?.amountDueNow??0))
+    : splitEligible && splitPayment
     ? discountedStay - Math.ceil(discountedStay / 2)
     : 0;
-  useEffect(()=>{if(mode!=="boarding")return;let active=true;const scheduleStart=new Date(`${start}T03:30:00.000Z`),scheduleEnd=careWindow==="24 hours"?new Date(`${end}T03:30:00.000Z`):new Date(scheduleStart.getTime()+(careWindow==="10 hours"?10:4)*3_600_000),packageCode=careWindow==="4 hours"?"boarding-4h":careWindow==="10 hours"?"boarding-10h":"boarding-24h";void quoteBoarding({packageCode,petCount:selectedPets.length,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),paymentMode:"prepaid"}).then(value=>{if(active){setBoardingQuote(value);setScheduleError("");}}).catch(problem=>{if(active){setBoardingQuote(null);setScheduleError(problem instanceof Error?problem.message:"Unable to refresh Boarding quote");}});return()=>{active=false;};},[mode,careWindow,start,end,selectedPets.length]);
+  useEffect(()=>{if(mode!=="boarding")return;let active=true;const scheduleStart=new Date(`${start}T03:30:00.000Z`),scheduleEnd=careWindow==="24 hours"?new Date(`${end}T03:30:00.000Z`):new Date(scheduleStart.getTime()+(careWindow==="10 hours"?10:4)*3_600_000),packageCode=careWindow==="4 hours"?"boarding-4h":careWindow==="10 hours"?"boarding-10h":"boarding-24h";void quoteBoarding({packageCode,petCount:selectedPets.length,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),paymentMode:splitEligible&&splitPayment?"split_50_50":"prepaid"}).then(value=>{if(active){setBoardingQuote(value);setScheduleError("");}}).catch(problem=>{if(active){setBoardingQuote(null);setScheduleError(problem instanceof Error?problem.message:"Unable to refresh Boarding quote");}});return()=>{active=false;};},[mode,careWindow,start,end,selectedPets.length,splitEligible,splitPayment]);
   useEffect(()=>{if(mode!=="boarding")return;let active=true;const queryKey=boardingHostQueryKey,scheduleStart=new Date(`${start}T03:30:00.000Z`),scheduleEnd=careWindow==="24 hours"?new Date(`${end}T03:30:00.000Z`):new Date(scheduleStart.getTime()+(careWindow==="10 hours"?10:4)*3_600_000);void loadBoardingCommercial({cityId:"blr",zoneId:"blr-east",scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),petCount:selectedPets.length,species:selectedSpecies}).then(data=>{if(!active)return;const hosts=data.hosts.map(toBoardingCaregiver);setBoardingHosts(hosts);setBoardingHostWindowKey(queryKey);setBoardingHostError("");setCaregiver(current=>hosts.find(host=>host.providerId===current.providerId)??hosts[0]??boardingPlaceholder);}).catch(problem=>{if(!active)return;setBoardingHosts([]);setBoardingHostWindowKey(queryKey);setBoardingHostError(problem instanceof Error?problem.message:"Unable to load Boarding host availability");setCaregiver(boardingPlaceholder);});return()=>{active=false;};},[mode,careWindow,start,end,selectedPets.length,boardingHostQueryKey,selectedSpecies.join(",")]);
   const togglePet = (name: string) =>
     setSelectedPets((current) =>
@@ -265,8 +267,8 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
     if (!datesValid || !agreed) return;
     setScheduling(true);setScheduleError("");
     try {
-    const scheduleStart=new Date(`${start}T03:30:00.000Z`);const scheduleEnd=careWindow==="24 hours"?new Date(`${end}T03:30:00.000Z`):new Date(scheduleStart.getTime()+(careWindow==="10 hours"?10:careWindow==="12 hours"?12:4)*3_600_000);const providerIds:Record<string,string>={"Sana F.":"sit_sana","Neha P.":"sit_neha"};const boardingCommercial=mode==="boarding"?await loadBoardingCommercial({cityId:"blr",zoneId:"blr-east",scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),petCount:selectedPets.length,species:selectedSpecies}):null,governedHost=boardingCommercial?.hosts.find(item=>item.providerId===caregiver.providerId);if(mode==="boarding"&&!governedHost)throw new Error("Selected Boarding host is no longer available for this stay window");const packageCode=careWindow==="4 hours"?"boarding-4h":careWindow==="10 hours"?"boarding-10h":"boarding-24h",governedBoardingQuote=mode==="boarding"?await quoteBoarding({packageCode,petCount:selectedPets.length,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),paymentMode:"prepaid"}):null;const requestId=`${mode}-${customer.customerId}-${start}-${end}-${careWindow.replaceAll(" ","")}-${selectedPets.length}-${Date.now()}`;const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:mode==="boarding"?"boarding":"pet_sitting",zoneId:"blr-east",scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),careMode:careWindow==="24 hours"?"overnight":"visit",preferredProviderId:mode==="boarding"?governedHost?.providerId:providerIds[caregiver.name]});
-    const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPets.map(name=>({sourceId:name,name,species:name==="Coco"?"cat":"dog",vaccinationStatus:mode==="boarding"?"verified":"not_provided"})),cityId:"blr",zoneId:"blr-east",serviceCode:mode==="boarding"?"boarding":"pet_sitting",packageCode:governedBoardingQuote?.packageCode??(careWindow==="24 hours"?"overnight-sitting":"home-visit"),packageName:governedBoardingQuote?.packageName??"Pet Sitting",scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),provider:decision.provider,totalAmount:governedBoardingQuote?.totalAmount??total,amountDueNow:governedBoardingQuote?.amountDueNow??reserveAmount,payment:{method:"upi",mode:mode==="boarding"?"prepaid":splitEligible&&splitPayment?"split":"prepaid",status:"captured",detail:mode==="boarding"?"UAT Boarding payment captured from server quote":splitEligible&&splitPayment?"UAT 50% stay deposit captured":"UAT payment captured"},pricing:{discount:mode==="boarding"?0:discount,couponCode:mode==="boarding"?undefined:couponCode||undefined,boardingQuoteId:governedBoardingQuote?.quoteId}});
+    const scheduleStart=new Date(`${start}T03:30:00.000Z`);const scheduleEnd=careWindow==="24 hours"?new Date(`${end}T03:30:00.000Z`):new Date(scheduleStart.getTime()+(careWindow==="10 hours"?10:careWindow==="12 hours"?12:4)*3_600_000);const providerIds:Record<string,string>={"Sana F.":"sit_sana","Neha P.":"sit_neha"};const boardingCommercial=mode==="boarding"?await loadBoardingCommercial({cityId:"blr",zoneId:"blr-east",scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),petCount:selectedPets.length,species:selectedSpecies}):null,governedHost=boardingCommercial?.hosts.find(item=>item.providerId===caregiver.providerId);if(mode==="boarding"&&!governedHost)throw new Error("Selected Boarding host is no longer available for this stay window");const packageCode=careWindow==="4 hours"?"boarding-4h":careWindow==="10 hours"?"boarding-10h":"boarding-24h",governedBoardingQuote=mode==="boarding"?await quoteBoarding({packageCode,petCount:selectedPets.length,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),paymentMode:splitEligible&&splitPayment?"split_50_50":"prepaid"}):null;const requestId=`${mode}-${customer.customerId}-${start}-${end}-${careWindow.replaceAll(" ","")}-${selectedPets.length}-${Date.now()}`;const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:mode==="boarding"?"boarding":"pet_sitting",zoneId:"blr-east",scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),careMode:careWindow==="24 hours"?"overnight":"visit",preferredProviderId:mode==="boarding"?governedHost?.providerId:providerIds[caregiver.name]});
+    const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPets.map(name=>({sourceId:name,name,species:name==="Coco"?"cat":"dog",vaccinationStatus:mode==="boarding"?"verified":"not_provided"})),cityId:"blr",zoneId:"blr-east",serviceCode:mode==="boarding"?"boarding":"pet_sitting",packageCode:governedBoardingQuote?.packageCode??(careWindow==="24 hours"?"overnight-sitting":"home-visit"),packageName:governedBoardingQuote?.packageName??"Pet Sitting",scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),provider:decision.provider,totalAmount:governedBoardingQuote?.totalAmount??total,amountDueNow:governedBoardingQuote?.amountDueNow??reserveAmount,payment:{method:"upi",mode:splitEligible&&splitPayment?"split_50_50":"prepaid",status:"captured",detail:mode==="boarding"?(splitEligible&&splitPayment?"UAT 50% Boarding deposit captured from server quote; balance due 24h before check-in":"UAT Boarding payment captured from server quote"):splitEligible&&splitPayment?"UAT 50% stay deposit captured; balance due 24h before the stay starts":"UAT payment captured"},pricing:{discount:mode==="boarding"?0:discount,couponCode:mode==="boarding"?undefined:couponCode||undefined,boardingQuoteId:governedBoardingQuote?.quoteId}});
     const booking = createTestTransaction({
       customerId: customer.customerId,
       customerName: customer.customerName,
@@ -288,7 +290,9 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
       discount: mode === "boarding" ? 0 : discount,
       payment:
         mode === "boarding"
-          ? "Paid in UAT sandbox from canonical Boarding quote"
+          ? splitEligible && splitPayment
+            ? `50% deposit paid in UAT sandbox from canonical Boarding quote · ${money(balanceAmount)} due 24 hours before check-in`
+            : "Paid in UAT sandbox from canonical Boarding quote"
           : splitEligible && splitPayment
             ? `50% stay deposit + Meet & Greet paid · ${money(balanceAmount)} due 24 hours before check-in`
             : `Paid online in full${couponCode ? ` · Coupon ${couponCode}` : ""}`,
@@ -823,7 +827,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
                   <span>LONG-STAY PAYMENT</span>
                   <b>{nights} nights qualifies for partial payment</b>
                 </div>
-                <em>MORE THAN 5 NIGHTS</em>
+                <em>MORE THAN 4 NIGHTS</em>
               </header>
               <button
                 className={splitPayment ? styles.selected : ""}
@@ -859,9 +863,9 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
             <article className={styles.fullPaymentNote}>
               <i>₹</i>
               <div>
-                <b>{mode === "boarding" ? "Full prepaid UAT payment from the canonical Boarding quote" : "Full payment for hourly care and stays up to 5 nights"}</b>
+                <b>{mode === "boarding" ? "Full prepaid UAT payment from the canonical Boarding quote" : "Full payment for hourly care and stays up to 4 nights"}</b>
                 <span>
-                  {mode === "boarding" ? "Long-stay split payment remains disabled until a Boarding payment policy is explicitly configured." : "Partial payment becomes available automatically for bookings longer than five nights."}
+                  {"50/50 split payment becomes available automatically for overnight stays longer than four nights."}
                 </span>
               </div>
             </article>

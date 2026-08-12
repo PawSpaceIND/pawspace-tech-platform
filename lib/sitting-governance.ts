@@ -1,6 +1,7 @@
+import{splitPaymentPlan}from"./stay-split-payments";
 type Row=Record<string,unknown>;
 export type SittingMode="visit"|"overnight";
-export type SittingPaymentMode="prepaid";
+export type SittingPaymentMode="prepaid"|"split_50_50";
 export type SittingQuote={quoteId:string;packageCode:string;packageName:string;packageVersion:number;mode:SittingMode;petCount:number;scheduledStart:string;scheduledEnd:string;billableUnits:number;basePricePerPet:number;extraPetPrice:number;totalAmount:number;amountDueNow:number;paymentMode:SittingPaymentMode;expiresAt:number};
 
 const packages=[
@@ -26,12 +27,12 @@ export async function listSittingPackages(db:D1Database,at=new Date().toISOStrin
 
 export async function createSittingQuote(db:D1Database,input:{packageCode:string;petCount:number;scheduledStart:string;scheduledEnd:string;paymentMode:SittingPaymentMode;couponCode?:string}){
  await ensureSittingGovernanceTables(db);
- if(input.paymentMode!=="prepaid")throw new Response("Sitting split payment policy is not approved; use full prepaid UAT payment",{status:409});
+ if(input.paymentMode!=="prepaid"&&input.paymentMode!=="split_50_50")throw new Response("Sitting supports full prepaid or the approved 50/50 split payment",{status:409});
  if(String(input.couponCode||"").trim())throw new Response("Sitting coupon policy is not enabled in the canonical catalogue",{status:409});
  const row=await db.prepare("SELECT * FROM sitting_commercial_packages WHERE package_code=?").bind(input.packageCode).first<Row>();
  if(!row||!activePackage(row,input.scheduledStart))throw new Response("Active Sitting package not found for this date",{status:404});
  const petCount=Math.floor(Number(input.petCount));if(petCount<1||petCount>Number(row.max_pets))throw new Response(`Sitting supports 1-${Number(row.max_pets)} pets per booking`,{status:409});
- const mode=String(row.mode) as SittingMode,billableUnits=units(mode,input.scheduledStart,input.scheduledEnd),basePricePerPet=Number(row.base_price_per_pet),extraPetPrice=Number(row.extra_pet_price),unitAmount=basePricePerPet+Math.max(0,petCount-1)*extraPetPrice,totalAmount=unitAmount*billableUnits,amountDueNow=totalAmount,now=Date.now(),expiresAt=now+15*60_000,id=`SQ-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
+ const mode=String(row.mode) as SittingMode,billableUnits=units(mode,input.scheduledStart,input.scheduledEnd),basePricePerPet=Number(row.base_price_per_pet),extraPetPrice=Number(row.extra_pet_price),unitAmount=basePricePerPet+Math.max(0,petCount-1)*extraPetPrice,totalAmount=unitAmount*billableUnits,amountDueNow=input.paymentMode==="split_50_50"?splitPaymentPlan({totalAmount,scheduledStart:input.scheduledStart}).dueNow:totalAmount,now=Date.now(),expiresAt=now+15*60_000,id=`SQ-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
  await db.prepare("INSERT INTO sitting_commercial_quotes (id,package_code,package_version,mode,pet_count,scheduled_start,scheduled_end,billable_units,payment_mode,total_amount,amount_due_now,expires_at,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'open',?)").bind(id,row.package_code,row.version,mode,petCount,input.scheduledStart,input.scheduledEnd,billableUnits,input.paymentMode,totalAmount,amountDueNow,expiresAt,now).run();
  return{quoteId:id,packageCode:String(row.package_code),packageName:String(row.name),packageVersion:Number(row.version),mode,petCount,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,billableUnits,basePricePerPet,extraPetPrice,totalAmount,amountDueNow,paymentMode:input.paymentMode,expiresAt} satisfies SittingQuote;
 }

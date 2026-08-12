@@ -19,7 +19,7 @@ test("Razorpay adapter is environment-aware and fails closed", () => {
 test("Verify-first: prepaid online bookings cannot self-capture in LIVE mode (sandbox unchanged)", () => {
   // the gate exists and is LIVE-only + excludes subscriptions
   assert.match(bookingRoute, /function recordedPaymentStatus/);
-  assert.match(bookingRoute, /if\(liveMode&&!isSubscription&&payment\.mode==="prepaid"&&ONLINE_METHODS\.has\(payment\.method\)&&payment\.status==="captured"\)return "created"/);
+  assert.match(bookingRoute, /if\(liveMode&&!isSubscription&&\(payment\.mode==="prepaid"\|\|payment\.mode==="split_50_50"\)&&ONLINE_METHODS\.has\(payment\.method\)&&payment\.status==="captured"\)return "created"/);
   assert.match(bookingRoute, /return payment\.status/); // sandbox/UAT keeps the submitted status
   assert.match(bookingRoute, /PAWSPACE_PAYMENT_ENV/);
   // the payment insert now records the gated status, not the raw client value

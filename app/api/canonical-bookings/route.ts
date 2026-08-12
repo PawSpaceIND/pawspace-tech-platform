@@ -4,6 +4,7 @@ import {requireCustomerOwnership,resolveActor} from "../../../lib/server-auth";
 import {policySnapshot,policyVersion,resolveGroomingPolicy} from "../../../lib/grooming-policy-governance";
 import {consumeTrainingQuote,governTrainingBooking,trainingQuoteLinkStatement} from "../../../lib/training-commercial-governance";
 import {boardingQuoteLinkStatement,boardingStayStatement,consumeBoardingQuote,governBoardingBooking} from "../../../lib/boarding-governance";
+import {ensureStayPaymentTables,splitPaymentPlan,staySplitScheduleStatement} from "../../../lib/stay-split-payments";
 import {prepareReferralBooking,referralBookingLinkStatement,referralClaimBoundStatement,type ReferralBookingPreparation} from "../../../lib/referral-booking-governance";
 import {attributeBookingToOpenLead} from "../../../lib/lead-conversion-attribution";
 
@@ -23,7 +24,7 @@ async function paymentEnv(){const {env}=await import("cloudflare:workers");retur
 // Verify-first (LIVE only): a prepaid online booking may NOT self-declare "captured"; it is recorded
 // "created" and only a signature-verified Razorpay webhook may mark it captured. Sandbox/UAT unchanged.
 const ONLINE_METHODS=new Set(["upi","card","netbanking","payment_link"]);
-function recordedPaymentStatus(liveMode:boolean,payment:{method:string;mode:string;status:string},isSubscription:boolean){if(liveMode&&!isSubscription&&payment.mode==="prepaid"&&ONLINE_METHODS.has(payment.method)&&payment.status==="captured")return "created";return payment.status;}
+function recordedPaymentStatus(liveMode:boolean,payment:{method:string;mode:string;status:string},isSubscription:boolean){if(liveMode&&!isSubscription&&(payment.mode==="prepaid"||payment.mode==="split_50_50")&&ONLINE_METHODS.has(payment.method)&&payment.status==="captured")return "created";return payment.status;}
 const petId=(customerId:string,sourceId:string)=>`PET-${customerId.replace(/[^A-Za-z0-9]/g,"").toUpperCase()}-${sourceId.replace(/[^A-Za-z0-9]/g,"").toUpperCase()}`;
 async function ensureTables(db:Awaited<ReturnType<typeof database>>){await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'uat_customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
@@ -83,6 +84,11 @@ export async function POST(request:Request){try{const input=await request.json()
   ];
   if(trainingCommercial)statements.push(trainingQuoteLinkStatement(db,trainingCommercial.quoteId,bookingId));
   if(boardingCommercial)statements.push(boardingQuoteLinkStatement(db,boardingCommercial.quoteId,bookingId),boardingStayStatement(db,{bookingId,customerId:input.customer.id,providerId:input.provider.id,cityId:input.cityId,zoneId:input.zoneId,packageCode:boardingCommercial.packageCode,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,stayUnits:boardingCommercial.stayUnits,petCount:boardingCommercial.petCount}));
+  if(boardingCommercial&&boardingCommercial.paymentMode==="split_50_50"){await ensureStayPaymentTables(db);const plan=splitPaymentPlan({totalAmount:boardingCommercial.totalAmount,scheduledStart:input.scheduledStart});statements.push(staySplitScheduleStatement(db,{bookingId,serviceCode:"boarding",customerId:input.customer.id,totalAmount:boardingCommercial.totalAmount,paidNowAmount:boardingCommercial.amountDueNow,balanceAmount:plan.balance,balanceDueAt:plan.balanceDueAt}));}
+  // Pet Sitting on this path is client-priced (no server quote yet); record the split schedule from
+  // the submitted amounts so the balance is tracked and collectable, requiring a real outstanding
+  // balance and a stay that starts more than 24h out (splitPaymentPlan enforces the lead time).
+  if(input.serviceCode==="pet_sitting"&&input.payment.mode==="split_50_50"){if(!(input.totalAmount>input.amountDueNow))return json({error:"Split payment requires an outstanding balance below the total"},409);await ensureStayPaymentTables(db);const plan=splitPaymentPlan({totalAmount:input.totalAmount,scheduledStart:input.scheduledStart});statements.push(staySplitScheduleStatement(db,{bookingId,serviceCode:"pet_sitting",customerId:input.customer.id,totalAmount:input.totalAmount,paidNowAmount:input.amountDueNow,balanceAmount:Math.round((input.totalAmount-input.amountDueNow)*100)/100,balanceDueAt:plan.balanceDueAt}));}
   if(referralCommercial)statements.push(referralBookingLinkStatement(db,{preparation:referralCommercial,bookingId,now}),referralClaimBoundStatement(db,{claimId:referralCommercial.claimId,now}));
   if(subscriptionId&&governed.subscriptionPlan){const expiresAt=subscriptionExpiry(now,governed.subscriptionPlan.validityValue,governed.subscriptionPlan.validityUnit);statements.push(
     db.prepare("INSERT INTO customer_grooming_subscriptions (id,customer_id,plan_code,service_package_code,total_sessions,sessions_reserved,sessions_consumed,status,started_at,expires_at,source_booking_id,catalogue_version,created_at,updated_at) VALUES (?,?,?,?,?,?,0,'active',?,?,?,?,?,?)").bind(subscriptionId,input.customer.id,governed.subscriptionPlan.planCode,governed.subscriptionPlan.servicePackageCode,governed.subscriptionPlan.sessions,governed.subscriptionPlan.reserveSessions,now,expiresAt,bookingId,governed.catalogueVersion??"unknown",now,now),

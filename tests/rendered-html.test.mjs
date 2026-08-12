@@ -217,7 +217,7 @@ test("keeps long-stay payment, paid meeting and home media rules explicit", asyn
   assert.match(mobileHome, /PAWSPACE MEDIA/);
   assert.match(mobileHome, /TRAINING VIDEO/);
   assert.match(mobileHome, /PawSpace Media slot/);
-  assert.match(stays, /nights > 5/);
+  assert.match(stays, /nights > 4/);
   assert.match(stays, /Reserve with 50% now/);
   assert.match(stays, /due 24 hours before check-in/);
   assert.match(stays, /3-hour host-home trial · Included/);

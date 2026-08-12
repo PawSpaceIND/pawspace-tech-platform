@@ -6,11 +6,11 @@ export async function ensureSittingPaymentTables(db:D1Database){await db.batch([
 
 export async function captureSittingQuoteSandbox(db:D1Database,input:{quoteId:string;amount:number}){
  await ensureSittingPaymentTables(db);
- const quote=await db.prepare("SELECT id,total_amount,status,expires_at FROM sitting_commercial_quotes WHERE id=?").bind(input.quoteId).first<Row>();
+ const quote=await db.prepare("SELECT id,total_amount,amount_due_now,status,expires_at FROM sitting_commercial_quotes WHERE id=?").bind(input.quoteId).first<Row>();
  if(!quote)throw new Response("Sitting quote not found",{status:404});
  if(String(quote.status)!=="open")throw new Response("Only an open Sitting quote can be sandbox-captured",{status:409});
  if(Number(quote.expires_at)<Date.now())throw new Response("Sitting quote expired before sandbox capture",{status:409});
- if(Number(quote.total_amount)!==Number(input.amount))throw new Response("Sandbox capture amount must match the Sitting quote",{status:409});
+ if(Number(quote.amount_due_now)!==Number(input.amount))throw new Response("Sandbox capture amount must match the Sitting quote amount due now (50% for split payment)",{status:409});
  const existing=await db.prepare("SELECT * FROM sitting_quote_payment_attestations WHERE quote_id=?").bind(input.quoteId).first<Row>();
  if(existing&&String(existing.status)==="captured")return{quoteId:input.quoteId,status:"captured" as const,amount:Number(existing.amount),currency:String(existing.currency),environment:"sandbox" as const,reference:String(existing.reference),duplicatePrevented:true};
  const now=Date.now(),reference=`SIT-UAT-PAY-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
