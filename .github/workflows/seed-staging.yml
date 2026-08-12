@@ -1,0 +1,34 @@
+name: Seed staging
+
+# Loads the UAT seed data into the isolated staging D1 (pawspace-staging). Manual only, confirm-gated.
+# Safe to re-run: every seed uses INSERT OR IGNORE, so re-seeding never duplicates rows.
+# Requires the same repo config as Deploy staging: CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID secrets.
+# The D1 must already exist and be named "pawspace-staging" (from `npx wrangler d1 create pawspace-staging`).
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "seed" to confirm seeding the staging D1'
+        required: true
+        default: ''
+
+jobs:
+  seed:
+    if: ${{ github.event.inputs.confirm == 'seed' }}
+    runs-on: ubuntu-latest
+    concurrency: pawspace-staging-seed
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Load 220-customer UAT seed
+        run: npx wrangler@4 d1 execute pawspace-staging --remote --yes --file=scripts/staging-seed.sql
+      - name: Load 40-employee + payroll + GST-invoice seed
+        run: npx wrangler@4 d1 execute pawspace-staging --remote --yes --file=scripts/employee-seed.sql
+      - name: Done
+        run: echo "Staging D1 seeded (idempotent). Open the app and the modules are pre-populated."
