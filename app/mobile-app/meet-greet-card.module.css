@@ -1,163 +1,169 @@
+/* Meet & Greet card — Emerald #01261F / Gold #E6B34E, system font stack. */
+
 .card {
-  border: 1px solid var(--color-emerald-200);
-  border-radius: 8px;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  border: 1px solid rgba(1, 38, 31, 0.18);
+  border-radius: 14px;
   padding: 16px;
-  background: var(--color-white);
-}
-
-.card header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
+  background: #fff;
+  color: #01261f;
+  display: grid;
   gap: 12px;
-  margin-bottom: 16px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--color-emerald-100);
 }
 
-.card header div {
-  flex: 1;
-}
-
-.card header b {
+.header b {
   display: block;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-emerald-900);
+  font-size: 15px;
+  font-weight: 700;
+  color: #01261f;
 }
 
-.card header span {
+.header span {
   display: block;
   font-size: 12px;
-  color: var(--color-emerald-600);
+  color: rgba(1, 38, 31, 0.65);
   margin-top: 2px;
 }
 
-.card header em {
-  font-style: normal;
-  font-size: 12px;
-  color: var(--color-emerald-600);
-  font-weight: 500;
-}
-
 .formats {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
   gap: 8px;
-  margin-bottom: 16px;
 }
 
 .formats label {
-  flex: 1;
-  border: 1px solid var(--color-emerald-200);
-  border-radius: 6px;
+  border: 1px solid rgba(1, 38, 31, 0.22);
+  border-radius: 10px;
   padding: 12px;
   cursor: pointer;
-  transition: all 0.2s;
   text-align: center;
-}
-
-.formats label:hover {
-  border-color: var(--color-emerald-400);
-  background: var(--color-emerald-50);
+  display: grid;
+  gap: 2px;
+  background: #fff;
+  transition: border-color 0.15s, background 0.15s;
 }
 
 .formats label.selected {
-  border-color: var(--color-emerald-600);
-  background: var(--color-emerald-50);
+  border: 2px solid #e6b34e;
+  background: #01261f;
+  color: #fff;
 }
 
-.formats label input {
-  display: none;
+.formats label.selected small {
+  color: rgba(255, 255, 255, 0.75);
 }
 
-.formats label span {
-  display: block;
+.formats input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.formats span {
   font-size: 13px;
-  font-weight: 600;
-  color: var(--color-emerald-900);
-  margin-bottom: 4px;
+  font-weight: 700;
 }
 
-.formats label em {
-  display: block;
+.formats small {
   font-size: 11px;
-  color: var(--color-emerald-600);
-  font-style: normal;
-  font-weight: 500;
+  color: rgba(1, 38, 31, 0.6);
 }
 
+.formats em {
+  font-style: normal;
+  font-size: 12px;
+  font-weight: 700;
+  color: #e6b34e;
+}
+
+.waiver {
+  margin: 0;
+  font-size: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(230, 179, 78, 0.14);
+  border: 1px solid rgba(230, 179, 78, 0.5);
+  color: #01261f;
+}
+
+.guest,
 .datetime {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: 10px;
 }
 
+.guest label,
 .datetime label {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  display: grid;
+  gap: 4px;
 }
 
-.datetime label span {
-  font-size: 12px;
+.guest span,
+.datetime span {
+  font-size: 11px;
   font-weight: 600;
-  color: var(--color-emerald-900);
+  color: rgba(1, 38, 31, 0.8);
 }
 
-.datetime label input {
-  padding: 8px;
-  border: 1px solid var(--color-emerald-200);
-  border-radius: 4px;
+.guest input,
+.datetime input {
+  padding: 9px 10px;
+  border: 1px solid rgba(1, 38, 31, 0.25);
+  border-radius: 8px;
   font-size: 13px;
-  color: var(--color-emerald-900);
+  font-family: inherit;
+  color: #01261f;
+  background: #fff;
 }
 
-.datetime label input:focus {
+.guest input:focus,
+.datetime input:focus {
   outline: none;
-  border-color: var(--color-emerald-500);
-  box-shadow: 0 0 0 2px var(--color-emerald-100);
+  border-color: #e6b34e;
+  box-shadow: 0 0 0 2px rgba(230, 179, 78, 0.35);
 }
 
-.datetime label input:disabled {
-  background: var(--color-emerald-50);
-  color: var(--color-emerald-400);
-  cursor: not-allowed;
-}
-
-.request {
+.submit {
   width: 100%;
   padding: 12px;
   border: none;
-  border-radius: 6px;
-  background: var(--color-emerald-600);
-  color: white;
+  border-radius: 10px;
+  background: #01261f;
+  color: #e6b34e;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 700;
+  font-family: inherit;
   cursor: pointer;
-  transition: all 0.2s;
-  margin-bottom: 12px;
 }
 
-.request:hover:not(:disabled) {
-  background: var(--color-emerald-700);
-}
-
-.request:active:not(:disabled) {
-  transform: scale(0.98);
-}
-
-.request:disabled {
-  background: var(--color-emerald-300);
+.submit:disabled {
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
-.message {
-  display: block;
+.error {
   font-size: 12px;
-  color: var(--color-emerald-700);
-  text-align: center;
-  padding: 8px;
-  background: var(--color-emerald-50);
-  border-radius: 4px;
+  color: #9c2b1f;
+}
+
+.confirmed {
+  display: grid;
+  gap: 6px;
+  padding: 6px 2px;
+}
+
+.confirmed b {
+  color: #01261f;
+  font-size: 15px;
+}
+
+.confirmed p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.confirmed small {
+  font-size: 11px;
+  color: rgba(1, 38, 31, 0.65);
 }

@@ -1,224 +1,113 @@
+import { authError, authorize, database, securityAudit } from "../../../lib/server-auth";
 import {
-  authError,
-  requireCustomerOwnership,
-  requirePermission,
-  resolveActor,
-  securityAudit,
-} from "../../../lib/server-auth";
-import {
-  cancelMeetGreetRequest,
-  completeMeetGreetRequest,
-  confirmMeetGreetRequest,
   createMeetGreetRequest,
-  ensureMeetGreetTables,
-  getMeetGreetEvents,
-  getMeetGreetRequest,
+  listMeetGreetEvents,
   listMeetGreetRequests,
-  markMeetGreetNoShow,
-  type MeetGreetRequest,
+  transitionMeetGreetRequest,
+  type MeetGreetAction,
+  type MeetGreetFormat,
+  type MeetGreetStatus,
 } from "../../../lib/meet-and-greet";
 
-const json = (value: unknown, status = 200) => Response.json(value, { status });
+type Row = Record<string, unknown>;
+const json = (value: unknown, status = 200) => Response.json(value, { status, headers: { "cache-control": "no-store" } });
+const ACTIONS: MeetGreetAction[] = ["confirm", "complete", "cancel", "no_show"];
+const STATUSES: MeetGreetStatus[] = ["requested", "confirmed", "completed", "cancelled", "no_show"];
 
-async function database() {
-  const { env } = await import("cloudflare:workers");
-  return env.DB;
+function sameOrigin(request: Request) {
+  const origin = request.headers.get("origin");
+  if (origin && origin !== new URL(request.url).origin) throw new Response("Cross-origin meet-and-greet write blocked", { status: 403 });
 }
 
-export async function GET(request: Request) {
-  try {
-    const actor = await resolveActor(request);
-    requirePermission(actor, "bookings.manage");
-
-    const db = await database();
-    await ensureMeetGreetTables(db);
-
-    const url = new URL(request.url);
-    const requestId = url.searchParams.get("requestId");
-    const customerId = url.searchParams.get("customerId");
-    const hostId = url.searchParams.get("hostId");
-    const status = url.searchParams.get("status") as any;
-    const includeEvents = url.searchParams.get("events") === "true";
-
-    if (requestId) {
-      const mgr = await getMeetGreetRequest(db, requestId);
-      if (!mgr) return json({ error: "Request not found" }, 404);
-
-      if (includeEvents) {
-        const events = await getMeetGreetEvents(db, requestId);
-        return json({ data: { ...mgr, events } });
-      }
-      return json({ data: mgr });
-    }
-
-    const requests = await listMeetGreetRequests(db, {
-      customerId: customerId || undefined,
-      hostId: hostId || undefined,
-      status: status || undefined,
-    });
-
-    return json({ data: requests });
-  } catch (error) {
-    return authError(error, "Unable to list meet-greet requests");
-  }
-}
-
+/** Customer-facing, public: no auth required to request a meet & greet
+ *  (mirrors /api/relocation-enquiry POST). Every input is coerced and re-validated
+ *  server-side; the price is computed on the server, never trusted from the browser. */
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as Record<string, unknown>;
-    const action = String(body.action || "");
-    const actor = await resolveActor(request);
+    sameOrigin(request);
     const db = await database();
+    const body = (await request.json().catch(() => ({}))) as Row;
 
-    if (action === "create") {
-      requirePermission(actor, "scheduling.book");
+    const rawFormat = String(body.format ?? "").trim();
+    if (rawFormat !== "phone" && rawFormat !== "house_visit") return json({ error: "format must be phone or house_visit" }, 400);
+    const format = rawFormat as MeetGreetFormat;
 
-      const input = body.input as {
-        customerId?: string;
-        hostId?: string;
-        format?: string;
-        preferredAt?: number;
-        intendedStayDays?: number;
-      };
-
-      if (!input?.customerId || !input?.hostId) return json({ error: "Customer and host are required" }, 400);
-
-      await requireCustomerOwnership(db, actor, input.customerId);
-
-      const mgr = await createMeetGreetRequest(
+    try {
+      const result = await createMeetGreetRequest(
         db,
         {
-          customerId: input.customerId,
-          hostId: input.hostId,
-          format: input.format as "phone_call" | "house_visit",
-          preferredAt: input.preferredAt || 0,
-          intendedStayDays: input.intendedStayDays || 0,
+          customerId: String(body.customerId ?? "").trim(),
+          hostProviderId: String(body.hostProviderId ?? "").trim(),
+          format,
+          preferredAt: Number(body.preferredAt),
+          intendedStayStart: body.intendedStayStart == null ? undefined : String(body.intendedStayStart),
+          intendedStayEnd: body.intendedStayEnd == null ? undefined : String(body.intendedStayEnd),
+          intendedStayDays: body.intendedStayDays == null ? undefined : Number(body.intendedStayDays),
+          notes: body.notes == null ? undefined : String(body.notes),
         },
-        actor.email
+        `customer:${String(body.customerId ?? "").trim() || "anonymous"}`
       );
-
-      await securityAudit(
-        db,
-        actor,
-        "meet_greet.create",
-        "meet_greet",
-        mgr.id,
-        "completed",
-        {
-          customerId: input.customerId,
-          hostId: input.hostId,
-          format: mgr.format,
-          price: mgr.price,
-        }
-      );
-
-      return json({ data: mgr }, 201);
+      return json({ data: result, productionReady: false }, 201);
+    } catch (error) {
+      if (error instanceof Error) return json({ error: error.message }, 400);
+      throw error;
     }
-
-    if (action === "confirm") {
-      requirePermission(actor, "bookings.manage");
-
-      const requestId = String(body.requestId || "");
-      if (!requestId) return json({ error: "Request ID is required" }, 400);
-
-      const mgr = await confirmMeetGreetRequest(db, requestId, actor.email);
-
-      await securityAudit(db, actor, "meet_greet.confirm", "meet_greet", requestId, "completed", {});
-
-      return json({ data: mgr });
-    }
-
-    if (action === "complete") {
-      requirePermission(actor, "bookings.manage");
-
-      const requestId = String(body.requestId || "");
-      if (!requestId) return json({ error: "Request ID is required" }, 400);
-
-      const mgr = await completeMeetGreetRequest(db, requestId, actor.email);
-
-      await securityAudit(db, actor, "meet_greet.complete", "meet_greet", requestId, "completed", {});
-
-      return json({ data: mgr });
-    }
-
-    if (action === "cancel") {
-      requirePermission(actor, "bookings.manage");
-
-      const requestId = String(body.requestId || "");
-      const reason = body.reason ? String(body.reason) : undefined;
-
-      if (!requestId) return json({ error: "Request ID is required" }, 400);
-
-      const mgr = await cancelMeetGreetRequest(db, requestId, actor.email, reason);
-
-      await securityAudit(db, actor, "meet_greet.cancel", "meet_greet", requestId, "completed", {
-        reason: reason || null,
-      });
-
-      return json({ data: mgr });
-    }
-
-    if (action === "no_show") {
-      requirePermission(actor, "bookings.manage");
-
-      const requestId = String(body.requestId || "");
-      if (!requestId) return json({ error: "Request ID is required" }, 400);
-
-      const mgr = await markMeetGreetNoShow(db, requestId, actor.email);
-
-      await securityAudit(db, actor, "meet_greet.no_show", "meet_greet", requestId, "completed", {});
-
-      return json({ data: mgr });
-    }
-
-    return json({ error: "Unsupported meet-greet action" }, 400);
   } catch (error) {
-    return authError(error, "Unable to update meet-greet request");
+    return authError(error, "Unable to submit meet & greet request");
   }
 }
 
+/** Staff-facing directory. Gateway maps GET here to "bookings.manage". */
+export async function GET(request: Request) {
+  try {
+    await authorize(request, "bookings.manage");
+    const db = await database();
+    const url = new URL(request.url);
+
+    const requestId = String(url.searchParams.get("requestId") || "").trim();
+    if (requestId) {
+      const events = await listMeetGreetEvents(db, requestId);
+      return json({ data: { events }, productionReady: false });
+    }
+
+    const rawStatus = String(url.searchParams.get("status") || "").trim();
+    const requests = await listMeetGreetRequests(db, {
+      customerId: String(url.searchParams.get("customerId") || "").trim() || undefined,
+      hostProviderId: String(url.searchParams.get("hostProviderId") || "").trim() || undefined,
+      status: (STATUSES as string[]).includes(rawStatus) ? (rawStatus as MeetGreetStatus) : undefined,
+    });
+    return json({ data: requests, productionReady: false });
+  } catch (error) {
+    return authError(error, "Unable to load meet & greet requests");
+  }
+}
+
+/** Staff-facing lifecycle transitions: confirm / complete / cancel / no_show. */
 export async function PATCH(request: Request) {
   try {
-    const body = (await request.json()) as Record<string, unknown>;
-    const requestId = String(body.requestId || "");
-    const action = String(body.action || "");
-
-    if (!requestId || !action) return json({ error: "Request ID and action are required" }, 400);
-
-    const actor = await resolveActor(request);
-    requirePermission(actor, "bookings.manage");
-
+    const actor = await authorize(request, "bookings.manage");
     const db = await database();
+    const body = (await request.json().catch(() => ({}))) as Row;
 
-    if (action === "confirm") {
-      const mgr = await confirmMeetGreetRequest(db, requestId, actor.email);
-      await securityAudit(db, actor, "meet_greet.confirm", "meet_greet", requestId, "completed", {});
-      return json({ data: mgr });
-    }
+    const requestId = String(body.requestId ?? "").trim();
+    const rawAction = String(body.action ?? "").trim();
+    if (!requestId) return json({ error: "requestId is required" }, 400);
+    if (!(ACTIONS as string[]).includes(rawAction)) return json({ error: "action must be confirm, complete, cancel or no_show" }, 400);
 
-    if (action === "complete") {
-      const mgr = await completeMeetGreetRequest(db, requestId, actor.email);
-      await securityAudit(db, actor, "meet_greet.complete", "meet_greet", requestId, "completed", {});
-      return json({ data: mgr });
-    }
-
-    if (action === "cancel") {
-      const reason = body.reason ? String(body.reason) : undefined;
-      const mgr = await cancelMeetGreetRequest(db, requestId, actor.email, reason);
-      await securityAudit(db, actor, "meet_greet.cancel", "meet_greet", requestId, "completed", {
-        reason: reason || null,
+    try {
+      const result = await transitionMeetGreetRequest(db, {
+        requestId,
+        action: rawAction as MeetGreetAction,
+        actorId: actor.email,
+        note: body.note == null ? undefined : String(body.note),
       });
-      return json({ data: mgr });
+      await securityAudit(db, actor, `meet_greet.${rawAction}`, "meet_greet_request", requestId, "completed", { status: result.status });
+      return json({ data: result, productionReady: false });
+    } catch (error) {
+      if (error instanceof Error) return json({ error: error.message }, 409);
+      throw error;
     }
-
-    if (action === "no_show") {
-      const mgr = await markMeetGreetNoShow(db, requestId, actor.email);
-      await securityAudit(db, actor, "meet_greet.no_show", "meet_greet", requestId, "completed", {});
-      return json({ data: mgr });
-    }
-
-    return json({ error: "Unsupported action" }, 400);
   } catch (error) {
-    return authError(error, "Unable to update meet-greet request");
+    return authError(error, "Unable to update meet & greet request");
   }
 }
