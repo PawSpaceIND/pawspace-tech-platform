@@ -56,6 +56,17 @@ function makeD1(sqlite) {
   };
 }
 
+// Pull the DDL for shared CRM tables out of the ROUTES THAT OWN THEM, never from the module under
+// test. The first version of this suite declared crm_activities itself and therefore agreed with a
+// column name (customer_id/summary) that no deployed database has - the bug only surfaced against
+// real staging. Owning-module DDL makes that class of drift a test failure instead.
+function applyOwnedDdl(sqlite, path) {
+  const source = read(path);
+  for (const match of source.matchAll(/\.prepare\(\s*(["'`])([\s\S]*?)\1/g)) {
+    if (/^\s*CREATE (TABLE|INDEX|UNIQUE INDEX)/i.test(match[2])) { try { sqlite.exec(match[2]); } catch { /* index for a table this suite does not need */ } }
+  }
+}
+
 const BOT = "haptik_voice";
 function fresh() {
   const sqlite = new DatabaseSync(":memory:");
@@ -63,6 +74,8 @@ function fresh() {
   globalThis.__PAWSPACE_TEST_ENV = { DB: db };
   sqlite.exec("CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,service_code TEXT NOT NULL,package_name TEXT,provider_id TEXT,status TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT,total_amount REAL NOT NULL,currency TEXT DEFAULT 'INR',created_at INTEGER,updated_at INTEGER)");
   sqlite.exec("CREATE TABLE booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,status TEXT NOT NULL,created_at INTEGER NOT NULL)");
+  // crm_contacts / crm_activities / crm_tasks / lead_work_items as the CRM route really defines them.
+  applyOwnedDdl(sqlite, "app/api/crm/route.ts");
   return { sqlite, db };
 }
 
@@ -119,9 +132,9 @@ test("a bot call writes the attempt, the activity and the lead state a human rep
   assert.equal(attempt[0].sequence_number, 1);
   assert.equal(attempt[0].provider_status, "bot_completed");
 
-  const activity = sqlite.prepare("SELECT type,summary,detail FROM crm_activities WHERE customer_id='CU-BOT'").get();
+  const activity = sqlite.prepare("SELECT type,title,detail FROM crm_activities WHERE contact_id='CU-BOT'").get();
   assert.equal(activity.type, "bot_call");
-  assert.match(activity.summary, /haptik_voice bot call/);
+  assert.match(activity.title, /haptik_voice bot call/);
   const detail = JSON.parse(activity.detail);
   assert.deepEqual(detail.crossSellServices, ["boarding", "dog_training"]);
   assert.equal(detail.transcriptRef, "r2://haptik/transcripts/call-1.json");
@@ -415,6 +428,26 @@ test("the bot outcome endpoints are permission-gated and the Haptik webhook stay
   const haptikRoute = read("app/api/haptik/route.ts");
   assert.ok(/record_call_outcome/.test(haptikRoute), "Haptik can post the post-call outcome");
   assert.ok(/HAPTIK_API_KEY/.test(haptikRoute) && /Invalid Haptik credentials/.test(haptikRoute), "the webhook stays fail-closed and key-authenticated");
+});
+
+test("shared CRM tables are written with the column names their owning route defines", () => {
+  const crmRoute = read("app/api/crm/route.ts"), moduleSource = read("lib/bot-call-disposition.ts");
+  for (const table of ["crm_contacts", "crm_activities", "lead_work_items"]) {
+    const owner = crmRoute.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(([^"]*)\\)`));
+    if (!owner) continue;
+    const ownerColumns = owner[1].split(",").map(part => part.trim().split(/\s+/)[0]);
+    for (const insert of moduleSource.matchAll(new RegExp(`INSERT (?:OR IGNORE )?INTO ${table} \\(([a-z_,]+)\\)`, "g"))) {
+      for (const column of insert[1].split(",")) {
+        assert.ok(ownerColumns.includes(column), `${table}.${column} does not exist in the owning route's schema`);
+      }
+    }
+    for (const update of moduleSource.matchAll(new RegExp(`UPDATE ${table} SET ([^"]+?) WHERE`, "g"))) {
+      for (const assignment of update[1].split(",")) {
+        const column = assignment.trim().split(/[=+]/)[0].trim();
+        if (column && /^[a-z_]+$/.test(column)) assert.ok(ownerColumns.includes(column), `${table}.${column} does not exist in the owning route's schema`);
+      }
+    }
+  }
 });
 
 test("bot call modules do not fabricate values or use banned DB access", () => {
