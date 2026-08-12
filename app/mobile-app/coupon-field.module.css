@@ -55,3 +55,12 @@
 .success { color: #117650; }
 .error { color: #a13f32; }
 .disabled { background: #f4f1f5; }
+
+.offersRow{display:grid;gap:8px;margin-top:8px}
+.offersToggle{background:none;border:none;color:var(--ps-accent,#E6B34E);font-weight:700;font-size:13px;text-align:left;padding:0;cursor:pointer}
+.offersList{display:grid;gap:6px}
+.offersList button{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;text-align:left;padding:10px 12px;border:1px dashed var(--ps-border,#2a4a42);border-radius:12px;background:var(--ps-surface,rgba(255,255,255,.04));color:inherit;cursor:pointer}
+.offersList button b{letter-spacing:1px}
+.offersList button span{font-size:12px;opacity:.85}
+.offersList button em{font-style:normal;font-size:10px;font-weight:800;padding:2px 8px;border-radius:10px;background:var(--ps-accent,#E6B34E);color:#01261F}
+.offerApplied{outline:2px solid var(--ps-accent,#E6B34E)}

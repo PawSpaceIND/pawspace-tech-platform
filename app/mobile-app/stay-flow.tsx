@@ -5,6 +5,7 @@ import styles from "./stay-flow.module.css";
 import { createTestTransaction } from "../../lib/test-transaction";
 import ProviderTrackingCard from "./provider-tracking-card";
 import CouponField from "./coupon-field";
+import PetManager from "./pet-manager";
 import { reserveUatSchedule } from "../../lib/uat-scheduling-client";
 import { createCanonicalLifecycle } from "../../lib/canonical-lifecycle-client";
 import { loadBoardingCommercial, quoteBoarding, type BoardingHost, type BoardingQuote } from "../../lib/boarding-commercial-client";
@@ -158,6 +159,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
   const [mode, setMode] = useState<Mode>(initialMode),
     [stage, setStage] = useState(1),
     [selectedPets, setSelectedPets] = useState(["Bruno", "Coco"]),
+    [showPetManager, setShowPetManager] = useState(false),
     [selectedNeeds, setSelectedNeeds] = useState([
       "Medication",
       "Two daily walks",
@@ -436,14 +438,15 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
                 <em>{selectedPets.includes(p.name) ? "✓" : "＋"}</em>
               </button>
             ))}
-            <button className={styles.addPet} onClick={() => flash("Add another pet is managed from My PawSpace \u2192 My Pets.")}>
-              <i>＋</i>
+            <button className={styles.addPet} onClick={() => setShowPetManager(v => !v)}>
+              <i>{showPetManager ? "−" : "＋"}</i>
               <span>
-                <b>Add another pet</b>
-                <small>Create pet profile</small>
+                <b>{showPetManager ? "Hide pet details" : "Add another pet"}</b>
+                <small>Add or edit right here — no need to leave the booking</small>
               </span>
             </button>
           </div>
+          {showPetManager && <PetManager customer={customer}/>}
           <div className={styles.sectionHead}>
             <b>Care needs</b>
             <span>Optional</span>
