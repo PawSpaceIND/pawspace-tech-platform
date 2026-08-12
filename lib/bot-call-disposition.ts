@@ -101,7 +101,7 @@ export async function ensureBotCallDispositionTables(db: Db) {
     db.prepare("CREATE INDEX IF NOT EXISTS idx_bot_call_disposition_tag ON bot_call_dispositions(primary_tag,created_at)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_bot_call_disposition_reconcile ON bot_call_dispositions(reconciliation_status,created_at)"),
     db.prepare("CREATE TABLE IF NOT EXISTS lead_attempts (id TEXT PRIMARY KEY, lead_id TEXT NOT NULL, channel TEXT NOT NULL, sequence_number INTEGER NOT NULL, outcome TEXT NOT NULL, note TEXT, provider_status TEXT NOT NULL DEFAULT 'uat_queued', created_by TEXT NOT NULL, created_at INTEGER NOT NULL)"),
-    db.prepare("CREATE TABLE IF NOT EXISTS crm_activities (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, type TEXT NOT NULL, summary TEXT NOT NULL, detail TEXT, created_at INTEGER NOT NULL)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS crm_activities (id TEXT PRIMARY KEY, contact_id TEXT NOT NULL, type TEXT NOT NULL, title TEXT NOT NULL, detail TEXT, created_at INTEGER NOT NULL)"),
   ]);
 }
 
@@ -241,7 +241,7 @@ export async function recordBotCallDisposition(db: Db, input: BotCallDisposition
   ).bind(primary.code, contacted ? now : null, nextActionAt, optsOut ? 1 : 0, leadStatus, now, leadId).run();
   await db.prepare("UPDATE crm_contacts SET stage=?,next_action=?,updated_at=? WHERE id=?")
     .bind(optsOut ? "Do not contact" : terminal ? "Closed" : positive ? "Qualified" : "Contacted", escalates ? "Human follow-up required" : callbackAt ? "Callback scheduled" : terminal ? "No further action" : "Follow up", now, contactId).run();
-  await db.prepare("INSERT INTO crm_activities (id,customer_id,type,summary,detail,created_at) VALUES (?,?,?,?,?,?)")
+  await db.prepare("INSERT INTO crm_activities (id,contact_id,type,title,detail,created_at) VALUES (?,?,?,?,?,?)")
     .bind(uid("ACT"), contactId, "bot_call", `${input.botProvider} bot call · ${primary.label}`, JSON.stringify({ tags, crmOutcome: primary.crmOutcome, callbackAt, crossSellServices: services, claimTags, notes, transcriptRef: text(input.transcriptRef) || null, talkTimeSeconds: input.talkTimeSeconds ?? null, sentiment: text(input.sentiment) || null }), now).run();
 
   // 6. The bot's own governed record.
