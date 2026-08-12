@@ -10,7 +10,11 @@ export async function ensureCrmAutomationGovernance(db:Db){await db.batch([
 
 export async function automationDecision(db:Db,input:{customerId:string;purpose:"marketing"|"service";channel:string;now?:number}):Promise<AutomationDecision>{
  await ensureCrmAutomationGovernance(db);const now=input.now??Date.now();
- const consent=await db.prepare("SELECT marketing_consent,service_consent,whatsapp_consent,sms_consent,email_consent FROM customer_contact_preferences WHERE customer_id=?").bind(input.customerId).first<Row>();
+ // customer_contact_preferences is owned by the Customer-360 stack; on a cold DB the direct read
+ // crashed the whole decision with a 500. A missing table means the same thing as a missing row:
+ // no recorded consent (marketing stays blocked below, service contact stays allowed).
+ const consentTable=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='customer_contact_preferences'").first<Row>();
+ const consent=consentTable?await db.prepare("SELECT marketing_consent,service_consent,whatsapp_consent,sms_consent,email_consent FROM customer_contact_preferences WHERE customer_id=?").bind(input.customerId).first<Row>():null;
  if(input.purpose==="marketing"&&!Boolean(Number(consent?.marketing_consent||0)))return{allowed:false,reason:"marketing_consent_missing",policyStatus:"blocked",nextEligibleAt:null};
  if(input.purpose==="service"&&consent&&Number(consent.service_consent)===0)return{allowed:false,reason:"service_contact_disabled",policyStatus:"blocked",nextEligibleAt:null};
  const channelKey=input.channel==="whatsapp"?"whatsapp_consent":input.channel==="sms"?"sms_consent":input.channel==="email"?"email_consent":null;
@@ -23,8 +27,12 @@ export async function automationDecision(db:Db,input:{customerId:string;purpose:
 }
 
 export async function queueGovernedAutomation(db:Db,input:{customerId:string;journeyCode:string;channel:string;purpose:"marketing"|"service";idempotencyKey:string;now?:number}){
- const now=input.now??Date.now(),decision=await automationDecision(db,{customerId:input.customerId,purpose:input.purpose,channel:input.channel,now});if(!decision.allowed)return{queued:false,decision};
- const prior=await db.prepare("SELECT id,status FROM crm_automation_dispatches WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();if(prior)return{queued:true,id:String(prior.id),duplicatePrevented:true,decision,status:String(prior.status)};
+ const now=input.now??Date.now();await ensureCrmAutomationGovernance(db);
+ // The idempotent replay must win BEFORE any frequency decision: previously a retry of an
+ // already-queued request counted its own first attempt against the frequency cap and was bounced
+ // with a spurious 409 instead of the duplicate-prevented response.
+ const prior=await db.prepare("SELECT id,status FROM crm_automation_dispatches WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();if(prior)return{queued:true,id:String(prior.id),duplicatePrevented:true,decision:{allowed:true,reason:"idempotent_replay",policyStatus:"approved",nextEligibleAt:now} as AutomationDecision,status:String(prior.status)};
+ const decision=await automationDecision(db,{customerId:input.customerId,purpose:input.purpose,channel:input.channel,now});if(!decision.allowed)return{queued:false,decision};
  const id=`AUTO-${crypto.randomUUID().slice(0,12).toUpperCase()}`;await db.prepare("INSERT INTO crm_automation_dispatches (id,customer_id,journey_code,channel,purpose,status,attempt_count,next_attempt_at,idempotency_key,created_at,updated_at) VALUES (?,?,?,?,?,'queued',0,?,?,?,?)").bind(id,input.customerId,input.journeyCode,input.channel,input.purpose,now,input.idempotencyKey,now,now).run();return{queued:true,id,duplicatePrevented:false,decision,status:"queued"};
 }
 
