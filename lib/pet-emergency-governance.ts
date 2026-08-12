@@ -46,7 +46,15 @@ export async function raiseEmergencyRequest(db: Db, input: { customerId: string;
   if (!input.cityId.trim() || !input.zoneId.trim()) throw new Error("City and zone are required to dispatch help");
   if (input.petId) {
     const pet = await db.prepare("SELECT customer_id FROM canonical_pets WHERE id=?").bind(input.petId).first<Row>();
-    if (pet && String(pet.customer_id) !== input.customerId) throw new Error("You can only raise an emergency for your own pet");
+    if (!pet) throw new Error("Pet not found");
+    if (String(pet.customer_id) !== input.customerId) throw new Error("You can only raise an emergency for your own pet");
+  }
+  if (input.bookingId) {
+    // The booking is written onto a high-severity case that Ops reads. Unchecked, a customer could
+    // attach somebody else's booking to their own emergency and pull that booking into their case.
+    const booking = await db.prepare("SELECT customer_id FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>();
+    if (!booking) throw new Error("Booking not found");
+    if (String(booking.customer_id) !== input.customerId) throw new Error("You can only reference your own booking in an emergency");
   }
   const id = uid("EMG"), now = Date.now();
   const caseResult = await createUnifiedCase(db, {
@@ -78,7 +86,11 @@ export async function resolveEmergencyRequest(db: Db, input: { requestId: string
   if (!req) throw new Error("Emergency request not found");
   if (String(req.status) === "resolved") throw new Error("This emergency is already resolved");
   if (input.resolutionNote.trim().length < 5) throw new Error("A resolution note is required");
-  await db.prepare("UPDATE pet_emergency_requests SET status='resolved',resolution_note=?,resolved_at=?,updated_at=? WHERE id=?").bind(input.resolutionNote.trim(), Date.now(), Date.now(), input.requestId).run();
+  // Conditional claim: two Ops users resolving the same emergency at once would otherwise both
+  // succeed, the second silently overwriting the first responder's resolution note.
+  const now = Date.now();
+  const claim = await db.prepare("UPDATE pet_emergency_requests SET status='resolved',resolution_note=?,resolved_at=?,updated_at=? WHERE id=? AND status!='resolved'").bind(input.resolutionNote.trim(), now, now, input.requestId).run();
+  if (!Number(claim.meta.changes)) throw new Error("This emergency is already resolved");
   return { requestId: input.requestId, status: "resolved" };
 }
 

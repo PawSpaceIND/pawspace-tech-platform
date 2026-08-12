@@ -76,9 +76,17 @@ export async function redeemBirthdayReward(db: Db, input: { code: string; custom
   if (!booking) throw new Error("Booking not found");
   if (String(booking.customer_id) !== input.customerId) throw new Error("You can only apply your reward to your own booking");
   if (String(booking.service_code) !== "grooming") throw new Error("The birthday reward is valid on doorstep grooming only");
-  await db.prepare("UPDATE pet_birthday_rewards SET status='redeemed',redeemed_booking_id=?,redeemed_at=? WHERE id=? AND status='issued'")
+  // The status='issued' guard makes the claim atomic, but its result has to be checked: without this
+  // two concurrent redeems (or a double-tapped button) both passed the read above and both reported
+  // a Rs.500 discount applied, while only one row actually moved to 'redeemed'.
+  const claim = await db.prepare("UPDATE pet_birthday_rewards SET status='redeemed',redeemed_booking_id=?,redeemed_at=? WHERE id=? AND status='issued'")
     .bind(input.bookingId, Date.now(), String(reward.id)).run();
-  return { code: String(reward.code), bookingId: input.bookingId, discountApplied: Number(reward.discount_amount), serviceScope: "grooming" };
+  if (!Number(claim.meta.changes)) {
+    const winner = await db.prepare("SELECT redeemed_booking_id FROM pet_birthday_rewards WHERE id=?").bind(String(reward.id)).first<Row>();
+    if (winner && String(winner.redeemed_booking_id) === input.bookingId) return { code: String(reward.code), bookingId: input.bookingId, discountApplied: Number(reward.discount_amount), serviceScope: "grooming", duplicatePrevented: true };
+    throw new Error("This birthday reward has already been used");
+  }
+  return { code: String(reward.code), bookingId: input.bookingId, discountApplied: Number(reward.discount_amount), serviceScope: "grooming", duplicatePrevented: false };
 }
 
 /** A customer's active (issued, unexpired) birthday rewards. */

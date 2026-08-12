@@ -72,12 +72,14 @@ export async function buildOutboundAudience(db: Db, input: { campaign: string; l
 
   if (campaign.code === "reactivation") {
     // Customers whose last completed service was > 60 days ago - with marketing consent, not opted out.
-    const rows = await db.prepare("SELECT b.customer_id contact_id,cu.name name,cu.primary_phone phone,MAX(b.scheduled_end) last_end,COUNT(*) done FROM canonical_bookings b JOIN canonical_customers cu ON cu.id=b.customer_id JOIN customer_contact_preferences p ON p.customer_id=b.customer_id WHERE b.status='completed' AND p.marketing_consent=1 GROUP BY b.customer_id HAVING MAX(b.scheduled_end)<? ORDER BY done DESC LIMIT ?").bind(new Date(at - 60 * DAY).toISOString(), limit * 2).all<Row>().catch(empty);
+    // p.opt_out=0 is a separate, stronger flag than marketing_consent: a contact who explicitly opted
+    // out of all contact while an old marketing_consent=1 row remained was still being dialled here.
+    const rows = await db.prepare("SELECT b.customer_id contact_id,cu.name name,cu.primary_phone phone,MAX(b.scheduled_end) last_end,COUNT(*) done FROM canonical_bookings b JOIN canonical_customers cu ON cu.id=b.customer_id JOIN customer_contact_preferences p ON p.customer_id=b.customer_id WHERE b.status='completed' AND p.marketing_consent=1 AND p.opt_out=0 GROUP BY b.customer_id HAVING MAX(b.scheduled_end)<? ORDER BY done DESC LIMIT ?").bind(new Date(at - 60 * DAY).toISOString(), limit * 2).all<Row>().catch(empty);
     return dedupe(rows.results.map(r => ({ contactId: String(r.contact_id), phone: String(r.phone || ""), name: text(r.name) || "there", context: { lastServiceAt: text(r.last_end), pastBookings: Number(r.done), reason: "reactivation" } }))).slice(0, limit);
   }
 
   // subscription_pitch: active grooming customers without an active/paused grooming subscription.
-  const rows = await db.prepare("SELECT b.customer_id contact_id,cu.name name,cu.primary_phone phone,COUNT(*) grooms FROM canonical_bookings b JOIN canonical_customers cu ON cu.id=b.customer_id JOIN customer_contact_preferences p ON p.customer_id=b.customer_id WHERE b.service_code='grooming' AND b.status NOT IN ('cancelled','refunded') AND p.marketing_consent=1 AND NOT EXISTS (SELECT 1 FROM customer_grooming_subscriptions s WHERE s.customer_id=b.customer_id AND s.status IN ('active','paused')) GROUP BY b.customer_id HAVING COUNT(*)>=2 ORDER BY grooms DESC LIMIT ?").bind(limit * 2).all<Row>().catch(empty);
+  const rows = await db.prepare("SELECT b.customer_id contact_id,cu.name name,cu.primary_phone phone,COUNT(*) grooms FROM canonical_bookings b JOIN canonical_customers cu ON cu.id=b.customer_id JOIN customer_contact_preferences p ON p.customer_id=b.customer_id WHERE b.service_code='grooming' AND b.status NOT IN ('cancelled','refunded') AND p.marketing_consent=1 AND p.opt_out=0 AND NOT EXISTS (SELECT 1 FROM customer_grooming_subscriptions s WHERE s.customer_id=b.customer_id AND s.status IN ('active','paused')) GROUP BY b.customer_id HAVING COUNT(*)>=2 ORDER BY grooms DESC LIMIT ?").bind(limit * 2).all<Row>().catch(empty);
   return dedupe(rows.results.map(r => ({ contactId: String(r.contact_id), phone: String(r.phone || ""), name: text(r.name) || "there", context: { groomingBookings: Number(r.grooms), reason: "subscription_pitch" } }))).slice(0, limit);
 }
 
