@@ -45,21 +45,16 @@ export async function computeHostStats(db:Db,hostProviderId:string):Promise<Host
   const avgRating=Number(ratingResult?.avg_rating||0);
   const totalReviews=Number(ratingResult?.review_count||0);
 
-  // Acceptance timeout from provider_capacity_profiles
-  const profileResult=await safeFirst(db,"SELECT acceptance_timeout_sec FROM provider_capacity_profiles WHERE id=?",[hostProviderId]);
-  const acceptanceTimeout=Number(profileResult?.acceptance_timeout_sec||300);
+  // Acceptance timeout lives on provider_capacity_profiles as MINUTES; expose seconds.
+  const profileResult=await safeFirst(db,"SELECT acceptance_timeout_minutes FROM provider_capacity_profiles WHERE id=?",[hostProviderId]);
+  const acceptanceTimeout=Number(profileResult?.acceptance_timeout_minutes||5)*60;
 
-  // Medication support from provider_capacity_profiles
-  const medicationResult=await safeFirst(db,"SELECT CAST(medication_support AS INTEGER) as med_support FROM provider_capacity_profiles WHERE id=?",[hostProviderId]);
-  const medicationSupport=Boolean(Number(medicationResult?.med_support||0));
-
-  // Home verified from provider_capacity_profiles
-  const homeResult=await safeFirst(db,"SELECT CAST(home_verified AS INTEGER) as home_v FROM provider_capacity_profiles WHERE id=?",[hostProviderId]);
-  const homeVerified=Boolean(Number(homeResult?.home_v||0));
-
-  // KYC verified from provider_capacity_profiles
-  const kycResult=await safeFirst(db,"SELECT CAST(kyc_verified AS INTEGER) as kyc_v FROM provider_capacity_profiles WHERE id=?",[hostProviderId]);
-  const kycVerified=Boolean(Number(kycResult?.kyc_v||0));
+  // Medication support / home verification / KYC live on boarding_host_profiles, not the
+  // capacity profile (sitting-only providers have no boarding_host_profiles row -> all false).
+  const hostProfile=await safeFirst(db,"SELECT medication_support,home_verified,kyc_status FROM boarding_host_profiles WHERE provider_id=?",[hostProviderId]);
+  const medicationSupport=Boolean(Number(hostProfile?.medication_support||0));
+  const homeVerified=Boolean(Number(hostProfile?.home_verified||0));
+  const kycVerified=String(hostProfile?.kyc_status||"")==="verified";
 
   // Host cancelled count
   const cancelResult=await safeFirst(db,"SELECT COUNT(*) as host_cancelled FROM canonical_bookings WHERE provider_id=? AND cancellation_reason='host_cancelled'",[hostProviderId]);
