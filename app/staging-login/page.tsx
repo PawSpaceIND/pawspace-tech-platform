@@ -1,7 +1,7 @@
 "use client";
 import{useEffect,useState}from"react";
 
-const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#041517",panel:"#0b2b24",line:"#123c33",orange:"#F6920A",gold:"#F2C968",green:"#3ecf8e"};
+const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",line:"#123c33",orange:"#F6920A",gold:"#E6B34E",green:"#3ecf8e"};
 // Seeded identities a tester can jump in as. Any other email works too (gets full/founder access for UAT).
 const QUICK=[
   {label:"Founder (full access)",email:"founder@pawspace.in"},
@@ -30,7 +30,7 @@ export default function StagingLoginPage(){
 
   const card:React.CSSProperties={background:C.panel,border:`1px solid ${C.line}`,borderRadius:16,padding:22,maxWidth:520,margin:"0 auto"};
   const inp:React.CSSProperties={display:"block",width:"100%",padding:11,marginTop:6,borderRadius:9,border:`1px solid ${C.line}`,background:C.ground,color:C.ink,boxSizing:"border-box"};
-  const btn:React.CSSProperties={padding:"11px 16px",borderRadius:10,border:"none",background:C.orange,color:"#041517",fontWeight:700,cursor:"pointer"};
+  const btn:React.CSSProperties={padding:"11px 16px",borderRadius:10,border:"none",background:C.orange,color:"#01261F",fontWeight:700,cursor:"pointer"};
 
   return <main style={{minHeight:"100vh",background:C.ground,color:C.ink,fontFamily:"system-ui,-apple-system,Segoe UI,sans-serif",display:"flex",alignItems:"center",padding:"40px 20px"}}>
     <div style={{width:"100%"}}>

@@ -10,7 +10,7 @@ type WS={linked:boolean;email?:string;engagement?:string;features?:{surface:stri
   liveAssignments?:Offer[];earnings?:{netPayout?:number;orders?:number;grossOrderValue?:number;visible?:boolean};pendingProof?:Pending[]};
 
 const INR=(v?:number)=>`₹${Number(v||0).toLocaleString("en-IN")}`;
-const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#041517",panel:"#0b2b24",panel2:"#01261F",line:"#123c33",orange:"#F6920A",purple:"#8b6bd8",gold:"#F2C968",green:"#3ecf8e"};
+const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",panel2:"#01261F",line:"#123c33",orange:"#F6920A",purple:"#8b6bd8",gold:"#E6B34E",green:"#3ecf8e"};
 async function load(){const r=await fetch("/api/provider-workspace",{cache:"no-store"});const p=await r.json();if(!r.ok)throw new Error(p.error||"Load failed");return p.data as WS;}
 
 export default function PartnerWorkspacePage(){
@@ -22,7 +22,7 @@ export default function PartnerWorkspacePage(){
 
   const card:React.CSSProperties={background:C.panel,border:`1px solid ${C.line}`,borderRadius:16,padding:18,marginTop:14};
   const h2:React.CSSProperties={fontSize:15,letterSpacing:1.5,textTransform:"uppercase",color:C.gold,margin:"0 0 12px"};
-  const btn:React.CSSProperties={padding:"8px 14px",borderRadius:9,border:"none",background:C.orange,color:"#041517",fontWeight:700,cursor:"pointer"};
+  const btn:React.CSSProperties={padding:"8px 14px",borderRadius:9,border:"none",background:C.orange,color:"#01261F",fontWeight:700,cursor:"pointer"};
   const chip=(t:string,c:string):React.CSSProperties=>({display:"inline-block",padding:"2px 9px",borderRadius:999,fontSize:12,background:c,color:t});
   const payColor=(s:string)=>s==="captured"||s==="paid"?C.green:["failed"].includes(s)?"#ff9a9a":C.gold;
   const row=(b:Booking)=><div key={b.bookingId} style={{display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:`1px solid ${C.line}`,padding:"8px 0",flexWrap:"wrap",gap:6}}><span><b>{b.serviceCode}</b> · {b.package} <small style={{color:C.dim}}>{b.start.slice(0,16).replace("T"," ")}</small></span><span style={{display:"flex",gap:10,alignItems:"center"}}>{INR(b.orderValue)} <span style={chip(payColor(b.paymentStatus),"rgba(255,255,255,0.06)")}>{b.paymentStatus}</span></span></div>;

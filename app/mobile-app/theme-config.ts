@@ -1,9 +1,10 @@
-export type ThemeId="signature"|"midnight"|"sage"|"rose"|"ocean";
+export type ThemeId="emerald"|"signature"|"midnight"|"sage"|"rose"|"ocean";
 export type AppearanceMode="system"|"light"|"dark";
 export type ThemeOption={id:ThemeId;label:string;tagline:string;swatches:[string,string,string]};
 export const THEME_STORAGE_KEY="pawspace.customer.theme";
 export const APPEARANCE_STORAGE_KEY="pawspace.customer.appearance";
 export const themes:ThemeOption[]=[
+{id:"emerald",label:"PawSpace Emerald",tagline:"Deep emerald, gold and ivory",swatches:["#01261F","#E6B34E","#f2f7f5"]},
 {id:"signature",label:"PawSpace Signature",tagline:"Iconic purple, saffron and ivory",swatches:["#5d22a8","#ffb128","#f7f5fa"]},
 {id:"midnight",label:"Midnight Luxe",tagline:"Deep plum, violet and champagne",swatches:["#25103f","#9b6de3","#e8c985"]},
 {id:"sage",label:"Sage Serenity",tagline:"Calm sage, forest and warm cream",swatches:["#295f4e","#7fa58c","#f4efe5"]},
@@ -16,5 +17,5 @@ export function isThemeId(value:string|null|undefined):value is ThemeId{return B
 export function isAppearanceMode(value:string|null|undefined):value is AppearanceMode{return Boolean(value&&appearanceModes.has(value as AppearanceMode));}
 const configuredTheme=typeof process!=="undefined"?process.env.NEXT_PUBLIC_PAWSPACE_DEFAULT_THEME:undefined;
 const configuredAppearance=typeof process!=="undefined"?process.env.NEXT_PUBLIC_PAWSPACE_DEFAULT_APPEARANCE:undefined;
-export const DEFAULT_THEME:ThemeId=isThemeId(configuredTheme)?configuredTheme:"signature";
+export const DEFAULT_THEME:ThemeId=isThemeId(configuredTheme)?configuredTheme:"emerald";
 export const DEFAULT_APPEARANCE:AppearanceMode=isAppearanceMode(configuredAppearance)?configuredAppearance:"system";

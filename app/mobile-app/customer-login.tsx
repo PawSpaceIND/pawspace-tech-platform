@@ -4,7 +4,7 @@ import styles from "./mobile.module.css";
 
 export type LoggedInCustomer = { customerId: string; customerName: string; phone: string };
 
-export default function CustomerLogin({ onLoggedIn }: { onLoggedIn: (customer: LoggedInCustomer) => void }) {
+export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLoggedIn: (customer: LoggedInCustomer) => void; embedded?: boolean }) {
   const [stage, setStage] = useState<"phone" | "otp">("phone");
   const [phone, setPhone] = useState("");
   const [name, setName] = useState("");
@@ -48,10 +48,7 @@ export default function CustomerLogin({ onLoggedIn }: { onLoggedIn: (customer: L
     }
   };
 
-  return (
-    <main className={styles.stage} data-theme="signature" data-mode="light">
-      <section className={styles.phone}>
-        <div className={styles.screen}>
+  const body = (
           <div className={styles.starter}>
             <i>🐾</i>
             <h3 style={{ margin: "10px 0" }}>Welcome to PawSpace</h3>
@@ -106,7 +103,12 @@ export default function CustomerLogin({ onLoggedIn }: { onLoggedIn: (customer: L
               </>
             )}
           </div>
-        </div>
+  );
+  if (embedded) return body;
+  return (
+    <main className={styles.stage} data-theme="emerald" data-mode="light">
+      <section className={styles.phone}>
+        <div className={styles.screen}>{body}</div>
       </section>
     </main>
   );

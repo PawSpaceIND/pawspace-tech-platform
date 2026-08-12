@@ -1,27 +1,28 @@
 @import "tailwindcss";
 
 :root {
-  --ink: #1b1231;
-  --purple: #5d22a8;
-  --purple-deep: #34106f;
-  --orange: #f59d19;
+  /* PawSpace brand base theme — Emerald #01261F + Gold #E6B34E */
+  --ink: #06231c;
+  --purple: #01261F;
+  --purple-deep: #001913;
+  --orange: #E6B34E;
   --cream: #fff8eb;
-  --line: #e9e1f4;
-  --muted: #6f687b;
+  --line: #d8e6e0;
+  --muted: #5c6f68;
   --green: #11885b;
 
-  /* Premium design system tokens — additive; existing tokens above are untouched */
-  --ds-primary-50: #f3edf9;
-  --ds-primary-100: #e4d5f3;
-  --ds-primary-400: #7d35cb;
-  --ds-primary-500: #5d22a8;
-  --ds-primary-600: #4a1b87;
-  --ds-primary-700: #34106f;
-  --ds-primary-900: #1b1231;
+  /* Premium design system tokens — Emerald primary scale + Gold accent */
+  --ds-primary-50: #e7f0ec;
+  --ds-primary-100: #c8ded6;
+  --ds-primary-400: #1f6b57;
+  --ds-primary-500: #01261F;
+  --ds-primary-600: #001c17;
+  --ds-primary-700: #001611;
+  --ds-primary-900: #000f0b;
 
-  --ds-accent-400: #f8b04a;
-  --ds-accent-500: #f59d19;
-  --ds-accent-600: #d9840a;
+  --ds-accent-400: #eec46f;
+  --ds-accent-500: #E6B34E;
+  --ds-accent-600: #c8952f;
 
   --ds-success-50: #e9faf3;
   --ds-success-500: #11885b;
@@ -36,8 +37,8 @@
   --ds-info-500: #2563c9;
 
   --ds-surface: #ffffff;
-  --ds-surface-sunken: #f6f2fb;
-  --ds-border: #e9e1f4;
+  --ds-surface-sunken: #eef4f1;
+  --ds-border: #d8e6e0;
   --ds-border-strong: #ddd2e5;
   --ds-text: #1b1231;
   --ds-text-muted: #6f687b;
