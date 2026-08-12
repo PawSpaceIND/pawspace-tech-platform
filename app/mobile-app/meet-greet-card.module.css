@@ -1,0 +1,163 @@
+.card {
+  border: 1px solid var(--color-emerald-200);
+  border-radius: 8px;
+  padding: 16px;
+  background: var(--color-white);
+}
+
+.card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--color-emerald-100);
+}
+
+.card header div {
+  flex: 1;
+}
+
+.card header b {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-emerald-900);
+}
+
+.card header span {
+  display: block;
+  font-size: 12px;
+  color: var(--color-emerald-600);
+  margin-top: 2px;
+}
+
+.card header em {
+  font-style: normal;
+  font-size: 12px;
+  color: var(--color-emerald-600);
+  font-weight: 500;
+}
+
+.formats {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.formats label {
+  flex: 1;
+  border: 1px solid var(--color-emerald-200);
+  border-radius: 6px;
+  padding: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: center;
+}
+
+.formats label:hover {
+  border-color: var(--color-emerald-400);
+  background: var(--color-emerald-50);
+}
+
+.formats label.selected {
+  border-color: var(--color-emerald-600);
+  background: var(--color-emerald-50);
+}
+
+.formats label input {
+  display: none;
+}
+
+.formats label span {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-emerald-900);
+  margin-bottom: 4px;
+}
+
+.formats label em {
+  display: block;
+  font-size: 11px;
+  color: var(--color-emerald-600);
+  font-style: normal;
+  font-weight: 500;
+}
+
+.datetime {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.datetime label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.datetime label span {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-emerald-900);
+}
+
+.datetime label input {
+  padding: 8px;
+  border: 1px solid var(--color-emerald-200);
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--color-emerald-900);
+}
+
+.datetime label input:focus {
+  outline: none;
+  border-color: var(--color-emerald-500);
+  box-shadow: 0 0 0 2px var(--color-emerald-100);
+}
+
+.datetime label input:disabled {
+  background: var(--color-emerald-50);
+  color: var(--color-emerald-400);
+  cursor: not-allowed;
+}
+
+.request {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  border-radius: 6px;
+  background: var(--color-emerald-600);
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-bottom: 12px;
+}
+
+.request:hover:not(:disabled) {
+  background: var(--color-emerald-700);
+}
+
+.request:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.request:disabled {
+  background: var(--color-emerald-300);
+  cursor: not-allowed;
+}
+
+.message {
+  display: block;
+  font-size: 12px;
+  color: var(--color-emerald-700);
+  text-align: center;
+  padding: 8px;
+  background: var(--color-emerald-50);
+  border-radius: 4px;
+}
