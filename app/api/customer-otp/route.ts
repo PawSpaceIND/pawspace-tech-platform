@@ -18,7 +18,7 @@ export async function POST(request: Request) {
   try {
     sameOriginWrite(request);
     const db = await database();
-    const body = (await request.json()) as { action?: string; phone?: string; challengeId?: string; code?: string; name?: string; cityId?: string };
+    const body = (await request.json()) as { action?: string; phone?: string; challengeId?: string; code?: string; name?: string; cityId?: string; installId?: string };
     if (body.action === "request") {
       if (!body.phone) return json({ error: "Phone number is required" }, 400);
       const result = await requestCustomerOtp(db, { phone: body.phone });
@@ -26,7 +26,7 @@ export async function POST(request: Request) {
     }
     if (body.action === "verify") {
       if (!body.challengeId || !body.code) return json({ error: "Challenge and code are required" }, 400);
-      const { assertion, customerId, customerName, phone } = await verifyCustomerOtp(db, { challengeId: body.challengeId, code: body.code, name: body.name, cityId: body.cityId });
+      const { assertion, customerId, customerName, phone } = await verifyCustomerOtp(db, { challengeId: body.challengeId, code: body.code, name: body.name, cityId: body.cityId, installId: body.installId });
       const verified = await verifyIdentityAssertion(db, assertion);
       const binding = await upsertIdentityBinding(db, {
         identitySource: verified.identitySource, principalType: verified.principalType, principalKey: verified.principalKey,

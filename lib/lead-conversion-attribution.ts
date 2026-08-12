@@ -19,15 +19,39 @@ export async function ensureLeadWorkItemsTable(db:Db){
   ).run();
 }
 
-export async function attributeBookingToOpenLead(db:Db,input:{customerId:string;bookingId:string}):Promise<{leadId:string}|null>{
+/**
+ * Called right after a NEW canonical booking is created. Conversion is PAYMENT-GATED: a lead only
+ * becomes `converted` once the booking's payment has reached `captured`. A booking that is started but
+ * not yet paid links to the lead as `booking_initiated` and keeps the lead OPEN, so Sales still owns it
+ * through the payment-recovery flow (this closes the "booked-but-unpaid ≠ converted" requirement).
+ * convertLeadOnPaymentCaptured() finishes the conversion when the payment webhook confirms capture.
+ */
+export async function attributeBookingToOpenLead(db:Db,input:{customerId:string;bookingId:string}):Promise<{leadId:string;converted:boolean}|null>{
   await ensureLeadWorkItemsTable(db);
   const openLead=await db.prepare(
     "SELECT id FROM lead_work_items WHERE customer_id=? AND converted_booking_id IS NULL AND status NOT IN ('closed','converted') ORDER BY assigned_at DESC LIMIT 1"
   ).bind(input.customerId).first<Row>();
   if(!openLead)return null;
   const leadId=String(openLead.id),now=Date.now();
-  await db.prepare(
-    "UPDATE lead_work_items SET converted_booking_id=?,status='converted',updated_at=? WHERE id=? AND converted_booking_id IS NULL"
-  ).bind(input.bookingId,now,leadId).run();
+  const payment=await db.prepare("SELECT status FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Row>().catch(()=>null);
+  const captured=String(payment?.status||"")==="captured";
+  if(captured){
+    await db.prepare("UPDATE lead_work_items SET converted_booking_id=?,status='converted',updated_at=? WHERE id=? AND converted_booking_id IS NULL").bind(input.bookingId,now,leadId).run();
+    return{leadId,converted:true};
+  }
+  // booking initiated but payment not done - keep the lead open for Sales/recovery, don't convert yet
+  await db.prepare("UPDATE lead_work_items SET last_outcome='booking_initiated',next_action_at=?,updated_at=? WHERE id=? AND converted_booking_id IS NULL").bind(now,now,leadId).run();
+  return{leadId,converted:false};
+}
+
+/** Finish the conversion when the payment is captured (called from the payment webhook hook). */
+export async function convertLeadOnPaymentCaptured(db:Db,input:{customerId:string;bookingId:string}):Promise<{leadId:string}|null>{
+  await ensureLeadWorkItemsTable(db);
+  const openLead=await db.prepare(
+    "SELECT id FROM lead_work_items WHERE customer_id=? AND converted_booking_id IS NULL AND status NOT IN ('closed','converted') ORDER BY assigned_at DESC LIMIT 1"
+  ).bind(input.customerId).first<Row>().catch(()=>null);
+  if(!openLead)return null;
+  const leadId=String(openLead.id),now=Date.now();
+  await db.prepare("UPDATE lead_work_items SET converted_booking_id=?,status='converted',updated_at=? WHERE id=? AND converted_booking_id IS NULL").bind(input.bookingId,now,leadId).run();
   return{leadId};
 }

@@ -1,4 +1,5 @@
 import { hmac, bytesToBase64Url, type AssertionPayload } from "./verified-identity-assertion";
+import { identifyInstall } from "./app-to-revenue-funnel";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -29,7 +30,7 @@ export async function requestCustomerOtp(db:Db,input:{phone:string}){
  return{challengeId:id,phone,expiresInSeconds:300,sandboxDelivery:true,sandboxCode:code,liveSmsDelivered:false};
 }
 
-export async function verifyCustomerOtp(db:Db,input:{challengeId:string;code:string;name?:string;cityId?:string}){
+export async function verifyCustomerOtp(db:Db,input:{challengeId:string;code:string;name?:string;cityId?:string;installId?:string}){
  await ensureCustomerOtpTables(db);
  const row=await db.prepare("SELECT * FROM customer_otp_challenges WHERE id=?").bind(input.challengeId).first<Row>();
  if(!row)throw new Error("OTP challenge not found");
@@ -54,6 +55,8 @@ export async function verifyCustomerOtp(db:Db,input:{challengeId:string;code:str
    subjectType:"customer",subjectId:text(customer.id),cityId:text(customer.city_id)||null,
    issuedAt:now,expiresAt:now+120000,nonce,
  };
+ // bind the app install to this identified customer (funnel: installed -> identified). Best-effort.
+ if(text(input.installId))await identifyInstall(db,{installId:text(input.installId),customerId:text(customer.id),at:now}).catch(()=>{});
  const encodedPayload=bytesToBase64Url(new TextEncoder().encode(JSON.stringify(payload)));
  const secret=await getAssertionSecret();
  const signature=await hmac(encodedPayload,secret);
