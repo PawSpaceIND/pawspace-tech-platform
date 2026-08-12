@@ -15,9 +15,20 @@ if (!d1Id || d1Id === "00000000-0000-4000-8000-000000000000") {
   process.exit(1);
 }
 
+// Staging-only UAT sign-in config (see lib/uat-staging-auth.ts). These vars exist ONLY on staging, so
+// the UAT login branch in resolveActor is dead code in production. Overridable via repo variables.
+const accessCode = String(process.env.PAWSPACE_UAT_ACCESS_CODE || "pawspace-uat-2026").trim();
+const signingKey = String(process.env.PAWSPACE_UAT_SIGNING_KEY || "pawspace-staging-uat-signing-key-do-not-reuse-in-prod").trim();
+
 cfg.name = "pawspace-staging";
 cfg.topLevelName = "pawspace-staging";
 cfg.d1_databases = [{ binding: "DB", database_name: "pawspace-staging", database_id: d1Id }];
-cfg.vars = { ...(cfg.vars || {}), PAWSPACE_PAYMENT_ENV: "sandbox" };
+cfg.vars = {
+  ...(cfg.vars || {}),
+  PAWSPACE_PAYMENT_ENV: "sandbox",
+  PAWSPACE_UAT_LOGIN: "on",
+  PAWSPACE_UAT_ACCESS_CODE: accessCode,
+  PAWSPACE_UAT_SIGNING_KEY: signingKey,
+};
 writeFileSync(path, JSON.stringify(cfg));
-console.log(`Staging config written → name=pawspace-staging, DB=${d1Id}, PAWSPACE_PAYMENT_ENV=sandbox`);
+console.log(`Staging config written → name=pawspace-staging, DB=${d1Id}, PAWSPACE_PAYMENT_ENV=sandbox, UAT_LOGIN=on, access code="${accessCode}"`);

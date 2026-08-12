@@ -1,6 +1,7 @@
 import { defaultRoles, hasPermission, parsePermissions, type Permission } from "./platform-security";
 import {ensureIdentityBindingTables,findIdentityBinding,type IdentitySource,type PrincipalType} from "./identity-binding";
 import {resolvePlatformSession} from "./platform-session";
+import {resolveUatStaffActor} from "./uat-staging-auth";
 
 type Db = Awaited<ReturnType<typeof database>>;
 export type AuthenticatedActor = { email:string; name:string; roleCode:string; permissions:string[]; developmentPreview:boolean; identitySource:IdentitySource; principalType:PrincipalType; principalKey:string };
@@ -39,6 +40,10 @@ export async function ensureSecurityTables(db:Db){
 export async function resolveActor(request:Request):Promise<AuthenticatedActor>{
   const db=await database(); await ensureSecurityTables(db);
   if(isDevelopmentPreview(request))return {email:"preview@pawspace.test",name:"Preview operator",roleCode:"superuser",permissions:["*"],developmentPreview:true,identitySource:"workspace",principalType:"email",principalKey:"preview@pawspace.test"};
+  // Staging-only UAT sign-in (flag-gated; a no-op in production where PAWSPACE_UAT_LOGIN is unset).
+  const {env:uatEnv}=await import("cloudflare:workers");
+  const uatActor=await resolveUatStaffActor(db,request,uatEnv as Record<string,unknown>);
+  if(uatActor)return uatActor;
   const session=await resolvePlatformSession(db,request);
   if(session)return {email:session.auditId,name:`${session.subjectType==="customer"?"Customer":"Provider"} ${session.subjectId}`,roleCode:session.roleCode,permissions:session.permissions,developmentPreview:false,identitySource:session.identitySource,principalType:session.principalType,principalKey:session.principalKey};
   const identity=forwardedIdentity(request);
