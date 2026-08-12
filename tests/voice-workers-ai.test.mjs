@@ -18,6 +18,10 @@ test("first-party voice runs on Cloudflare Workers AI, fail-closed on the env.AI
   assert.match(wai, /ai\.run\(model,/);
   // no external voice-vendor endpoints hard-coded in the first-party engine
   assert.doesNotMatch(wai, /https?:\/\/api\.(deepgram|elevenlabs|openai|assemblyai)\./);
+  // SSRF guard: caller-supplied audioRef URLs are host-allowlisted and private/link-local blocked
+  assert.match(wai, /assertFetchableAudioUrl/);
+  assert.match(wai, /169\\\.254\\\.|169\.254\./);
+  assert.match(wai, /VOICE_AUDIO_ALLOWED_HOSTS/);
 });
 
 test("the unified selector prefers our own Workers AI engine, with self-hosted fallback", () => {

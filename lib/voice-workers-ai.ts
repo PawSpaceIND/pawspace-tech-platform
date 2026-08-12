@@ -25,8 +25,24 @@ export function workersAiConfigured(env: Env): boolean {
   return Boolean(ai && typeof ai.run === "function");
 }
 
-/** Resolve audio bytes from a data: URL or an https reference, for feeding into Whisper. */
-async function audioBytes(audioRef: string): Promise<number[]> {
+/** SSRF guard: an http(s) audio reference is only fetched when its host is on an explicit allowlist
+ * (VOICE_AUDIO_ALLOWED_HOSTS, comma-separated). Private/link-local/loopback hosts and non-http
+ * protocols are always rejected - so a caller-supplied audioRef can never make the server reach cloud
+ * metadata (169.254.169.254 / IMDS) or internal-only services. Prefer passing a data: URL. */
+function assertFetchableAudioUrl(ref: string, allowedHosts: string[]) {
+  let url: URL;
+  try { url = new URL(ref); } catch { throw new Error("Invalid audio reference"); }
+  if (url.protocol !== "https:" && url.protocol !== "http:") throw new Error("Unsupported audio URL protocol");
+  const host = url.hostname.toLowerCase();
+  const isPrivate = host === "localhost" || host === "0.0.0.0" || host === "::1" || host === "[::1]"
+    || /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host)
+    || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || /^169\.254\./.test(host) || host.endsWith(".internal") || host.endsWith(".local");
+  if (isPrivate) throw new Error("Audio URL host is not allowed");
+  if (!allowedHosts.includes(host)) throw new Error("Audio URL host is not on the allowlist");
+}
+
+/** Resolve audio bytes from a data: URL or an allowlisted https reference, for feeding into Whisper. */
+async function audioBytes(audioRef: string, allowedHosts: string[] = []): Promise<number[]> {
   const ref = String(audioRef || "").trim();
   if (!ref) throw new Error("An audio reference is required");
   if (ref.startsWith("data:")) {
@@ -36,6 +52,7 @@ async function audioBytes(audioRef: string): Promise<number[]> {
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     return Array.from(bytes);
   }
+  assertFetchableAudioUrl(ref, allowedHosts);
   const response = await fetch(ref);
   if (!response.ok) throw new Error(`Unable to fetch audio (${response.status})`);
   return Array.from(new Uint8Array(await response.arrayBuffer()));
@@ -45,11 +62,12 @@ async function audioBytes(audioRef: string): Promise<number[]> {
 export function resolveWorkersAiStt(env: Env): VoiceSttProvider {
   if (!workersAiConfigured(env)) return disconnectedStt;
   const ai = env.AI as AiBinding, model = val(env, "VOICE_STT_MODEL") || "@cf/openai/whisper";
+  const allowedHosts = val(env, "VOICE_AUDIO_ALLOWED_HOSTS").split(",").map(h => h.trim().toLowerCase()).filter(Boolean);
   return {
     provider: "workers_ai", status: "connected",
     async transcribe(input: { audioRef: string; language?: string | null }) {
       const startedAt = Date.now();
-      const audio = await audioBytes(input.audioRef);
+      const audio = await audioBytes(input.audioRef, allowedHosts);
       const result = await ai.run(model, { audio });
       const textOut = String(result.text ?? result.transcription ?? "").trim();
       // Whisper on Workers AI does not return a scalar confidence; surface it when present, else a
