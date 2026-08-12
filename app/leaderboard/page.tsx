@@ -8,7 +8,7 @@ type Train={rank:number;trainerId:string;orderValue:number;meetGreetConversions:
 type Board={asOf:number;monthStart:string;metric:string;employees:Emp[];groomers:Groom[];trainers:Train[];counts:{employees:number;groomers:number;trainers:number}};
 
 const INR=(v?:number)=>`₹${Number(v||0).toLocaleString("en-IN")}`;
-const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#041517",panel:"#0b2b24",panel2:"#01261F",line:"#123c33",orange:"#F6920A",purple:"#8b6bd8",gold:"#F2C968"};
+const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",panel2:"#01261F",line:"#123c33",orange:"#F6920A",purple:"#8b6bd8",gold:"#E6B34E"};
 const METRICS=[["net_collected_revenue","Net collected"],["booking_conversions","Conversions"],["qualified_leads","Qualified leads"],["first_response_rate","First response %"]];
 const medal=(r:number)=>r===1?"🥇":r===2?"🥈":r===3?"🥉":`#${r}`;
 
@@ -32,7 +32,7 @@ export default function LeaderboardPage(){
       {error?<p style={{color:"#ff9a9a"}}>{error}</p>:null}
       {loading&&!data?<p style={{color:C.dim}}>Loading the leaderboard…</p>:null}
 
-      <div style={{display:"flex",gap:8,flexWrap:"wrap",margin:"14px 0"}}>{METRICS.map(([k,label])=><button key={k} onClick={()=>setMetric(k)} style={{padding:"8px 14px",borderRadius:999,border:`1px solid ${metric===k?C.orange:C.line}`,background:metric===k?C.orange:"transparent",color:metric===k?"#041517":C.ink,fontWeight:700,cursor:"pointer"}}>{label}</button>)}</div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",margin:"14px 0"}}>{METRICS.map(([k,label])=><button key={k} onClick={()=>setMetric(k)} style={{padding:"8px 14px",borderRadius:999,border:`1px solid ${metric===k?C.orange:C.line}`,background:metric===k?C.orange:"transparent",color:metric===k?"#01261F":C.ink,fontWeight:700,cursor:"pointer"}}>{label}</button>)}</div>
 
       <section style={card}>
         <h2 style={h2}>Employees · {data?.counts.employees||0}</h2>
