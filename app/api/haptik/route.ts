@@ -1,4 +1,5 @@
 import{captureHaptikLead,captureHaptikCallback,fetchHaptikTimeSlots,requestHaptikBooking}from"../../../lib/haptik-integration-governance";
+import{recordBotCallDisposition}from"../../../lib/bot-call-disposition";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 async function runtime(){const {env}=await import("cloudflare:workers");return env as unknown as Record<string,unknown>;}
@@ -25,7 +26,10 @@ export async function POST(request:Request){
     if(action==="capture_callback")return json({data:await captureHaptikCallback(db,{idempotencyKey:String(body.idempotencyKey||""),phone:String(body.phone||""),name:body.name as string,leadId:body.leadId as string,preferredAt:body.preferredAt as number,reason:body.reason as string,actorId})},201);
     if(action==="fetch_slots")return json({data:await fetchHaptikTimeSlots(db,{serviceCode:String(body.service||body.serviceCode||""),cityId:String(body.city||body.cityId||""),zoneId:body.zone as string,fromDate:body.fromDate as string,days:body.days as number})});
     if(action==="request_booking")return json({data:await requestHaptikBooking(db,{idempotencyKey:String(body.idempotencyKey||""),phone:String(body.phone||""),name:body.name as string,leadId:body.leadId as string,serviceCode:String(body.service||body.serviceCode||""),cityId:body.city as string,zoneId:body.zone as string,preferredSlot:body.preferredSlot as string,petName:body.petName as string,notes:body.notes as string,actorId})},201);
-    return json({error:"Unsupported Haptik action. Use capture_lead | capture_callback | fetch_slots | request_booking"},400);
+    // What happened on the call. Haptik posts this once the bot call ends; it lands in the real CRM
+    // (attempt + activity + lead state) using the same vocabulary a human rep's call uses.
+    if(action==="record_call_outcome")return json({data:await recordBotCallDisposition(db,{idempotencyKey:String(body.idempotencyKey||""),leadId:body.leadId as string,phone:String(body.phone||""),channel:body.channel==="whatsapp"?"whatsapp":"voice",botProvider:"haptik",callRef:body.callRef as string,primaryTag:String(body.primaryTag||body.outcome||""),secondaryTags:Array.isArray(body.tags)?body.tags as string[]:[],crossSellServices:Array.isArray(body.crossSellServices)?body.crossSellServices as string[]:[],callbackAt:body.callbackAt as number,talkTimeSeconds:body.talkTimeSeconds as number,sentiment:body.sentiment as string,notes:body.notes as string,transcriptRef:body.transcriptRef as string,actorId})},201);
+    return json({error:"Unsupported Haptik action. Use capture_lead | capture_callback | fetch_slots | request_booking | record_call_outcome"},400);
   }catch(error){
     if(error instanceof Response){const t=await error.text().catch(()=>"" );return json(t?JSON.parse(t):{error:"Haptik request rejected"},error.status);}
     return json({error:error instanceof Error?error.message:"Unable to process Haptik request"},400);

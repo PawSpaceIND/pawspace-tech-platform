@@ -13,7 +13,12 @@ test("Haptik integration: the 4 voice-agent APIs, capture-and-request only", () 
   // leads land in the REAL crm + governed lead pipeline
   assert.match(lib, /INSERT INTO crm_contacts/);
   assert.match(lib, /INSERT INTO lead_work_items/);
-  assert.match(lib, /INSERT INTO lead_callbacks/);
+  // Callbacks go through the GOVERNED callback ledger (scheduleLeadCallback) rather than a raw
+  // insert, so a bot promise supersedes any earlier open one, updates the worklist's next action and
+  // emits the audit event - see tests/bot-call-disposition.test.mjs for the behavioural coverage.
+  assert.match(lib, /import \{ scheduleLeadCallback \} from "\.\/lead-callback-governance"/);
+  assert.match(lib, /await scheduleLeadCallback\(db, \{ leadId/);
+  assert.doesNotMatch(lib, /INSERT INTO lead_callbacks \(id,lead_id,requested_at/);
   // every write is idempotent (Haptik retries on the same call/session id)
   assert.match(lib, /idempotency_key TEXT NOT NULL UNIQUE/);
   assert.match(lib, /if \(prior\) return \{ duplicatePrevented: true/);

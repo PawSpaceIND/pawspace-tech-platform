@@ -11,6 +11,7 @@
  */
 
 import { loadGovernedProviders } from "./provider-capacity-governance";
+import { scheduleLeadCallback } from "./lead-callback-governance";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
@@ -33,7 +34,11 @@ export async function ensureHaptikTables(db: Db) {
 async function ensureLead(db: Db, input: { phone: string; name?: string; service?: string; city?: string; source?: string; actorId: string }) {
   const phone = digits(input.phone);
   if (phone.length < 8) throw new Error("A valid phone number is required");
-  const contactId = `HAPTIK-${phone}`, now = Date.now(), service = text(input.service) || "grooming", source = text(input.source) || "haptik_voice";
+  // Match an existing CRM contact by phone FIRST. Keying purely on the bot-specific
+  // `HAPTIK-<phone>` id forked a second contact for a customer the CRM already knew (from the
+  // website form, an app signup or a rep), so the bot's leads never joined that customer's history.
+  const existingContact = await db.prepare("SELECT id FROM crm_contacts WHERE replace(replace(replace(primary_phone,' ',''),'-',''),'+','') LIKE ? ORDER BY updated_at DESC LIMIT 1").bind(`%${phone.slice(-10)}`).first<Row>();
+  const contactId = existingContact ? text(existingContact.id) : `HAPTIK-${phone}`, now = Date.now(), service = text(input.service) || "grooming", source = text(input.source) || "haptik_voice";
   await db.prepare("INSERT INTO crm_contacts (id,name,primary_phone,area,stage,owner,source,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=COALESCE(NULLIF(excluded.name,''),crm_contacts.name),area=COALESCE(NULLIF(excluded.area,''),crm_contacts.area),updated_at=excluded.updated_at")
     .bind(contactId, text(input.name) || `Lead ${phone.slice(-4)}`, input.phone, text(input.city) || null, "New lead", "Unassigned", source, now, now).run();
   const existingLead = await db.prepare("SELECT id FROM lead_work_items WHERE customer_id=? AND status IN ('active','sla_breached','qualified') ORDER BY created_at DESC LIMIT 1").bind(contactId).first<Row>();
@@ -63,8 +68,15 @@ export async function captureHaptikCallback(db: Db, input: { idempotencyKey: str
   const prior = await db.prepare("SELECT id,callback_id,lead_id FROM haptik_callback_requests WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();
   if (prior) return { duplicatePrevented: true, callbackId: String(prior.callback_id), leadId: String(prior.lead_id) };
   const leadId = text(input.leadId) || (await ensureLead(db, { phone: input.phone, name: input.name, source: "haptik_voice", actorId: input.actorId })).leadId;
-  const now = Date.now(), requestedAt = Number(input.preferredAt) || now, callbackId = uid("LCB"), reason = text(input.reason) || "Customer requested a callback (Haptik voice)";
-  await db.prepare("INSERT INTO lead_callbacks (id,lead_id,requested_at,reason,status,scheduled_by,created_at,updated_at) VALUES (?,?,?,?, 'scheduled',?,?,?)").bind(callbackId, leadId, requestedAt, reason, input.actorId, now, now).run();
+  const now = Date.now(), reason = text(input.reason) || "Customer requested a callback (Haptik voice)";
+  // Go through the governed callback ledger rather than writing lead_callbacks directly: that path
+  // supersedes any still-open promise to the same customer, keeps lead_work_items.next_action_at in
+  // agreement with the callback queue, emits the audit event, and refuses a placeholder past time.
+  // A bot asking for "now" (no preferred time) is normalised to the soonest real slot, 15 minutes out.
+  const preferred = Number(input.preferredAt);
+  const requestedAt = Number.isFinite(preferred) && preferred > now ? preferred : now + 15 * 60_000;
+  const scheduled = await scheduleLeadCallback(db, { leadId, requestedAt, reason, actorId: input.actorId, idempotencyKey: `haptik-callback:${input.idempotencyKey}` });
+  const callbackId = scheduled.id;
   await db.prepare("INSERT INTO haptik_callback_requests (id,idempotency_key,callback_id,lead_id,phone,preferred_at,reason,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(uid("HCB"), input.idempotencyKey, callbackId, leadId, input.phone, requestedAt, reason, now).run();
   return { duplicatePrevented: false, callbackId, leadId, requestedAt };
 }
@@ -95,7 +107,17 @@ export async function requestHaptikBooking(db: Db, input: { idempotencyKey: stri
   if (!text(input.serviceCode)) throw new Error("A service is required");
   const prior = await db.prepare("SELECT id,lead_id,status FROM haptik_booking_requests WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();
   if (prior) return { duplicatePrevented: true, requestId: String(prior.id), leadId: String(prior.lead_id), status: String(prior.status) };
-  const { contactId, leadId } = input.leadId ? { contactId: `HAPTIK-${digits(input.phone)}`, leadId: input.leadId } : await ensureLead(db, { phone: input.phone, name: input.name, service: input.serviceCode, city: input.cityId, source: "haptik_voice", actorId: input.actorId });
+  // When the bot passes a leadId, read that lead's REAL contact instead of assuming the bot-specific
+  // id convention - otherwise a booking request could be filed against a contact id that does not
+  // exist, or worse, a different customer's.
+  let contactId: string, leadId: string;
+  if (text(input.leadId)) {
+    const lead = await db.prepare("SELECT id,customer_id FROM lead_work_items WHERE id=?").bind(text(input.leadId)).first<Row>();
+    if (!lead) throw new Error("Lead not found for this booking request");
+    leadId = text(lead.id); contactId = text(lead.customer_id);
+  } else {
+    ({ contactId, leadId } = await ensureLead(db, { phone: input.phone, name: input.name, service: input.serviceCode, city: input.cityId, source: "haptik_voice", actorId: input.actorId }));
+  }
   const now = Date.now(), requestId = uid("HBR");
   await db.prepare("INSERT INTO haptik_booking_requests (id,idempotency_key,lead_id,contact_id,phone,service,city,zone,preferred_slot,pet_name,status,detail_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?, 'booking_requested',?,?,?)")
     .bind(requestId, input.idempotencyKey, leadId, contactId, input.phone, text(input.serviceCode), text(input.cityId) || null, text(input.zoneId) || null, text(input.preferredSlot) || null, text(input.petName) || null, JSON.stringify({ notes: text(input.notes) || null, source: "haptik_voice" }), now, now).run();
