@@ -110,7 +110,17 @@ export async function redeemPoints(db: Db, input: { customerId: string; points: 
   let discount = Math.floor(pointsUsed * REDEEM_RUPEE_PER_POINT);
   if (discount > maxDiscount) { discount = maxDiscount; pointsUsed = Math.ceil(discount / REDEEM_RUPEE_PER_POINT); }
   if (discount <= 0) throw new Error("Not enough points for a redeemable discount on this booking");
-  await post(db, { customerId: input.customerId, entryType: "redeemed", points: -pointsUsed, reason: `Redeemed on booking ${input.bookingId}`, sourceType: "booking", bookingId: input.bookingId, idempotencyKey: `redeem:booking:${input.bookingId}`, createdBy: input.actorId });
+  // Guarded debit: the ledger row is only written while the live SUM can still cover the spend
+  // inside the same statement, so concurrent redemptions on different bookings can never drive the
+  // points balance negative (the balance read above is advisory only).
+  try {
+    const debited = await db.prepare("INSERT INTO paw_points_ledger (id,customer_id,entry_type,points,reason,source_type,booking_id,idempotency_key,created_by,created_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE (SELECT COALESCE(SUM(points),0) FROM paw_points_ledger WHERE customer_id=?)>=?")
+      .bind(uid("PP"), input.customerId, "redeemed", -pointsUsed, `Redeemed on booking ${input.bookingId}`, "booking", input.bookingId, `redeem:booking:${input.bookingId}`, input.actorId, Date.now(), input.customerId, pointsUsed).run();
+    if (!Number(debited.meta?.changes || 0)) throw new Error("Your PawPoints balance is no longer sufficient for this redemption");
+  } catch (error) {
+    if (error instanceof Error && /UNIQUE/i.test(error.message)) throw new Error("Points have already been redeemed on this booking");
+    throw error;
+  }
   return { bookingId: input.bookingId, pointsRedeemed: pointsUsed, discountApplied: discount, balance: await pawPointsBalance(db, input.customerId) };
 }
 

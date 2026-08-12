@@ -59,8 +59,17 @@ export async function creditWallet(db: Db, input: { customerId: string; amount: 
   if (prior) return { alreadyCredited: true, ledgerId: String(prior.id), amount: Number(prior.amount), balance: await walletBalance(db, customerId) };
   const balance = await applyDelta(db, customerId, amount);
   const id = uid("WAL");
-  await db.prepare("INSERT INTO pawspace_wallet_ledger (id,customer_id,entry_type,amount,bonus_amount,applied_value,source_type,source_id,idempotency_key,note,balance_after,actor_id,created_at) VALUES (?,?,'credit',?,0,0,?,?,?,?,?,?,?)")
-    .bind(id, customerId, amount, source, input.sourceId || null, input.idempotencyKey, input.note || null, balance, input.actorId, Date.now()).run();
+  try {
+    await db.prepare("INSERT INTO pawspace_wallet_ledger (id,customer_id,entry_type,amount,bonus_amount,applied_value,source_type,source_id,idempotency_key,note,balance_after,actor_id,created_at) VALUES (?,?,'credit',?,0,0,?,?,?,?,?,?,?)")
+      .bind(id, customerId, amount, source, input.sourceId || null, input.idempotencyKey, input.note || null, balance, input.actorId, Date.now()).run();
+  } catch (error) {
+    // Same idempotency key raced past the prior-check: undo this call's balance delta so the wallet
+    // is credited exactly once, then answer as the idempotent replay it is.
+    if (!(error instanceof Error && /UNIQUE/i.test(error.message))) throw error;
+    await applyDelta(db, customerId, -amount);
+    const raced = await db.prepare("SELECT * FROM pawspace_wallet_ledger WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();
+    return { alreadyCredited: true, ledgerId: String(raced?.id || ""), amount: Number(raced?.amount || amount), balance: await walletBalance(db, customerId) };
+  }
   await postJournal(db, { groupKey: `wallet-credit-${input.idempotencyKey}`, entryDate: today(), periodCode: periodOf(today()), sourceType: "wallet_credit", sourceId: id, narration: `Wallet credit (${source}) for ${customerId}`, lines: [
     { accountCode: ACCT.REFUNDS, debit: amount },
     { accountCode: ACCT.WALLET_LIABILITY, credit: amount },
@@ -104,10 +113,23 @@ export async function redeemWalletForBooking(db: Db, input: { customerId: string
   if (!(requestedWallet > 0)) throw new Error("Wallet redemption amount must be positive");
   const q = quoteWalletRedemption(requestedWallet, bookingTotal);
   if (!(q.walletUsed > 0)) throw new Error("Wallet redemption amount must be positive");
-  const newBalance = await applyDelta(db, customerId, -q.walletUsed);
+  // Guarded debit: the balance row is only decremented when it can absorb the full spend, so two
+  // concurrent redemptions can never drive the wallet negative (the read above is advisory only).
+  const now = Date.now();
+  const debited = await db.prepare("UPDATE pawspace_wallet_accounts SET balance=balance-?,updated_at=? WHERE customer_id=? AND balance>=?").bind(q.walletUsed, now, customerId, q.walletUsed).run();
+  if (!Number(debited.meta?.changes || 0)) throw new Error("Wallet balance is no longer sufficient for this redemption");
+  const newBalance = await walletBalance(db, customerId);
   const id = uid("WAL");
-  await db.prepare("INSERT INTO pawspace_wallet_ledger (id,customer_id,entry_type,amount,bonus_amount,applied_value,source_type,source_id,idempotency_key,note,balance_after,actor_id,created_at) VALUES (?,?,'redeem',?,?,?,'booking',?,?,?,?,?,?)")
-    .bind(id, customerId, -q.walletUsed, q.bonus, q.appliedValue, bookingId, idempotencyKey, `Applied Rs.${q.appliedValue} (incl. Rs.${q.bonus} bonus) to booking`, newBalance, input.actorId, Date.now()).run();
+  try {
+    await db.prepare("INSERT INTO pawspace_wallet_ledger (id,customer_id,entry_type,amount,bonus_amount,applied_value,source_type,source_id,idempotency_key,note,balance_after,actor_id,created_at) VALUES (?,?,'redeem',?,?,?,'booking',?,?,?,?,?,?)")
+      .bind(id, customerId, -q.walletUsed, q.bonus, q.appliedValue, bookingId, idempotencyKey, `Applied Rs.${q.appliedValue} (incl. Rs.${q.bonus} bonus) to booking`, newBalance, input.actorId, Date.now()).run();
+  } catch (error) {
+    // One-redemption-per-booking raced past the prior-check: give the money back before failing,
+    // so a lost race never burns balance without a ledger row.
+    if (!(error instanceof Error && /UNIQUE/i.test(error.message))) throw error;
+    await applyDelta(db, customerId, q.walletUsed);
+    throw new Error("Wallet credit has already been applied to this booking");
+  }
   const vertical = booking.service_code ? String(booking.service_code) : null;
   await postJournal(db, { groupKey: `wallet-redeem-${bookingId}`, entryDate: today(), periodCode: periodOf(today()), sourceType: "wallet_redeem", sourceId: id, narration: `Wallet redeemed on booking ${bookingId}`, lines: [
     { accountCode: ACCT.WALLET_LIABILITY, debit: q.walletUsed, vertical },
