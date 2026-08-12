@@ -1,3 +1,5 @@
+import {apiSend} from "./api-fetch";
+
 export type CanonicalLifecycleInput={
   idempotencyKey:string;
   scheduleGroupId:string;
@@ -20,8 +22,5 @@ export type CanonicalLifecycleInput={
 export type CanonicalLifecycleResult={bookingId:string;customerId:string;petIds:string[];scheduleGroupId:string;workOrderId:string;paymentId:string;status:string;duplicatePrevented:boolean};
 
 export async function createCanonicalLifecycle(input:CanonicalLifecycleInput){
-  const response=await fetch("/api/canonical-bookings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)});
-  const body=await response.json() as {data?:CanonicalLifecycleResult;error?:string};
-  if(!response.ok||!body.data)throw new Error(body.error??"The shared booking record could not be created");
-  return body.data;
+  return apiSend<CanonicalLifecycleResult>("/api/canonical-bookings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)},"The shared booking record could not be created");
 }
