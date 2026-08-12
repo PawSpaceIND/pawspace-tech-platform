@@ -61,7 +61,9 @@ async function refreshLeaderboard(db:Db){
   const date=dayKey(),now=Date.now(),stats=[
     ["Priya",25000,28750,27400,7,3,96,91,0],["Rahul",25000,25100,23900,6,2,89,100,500],["Neha",25000,22400,21600,5,4,98,84,0],["Sanjay",25000,19850,18750,4,1,82,76,0],
   ] as const;
-  for(let index=0;index<stats.length;index++){const [name,target,revenue,collections,conversions,renewals,sla,rnr,refunds]=stats[index],eligible=Math.max(0,revenue-refunds),incentive=eligible>=target?Math.round((eligible-target)*.08+1250):0;await db.prepare("INSERT OR REPLACE INTO sales_performance_daily (id,performance_date,employee_name,target_revenue,eligible_revenue,collections,conversions,renewals,sla_percent,rnr_percent,refunds,incentive_amount,rank,status,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'provisional',?)").bind(`PERF-${date}-${name}`,date,name,target,eligible,collections,conversions,renewals,sla,rnr,refunds,incentive,index+1,now).run()}
+  // UAT seed only: OR IGNORE so a row written or updated by the real productivity/attribution
+  // modules is never clobbered back to seed values on every GET.
+  for(let index=0;index<stats.length;index++){const [name,target,revenue,collections,conversions,renewals,sla,rnr,refunds]=stats[index],eligible=Math.max(0,revenue-refunds),incentive=eligible>=target?Math.round((eligible-target)*.08+1250):0;await db.prepare("INSERT OR IGNORE INTO sales_performance_daily (id,performance_date,employee_name,target_revenue,eligible_revenue,collections,conversions,renewals,sla_percent,rnr_percent,refunds,incentive_amount,rank,status,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'provisional',?)").bind(`PERF-${date}-${name}`,date,name,target,eligible,collections,conversions,renewals,sla,rnr,refunds,incentive,index+1,now).run()}
 }
 
 async function runLeadReopening(db:Db,actorEmail:string,asOf=Date.now()){
