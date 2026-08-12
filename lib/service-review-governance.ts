@@ -101,20 +101,29 @@ export async function claimPublicReview(db: Db, input: { bookingId: string; cust
   const scope = isSecond ? "grooming" : "any";
   const code = `${isSecond ? "REV400" : "REV250"}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
   const now = Date.now(), expiresAt = now + REWARD_VALID_DAYS * 86_400_000;
-  await db.batch([
-    db.prepare("INSERT INTO review_public_claims (id,booking_id,customer_id,platform,verification_status,reward_code,created_at) VALUES (?,?,?,?, 'self_declared',?,?)").bind(uid("RPC"), input.bookingId, input.customerId, platform, code, now),
-    db.prepare("INSERT INTO review_reward_codes (code,customer_id,reward_kind,discount_amount,service_scope,status,source_booking_id,expires_at,created_at) VALUES (?,?,?,?,?, 'issued',?,?,?)").bind(code, input.customerId, rewardKind, discount, scope, input.bookingId, expiresAt, now),
-  ]);
+  // Guarded INSERT OR IGNORE against UNIQUE(booking_id,platform): a double-tapped claim button used
+  // to surface a raw UNIQUE constraint error, and only the loser's reward row must be skipped.
+  const claimed = await db.prepare("INSERT OR IGNORE INTO review_public_claims (id,booking_id,customer_id,platform,verification_status,reward_code,created_at) VALUES (?,?,?,?, 'self_declared',?,?)").bind(uid("RPC"), input.bookingId, input.customerId, platform, code, now).run();
+  if (!Number(claimed.meta.changes)) throw new Error("You have already claimed a reward for a review on this platform for this order");
+  await db.prepare("INSERT INTO review_reward_codes (code,customer_id,reward_kind,discount_amount,service_scope,status,source_booking_id,expires_at,created_at) VALUES (?,?,?,?,?, 'issued',?,?,?)").bind(code, input.customerId, rewardKind, discount, scope, input.bookingId, expiresAt, now).run();
   return { platform, claimNumber: priorCount + 1, reward: { code, discount, scope, rewardKind }, verification: "self_declared" };
 }
 
 /** Optional staff verification of a self-declared public review claim (for audit / anti-abuse). */
 export async function verifyPublicReview(db: Db, input: { claimId: string; actor: string; verified: boolean }) {
   await ensureServiceReviewTables(db);
-  const claim = await db.prepare("SELECT id FROM review_public_claims WHERE id=?").bind(input.claimId).first<Row>();
+  const claim = await db.prepare("SELECT id,reward_code FROM review_public_claims WHERE id=?").bind(input.claimId).first<Row>();
   if (!claim) throw new Error("Public review claim not found");
   await db.prepare("UPDATE review_public_claims SET verification_status=? WHERE id=?").bind(input.verified ? "verified" : "rejected", input.claimId).run();
-  return { claimId: input.claimId, verificationStatus: input.verified ? "verified" : "rejected" };
+  // Rejecting a claim used to leave its reward code live, so a claim staff had found to be false
+  // still bought a discount. Void the reward if it has not already been spent (a spent one needs the
+  // explicit refund/adjustment path, not a silent status flip).
+  let rewardVoided = false;
+  if (!input.verified && claim.reward_code) {
+    const voided = await db.prepare("UPDATE review_reward_codes SET status='void' WHERE code=? AND status='issued'").bind(String(claim.reward_code)).run();
+    rewardVoided = Number(voided.meta.changes) > 0;
+  }
+  return { claimId: input.claimId, verificationStatus: input.verified ? "verified" : "rejected", rewardCode: claim.reward_code ? String(claim.reward_code) : null, rewardVoided };
 }
 
 /** Redeem a review reward code against a real customer-owned booking (grooming-only for double-review). */
@@ -129,8 +138,15 @@ export async function redeemReviewReward(db: Db, input: { code: string; customer
   if (!booking) throw new Error("Booking not found");
   if (String(booking.customer_id) !== input.customerId) throw new Error("You can only apply your reward to your own booking");
   if (String(reward.service_scope) === "grooming" && String(booking.service_code) !== "grooming") throw new Error("This reward is valid on grooming only");
-  await db.prepare("UPDATE review_reward_codes SET status='redeemed',redeemed_booking_id=?,redeemed_at=? WHERE code=? AND status='issued'").bind(input.bookingId, Date.now(), String(reward.code)).run();
-  return { code: String(reward.code), bookingId: input.bookingId, discountApplied: Number(reward.discount_amount), serviceScope: String(reward.service_scope) };
+  // The status='issued' guard is only half the protection: its result has to be checked, or two
+  // concurrent redemptions both report the discount as applied while one row actually moved.
+  const claim = await db.prepare("UPDATE review_reward_codes SET status='redeemed',redeemed_booking_id=?,redeemed_at=? WHERE code=? AND status='issued'").bind(input.bookingId, Date.now(), String(reward.code)).run();
+  if (!Number(claim.meta.changes)) {
+    const winner = await db.prepare("SELECT redeemed_booking_id FROM review_reward_codes WHERE code=?").bind(String(reward.code)).first<Row>();
+    if (winner && String(winner.redeemed_booking_id) === input.bookingId) return { code: String(reward.code), bookingId: input.bookingId, discountApplied: Number(reward.discount_amount), serviceScope: String(reward.service_scope), duplicatePrevented: true };
+    throw new Error("This reward has already been used");
+  }
+  return { code: String(reward.code), bookingId: input.bookingId, discountApplied: Number(reward.discount_amount), serviceScope: String(reward.service_scope), duplicatePrevented: false };
 }
 
 /**
