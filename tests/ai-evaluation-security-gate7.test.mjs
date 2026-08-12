@@ -6,7 +6,7 @@ const evaluation=read("lib/ai-evaluation-security.ts");
 
 test("Gate 7 evaluation manifest covers all required security and quality categories",()=>{for(const category of["intent","groundedness","knowledge_freshness","hallucination","prompt_injection","data_isolation","pii","tool_authorization","consent","handoff","multilingual","webhook_reliability","instrumentation"])assert.match(evaluation,new RegExp(`category:\"${category}\"`));});
 
-test("Gate 7 blocks prompt injection and redacts common PII",()=>{assert.match(evaluation,/ignore previous instructions/);assert.match(evaluation,/reveal system prompt/);assert.match(evaluation,/injectionSignals/);assert.match(evaluation,/piiPatterns/);assert.match(evaluation,/\[REDACTED\]/);assert.match(evaluation,/detectPromptInjection/);assert.match(evaluation,/redactPii/);});
+test("Gate 7 blocks prompt injection and redacts common PII",()=>{assert.match(evaluation,/ignore_instructions/);assert.match(evaluation,/reveal_system_prompt/);assert.match(evaluation,/injectionPatterns/);assert.match(evaluation,/piiPatterns/);assert.match(evaluation,/\[REDACTED\]/);assert.match(evaluation,/detectPromptInjection/);assert.match(evaluation,/redactPii/);});
 
 test("Gate 7 rejects ungrounded business claims cross-customer references and unapproved high-impact actions",()=>{for(const marker of["fabricated_or_unapproved_high_impact_claim","missing_high_impact_approval","cross_customer_reference","ungrounded_business_claim"])assert.match(evaluation,new RegExp(marker));assert.match(evaluation,/approval_gated/);assert.match(evaluation,/approvalReference/);assert.match(evaluation,/customerOwned/);assert.match(evaluation,/permissionGranted/);});
 
