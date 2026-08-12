@@ -3,11 +3,8 @@ import {resolveZoneByPincode,listServiceZones,seedDefaultZones} from"../../../li
 type Db=D1Database;
 
 async function ensureDb():Promise<Db>{
-  // In Cloudflare Workers context, D1 binding is available as env.DB
-  // In local/test context, this would be injected
-  const ctx=globalThis as Record<string,unknown>;
-  if(!ctx.__D1__)throw new Response("Database not configured",{status:500});
-  return ctx.__D1__ as Db;
+  const{env}=await import("cloudflare:workers");
+  return(env as{DB:Db}).DB;
 }
 
 export async function GET(request:Request):Promise<Response>{

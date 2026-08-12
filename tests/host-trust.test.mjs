@@ -146,3 +146,32 @@ test("host-trust-panel includes pagination for reviews",async()=>{
   assert.match(panel,/Previous/);
   assert.match(panel,/Next/);
 });
+
+test("no API route resolves the database from globalThis - cloudflare:workers env only",async()=>{
+  // Regression: two parallel-account routes (host-trust, service-zone) fetched the DB from
+  // globalThis.__D1__, which exists nowhere in the runtime - every request 500'd once deployed.
+  const{readdir,readFile}=await import("node:fs/promises");
+  const{join}=await import("node:path");
+  const root=new URL("../app/api",import.meta.url).pathname;
+  const entries=await readdir(root,{withFileTypes:true});
+  for(const entry of entries){
+    if(!entry.isDirectory())continue;
+    const routePath=join(root,entry.name,"route.ts");
+    const source=await readFile(routePath,"utf8").catch(()=>"");
+    if(!source)continue;
+    if(source.includes("__D1__")||/globalThis[^\n]*\bDB\b/.test(source)){
+      throw new Error(`${entry.name}/route.ts resolves the DB from globalThis - use: const {env}=await import("cloudflare:workers")`);
+    }
+  }
+});
+
+test("host stats read verification flags from boarding_host_profiles with real column names",async()=>{
+  const{readFile}=await import("node:fs/promises");
+  const lib=await readFile(new URL("../lib/host-badges.ts",import.meta.url),"utf8");
+  // The original queries referenced acceptance_timeout_sec / medication_support / home_verified /
+  // kyc_verified on provider_capacity_profiles - none of those columns exist there, and the
+  // safeFirst .catch fallback silently returned every flag as false.
+  assert.match(lib,/acceptance_timeout_minutes/);
+  assert.doesNotMatch(lib,/acceptance_timeout_sec/);
+  assert.match(lib,/SELECT medication_support,home_verified,kyc_status FROM boarding_host_profiles/);
+});
