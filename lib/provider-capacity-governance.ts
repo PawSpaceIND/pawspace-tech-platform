@@ -13,6 +13,7 @@ const defaults=[
   {id:"host_maya_rohan",cityId:"blr",name:"Maya & Rohan",model:"commission",services:["boarding"],zones:["blr-east"],rating:4.9,qualityScore:96,capacity:4,travelBufferMinutes:0,maxDailyJobs:12,acceptanceTimeoutMinutes:3},
   {id:"host_sana",cityId:"blr",name:"Sana F.",model:"commission",services:["boarding"],zones:["blr-east"],rating:4.8,qualityScore:92,capacity:3,travelBufferMinutes:0,maxDailyJobs:10,acceptanceTimeoutMinutes:3},
   {id:"host_arjun_tara",cityId:"blr",name:"Arjun & Tara",model:"commission",services:["boarding"],zones:["blr-east"],rating:4.7,qualityScore:89,capacity:3,travelBufferMinutes:0,maxDailyJobs:10,acceptanceTimeoutMinutes:3},
+  {id:"host_priya_dev",cityId:"blr",name:"Priya & Dev",model:"commission",services:["boarding"],zones:["blr-east"],rating:4.8,qualityScore:91,capacity:4,travelBufferMinutes:0,maxDailyJobs:12,acceptanceTimeoutMinutes:3},
   {id:"sit_sana",cityId:"blr",name:"Sana F.",model:"commission",services:["pet_sitting"],zones:["blr-east"],rating:4.9,qualityScore:95,capacity:4,travelBufferMinutes:30,maxDailyJobs:6,acceptanceTimeoutMinutes:3},
   {id:"sit_neha",cityId:"blr",name:"Neha P.",model:"commission",services:["pet_sitting"],zones:["blr-east"],rating:4.8,qualityScore:92,capacity:4,travelBufferMinutes:30,maxDailyJobs:6,acceptanceTimeoutMinutes:3},
   {id:"sit_asha",cityId:"blr",name:"Asha R.",model:"commission",services:["pet_sitting"],zones:["blr-east"],rating:4.7,qualityScore:89,capacity:4,travelBufferMinutes:30,maxDailyJobs:6,acceptanceTimeoutMinutes:3},
