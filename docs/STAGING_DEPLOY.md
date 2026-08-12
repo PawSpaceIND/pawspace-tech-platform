@@ -64,8 +64,17 @@ ever complains about the `AI` binding, it is optional — voice simply stays fai
 
 ## Data
 Tables self-provision on first use; pricing packages, UAT coupons and provider defaults auto-seed. Start
-clean and let testers create data by using the app (add lead → book → pay sandbox → track → rate). Ask me
-to export the 220-customer audit seed as a `wrangler d1 execute --file` pack if you want it pre-populated.
+clean and let testers create data by using the app (add lead → book → pay sandbox → track → rate).
+
+**Or pre-populate with the 220-customer seed pack** (same profile as the launch audit — 220 customers
+across 5 cities, 294 pets, 307 bookings across all 6 verticals with mixed captured/pending/failed
+payments, 23 subscriptions, marketing consent on ~⅓). Idempotent (`INSERT OR IGNORE`), safe to re-run:
+```bash
+npx wrangler d1 execute pawspace-staging --remote --file=scripts/staging-seed.sql
+```
+(Regenerate any time with `node scripts/staging-seed-gen.mjs` — deterministic output.)
+After loading, open `/team/acquisition-funnel` and hit **Refresh sweep** to compute funnel stages, ₹300
+recoveries and App-Inbound leads from the seeded data — instant material for the CRM/Sales test.
 
 ## What to open (append to your staging URL)
 Customer `/` `/mobile-app` `/services` `/account` · Providers `/partner` `/groomer` `/host` … `/partner/onboarding`
