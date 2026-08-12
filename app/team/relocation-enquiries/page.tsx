@@ -2,7 +2,7 @@
 import Link from"next/link";
 import{useEffect,useState}from"react";
 
-type Enquiry={id:string;customerName:string;phonePrimary:string;phoneSecondary:string|null;email:string;petType:string;pickupDate:string;pickupApproxTime:string;pickupLocation:string;dropLocation:string;expectedTravelDate:string;status:string;createdAt:number};
+type Enquiry={id:string;customerName:string;phonePrimary:string;phoneSecondary:string|null;email:string;petType:string;relocationKind?:string;pickupDate:string;pickupApproxTime:string;pickupLocation:string;dropLocation:string;expectedTravelDate:string;status:string;createdAt:number};
 
 const box={background:"var(--ds-surface)",border:"1px solid var(--ds-border)",borderRadius:"var(--ds-radius-lg)",padding:16} as const;
 const row={display:"grid",gridTemplateColumns:"1.2fr 1fr 1fr 1fr 1fr",gap:8,padding:"10px 0",borderBottom:"1px solid var(--ds-border)",fontSize:14} as const;
@@ -32,7 +32,7 @@ export default function TeamRelocationEnquiries(){
       {rows.map(enquiry=><div key={enquiry.id} style={row}>
         <span>{enquiry.customerName}<br/><small>{enquiry.id}</small></span>
         <span>{enquiry.phonePrimary}{enquiry.phoneSecondary?<><br/><small>{enquiry.phoneSecondary}</small></>:null}<br/><small>{enquiry.email}</small></span>
-        <span style={{textTransform:"capitalize"}}>{enquiry.petType}</span>
+        <span style={{textTransform:"capitalize"}}>{enquiry.petType} · {enquiry.relocationKind==="international"?"Intl":"Domestic"}</span>
         <span>{enquiry.pickupDate} {enquiry.pickupApproxTime}<br/><small>{enquiry.pickupLocation}</small></span>
         <span>{enquiry.dropLocation}<br/><small>Travel: {enquiry.expectedTravelDate}</small></span>
       </div>)}

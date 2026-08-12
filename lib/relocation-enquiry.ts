@@ -16,14 +16,16 @@ const DATE_RE=/^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE=/^([01]\d|2[0-3]):[0-5]\d$/;
 const PET_TYPES=["dog","cat"] as const;
 export type PetType=typeof PET_TYPES[number];
+const RELOCATION_KINDS=["domestic","international"] as const;
+export type RelocationKind=typeof RELOCATION_KINDS[number];
 
 export type RelocationEnquiryInput={
-  customerName:string;phonePrimary:string;phoneSecondary?:string;email:string;petType:string;
+  customerName:string;phonePrimary:string;phoneSecondary?:string;email:string;petType:string;relocationKind:string;
   pickupDate:string;pickupApproxTime:string;pickupLocation:string;dropLocation:string;expectedTravelDate:string;
 };
 
 export type RelocationEnquiry={
-  id:string;customerName:string;phonePrimary:string;phoneSecondary:string|null;email:string;petType:PetType;
+  id:string;customerName:string;phonePrimary:string;phoneSecondary:string|null;email:string;petType:PetType;relocationKind:RelocationKind;
   pickupDate:string;pickupApproxTime:string;pickupLocation:string;dropLocation:string;expectedTravelDate:string;
   status:"new";createdAt:number;
 };
@@ -38,12 +40,17 @@ export async function ensureRelocationEnquiryTables(db:Db){
     db.prepare("CREATE TABLE IF NOT EXISTS relocation_enquiries (id TEXT PRIMARY KEY,customer_name TEXT NOT NULL,phone_primary TEXT NOT NULL,phone_secondary TEXT,email TEXT NOT NULL,pet_type TEXT NOT NULL,pickup_date TEXT NOT NULL,pickup_approx_time TEXT NOT NULL,pickup_location TEXT NOT NULL,drop_location TEXT NOT NULL,expected_travel_date TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'new',created_at INTEGER NOT NULL)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_relocation_enquiries_created ON relocation_enquiries(created_at)"),
   ]);
+  // Additive: founder requires capturing whether the relocation is domestic or international.
+  // The table already exists on staging, so migrate via PRAGMA/ALTER (customer-account pattern);
+  // pre-existing rows read back as 'domestic' (India-first default) rather than null.
+  const columns=await db.prepare("PRAGMA table_info(relocation_enquiries)").all<Row>();
+  if(!columns.results.some(row=>String(row.name)==="relocation_kind"))await db.prepare("ALTER TABLE relocation_enquiries ADD COLUMN relocation_kind TEXT NOT NULL DEFAULT 'domestic'").run();
   relocationEnquiryTablesEnsured.add(db);
 }
 
 function rowToEnquiry(row:Row):RelocationEnquiry{return{
   id:text(row.id),customerName:text(row.customer_name),phonePrimary:text(row.phone_primary),phoneSecondary:row.phone_secondary?text(row.phone_secondary):null,
-  email:text(row.email),petType:text(row.pet_type) as PetType,pickupDate:text(row.pickup_date),pickupApproxTime:text(row.pickup_approx_time),
+  email:text(row.email),petType:text(row.pet_type) as PetType,relocationKind:(text(row.relocation_kind)||"domestic") as RelocationKind,pickupDate:text(row.pickup_date),pickupApproxTime:text(row.pickup_approx_time),
   pickupLocation:text(row.pickup_location),dropLocation:text(row.drop_location),expectedTravelDate:text(row.expected_travel_date),
   status:"new",createdAt:Number(row.created_at||0),
 };}
@@ -60,6 +67,8 @@ function validate(input:RelocationEnquiryInput){
   if(!EMAIL_RE.test(email))throw new Error("A valid email address is required");
   const petType=text(input.petType).toLowerCase();
   if(!(PET_TYPES as readonly string[]).includes(petType))throw new Error('Pet type must be "dog" or "cat"');
+  const relocationKind=text(input.relocationKind).toLowerCase();
+  if(!(RELOCATION_KINDS as readonly string[]).includes(relocationKind))throw new Error('Relocation type must be "domestic" or "international"');
   const pickupDate=text(input.pickupDate);
   if(!DATE_RE.test(pickupDate))throw new Error("Pickup date must be in YYYY-MM-DD format");
   const pickupApproxTime=text(input.pickupApproxTime);
@@ -70,7 +79,7 @@ function validate(input:RelocationEnquiryInput){
   if(!dropLocation)throw new Error("Drop location is required");
   const expectedTravelDate=text(input.expectedTravelDate);
   if(!DATE_RE.test(expectedTravelDate))throw new Error("Expected travel date must be in YYYY-MM-DD format");
-  return{customerName,phonePrimary,phoneSecondary:phoneSecondaryRaw||null,email,petType:petType as PetType,pickupDate,pickupApproxTime,pickupLocation,dropLocation,expectedTravelDate};
+  return{customerName,phonePrimary,phoneSecondary:phoneSecondaryRaw||null,email,petType:petType as PetType,relocationKind:relocationKind as RelocationKind,pickupDate,pickupApproxTime,pickupLocation,dropLocation,expectedTravelDate};
 }
 
 /** Customer-facing, public: capture one relocation enquiry. No case, quote or vendor logic — pure lead intake. */
@@ -78,8 +87,8 @@ export async function createRelocationEnquiry(db:Db,input:RelocationEnquiryInput
   await ensureRelocationEnquiryTables(db);
   const clean=validate(input);
   const id=uid("RELQ"),now=Date.now();
-  await db.prepare("INSERT INTO relocation_enquiries (id,customer_name,phone_primary,phone_secondary,email,pet_type,pickup_date,pickup_approx_time,pickup_location,drop_location,expected_travel_date,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
-    .bind(id,clean.customerName,clean.phonePrimary,clean.phoneSecondary,clean.email,clean.petType,clean.pickupDate,clean.pickupApproxTime,clean.pickupLocation,clean.dropLocation,clean.expectedTravelDate,"new",now).run();
+  await db.prepare("INSERT INTO relocation_enquiries (id,customer_name,phone_primary,phone_secondary,email,pet_type,relocation_kind,pickup_date,pickup_approx_time,pickup_location,drop_location,expected_travel_date,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .bind(id,clean.customerName,clean.phonePrimary,clean.phoneSecondary,clean.email,clean.petType,clean.relocationKind,clean.pickupDate,clean.pickupApproxTime,clean.pickupLocation,clean.dropLocation,clean.expectedTravelDate,"new",now).run();
   return{id,...clean,status:"new",createdAt:now};
 }
 
