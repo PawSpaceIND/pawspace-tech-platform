@@ -39,8 +39,9 @@ export async function ensureGroomingSubscriptionPlans(db:Db){await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS grooming_subscription_plan_audit (id TEXT PRIMARY KEY,plan_id TEXT NOT NULL,plan_code TEXT NOT NULL,city_id TEXT NOT NULL,action TEXT NOT NULL,before_json TEXT,after_json TEXT NOT NULL,actor_id TEXT NOT NULL,reason TEXT NOT NULL,created_at INTEGER NOT NULL)"),
 ]);}
 
-export async function seedDefaultGroomingSubscriptionPlans(db:Db){await ensureGroomingSubscriptionPlans(db);const now=Date.now();for(const plan of defaultSubscriptionPlans){await db.prepare("INSERT OR IGNORE INTO grooming_subscription_plans (id,service_code,plan_code,city_id,zone_id,name,price,currency,session_count,validity_value,validity_unit,eligible_pet_types_json,service_package_code,max_pets_per_booking,credits_per_pet,family_wallet,pause_days,grace_days,renewal_window_days,benefits_json,terms_json,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,'grooming',?,'blr',NULL,? ,?,'INR',?,?,?,?,?,4,1,1,0,0,30,'[]','{}',1,1,'2026-08-01',NULL,'founder_seed',?)")
-  .bind(plan.id,plan.planCode,plan.name,plan.price,plan.sessions,plan.validityValue,plan.validityUnit,JSON.stringify(plan.pets),plan.servicePackageCode,now).run();}}
+const subscriptionPlansSeeded=new WeakSet<Db>();
+export async function seedDefaultGroomingSubscriptionPlans(db:Db){if(subscriptionPlansSeeded.has(db))return;await ensureGroomingSubscriptionPlans(db);const now=Date.now();await db.batch(defaultSubscriptionPlans.map(plan=>db.prepare("INSERT OR IGNORE INTO grooming_subscription_plans (id,service_code,plan_code,city_id,zone_id,name,price,currency,session_count,validity_value,validity_unit,eligible_pet_types_json,service_package_code,max_pets_per_booking,credits_per_pet,family_wallet,pause_days,grace_days,renewal_window_days,benefits_json,terms_json,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,'grooming',?,'blr',NULL,? ,?,'INR',?,?,?,?,?,4,1,1,0,0,30,'[]','{}',1,1,'2026-08-01',NULL,'founder_seed',?)")
+  .bind(plan.id,plan.planCode,plan.name,plan.price,plan.sessions,plan.validityValue,plan.validityUnit,JSON.stringify(plan.pets),plan.servicePackageCode,now)));subscriptionPlansSeeded.add(db);}
 
 function parseJson<T>(value:unknown,fallback:T):T{try{return JSON.parse(String(value??"")) as T;}catch{return fallback;}}
 

@@ -5,7 +5,7 @@ type Row=Record<string,unknown>;
 export type WalkingOpsAction="assign_replacement"|"close_recovery"|"add_note";
 export type WalkingOpsInput={bookingId:string;action:WalkingOpsAction;actorId:string;idempotencyKey:string;providerId?:string;reason?:string;note?:string};
 const parse=<T>(value:unknown,fallback:T):T=>{try{return JSON.parse(String(value??"")) as T}catch{return fallback}};
-export async function ensureWalkingOpsTables(db:D1Database){await ensureWalkingFinanceTables(db);await ensureWalkingProofTables(db);await db.batch([
+export async function ensureWalkingOpsTables(db:D1Database){await ensureWalkingFinanceTables(db);await ensureWalkingProofTables(db);await db.batch([db.prepare("CREATE TABLE IF NOT EXISTS walking_sessions (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,schedule_group_id TEXT NOT NULL,reservation_id TEXT NOT NULL UNIQUE,provider_id TEXT NOT NULL,occurrence_number INTEGER NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'scheduled',handover_status TEXT NOT NULL DEFAULT 'pending',completion_status TEXT NOT NULL DEFAULT 'pending',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS walking_ops_action_keys (idempotency_key TEXT PRIMARY KEY,booking_id TEXT NOT NULL,action TEXT NOT NULL,result_json TEXT NOT NULL,created_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS walking_ops_notes (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,note TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
  db.prepare("CREATE INDEX IF NOT EXISTS idx_walking_ops_notes_booking ON walking_ops_notes(booking_id,created_at)"),
