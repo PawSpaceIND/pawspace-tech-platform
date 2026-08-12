@@ -76,6 +76,20 @@ npx wrangler d1 execute pawspace-staging --remote --file=scripts/staging-seed.sq
 After loading, open `/team/acquisition-funnel` and hit **Refresh sweep** to compute funnel stages, ₹300
 recoveries and App-Inbound leads from the seeded data — instant material for the CRM/Sales test.
 
+**Best option — MASKED REAL data** (the actual 4-year book, safe for staging). Run the importer against
+`The_PawSpace_TRUTH.xlsx` locally (the workbook and the generated SQL contain customer data — never
+commit either; keep them off shared drives):
+```bash
+python3 scripts/import-truth-xlsx.py /path/to/The_PawSpace_TRUTH.xlsx --mode masked --out truth-masked.sql
+npx wrangler d1 execute pawspace-staging --remote --file=truth-masked.sql && rm truth-masked.sql
+```
+This imports all **17,321 real customers / 34,984 orders / ₹11.24Cr gross** with segments, dormancy,
+next-best-actions and exact service mix — so every report and the targeting/outbound modules show TRUE
+business numbers — while **phones are rewritten to non-dialable placeholders and names shortened**, so no
+tester action can ever reach a real customer even with integrations switched on. After UAT, the same
+importer runs with `--mode live` against production for the real go-live import (real names/phones;
+marketing consent stays 0 until captured fresh — DPDP).
+
 ## What to open (append to your staging URL)
 Customer `/` `/mobile-app` `/services` `/account` · Providers `/partner` `/groomer` `/host` … `/partner/onboarding`
 · Sales/CRM `/crm` `/team/sales` `/team/marketing` `/team/daily-revenue` · Ops `/ops` `/booking-command-center`
