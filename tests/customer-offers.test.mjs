@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { registerHooks } from "node:module";
+import * as nodeModule from "node:module";
 
 // lib/customer-offers.ts imports lib/coupon-governance.ts with an extensionless specifier
 // ("./coupon-governance") - required as-is for tsc/the real bundler build, but Node's native ESM
@@ -10,16 +10,29 @@ import { registerHooks } from "node:module";
 // specifiers the way a bundler does. This resolve hook is test-only plumbing so the real,
 // unmodified source can be imported and executed directly below; it changes nothing about how the
 // app actually resolves modules in build/production.
-registerHooks({
-  resolve(specifier, context, nextResolve) {
-    try {
-      return nextResolve(specifier, context);
-    } catch (error) {
-      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
+// registerHooks (sync, in-thread) only exists on Node >=22.15; fall back to the older
+// module.register() loader-thread API so the suite also passes on the CI runner's Node 22.13.
+if (typeof nodeModule.registerHooks === "function") {
+  nodeModule.registerHooks({
+    resolve(specifier, context, nextResolve) {
+      try {
+        return nextResolve(specifier, context);
+      } catch (error) {
+        if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
+        throw error;
+      }
+    },
+  });
+} else {
+  const hook = `export async function resolve(specifier, context, nextResolve) {
+    try { return await nextResolve(specifier, context); }
+    catch (error) {
+      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(specifier + ".ts", context);
       throw error;
     }
-  },
-});
+  }`;
+  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
+}
 
 const libSource = fs.readFileSync("lib/customer-offers.ts", "utf8");
 const governanceSource = fs.readFileSync("lib/coupon-governance.ts", "utf8");
