@@ -19,3 +19,55 @@
 .offerStrip article small{font-size:11px;opacity:.85}
 .offerStrip article em{font-style:normal;font-size:9px;font-weight:800;justify-self:start;padding:2px 8px;border-radius:8px;background:#E6B34E;color:#01261F}
 .offerStrip>small{font-size:10px;opacity:.7}
+
+/* ============================================================================
+   READABILITY & REAL-PHONE FIT PASS (founder: fonts too small, layout cluttered,
+   fit-to-screen broken on actual phones). Same class names re-declared later in
+   the file so they win the cascade; the desktop phone-frame mock scales with it.
+   Floor: no text below 9px; controls 11px+; inputs 16px (blocks iOS focus zoom).
+   ========================================================================== */
+.phone>header small{font-size:10px}.phone>header b{font-size:13px}
+.title small{font-size:10px;letter-spacing:1.4px}.title h2{font-size:26px}
+.phone>nav{height:76px;padding:8px 8px calc(12px + env(safe-area-inset-bottom,0px))}
+.phone>nav button{font-size:10px;gap:3px}.phone>nav i{font-size:21px}
+.screen{padding-bottom:calc(118px + env(safe-area-inset-bottom,0px))}
+.hero span,.offer span{font-size:10px}.hero p,.offer p{font-size:12px;line-height:1.55}
+.hero button,.offer button,.reminder button{font-size:12px;padding:10px 14px;border-radius:11px}
+.head{margin:22px 2px 11px}.head h3{font-size:17px}.head button{font-size:11px}
+.services{gap:12px 8px}
+.services button{font-size:11px;font-weight:700;gap:7px;line-height:1.25}
+.services i{width:56px;height:56px;border-radius:18px;font-size:24px;box-shadow:0 2px 8px rgba(0,0,0,.06)}
+.next strong{font-size:12px}.next span{font-size:10px}.next div small{font-size:9px}
+.next>b{width:50px;height:54px;font-size:19px}.next>b small{font-size:9px;margin-top:-4px}
+.reminder b{font-size:12px}.reminder span{font-size:10px}
+.offer h3{font-size:18px}
+.steps>span{font-size:10px}
+.petCards span{font-size:11px}
+.packs span{font-size:9px}.packs p{font-size:11px;line-height:1.5}
+.add,.primary{font-size:13px;padding:14px;border-radius:14px}
+.back{font-size:12px}
+.dates button{font-size:10px;padding:11px;min-width:96px}
+.slots b{font-size:11px}.slots small{font-size:9px}
+.checkout span,.checkout small{font-size:10px}.checkout b{font-size:19px}.checkout button{font-size:12px;padding:12px 14px}
+.segment button{font-size:11px;padding:10px}
+.activity h3{font-size:16px}.activity p{font-size:11px}.activity span{font-size:9px}.activity button{font-size:10px;padding:9px}
+.petProfile p{font-size:11px}.petProfile>span{font-size:9px}.petProfile small{font-size:9px}.petProfile small b{font-size:11px}.petProfile>button{font-size:11px;padding:11px}
+.account p{font-size:11px}.account span{font-size:9px}
+.menu b{font-size:12px}.menu small{font-size:10px}.menu button{padding:14px 12px}.menu i{width:34px;height:34px}
+.note{font-size:10px;line-height:1.5}
+.toast{font-size:12px}
+.success article span{font-size:10px}.success article b{font-size:11px}.success>div{font-size:9px}
+.appearanceHead span,.modePicker>span{font-size:9px}.appearanceHead p{font-size:10px}.appearanceHead>em{font-size:9px}
+.themeGrid>button b{font-size:11px}.themeGrid>button small{font-size:9px}.themeGrid>button>em{font-size:8px}
+.modePicker button{font-size:10px}.modePicker>small{font-size:9px}
+.search input{font-size:16px}
+.stage input,.stage select,.stage textarea{font-size:16px}
+/* Real-phone full-bleed: kill the mock frame entirely, honour notches */
+@media(max-width:480px){
+ .stage{display:block;padding:0}
+ .phone{width:100%;height:100dvh;max-height:none;border:0;border-radius:0;box-shadow:none;padding:calc(10px + env(safe-area-inset-top,0px)) 14px calc(84px + env(safe-area-inset-bottom,0px))}
+ .phone:before{display:none}
+ .services{grid-template-columns:repeat(4,1fr)}
+ .services i{width:60px;height:60px}
+ .title h2{font-size:28px}
+}

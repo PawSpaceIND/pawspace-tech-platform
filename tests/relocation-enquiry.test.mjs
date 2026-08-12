@@ -154,5 +154,5 @@ test("the embedded relocation flow posts every founder field including relocatio
   const fetches = [...flow.matchAll(/fetch\("([^"]+)"/g)].map(m => m[1]);
   assert.deepEqual([...new Set(fetches)], ["/api/relocation-enquiry"], "flow talks only to the enquiry endpoint");
   const shell = readFileSync(new URL("../app/mobile-app/page.tsx", import.meta.url), "utf8");
-  assert.match(shell, /service\.name==="Relocation"\)return <RelocationFlow customer=\{customer\}\/>/);
+  assert.match(shell, /service\.name==="Relocation"\)return flow\(<RelocationFlow customer=\{customer\}\/>\)/);
 });
