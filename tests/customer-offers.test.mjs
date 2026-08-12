@@ -70,8 +70,13 @@ test("the API route is public (no staff auth) and delegates entirely to listAvai
   assert.doesNotMatch(routeSource, /requireCustomerOwnership\(/);
 });
 
-test("/api/customer-offers is allowlisted as public in the API gateway, alongside /api/customer-otp", () => {
-  assert.match(gatewaySource, /url\.pathname==="\/api\/customer-offers"\|\|url\.pathname==="\/api\/customer-otp"/);
+test("/api/customer-offers is allowlisted as public in the API gateway, in the same return-null block as /api/customer-otp", () => {
+  // Presence in the public (return null) allowlist, not source adjacency — other public routes
+  // (e.g. /api/host-profile) may be inserted between entries by parallel branches.
+  const publicBlock = gatewaySource.match(/if\(url\.pathname==="\/api\/pricing-quote"[\s\S]*?\)return null;/);
+  assert.ok(publicBlock, "public allowlist block not found");
+  assert.match(publicBlock[0], /url\.pathname==="\/api\/customer-offers"/);
+  assert.match(publicBlock[0], /url\.pathname==="\/api\/customer-otp"/);
 });
 
 test("the offers card is a standalone client component that never touches the checkout flow files", () => {
