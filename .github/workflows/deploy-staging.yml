@@ -1,11 +1,14 @@
 name: Deploy staging
 
 # One-click ISOLATED STAGING deploy for human UAT. Manual only (workflow_dispatch) — never auto-runs,
-# never touches production. Requires two repo secrets (added once by ops, never pasted in chat):
-#   CLOUDFLARE_API_TOKEN   — a token scoped to the staging account (Workers Scripts:Edit, D1:Edit)
-#   CLOUDFLARE_ACCOUNT_ID  — the staging Cloudflare account id
-# Prereqs (one-time, see docs/STAGING_DEPLOY.md): create the staging D1 and paste its id into
-# wrangler.staging.jsonc; set sandbox secrets with `wrangler secret put … --config wrangler.staging.jsonc`.
+# never touches production. Deploys the vinext build output (dist/server) as worker "pawspace-staging"
+# bound to a dedicated staging D1.
+#
+# Required repo config (added once by ops — never pasted in chat):
+#   Secrets:   CLOUDFLARE_API_TOKEN (Workers Scripts: Edit, D1: Edit), CLOUDFLARE_ACCOUNT_ID
+#   Variable:  STAGING_D1_ID  (from `npx wrangler d1 create pawspace-staging`)
+# After the first deploy, set the app secret once:
+#   npx wrangler secret put PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT --name pawspace-staging
 
 on:
   workflow_dispatch:
@@ -29,10 +32,15 @@ jobs:
         run: npm run install:ci
       - name: Build (vinext)
         run: npm run build
+      - name: Configure staging (name + D1 + sandbox)
+        env:
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+        run: node scripts/stage-config.mjs
       - name: Deploy to staging
+        working-directory: dist/server
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx wrangler deploy --config wrangler.staging.jsonc
+        run: npx wrangler deploy
       - name: Where to test
-        run: echo "Staging deployed. Open https://pawspace-staging.<your-workers-subdomain>.workers.dev and append the module paths from docs/LAUNCH_AUDIT_REPORT.md / the route map."
+        run: echo "Staging deployed as pawspace-staging. The deploy log above prints the workers.dev URL — open it and append the module paths from docs/STAGING_DEPLOY.md."
