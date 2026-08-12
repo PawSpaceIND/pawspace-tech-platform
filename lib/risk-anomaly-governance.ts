@@ -120,7 +120,11 @@ export async function reviewRiskFlag(db: Db, input: { id: string; decision: "cle
   const flag = await db.prepare("SELECT id,status FROM risk_flags WHERE id=?").bind(input.id).first<Row>();
   if (!flag) throw new Error("Risk flag not found");
   if (String(flag.status) !== "open") throw new Error("This risk flag has already been reviewed");
-  await db.prepare("UPDATE risk_flags SET status=?,reviewed_by=?,review_note=?,reviewed_at=?,updated_at=? WHERE id=?").bind(input.decision, input.actor, input.note.trim(), Date.now(), Date.now(), input.id).run();
+  // Conditional claim: two reviewers deciding at once would otherwise both succeed, the second
+  // overwriting the first reviewer's decision and note on the same fraud flag.
+  const now = Date.now();
+  const claim = await db.prepare("UPDATE risk_flags SET status=?,reviewed_by=?,review_note=?,reviewed_at=?,updated_at=? WHERE id=? AND status='open'").bind(input.decision, input.actor, input.note.trim(), now, now, input.id).run();
+  if (!Number(claim.meta.changes)) throw new Error("This risk flag has already been reviewed");
   return { id: input.id, status: input.decision, reviewedBy: input.actor };
 }
 

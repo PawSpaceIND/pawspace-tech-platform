@@ -29,6 +29,27 @@ export const VERIFICATION_TYPES: VerificationType[] = [
 ];
 const typeByCode = (c: string) => VERIFICATION_TYPES.find(t => t.code === c) || null;
 export const PROVIDER_CATEGORIES = ["groomer", "pet_sitter", "trainer", "host"];
+
+/**
+ * Which mandate category an onboarding application's vertical belongs to. The onboarding application
+ * carries a service vertical_key ("grooming"), while mandates are defined per provider category
+ * ("groomer") - without this mapping the activation checklist could not consult the mandate at all,
+ * so a host could be activated with house/pet-proofing checks still not started.
+ * A vertical absent from this map has no category mandate defined yet (walking/taxi/food): those
+ * still require the application-level verification, and the activation checklist says so explicitly
+ * rather than implying a category mandate was satisfied.
+ */
+export const VERIFICATION_CATEGORY_BY_VERTICAL: Record<string, string> = {
+  grooming: "groomer",
+  pet_sitting: "pet_sitter",
+  sitting: "pet_sitter",
+  dog_training: "trainer",
+  training: "trainer",
+  boarding: "host",
+};
+export function verificationCategoryForVertical(verticalKey: string): string | null {
+  return VERIFICATION_CATEGORY_BY_VERTICAL[text(verticalKey).toLowerCase()] || null;
+}
 const DEFAULT_MANDATES: Record<string, string[]> = {
   groomer: ["aadhaar", "pan"],
   pet_sitter: ["aadhaar", "pan", "address"],

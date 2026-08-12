@@ -158,7 +158,10 @@ export async function computeGroomerMonthlyIncentive(db:Db,input:{headGroomerId:
  await ensureGroomingIncentiveTables(db);
  if(!/^\d{4}-\d{2}-01$/.test(input.monthStart))throw new Error("monthStart must be the first day of a month");
  const[year,month]=input.monthStart.split("-").map(Number);
- const monthEndDate=new Date(year,month,0).toISOString().slice(0,10);
+ // Date.UTC, not the local-time constructor: new Date(year,month,0) builds midnight LOCAL, so in any
+ // timezone ahead of UTC (IST included) toISOString() rolls back a day and the last day of the month
+ // silently dropped out of the incentive window.
+ const monthEndDate=new Date(Date.UTC(year,month,0)).toISOString().slice(0,10);
  const bracketRow=await currentGroomerBracket(db,input.headGroomerId,input.monthStart);
  if(!bracketRow)throw new Error("This groomer has no bracket configured for this month - set team/single before computing");
  const bracket=bracketRow.bracket;
