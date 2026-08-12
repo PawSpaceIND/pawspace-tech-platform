@@ -7,6 +7,7 @@ import{POST as slaPost}from"../app/api/lead-sla-governance/route";
 import{scheduleLeadCallback,completeLeadCallback}from"../lib/lead-callback-governance";
 import{POST as schedulingPost}from"../app/api/uat-scheduling/route";
 import{POST as bookingPost}from"../app/api/canonical-bookings/route";
+import{governGroomingBookingWithLiveMultiPet}from"../lib/live-grooming-governance";
 import{POST as sittingPost}from"../app/api/sitting-lifecycle/route";
 import{POST as sittingFinancePost}from"../app/api/sitting-finance/route";
 import{generatePnlReport}from"../lib/pnl-reporting";
@@ -52,6 +53,36 @@ const onboardingReachable=await onboardingSelfServiceGet(new Request(`${url}/api
 const quizDraftAttempt=await generateProviderQuizDraft({verticalKey:"grooming",cityCode:"BLR"});expect(quizDraftAttempt.connected===false&&typeof(quizDraftAttempt as{reason:string}).reason==="string"&&(quizDraftAttempt as{reason:string}).reason.length>0,"quiz AI draft must fail closed with a clear reason when no provider is configured");
 const interviewSummaryAttempt=await generateInterviewSummaryDraft({interviewNotes:"Runtime regression check - candidate was punctual and answered clearly.",verticalKey:"grooming"});expect(interviewSummaryAttempt.connected===false,"interview summary AI draft must fail closed when no provider is configured");
 const profileBioAttempt=await generateProviderProfileBioDraft({verticalKey:"grooming",cityCode:"BLR",displayName:"Runtime Caregiver"});expect(profileBioAttempt.connected===false,"profile bio AI draft must fail closed when no provider is configured");
+// Real proof for the two customer-app booking regressions that were confirmed against staging:
+// (1) a MULTI-PET grooming booking must not be rejected with a 409 price mismatch, and (2) a
+// *preferred* groomer must be a soft preference, not a hard filter - a busy preferred groomer must
+// fall back to another eligible governed groomer instead of NO_SCHEDULE_AVAILABLE, while a slot
+// where every governed groomer is genuinely at capacity must still be refused (no double-booking).
+// Guard 1: the customer flow's bundle() total (dog-basic: single 1899, bundle 1649/pet) must equal
+// the server's governed multi-pet total for 1-4 pets - the exact number the 409 compared.
+const groomBundleTotal=(pets:number)=>pets===1?1899:1649*pets;
+for(let pets=1;pets<=4;pets++){
+  const groomingGoverned=await governGroomingBookingWithLiveMultiPet(db,{packageCode:"dog-basic",pets:Array.from({length:pets},()=>({species:"dog" as const})),submittedTotal:groomBundleTotal(pets),submittedAmountDueNow:0,paymentMode:"pay_after_service",cityId:"blr",zoneId:"blr-east",scheduledStart:new Date(Date.UTC(2026,10,10+pets,5,30)).toISOString()});
+  expect(groomingGoverned.totalAmount===groomBundleTotal(pets),`grooming ${pets}-pet governed total (${groomingGoverned.totalAmount}) must equal the customer flow bundle total (${groomBundleTotal(pets)}) so the multi-pet booking is not rejected with a 409 price mismatch`);
+}
+// Guard 1 end-to-end: a real 2-pet grooming booking must schedule a provider AND confirm (201), not 409.
+const groomStart=new Date(Date.UTC(2026,10,20,5,30)),groomEnd=new Date(groomStart.getTime()+120*60_000),groomGroup="runtime-groom-2pet";
+const groomScheduled=await call(schedulingPost,"/api/uat-scheduling",{clientRequestId:groomGroup,customerId:"RUNTIME-GROOM-CUST",petIds:["Bruno","Coco"],serviceCode:"grooming",zoneId:"blr-east",scheduledStart:groomStart.toISOString(),scheduledEnd:groomEnd.toISOString(),preferredProviderId:"groom_arun"});
+const groomProvider=((groomScheduled.data as Row).provider||{}) as Row;expect(groomProvider.id,"a 2-pet grooming reserve must assign a governed groomer");
+const groomBooked=await call(bookingPost,"/api/canonical-bookings",{idempotencyKey:groomGroup,scheduleGroupId:groomGroup,customer:{id:"RUNTIME-GROOM-CUST",name:"Runtime Groom Parent",primaryPhone:"+919999999994"},pets:[{sourceId:"Bruno",name:"Bruno",species:"dog"},{sourceId:"Coco",name:"Coco",species:"dog"}],cityId:"blr",zoneId:"blr-east",serviceCode:"grooming",packageCode:"dog-basic",packageName:"Bath & Basic",scheduledStart:groomStart.toISOString(),scheduledEnd:groomEnd.toISOString(),provider:{id:String(groomProvider.id),name:String(groomProvider.name),model:String(groomProvider.model)},totalAmount:groomBundleTotal(2),amountDueNow:0,payment:{method:"cash",mode:"pay_after_service",status:"created",detail:"Pay after service"},pricing:{discount:0}});
+expect(String((groomBooked.data as Row).bookingId||"").length>0,"a governed 2-pet grooming booking must confirm end-to-end (201), not be rejected with a 409 price mismatch");
+// Guard 2: preferred-groomer soft preference + genuine-capacity protection. Only the 3 seeded
+// groomers (groom_arun/groom_kiran/groom_sanjay, capacity 1 each) exist at this point.
+const fbStart=new Date(Date.UTC(2026,10,25,5,30)),fbEnd=new Date(fbStart.getTime()+120*60_000);
+const fbBase={serviceCode:"grooming" as const,zoneId:"blr-east",scheduledStart:fbStart.toISOString(),scheduledEnd:fbEnd.toISOString(),preferredProviderId:"groom_arun",petIds:["Bruno"]};
+const fbReserve=(suffix:string)=>call(schedulingPost,"/api/uat-scheduling",{...fbBase,clientRequestId:`runtime-groom-fb-${suffix}`,customerId:`RUNTIME-GROOM-FB-${suffix}`});
+const fb1=await fbReserve("1");expect(String(((fb1.data as Row).provider as Row)?.id)==="groom_arun","the preferred groomer must be ranked first and selected when free");
+const fb2=await fbReserve("2");const fb2Provider=String(((fb2.data as Row).provider as Row)?.id);
+expect(fb2Provider.length>0&&fb2Provider!=="groom_arun","with the preferred groomer busy, the engine must fall back to another eligible governed groomer instead of NO_SCHEDULE_AVAILABLE");
+const fb3=await fbReserve("3");const fb3Provider=String(((fb3.data as Row).provider as Row)?.id);
+expect(fb3Provider.length>0&&fb3Provider!=="groom_arun"&&fb3Provider!==fb2Provider,"the second fallback must assign the last remaining eligible groomer");
+const fb4Response=await schedulingPost(request("/api/uat-scheduling",{...fbBase,clientRequestId:"runtime-groom-fb-4",customerId:"RUNTIME-GROOM-FB-4"}));const fb4=await fb4Response.json() as Row;
+expect(fb4Response.status===409&&String(fb4.error)==="NO_SCHEDULE_AVAILABLE","once every governed groomer is genuinely at capacity for the slot, real double-booking protection must still refuse the reserve");
 // Real proof that a newly activated provider actually becomes bookable - before
 // addProviderToServiceMap existed, activateProviderUat wrote live=0 with no code path anywhere
 // that ever flipped it, and wrote zones_json in a format ("BLR") that could never match a real
