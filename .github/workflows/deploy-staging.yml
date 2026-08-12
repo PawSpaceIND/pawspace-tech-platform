@@ -37,7 +37,10 @@ jobs:
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
         run: node scripts/stage-config.mjs
       - name: Deploy to staging
-        working-directory: dist/server
+        # Deploy from the repo ROOT: the @cloudflare/vite-plugin build writes a redirect at
+        # .wrangler/deploy/config.json pointing wrangler to dist/server/wrangler.json. Running from
+        # dist/server instead makes wrangler find BOTH that redirect and the local wrangler.json and
+        # refuse ("Found both a user configuration file ... and a deploy configuration file").
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
