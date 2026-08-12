@@ -41,7 +41,7 @@ export default function PartnerWorkspacePage(){
         <header style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",flexWrap:"wrap",gap:10,marginTop:8}}>
           <div><h1 style={{margin:"6px 0",fontSize:28}}>Partner workspace</h1>
             <p style={{margin:0,color:C.dim}}>{data.engagement==="contract"?"Contract partner":"Commission partner"} · onboarding: <b style={{color:data.onboardingStatus==="active"?C.green:C.gold}}>{data.onboardingStatus}</b></p></div>
-          {data.features?.payslip?<Link href="/me" style={{...btn,textDecoration:"none",display:"inline-block"}}>Payslip & leave →</Link>:null}
+          <span style={{display:"flex",gap:8,flexWrap:"wrap"}}><Link href="/partner/jobs" style={{...btn,background:C.gold,textDecoration:"none",display:"inline-block"}}>Job feed →</Link>{data.features?.payslip?<Link href="/me" style={{...btn,textDecoration:"none",display:"inline-block"}}>Payslip & leave →</Link>:null}</span>
         </header>
 
         {data.earnings?.visible!==false?<section style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:12,marginTop:16}}>
