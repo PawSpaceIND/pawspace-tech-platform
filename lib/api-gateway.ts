@@ -105,6 +105,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/address-autocomplete")return "scheduling.book";
   if(url.pathname==="/api/grooming-route")return "bookings.view";
   if(url.pathname==="/api/booking-command-center")return method==="GET"?"bookings.view":"bookings.manage";
+  if(url.pathname==="/api/ops-work-queue")return method==="GET"?"bookings.view":"bookings.manage";
   if(url.pathname==="/api/partner-grooming-jobs")return "bookings.view";
   if(url.pathname==="/api/service-media")return "bookings.view";
   if(url.pathname==="/api/grooming-booking-change")return "scheduling.book";
