@@ -9,7 +9,7 @@ test("Boarding Gate 1 owns catalogue quotes verified hosts and canonical stay cr
  assert.match(governance,/code:"boarding-4h".*basePrice:499/);
  assert.match(governance,/code:"boarding-10h".*basePrice:599/);
  assert.match(governance,/code:"boarding-24h".*basePrice:699/);
- assert.match(governance,/Boarding split or long-stay payment policy is not approved/);
+ assert.match(governance,/Boarding supports full prepaid or the approved 50\/50 split payment/);
  assert.match(governance,/Boarding coupon policy is not enabled/);
  assert.match(governance,/Boarding requires verified vaccination for every pet/);
  assert.match(governance,/home_verified/);
@@ -28,7 +28,7 @@ test("Boarding Gate 1 owns catalogue quotes verified hosts and canonical stay cr
  assert.match(flow,/loadBoardingCommercial/);
  assert.match(flow,/quoteBoarding/);
  assert.match(flow,/boardingQuoteId:governedBoardingQuote\?\.quoteId/);
- assert.match(flow,/splitEligible = mode !== "boarding"/);
+ assert.match(flow,/splitEligible = careWindow === "24 hours" && nights > 4/);
  assert.match(flow,/Boarding coupons are disabled until a canonical coupon policy is configured/);
  assert.match(flow,/Pet Taxi pricing is not enabled in Boarding Gate 1/);
  assert.match(flow,/Full prepaid UAT payment from the canonical Boarding quote/);

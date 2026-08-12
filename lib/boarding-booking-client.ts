@@ -32,7 +32,7 @@ export async function createCanonicalBoardingBooking(input:{
   provider:input.provider,
   totalAmount:quote.totalAmount,
   amountDueNow:quote.amountDueNow,
-  payment:{method:"payment_link",mode:"prepaid",status:"captured",detail:"Full prepaid UAT payment from the canonical Boarding quote; live money disabled"},
+  payment:{method:"payment_link",mode:quote.paymentMode,status:"captured",detail:quote.paymentMode==="split_50_50"?"50% UAT payment captured now from the canonical Boarding quote; balance due 24h before check-in; live money disabled":"Full prepaid UAT payment from the canonical Boarding quote; live money disabled"},
   pricing:{discount:0,boardingQuoteId:quote.quoteId},
  });
  return{...result,liveMoney:false} satisfies BoardingBookingResult;

@@ -144,12 +144,12 @@ test("Boarding customer journey is truthful before host acceptance",()=>{
   assert.match(flow,/useState\(\(\) => dateOffset\(10\)\)/);
 });
 
-test("Boarding keeps split payment and coupons disabled while Pet Sitting fixtures remain isolated",()=>{
+test("Boarding uses the founder-approved 50/50 split while coupons stay disabled and Pet Sitting fixtures remain isolated",()=>{
   const flow=read("app/mobile-app/stay-flow.tsx");
-  assert.match(flow,/splitEligible = mode !== \"boarding\"/);
+  assert.match(flow,/splitEligible = careWindow === "24 hours" && nights > 4/);
   assert.match(flow,/mode === \"boarding\" \? boardingQuote\?\.amountDueNow\?\?0/);
   assert.match(flow,/Boarding coupons are disabled until a canonical coupon policy is configured/);
-  assert.match(flow,/Long-stay split payment remains disabled until a Boarding payment policy is explicitly configured/);
+  assert.match(flow,/paymentMode:splitEligible&&splitPayment\?"split_50_50":"prepaid"/);
   assert.match(flow,/mode === \"boarding\" \? \(/);
   assert.match(flow,/Verified commission partners receive the request, review the Care Card and send an acceptance or flexible offer/);
 });

@@ -15,7 +15,7 @@ export type CanonicalLifecycleInput={
   provider:{id:string;name:string;model:"full_time"|"commission"};
   totalAmount:number;
   amountDueNow:number;
-  payment:{method:"upi"|"card"|"netbanking"|"payment_link"|"cash";mode:"prepaid"|"pay_after_service"|"split";status:"created"|"authorised"|"captured";detail:string};
+  payment:{method:"upi"|"card"|"netbanking"|"payment_link"|"cash";mode:"prepaid"|"pay_after_service"|"split"|"split_50_50";status:"created"|"authorised"|"captured";detail:string};
   pricing:{discount:number;couponCode?:string;subscription?:string;requirements?:string[];trainingQuoteId?:string;boardingQuoteId?:string};
 };
 
