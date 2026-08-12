@@ -1,0 +1,33 @@
+import{captureHaptikLead,captureHaptikCallback,fetchHaptikTimeSlots,requestHaptikBooking}from"../../../lib/haptik-integration-governance";
+
+const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
+async function runtime(){const {env}=await import("cloudflare:workers");return env as unknown as Record<string,unknown>;}
+async function database(){const {env}=await import("cloudflare:workers");return (env as unknown as {DB:D1Database}).DB;}
+
+// Haptik-facing webhook, authenticated by HAPTIK_API_KEY. Fail-closed: does nothing until the key is
+// configured (503), and rejects a wrong/absent key (401). The AI/voice automation layer is entirely
+// optional - with no key set, Haptik simply cannot call in and staff work leads manually.
+function assertHaptik(env:Record<string,unknown>,request:Request){
+  const key=String(env.HAPTIK_API_KEY||"").trim();
+  if(!key)throw new Response(JSON.stringify({error:"Haptik integration is not connected (HAPTIK_API_KEY not configured)"}),{status:503});
+  const provided=String(request.headers.get("x-haptik-key")||request.headers.get("authorization")||"").replace(/^Bearer\s+/i,"").trim();
+  if(provided!==key)throw new Response(JSON.stringify({error:"Invalid Haptik credentials"}),{status:401});
+}
+
+export async function POST(request:Request){
+  try{
+    const env=await runtime();assertHaptik(env,request);
+    const db=await database();
+    const body=await request.json() as Record<string,unknown>;
+    const action=String(body.action||"").trim();
+    const actorId="haptik_voice";
+    if(action==="capture_lead")return json({data:await captureHaptikLead(db,{idempotencyKey:String(body.idempotencyKey||""),phone:String(body.phone||""),name:body.name as string,service:body.service as string,city:body.city as string,source:body.source as string,qualification:body.qualification as Record<string,unknown>,actorId})},201);
+    if(action==="capture_callback")return json({data:await captureHaptikCallback(db,{idempotencyKey:String(body.idempotencyKey||""),phone:String(body.phone||""),name:body.name as string,leadId:body.leadId as string,preferredAt:body.preferredAt as number,reason:body.reason as string,actorId})},201);
+    if(action==="fetch_slots")return json({data:await fetchHaptikTimeSlots(db,{serviceCode:String(body.service||body.serviceCode||""),cityId:String(body.city||body.cityId||""),zoneId:body.zone as string,fromDate:body.fromDate as string,days:body.days as number})});
+    if(action==="request_booking")return json({data:await requestHaptikBooking(db,{idempotencyKey:String(body.idempotencyKey||""),phone:String(body.phone||""),name:body.name as string,leadId:body.leadId as string,serviceCode:String(body.service||body.serviceCode||""),cityId:body.city as string,zoneId:body.zone as string,preferredSlot:body.preferredSlot as string,petName:body.petName as string,notes:body.notes as string,actorId})},201);
+    return json({error:"Unsupported Haptik action. Use capture_lead | capture_callback | fetch_slots | request_booking"},400);
+  }catch(error){
+    if(error instanceof Response){const t=await error.text().catch(()=>"" );return json(t?JSON.parse(t):{error:"Haptik request rejected"},error.status);}
+    return json({error:error instanceof Error?error.message:"Unable to process Haptik request"},400);
+  }
+}
