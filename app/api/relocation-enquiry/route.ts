@@ -16,4 +16,4 @@ export async function POST(request:Request){try{sameOrigin(request);const db=awa
   pickupLocation:String(body.pickupLocation??""),dropLocation:String(body.dropLocation??""),expectedTravelDate:String(body.expectedTravelDate??""),
  };
  const result=await createRelocationEnquiry(db,input);
- return json({data:result,productionReady:false});}catch(error){return authError(error,"Unable to submit relocation enquiry");}}
+ return json({data:result,productionReady:false});}catch(error){if(error instanceof Error)return json({error:error.message},400);return authError(error,"Unable to submit relocation enquiry");}}

@@ -295,3 +295,24 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   .confirmation-actions { flex-direction: column; }
   .confirmation-actions button { width: 100%; }
 }
+
+/* ============================================================================
+   TEAM / CRM / CONTROL READABILITY PASS (founder: fonts, alignment and
+   arrangement not great). Scoped to staff surfaces via the shared ds tokens:
+   consistent type scale, comfortable row heights, aligned tabular numerals.
+   ========================================================================== */
+main[style*="font-family"] { font-size: 15px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+main[style*="font-family"] h1 { font-size: 30px; letter-spacing: -0.03em; line-height: 1.15; }
+main[style*="font-family"] h2 { font-size: 20px; letter-spacing: -0.02em; margin-bottom: 10px; }
+main[style*="font-family"] h3 { font-size: 16px; }
+main[style*="font-family"] p, main[style*="font-family"] li { max-width: 78ch; }
+main[style*="font-family"] small { font-size: 12.5px; line-height: 1.45; }
+main[style*="font-family"] table { border-collapse: collapse; width: 100%; }
+main[style*="font-family"] td, main[style*="font-family"] th { padding: 10px 12px; text-align: left; font-variant-numeric: tabular-nums; }
+main[style*="font-family"] button { font-size: 13px; font-weight: 700; padding: 9px 14px; border-radius: var(--ds-radius-sm); border: 1px solid var(--ds-border); background: var(--ds-surface); color: inherit; cursor: pointer; transition: filter .12s ease; }
+main[style*="font-family"] button:hover:not(:disabled) { filter: brightness(0.96); }
+main[style*="font-family"] button:disabled { opacity: .55; cursor: default; }
+main[style*="font-family"] input, main[style*="font-family"] select { font-size: 14px; padding: 9px 12px; border-radius: var(--ds-radius-sm); border: 1px solid var(--ds-border); background: var(--ds-surface); color: inherit; }
+main[style*="font-family"] dl { margin: 0; }
+main[style*="font-family"] dt { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--ds-text-muted, #6b7a75); }
+main[style*="font-family"] dd { margin: 2px 0 0; font-weight: 700; font-variant-numeric: tabular-nums; }

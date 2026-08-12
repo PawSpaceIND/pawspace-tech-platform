@@ -38,7 +38,7 @@ test("order creation goes through the client lib order path, not a direct endpoi
 test("subscription options offered by the flow are all supported by the real API contract", () => {
   // The route + governance accept any explicit customer-selected 7-90 day interval.
   assert.match(subscriptionRoute, /renewalIntervalDays/);
-  assert.match(subscriptionGovernance, /if\(interval<7\|\|interval>90\)/, "governance validates the 7-90 day window");
+  assert.match(subscriptionGovernance, /if\(!Number\.isFinite\(interval\)\|\|interval<7\|\|interval>90\)/, "governance validates the 7-90 day window, rejecting non-finite values");
   const offered = [...flow.matchAll(/intervalDays:\s*(\d+)/g)].map((match) => Number(match[1]));
   assert.ok(offered.length >= 2, "flow offers a choice of repeat intervals");
   for (const days of offered) {
