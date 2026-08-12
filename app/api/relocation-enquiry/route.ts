@@ -12,7 +12,7 @@ export async function GET(request:Request){try{await authorize(request,"customer
 export async function POST(request:Request){try{sameOrigin(request);const db=await database();const body=await request.json() as Row;
  const input:RelocationEnquiryInput={
   customerName:String(body.customerName??""),phonePrimary:String(body.phonePrimary??""),phoneSecondary:body.phoneSecondary==null?undefined:String(body.phoneSecondary),
-  email:String(body.email??""),petType:String(body.petType??""),pickupDate:String(body.pickupDate??""),pickupApproxTime:String(body.pickupApproxTime??""),
+  email:String(body.email??""),petType:String(body.petType??""),relocationKind:String(body.relocationKind??""),pickupDate:String(body.pickupDate??""),pickupApproxTime:String(body.pickupApproxTime??""),
   pickupLocation:String(body.pickupLocation??""),dropLocation:String(body.dropLocation??""),expectedTravelDate:String(body.expectedTravelDate??""),
  };
  const result=await createRelocationEnquiry(db,input);

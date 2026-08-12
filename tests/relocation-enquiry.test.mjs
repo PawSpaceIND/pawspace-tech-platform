@@ -77,3 +77,82 @@ test("relocation-enquiry does not touch the existing relocation-case feature",as
   assert.match(existingPage,/Create relocation inquiry/);
   assert.match(existingTeamPage,/Qualify lead/);
 });
+
+import { DatabaseSync } from "node:sqlite";
+import { readFileSync } from "node:fs";
+import * as nodeModule from "node:module";
+if (typeof nodeModule.registerHooks === "function") {
+  nodeModule.registerHooks({
+    resolve(specifier, context, nextResolve) {
+      try { return nextResolve(specifier, context); }
+      catch (error) {
+        if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
+        throw error;
+      }
+    },
+  });
+} else {
+  const hook = `export async function resolve(specifier, context, nextResolve) {
+    try { return await nextResolve(specifier, context); }
+    catch (error) {
+      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(specifier + ".ts", context);
+      throw error;
+    }
+  }`;
+  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
+}
+function wrapD1(sqlite) {
+  function statement(sql, args) {
+    return {
+      bind: (...boundArgs) => statement(sql, boundArgs),
+      first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
+      run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
+      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
+    };
+  }
+  return { prepare: (sql) => statement(sql, []), batch: async (statements) => { const results = []; for (const stmt of statements) results.push(await stmt.run()); return results; } };
+}
+const makeDb = () => wrapD1(new DatabaseSync(":memory:"));
+
+// --- Domestic / International capture (founder requirement) --------------------------------------
+
+test("relocation enquiry captures domestic vs international, validated and persisted", async () => {
+  const { createRelocationEnquiry, listRelocationEnquiries } = await import("../lib/relocation-enquiry.ts");
+  const db = makeDb();
+  const base = {
+    customerName: "Kind Verifier", phonePrimary: "9876543210", email: "kind@test.in", petType: "cat",
+    pickupDate: "2026-09-01", pickupApproxTime: "10:00", pickupLocation: "Bengaluru", dropLocation: "Singapore", expectedTravelDate: "2026-09-05",
+  };
+  const intl = await createRelocationEnquiry(db, { ...base, relocationKind: "international" });
+  assert.equal(intl.relocationKind, "international");
+  const dom = await createRelocationEnquiry(db, { ...base, phonePrimary: "9876543211", dropLocation: "Mumbai", relocationKind: "domestic" });
+  assert.equal(dom.relocationKind, "domestic");
+  await assert.rejects(() => createRelocationEnquiry(db, { ...base, relocationKind: "interplanetary" }), /domestic.*international|Relocation type/);
+  await assert.rejects(() => createRelocationEnquiry(db, { ...base, relocationKind: "" }), /Relocation type/);
+  const listed = await listRelocationEnquiries(db);
+  assert.deepEqual(listed.map(e => e.relocationKind).sort(), ["domestic", "international"]);
+});
+
+test("legacy relocation_enquiries table (without the kind column) migrates and reads back 'domestic'", async () => {
+  const { ensureRelocationEnquiryTables, listRelocationEnquiries } = await import("../lib/relocation-enquiry.ts");
+  const sqlite = new DatabaseSync(":memory:");
+  // Older DDL copy exactly as shipped before this change.
+  sqlite.exec("CREATE TABLE relocation_enquiries (id TEXT PRIMARY KEY,customer_name TEXT NOT NULL,phone_primary TEXT NOT NULL,phone_secondary TEXT,email TEXT NOT NULL,pet_type TEXT NOT NULL,pickup_date TEXT NOT NULL,pickup_approx_time TEXT NOT NULL,pickup_location TEXT NOT NULL,drop_location TEXT NOT NULL,expected_travel_date TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'new',created_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT INTO relocation_enquiries VALUES ('RELQ-LEGACY','Old Row','9000000000',NULL,'old@test.in','dog','2026-08-01','09:00','Bengaluru','Chennai','2026-08-03','new',1)").run();
+  const db = wrapD1(sqlite);
+  await ensureRelocationEnquiryTables(db);
+  const rows = await listRelocationEnquiries(db);
+  assert.equal(rows[0].relocationKind, "domestic", "pre-migration rows default to domestic");
+});
+
+test("the embedded relocation flow posts every founder field including relocationKind and never fetches other endpoints", () => {
+  const flow = readFileSync(new URL("../app/mobile-app/relocation-flow.tsx", import.meta.url), "utf8");
+  for (const field of ["customerName", "phonePrimary", "phoneSecondary", "email", "petType", "relocationKind", "pickupDate", "pickupApproxTime", "pickupLocation", "dropLocation", "expectedTravelDate"]) {
+    assert.ok(flow.includes(field), `flow must send ${field}`);
+  }
+  assert.match(flow, /"domestic" \| "international"|\["domestic", "international"\]/);
+  const fetches = [...flow.matchAll(/fetch\("([^"]+)"/g)].map(m => m[1]);
+  assert.deepEqual([...new Set(fetches)], ["/api/relocation-enquiry"], "flow talks only to the enquiry endpoint");
+  const shell = readFileSync(new URL("../app/mobile-app/page.tsx", import.meta.url), "utf8");
+  assert.match(shell, /service\.name==="Relocation"\)return <RelocationFlow customer=\{customer\}\/>/);
+});
