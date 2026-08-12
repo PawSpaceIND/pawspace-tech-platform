@@ -56,9 +56,10 @@ async function preferredChannel(db: Db, customerId: string): Promise<Communicati
   return "whatsapp";
 }
 
-async function logEvent(db: Db, customerId: string, reminderType: string, cycleKey: string, result: { duplicatePrevented: boolean; message?: { id: string } }, detail: unknown) {
+async function logEvent(db: Db, customerId: string, reminderType: string, cycleKey: string, result: Awaited<ReturnType<typeof enqueueCommunication>>, detail: unknown) {
+  const messageId = "messageId" in result ? result.messageId : (result.message ? String((result.message as Row).id) : null);
   await db.prepare("INSERT INTO reminder_governance_events (id,customer_id,reminder_type,cycle_key,message_id,duplicate_prevented,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?)")
-    .bind(crypto.randomUUID(), customerId, reminderType, cycleKey, result.message?.id ?? null, result.duplicatePrevented ? 1 : 0, JSON.stringify(detail), Date.now()).run();
+    .bind(crypto.randomUUID(), customerId, reminderType, cycleKey, messageId, result.duplicatePrevented ? 1 : 0, JSON.stringify(detail), Date.now()).run();
 }
 
 /**
@@ -97,7 +98,7 @@ export async function generateGroomingRebookingReminders(db: Db, input: { actorI
     });
     await logEvent(db, customerId, "grooming_rebooking", cycleKey, result, { daysSince, cycle });
     if (result.duplicatePrevented) continue;
-    if (result.message && String((result.message as Row).status) === "suppressed") suppressed++; else queued++;
+    if (result.status === "suppressed") suppressed++; else queued++;
   }
   return { queued, suppressed, skippedFutureBooking, cadenceDays: policy.groomingRebookingDays };
 }
@@ -138,7 +139,7 @@ export async function generateSubscriptionReminders(db: Db, input: { actorId: st
           createdBy: input.actorId,
         });
         await logEvent(db, customerId, "subscription_sessions", cycleKey, result, { subscriptionId, consumed, total, daysInactive });
-        if (!result.duplicatePrevented) { if (result.message && String((result.message as Row).status) === "suppressed") suppressed++; else sessionReminders++; }
+        if (!result.duplicatePrevented) { if (result.status === "suppressed") suppressed++; else sessionReminders++; }
       }
     }
 
@@ -151,7 +152,7 @@ export async function generateSubscriptionReminders(db: Db, input: { actorId: st
         createdBy: input.actorId,
       });
       await logEvent(db, customerId, "subscription_renewal", cycleKey, result, { subscriptionId, daysToExpiry });
-      if (!result.duplicatePrevented) { if (result.message && String((result.message as Row).status) === "suppressed") suppressed++; else renewalReminders++; }
+      if (!result.duplicatePrevented) { if (result.status === "suppressed") suppressed++; else renewalReminders++; }
     }
   }
   return { sessionReminders, renewalReminders, suppressed, subscriptionsScanned: subs.results.length };

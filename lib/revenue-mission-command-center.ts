@@ -2,7 +2,8 @@ import{ensureRevenueMissionTables,revenueMissionSummary}from"./revenue-mission-c
 import{ensureLeadAssignmentTables}from"./lead-assignment-governance";
 import{ensureLeadSlaTables}from"./lead-sla-governance";
 import{ensureRevenueOpportunityTables}from"./revenue-opportunity-governance";
-import{ensureSalesProductivityTables}from"./sales-productivity-governance";
+import{ensureSalesProductivityTables}from"./sales-productivity-governance"
+import{ensureLeadWorkItemsTable}from"./lead-conversion-attribution";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -10,7 +11,7 @@ const text=(value:unknown)=>String(value??"").trim();
 const money=(value:unknown)=>Math.round(Number(value||0)*100)/100;
 const rows=<T=Row>(result:{results?:unknown[]})=>(result.results||[]) as T[];
 
-async function ensureCommandCenterDependencies(db:Db){await ensureRevenueMissionTables(db);await ensureLeadAssignmentTables(db);await ensureLeadSlaTables(db);await ensureRevenueOpportunityTables(db);await ensureSalesProductivityTables(db);}
+async function ensureCommandCenterDependencies(db:Db){await ensureRevenueMissionTables(db);await ensureLeadAssignmentTables(db);await ensureLeadSlaTables(db);await ensureRevenueOpportunityTables(db);await ensureSalesProductivityTables(db);await ensureLeadWorkItemsTable(db);}
 async function latestMission(db:Db,missionId?:string){if(missionId)return db.prepare("SELECT * FROM revenue_missions WHERE id=?").bind(missionId).first<Row>();return db.prepare("SELECT * FROM revenue_missions WHERE status='active_uat' ORDER BY period_start DESC,updated_at DESC LIMIT 1").first<Row>();}
 function progress(periodStart:number,periodEnd:number,asOf:number){const total=Math.max(1,periodEnd-periodStart),elapsed=Math.min(total,Math.max(0,asOf-periodStart));return Math.round((elapsed/total)*10000)/100;}
 

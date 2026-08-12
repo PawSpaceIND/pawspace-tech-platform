@@ -1,0 +1,21 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+const lib = await readFile(new URL("../lib/paw-points-governance.ts", import.meta.url), "utf8");
+const route = await readFile(new URL("../app/api/paw-points/route.ts", import.meta.url), "utf8");
+const scheduler = await readFile(new URL("../lib/background-scheduler.ts", import.meta.url), "utf8");
+test("PawPoints loyalty: auditable ledger, earn/redeem/goodwill/winback with guard-rails", () => {
+  assert.match(lib, /EARN_POINTS_PER_RUPEE = 0\.1/);
+  assert.match(lib, /REDEEM_RUPEE_PER_POINT = 0\.5/);
+  assert.match(lib, /MAX_REDEEM_FRACTION = 0\.2/);
+  assert.match(lib, /idempotency_key TEXT NOT NULL UNIQUE/);
+  assert.match(lib, /export async function earnPointsForBooking/);
+  assert.match(lib, /export async function redeemPoints/);
+  assert.match(lib, /export async function grantGoodwillPoints/);
+  assert.match(lib, /export async function grantWinbackPoints/);
+  assert.match(lib, /idempotencyKey: `winback:\$\{input\.campaignKey\.trim\(\)\}:\$\{input\.customerId\}`/);
+  assert.match(lib, /You can only redeem points on your own booking/);
+  assert.match(route, /requirePermission\(actor,"marketing\.manage"\)/);
+  assert.match(scheduler, /runPawPointsEarnSweep\(db,\{\}\)/);
+  assert.match(scheduler, /"pawPointsEarn"/);
+});

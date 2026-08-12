@@ -1,5 +1,6 @@
+import{ensureLeadWorkItemsTable}from"./lead-conversion-attribution";
 export type LeadAssignmentPolicyStatus="draft"|"active_uat"|"retired";
-export type LeadAssignmentReason="new_lead"|"continuity"|"reassignment"|"reopened"|"manager_override";
+export type LeadAssignmentReason="new_lead"|"continuity"|"reassignment"|"reopened"|"manager_override"|"auto_workload";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -8,7 +9,7 @@ const list=(value:unknown)=>{if(Array.isArray(value))return value.map(text).filt
 const uid=(prefix:string)=>`${prefix}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
 const positiveInt=(value:unknown,name:string)=>{const n=Number(value);if(!Number.isInteger(n)||n<1)throw new Error(`${name} must be a positive integer`);return n;};
 
-export async function ensureLeadAssignmentTables(db:Db){await db.batch([
+export async function ensureLeadAssignmentTables(db:Db){await ensureLeadWorkItemsTable(db);await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS lead_assignment_policies (id TEXT PRIMARY KEY,name TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'draft',version INTEGER NOT NULL DEFAULT 1,team_code TEXT NOT NULL,service_codes_json TEXT NOT NULL,city_ids_json TEXT NOT NULL,language_codes_json TEXT NOT NULL,max_active_workload INTEGER NOT NULL,continuity_enabled INTEGER NOT NULL DEFAULT 1,require_shift INTEGER NOT NULL DEFAULT 0,fallback_queue TEXT NOT NULL,effective_from INTEGER NOT NULL,effective_until INTEGER,approval_reference TEXT,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS lead_assignment_policy_versions (id TEXT PRIMARY KEY,policy_id TEXT NOT NULL,version INTEGER NOT NULL,snapshot_json TEXT NOT NULL,reason TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS lead_assignment_memberships (id TEXT PRIMARY KEY,employee_email TEXT NOT NULL,team_code TEXT NOT NULL,service_codes_json TEXT NOT NULL,city_ids_json TEXT NOT NULL,language_codes_json TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,workload_cap_override INTEGER,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(employee_email,team_code))"),

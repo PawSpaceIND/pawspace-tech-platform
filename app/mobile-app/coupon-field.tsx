@@ -46,7 +46,7 @@ export default function CouponField(props: {
   const apply = async () => {
     const normalized = code.trim().toUpperCase();
     if (!normalized || loading) return;
-    if (!customerId) { setError("Sign in required before applying a coupon"); return; }
+    if (!customerId) { setMessage("Sign in required before applying a coupon"); return; }
     setLoading(true);
     try {
       const result = await quoteGovernedCoupon({

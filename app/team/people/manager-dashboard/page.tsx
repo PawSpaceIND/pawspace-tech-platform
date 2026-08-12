@@ -65,7 +65,7 @@ export default function ManagerDashboardPage() {
                       <td style={td}>{(row.monthly as { achievedValue?: number } | null)?.achievedValue ?? "—"}</td>
                       <td style={td}>{(row.monthly as { tierTarget?: number } | null)?.tierTarget ?? "—"}</td>
                       <td style={td}>{row.dayClosureReady === true ? "✅ Yes" : row.dayClosureReady === false ? "⚠ No" : "—"}</td>
-                      <td style={td}>{row.talkTimeMinutesToday ?? "—"} min</td>
+                      <td style={td}>{(row.talkTimeMinutesToday as number | undefined) ?? "—"} min</td>
                     </tr>
                   ))}
                 </tbody>

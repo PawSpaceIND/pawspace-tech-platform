@@ -28,7 +28,7 @@ export default function TrendChart({ data, xKey, series, type = "line", height =
             <CartesianGrid stroke="#e9e1f4" strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey={xKey} stroke="#8b818f" fontSize={11} tickLine={false} axisLine={false} />
             <YAxis stroke="#8b818f" fontSize={11} tickLine={false} axisLine={false} width={44} tickFormatter={format} />
-            <Tooltip formatter={(value: number) => format(value)} contentStyle={{ borderRadius: 12, border: "1px solid #e9e1f4", fontSize: 12 }} />
+            <Tooltip formatter={(value) => format(Number(value))} contentStyle={{ borderRadius: 12, border: "1px solid #e9e1f4", fontSize: 12 }} />
             {series.length > 1 && <Legend wrapperStyle={{ fontSize: 11 }} />}
             {series.map((s, i) => (
               <Line key={s.key} type="monotone" dataKey={s.key} name={s.label ?? s.key} stroke={s.color ?? palette[i % palette.length]} strokeWidth={2.5} dot={false} />
@@ -39,7 +39,7 @@ export default function TrendChart({ data, xKey, series, type = "line", height =
             <CartesianGrid stroke="#e9e1f4" strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey={xKey} stroke="#8b818f" fontSize={11} tickLine={false} axisLine={false} />
             <YAxis stroke="#8b818f" fontSize={11} tickLine={false} axisLine={false} width={44} tickFormatter={format} />
-            <Tooltip formatter={(value: number) => format(value)} contentStyle={{ borderRadius: 12, border: "1px solid #e9e1f4", fontSize: 12 }} />
+            <Tooltip formatter={(value) => format(Number(value))} contentStyle={{ borderRadius: 12, border: "1px solid #e9e1f4", fontSize: 12 }} />
             {series.length > 1 && <Legend wrapperStyle={{ fontSize: 11 }} />}
             {series.map((s, i) => (
               <Bar key={s.key} dataKey={s.key} name={s.label ?? s.key} fill={s.color ?? palette[i % palette.length]} radius={[6, 6, 0, 0]} />

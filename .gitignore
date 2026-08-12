@@ -45,3 +45,5 @@ next-env.d.ts
 .dev.vars
 .dev.vars.*
 .runtime-d1/
+scratchpad/
+*.tsbuildinfo

@@ -16,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "PawSpace Grooming",
-  description: "Book trusted doorstep dog and cat grooming across Bengaluru.",
+  title: "PawSpace — Pet Care Platform",
+  description: "Book trusted doorstep pet care across Bengaluru — grooming, boarding, training, sitting, walking, and pet taxi.",
   other: {
     "codex-preview": "development",
   },

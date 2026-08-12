@@ -27,11 +27,11 @@ export async function GET(request:Request){try{
     LEFT JOIN payment_reconciliation_records r ON r.payment_id=p.id
     WHERE b.service_code='grooming'
     ORDER BY b.updated_at DESC LIMIT 200`).all<Row>();
-  const items=rows.results.map(row=>{
+  const items=rows.results.map((row):Record<string,unknown>=>{
     const amount=Number(row.payment_amount||0),captured=Number(row.captured_amount||0),refunded=Number(row.refunded_amount||0),reconciliationStatus=String(row.reconciliation_status||"not_started");
     return{...row,receivable:Math.max(0,amount-captured),net_collected:Math.max(0,captured-refunded),reconciled:reconciliationStatus==="matched"&&Number(row.open_reconciliation_exceptions||0)===0,invoiced:Boolean(row.invoice_id)};
   });
-  const summary=items.reduce((acc,item)=>{
+  const summary=items.reduce((acc:{bookings:number;completed:number;invoiced:number;collected:number;refunded:number;receivable:number;reconciled:number;unreconciled:number;exceptions:number},item)=>{
     acc.bookings+=1;if(item.invoiced)acc.invoiced+=Number(item.net_amount||0);acc.collected+=Number(item.captured_amount||0);acc.refunded+=Number(item.refunded_amount||0);acc.receivable+=Number(item.receivable||0);if(item.reconciled)acc.reconciled+=1;if(String(item.reconciliation_status||"not_started")!=="matched")acc.unreconciled+=1;acc.exceptions+=Number(item.open_reconciliation_exceptions||0);if(String(item.booking_status)==="completed")acc.completed+=1;return acc;
   },{bookings:0,completed:0,invoiced:0,collected:0,refunded:0,receivable:0,reconciled:0,unreconciled:0,exceptions:0});
   const recentExceptions=await db.prepare("SELECT id,booking_id,payment_id,event_id,exception_type,severity,status,detail_json,created_at FROM payment_reconciliation_exceptions WHERE status='open' ORDER BY created_at DESC LIMIT 50").all<Row>();

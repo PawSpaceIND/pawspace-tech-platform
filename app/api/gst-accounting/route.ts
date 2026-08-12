@@ -1,5 +1,5 @@
 import{authError,database,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
-import{acknowledgeAccountingExport,approveStatutoryPackage,ConfigurationRequired,generateAccountingExport,generateStatutoryPackage,getGstAccountingSnapshot,issueAdjustment,issueInvoice,recordCloseEvidence,reviewVendorTax,saveConfiguration}from"../../../lib/gst-accounting";
+import{acknowledgeAccountingExport,approveAnnualReturn,approveStatutoryPackage,ConfigurationRequired,generateAccountingExport,generateAnnualReturn,generateStatutoryPackage,getGstAccountingSnapshot,issueAdjustment,issueInvoice,recordCloseEvidence,reviewVendorTax,saveConfiguration}from"../../../lib/gst-accounting";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin write blocked",{status:403});}
@@ -12,6 +12,8 @@ export async function POST(request:Request){try{sameOrigin(request);const actor=
  else if(action==="review_vendor_tax")data=await reviewVendorTax(db,body,actor.email);
  else if(action==="generate_statutory_package")data=await generateStatutoryPackage(db,body,actor.email);
  else if(action==="approve_statutory_package")data=await approveStatutoryPackage(db,body,actor.email);
+ else if(action==="generate_annual_return")data=await generateAnnualReturn(db,body,actor.email);
+ else if(action==="approve_annual_return")data=await approveAnnualReturn(db,body,actor.email);
  else if(action==="generate_accounting_export")data=await generateAccountingExport(db,body,actor.email);
  else if(action==="acknowledge_accounting_export")data=await acknowledgeAccountingExport(db,body,actor.email);
  else if(action==="record_close_evidence")data=await recordCloseEvidence(db,body,actor.email);
