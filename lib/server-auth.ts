@@ -21,7 +21,14 @@ function isDevelopmentPreview(request:Request){
   return process.env.NODE_ENV!=="production"&&["terminal.local","localhost","127.0.0.1"].includes(host);
 }
 
+// Per-isolate memoization: security DDL, identity-binding DDL and the fixed role catalogue are
+// idempotent. resolveActor() runs this on every authenticated request; before this it also issued 9
+// sequential role upserts each time. Batching + the WeakSet keep it to a single round-trip once, then
+// a no-op for the rest of the isolate's life.
+const securityTablesEnsured=new WeakSet<Db>();
+
 export async function ensureSecurityTables(db:Db){
+  if(securityTablesEnsured.has(db))return;
   const now=Date.now();
   await db.batch([
     db.prepare("CREATE TABLE IF NOT EXISTS app_users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, role_code TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)"),
@@ -31,10 +38,9 @@ export async function ensureSecurityTables(db:Db){
     db.prepare("CREATE TABLE IF NOT EXISTS provider_identity_links (email TEXT PRIMARY KEY, provider_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', verified_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)"),
   ]);
   await ensureIdentityBindingTables(db);
-  for(const role of defaultRoles){
-    await db.prepare("INSERT INTO role_definitions (code,name,description,permissions_json,system_role,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(code) DO UPDATE SET name=excluded.name,description=excluded.description,permissions_json=CASE WHEN role_definitions.system_role=1 THEN excluded.permissions_json ELSE role_definitions.permissions_json END,system_role=excluded.system_role,updated_at=excluded.updated_at")
-      .bind(role.code,role.name,role.description,JSON.stringify(role.permissions),1,now).run();
-  }
+  await db.batch(defaultRoles.map(role=>db.prepare("INSERT INTO role_definitions (code,name,description,permissions_json,system_role,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(code) DO UPDATE SET name=excluded.name,description=excluded.description,permissions_json=CASE WHEN role_definitions.system_role=1 THEN excluded.permissions_json ELSE role_definitions.permissions_json END,system_role=excluded.system_role,updated_at=excluded.updated_at")
+      .bind(role.code,role.name,role.description,JSON.stringify(role.permissions),1,now)));
+  securityTablesEnsured.add(db);
 }
 
 export async function resolveActor(request:Request):Promise<AuthenticatedActor>{

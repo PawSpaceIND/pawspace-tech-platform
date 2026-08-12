@@ -13,13 +13,17 @@ export type BookingChangeEvaluation={
   policyVersion:string;enforcementMode:"observe"|"enforce";allowed:boolean;minutesUntilStart:number;refundPercent:number;feeAmount:number;reasons:string[];
 };
 
-export async function ensureGroomingPolicyTables(db:Db){await db.batch([
+// Per-isolate memoization: DDL and the single default policy row are idempotent. resolveGroomingPolicy
+// runs on every grooming booking; the WeakSet keeps this to one round-trip per D1 binding.
+const groomingPolicyTablesEnsured=new WeakSet<Db>();
+export async function ensureGroomingPolicyTables(db:Db){if(groomingPolicyTablesEnsured.has(db))return;await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS grooming_commercial_policies (id TEXT PRIMARY KEY,policy_code TEXT NOT NULL DEFAULT 'grooming-default',city_id TEXT NOT NULL,zone_id TEXT,enforcement_mode TEXT NOT NULL DEFAULT 'observe',cancellation_cutoff_minutes INTEGER NOT NULL DEFAULT 0,refund_percent_before_cutoff REAL NOT NULL DEFAULT 100,refund_percent_after_cutoff REAL NOT NULL DEFAULT 100,reschedule_cutoff_minutes INTEGER NOT NULL DEFAULT 0,reschedule_allowed_after_cutoff INTEGER NOT NULL DEFAULT 1,max_reschedules INTEGER NOT NULL DEFAULT 0,reschedule_fee_type TEXT NOT NULL DEFAULT 'none',reschedule_fee_value REAL NOT NULL DEFAULT 0,no_show_refund_percent REAL NOT NULL DEFAULT 0,multi_pet_max INTEGER NOT NULL DEFAULT 4,multi_pet_pricing_mode TEXT NOT NULL DEFAULT 'catalogue',change_lock_statuses_json TEXT NOT NULL DEFAULT '[\"completed\",\"cancelled\"]',active INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_grooming_policy_lookup ON grooming_commercial_policies(city_id,zone_id,active,effective_from,effective_to)"),
   db.prepare("CREATE TABLE IF NOT EXISTS grooming_commercial_policy_audit (id TEXT PRIMARY KEY,policy_id TEXT NOT NULL,policy_code TEXT NOT NULL,city_id TEXT NOT NULL,action TEXT NOT NULL,before_json TEXT,after_json TEXT NOT NULL,actor_id TEXT NOT NULL,reason TEXT NOT NULL,created_at INTEGER NOT NULL)"),
-]);}
+]);groomingPolicyTablesEnsured.add(db);}
 
-export async function seedDefaultGroomingPolicy(db:Db){await ensureGroomingPolicyTables(db);const now=Date.now();await db.prepare("INSERT OR IGNORE INTO grooming_commercial_policies (id,policy_code,city_id,zone_id,enforcement_mode,cancellation_cutoff_minutes,refund_percent_before_cutoff,refund_percent_after_cutoff,reschedule_cutoff_minutes,reschedule_allowed_after_cutoff,max_reschedules,reschedule_fee_type,reschedule_fee_value,no_show_refund_percent,multi_pet_max,multi_pet_pricing_mode,change_lock_statuses_json,active,version,effective_from,effective_to,updated_by,updated_at) VALUES ('gpolicy_blr_default','grooming-default','blr',NULL,'observe',0,100,100,0,1,0,'none',0,0,4,'catalogue','[\"completed\",\"cancelled\"]',1,1,'2026-08-01',NULL,'founder_seed',?)").bind(now).run();}
+const groomingPolicySeeded=new WeakSet<Db>();
+export async function seedDefaultGroomingPolicy(db:Db){if(groomingPolicySeeded.has(db))return;await ensureGroomingPolicyTables(db);const now=Date.now();groomingPolicySeeded.add(db);await db.prepare("INSERT OR IGNORE INTO grooming_commercial_policies (id,policy_code,city_id,zone_id,enforcement_mode,cancellation_cutoff_minutes,refund_percent_before_cutoff,refund_percent_after_cutoff,reschedule_cutoff_minutes,reschedule_allowed_after_cutoff,max_reschedules,reschedule_fee_type,reschedule_fee_value,no_show_refund_percent,multi_pet_max,multi_pet_pricing_mode,change_lock_statuses_json,active,version,effective_from,effective_to,updated_by,updated_at) VALUES ('gpolicy_blr_default','grooming-default','blr',NULL,'observe',0,100,100,0,1,0,'none',0,0,4,'catalogue','[\"completed\",\"cancelled\"]',1,1,'2026-08-01',NULL,'founder_seed',?)").bind(now).run();}
 
 function parse<T>(value:unknown,fallback:T):T{try{return JSON.parse(String(value??"")) as T;}catch{return fallback;}}
 function rowToPolicy(row:Row):GroomingPolicy{return{

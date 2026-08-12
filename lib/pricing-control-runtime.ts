@@ -45,16 +45,26 @@ seeds.push(
   {id:"canonical_sitting_overnight_extra",serviceCode:"pet_sitting",packageCode:"sitting-overnight__extra_pet",name:"Overnight Pet Sitting · extra pet",description:"Canonical extra-pet component for Overnight Sitting",basePrice:399,slotMinutes:720,blockingMinutes:720},
 );
 
-export async function ensurePricingControlSchema(db:Db){await db.batch([
+// Per-isolate memoization: the schema and the ~56 canonical price rows are idempotent constants.
+// resolveLivePrice() calls ensurePricingControlRuntime() on every priced booking, and before this the
+// seed ran ~56 sequential INSERT OR IGNORE statements each time - the dominant cost of a canonical
+// booking create. Batching collapses them to one round-trip and the WeakSet skips the work entirely
+// once a given D1 binding has been seeded in this isolate.
+const pricingSchemaEnsured=new WeakSet<Db>();
+const pricingPackagesSeeded=new WeakSet<Db>();
+
+export async function ensurePricingControlSchema(db:Db){if(pricingSchemaEnsured.has(db))return;await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS service_packages (id text PRIMARY KEY NOT NULL,service_code text NOT NULL,package_code text NOT NULL UNIQUE,name text NOT NULL,description text NOT NULL,base_price real NOT NULL,currency text DEFAULT 'INR' NOT NULL,tax_inclusive integer DEFAULT 1 NOT NULL,slot_minutes integer NOT NULL,blocking_minutes integer NOT NULL,active integer DEFAULT 1 NOT NULL,version integer DEFAULT 1 NOT NULL,effective_from text NOT NULL,effective_to text,updated_by text NOT NULL,updated_at integer NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS dynamic_pricing_rules (id text PRIMARY KEY NOT NULL,name text NOT NULL,service_code text NOT NULL,package_code text,city_id text DEFAULT 'blr' NOT NULL,zone_id text,rule_type text NOT NULL,days_json text DEFAULT '[]' NOT NULL,start_time text,end_time text,effective_from text NOT NULL,effective_to text,adjustment_type text NOT NULL,adjustment_value real NOT NULL,coupon_policy text DEFAULT 'stackable' NOT NULL,priority integer DEFAULT 100 NOT NULL,status text DEFAULT 'draft' NOT NULL,version integer DEFAULT 1 NOT NULL,updated_by text NOT NULL,updated_at integer NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS pricing_audit_events (id text PRIMARY KEY NOT NULL,entity_type text NOT NULL,entity_id text NOT NULL,action text NOT NULL,before_json text,after_json text NOT NULL,actor_id text NOT NULL,reason text NOT NULL,created_at integer NOT NULL)"),
-]);}
+]);pricingSchemaEnsured.add(db);}
 
 export async function seedCanonicalPricingPackages(db:Db){
+  if(pricingPackagesSeeded.has(db))return;
   await ensurePricingControlSchema(db);const now=Date.now();
-  for(const item of seeds)await db.prepare("INSERT OR IGNORE INTO service_packages (id,service_code,package_code,name,description,base_price,currency,tax_inclusive,slot_minutes,blocking_minutes,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,?,'INR',1,?,?,0,1,'2026-08-01',NULL,'founder_seed',?)")
-    .bind(item.id,item.serviceCode,item.packageCode,item.name,item.description,item.basePrice,item.slotMinutes,item.blockingMinutes,now).run();
+  await db.batch(seeds.map(item=>db.prepare("INSERT OR IGNORE INTO service_packages (id,service_code,package_code,name,description,base_price,currency,tax_inclusive,slot_minutes,blocking_minutes,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,?,'INR',1,?,?,0,1,'2026-08-01',NULL,'founder_seed',?)")
+    .bind(item.id,item.serviceCode,item.packageCode,item.name,item.description,item.basePrice,item.slotMinutes,item.blockingMinutes,now)));
+  pricingPackagesSeeded.add(db);
 }
 
 export async function ensurePricingControlRuntime(db:Db){await seedCanonicalPricingPackages(db);}
