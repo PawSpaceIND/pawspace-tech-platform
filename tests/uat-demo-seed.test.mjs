@@ -234,6 +234,28 @@ test("seeded DB: the assistant grounding is activated, so knowledge retrieval an
   assert.equal(publicAnswer.customerDataAccess, false, "public mode never touches customer data");
 });
 
+// #165 made /api/crm recompute crm_contacts.lifetime_value from recognised bookings so the CRM
+// screen and Customer 360 stop reporting two different numbers for one person. The seed has to hold
+// up its end: seed the contacts, seed their bookings, and store 0 rather than a figure no booking
+// backs — otherwise the demo layer reintroduces exactly the disagreement that change removed.
+test("seeded DB: CRM contacts exist and their lifetime value derives from real bookings", async () => {
+  seededDb();
+  const db = globalThis.__PAWSPACE_TEST_ENV.DB;
+  const contacts = await db.prepare("SELECT id,name,primary_phone,lifetime_value FROM crm_contacts").all();
+  assert.equal(contacts.results.length, 6, "/api/crm reads crm_contacts directly — without these rows the CRM engine screen is empty");
+  for (const row of contacts.results) assert.equal(Number(row.lifetime_value), 0, "no stored figure may compete with the computed one");
+
+  // The recognition rule is the platform's single rule: cancelled and draft are not revenue.
+  const derived = await db.prepare(`SELECT c.id, (SELECT COALESCE(SUM(b.total_amount),0) FROM canonical_bookings b
+      JOIN canonical_customers cc ON cc.id=b.customer_id
+     WHERE cc.primary_phone=c.primary_phone AND b.status NOT IN ('cancelled','draft')) value
+     FROM crm_contacts c ORDER BY c.id`).all();
+  assert.ok(derived.results.every((row) => Number(row.value) > 0), "every demo contact must have bookings behind it, or its lifetime value can never display");
+  // UATD-CUS-4 holds a cancelled ₹3999 training booking and a completed ₹698 walk: only the walk counts.
+  const vikram = derived.results.find((row) => String(row.id) === "UATD-CUS-4-CRM");
+  assert.equal(Number(vikram.value), 698, "the cancelled booking must be excluded, exactly as /api/crm and Customer 360 exclude it");
+});
+
 test("seeded DB: the rollout is staff-first, never opened to customers by a seed", async () => {
   seededDb();
   const db = globalThis.__PAWSPACE_TEST_ENV.DB;

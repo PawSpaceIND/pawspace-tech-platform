@@ -60,6 +60,7 @@ const SOURCES = [
   "lib/pet-birthday-governance.ts",
   "app/api/walking-bookings/route.ts",
   "app/api/revenue-crm/route.ts",
+  "app/api/crm/route.ts",
   "app/api/uat-scheduling/route.ts",
 ];
 
@@ -243,6 +244,21 @@ const FACTS = [
 ];
 for (const [i, f] of FACTS.entries()) {
   insert("sales_productivity_facts", { id: `UATD-SPF-${i + 1}`, run_id: "UATD-SPFR-1", employee_email: f.email, team_code: "sales", period_start: at(-30), period_end: at(0), leads_assigned: f.leads, assignments_accepted: f.accepted, meaningful_actions: f.actions, qualified_leads: f.qualified, first_response_clocks: f.clocks, first_response_met: f.met, first_response_breached: f.breached, booking_conversions: f.conv, booked_revenue: f.booked, collected_revenue: f.collected, refunds: f.refunds, net_collected_revenue: f.collected - f.refunds, cx_escalations: f.cx, opt_out_or_consent_blocks: 0, data_quality_blocks: 0, quote_count: null, source_detail_json: JSON.stringify({ demoSeed: true }), created_at: at(-1) });
+}
+
+// --- CRM: contacts, leads + tickets (CRM engine, cases, customer experience) --
+// /api/crm reads crm_contacts DIRECTLY, so without these rows the CRM engine screen showed none of
+// the demo customers even though Customer 360 (which merges crm_contacts with canonical_customers)
+// showed all six.
+//
+// lifetime_value is deliberately seeded as 0. The column exists, but /api/crm now RECOMPUTES it from
+// each contact's recognised bookings (cancelled and draft excluded) so that the CRM screen and
+// Customer 360 report the same money for the same person — a stored figure here would either be
+// overwritten or, worse, disagree with the bookings behind it. The demo customers have real bookings,
+// so their lifetime value derives itself.
+const CRM_STAGES = ["Contacted", "Qualified", "Follow-up", "Won", "Qualified", "Dormant"];
+for (const [i, c] of CUSTOMERS.entries()) {
+  insert("crm_contacts", { id: `${c.id}-CRM`, name: c.name, primary_phone: c.phone, secondary_phone: null, email: null, area: "HSR Layout", pet_names: c.pet, pet_summary: `${c.pet} · ${c.breed} ${c.species}`, stage: CRM_STAGES[i], owner: ["Neha", "Priya", "Rahul"][i % 3], source: "uat_demo_seed", lifetime_value: 0, next_action: i === 5 ? "Win-back call" : "Rebooking reminder", opportunity: null, created_at: at(-120), updated_at: at(-2 + i * 0.1) });
 }
 
 // --- CRM: leads + tickets (CRM engine, cases, customer experience) -----------
