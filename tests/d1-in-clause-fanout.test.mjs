@@ -210,13 +210,20 @@ test("the suites run on the Node the CI pins, not just the one on this machine",
   assert.match(helper, /typeof nodeModule\.registerHooks === "function"/, "the modern API must be feature-detected");
   assert.match(helper, /nodeModule\.register\(/, "and an older Node must still get a resolver");
 
+  // This guard used to accept the feature-detection STRING as proof of safety. It is not: a suite can
+  // write `if (typeof nodeModule.registerHooks === "function") { ... }` with no `else`, register no
+  // resolver at all on CI's Node, and satisfy that check while dying on the first extensionless import.
+  // tests/live-payment-integrity.test.mjs did exactly that and was red on CI while green locally.
+  // What must be true is that a resolver is installed on BOTH Node versions — so require either the
+  // shared installer or a real `module.register()` fallback branch.
   const suites = (await readdir(new URL(".", import.meta.url))).filter((name) => name.endsWith(".test.mjs"));
   const unguarded = [];
   for (const name of suites) {
     const source = await readFile(new URL(name, import.meta.url), "utf8");
     if (!source.includes("registerHooks")) continue;
-    if (source.includes('typeof nodeModule.registerHooks === "function"')) continue;
+    if (source.includes("helpers/module-hooks.mjs")) continue;
+    if (source.includes('typeof nodeModule.registerHooks === "function"') && source.includes("nodeModule.register(")) continue;
     unguarded.push(name);
   }
-  assert.deepEqual(unguarded, [], "these suites call registerHooks without a fallback and will die on CI's Node");
+  assert.deepEqual(unguarded, [], "these suites install a resolver only on Node >=22.15 and will die on CI's Node — use installWorkersHooks from helpers/module-hooks.mjs");
 });

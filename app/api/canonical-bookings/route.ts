@@ -1,12 +1,14 @@
 import {subscriptionExpiry} from "../../../lib/grooming-governance";
 import {governGroomingBookingWithLiveMultiPet} from "../../../lib/live-grooming-governance";
 import {requireCustomerOwnership,resolveActor} from "../../../lib/server-auth";
+import {hasPermission} from "../../../lib/platform-security";
 import {policySnapshot,policyVersion,resolveGroomingPolicy} from "../../../lib/grooming-policy-governance";
 import {consumeTrainingQuote,governTrainingBooking,trainingQuoteLinkStatement} from "../../../lib/training-commercial-governance";
 import {boardingQuoteLinkStatement,boardingStayStatement,consumeBoardingQuote,governBoardingBooking} from "../../../lib/boarding-governance";
 import {ensureStayPaymentTables,splitPaymentPlan,staySplitScheduleStatement} from "../../../lib/stay-split-payments";
 import {prepareReferralBooking,referralBookingLinkStatement,referralClaimBoundStatement,type ReferralBookingPreparation} from "../../../lib/referral-booking-governance";
 import {attributeBookingToOpenLead} from "../../../lib/lead-conversion-attribution";
+import {PENDING_PAYMENT_STATUS} from "../../../lib/subscription-payment-activation";
 
 type LifecycleInput={
   idempotencyKey:string;scheduleGroupId:string;customer:{id:string;name:string;primaryPhone:string;secondaryPhone?:string;email?:string};
@@ -21,10 +23,28 @@ const services=new Set(["grooming","dog_training","boarding","pet_sitting"]);
 const json=(value:unknown,status=200)=>Response.json(value,{status});
 async function database(){const {env}=await import("cloudflare:workers");return env.DB;}
 async function paymentEnv(){const {env}=await import("cloudflare:workers");return String((env as unknown as Record<string,unknown>).PAWSPACE_PAYMENT_ENV||"sandbox").toLowerCase();}
-// Verify-first (LIVE only): a prepaid online booking may NOT self-declare "captured"; it is recorded
+// Verify-first (LIVE only): an ONLINE booking payment may NOT self-declare "captured"; it is recorded
 // "created" and only a signature-verified Razorpay webhook may mark it captured. Sandbox/UAT unchanged.
+//
+// It FAILS CLOSED on the method. It used to demote only when the mode was one of two spellings, then
+// only when the method was on an ONLINE_METHODS allowlist — either way a client-supplied string decided
+// whether gateway proof was necessary, so an off-list/unrecognised method (or a different mode) still
+// persisted a captured online payment in LIVE. Now, in LIVE, a submitted "captured" is NEVER financial
+// truth on the strength of the client's own labels: it is recorded "created" (awaiting verification)
+// unless the server has authorized this as an offline collection. `offlineAuthorized` is computed
+// server-side from the actor's permission, so no method string a caller can invent — known, unknown or
+// blank — can make gateway proof unnecessary. Mode/method are still recorded as submitted.
+//
+// Nor does it exempt subscriptions any more (that carve-out let a LIVE subscription self-declare capture
+// and claim its sessions for one HTTP request). The gate and entitlement were restructured instead (see
+// the subscription block below and lib/subscription-payment-activation.ts).
 const ONLINE_METHODS=new Set(["upi","card","netbanking","payment_link"]);
-function recordedPaymentStatus(liveMode:boolean,payment:{method:string;mode:string;status:string},isSubscription:boolean){if(liveMode&&!isSubscription&&(payment.mode==="prepaid"||payment.mode==="split_50_50")&&ONLINE_METHODS.has(payment.method)&&payment.status==="captured")return "created";return payment.status;}
+// Genuinely offline collections have no gateway to verify against. Keeping their "captured" is a
+// server-authorized action (a staff actor holding payments.manage recording e.g. cash), never something
+// a client can assert for itself; a customer-app caller never holds the permission, so its submitted
+// captured is demoted whatever method it names.
+const OFFLINE_METHODS=new Set(["cash"]);
+function recordedPaymentStatus(liveMode:boolean,payment:{status:string},offlineAuthorized:boolean){if(liveMode&&payment.status==="captured"&&!offlineAuthorized)return "created";return payment.status;}
 const petId=(customerId:string,sourceId:string)=>`PET-${customerId.replace(/[^A-Za-z0-9]/g,"").toUpperCase()}-${sourceId.replace(/[^A-Za-z0-9]/g,"").toUpperCase()}`;
 async function ensureTables(db:Awaited<ReturnType<typeof database>>){await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'uat_customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
@@ -48,11 +68,27 @@ export async function GET(){try{const db=await database();await ensureTables(db)
 
 export async function POST(request:Request){try{const input=await request.json() as LifecycleInput;const problem=validate(input);if(problem)return json({error:problem},400);const db=await database();await ensureTables(db);const actor=await resolveActor(request);await requireCustomerOwnership(db,actor,input.customer.id);const prior=await db.prepare("SELECT * FROM canonical_bookings WHERE idempotency_key=? OR schedule_group_id=?").bind(input.idempotencyKey,input.scheduleGroupId).first<Record<string,unknown>>();if(prior)return json({data:await readBundle(db,prior,true)});
   let governed:{packageCode:string;packageName:string;catalogueVersion?:string;offerType?:string;petCount:number;totalAmount:number;amountDueNow:number;subscriptionPlan?:SubscriptionPlan}={packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,totalAmount:input.totalAmount,amountDueNow:input.amountDueNow};
+  // Resolved before the subscription gate, because in LIVE the gate has to reason about what the payment
+  // will be RECORDED as (verify-first), not what the client claimed it already was.
+  // Authorization to keep a submitted "captured" without gateway proof is a SERVER decision, never the
+  // client's: only a staff actor holding payments.manage may record an offline collection (cash) as
+  // captured. A customer-app caller never holds it, so its captured is demoted whatever method it sends,
+  // and no unknown/blank method can slip through — the method is not what decides.
+  const offlineAuthorized=OFFLINE_METHODS.has(input.payment.method)&&hasPermission(actor.permissions,"payments.manage");
+  const liveMode=(await paymentEnv())!=="sandbox",paymentStatusRecorded=recordedPaymentStatus(liveMode,input.payment,offlineAuthorized);
   const commercialPolicy=input.serviceCode==="grooming"?await resolveGroomingPolicy(db,input.cityId,input.zoneId):null;
   if(commercialPolicy?.enforcementMode==="enforce"&&input.pets.length>commercialPolicy.multiPetMax)return json({error:`This city policy supports up to ${commercialPolicy.multiPetMax} pets per Grooming booking`,policyVersion:policyVersion(commercialPolicy)},409);
   if(input.serviceCode==="grooming"){
     try{governed=await governGroomingBookingWithLiveMultiPet(db,{packageCode:input.packageCode,packageName:input.packageName,pets:input.pets.map(pet=>({species:(pet.species??"other") as "dog"|"cat"|"other"})),submittedTotal:input.totalAmount,submittedAmountDueNow:input.amountDueNow,paymentMode:input.payment.mode,cityId:input.cityId,zoneId:input.zoneId,scheduledStart:input.scheduledStart});}catch(error){return json({error:error instanceof Error?error.message:"Invalid Grooming package or price"},409);}
-    if(governed.subscriptionPlan&&!(input.payment.mode==="prepaid"&&input.payment.status==="captured"))return json({error:"Grooming subscription purchases must be prepaid and captured before credits are created"},409);
+    // A subscription is still prepay-only — no split, no pay-after-service — but it no longer has to be
+    // CAPTURED at purchase time. Requiring that was what forced the verify-first exemption. It may now be
+    // an online payment awaiting gateway verification; the entitlement simply stays pending until the
+    // verified capture arrives, so an unpaid purchase yields no usable credits either way.
+    if(governed.subscriptionPlan){
+      if(input.payment.mode!=="prepaid")return json({error:"Grooming subscription purchases must be prepaid"},409);
+      const awaitingGateway=ONLINE_METHODS.has(input.payment.method)&&paymentStatusRecorded==="created";
+      if(paymentStatusRecorded!=="captured"&&!awaitingGateway)return json({error:"A Grooming subscription purchase needs a captured payment, or an online payment awaiting gateway verification"},409);
+    }
   }
   const assignment=await db.prepare("SELECT selected_provider_id,status,shortlist_json FROM scheduling_assignment_decisions WHERE group_id=?").bind(input.scheduleGroupId).first<Record<string,unknown>>();if(!assignment||assignment.status!=="assigned")return json({error:"Scheduling must be assigned before booking confirmation"},409);if(String(assignment.selected_provider_id)!==input.provider.id)return json({error:"The provider does not match the scheduling decision"},409);const reservations=await db.prepare("SELECT id,provider_id,scheduled_start,scheduled_end,occurrence_number,status FROM scheduling_reservations WHERE group_id=? AND status!='cancelled' ORDER BY occurrence_number").bind(input.scheduleGroupId).all<Record<string,unknown>>();if(!reservations.results.length||reservations.results.some(row=>String(row.provider_id)!==input.provider.id))return json({error:"A valid provider reservation is required"},409);
   let trainingCommercial:Awaited<ReturnType<typeof governTrainingBooking>>|null=null;
@@ -74,7 +110,9 @@ export async function POST(request:Request){try{const input=await request.json()
   }
   const now=Date.now(),bookingId=`PS-UAT-${now.toString(36).toUpperCase()}-${crypto.randomUUID().slice(0,4).toUpperCase()}`,workOrderId=`WO-${crypto.randomUUID().slice(0,8).toUpperCase()}`,paymentId=`PAY-${crypto.randomUUID().slice(0,8).toUpperCase()}`,subscriptionId=governed.subscriptionPlan?`GSUB-${crypto.randomUUID().slice(0,10).toUpperCase()}`:null,ids=input.pets.map(item=>petId(input.customer.id,item.sourceId));
   const pricingJson={...input.pricing,discount:referralCommercial?.discountAmount??trainingCommercial?.discount??input.pricing.discount,couponCode:trainingCommercial?.couponCode??input.pricing.couponCode,referralClaimId:referralCommercial?.claimId,referralCode:referralCommercial?.code,referralPolicy:referralCommercial?.policySnapshot,referralBaseAmount:referralCommercial?.baseAmount,catalogueVersion:governed.catalogueVersion,offerType:governed.offerType,subscription:subscriptionId??input.pricing.subscription,subscriptionPlanCode:governed.subscriptionPlan?.planCode,subscriptionConfig:governed.subscriptionPlan,commercialPolicy:commercialPolicy?policySnapshot(commercialPolicy):undefined,trainingCommercial:trainingCommercial??undefined,boardingCommercial:boardingCommercial??undefined};
-  const liveMode=(await paymentEnv())!=="sandbox",paymentStatusRecorded=recordedPaymentStatus(liveMode,input.payment,Boolean(governed.subscriptionPlan));
+  // The entitlement is only live money's to grant. Captured (sandbox, or an offline capture) creates it
+  // active; anything awaiting gateway verification creates it pending with zero sessions reserved.
+  const entitlementActive=paymentStatusRecorded==="captured";
   const statements=[
     db.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?, ?,?,?) ON CONFLICT(id) DO UPDATE SET city_id=excluded.city_id,name=excluded.name,primary_phone=excluded.primary_phone,secondary_phone=excluded.secondary_phone,email=excluded.email,updated_at=excluded.updated_at").bind(input.customer.id,input.cityId,input.customer.name,input.customer.primaryPhone,input.customer.secondaryPhone??null,input.customer.email??null,"uat_customer_app",JSON.stringify({serviceUpdates:true,marketing:false}),now,now),
     ...input.pets.map((pet,index)=>db.prepare("INSERT INTO canonical_pets (id,customer_id,name,species,breed,vaccination_status,source_pet_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,species=excluded.species,breed=excluded.breed,vaccination_status=excluded.vaccination_status,updated_at=excluded.updated_at").bind(ids[index],input.customer.id,pet.name,pet.species??"dog",pet.breed??null,pet.vaccinationStatus??"not_provided",pet.sourceId,now,now)),
@@ -90,14 +128,22 @@ export async function POST(request:Request){try{const input=await request.json()
   // balance and a stay that starts more than 24h out (splitPaymentPlan enforces the lead time).
   if(input.serviceCode==="pet_sitting"&&input.payment.mode==="split_50_50"){if(!(input.totalAmount>input.amountDueNow))return json({error:"Split payment requires an outstanding balance below the total"},409);await ensureStayPaymentTables(db);const plan=splitPaymentPlan({totalAmount:input.totalAmount,scheduledStart:input.scheduledStart});statements.push(staySplitScheduleStatement(db,{bookingId,serviceCode:"pet_sitting",customerId:input.customer.id,totalAmount:input.totalAmount,paidNowAmount:input.amountDueNow,balanceAmount:Math.round((input.totalAmount-input.amountDueNow)*100)/100,balanceDueAt:plan.balanceDueAt}));}
   if(referralCommercial)statements.push(referralBookingLinkStatement(db,{preparation:referralCommercial,bookingId,now}),referralClaimBoundStatement(db,{claimId:referralCommercial.claimId,now}));
-  if(subscriptionId&&governed.subscriptionPlan){const expiresAt=subscriptionExpiry(now,governed.subscriptionPlan.validityValue,governed.subscriptionPlan.validityUnit);statements.push(
-    db.prepare("INSERT INTO customer_grooming_subscriptions (id,customer_id,plan_code,service_package_code,total_sessions,sessions_reserved,sessions_consumed,status,started_at,expires_at,source_booking_id,catalogue_version,created_at,updated_at) VALUES (?,?,?,?,?,?,0,'active',?,?,?,?,?,?)").bind(subscriptionId,input.customer.id,governed.subscriptionPlan.planCode,governed.subscriptionPlan.servicePackageCode,governed.subscriptionPlan.sessions,governed.subscriptionPlan.reserveSessions,now,expiresAt,bookingId,governed.catalogueVersion??"unknown",now,now),
-    db.prepare("INSERT INTO booking_subscription_usage (id,booking_id,customer_id,plan_code,sessions_reserved,sessions_consumed,status,created_at,updated_at) VALUES (?,?,?,?,?,0,'reserved',?,?)").bind(crypto.randomUUID(),bookingId,input.customer.id,subscriptionId,governed.subscriptionPlan.reserveSessions,now,now),
+  if(subscriptionId&&governed.subscriptionPlan){const expiresAt=subscriptionExpiry(now,governed.subscriptionPlan.validityValue,governed.subscriptionPlan.validityUnit);
+    // Pending is not a label — mutateSubscriptionWallet only moves credits for a subscription in
+    // ('active','exhausted'), and coupon/reminder/BI reads filter on 'active'. Zero reserved sessions on
+    // top of it means an unverified purchase holds nothing a customer could redeem.
+    const subscriptionStatus=entitlementActive?"active":PENDING_PAYMENT_STATUS;
+    const sessionsReserved=entitlementActive?governed.subscriptionPlan.reserveSessions:0;
+    statements.push(
+    db.prepare("INSERT INTO customer_grooming_subscriptions (id,customer_id,plan_code,service_package_code,total_sessions,sessions_reserved,sessions_consumed,status,started_at,expires_at,source_booking_id,catalogue_version,created_at,updated_at) VALUES (?,?,?,?,?,?,0,?,?,?,?,?,?,?)").bind(subscriptionId,input.customer.id,governed.subscriptionPlan.planCode,governed.subscriptionPlan.servicePackageCode,governed.subscriptionPlan.sessions,sessionsReserved,subscriptionStatus,now,expiresAt,bookingId,governed.catalogueVersion??"unknown",now,now),
+    db.prepare("INSERT INTO booking_subscription_usage (id,booking_id,customer_id,plan_code,sessions_reserved,sessions_consumed,status,created_at,updated_at) VALUES (?,?,?,?,?,0,?,?,?)").bind(crypto.randomUUID(),bookingId,input.customer.id,subscriptionId,sessionsReserved,entitlementActive?"reserved":PENDING_PAYMENT_STATUS,now,now),
     db.prepare("INSERT INTO grooming_subscription_purchase_snapshots (subscription_id,booking_id,city_id,zone_id,plan_code,catalogue_version,config_json,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(subscriptionId,bookingId,input.cityId,input.zoneId,governed.subscriptionPlan.planCode,governed.catalogueVersion??"unknown",JSON.stringify(governed.subscriptionPlan),now)
   );}
-  const events:Array<readonly[string,string,string,Record<string,unknown>]>=[["scheduling_linked","schedule_group",input.scheduleGroupId,{providerId:input.provider.id,occurrences:reservations.results.length}],["booking_created","booking",bookingId,{serviceCode:input.serviceCode,packageName:governed.packageName,catalogueVersion:governed.catalogueVersion,commercialPolicyVersion:commercialPolicy?policyVersion(commercialPolicy):undefined,trainingSessions:trainingCommercial?.sessions,trainingValidityDays:trainingCommercial?.validityDays,trainingQuoteId:trainingCommercial?.quoteId,boardingQuoteId:boardingCommercial?.quoteId,boardingStayUnits:boardingCommercial?.stayUnits,boardingHostProfileVersion:boardingCommercial?.host.profileVersion,referralClaimId:referralCommercial?.claimId,referralDiscount:referralCommercial?.discountAmount}],["work_order_created","work_order",workOrderId,{status:input.provider.model==="commission"?"awaiting_acceptance":"assigned"}],["payment_recorded","payment",paymentId,{status:input.payment.status,gateway:"uat_sandbox",liveMoney:false,amount:governed.totalAmount,amountDueNow:governed.amountDueNow}]];
+  const events:Array<readonly[string,string,string,Record<string,unknown>]>=[["scheduling_linked","schedule_group",input.scheduleGroupId,{providerId:input.provider.id,occurrences:reservations.results.length}],["booking_created","booking",bookingId,{serviceCode:input.serviceCode,packageName:governed.packageName,catalogueVersion:governed.catalogueVersion,commercialPolicyVersion:commercialPolicy?policyVersion(commercialPolicy):undefined,trainingSessions:trainingCommercial?.sessions,trainingValidityDays:trainingCommercial?.validityDays,trainingQuoteId:trainingCommercial?.quoteId,boardingQuoteId:boardingCommercial?.quoteId,boardingStayUnits:boardingCommercial?.stayUnits,boardingHostProfileVersion:boardingCommercial?.host.profileVersion,referralClaimId:referralCommercial?.claimId,referralDiscount:referralCommercial?.discountAmount}],["work_order_created","work_order",workOrderId,{status:input.provider.model==="commission"?"awaiting_acceptance":"assigned"}],// the RECORDED status, not the submitted claim: the lifecycle trail must not read "captured" for a
+// payment the platform persisted as awaiting gateway verification
+["payment_recorded","payment",paymentId,{status:paymentStatusRecorded,submittedStatus:input.payment.status,gateway:"uat_sandbox",liveMoney:false,amount:governed.totalAmount,amountDueNow:governed.amountDueNow}]];
   if(referralCommercial)events.push(["referral_claim_bound","referral_claim",referralCommercial.claimId,{programmeId:referralCommercial.programmeId,code:referralCommercial.code,baseAmount:referralCommercial.baseAmount,discountAmount:referralCommercial.discountAmount,totalAmount:referralCommercial.totalAmount,testOnly:true,liveMoney:false}]);
-  if(subscriptionId&&governed.subscriptionPlan)events.push(["subscription_reserved","subscription",subscriptionId,{planCode:governed.subscriptionPlan.planCode,sessionsReserved:governed.subscriptionPlan.reserveSessions,totalSessions:governed.subscriptionPlan.sessions,validityValue:governed.subscriptionPlan.validityValue,validityUnit:governed.subscriptionPlan.validityUnit,cityId:governed.subscriptionPlan.cityId,zoneId:governed.subscriptionPlan.zoneId}]);
+  if(subscriptionId&&governed.subscriptionPlan)events.push([entitlementActive?"subscription_reserved":"subscription_pending_payment","subscription",subscriptionId,{planCode:governed.subscriptionPlan.planCode,sessionsReserved:entitlementActive?governed.subscriptionPlan.reserveSessions:0,totalSessions:governed.subscriptionPlan.sessions,validityValue:governed.subscriptionPlan.validityValue,validityUnit:governed.subscriptionPlan.validityUnit,cityId:governed.subscriptionPlan.cityId,zoneId:governed.subscriptionPlan.zoneId,awaitingGatewayVerification:!entitlementActive}]);
   for(const [eventType,entityType,entityId,detail] of events)statements.push(db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),bookingId,eventType,entityType,entityId,input.customer.id,JSON.stringify(detail),now));
   await db.batch(statements);if(trainingCommercial)await consumeTrainingQuote(db,trainingCommercial.quoteId,bookingId);if(boardingCommercial)await consumeBoardingQuote(db,boardingCommercial.quoteId,bookingId);await attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId});const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=?").bind(bookingId).first<Record<string,unknown>>();return json({data:await readBundle(db,booking!,false)},201);
 }catch(error){if(error instanceof Response){const message=await error.text().catch(()=>"");return json({error:message||"Canonical booking validation failed"},error.status||409);}return json({error:error instanceof Error?error.message:"Unable to create shared booking lifecycle"},500);}}
