@@ -6,3 +6,5 @@ export { default as PageHeader } from "./PageHeader";
 export { default as EmptyState } from "./EmptyState";
 export { default as TrendChart } from "./TrendChart";
 export type { ChartSeries, TrendChartProps } from "./TrendChart";
+export { TeamShell, TeamAlert, TeamSection, TeamStatGrid, TeamTable, TeamFigures } from "./TeamShell";
+export type { TeamNavLink } from "./TeamShell";

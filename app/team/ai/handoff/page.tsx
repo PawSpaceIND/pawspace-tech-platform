@@ -27,6 +27,8 @@ type HandoffCurrent = Record<string, unknown> & {
   summary?: { transcript?: TranscriptMessage[] };
 };
 
+type QueueEntry = { threadId: string; customerId: string; reason: string; queueCode: string; status: string; createdAt: number };
+
 type Handoff = {
   current?: HandoffCurrent | null;
   events?: Record<string, unknown>[];
@@ -41,6 +43,16 @@ const box = {
 };
 
 const label = (value: unknown) => String(value || "—").replaceAll("_", " ");
+
+/** The live escalation queue. Without it this page opened on whichever conversation sorted first —
+ *  almost never one with a handoff — and reported "no handoff is active or recorded for this
+ *  thread" while real escalations sat waiting. */
+async function fetchQueue(): Promise<QueueEntry[]> {
+  const response = await fetch("/api/ai-human-handoff?mode=queue", { cache: "no-store" });
+  const body = (await response.json()) as { data?: { queue: QueueEntry[] }; error?: string };
+  if (!response.ok) throw new Error(body.error || "Unable to load the AI handoff queue");
+  return body.data?.queue || [];
+}
 
 async function fetchThreads(): Promise<Thread[]> {
   const response = await fetch("/api/conversations?status=open", { cache: "no-store" });
@@ -62,6 +74,7 @@ async function fetchHandoff(thread: Thread): Promise<Handoff | null> {
 
 export default function AiHandoffPage() {
   const [threads, setThreads] = useState<Thread[]>([]);
+  const [queue, setQueue] = useState<QueueEntry[]>([]);
   const [selected, setSelected] = useState<Thread | null>(null);
   const [handoff, setHandoff] = useState<Handoff | null>(null);
   const [error, setError] = useState("");
@@ -69,11 +82,15 @@ export default function AiHandoffPage() {
 
   useEffect(() => {
     let cancelled = false;
-    void fetchThreads()
-      .then((rows) => {
+    void Promise.all([fetchThreads(), fetchQueue().catch(() => [] as QueueEntry[])])
+      .then(([rows, escalations]) => {
         if (cancelled) return;
         setThreads(rows);
-        setSelected((current) => current || rows[0] || null);
+        setQueue(escalations);
+        // Open on a conversation that actually has a live handoff; fall back to the first thread only
+        // when nothing is escalated.
+        const escalated = rows.find((thread) => escalations.some((entry) => entry.threadId === thread.id));
+        setSelected((current) => current || escalated || rows[0] || null);
       })
       .catch((cause) => {
         if (!cancelled) {
@@ -195,7 +212,13 @@ export default function AiHandoffPage() {
           <aside style={{ ...box, overflow: "hidden" }}>
             <div style={{ padding: 16, borderBottom: "1px solid #eee6f5" }}>
               <b>Open canonical threads</b>
+              <div style={{ fontSize: 12, color: "#746b7d", marginTop: 4 }}>
+                {queue.length === 0
+                  ? "No conversation is currently escalated to a human."
+                  : `${queue.filter((entry) => entry.status === "queued").length} waiting · ${queue.filter((entry) => entry.status === "staff_active").length} with staff`}
+              </div>
             </div>
+            {threads.length === 0 && <p style={{ padding: 16, color: "#746b7d" }}>No open conversations.</p>}
             {threads.map((thread) => (
               <button
                 key={thread.id}
@@ -214,6 +237,14 @@ export default function AiHandoffPage() {
                 <div style={{ fontSize: 12, marginTop: 4 }}>
                   {label(thread.assigned_to)} · {label(thread.status)}
                 </div>
+                {(() => {
+                  // Show at a glance which conversations the AI has escalated, so staff do not have
+                  // to click every thread to find the ones that need them.
+                  const entry = queue.find((item) => item.threadId === thread.id);
+                  if (!entry) return null;
+                  const waiting = entry.status === "queued";
+                  return <span style={{ display: "inline-block", marginTop: 6, padding: "2px 8px", borderRadius: 999, fontSize: 11, fontWeight: 700, background: waiting ? "#fff3e6" : "#eefaf1", color: waiting ? "#a35b00" : "#14663c" }}>{waiting ? "Waiting for staff" : "With staff"} · {label(entry.reason)}</span>;
+                })()}
               </button>
             ))}
           </aside>

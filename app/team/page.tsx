@@ -8,7 +8,7 @@ type Overview = {
   actor: { name: string; email: string; roleCode: string };
   today: string;
   commandStrip: { revenueActions: number | null; firstResponseMinutes: number | null; managerAlertMinutes: number | null; openEscalations: number | null; openTickets: number | null; commandPackReports: number | null };
-  workspaces: { bookingsToday: number | null; ticketsNeedAttention: number | null; dayCloseStatus: string | null; activeEmployees: number | null };
+  workspaces: { bookingsToday: number | null; ticketsNeedAttention: number | null; dayCloseStatus: string | null; activeEmployees: number | null; aiHandoffsWaiting: number | null; aiTurnsToday: number | null; aiRolloutStage: string | null };
 };
 
 // Static copy stays static; every COUNT comes from the API. `metric` is the label shown when the
@@ -21,6 +21,10 @@ const workspaces = [
   { group: "Customer experience", title: "Tickets & recovery", detail: "Customer 360, complaints, refund cases, RNR compliance, SLA and resolution evidence.", href: "/team/customer-experience", metric: "Open tickets", tone: "rose", live: (data: Overview) => data.workspaces.ticketsNeedAttention == null ? null : `${data.workspaces.ticketsNeedAttention} need attention` },
   { group: "Finance", title: "Accounts & collections", detail: "Collections, payouts, refunds, reconciliation and mandatory day closure.", href: "/team/finance", metric: "Day close", tone: "green", live: (data: Overview) => data.workspaces.dayCloseStatus == null ? null : `Day close ${data.workspaces.dayCloseStatus.replace(/_/g, " ")}` },
   { group: "People", title: "HR & performance", detail: "Employees, attendance, payroll, targets, incentives and team achievement.", href: "/team/people", metric: "Team directory", tone: "blue", live: (data: Overview) => data.workspaces.activeEmployees == null ? null : `${data.workspaces.activeEmployees} active employee${data.workspaces.activeEmployees === 1 ? "" : "s"}` },
+  // The AI workspace had no entry point anywhere in Team: nothing linked to /team/ai, so the whole
+  // module was reachable only by typing the URL. The metric leads with the rollout stage because
+  // that is what decides whether the assistant is talking to anyone at all.
+  { group: "AI", title: "Assistant & handoff", detail: "Conversation analytics, the human handoff queue, assistant grounding and the staff-first rollout switch. The assistant never acts autonomously on money, refunds or assignments.", href: "/team/ai", metric: "Rollout off", tone: "blue", live: (data: Overview) => data.workspaces.aiRolloutStage == null ? null : data.workspaces.aiRolloutStage === "off" ? "Rollout off · humans answer" : `${data.workspaces.aiRolloutStage.replace(/_/g, " ")}${data.workspaces.aiHandoffsWaiting ? ` · ${data.workspaces.aiHandoffsWaiting} awaiting staff` : ""}` },
   { group: "Marketing", title: "Segments & campaigns", detail: "Consent-safe audiences, WATI and SMS queues, promotions and campaign performance.", href: "/team/marketing", metric: "Live delivery locked", tone: "gold", live: () => null },
 ] as const;
 

@@ -56,6 +56,14 @@ export async function buildTeamOverview(db: Db, input: { actorEmail: string; act
     one(db, "SELECT COUNT(*) count FROM employee_incentive_results WHERE status='calculated'"),
     one(db, "SELECT COUNT(*) count FROM provider_commercial_terms WHERE status='draft'"),
   ]);
+  // AI: the assistant workspace was not reachable from this front door at all, so it needs its own
+  // counter here. Both reads are cold-safe (one() returns null on a missing table), and the rollout
+  // stage is what decides whether the AI is talking to anyone — it is the honest headline.
+  const [aiHandoffsWaiting, aiTurnsToday, aiRollout] = await Promise.all([
+    one(db, "SELECT COUNT(*) count FROM ai_handoffs WHERE status IN ('queued','staff_active')"),
+    one(db, "SELECT COUNT(*) count FROM ai_conversation_turns WHERE created_at>=?", [Date.parse(startIso)]),
+    one(db, "SELECT stage FROM ai_audience_rollout WHERE id=1"),
+  ]);
   const approvalParts = [payrollAwaiting, incentivesAwaiting, termsAwaiting];
   const pendingApprovals = approvalParts.every((part) => part === null) ? null : approvalParts.reduce((sum, part) => sum + (part ? num(part.count) : 0), 0);
 
@@ -75,6 +83,9 @@ export async function buildTeamOverview(db: Db, input: { actorEmail: string; act
       ticketsNeedAttention: openTickets,
       dayCloseStatus: closure ? String(closure.status) : null,
       activeEmployees: people ? num(people.count) : null,
+      aiHandoffsWaiting: aiHandoffsWaiting ? num(aiHandoffsWaiting.count) : null,
+      aiTurnsToday: aiTurnsToday ? num(aiTurnsToday.count) : null,
+      aiRolloutStage: aiRollout ? String(aiRollout.stage) : null,
     },
     approvals: {
       pending: pendingApprovals,
