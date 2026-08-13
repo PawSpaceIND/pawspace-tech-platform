@@ -10,8 +10,12 @@
  */
 import * as nodeModule from "node:module";
 
-export function installWorkersHooks(globalName) {
-  const shim = `export const env = new Proxy({}, { get: (_, key) => key === "DB" ? globalThis[${JSON.stringify(globalName)}] : (globalThis[${JSON.stringify(`${globalName}_ENV`)}] ?? {})[key] });`;
+// envName defaults to `${globalName}_ENV`, which is what the suites written before it existed use. The
+// two call sites that pass a name of their own (__FANOUT_ENV__, __SEED_ENV__) were setting a global the
+// shim never read: it looked for __FANOUT_DB___ENV. Those suites need no env values, so nothing failed -
+// the first suite to read one would have got undefined and no clue why.
+export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
+  const shim = `export const env = new Proxy({}, { get: (_, key) => key === "DB" ? globalThis[${JSON.stringify(globalName)}] : (globalThis[${JSON.stringify(envName)}] ?? {})[key] });`;
   const workersUrl = `data:text/javascript,${encodeURIComponent(shim)}`;
 
   // The fallback below only runs on the Node CI pins, so on a newer machine it is never exercised -

@@ -1,25 +1,16 @@
-"use client";
-/* eslint-disable @next/next/no-img-element */
+import { redirect } from "next/navigation";
 
-import Link from "next/link";
-import { useState } from "react";
-import styles from "./account.module.css";
-import TestSyncPanel from "../components/test-sync-panel";
-
-export default function AccountPage() {
-  const [tab, setTab] = useState<"home" | "history" | "pets" | "wallet">("home");
-  const [toast, setToast] = useState("");
-  const notify = (message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2400); };
-  return <main className={styles.shell}>
-    <aside><Link href="/"><img src="/assets/pawspace-logo.jpeg" alt="PawSpace" /></Link><div className={styles.user}><span>AR</span><div><strong>Ananya Rao</strong><small>Member since 2022</small></div></div><nav><button className={tab === "home" ? styles.active : ""} onClick={() => setTab("home")}>⌂ Overview</button><button className={tab === "history" ? styles.active : ""} onClick={() => setTab("history")}>▤ Service history</button><button className={tab === "pets" ? styles.active : ""} onClick={() => setTab("pets")}>🐾 My pets</button><button className={tab === "wallet" ? styles.active : ""} onClick={() => setTab("wallet")}>◈ Wallet & payments</button></nav><div className={styles.links}><Link href="/food">Fresh dog food</Link><Link href="/taxi">Pet Taxi</Link><Link href="/walking">Dog walking</Link><Link href="/sitting">Pet sitting</Link><Link href="/boarding">Home boarding</Link><Link href="/training">Dog training</Link><Link href="/">Book grooming</Link></div></aside>
-    <section className={styles.main}><header><div><span>MY PAWSPACE</span><h1>{tab === "home" ? "Everything about your pets" : tab === "history" ? "Service history" : tab === "pets" ? "Pet family" : "Wallet & payments"}</h1></div><button onClick={() => notify("Support conversation opened")}>Need help?</button></header>
-      <TestSyncPanel surface="customer" />
-      {tab === "home" && <><section className={styles.welcome}><div><span>GOOD MORNING, ANANYA</span><h2>Bruno is all set for today.</h2><p>Bath & Basic Grooming · 9:00–11:00 AM · Arun R.</p><div><button onClick={() => notify("Live service tracking opened")}>Track service</button><button onClick={() => notify("Message sent securely")}>Message groomer</button></div></div><aside><strong>4.8 ★</strong><span>Bruno’s care score</span><small>Grooming, stays, walks, trips and training</small></aside></section><section className={styles.stayCard}><div><span>NEXT JOURNEY · PST-7842</span><h2>Pet Taxi to Cessna Lifeline</h2><p>Today · 3:00–6:00 PM · Ravi K.</p></div><div><strong>Driver assigned</strong><span>Live tracking at pickup</span><small>Both contacts notified</small></div><Link href="/taxi">Open trip →</Link></section><section className={styles.stayCard}><div><span>RECURRING WALKS · PSW-4912</span><h2>Bruno walks with Nisha</h2><p>Mon, Wed & Fri · 7:00–8:00 AM</p></div><div><strong>Next walk</strong><span>Wednesday · 7:00 AM</span><small>GPS walk report included</small></div><Link href="/walking">Open schedule →</Link></section><section className={styles.cards}><article><span>Subscription wallet</span><strong>4 sessions</strong><small>Valid until 18 March 2027</small><button onClick={() => setTab("wallet")}>Manage plan →</button></article><article><span>Training progress</span><strong>68%</strong><small>Session 3 scheduled for 5 Aug</small><Link href="/training">Open journey →</Link></article><article><span>Upcoming stay</span><strong>24–27 Aug</strong><small>Maya & Rohan · Indiranagar</small><Link href="/boarding">Open stay →</Link></article></section></>}
-      {tab === "history" && <section className={styles.panel}><div className={styles.panelHead}><div><span>COMPLETE CARE RECORD</span><h2>All services in one timeline</h2></div><select><option>All services</option><option>Grooming</option><option>Training</option><option>Boarding</option><option>Pet Sitting</option><option>Pet Taxi</option><option>Dog Walking</option></select></div><div className={styles.history}>{[
-        ["24 Aug", "Home Boarding · 3 nights", "Maya & Rohan · Confirmed", "₹4,146", "Care plan"], ["Today", "Pet Taxi · Cessna Lifeline", "Ravi K. · Confirmed", "₹699", "Track trip"], ["Today", "Dog Walking · 30 min", "Nisha P. · Confirmed", "₹349", "Walk report"], ["Today", "Bath & Basic Grooming", "Arun R. · In service", "₹1,899", "Photos pending"], ["28 Jul", "Training · Session 2", "Arjun Kumar · Completed", "Package", "Report available"], ["20 Jul", "Training assessment", "Arjun Kumar · Completed", "₹499", "Roadmap created"], ["04 Jul", "Complete Makeover", "Priya S. · Completed", "₹2,399", "Before & after photos"], ["18 Jun", "Bath & Basic Grooming", "Arun R. · Completed", "Subscription", "4.9 ★ review"]
-      ].map((item) => <article key={`${item[0]}${item[1]}`}><span>{item[0]}</span><div><strong>{item[1]}</strong><small>{item[2]}</small></div><b>{item[3]}</b><button onClick={() => notify(`${item[4]} opened`)}>{item[4]} →</button></article>)}</div></section>}
-      {tab === "pets" && <section className={styles.petGrid}><article><span>BR</span><div><h2>Bruno</h2><p>Golden Retriever · Male · 4 years</p><div><b>4.8 care score</b><b>12 services</b><b>Training active</b></div></div><button onClick={() => notify("Bruno’s complete profile opened")}>View full profile</button></article><button className={styles.addPet} onClick={() => notify("Add pet form opened")}>＋ Add another pet</button></section>}
-      {tab === "wallet" && <section className={styles.wallet}><div className={styles.walletHero}><span>FAMILY GROOMING WALLET</span><h2>4 sessions remaining</h2><p>6-session plan · usable for all registered dogs and cats</p><div><span>Purchased 18 Jul 2026</span><span>Valid until 18 Mar 2027</span></div><button onClick={() => notify("Renewal options opened")}>Renew or upgrade</button></div><div className={styles.payments}><h2>Payment history</h2><article><div><strong>6-session grooming plan</strong><small>18 Jul · Razorpay</small></div><b>₹6,594</b><span>Paid</span></article><article><div><strong>Training assessment</strong><small>20 Jul · UPI</small></div><b>₹499</b><span>Paid</span></article><article><div><strong>Complete Makeover</strong><small>04 Jul · Pay after service</small></div><b>₹2,399</b><span>Paid</span></article></div></section>}
-    </section>{toast && <div className={styles.toast}>✓ {toast}</div>}
-  </main>;
+/**
+ * RETIRED ROUTE — this was a customer-facing prototype that showed a signed-in person INVENTED data
+ * about themselves: a fixed customer name and join year, an invented care score, an eight-row
+ * service history, a wallet with sessions remaining and a payment history — none of it from the
+ * database. It was linked from the home page and the marketing site, so a real customer could read
+ * fabricated spend and bookings as their own.
+ *
+ * The real customer account already exists inside the app (app/mobile-app/customer-account-view.tsx,
+ * fed by /api/customer-account), reachable from the app's bottom navigation. This route now sends
+ * people there instead of to a mock.
+ */
+export default function RetiredAccountPage() {
+  redirect("/mobile-app");
 }

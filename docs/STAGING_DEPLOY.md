@@ -76,6 +76,110 @@ npx wrangler d1 execute pawspace-staging --remote --file=scripts/staging-seed.sq
 After loading, open `/team/acquisition-funnel` and hit **Refresh sweep** to compute funnel stages, ₹300
 recoveries and App-Inbound leads from the seeded data — instant material for the CRM/Sales test.
 
+### Before any `--remote` command
+
+`npx wrangler d1 execute --remote` writes to the live staging database using `CLOUDFLARE_API_TOKEN`.
+Confirm the token you are about to use is the current one and that any previously exposed token has
+been **revoked, not merely superseded** — a superseded token still works until it is deleted:
+
+```bash
+npx wrangler whoami          # must show the expected account
+```
+
+If a token has been shared, pasted into a transcript, or committed at any point, rotate it in the
+Cloudflare dashboard (My Profile → API Tokens) and delete the old one before continuing. Every
+`--remote` step below is blocked on that.
+
+#### Finishing a rotation
+
+Creating a replacement token is not the end of a rotation. Two things are left:
+
+**1. Capture the old token's "Last used" timestamp BEFORE you delete it.** It is shown on the API
+Tokens page and is destroyed along with the token. A last-used time inside the exposure window that
+does not match your own activity means treat the token as used, not merely leaked.
+
+**2. Delete the old token, then check the audit log.** A rotated-but-undeleted token still
+authenticates. Run:
+
+```bash
+export CLOUDFLARE_API_TOKEN=…                 # the NEW token; needs Account Audit Logs (or Analytics) Read
+export CLOUDFLARE_ACCOUNT_ID=…                # npx wrangler whoami prints it
+node scripts/cloudflare-audit-check.mjs --since=<RFC3339 before the leak> --before=<now>
+```
+
+It groups every action in the window, reports whether a token deletion actually happened, and flags
+the actions that mean someone kept or widened access: a new token created, a member invited, a
+Logpush destination added, an R2 bucket or D1 database created, a Worker deployed, DNS or permissions
+changed. Exit code 0 only when a deletion was found and nothing sensitive is unexplained; any error
+exits non-zero, so it can never tick a checklist it could not actually check.
+
+**What none of this covers.** The audit log records configuration changes, not data reads. A token
+with D1 access could have run `wrangler d1 execute` against staging and left nothing in it. The only
+signals for that are the last-used timestamp above and Workers/D1 request analytics.
+
+**And settle what data was in staging during the window.** If only `staging-seed.sql`,
+`employee-seed.sql` and `uat-demo-seed.sql` had been loaded, the content is synthetic and the impact
+is low. If the masked real book (`truth-masked.sql`, below) had been loaded, this stops being
+housekeeping — treat it as a potential data incident and escalate rather than closing it out.
+
+**Add the module demo layer so NO page opens empty.** The two seeds above cover customers, bookings,
+payments and the employee/payroll baseline, but leave the module-level surfaces blank (ops queues, AI
+analytics, ledger, incentives, attendance, partner earnings, intelligence reports). This third seed
+fills exactly those gaps with a small, legible, fully derivable data set:
+```bash
+npx wrangler d1 execute pawspace-staging --remote --file=scripts/uat-demo-seed.sql
+```
+Idempotent, `UATD`-marked (never collides with the other two seeds), regenerate with
+`node --experimental-strip-types scripts/uat-demo-seed-gen.mjs`. Every CREATE TABLE inside it is copied
+verbatim from the source file that owns it, and the generator refuses to emit a column that does not
+exist in that real DDL.
+It carries 12 bookings across all six verticals (including one cancelled so revenue exclusions are
+visible), boarding stays, walk sessions, taxi trips, 4 demo employees with a full payroll run,
+attendance, leave, incentives, productivity facts, AI conversations/handoff/voice/CSAT, app installs,
+a ledger with a deliberately unbalanced journal plus duplicate and outlier vendor bills (so the
+finance anomaly report is not empty), commercial terms with computed payouts, CRM leads and tickets,
+ratings, vaccinations and birthdays.
+
+It also carries the sales-performance and campaign layer: 4 reps mapped to the `sales` team, 27 leads
+with SLA clocks, recorded calls and conversions into the seeded bookings, an active productivity
+policy, a live governed campaign with its audience snapshot and holdout, one campaign awaiting
+approval, and ad spend rows so the CAC line has real figures instead of `configuration_required`.
+Those rows reference the customers and bookings from `staging-seed.sql`, which is why that seed loads
+first. After loading, open `/team/performance` and press **Generate 30-day report** — one click turns
+the seeded lead work into a ranked leaderboard, and is also the check that the whole
+policy -> run -> board pipeline is live.
+
+`tests/uat-demo-seed.test.mjs` loads this file into an empty database and asserts every module's real
+route handler returns non-empty data. `tests/uat-demo-seed-sales-marketing.test.mjs` covers the sales
+and campaign layer, loading the staging seed alongside it because that layer is measured against it.
+
+The AI rows are the one part not hand-written: `scripts/ai-demo-run.mjs` executes the REAL AI libs
+against an in-memory database and the generator dumps whatever they wrote. Those tables store an
+engine vocabulary (`outcome`, `policy_decision`, `intent_code`, `queue_code`, and a SHA-256
+`immutable_hash`), so hand-written rows passed the column check while carrying values the engine can
+never emit. What the seed therefore contains: the activated assistant grounding (profile, system
+policy, 10 approved knowledge articles, 5 intents) with genuine digests and its full lifecycle audit
+trail; 7 governed turns across WhatsApp, chat and voice — 4 contained and 3 handed off (an explicit
+request for a human, a refund policy-risk block routed to `finance-cx`, and a fail-closed voice turn);
+one handoff taken over by staff so `/team/ai/handoff` opens on a live case; a voice call transferred
+to an agent; and 2 explicit CSAT ratings. The AI replies come from a declared scripted provider
+recorded as `provider='uat_demo_scripted'` on every turn — nothing in the seed is output from a live
+model. The rollout stage is seeded to `staff_only`: the assistant answers the internal team, and
+widening it to customers stays a human decision on `/team/ai/rollout`.
+
+### Switching the assistant on
+
+Four independent conditions all have to be met, and `/team/ai/configuration` now shows each one with a
+tick or a cross plus what to do about it:
+
+1. **Model provider** — set `PAWSPACE_AI_PROVIDER_API_KEY` (see the secrets list above). Without it the
+   orchestrator hands every conversation to a human, by design.
+2. **Grounding** — assistant profile, system policy, approved knowledge and intent catalogue must be
+   active. On a fresh environment press **Install starter assistant grounding** on
+   `/team/ai/configuration` (or `POST /api/ai-bootstrap`); the demo seed already carries it.
+3. **Rollout audience** — `off` by default. Widen it on `/team/ai/rollout`.
+4. **Kill switches** — nothing thrown. The Disable/Enable AI buttons on the configuration screen.
+
 **Best option — MASKED REAL data** (the actual 4-year book, safe for staging). Run the importer against
 `The_PawSpace_TRUTH.xlsx` locally (the workbook and the generated SQL contain customer data — never
 commit either; keep them off shared drives):

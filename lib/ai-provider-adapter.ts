@@ -26,6 +26,18 @@ async function getApiKey(): Promise<string> {
 }
 
 /**
+ * Whether an external model provider is configured, WITHOUT calling it. The AI screens need to be
+ * able to say "the provider is not connected" as a fact rather than as standing boilerplate - the
+ * team page used to print that sentence unconditionally, so it stayed on the screen even once a key
+ * was configured. Never returns the key itself.
+ */
+export async function aiProviderConnection(): Promise<{ connected: boolean; providerRef: string | null; modelRef: string | null; reason: string }> {
+  const apiKey = await getApiKey().catch(() => "");
+  if (!apiKey) return { connected: false, providerRef: null, modelRef: null, reason: "PAWSPACE_AI_PROVIDER_API_KEY is not configured - the assistant hands every conversation to a human" };
+  return { connected: true, providerRef: "anthropic", modelRef: "claude-sonnet-4-6", reason: "An external model provider key is configured" };
+}
+
+/**
  * Calls a real AI provider (Anthropic Messages API format) if configured. Returns a clear,
  * honest "not connected" result otherwise - never fabricates AI output locally, and never
  * silently falls back to canned text pretending to be AI-generated.

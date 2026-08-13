@@ -35,9 +35,26 @@ export async function createPricingRule(db: Db, input: { name: string; serviceCo
   if (!ADJUSTMENTS.includes(adjustmentType)) throw new Error(`adjustmentType must be one of: ${ADJUSTMENTS.join(", ")}`);
   if (!Number.isFinite(Number(input.adjustmentValue))) throw new Error("A valid adjustmentValue is required");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(text(input.effectiveFrom))) throw new Error("effectiveFrom must be YYYY-MM-DD");
+  // Each rule type must carry the fields the pricing engine actually matches on. lib/pricing-engine.ts
+  // matches by days / startTime / endTime / effective window and IGNORES rule_type, so a 'time_band'
+  // rule saved without times, or a 'weekday' rule saved without days, silently applies to EVERY slot -
+  // a surcharge nobody asked for. Fail closed instead of storing a rule that cannot mean what it says.
+  const days = Array.isArray(input.days) ? input.days.map(Number).filter(d => Number.isInteger(d) && d >= 0 && d <= 6) : [];
+  const startTime = text(input.startTime), endTime = text(input.endTime), effectiveTo = text(input.effectiveTo);
+  const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
+  if (effectiveTo && !/^\d{4}-\d{2}-\d{2}$/.test(effectiveTo)) throw new Error("effectiveTo must be YYYY-MM-DD");
+  if (effectiveTo && effectiveTo < text(input.effectiveFrom)) throw new Error("effectiveTo cannot be before effectiveFrom");
+  if (startTime && !timePattern.test(startTime)) throw new Error("startTime must be HH:MM (24-hour)");
+  if (endTime && !timePattern.test(endTime)) throw new Error("endTime must be HH:MM (24-hour)");
+  if (ruleType === "time_band") {
+    if (!startTime || !endTime) throw new Error("A time_band rule needs a start and end time, or it would apply to every slot");
+    if (startTime >= endTime) throw new Error("time_band startTime must be earlier than endTime");
+  }
+  if ((ruleType === "weekday" || ruleType === "weekend") && !days.length) throw new Error(`A ${ruleType} rule needs at least one selected day, or it would apply to every day`);
+  if ((ruleType === "season" || ruleType === "date_range") && !effectiveTo) throw new Error(`A ${ruleType} rule needs an end date, or it would never expire`);
   const id = uid("price_rule"), now = Date.now();
   await db.prepare("INSERT INTO dynamic_pricing_rules (id,name,service_code,package_code,city_id,zone_id,rule_type,days_json,start_time,end_time,effective_from,effective_to,adjustment_type,adjustment_value,coupon_policy,priority,status,version,updated_by,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'draft',1,?,?)")
-    .bind(id, name, serviceCode, text(input.packageCode) || null, cityId, text(input.zoneId) || null, ruleType, JSON.stringify(input.days || []), text(input.startTime) || null, text(input.endTime) || null, text(input.effectiveFrom), text(input.effectiveTo) || null, adjustmentType, Number(input.adjustmentValue), text(input.couponPolicy) || "stackable", Number(input.priority) || 100, input.actorId, now).run();
+    .bind(id, name, serviceCode, text(input.packageCode) || null, cityId, text(input.zoneId) || null, ruleType, JSON.stringify(days), startTime || null, endTime || null, text(input.effectiveFrom), effectiveTo || null, adjustmentType, Number(input.adjustmentValue), text(input.couponPolicy) || "stackable", Number(input.priority) || 100, input.actorId, now).run();
   const row = await db.prepare("SELECT * FROM dynamic_pricing_rules WHERE id=?").bind(id).first<Row>();
   return { id, ...shape(row!) };
 }
@@ -51,6 +68,31 @@ export async function listPricingRules(db: Db, input: { serviceCode?: string; ci
   if (input.cityId) { clauses.push("city_id=?"); binds.push(text(input.cityId)); }
   const rows = await db.prepare(`SELECT * FROM dynamic_pricing_rules WHERE ${clauses.join(" AND ")} ORDER BY priority,effective_from`).bind(...binds).all<Row>().catch(empty);
   return rows.results.map(r => ({ id: String(r.id), ...shape(r) }));
+}
+
+/**
+ * The cities a pricing rule may target, from real platform data rather than a hardcoded list: the
+ * governed launch configs first, then any city already carrying providers or bookings, then any city
+ * an existing rule already targets. Cold-DB safe — an empty platform still returns the launch cities
+ * it knows, so the picker is never blank and a rule can never be typed against a city that is not real.
+ */
+export async function listPricingCities(db: Db) {
+  await ensurePricingRuleTables(db);
+  const seen = new Map<string, { cityId: string; label: string; source: string }>();
+  const add = (cityId: unknown, label: unknown, source: string) => {
+    const id = text(cityId);
+    if (!id || seen.has(id)) return;
+    seen.set(id, { cityId: id, label: text(label) || id, source });
+  };
+  const launch = await db.prepare("SELECT city_code,city,status FROM city_launch_configs ORDER BY city").all<Row>().catch(empty);
+  for (const row of launch.results) add(row.city_code, `${text(row.city)}${text(row.status) ? ` · ${text(row.status)}` : ""}`, "city_launch_configs");
+  const providers = await db.prepare("SELECT DISTINCT city_id FROM provider_capacity_profiles WHERE city_id IS NOT NULL AND city_id!='' ORDER BY city_id").all<Row>().catch(empty);
+  for (const row of providers.results) add(row.city_id, row.city_id, "provider_capacity_profiles");
+  const bookings = await db.prepare("SELECT DISTINCT city_id FROM canonical_bookings WHERE city_id IS NOT NULL AND city_id!='' ORDER BY city_id").all<Row>().catch(empty);
+  for (const row of bookings.results) add(row.city_id, row.city_id, "canonical_bookings");
+  const rules = await db.prepare("SELECT DISTINCT city_id FROM dynamic_pricing_rules WHERE city_id IS NOT NULL AND city_id!='' ORDER BY city_id").all<Row>().catch(empty);
+  for (const row of rules.results) add(row.city_id, row.city_id, "dynamic_pricing_rules");
+  return [...seen.values()];
 }
 
 // --- Holiday calendar ---

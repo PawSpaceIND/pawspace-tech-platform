@@ -1,0 +1,149 @@
+/* Shared frame for Team workspace pages — see TeamShell.tsx. Matches the palette already used by
+   /team, /team/operations and the rest of the staff surfaces. */
+
+.shell {
+  min-height: 100vh;
+  background: #f7f4fb;
+  padding: 28px 20px 56px;
+  color: #24133f;
+  font-family: system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+}
+
+.inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.nav {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.navLink {
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid #e5dcef;
+  background: #fff;
+  color: #4b168c;
+  font-weight: 700;
+  font-size: 14px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.navLink:hover { border-color: #c9b3e4; }
+
+.navPrimary {
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #4b168c;
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.navPrimary:hover { background: #3b1070; }
+
+.alert {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  font-weight: 600;
+}
+
+.alertError { background: #fff1f1; color: #b42318; border: 1px solid #f6c8c4; }
+.alertSuccess { background: #eefaf1; color: #14663c; border: 1px solid #bfe6cd; }
+.alertInfo { background: #f2f0fb; color: #4b168c; border: 1px solid #ddd3ee; }
+
+.section {
+  background: #fff;
+  border: 1px solid #e5dcef;
+  border-radius: 16px;
+  padding: 18px;
+}
+
+.sectionHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.sectionTitle { margin: 0; font-size: 17px; font-weight: 800; }
+.sectionNote { margin: 4px 0 0; color: #746b7d; font-size: 13px; max-width: 70ch; }
+
+.statGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.tableWrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.table th {
+  text-align: left;
+  padding: 8px 14px 8px 0;
+  border-bottom: 1px solid #e5dcef;
+  font-size: 11px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: #746b7d;
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 10px 14px 10px 0;
+  border-bottom: 1px solid #f4eff9;
+  vertical-align: top;
+}
+
+.table tbody tr:last-child td { border-bottom: none; }
+.tableKey { font-weight: 700; }
+.tableEmpty { margin: 6px 0 0; color: #746b7d; }
+
+.figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.figures dt {
+  font-size: 11px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: #746b7d;
+  margin-bottom: 4px;
+}
+
+.figures dd {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 800;
+}
+
+.figureGood { color: #14663c; }
+.figureBad { color: #b42318; }
+
+@media (max-width: 640px) {
+  .shell { padding: 18px 14px 40px; }
+  .figures dd { font-size: 17px; }
+}

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import GroomingRouteCard from "./grooming-route-card";
 import styles from "./partner.module.css";
+import { recordBookingOperation, type BookingOperationResult } from "../../lib/booking-operations-client";
 
 type Tab = "home" | "jobs" | "tracking" | "earnings" | "more";
 type Identity = { subjectType?: string; subjectId?: string; roleCode?: string };
@@ -43,6 +44,11 @@ export default function PartnerMobileApp() {
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedId, setSelectedId] = useState("");
+  // Live order impact: the retired /groomer prototype was the only surface that reached the governed
+  // /api/booking-operations, but it sent hardcoded IDs. Here it runs against the REAL selected booking.
+  const [delayMinutes, setDelayMinutes] = useState(30);
+  const [operationResult, setOperationResult] = useState<BookingOperationResult | null>(null);
+  const [operationBusy, setOperationBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
@@ -98,6 +104,30 @@ export default function PartnerMobileApp() {
     : null;
   const actionLabel = nextAction === "accept" ? "Accept job" : nextAction === "on_the_way" ? "Start journey" : nextAction === "arrived" ? "Mark arrived" : nextAction === "start_service" ? "Start service" : nextAction === "add_proof" ? "Add service proof" : nextAction === "complete" ? "Complete job" : "No action";
   const canDecline = Boolean(selected && selected.providerModel === "commission" && (selected.status === "confirmed" || selected.workOrderStatus === "awaiting_acceptance"));
+
+  const reportOperation = async (action: "package_upgrade" | "service_overrun" | "running_late" | "vehicle_issue" | "rebook_requested") => {
+    if (!selected || operationBusy) return;
+    setOperationBusy(true);
+    setError("");
+    try {
+      const result = await recordBookingOperation({
+        bookingId: selected.bookingId,
+        providerId: selected.providerId,
+        action,
+        reason: action === "package_upgrade" ? "Customer approved a package upgrade during service"
+          : action === "service_overrun" ? "Service is taking longer than the booked slot"
+            : action === "vehicle_issue" ? "Vehicle issue reported while travelling"
+              : action === "rebook_requested" ? "Delay exceeded the customer comfort window"
+                : "Traffic or travel delay reported by the partner",
+        impactMinutes: delayMinutes,
+      });
+      setOperationResult(result);
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : "Unable to record the order update");
+    } finally {
+      setOperationBusy(false);
+    }
+  };
 
   const act = async (action: "accept" | "decline" | "on_the_way" | "arrived" | "start_service" | "add_proof" | "complete") => {
     if (!selected || busy) return;
@@ -189,6 +219,22 @@ export default function PartnerMobileApp() {
               <div><small>Payment</small><b>{label(selected.payment.mode)}</b><span>{label(selected.payment.status)}</span></div>
             </div>
             <div className={styles.proof}><b>Service proof</b><span>{selected.proof ? `${selected.proof.beforePhotoRef ? "Before ✓" : "Before —"} · ${selected.proof.afterPhotoRef ? "After ✓" : "After —"} · Checklist ${selected.proof.checklist.length}` : "Not captured yet"}</span>{selected.invoice && <small>Invoice {selected.invoice.invoiceNumber} · {money(selected.invoice.netAmount)}</small>}</div>
+            <section className={styles.notice}>
+              <b>Live order impact</b>
+              <p>Package upgrades, longer service time, traffic or a vehicle issue stay attached to this order. PawSpace recalculates the route and queues an update for every affected customer.</p>
+              <label>Expected delay
+                <select value={delayMinutes} onChange={(event) => setDelayMinutes(Number(event.target.value))}>
+                  {[10, 15, 30, 45, 60].map((minutes) => <option key={minutes} value={minutes}>{minutes} minutes</option>)}
+                </select>
+              </label>
+              <div className={styles.primaryActions}>
+                <button disabled={operationBusy} onClick={() => void reportOperation("package_upgrade")}>Package upgraded</button>
+                <button disabled={operationBusy} onClick={() => void reportOperation("service_overrun")}>Service taking longer</button>
+                <button disabled={operationBusy} onClick={() => void reportOperation("running_late")}>Running late</button>
+                <button disabled={operationBusy} onClick={() => void reportOperation("vehicle_issue")}>Bike issue</button>
+              </div>
+              {operationResult && <p><b>✓ Order timeline updated</b> — {operationResult.notificationsQueued} push/WhatsApp message{operationResult.notificationsQueued === 1 ? "" : "s"} queued · {operationResult.impactedBookings.length} later booking{operationResult.impactedBookings.length === 1 ? "" : "s"} affected.{operationResult.rebookingAvailable && <> Delay is 30+ minutes, so protected customer rebooking is available. <button disabled={operationBusy} onClick={() => void reportOperation("rebook_requested")}>Open protected rebooking</button></>}</p>}
+            </section>
             <div className={styles.primaryActions}>{nextAction && <button disabled={busy} onClick={() => void act(nextAction)}>{busy ? "Updating…" : actionLabel}</button>}{canTrack && <button className={styles.secondary} onClick={() => setTab("tracking")}>GPS & route</button>}{canDecline && <button className={styles.danger} disabled={busy} onClick={() => void act("decline")}>Decline</button>}</div>
           </section>}
         </>}

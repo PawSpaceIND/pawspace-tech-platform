@@ -13,10 +13,12 @@ const surfaces:Surface[]=[
  {label:"AI Governance",href:"/team/ai",audience:"AI / CX staff",note:"Human review queue and AI safety status.",check:"Human approval/rejection and autonomous sensitive-action blocking."},
  {label:"Test Lab",href:"/test-lab",audience:"Human UAT",note:"100 synthetic Bengaluru customers across all eight service families.",check:"Create controlled synthetic bookings and inspect cross-system projections."},
 ];
+// Only routes that genuinely redirect belong here. /crm and /trainer were listed as retired but were
+// afterwards built out into real, integrated modules (/crm reads /api/crm + /api/revenue-crm;
+// /trainer runs the canonical training session lifecycle, evidence and provider earnings), so
+// claiming they are retired sent testers away from working surfaces.
 const retiredRoutes:{from:string;to:string;why:string}[]=[
- {from:"/crm",to:"/team/sales",why:"Legacy predecessor - Team Sales reads canonical Customer 360 + Revenue Intelligence directly."},
- {from:"/groomer",to:"/partner-app",why:"Standalone screen never linked from the live app; superseded by the full Partner App workspace."},
- {from:"/trainer",to:"/partner-app",why:"Same as above."},
+ {from:"/groomer",to:"/partner-app",why:"Hardcoded prototype - jobs, customers and earnings were literals, completion only moved browser state and proof photos were never uploaded. The Partner App workspace does this for real."},
 ];
 
 const addressChecks=["Greenage","Indiranagar","Koramangala","HSR Layout","Whitefield"];

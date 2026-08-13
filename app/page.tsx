@@ -294,7 +294,7 @@ export default function Home() {
       <header className="topbar">
         <img src="/assets/pawspace-logo.jpeg" alt="PawSpace" />
         <div className="location"><span>Doorstep grooming in</span><strong>📍 Bengaluru</strong></div>
-        <div className="header-links"><Link href="/mobile-app">Mobile App</Link><Link href="/food">Fresh Food</Link><Link href="/boarding">Boarding</Link><Link href="/sitting">Pet Sitting</Link><Link href="/taxi">Pet Taxi</Link><Link href="/walking">Dog Walking</Link><Link href="/training">Training</Link><Link href="/account">My PawSpace</Link><Link href="/team">Team</Link><button className="login-link" onClick={() => setShowOtp(true)}>Login</button></div>
+        <div className="header-links"><Link href="/mobile-app">Mobile App</Link><Link href="/food">Fresh Food</Link><Link href="/boarding">Boarding</Link><Link href="/sitting">Pet Sitting</Link><Link href="/taxi">Pet Taxi</Link><Link href="/walking">Dog Walking</Link><Link href="/training">Training</Link><Link href="/mobile-app">My PawSpace</Link><Link href="/team">Team</Link><button className="login-link" onClick={() => setShowOtp(true)}>Login</button></div>
       </header>
       <TestSyncPanel surface="customer" />
 

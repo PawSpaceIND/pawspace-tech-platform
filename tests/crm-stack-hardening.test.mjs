@@ -1,5 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+// lib modules import each other extensionlessly; this installs the resolver on every supported Node.
+installWorkersHooks("__CRM_DB__");
+
+
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 

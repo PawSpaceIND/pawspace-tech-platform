@@ -168,8 +168,26 @@ const PROTOTYPE_CONTROL_VIEWS = new Set(["access", "approvals", "master", "data"
 /** Hand-authored assessment rather than a live count - true as written, but written by a person. */
 const AUTHORED_REGISTER_VIEWS = new Set(["audit"]);
 
+/** The approvals backlog is a real count of what is waiting on a human, from /api/team-overview.
+ *  Cold-safe: an environment without those tables reports null, which renders as "—". */
+function useApprovals() {
+  const [approvals, setApprovals] = useState<{ pending: number | null }>({ pending: null });
+  useEffect(() => {
+    let active = true;
+    void fetch("/api/team-overview", { cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json() as { data?: { approvals?: { pending: number | null } } };
+        if (active && response.ok) setApprovals({ pending: body.data?.approvals?.pending ?? null });
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
+  return approvals;
+}
+
 export default function Control() {
   const { data: tower, error: towerError, loading: towerLoading } = useControlTower();
+  const approvals = useApprovals();
   const [view, setView] = useState<View>("command");
   const [role, setRole] = useState(roles[0]);
   const [toast, setToast] = useState("");
@@ -182,7 +200,7 @@ export default function Control() {
   return (
     <main className={styles.shell}>
       <aside className={styles.side}>
-        <Link href="/ops" className={styles.brand}>
+        <Link href="/team" className={styles.brand}>
           <img src="/assets/pawspace-logo.jpeg" alt="PawSpace" />
           <div>
             <strong>Platform Control</strong>
@@ -480,12 +498,18 @@ export default function Control() {
         )}
         {view === "approvals" && (
           <>
+            {/* These four tiles used to be literals — 9 pending worth ₹1.84L, 42 approved today at a
+                median of 18 minutes, 128 auto-approved. Only the first has a source: payroll runs
+                awaiting review, incentive results awaiting approval and draft commercial terms, which
+                /api/team-overview counts from those tables. The other three have no canonical timing
+                source, so they say so rather than carrying a number that never moved. "Auto-approved"
+                is deliberately "None": nothing in this platform approves without a human. */}
             <section className={styles.metrics}>
               {[
-                ["Pending", "9", "₹1.84L value"],
-                ["SLA risk", "2", "Oldest 3h 18m"],
-                ["Approved today", "42", "Median 18 min"],
-                ["Auto-approved", "128", "Within safe limits"],
+                ["Pending", approvals.pending == null ? "—" : String(approvals.pending), approvals.pending == null ? "approvals backlog unavailable" : "payroll, incentives and commercial terms"],
+                ["SLA risk", "Not measured", "no canonical approval-timing source"],
+                ["Approved today", "Not measured", "no canonical approval-timing source"],
+                ["Auto-approved", "None", "every approval is human"],
               ].map((x) => (
                 <article key={x[0]}>
                   <span>{x[0]}</span>
