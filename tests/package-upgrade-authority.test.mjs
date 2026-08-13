@@ -209,3 +209,143 @@ test("the roles that hold the reporting permission cannot price an upgrade", asy
   const manager = defaultRoles.find((entry) => entry.code === "manager");
   assert.ok(!manager.permissions.includes("pricing.manage"));
 });
+
+// ---------------------------------------------------------------------------------------------
+// Concurrency, audit atomicity, and the two review findings that came with them.
+// ---------------------------------------------------------------------------------------------
+
+/** Async at every call, like the real D1 client - all the interleaving a check-then-act race needs. */
+function makeConcurrentD1(sqlite) {
+  function statement(sql, args) {
+    return {
+      bind: (...bound) => statement(sql, bound),
+      first: async () => { await null; const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
+      run: async () => { await null; const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
+      all: async () => { await null; return { results: sqlite.prepare(sql).all(...args) }; },
+    };
+  }
+  return {
+    prepare: (sql) => statement(sql, []),
+    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
+    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
+  };
+}
+
+async function seedConcurrent() {
+  const { sqlite, route } = await seed();
+  globalThis.__BOPS_DB__ = makeConcurrentD1(sqlite);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS security_audit_events (id TEXT PRIMARY KEY, actor_email TEXT NOT NULL, actor_role TEXT NOT NULL, action TEXT NOT NULL, resource_type TEXT NOT NULL, resource_id TEXT, outcome TEXT NOT NULL, detail_json TEXT NOT NULL, created_at INTEGER NOT NULL)");
+  return { sqlite, route };
+}
+
+test("two simultaneous approvals: exactly one prices the upgrade", async () => {
+  // The review finding: the compare-and-set was the first statement of the same batch that moved the
+  // money, and nothing read its result - so the losing approval still rewrote total_amount with its own
+  // figure, and the price was decided by whoever finished last.
+  const { sqlite, route } = await seedConcurrent();
+  const requested = await (await post(route, {
+    bookingId: "BK-1", providerId: "PRV-REAL", action: "package_upgrade",
+    reason: "customer approved a package upgrade during service",
+    upgradedPackageName: "Premium spa", upgradedAmount: 9000,
+  })).json();
+  sqlite.prepare("UPDATE booking_package_upgrade_requests SET requested_by='partner@pawspace.test' WHERE id=?").run(requested.data.upgradeRequestId);
+
+  const apply = (amount) => post(route, {
+    bookingId: "BK-1", providerId: "PRV-REAL", action: "apply_package_upgrade",
+    upgradeRequestId: requested.data.upgradeRequestId, reason: "pricing decision", upgradedAmount: amount,
+  });
+  const [a, b] = await Promise.all([apply(9000), apply(50000)]);
+
+  const statuses = [a.status, b.status].sort();
+  assert.deepEqual(statuses, [200, 409], `exactly one approval may win, got ${JSON.stringify(statuses)}`);
+
+  const winner = a.status === 200 ? 9000 : 50000;
+  assert.deepEqual(money(sqlite), { total: winner, payment: winner }, "the booking carries the winner's figure, not the last writer's");
+  const row = sqlite.prepare("SELECT status,approved_amount FROM booking_package_upgrade_requests WHERE id=?").get(requested.data.upgradeRequestId);
+  assert.equal(row.status, "applied");
+  assert.equal(row.approved_amount, winner, "the request and the booking agree on one price");
+});
+
+test("money and its audit record land together", async () => {
+  const { sqlite, route } = await seedConcurrent();
+  const requested = await (await post(route, {
+    bookingId: "BK-1", providerId: "PRV-REAL", action: "package_upgrade",
+    reason: "customer approved a package upgrade during service",
+    upgradedPackageName: "Premium spa", upgradedAmount: 9000,
+  })).json();
+  sqlite.prepare("UPDATE booking_package_upgrade_requests SET requested_by='partner@pawspace.test' WHERE id=?").run(requested.data.upgradeRequestId);
+
+  await post(route, {
+    bookingId: "BK-1", providerId: "PRV-REAL", action: "apply_package_upgrade",
+    upgradeRequestId: requested.data.upgradeRequestId, reason: "priced", upgradedAmount: 9000,
+  });
+
+  const audits = sqlite.prepare("SELECT action,outcome,detail_json FROM security_audit_events WHERE action='booking_operations.apply_package_upgrade'").all();
+  assert.equal(audits.length, 1, "the priced decision is audited");
+  assert.equal(JSON.parse(audits[0].detail_json).approvedAmount, 9000);
+  assert.deepEqual(money(sqlite), { total: 9000, payment: 9000 });
+  // The audit is written inside the same batch as the money, so a repriced booking can never exist
+  // without the record of who repriced it.
+  const src = await (await import("node:fs/promises")).readFile(new URL("../app/api/booking-operations/route.ts", import.meta.url), "utf8");
+  const applyBlock = src.slice(src.indexOf('if (input.action === "apply_package_upgrade")'), src.indexOf('if (input.action === "refund_status")'));
+  assert.match(applyBlock, /INSERT INTO security_audit_events[\s\S]{0,400}\n\s*\]\);/, "the audit insert is the last statement of the money batch");
+  assert.ok(!/\]\);\s*await securityAudit\(/.test(applyBlock), "and is not a separate write after the batch");
+});
+
+test("a losing approval changes no money and writes no audit", async () => {
+  const { sqlite, route } = await seedConcurrent();
+  const requested = await (await post(route, {
+    bookingId: "BK-1", providerId: "PRV-REAL", action: "package_upgrade",
+    reason: "customer approved a package upgrade during service",
+    upgradedPackageName: "Premium spa", upgradedAmount: 9000,
+  })).json();
+  sqlite.prepare("UPDATE booking_package_upgrade_requests SET requested_by='partner@pawspace.test' WHERE id=?").run(requested.data.upgradeRequestId);
+  const apply = (amount) => post(route, {
+    bookingId: "BK-1", providerId: "PRV-REAL", action: "apply_package_upgrade",
+    upgradeRequestId: requested.data.upgradeRequestId, reason: "pricing decision", upgradedAmount: amount,
+  });
+
+  assert.equal((await apply(9000)).status, 200);
+  const loser = await apply(50000);
+  assert.equal(loser.status, 409);
+  assert.deepEqual(money(sqlite), { total: 9000, payment: 9000 }, "the loser moved nothing");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM security_audit_events WHERE action='booking_operations.apply_package_upgrade'").get().n, 1, "one priced decision, one audit row");
+});
+
+test("the gateway and the route require the same permission for every action", async () => {
+  // Review finding: the route mapped rebook_requested and refund_requested to communications.message
+  // while the gateway sent them down the bookings.manage fallback, so a provider raising either from
+  // the partner app was refused at the door for an action the route considered theirs.
+  const { readFile } = await import("node:fs/promises");
+  const route = await readFile(new URL("../app/api/booking-operations/route.ts", import.meta.url), "utf8");
+  const gateway = await readFile(new URL("../lib/api-gateway.ts", import.meta.url), "utf8");
+
+  const routeMap = Object.fromEntries([...route.matchAll(/^\s{2}(\w+): "([a-z_.]+)",$/gm)].map((m) => [m[1], m[2]]));
+  const gatewayList = gateway.match(/booking-operations[\s\S]*?return \[([^\]]*)\]\.includes\(String\(body\.action\)\)\?"communications\.message"/)[1]
+    .split(",").map((entry) => entry.trim().replace(/"/g, ""));
+
+  for (const [action, permission] of Object.entries(routeMap)) {
+    if (permission !== "communications.message") continue;
+    assert.ok(gatewayList.includes(action), `${action} is communications.message in the route but not in the gateway list`);
+  }
+  for (const action of gatewayList) {
+    assert.equal(routeMap[action], "communications.message", `${action} is communications.message in the gateway but ${routeMap[action]} in the route`);
+  }
+  assert.ok(gatewayList.includes("rebook_requested") && gatewayList.includes("refund_requested"), "both flagged actions are aligned");
+});
+
+test("a requested upgrade tells the customer nothing has changed yet", async () => {
+  // The notice still said the revised scope, price and timing were visible on the booking - written
+  // when package_upgrade moved the money. It records a request now, so the customer was being told
+  // about a price change that had not happened.
+  const { sqlite, route } = await seedConcurrent();
+  await post(route, {
+    bookingId: "BK-1", providerId: "PRV-REAL", action: "package_upgrade",
+    reason: "customer approved a package upgrade during service",
+    upgradedPackageName: "Premium spa", upgradedAmount: 9000,
+  });
+  const pending = sqlite.prepare("SELECT message FROM booking_customer_notifications WHERE booking_id='BK-1' ORDER BY created_at").all().map((row) => row.message);
+  assert.ok(pending.every((message) => /awaiting confirmation|has been requested/i.test(message)), `pending notice must not claim a change: ${JSON.stringify(pending)}`);
+  assert.ok(pending.every((message) => !/revised service scope, price and timing are visible/i.test(message)));
+  assert.deepEqual(money(sqlite), { total: BOOKING_TOTAL, payment: BOOKING_TOTAL }, "and indeed nothing changed");
+});

@@ -1,4 +1,4 @@
-import { authError, requirePermission, requireProviderOwnership, resolveActor, securityAudit } from "../../../lib/server-auth";
+import { authError, requirePermission, requireProviderOwnership, resolveActor } from "../../../lib/server-auth";
 
 type OperationAction =
   | "package_upgrade"
@@ -84,7 +84,7 @@ function validate(input: OperationInput) {
 
 function customerMessage(action: OperationAction, minutes: number, rebook: boolean) {
   if (action === "package_upgrade")
-    return "Your PawSpace package upgrade is recorded on this order. The revised service scope, price and timing are visible in your booking.";
+    return "Your PawSpace package upgrade has been requested on this order and is awaiting confirmation. Nothing has changed on your booking or your price yet - we will confirm before anything is applied.";
   if (action === "vehicle_issue")
     return `Your provider reported a vehicle issue. The latest expected delay is ${minutes} minutes.${rebook ? " You may keep this booking or choose a new slot." : " Live tracking will keep updating."}`;
   if (action === "running_late" || action === "service_overrun")
@@ -147,15 +147,29 @@ export async function POST(request: Request) {
       if (!Number.isFinite(amount) || amount <= 0) return json({ error: "Approved upgrade amount must be a real positive figure" }, 400);
       if (amount < previous) return json({ error: "A package upgrade cannot reduce the booking total; use the governed refund path" }, 409);
       const eventId = crypto.randomUUID();
+      // Claim the transition BEFORE anything depends on it. The compare-and-set was previously the
+      // first statement of the same batch that moved the money, and its result was never read - so two
+      // concurrent approvals both passed the status check above, both entered the batch, and the one
+      // whose CAS changed zero rows still rewrote total_amount and booking_payments.amount with its own
+      // figure. The price was decided by whoever finished last, not by whoever won the transition.
+      const claimed = await db.prepare("UPDATE booking_package_upgrade_requests SET status='applied',approved_by=?,approved_amount=?,decision_reason=?,updated_at=? WHERE id=? AND status='pricing_approval_required'")
+        .bind(actor.email, amount, input.reason.trim(), now, upgrade.id).run();
+      if (Number(claimed.meta?.changes || 0) !== 1) return json({ error: "Package upgrade has already been priced" }, 409);
+
+      // Only the winner reaches here, and everything it writes - money, events, customer notice and the
+      // audit record - goes in ONE batch. The audit used to run after the batch, so a failure there left
+      // the booking repriced with nothing recording who did it. Money and its audit now land together or
+      // not at all. If this batch fails after the claim, the request is left 'applied' with the price
+      // unchanged: the upgrade is stuck rather than silently repriced, which is the safe direction.
       await db.batch([
-        db.prepare("UPDATE booking_package_upgrade_requests SET status='applied',approved_by=?,approved_amount=?,decision_reason=?,updated_at=? WHERE id=? AND status='pricing_approval_required'").bind(actor.email, amount, input.reason.trim(), now, upgrade.id),
         db.prepare("UPDATE canonical_bookings SET package_name=?,total_amount=?,pricing_json=json_set(pricing_json,'$.providerUpgrade',json(?)),updated_at=? WHERE id=?").bind(String(upgrade.requested_package_name), amount, JSON.stringify({ approved: true, approvedBy: actor.email, requestId: upgrade.id, recordedAt: now }), now, input.bookingId),
         db.prepare("UPDATE booking_payments SET amount=?,detail_json=json_set(detail_json,'$.packageUpgrade',json(?)),updated_at=? WHERE booking_id=?").bind(amount, JSON.stringify({ packageName: String(upgrade.requested_package_name), approved: true, approvedBy: actor.email }), now, input.bookingId),
         db.prepare("INSERT INTO booking_operational_events (id,booking_id,provider_id,event_type,reason,impact_minutes,detail_json,actor_id,created_at) VALUES (?,?,?,?,?,0,?,?,?)").bind(eventId, input.bookingId, String(upgrade.provider_id), "package_upgrade.applied", input.reason.trim(), JSON.stringify({ requestId: upgrade.id, previousAmount: previous, approvedAmount: amount }), actor.email, now),
         db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(), input.bookingId, "package_upgrade.applied", "booking", input.bookingId, actor.email, JSON.stringify({ requestId: upgrade.id, previousAmount: previous, approvedAmount: amount }), now),
         db.prepare("INSERT INTO booking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(), input.bookingId, String(booking.customer_id ?? ""), "whatsapp", "package_upgrade.applied", "Your PawSpace package upgrade has been confirmed. The revised scope and price are visible in your booking.", "queued", eventId, now),
+        db.prepare("INSERT INTO security_audit_events (id,actor_email,actor_role,action,resource_type,resource_id,outcome,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
+          .bind(crypto.randomUUID(), actor.email, actor.roleCode, "booking_operations.apply_package_upgrade", "booking", input.bookingId, "completed", JSON.stringify({ requestId: upgrade.id, previousAmount: previous, approvedAmount: amount }), now),
       ]);
-      await securityAudit(db, actor, "booking_operations.apply_package_upgrade", "booking", input.bookingId, "completed", { requestId: upgrade.id, previousAmount: previous, approvedAmount: amount });
       return json({ data: { eventId, bookingId: input.bookingId, action: input.action, upgradeRequestId: String(upgrade.id), previousAmount: previous, approvedAmount: amount } }, 200);
     }
 
