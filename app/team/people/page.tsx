@@ -1,7 +1,8 @@
 "use client";
 import{useCallback,useEffect,useMemo,useState}from"react";
 import Link from"next/link";
-import{Badge,EmptyState,PageHeader,StatCard}from"../../components/ui";
+import{Badge,EmptyState,StatCard}from"../../components/ui";
+import OpsShell from"../../components/ops-shell/OpsShell";
 import styles from"../team-console.module.css";
 
 type Employee={id:string;employee_code:string;display_name:string;work_email:string;phone?:string|null;employment_status:string;title?:string|null;team_code?:string|null;cost_centre_code?:string|null;location_code?:string|null;sensitiveMasked:boolean};
@@ -45,16 +46,12 @@ export default function PeoplePage(){
  const active=employees.filter(row=>row.employment_status==="active").length;
  const unconfigured=employees.filter(row=>!row.title||!row.team_code).length;
 
- return <main className={styles.shell}>
-  <PageHeader
+ return <OpsShell
     eyebrow="PAWSPACE · PEOPLE"
     title="Employee and employment system of record"
     description="Canonical employee identity, effective-dated employment, attendance and leave, payroll, governed incentives, finance/statutory integration and source-derived reporting share one People foundation. External statutory submission and live bank transmission remain disabled."
     actions={<Badge tone={active?"success":"warning"} dot>{active} active</Badge>}
-  />
-  <nav className={styles.nav} aria-label="People workspaces">
-   <Link href="/team">← Team</Link>{WORKSPACES.map(([href,label])=><Link key={href} href={href}>{label}</Link>)}
-  </nav>
+    >
 
   {error?<div className={`${styles.panel} ${styles.panelError}`}><b>{error}</b></div>:null}
 
@@ -63,6 +60,11 @@ export default function PeoplePage(){
    <StatCard label="Active" value={active} />
    <StatCard label="Awaiting role or team" value={unconfigured} meta="HR fields not set" />
    <StatCard label="Sensitive fields" value={employees.some(row=>row.sensitiveMasked)?"masked":"visible"} />
+  </section>
+
+  <section className={styles.panel}>
+   <div className={styles.panelHead}><h2>People workspaces</h2></div>
+   <nav className={styles.nav} aria-label="People workspaces">{WORKSPACES.map(([href,label])=><Link key={href} href={href}>{label}</Link>)}</nav>
   </section>
 
   <section className={styles.panel}>
@@ -96,5 +98,5 @@ export default function PeoplePage(){
    Sensitive fields are masked unless the actor holds the permission to see them.<br />
    <b>People Gates 1–6:</b> IMPLEMENTED FOR UAT · <b>External statutory/live bank:</b> NOT ENABLED · <b>Production ready:</b> NO
   </footer>
- </main>;
+ </OpsShell>;
 }

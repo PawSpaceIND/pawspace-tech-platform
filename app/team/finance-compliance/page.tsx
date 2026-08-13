@@ -1,7 +1,7 @@
 "use client";
-import Link from"next/link";
 import{useCallback,useEffect,useState}from"react";
-import{Badge,Button,PageHeader,StatCard}from"../../components/ui";
+import{Badge,Button,StatCard}from"../../components/ui";
+import OpsShell from"../../components/ops-shell/OpsShell";
 import styles from"../team-console.module.css";
 
 type Obligation={code:string;label:string;authority:string;period:string;dueDate:string;kind:string;notes:string;status:"upcoming"|"due_soon"|"overdue"|"filed";daysToDue:number;acknowledgementRef:string|null;amount:number|null};
@@ -50,16 +50,12 @@ export default function FinanceCompliancePage(){
   const dueSoon=(data?.calendar||[]).filter(item=>item.status==="due_soon").length;
   const filed=(data?.calendar||[]).filter(item=>item.status==="filed").length;
 
-  return <main className={styles.shell}>
-    <PageHeader
+  return <OpsShell
       eyebrow="FINANCE · STATUTORY COMPLIANCE & MONTHLY CLOSE"
       title="Filings, TDS and monthly close"
       description="The Indian statutory calendar — GST, TDS, EPF/ESI, Karnataka PT, advance tax and ROC — with monthly board approval, computed from real platform data. Filing itself stays manual: record the government acknowledgement here. Sandbox/UAT: no live money."
       actions={<Badge tone={overdue?"danger":dueSoon?"warning":"success"} dot>{overdue?`${overdue} overdue`:dueSoon?`${dueSoon} due soon`:"nothing overdue"}</Badge>}
-    />
-    <nav className={styles.nav} aria-label="Team workspaces">
-      <Link href="/team">← Team</Link><Link href="/team/people/finance">People finance</Link><Link href="/team/analytics">Analytics</Link>
-    </nav>
+      >
 
     {error&&<div className={`${styles.panel} ${styles.panelError}`} role="alert"><b>{error}</b></div>}
     {notice&&<div className={styles.panel} role="status">{notice}</div>}
@@ -136,5 +132,5 @@ export default function FinanceCompliancePage(){
       </div>
     </section>
     </>}
-  </main>;
+  </OpsShell>;
 }

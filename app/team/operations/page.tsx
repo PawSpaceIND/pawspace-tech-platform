@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { PageHeader } from "../../components/ui";
+import OpsShell from"../../components/ops-shell/OpsShell";
 import styles from "../team-console.module.css";
 
 const QUEUES = [
@@ -10,15 +10,11 @@ const QUEUES = [
 ];
 
 export default function TeamOperations() {
-  return <main className={styles.shell}>
-    <PageHeader
+  return <OpsShell
       eyebrow="PAWSPACE TEAM · OPERATIONS"
       title="Operations control"
       description="Open the canonical cross-service Booking Command Center, or a service-specific exception and recovery queue."
-    />
-    <nav className={styles.nav} aria-label="Team workspaces">
-      <Link href="/team">← Team OS</Link><Link href="/team/cases">Cases</Link><Link href="/team/customer-experience">CX queue</Link>
-    </nav>
+      >
 
     <section className={styles.cardGrid}>
       {QUEUES.map((queue) => <Link key={queue.href} href={queue.href} className={styles.linkCard}>
@@ -29,5 +25,5 @@ export default function TeamOperations() {
     </section>
 
     <footer className={styles.footnote}>UAT controlled. Live integrations and production credentials remain disabled.</footer>
-  </main>;
+  </OpsShell>;
 }

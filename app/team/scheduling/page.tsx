@@ -1,7 +1,7 @@
 "use client";
-import Link from"next/link";
 import{useCallback,useEffect,useState}from"react";
-import{Badge,Button,EmptyState,PageHeader,StatCard}from"../../components/ui";
+import{Badge,Button,EmptyState,StatCard}from"../../components/ui";
+import OpsShell from"../../components/ops-shell/OpsShell";
 import styles from"../team-console.module.css";
 
 type Reservation={id:string;groupId:string;serviceCode:string;zoneId:string;customerId:string;scheduledStart:string;scheduledEnd:string;status:string;occurrenceNumber:number;capacityUnits:number;decisionStatus:string};
@@ -57,16 +57,12 @@ export default function TeamSchedulingBoard(){
   const providers=board?.providers||[];
   const assigned=providers.reduce((sum,column)=>sum+column.reservations.filter(row=>row.decisionStatus==="assigned").length,0);
 
-  return <main className={`${styles.shell} ${styles.shellWide}`}>
-    <PageHeader
+  return <OpsShell
       eyebrow="SCHEDULING · DAY BOARD"
       title="Provider day view"
       description="Live scheduling reservations for one IST day, one column per provider. Reassign re-runs the full rule pack and keeps the current assignment if no replacement qualifies."
       actions={<Badge tone={board?.total?"info":"warning"} dot>{board?.total||0} reservations</Badge>}
-    />
-    <nav className={styles.nav} aria-label="Team workspaces">
-      <Link href="/team">← Team</Link><Link href="/team/operations">Operations</Link><Link href="/team/people">People</Link>
-    </nav>
+      >
 
     {error?<div className={`${styles.panel} ${styles.panelError}`} role="alert"><b>{error}</b></div>:null}
     {message?<div className={styles.panel}>{message}</div>:null}
@@ -105,5 +101,5 @@ export default function TeamSchedulingBoard(){
       </section>)}</div>}
 
     <footer className={styles.footnote}>Staff surface (<b>scheduling.manage</b>). Every reassignment records the acting staff identity on the decision and writes a security audit event. Sandbox/UAT — no live money.</footer>
-  </main>;
+  </OpsShell>;
 }

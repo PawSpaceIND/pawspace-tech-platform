@@ -1,7 +1,7 @@
 "use client";
 import{useCallback,useEffect,useMemo,useState}from"react";
-import Link from"next/link";
-import{Badge,Button,EmptyState,PageHeader,StatCard}from"../../components/ui";
+import{Badge,Button,EmptyState,StatCard}from"../../components/ui";
+import OpsShell from"../../components/ops-shell/OpsShell";
 import styles from"../team-console.module.css";
 
 type CaseRow={id:string;case_type:string;severity:string;status:string;title:string;description:string;owner_team:string;owner_email?:string|null;first_response_due_at?:number|null;resolution_due_at?:number|null;manager_escalation_due_at?:number|null;first_responded_at?:number|null;created_at:number;links?:{customerId?:string|null;bookingId?:string|null;paymentId?:string|null;leadId?:string|null;providerId?:string|null}};
@@ -47,16 +47,12 @@ export default function CasesPage(){
   return cases.filter(row=>!["resolved","closed"].includes(row.status));
  },[data,filter]);
 
- return <main className={styles.shell}>
-  <PageHeader
+ return <OpsShell
     eyebrow="PAWSPACE · CASE & ESCALATION CENTER"
     title="One queue for issues that need ownership"
     description="Refunds, lead escalations, payment exceptions, provider problems, complaints and operational incidents converge here. The native specialist modules remain the source of money and safety truth."
     actions={<Badge tone={data?.summary.critical?"danger":"success"} dot>{data?.summary.critical||0} critical</Badge>}
-  />
-  <nav className={styles.nav} aria-label="Team workspaces">
-   <Link href="/team">← Team Home</Link><Link href="/business">Business Hub</Link><Link href="/team/customer-experience">CX queue</Link>
-  </nav>
+    >
 
   {error?<div className={`${styles.panel} ${styles.panelError}`}><b>{error}</b></div>:null}
 
@@ -110,5 +106,5 @@ export default function CasesPage(){
   </article>)}</div>}
 
   <footer className={styles.footnote}><b>Production ready: NO.</b> External alerts are not yet automatic; that is the next workstream.</footer>
- </main>;
+ </OpsShell>;
 }

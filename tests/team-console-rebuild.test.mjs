@@ -129,7 +129,8 @@ test("every rebuilt team screen is built from the design system, not inline styl
   for (const screen of screens) {
     const source = await page(screen);
     assert.match(source, /team-console\.module\.css/, `${screen} must use the shared team console shell`);
-    assert.match(source, /PageHeader/, `${screen} must use the shared page header`);
+    assert.match(source, /OpsShell/, `${screen} must render inside the approved Operations shell`);
+    assert.doesNotMatch(source, /PageHeader/, `${screen} must not carry a second page header inside the shell`);
     if (!screen.startsWith("operations") && !screen.startsWith("finance-compliance")) assert.match(source, /EmptyState/, `${screen} must render a real empty state`);
     // The bare-prototype markers these screens shipped with.
     assert.doesNotMatch(source, /fontFamily:\s*"(system-ui|Arial)/, `${screen} must not set its own font`);
@@ -144,8 +145,27 @@ test("every rebuilt team screen is built from the design system, not inline styl
   }
 });
 
-test("the shared team console shell is responsive and keyboard-navigable", async () => {
-  const css = await readFile(new URL("../app/team/team-console.module.css", import.meta.url), "utf8");
+test("the Operations shell is the approved chrome, responsive and keyboard-navigable", async () => {
+  const [shell, shellCss, adminCss, css] = await Promise.all([
+    readFile(new URL("../app/components/ops-shell/OpsShell.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/ops-shell/ops-shell.module.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/admin/admin.module.css", import.meta.url), "utf8"),
+    readFile(new URL("../app/team/team-console.module.css", import.meta.url), "utf8"),
+  ]);
+  // The chrome matches the admin surface it was lifted from: same rail width, colour and workspace.
+  assert.match(shellCss, /grid-template-columns: 238px 1fr/);
+  assert.match(adminCss, /grid-template-columns: 238px 1fr/);
+  assert.match(shellCss, /background: #2d0a5d/);
+  assert.match(adminCss, /background: #2d0a5d/);
+  // The current screen is marked from the route, and the rail is reachable by keyboard.
+  assert.match(shell, /usePathname/);
+  assert.match(shell, /aria-current/);
+  assert.match(shellCss, /\.sidebar nav a:focus-visible/);
+  // It collapses to icons, then to a bottom bar, rather than squeezing the workspace.
+  assert.match(shellCss, /@media \(max-width: 1050px\)/);
+  assert.match(shellCss, /@media \(max-width: 720px\)/);
+  // A badge is only rendered when a screen supplies a real count.
+  assert.match(shell, /item\.badge \? <b>/);
   assert.match(css, /\.nav a:focus-visible/, "navigation must show a focus ring");
   assert.match(css, /@media \(max-width: 900px\)/, "the split conversation view must collapse on a narrow screen");
   assert.match(css, /overflow-x: auto/, "wide tables scroll inside their own container");

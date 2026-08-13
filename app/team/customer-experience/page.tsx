@@ -1,7 +1,7 @@
 "use client";
-import Link from"next/link";
 import{useCallback,useEffect,useState}from"react";
-import{Badge,Button,EmptyState,PageHeader,StatCard}from"../../components/ui";
+import{Badge,Button,EmptyState,StatCard}from"../../components/ui";
+import OpsShell from"../../components/ops-shell/OpsShell";
 import styles from"../team-console.module.css";
 
 type Thread=Record<string,unknown>&{id:string;customer_name?:string;customer_id?:string;status?:string;assigned_to?:string;lastMessage?:Record<string,unknown>|null;ticket?:Record<string,unknown>|null};
@@ -56,16 +56,12 @@ export default function CustomerExperiencePage(){
  const withTicket=threads.filter(thread=>thread.ticket).length;
  const thread=conversation?.thread;
 
- return <main className={`${styles.shell} ${styles.shellWide}`}>
-  <PageHeader
+ return <OpsShell
     eyebrow="PawSpace team · Customer experience"
     title="Unified conversation & CX queue"
     description="Canonical customer, booking, lead and ticket-linked threads. Outbound delivery stays inside communication governance — this workspace never bypasses consent, quiet hours, retries or adapter gating."
     actions={<Badge tone={unassigned?"warning":"success"} dot>{unassigned} unassigned</Badge>}
-  />
-  <nav className={styles.nav} aria-label="Team workspaces">
-   <Link href="/team">← Team Home</Link><Link href="/team/sales">CRM</Link><Link href="/team/cases">Cases</Link>
-  </nav>
+    >
 
   {error?<div className={`${styles.panel} ${styles.panelError}`}><b>{error}</b></div>:null}
 
@@ -115,5 +111,5 @@ export default function CustomerExperiencePage(){
     </>}
    </article>
   </section>
- </main>;
+ </OpsShell>;
 }

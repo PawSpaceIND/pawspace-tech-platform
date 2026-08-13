@@ -1,7 +1,7 @@
 "use client";
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { Badge, Button, EmptyState, PageHeader, StatCard } from "../../components/ui";
+import { Badge, Button, EmptyState, StatCard } from "../../components/ui";
+import OpsShell from"../../components/ops-shell/OpsShell";
 import styles from "../team-console.module.css";
 
 type MeetGreet = {
@@ -65,16 +65,12 @@ export default function MeetAndGreetPage() {
   const houseVisits = rows.filter((row) => row.format === "house_visit").length;
   const waived = rows.filter((row) => row.priceWaivedReason).length;
 
-  return <main className={styles.shell}>
-    <PageHeader
+  return <OpsShell
       eyebrow="Boarding & sitting · Meet & greet"
       title="Meet & greet requests"
       description="Pre-booking host meetings: free 10-minute phone calls, or 4-hour house visits at ₹499 — waived automatically for stays of 5 days or more. Sandbox/UAT: no live money moves here."
       actions={<Badge tone={open.length ? "warning" : "success"} dot>{open.length} awaiting a decision</Badge>}
-    />
-    <nav className={styles.nav} aria-label="Team workspaces">
-      <Link href="/team">← Team Home</Link><Link href="/team/boarding-ops">Boarding ops</Link><Link href="/team/customer-experience">CX queue</Link>
-    </nav>
+      >
 
     {error ? <div className={`${styles.panel} ${styles.panelError}`} role="alert"><b>{error}</b></div> : null}
 
@@ -120,5 +116,5 @@ export default function MeetAndGreetPage() {
       </table></div>}
 
     <footer className={styles.footnote}>Cancellations are always free — 100% refund, zero cancellation fee (platform-wide policy). <b>Sandbox/UAT:</b> no live money.</footer>
-  </main>;
+  </OpsShell>;
 }

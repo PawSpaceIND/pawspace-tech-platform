@@ -1,7 +1,7 @@
 "use client";
-import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { Badge, Button, EmptyState, PageHeader, StatCard } from "../../components/ui";
+import { Badge, Button, EmptyState, StatCard } from "../../components/ui";
+import OpsShell from"../../components/ops-shell/OpsShell";
 import styles from "../team-console.module.css";
 
 type Plan = { id: string; serviceCode: string; planCode: string; cityId: string; name: string; price: number; sessionCount: number; validityValue: number; validityUnit: string; active: boolean };
@@ -54,16 +54,12 @@ export default function SubscriptionPlansPage() {
   const activeCount = rows.filter((plan) => plan.active).length;
   const cities = new Set(rows.map((plan) => plan.cityId)).size;
 
-  return <main className={styles.shell}>
-    <PageHeader
+  return <OpsShell
       eyebrow="PAWSPACE TEAM · SUBSCRIPTION PLANS"
       title="Plans for every service"
       description="Per city, with a validity window in days or months that sets each customer’s expiry from the booked date."
       actions={<Badge tone={activeCount ? "success" : "warning"} dot>{activeCount} active</Badge>}
-    />
-    <nav className={styles.nav} aria-label="Team workspaces">
-      <Link href="/team">← Team Home</Link><Link href="/team/pricing">Pricing</Link><Link href="/team/operations">Operations</Link>
-    </nav>
+      >
 
     {error ? <div className={`${styles.panel} ${styles.panelError}`}><b>{error}</b></div> : null}
     {notice ? <div className={styles.panel}>{notice}</div> : null}
@@ -115,5 +111,5 @@ export default function SubscriptionPlansPage() {
         <td className={styles.numeric}><b>{money(plan.price)}</b></td>
       </tr>)}</tbody>
     </table></div>}
-  </main>;
+  </OpsShell>;
 }

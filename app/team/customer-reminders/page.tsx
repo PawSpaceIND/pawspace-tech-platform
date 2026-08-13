@@ -1,7 +1,7 @@
 "use client";
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { Badge, Button, EmptyState, PageHeader, StatCard } from "../../components/ui";
+import { Badge, Button, EmptyState, StatCard } from "../../components/ui";
+import OpsShell from"../../components/ops-shell/OpsShell";
 import styles from "../team-console.module.css";
 
 type Policy = { groomingRebookingDays: number; subscriptionInactivityDays: number; subscriptionRenewalDays: number; isDefault: boolean };
@@ -74,16 +74,12 @@ export default function CustomerRemindersPage() {
   const lastAt = totals.reduce((latest, row) => Math.max(latest, Number(row.last_at || 0)), 0);
   const shown = events.filter((event) => filter === "all" || (filter === "queued" ? !event.duplicate_prevented : Boolean(event.duplicate_prevented)));
 
-  return <main className={styles.shell}>
-    <PageHeader
+  return <OpsShell
       eyebrow="PawSpace · Customer lifecycle reminders"
       title="Rebooking, subscription session & renewal reminders"
       description="Runs every five minutes on the real background scheduler and queues into the governed communications outbox. Live WhatsApp and SMS delivery stays sandboxed until production credentials are configured."
       actions={<Badge tone={queuedTotal ? "success" : "warning"} dot>{queuedTotal} reminders queued</Badge>}
-    />
-    <nav className={styles.nav} aria-label="Team workspaces">
-      <Link href="/team">← Team Home</Link><Link href="/team/customer-experience">CX queue</Link><Link href="/team/communications">Communications</Link>
-    </nav>
+      >
 
     {error ? <div className={`${styles.panel} ${styles.panelError}`}><b>{error}</b></div> : null}
     {notice ? <div className={styles.panel}>{notice}</div> : null}
@@ -143,5 +139,5 @@ export default function CustomerRemindersPage() {
     </section>
 
     <footer className={styles.footnote}><b>Scheduler:</b> real, every 5 minutes · <b>Outbox:</b> governed · <b>Live WhatsApp/SMS delivery:</b> sandboxed until credentials are configured · <b>Production ready:</b> NO</footer>
-  </main>;
+  </OpsShell>;
 }
