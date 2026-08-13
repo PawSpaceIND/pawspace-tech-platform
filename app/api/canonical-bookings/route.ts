@@ -1,6 +1,7 @@
 import {subscriptionExpiry} from "../../../lib/grooming-governance";
 import {governGroomingBookingWithLiveMultiPet} from "../../../lib/live-grooming-governance";
 import {requireCustomerOwnership,resolveActor} from "../../../lib/server-auth";
+import {hasPermission} from "../../../lib/platform-security";
 import {policySnapshot,policyVersion,resolveGroomingPolicy} from "../../../lib/grooming-policy-governance";
 import {consumeTrainingQuote,governTrainingBooking,trainingQuoteLinkStatement} from "../../../lib/training-commercial-governance";
 import {boardingQuoteLinkStatement,boardingStayStatement,consumeBoardingQuote,governBoardingBooking} from "../../../lib/boarding-governance";
@@ -25,22 +26,25 @@ async function paymentEnv(){const {env}=await import("cloudflare:workers");retur
 // Verify-first (LIVE only): an ONLINE booking payment may NOT self-declare "captured"; it is recorded
 // "created" and only a signature-verified Razorpay webhook may mark it captured. Sandbox/UAT unchanged.
 //
-// This deliberately does NOT look at payment.mode. It used to demote only when the mode was exactly
-// "prepaid" or "split_50_50", while the platform also uses "full" and "split" — so a caller could
-// persist a captured online payment in LIVE simply by labelling it with a different mode string, or an
-// unrecognised one. Financial truth cannot depend on a client-supplied label: what matters is that the
-// money was supposed to move through the gateway (an online method) and that nothing has yet proved it
-// did. Mode remains recorded as submitted; it just no longer decides whether verification applies.
+// It FAILS CLOSED on the method. It used to demote only when the mode was one of two spellings, then
+// only when the method was on an ONLINE_METHODS allowlist — either way a client-supplied string decided
+// whether gateway proof was necessary, so an off-list/unrecognised method (or a different mode) still
+// persisted a captured online payment in LIVE. Now, in LIVE, a submitted "captured" is NEVER financial
+// truth on the strength of the client's own labels: it is recorded "created" (awaiting verification)
+// unless the server has authorized this as an offline collection. `offlineAuthorized` is computed
+// server-side from the actor's permission, so no method string a caller can invent — known, unknown or
+// blank — can make gateway proof unnecessary. Mode/method are still recorded as submitted.
 //
-// Nor does it exempt subscriptions any more. It used to take an `isSubscription` flag and skip the
-// demotion entirely, because the purchase gate below demanded a captured payment before credits could be
-// created — so demoting would have made subscriptions unbuyable. That exemption was the hole: a LIVE
-// subscription could self-declare "captured" and get ten redeemable grooming sessions for one HTTP
-// request. The gate and the entitlement were restructured instead (see the subscription block below and
-// lib/subscription-payment-activation.ts), so verification now applies to every online LIVE payment
-// without exception.
+// Nor does it exempt subscriptions any more (that carve-out let a LIVE subscription self-declare capture
+// and claim its sessions for one HTTP request). The gate and entitlement were restructured instead (see
+// the subscription block below and lib/subscription-payment-activation.ts).
 const ONLINE_METHODS=new Set(["upi","card","netbanking","payment_link"]);
-function recordedPaymentStatus(liveMode:boolean,payment:{method:string;mode:string;status:string}){if(liveMode&&ONLINE_METHODS.has(payment.method)&&payment.status==="captured")return "created";return payment.status;}
+// Genuinely offline collections have no gateway to verify against. Keeping their "captured" is a
+// server-authorized action (a staff actor holding payments.manage recording e.g. cash), never something
+// a client can assert for itself; a customer-app caller never holds the permission, so its submitted
+// captured is demoted whatever method it names.
+const OFFLINE_METHODS=new Set(["cash"]);
+function recordedPaymentStatus(liveMode:boolean,payment:{status:string},offlineAuthorized:boolean){if(liveMode&&payment.status==="captured"&&!offlineAuthorized)return "created";return payment.status;}
 const petId=(customerId:string,sourceId:string)=>`PET-${customerId.replace(/[^A-Za-z0-9]/g,"").toUpperCase()}-${sourceId.replace(/[^A-Za-z0-9]/g,"").toUpperCase()}`;
 async function ensureTables(db:Awaited<ReturnType<typeof database>>){await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'uat_customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
@@ -66,7 +70,12 @@ export async function POST(request:Request){try{const input=await request.json()
   let governed:{packageCode:string;packageName:string;catalogueVersion?:string;offerType?:string;petCount:number;totalAmount:number;amountDueNow:number;subscriptionPlan?:SubscriptionPlan}={packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,totalAmount:input.totalAmount,amountDueNow:input.amountDueNow};
   // Resolved before the subscription gate, because in LIVE the gate has to reason about what the payment
   // will be RECORDED as (verify-first), not what the client claimed it already was.
-  const liveMode=(await paymentEnv())!=="sandbox",paymentStatusRecorded=recordedPaymentStatus(liveMode,input.payment);
+  // Authorization to keep a submitted "captured" without gateway proof is a SERVER decision, never the
+  // client's: only a staff actor holding payments.manage may record an offline collection (cash) as
+  // captured. A customer-app caller never holds it, so its captured is demoted whatever method it sends,
+  // and no unknown/blank method can slip through — the method is not what decides.
+  const offlineAuthorized=OFFLINE_METHODS.has(input.payment.method)&&hasPermission(actor.permissions,"payments.manage");
+  const liveMode=(await paymentEnv())!=="sandbox",paymentStatusRecorded=recordedPaymentStatus(liveMode,input.payment,offlineAuthorized);
   const commercialPolicy=input.serviceCode==="grooming"?await resolveGroomingPolicy(db,input.cityId,input.zoneId):null;
   if(commercialPolicy?.enforcementMode==="enforce"&&input.pets.length>commercialPolicy.multiPetMax)return json({error:`This city policy supports up to ${commercialPolicy.multiPetMax} pets per Grooming booking`,policyVersion:policyVersion(commercialPolicy)},409);
   if(input.serviceCode==="grooming"){

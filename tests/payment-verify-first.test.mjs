@@ -24,7 +24,8 @@ test("Verify-first: prepaid online bookings cannot self-capture in LIVE mode (sa
   // and this assertion passed the whole time, because the source matched the source. The gate no longer
   // consults payment.mode at all; the behaviour is exercised across every mode in
   // tests/live-payment-integrity.test.mjs.
-  assert.match(bookingRoute, /liveMode&&ONLINE_METHODS\.has\(payment\.method\)&&payment\.status==="captured"\)return "created"/);
+  assert.match(bookingRoute, /liveMode&&payment\.status==="captured"&&!offlineAuthorized\)return "created"/);
+  assert.doesNotMatch(bookingRoute, /liveMode&&ONLINE_METHODS\.has\(payment\.method\)&&payment\.status==="captured"/, "an online-method allowlist let an off-list method through — the demotion keys off server authorization now");
   assert.doesNotMatch(bookingRoute, /payment\.mode==="prepaid"\|\|payment\.mode==="split_50_50"/, "LIVE financial truth must not depend on a client-supplied mode label");
   // Nor on whether the purchase happens to be a subscription: that carve-out was PAY-002 defect 1.
   assert.doesNotMatch(bookingRoute, /!isSubscription/, "no payment class may be exempt from LIVE verification");

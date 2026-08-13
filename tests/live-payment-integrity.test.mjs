@@ -61,86 +61,66 @@ function loadRecordedPaymentStatus(source) {
 }
 const recordedPaymentStatus = loadRecordedPaymentStatus(bookingRoute);
 
-/** Every payment-mode label this platform is known to use, plus values a caller could invent. */
-const MODES = ["prepaid", "split_50_50", "full", "split", "deposit", "pay_after_service", "", "PREPAID", "totally_made_up", "undefined"];
-const ONLINE = ["upi", "card", "netbanking", "payment_link"];
+// Every method label the platform uses, plus values a caller could invent — and the offline one.
+const METHODS = ["upi", "card", "netbanking", "payment_link", "cash", "wallet", "crypto", "", "UPI", "CASH", "totally_made_up"];
+const MODES = ["prepaid", "split_50_50", "full", "split", "deposit", "pay_after_service", "", "PREPAID", "totally_made_up"];
 
-test("LIVE: a submitted 'captured' online payment is demoted for EVERY payment mode", () => {
-  // The invariant: in LIVE, an online payment cannot assert its own capture. The mode label is
-  // client-controlled metadata and must not decide whether verification applies.
-  for (const mode of MODES) {
-    for (const method of ONLINE) {
-      const recorded = recordedPaymentStatus(true, { method, mode, status: "captured" });
-      assert.equal(recorded, "created", `LIVE ${method} + mode '${mode}' must be demoted to 'created', got '${recorded}'`);
+test("LIVE: a submitted 'captured' is demoted for EVERY method and mode when the server has not authorized an offline collection", () => {
+  // The invariant fails CLOSED on the client's labels. Without a server authorization, no method —
+  // known, unknown, blank, or the string 'cash' — and no mode keeps a self-declared capture in LIVE.
+  for (const method of METHODS) {
+    for (const mode of MODES) {
+      const recorded = recordedPaymentStatus(true, { method, mode, status: "captured" }, false);
+      assert.equal(recorded, "created", `LIVE '${method}' + '${mode}' must be demoted without offline authorization, got '${recorded}'`);
     }
   }
 });
 
-test("LIVE: mode 'full' with submitted captured cannot persist as captured", () => {
-  assert.equal(recordedPaymentStatus(true, { method: "upi", mode: "full", status: "captured" }), "created");
-});
-
-test("LIVE: mode 'split' with submitted captured cannot persist as captured", () => {
-  assert.equal(recordedPaymentStatus(true, { method: "upi", mode: "split", status: "captured" }), "created");
-});
-
-test("LIVE: the existing 'prepaid' protection still holds", () => {
-  assert.equal(recordedPaymentStatus(true, { method: "upi", mode: "prepaid", status: "captured" }), "created");
-});
-
-test("LIVE: the existing 'split_50_50' protection still holds", () => {
-  assert.equal(recordedPaymentStatus(true, { method: "upi", mode: "split_50_50", status: "captured" }), "created");
-});
-
-test("LIVE: an unknown mode string cannot bypass verification", () => {
-  for (const mode of ["totally_made_up", "", "PREPAID", "prepaid ", "split-50-50"]) {
-    assert.equal(recordedPaymentStatus(true, { method: "card", mode, status: "captured" }), "created", `mode '${mode}' must not be a bypass`);
+test("LIVE: only a server-authorized offline collection keeps 'captured' — the method label never decides", () => {
+  // offlineAuthorized is the ONLY input that changes the answer. The very same method that is demoted
+  // when unauthorized is kept when authorized, proving the rule keys off the server's authorization and
+  // not off any client-controlled method string.
+  for (const method of METHODS) {
+    assert.equal(recordedPaymentStatus(true, { method, mode: "prepaid", status: "captured" }, true), "captured", `an authorized offline collection keeps captured ('${method}')`);
+    assert.equal(recordedPaymentStatus(true, { method, mode: "prepaid", status: "captured" }, false), "created", `the same method is demoted when not authorized ('${method}')`);
   }
 });
 
-test("LIVE: a cash payment is unaffected — the gate is about gateway money, not all money", () => {
-  // Cash is recorded by staff at the service; there is no gateway to verify against, so demoting it
-  // would break legitimate collection.
-  assert.equal(recordedPaymentStatus(true, { method: "cash", mode: "pay_after_service", status: "captured" }), "captured");
+test("LIVE: an unknown/unsupported method + captured fails closed", () => {
+  for (const method of ["crypto", "giftcard", "", "cash ", "bank_transfer", "totally_made_up", "netbanking2"]) {
+    assert.equal(recordedPaymentStatus(true, { method, mode: "full", status: "captured" }, false), "created", `unsupported method '${method}' must not preserve captured in LIVE`);
+  }
+});
+
+test("LIVE: the existing prepaid / split_50_50 protection still holds", () => {
+  for (const mode of ["prepaid", "split_50_50"]) {
+    assert.equal(recordedPaymentStatus(true, { method: "upi", mode, status: "captured" }, false), "created");
+  }
 });
 
 test("LIVE: statuses other than 'captured' pass through untouched", () => {
   for (const status of ["created", "pending", "failed", "awaiting_payment"]) {
-    assert.equal(recordedPaymentStatus(true, { method: "upi", mode: "full", status }), status);
+    assert.equal(recordedPaymentStatus(true, { method: "upi", mode: "full", status }, false), status);
+    assert.equal(recordedPaymentStatus(true, { method: "cash", mode: "full", status }, true), status);
   }
 });
 
-// ---------------------------------------------------------------------------
-// UAT/internal capture must stay environment-gated: the whole point of the gate is that it is LIVE-only.
-// ---------------------------------------------------------------------------
-test("UAT/internal capture behaviour does not become available in LIVE", () => {
-  // Sandbox keeps the submitted status — that is the UAT mechanism, and it must remain reachable.
-  for (const mode of MODES) {
-    assert.equal(recordedPaymentStatus(false, { method: "upi", mode, status: "captured" }), "captured", `sandbox must keep the submitted status for mode '${mode}'`);
+test("UAT/sandbox keeps the submitted status regardless — the gate is LIVE-only", () => {
+  for (const method of METHODS) for (const mode of MODES) {
+    assert.equal(recordedPaymentStatus(false, { method, mode, status: "captured" }, false), "captured", `sandbox must keep the submitted status ('${method}' / '${mode}')`);
   }
-  // And the LIVE gate is driven by the environment, not by anything a caller sends.
+});
+
+test("the demotion keys off server authorization, not a client-controlled label", () => {
   assert.match(bookingRoute, /PAWSPACE_PAYMENT_ENV/, "the environment is read from the Worker env");
-  assert.doesNotMatch(bookingRoute, /payment\.mode==="prepaid"\|\|payment\.mode==="split_50_50"/, "financial truth must not depend on a mode spelling");
-});
-
-// ---------------------------------------------------------------------------
-// PAY-002 defect 1. The demotion carried an `!isSubscription` exemption, so a LIVE subscription purchase
-// could self-declare "captured" — and be granted its sessions — with nothing verified.
-//
-// The invariant is executed, not pinned: the extracted function is called with a third argument, which is
-// what the exemption used to consume. It must make no difference. Asserting only that the source no
-// longer contains "!isSubscription" would pass again the moment someone spelled the same carve-out
-// differently.
-// ---------------------------------------------------------------------------
-test("LIVE: a subscription purchase cannot self-declare capture either", () => {
-  for (const method of ONLINE) {
-    assert.equal(recordedPaymentStatus(true, { method, mode: "prepaid", status: "captured" }), "created", `a LIVE ${method} subscription purchase must await verification`);
-    // Whatever a caller (or a future refactor) passes as an extra flag, the answer must not change.
-    for (const flag of [true, 1, "subscription", {}]) {
-      assert.equal(recordedPaymentStatus(true, { method, mode: "prepaid", status: "captured" }, flag), "created", `no third argument may re-enable LIVE self-capture (${String(flag)})`);
-    }
-  }
-  assert.doesNotMatch(bookingRoute, /!isSubscription/, "the subscription exemption must be gone from the demotion rule");
+  assert.doesNotMatch(bookingRoute, /payment\.mode==="prepaid"\|\|payment\.mode==="split_50_50"/, "no mode allowlist may decide financial truth");
+  assert.doesNotMatch(bookingRoute, /!isSubscription/, "no subscription carve-out");
+  // The bug was that the demotion gated on ONLINE_METHODS.has(payment.method): an off-list method
+  // slipped through. The security decision must not depend on the method allowlist any more.
+  assert.doesNotMatch(bookingRoute, /liveMode&&ONLINE_METHODS\.has\(payment\.method\)&&payment\.status==="captured"/, "the demotion must not gate on the online-method allowlist");
+  assert.match(bookingRoute, /payment\.status==="captured"&&!offlineAuthorized\)return "created"/, "the demotion keys off status + server authorization");
+  // And authorization is a server permission plus the offline method, never a client flag alone.
+  assert.match(bookingRoute, /OFFLINE_METHODS\.has\(input\.payment\.method\)&&hasPermission\(actor\.permissions,"payments\.manage"\)/, "offline authorization requires payments.manage");
 });
 
 // ---------------------------------------------------------------------------

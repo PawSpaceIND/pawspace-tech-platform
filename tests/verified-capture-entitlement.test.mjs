@@ -236,3 +236,160 @@ test("sandbox/UAT behaviour is unchanged and explicitly environment-gated", asyn
   // The gate is the environment variable and nothing else.
   assert.match(read("app/api/canonical-bookings/route.ts"), /PAWSPACE_PAYMENT_ENV/);
 });
+
+// ---------------------------------------------------------------------------
+// PAY-002 delta — defect 1: the LIVE gate must fail CLOSED on the payment method. Keeping a submitted
+// capture without gateway proof is a SERVER decision (payments.manage recording an offline collection),
+// never something a client's method label can assert.
+// ---------------------------------------------------------------------------
+
+/** The subscription request body, so we can re-address it to any host/identity with a chosen method. */
+async function bodyWith(method, status = "captured") {
+  return await subscriptionRequest({ payment: { method, status } }).text();
+}
+
+test("LIVE: an arbitrary/unsupported method + submitted captured fails closed, even for a superuser", async () => {
+  // localhost => development-preview superuser, which holds payments.manage. Even so, an off-list method
+  // is not a server-authorized OFFLINE collection, so the capture is demoted and the subscription — which
+  // needs a captured or online-awaiting payment — is refused. No credits are minted from a made-up label.
+  const { sqlite } = freshDb({ PAWSPACE_PAYMENT_ENV: "live" });
+  seedScheduling(sqlite, "SG-SUB-1");
+  const { POST } = await import("../app/api/canonical-bookings/route.ts");
+  const response = await POST(new Request("http://localhost/api/canonical-bookings", { method: "POST", headers: { "content-type": "application/json" }, body: await bodyWith("crypto") }));
+  assert.equal(response.status, 409, "an unsupported method cannot self-declare a captured subscription purchase");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM customer_grooming_subscriptions").get().c, 0, "and no entitlement is created");
+});
+
+test("LIVE: the authorized offline path (cash + payments.manage) keeps captured", async () => {
+  // Same superuser, method 'cash': this IS a server-authorized offline collection, so the capture stands
+  // and the entitlement activates — legitimate cash collection is not broken.
+  const { sqlite } = freshDb({ PAWSPACE_PAYMENT_ENV: "live" });
+  seedScheduling(sqlite, "SG-SUB-1");
+  const { POST } = await import("../app/api/canonical-bookings/route.ts");
+  const response = await POST(new Request("http://localhost/api/canonical-bookings", { method: "POST", headers: { "content-type": "application/json" }, body: await bodyWith("cash") }));
+  assert.equal(response.status, 201, JSON.stringify(await response.json()));
+  assert.equal(payment(sqlite).status, "captured", "a payments.manage actor may record an offline cash capture");
+  assert.equal(sub(sqlite).status, "active", "and the entitlement is active");
+  assert.equal(Number(sub(sqlite).sessions_reserved), 1);
+});
+
+test("LIVE: the SAME cash capture is demoted for a caller without payments.manage — authorization decides, not the method", async () => {
+  // A real workspace identity (non-preview host) whose role lacks payments.manage. The identical cash +
+  // captured request that a superuser could keep is demoted here, so the subscription is refused. This is
+  // what makes the offline path server-authorized rather than a client-controlled 'cash' spelling.
+  const { sqlite, db } = freshDb({ PAWSPACE_PAYMENT_ENV: "live" });
+  seedScheduling(sqlite, "SG-SUB-1");
+  const { ensureSecurityTables } = await import("../lib/server-auth.ts");
+  await ensureSecurityTables(db);
+  const now = Date.now(), email = "desk.agent@pawspace.test";
+  sqlite.prepare("INSERT OR REPLACE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").run(`U:${email}`, email, "Desk Agent", "associate", "active", now, now);
+  sqlite.prepare("INSERT OR REPLACE INTO customer_identity_links (email,customer_id,status,verified_at,updated_at) VALUES (?,?,?,?,?)").run(email, "CUS-SUB-1", "active", now, now);
+  const { POST } = await import("../app/api/canonical-bookings/route.ts");
+  // Confirm the resolved actor is genuine and unprivileged (never the preview superuser).
+  const { resolveActor } = await import("../lib/server-auth.ts");
+  const actor = await resolveActor(new Request("https://app.pawspace.in/x", { headers: { "oai-authenticated-user-email": email } }));
+  assert.equal(actor.roleCode, "associate");
+  assert.equal(actor.developmentPreview, false);
+  assert.ok(!actor.permissions.includes("*") && !actor.permissions.includes("payments.manage"), "the actor must not hold payments.manage");
+  const response = await POST(new Request("https://app.pawspace.in/api/canonical-bookings", { method: "POST", headers: { "content-type": "application/json", "oai-authenticated-user-email": email }, body: await bodyWith("cash") }));
+  assert.equal(response.status, 409, "cash + captured from an unauthorized caller is demoted, so the subscription is refused");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM customer_grooming_subscriptions").get().c, 0, "and no entitlement is created");
+});
+
+// ---------------------------------------------------------------------------
+// PAY-002 delta — defect 2: the subscription transition must be atomic and safely retryable. A
+// dependent-write failure must not half-apply it or permanently strand it; a replay must repair it
+// without double-granting. Verified with a TRANSACTIONAL D1 shim (batch = one transaction) and an
+// injectable fault on a dependent write.
+// ---------------------------------------------------------------------------
+
+/** A D1 shim whose batch() is a real transaction, with a fault that can be injected on a chosen write. */
+function faultDb(env) {
+  const sqlite = new DatabaseSync(":memory:");
+  const faults = { patterns: [] };
+  const stmt = (sql, args) => ({
+    bind: (...bound) => stmt(sql, bound),
+    first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
+    run: async () => {
+      if (faults.patterns.some((p) => sql.includes(p))) throw new Error(`injected fault on: ${sql.slice(0, 48)}`);
+      const info = sqlite.prepare(sql).run(...args);
+      return { success: true, meta: { changes: Number(info.changes) } };
+    },
+    all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
+  });
+  const db = {
+    prepare: (sql) => stmt(sql, []),
+    batch: async (list) => {
+      sqlite.exec("BEGIN");
+      try { const out = []; for (const item of list) out.push(await item.run()); sqlite.exec("COMMIT"); return out; }
+      catch (error) { sqlite.exec("ROLLBACK"); throw error; }
+    },
+    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
+  };
+  globalThis.__PAY002_DB__ = db;
+  globalThis.__PAY002_ENV__ = env;
+  return { sqlite, db, faults };
+}
+
+const activatedCount = (sqlite) => Number(sqlite.prepare("SELECT COUNT(*) c FROM booking_lifecycle_events WHERE event_type='subscription_activated'").get().c);
+
+test("failure-injection: a dependent-write failure rolls the activation back atomically; a replay repairs it exactly once", async () => {
+  const { sqlite, db, faults } = faultDb({ PAWSPACE_PAYMENT_ENV: "live" });
+  seedScheduling(sqlite, "SG-SUB-1");
+  const { POST } = await import("../app/api/canonical-bookings/route.ts");
+  assert.equal((await POST(subscriptionRequest())).status, 201);
+  const bookingId = sub(sqlite).source_booking_id;
+  assert.equal(sub(sqlite).status, "pending_payment");
+  const { processGatewayEvent } = await import("../lib/grooming-payment-reconciliation.ts");
+
+  // Inject a failure into the usage write INSIDE the activation batch.
+  faults.patterns = ["UPDATE booking_subscription_usage"];
+  const first = await processGatewayEvent(db, captureEvent(bookingId, 3597, "evt-inj-1"));
+  assert.equal(first.status, "processed", "the payment capture is not held hostage to the subscription side-effect");
+  // Atomic rollback: nothing half-applied.
+  assert.equal(sub(sqlite).status, "pending_payment", "the entitlement must stay pending, not half-activate");
+  assert.equal(Number(sub(sqlite).sessions_reserved), 0, "no sessions reserved");
+  assert.equal(usage(sqlite).status, "pending_payment", "usage stays pending too — no split state");
+  assert.equal(activatedCount(sqlite), 0, "no activation event written");
+  // Surfaced, not swallowed.
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM payment_reconciliation_exceptions WHERE exception_type='subscription_activation_failed'").get().c, 1, "the stranded transition is a governed exception");
+
+  // Repair: clear the fault and replay. Completes exactly once.
+  faults.patterns = [];
+  const repair = await processGatewayEvent(db, captureEvent(bookingId, 3597, "evt-inj-2", "order.paid"));
+  assert.equal(repair.status, "processed");
+  assert.equal(sub(sqlite).status, "active", "the replay completes the activation");
+  assert.equal(Number(sub(sqlite).sessions_reserved), 1, "exactly one session reserved — never double-granted");
+  assert.equal(usage(sqlite).status, "reserved");
+  assert.equal(activatedCount(sqlite), 1, "activated exactly once");
+
+  // A further replay is a no-op.
+  await processGatewayEvent(db, captureEvent(bookingId, 3597, "evt-inj-3", "order.paid"));
+  assert.equal(Number(sub(sqlite).sessions_reserved), 1, "idempotent after repair");
+  assert.equal(activatedCount(sqlite), 1);
+});
+
+test("failure-injection: a payment-failure close is atomic; a replay repairs it with no usable credits", async () => {
+  const { sqlite, db, faults } = faultDb({ PAWSPACE_PAYMENT_ENV: "live" });
+  seedScheduling(sqlite, "SG-SUB-1");
+  const { POST } = await import("../app/api/canonical-bookings/route.ts");
+  assert.equal((await POST(subscriptionRequest())).status, 201);
+  const bookingId = sub(sqlite).source_booking_id, subscriptionId = sub(sqlite).id;
+  const { processGatewayEvent } = await import("../lib/grooming-payment-reconciliation.ts");
+
+  faults.patterns = ["UPDATE booking_subscription_usage"];
+  await processGatewayEvent(db, captureEvent(bookingId, 3597, "evt-f-1", "payment.failed"));
+  assert.equal(sub(sqlite).status, "pending_payment", "a dependent-write failure must not half-close the entitlement");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM payment_reconciliation_exceptions WHERE exception_type='subscription_failure_recording_failed'").get().c, 1, "surfaced as a governed exception");
+
+  faults.patterns = [];
+  await processGatewayEvent(db, captureEvent(bookingId, 3597, "evt-f-2", "payment.failed"));
+  assert.equal(sub(sqlite).status, "payment_failed", "the replay completes the closure");
+  assert.equal(Number(sub(sqlite).sessions_reserved), 0, "no usable sessions");
+  const { mutateSubscriptionWallet } = await import("../lib/subscription-wallet.ts");
+  await assert.rejects(
+    () => mutateSubscriptionWallet(db, { subscriptionId, bookingId, action: "reserve", credits: 1, idempotencyKey: "wf", actorId: "test" }),
+    (error) => /payment_failed/.test(error.message),
+    "a failed subscription can never reserve a credit",
+  );
+});

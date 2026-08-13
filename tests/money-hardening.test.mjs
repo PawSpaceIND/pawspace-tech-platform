@@ -206,7 +206,8 @@ test("real execution: capture amount mismatch and refund flow both land in the e
 // about the METHOD being online and the environment being LIVE, never about a client-supplied label.
 test("contract: verify-first pins EVERY LIVE online payment to 'created' regardless of mode, and the webhook checks the signature before parsing", () => {
   const bookings = fs.readFileSync(new URL("../app/api/canonical-bookings/route.ts", import.meta.url), "utf8");
-  assert.match(bookings, /liveMode&&ONLINE_METHODS\.has\(payment\.method\)&&payment\.status==="captured"\)return "created"/, "the verify-first rule keys off the online method and the environment");
+  assert.match(bookings, /liveMode&&payment\.status==="captured"&&!offlineAuthorized\)return "created"/, "the verify-first rule fails closed on the method — it demotes unless the server authorized an offline collection");
+  assert.doesNotMatch(bookings, /liveMode&&ONLINE_METHODS\.has\(payment\.method\)&&payment\.status==="captured"/, "an online-method allowlist is exactly what let an off-list method preserve captured");
   assert.doesNotMatch(bookings, /payment\.mode==="prepaid"\|\|payment\.mode==="split_50_50"/, "a mode-name allowlist is exactly what let 'full' and 'split' through");
   assert.doesNotMatch(bookings, /!isSubscription/, "and a subscription carve-out is what let a LIVE subscription self-declare capture");
   const webhook = fs.readFileSync(new URL("../app/api/razorpay-webhook/route.ts", import.meta.url), "utf8");

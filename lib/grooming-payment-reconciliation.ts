@@ -157,16 +157,21 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
     await lifecycle(db,bookingId,"payment_captured",{gateway:event.provider,environment:event.environment,gatewayPaymentId:event.gatewayPaymentId,eventId:event.eventId,amount,capturedTotal,stagesCollected,settledStayBalance:settlesBalance});
     // A verified capture is the ONLY thing that may activate a subscription entitlement (PAY-002). The
     // purchase wrote it pending with zero sessions reserved; this reserves them, exactly once — the
-    // guarded transition means a replayed capture (or an order.paid following payment.captured) changes
-    // nothing, and it no-ops for any booking that is not a subscription purchase.
-    await activateSubscriptionOnCapture(db,{bookingId,eventId:event.eventId,at:now}).catch(()=>null);
+    // atomic, guarded transition means a replayed capture (or an order.paid following payment.captured)
+    // changes nothing, and it no-ops for any booking that is not a subscription purchase. A dependent-
+    // write failure rolls the whole transition back (it stays pending) and is surfaced as a governed
+    // exception rather than swallowed, so it is never silently stranded — the next verified capture /
+    // redelivery completes it, and the payment capture itself is never held hostage to it.
+    await activateSubscriptionOnCapture(db,{bookingId,eventId:event.eventId,at:now}).catch(async(error)=>{await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"subscription_activation_failed",severity:"critical",detail:{stage:"capture",message:error instanceof Error?error.message:String(error)}}).catch(()=>null);});
     // funnel closure: payment succeeded -> convert the Sales lead and cancel any ₹300 recovery entitlement (belt-and-braces; never breaks payment processing)
     const paidCustomerId=String(payment.customer_id||"");if(paidCustomerId){await convertLeadOnPaymentCaptured(db,{customerId:paidCustomerId,bookingId}).catch(()=>{});await cancelRecoveryEntitlements(db,{customerId:paidCustomerId,bookingId,reason:"payment_captured",at:now}).catch(()=>{});}
   }else if(event.eventType==="payment.failed"){
     if(settled){await upsert(gatewayCurrent,reconCurrent,capturedCurrent,refundedCurrent,varianceCurrent);await finish("processed","Out-of-order failure ignored after settled state");return{duplicate:false,status:"processed",ignored:true,reason:"out_of_order_failed"};}
     await db.prepare("UPDATE booking_payments SET status='failed',gateway=?,detail_json=json_set(detail_json,'$.lastGatewayEventId',?),updated_at=? WHERE id=?").bind(event.environment==="sandbox"?"razorpay_sandbox":"razorpay",event.eventId,now,paymentId).run();await upsert("failed","gateway_failed",capturedCurrent,refundedCurrent,0);await lifecycle(db,bookingId,"payment_failed",{gateway:event.provider,eventId:event.eventId});
-    // a verified failure on a subscription purchase leaves no usable credits behind (PAY-002)
-    await failSubscriptionOnPaymentFailure(db,{bookingId,eventId:event.eventId,at:now}).catch(()=>null);
+    // a verified failure on a subscription purchase leaves no usable credits behind (PAY-002); the
+    // close is atomic, and a dependent-write failure is surfaced as a governed exception (retryable on
+    // the next failure event) rather than swallowed
+    await failSubscriptionOnPaymentFailure(db,{bookingId,eventId:event.eventId,at:now}).catch(async(error)=>{await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"subscription_failure_recording_failed",severity:"critical",detail:{stage:"failure",message:error instanceof Error?error.message:String(error)}}).catch(()=>null);});
   }else if(["refund.created","refund.processed","refund.failed"].includes(event.eventType)){
     const refund=await db.prepare("SELECT * FROM booking_refund_cases WHERE booking_id=? ORDER BY created_at DESC LIMIT 1").bind(bookingId).first<Row>();if(!refund){await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"orphan_gateway_refund",detail:{gatewayRefundId:event.gatewayRefundId,amount}});await finish("exception","No internal refund case");return{duplicate:false,status:"exception",reason:"orphan_gateway_refund"};}
     const expectedRefund=Number(refund.amount||0),sameGatewayRefund=Boolean(event.gatewayRefundId&&String(refund.gateway_reference||"")===event.gatewayRefundId),alreadyProcessed=String(refund.status)==="processed"&&sameGatewayRefund;

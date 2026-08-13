@@ -45,9 +45,18 @@ async function pendingSubscription(db:Db,bookingId:string){
 }
 
 /**
- * Activate the entitlement a verified capture has now paid for. Exactly once: the transition is a
- * guarded UPDATE on `pending_payment`, so a replayed webhook (or a second capture event for the same
- * booking) finds nothing to change and reports `already_active` without re-reserving sessions.
+ * Activate the entitlement a verified capture has now paid for.
+ *
+ * ATOMIC and idempotent. The entitlement, its usage row and the audit event move in ONE db.batch — a
+ * D1 transaction — so a failure in any dependent write rolls the whole thing back and leaves the
+ * subscription cleanly `pending_payment` rather than half-activated (active entitlement, unreserved
+ * usage). The earlier version updated the entitlement and then swallowed failures on the usage and
+ * lifecycle writes, which could strand exactly that inconsistent state.
+ *
+ * Exactly once: the read-check short-circuits a replay after success (nothing to do), and every write in
+ * the batch is guarded `WHERE status='pending_payment'`, so even a concurrent second capture cannot
+ * reserve the sessions twice. If the batch throws, the caller sees it and the transition stays available
+ * for the next verified capture / webhook redelivery to complete — money is never granted, never twice.
  */
 export async function activateSubscriptionOnCapture(db:Db,input:{bookingId:string;eventId?:string;at?:number}):Promise<{outcome:"activated"|"already_active"|"none";subscriptionId?:string;sessionsReserved?:number}>{
  const bookingId=String(input.bookingId||"").trim();
@@ -58,10 +67,12 @@ export async function activateSubscriptionOnCapture(db:Db,input:{bookingId:strin
  if(String(subscription.status)!==PENDING_PAYMENT_STATUS)return{outcome:"already_active",subscriptionId};
  const snapshot=await db.prepare("SELECT config_json FROM grooming_subscription_purchase_snapshots WHERE subscription_id=?").bind(subscriptionId).first<Row>().catch(()=>null);
  const reserve=reservedSessionsOf(snapshot,Number(subscription.total_sessions||0)),now=input.at??Date.now();
- const activated=await db.prepare("UPDATE customer_grooming_subscriptions SET status='active',sessions_reserved=?,updated_at=? WHERE id=? AND status=?").bind(reserve,now,subscriptionId,PENDING_PAYMENT_STATUS).run();
- if(!Number(activated.meta?.changes||0))return{outcome:"already_active",subscriptionId};
- await db.prepare("UPDATE booking_subscription_usage SET status='reserved',sessions_reserved=?,updated_at=? WHERE booking_id=? AND plan_code=? AND status=?").bind(reserve,now,bookingId,subscriptionId,PENDING_PAYMENT_STATUS).run().catch(()=>null);
- await db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),bookingId,"subscription_activated","subscription",subscriptionId,"razorpay_webhook",JSON.stringify({sessionsReserved:reserve,eventId:input.eventId??null,verified:true}),now).run().catch(()=>null);
+ const results=await db.batch([
+  db.prepare("UPDATE customer_grooming_subscriptions SET status='active',sessions_reserved=?,updated_at=? WHERE id=? AND status=?").bind(reserve,now,subscriptionId,PENDING_PAYMENT_STATUS),
+  db.prepare("UPDATE booking_subscription_usage SET status='reserved',sessions_reserved=?,updated_at=? WHERE booking_id=? AND plan_code=? AND status=?").bind(reserve,now,bookingId,subscriptionId,PENDING_PAYMENT_STATUS),
+  db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),bookingId,"subscription_activated","subscription",subscriptionId,"razorpay_webhook",JSON.stringify({sessionsReserved:reserve,eventId:input.eventId??null,verified:true}),now),
+ ]);
+ if(!Number(results?.[0]?.meta?.changes||0))return{outcome:"already_active",subscriptionId};
  return{outcome:"activated",subscriptionId,sessionsReserved:reserve};
 }
 
@@ -76,9 +87,13 @@ export async function failSubscriptionOnPaymentFailure(db:Db,input:{bookingId:st
  if(!subscription)return{outcome:"none"};
  const subscriptionId=String(subscription.id),now=input.at??Date.now();
  if(String(subscription.status)!==PENDING_PAYMENT_STATUS)return{outcome:"ignored",subscriptionId};
- const closed=await db.prepare("UPDATE customer_grooming_subscriptions SET status='payment_failed',sessions_reserved=0,updated_at=? WHERE id=? AND status=?").bind(now,subscriptionId,PENDING_PAYMENT_STATUS).run();
- if(!Number(closed.meta?.changes||0))return{outcome:"ignored",subscriptionId};
- await db.prepare("UPDATE booking_subscription_usage SET status='payment_failed',sessions_reserved=0,updated_at=? WHERE booking_id=? AND plan_code=? AND status=?").bind(now,bookingId,subscriptionId,PENDING_PAYMENT_STATUS).run().catch(()=>null);
- await db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),bookingId,"subscription_payment_failed","subscription",subscriptionId,"razorpay_webhook",JSON.stringify({eventId:input.eventId??null}),now).run().catch(()=>null);
+ // Atomic and idempotent, for the same reasons as activation: the entitlement, its usage row and the
+ // audit event close together or not at all, and the guarded writes make a replay a no-op.
+ const results=await db.batch([
+  db.prepare("UPDATE customer_grooming_subscriptions SET status='payment_failed',sessions_reserved=0,updated_at=? WHERE id=? AND status=?").bind(now,subscriptionId,PENDING_PAYMENT_STATUS),
+  db.prepare("UPDATE booking_subscription_usage SET status='payment_failed',sessions_reserved=0,updated_at=? WHERE booking_id=? AND plan_code=? AND status=?").bind(now,bookingId,subscriptionId,PENDING_PAYMENT_STATUS),
+  db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),bookingId,"subscription_payment_failed","subscription",subscriptionId,"razorpay_webhook",JSON.stringify({eventId:input.eventId??null}),now),
+ ]);
+ if(!Number(results?.[0]?.meta?.changes||0))return{outcome:"ignored",subscriptionId};
  return{outcome:"failed",subscriptionId};
 }
