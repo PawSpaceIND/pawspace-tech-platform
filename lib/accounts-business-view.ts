@@ -1,3 +1,4 @@
+import { chunkedIn } from "./d1-chunked-in";
 type Db = D1Database;
 type Row = Record<string, unknown>;
 
@@ -43,10 +44,9 @@ export async function buildAccountsBusinessView(db: Db) {
   const bookingIds = bookings.map(b => String(b.id));
   let invoices: Row[] = [], payments: Row[] = [];
   if (bookingIds.length) {
-    const placeholders = bookingIds.map(() => "?").join(",");
     [invoices, payments] = await Promise.all([
-      safeAll(db, `SELECT id,booking_id,customer_id,invoice_number,status,gross_amount,tax_amount,net_amount,issued_at FROM booking_invoices WHERE booking_id IN (${placeholders})`, bookingIds),
-      safeAll(db, `SELECT booking_id,amount,status,method FROM booking_payments WHERE booking_id IN (${placeholders})`, bookingIds),
+      chunkedIn(bookingIds, (chunk, placeholders) => safeAll(db, `SELECT id,booking_id,customer_id,invoice_number,status,gross_amount,tax_amount,net_amount,issued_at FROM booking_invoices WHERE booking_id IN (${placeholders})`, chunk)),
+      chunkedIn(bookingIds, (chunk, placeholders) => safeAll(db, `SELECT booking_id,amount,status,method FROM booking_payments WHERE booking_id IN (${placeholders})`, chunk)),
     ]);
   }
   const invoiceByBooking = new Map(invoices.map(i => [String(i.booking_id), i]));
