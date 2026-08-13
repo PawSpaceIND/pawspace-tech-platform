@@ -18,7 +18,7 @@ import test from "node:test";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 import { freshCountingD1, assertWithinBudget } from "./helpers/d1-harness.mjs";
 
-installWorkersHooks("__CHUNK_SEMANTICS_DB__");
+installWorkersHooks("__CHUNK_SEMANTICS_DB__", "__CHUNK_SEMANTICS_ENV__");
 
 import { D1_IN_CHUNK } from "../lib/d1-chunked-in.ts";
 
@@ -27,7 +27,7 @@ const D1_SUBREQUEST_CEILING = 1_000;
 
 function use(harness) {
   globalThis.__CHUNK_SEMANTICS_DB__ = harness.db;
-  globalThis.__CHUNK_SEMANTICS_DB___ENV = {};
+  globalThis.__CHUNK_SEMANTICS_ENV__ = {};
   return harness;
 }
 
