@@ -229,3 +229,69 @@ test("contract: gateway permission line, DB access rule, and the team surface ex
   const lib = fs.readFileSync(new URL("../lib/food-supply-chain.ts", import.meta.url), "utf8");
   assert.match(lib, /autoPurchase:false/, "reorder stays a governed suggestion, never an automatic purchase");
 });
+
+// ---------------------------------------------------------------------------
+// Expired stock and the sweep window. food_inventory_uat is the counter the
+// customer quote and the ops reservation path both read, and neither is
+// expiry-aware. So the honest question is: how long can an expired batch stay
+// sellable, and does the system say so while it is?
+// ---------------------------------------------------------------------------
+test("real execution: an expired batch stops being sellable once swept, and is declared while it waits", async () => {
+  freshDb();
+  const db = globalThis.__FSC_DB__;
+  const { po } = await seedSupplierAndPo(db, { quantity: 20 });
+  const before = inventory().available_units;
+  // Received with an expiry date already in the past.
+  await receiveFoodPurchaseOrder(db, { purchaseOrderId: po.purchaseOrderId, preparationDate: "2026-08-10", expiryDate: "2026-09-10", actorId: "ops:uat" });
+  assert.equal(inventory().available_units, before + 20, "receiving raises the shared counter");
+
+  // Before the sweep the units are still in the shared counter - the module must not pretend
+  // otherwise, and must report the exposure rather than hide it.
+  const waiting = await foodSupplyChainSnapshot(db, { asOfDate: "2026-09-15" });
+  assert.equal(waiting.expiry.pastExpiryAwaitingSweep, 1, "an expired-but-unswept batch is declared, not hidden");
+  assert.ok(waiting.expiry.expiringWithin48h.every(item => item.expiryDate >= "2026-09-15"), "past-expiry stock is not reported as merely expiring soon");
+
+  // The sweep is what removes it from sellable stock, and it removes exactly the remainder.
+  const swept = await sweepExpiredFoodBatches(db, { actorId: "system", asOfDate: "2026-09-15" });
+  assert.equal(swept.expiredBatches, 1);
+  assert.equal(swept.unitsWasted, 20, "the whole remaining batch is written off");
+  assert.equal(inventory().available_units, before, "expired units are removed from the counter the customer path reads");
+  const batch = sqlite.prepare("SELECT status, quantity_remaining FROM food_stock_batches WHERE purchase_order_id=?").get(po.purchaseOrderId);
+  assert.equal(batch.status, "expired");
+  assert.equal(batch.quantity_remaining, 0, "the remainder is written off, not left dangling");
+
+  // Sweeping again changes nothing: no double write-off of the same batch.
+  const again = await sweepExpiredFoodBatches(db, { actorId: "system", asOfDate: "2026-09-15" });
+  assert.equal(again.expiredBatches, 0);
+  assert.equal(again.unitsWasted, 0);
+  assert.equal(inventory().available_units, before);
+});
+
+test("real execution: concurrent stock-outs on one batch can never drive stock negative", async () => {
+  freshDb();
+  const db = globalThis.__FSC_DB__;
+  const { po } = await seedSupplierAndPo(db, { quantity: 10 });
+  const before = inventory().available_units;
+  await receiveFoodPurchaseOrder(db, { purchaseOrderId: po.purchaseOrderId, preparationDate: "2026-08-10", expiryDate: "2027-01-01", actorId: "ops:uat" });
+  const batchId = sqlite.prepare("SELECT id FROM food_stock_batches WHERE purchase_order_id=?").get(po.purchaseOrderId).id;
+
+  // Six simultaneous wastage claims of 3 units against a batch holding 10: at most three can win.
+  const attempts = await Promise.all(Array.from({ length: 6 }, (_, index) =>
+    recordFoodWastage(db, { batchId, quantity: 3, reason: "cold chain break in transit", idempotencyKey: `waste-race-${index}`, actorId: "ops:uat" })
+      .then(() => "ok").catch(() => "refused")));
+  const won = attempts.filter(result => result === "ok").length;
+  assert.ok(won <= 3, `at most three 3-unit claims can succeed against 10 units, ${won} succeeded`);
+
+  const remaining = sqlite.prepare("SELECT quantity_remaining FROM food_stock_batches WHERE id=?").get(batchId).quantity_remaining;
+  assert.ok(remaining >= 0, `batch quantity must never go negative, got ${remaining}`);
+  assert.equal(remaining, 10 - won * 3, "the batch reflects exactly the claims that won");
+  assert.equal(inventory().available_units, before + 10 - won * 3, "the shared counter matches the batch exactly");
+  assert.ok(inventory().available_units >= 0, "the shared inventory counter must never go negative");
+});
+
+test("contract: the supply chain module never writes a customer money table", () => {
+  const source = fs.readFileSync("lib/food-supply-chain.ts", "utf8");
+  for (const table of ["booking_payments", "canonical_bookings", "food_order_payments", "food_refund_ledger", "pawspace_wallet_ledger"]) {
+    assert.ok(!new RegExp(`(INSERT INTO|UPDATE|DELETE FROM)\\s+${table}`).test(source), `procurement must never write ${table}`);
+  }
+});

@@ -2,7 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import styles from "./admin.module.css";
 import TrainingPanel from "./training-panel";
 import WorkforcePanel from "./workforce-panel";
@@ -84,7 +84,35 @@ const nav: { id: View; label: string; icon: string; count?: number }[] = [
 
 const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
 
+
+type OverviewMetrics={bookingsToday:number;confirmed:number;completed:number;cancelled:number;unassigned:number;recognizedRevenue:number;providersActive:number|null;providersTotal:number|null;openTickets:number|null;ticketsNeedingAttention:number|null};
+type OverviewCapacity={providerId:string;name:string;zone:string|null;slots:{slot:string;state:"available"|"booked"|"completed";bookingId:string|null;label:string}[]};
+type OverviewActivity={bookingId:string;customer:string;service:string;packageName:string;status:string;provider:string|null;scheduledStart:string;amount:number};
+type OverviewData={date:string;metrics:OverviewMetrics;capacity:OverviewCapacity[];slots:string[];activity:OverviewActivity[];sourceStatus:Record<string,string>};
+
+/** Live operations data. Nothing on this screen is hard-coded: an empty day shows zeros, and a
+ *  field with no source shows "Not connected" rather than a plausible-looking number. */
+function useOperationsOverview(){
+  const[data,setData]=useState<OverviewData|null>(null);
+  const[error,setError]=useState("");
+  const[loading,setLoading]=useState(true);
+  useEffect(()=>{let active=true;
+    fetch("/api/operations-overview",{cache:"no-store"})
+      .then(async response=>{const body=await response.json() as {data?:OverviewData;error?:string};
+        if(!response.ok)throw new Error(body.error||"Unable to load the operations overview");
+        if(active){setData(body.data??null);setError("");}})
+      .catch(problem=>{if(active)setError(problem instanceof Error?problem.message:"Unable to load the operations overview");})
+      .finally(()=>{if(active)setLoading(false);});
+    return()=>{active=false};},[]);
+  return{data,error,loading};
+}
+/** Tabs still rendering the built-in sample rows rather than the database. Labelled on screen so a
+ *  tester never files a bug against invented data - and so the list shrinks visibly as each is wired. */
+const PROTOTYPE_VIEWS=new Set(["groomers","payments"]);
+const rupees=(value:number)=>`\u20B9${value.toLocaleString("en-IN")}`;
+
 export default function AdminPage() {
+  const{data:overview,error:overviewError,loading:overviewLoading}=useOperationsOverview();
   const [view, setView] = useState<View>("overview");
   const [zone, setZone] = useState("All Bangalore zones");
   const [selectedBooking, setSelectedBooking] = useState(bookings[0]);
@@ -126,18 +154,27 @@ export default function AdminPage() {
           <div className={styles.headerActions}>{view === "crm" ? <><button className={styles.ghostButton} onClick={() => notify("Customer import opened")}>Import customers</button><button className={styles.primaryButton} onClick={() => notify("New lead form opened")}>＋ Add lead</button></> : view === "training" ? <><button className={styles.ghostButton} onClick={() => notify("Assessment queue opened")}>Assessment queue</button><button className={styles.primaryButton} onClick={() => notify("New training plan opened")}>＋ Create plan</button></> : view === "workforce" ? <><button className={styles.ghostButton} onClick={() => notify("Attendance exceptions opened")}>Attendance exceptions</button><button className={styles.primaryButton} onClick={() => notify("Payout approval queue opened")}>Review payouts</button></> : <><select value={zone} onChange={(event) => setZone(event.target.value)}><option>All Bangalore zones</option><option>Koramangala</option><option>Indiranagar</option><option>Whitefield</option><option>HSR Layout</option><option>JP Nagar</option></select><button className={styles.ghostButton} onClick={() => notify("Selected slots blocked for 2 hours")}>Block slot</button><button className={styles.primaryButton} onClick={() => notify("New booking form opened")}>＋ Add booking</button></>}</div>
         </header>
         <TestSyncPanel surface="admin" />
+        {PROTOTYPE_VIEWS.has(view)&&<p className={styles.prototypeNotice}><b>Sample data.</b> This tab still shows built-in example rows, not your database. Overview, Live calendar and Bookings are live.</p>}
 
         {(view === "overview" || view === "calendar") && <>
           <section className={styles.metrics}>
-            <article><div className={styles.metricIcon}>▤</div><div><span>Today’s bookings</span><strong>18</strong><small>14 confirmed · 4 completed</small></div></article>
-            <article><div className={styles.metricIcon}>₹</div><div><span>Expected revenue</span><strong>₹32,482</strong><small className={styles.positive}>↑ 12% vs last Monday</small></div></article>
-            <article><div className={styles.metricIcon}>♟</div><div><span>Groomers active</span><strong>8 / 10</strong><small>2 on leave today</small></div></article>
-            <article><div className={`${styles.metricIcon} ${styles.alertIcon}`}>!</div><div><span>Open tickets</span><strong>3</strong><small className={styles.warning}>1 needs attention now</small></div></article>
+            <article><div className={styles.metricIcon}>▤</div><div><span>Today’s bookings</span><strong>{overviewLoading?"—":overview?.metrics.bookingsToday ?? 0}</strong><small>{overview?`${overview.metrics.confirmed} confirmed · ${overview.metrics.completed} completed`:"Loading today’s bookings"}</small></div></article>
+            <article><div className={styles.metricIcon}>₹</div><div><span>Recognised revenue</span><strong>{overviewLoading?"—":rupees(overview?.metrics.recognizedRevenue ?? 0)}</strong><small>Excludes cancelled &amp; draft · matches the P&amp;L</small></div></article>
+            <article><div className={styles.metricIcon}>♟</div><div><span>Providers active</span><strong>{overview?.metrics.providersActive==null?"Not connected":`${overview.metrics.providersActive} / ${overview.metrics.providersTotal}`}</strong><small>Live, active capacity profiles</small></div></article>
+            <article><div className={`${styles.metricIcon} ${styles.alertIcon}`}>!</div><div><span>Open tickets</span><strong>{overview?.metrics.openTickets==null?"Not connected":overview.metrics.openTickets}</strong><small className={overview?.metrics.ticketsNeedingAttention?styles.warning:undefined}>{overview?.metrics.ticketsNeedingAttention?`${overview.metrics.ticketsNeedingAttention} past its SLA`:"None past SLA"}</small></div></article>
           </section>
+          {overviewError&&<p className={styles.dataError}>{overviewError}</p>}
 
           <section className={styles.panel}>
             <div className={styles.panelHead}><div><span className={styles.kicker}>Live capacity</span><h2>Groomer calendar</h2></div><div className={styles.legend}><span><i className={styles.availableDot}></i>Available</span><span><i className={styles.bookedDot}></i>Booked</span><span><i className={styles.travelDot}></i>Travel</span></div></div>
-            <div className={styles.scheduleWrap}><table className={styles.schedule}><thead><tr><th>Time</th>{groomers.map((groomer) => <th key={groomer.id}><div className={styles.tableGroomer}><span>{groomer.initials}</span><div><strong>{groomer.name}</strong><small>{groomer.zone}</small></div></div></th>)}</tr></thead><tbody>{schedule.map((row) => <tr key={row.time}><th>{row.time}</th>{groomers.map((groomer) => { const value = row[groomer.id as keyof typeof row]; const booking = typeof value === "string" && value.startsWith("PS-"); const state = booking ? styles.bookedCell : value === "Available" ? styles.availableCell : value === "Travel" ? styles.travelCell : styles.mutedCell; return <td key={groomer.id}><button className={state} onClick={() => booking ? setSelectedBooking(bookings.find((item) => item.id === value) ?? selectedBooking) : notify(`${groomer.name}: ${value}`)}><strong>{value}</strong><small>{booking ? "View booking" : value === "Available" ? "Open for booking" : ""}</small></button></td>; })}</tr>)}</tbody></table></div>
+            <div className={styles.scheduleWrap}>
+              {overviewLoading&&<p className={styles.dataNote}>Loading today’s capacity…</p>}
+              {!overviewLoading&&!overview?.capacity.length&&<p className={styles.dataNote}>No active provider has capacity configured for today. Add a provider capacity profile to see the live board.</p>}
+              {!!overview?.capacity.length&&<table className={styles.schedule}>
+                <thead><tr><th>Time</th>{overview.capacity.map(provider=><th key={provider.providerId}><div className={styles.tableGroomer}><span>{provider.name.split(" ").map(part=>part[0]).slice(0,2).join("").toUpperCase()}</span><div><b>{provider.name}</b>{provider.zone&&<small>{provider.zone}</small>}</div></div></th>)}</tr></thead>
+                <tbody>{overview.slots.map((slot,index)=><tr key={slot}><th>{slot}</th>{overview.capacity.map(provider=>{const cell=provider.slots[index];return <td key={provider.providerId+slot}><div className={cell.state==="available"?styles.slotAvailable:cell.state==="completed"?styles.slotCompleted:styles.slotBooked}><b>{cell.bookingId??"Available"}</b><small>{cell.label}</small></div></td>;})}</tr>)}</tbody>
+              </table>}
+            </div>
           </section>
         </>}
 

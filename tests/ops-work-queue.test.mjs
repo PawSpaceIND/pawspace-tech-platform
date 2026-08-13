@@ -273,3 +273,101 @@ test("contract: gateway permission line, DB access rule, and the team surface ex
     assert.match(lib, new RegExp(`"${rule}"`), `detector ${rule} must stay wired`);
   }
 });
+
+// ---------------------------------------------------------------------------
+// Command Centre TODAY revenue must recognize the same bookings as every other
+// money surface. lib/pnl-reporting.ts and buildCompanyAnalytics both exclude
+// cancelled AND draft; TODAY excluded only cancelled, so a draft booking made
+// the founder's headline revenue disagree with the P&L for the same day.
+// ---------------------------------------------------------------------------
+test("real execution: TODAY revenue excludes draft as well as cancelled, matching the P&L", async () => {
+  freshDb(); seedSourceTables();
+  const noon = Date.UTC(2026, 8, 15, 12, 0, 0);
+  const at = (hour) => new Date(Date.UTC(2026, 8, 15, hour, 0, 0)).toISOString();
+  const insert = sqlite.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,'[]','[]','blr','blr-east',?,'pkg','Pkg',?,'p1',?,?,?,'customer_app',?,'INR','{}','uat',?,?)");
+  insert.run("R1", "rk1", "cus_1", "grooming", "rg1", at(9), at(10), "completed", 1200, NOW, NOW);
+  insert.run("R2", "rk2", "cus_2", "boarding", "rg2", at(17), at(20), "confirmed", 4000, NOW, NOW);
+  insert.run("R3", "rk3", "cus_3", "grooming", "rg3", at(15), at(16), "cancelled", 900, NOW, NOW);
+  insert.run("R4", "rk4", "cus_4", "grooming", "rg4", at(14), at(15), "draft", 5000, NOW, NOW);
+
+  const centre = (await workQueueSnapshot(globalThis.__WQ_DB__, { now: noon })).commandCentre;
+  // Recognized revenue is 1200 + 4000. Neither the cancelled 900 nor the draft 5000 counts.
+  assert.equal(centre.revenue, 5200, "draft and cancelled bookings must not be counted as revenue");
+  assert.equal(centre.bookings, 2, "a draft is not a booking of the day");
+  assert.equal(centre.cancelled, 1, "cancellations stay visible as a count");
+  assert.equal(centre.completed, 1);
+  // Per-service must obey the same rule as the headline.
+  assert.equal(centre.byService.grooming.revenue, 1200, "grooming: only the completed 1200 is revenue");
+  assert.equal(centre.byService.grooming.bookings, 1);
+  assert.equal(centre.byService.grooming.cancelled, 1);
+  assert.equal(centre.byService.boarding.revenue, 4000);
+
+  // The same rule the P&L applies, asserted against the P&L's own source of truth.
+  const recognized = sqlite.prepare("SELECT COALESCE(SUM(total_amount),0) total FROM canonical_bookings WHERE status!='cancelled' AND status!='draft' AND substr(scheduled_start,1,10)='2026-09-15'").get().total;
+  assert.equal(centre.revenue, recognized, "TODAY revenue must equal the P&L's recognized revenue for the same day");
+});
+
+// ---------------------------------------------------------------------------
+// Repeated sweeps and CONCURRENT sweeps are different guarantees. The scheduled
+// worker can overlap with a human opening the screen (GET sweeps too), so two
+// sweeps genuinely run at once in production.
+// ---------------------------------------------------------------------------
+test("real execution: two sweeps running at the same time still create each task exactly once", async () => {
+  freshDb(); seedSourceTables(); seedOneOfEachCondition();
+  const results = await Promise.all([
+    sweepWorkQueue(globalThis.__WQ_DB__, { actorId: "system:a" }),
+    sweepWorkQueue(globalThis.__WQ_DB__, { actorId: "system:b" }),
+    sweepWorkQueue(globalThis.__WQ_DB__, { actorId: "system:c" }),
+  ]);
+  const rows = sqlite.prepare("SELECT source_key, COUNT(*) n FROM ops_work_queue_tasks GROUP BY source_key HAVING n > 1").all();
+  assert.deepEqual(rows, [], "no condition may produce a duplicate task under concurrent sweeps");
+  const total = sqlite.prepare("SELECT COUNT(*) n FROM ops_work_queue_tasks").get().n;
+  assert.equal(total, 7, "the seven conditions produce exactly seven tasks in total");
+  // Creation is attributed once across the three racers, not three times.
+  assert.equal(results.reduce((sum, r) => sum + r.totalCreated, 0), 7, "creation is counted once in total, not once per sweep");
+});
+
+test("real execution: a task past its SLA escalates exactly once even when sweeps race", async () => {
+  freshDb(); seedSourceTables(); seedOneOfEachCondition();
+  await sweepWorkQueue(globalThis.__WQ_DB__, { actorId: "system" });
+  // Drive every open task past its due time.
+  const past = NOW - DAY;
+  sqlite.prepare("UPDATE ops_work_queue_tasks SET due_at=? WHERE status='open'").run(past);
+  const openCount = sqlite.prepare("SELECT COUNT(*) n FROM ops_work_queue_tasks WHERE status='open'").get().n;
+
+  const raced = await Promise.all([
+    sweepWorkQueue(globalThis.__WQ_DB__, { actorId: "system:a", now: NOW }),
+    sweepWorkQueue(globalThis.__WQ_DB__, { actorId: "system:b", now: NOW }),
+  ]);
+  const escalatedTotal = raced.reduce((sum, r) => sum + r.escalated, 0);
+  assert.equal(escalatedTotal, openCount, "each overdue task is escalated exactly once across the racers");
+  const flagged = sqlite.prepare("SELECT COUNT(*) n FROM ops_work_queue_tasks WHERE escalated=1").get().n;
+  assert.equal(flagged, openCount);
+  // Escalating is not repeatable: a further sweep escalates nothing new.
+  const again = await sweepWorkQueue(globalThis.__WQ_DB__, { actorId: "system", now: NOW });
+  assert.equal(again.escalated, 0, "an already-escalated task never re-escalates");
+});
+
+// ---------------------------------------------------------------------------
+// A condition that resolves itself in the source system. The task must not keep
+// regenerating, and whatever happens to the existing task must be deliberate.
+// ---------------------------------------------------------------------------
+test("real execution: when the underlying condition clears, no new task is raised", async () => {
+  freshDb(); seedSourceTables(); seedOneOfEachCondition();
+  await sweepWorkQueue(globalThis.__WQ_DB__, { actorId: "system" });
+  const before = sqlite.prepare("SELECT COUNT(*) n FROM ops_work_queue_tasks WHERE rule='provider_unassigned'").get().n;
+  assert.equal(before, 1);
+
+  // The work order gets assigned - the exception no longer exists in the source system.
+  sqlite.prepare("UPDATE provider_work_orders SET status='assigned', provider_id='p_real'").run();
+  const after = await sweepWorkQueue(globalThis.__WQ_DB__, { actorId: "system" });
+  const stillOne = sqlite.prepare("SELECT COUNT(*) n FROM ops_work_queue_tasks WHERE rule='provider_unassigned'").get().n;
+  assert.equal(stillOne, 1, "a cleared condition must not raise a second task");
+  assert.equal(after.created.provider_unassigned ?? 0, 0, "and must not report a new creation");
+
+  // The already-open task is left for a human to close: it is NOT auto-resolved, because the
+  // queue is a record of what needed attention, and closure requires a note naming what was done.
+  const task = sqlite.prepare("SELECT status, resolution_note FROM ops_work_queue_tasks WHERE rule='provider_unassigned'").get();
+  assert.equal(task.status, "open", "the raised task stays open until a human closes it with a note");
+  assert.equal(task.resolution_note, null);
+});
