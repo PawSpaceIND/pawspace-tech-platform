@@ -149,7 +149,7 @@ export async function resolveZoneByPincode(db:Db,pincode:string):Promise<{zone:S
 async function cityRangeCovers(db:Db,pincode:string):Promise<{city:string;zoneId:string}|null>{
   const numeric=Number(pincode);
   if(!Number.isFinite(numeric))return null;
-  const rows=await db.prepare("SELECT city,city_code,pincodes,status FROM city_launch_config WHERE status='Live'").all<Row>().catch(()=>({results:[] as Row[]}));
+  const rows=await db.prepare("SELECT city,city_code,pincodes,status FROM city_launch_configs WHERE status='Live'").all<Row>().catch(()=>({results:[] as Row[]}));
   for(const row of rows.results){
     // Ranges are published as "560001-560110" (en dash or hyphen) and may list several, comma separated.
     for(const part of String(row.pincodes||"").split(",")){
