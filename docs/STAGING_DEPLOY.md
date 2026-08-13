@@ -76,6 +76,25 @@ npx wrangler d1 execute pawspace-staging --remote --file=scripts/staging-seed.sq
 After loading, open `/team/acquisition-funnel` and hit **Refresh sweep** to compute funnel stages, ₹300
 recoveries and App-Inbound leads from the seeded data — instant material for the CRM/Sales test.
 
+**Add the module demo layer so NO page opens empty.** The two seeds above cover customers, bookings,
+payments and the employee/payroll baseline, but leave the module-level surfaces blank (ops queues, AI
+analytics, ledger, incentives, attendance, partner earnings, intelligence reports). This third seed
+fills exactly those gaps with a small, legible, fully derivable data set:
+```bash
+npx wrangler d1 execute pawspace-staging --remote --file=scripts/uat-demo-seed.sql
+```
+Idempotent, namespaced `UATD-*` (never collides with the other two seeds), regenerate with
+`node scripts/uat-demo-seed-gen.mjs`. Every CREATE TABLE inside it is copied verbatim from the source
+file that owns it, and the generator refuses to emit a column that does not exist in that real DDL.
+It carries 12 bookings across all six verticals (including one cancelled so revenue exclusions are
+visible), boarding stays, walk sessions, taxi trips, 4 demo employees with a full payroll run,
+attendance, leave, incentives, productivity facts, AI conversations/handoff/voice/CSAT, app installs,
+a ledger with a deliberately unbalanced journal plus duplicate and outlier vendor bills (so the
+finance anomaly report is not empty), commercial terms with computed payouts, CRM leads and tickets,
+ratings, vaccinations and birthdays.
+`tests/uat-demo-seed.test.mjs` loads this file into an empty database and asserts every module's real
+route handler returns non-empty data.
+
 **Best option — MASKED REAL data** (the actual 4-year book, safe for staging). Run the importer against
 `The_PawSpace_TRUTH.xlsx` locally (the workbook and the generated SQL contain customer data — never
 commit either; keep them off shared drives):

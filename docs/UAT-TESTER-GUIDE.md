@@ -15,6 +15,13 @@
 | Groomer (employee) | `asha.groomer1@tkpetcare.in` | Partner/self-service surfaces |
 | Associate | `anita.associate17@tkpetcare.in` | Limited staff view |
 
+**Demo module identities** (present once `scripts/uat-demo-seed.sql` is loaded — every module page then
+opens with data instead of blank): `uat.demo.manager@tkpetcare.in` (manager),
+`uat.demo.sales1@tkpetcare.in` / `uat.demo.sales2@tkpetcare.in` (sales, appear on the leaderboard and
+in incentives), `uat.demo.groomer@tkpetcare.in` (linked to a real provider — sign in as this one to see
+the Partner workspace with jobs, a live assignment and earnings). Sign in with the same access code.
+All demo rows are prefixed `UATD-` / `Demo ·` so they are obvious in every list.
+
 **Customers do NOT log in here.** Open the app root on your phone, browse as a guest, and log in with any Indian-format mobile number when booking — the OTP is **shown on screen** (sandbox; no real SMS is sent). Every fresh number creates a fresh customer, which is the easiest way to test the new-customer welcome coupon.
 
 ## 2. Sandbox rules (not bugs)
