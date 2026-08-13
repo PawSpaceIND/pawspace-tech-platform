@@ -1,6 +1,8 @@
 "use client";
-import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Badge, Button, EmptyState, StatCard } from "../../components/ui";
+import OpsShell from"../../components/ops-shell/OpsShell";
+import styles from "../team-console.module.css";
 
 type MeetGreet = {
   id: string;
@@ -18,155 +20,101 @@ type MeetGreet = {
   createdAt: number;
 };
 
-const box = { background: "var(--ds-surface)", border: "1px solid var(--ds-border)", borderRadius: "var(--ds-radius-lg)", padding: 16 } as const;
-const row = { display: "grid", gridTemplateColumns: "1.3fr 1fr 1fr 1fr 1.4fr", gap: 8, padding: "10px 0", borderBottom: "1px solid var(--ds-border)", fontSize: 14 } as const;
-const when = (ms: number) => new Date(ms).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
-const NEXT_ACTIONS: Record<string, Array<{ action: string; label: string }>> = {
-  requested: [
-    { action: "confirm", label: "Confirm" },
-    { action: "cancel", label: "Cancel" },
-  ],
-  confirmed: [
-    { action: "complete", label: "Complete" },
-    { action: "no_show", label: "No-show" },
-    { action: "cancel", label: "Cancel" },
-  ],
-};
+const when = (value: number) => new Date(Number(value || 0)).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value || 0);
+const words = (value: string) => value.replaceAll("_", " ");
+const statusTone = (status: MeetGreet["status"]) =>
+  status === "confirmed" ? "success" : status === "completed" ? "info" : status === "requested" ? "warning" : "neutral";
 
-export default function TeamMeetGreetQueue() {
+export default function MeetAndGreetPage() {
   const [rows, setRows] = useState<MeetGreet[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState("");
 
-  const load = () =>
-    fetch("/api/meet-and-greet", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((body) => {
-        if (body.error) setError(String(body.error));
-        else {
-          setError("");
-          setRows((body.data ?? []) as MeetGreet[]);
-        }
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : "Unable to load meet & greet requests"))
-      .finally(() => setLoading(false));
-
-  useEffect(() => {
-    let live = true;
-    fetch("/api/meet-and-greet", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((body) => {
-        if (!live) return;
-        if (body.error) setError(String(body.error));
-        else setRows((body.data ?? []) as MeetGreet[]);
-      })
-      .catch((e) => {
-        if (live) setError(e instanceof Error ? e.message : "Unable to load meet & greet requests");
-      })
-      .finally(() => {
-        if (live) setLoading(false);
-      });
-    return () => {
-      live = false;
-    };
+  const load = useCallback(async () => {
+    try {
+      const response = await fetch("/api/meet-and-greet", { cache: "no-store" });
+      const body = (await response.json().catch(() => ({}))) as { data?: MeetGreet[]; error?: string };
+      if (!response.ok || body.error) throw new Error(String(body.error || `Unable to load meet & greet requests (HTTP ${response.status})`));
+      setRows((body.data ?? []) as MeetGreet[]);
+      setError("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setLoading(false);
+    }
   }, []);
+  useEffect(() => { const timer = setTimeout(() => { void load(); }, 0); return () => clearTimeout(timer); }, [load]);
 
   const transition = async (requestId: string, action: string) => {
-    setBusyId(requestId);
-    setError("");
+    setBusyId(requestId); setError("");
     try {
-      const response = await fetch("/api/meet-and-greet", {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ requestId, action }),
-      });
-      const body = await response.json();
-      if (!response.ok) throw new Error(String(body.error || "Transition failed"));
+      const response = await fetch("/api/meet-and-greet", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ requestId, action }) });
+      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) throw new Error(String(body.error || `Transition failed (HTTP ${response.status})`));
       await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Transition failed");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBusyId("");
     }
   };
 
-  return (
-    <main style={{ maxWidth: 1100, margin: "0 auto", padding: 28, fontFamily: "system-ui", display: "grid", gap: 16 }}>
-      <header>
-        <Link href="/team">← Team</Link>
-        <p style={{ color: "var(--ds-primary-500)", letterSpacing: 1, fontSize: 12 }}>BOARDING &amp; SITTING · MEET &amp; GREET</p>
-        <h1 style={{ margin: 0 }}>Meet &amp; greet requests</h1>
-        <p>Pre-booking host meetings: free 10-minute phone calls, or 4-hour house visits (₹499, waived for 5+ day stays). Newest first. Sandbox/UAT — no live money.</p>
-      </header>
-      {error && (
-        <p role="alert" style={{ color: "var(--ds-danger-500)" }}>
-          {error}
-        </p>
-      )}
-      <section style={box}>
-        <div style={{ ...row, fontWeight: 700, color: "var(--ds-text-muted)" }}>
-          <span>Request</span>
-          <span>Format · Price</span>
-          <span>Preferred (IST)</span>
-          <span>Intended stay</span>
-          <span>Status · Actions</span>
-        </div>
-        {loading && <p>Loading…</p>}
-        {!loading && rows.length === 0 && <p>No meet &amp; greet requests yet.</p>}
-        {rows.map((item) => (
-          <div key={item.id} style={row}>
-            <span>
-              {item.customerId} → {item.hostProviderId}
-              <br />
-              <small>{item.id} · {when(item.createdAt)}</small>
-              {item.notes ? (
-                <>
-                  <br />
-                  <small>{item.notes}</small>
-                </>
-              ) : null}
-            </span>
-            <span>
-              {item.format === "phone" ? "Phone · 10 min" : "House visit · 4 h"}
-              <br />
-              <small>
-                {item.priceCharged === 0 ? "FREE" : `₹${item.priceCharged}`}
-                {item.priceWaivedReason === "stay_5_days_or_more" ? " (5+ day stay)" : ""}
-              </small>
-            </span>
-            <span>{when(item.preferredAt)}</span>
-            <span>
-              {item.intendedStayDays} day{item.intendedStayDays === 1 ? "" : "s"}
-              {item.intendedStayStart ? (
-                <>
-                  <br />
-                  <small>
-                    {item.intendedStayStart} → {item.intendedStayEnd || "?"}
-                  </small>
-                </>
-              ) : null}
-            </span>
-            <span>
-              <b style={{ textTransform: "capitalize" }}>{item.status.replaceAll("_", " ")}</b>
-              <br />
-              {(NEXT_ACTIONS[item.status] || []).map(({ action, label }) => (
-                <button
-                  key={action}
-                  disabled={busyId === item.id}
-                  onClick={() => void transition(item.id, action)}
-                  style={{ marginRight: 6, marginTop: 4 }}
-                >
-                  {busyId === item.id ? "…" : label}
-                </button>
-              ))}
-            </span>
-          </div>
-        ))}
-      </section>
-      <footer>
-        <small>Cancellations are always free — 100% refund, zero cancellation fee (platform-wide policy).</small>
-      </footer>
-    </main>
-  );
+  const open = rows.filter((row) => row.status === "requested");
+  const houseVisits = rows.filter((row) => row.format === "house_visit").length;
+  const waived = rows.filter((row) => row.priceWaivedReason).length;
+
+  return <OpsShell
+      eyebrow="Boarding & sitting · Meet & greet"
+      title="Meet & greet requests"
+      description="Pre-booking host meetings: free 10-minute phone calls, or 4-hour house visits at ₹499 — waived automatically for stays of 5 days or more. Sandbox/UAT: no live money moves here."
+      actions={<Badge tone={open.length ? "warning" : "success"} dot>{open.length} awaiting a decision</Badge>}
+      >
+
+    {error ? <div className={`${styles.panel} ${styles.panelError}`} role="alert"><b>{error}</b></div> : null}
+
+    <section className={styles.tiles}>
+      <StatCard label="Requested" value={open.length} />
+      <StatCard label="All requests" value={rows.length} />
+      <StatCard label="House visits" value={houseVisits} meta={`${rows.length - houseVisits} phone`} />
+      <StatCard label="Fee waived" value={waived} meta="5+ day stays" />
+    </section>
+
+    {loading ? <EmptyState title="Loading meet & greet requests" body="Reading the canonical request list…" />
+      : rows.length === 0 ? <EmptyState title="No meet & greet requests yet" body="Requests appear here when a customer asks to meet a host before booking a stay — a free phone call, or a house visit." />
+      : <div className={styles.tableWrap}><table className={styles.table}>
+        <thead><tr><th>Request</th><th>Format · price</th><th>Preferred (IST)</th><th>Intended stay</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>{rows.map((item) => <tr key={item.id}>
+          <td><div className={styles.stack}>
+            <b>{item.customerId} → {item.hostProviderId}</b>
+            <small>{item.id}</small>
+            <small>raised {when(item.createdAt)}</small>
+          </div></td>
+          <td><div className={styles.stack}>
+            <span>{item.format === "phone" ? "Phone · 10 min" : "House visit · 4 h"}</span>
+            <small>{item.priceCharged > 0 ? money(item.priceCharged) : item.priceWaivedReason ? `Free (${words(item.priceWaivedReason)})` : "Free"}</small>
+          </div></td>
+          <td><small>{when(item.preferredAt)}</small></td>
+          <td><div className={styles.stack}>
+            <span>{item.intendedStayDays} {item.intendedStayDays === 1 ? "day" : "days"}</span>
+            {item.intendedStayStart ? <small>{item.intendedStayStart}{item.intendedStayEnd ? ` → ${item.intendedStayEnd}` : ""}</small> : null}
+          </div></td>
+          <td><Badge tone={statusTone(item.status)}>{words(item.status)}</Badge></td>
+          <td><div className={styles.actions}>
+            {item.status === "requested" ? <>
+              <Button size="sm" disabled={busyId === item.id} onClick={() => { void transition(item.id, "confirm"); }}>Confirm</Button>
+              <Button size="sm" variant="ghost" disabled={busyId === item.id} onClick={() => { void transition(item.id, "cancel"); }}>Cancel</Button>
+            </> : null}
+            {item.status === "confirmed" ? <>
+              <Button size="sm" variant="secondary" disabled={busyId === item.id} onClick={() => { void transition(item.id, "complete"); }}>Mark completed</Button>
+              <Button size="sm" variant="ghost" disabled={busyId === item.id} onClick={() => { void transition(item.id, "no_show"); }}>No show</Button>
+            </> : null}
+            {["completed", "cancelled", "no_show"].includes(item.status) ? <small>closed</small> : null}
+          </div></td>
+        </tr>)}</tbody>
+      </table></div>}
+
+    <footer className={styles.footnote}>Cancellations are always free — 100% refund, zero cancellation fee (platform-wide policy). <b>Sandbox/UAT:</b> no live money.</footer>
+  </OpsShell>;
 }
