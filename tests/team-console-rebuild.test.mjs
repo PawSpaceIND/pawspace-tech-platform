@@ -198,3 +198,32 @@ test("real execution: the CX queue opens on a database without the customer modu
   assert.equal(named[0].customer_name, "Meera Iyer");
   assert.equal(named[0].primary_phone, "9876543210");
 });
+
+test("real execution: tolerating an absent table does not also hide a real fault", async () => {
+  // The ticket badge is decoration, so its read is allowed to fail when the CX module's table does not
+  // exist. The dangerous version of that tolerance is a bare catch(() => null), which reports "no
+  // ticket" for a genuine fault too - a confident zero, and the exact failure mode this codebase keeps
+  // having to remove. Only the absent table may be swallowed.
+  const sqlite = new DatabaseSync(":memory:");
+  globalThis.__CONSOLE_DB__ = makeD1(sqlite);
+  globalThis.__CONSOLE_ENV__ = {};
+  const governance = await import("../lib/conversation-governance.ts");
+  await governance.ensureConversationGovernance(globalThis.__CONSOLE_DB__);
+
+  const now = Date.now();
+  sqlite.prepare("INSERT INTO communication_threads (id,customer_id,ticket_id,status,created_at,updated_at) VALUES ('TH-2','cus_1','CXT-1','open',?,?)").run(now, now);
+
+  // Absent table: tolerated, and the thread still lists with no ticket attached.
+  const withoutTickets = await governance.listConversationThreads(globalThis.__CONSOLE_DB__, { status: "open" });
+  assert.equal(withoutTickets.length, 1);
+  assert.equal(withoutTickets[0].ticket, null, "a missing CX module leaves the badge empty, not the queue");
+
+  // The table exists but is the wrong shape - schema drift, a real fault. This must NOT read as
+  // "no ticket": it has to reach the caller.
+  sqlite.exec("CREATE TABLE customer_experience_tickets (id TEXT PRIMARY KEY, unrelated TEXT)");
+  await assert.rejects(
+    governance.listConversationThreads(globalThis.__CONSOLE_DB__, { status: "open" }),
+    /no such column|priority/i,
+    "schema drift on the ticket table must surface instead of being reported as no ticket",
+  );
+});
