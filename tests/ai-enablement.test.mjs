@@ -58,12 +58,23 @@ const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), "
 const configPage = read("app/team/ai/configuration/page.tsx");
 const teamAiPage = read("app/team/ai/page.tsx");
 
+// Local stand-in for the shared harness the other branch is landing at tests/helpers/d1-harness.mjs
+// ("test the budget, not the shape"). Counts statements and enforces D1's 100-parameter bind cap, so
+// an N+1 or an over-wide IN () fails here rather than in production. Swap for the shared harness once
+// it is on main.
+const meter = { calls: 0, reset() { this.calls = 0; } };
+
+function count(sql, args) {
+  meter.calls += 1;
+  if (args.length > 100) throw new Error(`D1 allows at most 100 bind parameters; this statement used ${args.length}: ${sql.slice(0, 120)}`);
+}
+
 function makeD1(sqlite) {
   const statement = (sql, args) => ({
     bind: (...bound) => statement(sql, bound),
-    first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-    run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
-    all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
+    first: async () => { count(sql, args); const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
+    run: async () => { count(sql, args); const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
+    all: async () => { count(sql, args); return { results: sqlite.prepare(sql).all(...args) }; },
   });
   return {
     prepare: (sql) => statement(sql, []),
@@ -203,4 +214,32 @@ test("reinstalling the grounding supersedes v1 instead of leaving two active pro
   assert.equal(profiles.filter((row) => String(row.status) === "retired").length, 1, "the previous version is retired, not deleted");
   const active = await configLib.resolveActiveAiBusinessConfig(db, { channel: "chat", intent: "service_info" });
   assert.equal(active.profile.version, 2, "the newest version wins");
+});
+
+
+// ---------------------------------------------------------------------------
+// 4. Budget: the status read must not grow with configuration history.
+// ---------------------------------------------------------------------------
+test("the status read costs the same whether there is one config version or fifty", async () => {
+  coldDb();
+  const bootstrap = () => bootstrapRoute.POST(new Request("http://localhost/api/ai-bootstrap", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }));
+  await bootstrap();
+
+  meter.reset();
+  await get("/api/ai-business-configuration?mode=status");
+  const small = meter.calls;
+
+  // Nine more bootstraps: ~10 profiles, ~50 intents, ~100 knowledge versions and their audit trail.
+  for (let round = 0; round < 9; round += 1) await bootstrap();
+  const versions = await configLib.aiBusinessConfigurationSnapshot(globalThis.__PAWSPACE_TEST_ENV.DB);
+  assert.ok(versions.knowledge.length >= 100, "the history really did grow");
+
+  meter.reset();
+  await get("/api/ai-business-configuration?mode=status");
+  const large = meter.calls;
+
+  // This is the point of the test: not "how many queries" but "does it scale". The handler used to
+  // call aiBusinessConfigurationSnapshot and pull every version row to count two integers.
+  assert.equal(large, small, `status issued ${large} statements against 100+ versions vs ${small} against 10 — it must be constant`);
+  assert.ok(small <= 20, `status should be a bounded read, got ${small} statements`);
 });
