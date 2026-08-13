@@ -62,7 +62,7 @@ async function ensureTables(db: Awaited<ReturnType<typeof database>>) {
     db.prepare("CREATE TABLE IF NOT EXISTS booking_customer_notifications (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,customer_id TEXT,channel TEXT NOT NULL,template_code TEXT NOT NULL,message TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',event_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS booking_rebooking_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,source_event_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'offered',reason TEXT NOT NULL,eligible_at INTEGER NOT NULL,selected_start TEXT,assigned_provider_id TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'requested',requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
-    db.prepare("CREATE TABLE IF NOT EXISTS booking_package_upgrade_requests (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,source_event_id TEXT NOT NULL,requested_package_name TEXT NOT NULL,requested_amount REAL NOT NULL,previous_amount REAL NOT NULL,status TEXT NOT NULL DEFAULT 'pricing_approval_required',requested_by TEXT NOT NULL,approved_by TEXT,approved_amount REAL,decision_reason TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS booking_package_upgrade_requests (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,source_event_id TEXT NOT NULL,requested_package_name TEXT NOT NULL,requested_amount REAL NOT NULL,previous_amount REAL NOT NULL,status TEXT NOT NULL DEFAULT 'pricing_approval_required',requested_by TEXT NOT NULL,approved_by TEXT,approved_amount REAL,decision_reason TEXT,claim_token TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_package_upgrade_booking ON booking_package_upgrade_requests(booking_id,status,created_at)"),
   ]);
 }
@@ -146,30 +146,42 @@ export async function POST(request: Request) {
       const previous = Number(booking.total_amount || 0);
       if (!Number.isFinite(amount) || amount <= 0) return json({ error: "Approved upgrade amount must be a real positive figure" }, 400);
       if (amount < previous) return json({ error: "A package upgrade cannot reduce the booking total; use the governed refund path" }, 409);
-      const eventId = crypto.randomUUID();
-      // Claim the transition BEFORE anything depends on it. The compare-and-set was previously the
-      // first statement of the same batch that moved the money, and its result was never read - so two
-      // concurrent approvals both passed the status check above, both entered the batch, and the one
-      // whose CAS changed zero rows still rewrote total_amount and booking_payments.amount with its own
-      // figure. The price was decided by whoever finished last, not by whoever won the transition.
-      const claimed = await db.prepare("UPDATE booking_package_upgrade_requests SET status='applied',approved_by=?,approved_amount=?,decision_reason=?,updated_at=? WHERE id=? AND status='pricing_approval_required'")
-        .bind(actor.email, amount, input.reason.trim(), now, upgrade.id).run();
-      if (Number(claimed.meta?.changes || 0) !== 1) return json({ error: "Package upgrade has already been priced" }, 409);
-
-      // Only the winner reaches here, and everything it writes - money, events, customer notice and the
-      // audit record - goes in ONE batch. The audit used to run after the batch, so a failure there left
-      // the booking repriced with nothing recording who did it. Money and its audit now land together or
-      // not at all. If this batch fails after the claim, the request is left 'applied' with the price
-      // unchanged: the upgrade is stuck rather than silently repriced, which is the safe direction.
-      await db.batch([
-        db.prepare("UPDATE canonical_bookings SET package_name=?,total_amount=?,pricing_json=json_set(pricing_json,'$.providerUpgrade',json(?)),updated_at=? WHERE id=?").bind(String(upgrade.requested_package_name), amount, JSON.stringify({ approved: true, approvedBy: actor.email, requestId: upgrade.id, recordedAt: now }), now, input.bookingId),
-        db.prepare("UPDATE booking_payments SET amount=?,detail_json=json_set(detail_json,'$.packageUpgrade',json(?)),updated_at=? WHERE booking_id=?").bind(amount, JSON.stringify({ packageName: String(upgrade.requested_package_name), approved: true, approvedBy: actor.email }), now, input.bookingId),
-        db.prepare("INSERT INTO booking_operational_events (id,booking_id,provider_id,event_type,reason,impact_minutes,detail_json,actor_id,created_at) VALUES (?,?,?,?,?,0,?,?,?)").bind(eventId, input.bookingId, String(upgrade.provider_id), "package_upgrade.applied", input.reason.trim(), JSON.stringify({ requestId: upgrade.id, previousAmount: previous, approvedAmount: amount }), actor.email, now),
-        db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(), input.bookingId, "package_upgrade.applied", "booking", input.bookingId, actor.email, JSON.stringify({ requestId: upgrade.id, previousAmount: previous, approvedAmount: amount }), now),
-        db.prepare("INSERT INTO booking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(), input.bookingId, String(booking.customer_id ?? ""), "whatsapp", "package_upgrade.applied", "Your PawSpace package upgrade has been confirmed. The revised scope and price are visible in your booking.", "queued", eventId, now),
-        db.prepare("INSERT INTO security_audit_events (id,actor_email,actor_role,action,resource_type,resource_id,outcome,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
-          .bind(crypto.randomUUID(), actor.email, actor.roleCode, "booking_operations.apply_package_upgrade", "booking", input.bookingId, "completed", JSON.stringify({ requestId: upgrade.id, previousAmount: previous, approvedAmount: amount }), now),
+      const eventId = crypto.randomUUID(), claim = crypto.randomUUID();
+      // Claim, money, audit and the `applied` transition are ONE atomic batch, so `applied` can only
+      // mean the financial application committed.
+      //
+      // Two earlier shapes both failed. Putting the compare-and-set first in the batch and never
+      // reading its result let a losing approval rewrite the price anyway. Claiming in a separate
+      // statement before the batch fixed that, but a failure inside the batch then rolled back the
+      // money while leaving the claim committed - the request read `applied` for an amount that was
+      // never applied, and no approver could retry it because the status no longer matched.
+      //
+      // Now every dependent statement is guarded by EXISTS on this attempt's own `claim_token`, so a
+      // caller whose CAS changed nothing writes nothing - it cannot ride the winner's claim. And
+      // because the CAS is inside the batch, any failure rolls the whole thing back: the request
+      // returns to pricing_approval_required, the money is untouched, and the next approval retries
+      // cleanly. Either all seven facts commit together, or none of them do.
+      const guard = "EXISTS (SELECT 1 FROM booking_package_upgrade_requests WHERE id=? AND claim_token=?)";
+      const applied = await db.batch([
+        db.prepare("UPDATE booking_package_upgrade_requests SET status='applied',approved_by=?,approved_amount=?,decision_reason=?,claim_token=?,updated_at=? WHERE id=? AND status='pricing_approval_required'")
+          .bind(actor.email, amount, input.reason.trim(), claim, now, upgrade.id),
+        db.prepare(`UPDATE canonical_bookings SET package_name=?,total_amount=?,pricing_json=json_set(pricing_json,'$.providerUpgrade',json(?)),updated_at=? WHERE id=? AND ${guard}`)
+          .bind(String(upgrade.requested_package_name), amount, JSON.stringify({ approved: true, approvedBy: actor.email, requestId: upgrade.id, recordedAt: now }), now, input.bookingId, upgrade.id, claim),
+        db.prepare(`UPDATE booking_payments SET amount=?,detail_json=json_set(detail_json,'$.packageUpgrade',json(?)),updated_at=? WHERE booking_id=? AND ${guard}`)
+          .bind(amount, JSON.stringify({ packageName: String(upgrade.requested_package_name), approved: true, approvedBy: actor.email }), now, input.bookingId, upgrade.id, claim),
+        db.prepare(`INSERT INTO booking_operational_events (id,booking_id,provider_id,event_type,reason,impact_minutes,detail_json,actor_id,created_at) SELECT ?,?,?,?,?,0,?,?,? WHERE ${guard}`)
+          .bind(eventId, input.bookingId, String(upgrade.provider_id), "package_upgrade.applied", input.reason.trim(), JSON.stringify({ requestId: upgrade.id, previousAmount: previous, approvedAmount: amount }), actor.email, now, upgrade.id, claim),
+        db.prepare(`INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) SELECT ?,?,?,?,?,?,?,? WHERE ${guard}`)
+          .bind(crypto.randomUUID(), input.bookingId, "package_upgrade.applied", "booking", input.bookingId, actor.email, JSON.stringify({ requestId: upgrade.id, previousAmount: previous, approvedAmount: amount }), now, upgrade.id, claim),
+        db.prepare(`INSERT INTO booking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) SELECT ?,?,?,?,?,?,?,?,? WHERE ${guard}`)
+          .bind(crypto.randomUUID(), input.bookingId, String(booking.customer_id ?? ""), "whatsapp", "package_upgrade.applied", "Your PawSpace package upgrade has been confirmed. The revised scope and price are visible in your booking.", "queued", eventId, now, upgrade.id, claim),
+        db.prepare(`INSERT INTO security_audit_events (id,actor_email,actor_role,action,resource_type,resource_id,outcome,detail_json,created_at) SELECT ?,?,?,?,?,?,?,?,? WHERE ${guard}`)
+          .bind(crypto.randomUUID(), actor.email, actor.roleCode, "booking_operations.apply_package_upgrade", "booking", input.bookingId, "completed", JSON.stringify({ requestId: upgrade.id, previousAmount: previous, approvedAmount: amount }), now, upgrade.id, claim),
       ]);
+      // The CAS is the first statement; if it changed nothing this attempt lost the race, and every
+      // guarded statement above it wrote nothing either.
+      if (Number(applied[0]?.meta?.changes || 0) !== 1) return json({ error: "Package upgrade has already been priced" }, 409);
+
       return json({ data: { eventId, bookingId: input.bookingId, action: input.action, upgradeRequestId: String(upgrade.id), previousAmount: previous, approvedAmount: amount } }, 200);
     }
 

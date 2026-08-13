@@ -215,23 +215,39 @@ test("the roles that hold the reporting permission cannot price an upgrade", asy
 // ---------------------------------------------------------------------------------------------
 
 /** Async at every call, like the real D1 client - all the interleaving a check-then-act race needs. */
+let injectFailure = null;
 function makeConcurrentD1(sqlite) {
+  let queue = Promise.resolve();
   function statement(sql, args) {
+    const guard = () => { if (injectFailure && injectFailure.test(sql)) throw new Error(`INJECTED FAILURE: ${sql.slice(0, 40)}`); };
     return {
       bind: (...bound) => statement(sql, bound),
-      first: async () => { await null; const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-      run: async () => { await null; const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
-      all: async () => { await null; return { results: sqlite.prepare(sql).all(...args) }; },
+      first: async () => { await null; guard(); const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
+      run: async () => { await null; guard(); const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
+      all: async () => { await null; guard(); return { results: sqlite.prepare(sql).all(...args) }; },
     };
   }
   return {
     prepare: (sql) => statement(sql, []),
-    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
+    // D1 runs a batch in a transaction: all statements commit, or none do. Modelling that is the whole
+    // point of these tests - a non-atomic shim would leave partial writes D1 would have rolled back,
+    // and every failure-injection assertion below would be judging the harness instead of the route.
+    // Serialised because one sqlite connection cannot nest BEGIN; D1 gives each batch its own.
+    batch: async (list) => {
+      const mine = queue.then(async () => {
+        sqlite.exec("BEGIN");
+        try { const out = []; for (const item of list) out.push(await item.run()); sqlite.exec("COMMIT"); return out; }
+        catch (error) { sqlite.exec("ROLLBACK"); throw error; }
+      });
+      queue = mine.catch(() => {});
+      return mine;
+    },
     exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
   };
 }
 
 async function seedConcurrent() {
+  injectFailure = null;
   const { sqlite, route } = await seed();
   globalThis.__BOPS_DB__ = makeConcurrentD1(sqlite);
   sqlite.exec("CREATE TABLE IF NOT EXISTS security_audit_events (id TEXT PRIMARY KEY, actor_email TEXT NOT NULL, actor_role TEXT NOT NULL, action TEXT NOT NULL, resource_type TEXT NOT NULL, resource_id TEXT, outcome TEXT NOT NULL, detail_json TEXT NOT NULL, created_at INTEGER NOT NULL)");
@@ -288,8 +304,13 @@ test("money and its audit record land together", async () => {
   // without the record of who repriced it.
   const src = await (await import("node:fs/promises")).readFile(new URL("../app/api/booking-operations/route.ts", import.meta.url), "utf8");
   const applyBlock = src.slice(src.indexOf('if (input.action === "apply_package_upgrade")'), src.indexOf('if (input.action === "refund_status")'));
-  assert.match(applyBlock, /INSERT INTO security_audit_events[\s\S]{0,400}\n\s*\]\);/, "the audit insert is the last statement of the money batch");
-  assert.ok(!/\]\);\s*await securityAudit\(/.test(applyBlock), "and is not a separate write after the batch");
+  // Structural: the claim, the money and the audit are one batch, and every dependent statement is
+  // guarded by this attempt's own claim token so a loser cannot ride the winner's claim.
+  assert.match(applyBlock, /await db\.batch\(\[[\s\S]*INSERT INTO security_audit_events[\s\S]*\]\);/, "the audit insert is inside the money batch");
+  assert.match(applyBlock, /UPDATE booking_package_upgrade_requests SET status='applied'[\s\S]{0,600}claim_token=\?/, "the CAS writes this attempt's claim token");
+  assert.match(applyBlock, /applied\[0\]\?\.meta\?\.changes \|\| 0\) !== 1/, "and the CAS result decides the outcome");
+  assert.ok(!/await securityAudit\(/.test(applyBlock), "the audit is not a separate write after the batch");
+  assert.equal((applyBlock.match(/EXISTS \(SELECT 1 FROM booking_package_upgrade_requests WHERE id=\? AND claim_token=\?\)/g) || []).length >= 1, true, "dependent statements are token-guarded");
 });
 
 test("a losing approval changes no money and writes no audit", async () => {
@@ -348,4 +369,99 @@ test("a requested upgrade tells the customer nothing has changed yet", async () 
   assert.ok(pending.every((message) => /awaiting confirmation|has been requested/i.test(message)), `pending notice must not claim a change: ${JSON.stringify(pending)}`);
   assert.ok(pending.every((message) => !/revised service scope, price and timing are visible/i.test(message)));
   assert.deepEqual(money(sqlite), { total: BOOKING_TOTAL, payment: BOOKING_TOTAL }, "and indeed nothing changed");
+});
+
+// ---------------------------------------------------------------------------------------------
+// Failure injection. `applied` must mean the financial application committed - not merely that an
+// approver won the claim. Independent QA proved the previous shape left the request reading
+// `applied / Rs 9,000` while the booking stayed at Rs 6,000, with no audit and no way to retry.
+// ---------------------------------------------------------------------------------------------
+
+const PENDING = "pricing_approval_required";
+const upgradeRow = (sqlite) => sqlite.prepare("SELECT status,approved_by,approved_amount,claim_token FROM booking_package_upgrade_requests WHERE booking_id='BK-1'").get();
+const sideEffects = (sqlite) => ({
+  audits: sqlite.prepare("SELECT COUNT(*) n FROM security_audit_events WHERE action='booking_operations.apply_package_upgrade'").get().n,
+  appliedEvents: sqlite.prepare("SELECT COUNT(*) n FROM booking_operational_events WHERE booking_id='BK-1' AND event_type='package_upgrade.applied'").get().n,
+  confirmations: sqlite.prepare("SELECT COUNT(*) n FROM booking_customer_notifications WHERE booking_id='BK-1' AND template_code='package_upgrade.applied'").get().n,
+});
+
+async function pendingUpgrade() {
+  const { sqlite, route } = await seedConcurrent();
+  const requested = await (await post(route, {
+    bookingId: "BK-1", providerId: "PRV-REAL", action: "package_upgrade",
+    reason: "customer approved a package upgrade during service",
+    upgradedPackageName: "Premium spa", upgradedAmount: 9000,
+  })).json();
+  sqlite.prepare("UPDATE booking_package_upgrade_requests SET requested_by='partner@pawspace.test' WHERE id=?").run(requested.data.upgradeRequestId);
+  const applyAs = (amount) => post(route, {
+    bookingId: "BK-1", providerId: "PRV-REAL", action: "apply_package_upgrade",
+    upgradeRequestId: requested.data.upgradeRequestId, reason: "pricing decision", upgradedAmount: amount,
+  });
+  return { sqlite, route, id: requested.data.upgradeRequestId, applyAs };
+}
+
+test("B: a money-statement failure leaves the request retryable and the money untouched", async () => {
+  const { sqlite, applyAs } = await pendingUpgrade();
+  injectFailure = /UPDATE booking_payments SET amount=/;
+  let response;
+  try { response = await applyAs(9000); } catch { response = { status: "THREW" }; }
+  injectFailure = null;
+
+  assert.equal(response.status, 500, "the caller is told it failed");
+  assert.deepEqual(money(sqlite), { total: BOOKING_TOTAL, payment: BOOKING_TOTAL }, "no money moved");
+  assert.deepEqual(sideEffects(sqlite), { audits: 0, appliedEvents: 0, confirmations: 0 }, "and nothing was left behind");
+  const row = upgradeRow(sqlite);
+  assert.equal(row.status, PENDING, "the request reverted to pending rather than claiming an approval that never applied");
+  assert.equal(row.approved_by, null);
+  assert.equal(row.approved_amount, null);
+
+  // The point of the whole change: a legitimate approval can still land afterwards.
+  const retry = await applyAs(9000);
+  assert.equal(retry.status, 200, "a subsequent approval retries successfully");
+  assert.deepEqual(money(sqlite), { total: 9000, payment: 9000 });
+  assert.deepEqual(sideEffects(sqlite), { audits: 1, appliedEvents: 1, confirmations: 1 });
+  assert.equal(upgradeRow(sqlite).status, "applied");
+});
+
+test("C: an audit-insert failure leaves the request retryable and the money untouched", async () => {
+  const { sqlite, applyAs } = await pendingUpgrade();
+  injectFailure = /INSERT INTO security_audit_events/;
+  let response;
+  try { response = await applyAs(9000); } catch { response = { status: "THREW" }; }
+  injectFailure = null;
+
+  assert.equal(response.status, 500);
+  assert.deepEqual(money(sqlite), { total: BOOKING_TOTAL, payment: BOOKING_TOTAL }, "money never moves without its audit");
+  assert.deepEqual(sideEffects(sqlite), { audits: 0, appliedEvents: 0, confirmations: 0 });
+  assert.equal(upgradeRow(sqlite).status, PENDING, "no applied state");
+
+  const retry = await applyAs(9000);
+  assert.equal(retry.status, 200, "and the approval retries successfully");
+  assert.deepEqual(money(sqlite), { total: 9000, payment: 9000 });
+  assert.equal(sideEffects(sqlite).audits, 1);
+});
+
+test("A: the winner's claim token is what authorises the money, so a loser writes nothing", async () => {
+  const { sqlite, applyAs } = await pendingUpgrade();
+  const [a, b] = await Promise.all([applyAs(9000), applyAs(50000)]);
+  assert.deepEqual([a.status, b.status].sort(), [200, 409]);
+
+  const winner = a.status === 200 ? 9000 : 50000;
+  const loser = a.status === 200 ? 50000 : 9000;
+  const row = upgradeRow(sqlite);
+  assert.equal(row.status, "applied");
+  assert.equal(row.approved_amount, winner);
+  assert.ok(row.claim_token, "the winning attempt stamped its claim token");
+  assert.deepEqual(money(sqlite), { total: winner, payment: winner });
+  assert.deepEqual(sideEffects(sqlite), { audits: 1, appliedEvents: 1, confirmations: 1 }, "exactly one of everything");
+
+  const everything = JSON.stringify([
+    sqlite.prepare("SELECT * FROM canonical_bookings WHERE id='BK-1'").all(),
+    sqlite.prepare("SELECT * FROM booking_payments WHERE booking_id='BK-1'").all(),
+    sqlite.prepare("SELECT * FROM booking_package_upgrade_requests WHERE booking_id='BK-1'").all(),
+    sqlite.prepare("SELECT * FROM security_audit_events").all(),
+    sqlite.prepare("SELECT * FROM booking_operational_events WHERE booking_id='BK-1'").all(),
+    sqlite.prepare("SELECT * FROM booking_customer_notifications WHERE booking_id='BK-1'").all(),
+  ]);
+  assert.ok(!everything.includes(String(loser)), `the losing amount ${loser} must appear nowhere`);
 });
