@@ -123,7 +123,11 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
     const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;
     return body.action==="mark_paid"?"payments.manage":"bookings.view";
   }
-  if(url.pathname==="/api/booking-operations"){if(method==="GET")return "bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;if(body.action==="refund_status")return "payments.manage";return ["package_upgrade","service_overrun","running_late","vehicle_issue"].includes(String(body.action))?"communications.message":"bookings.manage";}
+  // Reporting what happened on a job is a communications act; changing what the customer owes is not.
+  // `package_upgrade` only records a request now - the money moves through `apply_package_upgrade`,
+  // which is a pricing decision. The route enforces the same mapping itself, so a path the gateway
+  // does not recognise cannot get a weaker answer than this one.
+  if(url.pathname==="/api/booking-operations"){if(method==="GET")return "bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;if(body.action==="refund_status")return "payments.manage";if(body.action==="apply_package_upgrade")return "pricing.manage";return ["package_upgrade","service_overrun","running_late","vehicle_issue","rebook_requested","refund_requested"].includes(String(body.action))?"communications.message":"bookings.manage";}
   if(url.pathname==="/api/meet-and-greet")return method==="POST"?null:"bookings.manage";
   return "dashboard.view";
 }

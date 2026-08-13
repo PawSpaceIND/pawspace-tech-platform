@@ -30,6 +30,10 @@ const REQUIRED_COLUMNS: Array<{ table: string; column: string; definition: strin
     table: "customer_contact_preferences", column: "opt_out", definition: "INTEGER NOT NULL DEFAULT 0",
     why: "lib/customer-360.ts created this table without the opt-out flag lib/revenue-opportunity-governance.ts filters on",
   },
+  {
+    table: "booking_package_upgrade_requests", column: "claim_token", definition: "TEXT",
+    why: "the table shipped without claim_token before the package-upgrade approval became a claim-token compare-and-set; on a database that already created it, every apply_package_upgrade fails with 'no such column: claim_token'",
+  },
 ];
 
 async function tableExists(db: Db, name: string) {
@@ -48,9 +52,18 @@ export async function repairSchemaDrift(db: Db) {
     if (!await tableExists(db, item.table)) continue;
     const columns = await db.prepare(`PRAGMA table_info(${item.table})`).all<Row>().catch(() => ({ results: [] as Row[] }));
     if (columns.results.some(row => String(row.name) === item.column)) continue;
-    // A concurrent request may win the race and add it first; that ALTER simply fails and we move on.
-    await db.prepare(`ALTER TABLE ${item.table} ADD COLUMN ${item.column} ${item.definition}`).run().catch(() => {});
-    repaired.push(`${item.table}.${item.column}`);
+    try {
+      await db.prepare(`ALTER TABLE ${item.table} ADD COLUMN ${item.column} ${item.definition}`).run();
+      repaired.push(`${item.table}.${item.column}`);
+    } catch (error) {
+      // This used to swallow the failure AND still report the column as repaired, so a genuinely failed
+      // ALTER resolved successfully and every caller carried on against a table that still lacks the
+      // column. Only one failure is benign: a concurrent request winning the race and adding it first,
+      // which fails with "duplicate column name". Distinguish them by re-reading the schema - accept
+      // only if the column is actually there now, and otherwise fail closed so the caller knows.
+      const after = await db.prepare(`PRAGMA table_info(${item.table})`).all<Row>().catch(() => ({ results: [] as Row[] }));
+      if (!after.results.some(row => String(row.name) === item.column)) throw error;
+    }
   }
   return { repaired };
 }
