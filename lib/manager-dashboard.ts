@@ -1,3 +1,4 @@
+import { ensurePeopleTables } from "./people-foundation";
 import { currentSalesBase, computeDailySalesIncentive, computeMonthlySalesIncentive } from "./sales-incentive-engine";
 import { currentGroomerBracket, computeGroomerMonthlyIncentive } from "./grooming-incentive-engine";
 import { computeTrainerMonthlyIncentive } from "./trainer-incentive-engine";
@@ -97,6 +98,7 @@ async function trainerRow(db:Db,email:string,name:string,today:string,actorId:st
  * engines already built and tested this session - nothing here is a separate, parallel calculation.
  */
 export async function buildManagerDashboard(db:Db,input:{actorEmail:string;permissions:string[];asOf?:number}){
+  await ensurePeopleTables(db); // cold-DB safe: the dashboard reads employees/employment versions before any people module has run
   const asOf=input.asOf??Date.now(),today=new Date(asOf).toISOString().slice(0,10);
   const scope=await resolveDashboardScope(db,{actorEmail:input.actorEmail,permissions:input.permissions});
   const employees=await employeesInScope(db,scope);
