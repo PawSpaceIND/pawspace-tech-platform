@@ -11,20 +11,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
-import * as nodeModule from "node:module";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
-const CF_STUB = "data:text/javascript,export const env=new Proxy({},{get:(t,k)=>k===\"DB\"?globalThis.__CONSOLE_DB__:(globalThis.__CONSOLE_ENV__??{})[k]});";
-nodeModule.registerHooks({
-  resolve(specifier, context, nextResolve) {
-    if (specifier === "cloudflare:workers") return { url: CF_STUB, shortCircuit: true };
-    try {
-      return nextResolve(specifier, context);
-    } catch (error) {
-      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
-      throw error;
-    }
-  },
-});
+
+installWorkersHooks("__CONSOLE_DB__");
 
 function makeD1(sqlite) {
   function statement(sql, args) {
