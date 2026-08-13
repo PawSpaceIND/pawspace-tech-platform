@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import styles from "./control.module.css";
 import CouponsControlPanel from "./coupons-control-panel";
 import ReferralsControlPanel from "./referrals-control-panel";
@@ -41,33 +41,34 @@ type View =
   | "quality"
   | "security"
   | "health";
-const nav: { id: View; label: string; icon: string; count?: number }[] = [
+// Nav badges carried invented queue lengths (12 launch items, 14 audit items, 9 approvals). None
+// had a source, so none are shown.
+const nav: { id: View; label: string; icon: string }[] = [
   { id: "command", label: "Control tower", icon: "⌂" },
-  { id: "launch", label: "Launch essentials", icon: "◎", count: 12 },
-  { id: "lifecycle", label: "Customer booking lifecycle", icon: "⛓", count: 4 },
-  { id: "audit", label: "Platform audit & release", icon: "✓", count: 14 },
-  { id: "business", label: "Business 360 & reports", icon: "▥", count: 12 },
-  { id: "scheduling", label: "Auto-scheduling", icon: "◷", count: 4 },
-  { id: "pricing", label: "Pricing, packages & slots", icon: "₹", count: 4 },
-  { id: "marketing", label: "Marketing command center", icon: "↗", count: 6 },
-  { id: "finance", label: "Finance, expenses & accounts", icon: "₹", count: 11 },
-  { id: "access2", label: "Users, roles & access", icon: "♟", count: 8 },
-  { id: "approvals", label: "Approvals", icon: "✓", count: 9 },
+  { id: "launch", label: "Launch essentials", icon: "◎" },
+  { id: "lifecycle", label: "Customer booking lifecycle", icon: "⛓" },
+  { id: "audit", label: "Platform audit & release", icon: "✓" },
+  { id: "business", label: "Business 360 & reports", icon: "▥" },
+  { id: "scheduling", label: "Auto-scheduling", icon: "◷" },
+  { id: "pricing", label: "Pricing, packages & slots", icon: "₹" },
+  { id: "marketing", label: "Marketing command center", icon: "↗" },
+  { id: "finance", label: "Finance, expenses & accounts", icon: "₹" },
+  { id: "access2", label: "Users, roles & access", icon: "♟" },
+  { id: "approvals", label: "Approvals", icon: "✓" },
   { id: "master", label: "Master settings", icon: "⚙" },
-  { id: "cities", label: "Cities & geofences", icon: "◎", count: 1 },
+  { id: "cities", label: "Cities & geofences", icon: "◎" },
   {
     id: "subscriptions",
     label: "Grooming subscriptions",
     icon: "◈",
-    count: 386,
   },
-  { id: "coupons", label: "Coupon management", icon: "₹", count: 4 },
-  { id: "referrals", label: "Referral management", icon: "↗", count: 6 },
-  { id: "data2", label: "Customer data & contact", icon: "⇄", count: 1304 },
-  { id: "inventory", label: "Inventory & buying", icon: "▦", count: 7 },
-  { id: "quality", label: "Quality & incidents", icon: "◆", count: 3 },
+  { id: "coupons", label: "Coupon management", icon: "₹" },
+  { id: "referrals", label: "Referral management", icon: "↗" },
+  { id: "data2", label: "Customer data & contact", icon: "⇄" },
+  { id: "inventory", label: "Inventory & buying", icon: "▦" },
+  { id: "quality", label: "Quality & incidents", icon: "◆" },
   { id: "security", label: "Privacy & security", icon: "◇" },
-  { id: "health", label: "System health", icon: "⚡", count: 2 },
+  { id: "health", label: "System health", icon: "⚡" },
 ];
 const roles = [
   ["Super Admin", "2", "All modules + settings", "Critical"],
@@ -77,63 +78,98 @@ const roles = [
   ["HR & Payroll", "2", "People, attendance, payroll", "High"],
   ["Service Partner", "94", "Assigned jobs and earnings", "Low"],
 ];
+// Shortcut cards. Their old third column carried hand-written status words ("Partial",
+// "Prototype", "P0 gaps") that nothing verified; the card now shows whether that view reads the
+// database, which is derived from the sets above and is checkable.
 const modules = [
   [
     "Platform audit & release",
     "Evidence, gaps, owners and launch gates",
-    "14 areas",
     "audit",
   ],
   [
     "Roles & access",
     "Least privilege, masking and quarterly reviews",
-    "Partial",
     "access",
   ],
   [
     "Approval policies",
     "Maker-checker for money, exports, fines and settings",
-    "Prototype",
     "approvals",
   ],
   [
     "Master configuration",
     "Services, prices, slots, zones, taxes and commissions",
-    "Partial",
     "master",
   ],
   [
     "Data governance",
     "Imports, dedupe, consent, retention and merges",
-    "Partial",
     "data",
   ],
   [
     "Inventory & buying",
     "Consumables, food, kits, vendors and wastage",
-    "Prototype",
     "inventory",
   ],
   [
     "Quality & incidents",
     "Pet safety, complaints, CAPA and insurance",
-    "Prototype",
     "quality",
   ],
   [
     "Privacy & security",
     "MFA, consent, encryption, backup and deletion",
-    "P0 gaps",
     "security",
   ],
   [
     "System health",
     "Build gates, integrations and recovery evidence",
-    "UAT only",
     "health",
   ],
 ];
+type ControlSignal = { code: string; severity: "critical" | "attention" | "clear"; label: string; detail: string; count: number; view: string };
+type PostureArea = { code: string; label: string; score: number | null; good: number | null; total: number | null; basis: string };
+type ControlTower = {
+  date: string; timezone: string;
+  headline: { signalsTracked: number; signalsClear: number; needsAttention: number; openItems: number };
+  signals: ControlSignal[]; posture: PostureArea[];
+  recentChanges: Array<{ at: number; actor: string; action: string; entity: string; outcome: string }>;
+  sourceStatus: Record<string, string>;
+};
+
+/** Live governance posture. Every number is counted from a governance table; anything without a
+ *  source comes back null and is rendered as "Not connected" rather than a plausible percentage. */
+function useControlTower() {
+  const [result, setResult] = useState<{ data: ControlTower | null; error: string } | null>(null);
+  useEffect(() => {
+    let active = true;
+    fetch("/api/control-tower", { cache: "no-store" })
+      .then(async (response) => {
+        const body = (await response.json()) as { data?: ControlTower; error?: string };
+        if (!response.ok) throw new Error(body.error || "Unable to load the control tower");
+        if (active) setResult({ data: body.data ?? null, error: "" });
+      })
+      .catch((problem) => { if (active) setResult({ data: null, error: problem instanceof Error ? problem.message : "Unable to load the control tower" }); });
+    return () => { active = false; };
+  }, []);
+  return { data: result?.data ?? null, error: result?.error ?? "", loading: !result };
+}
+const istStamp = (at: number) =>
+  at ? new Date(at).toLocaleString("en-GB", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false }) : "—";
+const longIstDay = (day: string) => {
+  const at = new Date(`${day}T12:00:00+05:30`);
+  return Number.isFinite(at.getTime()) ? at.toLocaleDateString("en-GB", { timeZone: "Asia/Kolkata", weekday: "long", day: "numeric", month: "long", year: "numeric" }) : day;
+};
+/** Views still rendering built-in example rows rather than the database, labelled on screen so a
+ *  tester never files a bug against invented data. "access2" and "data2" are the live replacements
+ *  for the older "access" and "data" prototypes and are deliberately not in this set. */
+const PROTOTYPE_CONTROL_VIEWS = new Set(["access", "approvals", "master", "data", "inventory", "quality", "security", "health"]);
+/** Hand-authored assessment rather than a live count - true as written, but written by a person. */
+const AUTHORED_REGISTER_VIEWS = new Set(["audit"]);
+
 export default function Control() {
+  const { data: tower, error: towerError, loading: towerLoading } = useControlTower();
   const [view, setView] = useState<View>("command");
   const [role, setRole] = useState(roles[0]);
   const [toast, setToast] = useState("");
@@ -167,7 +203,6 @@ export default function Control() {
             >
               <i>{n.icon}</i>
               <span>{n.label}</span>
-              {n.count && <b>{n.count}</b>}
             </button>
           ))}
         </nav>
@@ -196,37 +231,63 @@ export default function Control() {
             Emergency controls
           </button>
         </header>
+        {PROTOTYPE_CONTROL_VIEWS.has(view) && (
+          <p className={styles.notice}>
+            <b>Sample data.</b> This view still shows built-in example rows, not
+            your database. Control tower, Launch essentials, Booking lifecycle,
+            Business 360, Auto-scheduling, Pricing, Marketing, Finance, Cities,
+            Coupons, Referrals, Subscriptions, Users &amp; roles and Customer
+            data read live data.
+          </p>
+        )}
+        {AUTHORED_REGISTER_VIEWS.has(view) && (
+          <p className={styles.notice}>
+            <b>Authored register.</b> These area assessments were written by the
+            team, not counted from the database. Treat them as a review
+            document; the Control tower above is the live measurement.
+          </p>
+        )}
         {view === "command" && (
           <>
             <section className={styles.hero}>
               <div>
-                <span>PLATFORM ASSURANCE · TEST DATA</span>
+                <span>PLATFORM ASSURANCE · {tower ? `${longIstDay(tower.date)} · ${tower.timezone}` : "LOADING"}</span>
                 <h2>One place to control the whole company.</h2>
                 <p>
-                  Who can do what, which rule is active, what changed, where
-                  data came from, what failed and who must resolve it.
+                  Every figure below is counted from a governance table right
+                  now. Nothing on this screen is a target, an estimate or an
+                  example — where no source exists it says so.
                 </p>
               </div>
               <strong>
                 UAT<small>launch candidate</small>
               </strong>
-              <button onClick={() => setView("audit")}> 
+              <button onClick={() => setView("audit")}>
                 Open full audit →
               </button>
             </section>
+            {towerError && <p className={styles.notice}>{towerError}</p>}
             <section className={styles.metrics}>
-              {[
-                ["Audited areas", "14", "App to reliability"],
-                ["Verified requirements", "84", "Evidence in current build"],
-                ["Partial requirements", "90", "Connection or completion due"],
-                ["P0 release blockers", "5", "Before public launch"],
-              ].map((x) => (
-                <article key={x[0]}>
-                  <span>{x[0]}</span>
-                  <strong>{x[1]}</strong>
-                  <small>{x[2]}</small>
-                </article>
-              ))}
+              <article>
+                <span>Signals tracked</span>
+                <strong>{towerLoading ? "—" : tower?.headline.signalsTracked ?? 0}</strong>
+                <small>Governance checks with a live source</small>
+              </article>
+              <article>
+                <span>Needs attention</span>
+                <strong>{towerLoading ? "—" : tower?.headline.needsAttention ?? 0}</strong>
+                <small>Signals with at least one open item</small>
+              </article>
+              <article>
+                <span>Clear</span>
+                <strong>{towerLoading ? "—" : tower?.headline.signalsClear ?? 0}</strong>
+                <small>Nothing outstanding on this check</small>
+              </article>
+              <article>
+                <span>Open items</span>
+                <strong>{towerLoading ? "—" : tower?.headline.openItems ?? 0}</strong>
+                <small>Total across every signal</small>
+              </article>
             </section>
             <section className={styles.grid}>
               <div className={styles.panel}>
@@ -236,39 +297,25 @@ export default function Control() {
                     <h2>Needs attention now</h2>
                   </div>
                 </div>
-                {[
-                  [
-                    "Critical",
-                    "Accounts access review overdue",
-                    "3 payout approvers",
-                    "Review",
-                  ],
-                  [
-                    "Data",
-                    "Import needs consent mapping",
-                    "4,816 contacts",
-                    "Fix",
-                  ],
-                  ["Safety", "Incident awaiting CAPA", "INC-2041", "Open"],
-                  ["Stock", "Food tubs below buffer", "3 days left", "Buy"],
-                  [
-                    "System",
-                    "Webhook delay recovered",
-                    "12 messages",
-                    "Inspect",
-                  ],
-                ].map((x) => (
+                {towerLoading && <p className={styles.muted}>Loading governance signals…</p>}
+                {!towerLoading && !tower?.signals.length && (
+                  <p className={styles.muted}>
+                    No governance signal has a connected source yet. This is a
+                    live read, not an empty template.
+                  </p>
+                )}
+                {tower?.signals.map((item) => (
                   <button
                     className={styles.signal}
-                    key={x[1]}
-                    onClick={() => notify(`${x[1]} opened`)}
+                    key={item.code}
+                    onClick={() => setView(item.view as View)}
                   >
-                    <i>{x[0]}</i>
+                    <i>{item.severity === "critical" ? "Action" : "Clear"}</i>
                     <div>
-                      <strong>{x[1]}</strong>
-                      <small>{x[2]}</small>
+                      <strong>{item.label}</strong>
+                      <small>{item.detail}</small>
                     </div>
-                    <b>{x[3]} →</b>
+                    <b>{item.count} →</b>
                   </button>
                 ))}
               </div>
@@ -279,23 +326,51 @@ export default function Control() {
                     <h2>Assurance areas</h2>
                   </div>
                 </div>
-                {[
-                  ["Identity & access", 94],
-                  ["Financial approvals", 97],
-                  ["Customer privacy", 88],
-                  ["Data reliability", 91],
-                  ["Safety & quality", 86],
-                  ["Recovery", 93],
-                ].map((x) => (
-                  <article className={styles.bar} key={x[0] as string}>
-                    <span>{x[0] as string}</span>
+                {towerLoading && <p className={styles.muted}>Loading assurance areas…</p>}
+                {tower?.posture.map((area) => (
+                  <article className={styles.bar} key={area.code} title={area.basis}>
+                    <span>
+                      {area.label}
+                      <small> · {area.score === null ? "no source" : `${area.good} of ${area.total}`}</small>
+                    </span>
                     <i>
-                      <b style={{ width: `${x[1]}%` }}></b>
+                      <b style={{ width: `${area.score ?? 0}%` }}></b>
                     </i>
-                    <strong>{x[1]}</strong>
+                    <strong>{area.score === null ? "n/c" : area.score}</strong>
                   </article>
                 ))}
+                {!!tower && (
+                  <p className={styles.muted}>
+                    Each score is a ratio of two counted numbers, shown beside
+                    it. &ldquo;n/c&rdquo; means that table is not connected yet.
+                  </p>
+                )}
               </aside>
+            </section>
+            <section className={styles.panel}>
+              <div className={styles.head}>
+                <div>
+                  <span>AUDIT TRAIL</span>
+                  <h2>Recent governed changes</h2>
+                </div>
+              </div>
+              {towerLoading && <p className={styles.muted}>Loading the audit trail…</p>}
+              {!towerLoading && !tower?.recentChanges.length && (
+                <p className={styles.muted}>
+                  No governed change has been recorded yet. Staff actions that
+                  pass through the security audit will appear here.
+                </p>
+              )}
+              {tower?.recentChanges.map((change, index) => (
+                <article className={styles.permission} key={`${change.at}-${index}`}>
+                  <span>
+                    {change.action} · {change.entity}
+                  </span>
+                  <b>
+                    {change.actor} · {istStamp(change.at)} · {change.outcome}
+                  </b>
+                </article>
+              ))}
             </section>
             <section className={styles.modules}>
               {modules.map((x) => (
@@ -303,8 +378,8 @@ export default function Control() {
                   <i>◆</i>
                   <strong>{x[0]}</strong>
                   <p>{x[1]}</p>
-                  <span>{x[2]}</span>
-                  <button onClick={() => setView(x[3] as View)}>Open →</button>
+                  <span>{PROTOTYPE_CONTROL_VIEWS.has(x[2]) ? "Sample data" : AUTHORED_REGISTER_VIEWS.has(x[2]) ? "Authored register" : "Live data"}</span>
+                  <button onClick={() => setView(x[2] as View)}>Open →</button>
                 </article>
               ))}
             </section>
