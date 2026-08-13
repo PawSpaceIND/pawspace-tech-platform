@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import * as nodeModule from "node:module";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
 // ---------------------------------------------------------------------------
 // Full-access privilege escalation through /api/platform-governance.
@@ -22,20 +22,12 @@ import * as nodeModule from "node:module";
 // passed the whole time the hole was open, which is why these tests execute the real POST handler
 // against a real database and then read app_users back, rather than inspecting the file.
 // ---------------------------------------------------------------------------
-const WORKERS_SHIM = `export const env = new Proxy({}, { get: (_, key) => globalThis.__PAWSPACE_TEST_ENV?.[key] });`;
-const workersUrl = `data:text/javascript,${encodeURIComponent(WORKERS_SHIM)}`;
-if (typeof nodeModule.registerHooks === "function") {
-  nodeModule.registerHooks({
-    resolve(specifier, context, nextResolve) {
-      if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
-      try { return nextResolve(specifier, context); }
-      catch (error) {
-        if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
-        throw error;
-      }
-    },
-  });
-}
+// The resolver comes from the shared helper, which carries BOTH branches: registerHooks on Node >=22.15
+// and an out-of-thread module.register() loader on the version CI pins (22.13.0). This file previously
+// installed only the registerHooks branch with no fallback, so on CI no resolver was registered, the
+// route's extensionless `../../../lib/platform-security` import could not resolve, and the whole file
+// died before a single test ran - the suite proved nothing on the only machine that gates the merge.
+installWorkersHooks("__PAWSPACE_TEST_DB__", "__PAWSPACE_TEST_ENV__");
 
 const route = await import("../app/api/platform-governance/route.ts");
 
@@ -62,7 +54,7 @@ const ADMIN_EMAIL = "admin.actor@tkpetcare.in";
  */
 function governanceDb() {
   const sqlite = new DatabaseSync(":memory:");
-  globalThis.__PAWSPACE_TEST_ENV = { DB: makeD1(sqlite) };
+  globalThis.__PAWSPACE_TEST_DB__ = makeD1(sqlite);
   sqlite.exec("CREATE TABLE IF NOT EXISTS app_users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, role_code TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)");
   // DDL copied from lib/api-gateway.ts, which owns it. Created up front so a test can define a role
   // before the first POST (the route's own ensureTables would otherwise create it lazily).
@@ -305,4 +297,140 @@ test("the permission list no longer claims editing is available", () => {
   // Every checkbox is disabled now, not only the founder's.
   assert.ok(panel.includes("readOnly disabled/>"), "no checkbox may look interactive");
   assert.ok(!panel.includes('disabled={role?.code==="founder"}'), "the disabled state must not depend on a role name");
+});
+
+// ---------------------------------------------------------------------------
+// 22-23. GAP 9 — create_user never validated the role, while update_user did.
+//
+// An unknown roleCode was written straight into app_users, producing an account that authenticates and
+// then authorises nothing — the exact failure update_user's own guard exists to prevent. The role code
+// is also normalised ONCE now and used for the protection check, the existence check AND the stored
+// value; it was previously normalised only for the comparison and persisted verbatim.
+// ---------------------------------------------------------------------------
+const auditRows = (sqlite, outcome = "denied") =>
+  sqlite.prepare("SELECT action,resource_type,resource_id,outcome,detail_json FROM security_audit_events WHERE outcome=?").all(outcome).map(plain);
+const userByEmail = (sqlite, email) => plain(sqlite.prepare("SELECT id,role_code FROM app_users WHERE email=?").get(email));
+
+test("create_user: an unknown role is refused and NO app_users row is written", async () => {
+  const sqlite = governanceDb();
+  const before = sqlite.prepare("SELECT COUNT(*) c FROM app_users").get().c;
+  const response = await post({ action: "create_user", email: "new.hire@tkpetcare.in", name: "New Hire", roleCode: "role_that_does_not_exist" });
+  assert.equal(response.status, 400, "an unknown role must be refused");
+  assert.match((await response.json()).error, /unknown role/i);
+  assert.equal(userByEmail(sqlite, "new.hire@tkpetcare.in"), undefined, "no account may exist for a rejected role");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM app_users").get().c, before, "the user table must be unchanged");
+  const denied = auditRows(sqlite);
+  assert.equal(denied.length, 1, "the refusal must be audited");
+  assert.equal(denied[0].action, "create_user");
+  assert.match(String(denied[0].detail_json), /unknown_role/);
+});
+
+test("create_user: the role code is normalised for protection, existence AND storage", async () => {
+  const sqlite = governanceDb();
+  // Padded + differently-cased PROTECTED role is still refused (protection reads the normalised code).
+  const escalation = await post({ action: "create_user", email: "sneaky@tkpetcare.in", name: "Sneaky", roleCode: "  FoUnDeR  " });
+  assert.equal(escalation.status, 400);
+  assert.equal(userByEmail(sqlite, "sneaky@tkpetcare.in"), undefined, "no row may be written for a refused protected role");
+  // Padded + differently-cased ORDINARY role resolves and is STORED normalised, not verbatim.
+  const ok = await post({ action: "create_user", email: "cased@tkpetcare.in", name: "Cased", roleCode: "  ASSOCIATE  " });
+  assert.equal(ok.status, 200, "a real role in odd casing must still resolve");
+  assert.equal(userByEmail(sqlite, "cased@tkpetcare.in").role_code, "associate",
+    "the stored role_code must be the normalised value — storing it verbatim yields a role matching no definition");
+});
+
+// ---------------------------------------------------------------------------
+// 24-28. GAP 13 — five refusal paths returned silently.
+//
+// An attempt to hand out full access through update_user, to assign an unknown role, or to edit a
+// protected/built-in role left NO trace, while three neighbouring refusals did write one. A partial
+// audit trail is worse than none: it reads as complete. Business state is untouched on every path.
+// ---------------------------------------------------------------------------
+test("audit: refusing to edit a protected HOLDER is recorded", async () => {
+  const sqlite = governanceDb();
+  const response = await post({ action: "update_user", id: "U-FOUNDER", roleCode: "associate", status: "active" });
+  assert.equal(response.status, 400);
+  assert.equal(roleOf(sqlite, "U-FOUNDER"), "founder", "the founder's role must be untouched");
+  const denied = auditRows(sqlite);
+  assert.equal(denied.length, 1, "editing a protected holder must be audited");
+  assert.equal(denied[0].action, "update_user");
+  assert.equal(denied[0].resource_id, "U-FOUNDER");
+  assert.match(String(denied[0].detail_json), /protected_holder_edit_blocked/);
+});
+
+test("audit: refusing an unknown role on update_user is recorded", async () => {
+  const sqlite = governanceDb();
+  const response = await post({ action: "update_user", id: "U-STAFF", roleCode: "no_such_role", status: "active" });
+  assert.equal(response.status, 400);
+  assert.equal(roleOf(sqlite, "U-STAFF"), "associate", "the target's role must be unchanged");
+  const denied = auditRows(sqlite);
+  assert.equal(denied.length, 1);
+  assert.match(String(denied[0].detail_json), /unknown_role/);
+});
+
+test("audit: save_role refusing an unknown role is recorded", async () => {
+  const sqlite = governanceDb();
+  const response = await post({ action: "save_role", code: "not_a_role", permissions: ["bookings.view"] });
+  assert.equal(response.status, 400);
+  const denied = auditRows(sqlite);
+  assert.equal(denied.length, 1);
+  assert.equal(denied[0].action, "save_role");
+  assert.equal(denied[0].resource_type, "role");
+  assert.match(String(denied[0].detail_json), /unknown_role/);
+});
+
+// role_definitions is seeded by the route's own ensureTables(), not by the fixture, so a "before" value
+// read prior to the first POST is undefined. This fires a benign unknown action first: it runs
+// ensureTables and returns 400 WITHOUT writing an audit row, so the denial counts below stay exact.
+const seedRoles = async (sqlite) => { await post({ action: "__no_such_action__" }); return sqlite; };
+const permsOf = (sqlite, code) => sqlite.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").get(code)?.permissions_json;
+
+test("audit: save_role refusing a FULL-ACCESS role is recorded and changes nothing", async () => {
+  const sqlite = await seedRoles(governanceDb());
+  assert.equal(auditRows(sqlite).length, 0, "the seeding call must not itself write a denial");
+  for (const code of ["founder", "superuser"]) {
+    const before = permsOf(sqlite, code);
+    assert.equal(before, '["*"]', `control: ${code} must really be full-access before the attempt`);
+    const response = await post({ action: "save_role", code, permissions: ["bookings.view"] });
+    assert.equal(response.status, 400, `${code} must be refused`);
+    assert.equal(permsOf(sqlite, code), before, `${code}'s stored permissions must be byte-identical after the refusal`);
+    assert.notEqual(permsOf(sqlite, code), '["bookings.view"]', `${code} must not have taken the attempted downgrade`);
+  }
+  const denied = auditRows(sqlite);
+  assert.equal(denied.length, 2, "both refusals must be audited");
+  for (const row of denied) assert.match(String(row.detail_json), /full_access_role_edit_blocked/);
+});
+
+test("audit: save_role refusing a BUILT-IN role is recorded and changes nothing", async () => {
+  const sqlite = await seedRoles(governanceDb());
+  const before = permsOf(sqlite, "admin");
+  assert.ok(before && before !== '["*"]', "control: admin must be a seeded built-in that is NOT full-access");
+  const response = await post({ action: "save_role", code: "admin", permissions: ["bookings.view"] });
+  assert.equal(response.status, 400);
+  assert.match((await response.json()).error, /immutable|built-in/i);
+  assert.equal(permsOf(sqlite, "admin"), before, "a refused built-in edit must leave the definition byte-identical");
+  const denied = auditRows(sqlite);
+  assert.equal(denied.length, 1);
+  assert.match(String(denied[0].detail_json), /built_in_role_edit_blocked/);
+});
+
+test("audit: EVERY security-relevant refusal path writes exactly one denied record", async () => {
+  // Structural sweep: no refusal path may return silently. Each case is driven independently so a
+  // single shared counter cannot mask a path that writes nothing.
+  const cases = [
+    ["create_user protected role", { action: "create_user", email: "a@tkpetcare.in", name: "A", roleCode: "founder" }],
+    ["create_user unknown role", { action: "create_user", email: "b@tkpetcare.in", name: "B", roleCode: "nope" }],
+    ["create_user duplicate email", { action: "create_user", email: "ordinary.staff@tkpetcare.in", name: "C", roleCode: "associate" }],
+    ["update_user protected holder", { action: "update_user", id: "U-SUPER", roleCode: "associate", status: "active" }],
+    ["update_user protected assignment", { action: "update_user", id: "U-STAFF", roleCode: "superuser", status: "active" }],
+    ["update_user unknown role", { action: "update_user", id: "U-STAFF", roleCode: "nope", status: "active" }],
+    ["save_role unknown role", { action: "save_role", code: "nope", permissions: [] }],
+    ["save_role full-access role", { action: "save_role", code: "founder", permissions: [] }],
+    ["save_role built-in role", { action: "save_role", code: "manager", permissions: [] }],
+  ];
+  for (const [label, body] of cases) {
+    const sqlite = governanceDb();
+    const response = await post(body);
+    assert.ok(response.status >= 400, `${label}: must be refused`);
+    assert.equal(auditRows(sqlite).length, 1, `${label}: must write exactly one denied audit record`);
+  }
 });

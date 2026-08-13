@@ -37,6 +37,20 @@ async function protectedRoleCodes(db:D1Database){
  return codes;
 }
 
+/**
+ * Record a refused mutation and return its response.
+ *
+ * Every refusal here is a security-relevant event, but only three paths wrote one: an attempt to edit an
+ * existing protected holder, to assign an unknown role, or to edit a protected or built-in role all
+ * returned silently. The audit trail therefore showed some attempts to escalate and not others, which is
+ * worse than none - it reads as a complete record. None of these paths touch business state; the audit
+ * row is the only write.
+ */
+async function denyAndAudit(db:D1Database,current:Awaited<ReturnType<typeof resolveActor>>,action:string,resourceType:string,resourceId:string|null,reason:string,detail:Record<string,unknown>,message:string,status=400){
+ await securityAudit(db,current,action,resourceType,resourceId,"denied",{reason,...detail});
+ return Response.json({error:message},{status});
+}
+
 export async function GET(request:Request){
   try{await ensureTables(); const current=await resolveActor(request);
   const db=await database();
@@ -51,15 +65,26 @@ export async function POST(request:Request){
   try{
     await ensureTables(); const current=await resolveActor(request); const body=await request.json() as Record<string,unknown>; const action=String(body.action||""); const db=await database(); const now=Date.now();
     if(action==="create_user"){
-      requirePermission(current,"users.manage"); const email=String(body.email||"").trim().toLowerCase(); const name=String(body.name||"").trim(); const roleCode=String(body.roleCode||"associate");
+      requirePermission(current,"users.manage"); const email=String(body.email||"").trim().toLowerCase(); const name=String(body.name||"").trim();
+      // Normalised ONCE, then used for the protection check, the existence check and the row that is
+      // written. It was previously normalised only for the comparison and stored raw, so a padded or
+      // differently-cased value was refused correctly when protected but persisted verbatim otherwise -
+      // producing a role_code matching no definition, i.e. an account that authenticates and then
+      // authorises nothing.
+      const roleCode=normaliseCode(String(body.roleCode||"associate"));
       if(!email.includes("@")||!name)return Response.json({error:"Name and valid email are required"},{status:400});
       const protectedCodes=await protectedRoleCodes(db);
-      if(protectedCodes.has(normaliseCode(roleCode))){await securityAudit(db,current,"create_user","identity",email,"denied",{reason:"full_access_role_assignment_blocked",requestedRoleCode:roleCode});return Response.json({error:"Founder and Superuser carry full access and cannot be assigned from user management"},{status:400});}
+      if(protectedCodes.has(roleCode))return denyAndAudit(db,current,"create_user","identity",email,"full_access_role_assignment_blocked",{requestedRoleCode:roleCode},"Founder and Superuser carry full access and cannot be assigned from user management");
+      // create_user never validated the role, while update_user did. An unknown role was accepted and a
+      // row written for it; the guard is applied on the normalised code so it cannot be dodged by case
+      // or padding. Refused BEFORE any INSERT, so no app_users row exists for a rejected role.
+      const definedRole=await db.prepare("SELECT code FROM role_definitions WHERE lower(code)=?").bind(roleCode).first();
+      if(!definedRole)return denyAndAudit(db,current,"create_user","identity",email,"unknown_role",{requestedRoleCode:roleCode},`Unknown role '${roleCode}'`);
       // This used to INSERT ... ON CONFLICT(email) DO UPDATE SET role_code=excluded.role_code, so
       // "create" silently behaved as "update" for any address that already existed - including a
       // founder's, whose record it would rewrite. Create now creates: an existing email is a conflict.
       const existing=await db.prepare("SELECT role_code FROM app_users WHERE email=?").bind(email).first<{role_code:string}>();
-      if(existing){await securityAudit(db,current,"create_user","identity",email,"denied",{reason:"email_already_exists"});return Response.json({error:"An account with that email already exists. Change its role from the user directory instead — create never edits an existing identity."},{status:409});}
+      if(existing)return denyAndAudit(db,current,"create_user","identity",email,"email_already_exists",{},"An account with that email already exists. Change its role from the user directory instead — create never edits an existing identity.",409);
       await db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),email,name,roleCode,"active",now,now).run(); await securityAudit(db,current,"create_user","identity",email,"completed",{roleCode});
       return Response.json({ok:true});
     }
@@ -68,12 +93,12 @@ export async function POST(request:Request){
       const protectedCodes=await protectedRoleCodes(db);
       // A holder of a full-access role cannot be edited from here, and a full-access role cannot be
       // handed out from here. The first half existed; the second was missing entirely.
-      if(protectedCodes.has(normaliseCode(target?.role_code)))return Response.json({error:"Founder and Superuser access cannot be changed from user management"},{status:400});
-      if(protectedCodes.has(normaliseCode(body.roleCode))){await securityAudit(db,current,"update_user","identity",id,"denied",{reason:"full_access_role_assignment_blocked",requestedRoleCode:String(body.roleCode??"")});return Response.json({error:"Founder and Superuser carry full access and cannot be assigned from user management"},{status:400});}
+      if(protectedCodes.has(normaliseCode(target?.role_code)))return denyAndAudit(db,current,"update_user","identity",id,"protected_holder_edit_blocked",{targetRoleCode:normaliseCode(target?.role_code)},"Founder and Superuser access cannot be changed from user management");
+      if(protectedCodes.has(normaliseCode(body.roleCode)))return denyAndAudit(db,current,"update_user","identity",id,"full_access_role_assignment_blocked",{requestedRoleCode:String(body.roleCode??"")},"Founder and Superuser carry full access and cannot be assigned from user management");
       // An unvalidated role_code produced an account that authenticates and then authorises nothing.
       const assigned=String(body.roleCode||"associate");
       const known=await db.prepare("SELECT code FROM role_definitions WHERE code=?").bind(assigned).first();
-      if(!known)return Response.json({error:`Unknown role '${assigned}'`},{status:400});
+      if(!known)return denyAndAudit(db,current,"update_user","identity",id,"unknown_role",{requestedRoleCode:assigned},`Unknown role '${assigned}'`);
       await db.prepare("UPDATE app_users SET role_code=?,status=?,updated_at=? WHERE id=?").bind(String(body.roleCode||"associate"),String(body.status||"active"),now,id).run(); await securityAudit(db,current,"update_user","identity",id,"completed",{roleCode:body.roleCode,status:body.status});
       return Response.json({ok:true});
     }
@@ -85,9 +110,9 @@ export async function POST(request:Request){
       // UI appeared to accept a change that did not survive. They are now refused explicitly rather
       // than accepted and quietly undone.
       const definition=await db.prepare("SELECT system_role,permissions_json FROM role_definitions WHERE code=?").bind(code).first<{system_role:number;permissions_json:string}>();
-      if(!definition)return Response.json({error:`Unknown role '${code}'`},{status:400});
-      if(isFullAccessRole(definition.permissions_json))return Response.json({error:"Founder and Superuser permissions are protected"},{status:400});
-      if(Number(definition.system_role)===1)return Response.json({error:"Built-in role permissions are immutable: they are restored from the platform definition on every deploy, so a change here would not survive. Create a custom role instead."},{status:400});
+      if(!definition)return denyAndAudit(db,current,"save_role","role",code,"unknown_role",{requestedRoleCode:code},`Unknown role '${code}'`);
+      if(isFullAccessRole(definition.permissions_json))return denyAndAudit(db,current,"save_role","role",code,"full_access_role_edit_blocked",{},"Founder and Superuser permissions are protected");
+      if(Number(definition.system_role)===1)return denyAndAudit(db,current,"save_role","role",code,"built_in_role_edit_blocked",{},"Built-in role permissions are immutable: they are restored from the platform definition on every deploy, so a change here would not survive. Create a custom role instead.");
       const permissions=parsePermissions(body.permissions).filter(p=>permissionCatalog.includes(p as Permission));
       await db.prepare("UPDATE role_definitions SET permissions_json=?,updated_at=? WHERE code=?").bind(JSON.stringify(permissions),now,code).run(); await securityAudit(db,current,"save_role","role",code,"completed",{permissions}); return Response.json({ok:true});
     }
