@@ -1,4 +1,5 @@
 import{findExpenseCategory}from"../../../lib/chart-of-accounts";
+import{repairSchemaDrift}from"../../../lib/schema-drift-repair";
 
 type Db = Awaited<ReturnType<typeof database>>;
 async function database(){const {env}=await import("cloudflare:workers");return env.DB;}
@@ -22,6 +23,10 @@ async function ensureSchema(db:Db){await db.batch([
    await db.prepare(`ALTER TABLE ${table} ADD COLUMN category_code text`).run();
   }
  }
+ // finance_close_periods is also declared by lib/gst-accounting.ts, which used to omit
+ // checklist_json. On any database where that module created the table first, every close write here
+ // failed. Repair it in place - the unified declarations only help a fresh database.
+ await repairSchemaDrift(db);
 }
 
 function resolveAccountCode(categoryCode:string|undefined,fallback:string):string{

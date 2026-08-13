@@ -195,3 +195,19 @@ test("no library builds an IN list straight from a result set any more", async (
   }
   assert.deepEqual(offenders, [], "these files must build IN lists through chunkedIn so they cannot exceed D1's cap");
 });
+
+test("one chunk size for the whole platform, not one per module", async () => {
+  // Main briefly carried two: 80 in lib/customer-360.ts and 50 in lib/unit-economics.ts, which is how
+  // the same class of bug came back at a different size in a different module. The constant lives in
+  // one place now, and a module that declares its own is the thing to catch.
+  const files = (await readdir(new URL("../lib", import.meta.url))).filter((name) => name.endsWith(".ts") && name !== "d1-chunked-in.ts");
+  const offenders = [];
+  for (const name of files) {
+    const source = await readFile(new URL(`../lib/${name}`, import.meta.url), "utf8");
+    for (const match of source.matchAll(/const\s+([A-Z_]*CHUNK[A-Z_]*)\s*=\s*(\d+)/g)) offenders.push(`${name}: ${match[1]}=${match[2]}`);
+  }
+  assert.deepEqual(offenders, [], "these modules declare their own IN-chunk size instead of using D1_IN_CHUNK");
+
+  const { D1_IN_CHUNK } = await import("../lib/d1-chunked-in.ts");
+  assert.equal(D1_IN_CHUNK, 80, "the size #166 measured as correct: a chunk of 50 cost 82 D1 calls for 500 customers where 58 would do");
+});
