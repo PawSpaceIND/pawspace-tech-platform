@@ -1,15 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as nodeModule from "node:module";
 
 // ---------------------------------------------------------------------------
-// Founder privilege escalation through /api/platform-governance, action update_user.
+// Full-access privilege escalation through /api/platform-governance.
 //
 // create_user rejected roleCode === "founder". update_user checked only whether the TARGET was already
 // a founder — never what role was being ASSIGNED — and then wrote body.roleCode straight into
 // app_users.role_code. Any holder of users.manage (an admin) could therefore promote a normal account,
 // or their own, to founder and obtain ["*"].
+//
+// Guarding the literal "founder" was NOT sufficient: `superuser` is also defined as ["*"], so blocking
+// one name left the other completely open, and the UI actively offered Superuser in both role
+// dropdowns. The protected set is now derived from the permissions in role_definitions, so a role is
+// protected because of what it can do rather than because someone remembered its name.
 //
 // The route already carried the correct guard for create_user, and the only test coverage was
 // `assert.match(route, /Founder is protected/)` — a grep for the error string in the source. That
@@ -58,10 +64,14 @@ function governanceDb() {
   const sqlite = new DatabaseSync(":memory:");
   globalThis.__PAWSPACE_TEST_ENV = { DB: makeD1(sqlite) };
   sqlite.exec("CREATE TABLE IF NOT EXISTS app_users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, role_code TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)");
+  // DDL copied from lib/api-gateway.ts, which owns it. Created up front so a test can define a role
+  // before the first POST (the route's own ensureTables would otherwise create it lazily).
+  sqlite.exec("CREATE TABLE IF NOT EXISTS role_definitions (code TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, permissions_json TEXT NOT NULL, system_role INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)");
   const insert = sqlite.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)");
   insert.run("U-FOUNDER", "real.founder@pawspace.in", "Real Founder", "founder", "active", 0, 0);
   insert.run("U-ADMIN", ADMIN_EMAIL, "Admin Actor", "admin", "active", 0, 0);
   insert.run("U-STAFF", "ordinary.staff@tkpetcare.in", "Ordinary Staff", "associate", "active", 0, 0);
+  insert.run("U-SUPER", "real.superuser@pawspace.in", "Real Superuser", "superuser", "active", 0, 0);
   return sqlite;
 }
 
@@ -88,7 +98,7 @@ test("update_user: an admin cannot promote another user to founder", async () =>
   const sqlite = governanceDb();
   const response = await post({ action: "update_user", id: "U-STAFF", roleCode: "founder", status: "active" });
   assert.equal(response.status, 400, "the request must be refused");
-  assert.match((await response.json()).error, /Founder is protected/);
+  assert.match((await response.json()).error, /cannot be assigned/i);
   assert.equal(roleOf(sqlite, "U-STAFF"), "associate", "the target's role must be unchanged in the database");
 });
 
@@ -99,7 +109,7 @@ test("update_user: an admin cannot promote themselves to founder", async () => {
   const sqlite = governanceDb();
   const response = await post({ action: "update_user", id: "U-ADMIN", roleCode: "founder", status: "active" });
   assert.equal(response.status, 400);
-  assert.match((await response.json()).error, /Founder is protected/);
+  assert.match((await response.json()).error, /cannot be assigned/i);
   assert.equal(roleOf(sqlite, "U-ADMIN"), "admin", "self-promotion must leave the actor's own role untouched");
 });
 
@@ -110,7 +120,7 @@ test("create_user: assigning founder is still rejected", async () => {
   const sqlite = governanceDb();
   const response = await post({ action: "create_user", email: "brand.new@tkpetcare.in", name: "Brand New", roleCode: "founder" });
   assert.equal(response.status, 400);
-  assert.match((await response.json()).error, /Founder is protected/);
+  assert.match((await response.json()).error, /cannot be assigned/i);
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS total FROM app_users WHERE email=?").get("brand.new@tkpetcare.in").total, 0, "no account may be created at all");
 });
 
@@ -139,7 +149,7 @@ test("update_user: an existing founder still cannot be modified", async () => {
   const sqlite = governanceDb();
   const response = await post({ action: "update_user", id: "U-FOUNDER", roleCode: "associate", status: "suspended" });
   assert.equal(response.status, 400);
-  assert.match((await response.json()).error, /Founder access cannot be changed/);
+  assert.match((await response.json()).error, /cannot be changed/i);
   assert.deepEqual(plain(sqlite.prepare("SELECT role_code,status FROM app_users WHERE id=?").get("U-FOUNDER")), { role_code: "founder", status: "active" }, "neither the role nor the status may change");
 });
 
@@ -149,8 +159,7 @@ test("update_user: an existing founder still cannot be modified", async () => {
 test("create_user: an existing founder cannot be demoted through the upsert path", async () => {
   const sqlite = governanceDb();
   const response = await post({ action: "create_user", email: "real.founder@pawspace.in", name: "Hijacked", roleCode: "associate" });
-  assert.equal(response.status, 400, "the create path must not become an edit path for a founder");
-  assert.match((await response.json()).error, /Founder access cannot be changed/);
+  assert.equal(response.status, 409, "create must conflict on an existing address rather than edit it");
   assert.deepEqual(plain(sqlite.prepare("SELECT name,role_code FROM app_users WHERE email=?").get("real.founder@pawspace.in")), { name: "Real Founder", role_code: "founder" }, "the founder's record must be untouched");
 });
 
@@ -172,5 +181,128 @@ test("a refused founder assignment is recorded as a denial in the audit trail", 
   const denied = sqlite.prepare("SELECT action,outcome,detail_json FROM security_audit_events WHERE outcome='denied'").all();
   assert.equal(denied.length, 1, "an attempt to mint founder must leave a record");
   assert.equal(denied[0].action, "update_user");
-  assert.match(String(denied[0].detail_json), /founder_role_assignment_blocked/);
+  assert.match(String(denied[0].detail_json), /full_access_role_assignment_blocked/);
+});
+
+
+// ---------------------------------------------------------------------------
+// Superuser is the other ["*"] role. Blocking "founder" by name left this wide open.
+// ---------------------------------------------------------------------------
+test("update_user: an admin cannot promote another user to superuser", async () => {
+  const sqlite = governanceDb();
+  const response = await post({ action: "update_user", id: "U-STAFF", roleCode: "superuser", status: "active" });
+  assert.equal(response.status, 400, "superuser carries [\"*\"] and must be refused exactly like founder");
+  assert.match((await response.json()).error, /full access/i);
+  assert.equal(roleOf(sqlite, "U-STAFF"), "associate", "the target's role must be unchanged");
+});
+
+test("update_user: an admin cannot promote themselves to superuser", async () => {
+  const sqlite = governanceDb();
+  const response = await post({ action: "update_user", id: "U-ADMIN", roleCode: "superuser", status: "active" });
+  assert.equal(response.status, 400);
+  assert.equal(roleOf(sqlite, "U-ADMIN"), "admin", "self-promotion to superuser must change nothing");
+});
+
+test("create_user: assigning superuser is rejected", async () => {
+  const sqlite = governanceDb();
+  const response = await post({ action: "create_user", email: "sneaky@tkpetcare.in", name: "Sneaky", roleCode: "superuser" });
+  assert.equal(response.status, 400);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS total FROM app_users WHERE email=?").get("sneaky@tkpetcare.in").total, 0);
+});
+
+test("an existing superuser cannot be edited from user management either", async () => {
+  const sqlite = governanceDb();
+  const response = await post({ action: "update_user", id: "U-SUPER", roleCode: "associate", status: "suspended" });
+  assert.equal(response.status, 400);
+  assert.deepEqual(plain(sqlite.prepare("SELECT role_code,status FROM app_users WHERE id=?").get("U-SUPER")), { role_code: "superuser", status: "active" });
+});
+
+test("the protected set is derived from permissions, not from a list of names", async () => {
+  const sqlite = governanceDb();
+  // A role nobody hardcoded anywhere, defined as full access. It must be protected on definition.
+  sqlite.prepare("INSERT INTO role_definitions (code,name,description,permissions_json,system_role,updated_at) VALUES (?,?,?,?,?,?)")
+    .run("owner_delegate", "Owner Delegate", "invented for this test", JSON.stringify(["*"]), 0, 0);
+  const response = await post({ action: "update_user", id: "U-STAFF", roleCode: "owner_delegate", status: "active" });
+  assert.equal(response.status, 400, "a new ['*'] role must be protected without anyone adding its name to a guard");
+  assert.equal(roleOf(sqlite, "U-STAFF"), "associate");
+});
+
+// ---------------------------------------------------------------------------
+// create must create. It used to upsert, which made it an edit path.
+// ---------------------------------------------------------------------------
+test("create_user: a duplicate email is a conflict, and cannot silently change the role", async () => {
+  const sqlite = governanceDb();
+  const response = await post({ action: "create_user", email: "ordinary.staff@tkpetcare.in", name: "Renamed", roleCode: "manager" });
+  assert.equal(response.status, 409, "an existing email must conflict rather than behave as update");
+  assert.deepEqual(plain(sqlite.prepare("SELECT name,role_code FROM app_users WHERE email=?").get("ordinary.staff@tkpetcare.in")), { name: "Ordinary Staff", role_code: "associate" }, "neither the name nor the role may change");
+});
+
+test("update_user: an unknown role is refused rather than stored", async () => {
+  const sqlite = governanceDb();
+  // An unvalidated role_code produced an account that authenticates and authorises nothing.
+  const response = await post({ action: "update_user", id: "U-STAFF", roleCode: "not_a_real_role", status: "active" });
+  assert.equal(response.status, 400);
+  assert.equal(roleOf(sqlite, "U-STAFF"), "associate");
+});
+
+// ---------------------------------------------------------------------------
+// save_role: immutability enforced instead of implied, and durability across isolates.
+// ---------------------------------------------------------------------------
+test("save_role: a built-in role is refused, because ensureSecurityTables would revert it anyway", async () => {
+  const sqlite = governanceDb();
+  const response = await post({ action: "save_role", code: "admin", permissions: ["dashboard.view"] });
+  assert.equal(response.status, 400, "accepting an edit that a fresh isolate silently undoes is worse than refusing it");
+  assert.match((await response.json()).error, /immutable|restored/i);
+  const stored = JSON.parse(sqlite.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").get("admin").permissions_json);
+  assert.ok(stored.length > 1, "admin's permissions must not have been narrowed");
+});
+
+test("save_role: a full-access role is refused", async () => {
+  const sqlite = governanceDb();
+  for (const code of ["founder", "superuser"]) {
+    const response = await post({ action: "save_role", code, permissions: ["dashboard.view"] });
+    assert.equal(response.status, 400, `${code} permissions must be protected`);
+    assert.deepEqual(JSON.parse(sqlite.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").get(code).permissions_json), ["*"]);
+  }
+});
+
+test("a revoked permission on a CUSTOM role survives a fresh security bootstrap", async () => {
+  const sqlite = governanceDb();
+  sqlite.prepare("INSERT INTO role_definitions (code,name,description,permissions_json,system_role,updated_at) VALUES (?,?,?,?,?,?)")
+    .run("city_lead", "City Lead", "custom role", JSON.stringify(["dashboard.view", "bookings.view", "customers.manage"]), 0, 0);
+
+  const saved = await post({ action: "save_role", code: "city_lead", permissions: ["dashboard.view"] });
+  assert.equal(saved.status, 200, `a custom role must be editable, got ${await saved.clone().text()}`);
+  assert.deepEqual(JSON.parse(sqlite.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").get("city_lead").permissions_json), ["dashboard.view"], "the revocation applied");
+
+  // Simulate a fresh Worker isolate: ensureSecurityTables memoises on a WeakSet<Db>, so the same
+  // binding object would skip the seed entirely and the test would pass without proving anything.
+  const { ensureSecurityTables } = await import("../lib/server-auth.ts");
+  await ensureSecurityTables(makeD1(sqlite));
+
+  assert.deepEqual(JSON.parse(sqlite.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").get("city_lead").permissions_json), ["dashboard.view"], "the bootstrap must not restore a revoked permission");
+});
+
+// ---------------------------------------------------------------------------
+// The UI must offer only what the API will accept, and must not claim it can edit what it cannot.
+// ---------------------------------------------------------------------------
+test("no full-access role is offered in either user-management dropdown", () => {
+  const panel = fs.readFileSync(new URL("../app/control/access-control-panel.tsx", import.meta.url), "utf8");
+  assert.match(panel, /assignableRoles/, "both selects must draw from the assignable set");
+  assert.ok(panel.includes("filter(role=>!isFullAccessRole(role.permissions))"), "assignability is derived from permissions");
+  // The old filters named founder and left superuser on offer.
+  assert.ok(!panel.includes('filter(r=>r.code!=="founder")'), "filtering by the name 'founder' left superuser assignable");
+  assert.ok(!panel.includes('r.code!=="founder"||u.role_code==="founder"'), "the user select must not filter by name either");
+});
+
+test("the permission list no longer claims editing is available", () => {
+  const panel = fs.readFileSync(new URL("../app/control/access-control-panel.tsx", import.meta.url), "utf8");
+  // The claim lived in a warning string while every checkbox was readOnly and nothing could save one.
+  // The claim lived in a rendered warning string. Only the explanatory comment may mention it now.
+  const rendered = panel.replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+  assert.ok(!rendered.includes("Permission editing is available"), "the UI must not claim an editor it does not have");
+  assert.ok(rendered.includes("reference view, not an editor"), "and it should say what the list actually is");
+  // Every checkbox is disabled now, not only the founder's.
+  assert.ok(panel.includes("readOnly disabled/>"), "no checkbox may look interactive");
+  assert.ok(!panel.includes('disabled={role?.code==="founder"}'), "the disabled state must not depend on a role name");
 });

@@ -193,7 +193,14 @@ test("governance route: role/user mutations are audited and permission-gated at 
   const route = read("app/api/platform-governance/route.ts");
   assert.match(route, /securityAudit/);
   assert.match(route, /roles\.manage|users\.manage/);
-  assert.match(route, /Founder is protected/);
+  // This used to assert the literal string "Founder is protected". That string lived in create_user,
+  // so the assertion passed for the whole time update_user let a users.manage actor assign founder —
+  // and it said nothing about superuser, which is also ["*"]. The behaviour is now covered properly by
+  // tests/founder-role-escalation.test.mjs, which executes the handler; what is worth pinning HERE is
+  // that the guard is derived from permissions rather than from a list of role names, because a
+  // name-based guard is what allowed superuser through.
+  assert.match(route, /isFullAccessRole/, "the protected set must be derived from permissions, not named");
+  assert.doesNotMatch(route, /roleCode==="founder"/, "a name-equality guard leaves every other full-access role open");
 });
 
 // ---------------------------------------------------------------------------
