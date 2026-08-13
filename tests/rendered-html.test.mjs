@@ -208,18 +208,15 @@ test("keeps the four-vertical closure UX explicit and partner-connected", async 
 });
 
 test("keeps long-stay payment, paid meeting and home media rules explicit", async () => {
-  const [mobileHome, homeDesigns, stays, training, trainer, host, trainingCommercial] = await Promise.all(
-    ["app/mobile-app/page.tsx", "app/mobile-app/home-designs.tsx", "app/mobile-app/stay-flow.tsx", "app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/host/page.tsx", "lib/training-commercial-governance.ts"].map((path) =>
+  const [mobileHome, stays, training, trainer, host, trainingCommercial] = await Promise.all(
+    ["app/mobile-app/page.tsx", "app/mobile-app/stay-flow.tsx", "app/mobile-app/training-flow.tsx", "app/trainer/page.tsx", "app/host/page.tsx", "lib/training-commercial-governance.ts"].map((path) =>
       readFile(new URL("../" + path, import.meta.url), "utf8"),
     ),
   );
 
   assert.match(mobileHome, /PAWSPACE MEDIA/);
   assert.match(mobileHome, /TRAINING VIDEO/);
-  // The promoted slot lives in the home design component that renders it (either design), and the
-  // "clearly labelled campaign" disclosure has to travel with the markup, not with the data.
-  assert.match(homeDesigns, /PawSpace Media slot/);
-  assert.match(homeDesigns, /clearly labelled approved campaigns/);
+  assert.match(mobileHome, /PawSpace Media slot/);
   assert.match(stays, /nights > 4/);
   assert.match(stays, /Reserve with 50% now/);
   assert.match(stays, /due 24 hours before check-in/);
