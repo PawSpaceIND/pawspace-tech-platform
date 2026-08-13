@@ -139,8 +139,19 @@ attendance, leave, incentives, productivity facts, AI conversations/handoff/voic
 a ledger with a deliberately unbalanced journal plus duplicate and outlier vendor bills (so the
 finance anomaly report is not empty), commercial terms with computed payouts, CRM leads and tickets,
 ratings, vaccinations and birthdays.
+
+It also carries the sales-performance and campaign layer: 4 reps mapped to the `sales` team, 27 leads
+with SLA clocks, recorded calls and conversions into the seeded bookings, an active productivity
+policy, a live governed campaign with its audience snapshot and holdout, one campaign awaiting
+approval, and ad spend rows so the CAC line has real figures instead of `configuration_required`.
+Those rows reference the customers and bookings from `staging-seed.sql`, which is why that seed loads
+first. After loading, open `/team/performance` and press **Generate 30-day report** — one click turns
+the seeded lead work into a ranked leaderboard, and is also the check that the whole
+policy -> run -> board pipeline is live.
+
 `tests/uat-demo-seed.test.mjs` loads this file into an empty database and asserts every module's real
-route handler returns non-empty data.
+route handler returns non-empty data. `tests/uat-demo-seed-sales-marketing.test.mjs` covers the sales
+and campaign layer, loading the staging seed alongside it because that layer is measured against it.
 
 The AI rows are the one part not hand-written: `scripts/ai-demo-run.mjs` executes the REAL AI libs
 against an in-memory database and the generator dumps whatever they wrote. Those tables store an

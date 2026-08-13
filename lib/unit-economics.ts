@@ -12,6 +12,7 @@
  * utilisation and CAC (only when marketing spend facts exist).
  */
 
+import{chunkedIn}from"./d1-chunked-in";
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
@@ -19,26 +20,23 @@ const round2=(value:number)=>Math.round(value*100)/100;
 const pct=(part:number,whole:number)=>whole>0?Math.round((part/whole)*1000)/10:null;
 
 async function tableExists(db:Db,name:string){const row=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>();return Boolean(row);}
-async function safeAll(db:Db,guard:string[],sql:string,binds:unknown[]):Promise<Row[]>{for(const table of guard)if(!await tableExists(db,table))return[];const rows=await db.prepare(sql).bind(...binds).all<Row>();return rows.results;}
 
-// D1 caps the number of bound parameters in a single statement. These lookups used to build one "?"
-// per booking in the window, which is unbounded: with no date filter it is every booking ever. On
-// staging that produced "D1_ERROR: too many SQL variables at offset 301" and the whole Unit
-// Economics screen returned an error. It passed every test, because tests use a handful of rows.
-//
-// Chunking keeps each statement well inside the limit and makes the query count grow linearly with
-// data instead of the statement width growing without bound.
-const BIND_CHUNK=50;
-async function safeAllChunked(db:Db,guard:string[],sqlFor:(placeholders:string)=>string,ids:string[]):Promise<Row[]>{
- for(const table of guard)if(!await tableExists(db,table))return[];
- const out:Row[]=[];
- for(let index=0;index<ids.length;index+=BIND_CHUNK){
-  const slice=ids.slice(index,index+BIND_CHUNK);
-  const rows=await db.prepare(sqlFor(slice.map(()=>"?").join(","))).bind(...slice).all<Row>();
-  out.push(...rows.results);
- }
- return out;
-}
+/**
+ * Table-existence guards are memoised for the life of one request.
+ *
+ * Each guard is its own sqlite_master read, and each of these reads is now wrapped in chunkedIn, so
+ * an unmemoised guard costs one extra subrequest PER CHUNK: 7 guarded lookups over 5,000 bookings
+ * spent 1,012 D1 subrequests where a Worker invocation is allowed about 1,000. The chunking fix would
+ * then have re-broken the screen it was fixing, one order of magnitude further up.
+ *
+ * The memo is per call, not per module. A module-level cache would remember "table absent" after
+ * another module ran CREATE TABLE IF NOT EXISTS, and go on reporting zeros for the rest of the
+ * isolate's life - the same confident-zero failure this file exists to remove.
+ */
+type Guards=Map<string,Promise<boolean>>;
+function guardCache():Guards{return new Map();}
+function knownTable(db:Db,guards:Guards,name:string){const hit=guards.get(name);if(hit)return hit;const probe=tableExists(db,name);guards.set(name,probe);return probe;}
+async function safeAll(db:Db,guard:string[],sql:string,binds:unknown[],guards:Guards=guardCache()):Promise<Row[]>{for(const table of guard)if(!await knownTable(db,guards,table))return[];const rows=await db.prepare(sql).bind(...binds).all<Row>();return rows.results;}
 
 export type UnitEconomicsFilters={from?:string;to?:string;cityId?:string};
 
@@ -47,7 +45,8 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
  const filters=["substr(scheduled_start,1,10)>=?","substr(scheduled_start,1,10)<=?"],binds:unknown[]=[from,to];
  if(input.cityId){filters.push("city_id=?");binds.push(input.cityId);}
  const where=filters.join(" AND ");
- const bookings=await safeAll(db,["canonical_bookings"],`SELECT id,customer_id,provider_id,service_code,status,total_amount,scheduled_start,scheduled_end FROM canonical_bookings WHERE ${where}`,binds);
+ const guards=guardCache();
+ const bookings=await safeAll(db,["canonical_bookings"],`SELECT id,customer_id,provider_id,service_code,status,total_amount,scheduled_start,scheduled_end FROM canonical_bookings WHERE ${where}`,binds,guards);
  if(!bookings.length)return{from,to,cityId:input.cityId??null,services:{},company:emptyCompany(),dataCoverage:coverageNote(),truth:truthNote()};
 
  const ids=bookings.map(row=>String(row.id));
@@ -55,13 +54,13 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
  const serviceOf=new Map(bookings.map(row=>[String(row.id),String(row.service_code)]));
 
  // Real per-booking money components (each guarded on its owning table)
- const coupons=await safeAllChunked(db,["coupon_redemptions"],slot=>`SELECT booking_id,discount_amount FROM coupon_redemptions WHERE status='consumed' AND booking_id IN (${slot})`,ids);
- const points=await safeAllChunked(db,["paw_points_ledger"],slot=>`SELECT booking_id,points FROM paw_points_ledger WHERE entry_type='redeemed' AND booking_id IN (${slot})`,ids);
- const wallet=await safeAllChunked(db,["pawspace_wallet_ledger"],slot=>`SELECT source_id booking_id,applied_value FROM pawspace_wallet_ledger WHERE entry_type='redeem' AND source_id IN (${slot})`,ids);
- const payouts=await safeAllChunked(db,["provider_order_payouts"],slot=>`SELECT booking_id,amount FROM provider_order_payouts WHERE booking_id IN (${slot})`,ids);
- const refunds=await safeAllChunked(db,["booking_refund_cases"],slot=>`SELECT booking_id,amount FROM booking_refund_cases WHERE status='processed' AND booking_id IN (${slot})`,ids);
- const reviews=await safeAllChunked(db,["service_reviews"],slot=>`SELECT booking_id,stars FROM service_reviews WHERE booking_id IN (${slot})`,ids);
- const tickets=await safeAllChunked(db,["customer_experience_tickets"],slot=>`SELECT booking_id FROM customer_experience_tickets WHERE booking_id IN (${slot})`,ids);
+ const coupons=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["coupon_redemptions"],`SELECT booking_id,discount_amount FROM coupon_redemptions WHERE status='consumed' AND booking_id IN (${placeholders})`,chunk,guards));
+ const points=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["paw_points_ledger"],`SELECT booking_id,points FROM paw_points_ledger WHERE entry_type='redeemed' AND booking_id IN (${placeholders})`,chunk,guards));
+ const wallet=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["pawspace_wallet_ledger"],`SELECT source_id booking_id,applied_value FROM pawspace_wallet_ledger WHERE entry_type='redeem' AND source_id IN (${placeholders})`,chunk,guards));
+ const payouts=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["provider_order_payouts"],`SELECT booking_id,amount FROM provider_order_payouts WHERE booking_id IN (${placeholders})`,chunk,guards));
+ const refunds=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["booking_refund_cases"],`SELECT booking_id,amount FROM booking_refund_cases WHERE status='processed' AND booking_id IN (${placeholders})`,chunk,guards));
+ const reviews=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["service_reviews"],`SELECT booking_id,stars FROM service_reviews WHERE booking_id IN (${placeholders})`,chunk,guards));
+ const tickets=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["customer_experience_tickets"],`SELECT booking_id FROM customer_experience_tickets WHERE booking_id IN (${placeholders})`,chunk,guards));
 
  type Ladder={gmv:number;orders:number;cancelled:number;discounts:number;providerPayout:number;refunds:number;tax:null;paymentFee:null;variableCost:null;contributionKnown:number;contributionPctOfGmv:number|null;avgOrderValue:number|null;reviews:number;csatAvgStars:number|null;csatPct:number|null;complaintsPer100:number|null;repeatRatePct:number|null;revenuePerProviderDay:number|null};
  const ladders:Record<string,Ladder>={};
@@ -102,15 +101,15 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
  const activeCustomers=[...new Set(active.map(row=>String(row.customer_id)))];
  let ltvPerActiveCustomer:number|null=null;
  if(activeCustomers.length){
-  const lifetime=await safeAllChunked(db,["canonical_bookings"],slot=>`SELECT customer_id,SUM(total_amount) total FROM canonical_bookings WHERE status NOT IN ('cancelled','draft') AND customer_id IN (${slot}) GROUP BY customer_id`,activeCustomers);
+  const lifetime=await chunkedIn(activeCustomers,(chunk,placeholders)=>safeAll(db,["canonical_bookings"],`SELECT customer_id,SUM(total_amount) total FROM canonical_bookings WHERE status NOT IN ('cancelled','draft') AND customer_id IN (${placeholders}) GROUP BY customer_id`,chunk,guards));
   ltvPerActiveCustomer=round2(lifetime.reduce((sum,row)=>sum+Number(row.total||0),0)/activeCustomers.length);
  }
  // Roster utilisation: booked reservation hours / rostered window hours across the window
  let utilisationPct:number|null=null;
  if(await tableExists(db,"scheduling_reservations")&&await tableExists(db,"scheduling_availability")){
-  const reservations=await safeAll(db,["scheduling_reservations"],"SELECT scheduled_start,scheduled_end FROM scheduling_reservations WHERE status!='cancelled' AND substr(scheduled_start,1,10)>=? AND substr(scheduled_start,1,10)<=?",[from,to]);
+  const reservations=await safeAll(db,["scheduling_reservations"],"SELECT scheduled_start,scheduled_end FROM scheduling_reservations WHERE status!='cancelled' AND substr(scheduled_start,1,10)>=? AND substr(scheduled_start,1,10)<=?",[from,to],guards);
   const bookedHours=reservations.reduce((sum,row)=>sum+Math.max(0,(new Date(String(row.scheduled_end)).getTime()-new Date(String(row.scheduled_start)).getTime())/3_600_000),0);
-  const roster=await safeAll(db,["scheduling_availability"],"SELECT windows_json FROM scheduling_availability WHERE date>=? AND date<=?",[from,to]);
+  const roster=await safeAll(db,["scheduling_availability"],"SELECT windows_json FROM scheduling_availability WHERE date>=? AND date<=?",[from,to],guards);
   let rosterHours=0;
   for(const row of roster){let windows:string[]=[];try{windows=JSON.parse(String(row.windows_json||"[]"));}catch{windows=[];}for(const window of windows){const match=/^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/.exec(window);if(match)rosterHours+=Math.max(0,(Number(match[3])*60+Number(match[4])-Number(match[1])*60-Number(match[2]))/60);}}
   utilisationPct=rosterHours>0?pct(bookedHours,rosterHours):null;
@@ -121,7 +120,7 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
   const spendRow=await db.prepare("SELECT COALESCE(SUM(spend_amount),0) spend,COUNT(*) rows FROM marketing_attribution_facts WHERE spend_amount IS NOT NULL").first<Row>();
   const spend=Number(spendRow?.spend||0);
   if(Number(spendRow?.rows||0)>0&&spend>0){
-   const firsts=await safeAll(db,["canonical_bookings"],`SELECT customer_id,MIN(substr(scheduled_start,1,10)) first_day FROM canonical_bookings WHERE status NOT IN ('cancelled','draft') GROUP BY customer_id`,[]);
+   const firsts=await safeAll(db,["canonical_bookings"],`SELECT customer_id,MIN(substr(scheduled_start,1,10)) first_day FROM canonical_bookings WHERE status NOT IN ('cancelled','draft') GROUP BY customer_id`,[],guards);
    const newCustomers=firsts.filter(row=>String(row.first_day)>=from&&String(row.first_day)<=to).length;
    cac={status:"derived_from_recorded_spend",spend:round2(spend),newCustomers,cacPerNewCustomer:newCustomers>0?round2(spend/newCustomers):null};
   }

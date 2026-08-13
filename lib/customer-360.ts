@@ -1,3 +1,4 @@
+import{chunkedIn}from"./d1-chunked-in";
 type Db=D1Database;
 type Row=Record<string,unknown>;
 export type Customer360Record={customerId:string;name:string;primaryPhone:string;email:string|null;area:string|null;crmStage:string;owner:string;source:string;consent:{marketing:boolean;service:boolean;whatsapp:boolean;sms:boolean;email:boolean;updatedAt:number|null};addresses:Array<{id:string;label:string;line1:string;line2:string|null;area:string|null;city:string;postalCode:string|null;isDefault:boolean}>;pets:Array<{id:string;name:string;species:string;breed:string|null;vaccinationStatus:string}>;bookings:Array<{id:string;serviceCode:string;packageName:string;status:string;scheduledStart:string;scheduledEnd:string;totalAmount:number;currency:string}>;coupons:Array<{id:string;code:string;bookingId:string|null;discountAmount:number;status:string;createdAt:number}>;supportCases:Array<{id:string;caseType:string;severity:string;status:string;title:string;updatedAt:number}>;tickets:Array<{id:string;category:string;priority:string;status:string;subject:string;updatedAt:number}>;lifetimeValue:number;lastServiceAt:string|null;openTicketCount:number;dataQuality:{score:number;issues:string[];duplicateCandidateIds:string[]}};
@@ -21,14 +22,13 @@ const selectedIds=selected.map(([id])=>id);
 // D1's ~100 bound-parameter ceiling while cutting round trips by a third: 500 customers cost 7
 // chunks x 8 reads instead of 10 x 8. Sized to satisfy the call BUDGET asserted by
 // tests/customer-360-fanout.test.mjs - a chunk of 50 exceeded it at 82 calls for 500 customers.
-const ID_CHUNK=80;
 async function groupedByCustomer(sqlFor:(placeholders:string)=>string,key='customer_id'){
  const grouped=new Map<string,Row[]>();
- for(let index=0;index<selectedIds.length;index+=ID_CHUNK){
-  const slice=selectedIds.slice(index,index+ID_CHUNK);
-  for(const row of await safeAll(db,sqlFor(slice.map(()=>'?').join(',')),slice)){
-   const owner=String(row[key]??'');const list=grouped.get(owner)??[];list.push(row);grouped.set(owner,list);
-  }
+ // One chunk size for the whole platform (lib/d1-chunked-in.ts). It used to be declared here as 80
+ // and again as 50 inside lib/unit-economics.ts, which is how the same class of bug came back at a
+ // different size in a different module.
+ for(const row of await chunkedIn(selectedIds,(slice,placeholders)=>safeAll(db,sqlFor(placeholders),slice))){
+  const owner=String(row[key]??'');const list=grouped.get(owner)??[];list.push(row);grouped.set(owner,list);
  }
  return grouped;
 }

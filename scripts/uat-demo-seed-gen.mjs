@@ -7,7 +7,13 @@
 // This one adds the module-level rows those two don't carry: service lifecycle (stays, walk
 // sessions, taxi trips), AI conversations, app funnel, productivity facts, attendance/leave,
 // incentives, ledger + bills + expenses, commercial terms + payouts, ratings, vaccinations,
-// birthdays, CRM leads/tickets and provider identity links.
+// birthdays, CRM leads/tickets and provider identity links — plus, from #158, the sales team the
+// performance leaderboard measures and the governed campaigns behind the marketing command centre.
+//
+// Two layers with two different assumptions, deliberately kept apart in section 3 and 3b: the UATD-*
+// rows are self-contained and prove out on an empty database, while the sales and campaign rows
+// reference staging-seed.sql's customers and bookings so those screens are measured against real
+// volume. Load staging-seed.sql first.
 //
 // SAFETY: every CREATE TABLE is COPIED VERBATIM from the source file that owns it (never retyped),
 // and every column name used in an INSERT is validated against that real DDL — the generator throws
@@ -62,6 +68,13 @@ const SOURCES = [
   "app/api/revenue-crm/route.ts",
   "app/api/crm/route.ts",
   "app/api/uat-scheduling/route.ts",
+  // Owners of the sales-performance and campaign tables merged in from #158. That branch inlined these
+  // CREATE TABLE strings by hand; naming the owning file instead means the column validation below
+  // covers them too, which is the whole point of extracting DDL rather than retyping it.
+  "lib/lead-assignment-governance.ts",
+  "lib/lead-sla-governance.ts",
+  "lib/revenue-mission-control.ts",
+  "lib/marketing-governance.ts",
 ];
 
 const ddl = new Map(); // table -> { sql, cols }
@@ -339,6 +352,162 @@ insert("provider_job_offers", { id: "UATD-OFFER-1", provider_id: "groom_arun", b
 insert("pet_vaccinations", { id: "UATD-VAX-1", pet_id: "UATD-CUS-1-PET", customer_id: "UATD-CUS-1", vaccine_type: "rabies", administered_on: dateAt(-350), next_due_on: dateAt(9), administered_by: "Dr Rao", notes: "Demo seed record", status: "active", created_at: at(-350), updated_at: at(-350) });
 insert("pet_vaccinations", { id: "UATD-VAX-2", pet_id: "UATD-CUS-6-PET", customer_id: "UATD-CUS-6", vaccine_type: "DHPPi", administered_on: dateAt(-400), next_due_on: dateAt(-20), administered_by: "Dr Rao", notes: "Demo seed record: overdue", status: "active", created_at: at(-400), updated_at: at(-400) });
 insert("pet_birthdays", { pet_id: "UATD-CUS-2-PET", customer_id: "UATD-CUS-2", date_of_birth: `2023-${dateAt(6).slice(5)}`, created_at: at(-100), updated_at: at(-100) });
+
+// ---------------------------------------------------------------------------
+// 3b. Sales performance + governed campaigns (merged from #158).
+// ---------------------------------------------------------------------------
+// These rows layer on scripts/staging-seed.sql: they reference its customers (CUS0000...) and bookings
+// (BK00000...) by design, so the sales and marketing screens are measured against the same volume the
+// rest of staging carries. Load the staging seed first, as docs/STAGING_DEPLOY.md instructs.
+//
+// Kept on #158's own base date rather than this file's `NOW`, so the leads still land inside the 7, 30
+// and 90-day windows the leaderboard offers and the numbers its tests assert stay the numbers.
+const SALES_BASE = Date.UTC(2026, 7, 1);
+
+// ------------------------------------------------------------------------------------ sales team
+const REPS = [
+  { email: "asha.rao@pawspace.in", name: "Asha Rao", leads: 9, qualified: 5, converted: 3 },
+  { email: "vikram.shetty@pawspace.in", name: "Vikram Shetty", leads: 7, qualified: 4, converted: 2 },
+  { email: "neha.kulkarni@pawspace.in", name: "Neha Kulkarni", leads: 6, qualified: 2, converted: 2 },
+  { email: "rohit.menon@pawspace.in", name: "Rohit Menon", leads: 5, qualified: 1, converted: 1 },
+];
+const AMOUNTS = [799, 1299, 699, 899, 599];
+let leadSeq = 0, bookingSeq = 0;
+
+lines.push("-- Sales team: reps, their team membership, and the lead work the leaderboard measures.");
+for (const [repIndex, rep] of REPS.entries()) {
+  insert("app_users", { id: `USR-SALES-${repIndex}`, email: rep.email, name: rep.name, role_code: "associate", status: "active", created_at: SALES_BASE - 120 * DAY, updated_at: SALES_BASE - 120 * DAY });
+  insert("lead_assignment_memberships", {
+    id: `LAM-SALES-${repIndex}`, employee_email: rep.email, team_code: "sales",
+    service_codes_json: JSON.stringify(["grooming", "boarding", "dog_training"]), city_ids_json: JSON.stringify(["blr", "hyd"]),
+    language_codes_json: JSON.stringify(["en", "hi"]), active: 1, workload_cap_override: null,
+    created_by: "uat-demo-seed", created_at: SALES_BASE - 120 * DAY, updated_by: "uat-demo-seed", updated_at: SALES_BASE - 120 * DAY,
+  });
+
+  for (let index = 0; index < rep.leads; index += 1) {
+    const leadId = `LEAD-UAT-${String(leadSeq).padStart(4, "0")}`;
+    const assignmentId = `ASG-UAT-${String(leadSeq).padStart(4, "0")}`;
+    const clockId = `CLK-UAT-${String(leadSeq).padStart(4, "0")}`;
+    const customerId = `CUS${String(leadSeq * 3 % 220).padStart(4, "0")}`;
+    // Spread the work across the last three weeks so 7/30/90-day windows all show something.
+    const at = SALES_BASE - (3 + (leadSeq % 18)) * DAY;
+    const qualified = index < rep.qualified;
+    const converted = index < rep.converted;
+    const bookingId = converted ? `BK${String(bookingSeq++).padStart(5, "0")}` : null;
+    const amount = AMOUNTS[leadSeq % AMOUNTS.length];
+    const metSla = index % 3 !== 2;
+
+    insert("lead_work_items", {
+      id: leadId, customer_id: customerId, source: ["website", "whatsapp", "referral"][index % 3], service: ["grooming", "boarding", "dog_training"][index % 3],
+      owner: rep.email, manager: "sales.manager@pawspace.in", status: converted ? "converted" : "active", stage: "day_1", work_day: 1,
+      assigned_at: at, first_action_due_at: at + 600000, manager_alert_at: at + 1_800_000, first_action_at: at + 300000,
+      call_attempts: 1 + (index % 3), whatsapp_attempts: index % 2, last_outcome: qualified ? "qualified" : "call_back_later",
+      next_action_at: at + 2 * DAY, recycle_at: null, recycle_cycle: 0, opt_out: 0, converted_booking_id: bookingId,
+      created_at: at, updated_at: at + 3 * DAY,
+    });
+    insert("lead_assignments", {
+      id: assignmentId, idempotency_key: `${assignmentId}-idem`, lead_id: leadId, employee_email: rep.email, team_code: "sales",
+      policy_id: "LAP-UAT-DEMO", policy_version: 1, assignment_reason: "round_robin", status: "current", fallback_queue: null,
+      assigned_at: at, accepted_at: at + 120000, ended_at: null, ended_reason: null, previous_assignment_id: null,
+      detail_json: "{}", created_by: "uat-demo-seed", created_at: at,
+    });
+    insert("lead_sla_clocks", {
+      id: clockId, idempotency_key: `${clockId}-idem`, lead_id: leadId, assignment_id: assignmentId, policy_id: "LSP-UAT-DEMO", policy_version: 1,
+      clock_type: "first_response", cycle: 1, status: metSla ? "met" : "breached", started_at: at, due_at: at + 600000,
+      manager_escalation_due_at: at + 1_800_000, reassignment_due_at: at + 3_600_000, met_at: metSla ? at + 300000 : null,
+      breached_at: metSla ? null : at + 900000, paused_at: null, pause_reason: null, paused_remaining_minutes: null,
+      last_action_at: at + 300000, next_action_at: at + 2 * DAY, detail_json: "{}", created_by: "uat-demo-seed", created_at: at, updated_at: at + 300000,
+    });
+    // Every touch is a recorded action; its outcome is what makes the lead "qualified" under a policy.
+    for (const [actionIndex, actionType] of ["call", "whatsapp"].entries()) {
+      const eventId = `EVT-UAT-${String(leadSeq).padStart(4, "0")}-${actionIndex}`;
+      insert("lead_sla_events", {
+        id: eventId, idempotency_key: `${eventId}-idem`, clock_id: clockId, lead_id: leadId, event_type: "action_recorded", actor_id: rep.email,
+        detail_json: JSON.stringify({ actionType, outcome: actionIndex === 0 && qualified ? "qualified" : converted ? "booked" : "call_back_later" }),
+        created_at: at + 300000 + actionIndex * 60000,
+      });
+    }
+    if (converted) {
+      // Money for a converted lead comes from the revenue ledger, keyed to the booking.
+      insert("revenue_mission_events", {
+        id: `RME-UAT-${leadSeq}-c`, mission_id: "MIS-UAT-DEMO", source_event_key: `${bookingId}-collected`, event_type: "collected",
+        customer_id: customerId, booking_id: bookingId, payment_id: `PAY-${bookingId}`, refund_id: null, service_code: "grooming", city_id: "blr",
+        gross_amount: amount, refund_amount: 0, eligible_amount: amount, currency: "INR", source_at: at + 2 * DAY,
+        source_version: "uat_demo_seed:v1", attribution_json: "{}", created_at: at + 2 * DAY,
+      });
+      if (leadSeq % 7 === 0) {
+        insert("revenue_mission_events", {
+          id: `RME-UAT-${leadSeq}-r`, mission_id: "MIS-UAT-DEMO", source_event_key: `${bookingId}-refunded`, event_type: "refunded",
+          customer_id: customerId, booking_id: bookingId, payment_id: `PAY-${bookingId}`, refund_id: `RFD-${bookingId}`, service_code: "grooming", city_id: "blr",
+          gross_amount: 0, refund_amount: Math.round(amount / 2), eligible_amount: 0, currency: "INR", source_at: at + 3 * DAY,
+          source_version: "uat_demo_seed:v1", attribution_json: "{}", created_at: at + 3 * DAY,
+        });
+      }
+    }
+    leadSeq += 1;
+  }
+}
+
+// An active policy so the leaderboard has a definition to measure against. The fact run is deliberately
+// left out: generating it is one click on /team/performance, which is also how the pipeline is proven.
+lines.push("-- Active productivity policy. Generate the report from /team/performance to fill the board.");
+insert("sales_productivity_policies", {
+  id: "SPP-UAT-DEMO", name: "Sales productivity (UAT baseline)", status: "active_uat", version: 1, team_code: "sales", timezone: "Asia/Kolkata",
+  meaningful_action_types_json: JSON.stringify(["call", "whatsapp"]), qualified_outcomes_json: JSON.stringify(["qualified", "booked"]),
+  revenue_basis: "net_collected", require_canonical_lead_booking_link: 1, effective_from: SALES_BASE - 365 * DAY, effective_until: null,
+  approval_reference: "UAT-DEMO-SEED", created_by: "uat-demo-seed", created_at: SALES_BASE - 120 * DAY, updated_by: "uat-demo-seed", updated_at: SALES_BASE - 120 * DAY,
+});
+
+// -------------------------------------------------------------------------------------- marketing
+lines.push("-- Governed campaigns: one live with a taken audience snapshot, one awaiting approval.");
+const CAMPAIGNS = [
+  { id: "CMP-UAT-MONSOON", name: "Monsoon grooming refresh", objective: "reactivation", service: "grooming", city: "blr", budget: 45000, holdout: 10, status: "active", approval: "approved" },
+  { id: "CMP-UAT-BOARDING", name: "Festive boarding pre-book", objective: "acquisition", service: "boarding", city: "hyd", budget: 60000, holdout: 15, status: "draft", approval: "approval_required" },
+];
+for (const campaign of CAMPAIGNS) {
+  insert("governed_marketing_campaigns", {
+    id: campaign.id, name: campaign.name, objective: campaign.objective, service_code: campaign.service, city_id: campaign.city,
+    audience_rule_json: JSON.stringify({ marketingConsent: true, serviceCode: campaign.service, cityId: campaign.city }),
+    budget_amount: campaign.budget, currency: "INR", holdout_percent: campaign.holdout, status: campaign.status, approval_status: campaign.approval,
+    approved_by: campaign.approval === "approved" ? "marketing.head@pawspace.in" : null, approved_at: campaign.approval === "approved" ? SALES_BASE - 20 * DAY : null,
+    start_at: campaign.status === "active" ? SALES_BASE - 18 * DAY : null, end_at: campaign.status === "active" ? SALES_BASE + 12 * DAY : null,
+    created_by: "uat-demo-seed", created_at: SALES_BASE - 25 * DAY, updated_at: SALES_BASE - 18 * DAY,
+  });
+}
+
+// The snapshot mirrors what snapshotCampaignAudience() records: consent-eligible customers, an explicit
+// holdout, and everyone else suppressed with the reason they were held back.
+const live = CAMPAIGNS[0];
+const audience = [];
+for (let index = 0; index < 220; index += 3) audience.push(`CUS${String(index).padStart(4, "0")}`);
+const holdout = audience.filter((_, index) => index % 10 === 0);
+const suppressed = audience.filter((_, index) => index % 7 === 0 && index % 10 !== 0);
+const eligible = audience.filter((id) => !holdout.includes(id) && !suppressed.includes(id));
+insert("marketing_audience_snapshots", {
+  id: "MAS-UAT-MONSOON", campaign_id: live.id, snapshot_at: SALES_BASE - 18 * DAY, total_candidates: audience.length,
+  eligible_count: eligible.length, holdout_count: holdout.length, suppressed_count: suppressed.length,
+  policy_json: JSON.stringify({ requiresMarketingConsent: true, holdoutPercent: live.holdout, suppressionReasons: ["marketing_consent_missing"] }),
+  created_by: "uat-demo-seed",
+});
+for (const customerId of audience) {
+  const cohort = holdout.includes(customerId) ? "holdout" : suppressed.includes(customerId) ? "suppressed" : "eligible";
+  insert("marketing_audience_members", {
+    snapshot_id: "MAS-UAT-MONSOON", campaign_id: live.id, customer_id: customerId, cohort,
+    suppression_reason: cohort === "suppressed" ? "marketing_consent_missing" : null,
+  });
+}
+
+// Attribution facts carry the spend the unit-economics CAC line refuses to invent.
+for (let index = 0; index < 6; index += 1) {
+  const bookingId = `BK${String(index).padStart(5, "0")}`;
+  insert("marketing_attribution_facts", {
+    id: `MAF-UAT-${index}`, campaign_id: live.id, customer_id: `CUS${String(index * 3).padStart(4, "0")}`, lead_id: null, booking_id: bookingId,
+    collection_id: null, source: "meta", medium: "paid_social", spend_amount: 1500, booked_revenue: AMOUNTS[index % AMOUNTS.length],
+    collected_revenue: AMOUNTS[index % AMOUNTS.length], contribution_margin: null, attribution_model: "last_touch_uat",
+    created_at: SALES_BASE - 15 * DAY, updated_at: SALES_BASE - 15 * DAY,
+  });
+}
+
 
 // ---------------------------------------------------------------------------
 // 4. Write the file: real DDL first (only for tables actually used), then rows.
