@@ -27,6 +27,8 @@ export const caseTypes: CaseType[] = [
   "safety_incident", "customer_complaint", "payment", "refund", "provider_issue",
   "lead_escalation", "rebooking", "reconciliation", "operations",
 ];
+/** Every case-type/severity pair the platform can raise, and so must have an SLA policy for. */
+export const REQUIRED_CASE_POLICY_COUNT = caseTypes.length * caseSeverities.length;
 
 // Severity baseline, in minutes: how fast someone must respond, resolve, and how long before a
 // manager is pulled in. Manager escalation is deliberately AFTER first response but well BEFORE
@@ -129,5 +131,5 @@ export async function caseSlaCoverageGaps(db: Db, asOf = Date.now()) {
   for (const caseType of caseTypes) for (const severity of caseSeverities) {
     if (!covered.has(`${caseType}:${severity}`)) gaps.push({ caseType, severity });
   }
-  return { total: caseTypes.length * caseSeverities.length, covered: covered.size, gaps, fullyCovered: gaps.length === 0 };
+  return { total: REQUIRED_CASE_POLICY_COUNT, covered: covered.size, gaps, fullyCovered: gaps.length === 0 };
 }

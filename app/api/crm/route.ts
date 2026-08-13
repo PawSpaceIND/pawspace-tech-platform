@@ -19,8 +19,33 @@ async function ensureTables(){
 export async function GET(request:Request){try{
   await authorize(request,"customers.view"); await ensureTables();
   const db=await getDatabase();
-  const result=await db.prepare("SELECT * FROM crm_contacts ORDER BY updated_at DESC LIMIT 100").all();
-  return Response.json({contacts:result.results});
+  const result=await db.prepare("SELECT * FROM crm_contacts ORDER BY updated_at DESC LIMIT 100").all<Record<string,unknown>>();
+  // Lifetime value must be the SAME number Customer 360 shows for the same person. crm_contacts
+  // carries a stored lifetime_value column that no booking backs - seeded demo figures - so this
+  // screen was reporting Meera Shah at Rs.4,150 while /team/sales correctly computed Rs.0 from her
+  // (nonexistent) bookings. Two different numbers for one customer is worse than either number.
+  //
+  // The recognition rule is the platform's single rule, matching lib/pnl-reporting.ts,
+  // buildCompanyAnalytics and lib/customer-360.ts: cancelled and draft bookings are not revenue.
+  const contacts=result.results;
+  if(contacts.length){
+    const ids=contacts.map(row=>String(row.id));
+    const totals=new Map<string,number>();
+    // Chunked to stay inside D1's bound-parameter cap.
+    for(let index=0;index<ids.length;index+=50){
+      const slice=ids.slice(index,index+50);
+      const rows=await db.prepare(`SELECT customer_id,COALESCE(SUM(total_amount),0) total FROM canonical_bookings WHERE status NOT IN ('cancelled','draft') AND customer_id IN (${slice.map(()=>"?").join(",")}) GROUP BY customer_id`)
+        .bind(...slice).all<Record<string,unknown>>().catch(()=>({results:[] as Record<string,unknown>[]}));
+      for(const row of rows.results)totals.set(String(row.customer_id),Number(row.total||0));
+    }
+    for(const contact of contacts){
+      const booked=totals.get(String(contact.id))??0;
+      contact.lifetime_value=booked;
+      // Published so the screen can be explicit rather than implying money that never arrived.
+      contact.lifetime_value_basis=booked>0?"recognized_bookings":"no_recognized_bookings";
+    }
+  }
+  return Response.json({contacts});
 }catch(error){return authError(error,"Unable to load CRM");}}
 
 export async function POST(request:Request){

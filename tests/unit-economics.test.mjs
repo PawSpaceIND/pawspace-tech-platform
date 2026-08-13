@@ -30,8 +30,16 @@ if (typeof nodeModule.registerHooks === "function") {
   nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
 }
 
+// The bind cap now comes from the shared harness (tests/helpers/d1-harness.mjs) so every suite
+// models the same database. It exists because /api/unit-economics returned "D1_ERROR: too many SQL
+// variables at offset 301" on staging while this suite stayed green: node:sqlite accepts thousands
+// of bound parameters and D1 caps them near 100.
+import { D1_MAX_BOUND_PARAMS } from "./helpers/d1-harness.mjs";
 function makeD1(sqlite) {
   function statement(sql, args) {
+    if (args.length > D1_MAX_BOUND_PARAMS) {
+      throw new Error(`D1_ERROR: too many SQL variables (${args.length} > ${D1_MAX_BOUND_PARAMS}): ${sql.slice(0, 80)}`);
+    }
     return {
       bind: (...boundArgs) => statement(sql, boundArgs),
       first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
@@ -221,4 +229,26 @@ test("contract: gateway permission line, DB access rule, and the finance surface
   assert.match(page, /\/api\/unit-economics/);
   const lib = fs.readFileSync(new URL("../lib/unit-economics.ts", import.meta.url), "utf8");
   assert.match(lib, /configuration_required/, "unconfigured cost lines must stay explicit, never silently zero");
+});
+
+test("a month with more bookings than D1's bind limit still reports, instead of erroring", async () => {
+  // The per-booking money lookups used to build one "?" per booking in the window. With no date
+  // filter that is every booking ever, so the statement width grew without bound and D1 rejected it:
+  // "D1_ERROR: too many SQL variables at offset 301". It passed every test because tests used a
+  // handful of rows. 250 bookings is comfortably past the 100-parameter cap.
+  freshDb();
+  seedTables();
+  const COUNT = 250;
+  for (let index = 0; index < COUNT; index += 1) {
+    booking(`BULK-${index}`, { customer: `cus_bulk_${index % 40}`, total: 1000, day: 10 });
+  }
+  // One real discount, so the chunked lookup is proven to still find its rows rather than silently
+  // returning nothing once it is split into batches.
+  sqlite.prepare("INSERT INTO coupon_redemptions (id,idempotency_key,quote_id,campaign_id,code,customer_id,booking_id,discount_amount,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'consumed',?,?)")
+    .run("CR-1", "ik-CR-1", "q-CR-1", "camp", "SAVE", "cus_bulk_0", `BULK-${COUNT - 1}`, 300, NOW, NOW);
+
+  const result = await buildUnitEconomics(globalThis.__UE_DB__, { from: FROM, to: TO });
+  assert.equal(result.services.grooming.orders, COUNT, "every booking in the window is counted");
+  assert.equal(result.services.grooming.gmv, COUNT * 1000);
+  assert.equal(result.services.grooming.discounts, 300, "a discount on the LAST booking is still found after chunking");
 });
