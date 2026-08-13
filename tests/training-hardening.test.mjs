@@ -549,7 +549,7 @@ test("contract: gateway permission map, DB access rule, and team surfaces for th
   const lifecycle = fs.readFileSync(new URL("../lib/training-session-lifecycle.ts", import.meta.url), "utf8");
   assert.match(lifecycle, /rosterCovers/, "reschedule/replace must keep the roster availability check");
   assert.match(lifecycle, /scheduling_availability WHERE provider_id=\? AND date=\?/);
-  const panel = fs.readFileSync(new URL("../app/admin/training-panel.tsx", import.meta.url), "utf8");
+  const panel = fs.readFileSync(new URL("../app/team/operations/training/training-panel.tsx", import.meta.url), "utf8");
   assert.match(panel, /\/api\/training-(ops|sessions)/);
   const financePage = fs.readFileSync(new URL("../app/team/finance/training/page.tsx", import.meta.url), "utf8");
   assert.match(financePage, /\/api\/training-(finance|cancellation)/);

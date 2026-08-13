@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import styles from "./team.module.css";
+import TestSyncPanel from "../components/test-sync-panel";
 
 type Overview = {
   actor: { name: string; email: string; roleCode: string };
@@ -76,6 +77,8 @@ export default function TeamHome() {
         <article><span>Open escalations</span><b>{show(strip?.openEscalations)}</b><small>{strip?.openTickets == null ? "no ticket data yet" : `of ${strip.openTickets} open ticket${strip.openTickets === 1 ? "" : "s"}`}</small></article>
         <article><span>7 PM command pack</span><b>{packLabel}</b><small>{packNote}</small></article>
       </section>
+      {/* The synthetic transaction engine lived on /admin and /ops; this front door replaced them. */}
+      <TestSyncPanel surface="ops" />
       <section className={styles.workspaceSection}>
         <div className={styles.sectionHead}><div><p>ROLE-BASED WORKSPACES</p><h2>Choose what you need to run.</h2></div><span>6 teams · 1 customer record · 1 audit trail</span></div>
         <div className={styles.grid}>{workspaces.map((workspace) => <Link href={workspace.href} className={`${styles.card} ${styles[workspace.tone]}`} key={workspace.group + workspace.title}><div><span>{workspace.group}</span><i aria-hidden="true">↗</i></div><h3>{workspace.title}</h3><p>{workspace.detail}</p><footer><b>{(data && workspace.live(data)) || workspace.metric}</b><span>Open workspace →</span></footer></Link>)}</div>

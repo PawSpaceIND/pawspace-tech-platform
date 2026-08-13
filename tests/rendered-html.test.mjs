@@ -82,7 +82,9 @@ test("wires the synthetic transaction engine into every operating surface", asyn
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("transaction-surfaces", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
-  for (const path of ["/", "/admin", "/crm", "/partner-app", "/ops", "/account"]) {
+  // /admin, /ops and /account were fabricated dashboards and now redirect; the engine is checked
+  // on the real surfaces that replaced them.
+  for (const path of ["/", "/team", "/crm", "/partner-app"]) {
     const response = await worker.fetch(
       new Request(`http://localhost${path}`, { headers: { accept: "text/html" } }),
       { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
@@ -143,12 +145,12 @@ test("renders the connected Booking Command Center", async () => {
   const html = await response.text();
   assert.match(html, /Booking Command Center/i);
   assert.match(html, /One place to control every booking/i);
-  const [page, api, admin] = await Promise.all(["app/booking-command-center/page.tsx", "app/api/booking-command-center/route.ts", "app/admin/page.tsx"].map(path => readFile(new URL("../" + path, import.meta.url), "utf8")));
+  const [page, api, admin] = await Promise.all(["app/booking-command-center/page.tsx", "app/api/booking-command-center/route.ts", "app/team/page.tsx"].map(path => readFile(new URL("../" + path, import.meta.url), "utf8")));
   assert.match(page, /Tickets & refunds/);
   assert.match(page, /UNIFIED ORDER TIMELINE/);
   assert.match(api, /canonical_bookings/);
   assert.match(api, /booking_admin_actions/);
-  assert.match(admin, /\/team\/operations\/bookings/);
+  assert.match(admin, /\/team\/operations\/bookings/); // the real Team front door links to the Command Center
 });
 
 test("renders the evidence-based System Integration Control", async () => {

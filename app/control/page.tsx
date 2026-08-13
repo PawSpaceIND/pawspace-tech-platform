@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import styles from "./control.module.css";
 import CouponsControlPanel from "./coupons-control-panel";
 import ReferralsControlPanel from "./referrals-control-panel";
@@ -41,33 +41,35 @@ type View =
   | "quality"
   | "security"
   | "health";
+// No badge counts: the sidebar used to carry fixed numbers (12 launch items, 386 subscriptions,
+// 1,304 customer records, 9 approvals...) that were literals and never moved. Each module shows its
+// own real counts once opened.
 const nav: { id: View; label: string; icon: string; count?: number }[] = [
   { id: "command", label: "Control tower", icon: "⌂" },
-  { id: "launch", label: "Launch essentials", icon: "◎", count: 12 },
-  { id: "lifecycle", label: "Customer booking lifecycle", icon: "⛓", count: 4 },
-  { id: "audit", label: "Platform audit & release", icon: "✓", count: 14 },
-  { id: "business", label: "Business 360 & reports", icon: "▥", count: 12 },
-  { id: "scheduling", label: "Auto-scheduling", icon: "◷", count: 4 },
-  { id: "pricing", label: "Pricing, packages & slots", icon: "₹", count: 4 },
-  { id: "marketing", label: "Marketing command center", icon: "↗", count: 6 },
-  { id: "finance", label: "Finance, expenses & accounts", icon: "₹", count: 11 },
-  { id: "access2", label: "Users, roles & access", icon: "♟", count: 8 },
-  { id: "approvals", label: "Approvals", icon: "✓", count: 9 },
+  { id: "launch", label: "Launch essentials", icon: "◎" },
+  { id: "lifecycle", label: "Customer booking lifecycle", icon: "⛓" },
+  { id: "audit", label: "Platform audit & release", icon: "✓" },
+  { id: "business", label: "Business 360 & reports", icon: "▥" },
+  { id: "scheduling", label: "Auto-scheduling", icon: "◷" },
+  { id: "pricing", label: "Pricing, packages & slots", icon: "₹" },
+  { id: "marketing", label: "Marketing command center", icon: "↗" },
+  { id: "finance", label: "Finance, expenses & accounts", icon: "₹" },
+  { id: "access2", label: "Users, roles & access", icon: "♟" },
+  { id: "approvals", label: "Approvals", icon: "✓" },
   { id: "master", label: "Master settings", icon: "⚙" },
-  { id: "cities", label: "Cities & geofences", icon: "◎", count: 1 },
+  { id: "cities", label: "Cities & geofences", icon: "◎" },
   {
     id: "subscriptions",
     label: "Grooming subscriptions",
     icon: "◈",
-    count: 386,
   },
-  { id: "coupons", label: "Coupon management", icon: "₹", count: 4 },
-  { id: "referrals", label: "Referral management", icon: "↗", count: 6 },
-  { id: "data2", label: "Customer data & contact", icon: "⇄", count: 1304 },
-  { id: "inventory", label: "Inventory & buying", icon: "▦", count: 7 },
-  { id: "quality", label: "Quality & incidents", icon: "◆", count: 3 },
+  { id: "coupons", label: "Coupon management", icon: "₹" },
+  { id: "referrals", label: "Referral management", icon: "↗" },
+  { id: "data2", label: "Customer data & contact", icon: "⇄" },
+  { id: "inventory", label: "Inventory & buying", icon: "▦" },
+  { id: "quality", label: "Quality & incidents", icon: "◆" },
   { id: "security", label: "Privacy & security", icon: "◇" },
-  { id: "health", label: "System health", icon: "⚡", count: 2 },
+  { id: "health", label: "System health", icon: "⚡" },
 ];
 const roles = [
   ["Super Admin", "2", "All modules + settings", "Critical"],
@@ -133,8 +135,20 @@ const modules = [
     "health",
   ],
 ];
+type ApprovalsSummary = { pending: number | null };
+
 export default function Control() {
   const [view, setView] = useState<View>("command");
+  // Real approval backlog for the approvals view (see the tile comments below).
+  const [approvals, setApprovals] = useState<ApprovalsSummary>({ pending: null });
+  useEffect(() => {
+    let on = true;
+    void fetch("/api/team-overview", { cache: "no-store" })
+      .then((response) => response.ok ? response.json() as Promise<{ data?: { approvals?: ApprovalsSummary } }> : Promise.reject(new Error("unavailable")))
+      .then((body) => { if (on && body.data?.approvals) setApprovals({ pending: body.data.approvals.pending ?? null }); })
+      .catch(() => { /* leave the tile as "—" rather than inventing a backlog */ });
+    return () => { on = false; };
+  }, []);
   const [role, setRole] = useState(roles[0]);
   const [toast, setToast] = useState("");
   const [flags, setFlags] = useState([true, true, false, false, true]);
@@ -146,7 +160,7 @@ export default function Control() {
   return (
     <main className={styles.shell}>
       <aside className={styles.side}>
-        <Link href="/ops" className={styles.brand}>
+        <Link href="/team" className={styles.brand}>
           <img src="/assets/pawspace-logo.jpeg" alt="PawSpace" />
           <div>
             <strong>Platform Control</strong>
@@ -404,10 +418,14 @@ export default function Control() {
           <>
             <section className={styles.metrics}>
               {[
-                ["Pending", "9", "₹1.84L value"],
-                ["SLA risk", "2", "Oldest 3h 18m"],
-                ["Approved today", "42", "Median 18 min"],
-                ["Auto-approved", "128", "Within safe limits"],
+                // Pending is real: reviewed payroll runs + calculated incentive results + draft
+                // commercial terms, all genuinely waiting on a second person. Approval timing and
+                // throughput have no canonical source, so they say so rather than inventing one -
+                // matching how the infrastructure tiles on this page already report gaps.
+                ["Pending", approvals.pending == null ? "—" : String(approvals.pending), approvals.pending == null ? "Approval queues unavailable" : "Awaiting a second approver"],
+                ["SLA risk", "Not measured", "Approval timing not recorded"],
+                ["Approved today", "Not measured", "Approval throughput not recorded"],
+                ["Auto-approved", "None", "Every approval is human"],
               ].map((x) => (
                 <article key={x[0]}>
                   <span>{x[0]}</span>

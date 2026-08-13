@@ -72,3 +72,40 @@ test("the real groomer-facing surfaces stay wired to canonical APIs", () => {
   assert.match(read("app/partner/jobs/page.tsx"), /fetch\("\/api\/partner-job-feed"/);
   assert.match(read("app/partner/workspace/page.tsx"), /fetch\("\/api\/provider-workspace"/);
 });
+
+test("/account, /ops and /admin retired: no fabricated dashboards remain reachable", () => {
+  for (const [route, target] of [["/account", "/mobile-app"], ["/ops", "/team"], ["/admin", "/team"]]) {
+    const page = read(`app${route}/page.tsx`);
+    assert.match(page, new RegExp(`redirect\\("${target}"\\)`), `${route} must redirect to ${target}`);
+    assert.doesNotMatch(page, /^"use client"/m, `${route} must redirect server-side`);
+  }
+  // the fabricated figures are gone with their pages and panels
+  const account = read("app/account/page.tsx"), ops = read("app/ops/page.tsx"), admin = read("app/admin/page.tsx");
+  for (const gone of ["Ananya Rao", "4.8 ★", "₹6,594", "Member since 2022"]) assert.ok(!account.includes(gone), `/account must not keep '${gone}'`);
+  for (const gone of ["₹31.82L", "₹24.18L", "₹18.42L", "94%"]) assert.ok(!ops.includes(gone), `/ops must not keep '${gone}'`);
+  for (const gone of ["₹32,482", "4.9 ★", "50,000+"]) assert.ok(!admin.includes(gone), `/admin must not keep '${gone}'`);
+  for (const panel of ["boarding-panel", "food-panel", "mobility-panel", "workforce-panel"]) {
+    assert.ok(!fs.existsSync(`app/admin/${panel}.tsx`), `the fabricated ${panel} is removed`);
+  }
+  // the real customer account surface it points at still exists and is wired
+  assert.match(read("app/mobile-app/customer-account-view.tsx"), /fetch\(/, "the real customer account view reads live data");
+});
+
+test("/control keeps its real panels, states gaps honestly and no longer carries invented counts", () => {
+  const control = read("app/control/page.tsx");
+  // real panels are still mounted
+  for (const panel of ["MarketingControlPanel", "PricingControlPanel", "FinanceControlPanel", "AccessControlPanel", "BusinessIntelligencePanel"]) {
+    assert.ok(control.includes(panel), `${panel} must stay mounted`);
+  }
+  // the approvals backlog is real; timing/throughput say they are not measured
+  assert.match(control, /approvals\.pending/, "the pending tile reads a real backlog");
+  assert.match(control, /fetch\("\/api\/team-overview"/);
+  for (const invented of ['"9", "₹1.84L value"', '"2", "Oldest 3h 18m"', '"42", "Median 18 min"', '"128", "Within safe limits"']) {
+    assert.ok(!control.includes(invented), `the fabricated approvals tile ${invented} must be gone`);
+  }
+  assert.match(control, /Not measured/, "unmeasured approval SLA is stated, not invented");
+  // sidebar badge counts were literals that never moved
+  assert.ok(!/\bcount: \d+/.test(control), "no hardcoded sidebar badge counts remain");
+  // honest infrastructure reporting kept
+  assert.match(control, /Not connected/);
+});

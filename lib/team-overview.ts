@@ -48,6 +48,17 @@ export async function buildTeamOverview(db: Db, input: { actorEmail: string; act
   const openTickets = tickets ? num(tickets.open) : null;
   const escalated = tickets ? num(tickets.escalated) : null;
 
+  // Real work genuinely waiting on a human decision, across the governed maker/checker flows.
+  // Approval SLA/throughput ("approved today", "median 18 min", "auto-approved") has no canonical
+  // source, so it is reported as unavailable rather than invented.
+  const [payrollAwaiting, incentivesAwaiting, termsAwaiting] = await Promise.all([
+    one(db, "SELECT COUNT(*) count FROM payroll_runs WHERE status='reviewed'"),
+    one(db, "SELECT COUNT(*) count FROM employee_incentive_results WHERE status='calculated'"),
+    one(db, "SELECT COUNT(*) count FROM provider_commercial_terms WHERE status='draft'"),
+  ]);
+  const approvalParts = [payrollAwaiting, incentivesAwaiting, termsAwaiting];
+  const pendingApprovals = approvalParts.every((part) => part === null) ? null : approvalParts.reduce((sum, part) => sum + (part ? num(part.count) : 0), 0);
+
   return {
     actor: { name: input.actorName || input.actorEmail, email: input.actorEmail, roleCode: input.roleCode },
     today,
@@ -64,6 +75,15 @@ export async function buildTeamOverview(db: Db, input: { actorEmail: string; act
       ticketsNeedAttention: openTickets,
       dayCloseStatus: closure ? String(closure.status) : null,
       activeEmployees: people ? num(people.count) : null,
+    },
+    approvals: {
+      pending: pendingApprovals,
+      breakdown: {
+        payrollRuns: payrollAwaiting ? num(payrollAwaiting.count) : null,
+        incentiveResults: incentivesAwaiting ? num(incentivesAwaiting.count) : null,
+        commercialTerms: termsAwaiting ? num(termsAwaiting.count) : null,
+      },
+      slaMeasured: false, // no canonical approval-timing source yet
     },
     truth: { source: "canonical platform tables", fabricatedCounters: false, productionReady: false },
   };
