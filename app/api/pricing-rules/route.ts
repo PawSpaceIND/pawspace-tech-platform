@@ -1,5 +1,5 @@
 import{authError,database,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
-import{createPricingRule,listPricingRules,addHoliday,seedNationalHolidays,listHolidays,suggestSurcharge,applySurchargeSuggestion}from"../../../lib/pricing-rule-governance";
+import{createPricingRule,listPricingRules,listPricingCities,addHoliday,seedNationalHolidays,listHolidays,suggestSurcharge,applySurchargeSuggestion}from"../../../lib/pricing-rule-governance";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin pricing write blocked",{status:403});}
@@ -9,6 +9,7 @@ export async function GET(request:Request){
   try{
     const url=new URL(request.url),db=await database(),actor=await resolveActor(request);requirePermission(actor,"pricing.view");
     const mode=url.searchParams.get("mode")||"rules";
+    if(mode==="cities")return json({data:await listPricingCities(db)});
     if(mode==="holidays")return json({data:await listHolidays(db,{region:url.searchParams.get("region")||undefined,year:url.searchParams.has("year")?Number(url.searchParams.get("year")):undefined})});
     if(mode==="suggest"){const data=await suggestSurcharge(db,{region:url.searchParams.get("region")||undefined,year:Number(url.searchParams.get("year"))||new Date().getUTCFullYear(),serviceCode:url.searchParams.get("serviceCode")||"boarding",cityId:url.searchParams.get("cityId")||"blr",zoneId:url.searchParams.get("zoneId")||undefined,adjustmentPercent:url.searchParams.has("pct")?Number(url.searchParams.get("pct")):undefined});return json({data});}
     return json({data:await listPricingRules(db,{serviceCode:url.searchParams.get("serviceCode")||undefined,cityId:url.searchParams.get("cityId")||undefined})});
