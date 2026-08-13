@@ -165,13 +165,38 @@ test("TRUTH: a role cannot grant itself the power to change roles", async () => 
 });
 
 test("TRUTH: founder access cannot be taken by anyone who can administer users", async () => {
+  // Asserted as behaviour, not as a source string. An earlier version of this invariant grepped the
+  // route for the literal `roleCode==="founder"` guard; that guard was correct but naming one role left
+  // `superuser` (also ["*"]) wide open, so the platform now DERIVES the protected set from permissions
+  // rather than from a name. A text match on the old spelling would fail against the stronger route
+  // while the property it cares about — a user-admin cannot mint full access — holds more firmly than
+  // before. So drive the real handler and read the database back.
   const route = await import("../app/api/platform-governance/route.ts");
-  const source = (await import("node:fs/promises")).readFile;
-  const text = await source(new URL("../app/api/platform-governance/route.ts", import.meta.url), "utf8");
+  const sqlite = new DatabaseSync(":memory:");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS app_users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, role_code TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS role_definitions (code TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, permissions_json TEXT NOT NULL, system_role INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").run("U-STAFF", "ordinary.staff@tkpetcare.in", "Ordinary Staff", "associate", "active", 0, 0);
+  globalThis.__TRUTH_DB__ = makeD1(sqlite);
+  const post = (body) => route.POST(new Request("http://localhost/api/platform-governance", {
+    method: "POST",
+    headers: { "content-type": "application/json", "oai-authenticated-user-email": "admin.actor@tkpetcare.in" },
+    body: JSON.stringify(body),
+  }));
 
-  // Both doors: creating a founder, and promoting an existing user into one.
-  assert.match(text, /roleCode==="founder"\)return Response\.json\(\{error:"Founder is protected/, "create_user must refuse the founder role");
-  assert.match(text, /target\?\.role_code==="founder"\)return Response\.json\(\{error:"Founder access cannot be changed/, "update_user must refuse to touch a founder");
+  // Door 1 — creating a founder is refused, and NO account is written for it.
+  const created = await post({ action: "create_user", email: "brand.new@tkpetcare.in", name: "Brand New", roleCode: "founder" });
+  assert.equal(created.status, 400, "create_user must refuse the founder role");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS total FROM app_users WHERE email=?").get("brand.new@tkpetcare.in").total, 0, "no founder account may be created");
+
+  // Door 2 — promoting an existing user into a founder is refused, and the row is unchanged.
+  const promoted = await post({ action: "update_user", id: "U-STAFF", roleCode: "founder", status: "active" });
+  assert.equal(promoted.status, 400, "update_user must refuse to promote into a founder");
+  assert.equal(sqlite.prepare("SELECT role_code FROM app_users WHERE id=?").get("U-STAFF").role_code, "associate", "the target's role must be untouched");
+
+  // And the same protection covers the OTHER full-access role the name-based guard used to miss.
+  const superuser = await post({ action: "update_user", id: "U-STAFF", roleCode: "superuser", status: "active" });
+  assert.equal(superuser.status, 400, "superuser is ['*'] too and must be refused identically");
+  assert.equal(sqlite.prepare("SELECT role_code FROM app_users WHERE id=?").get("U-STAFF").role_code, "associate");
   assert.equal(typeof route.POST, "function");
 });
 
