@@ -175,12 +175,73 @@ test("seeded DB: leaderboard ranks the demo team from real productivity facts", 
 test("seeded DB: AI analytics reports real turns, handoff, voice and CSAT", async () => {
   seededDb();
   const { data } = await body(await GET(aiAnalyticsRoute, "/api/ai-analytics"));
-  assert.equal(data.volume.turns, 5, "the five demo AI turns");
-  assert.equal(data.volume.threads, 3);
-  assert.equal(data.containment.handoffTurns, 1);
+  assert.equal(data.volume.turns, 7, "the seven demo AI turns");
+  assert.equal(data.volume.threads, 5);
+  assert.equal(data.containment.handoffTurns, 3, "explicit human request, refund policy risk, and the fail-closed voice turn");
+  assert.ok(data.containment.rate > 0 && data.containment.rate < 1, "both contained and handed-off turns are represented");
   assert.equal(data.csat.responses, 2);
   assert.equal(data.csat.averageRating, 4.5);
   assert.ok(data.voice.byOutcome.length >= 1, "a voice call is seeded");
+  assert.ok(data.volume.byChannel.length >= 3, "whatsapp, chat and voice all appear");
+});
+
+// The AI tables store an engine vocabulary, not free text. The demo rows used to be hand-written and
+// carried values the engine cannot emit (intent 'pricing', outcome 'answered', policy 'allowed',
+// queue 'care'), so these screens grouped by categories that can never occur in production. The seed
+// is now produced by running the real libs; this pins that every value is one the code can produce.
+test("seeded DB: every AI row uses a value the real engine can actually emit", async () => {
+  seededDb();
+  const { data } = await body(await GET(aiAnalyticsRoute, "/api/ai-analytics"));
+  const orchestrator = fs.readFileSync("lib/ai-conversation-orchestrator.ts", "utf8");
+  const intents = new Set(orchestrator.match(/export type AiConversationIntent=([^;]+);/)[1].split("|").map((item) => item.trim().replace(/"/g, "")));
+  for (const row of data.volume.byIntent) assert.ok(intents.has(row.intent), `intent '${row.intent}' is not a member of AiConversationIntent`);
+  for (const row of data.policy.byDecision) assert.ok(["draft_review_required", "human_handoff", "blocked_high_impact"].includes(row.decision), `policy decision '${row.decision}' is not one the orchestrator writes`);
+  for (const row of data.volume.byChannel) assert.ok(["whatsapp", "chat", "voice"].includes(row.channel), `channel '${row.channel}' is not an AiConversationChannel`);
+
+  const handoffLib = fs.readFileSync("lib/ai-human-handoff.ts", "utf8");
+  const queues = new Set([...handoffLib.matchAll(/queue:"([a-z-]+)"/g)].map((match) => match[1]));
+  const reasons = new Set(handoffLib.match(/export type AiHandoffReason=([^;]+);/)[1].split("|").map((item) => item.trim().replace(/"/g, "")));
+  for (const row of data.handoff.byReason) assert.ok(reasons.has(row.reason), `handoff reason '${row.reason}' is not an AiHandoffReason`);
+  const rows = await globalThis.__PAWSPACE_TEST_ENV.DB.prepare("SELECT queue_code,status FROM ai_handoffs").all();
+  assert.ok(rows.results.length >= 2, "handoffs are seeded");
+  for (const row of rows.results) {
+    assert.ok(queues.has(String(row.queue_code)), `queue '${row.queue_code}' is not a queue lib/ai-human-handoff.ts routes to`);
+    assert.ok(["queued", "staff_active", "resumed"].includes(String(row.status)), `handoff status '${row.status}' is not one the lifecycle sets`);
+  }
+});
+
+// A fresh environment had no AI configuration and no way to make any: the configuration screen only
+// offered lifecycle buttons for versions that did not exist, so /team/ai/configuration read
+// "No versions configured" forever. The seed now carries an activated grounding, and the screen
+// carries the bootstrap action that creates one where the seed has not been loaded.
+test("seeded DB: the assistant grounding is activated, so knowledge retrieval and public chat work", async () => {
+  seededDb();
+  const db = globalThis.__PAWSPACE_TEST_ENV.DB;
+  const config = await import("../lib/ai-business-configuration.ts");
+  const active = await config.resolveActiveAiBusinessConfig(db, { channel: "chat", intent: "service_info" });
+  assert.equal(active.configurationRequired, false, "an active assistant profile and prompt policy exist");
+  assert.equal(active.profile.key, "pawspace_default");
+  assert.ok(active.promptPolicy.systemPrompt.includes("PawSpace assistant"), "the activated system policy is the real grounding");
+  assert.equal(active.killSwitches.length, 0, "nothing is disabled");
+
+  // Every activated version carries a genuine SHA-256 of its own snapshot, not a placeholder.
+  const profiles = await db.prepare("SELECT immutable_hash FROM ai_assistant_profile_versions").all();
+  for (const row of profiles.results) assert.match(String(row.immutable_hash), /^[0-9a-f]{64}$/, "immutable hashes are real digests");
+
+  const chat = await import("../lib/ai-web-chat-adapter.ts");
+  const publicAnswer = await chat.publicAiWebKnowledge(db, { query: "boarding" });
+  assert.ok(publicAnswer.knowledge.length >= 1, "/chat public mode finds approved public knowledge");
+  assert.equal(publicAnswer.customerDataAccess, false, "public mode never touches customer data");
+});
+
+test("seeded DB: the rollout is staff-first, never opened to customers by a seed", async () => {
+  seededDb();
+  const db = globalThis.__PAWSPACE_TEST_ENV.DB;
+  const rollout = await import("../lib/ai-audience-rollout.ts");
+  const snapshot = await rollout.aiRolloutSnapshot(db);
+  assert.equal(snapshot.stage, "staff_only", "widening to customers stays a human decision on /team/ai/rollout");
+  assert.equal((await rollout.resolveAiAudienceGate(db, { audience: "staff" })).allowed, true);
+  assert.equal((await rollout.resolveAiAudienceGate(db, { audience: "customer" })).allowed, false, "customers still reach a human");
 });
 
 test("seeded DB: acquisition funnel shows installs, identification and payment-truthful conversion", async () => {

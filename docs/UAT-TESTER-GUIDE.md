@@ -48,6 +48,32 @@ Run each on a **real phone** (both iOS Safari and Android Chrome if possible):
 - **Partner job feed** (`/partner/jobs` via groomer/manager login): new bookings appear; boarding requests show Accept/Decline.
 - **Scheduling board** (`/team/scheduling?date=YYYY-MM-DD`, manager): day columns per provider; try a reassign.
 - **Relocation triage** (`/team/relocation-enquiries`): your submitted enquiries appear with Domestic/Intl tags.
+
+### AI assistant (read the state before judging the screens)
+
+The assistant is deliberately fail-closed: it answers nobody until four separate conditions are met.
+Start at **`/team/ai/configuration`** — the panel at the top ticks or crosses each one and says what to
+do about it, so "the AI does nothing" is never a mystery:
+
+1. Model provider connected (a `PAWSPACE_AI_PROVIDER_API_KEY` secret). Not set on staging by default.
+2. Assistant grounding activated — press **Install starter assistant grounding** if it is missing.
+3. Rollout audience widened on **`/team/ai/rollout`** (`off` → `staff_only` → `customers`).
+4. No kill switch thrown (the Disable/Enable AI buttons on the same screen).
+
+With the demo seed loaded, 2 is done and 3 is at `staff_only`, so these screens carry real data:
+
+- **`/team/ai/analytics`** — 7 governed turns across WhatsApp, chat and voice, a containment rate,
+  latency, token/cost totals and 2 explicit CSAT ratings. Conversion and first-response deliberately
+  read "not claimed" / "not attributable yet"; that is a design decision, not a gap.
+- **`/team/ai/handoff`** — pick a canonical thread. `UATD-TH-1` is a customer asking for a human, taken
+  over by staff. `UATD-TH-3` is a refund dispute the policy rules blocked and routed to the finance CX
+  queue — the assistant is not allowed to answer it at all.
+- **`/team/ai`** — the safety contract result and the human review queue for AI suggestions.
+- **`/chat`** — Public mode answers from the approved knowledge base only. Authenticated mode needs a
+  canonical customer ID (`UATD-CUS-1`) and uses that customer's own record.
+
+Every seeded AI reply came from a scripted sandbox provider recorded as `uat_demo_scripted` on the
+turn — none of it is output from a live model.
 - **Finance compliance** (`/team/finance-compliance`, finance login): calendar due dates, monthly close checklist, TDS tab.
 
 ## 5. How to file an issue
@@ -62,5 +88,4 @@ Severity guide: **P0** = money wrong / booking lost / crash · **P1** = flow blo
 
 - Payment edge-case abuse (double-pay, refund abuse) — payments audit is landing.
 - OTP/identity abuse cases — identity audit is landing.
-- AI chat / voice bot — channel audit is landing.
 - Deep back-office regression — after the E2E gate (Task 24).

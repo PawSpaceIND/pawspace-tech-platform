@@ -15,10 +15,16 @@
 // `UATD-*` and written with INSERT OR IGNORE, so the script is safe to re-run and never collides
 // with the other seeds.
 //
-// Run:   node scripts/uat-demo-seed-gen.mjs
+// The AI block is the one exception to "hand-written rows": those tables store an engine vocabulary
+// (outcome, policy_decision, intent_code, queue_code, immutable_hash), so scripts/ai-demo-run.mjs
+// executes the REAL AI libs against an in-memory database and this generator dumps whatever they
+// wrote. See that file for why.
+//
+// Run:   node --experimental-strip-types scripts/uat-demo-seed-gen.mjs
 // Load:  npx wrangler d1 execute pawspace-staging --remote --file=scripts/uat-demo-seed.sql
 
 import fs from "node:fs";
+import { AI_TABLES, runRealAiDemo } from "./ai-demo-run.mjs";
 
 // ---------------------------------------------------------------------------
 // 1. Copy the real DDL out of the files that own each table.
@@ -40,7 +46,12 @@ const SOURCES = [
   "lib/ai-conversation-orchestrator.ts",
   "lib/ai-human-handoff.ts",
   "lib/ai-voice-uat.ts",
+  "lib/ai-business-configuration.ts",
+  "lib/ai-governance.ts",
+  "lib/ai-audience-rollout.ts",
+  "lib/ai-analytics.ts",
   "lib/communication-engine.ts",
+  "lib/conversation-governance.ts",
   "lib/app-to-revenue-funnel.ts",
   "lib/gst-accounting.ts",
   "lib/people-finance-integration.ts",
@@ -247,25 +258,13 @@ for (const l of LEADS) {
 insert("customer_experience_tickets", { id: "UATD-TKT-1", customer_id: "UATD-CUS-1", booking_id: "UATD-BK-GROOM-1", lead_id: null, category: "Grooming", priority: "high", subject: "Groomer arrived late", detail: "Demo seed ticket: service started 25 minutes after the slot.", owner: "Neha", manager: "Operations Manager", sla_due_at: at(1), status: "open", escalation_level: 1, customer_status: "A manager is reviewing this request", resolution: null, root_cause: null, resolution_evidence: null, reopened_count: 0, created_by: "uat_demo_seed", created_at: at(-2), updated_at: at(-1), resolved_at: null });
 insert("customer_experience_tickets", { id: "UATD-TKT-2", customer_id: "UATD-CUS-3", booking_id: "UATD-BK-TAXI-1", lead_id: null, category: "Pet Taxi", priority: "medium", subject: "Pickup address change", detail: "Demo seed ticket: customer moved the pickup point.", owner: "Rahul", manager: "Operations Manager", sla_due_at: at(-3), status: "resolved", escalation_level: 0, customer_status: "Resolved", resolution: "Address updated before pickup.", root_cause: "customer_request", resolution_evidence: "call_log", reopened_count: 1, created_by: "uat_demo_seed", created_at: at(-5), updated_at: at(-4), resolved_at: at(-4) });
 
-// --- AI: threads, turns, handoffs, voice, CSAT, delivery --------------------
-for (const [i, c] of CUSTOMERS.slice(0, 3).entries()) {
-  insert("communication_threads", { id: `UATD-TH-${i + 1}`, customer_id: c.id, booking_id: BOOKINGS[i].id, lead_id: null, ticket_id: null, status: "open", assigned_to: null, sla_due_at: at(1), created_at: at(-2), updated_at: at(-1) });
-}
-const TURNS = [
-  { id: "UATD-TURN-1", th: "UATD-TH-1", cus: "UATD-CUS-1", ch: "whatsapp", intent: "booking_status", outcome: "answered", latency: 620, in: 140, out: 90, cost: 3 },
-  { id: "UATD-TURN-2", th: "UATD-TH-1", cus: "UATD-CUS-1", ch: "whatsapp", intent: "reschedule", outcome: "handoff", latency: 880, in: 180, out: 120, cost: 5 },
-  { id: "UATD-TURN-3", th: "UATD-TH-2", cus: "UATD-CUS-2", ch: "chat", intent: "pricing", outcome: "answered", latency: 410, in: 100, out: 70, cost: 2 },
-  { id: "UATD-TURN-4", th: "UATD-TH-3", cus: "UATD-CUS-3", ch: "chat", intent: "vaccination_help", outcome: "answered", latency: 540, in: 130, out: 85, cost: 3 },
-  { id: "UATD-TURN-5", th: "UATD-TH-3", cus: "UATD-CUS-3", ch: "voice", intent: "booking_status", outcome: "answered", latency: 750, in: 160, out: 110, cost: 4 },
-];
-for (const [i, t] of TURNS.entries()) {
-  insert("ai_conversation_turns", { id: t.id, session_id: `UATD-SES-${t.th}`, thread_id: t.th, customer_id: t.cus, input_message_id: `UATD-MSG-${i + 1}`, idempotency_key: `uatd-turn-${i + 1}`, channel: t.ch, intent_code: t.intent, intent_confidence: 0.92, context_id: `UATD-CTX-${i + 1}`, provider: "uat_sandbox", model_ref: null, output_text: "Demo seed AI response.", latency_ms: t.latency, input_tokens: t.in, output_tokens: t.out, cost_minor: t.cost, policy_decision: "allowed", outcome: t.outcome, handoff_reason: t.outcome === "handoff" ? "customer_requested_human" : null, created_at: at(-2 + i * 0.1), completed_at: at(-2 + i * 0.1) + t.latency });
-}
-insert("ai_handoffs", { id: "UATD-HO-1", thread_id: "UATD-TH-1", customer_id: "UATD-CUS-1", session_id: "UATD-SES-UATD-TH-1", reason: "customer_requested_human", confidence: 0.41, queue_code: "care", status: "taken_over", summary_json: JSON.stringify({ demoSeed: true }), requested_by: "ai", taken_over_by: "uat.demo.manager@tkpetcare.in", resumed_by: null, created_at: at(-2), taken_over_at: at(-2) + 240_000, resumed_at: null });
-insert("ai_voice_calls", { id: "UATD-VOICE-1", thread_id: "UATD-TH-3", customer_id: "UATD-CUS-3", transport_provider: "uat_sandbox", direction: "inbound", status: "completed", consent_status: "granted", language: "en-IN", started_at: at(-2, 11), ended_at: at(-2, 11) + 180_000, outcome: "answered", disposition: "resolved_by_ai", live_agent_transfer: 0, reconnect_count: 0, created_by: "uat_demo_seed" });
-lines.push("CREATE TABLE IF NOT EXISTS ai_explicit_csat (id TEXT PRIMARY KEY,thread_id TEXT NOT NULL,customer_id TEXT NOT NULL,rating INTEGER NOT NULL,source TEXT NOT NULL,created_at INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5));");
-lines.push(`INSERT OR IGNORE INTO ai_explicit_csat (id,thread_id,customer_id,rating,source,created_at) VALUES ('UATD-CSAT-1','UATD-TH-1','UATD-CUS-1',4,'post_chat_survey',${at(-1)});`);
-lines.push(`INSERT OR IGNORE INTO ai_explicit_csat (id,thread_id,customer_id,rating,source,created_at) VALUES ('UATD-CSAT-2','UATD-TH-3','UATD-CUS-3',5,'post_chat_survey',${at(-1)});`);
+// --- AI: configuration, conversations, handoffs, voice, CSAT ----------------
+// Produced by executing the real AI libs (scripts/ai-demo-run.mjs) rather than by hand, so every
+// value is one the engine can actually emit. Rows still go through insert() below, so the column
+// validation that protects the rest of this file protects these too.
+const aiRows = await runRealAiDemo({ ddl, customers: CUSTOMERS, bookings: BOOKINGS, now: NOW, isoAt });
+for (const [table, row] of aiRows) insert(table, row);
+const aiRowCount = aiRows.length;
 
 // --- app-to-revenue funnel ---------------------------------------------------
 for (const [i, c] of CUSTOMERS.entries()) {
@@ -328,15 +327,29 @@ insert("pet_birthdays", { pet_id: "UATD-CUS-2-PET", customer_id: "UATD-CUS-2", d
 // ---------------------------------------------------------------------------
 // 4. Write the file: real DDL first (only for tables actually used), then rows.
 // ---------------------------------------------------------------------------
+// A kill switch is deliberately absent (nothing is disabled), so it is the one AI table allowed to
+// be empty. Every other one must have produced rows, or the AI screens would open empty again.
+for (const table of AI_TABLES) {
+  if (table === "ai_kill_switches") continue;
+  if (!usedTables.has(table)) throw new Error(`AI demo run produced no rows for '${table}' — the AI surfaces would open empty`);
+}
+
 const header = [
   "-- PawSpace UAT DEMO SEED (generated by scripts/uat-demo-seed-gen.mjs — do not hand-edit).",
   "-- Puts real, derivable demo data behind every module UI so no staging page opens empty.",
   "-- Every CREATE TABLE below is copied verbatim from the source file that owns it.",
-  "-- All rows are namespaced UATD-* and inserted with INSERT OR IGNORE: safe to re-run,",
+  "-- All rows carry a UATD marker and are inserted with INSERT OR IGNORE: safe to re-run,",
   "-- and it never collides with staging-seed.sql or employee-seed.sql.",
+  "--",
+  "-- The AI rows were written by the REAL AI engine (scripts/ai-demo-run.mjs runs the same libs the",
+  "-- product runs), which is why their IDs carry the engine's own prefixes. The AI replies come from",
+  "-- a declared scripted provider recorded as provider='uat_demo_scripted' on every turn — no row",
+  "-- here is output from a live model. The rollout stage is seeded to 'staff_only': the assistant",
+  "-- answers the internal team, customers still reach a human until someone widens it on",
+  "-- /team/ai/rollout.",
   `-- Demo 'today' is ${dateAt(0)}.`,
   "",
 ];
 const creates = [...usedTables].sort().map((t) => `${ddl.get(t).sql};`);
 fs.writeFileSync("scripts/uat-demo-seed.sql", [...header, ...creates, "", ...lines, ""].join("\n"));
-console.log(`scripts/uat-demo-seed.sql written: ${creates.length} tables, ${lines.filter((l) => l.startsWith("INSERT")).length} rows.`);
+console.log(`scripts/uat-demo-seed.sql written: ${creates.length} tables, ${lines.filter((l) => l.startsWith("INSERT")).length} rows (${aiRowCount} from the real AI engine).`);

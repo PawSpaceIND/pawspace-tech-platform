@@ -83,9 +83,10 @@ fills exactly those gaps with a small, legible, fully derivable data set:
 ```bash
 npx wrangler d1 execute pawspace-staging --remote --file=scripts/uat-demo-seed.sql
 ```
-Idempotent, namespaced `UATD-*` (never collides with the other two seeds), regenerate with
-`node scripts/uat-demo-seed-gen.mjs`. Every CREATE TABLE inside it is copied verbatim from the source
-file that owns it, and the generator refuses to emit a column that does not exist in that real DDL.
+Idempotent, `UATD`-marked (never collides with the other two seeds), regenerate with
+`node --experimental-strip-types scripts/uat-demo-seed-gen.mjs`. Every CREATE TABLE inside it is copied
+verbatim from the source file that owns it, and the generator refuses to emit a column that does not
+exist in that real DDL.
 It carries 12 bookings across all six verticals (including one cancelled so revenue exclusions are
 visible), boarding stays, walk sessions, taxi trips, 4 demo employees with a full payroll run,
 attendance, leave, incentives, productivity facts, AI conversations/handoff/voice/CSAT, app installs,
@@ -94,6 +95,33 @@ finance anomaly report is not empty), commercial terms with computed payouts, CR
 ratings, vaccinations and birthdays.
 `tests/uat-demo-seed.test.mjs` loads this file into an empty database and asserts every module's real
 route handler returns non-empty data.
+
+The AI rows are the one part not hand-written: `scripts/ai-demo-run.mjs` executes the REAL AI libs
+against an in-memory database and the generator dumps whatever they wrote. Those tables store an
+engine vocabulary (`outcome`, `policy_decision`, `intent_code`, `queue_code`, and a SHA-256
+`immutable_hash`), so hand-written rows passed the column check while carrying values the engine can
+never emit. What the seed therefore contains: the activated assistant grounding (profile, system
+policy, 10 approved knowledge articles, 5 intents) with genuine digests and its full lifecycle audit
+trail; 7 governed turns across WhatsApp, chat and voice — 4 contained and 3 handed off (an explicit
+request for a human, a refund policy-risk block routed to `finance-cx`, and a fail-closed voice turn);
+one handoff taken over by staff so `/team/ai/handoff` opens on a live case; a voice call transferred
+to an agent; and 2 explicit CSAT ratings. The AI replies come from a declared scripted provider
+recorded as `provider='uat_demo_scripted'` on every turn — nothing in the seed is output from a live
+model. The rollout stage is seeded to `staff_only`: the assistant answers the internal team, and
+widening it to customers stays a human decision on `/team/ai/rollout`.
+
+### Switching the assistant on
+
+Four independent conditions all have to be met, and `/team/ai/configuration` now shows each one with a
+tick or a cross plus what to do about it:
+
+1. **Model provider** — set `PAWSPACE_AI_PROVIDER_API_KEY` (see the secrets list above). Without it the
+   orchestrator hands every conversation to a human, by design.
+2. **Grounding** — assistant profile, system policy, approved knowledge and intent catalogue must be
+   active. On a fresh environment press **Install starter assistant grounding** on
+   `/team/ai/configuration` (or `POST /api/ai-bootstrap`); the demo seed already carries it.
+3. **Rollout audience** — `off` by default. Widen it on `/team/ai/rollout`.
+4. **Kill switches** — nothing thrown. The Disable/Enable AI buttons on the configuration screen.
 
 **Best option — MASKED REAL data** (the actual 4-year book, safe for staging). Run the importer against
 `The_PawSpace_TRUTH.xlsx` locally (the workbook and the generated SQL contain customer data — never
