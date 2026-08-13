@@ -1,7 +1,7 @@
 import{authError,database,requireCustomerOwnership,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{ensureSittingFinanceTables,mutateSittingFinance,type SittingFinanceAction}from"../../../lib/sitting-finance-governance";
 import{issueSittingInvoice,saveSittingTaxPolicy}from"../../../lib/sitting-invoice";
-import{collectedAmountSql}from"../../../lib/collected-funds";
+import{collectedForBooking}from"../../../lib/collected-funds";
 
 type Body={bookingId?:string;action?:SittingFinanceAction;idempotencyKey?:string;reason?:string;requestedStart?:string;requestedEnd?:string;quoteId?:string;replacementGroupId?:string;approvedRefundAmount?:number;refundReference?:string;paymentAdjustmentReference?:string};
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
@@ -9,13 +9,13 @@ const customerActions=new Set<SittingFinanceAction>(["request_cancel","request_d
 const financeActions=new Set<SittingFinanceAction>(["approve_cancel","apply_date_change","record_refund","prepare_settlement","reconcile"]);
 
 export async function GET(request:Request){try{const url=new URL(request.url),bookingId=String(url.searchParams.get("bookingId")||"").trim();if(!bookingId)return json({error:"Booking ID is required"},400);const db=await database(),actor=await resolveActor(request);requirePermission(actor,"finance.view");await ensureSittingFinanceTables(db);const [booking,cancellations,changes,refunds,settlement,reconciliation]=await Promise.all([
- db.prepare(`SELECT b.id,b.customer_id,b.provider_id,b.status,b.package_name,b.scheduled_start,b.scheduled_end,b.total_amount,${collectedAmountSql("p")} captured_amount,p.status payment_status FROM canonical_bookings b LEFT JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=? AND b.service_code='pet_sitting'`).bind(bookingId).first<Record<string,unknown>>(),
+ db.prepare(`SELECT b.id,b.customer_id,b.provider_id,b.status,b.package_name,b.scheduled_start,b.scheduled_end,b.total_amount,p.status payment_status FROM canonical_bookings b LEFT JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=? AND b.service_code='pet_sitting'`).bind(bookingId).first<Record<string,unknown>>(),
  db.prepare("SELECT * FROM sitting_cancellation_requests WHERE booking_id=? ORDER BY created_at DESC LIMIT 10").bind(bookingId).all<Record<string,unknown>>(),
  db.prepare("SELECT * FROM sitting_date_change_requests WHERE booking_id=? ORDER BY created_at DESC LIMIT 10").bind(bookingId).all<Record<string,unknown>>(),
  db.prepare("SELECT * FROM sitting_refund_ledger WHERE booking_id=? ORDER BY created_at DESC LIMIT 10").bind(bookingId).all<Record<string,unknown>>(),
  db.prepare("SELECT * FROM sitting_sitter_settlement_ledger WHERE booking_id=?").bind(bookingId).first<Record<string,unknown>>(),
  db.prepare("SELECT * FROM sitting_finance_reconciliation WHERE booking_id=? ORDER BY created_at DESC LIMIT 1").bind(bookingId).first<Record<string,unknown>>(),
- ]);if(!booking)return json({error:"Sitting booking not found"},404);return json({data:{booking,cancellations:cancellations.results,dateChanges:changes.results,refunds:refunds.results,settlement:settlement??null,reconciliation:reconciliation??null,sandboxOnly:true}});}catch(error){return authError(error,"Unable to load Sitting finance");}}
+ ]);if(!booking)return json({error:"Sitting booking not found"},404);booking.captured_amount=await collectedForBooking(db,bookingId);return json({data:{booking,cancellations:cancellations.results,dateChanges:changes.results,refunds:refunds.results,settlement:settlement??null,reconciliation:reconciliation??null,sandboxOnly:true}});}catch(error){return authError(error,"Unable to load Sitting finance");}}
 
 export async function POST(request:Request){try{const body=await request.json() as Body,rawAction=String((body as Record<string,unknown>).action||"");
   if(rawAction==="save_tax_policy"||rawAction==="issue_invoice"){const actor=await resolveActor(request);requirePermission(actor,"finance.manage");const db=await database();const reason=String((body as Record<string,unknown>).reason||"");let data:unknown;if(rawAction==="save_tax_policy")data=await saveSittingTaxPolicy(db,{cityId:String((body as Record<string,unknown>).cityId||"blr"),taxMode:String((body as Record<string,unknown>).taxMode||"") as"inclusive"|"exclusive",taxRate:Number((body as Record<string,unknown>).taxRate),effectiveFrom:String((body as Record<string,unknown>).effectiveFrom||new Date().toISOString().slice(0,10)),reason,actorId:actor.email});else data=await issueSittingInvoice(db,{bookingId:String((body as Record<string,unknown>).bookingId||""),reason,actorId:actor.email});await securityAudit(db,actor,`sitting.finance.${rawAction}`,"canonical_booking",String((body as Record<string,unknown>).bookingId||(body as Record<string,unknown>).cityId||"blr"),"completed",{liveMoney:false,executionMode:"sandbox_not_connected"});return json({data});}

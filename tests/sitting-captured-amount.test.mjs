@@ -119,3 +119,72 @@ test("A2: the Sitting ops snapshot does not call an unpaid booking's price 'capt
   assert.equal(Number(booking.captured_amount || 0), 0, `the ops snapshot must not report an unpaid booking's price as captured, got ${booking.captured_amount}`);
   void sqlite;
 });
+
+// ---------------------------------------------------------------------------------------------
+// Split/deposit collection and cross-surface agreement, added when #178 was reconciled onto
+// #174's canonical collectedForBooking. captured_amount is now computed by that one helper, which is
+// schedule-aware — so a part-paid split must report only the instalment collected, and every Sitting
+// surface must report the same number.
+// ---------------------------------------------------------------------------------------------
+
+const SPLIT_NOW = 2000, SPLIT_BALANCE = 1600;   // PRICE = 3600, a 2000/1600 deposit split
+
+/** Adds a stay_payment_schedules row to the seeded booking. */
+async function seedSplit(scheduleStatus) {
+  const { sqlite, db, mutate } = await seed("captured");   // payment captured; the schedule holds the truth
+  sqlite.exec("CREATE TABLE IF NOT EXISTS stay_payment_schedules (booking_id TEXT PRIMARY KEY,service_code TEXT,customer_id TEXT,total_amount REAL,paid_now_amount REAL,balance_amount REAL,balance_due_at INTEGER,status TEXT,paid_at INTEGER,payment_ref TEXT,created_at INTEGER,updated_at INTEGER)");
+  const now = Date.UTC(2026, 6, 1);
+  sqlite.prepare("INSERT INTO stay_payment_schedules VALUES ('BK-A2','pet_sitting','CUS-1',?,?,?,?,?,NULL,NULL,?,?)").run(PRICE, SPLIT_NOW, SPLIT_BALANCE, now + 86400000, scheduleStatus, now, now);
+  return { sqlite, db, mutate };
+}
+
+test("A2 split: a part-paid deposit reports only the collected instalment, not the price", async () => {
+  const { sqlite, db, mutate } = await seedSplit("balance_due");
+  await mutate(db, { bookingId: "BK-A2", action: "reconcile", actorId: "finance@pawspace.in", reason: "Reconcile a part-paid split", idempotencyKey: "rec-split-due" });
+  const row = sqlite.prepare("SELECT captured_amount,net_customer_amount FROM sitting_finance_reconciliation WHERE booking_id='BK-A2'").get();
+  assert.equal(row.captured_amount, SPLIT_NOW, `only the ${SPLIT_NOW} deposit is collected, got ${row.captured_amount}`);
+  assert.notEqual(row.captured_amount, PRICE, "the full price must NOT be reported as captured on a part-paid split");
+});
+
+test("A2 split: once the balance is paid the whole amount is collected", async () => {
+  const { sqlite, db, mutate } = await seedSplit("paid");
+  await mutate(db, { bookingId: "BK-A2", action: "reconcile", actorId: "finance@pawspace.in", reason: "Reconcile a settled split", idempotencyKey: "rec-split-paid" });
+  const row = sqlite.prepare("SELECT captured_amount FROM sitting_finance_reconciliation WHERE booking_id='BK-A2'").get();
+  assert.equal(row.captured_amount, SPLIT_NOW + SPLIT_BALANCE, `settled split collects the full ${SPLIT_NOW + SPLIT_BALANCE}, got ${row.captured_amount}`);
+});
+
+test("A2 agreement: reconcile, finance GET and ops snapshot report the same captured amount", async () => {
+  // One part-paid split, read three ways. All three must agree, because all three now go through the
+  // one canonical collectedForBooking rather than three separate SQL expressions.
+  const { sqlite, db, mutate } = await seedSplit("balance_due");
+  const { ensureSittingOpsTables, getSittingOpsSnapshot } = await import("../lib/sitting-ops-governance.ts");
+  const { ensureProviderCapacityTables } = await import("../lib/provider-capacity-governance.ts");
+  const { GET } = await import("../app/api/sitting-finance/route.ts");
+  await ensureProviderCapacityTables(db); await ensureSittingOpsTables(db);
+
+  await mutate(db, { bookingId: "BK-A2", action: "reconcile", actorId: "finance@pawspace.in", reason: "Reconcile for agreement", idempotencyKey: "rec-agree" });
+  const reconciled = sqlite.prepare("SELECT captured_amount FROM sitting_finance_reconciliation WHERE booking_id='BK-A2'").get().captured_amount;
+
+  const financeGet = await (await GET(new Request("https://uat.pawspace.in/api/sitting-finance?bookingId=BK-A2", { headers: { "oai-authenticated-user-email": "finance@pawspace.in" } }))).json().catch(() => null);
+  const snapshot = await getSittingOpsSnapshot(db);
+  const opsBooking = snapshot.bookings.find((b) => b.id === "BK-A2");
+
+  assert.equal(reconciled, SPLIT_NOW, "reconcile captured the deposit only");
+  if (financeGet?.data?.booking) assert.equal(Number(financeGet.data.booking.captured_amount), SPLIT_NOW, `finance GET must agree, got ${financeGet.data.booking.captured_amount}`);
+  assert.ok(opsBooking, "the ops snapshot lists the booking");
+  assert.equal(Number(opsBooking.captured_amount), SPLIT_NOW, `ops snapshot must agree, got ${opsBooking.captured_amount}`);
+});
+
+test("A2 canonical: captured_amount comes from the single collectedForBooking helper, no second calc", async () => {
+  const { readFile } = await import("node:fs/promises");
+  for (const file of ["../lib/sitting-finance-governance.ts", "../lib/sitting-ops-governance.ts", "../app/api/sitting-finance/route.ts"]) {
+    const src = await readFile(new URL(file, import.meta.url), "utf8");
+    assert.match(src, /collectedForBooking/, `${file} must use the canonical helper`);
+    assert.ok(!src.includes("collectedAmountSql"), `${file} must not carry the deleted second helper`);
+  }
+  // And the collected value the surfaces publish equals the helper called directly — same number, one source.
+  const { collectedForBooking } = await import("../lib/collected-funds.ts");
+  const { sqlite, db } = await seedSplit("balance_due");
+  assert.equal(await collectedForBooking(db, "BK-A2"), SPLIT_NOW, "the helper itself returns the collected deposit");
+  assert.ok(sqlite);
+});

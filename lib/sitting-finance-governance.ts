@@ -1,4 +1,3 @@
-import{collectedForBooking}from"./collected-funds";
 import{ensureSittingLifecycleTables}from"./sitting-lifecycle";
 import{collectedForBooking}from"./collected-funds";
 
