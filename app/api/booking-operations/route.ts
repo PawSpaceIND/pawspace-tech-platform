@@ -93,12 +93,53 @@ function customerMessage(action: OperationAction, minutes: number, rebook: boole
   return "Your refund request is recorded and can be tracked from this order until the amount is completed.";
 }
 
+/**
+ * Reading a booking's operational history is a per-RECORD authorisation, not a per-endpoint one.
+ *
+ * This handler used to resolve no actor at all: any caller the gateway let through could pass any
+ * bookingId and receive that booking's operational events, the message sent to its customer, its
+ * rebooking case and its refund case - amount, reason and the internal requester. A provider could read
+ * another provider's jobs, and with them a VIP customer's name and a CX complaint about a rival.
+ *
+ * bookings.view is the correct permission and stays: a provider legitimately needs it for their OWN
+ * bookings. What was missing is the record-level check, so that is what was added - ownership is
+ * established from the canonical booking BEFORE any of the four sensitive tables is read, rather than
+ * fetching everything and filtering afterwards.
+ *
+ * requireProviderOwnership already encodes who may cross provider boundaries: bookings.manage,
+ * providers.manage or grooming.manage (admin, manager, founder) pass through, so Ops and management
+ * keep working. Ordinary provider identities are matched against their identity binding or their
+ * provider_identity_links row.
+ *
+ * ASSOCIATE, checked rather than assumed: `associate` holds bookings.view but is not a provider
+ * identity and has no booking assignment to be scoped by - canonical_bookings carries provider_id and
+ * created_by and nothing else that names an assignee. No client in this repository performs this GET
+ * either: lib/booking-operations-client.ts is POST-only and app/partner-app is its only consumer. There
+ * is therefore no legitimate associate consumer of this endpoint, and an associate is refused. That is
+ * recorded here deliberately, rather than granting global booking read access to make a hypothetical
+ * caller work.
+ */
 export async function GET(request: Request) {
   try {
     const db = await database();
     await ensureTables(db);
     const bookingId = new URL(request.url).searchParams.get("bookingId");
     if (!bookingId) return json({ error: "Booking ID is required" }, 400);
+
+    const actor = await resolveActor(request);
+    requirePermission(actor, "bookings.view");
+    const booking = await db.prepare("SELECT id,provider_id FROM canonical_bookings WHERE id=?").bind(bookingId).first<{ id: string; provider_id: string }>();
+    if (!booking) return json({ error: "Booking not found" }, 404);
+    try {
+      await requireProviderOwnership(db, actor, String(booking.provider_id));
+    } catch (denied) {
+      // An attempt to read across the provider boundary is worth a trace. Never fatal: a failed audit
+      // write must not turn a 403 into a 500.
+      await securityAudit(db, actor, "booking_operations.read", "canonical_booking", bookingId, "denied", { providerId: String(booking.provider_id) }).catch(() => {});
+      throw denied;
+    }
+
+    // Only now are the sensitive datasets read at all.
     const [events, notifications, rebooking, refunds] = await Promise.all([
       db.prepare("SELECT * FROM booking_operational_events WHERE booking_id=? ORDER BY created_at DESC").bind(bookingId).all(),
       db.prepare("SELECT * FROM booking_customer_notifications WHERE booking_id=? ORDER BY created_at DESC").bind(bookingId).all(),
@@ -107,7 +148,8 @@ export async function GET(request: Request) {
     ]);
     return json({ data: { events: events.results, notifications: notifications.results, rebooking: rebooking.results, refunds: refunds.results } });
   } catch (error) {
-    return json({ error: error instanceof Error ? error.message : "Unable to load order operations" }, 500);
+    // authError, not a bare 500: an ownership denial must reach the caller as 403.
+    return authError(error, "Unable to load order operations");
   }
 }
 
