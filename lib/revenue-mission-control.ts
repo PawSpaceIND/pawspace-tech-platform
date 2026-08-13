@@ -49,8 +49,15 @@ export async function backfillRevenueMissionFromCanonicalSources(db:Db,missionId
   // synthetic payment lane so the gateway-capture delta math is untouched, and delta-idempotent on
   // rebuild like every other collection source.
   const stayTable=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='stay_payment_schedules'").first<Row>();
-  if(stayTable){const stayBalance=await db.prepare("SELECT balance_amount,payment_ref,paid_at FROM stay_payment_schedules WHERE booking_id=? AND status='paid'").bind(booking.id).first<Row>();
-   if(stayBalance&&amount(stayBalance.balance_amount)>0){const result=await recordMissionCollectionDelta(db,{bookingId:text(booking.id),paymentId:`${paymentId}:stay-balance`,customerId:text(booking.customer_id),serviceCode:source.serviceCode,cityId:source.cityId,canonicalCapturedAmount:amount(stayBalance.balance_amount),currency:text(payment.currency||booking.currency),sourceAt:Number(stayBalance.paid_at||eventAt),sourceReference:`stay-balance:${text(stayBalance.payment_ref)||text(booking.id)}`,actorId});collectionEvents+=result.created;}}}
+  if(stayTable){const stayBalance=await db.prepare("SELECT paid_now_amount,balance_amount,payment_ref,paid_at FROM stay_payment_schedules WHERE booking_id=? AND status='paid'").bind(booking.id).first<Row>();
+   // Credit only the settled balance NOT already inside the gateway reconciliation record. When the
+   // balance is captured through the gateway, lib/grooming-payment-reconciliation.ts settles the
+   // schedule to 'paid' AND accumulates the balance into captured_amount, so crediting balance_amount
+   // again here would double-count it (captured lane + this lane). A sandbox-settled balance leaves
+   // captured_amount at the first instalment, so the residual is the whole balance and behaviour is
+   // unchanged.
+   if(stayBalance){const stayCredit=Math.min(amount(stayBalance.balance_amount),Math.max(0,amount(stayBalance.paid_now_amount)+amount(stayBalance.balance_amount)-captured));
+    if(stayCredit>0){const result=await recordMissionCollectionDelta(db,{bookingId:text(booking.id),paymentId:`${paymentId}:stay-balance`,customerId:text(booking.customer_id),serviceCode:source.serviceCode,cityId:source.cityId,canonicalCapturedAmount:stayCredit,currency:text(payment.currency||booking.currency),sourceAt:Number(stayBalance.paid_at||eventAt),sourceReference:`stay-balance:${text(stayBalance.payment_ref)||text(booking.id)}`,actorId});collectionEvents+=result.created;}}}}
  return{missionId,bookingEvents,collectionEvents,refundEvents,syntheticSourcesUsed:false};}
 
 export async function revenueMissionSummary(db:Db,missionId:string){await ensureRevenueMissionTables(db);const mission=await db.prepare("SELECT * FROM revenue_missions WHERE id=?").bind(missionId).first<Row>();if(!mission)throw new Error("Revenue mission not found");
