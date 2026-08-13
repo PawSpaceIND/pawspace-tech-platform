@@ -33,6 +33,23 @@ export function parsePermissions(value:unknown):string[]{
   try{return parsePermissions(JSON.parse(value));}catch{return [];}
 }
 
+/**
+ * A role that carries the wildcard holds every permission there is, present and future.
+ *
+ * Both `founder` and `superuser` are defined as ["*"], and the governance route guarded only the
+ * literal string "founder" — so an actor with users.manage could assign `superuser` and obtain the
+ * same total authority the founder guard existed to prevent. Deriving the protected set from the
+ * PERMISSIONS rather than from a list of names means a tenth role defined as ["*"] tomorrow is
+ * protected the moment it is defined, instead of reopening the hole until someone remembers to add it
+ * to a hardcoded list.
+ */
+export function isFullAccessRole(permissions:unknown){return parsePermissions(permissions).includes("*");}
+
+/** Role codes that may never be assigned through ordinary user management, derived not enumerated. */
+export function fullAccessRoleCodes(roles:Array<{code:string;permissions?:unknown;permissions_json?:unknown}>){
+ return roles.filter(role=>isFullAccessRole(role.permissions??role.permissions_json)).map(role=>role.code);
+}
+
 export function hasPermission(rolePermissions:string[], permission:Permission){
   return rolePermissions.includes("*") || rolePermissions.includes(permission);
 }

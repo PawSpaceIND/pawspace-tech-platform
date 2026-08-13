@@ -402,13 +402,17 @@ test("provides protected customer import, configurable roles and routed contact 
   );
   assert.match(control, /Users, roles & access/);
   assert.match(control, /Customer data & contact/);
-  assert.match(access, /Founder permissions cannot be downgraded/);
+  // Was: /Founder permissions cannot be downgraded/ on the access panel. That named founder alone
+  // while the panel offered superuser — also ["*"] — in both role dropdowns, and claimed a permission
+  // editor that did not exist. Protection is now derived from permissions.
+  assert.match(access, /isFullAccessRole/, "the panel must derive protection from permissions, not a role name");
+  assert.match(access, /assignableRoles/, "and offer only roles it is permitted to assign");
   assert.match(access, /Create user/);
   assert.match(customerData, /Import protected customer data/);
   assert.match(customerData, /Call primary/);
   assert.match(customerData, /Try secondary/);
   assert.match(governance, /create_user/);
-  assert.match(governance, /Founder is protected/);
+  assert.match(governance, /isFullAccessRole/, "the route must derive the protected set from permissions");
   assert.match(importer, /ON CONFLICT\(customer_key\)/);
   assert.match(contact, /enqueueCommunication/);
   assert.match(contact, /governed_outbox/);
