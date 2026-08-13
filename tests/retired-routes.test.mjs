@@ -35,6 +35,41 @@ test("the retired-route list only claims routes that actually redirect", () => {
   }
 });
 
+test("nothing in the app still links to a route that only redirects", () => {
+  // A redirect keeps a stale link working, which is exactly why one survives review: it is invisible
+  // until someone notices the extra hop. /ops was still the brand link of the /control shell and
+  // /groomer was still offered on the partner mobile profile, both pointing at pages whose entire
+  // body is a redirect. Send people to the real destination instead of through the retired one.
+  const retired = new Map();
+  for (const dir of fs.readdirSync("app", { withFileTypes: true })) {
+    if (!dir.isDirectory()) continue;
+    const page = `app/${dir.name}/page.tsx`;
+    if (!fs.existsSync(page)) continue;
+    const source = read(page);
+    const target = source.match(/redirect\("([^"]+)"\)/);
+    // A page that does nothing but redirect. A page that redirects conditionally is a real page.
+    if (target && /RETIRED ROUTE/.test(source)) retired.set(`/${dir.name}`, target[1]);
+  }
+  assert.ok(retired.size >= 3, `expected the retired routes to be found, got ${[...retired.keys()].join(", ")}`);
+
+  const offenders = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const path = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) { walk(path); continue; }
+      if (!entry.name.endsWith(".tsx")) continue;
+      const source = read(path);
+      for (const [route, destination] of retired) {
+        // The retired page itself is allowed to name its own route in its explanatory comment.
+        if (path === `app${route}/page.tsx`) continue;
+        if (source.includes(`href="${route}"`)) offenders.push(`${path} links to ${route} (link it to ${destination})`);
+      }
+    }
+  };
+  walk("app");
+  assert.deepEqual(offenders, [], "these links go through a retired route instead of straight to the live one");
+});
+
 test("regression: /trainer and /crm are real integrated modules and must NOT be retired", () => {
   // /trainer runs the canonical training session lifecycle, evidence and earnings
   const trainer = read("app/trainer/page.tsx");

@@ -200,7 +200,7 @@ export default function Control() {
   return (
     <main className={styles.shell}>
       <aside className={styles.side}>
-        <Link href="/ops" className={styles.brand}>
+        <Link href="/team" className={styles.brand}>
           <img src="/assets/pawspace-logo.jpeg" alt="PawSpace" />
           <div>
             <strong>Platform Control</strong>
