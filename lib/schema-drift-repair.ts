@@ -52,9 +52,18 @@ export async function repairSchemaDrift(db: Db) {
     if (!await tableExists(db, item.table)) continue;
     const columns = await db.prepare(`PRAGMA table_info(${item.table})`).all<Row>().catch(() => ({ results: [] as Row[] }));
     if (columns.results.some(row => String(row.name) === item.column)) continue;
-    // A concurrent request may win the race and add it first; that ALTER simply fails and we move on.
-    await db.prepare(`ALTER TABLE ${item.table} ADD COLUMN ${item.column} ${item.definition}`).run().catch(() => {});
-    repaired.push(`${item.table}.${item.column}`);
+    try {
+      await db.prepare(`ALTER TABLE ${item.table} ADD COLUMN ${item.column} ${item.definition}`).run();
+      repaired.push(`${item.table}.${item.column}`);
+    } catch (error) {
+      // This used to swallow the failure AND still report the column as repaired, so a genuinely failed
+      // ALTER resolved successfully and every caller carried on against a table that still lacks the
+      // column. Only one failure is benign: a concurrent request winning the race and adding it first,
+      // which fails with "duplicate column name". Distinguish them by re-reading the schema - accept
+      // only if the column is actually there now, and otherwise fail closed so the caller knows.
+      const after = await db.prepare(`PRAGMA table_info(${item.table})`).all<Row>().catch(() => ({ results: [] as Row[] }));
+      if (!after.results.some(row => String(row.name) === item.column)) throw error;
+    }
   }
   return { repaired };
 }

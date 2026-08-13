@@ -2,7 +2,8 @@ import { authError, requirePermission, requireProviderOwnership, resolveActor } 
 import { repairSchemaDrift } from "../../../lib/schema-drift-repair";
 
 /** Per-isolate guard so the in-place column repair runs once, not on every request. */
-const driftRepaired = new WeakSet<object>();
+/** One in-flight repair per isolate, so concurrent cold requests wait for it instead of racing past. */
+const driftRepair = new WeakMap<object, Promise<unknown>>();
 
 type OperationAction =
   | "package_upgrade"
@@ -76,10 +77,17 @@ async function ensureTables(db: Awaited<ReturnType<typeof database>>) {
   //
   // Once per isolate: the repair is idempotent (it checks PRAGMA table_info before altering) but it costs
   // a lookup per registered column, and this route is on a per-request path.
-  if (!driftRepaired.has(db)) {
-    driftRepaired.add(db);
-    await repairSchemaDrift(db).catch(() => driftRepaired.delete(db));
+  // The isolate used to be marked repaired BEFORE the repair was awaited, so a second concurrent
+  // request saw the mark, skipped the wait and ran against a table that had not been altered yet.
+  // Callers now share one in-flight promise and all await it; the entry is dropped on failure so the
+  // next request in the same isolate retries rather than inheriting a repair that never happened.
+  let repair = driftRepair.get(db);
+  if (!repair) {
+    repair = repairSchemaDrift(db);
+    driftRepair.set(db, repair);
+    repair.catch(() => driftRepair.delete(db));
   }
+  await repair;
 }
 
 function validate(input: OperationInput) {

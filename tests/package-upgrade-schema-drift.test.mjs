@@ -23,12 +23,19 @@ installWorkersHooks("__PUD_DB__", "__PUD_ENV__");
 /** The shape booking_package_upgrade_requests had before claim_token existed. Verbatim from 73b3682. */
 const OLD_SHAPE = "CREATE TABLE booking_package_upgrade_requests (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,source_event_id TEXT NOT NULL,requested_package_name TEXT NOT NULL,requested_amount REAL NOT NULL,previous_amount REAL NOT NULL,status TEXT NOT NULL DEFAULT 'pricing_approval_required',requested_by TEXT NOT NULL,approved_by TEXT,approved_amount REAL,decision_reason TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)";
 
+/** Set true to make ALTER TABLE throw, so the repair's own failure path can be exercised. */
+let failAlter = false;
+
 function makeD1(sqlite) {
   let batchQueue = Promise.resolve();
   const statement = (sql, args) => ({
     bind: (...bound) => statement(sql, bound),
     first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-    run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
+    run: async () => {
+      if (failAlter && /^\s*ALTER TABLE/i.test(sql)) throw new Error("INJECTED: ALTER refused");
+      const info = sqlite.prepare(sql).run(...args);
+      return { success: true, meta: { changes: Number(info.changes) } };
+    },
     all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
   });
   return {
@@ -71,6 +78,7 @@ function seed({ preExistingTable }) {
   // booking_lifecycle_events is owned by another module, so the route does not create it.
   sqlite.exec("CREATE TABLE booking_lifecycle_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,event_type TEXT NOT NULL,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',occurred_at INTEGER NOT NULL)");
   sqlite.exec("CREATE TABLE app_users (id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,name TEXT NOT NULL,role_code TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',created_at INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT 0)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS security_audit_events (id TEXT PRIMARY KEY, actor_email TEXT NOT NULL, actor_role TEXT NOT NULL, action TEXT NOT NULL, resource_type TEXT NOT NULL, resource_id TEXT, outcome TEXT NOT NULL, detail_json TEXT NOT NULL, created_at INTEGER NOT NULL)");
   sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,provider_id,total_amount) VALUES (?,?,?,?)").run(BOOKING, "CUS-DRIFT", PROVIDER, ORIGINAL);
   sqlite.prepare("INSERT INTO booking_payments (id,booking_id,amount) VALUES (?,?,?)").run("PAY-DRIFT", BOOKING, ORIGINAL);
   // REQUESTER holds communications.message and provider authority so it can REPORT; it is a
@@ -232,4 +240,49 @@ test("the column is registered in the shared repair mechanism, not repaired ad h
   const route = await (await import("node:fs/promises")).readFile(new URL("../app/api/booking-operations/route.ts", import.meta.url), "utf8");
   assert.match(route, /repairSchemaDrift\(db\)/, "the route must run the shared repair, not its own ALTER");
   assert.doesNotMatch(route, /ALTER TABLE/, "no ad-hoc column patching in the route");
+});
+
+// ---------------------------------------------------------------------------------------------
+// The repair's own failure modes. Both were reported by QA against the first version of this fix.
+// ---------------------------------------------------------------------------------------------
+
+test("a failed ALTER is never reported as repaired, and the request fails closed", async () => {
+  // repairSchemaDrift used to swallow an ALTER failure and still push the column onto `repaired`, so the
+  // promise resolved successfully while the column stayed absent. Every caller then ran against a table
+  // it believed had been fixed, and the route's own .catch never fired.
+  const { sqlite, db } = seed({ preExistingTable: true });
+  assert.ok(!columns(sqlite).includes("claim_token"), "starts drifted");
+
+  const { repairSchemaDrift } = await import("../lib/schema-drift-repair.ts");
+  failAlter = true;
+  await assert.rejects(() => repairSchemaDrift(db), "a failed ALTER must reject, not resolve with a false repaired entry");
+  assert.ok(!columns(sqlite).includes("claim_token"), "and the column really is still missing");
+
+  // The route must refuse rather than proceed against a table it could not repair.
+  const refused = await apply();
+  assert.ok(refused.status >= 500, `expected a closed failure, got ${refused.status} ${await refused.clone().text()}`);
+  assert.equal(state(sqlite).bookingTotal, ORIGINAL, "and no money moved");
+
+  // Same isolate, next request: the failed repair cleared the memo, so it is attempted again.
+  failAlter = false;
+  const retry = await apply();
+  assert.equal(retry.status, 200, `a same-isolate retry must repair and succeed, got ${await retry.clone().text()}`);
+  assert.ok(columns(sqlite).includes("claim_token"));
+  assert.equal(state(sqlite).bookingTotal, APPROVED);
+});
+
+test("two concurrent cold-isolate requests share one repair and neither sees the missing column", async () => {
+  // The isolate was marked repaired BEFORE the repair was awaited, so a second concurrent request saw
+  // the mark, skipped the wait, and ran against a table that had not been altered yet.
+  const { sqlite } = seed({ preExistingTable: true });
+  assert.ok(!columns(sqlite).includes("claim_token"), "both requests start against the drifted shape");
+
+  const [one, two] = await Promise.all([apply(APPROVER, APPROVED), apply(OTHER, 47000)]);
+  const bodies = [await one.clone().text(), await two.clone().text()];
+  for (const body of bodies) {
+    assert.ok(!body.includes("no such column: claim_token"), `a concurrent caller raced past the repair: ${body}`);
+  }
+  assert.deepEqual([one.status, two.status].sort(), [200, 409], `one winner and one loser, got ${one.status} and ${two.status}`);
+  assert.ok(columns(sqlite).includes("claim_token"));
+  assert.equal(columns(sqlite).filter((name) => name === "claim_token").length, 1, "the shared repair added it exactly once");
 });
