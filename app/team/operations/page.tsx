@@ -1,3 +1,33 @@
-import Link from"next/link";
+import Link from "next/link";
+import { PageHeader } from "../../components/ui";
+import styles from "../team-console.module.css";
 
-export default function TeamOperations(){return <main style={{maxWidth:1040,margin:"0 auto",padding:32,fontFamily:"system-ui"}}><Link href="/team">← Team OS</Link><p style={{fontSize:12,fontWeight:800,letterSpacing:1}}>PAWSPACE TEAM · OPERATIONS</p><h1>Operations control</h1><p>Open the canonical cross-service Booking Command Center or a service-specific exception and recovery queue.</p><section style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:16,marginTop:24}}><Link href="/team/operations/bookings" style={{border:"1px solid #ddd",borderRadius:16,padding:20,textDecoration:"none",color:"inherit"}}><h2>Booking Command Center</h2><p>All canonical bookings, providers, payments, tickets and operational events.</p></Link><Link href="/team/operations/boarding" style={{border:"1px solid #ddd",borderRadius:16,padding:20,textDecoration:"none",color:"inherit"}}><h2>Boarding exception queue</h2><p>Host recovery, care incidents, finance review, proof/media blockers and settlement readiness.</p></Link><Link href="/team/operations/sitting" style={{border:"1px solid #ddd",borderRadius:16,padding:20,textDecoration:"none",color:"inherit"}}><h2>Sitting exception queue</h2><p>Sitter recovery, care incidents, Finance review, proof/media blockers and service-timing exceptions.</p></Link><Link href="/team/operations/walking" style={{border:"1px solid #ddd",borderRadius:16,padding:20,textDecoration:"none",color:"inherit"}}><h2>Walking exception queue</h2><p>Walker recovery, route evidence, safety incidents, completed-payment dues and settlement blockers.</p></Link></section><p style={{marginTop:24}}><small>UAT controlled. Live integrations and production credentials remain disabled.</small></p></main>;}
+const QUEUES = [
+  { href: "/team/operations/bookings", title: "Booking Command Center", body: "All canonical bookings, providers, payments, tickets and operational events." },
+  { href: "/team/operations/boarding", title: "Boarding exception queue", body: "Host recovery, care incidents, finance review, proof/media blockers and settlement readiness." },
+  { href: "/team/operations/sitting", title: "Sitting exception queue", body: "Sitter recovery, care incidents, finance review, proof/media blockers and service-timing exceptions." },
+  { href: "/team/operations/walking", title: "Walking exception queue", body: "Walker recovery, route evidence, safety incidents, completed-payment dues and settlement blockers." },
+];
+
+export default function TeamOperations() {
+  return <main className={styles.shell}>
+    <PageHeader
+      eyebrow="PAWSPACE TEAM · OPERATIONS"
+      title="Operations control"
+      description="Open the canonical cross-service Booking Command Center, or a service-specific exception and recovery queue."
+    />
+    <nav className={styles.nav} aria-label="Team workspaces">
+      <Link href="/team">← Team OS</Link><Link href="/team/cases">Cases</Link><Link href="/team/customer-experience">CX queue</Link>
+    </nav>
+
+    <section className={styles.cardGrid}>
+      {QUEUES.map((queue) => <Link key={queue.href} href={queue.href} className={styles.linkCard}>
+        <h2>{queue.title}</h2>
+        <p>{queue.body}</p>
+        <span className={styles.linkCue}>Open →</span>
+      </Link>)}
+    </section>
+
+    <footer className={styles.footnote}>UAT controlled. Live integrations and production credentials remain disabled.</footer>
+  </main>;
+}

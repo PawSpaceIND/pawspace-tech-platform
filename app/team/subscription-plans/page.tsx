@@ -1,37 +1,119 @@
 "use client";
 import Link from "next/link";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
+import { Badge, Button, EmptyState, PageHeader, StatCard } from "../../components/ui";
+import styles from "../team-console.module.css";
 
 type Plan = { id: string; serviceCode: string; planCode: string; cityId: string; name: string; price: number; sessionCount: number; validityValue: number; validityUnit: string; active: boolean };
-const wrap = { minHeight: "100vh", background: "#f7f4fb", padding: 28, fontFamily: "Arial,sans-serif", color: "#24133f" } as const;
-const card = { background: "white", border: "1px solid #e5dcef", borderRadius: 14 } as const;
+
 const SERVICES = ["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi"];
+const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value || 0);
 
 export default function SubscriptionPlansPage() {
   const [rows, setRows] = useState<Plan[]>([]);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
-  async function load() { const r = await fetch("/api/subscription-plans", { cache: "no-store" }); const b = await r.json() as { data?: Plan[]; error?: string }; if (!r.ok) throw new Error(b.error || "Plans unavailable"); setRows(b.data || []); }
-  useEffect(() => { let on = true; void fetch("/api/subscription-plans", { cache: "no-store" }).then(async r => { const b = await r.json() as { data?: Plan[]; error?: string }; if (!r.ok) throw new Error(b.error || "Plans unavailable"); if (on) setRows(b.data || []); }).catch(e => { if (on) setError(e instanceof Error ? e.message : "Plans unavailable"); }); return () => { on = false; }; }, []);
-  async function create(e: FormEvent<HTMLFormElement>) { e.preventDefault(); const fd = new FormData(e.currentTarget); setBusy(true); setError(""); try { const r = await fetch("/api/subscription-plans", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ serviceCode: String(fd.get("serviceCode")), planCode: String(fd.get("planCode")), cityId: String(fd.get("cityId")), name: String(fd.get("name")), price: Number(fd.get("price")), sessionCount: Number(fd.get("sessionCount")), validityValue: Number(fd.get("validityValue")), validityUnit: String(fd.get("validityUnit")), servicePackageCode: String(fd.get("servicePackageCode")), reason: "New plan via admin" }) }); const b = await r.json() as { error?: string }; if (!r.ok) throw new Error(b.error || "Create failed"); e.currentTarget.reset(); await load(); } catch (x) { setError(x instanceof Error ? x.message : "Create failed"); } finally { setBusy(false); } }
-  return <main style={wrap}><div style={{ maxWidth: 1200, margin: "0 auto" }}>
-    <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 18 }}><div><small style={{ fontWeight: 800, color: "#6c39a8" }}>PAWSPACE TEAM · SUBSCRIPTION PLANS</small><h1 style={{ margin: "7px 0" }}>Plans for every service</h1><p style={{ margin: 0, color: "#746b7d" }}>Per city, with a validity window (days/months) that sets each customer&apos;s expiry from the booked date.</p></div><Link href="/team" style={{ padding: 10, background: "#4b168c", color: "white", borderRadius: 10, textDecoration: "none" }}>Team home</Link></header>
-    {error && <div style={{ padding: 12, background: "#fff1f1", borderRadius: 10, marginBottom: 12 }}>{error}</div>}
-    <form onSubmit={create} style={{ ...card, padding: 16, display: "grid", gridTemplateColumns: "1.2fr 1.2fr 2fr 1fr 1fr 1fr 1fr 1fr 1.3fr auto", gap: 8, marginBottom: 16 }}>
-      <select name="serviceCode" required>{SERVICES.map(s => <option key={s} value={s}>{s}</option>)}</select>
-      <input name="planCode" required placeholder="plan-code" />
-      <input name="name" required placeholder="Plan name" />
-      <input name="cityId" required placeholder="city" />
-      <input name="price" type="number" min="0" required placeholder="₹ price" />
-      <input name="sessionCount" type="number" min="1" required placeholder="sessions" />
-      <input name="validityValue" type="number" min="1" required placeholder="validity" />
-      <select name="validityUnit" required><option value="months">months</option><option value="days">days</option></select>
-      <input name="servicePackageCode" required placeholder="package-code" />
-      <button disabled={busy} style={{ background: "#F6920A", color: "white", border: 0, borderRadius: 8, fontWeight: 800 }}>{busy ? "…" : "Add"}</button>
-    </form>
-    <div style={{ ...card, overflow: "hidden" }}>
-      <div style={{ padding: 14, borderBottom: "1px solid #eee6f5" }}><b>{rows.length} plan{rows.length === 1 ? "" : "s"}</b></div>
-      {rows.length === 0 ? <p style={{ padding: 18, color: "#746b7d" }}>No plans yet — add one above.</p> : rows.map(p => <article key={p.id} style={{ padding: 14, borderBottom: "1px solid #f0ebf4", display: "flex", justifyContent: "space-between", gap: 12 }}><div><strong>{p.name}</strong> <small style={{ color: "#746b7d" }}>· {p.serviceCode} · {p.cityId}</small><small style={{ display: "block", marginTop: 3, color: "#746b7d" }}>{p.sessionCount} sessions · valid {p.validityValue} {p.validityUnit} · {p.active ? "active" : "inactive"}</small></div><div style={{ fontWeight: 800, fontSize: 17 }}>₹{Number(p.price).toLocaleString("en-IN")}</div></article>)}
-    </div>
-  </div></main>;
+  const [service, setService] = useState("all");
+
+  const load = useCallback(async () => {
+    try {
+      const response = await fetch("/api/subscription-plans", { cache: "no-store" });
+      const body = (await response.json().catch(() => ({}))) as { data?: Plan[]; error?: string };
+      if (!response.ok) throw new Error(body.error || `Plans unavailable (HTTP ${response.status})`);
+      setRows(body.data || []); setError("");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+  }, []);
+  useEffect(() => { const timer = setTimeout(() => { void load(); }, 0); return () => clearTimeout(timer); }, [load]);
+
+  async function create(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const response = await fetch("/api/subscription-plans", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          serviceCode: String(data.get("serviceCode")), planCode: String(data.get("planCode")), cityId: String(data.get("cityId")),
+          name: String(data.get("name")), price: Number(data.get("price")), sessionCount: Number(data.get("sessionCount")),
+          validityValue: Number(data.get("validityValue")), validityUnit: String(data.get("validityUnit")),
+          servicePackageCode: String(data.get("servicePackageCode")), reason: "New plan via admin",
+        }),
+      });
+      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) throw new Error(body.error || `Create failed (HTTP ${response.status})`);
+      form.reset();
+      setNotice(`${String(data.get("name"))} added for ${String(data.get("cityId"))}.`);
+      await load();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setBusy(false); }
+  }
+
+  const shown = service === "all" ? rows : rows.filter((plan) => plan.serviceCode === service);
+  const activeCount = rows.filter((plan) => plan.active).length;
+  const cities = new Set(rows.map((plan) => plan.cityId)).size;
+
+  return <main className={styles.shell}>
+    <PageHeader
+      eyebrow="PAWSPACE TEAM · SUBSCRIPTION PLANS"
+      title="Plans for every service"
+      description="Per city, with a validity window in days or months that sets each customer’s expiry from the booked date."
+      actions={<Badge tone={activeCount ? "success" : "warning"} dot>{activeCount} active</Badge>}
+    />
+    <nav className={styles.nav} aria-label="Team workspaces">
+      <Link href="/team">← Team Home</Link><Link href="/team/pricing">Pricing</Link><Link href="/team/operations">Operations</Link>
+    </nav>
+
+    {error ? <div className={`${styles.panel} ${styles.panelError}`}><b>{error}</b></div> : null}
+    {notice ? <div className={styles.panel}>{notice}</div> : null}
+
+    <section className={styles.tiles}>
+      <StatCard label="Plans" value={rows.length} />
+      <StatCard label="Active" value={activeCount} />
+      <StatCard label="Cities covered" value={cities} />
+      <StatCard label="Services covered" value={new Set(rows.map((plan) => plan.serviceCode)).size} meta={`of ${SERVICES.length}`} />
+    </section>
+
+    <section className={styles.panel}>
+      <div className={styles.panelHead}><h2>Add a plan</h2></div>
+      <p className={styles.panelNote}>The validity window is what a customer’s expiry is calculated from, so it belongs to the plan rather than to any single booking.</p>
+      <form onSubmit={create}>
+        <div className={styles.fieldRow}>
+          <label className={styles.field}>Service<select name="serviceCode" required>{SERVICES.map((code) => <option key={code} value={code}>{code.replaceAll("_", " ")}</option>)}</select></label>
+          <label className={styles.field}>Plan code<input name="planCode" required placeholder="grooming-6" /></label>
+          <label className={styles.field}>Plan name<input name="name" required placeholder="Grooming · 6 sessions" /></label>
+          <label className={styles.field}>City<input name="cityId" required placeholder="blr" /></label>
+        </div>
+        <div className={styles.fieldRow}>
+          <label className={styles.field}>Price (₹)<input name="price" type="number" min="0" required placeholder="6594" /></label>
+          <label className={styles.field}>Sessions<input name="sessionCount" type="number" min="1" required placeholder="6" /></label>
+          <label className={styles.field}>Validity<input name="validityValue" type="number" min="1" required placeholder="8" /></label>
+          <label className={styles.field}>Validity unit<select name="validityUnit" required><option value="months">months</option><option value="days">days</option></select></label>
+          <label className={styles.field}>Package code<input name="servicePackageCode" required placeholder="grooming-full" /></label>
+        </div>
+        <div className={styles.actions}><Button size="sm" type="submit" disabled={busy}>{busy ? "Adding…" : "Add plan"}</Button></div>
+      </form>
+    </section>
+
+    <section className={styles.controls}>
+      <Button size="sm" variant={service === "all" ? "primary" : "secondary"} onClick={() => setService("all")}>All services</Button>
+      {SERVICES.map((code) => <Button key={code} size="sm" variant={service === code ? "primary" : "secondary"} onClick={() => setService(code)}>{code.replaceAll("_", " ")}</Button>)}
+    </section>
+
+    {shown.length === 0 ? <EmptyState
+      title={rows.length ? `No ${service.replaceAll("_", " ")} plans yet` : "No subscription plans yet"}
+      body={rows.length ? "Pick another service, or add a plan for this one above." : "Add the first plan above — service, city, price, sessions and the validity window."}
+    /> : <div className={styles.tableWrap}><table className={styles.table}>
+      <thead><tr><th>Plan</th><th>Service · city</th><th className={styles.numeric}>Sessions</th><th>Validity</th><th>Status</th><th className={styles.numeric}>Price</th></tr></thead>
+      <tbody>{shown.map((plan) => <tr key={plan.id}>
+        <td><div className={styles.stack}><b>{plan.name}</b><small>{plan.planCode}</small></div></td>
+        <td><div className={styles.stack}><span>{plan.serviceCode.replaceAll("_", " ")}</span><small>{plan.cityId}</small></div></td>
+        <td className={styles.numeric}>{plan.sessionCount}</td>
+        <td>{plan.validityValue} {plan.validityUnit}</td>
+        <td><Badge tone={plan.active ? "success" : "neutral"}>{plan.active ? "active" : "inactive"}</Badge></td>
+        <td className={styles.numeric}><b>{money(plan.price)}</b></td>
+      </tr>)}</tbody>
+    </table></div>}
+  </main>;
 }

@@ -14,7 +14,12 @@ export async function GET(request: Request) {
     const db = await database();
     const policy = await currentCadencePolicy(db);
     const recent = await db.prepare("SELECT * FROM reminder_governance_events ORDER BY created_at DESC LIMIT 100").all();
-    return json({ data: { policy, recentEvents: recent.results, backgroundSchedulerConfigured: true, externalDelivery: false } });
+    // A sweep that finds nothing new to send records a suppression, so a screen showing only the most
+    // recent events looks idle exactly when the de-duplication is working. These totals separate the
+    // two outcomes over the whole history, per reminder type, so "queued" is visible next to "already
+    // reminded this cycle" instead of being buried under the last hour of repeat sweeps.
+    const totals = await db.prepare("SELECT reminder_type, SUM(CASE WHEN duplicate_prevented=1 THEN 1 ELSE 0 END) AS suppressed, SUM(CASE WHEN duplicate_prevented=0 THEN 1 ELSE 0 END) AS queued, MAX(created_at) AS last_at FROM reminder_governance_events GROUP BY reminder_type ORDER BY reminder_type").all();
+    return json({ data: { policy, recentEvents: recent.results, outcomeTotals: totals.results, backgroundSchedulerConfigured: true, externalDelivery: false } });
   } catch (error) {
     return authError(error, "Unable to load reminder governance");
   }
