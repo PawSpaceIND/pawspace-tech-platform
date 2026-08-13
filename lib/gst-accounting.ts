@@ -23,7 +23,11 @@ export async function ensureGstAccountingTables(db:Db){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS accounting_mapping_versions (id TEXT PRIMARY KEY,entity_id TEXT NOT NULL,version INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'draft',effective_from TEXT NOT NULL,mapping_json TEXT NOT NULL,approval_reference TEXT,approved_by TEXT,approved_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(entity_id,version))"),
  db.prepare("CREATE TABLE IF NOT EXISTS accounting_export_runs (id TEXT PRIMARY KEY,entity_id TEXT NOT NULL,period_code TEXT NOT NULL,target TEXT NOT NULL,mapping_id TEXT NOT NULL,source_snapshot_json TEXT NOT NULL,checksum TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'generated',ack_reference TEXT,generated_by TEXT NOT NULL,generated_at INTEGER NOT NULL,acknowledged_at INTEGER)"),
  db.prepare("CREATE TABLE IF NOT EXISTS finance_close_evidence (id TEXT PRIMARY KEY,period_code TEXT NOT NULL,evidence_type TEXT NOT NULL,source_reference TEXT NOT NULL,status TEXT NOT NULL,variance_amount REAL NOT NULL DEFAULT 0,detail_json TEXT NOT NULL,recorded_by TEXT NOT NULL,recorded_at INTEGER NOT NULL,UNIQUE(period_code,evidence_type,source_reference))"),
- db.prepare("CREATE TABLE IF NOT EXISTS finance_close_periods (period_code TEXT PRIMARY KEY,status TEXT NOT NULL DEFAULT 'open',locked_by TEXT,locked_at INTEGER,updated_at INTEGER)"),
+ // MUST match lib/people-finance-integration.ts and app/api/finance-control/route.ts column for
+ // column. This declaration used to omit checklist_json; because CREATE TABLE IF NOT EXISTS is a
+ // no-op once the table exists, whichever module ran first decided the real shape - and on staging
+ // this one won, so every Finance close write failed with "no column named checklist_json".
+ db.prepare("CREATE TABLE IF NOT EXISTS finance_close_periods (period_code text PRIMARY KEY NOT NULL,status text DEFAULT 'open' NOT NULL,checklist_json text NOT NULL,locked_at integer,locked_by text,updated_at integer NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS gst_accounting_audit_events (id TEXT PRIMARY KEY,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,action TEXT NOT NULL,before_json TEXT,after_json TEXT NOT NULL,actor_id TEXT NOT NULL,reason TEXT NOT NULL,created_at INTEGER NOT NULL)"),
  // Defensive: the statutory-package (monthly filing) and accounting-export read paths JOIN/read these
  // finance-module tables; provision them here too so opening the GST/filing screen on a freshly
