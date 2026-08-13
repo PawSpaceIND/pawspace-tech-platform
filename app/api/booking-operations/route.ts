@@ -116,12 +116,38 @@ function customerMessage(action: OperationAction, minutes: number, rebook: boole
   return "Your refund request is recorded and can be tracked from this order until the amount is completed.";
 }
 
+/**
+ * Order operations for ONE booking: operational events, the customer notification bodies, rebooking
+ * cases and refund cases.
+ *
+ * This read used to go straight from the `bookingId` query parameter to the four queries below, with no
+ * actor resolution and no record-level check — it relied entirely on the gateway, which maps this route
+ * to `bookings.view`. `service_provider` holds `bookings.view`; its own description is "sees assigned
+ * jobs only". So any signed-in provider could read any other provider's booking operations, including
+ * customer notification text, refund amounts and gateway references. Horizontal authorization, missing.
+ *
+ * The permission is deliberately unchanged: providers do legitimately need this read for their own
+ * assigned jobs, so escalating to a staff-only permission would break the provider app rather than fix
+ * the boundary. What was missing is the per-record check, and that is what is added here.
+ */
 export async function GET(request: Request) {
   try {
-    const db = await database();
-    await ensureTables(db);
+    // Authenticate before answering anything, including shape questions like a missing parameter.
+    const actor = await resolveActor(request);
+    requirePermission(actor, "bookings.view");
     const bookingId = new URL(request.url).searchParams.get("bookingId");
     if (!bookingId) return json({ error: "Booking ID is required" }, 400);
+    const db = await database();
+    await ensureTables(db);
+    // Record-level ownership. requireProviderOwnership passes privileged staff through
+    // (bookings.manage / providers.manage / grooming.manage) so intended cross-booking authority is
+    // preserved, and holds an ordinary provider to its own assignment.
+    //
+    // The empty-string fallback is deliberate: a booking with no work order has no assignment for a
+    // provider to own, so it must fail closed. Guarding this call behind `if (workOrder)` instead would
+    // leave every unassigned booking readable by any provider — the same hole in a smaller window.
+    const workOrder = await db.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id=?").bind(bookingId).first<{ provider_id?: unknown }>();
+    await requireProviderOwnership(db, actor, String(workOrder?.provider_id ?? ""));
     const [events, notifications, rebooking, refunds] = await Promise.all([
       db.prepare("SELECT * FROM booking_operational_events WHERE booking_id=? ORDER BY created_at DESC").bind(bookingId).all(),
       db.prepare("SELECT * FROM booking_customer_notifications WHERE booking_id=? ORDER BY created_at DESC").bind(bookingId).all(),
@@ -130,7 +156,9 @@ export async function GET(request: Request) {
     ]);
     return json({ data: { events: events.results, notifications: notifications.results, rebooking: rebooking.results, refunds: refunds.results } });
   } catch (error) {
-    return json({ error: error instanceof Error ? error.message : "Unable to load order operations" }, 500);
+    // authError passes a thrown auth Response through with its own status (401/403) instead of
+    // flattening it into a 500 with the refusal text in the body.
+    return authError(error, "Unable to load order operations");
   }
 }
 
