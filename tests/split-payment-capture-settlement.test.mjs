@@ -123,7 +123,11 @@ test("BLOCKER 2: both instalments accumulate, so a fully paid stay reports the w
   const afterFirst = recon(sqlite);
   console.error(`after first  -> expected=${afterFirst.expected_amount} captured=${afterFirst.captured_amount} recon=${afterFirst.reconciliation_status}`);
   assert.equal(Number(afterFirst.captured_amount), HALF, "half is collected");
-  assert.equal(Number(afterFirst.expected_amount), TOTAL, "against the whole split, not just this instalment");
+  // expected_amount is the amount THIS order was opened for, deliberately. An earlier version stored
+  // the booking total here and it fed straight back into the next event's variance check, raising a
+  // false mismatch on the second notification for one capture. Booking-level truth is captured_amount
+  // plus the schedule; see tests/split-payment-capture-idempotency.test.mjs.
+  assert.equal(Number(afterFirst.expected_amount), HALF, "the per-stage expectation stays per stage");
   assert.equal(afterFirst.reconciliation_status, "partially_captured", "and it is honest that the rest is outstanding");
   assert.equal(Number(afterFirst.variance_amount), 0, "the instalment matched its own order, so there is no variance");
 
@@ -132,8 +136,8 @@ test("BLOCKER 2: both instalments accumulate, so a fully paid stay reports the w
   const afterBalance = recon(sqlite);
   console.error(`after balance -> expected=${afterBalance.expected_amount} captured=${afterBalance.captured_amount} recon=${afterBalance.reconciliation_status}`);
   assert.equal(Number(afterBalance.captured_amount), TOTAL, "the balance ADDS to the first instalment - overwriting it under-reported collections");
-  assert.equal(Number(afterBalance.expected_amount), TOTAL);
-  assert.equal(afterBalance.reconciliation_status, "matched", "fully collected");
+  assert.equal(Number(afterBalance.expected_amount), HALF, "still the balance order's own amount, not the booking total");
+  assert.equal(afterBalance.reconciliation_status, "matched", "cumulative collections cover the schedule");
   assert.equal(Number(afterBalance.variance_amount), 0);
 });
 

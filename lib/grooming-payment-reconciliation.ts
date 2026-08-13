@@ -14,8 +14,6 @@ export async function ensurePaymentReconciliationTables(db:Db){await db.batch([
 ]);}
 
 const round2=(value:number)=>Math.round(value*100)/100;
-/** booking_payments.status values meaning that instalment's money is already in. */
-const COLLECTED=["captured","paid","refunded","partially_refunded"];
 
 /**
  * The 50/50 split schedule, when this booking has one. Read directly rather than through
@@ -23,6 +21,49 @@ const COLLECTED=["captured","paid","refunded","partially_refunded"];
  */
 async function splitSchedule(db:Db,bookingId:string){
  return db.prepare("SELECT paid_now_amount,balance_amount,status FROM stay_payment_schedules WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
+}
+
+/**
+ * The identity of the money, not of the notification.
+ *
+ * One gateway capture can arrive as several webhook events: Razorpay sends `payment.captured` AND
+ * `order.paid` for a single payment, each with its own event id, so deduplication on event_id does not
+ * merge them. What identifies the underlying capture is the gateway payment id (falling back to the
+ * order id, then the event id when a provider sends neither).
+ */
+/**
+ * Both references, because a provider does not always send both. `order.paid` can arrive carrying only
+ * the order id while `payment.captured` for the SAME money carried a payment id, so matching on a single
+ * preferred key would treat one capture as two. A prior capture counts as the same money if EITHER
+ * reference matches. Each stage of a split opens its own order, so this cannot merge two real stages.
+ */
+function captureRefs(event:GatewayEvent){
+ return [event.gatewayPaymentId,event.gatewayOrderId].map(value=>String(value||"")).filter(Boolean);
+}
+
+/**
+ * The gateway captures already collected against this payment, as reference pairs. Derived from the
+ * event log rather than stored, so there is one source of truth and no new table to keep in step.
+ * `exceptRowId` excludes the event currently being processed.
+ */
+async function collectedCaptures(db:Db,paymentId:string,exceptRowId:string){
+ const rows=await db.prepare("SELECT gateway_payment_id,gateway_order_id,event_id FROM payment_gateway_events WHERE payment_id=? AND event_type IN ('payment.captured','order.paid') AND processing_status='processed' AND id<>?")
+   .bind(paymentId,exceptRowId).all<Row>().catch(()=>({results:[] as Row[]}));
+ return rows.results.map(row=>({
+  refs:[row.gateway_payment_id,row.gateway_order_id].map(value=>String(value||"")).filter(Boolean),
+  eventId:String(row.event_id||""),
+ }));
+}
+
+/** Distinct captures among a collected set: entries sharing any reference are the same money. */
+function distinctCaptureCount(collected:Array<{refs:string[];eventId:string}>){
+ const groups:string[][]=[];
+ for(const item of collected){
+  const key=item.refs.length?item.refs:[item.eventId];
+  const existing=groups.find(group=>group.some(value=>key.includes(value)));
+  if(existing)existing.push(...key);else groups.push([...key]);
+ }
+ return groups.length;
 }
 
 /**
@@ -67,15 +108,28 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
   const expected=Number(linkedExpected?.expected_amount??payment.amount??0);await db.prepare("UPDATE payment_gateway_events SET booking_id=?,payment_id=? WHERE id=?").bind(bookingId,paymentId,rowId).run();
   if(event.currency&&event.currency!==currency){await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"currency_mismatch",detail:{expected:currency,received:event.currency}});await finish("exception","Currency mismatch");return{duplicate:false,status:"exception",reason:"currency_mismatch"};}
   if(event.gatewayPaymentId)await db.prepare("UPDATE payment_gateway_links SET gateway_payment_id=COALESCE(gateway_payment_id,?),updated_at=? WHERE booking_id=?").bind(event.gatewayPaymentId,now,bookingId).run();
-  // expectedFor defaults to THIS order's expected amount. The capture branch overrides it with the
-  // booking-level total, because one record serves both instalments of a split.
-  const upsert=async(status:string,recon:string,captured:number,refunded:number,variance:number,expectedFor:number=expected)=>db.prepare("INSERT INTO payment_reconciliation_records (payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,last_event_id,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(payment_id) DO UPDATE SET gateway=excluded.gateway,environment=excluded.environment,expected_amount=excluded.expected_amount,captured_amount=excluded.captured_amount,refunded_amount=excluded.refunded_amount,currency=excluded.currency,gateway_status=excluded.gateway_status,reconciliation_status=excluded.reconciliation_status,variance_amount=excluded.variance_amount,last_event_id=excluded.last_event_id,updated_at=excluded.updated_at").bind(paymentId,bookingId,event.provider,event.environment,expectedFor,captured,refunded,currency,status,recon,variance,event.eventId,now).run();
+  // expected_amount stays the amount THIS order was opened for. An earlier attempt stored the
+  // booking-level total here, which fed straight back into the variance check on the next event: a
+  // second notification for a Rs 4,000 instalment was compared against a Rs 8,000 booking and raised a
+  // false capture_amount_mismatch. Booking-level truth is captured_amount plus the schedule, never this.
+  const upsert=async(status:string,recon:string,captured:number,refunded:number,variance:number)=>db.prepare("INSERT INTO payment_reconciliation_records (payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,last_event_id,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(payment_id) DO UPDATE SET gateway=excluded.gateway,environment=excluded.environment,expected_amount=excluded.expected_amount,captured_amount=excluded.captured_amount,refunded_amount=excluded.refunded_amount,currency=excluded.currency,gateway_status=excluded.gateway_status,reconciliation_status=excluded.reconciliation_status,variance_amount=excluded.variance_amount,last_event_id=excluded.last_event_id,updated_at=excluded.updated_at").bind(paymentId,bookingId,event.provider,event.environment,expected,captured,refunded,currency,status,recon,variance,event.eventId,now).run();
   const current=await db.prepare("SELECT captured_amount,refunded_amount,gateway_status,reconciliation_status,variance_amount FROM payment_reconciliation_records WHERE payment_id=?").bind(paymentId).first<Row>();const capturedCurrent=Number(current?.captured_amount||0),refundedCurrent=Number(current?.refunded_amount||0),gatewayCurrent=String(current?.gateway_status||"not_started"),reconCurrent=String(current?.reconciliation_status||"pending"),varianceCurrent=Number(current?.variance_amount||0);const settled=["captured","refunded","partially_refunded"].includes(gatewayCurrent)||["captured","refunded","partially_refunded"].includes(String(payment.status));
 
   if(event.eventType==="payment.authorized"){
     if(settled){await finish("processed","Out-of-order authorization ignored after settled state");return{duplicate:false,status:"processed",ignored:true,reason:"out_of_order_authorized"};}
     await upsert("authorized","pending",capturedCurrent,refundedCurrent,0);
   }else if(event.eventType==="payment.captured"||event.eventType==="order.paid"){
+    // Financial idempotency is per CAPTURE, not per event. A second notification for money already
+    // collected must change nothing at all: not the collected total, not the schedule, and it must not
+    // be measured against an expectation it was never opened for. Deciding this BEFORE the variance
+    // check is what stops `order.paid` following `payment.captured` from raising a false mismatch.
+    const refs=captureRefs(event);
+    const alreadyCollected=await collectedCaptures(db,paymentId,rowId);
+    const isRepeat=alreadyCollected.some(item=>item.refs.some(value=>refs.includes(value)));
+    if(isRepeat){
+      await finish("processed","Repeat notification for a capture already collected");
+      return{duplicate:false,status:"processed",ignored:true,reason:"capture_already_collected"};
+    }
     const variance=Math.round((amount-expected)*100)/100;if(Math.abs(variance)>0.009){await upsert("captured","amount_mismatch",amount,refundedCurrent,variance);await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"capture_amount_mismatch",detail:{expected,received:amount,variance}});await finish("exception","Capture amount mismatch");return{duplicate:false,status:"exception",reason:"capture_amount_mismatch"};}
     // A 50/50 stay pays in TWO captures against ONE payment row and ONE reconciliation record. The
     // variance check above is per ORDER and must stay that way, but what the record REPORTS has to be
@@ -83,17 +137,23 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
     // Rs 10,000 stay reported Rs 5,000 collected — and captured_amount is what lib/revenue-mission-control
     // and app/api/revenue-crm read as collections, so the under-report reached revenue reporting.
     const schedule=await splitSchedule(db,bookingId);
-    const balanceAmount=schedule?round2(Number(schedule.balance_amount||0)):0;
+    const scheduleTotal=schedule?round2(Number(schedule.paid_now_amount||0)+Number(schedule.balance_amount||0)):0;
+    // Cumulative, because one record serves both instalments: captured_amount was being overwritten by
+    // each capture, so a fully paid Rs 8,000 stay reported Rs 4,000 collected — and that column is what
+    // lib/revenue-mission-control and app/api/revenue-crm read as collections.
     const capturedTotal=round2(capturedCurrent+amount);
-    const expectedTotal=schedule?round2(Number(schedule.paid_now_amount||0)+balanceAmount):expected;
-    // This capture settles the balance only if the first instalment was already in AND the amount is
-    // the balance. Requiring both means a re-sent first instalment under a new event id cannot close
-    // the schedule, and `payment.status` here is the value read BEFORE this event was applied.
-    const settlesBalance=Boolean(schedule)&&String(schedule?.status)!=="paid"&&COLLECTED.includes(String(payment.status))&&Math.abs(amount-balanceAmount)<=0.009;
+    // A schedule settles only once TWO genuinely distinct captures have been collected. Inferring the
+    // balance from `amount == balance_amount` was wrong: the default split is total/2, so the first
+    // instalment and the balance are the SAME figure and a repeated first capture closed the schedule
+    // with half the money. Counting distinct captures cannot be fooled that way, and the cumulative
+    // check means a short second capture still cannot settle a stay.
+    const stagesCollected=distinctCaptureCount([...alreadyCollected,{refs,eventId:event.eventId}]);
+    const settlesBalance=Boolean(schedule)&&String(schedule?.status)!=="paid"&&stagesCollected>=2&&capturedTotal+0.009>=scheduleTotal;
+    const collectedInFull=schedule?capturedTotal+0.009>=scheduleTotal:capturedTotal+0.009>=expected;
     await db.prepare("UPDATE booking_payments SET status='captured',gateway=?,detail_json=json_set(detail_json,'$.gatewayPaymentId',?,'$.gatewayOrderId',?,'$.lastGatewayEventId',?),updated_at=? WHERE id=?").bind(event.environment==="sandbox"?"razorpay_sandbox":"razorpay",event.gatewayPaymentId??null,event.gatewayOrderId??null,event.eventId,now,paymentId).run();
-    await upsert("captured",capturedTotal+0.009>=expectedTotal?"matched":"partially_captured",capturedTotal,refundedCurrent,0,expectedTotal);
+    await upsert("captured",collectedInFull?"matched":"partially_captured",capturedTotal,refundedCurrent,0);
     if(settlesBalance)await settleStayBalance(db,{bookingId,eventId:event.eventId,paymentRef:event.gatewayPaymentId??null,now});
-    await lifecycle(db,bookingId,"payment_captured",{gateway:event.provider,environment:event.environment,gatewayPaymentId:event.gatewayPaymentId,eventId:event.eventId,amount,capturedTotal,expectedTotal,settledStayBalance:settlesBalance});
+    await lifecycle(db,bookingId,"payment_captured",{gateway:event.provider,environment:event.environment,gatewayPaymentId:event.gatewayPaymentId,eventId:event.eventId,amount,capturedTotal,stagesCollected,settledStayBalance:settlesBalance});
     // funnel closure: payment succeeded -> convert the Sales lead and cancel any ₹300 recovery entitlement (belt-and-braces; never breaks payment processing)
     const paidCustomerId=String(payment.customer_id||"");if(paidCustomerId){await convertLeadOnPaymentCaptured(db,{customerId:paidCustomerId,bookingId}).catch(()=>{});await cancelRecoveryEntitlements(db,{customerId:paidCustomerId,bookingId,reason:"payment_captured",at:now}).catch(()=>{});}
   }else if(event.eventType==="payment.failed"){
