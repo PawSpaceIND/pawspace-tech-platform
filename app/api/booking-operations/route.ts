@@ -98,8 +98,8 @@ function validate(input: OperationInput) {
     return "Delay must be between 0 and 360 minutes";
   if (input.action === "package_upgrade" && (!input.upgradedPackageName || !input.upgradedAmount))
     return "Approved package and amount are required";
-  if (input.action === "apply_package_upgrade" && !input.upgradeRequestId)
-    return "Upgrade request is required";
+  if (input.action === "apply_package_upgrade" && (!input.upgradeRequestId || input.upgradedAmount === undefined || input.upgradedAmount === null))
+    return "Upgrade request and approved amount are required";
   if (input.action === "refund_status" && (!input.refundCaseId || !input.refundStatus))
     return "Refund case and next status are required";
   return null;
@@ -165,7 +165,7 @@ export async function POST(request: Request) {
       // The amount is the priced decision, not the provider's number. It must be explicit, real, and
       // an upgrade - a "package upgrade" that lowers what the customer owes is a refund, and refunds
       // have their own governed path.
-      const amount = Number(input.upgradedAmount ?? upgrade.requested_amount);
+      const amount = Number(input.upgradedAmount);
       const previous = Number(booking.total_amount || 0);
       if (!Number.isFinite(amount) || amount <= 0) return json({ error: "Approved upgrade amount must be a real positive figure" }, 400);
       if (amount < previous) return json({ error: "A package upgrade cannot reduce the booking total; use the governed refund path" }, 409);
