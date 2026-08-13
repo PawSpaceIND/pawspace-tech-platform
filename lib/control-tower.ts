@@ -54,8 +54,12 @@ export type PostureArea = {
   basis: string;
 };
 
+// A ratio with nothing in the denominator is NOT a perfect score. "Payment reconciliation 100%"
+// with zero recorded payments is a green light for something that has never been measured - the
+// same overstatement this screen exists to remove. Nothing to measure returns null, and the screen
+// distinguishes it from a missing table by whether `total` is 0 or null.
 const percent = (good: number | null, total: number | null) =>
-  good === null || total === null ? null : total === 0 ? 100 : Math.round((good / total) * 100);
+  good === null || total === null || total === 0 ? null : Math.round((good / total) * 100);
 
 export async function buildControlTower(db: Db, input: { asOf?: number } = {}) {
   const asOf = input.asOf ?? Date.now();

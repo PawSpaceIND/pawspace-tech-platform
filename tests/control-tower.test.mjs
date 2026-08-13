@@ -184,6 +184,22 @@ test("money, filing and onboarding signals count only what is genuinely outstand
   assert.equal(tower.headline.signalsTracked, tower.headline.needsAttention + tower.headline.signalsClear);
 });
 
+test("a table with no rows scores nothing, not 100%", async () => {
+  // The table exists but is empty: 0 of 0 must NOT render as a perfect score. This is the exact
+  // overstatement the screen was rebuilt to remove, in a new costume.
+  const { db } = fresh(["payment_reconciliation_exceptions"]);
+  const tower = await buildControlTower(db, { asOf: ASOF });
+  const area = tower.posture.find(item => item.code === "payment_reconciliation");
+  assert.equal(area.total, 0, "the table exists and is empty");
+  assert.equal(area.score, null, "nothing recorded means nothing measured, not 100%");
+  assert.equal(tower.sourceStatus.paymentReconciliation, "payment_reconciliation_exceptions", "the source IS connected - it is simply empty");
+
+  // The screen tells the two apart: total===null is a missing table, total===0 is an empty one.
+  const page = read("app/control/page.tsx");
+  assert.match(page, /area\.total === null \? "not connected" : area\.total === 0 \? "nothing recorded yet"/);
+  assert.match(page, /area\.total === null \? "n\/c" : area\.total === 0 \? "—"/);
+});
+
 test("the audit trail reads the columns security_audit_events actually has", async () => {
   const { sqlite, db } = fresh(["security_audit_events"]);
   sqlite.prepare("INSERT INTO security_audit_events (id,actor_email,actor_role,action,resource_type,resource_id,outcome,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
@@ -229,7 +245,7 @@ test("the /control screen renders the live tower and labels what is still sample
   assert.match(page, /fetch\("\/api\/control-tower"/);
   assert.match(page, /tower\?\.signals\.map/);
   assert.match(page, /tower\?\.posture\.map/);
-  assert.match(page, /area\.score === null \? "no source" : `\$\{area\.good\} of \$\{area\.total\}`/);
+  assert.match(page, /`\$\{area\.good\} of \$\{area\.total\}`/, "each bar publishes the ratio behind its score");
   // Views still on sample rows say so, and the authored register is not passed off as measurement.
   assert.match(page, /PROTOTYPE_CONTROL_VIEWS/);
   assert.match(page, /AUTHORED_REGISTER_VIEWS/);
