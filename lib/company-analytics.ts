@@ -19,10 +19,15 @@ export async function buildCompanyAnalytics(db:D1Database,input:{from?:string;to
   const sittingIds=bookings.filter(b=>String(b.service_code)==="pet_sitting").map(b=>String(b.id));
   const trainingIds=bookings.filter(b=>String(b.service_code)==="dog_training").map(b=>String(b.id));
   const groomingIds=bookings.filter(b=>String(b.service_code)==="grooming").map(b=>String(b.id));
+  // Chunked for the same reason the payments read above is (#158): an IN list built straight from a
+  // result set breaks past D1's 100-bound-parameter cap, and safeAll swallows the failure - so above
+  // 100 bookings in a vertical/period the cost simply vanished and the margin with it, while GMV and
+  // collected stayed correct and the screen looked healthy. Worse than absent: costCoverage then
+  // reported 0% for a period in which every single booking had a real payout row.
   const [boardingPayouts,sittingPayouts,trainingEarnings,groomingCosts]=await Promise.all([
-    boardingIds.length?safeAll(db,`SELECT booking_id,payout_amount FROM boarding_host_settlement_ledger WHERE booking_id IN (${boardingIds.map(()=>"?").join(",")})`,boardingIds):Promise.resolve([]),
-    sittingIds.length?safeAll(db,`SELECT booking_id,payout_amount FROM sitting_sitter_settlement_ledger WHERE booking_id IN (${sittingIds.map(()=>"?").join(",")})`,sittingIds):Promise.resolve([]),
-    trainingIds.length?safeAll(db,`SELECT booking_id,gross_earning,status FROM training_session_earnings WHERE booking_id IN (${trainingIds.map(()=>"?").join(",")})`,trainingIds):Promise.resolve([]),
+    chunkedIn(boardingIds,(chunk,placeholders)=>safeAll(db,`SELECT booking_id,payout_amount FROM boarding_host_settlement_ledger WHERE booking_id IN (${placeholders})`,chunk)),
+    chunkedIn(sittingIds,(chunk,placeholders)=>safeAll(db,`SELECT booking_id,payout_amount FROM sitting_sitter_settlement_ledger WHERE booking_id IN (${placeholders})`,chunk)),
+    chunkedIn(trainingIds,(chunk,placeholders)=>safeAll(db,`SELECT booking_id,gross_earning,status FROM training_session_earnings WHERE booking_id IN (${placeholders})`,chunk)),
     attributeGroomingBookingCosts(db,groomingIds),
   ]);
   const costByBooking=new Map<string,number|null>();

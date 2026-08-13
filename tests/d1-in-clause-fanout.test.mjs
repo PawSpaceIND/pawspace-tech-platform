@@ -174,16 +174,30 @@ const BOUNDED_IN_LISTS = {
 };
 
 test("no library builds an IN list straight from a result set any more", async () => {
+  // This sweep used to exempt the whole FILE when it imported d1-chunked-in anywhere:
+  //
+  //   if (source.includes("d1-chunked-in") || name in BOUNDED_IN_LISTS) continue;
+  //
+  // So a module that chunked one read became immune for every other read it built. That is exactly
+  // how lib/company-analytics.ts kept three unchunked cost-ledger IN-lists (boarding, sitting and
+  // training payouts) directly beneath a payments read that PR #158 had chunked - the sweep written
+  // to catch this class walked straight past the file it was written for.
+  //
+  // The exemption is now per LINE: a raw `.map(() => "?")` counts unless that same line goes through
+  // chunkedIn. Bounded lists stay allowlisted by name, with the reason they cannot grow.
   const files = (await readdir(new URL("../lib", import.meta.url))).filter((name) => name.endsWith(".ts") && name !== "d1-chunked-in.ts");
   const offenders = [];
   for (const name of files) {
+    if (name in BOUNDED_IN_LISTS) continue;
     const source = await readFile(new URL(`../lib/${name}`, import.meta.url), "utf8");
-    // `.map(() => "?")` over a variable-length list is the shape that breaks past 100 rows.
-    if (!/\.map\(\s*\(\s*\)\s*=>\s*"\?"\s*\)/.test(source)) continue;
-    if (source.includes("d1-chunked-in") || name in BOUNDED_IN_LISTS) continue;
-    offenders.push(name);
+    source.split("\n").forEach((line, index) => {
+      // `.map(() => "?")` over a variable-length list is the shape that breaks past 100 rows.
+      if (!/\.map\(\s*\(\s*\)\s*=>\s*"\?"\s*\)/.test(line)) return;
+      if (line.includes("chunkedIn") || line.includes("placeholders")) return;
+      offenders.push(`${name}:${index + 1}`);
+    });
   }
-  assert.deepEqual(offenders, [], "these files must build IN lists through chunkedIn so they cannot exceed D1's cap");
+  assert.deepEqual(offenders, [], "these call sites must build IN lists through chunkedIn so they cannot exceed D1's cap");
 });
 
 test("one chunk size for the whole platform, not one per module", async () => {
