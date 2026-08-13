@@ -3,14 +3,21 @@ import assert from"node:assert/strict";
 import{readFile}from"node:fs/promises";
 const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
 
-test("service-zones lib defines pincode zone mapping with 5 bengaluru zones",async()=>{
+test("service-zones lib maps real Bengaluru pincodes to their real zones",async()=>{
+  // This test previously pinned the FABRICATED table: it asserted 560034 (Koramangala) was in the
+  // east zone and 560010 (Rajajinagar) in the north. Both are wrong on the ground, so the test was
+  // holding the defect in place rather than catching it - a green assertion over invented data.
+  // It now checks the geography that actually exists. tests/service-zone-coverage.test.mjs executes
+  // the resolver against every advertised pincode; this one guards the table's shape and anchors.
   const lib=await read("lib/service-zones.ts");
   assert.match(lib,/PINCODE_ZONE_MAP:Record<string,ZoneAssignment>=/);
-  assert.match(lib,/"560034":{pincode:"560034",zoneId:"blr-east"/);
-  assert.match(lib,/"560010":{pincode:"560010",zoneId:"blr-north"/);
-  assert.match(lib,/"560018":{pincode:"560018",zoneId:"blr-west"/);
-  assert.match(lib,/"560023":{pincode:"560023",zoneId:"blr-south"/);
-  assert.match(lib,/"560001":{pincode:"560001",zoneId:"blr-central"/);
+  assert.match(lib,/"560034":{pincode:"560034",zoneId:"blr-south"/);   // Koramangala
+  assert.match(lib,/"560102":{pincode:"560102",zoneId:"blr-south"/);   // HSR Layout
+  assert.match(lib,/"560038":{pincode:"560038",zoneId:"blr-east"/);    // Indiranagar
+  assert.match(lib,/"560066":{pincode:"560066",zoneId:"blr-east"/);    // Whitefield
+  assert.match(lib,/"560010":{pincode:"560010",zoneId:"blr-west"/);    // Rajajinagar
+  assert.match(lib,/"560032":{pincode:"560032",zoneId:"blr-north"/);   // Hebbal / RT Nagar
+  assert.match(lib,/"560001":{pincode:"560001",zoneId:"blr-central"/); // MG Road
 });
 
 test("service-zones lib defines SERVICE_ZONES with color and availability flags",async()=>{

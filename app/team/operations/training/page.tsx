@@ -1,15 +1,15 @@
 "use client";
 import Link from "next/link";
 import { useState } from "react";
-import TrainingPanel from "./training-panel";
+import TrainingPanel from "../../../admin/training-panel";
 
 /**
  * Training Operations — session recovery, trainer replacement and payment records.
  *
- * This panel is real (it reads /api/training-ops and the canonical programme session records) but
- * used to be mounted only inside the fabricated /admin dashboard, so retiring that shell would have
- * taken a working operations surface with it. It now lives with the other per-vertical Operations
- * workspaces, where the rest of the ops team already works.
+ * The panel itself is real (it reads /api/training-ops and the canonical programme session records)
+ * and is owned by /admin, which now reads the database too. This route mounts the same component so
+ * Training sits alongside the other per-vertical Operations workspaces, where the ops team works —
+ * one implementation, two entry points, no copy of the logic.
  */
 export default function TrainingOperationsPage() {
   const [toast, setToast] = useState("");

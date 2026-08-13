@@ -1,7 +1,7 @@
 "use client";
 
 import{useEffect,useMemo,useState}from"react";
-import styles from"./training-ops.module.css";
+import styles from"./admin.module.css";
 type Session={id:string;sequence_no:number;provider_id:string;scheduled_start:string;scheduled_end:string;status:string};
 type Recovery={id:string;session_id:string;recovery_type:string;status:string;reason:string;replacement_provider_id?:string|null;new_start?:string|null;new_end?:string|null};
 type Programme={id:string;booking_id:string;customer_name:string;plan_name:string;plan_code:string;provider_id:string;zone_id:string;status:string;total_sessions:number;completed_sessions:number;no_show_sessions:number;cancelled_sessions:number;payment_status:string;payment_mode:string;amount_due_now:number;total_amount:number;requirements:string[];sessions:Session[];recoveries:Recovery[]};

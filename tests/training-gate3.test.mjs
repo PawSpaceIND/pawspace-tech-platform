@@ -46,7 +46,7 @@ test("Training customer trainer choice comes from canonical capacity and final s
 });
 
 test("Training Ops uses canonical programme session recovery and payment records",async()=>{
- const[ops,panel,lifecycle]=await Promise.all([read("app/api/training-ops/route.ts"),read("app/team/operations/training/training-panel.tsx"),read("lib/training-session-lifecycle.ts")]);
+ const[ops,panel,lifecycle]=await Promise.all([read("app/api/training-ops/route.ts"),read("app/admin/training-panel.tsx"),read("lib/training-session-lifecycle.ts")]);
  assert.match(ops,/training_programmes/);
  assert.match(ops,/training_sessions/);
  assert.match(ops,/training_session_recovery_cases/);

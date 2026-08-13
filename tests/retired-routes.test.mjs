@@ -73,39 +73,56 @@ test("the real groomer-facing surfaces stay wired to canonical APIs", () => {
   assert.match(read("app/partner/workspace/page.tsx"), /fetch\("\/api\/provider-workspace"/);
 });
 
-test("/account, /ops and /admin retired: no fabricated dashboards remain reachable", () => {
-  for (const [route, target] of [["/account", "/mobile-app"], ["/ops", "/team"], ["/admin", "/team"]]) {
+// /admin is deliberately NOT in this list any more. This branch retired it as a fabricated
+// dashboard, and while that was true when the sweep ran, main then made the /admin shell read
+// /api/operations-overview (#154) and report in IST (#156). Retiring a page that another change had
+// just made real would have deleted working code, so the retirement was dropped on merge and /admin
+// is pinned as live below instead.
+test("/account and /ops retired: no fabricated dashboards remain reachable", () => {
+  for (const [route, target] of [["/account", "/mobile-app"], ["/ops", "/team"]]) {
     const page = read(`app${route}/page.tsx`);
     assert.match(page, new RegExp(`redirect\\("${target}"\\)`), `${route} must redirect to ${target}`);
     assert.doesNotMatch(page, /^"use client"/m, `${route} must redirect server-side`);
   }
   // the fabricated figures are gone with their pages and panels
-  const account = read("app/account/page.tsx"), ops = read("app/ops/page.tsx"), admin = read("app/admin/page.tsx");
+  const account = read("app/account/page.tsx"), ops = read("app/ops/page.tsx");
   for (const gone of ["Ananya Rao", "4.8 ★", "₹6,594", "Member since 2022"]) assert.ok(!account.includes(gone), `/account must not keep '${gone}'`);
   for (const gone of ["₹31.82L", "₹24.18L", "₹18.42L", "94%"]) assert.ok(!ops.includes(gone), `/ops must not keep '${gone}'`);
-  for (const gone of ["₹32,482", "4.9 ★", "50,000+"]) assert.ok(!admin.includes(gone), `/admin must not keep '${gone}'`);
-  for (const panel of ["boarding-panel", "food-panel", "mobility-panel", "workforce-panel"]) {
-    assert.ok(!fs.existsSync(`app/admin/${panel}.tsx`), `the fabricated ${panel} is removed`);
-  }
   // the real customer account surface it points at still exists and is wired
   assert.match(read("app/mobile-app/customer-account-view.tsx"), /fetch\(/, "the real customer account view reads live data");
 });
 
-test("/control keeps its real panels, states gaps honestly and no longer carries invented counts", () => {
+test("/admin is live and reads the database — it must not be retired by a stale sweep", () => {
+  const admin = read("app/admin/page.tsx");
+  assert.doesNotMatch(admin, /redirect\("\/team"\)/, "/admin reads /api/operations-overview; retiring it would delete working code");
+  assert.match(admin, /fetch\(`?\/api\/operations-overview/, "the /admin shell reads a real endpoint");
+  // The training panel it mounts is the one real panel in that shell, and /team/operations/training
+  // mounts the SAME component rather than a copy of it.
+  assert.match(read("app/admin/training-panel.tsx"), /\/api\/training-ops/, "the training panel reads a real endpoint");
+  assert.match(read("app/team/operations/training/page.tsx"), /from "\.\.\/\.\.\/\.\.\/admin\/training-panel"/, "one implementation, two entry points");
+  assert.ok(!fs.existsSync("app/team/operations/training/training-panel.tsx"), "the panel must not be duplicated");
+});
+
+// This branch made /control honest by reading a real approvals backlog from /api/team-overview.
+// Main solved the same problem more thoroughly in #156: a purpose-built /api/control-tower, plus an
+// on-screen label for every view still rendering example rows. Main's version was kept on merge, so
+// this test pins MAIN's mechanism rather than the one this branch wrote.
+test("/control measures instead of asserting, and labels the views that are still prototypes", () => {
   const control = read("app/control/page.tsx");
-  // real panels are still mounted
   for (const panel of ["MarketingControlPanel", "PricingControlPanel", "FinanceControlPanel", "AccessControlPanel", "BusinessIntelligencePanel"]) {
     assert.ok(control.includes(panel), `${panel} must stay mounted`);
   }
-  // the approvals backlog is real; timing/throughput say they are not measured
-  assert.match(control, /approvals\.pending/, "the pending tile reads a real backlog");
-  assert.match(control, /fetch\("\/api\/team-overview"/);
+  assert.match(control, /fetch\("\/api\/control-tower"/, "the tower reads a real endpoint");
+  assert.match(control, /PROTOTYPE_CONTROL_VIEWS/, "views still showing example rows must be labelled on screen");
+  // main kept four invented approvals tiles behind that label; this branch's real backlog replaced
+  // the one of them that has a source, and the other three now state that they are not measured.
+  assert.match(control, /fetch\("\/api\/team-overview"/, "the pending tile reads a real backlog");
+  assert.match(control, /approvals\.pending/);
+  assert.match(control, /Not measured/, "unmeasured approval timing is stated, not invented");
+  // the invented tiles and badge counts this branch also removed must stay gone
   for (const invented of ['"9", "₹1.84L value"', '"2", "Oldest 3h 18m"', '"42", "Median 18 min"', '"128", "Within safe limits"']) {
     assert.ok(!control.includes(invented), `the fabricated approvals tile ${invented} must be gone`);
   }
-  assert.match(control, /Not measured/, "unmeasured approval SLA is stated, not invented");
-  // sidebar badge counts were literals that never moved
   assert.ok(!/\bcount: \d+/.test(control), "no hardcoded sidebar badge counts remain");
-  // honest infrastructure reporting kept
   assert.match(control, /Not connected/);
 });
