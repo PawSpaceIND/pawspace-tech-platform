@@ -1,6 +1,5 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
@@ -92,6 +91,7 @@ async function seed() {
     sqlite.prepare("INSERT INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,gateway_reference,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)").run(`RF-${side.providerId}`, side.bookingId, `PAY-${side.providerId}`, side.refundAmount, side.refundReason, "requested", side.providerId, side.gatewayReference, now, now);
   }
   sqlite.prepare("INSERT INTO app_users (id,email,name,role_code,status) VALUES (?,?,?,?,?)").run("u-mgr", "ops.manager@pawspace.in", "Ops manager", "manager", "active");
+  sqlite.prepare("INSERT INTO app_users (id,email,name,role_code,status) VALUES (?,?,?,?,?)").run("u-assoc", "associate@pawspace.in", "Associate", "associate", "active");
   return { sqlite, db };
 }
 
@@ -99,7 +99,16 @@ async function seed() {
 async function providerCookie(db, providerId) {
   const { upsertIdentityBinding } = await import("../lib/identity-binding.ts");
   const { issuePlatformSession, PLATFORM_SESSION_COOKIE } = await import("../lib/platform-session.ts");
-  const principalKey = `+9199000000${providerId === "PRV-A" ? "01" : "02"}`;
+  // One distinct principal per provider, from an explicit map that throws on an unknown id.
+  //
+  // This was a two-way ternary (`PRV-A ? "01" : "02"`). Correct for exactly two providers and a trap for
+  // the third: it would reuse Provider B's principal key, and upsertIdentityBinding's
+  // ON CONFLICT(identity_source,principal_type,principal_key,subject_type) would rebind that principal to
+  // the new subject — silently revoking Provider B's binding. The isolation assertions would then pass
+  // because B had no identity, not because the boundary held. Raised in review on #181.
+  const PRINCIPALS = { "PRV-A": "+919900000001", "PRV-B": "+919900000002" };
+  const principalKey = PRINCIPALS[providerId];
+  if (!principalKey) throw new Error(`No test principal for ${providerId} — add one to PRINCIPALS rather than sharing a key`);
   const binding = await upsertIdentityBinding(db, {
     identitySource: "customer_app", principalType: "phone", principalKey,
     subjectType: "provider", subjectId: providerId, verificationState: "verified",
@@ -115,6 +124,7 @@ async function providerCookie(db, providerId) {
 const url = (bookingId) => `https://uat.pawspace.in/api/booking-operations?bookingId=${encodeURIComponent(bookingId)}`;
 const asProvider = (bookingId, cookie) => new Request(url(bookingId), { headers: { cookie } });
 const asManager = (bookingId) => new Request(url(bookingId), { headers: { "oai-authenticated-user-email": "ops.manager@pawspace.in" } });
+const asAssociate = (bookingId) => new Request(url(bookingId), { headers: { "oai-authenticated-user-email": "associate@pawspace.in" } });
 const anonymous = (bookingId) => new Request(url(bookingId));
 
 async function get(request) {
@@ -192,6 +202,35 @@ test("privileged Ops manager -> Booking B: allowed, cross-booking authority pres
   assert.equal(other.body.data.refunds[0].amount, A.refundAmount);
 });
 
+test("an associate is refused: holding bookings.view is not the same as owning the job", async () => {
+  // Raised in review on #181, reproduced, and decided rather than left implicit. An `associate` holds
+  // `bookings.view` and so passes the gateway, but has no provider assignment and none of the manage
+  // permissions requireProviderOwnership recognises — so it gets 403 here where it previously got 200.
+  //
+  // That is intended. The same `bookings.view` + requireProviderOwnership pairing governs 22 route files
+  // (grooming-lifecycle, walking-proof, taxi-lifecycle, partner-job-feed, boarding-stays …), and an
+  // associate is already refused by every one of them. booking-operations was the outlier with no record
+  // check at all; this brings it into line rather than inventing a restriction.
+  //
+  // The tempting alternative — treat "has bookings.view but no provider binding" as a staff reader — is
+  // fail-open: a provider whose binding expired or was revoked would be silently promoted to
+  // cross-booking access. Granting associates this read is a deliberate platform-wide decision, not a
+  // local patch, and it is not what this fix does.
+  const { sqlite } = await seed();
+  const { status, body } = await get(asAssociate(B.bookingId));
+  assert.equal(status, 403, `an associate has no assignment to own: HTTP ${status} ${payload(body).slice(0, 160)}`);
+  assert.deepEqual(B_SECRETS.filter((secret) => payload(body).includes(secret)), []);
+  assert.equal(rowCount(body), 0);
+  // Its own seeded rows are untouched — refusing the read must not be confused with there being no data.
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM booking_operational_events WHERE booking_id=?").get(B.bookingId).c, 1);
+  // And the role really does hold the permission the gateway checks, so the refusal is record-level,
+  // not a permission failure that would have shown up as a 403 at the gateway instead.
+  const { defaultRoles } = await import("../lib/platform-security.ts");
+  const associate = defaultRoles.find((role) => role.code === "associate");
+  assert.ok(associate.permissions.includes("bookings.view"), "associate holds bookings.view — the refusal is about the record, not the endpoint");
+  assert.ok(!associate.permissions.includes("bookings.manage"), "and lacks the manage permission that grants cross-booking authority");
+});
+
 test("unauthenticated -> Booking B: rejected with nothing disclosed", async () => {
   await seed();
   const { status, body } = await get(anonymous(B.bookingId));
@@ -233,13 +272,24 @@ test("a missing bookingId is a 400 for an authenticated caller, and a 401 for an
   assert.equal(anon.status, 401);
 });
 
-test("the fix did not escalate the gateway permission away from providers", () => {
+test("the fix did not escalate the gateway permission away from providers", async () => {
   // Everything above calls GET directly, never through the gateway — so those tests already prove the
   // route enforces the boundary itself. The one thing they cannot see is the gateway mapping, and the
   // failure mode there is a fix that "secures" the route by demanding a staff-only permission: the
   // boundary would hold and the provider app would break. `service_provider` must keep this read.
-  const gateway = fs.readFileSync(new URL("../lib/api-gateway.ts", import.meta.url), "utf8");
-  assert.match(gateway, /booking-operations"\)\{if\(method==="GET"\)return "bookings\.view"/, "GET must still be reachable with bookings.view");
+  //
+  // This EXECUTES the gateway rather than regex-matching lib/api-gateway.ts, which is what it used to do.
+  // A source match would break on a harmless reformat and, worse, would keep passing if the mapping moved
+  // somewhere the regex no longer looked — the same certifies-nothing failure this whole suite exists to
+  // avoid. authorizeApiRequest is exported and returns the resolved permission, so ask it. Raised in
+  // review on #181.
+  await seed();
+  const { authorizeApiRequest } = await import("../lib/api-gateway.ts");
+  // A localhost hostname short-circuits to the preview actor, which is exactly what is wanted here: the
+  // question is which permission the gateway RESOLVES for this route and method, not who may pass it.
+  const resolved = await authorizeApiRequest(new Request("http://localhost/api/booking-operations?bookingId=BK-PROV-A"), { DB: globalThis.__BOPS_DB__ });
+  assert.ok(!(resolved instanceof Response), "the gateway must resolve a permission for this route, not refuse outright");
+  assert.equal(resolved.permission, "bookings.view", "GET must still be reachable with bookings.view — providers legitimately need this read");
 });
 
 test("service_provider still holds the permission this read requires", async () => {
