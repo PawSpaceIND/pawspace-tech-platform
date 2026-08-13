@@ -22,6 +22,20 @@ const money = (value: number) => Math.round(value * 100) / 100;
 /** Cancelled and draft bookings are not recognized revenue. Single source of the rule. */
 const recognized = (row: Row) => !["cancelled", "draft"].includes(text(row.status));
 
+// The business runs on IST and every other module already reads times that way: the scheduling
+// roster compares against IST minutes-of-day, the staff day board bounds its query at
+// `T00:00:00+05:30`, and the pricing engine resolves time bands in Asia/Kolkata. Slicing the ISO
+// string (UTC) instead would put a 10:00 IST groom at 04:30 — inside none of the slots — and push
+// every evening job after 18:30 IST onto tomorrow's board.
+/** The IST calendar date (YYYY-MM-DD) an instant falls on. */
+const istDate = (at: number) => new Date(at).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+/** The IST wall-clock time (HH:MM) an ISO timestamp falls on. */
+const istTime = (iso: string) => {
+  const at = new Date(iso).getTime();
+  if (!Number.isFinite(at)) return "";
+  return new Date(at).toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false });
+};
+
 async function tableExists(db: Db, name: string) {
   const row = await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>();
   return Boolean(row);
@@ -39,12 +53,16 @@ export const OVERVIEW_SLOTS: OverviewSlot[] = [
 
 export async function buildOperationsOverview(db: Db, input: { asOf?: number; zoneId?: string } = {}) {
   const asOf = input.asOf ?? Date.now();
-  const day = new Date(asOf).toISOString().slice(0, 10);
+  const day = istDate(asOf);
+  const dayStart = new Date(`${day}T00:00:00+05:30`).toISOString();
+  const dayEnd = new Date(new Date(dayStart).getTime() + 86_400_000).toISOString();
   const zoneId = text(input.zoneId);
 
   const hasBookings = await tableExists(db, "canonical_bookings");
-  const binds: unknown[] = [day];
-  let where = "substr(b.scheduled_start,1,10)=?";
+  // Same IST day window the staff scheduling board uses, so the two screens never disagree about
+  // which bookings belong to "today".
+  const binds: unknown[] = [dayStart, dayEnd];
+  let where = "b.scheduled_start>=? AND b.scheduled_start<?";
   if (zoneId) { where += " AND b.zone_id=?"; binds.push(zoneId); }
 
   const bookings = hasBookings
@@ -74,6 +92,20 @@ export async function buildOperationsOverview(db: Db, input: { asOf?: number; zo
     providersActive = Number(row?.active || 0);
   }
 
+  // The zone filter must offer the zones that actually exist, not a hard-coded neighbourhood list.
+  let zones: string[] = [];
+  if (await tableExists(db, "provider_capacity_profiles")) {
+    const rows = await db.prepare("SELECT DISTINCT zones_json FROM provider_capacity_profiles WHERE status='active' AND live=1").all<Row>();
+    const found = new Set<string>();
+    for (const row of rows.results) {
+      for (const zone of text(row.zones_json).replace(/[[\]"]/g, "").split(",")) {
+        const trimmed = zone.trim();
+        if (trimmed) found.add(trimmed);
+      }
+    }
+    zones = [...found].sort();
+  }
+
   let openTickets: number | null = null, ticketsNeedingAttention: number | null = null;
   if (await tableExists(db, "customer_experience_tickets")) {
     const row = await db.prepare(
@@ -84,15 +116,20 @@ export async function buildOperationsOverview(db: Db, input: { asOf?: number; zo
   }
 
   // Live capacity board: real providers, real bookings placed in the slot their start time falls in.
+  // The board is capped so a wide roster stays readable, but the cap is REPORTED (capacityShown /
+  // capacityTotal below) — a silently truncated board reads as "that's everyone" and hides the very
+  // providers an ops lead is looking for.
+  const CAPACITY_BOARD_LIMIT = 24, ACTIVITY_LIMIT = 60;
   const providerRows = await tableExists(db, "provider_capacity_profiles")
     ? (await db.prepare(
         `SELECT id,name,city_id,zones_json,status,live FROM provider_capacity_profiles
-         WHERE status='active' AND live=1${zoneId ? " AND zones_json LIKE ?" : ""} ORDER BY name LIMIT 12`)
+         WHERE status='active' AND live=1${zoneId ? " AND zones_json LIKE ?" : ""} ORDER BY name LIMIT ${CAPACITY_BOARD_LIMIT}`)
         .bind(...(zoneId ? [`%${zoneId}%`] : [])).all<Row>()).results
     : [];
 
   const slotOf = (start: string) => {
-    const time = start.slice(11, 16);
+    const time = istTime(start);
+    if (!time) return null;
     return OVERVIEW_SLOTS.find(slot => time >= slot.start && time < slot.end)?.label ?? null;
   };
   const capacity = providerRows.map(provider => {
@@ -123,11 +160,16 @@ export async function buildOperationsOverview(db: Db, input: { asOf?: number; zo
 
   return {
     date: day,
+    // Published so a tester can see exactly which window "today" means rather than guess.
+    dayWindow: { timezone: "Asia/Kolkata", startUtc: dayStart, endUtc: dayEnd },
     zoneId: zoneId || null,
     metrics: {
       bookingsToday: revenueRows.length,
       confirmed: confirmed.length,
       completed: completed.length,
+      // Accepted / on the way / arrived / in service — a real day is mostly these by mid-morning, and
+      // without this count the tile's "N confirmed, M completed" silently loses the rest of the day.
+      inProgress: revenueRows.length - confirmed.length - completed.length,
       cancelled: cancelled.length,
       unassigned: unassigned.length,
       // "Recognized" rather than "expected": this is the same money the P&L recognizes for the day.
@@ -137,9 +179,14 @@ export async function buildOperationsOverview(db: Db, input: { asOf?: number; zo
       openTickets,
       ticketsNeedingAttention,
     },
+    zones,
     capacity,
+    capacityShown: capacity.length,
+    capacityTotal: providersActive,
     slots: OVERVIEW_SLOTS.map(slot => slot.label),
-    activity: bookings.slice(0, 12).map(row => ({
+    // Same rule as the capacity board: cap for readability, but report the cap (activityShown vs
+    // bookingsToday) so a day with more bookings than rows never reads as the complete list.
+    activity: bookings.slice(0, ACTIVITY_LIMIT).map(row => ({
       bookingId: text(row.id),
       customer: text(row.customer_name) || text(row.customer_id),
       service: text(row.service_code),
@@ -147,8 +194,12 @@ export async function buildOperationsOverview(db: Db, input: { asOf?: number; zo
       status: text(row.status),
       provider: text(row.provider_name) || null,
       scheduledStart: text(row.scheduled_start),
+      scheduledTimeIst: istTime(text(row.scheduled_start)),
+      slot: slotOf(text(row.scheduled_start)),
       amount: Number(row.total_amount || 0),
     })),
+    activityShown: Math.min(bookings.length, ACTIVITY_LIMIT),
+    activityTotal: bookings.length,
     byService,
     sourceStatus: {
       bookings: hasBookings ? "canonical_bookings" : "not_connected",

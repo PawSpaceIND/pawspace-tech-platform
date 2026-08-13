@@ -41,23 +41,6 @@ const groomers = [
   { id: "deepa", name: "Deepa K.", initials: "DK", zone: "JP Nagar", skill: "Cat", rating: "4.9", jobs: 3, status: "On service" },
 ];
 
-const bookings = [
-  { id: "PS-2841", time: "9:00–11:00", customer: "Ananya Rao", pets: "Bruno · Dog", package: "Bath & Basic", groomer: "Arun R.", zone: "Koramangala", amount: 1899, payment: "Paid online", status: "In service" },
-  { id: "PS-2842", time: "9:00–11:00", customer: "Rahul Menon", pets: "Coco · Cat", package: "Routine Grooming", groomer: "Deepa K.", zone: "JP Nagar", amount: 1149, payment: "Pay after", status: "In service" },
-  { id: "PS-2843", time: "11:00–1:00", customer: "Meera Shah", pets: "Milo, Max · Dogs", package: "Complete Makeover", groomer: "Mohammed K.", zone: "Whitefield", amount: 4298, payment: "Paid online", status: "On the way" },
-  { id: "PS-2844", time: "1:00–3:00", customer: "Sanjay Kumar", pets: "Rio · Dog", package: "Essential Bath", groomer: "Priya S.", zone: "Indiranagar", amount: 1349, payment: "Pay after", status: "Confirmed" },
-  { id: "PS-2845", time: "3:00–5:00", customer: "Divya Nair", pets: "Luna · Cat", package: "Bath & Basic", groomer: "Naveen J.", zone: "HSR Layout", amount: 1899, payment: "Subscription", status: "Confirmed" },
-  { id: "PS-2846", time: "5:00–7:00", customer: "Kiran B.", pets: "Oreo · Cat", package: "Just Trim", groomer: "Deepa K.", zone: "JP Nagar", amount: 1599, payment: "Pay after", status: "Confirmed" },
-];
-
-const schedule = [
-  { time: "9–11", arun: "PS-2841", priya: "Available", mohammed: "Completed", naveen: "Blocked", deepa: "PS-2842" },
-  { time: "11–1", arun: "Travel", priya: "Available", mohammed: "PS-2843", naveen: "Available", deepa: "Travel" },
-  { time: "1–3", arun: "PS-2847", priya: "PS-2844", mohammed: "Booked", naveen: "Available", deepa: "PS-2848" },
-  { time: "3–5", arun: "Available", priya: "PS-2849", mohammed: "Booked", naveen: "PS-2845", deepa: "Available" },
-  { time: "5–7", arun: "Available", priya: "Available", mohammed: "Booked", naveen: "Available", deepa: "PS-2846" },
-];
-
 const customers: Customer[] = [
   { id: "CU-10821", name: "Ananya Rao", initials: "AR", primary: "99969 48102", secondary: "98802 22741", pets: "Bruno", petMeta: "Golden Retriever · 4 years", zone: "Koramangala", lastService: "Today · Bath & Basic", lifetime: 18492, subscription: "6-session plan", sessions: 4, stage: "Active customer", owner: "Neha", nextAction: "Renewal call · 18 Aug", source: "Google Ads", opportunity: "Renew subscription" },
   { id: "CU-09642", name: "Rahul Menon", initials: "RM", primary: "98451 33016", secondary: "99860 44912", pets: "Coco", petMeta: "Persian cat · 3 years", zone: "JP Nagar", lastService: "Today · Routine Grooming", lifetime: 12338, subscription: "No active plan", sessions: 0, stage: "Follow-up due", owner: "Rahul", nextAction: "Call today · 4:30 PM", source: "Organic", opportunity: "3-session cat routine" },
@@ -66,63 +49,71 @@ const customers: Customer[] = [
   { id: "CU-07192", name: "Vikram Reddy", initials: "VR", primary: "98452 66291", secondary: "Not added", pets: "Rocky", petMeta: "Labrador · 6 years", zone: "HSR Layout", lastService: "74 days ago · Essential Bath", lifetime: 9860, subscription: "Expired 3-session plan", sessions: 0, stage: "Dormant", owner: "Sanjay", nextAction: "Win-back WhatsApp · today", source: "Google Ads", opportunity: "Reactivate grooming" },
 ];
 
-const nav: { id: View; label: string; icon: string; count?: number }[] = [
+// Badge counts are only shown where a live count exists. An invented badge is the most quietly
+// misleading thing on a nav rail: it looks like a queue length and is checked by nobody.
+const nav: { id: View; label: string; icon: string }[] = [
   { id: "overview", label: "Overview", icon: "⌂" },
   { id: "calendar", label: "Live calendar", icon: "▦" },
-  { id: "bookings", label: "Bookings", icon: "▤", count: 18 },
-  { id: "crm", label: "Customers & CRM", icon: "◉", count: 418 },
-  { id: "training", label: "Training operations", icon: "◆", count: 42 },
-  { id: "boarding", label: "Boarding & sitting", icon: "⌂", count: 14 },
-  { id: "mobility", label: "Taxi & walking", icon: "↗", count: 11 },
-  { id: "food", label: "Fresh food", icon: "●", count: 18 },
+  { id: "bookings", label: "Bookings", icon: "▤" },
+  { id: "crm", label: "Customers & CRM", icon: "◉" },
+  { id: "training", label: "Training operations", icon: "◆" },
+  { id: "boarding", label: "Boarding & sitting", icon: "⌂" },
+  { id: "mobility", label: "Taxi & walking", icon: "↗" },
+  { id: "food", label: "Fresh food", icon: "●" },
   { id: "groomers", label: "Groomers", icon: "♟" },
   { id: "workforce", label: "Workforce & payouts", icon: "₹" },
   { id: "subscriptions", label: "Subscriptions", icon: "◈" },
   { id: "payments", label: "Payments", icon: "₹" },
-  { id: "tickets", label: "Support tickets", icon: "◎", count: 3 },
+  { id: "tickets", label: "Support tickets", icon: "◎" },
 ];
 
 const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
 
 
-type OverviewMetrics={bookingsToday:number;confirmed:number;completed:number;cancelled:number;unassigned:number;recognizedRevenue:number;providersActive:number|null;providersTotal:number|null;openTickets:number|null;ticketsNeedingAttention:number|null};
+type OverviewMetrics={bookingsToday:number;confirmed:number;completed:number;inProgress:number;cancelled:number;unassigned:number;recognizedRevenue:number;providersActive:number|null;providersTotal:number|null;openTickets:number|null;ticketsNeedingAttention:number|null};
 type OverviewCapacity={providerId:string;name:string;zone:string|null;slots:{slot:string;state:"available"|"booked"|"completed";bookingId:string|null;label:string}[]};
-type OverviewActivity={bookingId:string;customer:string;service:string;packageName:string;status:string;provider:string|null;scheduledStart:string;amount:number};
-type OverviewData={date:string;metrics:OverviewMetrics;capacity:OverviewCapacity[];slots:string[];activity:OverviewActivity[];sourceStatus:Record<string,string>};
+type OverviewActivity={bookingId:string;customer:string;service:string;packageName:string;status:string;provider:string|null;scheduledStart:string;scheduledTimeIst:string;slot:string|null;amount:number};
+type OverviewData={date:string;dayWindow:{timezone:string;startUtc:string;endUtc:string};zoneId:string|null;zones:string[];metrics:OverviewMetrics;capacity:OverviewCapacity[];capacityShown:number;capacityTotal:number|null;slots:string[];activity:OverviewActivity[];activityShown:number;activityTotal:number;sourceStatus:Record<string,string>};
 
 /** Live operations data. Nothing on this screen is hard-coded: an empty day shows zeros, and a
  *  field with no source shows "Not connected" rather than a plausible-looking number. */
-function useOperationsOverview(){
-  const[data,setData]=useState<OverviewData|null>(null);
-  const[error,setError]=useState("");
-  const[loading,setLoading]=useState(true);
+function useOperationsOverview(zoneId:string){
+  // The result carries the zone it belongs to, so "loading" is derived rather than flipped with a
+  // synchronous setState in the effect body - the zone the user just picked is loading until its own
+  // response lands, and a stale zone's numbers are never shown under the new zone's heading.
+  const[result,setResult]=useState<{zoneId:string;data:OverviewData|null;error:string}|null>(null);
   useEffect(()=>{let active=true;
-    fetch("/api/operations-overview",{cache:"no-store"})
+    fetch(`/api/operations-overview${zoneId?`?zoneId=${encodeURIComponent(zoneId)}`:""}`,{cache:"no-store"})
       .then(async response=>{const body=await response.json() as {data?:OverviewData;error?:string};
         if(!response.ok)throw new Error(body.error||"Unable to load the operations overview");
-        if(active){setData(body.data??null);setError("");}})
-      .catch(problem=>{if(active)setError(problem instanceof Error?problem.message:"Unable to load the operations overview");})
-      .finally(()=>{if(active)setLoading(false);});
-    return()=>{active=false};},[]);
-  return{data,error,loading};
+        if(active)setResult({zoneId,data:body.data??null,error:""});})
+      .catch(problem=>{if(active)setResult({zoneId,data:null,error:problem instanceof Error?problem.message:"Unable to load the operations overview"});});
+    return()=>{active=false};},[zoneId]);
+  const current=result?.zoneId===zoneId?result:null;
+  return{data:current?.data??null,error:current?.error??"",loading:!current};
 }
+/** The IST day the overview is reporting on, written out for the header. */
+const longDay=(day:string)=>{const at=new Date(`${day}T12:00:00+05:30`);return Number.isFinite(at.getTime())?at.toLocaleDateString("en-GB",{timeZone:"Asia/Kolkata",weekday:"long",day:"numeric",month:"long",year:"numeric"}):day;};
+const titleCase=(value:string)=>value.replace(/[_-]+/g," ").replace(/\b\w/g,letter=>letter.toUpperCase());
 /** Tabs still rendering the built-in sample rows rather than the database. Labelled on screen so a
  *  tester never files a bug against invented data - and so the list shrinks visibly as each is wired. */
-const PROTOTYPE_VIEWS=new Set(["groomers","payments"]);
+const PROTOTYPE_VIEWS=new Set(["groomers","payments","crm","tickets","subscriptions","boarding","mobility","food","workforce"]);
 const rupees=(value:number)=>`\u20B9${value.toLocaleString("en-IN")}`;
 
 export default function AdminPage() {
-  const{data:overview,error:overviewError,loading:overviewLoading}=useOperationsOverview();
+  const [zone, setZone] = useState("");
+  const{data:overview,error:overviewError,loading:overviewLoading}=useOperationsOverview(zone);
   const [view, setView] = useState<View>("overview");
-  const [zone, setZone] = useState("All Bangalore zones");
-  const [selectedBooking, setSelectedBooking] = useState(bookings[0]);
+  const [selectedBookingId, setSelectedBookingId] = useState("");
   const [selectedCustomer, setSelectedCustomer] = useState<Customer>(customers[0]);
   const [crmSearch, setCrmSearch] = useState("");
   const [crmSegment, setCrmSegment] = useState("All customers");
   const [crmTab, setCrmTab] = useState<"profile" | "activity" | "wallet">("profile");
   const [toast, setToast] = useState("");
 
-  const filteredBookings = useMemo(() => zone === "All Bangalore zones" ? bookings : bookings.filter((booking) => booking.zone === zone), [zone]);
+  // The zone filter is applied by the API against real zone IDs, so the list here is already scoped.
+  const liveActivity = overview?.activity ?? [];
+  const selectedActivity = liveActivity.find(row => row.bookingId === selectedBookingId) ?? liveActivity[0] ?? null;
   const filteredCustomers = useMemo(() => customers.filter((customer) => {
     const query = crmSearch.trim().toLowerCase();
     const matchesSearch = !query || `${customer.name} ${customer.primary} ${customer.pets} ${customer.id}`.toLowerCase().includes(query);
@@ -144,21 +135,21 @@ export default function AdminPage() {
     <main className={styles.adminShell}>
       <aside className={styles.sidebar}>
         <div className={styles.brand}><img src="/assets/pawspace-logo.jpeg" alt="PawSpace" /><span>Operations</span></div>
-        <nav>{nav.map((item) => <button key={item.id} className={view === item.id ? styles.activeNav : ""} onClick={() => setView(item.id)}><i>{item.icon}</i><span>{item.label}</span>{item.count && <b>{item.count}</b>}</button>)}</nav>
+        <nav>{nav.map((item) => {const count=item.id==="bookings"?overview?.metrics.bookingsToday:item.id==="tickets"?overview?.metrics.openTickets:null;return <button key={item.id} className={view === item.id ? styles.activeNav : ""} onClick={() => setView(item.id)}><i>{item.icon}</i><span>{item.label}</span>{!!count && <b>{count}</b>}</button>;})}</nav>
         <div className={styles.sidebarFooter}><Link href="/team">⌂ Team home</Link><Link href="/team/operations/bookings">▤ Booking Command Center</Link><Link href="/control/integrations">◎ System Integration Control</Link><Link href="/mobile-app">◉ Customer Mobile App</Link><Link href="/regression-lab">✓ Regression Command Centre</Link><Link href="/test-lab">✓ 100-Customer Test Lab</Link><Link href="/platform-api">⬡ Platform API</Link><Link href="/assisted-booking">◎ Assisted Booking</Link><Link href="/partner">◆ Unified Partner App</Link><Link href="/control">◇ Platform Control</Link><Link href="/team/finance">₹ Finance & People OS</Link><Link href="/team/sales">⚡ Advanced CRM</Link><Link href="/">← Customer app</Link><div className={styles.adminUser}><span>KP</span><div><strong>Karthik</strong><small>Super admin</small></div></div></div>
       </aside>
 
       <section className={styles.workspace}>
         <header className={styles.header}>
-          <div><p>Monday · 3 August 2026</p><h1>{title}</h1></div>
-          <div className={styles.headerActions}>{view === "crm" ? <><button className={styles.ghostButton} onClick={() => notify("Customer import opened")}>Import customers</button><button className={styles.primaryButton} onClick={() => notify("New lead form opened")}>＋ Add lead</button></> : view === "training" ? <><button className={styles.ghostButton} onClick={() => notify("Assessment queue opened")}>Assessment queue</button><button className={styles.primaryButton} onClick={() => notify("New training plan opened")}>＋ Create plan</button></> : view === "workforce" ? <><button className={styles.ghostButton} onClick={() => notify("Attendance exceptions opened")}>Attendance exceptions</button><button className={styles.primaryButton} onClick={() => notify("Payout approval queue opened")}>Review payouts</button></> : <><select value={zone} onChange={(event) => setZone(event.target.value)}><option>All Bangalore zones</option><option>Koramangala</option><option>Indiranagar</option><option>Whitefield</option><option>HSR Layout</option><option>JP Nagar</option></select><button className={styles.ghostButton} onClick={() => notify("Selected slots blocked for 2 hours")}>Block slot</button><button className={styles.primaryButton} onClick={() => notify("New booking form opened")}>＋ Add booking</button></>}</div>
+          <div><p>{overview?`${longDay(overview.date)} · IST`:"Loading today’s date…"}</p><h1>{title}</h1></div>
+          <div className={styles.headerActions}>{view === "crm" ? <><button className={styles.ghostButton} onClick={() => notify("Customer import opened")}>Import customers</button><button className={styles.primaryButton} onClick={() => notify("New lead form opened")}>＋ Add lead</button></> : view === "training" ? <><button className={styles.ghostButton} onClick={() => notify("Assessment queue opened")}>Assessment queue</button><button className={styles.primaryButton} onClick={() => notify("New training plan opened")}>＋ Create plan</button></> : view === "workforce" ? <><button className={styles.ghostButton} onClick={() => notify("Attendance exceptions opened")}>Attendance exceptions</button><button className={styles.primaryButton} onClick={() => notify("Payout approval queue opened")}>Review payouts</button></> : <><select value={zone} onChange={(event) => setZone(event.target.value)} aria-label="Filter by zone"><option value="">All zones</option>{(overview?.zones??[]).map(id=><option key={id} value={id}>{id}</option>)}</select><Link className={styles.ghostButton} href="/team/operations/bookings">Open day board</Link><Link className={styles.primaryButton} href="/assisted-booking">＋ Add booking</Link></>}</div>
         </header>
         <TestSyncPanel surface="admin" />
         {PROTOTYPE_VIEWS.has(view)&&<p className={styles.prototypeNotice}><b>Sample data.</b> This tab still shows built-in example rows, not your database. Overview, Live calendar and Bookings are live.</p>}
 
         {(view === "overview" || view === "calendar") && <>
           <section className={styles.metrics}>
-            <article><div className={styles.metricIcon}>▤</div><div><span>Today’s bookings</span><strong>{overviewLoading?"—":overview?.metrics.bookingsToday ?? 0}</strong><small>{overview?`${overview.metrics.confirmed} confirmed · ${overview.metrics.completed} completed`:"Loading today’s bookings"}</small></div></article>
+            <article><div className={styles.metricIcon}>▤</div><div><span>Today’s bookings</span><strong>{overviewLoading?"—":overview?.metrics.bookingsToday ?? 0}</strong><small>{overview?`${overview.metrics.confirmed} confirmed · ${overview.metrics.inProgress} in progress · ${overview.metrics.completed} completed`:"Loading today’s bookings"}</small></div></article>
             <article><div className={styles.metricIcon}>₹</div><div><span>Recognised revenue</span><strong>{overviewLoading?"—":rupees(overview?.metrics.recognizedRevenue ?? 0)}</strong><small>Excludes cancelled &amp; draft · matches the P&amp;L</small></div></article>
             <article><div className={styles.metricIcon}>♟</div><div><span>Providers active</span><strong>{overview?.metrics.providersActive==null?"Not connected":`${overview.metrics.providersActive} / ${overview.metrics.providersTotal}`}</strong><small>Live, active capacity profiles</small></div></article>
             <article><div className={`${styles.metricIcon} ${styles.alertIcon}`}>!</div><div><span>Open tickets</span><strong>{overview?.metrics.openTickets==null?"Not connected":overview.metrics.openTickets}</strong><small className={overview?.metrics.ticketsNeedingAttention?styles.warning:undefined}>{overview?.metrics.ticketsNeedingAttention?`${overview.metrics.ticketsNeedingAttention} past its SLA`:"None past SLA"}</small></div></article>
@@ -166,7 +157,8 @@ export default function AdminPage() {
           {overviewError&&<p className={styles.dataError}>{overviewError}</p>}
 
           <section className={styles.panel}>
-            <div className={styles.panelHead}><div><span className={styles.kicker}>Live capacity</span><h2>Groomer calendar</h2></div><div className={styles.legend}><span><i className={styles.availableDot}></i>Available</span><span><i className={styles.bookedDot}></i>Booked</span><span><i className={styles.travelDot}></i>Travel</span></div></div>
+            <div className={styles.panelHead}><div><span className={styles.kicker}>Live capacity · {overview?.dayWindow.timezone??"IST"}</span><h2>Provider day board</h2></div><div className={styles.legend}><span><i className={styles.availableDot}></i>Available</span><span><i className={styles.bookedDot}></i>Booked</span><span><i className={styles.travelDot}></i>Completed</span></div></div>
+            {!!overview&&overview.capacityTotal!=null&&overview.capacityShown<overview.capacityTotal&&<p className={styles.dataNote}>Showing {overview.capacityShown} of {overview.capacityTotal} active providers. Filter by zone to see the rest.</p>}
             <div className={styles.scheduleWrap}>
               {overviewLoading&&<p className={styles.dataNote}>Loading today’s capacity…</p>}
               {!overviewLoading&&!overview?.capacity.length&&<p className={styles.dataNote}>No active provider has capacity configured for today. Add a provider capacity profile to see the live board.</p>}
@@ -180,8 +172,25 @@ export default function AdminPage() {
 
         {view === "bookings" && <section className={styles.panel}><div className={styles.panelHead}><div><span className={styles.kicker}>Connected operations</span><h2>Modern Booking Command Center</h2></div><Link className={styles.primaryButton} href="/team/operations/bookings">Open command center →</Link></div><p>Control canonical bookings, provider work orders, payments, delay impact, customer communication, tickets, rebooking, refunds and the full audit timeline from one workspace.</p></section>}
         {(view === "overview" || view === "bookings") && <section className={styles.splitGrid}>
-          <div className={styles.panel}><div className={styles.panelHead}><div><span className={styles.kicker}>Today</span><h2>Booking activity</h2></div><button className={styles.textButton} onClick={() => setView("bookings")}>View all →</button></div><div className={styles.bookingList}>{filteredBookings.map((booking) => <button key={booking.id} className={selectedBooking.id === booking.id ? styles.selectedBooking : ""} onClick={() => setSelectedBooking(booking)}><span className={styles.timePill}>{booking.time}</span><div><strong>{booking.customer}</strong><small>{booking.pets} · {booking.package}</small></div><div className={styles.bookingMeta}><strong>{money(booking.amount)}</strong><small>{booking.payment}</small></div><span className={`${styles.status} ${styles[booking.status.replaceAll(" ", "").toLowerCase()]}`}>{booking.status}</span></button>)}</div></div>
-          <aside className={styles.detailPanel}><div className={styles.panelHead}><div><span className={styles.kicker}>{selectedBooking.id}</span><h2>Booking details</h2></div><button className={styles.moreButton}>•••</button></div><div className={styles.customerCard}><span>{selectedBooking.customer.split(" ").map((part) => part[0]).join("")}</span><div><strong>{selectedBooking.customer}</strong><small>Primary: 99969 99505 · Secondary saved</small></div></div><dl><div><dt>Pet & package</dt><dd>{selectedBooking.pets}<br/><strong>{selectedBooking.package}</strong></dd></div><div><dt>Slot</dt><dd>3 Aug · {selectedBooking.time}<br/><strong>{selectedBooking.zone}</strong></dd></div><div><dt>Assigned groomer</dt><dd>{selectedBooking.groomer}<br/><strong>4.9 ★ verified</strong></dd></div><div><dt>Payment</dt><dd>{selectedBooking.payment}<br/><strong>{money(selectedBooking.amount)}</strong></dd></div></dl><div className={styles.detailActions}><button onClick={() => notify("Reassignment options opened")}>Reassign</button><button onClick={() => notify("Masked chat opened")}>Message</button><button className={styles.dangerButton} onClick={() => notify("Cancellation review opened")}>Cancel</button></div></aside>
+          <div className={styles.panel}><div className={styles.panelHead}><div><span className={styles.kicker}>Today</span><h2>Booking activity</h2></div><Link className={styles.textButton} href="/team/operations/bookings">View all →</Link></div>
+            {overviewLoading&&<p className={styles.dataNote}>Loading today’s bookings…</p>}
+            {!overviewLoading&&!liveActivity.length&&<p className={styles.dataNote}>No bookings are scheduled for this day{zone?` in ${zone}`:""}. This is a live read of canonical_bookings, not an empty template.</p>}
+            {!!overview&&overview.activityShown<overview.activityTotal&&<p className={styles.dataNote}>Showing the first {overview.activityShown} of {overview.activityTotal} bookings today.</p>}
+            {!!liveActivity.length&&<div className={styles.bookingList}>{liveActivity.map(row => <button key={row.bookingId} className={selectedActivity?.bookingId === row.bookingId ? styles.selectedBooking : ""} onClick={() => setSelectedBookingId(row.bookingId)}><span className={styles.timePill}>{row.scheduledTimeIst||"—"}</span><div><strong>{row.customer}</strong><small>{titleCase(row.service)} · {row.packageName}</small></div><div className={styles.bookingMeta}><strong>{money(row.amount)}</strong><small>{row.provider??"Unassigned"}</small></div><span className={styles.status}>{titleCase(row.status)}</span></button>)}</div>}
+          </div>
+          <aside className={styles.detailPanel}><div className={styles.panelHead}><div><span className={styles.kicker}>{selectedActivity?.bookingId??"No booking selected"}</span><h2>Booking details</h2></div></div>
+            {!selectedActivity&&<p className={styles.dataNote}>Select a booking from today’s list to see its details.</p>}
+            {!!selectedActivity&&<>
+              <div className={styles.customerCard}><span>{selectedActivity.customer.split(" ").map(part => part[0]).join("").slice(0,2).toUpperCase()}</span><div><strong>{selectedActivity.customer}</strong><small>{titleCase(selectedActivity.service)}</small></div></div>
+              <dl>
+                <div><dt>Package</dt><dd><strong>{selectedActivity.packageName||"—"}</strong></dd></div>
+                <div><dt>Slot ({overview?.dayWindow.timezone??"IST"})</dt><dd>{overview?longDay(overview.date):""}<br/><strong>{selectedActivity.scheduledTimeIst||"—"}{selectedActivity.slot?` · ${selectedActivity.slot}`:""}</strong></dd></div>
+                <div><dt>Assigned provider</dt><dd><strong>{selectedActivity.provider??"Not assigned yet"}</strong></dd></div>
+                <div><dt>Status &amp; value</dt><dd>{titleCase(selectedActivity.status)}<br/><strong>{money(selectedActivity.amount)}</strong></dd></div>
+              </dl>
+              <div className={styles.detailActions}><Link href={`/team/operations/bookings?bookingId=${encodeURIComponent(selectedActivity.bookingId)}`}>Open in Command Center</Link></div>
+            </>}
+          </aside>
         </section>}
 
         {view === "crm" && <>

@@ -55,7 +55,9 @@ const { buildOperationsOverview } = await import("../lib/operations-overview.ts"
 // Monday 3 August 2026, 12:00 UTC — the day the prototype screen claimed to show.
 const ASOF = Date.UTC(2026, 7, 3, 12, 0, 0);
 const DAY = "2026-08-03";
-const at = (hour) => `${DAY}T${String(hour).padStart(2, "0")}:00:00.000Z`;
+// Hours are IST, because that is the clock the business runs on and the one every other module
+// (scheduling roster, staff day board, pricing bands) reads.
+const at = (hour) => new Date(`${DAY}T${String(hour).padStart(2, "0")}:00:00+05:30`).toISOString();
 
 function fresh() {
   const sqlite = new DatabaseSync(":memory:");
@@ -86,7 +88,7 @@ test("every headline number is computed from the seeds, with the P&L's revenue r
   booking(sqlite, "B4", { status: "draft", amount: 5000, hour: 15 });
   booking(sqlite, "B5", { status: "confirmed", amount: 800, hour: 17, provider: "" }); // unassigned
   // A booking on another day must never leak into today.
-  sqlite.prepare("UPDATE canonical_bookings SET scheduled_start='2026-08-04T09:00:00.000Z' WHERE id='B1'").run();
+  sqlite.prepare("UPDATE canonical_bookings SET scheduled_start=? WHERE id='B1'").run(new Date("2026-08-04T09:00:00+05:30").toISOString());
   booking(sqlite, "B6", { status: "completed", amount: 1200, hour: 9 });
 
   provider(sqlite, "PRV-1", "Arun Rao");
@@ -115,9 +117,65 @@ test("every headline number is computed from the seeds, with the P&L's revenue r
   assert.equal(overview.metrics.openTickets, 2, "resolved tickets are not open");
   assert.equal(overview.metrics.ticketsNeedingAttention, 1, "one ticket is past its SLA");
 
-  // The same rule the P&L applies, checked against the P&L's own recognition query.
+  // The same rule the P&L applies, checked against the P&L's own recognition query. Every seed here
+  // sits between 09:00 and 18:00 IST, where the IST and UTC calendar dates agree, so the P&L's
+  // date-prefix filter and the IST window select the same rows and the amounts are comparable.
   const recognized = sqlite.prepare("SELECT COALESCE(SUM(total_amount),0) t FROM canonical_bookings WHERE status!='cancelled' AND status!='draft' AND substr(scheduled_start,1,10)=?").get(DAY).t;
   assert.equal(overview.metrics.recognizedRevenue, recognized);
+  // The counts must account for the whole day, not just its two named ends.
+  assert.equal(overview.metrics.confirmed + overview.metrics.completed + overview.metrics.inProgress, overview.metrics.bookingsToday);
+});
+
+test("today is the IST day, not the UTC day", async () => {
+  const { sqlite, db } = fresh();
+  provider(sqlite, "PRV-1", "Arun Rao");
+  // 20:00 IST on the 3rd is 14:30Z on the 3rd — both agree it is today.
+  booking(sqlite, "LATE", { hour: 20, amount: 500 });
+  // 00:30 IST on the 4th is 19:00Z on the *3rd*. Slicing the ISO string would file this under today.
+  sqlite.prepare("UPDATE canonical_bookings SET scheduled_start=? WHERE id='LATE'").run(new Date("2026-08-03T20:00:00+05:30").toISOString());
+  booking(sqlite, "TOMORROW", { hour: 9, amount: 9000 });
+  const tomorrowStart = new Date("2026-08-04T00:30:00+05:30").toISOString();
+  sqlite.prepare("UPDATE canonical_bookings SET scheduled_start=? WHERE id='TOMORROW'").run(tomorrowStart);
+  assert.equal(tomorrowStart.slice(0, 10), DAY, "the fixture only proves anything if its UTC prefix still reads as today");
+
+  const overview = await buildOperationsOverview(db, { asOf: ASOF });
+  assert.equal(overview.date, DAY);
+  assert.equal(overview.dayWindow.timezone, "Asia/Kolkata");
+  assert.equal(overview.dayWindow.startUtc, new Date(`${DAY}T00:00:00+05:30`).toISOString());
+  assert.equal(overview.metrics.bookingsToday, 1, "the 00:30 IST booking belongs to tomorrow");
+  assert.equal(overview.metrics.recognizedRevenue, 500, "tomorrow's ₹9,000 must not be recognized today");
+  assert.deepEqual(overview.activity.map(row => row.bookingId), ["LATE"]);
+});
+
+test("slots are placed by IST wall-clock time", async () => {
+  const { sqlite, db } = fresh();
+  provider(sqlite, "PRV-1", "Arun Rao");
+  booking(sqlite, "S1", { hour: 10, provider: "PRV-1" }); // 10:00 IST -> 04:30Z
+  const overview = await buildOperationsOverview(db, { asOf: ASOF });
+  const arun = overview.capacity[0];
+  assert.equal(arun.slots[0].bookingId, "S1", "10:00 IST belongs in the 9–11 slot, not nowhere");
+  assert.equal(overview.activity[0].scheduledTimeIst, "10:00");
+  assert.equal(overview.activity[0].slot, "9–11");
+  assert.ok(overview.activity[0].scheduledStart.endsWith("04:30:00.000Z"), "the stored instant is still UTC");
+});
+
+test("a truncated capacity board says so instead of reading as the whole roster", async () => {
+  const { sqlite, db } = fresh();
+  for (let index = 0; index < 30; index++) provider(sqlite, `PRV-${index}`, `Provider ${String(index).padStart(2, "0")}`);
+  const overview = await buildOperationsOverview(db, { asOf: ASOF });
+  assert.equal(overview.metrics.providersActive, 30);
+  assert.equal(overview.capacityShown, overview.capacity.length);
+  assert.ok(overview.capacityShown < overview.capacityTotal, "this fixture is only meaningful if the board truncates");
+  assert.equal(overview.capacityTotal, 30, "the board reports the full roster size it is truncating from");
+});
+
+test("the zone filter offers the zones that actually exist", async () => {
+  const { sqlite, db } = fresh();
+  provider(sqlite, "PRV-1", "Arun Rao", "blr-east");
+  provider(sqlite, "PRV-2", "West Provider", "blr-west");
+  provider(sqlite, "PRV-3", "Offline", "blr-north", { status: "active", live: 0 });
+  const overview = await buildOperationsOverview(db, { asOf: ASOF });
+  assert.deepEqual(overview.zones, ["blr-east", "blr-west"], "a zone with no live provider is not offered as a filter");
 });
 
 test("the capacity board shows real providers and real bookings in the right slot", async () => {
@@ -172,10 +230,20 @@ test("the /admin screen renders live data and labels anything that is still samp
   assert.ok(!/32,482/.test(page.slice(0, page.indexOf('view === "payments"'))), "the invented revenue figure is gone from the overview");
   assert.doesNotMatch(page, /8 \/ 10/, "the invented provider count is gone");
   assert.doesNotMatch(page, /vs last Monday/, "no trend is claimed without a comparison series");
-  // It now actually fetches.
-  assert.match(page, /fetch\("\/api\/operations-overview"/);
-  assert.match(page, /useOperationsOverview\(\)/);
+  // It now actually fetches, and the zone selector drives that fetch instead of filtering a fixture.
+  assert.match(page, /fetch\(`\/api\/operations-overview\$\{zoneId\?/);
+  assert.match(page, /useOperationsOverview\(zone\)/);
   assert.match(page, /overview\?\.metrics\.recognizedRevenue/);
+  assert.match(page, /\(overview\?\.zones\?\?\[\]\)\.map/, "the zone options come from the API, not a hard-coded neighbourhood list");
+  // Today's booking list and the detail panel read the live day, not the sample array.
+  assert.match(page, /liveActivity\.map/);
+  assert.match(page, /const liveActivity = overview\?\.activity/);
+  assert.doesNotMatch(page.slice(0, page.indexOf('view === "crm"')), /selectedBooking\./, "the overview detail panel no longer reads the sample booking");
+  assert.doesNotMatch(page, /Monday · 3 August 2026/, "the header date is read from the data, not frozen");
+  // Nav badges are queue lengths. Hard-coding them is the quietest lie on the screen.
+  const navBlock = page.slice(page.indexOf("const nav:"), page.indexOf("const money ="));
+  assert.doesNotMatch(navBlock, /count:\s*\d+/, "no nav badge carries an invented count");
+  assert.match(page, /item\.id==="bookings"\?overview\?\.metrics\.bookingsToday/, "the badges that remain come from live metrics");
   // Unsourced fields render as "Not connected" rather than a number.
   assert.match(page, /Not connected/);
   // Tabs still on sample rows say so.
