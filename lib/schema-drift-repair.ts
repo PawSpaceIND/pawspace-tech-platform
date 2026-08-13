@@ -30,6 +30,10 @@ const REQUIRED_COLUMNS: Array<{ table: string; column: string; definition: strin
     table: "customer_contact_preferences", column: "opt_out", definition: "INTEGER NOT NULL DEFAULT 0",
     why: "lib/customer-360.ts created this table without the opt-out flag lib/revenue-opportunity-governance.ts filters on",
   },
+  {
+    table: "booking_package_upgrade_requests", column: "claim_token", definition: "TEXT",
+    why: "the table shipped without claim_token before the package-upgrade approval became a claim-token compare-and-set; on a database that already created it, every apply_package_upgrade fails with 'no such column: claim_token'",
+  },
 ];
 
 async function tableExists(db: Db, name: string) {

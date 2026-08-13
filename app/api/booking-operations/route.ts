@@ -1,4 +1,8 @@
 import { authError, requirePermission, requireProviderOwnership, resolveActor } from "../../../lib/server-auth";
+import { repairSchemaDrift } from "../../../lib/schema-drift-repair";
+
+/** Per-isolate guard so the in-place column repair runs once, not on every request. */
+const driftRepaired = new WeakSet<object>();
 
 type OperationAction =
   | "package_upgrade"
@@ -65,6 +69,17 @@ async function ensureTables(db: Awaited<ReturnType<typeof database>>) {
     db.prepare("CREATE TABLE IF NOT EXISTS booking_package_upgrade_requests (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,source_event_id TEXT NOT NULL,requested_package_name TEXT NOT NULL,requested_amount REAL NOT NULL,previous_amount REAL NOT NULL,status TEXT NOT NULL DEFAULT 'pricing_approval_required',requested_by TEXT NOT NULL,approved_by TEXT,approved_amount REAL,decision_reason TEXT,claim_token TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_package_upgrade_booking ON booking_package_upgrade_requests(booking_id,status,created_at)"),
   ]);
+  // The DDL above is CREATE TABLE IF NOT EXISTS, which is a no-op once the table exists — so it cannot
+  // add claim_token to a database that created booking_package_upgrade_requests before the approval
+  // became a claim-token compare-and-set. On such a database every apply_package_upgrade fails with
+  // "no such column: claim_token". repairSchemaDrift adds it in place; the column is registered there.
+  //
+  // Once per isolate: the repair is idempotent (it checks PRAGMA table_info before altering) but it costs
+  // a lookup per registered column, and this route is on a per-request path.
+  if (!driftRepaired.has(db)) {
+    driftRepaired.add(db);
+    await repairSchemaDrift(db).catch(() => driftRepaired.delete(db));
+  }
 }
 
 function validate(input: OperationInput) {
