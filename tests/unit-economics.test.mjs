@@ -30,11 +30,11 @@ if (typeof nodeModule.registerHooks === "function") {
   nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
 }
 
-// D1 rejects a statement with more than 100 bound parameters. node:sqlite allows thousands, so a
-// shim that does not enforce the cap will happily pass a query that dies on the real database -
-// which is exactly what happened: /api/unit-economics returned
-// "D1_ERROR: too many SQL variables at offset 301" on staging while this suite stayed green.
-const D1_MAX_BOUND_PARAMS = 100;
+// The bind cap now comes from the shared harness (tests/helpers/d1-harness.mjs) so every suite
+// models the same database. It exists because /api/unit-economics returned "D1_ERROR: too many SQL
+// variables at offset 301" on staging while this suite stayed green: node:sqlite accepts thousands
+// of bound parameters and D1 caps them near 100.
+import { D1_MAX_BOUND_PARAMS } from "./helpers/d1-harness.mjs";
 function makeD1(sqlite) {
   function statement(sql, args) {
     if (args.length > D1_MAX_BOUND_PARAMS) {
