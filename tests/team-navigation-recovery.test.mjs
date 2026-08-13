@@ -174,13 +174,12 @@ test("real execution: a signed staging session still resolves to a working actor
 test("the performance page never reports an unreadable response as 'no policy configured'", async () => {
   const page = await repoFile("app/team/performance/page.tsx");
 
-  // A failed read leaves the claim unmade (null) instead of asserting the policy does not exist.
-  assert.match(page, /setHasActivePolicy\(null\)/);
-  assert.doesNotMatch(page, /setHasActivePolicy\(false\)/);
-  // The "not configured" banner only renders on a response that actually parsed.
-  assert.match(page, /hasActivePolicy===false&&/);
-  // A 401 body is read defensively and its recovery route is offered to the tester.
-  assert.match(page, /r\.json\(\)\.catch\(/);
+  // Policy state is read from the governance response itself, never inferred from a failed request.
+  assert.match(page, /policy\.status==="active_uat"/);
+  assert.doesNotMatch(page, /No active productivity policy is configured yet/);
+  // Every response body is parsed defensively, so a non-JSON body cannot become the error message.
+  assert.match(page, /response\.json\(\)\.catch\(/);
+  // A 401 that names a way back in is offered to the tester.
   assert.match(page, /signInUrl/);
   assert.match(page, /Sign in again/);
 });
