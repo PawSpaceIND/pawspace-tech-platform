@@ -8,8 +8,15 @@ test("Boarding Gate 3 keeps cancellation refund policy explicit and auditable",(
  assert.match(source,/boarding_cancellation_requests/);
  assert.match(source,/policy_review_required/);
  assert.match(source,/refundPolicy:\"configuration_required\"/);
- assert.match(source,/approvedRefundAmount/);
  assert.match(source,/explicit_staff_approval/);
+ // PAWSPACE-QA-001. `assert.match(source,/approvedRefundAmount/)` used to stand here and it proved
+ // nothing: the name appears whether the ceiling is captured funds or the booking price. It appeared
+ // beside a message reading "within the captured booking value" while the code compared against
+ // total_amount, so the file READ correct and behaved wrong, and this suite agreed with it.
+ // The ceiling is now asserted by behaviour in tests/refund-cap-collected-funds.test.mjs, which drives
+ // approve_cancel against a real database. What is left here is the regression guard.
+ assert.match(source,/collectedForBooking/,"the refund ceiling must come from the shared collected-funds invariant");
+ assert.doesNotMatch(source,/amount>Number\(stay\.total_amount\)/,"a refund must never be capped by the booking price");
  assert.match(source,/In-progress Boarding cancellation requires an Operations incident workflow/);
  assert.match(source,/UPDATE boarding_capacity_locks SET status='released'/);
  assert.match(source,/UPDATE scheduling_reservations SET status='cancelled'/);
