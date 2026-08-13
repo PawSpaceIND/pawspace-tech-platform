@@ -2,6 +2,7 @@ import{ensureLeadSlaTables,runLeadSlaGovernance}from"./lead-sla-governance";
 import{ensureUnifiedCaseTables,runUnifiedCaseEscalations,syncNativeCases}from"./unified-case-center";
 import{enqueueCommunication}from"./communication-engine";
 import{repsWithIncompleteClosure}from"./rep-daily-closure-governance";
+import{authorizeStaffAlertAction}from"./staff-alert-authority";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -77,4 +78,42 @@ export async function runStaffAlertSweep(db:Db,input:{actorId:string;asOf?:numbe
 
 export async function staffAlertDirectory(db:Db){await ensureStaffAlertTables(db);const now=Date.now(),alerts=await db.prepare("SELECT * FROM staff_alerts ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,due_at ASC LIMIT 250").all<Row>(),summary=await db.prepare("SELECT COUNT(*) total,SUM(CASE WHEN status='open' THEN 1 ELSE 0 END) open,SUM(CASE WHEN status='acknowledged' THEN 1 ELSE 0 END) acknowledged,SUM(CASE WHEN status='open' AND severity='critical' THEN 1 ELSE 0 END) critical,SUM(CASE WHEN status='open' AND due_at<=? THEN 1 ELSE 0 END) overdue FROM staff_alerts").bind(now).first<Row>();return{summary,alerts:alerts.results,truth:{thresholds:"source_policy_derived",hardcodedTwentyMinuteRule:false,automaticMode:"governed_runner_available",runnerBoundary:"/api/staff-alert-runner",backgroundSchedulerConfigured:false,customerNotificationTransport:"canonical_chat_outbox",externalDelivery:false,productionReady:false}};}
 
-export async function updateStaffAlert(db:Db,input:{alertId:string;action:"acknowledge"|"resolve";actorId:string}){await ensureStaffAlertTables(db);const row=await db.prepare("SELECT * FROM staff_alerts WHERE id=?").bind(input.alertId).first<Row>();if(!row)throw new Error("Staff alert not found");const now=Date.now(),eventKey=`alert:${input.alertId}:${input.action}`;if(input.action==="acknowledge"){if(text(row.status)==="resolved")throw new Error("Resolved alert cannot be acknowledged");await db.prepare("UPDATE staff_alerts SET status='acknowledged',acknowledged_at=COALESCE(acknowledged_at,?),acknowledged_by=COALESCE(acknowledged_by,?),updated_at=? WHERE id=?").bind(now,input.actorId,now,input.alertId).run();}else await db.prepare("UPDATE staff_alerts SET status='resolved',resolved_at=?,resolved_by=?,updated_at=? WHERE id=?").bind(now,input.actorId,now,input.alertId).run();await db.prepare("INSERT OR IGNORE INTO staff_alert_events (id,idempotency_key,alert_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,'{}',?)").bind(uid("ALE"),eventKey,input.alertId,input.action,input.actorId,now).run();return{alertId:input.alertId,status:input.action==="resolve"?"resolved":"acknowledged"};}
+/** Thrown when the actor may not act on this particular alert. The route turns it into a 403. */
+export class StaffAlertAuthorityError extends Error{
+ readonly status=403;
+ readonly owner:string;
+ constructor(message:string,owner:string){super(message);this.name="StaffAlertAuthorityError";this.owner=owner;}
+}
+
+/**
+ * Acknowledge or resolve one alert.
+ *
+ * Authority is decided per alert, not per endpoint - a Manager's `customers.manage` is authority over
+ * Sales and Operations alerts and is NOT authority over a Finance payment failure. See
+ * lib/staff-alert-authority.ts for the policy and why it fails closed.
+ *
+ * Resolution is write-once. The UPDATE carries its own `status!='resolved'` guard and the event is
+ * written only when that UPDATE actually changed a row, which gives two properties that used to be
+ * missing: a second resolver cannot rewrite `resolved_by`/`resolved_at` (the first resolution is the
+ * record), and the alert row can never disagree with its event history - previously the row was
+ * overwritten while the `INSERT OR IGNORE` dropped the duplicate event, leaving the row crediting one
+ * person and the audit trail crediting another.
+ */
+export async function updateStaffAlert(db:Db,input:{alertId:string;action:"acknowledge"|"resolve";actorId:string;actorPermissions:string[]}){await ensureStaffAlertTables(db);const row=await db.prepare("SELECT * FROM staff_alerts WHERE id=?").bind(input.alertId).first<Row>();if(!row)throw new Error("Staff alert not found");
+ const decision=authorizeStaffAlertAction({email:input.actorId,permissions:input.actorPermissions},row,input.action);
+ // Refused before any write: an unauthorised attempt must leave both tables exactly as it found them.
+ if(!decision.allowed)throw new StaffAlertAuthorityError(decision.reason,decision.authority.owner);
+ const now=Date.now(),eventKey=`alert:${input.alertId}:${input.action}`;
+ if(input.action==="acknowledge"){
+  if(text(row.status)==="resolved")throw new Error("Resolved alert cannot be acknowledged");
+  const changed=await db.prepare("UPDATE staff_alerts SET status='acknowledged',acknowledged_at=COALESCE(acknowledged_at,?),acknowledged_by=COALESCE(acknowledged_by,?),updated_at=? WHERE id=? AND status!='resolved'").bind(now,input.actorId,now,input.alertId).run();
+  if(Number(changed.meta?.changes||0)>0)await db.prepare("INSERT OR IGNORE INTO staff_alert_events (id,idempotency_key,alert_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,'{}',?)").bind(uid("ALE"),eventKey,input.alertId,input.action,input.actorId,now).run();
+  const after=await db.prepare("SELECT acknowledged_at,acknowledged_by FROM staff_alerts WHERE id=?").bind(input.alertId).first<Row>();
+  return{alertId:input.alertId,status:"acknowledged" as const,acknowledgedBy:text(after?.acknowledged_by)||null,acknowledgedAt:after?.acknowledged_at==null?null:Number(after.acknowledged_at),alreadyAcknowledged:text(row.status)==="acknowledged"};
+ }
+ const changed=await db.prepare("UPDATE staff_alerts SET status='resolved',resolved_at=?,resolved_by=?,updated_at=? WHERE id=? AND status!='resolved'").bind(now,input.actorId,now,input.alertId).run();
+ const firstResolution=Number(changed.meta?.changes||0)>0;
+ // Only a resolution that actually changed the row writes an event, so the two can never diverge.
+ if(firstResolution)await db.prepare("INSERT OR IGNORE INTO staff_alert_events (id,idempotency_key,alert_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,'{}',?)").bind(uid("ALE"),eventKey,input.alertId,input.action,input.actorId,now).run();
+ const after=await db.prepare("SELECT resolved_at,resolved_by FROM staff_alerts WHERE id=?").bind(input.alertId).first<Row>();
+ return{alertId:input.alertId,status:"resolved" as const,resolvedBy:text(after?.resolved_by)||null,resolvedAt:after?.resolved_at==null?null:Number(after.resolved_at),alreadyResolved:!firstResolution};}
