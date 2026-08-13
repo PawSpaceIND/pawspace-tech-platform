@@ -26,28 +26,35 @@ assets `../client`, D1 binding `DB`, 5-min cron). We patch that generated config
 
 ### Path A — one-click via GitHub Actions (recommended)
 Add in GitHub → Settings → Secrets and variables → Actions:
-- **Secrets:** `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`
+- **Secrets:** `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `PAWSPACE_UAT_ACCESS_CODE`,
+  `PAWSPACE_UAT_SIGNING_KEY`, `PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT` (generate each fresh — see the
+  three `openssl rand -hex 32` lines below)
 - **Variable:** `STAGING_D1_ID` = the id from step 3
 
 Then: **Actions → "Deploy staging" → Run workflow →** type `staging` → Run.
-It builds, patches the config, and deploys. The run log prints your URL:
+It builds, patches the config (non-secret settings only), deploys, and then installs the three UAT
+credentials into the Worker as encrypted **secrets** (`wrangler secret put`) — they are never written
+into `wrangler.json` and never printed. The run log prints your URL:
 `https://pawspace-staging.<your-subdomain>.workers.dev`
-
-One-time after the first deploy, set the app auth secret (sandbox):
-```bash
-npx wrangler secret put PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT --name pawspace-staging   # any 32+ char string
-```
 
 ### Path B — from a terminal
 ```bash
 npm run install:ci
-export CLOUDFLARE_API_TOKEN=…            # from step 2 (do not commit)
-export CLOUDFLARE_ACCOUNT_ID=…           # from step 1
-export STAGING_D1_ID=…                   # from step 3
+export CLOUDFLARE_API_TOKEN=…                          # from step 2 (do not commit)
+export CLOUDFLARE_ACCOUNT_ID=…                         # from step 1
+export STAGING_D1_ID=…                                 # from step 3
+export PAWSPACE_UAT_ACCESS_CODE=…                      # openssl rand -hex 32 (>=32 chars)
+export PAWSPACE_UAT_SIGNING_KEY=…                      # openssl rand -hex 32
+export PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT=…        # openssl rand -hex 32
 npm run build
-node scripts/stage-config.mjs            # patches dist/server/wrangler.json for staging
-( cd dist/server && npx wrangler deploy )
-npx wrangler secret put PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT --name pawspace-staging
+node scripts/stage-config.mjs            # validates the 3 UAT credentials (fail-closed) and patches
+                                         # dist/server/wrangler.json — NON-SECRET settings only
+npx wrangler deploy                      # from the repo ROOT (the build writes a deploy redirect;
+                                         # deploying from dist/server makes wrangler refuse)
+# Install the three UAT credentials as Worker SECRETS (never plain vars, never echoed):
+for name in PAWSPACE_UAT_ACCESS_CODE PAWSPACE_UAT_SIGNING_KEY PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT; do
+  printf '%s' "${!name}" | npx wrangler secret put "$name" --name pawspace-staging
+done
 ```
 
 ---
@@ -59,10 +66,12 @@ RAZORPAY_KEY_ID_SANDBOX / RAZORPAY_KEY_SECRET_SANDBOX / RAZORPAY_WEBHOOK_SECRET_
 IDFY_API_KEY / IDFY_ACCOUNT_ID / IDFY_URL
 PAWSPACE_AI_PROVIDER_API_KEY            (then set AI rollout to staff_only at /team/ai/rollout)
 
-The staging UAT sign-in needs three credentials, supplied as GitHub Actions **secrets** and read by
-`scripts/stage-config.mjs`. There are no defaults: the deploy fails closed without them, refuses a value
-below its minimum length, and refuses the three values that were once committed to this repository (they
-are public now, so re-supplying one would restore the defect). Generate each fresh:
+The staging UAT sign-in needs three credentials, supplied as GitHub Actions **secrets**.
+`scripts/stage-config.mjs` validates them (fail-closed) but never writes them into `wrangler.json`; the
+deploy installs them into the Worker runtime as encrypted **secrets** (`wrangler secret put`). There are
+no defaults: the deploy fails closed without them, refuses a value below its minimum length, and refuses
+the three values that were once committed to this repository (they are public now, so re-supplying one
+would restore the defect). Generate each fresh:
 
 ```bash
 openssl rand -hex 32     # PAWSPACE_UAT_SIGNING_KEY               signs the UAT session cookie

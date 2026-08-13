@@ -58,11 +58,9 @@ const REQUIRED = [
   ["PAWSPACE_UAT_SIGNING_KEY", 32, "This signs the UAT session cookie that resolveActor trusts."],
   ["PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT", 32, "This signs customer and partner OTP identity assertions."],
 ];
-const resolved = {};
 for (const [name, minLength, purpose] of REQUIRED) {
   const result = readSecret(process.env, name, minLength, purpose);
   if (result.error) problems.push(result.error);
-  else resolved[name] = result.value;
 }
 
 if (problems.length) {
@@ -76,17 +74,23 @@ if (problems.length) {
 cfg.name = "pawspace-staging";
 cfg.topLevelName = "pawspace-staging";
 cfg.d1_databases = [{ binding: "DB", database_name: "pawspace-staging", database_id: d1Id }];
+
+// Only NON-SECRET configuration is serialized into wrangler.json. The three UAT credentials are
+// validated above (fail-closed) but are DELIBERATELY NOT written here: wrangler.json is a generated
+// deploy artifact, and anything under `vars` becomes a plaintext Worker variable readable in the
+// dashboard, in the file, and in any build log that echoes it. The credentials are installed into the
+// Worker runtime as Cloudflare Worker SECRETS (`wrangler secret put`) by the deploy step instead.
 cfg.vars = {
   ...(cfg.vars || {}),
   PAWSPACE_PAYMENT_ENV: "sandbox",
   PAWSPACE_UAT_LOGIN: "on",
-  PAWSPACE_UAT_ACCESS_CODE: resolved.PAWSPACE_UAT_ACCESS_CODE,
-  PAWSPACE_UAT_SIGNING_KEY: resolved.PAWSPACE_UAT_SIGNING_KEY,
-  PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: resolved.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT,
 };
+// Defensively strip the credentials in case an inherited cfg.vars already carried them — no code path
+// may leave a UAT credential in the serialized config.
+for (const [name] of REQUIRED) delete cfg.vars[name];
 writeFileSync(path, JSON.stringify(cfg));
 
 // Report only what is safe to read in a build log. The access code used to be printed here, which put
 // it in every CI log for anyone with repository read access.
 console.log(`Staging config written → name=pawspace-staging, DB=${d1Id}, PAWSPACE_PAYMENT_ENV=sandbox, UAT_LOGIN=on`);
-console.log("UAT credentials were taken from the environment and are not logged.");
+console.log("UAT credentials were validated from the environment, are NOT written to wrangler.json, and are installed separately as Cloudflare Worker secrets — nothing secret is logged.");

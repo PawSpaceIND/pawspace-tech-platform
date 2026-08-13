@@ -85,7 +85,8 @@ function runStageConfig(env) {
   const script = new URL("../scripts/stage-config.mjs", import.meta.url).pathname;
   try {
     const stdout = execFileSync(process.execPath, [script], { cwd: dir, env: { PATH: process.env.PATH, ...env }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-    return { code: 0, stdout, config: JSON.parse(fs.readFileSync(path.join(dir, "dist", "server", "wrangler.json"), "utf8")) };
+    const raw = fs.readFileSync(path.join(dir, "dist", "server", "wrangler.json"), "utf8");
+    return { code: 0, stdout, raw, config: JSON.parse(raw) };
   } catch (error) {
     return { code: error.status ?? 1, stdout: String(error.stdout || ""), stderr: String(error.stderr || "") };
   }
@@ -128,14 +129,23 @@ test("real execution: a too-weak secret is refused rather than accepted quietly"
   assert.notEqual(runStageConfig({ ...GOOD, PAWSPACE_UAT_SIGNING_KEY: "c".repeat(31) }).code, 0, "31 characters must be refused for the signing key too");
 });
 
-test("real execution: with every secret supplied, the config is written from the environment", () => {
+test("real execution: with every secret supplied, only NON-SECRET config is written — the credentials are never serialized", () => {
   const result = runStageConfig(GOOD);
   assert.equal(result.code, 0, `expected success, got: ${result.stderr}`);
-  assert.equal(result.config.vars.PAWSPACE_UAT_ACCESS_CODE, GOOD.PAWSPACE_UAT_ACCESS_CODE);
-  assert.equal(result.config.vars.PAWSPACE_UAT_SIGNING_KEY, GOOD.PAWSPACE_UAT_SIGNING_KEY);
-  assert.equal(result.config.vars.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT, GOOD.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT);
+  // The non-secret staging settings are written…
   assert.equal(result.config.vars.PAWSPACE_PAYMENT_ENV, "sandbox", "sandbox payments are preserved");
+  assert.equal(result.config.vars.PAWSPACE_UAT_LOGIN, "on", "the UAT login flag is a non-secret var and is preserved");
   assert.equal(result.config.name, "pawspace-staging", "existing behaviour is preserved");
+  // …but NONE of the three credentials may land in `vars`. Writing them there makes them plaintext
+  // Worker variables — the exact defect #170 exists to close. They are installed as Worker secrets.
+  for (const name of ["PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"]) {
+    assert.ok(!(name in result.config.vars), `${name} must not be placed in wrangler.json vars`);
+  }
+  // And prove it at the artifact level, not just the parsed object: none of the actual secret VALUES
+  // may appear anywhere in the serialized wrangler.json the deploy ships.
+  for (const secret of [GOOD.PAWSPACE_UAT_ACCESS_CODE, GOOD.PAWSPACE_UAT_SIGNING_KEY, GOOD.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT]) {
+    assert.ok(!result.raw.includes(secret), "no credential VALUE may be serialized into the generated wrangler.json artifact");
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -148,7 +158,7 @@ test("real execution: no credential appears in the deploy output", () => {
     assert.ok(!output.includes(secret), "the deploy log must not contain a credential");
   }
   assert.doesNotMatch(stageConfig, /access code="\$\{accessCode\}"/, "the access code was printed here; it must not be");
-  assert.match(result.stdout, /not logged/, "and it should say that it withheld them");
+  assert.match(result.stdout, /nothing secret is logged|not logged/, "and it should say that it withheld them");
 });
 
 test("the workflow supplies all three from GitHub secrets", () => {
@@ -156,6 +166,22 @@ test("the workflow supplies all three from GitHub secrets", () => {
     assert.match(workflow, new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`), `${name} must come from secrets.${name}`);
     assert.doesNotMatch(workflow, new RegExp(`${name}:\\s*\\$\\{\\{\\s*vars\\.${name}`), `${name} must not come from a repository VARIABLE, which is not secret`);
   }
+});
+
+test("the workflow installs all three as Cloudflare Worker SECRETS, not plain vars", () => {
+  // The runtime credentials must reach the Worker through `wrangler secret put` (encrypted secret
+  // bindings), never through the serialized wrangler.json. Deploy remains from the repo ROOT.
+  assert.match(workflow, /wrangler\s+secret\s+put/, "the workflow must install the credentials as Worker secrets");
+  for (const name of ["PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"]) {
+    assert.match(workflow, new RegExp(name), `${name} must be provisioned by the deploy workflow`);
+  }
+  assert.match(workflow, /--name\s+pawspace-staging/, "secrets are put onto the pawspace-staging worker");
+  // The value is piped over stdin, never passed as a shell argument that could land in a process
+  // listing or a build log.
+  assert.match(workflow, /printf\s+'%s'\s+"\$\{!name\}"\s*\|\s*npx\s+wrangler\s+secret\s+put/, "secret values must be piped over stdin, not echoed");
+  // Root deploy is preserved; the obsolete dist/server deploy must not reappear.
+  assert.match(workflow, /run:\s*npx wrangler deploy/, "deploy stays at the repo root");
+  assert.doesNotMatch(workflow, /cd dist\/server && npx wrangler deploy/, "the obsolete dist/server deploy path must not return");
 });
 
 // ---------------------------------------------------------------------------
