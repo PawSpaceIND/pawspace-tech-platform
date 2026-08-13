@@ -21,6 +21,25 @@ const pct=(part:number,whole:number)=>whole>0?Math.round((part/whole)*1000)/10:n
 async function tableExists(db:Db,name:string){const row=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>();return Boolean(row);}
 async function safeAll(db:Db,guard:string[],sql:string,binds:unknown[]):Promise<Row[]>{for(const table of guard)if(!await tableExists(db,table))return[];const rows=await db.prepare(sql).bind(...binds).all<Row>();return rows.results;}
 
+// D1 caps the number of bound parameters in a single statement. These lookups used to build one "?"
+// per booking in the window, which is unbounded: with no date filter it is every booking ever. On
+// staging that produced "D1_ERROR: too many SQL variables at offset 301" and the whole Unit
+// Economics screen returned an error. It passed every test, because tests use a handful of rows.
+//
+// Chunking keeps each statement well inside the limit and makes the query count grow linearly with
+// data instead of the statement width growing without bound.
+const BIND_CHUNK=50;
+async function safeAllChunked(db:Db,guard:string[],sqlFor:(placeholders:string)=>string,ids:string[]):Promise<Row[]>{
+ for(const table of guard)if(!await tableExists(db,table))return[];
+ const out:Row[]=[];
+ for(let index=0;index<ids.length;index+=BIND_CHUNK){
+  const slice=ids.slice(index,index+BIND_CHUNK);
+  const rows=await db.prepare(sqlFor(slice.map(()=>"?").join(","))).bind(...slice).all<Row>();
+  out.push(...rows.results);
+ }
+ return out;
+}
+
 export type UnitEconomicsFilters={from?:string;to?:string;cityId?:string};
 
 export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
@@ -31,18 +50,18 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
  const bookings=await safeAll(db,["canonical_bookings"],`SELECT id,customer_id,provider_id,service_code,status,total_amount,scheduled_start,scheduled_end FROM canonical_bookings WHERE ${where}`,binds);
  if(!bookings.length)return{from,to,cityId:input.cityId??null,services:{},company:emptyCompany(),dataCoverage:coverageNote(),truth:truthNote()};
 
- const ids=bookings.map(row=>String(row.id)),placeholders=ids.map(()=>"?").join(",");
+ const ids=bookings.map(row=>String(row.id));
  const active=bookings.filter(row=>!["cancelled","draft"].includes(String(row.status)));
  const serviceOf=new Map(bookings.map(row=>[String(row.id),String(row.service_code)]));
 
  // Real per-booking money components (each guarded on its owning table)
- const coupons=await safeAll(db,["coupon_redemptions"],`SELECT booking_id,discount_amount FROM coupon_redemptions WHERE status='consumed' AND booking_id IN (${placeholders})`,ids);
- const points=await safeAll(db,["paw_points_ledger"],`SELECT booking_id,points FROM paw_points_ledger WHERE entry_type='redeemed' AND booking_id IN (${placeholders})`,ids);
- const wallet=await safeAll(db,["pawspace_wallet_ledger"],`SELECT source_id booking_id,applied_value FROM pawspace_wallet_ledger WHERE entry_type='redeem' AND source_id IN (${placeholders})`,ids);
- const payouts=await safeAll(db,["provider_order_payouts"],`SELECT booking_id,amount FROM provider_order_payouts WHERE booking_id IN (${placeholders})`,ids);
- const refunds=await safeAll(db,["booking_refund_cases"],`SELECT booking_id,amount FROM booking_refund_cases WHERE status='processed' AND booking_id IN (${placeholders})`,ids);
- const reviews=await safeAll(db,["service_reviews"],`SELECT booking_id,stars FROM service_reviews WHERE booking_id IN (${placeholders})`,ids);
- const tickets=await safeAll(db,["customer_experience_tickets"],`SELECT booking_id FROM customer_experience_tickets WHERE booking_id IN (${placeholders})`,ids);
+ const coupons=await safeAllChunked(db,["coupon_redemptions"],slot=>`SELECT booking_id,discount_amount FROM coupon_redemptions WHERE status='consumed' AND booking_id IN (${slot})`,ids);
+ const points=await safeAllChunked(db,["paw_points_ledger"],slot=>`SELECT booking_id,points FROM paw_points_ledger WHERE entry_type='redeemed' AND booking_id IN (${slot})`,ids);
+ const wallet=await safeAllChunked(db,["pawspace_wallet_ledger"],slot=>`SELECT source_id booking_id,applied_value FROM pawspace_wallet_ledger WHERE entry_type='redeem' AND source_id IN (${slot})`,ids);
+ const payouts=await safeAllChunked(db,["provider_order_payouts"],slot=>`SELECT booking_id,amount FROM provider_order_payouts WHERE booking_id IN (${slot})`,ids);
+ const refunds=await safeAllChunked(db,["booking_refund_cases"],slot=>`SELECT booking_id,amount FROM booking_refund_cases WHERE status='processed' AND booking_id IN (${slot})`,ids);
+ const reviews=await safeAllChunked(db,["service_reviews"],slot=>`SELECT booking_id,stars FROM service_reviews WHERE booking_id IN (${slot})`,ids);
+ const tickets=await safeAllChunked(db,["customer_experience_tickets"],slot=>`SELECT booking_id FROM customer_experience_tickets WHERE booking_id IN (${slot})`,ids);
 
  type Ladder={gmv:number;orders:number;cancelled:number;discounts:number;providerPayout:number;refunds:number;tax:null;paymentFee:null;variableCost:null;contributionKnown:number;contributionPctOfGmv:number|null;avgOrderValue:number|null;reviews:number;csatAvgStars:number|null;csatPct:number|null;complaintsPer100:number|null;repeatRatePct:number|null;revenuePerProviderDay:number|null};
  const ladders:Record<string,Ladder>={};
@@ -83,7 +102,7 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
  const activeCustomers=[...new Set(active.map(row=>String(row.customer_id)))];
  let ltvPerActiveCustomer:number|null=null;
  if(activeCustomers.length){
-  const lifetime=await safeAll(db,["canonical_bookings"],`SELECT customer_id,SUM(total_amount) total FROM canonical_bookings WHERE status NOT IN ('cancelled','draft') AND customer_id IN (${activeCustomers.map(()=>"?").join(",")}) GROUP BY customer_id`,activeCustomers);
+  const lifetime=await safeAllChunked(db,["canonical_bookings"],slot=>`SELECT customer_id,SUM(total_amount) total FROM canonical_bookings WHERE status NOT IN ('cancelled','draft') AND customer_id IN (${slot}) GROUP BY customer_id`,activeCustomers);
   ltvPerActiveCustomer=round2(lifetime.reduce((sum,row)=>sum+Number(row.total||0),0)/activeCustomers.length);
  }
  // Roster utilisation: booked reservation hours / rostered window hours across the window

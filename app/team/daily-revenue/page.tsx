@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { EmptyState } from "../../components/ui";
 
 type Opportunity = { id: string; customer_id: string; customer_name: string | null; opportunity_type: string; reason: string; score: number; expected_revenue: number; status: string; owner: string; signals_json: string };
 
@@ -92,7 +93,7 @@ export default function DailyRevenuePriorityPage() {
 
       <section style={{ marginTop: 24 }}>
         <h2>Prioritised list ({opportunities.length})</h2>
-        {!opportunities.length && <p style={{ color: "#666" }}>No opportunities generated yet.</p>}
+        {!opportunities.length && <EmptyState title="No opportunities generated yet" body="This list is built from real customer scoring, open inbound leads and subscription renewals due. It fills once leads exist and a daily target is set above." action={<Link href="/team/sales" style={{fontWeight:700}}>Open the customer worklist →</Link>} />}
         {opportunities.map((row) => (
           <article key={row.id} style={{ border: "1px solid #eee", borderRadius: 10, padding: 12, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
             <div>
