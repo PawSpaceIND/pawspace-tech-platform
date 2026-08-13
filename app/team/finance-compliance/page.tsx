@@ -1,6 +1,8 @@
 "use client";
-import Link from"next/link";
 import{useCallback,useEffect,useState}from"react";
+import{Badge,Button,StatCard}from"../../components/ui";
+import OpsShell from"../../components/ops-shell/OpsShell";
+import styles from"../team-console.module.css";
 
 type Obligation={code:string;label:string;authority:string;period:string;dueDate:string;kind:string;notes:string;status:"upcoming"|"due_soon"|"overdue"|"filed";daysToDue:number;acknowledgementRef:string|null;amount:number|null};
 type ChecklistItem={key:string;label:string;ok:boolean;value:number|string|null;detail:string};
@@ -8,9 +10,8 @@ type CloseView={period:string;status:"open"|"ready"|"closed";checklist:Checklist
 type TdsRow={section:string;deductee_type:string;deductee_id:string;base_amount:number;rate_pct:number;tds_amount:number;pan_status:string};
 type Dashboard={period:string;calendar:Obligation[];close:CloseView;tds:{deductions:TdsRow[];deposit:{amount:number;challan_reference:string}|null;quarterlyReturns:Array<{fy_label:string;quarter:number;form:string;total_tds:number;total_deposited:number;status:string;acknowledgement_ref:string|null}>}};
 
-const box={background:"var(--ds-surface)",border:"1px solid var(--ds-border)",borderRadius:"var(--ds-radius-lg)",padding:16} as const;
 const money=(value:number|null)=>value==null?"—":`₹${Number(value).toLocaleString("en-IN")}`;
-const statusColor:Record<string,string>={filed:"var(--ds-success-500, #1a7f4b)",overdue:"var(--ds-danger-500)",due_soon:"#b57400",upcoming:"var(--ds-text-muted)"};
+const statusTone=(status:string)=>status==="filed"?"success":status==="overdue"?"danger":status==="due_soon"?"warning":"neutral";
 
 export default function FinanceCompliancePage(){
   const[period,setPeriod]=useState(()=>new Date(Date.now()+330*60_000).toISOString().slice(0,7));
@@ -45,34 +46,48 @@ export default function FinanceCompliancePage(){
   }
 
   const close=data?.close;
-  return <main style={{maxWidth:1200,margin:"0 auto",padding:28,fontFamily:"system-ui",display:"grid",gap:16}}>
-    <header>
-      <Link href="/team">← Team</Link>
-      <p style={{color:"var(--ds-primary-500)",letterSpacing:1,fontSize:12}}>FINANCE · STATUTORY COMPLIANCE & MONTHLY CLOSE</p>
-      <h1 style={{margin:0}}>Filings, TDS and monthly close</h1>
-      <p>Indian statutory calendar (GST · TDS · EPF/ESI · Karnataka PT · advance tax · ROC) with monthly board approval, computed from real platform data. Filing itself stays manual — record the government acknowledgement here. Sandbox/UAT: no live money.</p>
-      <label>Period <input type="month" value={period} onChange={event=>changePeriod(event.target.value)} style={{marginLeft:8}}/></label>
-    </header>
-    {error&&<p role="alert" style={{color:"var(--ds-danger-500)"}}>{error}</p>}
-    {notice&&<p role="status" style={{color:"var(--ds-primary-500)"}}>{notice}</p>}
-    {loading&&<p>Loading…</p>}
+  const overdue=(data?.calendar||[]).filter(item=>item.status==="overdue").length;
+  const dueSoon=(data?.calendar||[]).filter(item=>item.status==="due_soon").length;
+  const filed=(data?.calendar||[]).filter(item=>item.status==="filed").length;
+
+  return <OpsShell
+      eyebrow="FINANCE · STATUTORY COMPLIANCE & MONTHLY CLOSE"
+      title="Filings, TDS and monthly close"
+      description="The Indian statutory calendar — GST, TDS, EPF/ESI, Karnataka PT, advance tax and ROC — with monthly board approval, computed from real platform data. Filing itself stays manual: record the government acknowledgement here. Sandbox/UAT: no live money."
+      actions={<Badge tone={overdue?"danger":dueSoon?"warning":"success"} dot>{overdue?`${overdue} overdue`:dueSoon?`${dueSoon} due soon`:"nothing overdue"}</Badge>}
+      >
+
+    {error&&<div className={`${styles.panel} ${styles.panelError}`} role="alert"><b>{error}</b></div>}
+    {notice&&<div className={styles.panel} role="status">{notice}</div>}
+
+    <section className={styles.tiles}>
+      <StatCard label="Obligations" value={data?.calendar.length??0} meta={data?.period} />
+      <StatCard label="Filed" value={filed} />
+      <StatCard label="Due soon" value={dueSoon} />
+      <StatCard label="Overdue" value={overdue} />
+    </section>
+
+    <section className={styles.controls}>
+      <label className={styles.field}>Period<input type="month" value={period} onChange={event=>changePeriod(event.target.value)} /></label>
+      {loading?<small>Loading…</small>:null}
+    </section>
 
     {data&&<>
-    <section style={box}>
+    <section className={styles.panel}>
       <h2 style={{marginTop:0}}>Statutory calendar — {data.period}</h2>
       <div style={{display:"grid",gap:6}}>
         {data.calendar.map(item=><article key={`${item.code}:${item.period}`} style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr 1fr auto",gap:8,alignItems:"center",padding:"8px 0",borderBottom:"1px solid var(--ds-border)",fontSize:14}}>
           <span><b>{item.label}</b><br/><small style={{color:"var(--ds-text-muted)"}}>{item.authority} · {item.notes}</small></span>
           <span>due {item.dueDate}</span>
-          <span style={{color:statusColor[item.status]}}>{item.status.replaceAll("_"," ")}{item.status!=="filed"&&item.daysToDue>=0?` · T-${item.daysToDue}`:""}</span>
+          <span><Badge tone={statusTone(item.status)}>{item.status.replaceAll("_"," ")}{item.status!=="filed"&&item.daysToDue>=0?` · T-${item.daysToDue}`:""}</Badge></span>
           <span>{item.acknowledgementRef?`ACK ${item.acknowledgementRef}`:"—"}</span>
-          <span>{item.status!=="filed"&&item.code!=="board_approval"&&<button disabled={busy} onClick={()=>recordFiling(item.code)}>Record filing</button>}</span>
+          <span>{item.status!=="filed"&&item.code!=="board_approval"&&<Button size="sm" variant="secondary" disabled={busy} onClick={()=>recordFiling(item.code)}>Record filing</Button>}</span>
         </article>)}
       </div>
-      <p><button disabled={busy} onClick={()=>void act({action:"run_reminders"},"Reminder sweep completed — due obligations raised as finance alerts")}>Run reminder sweep now</button> <small style={{color:"var(--ds-text-muted)"}}>Also runs automatically every scheduler cycle; T-7 and closer become finance staff alerts, overdue become critical.</small></p>
+      <p><Button size="sm" disabled={busy} onClick={()=>void act({action:"run_reminders"},"Reminder sweep completed — due obligations raised as finance alerts")}>Run reminder sweep now</Button> <small style={{color:"var(--ds-text-muted)"}}>Also runs automatically every scheduler cycle; T-7 and closer become finance staff alerts, overdue become critical.</small></p>
     </section>
 
-    {close&&<section style={box}>
+    {close&&<section className={styles.panel}>
       <h2 style={{marginTop:0}}>Monthly close — {close.period} <em style={{fontStyle:"normal",fontSize:13,padding:"2px 10px",borderRadius:12,background:close.status==="closed"?"#dff3e7":close.status==="ready"?"#fff6df":"#f3f4f6"}}>{close.status.toUpperCase()}</em></h2>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10,marginBottom:12}}>
         <article><small>Revenue</small><br/><b>{money(close.revenue.total)}</b><br/><small>{close.revenue.bookingCount} bookings · {close.revenue.foodOrderCount} food orders</small></article>
@@ -89,17 +104,17 @@ export default function FinanceCompliancePage(){
         </label>)}
       </div>
       <div style={{display:"flex",gap:10,marginTop:12,flexWrap:"wrap"}}>
-        {!close.boardApproval.approved&&<button disabled={busy} onClick={()=>{const minutes=window.prompt("Board minutes reference (optional)")||undefined;void act({action:"board_approve",minutesReference:minutes},"Board approval recorded");}}>Record board approval</button>}
-        {close.status==="ready"&&<button disabled={busy} onClick={()=>{if(window.confirm(`Close and LOCK ${close.period}? Corrections then happen in the next period.`))void act({action:"close_month"},`${close.period} closed and locked`);}}>Close & lock month</button>}
+        {!close.boardApproval.approved&&<Button size="sm" variant="secondary" disabled={busy} onClick={()=>{const minutes=window.prompt("Board minutes reference (optional)")||undefined;void act({action:"board_approve",minutesReference:minutes},"Board approval recorded");}}>Record board approval</Button>}
+        {close.status==="ready"&&<Button size="sm" variant="secondary" disabled={busy} onClick={()=>{if(window.confirm(`Close and LOCK ${close.period}? Corrections then happen in the next period.`))void act({action:"close_month"},`${close.period} closed and locked`);}}>Close & lock month</Button>}
         {close.status==="closed"&&<small>Closed by {close.closedBy} — locked; corrections post in the next open period.</small>}
       </div>
     </section>}
 
-    <section style={box}>
+    <section className={styles.panel}>
       <h2 style={{marginTop:0}}>TDS — {data.period}</h2>
-      <p><button disabled={busy} onClick={()=>void act({action:"compute_tds"},"TDS recomputed from payroll + payouts")}>Recompute from source data</button>
+      <p><Button size="sm" variant="secondary" disabled={busy} onClick={()=>void act({action:"compute_tds"},"TDS recomputed from payroll + payouts")}>Recompute from source data</Button>
       {data.tds.deposit?<small style={{marginLeft:10}}>Deposited: {money(data.tds.deposit.amount)} · challan {data.tds.deposit.challan_reference}</small>
-      :<button disabled={busy||!close||close.tds.total<=0} style={{marginLeft:10}} onClick={()=>{const challan=window.prompt("ITNS-281 challan reference?");if(challan)void act({action:"record_tds_deposit",challanReference:challan,amount:close?.tds.total},"TDS deposit recorded");}}>Record deposit ({money(close?.tds.total??0)})</button>}</p>
+      :<Button size="sm" variant="secondary" disabled={busy||!close||close.tds.total<=0} onClick={()=>{const challan=window.prompt("ITNS-281 challan reference?");if(challan)void act({action:"record_tds_deposit",challanReference:challan,amount:close?.tds.total},"TDS deposit recorded");}}>Record deposit ({money(close?.tds.total??0)})</Button>}</p>
       <div style={{display:"grid",gap:4,fontSize:14}}>
         <div style={{display:"grid",gridTemplateColumns:"80px 1fr 1fr 80px 1fr 1fr",gap:8,fontWeight:700,color:"var(--ds-text-muted)"}}><span>Section</span><span>Deductee</span><span>Base</span><span>Rate</span><span>TDS</span><span>PAN</span></div>
         {data.tds.deductions.length===0&&<p>No deductions computed for this period yet.</p>}
@@ -108,14 +123,14 @@ export default function FinanceCompliancePage(){
         </div>)}
       </div>
       <h3>Quarterly returns</h3>
-      <p><button disabled={busy} onClick={()=>{const fy=window.prompt("FY label (e.g. FY2026-27)?");const quarter=Number(window.prompt("Quarter (1-4)?"));const form=window.prompt("Form (24Q or 26Q)?");if(fy&&quarter&&form)void act({action:"prepare_tds_return",fyLabel:fy,quarter,form:form.toUpperCase()},"Quarterly return prepared");}}>Prepare quarterly return</button></p>
+      <p><Button size="sm" variant="secondary" disabled={busy} onClick={()=>{const fy=window.prompt("FY label (e.g. FY2026-27)?");const quarter=Number(window.prompt("Quarter (1-4)?"));const form=window.prompt("Form (24Q or 26Q)?");if(fy&&quarter&&form)void act({action:"prepare_tds_return",fyLabel:fy,quarter,form:form.toUpperCase()},"Quarterly return prepared");}}>Prepare quarterly return</Button></p>
       <div style={{display:"grid",gap:4,fontSize:14}}>
         {data.tds.quarterlyReturns.map((item,index)=><div key={index} style={{display:"grid",gridTemplateColumns:"1fr 60px 60px 1fr 1fr 1fr 1fr",gap:8,padding:"4px 0",borderBottom:"1px solid var(--ds-border)"}}>
           <span>{item.fy_label}</span><span>Q{item.quarter}</span><span>{item.form}</span><span>TDS {money(item.total_tds)}</span><span>Deposited {money(item.total_deposited)}</span><span>{item.status}{item.acknowledgement_ref?` · ${item.acknowledgement_ref}`:""}</span>
-          <span>{item.status==="prepared"&&<button disabled={busy} onClick={()=>{const ack=window.prompt("TRACES acknowledgement reference?");if(ack)void act({action:"file_tds_return",fyLabel:item.fy_label,quarter:item.quarter,form:item.form,acknowledgementRef:ack},"Return marked filed");}}>Mark filed</button>}</span>
+          <span>{item.status==="prepared"&&<Button size="sm" variant="secondary" disabled={busy} onClick={()=>{const ack=window.prompt("TRACES acknowledgement reference?");if(ack)void act({action:"file_tds_return",fyLabel:item.fy_label,quarter:item.quarter,form:item.form,acknowledgementRef:ack},"Return marked filed");}}>Mark filed</Button>}</span>
         </div>)}
       </div>
     </section>
     </>}
-  </main>;
+  </OpsShell>;
 }

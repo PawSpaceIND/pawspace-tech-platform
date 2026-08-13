@@ -1,23 +1,115 @@
 "use client";
-import Link from"next/link";
 import{useCallback,useEffect,useState}from"react";
+import{Badge,Button,EmptyState,StatCard}from"../../components/ui";
+import OpsShell from"../../components/ops-shell/OpsShell";
+import styles from"../team-console.module.css";
 
 type Thread=Record<string,unknown>&{id:string;customer_name?:string;customer_id?:string;status?:string;assigned_to?:string;lastMessage?:Record<string,unknown>|null;ticket?:Record<string,unknown>|null};
 type Conversation={thread:Record<string,unknown>;participants:Record<string,unknown>[];messages:Array<Record<string,unknown>&{payload?:Record<string,unknown>}>;assignments:Record<string,unknown>[]};
-const box={background:"white",border:"1px solid #e5dcef",borderRadius:14};
-const label=(value:unknown)=>String(value||"—").replaceAll("_"," ");
 
-export default function CustomerExperiencePage(){const[threads,setThreads]=useState<Thread[]>([]),[selected,setSelected]=useState(""),[conversation,setConversation]=useState<Conversation|null>(null),[error,setError]=useState(""),[busy,setBusy]=useState(false);
- const loadThreads=useCallback(async()=>{const r=await fetch("/api/conversations?status=open",{cache:"no-store"});const b=await r.json() as {data?:{threads:Thread[]};error?:string};if(!r.ok)throw new Error(b.error||"Unable to load conversations");setThreads(b.data?.threads||[]);return b.data?.threads||[];},[]);
- const loadConversation=useCallback(async(id:string)=>{if(!id)return;const r=await fetch(`/api/conversations?threadId=${encodeURIComponent(id)}`,{cache:"no-store"});const b=await r.json() as {data?:Conversation;error?:string};if(!r.ok)throw new Error(b.error||"Unable to load conversation");setConversation(b.data||null);},[]);
- useEffect(()=>{let active=true;void fetch("/api/conversations?status=open",{cache:"no-store"}).then(async r=>{const b=await r.json() as {data?:{threads:Thread[]};error?:string};if(!r.ok)throw new Error(b.error||"Unable to load conversations");if(active){const next=b.data?.threads||[];setThreads(next);if(next[0])setSelected(String(next[0].id));}}).catch(e=>{if(active)setError(e instanceof Error?e.message:"Unable to load conversations")});return()=>{active=false}},[]);
- useEffect(()=>{if(!selected)return;let active=true;void fetch(`/api/conversations?threadId=${encodeURIComponent(selected)}`,{cache:"no-store"}).then(async r=>{const b=await r.json() as {data?:Conversation;error?:string};if(!r.ok)throw new Error(b.error||"Unable to load conversation");if(active)setConversation(b.data||null)}).catch(e=>{if(active)setError(e instanceof Error?e.message:"Unable to load conversation")});return()=>{active=false}},[selected]);
- async function act(action:string,payload:Record<string,unknown>){if(!selected)return;setBusy(true);setError("");try{const r=await fetch("/api/conversations",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action,threadId:selected,...payload})});const b=await r.json() as {error?:string};if(!r.ok)throw new Error(b.error||"Action failed");await Promise.all([loadThreads(),loadConversation(selected)]);}catch(e){setError(e instanceof Error?e.message:"Action failed")}finally{setBusy(false)}}
- return <main style={{minHeight:"100vh",background:"#f7f4fb",padding:28,fontFamily:"Arial, sans-serif",color:"#24133f"}}><div style={{maxWidth:1450,margin:"0 auto"}}>
-  <header style={{display:"flex",justifyContent:"space-between",gap:16,alignItems:"center",marginBottom:20}}><div><small style={{fontWeight:800,color:"#6c39a8"}}>PAWSPACE TEAM · CUSTOMER EXPERIENCE</small><h1 style={{margin:"7px 0"}}>Unified conversation & CX queue</h1><p style={{margin:0,color:"#70677a"}}>Canonical customer, booking, lead and ticket-linked threads. Live provider delivery remains adapter-gated.</p></div><div style={{display:"flex",gap:8}}><Link href="/team/sales" style={{padding:10,textDecoration:"none",...box}}>CRM</Link><Link href="/team" style={{padding:10,textDecoration:"none",background:"#4b168c",color:"white",borderRadius:10}}>Team home</Link></div></header>
-  {error&&<div style={{padding:12,marginBottom:14,background:"#fff1f1",border:"1px solid #efc2c2",borderRadius:10}}>{error}</div>}
-  <section style={{display:"grid",gridTemplateColumns:"minmax(320px,0.8fr) minmax(520px,1.5fr)",gap:16}}>
-   <aside style={{...box,overflow:"hidden"}}><div style={{padding:16,borderBottom:"1px solid #eee6f5"}}><b>Open conversations</b><div style={{fontSize:12,color:"#7a7183",marginTop:4}}>{threads.length} canonical thread(s)</div></div>{threads.length===0?<div style={{padding:24,color:"#7a7183"}}>No open canonical conversations.</div>:threads.map(t=><button key={String(t.id)} onClick={()=>setSelected(String(t.id))} style={{display:"block",width:"100%",textAlign:"left",padding:14,border:0,borderBottom:"1px solid #f0ebf4",background:selected===String(t.id)?"#f2ebfa":"white",cursor:"pointer"}}><strong>{String(t.customer_name||t.customer_id||"Customer")}</strong><div style={{fontSize:12,marginTop:4}}>{label(t.status)} · {String(t.assigned_to||"Unassigned")}</div><small style={{display:"block",marginTop:5,color:"#756c7d"}}>{t.ticket?`${label(t.ticket.priority)} ticket · ${String(t.ticket.subject||"")}`:t.lastMessage?`${label(t.lastMessage.channel)} · ${label(t.lastMessage.status)}`:"No message yet"}</small></button>)}</aside>
-   <article style={{...box,minHeight:620,display:"flex",flexDirection:"column"}}>{!conversation?<div style={{padding:30,color:"#756c7d"}}>Select a conversation.</div>:<><div style={{padding:16,borderBottom:"1px solid #eee6f5",display:"flex",justifyContent:"space-between",gap:12}}><div><small>{String(conversation.thread.id)}</small><h2 style={{margin:"4px 0"}}>{String(conversation.thread.customer_id||"Customer")}</h2><span>{label(conversation.thread.status)} · {String(conversation.thread.assigned_to||"Unassigned")}</span></div><div style={{display:"flex",gap:6,alignItems:"start"}}><button disabled={busy} onClick={()=>act("assign",{assignedTo:"CX Queue",reason:"Manual CX ownership"})}>Take ownership</button><button disabled={busy} onClick={()=>act("status",{status:"pending_customer",reason:"Awaiting customer response"})}>Await customer</button><button disabled={busy} onClick={()=>act("status",{status:"resolved",reason:"CX resolution recorded"})}>Resolve</button></div></div><div style={{padding:18,flex:1,overflowY:"auto"}}>{conversation.messages.length===0?<p style={{color:"#756c7d"}}>No canonical messages in this thread yet.</p>:conversation.messages.map(m=><div key={String(m.id)} style={{maxWidth:"78%",marginLeft:String(m.direction)==="outbound"?"auto":0,marginBottom:12,padding:12,borderRadius:12,background:String(m.direction)==="outbound"?"#eee3fa":"#f6f5f7"}}><small>{label(m.direction)} · {label(m.channel)} · {label(m.status)}</small><div style={{marginTop:6,whiteSpace:"pre-wrap"}}>{String(m.payload?.text||m.payload?.message||m.template_key||"Message")}</div><small style={{display:"block",marginTop:6,color:"#807688"}}>{new Date(Number(m.created_at||0)).toLocaleString("en-IN")}</small></div>)}</div><footer style={{padding:12,borderTop:"1px solid #eee6f5",fontSize:12,color:"#756c7d"}}>Outbound delivery is handled by PawSpace communication governance; this CX workspace does not bypass consent, quiet-hour, retry or adapter controls.</footer></>}</article>
+const label=(value:unknown)=>String(value||"—").replaceAll("_"," ");
+const when=(value:unknown)=>new Date(Number(value||0)).toLocaleString("en-IN",{timeZone:"Asia/Kolkata"});
+const tone=(status:unknown)=>String(status)==="resolved"?"success":String(status)==="pending_customer"?"warning":"info";
+
+export default function CustomerExperiencePage(){
+ const[threads,setThreads]=useState<Thread[]>([]);
+ const[selected,setSelected]=useState("");
+ const[conversation,setConversation]=useState<Conversation|null>(null);
+ const[error,setError]=useState("");
+ const[busy,setBusy]=useState(false);
+
+ const loadThreads=useCallback(async()=>{
+  const response=await fetch("/api/conversations?status=open",{cache:"no-store"});
+  const payload=await response.json().catch(()=>({}) as Record<string,unknown>) as {data?:{threads:Thread[]};error?:string};
+  if(!response.ok)throw new Error(payload.error||`Unable to load conversations (HTTP ${response.status})`);
+  const next=payload.data?.threads||[];setThreads(next);return next;
+ },[]);
+ const loadConversation=useCallback(async(id:string)=>{
+  if(!id)return;
+  const response=await fetch(`/api/conversations?threadId=${encodeURIComponent(id)}`,{cache:"no-store"});
+  const payload=await response.json().catch(()=>({}) as Record<string,unknown>) as {data?:Conversation;error?:string};
+  if(!response.ok)throw new Error(payload.error||`Unable to load conversation (HTTP ${response.status})`);
+  setConversation(payload.data||null);
+ },[]);
+
+ useEffect(()=>{let active=true;const timer=setTimeout(()=>{void loadThreads().then(next=>{if(active&&next[0])setSelected(String(next[0].id));}).catch(cause=>{if(active)setError(cause instanceof Error?cause.message:String(cause));});},0);return()=>{active=false;clearTimeout(timer);};},[loadThreads]);
+ useEffect(()=>{
+  if(!selected)return;
+  let active=true;
+  const timer=setTimeout(()=>{void loadConversation(selected).catch(cause=>{if(active)setError(cause instanceof Error?cause.message:String(cause));});},0);
+  return()=>{active=false;clearTimeout(timer);};
+ },[selected,loadConversation]);
+
+ async function act(action:string,payload:Record<string,unknown>){
+  if(!selected)return;
+  setBusy(true);setError("");
+  try{
+   const response=await fetch("/api/conversations",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action,threadId:selected,...payload})});
+   const body=await response.json().catch(()=>({}) as Record<string,unknown>) as {error?:string};
+   if(!response.ok)throw new Error(body.error||`Action failed (HTTP ${response.status})`);
+   await Promise.all([loadThreads(),loadConversation(selected)]);
+  }catch(cause){setError(cause instanceof Error?cause.message:String(cause));}
+  finally{setBusy(false);}
+ }
+
+ const unassigned=threads.filter(thread=>!String(thread.assigned_to||"").trim()).length;
+ const withTicket=threads.filter(thread=>thread.ticket).length;
+ const thread=conversation?.thread;
+
+ return <OpsShell
+    eyebrow="PawSpace team · Customer experience"
+    title="Unified conversation & CX queue"
+    description="Canonical customer, booking, lead and ticket-linked threads. Outbound delivery stays inside communication governance — this workspace never bypasses consent, quiet hours, retries or adapter gating."
+    actions={<Badge tone={unassigned?"warning":"success"} dot>{unassigned} unassigned</Badge>}
+    >
+
+  {error?<div className={`${styles.panel} ${styles.panelError}`}><b>{error}</b></div>:null}
+
+  <section className={styles.tiles}>
+   <StatCard label="Open threads" value={threads.length} />
+   <StatCard label="Unassigned" value={unassigned} />
+   <StatCard label="Ticket-linked" value={withTicket} />
+   <StatCard label="Messages in view" value={conversation?.messages.length??0} />
   </section>
- </div></main>}
+
+  <section className={styles.split}>
+   <aside className={styles.list}>
+    <div className={styles.listHead}><b>Open conversations</b><small>{threads.length} canonical</small></div>
+    {threads.length===0
+      ?<EmptyState title="No open canonical conversations" body="Threads appear here when a customer, booking, lead or ticket generates a message. Nothing is waiting on CX right now." />
+      :threads.map(row=><button key={String(row.id)} type="button" className={styles.listItem} aria-current={selected===String(row.id)} onClick={()=>setSelected(String(row.id))}>
+        <strong>{String(row.customer_name||row.customer_id||"Customer")}</strong>
+        <small>{label(row.status)} · {String(row.assigned_to||"Unassigned")}</small>
+        <small>{row.ticket?`${label(row.ticket.priority)} ticket · ${String(row.ticket.subject||"")}`:row.lastMessage?`${label(row.lastMessage.channel)} · ${label(row.lastMessage.status)}`:"No message yet"}</small>
+      </button>)}
+   </aside>
+
+   <article className={styles.thread}>
+    {!thread?<EmptyState title="Select a conversation" body="Pick a thread on the left to see its canonical message history and take ownership." />:<>
+     <div className={styles.threadHead}>
+      <div className={styles.stack}>
+       <small>{String(thread.id)}</small>
+       <h2>{String(thread.customer_name||thread.customer_id||"Customer")}</h2>
+       <div className={styles.actions}><Badge tone={tone(thread.status)}>{label(thread.status)}</Badge><small>{String(thread.assigned_to||"Unassigned")}</small></div>
+      </div>
+      <div className={styles.actions}>
+       <Button size="sm" variant="secondary" disabled={busy} onClick={()=>{void act("assign",{assignedTo:"CX Queue",reason:"Manual CX ownership"});}}>Take ownership</Button>
+       <Button size="sm" variant="ghost" disabled={busy} onClick={()=>{void act("status",{status:"pending_customer",reason:"Awaiting customer response"});}}>Await customer</Button>
+       <Button size="sm" disabled={busy} onClick={()=>{void act("status",{status:"resolved",reason:"CX resolution recorded"});}}>Resolve</Button>
+      </div>
+     </div>
+     <div className={styles.threadBody}>
+      {conversation.messages.length===0
+        ?<EmptyState title="No canonical messages yet" body="The thread exists, but nothing has been sent or received on it." />
+        :conversation.messages.map(message=><div key={String(message.id)} className={`${styles.bubble}${String(message.direction)==="outbound"?` ${styles.bubbleOut}`:""}`}>
+          <small>{label(message.direction)} · {label(message.channel)} · {label(message.status)}</small>
+          <p>{String(message.payload?.text||message.payload?.message||message.template_key||"Message")}</p>
+          <small>{when(message.created_at)}</small>
+        </div>)}
+     </div>
+     <footer className={styles.footnote} style={{padding:"12px 18px",marginTop:0}}>Outbound delivery is handled by PawSpace communication governance; this workspace does not bypass consent, quiet-hour, retry or adapter controls.</footer>
+    </>}
+   </article>
+  </section>
+ </OpsShell>;
+}

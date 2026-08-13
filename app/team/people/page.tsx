@@ -1,5 +1,102 @@
 "use client";
-import{useEffect,useState}from"react";
+import{useCallback,useEffect,useMemo,useState}from"react";
 import Link from"next/link";
+import{Badge,EmptyState,StatCard}from"../../components/ui";
+import OpsShell from"../../components/ops-shell/OpsShell";
+import styles from"../team-console.module.css";
+
 type Employee={id:string;employee_code:string;display_name:string;work_email:string;phone?:string|null;employment_status:string;title?:string|null;team_code?:string|null;cost_centre_code?:string|null;location_code?:string|null;sensitiveMasked:boolean};
-export default function PeoplePage(){const[employees,setEmployees]=useState<Employee[]>([]),[error,setError]=useState(""),[loading,setLoading]=useState(true);useEffect(()=>{let active=true;fetch("/api/people-foundation",{cache:"no-store"}).then(r=>r.json().then(p=>({r,p}))).then(({r,p})=>{if(!r.ok)throw new Error(p.error||"People load failed");if(active)setEmployees(p.data.employees||[]);}).catch(e=>{if(active)setError(e instanceof Error?e.message:String(e));}).finally(()=>{if(active)setLoading(false);});return()=>{active=false;};},[]);return <main style={{maxWidth:1180,margin:"0 auto",padding:"32px 20px",fontFamily:"system-ui,sans-serif"}}><p><Link href="/team">← Team</Link></p><p style={{fontWeight:800,letterSpacing:1}}>PAWSPACE · PEOPLE</p><h1>Employee and employment system of record</h1><p>Canonical employee identity, effective-dated employment, attendance/leave, payroll, governed incentives, Finance/statutory integration and source-derived reporting now share one People foundation for UAT. External statutory submission and live bank transmission remain disabled.</p><p><Link href="/team/people/time">Attendance & Leave →</Link> · <Link href="/team/people/payroll">Payroll →</Link> · <Link href="/team/people/incentives">Incentives →</Link> · <Link href="/team/people/service-incentives">Groomer/Trainer/Sales Incentives →</Link> · <Link href="/team/people/manager-dashboard">Manager/Founder Dashboard →</Link> · <Link href="/team/people/finance">Finance + Statutory →</Link> · <Link href="/team/people/reports">People Reports →</Link> · <Link href="/team/performance">Employee Performance →</Link></p>{error?<p>{error}</p>:null}<section style={{display:"grid",gap:10,marginTop:20}}>{employees.map(e=><article key={e.id} style={{border:"1px solid #ddd",borderRadius:12,padding:16}}><div style={{display:"flex",justifyContent:"space-between",gap:12}}><div><small>{e.employee_code} · {e.employment_status}</small><h2 style={{margin:"4px 0"}}>{e.display_name}</h2></div><code>{e.id}</code></div><p><b>Role:</b> {e.title||"Configuration required"} · <b>Team:</b> {e.team_code||"Configuration required"}</p><p><b>Work email:</b> {e.work_email} · <b>Phone:</b> {e.phone||"Not available"}</p><p><b>Cost centre:</b> {e.cost_centre_code||"Configuration required"} · <b>Location:</b> {e.location_code||"Configuration required"}</p></article>)}</section>{loading?<p>Loading People directory…</p>:null}<footer style={{marginTop:24}}><b>People Gates 1–6:</b> IMPLEMENTED FOR UAT · <b>External statutory/live bank:</b> NOT ENABLED · <b>Production ready:</b> NO</footer></main>}
+
+const WORKSPACES=[
+ ["/team/people/time","Attendance & leave"],
+ ["/team/people/payroll","Payroll"],
+ ["/team/people/incentives","Incentives"],
+ ["/team/people/service-incentives","Groomer / trainer / sales incentives"],
+ ["/team/people/manager-dashboard","Manager & founder dashboard"],
+ ["/team/people/finance","Finance + statutory"],
+ ["/team/people/reports","People reports"],
+ ["/team/performance","Employee performance"],
+] as const;
+
+// A field the HR record has never been given reads as "not set" rather than as a demand on the reader.
+const value=(input:unknown)=>{const text=String(input??"").trim();return text?{text,set:true}:{text:"not set",set:false};};
+
+export default function PeoplePage(){
+ const[employees,setEmployees]=useState<Employee[]>([]);
+ const[error,setError]=useState("");
+ const[loading,setLoading]=useState(true);
+ const[query,setQuery]=useState("");
+
+ const load=useCallback(async()=>{
+  try{
+   const response=await fetch("/api/people-foundation",{cache:"no-store"});
+   const payload=await response.json().catch(()=>({}) as Record<string,unknown>) as {data?:{employees?:Employee[]};error?:string};
+   if(!response.ok)throw new Error(payload.error||`People load failed (HTTP ${response.status})`);
+   setEmployees(payload.data?.employees||[]);setError("");
+  }catch(cause){setError(cause instanceof Error?cause.message:String(cause));}
+  finally{setLoading(false);}
+ },[]);
+ useEffect(()=>{const timer=setTimeout(()=>{void load();},0);return()=>clearTimeout(timer);},[load]);
+
+ const shown=useMemo(()=>{
+  const needle=query.trim().toLowerCase();
+  if(!needle)return employees;
+  return employees.filter(row=>[row.display_name,row.employee_code,row.work_email,row.team_code,row.title].some(field=>String(field||"").toLowerCase().includes(needle)));
+ },[employees,query]);
+ const active=employees.filter(row=>row.employment_status==="active").length;
+ const unconfigured=employees.filter(row=>!row.title||!row.team_code).length;
+
+ return <OpsShell
+    eyebrow="PAWSPACE · PEOPLE"
+    title="Employee and employment system of record"
+    description="Canonical employee identity, effective-dated employment, attendance and leave, payroll, governed incentives, finance/statutory integration and source-derived reporting share one People foundation. External statutory submission and live bank transmission remain disabled."
+    actions={<Badge tone={active?"success":"warning"} dot>{active} active</Badge>}
+    >
+
+  {error?<div className={`${styles.panel} ${styles.panelError}`}><b>{error}</b></div>:null}
+
+  <section className={styles.tiles}>
+   <StatCard label="Employees" value={employees.length} />
+   <StatCard label="Active" value={active} />
+   <StatCard label="Awaiting role or team" value={unconfigured} meta="HR fields not set" />
+   <StatCard label="Sensitive fields" value={employees.some(row=>row.sensitiveMasked)?"masked":"visible"} />
+  </section>
+
+  <section className={styles.panel}>
+   <div className={styles.panelHead}><h2>People workspaces</h2></div>
+   <nav className={styles.nav} aria-label="People workspaces">{WORKSPACES.map(([href,label])=><Link key={href} href={href}>{label}</Link>)}</nav>
+  </section>
+
+  <section className={styles.panel}>
+   <label className={styles.field}>Find someone<input value={query} onChange={event=>setQuery(event.target.value)} placeholder="name, code, email, team or role" /></label>
+  </section>
+
+  {loading?<EmptyState title="Loading the employee record" body="Reading the canonical People foundation…" />
+   :shown.length===0?<EmptyState title={employees.length?`No one matches “${query}”`:"No employees on record yet"} body={employees.length?"Clear the search to see the full directory.":"Employees appear here once they exist in the canonical People foundation."} />
+   :<div className={styles.recordList}>{shown.map(row=>{
+     const title=value(row.title),team=value(row.team_code),cost=value(row.cost_centre_code),location=value(row.location_code),phone=value(row.phone);
+     return <article key={row.id} className={styles.record}>
+      <div className={styles.recordHead}>
+       <div className={styles.stack}>
+        <small>{row.employee_code} · <Badge tone={row.employment_status==="active"?"success":"neutral"}>{row.employment_status}</Badge></small>
+        <h3>{row.display_name}</h3>
+       </div>
+       <code className={styles.muted}>{row.id}</code>
+      </div>
+      <div className={styles.recordMeta}>
+       <span><b>Role:</b> <span className={title.set?"":styles.muted}>{title.text}</span></span>
+       <span><b>Team:</b> <span className={team.set?"":styles.muted}>{team.text}</span></span>
+       <span><b>Work email:</b> {row.work_email}</span>
+       <span><b>Phone:</b> <span className={phone.set?"":styles.muted}>{phone.text}</span></span>
+       <span><b>Cost centre:</b> <span className={cost.set?"":styles.muted}>{cost.text}</span></span>
+       <span><b>Location:</b> <span className={location.set?"":styles.muted}>{location.text}</span></span>
+      </div>
+     </article>;
+   })}</div>}
+
+  <footer className={styles.footnote}>
+   Sensitive fields are masked unless the actor holds the permission to see them.<br />
+   <b>People Gates 1–6:</b> IMPLEMENTED FOR UAT · <b>External statutory/live bank:</b> NOT ENABLED · <b>Production ready:</b> NO
+  </footer>
+ </OpsShell>;
+}
