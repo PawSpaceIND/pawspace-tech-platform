@@ -1,4 +1,5 @@
 import{ensureBoardingStayLifecycleTables}from"./boarding-stay-lifecycle";
+import{collectedForBooking}from"./collected-funds";
 
 type Row=Record<string,unknown>;
 export type BoardingFinanceAction="request_cancel"|"approve_cancel"|"request_date_change"|"apply_date_change"|"record_refund"|"prepare_settlement"|"reconcile";
@@ -6,6 +7,26 @@ export type BoardingFinanceInput={bookingId:string;action:BoardingFinanceAction;
 
 const parse=(value:unknown)=>{try{return JSON.parse(String(value??"{}")) as Record<string,unknown>;}catch{return{};}};
 
+
+/**
+ * DATABASE-LEVEL refund uniqueness (PAWSPACE-QA-004 requirement 4).
+ *
+ * The atomic claim above is the correct fix; this is the floor under it, so one cancellation request
+ * cannot own two refund obligations even if the application logic regresses later. The key is the
+ * cancellation-request identity - not the human-supplied `reference`, which is NULL at insert and only
+ * filled in later by record_refund.
+ *
+ * Created outside the schema batch and tolerant of failure ON PURPOSE. A database that already contains
+ * duplicate refunds from before this fix cannot build the index, and throwing here would take every
+ * request on this module down rather than the one write that is actually unsafe. When that happens the
+ * duplicates must be reconciled by Finance and the index created afterwards; the claim still holds the
+ * invariant in the meantime. tests assert the index EXISTS on any clean database.
+ */
+async function ensureRefundLedgerUniqueness(db:D1Database,table:string){
+ await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS ${table}_one_refund_per_request ON ${table}(cancellation_request_id)`).run().catch((error:unknown)=>{
+  console.error(`${table}: could not create the one-refund-per-request index; existing duplicate refunds must be reconciled first.`,error instanceof Error?error.message:String(error));
+ });
+}
 export async function ensureBoardingFinanceTables(db:D1Database){await ensureBoardingStayLifecycleTables(db);await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,amount_due_now REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',method TEXT NOT NULL,mode TEXT NOT NULL,status TEXT NOT NULL,gateway TEXT NOT NULL DEFAULT 'uat_sandbox',idempotency_key TEXT NOT NULL UNIQUE,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS boarding_finance_action_keys (idempotency_key TEXT PRIMARY KEY,booking_id TEXT NOT NULL,action TEXT NOT NULL,result_json TEXT NOT NULL,created_at INTEGER NOT NULL)"),
@@ -17,7 +38,7 @@ export async function ensureBoardingFinanceTables(db:D1Database){await ensureBoa
  db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_boarding_refund_reference ON boarding_refund_ledger(reference) WHERE reference IS NOT NULL"),
  db.prepare("CREATE TABLE IF NOT EXISTS boarding_host_settlement_ledger (booking_id TEXT PRIMARY KEY,stay_id TEXT NOT NULL,provider_id TEXT NOT NULL,gross_booking_value REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',base_payout REAL,add_on_payout REAL,travel_allowance REAL,incentives REAL,penalties REAL,cash_adjustment REAL,payout_amount REAL,payout_rule_status TEXT NOT NULL DEFAULT 'rule_pending',tax_status TEXT NOT NULL DEFAULT 'configuration_required',approval_status TEXT NOT NULL DEFAULT 'not_ready',payout_status TEXT NOT NULL DEFAULT 'not_instructed',eligible_at INTEGER,approved_by TEXT,payout_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS boarding_finance_reconciliation (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,booking_total REAL NOT NULL,amount_due_now REAL NOT NULL,refund_total REAL NOT NULL,net_customer_amount REAL NOT NULL,settlement_amount REAL,refund_state TEXT NOT NULL,settlement_state TEXT NOT NULL,tax_state TEXT NOT NULL,status TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',checked_by TEXT NOT NULL,created_at INTEGER NOT NULL)"),
- ]);}
+ ]);await ensureRefundLedgerUniqueness(db,"boarding_refund_ledger");}
 
 async function context(db:D1Database,bookingId:string){await ensureBoardingFinanceTables(db);const row=await db.prepare("SELECT b.id booking_id,b.customer_id,b.provider_id,b.total_amount,p.amount_due_now,b.status booking_status,p.status payment_status,b.package_code,b.package_name,b.scheduled_start,b.scheduled_end,s.id stay_id,s.status stay_status,s.check_in_status,s.check_out_status,s.host_provider_id,s.pet_count,s.city_id,s.zone_id,s.check_in_at,s.check_out_at FROM canonical_bookings b JOIN boarding_stays s ON s.booking_id=b.id LEFT JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=? AND b.service_code='boarding'").bind(bookingId).first<Row>();if(!row)throw new Response("Canonical Boarding booking not found",{status:404});return row;}
 async function prior(db:D1Database,key:string){const row=await db.prepare("SELECT result_json FROM boarding_finance_action_keys WHERE idempotency_key=?").bind(key).first<Row>();return row?parse(row.result_json):null;}
@@ -36,7 +57,16 @@ export async function mutateBoardingFinance(db:D1Database,input:BoardingFinanceI
  }
 
  if(input.action==="approve_cancel"){
-  if(stayStatus==="in_progress"||String(stay.check_in_status)==="complete")throw new Response("In-progress Boarding cancellation requires an Operations incident workflow; automatic cancellation is blocked",{status:409});const request=await db.prepare("SELECT * FROM boarding_cancellation_requests WHERE booking_id=? AND status='policy_review_required' ORDER BY created_at DESC LIMIT 1").bind(input.bookingId).first<Row>();if(!request)throw new Response("No cancellation request is awaiting policy review",{status:409});if(String(request.requested_by)===String(input.actorId))throw new Response("Segregation of duties: the cancellation requester cannot approve their own refund",{status:409});const amount=Number(input.approvedRefundAmount);if(!Number.isFinite(amount)||amount<0||amount>Number(stay.total_amount))throw new Response("Approved refund amount must be explicitly supplied within the captured booking value",{status:409});const why=reason(input),refundId=amount>0?crypto.randomUUID():null;const statements=[db.prepare("UPDATE boarding_cancellation_requests SET status='approved',approved_refund_amount=?,decision_by=?,decision_reason=?,updated_at=? WHERE id=? AND status='policy_review_required'").bind(amount,input.actorId,why,now,request.id),db.prepare("UPDATE boarding_stays SET status='cancelled',updated_at=? WHERE id=?").bind(now,stay.stay_id),db.prepare("UPDATE canonical_bookings SET status='cancelled',updated_at=? WHERE id=?").bind(now,input.bookingId),db.prepare("UPDATE boarding_capacity_locks SET status='released',updated_at=? WHERE stay_id=? AND status='active'").bind(now,stay.stay_id),db.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=(SELECT schedule_group_id FROM canonical_bookings WHERE id=?) AND status NOT IN ('completed','cancelled')").bind(input.bookingId)];if(refundId)statements.push(db.prepare("INSERT INTO boarding_refund_ledger (id,booking_id,cancellation_request_id,amount,currency,status,reference,policy_source,created_by,created_at,updated_at) VALUES (?,?,?,?,'INR','sandbox_pending',NULL,'explicit_staff_approval',?,?,?)").bind(refundId,input.bookingId,request.id,amount,input.actorId,now,now));await db.batch(statements);await db.prepare("INSERT INTO boarding_stay_events (id,stay_id,booking_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),stay.stay_id,input.bookingId,"cancelled",input.actorId,JSON.stringify({requestId:request.id,approvedRefundAmount:amount,refundId,policySource:"explicit_staff_approval"}),now).run();return remember(db,input,{bookingId:input.bookingId,status:"cancelled",approvedRefundAmount:amount,refundId,refundStatus:refundId?"sandbox_pending":"not_required",capacityReleased:true});
+  if(stayStatus==="in_progress"||String(stay.check_in_status)==="complete")throw new Response("In-progress Boarding cancellation requires an Operations incident workflow; automatic cancellation is blocked",{status:409});const request=await db.prepare("SELECT * FROM boarding_cancellation_requests WHERE booking_id=? AND status='policy_review_required' ORDER BY created_at DESC LIMIT 1").bind(input.bookingId).first<Row>();if(!request)throw new Response("No cancellation request is awaiting policy review",{status:409});if(String(request.requested_by)===String(input.actorId))throw new Response("Segregation of duties: the cancellation requester cannot approve their own refund",{status:409});const amount=Number(input.approvedRefundAmount),collected=await collectedForBooking(db,input.bookingId);if(!Number.isFinite(amount)||amount<0||amount>collected)throw new Response(`Approved refund cannot exceed the amount actually collected for this booking (collected \u20b9${collected}). Boarding refunds are capped by captured funds, never by the booking total.`,{status:409});const why=reason(input),refundId=amount>0?crypto.randomUUID():null;
+  // ATOMIC CLAIM (PAWSPACE-QA-004). This UPDATE used to sit inside the same batch as the refund-ledger
+  // INSERT, and the INSERT was conditional only on `amount > 0`. Two approvers who both read the request
+  // while it was still policy_review_required therefore both reached the batch and both inserted a
+  // refund: QA reproduced 2 ledger rows totalling Rs 8,000 for one approved Rs 4,000 refund, with both
+  // calls returning success. The claim now runs FIRST and alone, and only the approver whose UPDATE
+  // actually changed a row is allowed to write anything further.
+  const claim=await db.prepare("UPDATE boarding_cancellation_requests SET status='approved',approved_refund_amount=?,decision_by=?,decision_reason=?,updated_at=? WHERE id=? AND status='policy_review_required'").bind(amount,input.actorId,why,now,request.id).run();
+  if(Number(claim?.meta?.changes||0)!==1)throw new Response("This Boarding cancellation has already been decided by another approver",{status:409});
+  const statements=[db.prepare("UPDATE boarding_stays SET status='cancelled',updated_at=? WHERE id=?").bind(now,stay.stay_id),db.prepare("UPDATE canonical_bookings SET status='cancelled',updated_at=? WHERE id=?").bind(now,input.bookingId),db.prepare("UPDATE boarding_capacity_locks SET status='released',updated_at=? WHERE stay_id=? AND status='active'").bind(now,stay.stay_id),db.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=(SELECT schedule_group_id FROM canonical_bookings WHERE id=?) AND status NOT IN ('completed','cancelled')").bind(input.bookingId)];if(refundId)statements.push(db.prepare("INSERT INTO boarding_refund_ledger (id,booking_id,cancellation_request_id,amount,currency,status,reference,policy_source,created_by,created_at,updated_at) VALUES (?,?,?,?,'INR','sandbox_pending',NULL,'explicit_staff_approval',?,?,?)").bind(refundId,input.bookingId,request.id,amount,input.actorId,now,now));await db.batch(statements);await db.prepare("INSERT INTO boarding_stay_events (id,stay_id,booking_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),stay.stay_id,input.bookingId,"cancelled",input.actorId,JSON.stringify({requestId:request.id,approvedRefundAmount:amount,refundId,policySource:"explicit_staff_approval"}),now).run();return remember(db,input,{bookingId:input.bookingId,status:"cancelled",approvedRefundAmount:amount,refundId,refundStatus:refundId?"sandbox_pending":"not_required",capacityReleased:true});
  }
 
  if(input.action==="record_refund"){

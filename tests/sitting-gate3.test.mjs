@@ -3,7 +3,12 @@ import assert from"node:assert/strict";
 import{readFile}from"node:fs/promises";
 const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
 
-test("Sitting Gate 3 keeps cancellation refund policy explicit and auditable",async()=>{const source=await read("lib/sitting-finance-governance.ts");assert.match(source,/sitting_cancellation_requests/);assert.match(source,/policy_review_required/);assert.match(source,/refundPolicy:\"configuration_required\"/);assert.match(source,/approvedRefundAmount/);assert.match(source,/explicit_staff_approval/);assert.match(source,/In-progress Sitting cancellation requires an Operations incident workflow/);assert.match(source,/UPDATE scheduling_reservations SET status='cancelled'/);});
+test("Sitting Gate 3 keeps cancellation refund policy explicit and auditable",async()=>{const source=await read("lib/sitting-finance-governance.ts");assert.match(source,/sitting_cancellation_requests/);assert.match(source,/policy_review_required/);assert.match(source,/refundPolicy:\"configuration_required\"/);assert.match(source,/explicit_staff_approval/);
+ // PAWSPACE-QA-001. The old `assert.match(source,/approvedRefundAmount/)` passed whether the refund was
+ // capped by captured funds or by the booking price, next to a message claiming the former while the code
+ // did the latter. Behaviour is asserted in tests/refund-cap-collected-funds.test.mjs; this is the guard.
+ assert.match(source,/collectedForBooking/,"the refund ceiling must come from the shared collected-funds invariant");
+ assert.doesNotMatch(source,/amount>Number\(booking\.total_amount\)/,"a refund must never be capped by the booking price");assert.match(source,/In-progress Sitting cancellation requires an Operations incident workflow/);assert.match(source,/UPDATE scheduling_reservations SET status='cancelled'/);});
 
 test("Sitting Gate 3 refund ledger is sandbox-only and replay resistant",async()=>{const source=await read("lib/sitting-finance-governance.ts");assert.match(source,/sitting_finance_action_keys/);assert.match(source,/sitting_refund_ledger/);assert.match(source,/sandbox_pending/);assert.match(source,/sandbox_recorded/);assert.match(source,/idx_sitting_refund_reference/);assert.match(source,/Refund reference was already used/);assert.doesNotMatch(source,/razorpay/i);});
 
