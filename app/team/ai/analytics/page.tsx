@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
-import { StatCard, TeamAlert, TeamSection, TeamShell, TeamStatGrid, TeamTable } from "../../../components/ui";
+import { StatCard } from "../../../components/ui";
+import OpsShell from "../../../components/ops-shell/OpsShell";
+import styles from "../../team-console.module.css";
 
 /**
  * AI analytics.
@@ -10,7 +12,11 @@ import { StatCard, TeamAlert, TeamSection, TeamShell, TeamStatGrid, TeamTable } 
  * screen was a title on an empty background with no loading state, no error surface and no way to
  * navigate anywhere. It also threw away most of what /api/ai-analytics returns (the channel, intent,
  * handoff-reason, policy, delivery and voice breakdowns) and exposed none of the filters the API
- * already supports. All of that is now on screen, on the shared Team shell.
+ * already supports. All of that is now on screen.
+ *
+ * It renders inside OpsShell on team-console.module.css, the same chrome and content vocabulary as
+ * every other internal console. An earlier version of this fix shipped its own shell, which was
+ * consolidated away once OpsShell became the established pattern.
  */
 
 type Breakdown = { count: number };
@@ -31,12 +37,15 @@ const DASH = "—";
 const CHANNELS = [["", "All channels"], ["whatsapp", "WhatsApp"], ["chat", "Chat"], ["voice", "Voice"]] as const;
 const pretty = (value: string) => value.replaceAll("_", " ");
 const field = { padding: 9, borderRadius: 8, border: "1px solid #e5dcef", background: "white" } as const;
-const NAV = [
-  { href: "/team/ai", label: "AI home" },
-  { href: "/team/ai/handoff", label: "Handoff queue" },
-  { href: "/team/ai/configuration", label: "Configuration" },
-  { href: "/team", label: "Team home", primary: true },
-];
+
+/** A breakdown table in the console's table vocabulary, that states when it is empty. */
+function Rows({ head, rows, empty }: { head: string[]; rows: Array<Array<string | number>>; empty: string }) {
+  if (rows.length === 0) return <p className={styles.muted}>{empty}</p>;
+  return <div className={styles.tableWrap}><table className={styles.table}>
+    <thead><tr>{head.map((cell) => <th key={cell}>{cell}</th>)}</tr></thead>
+    <tbody>{rows.map((row) => <tr key={String(row[0])}>{row.map((cell, index) => <td key={index}>{cell}</td>)}</tr>)}</tbody>
+  </table></div>;
+}
 
 export default function AiAnalyticsPage() {
   const [data, setData] = useState<Data | null>(null);
@@ -78,15 +87,17 @@ export default function AiAnalyticsPage() {
   const busy = loading && !data;
 
   return (
-    <TeamShell
-      eyebrow="PAWSPACE TEAM · AI ANALYTICS"
+    <OpsShell
+      eyebrow="PAWSPACE · AI ANALYTICS"
       title="How the assistant is actually performing"
       description="Source-derived operational analytics only: every figure is counted from canonical AI turns. Unsupported attribution, inferred CSAT and fabricated business KPIs are deliberately omitted — the cards that say so mean it."
-      nav={NAV}
-      status={error ? <TeamAlert>{error}</TeamAlert> : undefined}
     >
-      <TeamSection title="Filter" note="The API supports these; nothing on this page previously exposed them.">
-        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+      {error ? <div className={`${styles.panel} ${styles.panelError}`}><b>{error}</b></div> : null}
+
+      <section className={styles.panel}>
+        <div className={styles.panelHead}><h2>Filter</h2></div>
+        <p className={styles.panelNote}>The API supports these; nothing on this page previously exposed them.</p>
+        <div className={styles.controls}>
           <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#746b7d" }}>Channel
             <select value={channel} onChange={(event) => setChannel(event.target.value)} style={{ ...field, minWidth: 160 }}>
               {CHANNELS.map(([value, text]) => <option key={value} value={value}>{text}</option>)}
@@ -99,11 +110,11 @@ export default function AiAnalyticsPage() {
             <input type="date" value={to} onChange={(event) => setTo(event.target.value)} style={field} />
           </label>
           <button onClick={() => { setChannel(""); setFrom(""); setTo(""); }} style={{ ...field, cursor: "pointer", fontWeight: 700 }}>Clear</button>
-          {loading && <span style={{ color: "#746b7d", fontSize: 13 }}>Loading…</span>}
+          {loading && <span className={styles.muted}>Loading…</span>}
         </div>
-      </TeamSection>
+      </section>
 
-      <TeamStatGrid>
+      <section className={styles.tiles}>
         <StatCard label="AI turns" value={busy ? "…" : data?.volume.turns ?? DASH} meta="canonical governed turns" />
         <StatCard label="Canonical threads" value={busy ? "…" : data?.volume.threads ?? DASH} meta="conversations touched" />
         <StatCard label="Containment" value={busy ? "…" : containment} meta="turns not escalated — not a resolution claim" />
@@ -116,21 +127,43 @@ export default function AiAnalyticsPage() {
         <StatCard label="Attributed conversion" value="Not claimed" meta="needs explicit attribution" />
         <StatCard label="First response" value="Not attributable yet" meta="needs canonical response timing" />
         <StatCard label="Resolution time" value="Not attributable yet" meta="needs canonical thread resolution" />
-      </TeamStatGrid>
+      </section>
 
-      {!data && !error && !loading && <TeamAlert tone="info">No AI analytics were returned for this filter.</TeamAlert>}
+      {!data && !error && !loading && <div className={styles.panel}><p className={styles.muted}>No AI analytics were returned for this filter.</p></div>}
 
       {data && <>
-        <TeamSection title="By channel"><TeamTable head={["Channel", "Turns"]} rows={data.volume.byChannel.map((row) => [pretty(row.channel), row.count])} empty="No turns on any channel in this window." /></TeamSection>
-        <TeamSection title="By intent" note="Intent is a deterministic keyword heuristic, not a model probability."><TeamTable head={["Intent", "Turns", "Handed off"]} rows={data.volume.byIntent.map((row) => [pretty(row.intent), row.count, row.handoffs])} /></TeamSection>
-        <TeamSection title="Why the assistant handed over"><TeamTable head={["Reason", "Count", "Avg time to staff takeover"]} rows={data.handoff.byReason.map((row) => [pretty(row.reason), row.count, row.avgTakeoverMs == null ? "not taken over yet" : `${Math.round(row.avgTakeoverMs / 1000)}s`])} empty="No conversation has been escalated to a human." /></TeamSection>
-        <TeamSection title="Policy decisions" note="What the governance layer allowed on each turn."><TeamTable head={["Decision", "Turns"]} rows={data.policy.byDecision.map((row) => [pretty(row.decision), row.count])} /></TeamSection>
-        <TeamSection title="Voice calls"><TeamTable head={["Status", "Outcome", "Calls", "Live-agent transfers", "Reconnects"]} rows={data.voice.byOutcome.map((row) => [pretty(row.status), pretty(row.outcome), row.count, row.liveAgentTransfers, row.reconnects])} empty="No voice calls recorded." /></TeamSection>
-        <TeamSection title="Message delivery"><TeamTable head={["Event", "Count"]} rows={data.delivery.byStatus.map((row) => [pretty(row.status), row.count])} empty="No delivery events recorded — outbound delivery is queued, not live." /></TeamSection>
-        <TeamSection title="What each figure means" note="Written down so nobody has to guess what a number is claiming.">
-          <TeamTable head={["Figure", "Definition"]} rows={Object.entries(data.definitions).map(([key, text]) => [pretty(key), text])} />
-        </TeamSection>
+        <section className={styles.panel}>
+        <div className={styles.panelHead}><h2>By channel</h2></div>
+        <Rows head={["Channel", "Turns"]} rows={data.volume.byChannel.map((row) => [pretty(row.channel), row.count])} empty="No turns on any channel in this window." />
+      </section>
+        <section className={styles.panel}>
+        <div className={styles.panelHead}><h2>By intent</h2></div>
+        <p className={styles.panelNote}>Intent is a deterministic keyword heuristic, not a model probability.</p>
+        <Rows head={["Intent", "Turns", "Handed off"]} rows={data.volume.byIntent.map((row) => [pretty(row.intent), row.count, row.handoffs])} empty="Nothing recorded in this window." />
+      </section>
+        <section className={styles.panel}>
+        <div className={styles.panelHead}><h2>Why the assistant handed over</h2></div>
+        <Rows head={["Reason", "Count", "Avg time to staff takeover"]} rows={data.handoff.byReason.map((row) => [pretty(row.reason), row.count, row.avgTakeoverMs == null ? "not taken over yet" : `${Math.round(row.avgTakeoverMs / 1000)}s`])} empty="No conversation has been escalated to a human." />
+      </section>
+        <section className={styles.panel}>
+        <div className={styles.panelHead}><h2>Policy decisions</h2></div>
+        <p className={styles.panelNote}>What the governance layer allowed on each turn.</p>
+        <Rows head={["Decision", "Turns"]} rows={data.policy.byDecision.map((row) => [pretty(row.decision), row.count])} empty="Nothing recorded in this window." />
+      </section>
+        <section className={styles.panel}>
+        <div className={styles.panelHead}><h2>Voice calls</h2></div>
+        <Rows head={["Status", "Outcome", "Calls", "Live-agent transfers", "Reconnects"]} rows={data.voice.byOutcome.map((row) => [pretty(row.status), pretty(row.outcome), row.count, row.liveAgentTransfers, row.reconnects])} empty="No voice calls recorded." />
+      </section>
+        <section className={styles.panel}>
+        <div className={styles.panelHead}><h2>Message delivery</h2></div>
+        <Rows head={["Event", "Count"]} rows={data.delivery.byStatus.map((row) => [pretty(row.status), row.count])} empty="No delivery events recorded — outbound delivery is queued, not live." />
+      </section>
+        <section className={styles.panel}>
+        <div className={styles.panelHead}><h2>What each figure means</h2></div>
+        <p className={styles.panelNote}>Written down so nobody has to guess what a number is claiming.</p>
+        <Rows head={["Figure", "Definition"]} rows={Object.entries(data.definitions).map(([key, text]) => [pretty(key), text])} empty="Nothing recorded in this window." />
+      </section>
       </>}
-    </TeamShell>
+    </OpsShell>
   );
 }

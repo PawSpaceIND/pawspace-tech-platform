@@ -1,16 +1,22 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Badge, StatCard, TeamAlert, TeamFigures, TeamSection, TeamShell, TeamStatGrid, TeamTable } from "../../components/ui";
+import { Badge, StatCard } from "../../components/ui";
+import OpsShell from "../../components/ops-shell/OpsShell";
+import styles from "../team-console.module.css";
 
 /**
  * Revenue Mission Command Center.
  *
- * This page previously rendered as raw browser-default text — no shell, no cards, no navigation, no
- * loading or empty state — because it used no styling at all. Every number it shows was already
- * real; only the presentation was missing. It now uses the shared Team shell, so it looks and
- * behaves like the rest of the workspace, and the warnings the API returns are ranked by severity
- * instead of listed flat.
+ * This page used to render as raw browser-default text — no shell, no cards, no navigation, no
+ * loading or empty state — because it used no styling at all. Every number it shows was already real;
+ * only the presentation was missing.
+ *
+ * It renders inside OpsShell on team-console.module.css: the same chrome and content vocabulary as
+ * every other internal console, so a staff member moving between screens stays in one product. An
+ * earlier version of this fix shipped its own shell, which was consolidated away once OpsShell — with
+ * a persistent sidebar marking the active route, which the other never had — became the established
+ * pattern across nine consoles.
  */
 
 type Warning = { severity: string; code: string; message: string };
@@ -27,17 +33,11 @@ const money = (value: unknown) => `₹${Number(value || 0).toLocaleString("en-IN
 const RANK: Record<string, number> = { critical: 0, warning: 1, info: 2 };
 const TONE: Record<string, "danger" | "warning" | "info"> = { critical: "danger", warning: "warning", info: "info" };
 
-const NAV = [
-  { href: "/team/daily-revenue", label: "Daily revenue" },
-  { href: "/team/sales", label: "Sales & CRM" },
-  { href: "/team", label: "Team home", primary: true },
-];
-
 export default function RevenueMissionPage() {
   const [data, setData] = useState<Command | null>(null);
   const [error, setError] = useState("");
-  // Derived rather than set inside the effect — see the note in the AI analytics page: a synchronous
-  // setState in an effect causes cascading renders and is rejected by the React compiler.
+  // Derived rather than set inside the effect: a synchronous setState in an effect causes cascading
+  // renders and is rejected by the React compiler.
   const [settled, setSettled] = useState(false);
   const loading = !settled;
 
@@ -59,59 +59,70 @@ export default function RevenueMissionPage() {
   const target = Number(revenue?.target || 0), achieved = Number(revenue?.achieved || 0);
   const attained = target > 0 ? Math.round((achieved / target) * 100) : null;
   const blockers = warnings.filter((item) => item.severity === "critical").length;
+  const show = (value: unknown) => loading && !data ? "…" : money(value);
+
+  /** A labelled row of figures, in the console's own tile vocabulary. */
+  const figures = (items: Array<[string, string | number, string?]>) => (
+    <section className={styles.tiles}>
+      {items.map(([label, value, meta]) => <StatCard key={label} label={label} value={value} meta={meta} />)}
+    </section>
+  );
 
   return (
-    <TeamShell
-      eyebrow="PAWSPACE TEAM · REVENUE MISSION CONTROL · UAT ONLY"
+    <OpsShell
+      eyebrow="PAWSPACE · REVENUE MISSION CONTROL · UAT ONLY"
       title={data?.mission?.name || "Revenue Mission Command Center"}
       description="Target versus what the platform can actually prove was collected, the pipeline that has not converted yet, and the lead-execution queue behind both. UAT only — production readiness is reported, never assumed."
-      nav={NAV}
-      status={<>{error && <TeamAlert>{error}</TeamAlert>}<TeamAlert tone="info">Production ready: NO — this command centre reports UAT state, and every warning below is a real blocker rather than a placeholder.</TeamAlert></>}
+      actions={<Badge tone={blockers ? "danger" : "success"} dot>{blockers} critical blocker{blockers === 1 ? "" : "s"}</Badge>}
     >
-      <TeamStatGrid>
-        <StatCard label="Target" value={loading && !data ? "…" : money(revenue?.target)} meta={data?.mission?.cityId ? `city ${data.mission.cityId}` : "mission target"} />
-        <StatCard label="Achieved" value={loading && !data ? "…" : money(revenue?.achieved)} meta={attained == null ? `basis ${data?.mission?.revenueBasis || "—"}` : `${attained}% of target · basis ${data?.mission?.revenueBasis || "—"}`} trend={attained != null && attained >= 100 ? "up" : "none"} />
-        <StatCard label="Gap to target" value={loading && !data ? "…" : money(revenue?.gap)} meta={Number(revenue?.gap || 0) > 0 ? "still to close" : "target met"} trend={Number(revenue?.gap || 0) > 0 ? "down" : "up"} />
-        <StatCard label="Critical blockers" value={data ? blockers : "—"} meta={blockers > 0 ? "must be resolved before the mission is trustworthy" : "no critical blockers"} trend={blockers > 0 ? "down" : "up"} />
-      </TeamStatGrid>
+      {error ? <div className={`${styles.panel} ${styles.panelError}`}><b>{error}</b></div> : null}
 
-      <TeamSection title="Revenue truth" note="Achieved counts only what the payment records prove. Booked is what was sold; net collected is booked less refunds.">
-        <TeamFigures items={[
-          { label: "Booked", value: money(revenue?.booked) },
-          { label: "Collected", value: money(revenue?.collected), tone: "good" },
-          { label: "Refunded", value: money(revenue?.refunded), tone: Number(revenue?.refunded || 0) > 0 ? "bad" : "default" },
-          { label: "Net collected", value: money(revenue?.netCollected), tone: "good" },
-        ]} />
-      </TeamSection>
+      <section className={styles.tiles}>
+        <StatCard label="Target" value={show(revenue?.target)} meta={data?.mission?.cityId ? `city ${data.mission.cityId}` : "mission target"} />
+        <StatCard label="Achieved" value={show(revenue?.achieved)} meta={attained == null ? `basis ${data?.mission?.revenueBasis || "—"}` : `${attained}% of target · basis ${data?.mission?.revenueBasis || "—"}`} trend={attained != null && attained >= 100 ? "up" : "none"} />
+        <StatCard label="Gap to target" value={show(revenue?.gap)} meta={Number(revenue?.gap || 0) > 0 ? "still to close" : "target met"} trend={Number(revenue?.gap || 0) > 0 ? "down" : "up"} />
+        <StatCard label="Critical blockers" value={data ? blockers : "—"} meta={blockers > 0 ? "resolve before relying on the figures" : "no critical blockers"} trend={blockers > 0 ? "down" : "up"} />
+      </section>
 
-      <TeamSection title="Pipeline — not achieved revenue" note="Weighted applies each opportunity's own probability; suppressed and review-required rows are excluded from any target claim.">
-        <TeamFigures items={[
-          { label: "Weighted", value: money(pipeline?.weightedPipeline) },
-          { label: "Unweighted", value: money(pipeline?.unweightedPipeline) },
-          { label: "Ready", value: pipeline?.ready ?? 0 },
-          { label: "Suppressed", value: pipeline?.suppressed ?? 0 },
-          { label: "Review required", value: pipeline?.reviewRequired ?? 0 },
-        ]} />
-      </TeamSection>
+      <section className={styles.panel}>
+        <div className={styles.panelHead}><h2>Revenue truth</h2></div>
+        <p className={styles.panelNote}>Achieved counts only what the payment records prove. Booked is what was sold; net collected is booked less refunds.</p>
+        {figures([["Booked", show(revenue?.booked)], ["Collected", show(revenue?.collected)], ["Refunded", show(revenue?.refunded)], ["Net collected", show(revenue?.netCollected)]])}
+      </section>
 
-      <TeamSection title="Lead execution" note="The queue behind the pipeline. An SLA breach or an unacknowledged assignment is why revenue stalls before it reaches the pipeline at all.">
-        <TeamFigures items={[
-          { label: "Current assignments", value: queue?.currentAssignments ?? 0 },
-          { label: "Unassigned", value: queue?.unassigned ?? 0, tone: Number(queue?.unassigned || 0) > 0 ? "bad" : "default" },
-          { label: "Unacknowledged", value: queue?.unacknowledged ?? 0, tone: Number(queue?.unacknowledged || 0) > 0 ? "bad" : "default" },
-          { label: "SLA breached", value: queue?.slaBreached ?? 0, tone: Number(queue?.slaBreached || 0) > 0 ? "bad" : "default" },
-          { label: "Manager escalation due", value: queue?.managerEscalationDue ?? 0 },
-          { label: "Reassignment due", value: queue?.reassignmentDue ?? 0 },
-        ]} />
-      </TeamSection>
+      <section className={styles.panel}>
+        <div className={styles.panelHead}><h2>Pipeline — not achieved revenue</h2></div>
+        <p className={styles.panelNote}>Weighted applies each opportunity&apos;s own probability; suppressed and review-required rows are excluded from any target claim.</p>
+        {figures([["Weighted", show(pipeline?.weightedPipeline)], ["Unweighted", show(pipeline?.unweightedPipeline)], ["Ready", pipeline?.ready ?? 0], ["Suppressed", pipeline?.suppressed ?? 0], ["Review required", pipeline?.reviewRequired ?? 0]])}
+      </section>
 
-      <TeamSection title="Warnings & blockers" note="Ranked by severity. A critical entry means the mission figures above cannot yet be relied on.">
-        <TeamTable
-          head={["Severity", "What is wrong", "Code"]}
-          rows={warnings.map((item) => [<Badge key={item.code} tone={TONE[item.severity] || "neutral"}>{item.severity.toUpperCase()}</Badge>, item.message, <code key={`${item.code}-code`}>{item.code}</code>])}
-          empty={loading ? "Loading…" : "No current command-centre warnings — every governing policy the mission depends on is in place."}
-        />
-      </TeamSection>
-    </TeamShell>
+      <section className={styles.panel}>
+        <div className={styles.panelHead}><h2>Lead execution</h2></div>
+        <p className={styles.panelNote}>The queue behind the pipeline. An SLA breach or an unacknowledged assignment is why revenue stalls before it reaches the pipeline at all.</p>
+        {figures([
+          ["Current assignments", queue?.currentAssignments ?? 0],
+          ["Unassigned", queue?.unassigned ?? 0],
+          ["Unacknowledged", queue?.unacknowledged ?? 0],
+          ["SLA breached", queue?.slaBreached ?? 0],
+          ["Manager escalation due", queue?.managerEscalationDue ?? 0],
+          ["Reassignment due", queue?.reassignmentDue ?? 0],
+        ])}
+      </section>
+
+      <section className={styles.panel}>
+        <div className={styles.panelHead}><h2>Warnings &amp; blockers</h2></div>
+        <p className={styles.panelNote}>Ranked by severity. A critical entry means the figures above cannot yet be relied on.</p>
+        {warnings.length === 0
+          ? <p className={styles.muted}>{loading ? "Loading…" : "No current command-centre warnings — every governing policy the mission depends on is in place."}</p>
+          : <div className={styles.tableWrap}>
+              <table className={styles.table}>
+                <thead><tr><th>Severity</th><th>What is wrong</th><th>Code</th></tr></thead>
+                <tbody>{warnings.map((item) => <tr key={item.code}><td><Badge tone={TONE[item.severity] || "neutral"}>{item.severity.toUpperCase()}</Badge></td><td>{item.message}</td><td><code>{item.code}</code></td></tr>)}</tbody>
+              </table>
+            </div>}
+      </section>
+
+      <p className={styles.footnote}>Production ready: NO — this command centre reports UAT state, and every warning above is a real blocker rather than a placeholder.</p>
+    </OpsShell>
   );
 }

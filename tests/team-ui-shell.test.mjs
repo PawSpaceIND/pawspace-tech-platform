@@ -21,12 +21,26 @@ const read = (file) => fs.readFileSync(new URL(`../${file}`, import.meta.url), "
 
 const SHELL_PAGES = ["app/team/revenue-mission/page.tsx", "app/team/ai/analytics/page.tsx"];
 
-test("pages rebuilt on the shared shell actually use it, rather than raw markup", () => {
-  for (const file of SHELL_PAGES) {
+// These two pages were rebuilt on a shell this branch introduced (TeamShell). Meanwhile nine other
+// consoles landed on OpsShell + team-console.module.css, which carries a persistent sidebar marking
+// the active route — something TeamShell never had. Two shells for one workspace is worse than either,
+// so TeamShell was retired and these two moved across. The guard now enforces the surviving one.
+test("every internal console renders inside the ONE shared shell", () => {
+  const consoles = [...SHELL_PAGES, "app/team/cases/page.tsx", "app/team/customer-experience/page.tsx", "app/team/people/page.tsx"];
+  for (const file of consoles) {
     const source = read(file);
-    assert.match(source, /from "(\.\.\/)+components\/ui"/, `${file} must import the shared UI kit`);
-    assert.match(source, /<TeamShell/, `${file} must render inside the shared Team shell`);
-    assert.match(source, /nav=\{NAV\}/, `${file} must offer navigation — a dead-end page is why the module felt unbuilt`);
+    assert.match(source, /OpsShell/, `${file} must render inside OpsShell`);
+    assert.match(source, /team-console\.module\.css/, `${file} must use the shared console vocabulary, not its own styles`);
+  }
+});
+
+test("the retired second shell is gone, not left behind for the next page to pick up", () => {
+  assert.ok(!fs.existsSync("app/components/ui/TeamShell.tsx"), "TeamShell was consolidated into OpsShell");
+  assert.ok(!fs.existsSync("app/components/ui/team-shell.module.css"), "and its stylesheet with it");
+  assert.ok(!read("app/components/ui/index.ts").includes("TeamShell"), "the kit must not re-export a shell that no longer exists");
+  // A shell is chrome; the kit keeps the content primitives every console shares.
+  for (const kept of ["Button", "Card", "Badge", "StatCard", "PageHeader", "EmptyState"]) {
+    assert.ok(read("app/components/ui/index.ts").includes(kept), `${kept} stays in the kit`);
   }
 });
 
@@ -59,12 +73,12 @@ test("no Team page ships with zero styling the way revenue-mission did", () => {
 
 test("AI analytics renders its cards and navigation before the fetch resolves", () => {
   const source = read("app/team/ai/analytics/page.tsx");
-  const grid = source.indexOf("<TeamStatGrid>");
+  const grid = source.indexOf("styles.tiles");
   const guarded = source.indexOf("{data && <>");
   assert.ok(grid > 0, "the stat grid must exist");
   assert.ok(guarded === -1 || grid < guarded, "the headline cards must render outside the `data &&` guard, so the page is never a bare header");
   assert.match(source, /busy \? "…"/, "cards must show a loading placeholder rather than nothing");
-  assert.match(source, /TeamAlert/, "a failed load must surface as a visible alert");
+  assert.match(source, /styles\.panelError/, "a failed load must surface as a visible alert");
   // The filters the API has always supported must be reachable from the screen.
   for (const control of ["channel", "from", "to"]) assert.ok(source.includes(`query.set("${control}"`), `the ${control} filter must be exposed`);
 });
