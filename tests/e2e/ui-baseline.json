@@ -1,0 +1,219 @@
+{
+  "/": [
+    "scrolls sideways on a 390px screen (+Npx)",
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/account": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/admin": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/assisted-booking": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/boarding": [
+    "scrolls sideways on a 390px screen (+Npx)"
+  ],
+  "/booking-command-center": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/control": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/control/integrations": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/crm": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/dog-breeds/labrador-retriever": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/food": [
+    "scrolls sideways on a 390px screen (+Npx)"
+  ],
+  "/groomer": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/host": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/mobile-app": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/ops": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/partner": [
+    "scrolls sideways on a 390px screen (+Npx)"
+  ],
+  "/partner-app": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/partner-mobile": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/partner/funeral": [
+    "scrolls sideways on a 390px screen (+Npx)"
+  ],
+  "/platform-api": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/prelaunch": [
+    "scrolls sideways on a 390px screen (+Npx)",
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/regression-lab": [
+    "scrolls sideways on a 390px screen (+Npx)",
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/services/grooming": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/sitting": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/system-integration": [
+    "scrolls sideways on a 390px screen (+Npx)",
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/acquisition-funnel": [
+    "scrolls sideways on a 390px screen (+Npx)"
+  ],
+  "/team/ai": [
+    "scrolls sideways on a 390px screen (+Npx)",
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/ai/analytics": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/ai/handoff": [
+    "scrolls sideways on a 390px screen (+Npx)"
+  ],
+  "/team/alerts": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/analytics": [
+    "scrolls sideways on a 390px screen (+Npx)",
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/cases": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/catalogue": [
+    "scrolls sideways on a 390px screen (+Npx)"
+  ],
+  "/team/customer-experience": [
+    "scrolls sideways on a 390px screen (+Npx)"
+  ],
+  "/team/finance": [
+    "scrolls sideways on a 390px screen (+Npx)"
+  ],
+  "/team/finance-compliance": [
+    "scrolls sideways on a 390px screen (+Npx)"
+  ],
+  "/team/finance/funeral-memorial": [
+    "scrolls sideways on a 390px screen (+Npx)"
+  ],
+  "/team/finance/partners": [
+    "scrolls sideways on a 390px screen (+Npx)"
+  ],
+  "/team/finance/statutory": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/finance/training": [
+    "scrolls sideways on a 390px screen (+Npx)",
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/finance/unit-economics": [
+    "scrolls sideways on a 390px screen (+Npx)",
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/funeral-memorial": [
+    "scrolls sideways on a 390px screen (+Npx)"
+  ],
+  "/team/marketing": [
+    "scrolls sideways on a 390px screen (+Npx)"
+  ],
+  "/team/marketing/content": [
+    "scrolls sideways on a 390px screen (+Npx)",
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/meet-and-greet": [
+    "scrolls sideways on a 390px screen (+Npx)"
+  ],
+  "/team/operations/boarding": [
+    "scrolls sideways on a 390px screen (+Npx)",
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/operations/bookings": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/operations/food": [
+    "scrolls sideways on a 390px screen (+Npx)",
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/operations/food/supply-chain": [
+    "scrolls sideways on a 390px screen (+Npx)",
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/operations/sitting": [
+    "scrolls sideways on a 390px screen (+Npx)",
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/operations/taxi": [
+    "scrolls sideways on a 390px screen (+Npx)",
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/operations/training": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/operations/walking": [
+    "scrolls sideways on a 390px screen (+Npx)",
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/operations/work-queue": [
+    "scrolls sideways on a 390px screen (+Npx)",
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/people/provider-training": [
+    "scrolls sideways on a 390px screen (+Npx)",
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/performance": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/pricing-rules": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/provider-onboarding": [
+    "scrolls sideways on a 390px screen (+Npx)"
+  ],
+  "/team/provider-verification": [
+    "scrolls sideways on a 390px screen (+Npx)"
+  ],
+  "/team/revenue-mission": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/sales": [
+    "scrolls sideways on a 390px screen (+Npx)",
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/team/subscription-plans": [
+    "scrolls sideways on a 390px screen (+Npx)"
+  ],
+  "/test-lab": [
+    "text at Npx (\"...\") is below the 12px floor"
+  ],
+  "/training": [
+    "scrolls sideways on a 390px screen (+Npx)"
+  ],
+  "/walking": [
+    "scrolls sideways on a 390px screen (+Npx)",
+    "text at Npx (\"...\") is below the 12px floor"
+  ]
+}
