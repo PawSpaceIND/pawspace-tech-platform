@@ -1,4 +1,5 @@
 import { buildCustomer360 } from "./customer-360";
+import { chunkedIn } from "./d1-chunked-in";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
@@ -25,16 +26,15 @@ export async function buildCustomerBusinessView(db: Db, customerId?: string): Pr
   const records = await buildCustomer360(db, customerId);
   if (!records.length) return [];
   const ids = records.map(r => r.customerId);
-  const placeholders = ids.map(() => "?").join(",");
   let activeSubByCustomer = new Map<string, number>();
   let createdAtByCustomer = new Map<string, number>();
   try {
-    const subs = await db.prepare(`SELECT customer_id,MIN(expires_at) nearest_expiry FROM customer_grooming_subscriptions WHERE customer_id IN (${placeholders}) AND status='active' GROUP BY customer_id`).bind(...ids).all<Row>();
-    activeSubByCustomer = new Map(subs.results.map(row => [String(row.customer_id), Number(row.nearest_expiry)]));
+    const subs = await chunkedIn(ids, async (chunk, placeholders) => (await db.prepare(`SELECT customer_id,MIN(expires_at) nearest_expiry FROM customer_grooming_subscriptions WHERE customer_id IN (${placeholders}) AND status='active' GROUP BY customer_id`).bind(...chunk).all<Row>()).results);
+    activeSubByCustomer = new Map(subs.map(row => [String(row.customer_id), Number(row.nearest_expiry)]));
   } catch { /* table may not exist yet in some environments */ }
   try {
-    const created = await db.prepare(`SELECT id,created_at FROM canonical_customers WHERE id IN (${placeholders})`).bind(...ids).all<Row>();
-    createdAtByCustomer = new Map(created.results.map(row => [String(row.id), Number(row.created_at)]));
+    const created = await chunkedIn(ids, async (chunk, placeholders) => (await db.prepare(`SELECT id,created_at FROM canonical_customers WHERE id IN (${placeholders})`).bind(...chunk).all<Row>()).results);
+    createdAtByCustomer = new Map(created.map(row => [String(row.id), Number(row.created_at)]));
   } catch { /* table may not exist yet in some environments */ }
   const now = Date.now(), day = 86_400_000;
   return records.map(r => {

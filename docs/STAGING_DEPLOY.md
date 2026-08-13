@@ -76,6 +76,19 @@ npx wrangler d1 execute pawspace-staging --remote --file=scripts/staging-seed.sq
 After loading, open `/team/acquisition-funnel` and hit **Refresh sweep** to compute funnel stages, ₹300
 recoveries and App-Inbound leads from the seeded data — instant material for the CRM/Sales test.
 
+**Then load the team demo pack** so the internal surfaces are not blank. It adds the sales team the
+performance leaderboard measures (4 reps mapped to `sales`, 27 leads with SLA clocks, recorded calls
+and conversions into the seeded bookings, an active productivity policy) and the governed campaign
+command centre (a live campaign with its audience snapshot and holdout, one awaiting approval, and ad
+spend rows for the CAC line). Idempotent, and it reuses the customers and bookings above, so load it
+second:
+```bash
+npx wrangler d1 execute pawspace-staging --remote --file=scripts/uat-demo-seed.sql
+```
+(Regenerate with `node scripts/uat-demo-seed-gen.mjs`.) Then open `/team/performance` and press
+**Generate 30-day report** — one click turns the seeded lead work into a ranked leaderboard, which is
+also the check that the whole policy → run → board pipeline is live.
+
 **Best option — MASKED REAL data** (the actual 4-year book, safe for staging). Run the importer against
 `The_PawSpace_TRUTH.xlsx` locally (the workbook and the generated SQL contain customer data — never
 commit either; keep them off shared drives):
