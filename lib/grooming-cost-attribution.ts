@@ -1,4 +1,5 @@
 import { computeGroomerMonthlyIncentive } from "./grooming-incentive-engine";
+import { chunkedIn } from "./d1-chunked-in";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
@@ -25,10 +26,9 @@ type Row = Record<string, unknown>;
 export async function attributeGroomingBookingCosts(db: Db, bookingIds: string[]): Promise<Map<string, number | null>> {
   const result = new Map<string, number | null>();
   if (!bookingIds.length) return result;
-  const placeholders = bookingIds.map(() => "?").join(",");
-  const rows = await db.prepare(
+  const rows = { results: await chunkedIn(bookingIds, async (chunk, placeholders) => (await db.prepare(
     `SELECT id,provider_id,total_amount,scheduled_start FROM canonical_bookings WHERE id IN (${placeholders}) AND service_code='grooming' AND status='completed'`
-  ).bind(...bookingIds).all<Row>();
+  ).bind(...chunk).all<Row>()).results) };
 
   const groups = new Map<string, { headGroomerId: string; monthStart: string; bookings: Array<{ id: string; amount: number }> }>();
   for (const row of rows.results) {

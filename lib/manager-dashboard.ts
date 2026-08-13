@@ -3,6 +3,7 @@ import { currentGroomerBracket, computeGroomerMonthlyIncentive } from "./groomin
 import { computeTrainerMonthlyIncentive } from "./trainer-incentive-engine";
 import { dailyClosureReadiness } from "./rep-daily-closure-governance";
 import { dailyTalkTimeSummary } from "./talk-time-governance";
+import{chunkedIn}from"./d1-chunked-in";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -34,9 +35,8 @@ async function employeesInScope(db:Db,scope:Scope){
     return rows.results;
   }
   if(!scope.employeeEmails.length)return[];
-  const placeholders=scope.employeeEmails.map(()=>"?").join(",");
-  const rows=await db.prepare(`SELECT e.id,e.work_email,e.user_email,e.display_name,v.title,v.team_code FROM employees e JOIN employee_employment_versions v ON v.employee_id=e.id AND v.effective_until IS NULL WHERE lower(COALESCE(e.user_email,e.work_email)) IN (${placeholders}) ORDER BY e.display_name`).bind(...scope.employeeEmails).all<Row>();
-  return rows.results;
+  return chunkedIn(scope.employeeEmails,async(chunk,placeholders)=>(await db.prepare(`SELECT e.id,e.work_email,e.user_email,e.display_name,v.title,v.team_code FROM employees e JOIN employee_employment_versions v ON v.employee_id=e.id AND v.effective_until IS NULL WHERE lower(COALESCE(e.user_email,e.work_email)) IN (${placeholders}) ORDER BY e.display_name`).bind(...chunk).all<Row>()).results);
+
 }
 
 /**

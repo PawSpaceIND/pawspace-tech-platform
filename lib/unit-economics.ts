@@ -12,6 +12,7 @@
  * utilisation and CAC (only when marketing spend facts exist).
  */
 
+import{chunkedIn}from"./d1-chunked-in";
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
@@ -31,18 +32,18 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
  const bookings=await safeAll(db,["canonical_bookings"],`SELECT id,customer_id,provider_id,service_code,status,total_amount,scheduled_start,scheduled_end FROM canonical_bookings WHERE ${where}`,binds);
  if(!bookings.length)return{from,to,cityId:input.cityId??null,services:{},company:emptyCompany(),dataCoverage:coverageNote(),truth:truthNote()};
 
- const ids=bookings.map(row=>String(row.id)),placeholders=ids.map(()=>"?").join(",");
+ const ids=bookings.map(row=>String(row.id));
  const active=bookings.filter(row=>!["cancelled","draft"].includes(String(row.status)));
  const serviceOf=new Map(bookings.map(row=>[String(row.id),String(row.service_code)]));
 
  // Real per-booking money components (each guarded on its owning table)
- const coupons=await safeAll(db,["coupon_redemptions"],`SELECT booking_id,discount_amount FROM coupon_redemptions WHERE status='consumed' AND booking_id IN (${placeholders})`,ids);
- const points=await safeAll(db,["paw_points_ledger"],`SELECT booking_id,points FROM paw_points_ledger WHERE entry_type='redeemed' AND booking_id IN (${placeholders})`,ids);
- const wallet=await safeAll(db,["pawspace_wallet_ledger"],`SELECT source_id booking_id,applied_value FROM pawspace_wallet_ledger WHERE entry_type='redeem' AND source_id IN (${placeholders})`,ids);
- const payouts=await safeAll(db,["provider_order_payouts"],`SELECT booking_id,amount FROM provider_order_payouts WHERE booking_id IN (${placeholders})`,ids);
- const refunds=await safeAll(db,["booking_refund_cases"],`SELECT booking_id,amount FROM booking_refund_cases WHERE status='processed' AND booking_id IN (${placeholders})`,ids);
- const reviews=await safeAll(db,["service_reviews"],`SELECT booking_id,stars FROM service_reviews WHERE booking_id IN (${placeholders})`,ids);
- const tickets=await safeAll(db,["customer_experience_tickets"],`SELECT booking_id FROM customer_experience_tickets WHERE booking_id IN (${placeholders})`,ids);
+ const coupons=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["coupon_redemptions"],`SELECT booking_id,discount_amount FROM coupon_redemptions WHERE status='consumed' AND booking_id IN (${placeholders})`,chunk));
+ const points=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["paw_points_ledger"],`SELECT booking_id,points FROM paw_points_ledger WHERE entry_type='redeemed' AND booking_id IN (${placeholders})`,chunk));
+ const wallet=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["pawspace_wallet_ledger"],`SELECT source_id booking_id,applied_value FROM pawspace_wallet_ledger WHERE entry_type='redeem' AND source_id IN (${placeholders})`,chunk));
+ const payouts=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["provider_order_payouts"],`SELECT booking_id,amount FROM provider_order_payouts WHERE booking_id IN (${placeholders})`,chunk));
+ const refunds=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["booking_refund_cases"],`SELECT booking_id,amount FROM booking_refund_cases WHERE status='processed' AND booking_id IN (${placeholders})`,chunk));
+ const reviews=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["service_reviews"],`SELECT booking_id,stars FROM service_reviews WHERE booking_id IN (${placeholders})`,chunk));
+ const tickets=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,["customer_experience_tickets"],`SELECT booking_id FROM customer_experience_tickets WHERE booking_id IN (${placeholders})`,chunk));
 
  type Ladder={gmv:number;orders:number;cancelled:number;discounts:number;providerPayout:number;refunds:number;tax:null;paymentFee:null;variableCost:null;contributionKnown:number;contributionPctOfGmv:number|null;avgOrderValue:number|null;reviews:number;csatAvgStars:number|null;csatPct:number|null;complaintsPer100:number|null;repeatRatePct:number|null;revenuePerProviderDay:number|null};
  const ladders:Record<string,Ladder>={};
@@ -83,7 +84,7 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
  const activeCustomers=[...new Set(active.map(row=>String(row.customer_id)))];
  let ltvPerActiveCustomer:number|null=null;
  if(activeCustomers.length){
-  const lifetime=await safeAll(db,["canonical_bookings"],`SELECT customer_id,SUM(total_amount) total FROM canonical_bookings WHERE status NOT IN ('cancelled','draft') AND customer_id IN (${activeCustomers.map(()=>"?").join(",")}) GROUP BY customer_id`,activeCustomers);
+  const lifetime=await chunkedIn(activeCustomers,(chunk,placeholders)=>safeAll(db,["canonical_bookings"],`SELECT customer_id,SUM(total_amount) total FROM canonical_bookings WHERE status NOT IN ('cancelled','draft') AND customer_id IN (${placeholders}) GROUP BY customer_id`,chunk));
   ltvPerActiveCustomer=round2(lifetime.reduce((sum,row)=>sum+Number(row.total||0),0)/activeCustomers.length);
  }
  // Roster utilisation: booked reservation hours / rostered window hours across the window

@@ -1,3 +1,4 @@
+import{chunkedIn}from"./d1-chunked-in";
 // Partner Job Feed: one unified, chronological feed of a provider's confirmed customer bookings
 // across ALL services, aggregated read-only from the real canonical tables. Founder requirement:
 // "once the booking is done the same info has to be updated in the partner app".
@@ -68,8 +69,7 @@ export async function listProviderJobs(db:Db,providerId:string,now=Date.now()):P
   const customerIds=[...new Set(bookings.map(row=>String(row.customer_id)))].filter(Boolean);
   const nameByCustomer=new Map<string,string>();
   if(customerIds.length){
-    const placeholders=customerIds.map(()=>"?").join(",");
-    for(const row of await safeAll(db,`SELECT id,name FROM canonical_customers WHERE id IN (${placeholders})`,customerIds))nameByCustomer.set(String(row.id),firstName(row.name));
+    for(const row of await chunkedIn(customerIds,(chunk,placeholders)=>safeAll(db,`SELECT id,name FROM canonical_customers WHERE id IN (${placeholders})`,chunk)))nameByCustomer.set(String(row.id),firstName(row.name));
   }
 
   const reference=new Date(now),startOfToday=new Date(reference.getFullYear(),reference.getMonth(),reference.getDate()).getTime(),endOfToday=startOfToday+DAY_MS;
