@@ -14,8 +14,10 @@ async function ensureGatewayTables(env:GatewayEnv){const now=Date.now();await en
 async function requiredPermission(request:Request):Promise<Permission|null>{const url=new URL(request.url),method=request.method.toUpperCase();if(url.pathname==="/api/pricing-quote"||url.pathname==="/api/training-commercial"||url.pathname==="/api/training-trainers"||url.pathname==="/api/boarding-commercial"||url.pathname==="/api/sitting-commercial"||url.pathname==="/api/taxi-commercial"||url.pathname==="/api/food-commercial"||url.pathname==="/api/walking-commercial"||url.pathname==="/api/razorpay-webhook"||url.pathname==="/api/haptik"||url.pathname==="/api/whatsapp-uat-webhook"||url.pathname==="/api/identity-session"||url.pathname==="/api/service-availability"||url.pathname==="/api/public-contact"||url.pathname==="/api/provider-public-profile"||url.pathname==="/api/staging-login"
     ||url.pathname==="/api/customer-offers"||url.pathname==="/api/host-profile"||url.pathname==="/api/customer-otp"||url.pathname==="/api/customer-profile"||url.pathname==="/api/customer-account"||url.pathname==="/api/booking-rating"||url.pathname==="/api/customer-support-case"||url.pathname==="/api/live-price-quote"||url.pathname==="/api/training-requirements"||url.pathname==="/api/host-trust"||url.pathname==="/api/service-zone")return null;
   if(url.pathname==="/api/relocation-enquiry")return method==="POST"?null:"customers.view";
+  if(url.pathname==="/api/content-controls"){if(method==="GET")return url.searchParams.get("view")==="admin"?"marketing.manage":null;const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="set_feature"?"settings.manage":"marketing.manage";}
   if(url.pathname==="/api/stay-balance")return "scheduling.book";
   if(url.pathname==="/api/partner-job-feed")return "bookings.view";
+  if(url.pathname==="/api/provider-lms"){if(method==="GET")return "bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="complete_module"?"bookings.view":"settings.manage";}
   if(url.pathname==="/api/me"||url.pathname==="/api/leaderboard"||url.pathname==="/api/provider-workspace")return "self_service.view";
   if(url.pathname==="/api/provider-commercial-terms")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/funeral-manual-order")return method==="GET"?"finance.view":"finance.manage";
@@ -48,6 +50,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/pnl-reporting")return "finance.view";
   if(url.pathname==="/api/partner-finance")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/company-analytics")return "reports.view";
+  if(url.pathname==="/api/unit-economics")return "reports.view";
   if(url.pathname==="/api/ai-intelligence")return method==="GET"?"reports.view":"customers.manage";
   if(url.pathname==="/api/training-finance")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/training-cancellation"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action)==="request"?"scheduling.book":"finance.manage";}
@@ -81,6 +84,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/food-finance"){if(method==="GET")return "finance.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action)==="request_cancel"?"scheduling.book":"finance.manage";}
   if(url.pathname==="/api/food-proof"){if(method==="GET")return url.searchParams.get("scope")==="customer"?"scheduling.book":"bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");return action==="acknowledge_incident"?"scheduling.book":"bookings.manage";}
   if(url.pathname==="/api/food-ops")return method==="GET"?"bookings.view":"bookings.manage";
+  if(url.pathname==="/api/food-supply-chain")return method==="GET"?"bookings.view":"bookings.manage";
   if(url.pathname==="/api/relocation"){if(method==="GET")return url.searchParams.get("scope")==="customer"?"scheduling.book":"bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"create");if(["create","register_document","accept_quote","request_refund","open_support"].includes(action))return "scheduling.book";if(["record_payment","resolve_refund"].includes(action))return "finance.manage";return "bookings.manage";}
   if(url.pathname==="/api/funeral-memorial"){if(method==="GET"){if(url.searchParams.get("config")==="1")return "pricing.view";if(url.searchParams.get("report")==="summary")return "reports.view";return url.searchParams.get("scope")==="customer"?"scheduling.book":"bookings.view";}const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"create");if(action==="save_service_config")return "pricing.manage";if(["create","register_customer_media","schedule_ash_collection","request_refund","open_support"].includes(action))return "scheduling.book";if(["set_service_amount","record_payment","resolve_refund"].includes(action))return "finance.manage";return "bookings.manage";}
   if(url.pathname==="/api/sitting-payment-sandbox"||url.pathname==="/api/sitting-bookings")return "scheduling.book";
@@ -106,6 +110,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/address-autocomplete")return "scheduling.book";
   if(url.pathname==="/api/grooming-route")return "bookings.view";
   if(url.pathname==="/api/booking-command-center")return method==="GET"?"bookings.view":"bookings.manage";
+  if(url.pathname==="/api/ops-work-queue")return method==="GET"?"bookings.view":"bookings.manage";
   if(url.pathname==="/api/partner-grooming-jobs")return "bookings.view";
   if(url.pathname==="/api/service-media")return "bookings.view";
   if(url.pathname==="/api/grooming-booking-change")return "scheduling.book";

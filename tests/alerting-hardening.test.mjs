@@ -107,14 +107,14 @@ test("inventory: every background job is wired into the scheduled worker; none a
   const workerSource = fs.readFileSync("worker/index.ts", "utf8");
   assert.match(workerSource, /async scheduled\(/);
   assert.match(workerSource, /runBackgroundScheduler\(env\.DB/);
-  const jobNames = ["staffAlerts", "callbacks", "leadReopening", "legacyLeadSla", "opsEscalation", "commandReports", "customerReminders", "petBirthdayRewards", "vaccinationReminders", "pawPointsEarn", "serviceReviews", "revenueRecognition", "riskAnomaly", "customerTargeting", "haptikOutbound", "appToRevenueFunnel", "dailyIncentiveAccrual", "statutoryReminders"];
+  const jobNames = ["staffAlerts", "callbacks", "leadReopening", "legacyLeadSla", "opsEscalation", "commandReports", "customerReminders", "petBirthdayRewards", "vaccinationReminders", "pawPointsEarn", "serviceReviews", "revenueRecognition", "riskAnomaly", "customerTargeting", "haptikOutbound", "appToRevenueFunnel", "dailyIncentiveAccrual", "statutoryReminders", "opsWorkQueue", "foodBatchExpiry", "overdueStayBalances"];
   for (const name of jobNames) assert.ok(scheduler.includes(`"${name}"`), `job ${name} is named in the scheduler result`);
   // Every exported run*Sweep in lib/ must be reachable from the scheduler (directly or transitively).
   const sweepExports = [];
   for (const file of fs.readdirSync("lib")) {
     if (!file.endsWith(".ts")) continue;
     const source = fs.readFileSync(`lib/${file}`, "utf8");
-    for (const match of source.matchAll(/export async function (run\w*Sweep)/g)) sweepExports.push(match[1]);
+    for (const match of source.matchAll(/export async function (run\w*Sweep|sweep[A-Z]\w*)/g)) sweepExports.push(match[1]);
   }
   const funnel = fs.readFileSync("lib/app-to-revenue-funnel.ts", "utf8");
   for (const sweep of sweepExports) {
