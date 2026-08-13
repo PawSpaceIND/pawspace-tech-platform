@@ -118,3 +118,41 @@ test("the module says why swallowing without recording is the dangerous shape", 
   assert.match(source, /Collected Rs 0|Rs 3,24,472/, "the incident that motivated it stays in the file");
   assert.match(source, /catch/);
 });
+
+test("real execution: the finance view names the ledger it could not read", async () => {
+  // A swallowed read here becomes a receivable or a payable that is quietly short - the same failure
+  // as the analytics zero, on the numbers finance acts on.
+  const db = seed({ failOn: /FROM booking_payments/ });
+  const { buildAccountsBusinessView } = await import("../lib/accounts-business-view.ts");
+  const view = await buildAccountsBusinessView(db);
+
+  assert.ok(view.degraded, "an incomplete ledger must not present itself as complete");
+  assert.ok(view.degraded.sources.includes("payments"), `payments must be named, got ${view.degraded.sources.join(", ")}`);
+  assert.match(view.degraded.headline, /missing rather than zero/);
+});
+
+test("a new swallowing read cannot be added without recording what it lost", async () => {
+  // The rest of lib/ still swallows silently. Baselined by name so the debt is visible and finite,
+  // and so a NEW file cannot quietly join the list - which is how this class kept coming back.
+  const KNOWN_SILENT = [
+    "coupon-governance.ts", "customer-360.ts", "customer-account.ts", "lead-assignment-governance.ts",
+    "lead-sla-governance.ts", "live-leaderboard.ts", "partner-job-feed.ts", "partner-settlement-governance.ts",
+    "payroll-engine.ts", "platform-security.ts", "referral-governance.ts", "sales-productivity-governance.ts",
+    "host-badges.ts", "host-reviews.ts", "tds-governance.ts",
+  ];
+  const { readdir } = await import("node:fs/promises");
+  const dir = new URL("../lib/", import.meta.url);
+  const swallowing = [];
+  for (const name of await readdir(dir)) {
+    if (!name.endsWith(".ts")) continue;
+    const source = await readFile(new URL(name, dir), "utf8");
+    if (!/catch\s*(\([^)]*\))?\s*\{\s*return\s*\[\s*\]/.test(source.replace(/\s+/g, " "))) continue;
+    if (source.includes("degraded-reads")) continue;
+    swallowing.push(name);
+  }
+  const added = swallowing.filter((name) => !KNOWN_SILENT.includes(name));
+  assert.deepEqual(added, [], "these modules swallow a failed read without recording it - use lib/degraded-reads.ts");
+
+  const fixed = KNOWN_SILENT.filter((name) => !swallowing.includes(name));
+  if (fixed.length) console.log(`  (${fixed.length} module(s) now record: ${fixed.join(", ")} - trim them from KNOWN_SILENT)`);
+});

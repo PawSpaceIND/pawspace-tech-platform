@@ -1,15 +1,19 @@
 import { chunkedIn } from "./d1-chunked-in";
+import { createDegradationLog, degradationNotice, type DegradationLog } from "./degraded-reads";
 type Db = D1Database;
 type Row = Record<string, unknown>;
 
 const rows = <T = Row>(r: { results?: unknown[] }) => (r.results || []) as T[];
-async function safeAll(db: Db, sql: string, binds: unknown[] = []) {
+// A read that fails here becomes a receivable or a payable that is quietly short. Swallowing is kept
+// so one absent module cannot take the finance view down, but the source is recorded so the screen can
+// say what it could not read rather than presenting an incomplete ledger as a complete one.
+async function safeAll(db: Db, sql: string, binds: unknown[] = [], log?: DegradationLog, source?: string) {
   try {
     let q = db.prepare(sql);
     if (binds.length) q = q.bind(...binds);
     return rows(await q.all<Row>());
-  } catch {
-    return [] as Row[];
+  } catch (error) {
+    return log && source ? log.note(source, error, [] as Row[]) : ([] as Row[]);
   }
 }
 
@@ -40,13 +44,14 @@ const SETTLEMENT_LEDGER_VERTICALS = [
  * not forced into the same union, which would risk silently misclassifying their real records.
  */
 export async function buildAccountsBusinessView(db: Db) {
-  const bookings = await safeAll(db, "SELECT id,service_code,total_amount FROM canonical_bookings WHERE status NOT IN ('draft','cancelled')");
+  const degradation = createDegradationLog();
+  const bookings = await safeAll(db, "SELECT id,service_code,total_amount FROM canonical_bookings WHERE status NOT IN ('draft','cancelled')", [], degradation, "bookings");
   const bookingIds = bookings.map(b => String(b.id));
   let invoices: Row[] = [], payments: Row[] = [];
   if (bookingIds.length) {
     [invoices, payments] = await Promise.all([
-      chunkedIn(bookingIds, (chunk, placeholders) => safeAll(db, `SELECT id,booking_id,customer_id,invoice_number,status,gross_amount,tax_amount,net_amount,issued_at FROM booking_invoices WHERE booking_id IN (${placeholders})`, chunk)),
-      chunkedIn(bookingIds, (chunk, placeholders) => safeAll(db, `SELECT booking_id,amount,status,method FROM booking_payments WHERE booking_id IN (${placeholders})`, chunk)),
+      chunkedIn(bookingIds, (chunk, placeholders) => safeAll(db, `SELECT id,booking_id,customer_id,invoice_number,status,gross_amount,tax_amount,net_amount,issued_at FROM booking_invoices WHERE booking_id IN (${placeholders})`, chunk, degradation, "invoices")),
+      chunkedIn(bookingIds, (chunk, placeholders) => safeAll(db, `SELECT booking_id,amount,status,method FROM booking_payments WHERE booking_id IN (${placeholders})`, chunk, degradation, "payments")),
     ]);
   }
   const invoiceByBooking = new Map(invoices.map(i => [String(i.booking_id), i]));
@@ -88,6 +93,7 @@ export async function buildAccountsBusinessView(db: Db) {
     .slice(0, 100);
 
   return {
+    degraded: degradationNotice(degradation.entries()),
     receivable, gstPayable,
     refundQueue: { amount: refundPending, count: refundPendingCount, verticalsCovered: REFUND_LEDGER_VERTICALS.map(v => v.vertical) },
     providerPayable: { amount: providerPayable, count: providerPayableCount, verticalsCovered: SETTLEMENT_LEDGER_VERTICALS.map(v => v.vertical) },
