@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { discoverRoutes, verdict, EMPTY_STATE_PHRASES, EXPECTED_WITHOUT_SESSION, FAIL_LEVELS, UNTESTED_LEVELS } from "../scripts/screen-sweep.mjs";
+import { discoverRoutes, verdict, detectEmptyStates, EXPECTED_WITHOUT_SESSION, FAIL_LEVELS, UNTESTED_LEVELS } from "../scripts/screen-sweep.mjs";
 
 // ---------------------------------------------------------------------------
 // scripts/screen-sweep.mjs opens every route in a real browser and reports which screens a tester can
@@ -37,20 +37,44 @@ test("a screen that SAYS it is empty is passing, not failing", () => {
   }
 });
 
-test("a deep-link page that asks for its parameter is passing", () => {
-  // /walking/manage, /driver/proof, /walker/proof and /sitter all do this, in four different wordings.
-  // The first version of the sweep reported all four as BLANK.
-  const wordings = ["Open with canonical bookingId.", "Open this page with a canonical booking ID.", "Open this workspace from a confirmed Sitting booking", "Open with canonical orderId."];
-  for (const wording of wordings) {
-    const matched = EMPTY_STATE_PHRASES.filter((phrase) => wording.toLowerCase().includes(phrase));
-    assert.ok(matched.length > 0, `"${wording}" must be recognised as an instruction, not an empty screen`);
+// The detector was a curated phrase list and it was wrong THREE TIMES, each time reporting a
+// correctly-behaving page as broken: it missed "Open with canonical bookingId", then "not yet linked
+// to a provider", then "No enquiries submitted yet". Enumerating wordings is unwinnable. It now
+// matches the structure — a sentence OPENING with a negation or an instruction — and every wording
+// that previously slipped through is pinned here so the list-shaped mistake cannot come back.
+test("every real empty-state wording in this codebase is recognised", () => {
+  const real = [
+    "Pet Taxi proof\nOpen with canonical bookingId.\nDriver workspace",
+    "Manage Dog Walking\nOpen this page with a canonical booking ID.",
+    "PawSpace Sitting workspace\nOpen this workspace from a confirmed Sitting booking",
+    "No provider record linked\nYour identity is signed in but not yet linked to a provider",
+    "Submitted relocation enquiries\nNo enquiries submitted yet.",
+    "Nothing recorded in this window.",
+    "No versions configured.",
+    "Assistant profiles\nNot measured",
+    "Select a thread.",
+  ];
+  for (const text of real) {
+    assert.ok(detectEmptyStates(text).length > 0, `this page explains itself and must pass: ${JSON.stringify(text.slice(0, 60))}`);
   }
 });
 
-test("an unresolved identity that explains itself is passing", () => {
-  const said = "No provider record linked. Your identity is signed in but not yet linked to a provider";
-  const matched = EMPTY_STATE_PHRASES.filter((phrase) => said.toLowerCase().includes(phrase));
-  assert.ok(matched.length > 0, "/partner/workspace explains itself correctly and must not be reported");
+test("a page that renders a title and nothing else is still a finding", () => {
+  // The three food screens fixed alongside this test. If someone removes those empty states, the
+  // sweep must go back to flagging them.
+  for (const text of ["Manage Food order\nBack to Food", "PAWSPACE FOOD · RENEWAL INVOICE\nInvoice", "FOOD RENEWAL PAYMENT REQUEST · UAT\nPayment request"]) {
+    assert.equal(detectEmptyStates(text).length, 0, `this says nothing about why it is empty: ${JSON.stringify(text)}`);
+  }
+});
+
+test("detection is sentence-initial, so ordinary prose is not mistaken for an empty state", () => {
+  // A bare /not/ anywhere in the text would match almost any page on this platform, which writes
+  // "must not", "does not" and "cannot" constantly. That would silence the sweep entirely.
+  const prose = "Revenue truth\nAchieved counts only what the payment records prove, and cancelled bookings are not revenue.";
+  assert.equal(detectEmptyStates(prose).length, 0, "prose containing 'not' mid-sentence is not an empty state");
+  // And the flattening bug: joining lines before detection destroyed the boundaries that make it work.
+  assert.equal(detectEmptyStates("Pet Taxi proof Open with canonical bookingId.").length, 0, "flattened text genuinely has no sentence-initial instruction — which is why the sweep must pass raw innerText");
+  assert.ok(detectEmptyStates("Pet Taxi proof\nOpen with canonical bookingId.").length > 0, "raw innerText keeps the boundary and detects it");
 });
 
 test("a form control counts as a way forward, links alone do not", () => {
@@ -105,6 +129,6 @@ test("the sweep reports honestly about its own coverage", () => {
   assert.match(source, /NOT TESTED/, "routes it could not reach must be listed separately from passes");
   assert.match(source, /excerpt: measured\.text\.slice/, "each finding must carry what the page actually said, or triage needs a manual visit");
   assert.match(source, /networkidle/, "it must wait for client fetches — that is the whole point over curl");
+  assert.match(source, /measured\.raw/, "detection must run on raw innerText — flattening destroys the sentence boundaries it relies on");
   assert.ok(EXPECTED_WITHOUT_SESSION.length >= 3);
-  assert.ok(EMPTY_STATE_PHRASES.length >= 25, "the empty-state vocabulary must cover the wordings actually in use");
 });

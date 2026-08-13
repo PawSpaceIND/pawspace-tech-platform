@@ -74,24 +74,38 @@ function discoverRoutes(root = "app") {
   return [...new Set(routes)].sort();
 }
 
-// Phrases that mean "this screen deliberately has nothing to show". A page carrying one of these is
-// working correctly and must not be reported as blank. The second group matters as much as the first:
-// a deep-link surface like /walking/manage or /driver has nothing to show WITHOUT a booking ID, and
-// saying so plainly is the correct behaviour, not a defect. The first version of this sweep flagged
-// those as BLANK, which is how a sweep starts crying wolf and gets ignored.
+// Does this screen SAY it has nothing to show? That is a pass, not a failure.
+//
+// This started as a curated phrase list and it was wrong three times running — it missed "Open with
+// canonical bookingId", then "not yet linked to a provider", then "No enquiries submitted yet". Each
+// miss reported a correctly-behaving page as broken. Enumerating wordings is unwinnable: every screen
+// phrases it differently.
+//
+// So match the STRUCTURE instead. An honest empty state is a sentence that OPENS with a negation
+// ("No enquiries submitted yet", "Nothing recorded", "Not measured") or with an instruction telling
+// the tester what to supply ("Open with canonical bookingId", "Select a thread"). Sentence-initial is
+// what makes this safe: a bare /\bnot\b/ anywhere in the text would match almost any prose.
+const EMPTY_STATE_OPENERS = /^(no|none|nothing|not|never|neither|open|select|enter|provide|choose|pick|search|start|add|requires?|awaiting|pending|loading|configuration required)\b/i;
+
+// A few states that do not open with one of those but still explain themselves plainly.
 const EMPTY_STATE_PHRASES = [
-  "no data", "nothing recorded", "no versions configured", "not connected", "no results",
-  "no bookings", "no open", "none yet", "no entries", "not measured", "not attributable",
-  "no current", "nothing to", "no suggestions", "not claimed", "no snapshot", "empty",
-  "no conversation", "no handoff", "no active", "loading",
-  // "this needs a parameter" — an honest instruction, not an empty screen. Phrasing varies across
-  // the deep-link surfaces ("Open with canonical bookingId", "Open this workspace from a confirmed
-  // booking"), so match the stem rather than a full sentence.
-  "open this page", "open this workspace", "open with", "provide a", "enter a",
-  "select a", "requires a", "no booking selected", "choose a",
-  // identity not yet resolved — also a correct, self-explaining state
-  "not yet linked", "no provider record", "not linked to", "no linked",
+  "not yet linked", "no provider record", "not attributable", "not measured", "not claimed",
+  "not connected", "no booking selected", "is empty", "yet to be", "will appear here",
 ];
+
+/** Every self-explaining sentence on the page. Empty result means the screen never says why it is bare. */
+function detectEmptyStates(text) {
+  const found = [];
+  // Split on sentence and line boundaries, because these messages are often their own paragraph.
+  for (const raw of text.split(/(?<=[.!?])\s+|\n+|\s{2,}/)) {
+    const sentence = raw.trim();
+    if (sentence.length < 3 || sentence.length > 200) continue;
+    if (EMPTY_STATE_OPENERS.test(sentence)) found.push(sentence.slice(0, 80));
+  }
+  const lower = text.toLowerCase();
+  for (const phrase of EMPTY_STATE_PHRASES) if (lower.includes(phrase)) found.push(phrase);
+  return [...new Set(found)];
+}
 
 // Endpoints that answer 401 or 400 BY DESIGN when a page is opened without a session or a filter.
 // /api/identity-session 401s for a signed-out visitor; the scope-required feeds 400 asking for their
@@ -129,8 +143,14 @@ async function sweepRoute(page, route) {
   }
 
   const measured = await page.evaluate(() => {
-    const text = (document.body?.innerText || "").replace(/\s+/g, " ").trim();
+    // Keep the RAW innerText as well as the flattened one. Empty-state detection is sentence- and
+    // line-aware, and innerText's newlines between block elements ARE those boundaries: flattening
+    // first turned "Pet Taxi proof\nOpen with canonical bookingId." into one sentence starting with
+    // "Pet", so the instruction stopped being sentence-initial and the page read as unexplained.
+    const raw = document.body?.innerText || "";
+    const text = raw.replace(/\s+/g, " ").trim();
     return {
+      raw,
       text,
       textLength: text.length,
       interactive: document.querySelectorAll("a[href],button,input,select,textarea,tr td").length,
@@ -140,17 +160,16 @@ async function sweepRoute(page, route) {
       formControls: document.querySelectorAll("button,input,select,textarea").length,
       headings: document.querySelectorAll("h1,h2,h3").length,
     };
-  }).catch(() => ({ text: "", textLength: 0, interactive: 0, formControls: 0, headings: 0 }));
+  }).catch(() => ({ raw: "", text: "", textLength: 0, interactive: 0, formControls: 0, headings: 0 }));
 
   page.off("response", onResponse);
   page.off("console", onConsole);
   page.off("pageerror", onPageError);
 
-  const lower = measured.text.toLowerCase();
-  const emptyStates = EMPTY_STATE_PHRASES.filter((phrase) => lower.includes(phrase));
+  const emptyStates = detectEmptyStates(measured.raw);
   // Keep an excerpt of what the page actually said. Without it every finding needs a manual browser
   // visit to interpret — which is the loop this sweep exists to replace.
-  return { route, status, landed, redirected: landed !== route, failure, apiFailures: [...new Set(apiFailures)], consoleErrors: [...new Set(consoleErrors)], pageErrors: [...new Set(pageErrors)], ...measured, emptyStates: emptyStates.slice(0, 3), excerpt: measured.text.slice(0, 300), text: undefined };
+  return { route, status, landed, redirected: landed !== route, failure, apiFailures: [...new Set(apiFailures)], consoleErrors: [...new Set(consoleErrors)], pageErrors: [...new Set(pageErrors)], ...measured, emptyStates: emptyStates.slice(0, 3), excerpt: measured.text.slice(0, 300), text: undefined, raw: undefined };
 }
 
 /**
@@ -250,7 +269,7 @@ async function main() {
   process.exit(failures.length ? 1 : 0);
 }
 
-export { discoverRoutes, verdict, DYNAMIC_ROUTES, EMPTY_STATE_PHRASES, EXPECTED_WITHOUT_SESSION, FAIL_LEVELS, UNTESTED_LEVELS };
+export { discoverRoutes, verdict, detectEmptyStates, DYNAMIC_ROUTES, EMPTY_STATE_OPENERS, EMPTY_STATE_PHRASES, EXPECTED_WITHOUT_SESSION, FAIL_LEVELS, UNTESTED_LEVELS };
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((error) => { console.error(error); process.exit(2); });
