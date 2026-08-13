@@ -31,18 +31,30 @@ export async function GET(request:Request){try{
   if(contacts.length){
     const ids=contacts.map(row=>String(row.id));
     const totals=new Map<string,number>();
+    // Which contacts were actually READ. "no recognised bookings" is a positive claim - that the
+    // bookings table was consulted and held nothing for this customer - and it was previously derived
+    // from the RESULT, so a failed read published it too. On a database without canonical_bookings
+    // every contact rendered Rs.0 "no recognised bookings", indistinguishable from the truth, and a
+    // single failed chunk did it to 50 contacts while the rest of the page stayed correct. A basis is
+    // only earned by a read that returned.
+    const read=new Set<string>();
     // Chunked to stay inside D1's bound-parameter cap.
     for(let index=0;index<ids.length;index+=50){
       const slice=ids.slice(index,index+50);
       const rows=await db.prepare(`SELECT customer_id,COALESCE(SUM(total_amount),0) total FROM canonical_bookings WHERE status NOT IN ('cancelled','draft') AND customer_id IN (${slice.map(()=>"?").join(",")}) GROUP BY customer_id`)
-        .bind(...slice).all<Record<string,unknown>>().catch(()=>({results:[] as Record<string,unknown>[]}));
+        .bind(...slice).all<Record<string,unknown>>().catch(()=>null);
+      // One absent module must not take the CRM down, so the failure is still swallowed - but it is
+      // recorded, so the screen can say "could not be read" instead of a confident zero.
+      if(!rows)continue;
+      for(const id of slice)read.add(id);
       for(const row of rows.results)totals.set(String(row.customer_id),Number(row.total||0));
     }
     for(const contact of contacts){
+      const known=read.has(String(contact.id));
       const booked=totals.get(String(contact.id))??0;
-      contact.lifetime_value=booked;
+      contact.lifetime_value=known?booked:null;
       // Published so the screen can be explicit rather than implying money that never arrived.
-      contact.lifetime_value_basis=booked>0?"recognized_bookings":"no_recognized_bookings";
+      contact.lifetime_value_basis=!known?"unavailable":booked>0?"recognized_bookings":"no_recognized_bookings";
     }
   }
   return Response.json({contacts});

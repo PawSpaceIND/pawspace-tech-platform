@@ -289,10 +289,15 @@ test("the legacy CRM and Customer 360 report the SAME lifetime value for one cus
   // recognition rule, so both screens are always the same number.
   assert.match(crmRoute, /status NOT IN \('cancelled','draft'\)/,
     "the CRM lifetime value must exclude cancelled and draft bookings, exactly as the P&L does");
-  assert.match(crmRoute, /contact\.lifetime_value=booked/,
-    "the stored demo column must be overwritten with the computed figure");
+  assert.match(crmRoute, /contact\.lifetime_value=known\?booked:null/,
+    "the stored demo column must be overwritten with the computed figure - or with null when the bookings could not be read");
   assert.match(crmRoute, /lifetime_value_basis/,
     "the basis must be published so the screen can be explicit rather than implying money");
+  // The basis is a positive claim, so it must come from whether the read RETURNED, not from what it
+  // returned - deriving it from the result published "no recognised bookings" for a read that failed.
+  // tests/analytics-scale-truth.test.mjs executes both states; this only pins the shape.
+  assert.match(crmRoute, /!known\?"unavailable"/,
+    "a read that did not return cannot claim the customer has no bookings");
   // Customer 360 applies the same exclusion, so the two cannot diverge.
   assert.match(c360Lib, /'cancelled','refunded','draft'/,
     "Customer 360 already excludes cancelled/refunded/draft - the rule must stay shared");
