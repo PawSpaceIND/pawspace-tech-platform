@@ -14,6 +14,21 @@ async function ensureTables(){
 }
 function requirePermission(current:Awaited<ReturnType<typeof resolveActor>>,permission:Permission){if(!hasPermission(current.permissions,permission))throw new Response("Permission denied",{status:403});}
 
+/**
+ * The founder role carries ["*"] and must never be granted through ordinary user management.
+ *
+ * update_user checked only whether the TARGET was already a founder, never what role was being
+ * ASSIGNED, so any holder of users.manage - an admin - could set a normal account's role_code to
+ * "founder" and mint full authority, for someone else or for themselves. create_user got this right;
+ * update_user did not, and the only test coverage was a grep for the create_user error string, which
+ * is why the gap survived.
+ *
+ * Normalised before comparing so a padded or differently-cased value cannot slip past this guard if a
+ * collation or a lookup ever stops being case-sensitive.
+ */
+const FOUNDER_ROLE="founder";
+const isFounderRole=(value:unknown)=>String(value??"").trim().toLowerCase()===FOUNDER_ROLE;
+
 export async function GET(request:Request){
   try{await ensureTables(); const current=await resolveActor(request);
   const db=await database();
@@ -30,13 +45,20 @@ export async function POST(request:Request){
     if(action==="create_user"){
       requirePermission(current,"users.manage"); const email=String(body.email||"").trim().toLowerCase(); const name=String(body.name||"").trim(); const roleCode=String(body.roleCode||"associate");
       if(!email.includes("@")||!name)return Response.json({error:"Name and valid email are required"},{status:400});
-      if(roleCode==="founder")return Response.json({error:"Founder is protected and cannot be assigned here"},{status:400});
+      if(isFounderRole(roleCode))return Response.json({error:"Founder is protected and cannot be assigned here"},{status:400});
+      // This INSERT upserts on email, so passing an existing founder's address with any other role
+      // would have edited that founder's record - the same protection update_user enforces, bypassed
+      // through the create path.
+      const existing=await db.prepare("SELECT role_code FROM app_users WHERE email=?").bind(email).first<{role_code:string}>();
+      if(isFounderRole(existing?.role_code))return Response.json({error:"Founder access cannot be changed from user management"},{status:400});
       await db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(email) DO UPDATE SET name=excluded.name,role_code=excluded.role_code,status='active',updated_at=excluded.updated_at").bind(crypto.randomUUID(),email,name,roleCode,"active",now,now).run(); await securityAudit(db,current,"create_user","identity",email,"completed",{roleCode});
       return Response.json({ok:true});
     }
     if(action==="update_user"){
       requirePermission(current,"users.manage"); const id=String(body.id||""); const target=await db.prepare("SELECT role_code FROM app_users WHERE id=?").bind(id).first<{role_code:string}>();
-      if(target?.role_code==="founder")return Response.json({error:"Founder access cannot be changed from user management"},{status:400});
+      if(isFounderRole(target?.role_code))return Response.json({error:"Founder access cannot be changed from user management"},{status:400});
+      // The missing half: refuse ASSIGNING founder, not just refuse editing an existing founder.
+      if(isFounderRole(body.roleCode)){await securityAudit(db,current,"update_user","identity",id,"denied",{reason:"founder_role_assignment_blocked",requestedRoleCode:String(body.roleCode??"")});return Response.json({error:"Founder is protected and cannot be assigned here"},{status:400});}
       await db.prepare("UPDATE app_users SET role_code=?,status=?,updated_at=? WHERE id=?").bind(String(body.roleCode||"associate"),String(body.status||"active"),now,id).run(); await securityAudit(db,current,"update_user","identity",id,"completed",{roleCode:body.roleCode,status:body.status});
       return Response.json({ok:true});
     }
