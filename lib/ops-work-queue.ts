@@ -147,9 +147,13 @@ export async function workQueueSnapshot(db:Db,input:{now?:number}={}){
  let commandCentre:Record<string,unknown>={available:false};
  if(await tableExists(db,"canonical_bookings")){
   const todays=await db.prepare("SELECT id,service_code,status,total_amount,scheduled_start FROM canonical_bookings WHERE substr(scheduled_start,1,10)=?").bind(today).all<Row>();
-  const active=todays.results.filter(row=>String(row.status)!=="cancelled");
+  // Revenue recognition matches lib/pnl-reporting.ts and buildCompanyAnalytics: cancelled AND
+  // draft bookings carry a total_amount but are not recognized revenue. Excluding only cancelled
+  // made the founder's headline TODAY number disagree with the P&L for the same day.
+  const recognized=(row:Row)=>!["cancelled","draft"].includes(String(row.status));
+  const active=todays.results.filter(recognized);
   const byService:Record<string,{bookings:number;revenue:number;completed:number;cancelled:number}>={};
-  for(const row of todays.results){const service=String(row.service_code);byService[service]??={bookings:0,revenue:0,completed:0,cancelled:0};const bucket=byService[service];if(String(row.status)==="cancelled")bucket.cancelled++;else{bucket.bookings++;bucket.revenue+=Number(row.total_amount||0);}if(String(row.status)==="completed")bucket.completed++;}
+  for(const row of todays.results){const service=String(row.service_code);byService[service]??={bookings:0,revenue:0,completed:0,cancelled:0};const bucket=byService[service];if(String(row.status)==="cancelled")bucket.cancelled++;else if(recognized(row)){bucket.bookings++;bucket.revenue+=Number(row.total_amount||0);}if(String(row.status)==="completed")bucket.completed++;}
   let openComplaints=0;
   if(await tableExists(db,"customer_experience_tickets")){const row=await db.prepare("SELECT COUNT(*) count FROM customer_experience_tickets WHERE status NOT IN ('resolved','closed')").first<Row>();openComplaints=Number(row?.count||0);}
   commandCentre={
