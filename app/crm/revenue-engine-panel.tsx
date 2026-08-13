@@ -12,14 +12,25 @@ type Report={id:string;period_type:string;status:string;generated_at:number;reci
 type Ops={id:string;booking_id:string;vertical:string;owner:string;scheduled_end_at:number;status:string;service_evidence?:string;payment_confirmed:number;provider_settlement_ready:number;exception_reason?:string;escalation_level:number};
 type Closure={closure_date:string;status:string;checklist:Record<string,{done:boolean;note:string}>;variance_amount:number;escalation_level:number};
 type Payload={stats:{revenue100:number;expectedRevenue:number;slaBreaches:number;rnrComplete:number;openTickets:number;escalatedTickets:number;reopened:number;teamRevenue:number;teamIncentive:number;opsBlocked:number};sourceStatus:Record<string,string>;opportunities:Opportunity[];leads:Lead[];tickets:Ticket[];leaderboard:Leader[];deliveries:Delivery[];reports:Report[];closure:Closure;ops:Ops[]};
+// The engine's load failure must say WHAT failed: a 401/403 is an access problem, anything else is
+// the API erroring (schema drift, server bug) - previously both collapsed into a misleading
+// "check your CRM access" message even when the caller's permissions were fine.
+async function describeLoadFailure(response:Response){
+  const body=await response.text().catch(()=>"");
+  let message=body;
+  try{message=String((JSON.parse(body) as {error?:string}).error||body)}catch{/* plain-text body */}
+  message=message.trim().slice(0,300);
+  if(response.status===401||response.status===403)return `Revenue engine access denied (HTTP ${response.status})${message?`: ${message}`:""} — your role needs customers.view.`;
+  return `Revenue engine failed to load (HTTP ${response.status})${message?`: ${message}`:""} — the API errored; this is not a permission problem.`;
+}
 const money=(value:number)=>`₹${Number(value||0).toLocaleString("en-IN")}`;
 const time=(value:number)=>new Date(value).toLocaleString("en-IN",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
 const closeLabels:Record<string,string>={online_cash_collections:"Online & cash collections",unmatched_payments:"Unmatched payments",refunds:"Refunds",provider_payouts:"Provider payouts",expenses_bills:"Expenses & bills",bank_ledger_variance:"Bank / ledger variance"};
 
 export default function RevenueEnginePanel({notify}:{notify:(message:string)=>void}){
   const[tab,setTab]=useState<Tab>("revenue"),[data,setData]=useState<Payload|null>(null),[busy,setBusy]=useState(""),[error,setError]=useState("");
-  const load=useCallback(async()=>{const response=await fetch("/api/revenue-crm",{cache:"no-store"});if(!response.ok)throw new Error(await response.text());setData(await response.json() as Payload)},[]);
-  useEffect(()=>{let active=true;fetch("/api/revenue-crm",{cache:"no-store"}).then(async response=>{if(!response.ok)throw new Error(await response.text());return response.json() as Promise<Payload>}).then(payload=>{if(active)setData(payload)}).catch(()=>{if(active)setError("Revenue engine could not load. Check your CRM access.")});return()=>{active=false}},[]);
+  const load=useCallback(async()=>{const response=await fetch("/api/revenue-crm",{cache:"no-store"});if(!response.ok)throw new Error(await describeLoadFailure(response));setData(await response.json() as Payload)},[]);
+  useEffect(()=>{let active=true;fetch("/api/revenue-crm",{cache:"no-store"}).then(async response=>{if(!response.ok)throw new Error(await describeLoadFailure(response));return response.json() as Promise<Payload>}).then(payload=>{if(active)setData(payload)}).catch(reason=>{if(active)setError(reason instanceof Error&&reason.message?reason.message:"Revenue engine could not load: the network request failed before reaching the API.")});return()=>{active=false}},[]);
   async function act(action:string,body:Record<string,unknown>={},success="Saved"){setBusy(action+String(body.id||body.leadId||""));setError("");try{const response=await fetch("/api/revenue-crm",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action,...body})});const result=await response.json() as {error?:string};if(!response.ok)throw new Error(result.error||"Action failed");await load();notify(success)}catch(reason){setError(reason instanceof Error?reason.message:"Action failed")}finally{setBusy("")}}
   const rnrLeads=useMemo(()=>data?.leads.filter(lead=>!['closed','converted','cold_exhausted'].includes(lead.status))||[],[data]);
   if(!data)return <section className={styles.loading}>{error||"Preparing today’s governed revenue worklist…"}</section>;
