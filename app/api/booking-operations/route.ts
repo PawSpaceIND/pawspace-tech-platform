@@ -1,5 +1,8 @@
+import { authError, requirePermission, requireProviderOwnership, resolveActor, securityAudit } from "../../../lib/server-auth";
+
 type OperationAction =
   | "package_upgrade"
+  | "apply_package_upgrade"
   | "service_overrun"
   | "running_late"
   | "vehicle_issue"
@@ -16,12 +19,14 @@ type OperationInput = {
   upgradedPackageName?: string;
   upgradedAmount?: number;
   refundCaseId?: string;
+  upgradeRequestId?: string;
   refundStatus?: "approved" | "processing" | "completed" | "rejected";
   gatewayReference?: string;
 };
 
 const actions = new Set<OperationAction>([
   "package_upgrade",
+  "apply_package_upgrade",
   "service_overrun",
   "running_late",
   "vehicle_issue",
@@ -30,6 +35,22 @@ const actions = new Set<OperationAction>([
   "refund_status",
 ]);
 const json = (value: unknown, status = 200) => Response.json(value, { status });
+
+/**
+ * A provider reporting what happened on a job is a communications act. Changing what a customer owes
+ * is not: `apply_package_upgrade` moves canonical_bookings.total_amount and booking_payments.amount,
+ * so it is a pricing decision, and refund progress belongs to Finance.
+ */
+const REQUIRED_PERMISSION: Record<OperationAction, "communications.message" | "pricing.manage" | "payments.manage"> = {
+  package_upgrade: "communications.message",
+  apply_package_upgrade: "pricing.manage",
+  service_overrun: "communications.message",
+  running_late: "communications.message",
+  vehicle_issue: "communications.message",
+  rebook_requested: "communications.message",
+  refund_requested: "communications.message",
+  refund_status: "payments.manage",
+};
 async function database() {
   const { env } = await import("cloudflare:workers");
   return env.DB;
@@ -41,6 +62,8 @@ async function ensureTables(db: Awaited<ReturnType<typeof database>>) {
     db.prepare("CREATE TABLE IF NOT EXISTS booking_customer_notifications (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,customer_id TEXT,channel TEXT NOT NULL,template_code TEXT NOT NULL,message TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',event_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS booking_rebooking_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,source_event_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'offered',reason TEXT NOT NULL,eligible_at INTEGER NOT NULL,selected_start TEXT,assigned_provider_id TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'requested',requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS booking_package_upgrade_requests (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,source_event_id TEXT NOT NULL,requested_package_name TEXT NOT NULL,requested_amount REAL NOT NULL,previous_amount REAL NOT NULL,status TEXT NOT NULL DEFAULT 'pricing_approval_required',requested_by TEXT NOT NULL,approved_by TEXT,approved_amount REAL,decision_reason TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_package_upgrade_booking ON booking_package_upgrade_requests(booking_id,status,created_at)"),
   ]);
 }
 
@@ -52,6 +75,8 @@ function validate(input: OperationInput) {
     return "Delay must be between 0 and 360 minutes";
   if (input.action === "package_upgrade" && (!input.upgradedPackageName || !input.upgradedAmount))
     return "Approved package and amount are required";
+  if (input.action === "apply_package_upgrade" && !input.upgradeRequestId)
+    return "Upgrade request is required";
   if (input.action === "refund_status" && (!input.refundCaseId || !input.refundStatus))
     return "Refund case and next status are required";
   return null;
@@ -94,6 +119,46 @@ export async function POST(request: Request) {
     const db = await database();
     await ensureTables(db);
     const now = Date.now();
+
+    // The route authorises itself rather than trusting the gateway alone, and it verifies that the
+    // caller may act for the provider they claim: providerId arrives in the request body, so without
+    // this check any holder of the action's permission could file events - and, before the split
+    // below, rewrite the price - against a booking assigned to somebody else entirely.
+    const actor = await resolveActor(request);
+    requirePermission(actor, REQUIRED_PERMISSION[input.action]);
+    const booking = await db.prepare("SELECT customer_id,provider_id,total_amount FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Record<string, unknown>>();
+    if (!booking) return json({ error: "Booking not found" }, 404);
+    if (REQUIRED_PERMISSION[input.action] === "communications.message") {
+      await requireProviderOwnership(db, actor, input.providerId);
+      if (String(booking.provider_id) !== String(input.providerId)) return json({ error: "This booking is assigned to another provider" }, 403);
+    }
+    if (input.action === "apply_package_upgrade") {
+      const upgrade = await db.prepare("SELECT * FROM booking_package_upgrade_requests WHERE id=? AND booking_id=?").bind(input.upgradeRequestId, input.bookingId).first<Record<string, unknown>>();
+      if (!upgrade) return json({ error: "Package upgrade request not found" }, 404);
+      if (String(upgrade.status) !== "pricing_approval_required") return json({ error: `Package upgrade is already ${String(upgrade.status)}` }, 409);
+      // Segregation of duties, matching the Boarding cancellation rule: whoever reported the upgrade
+      // cannot also be the one who prices it.
+      if (String(upgrade.requested_by) === actor.email) return json({ error: "Segregation of duties: the requester cannot approve their own package upgrade" }, 409);
+      // The amount is the priced decision, not the provider's number. It must be explicit, real, and
+      // an upgrade - a "package upgrade" that lowers what the customer owes is a refund, and refunds
+      // have their own governed path.
+      const amount = Number(input.upgradedAmount ?? upgrade.requested_amount);
+      const previous = Number(booking.total_amount || 0);
+      if (!Number.isFinite(amount) || amount <= 0) return json({ error: "Approved upgrade amount must be a real positive figure" }, 400);
+      if (amount < previous) return json({ error: "A package upgrade cannot reduce the booking total; use the governed refund path" }, 409);
+      const eventId = crypto.randomUUID();
+      await db.batch([
+        db.prepare("UPDATE booking_package_upgrade_requests SET status='applied',approved_by=?,approved_amount=?,decision_reason=?,updated_at=? WHERE id=? AND status='pricing_approval_required'").bind(actor.email, amount, input.reason.trim(), now, upgrade.id),
+        db.prepare("UPDATE canonical_bookings SET package_name=?,total_amount=?,pricing_json=json_set(pricing_json,'$.providerUpgrade',json(?)),updated_at=? WHERE id=?").bind(String(upgrade.requested_package_name), amount, JSON.stringify({ approved: true, approvedBy: actor.email, requestId: upgrade.id, recordedAt: now }), now, input.bookingId),
+        db.prepare("UPDATE booking_payments SET amount=?,detail_json=json_set(detail_json,'$.packageUpgrade',json(?)),updated_at=? WHERE booking_id=?").bind(amount, JSON.stringify({ packageName: String(upgrade.requested_package_name), approved: true, approvedBy: actor.email }), now, input.bookingId),
+        db.prepare("INSERT INTO booking_operational_events (id,booking_id,provider_id,event_type,reason,impact_minutes,detail_json,actor_id,created_at) VALUES (?,?,?,?,?,0,?,?,?)").bind(eventId, input.bookingId, String(upgrade.provider_id), "package_upgrade.applied", input.reason.trim(), JSON.stringify({ requestId: upgrade.id, previousAmount: previous, approvedAmount: amount }), actor.email, now),
+        db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(), input.bookingId, "package_upgrade.applied", "booking", input.bookingId, actor.email, JSON.stringify({ requestId: upgrade.id, previousAmount: previous, approvedAmount: amount }), now),
+        db.prepare("INSERT INTO booking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(), input.bookingId, String(booking.customer_id ?? ""), "whatsapp", "package_upgrade.applied", "Your PawSpace package upgrade has been confirmed. The revised scope and price are visible in your booking.", "queued", eventId, now),
+      ]);
+      await securityAudit(db, actor, "booking_operations.apply_package_upgrade", "booking", input.bookingId, "completed", { requestId: upgrade.id, previousAmount: previous, approvedAmount: amount });
+      return json({ data: { eventId, bookingId: input.bookingId, action: input.action, upgradeRequestId: String(upgrade.id), previousAmount: previous, approvedAmount: amount } }, 200);
+    }
+
     if (input.action === "refund_status") {
       const refund = await db.prepare("SELECT * FROM booking_refund_cases WHERE id=? AND booking_id=?").bind(input.refundCaseId,input.bookingId).first<Record<string,unknown>>();
       if (!refund) return json({ error: "Refund case not found" }, 404);
@@ -112,7 +177,7 @@ export async function POST(request: Request) {
     const eventId = crypto.randomUUID();
     const impactMinutes = Math.round(input.impactMinutes ?? 0);
     const rebookingAvailable = ["vehicle_issue", "running_late", "service_overrun"].includes(input.action) && impactMinutes >= 30;
-    const current = await db.prepare("SELECT customer_id,scheduled_start,total_amount FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Record<string, unknown>>();
+    const current = booking;
     const impacted = impactMinutes > 0
       ? await db.prepare("SELECT id,customer_id,scheduled_start FROM canonical_bookings WHERE provider_id=? AND scheduled_start>(SELECT COALESCE(scheduled_start,'') FROM canonical_bookings WHERE id=?) AND status NOT IN ('cancelled','completed') ORDER BY scheduled_start LIMIT 20").bind(input.providerId, input.bookingId).all<Record<string, unknown>>()
       : { results: [] as Record<string, unknown>[] };
@@ -122,9 +187,15 @@ export async function POST(request: Request) {
       db.prepare("INSERT INTO booking_operational_events (id,booking_id,provider_id,event_type,reason,impact_minutes,detail_json,actor_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(eventId,input.bookingId,input.providerId,input.action,input.reason.trim(),impactMinutes,JSON.stringify(detail),input.providerId,now),
       db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.bookingId,`operation.${input.action}`,"booking",input.bookingId,input.providerId,JSON.stringify(detail),now),
     ];
+    // A provider reporting an agreed upgrade records a REQUEST. It used to write the new price
+    // straight into canonical_bookings.total_amount and booking_payments.amount from the request
+    // body, so anyone holding communications.message - which the service_provider and associate roles
+    // both do - could set any booking's price to any number, including a negative one. The money now
+    // moves only through apply_package_upgrade, which requires pricing.manage.
+    let upgradeRequestId: string | undefined;
     if (input.action === "package_upgrade") {
-      statements.push(db.prepare("UPDATE canonical_bookings SET package_name=?,total_amount=?,pricing_json=json_set(pricing_json,'$.providerUpgrade',json(?)),updated_at=? WHERE id=?").bind(input.upgradedPackageName,input.upgradedAmount,JSON.stringify({ approved: true, recordedAt: now }),now,input.bookingId));
-      statements.push(db.prepare("UPDATE booking_payments SET amount=?,detail_json=json_set(detail_json,'$.packageUpgrade',json(?)),updated_at=? WHERE booking_id=?").bind(input.upgradedAmount,JSON.stringify({ packageName: input.upgradedPackageName, approved: true }),now,input.bookingId));
+      upgradeRequestId = crypto.randomUUID();
+      statements.push(db.prepare("INSERT INTO booking_package_upgrade_requests (id,booking_id,provider_id,source_event_id,requested_package_name,requested_amount,previous_amount,status,requested_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'pricing_approval_required',?,?,?)").bind(upgradeRequestId,input.bookingId,input.providerId,eventId,String(input.upgradedPackageName),Number(input.upgradedAmount),Number(current?.total_amount ?? 0),actor.email,now,now));
     }
     const allRecipients = [{ bookingId: input.bookingId, customerId: String(current?.customer_id ?? "") }, ...impactedBookings];
     for (const recipient of allRecipients) {
@@ -146,8 +217,8 @@ export async function POST(request: Request) {
       statements.push(db.prepare("INSERT INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(refundCaseId,input.bookingId,payment?.id ?? null,Number(payment?.amount ?? 0),input.reason,"requested",input.providerId,now,now));
     }
     await db.batch(statements);
-    return json({ data: { eventId, bookingId: input.bookingId, action: input.action, impactMinutes, impactedBookings, notificationsQueued: allRecipients.length * 2, rebookingAvailable, rebookingCaseId, refundCaseId } }, 201);
+    return json({ data: { eventId, bookingId: input.bookingId, action: input.action, impactMinutes, impactedBookings, notificationsQueued: allRecipients.length * 2, rebookingAvailable, rebookingCaseId, refundCaseId, upgradeRequestId } }, 201);
   } catch (error) {
-    return json({ error: error instanceof Error ? error.message : "Unable to save order operation" }, 500);
+    return authError(error, "Unable to save order operation");
   }
 }
