@@ -1,3 +1,6 @@
+import { authError, requirePermission, requireProviderOwnership, resolveActor } from "../../../lib/server-auth";
+import { hasPermission } from "../../../lib/platform-security";
+
 type OperationAction =
   | "package_upgrade"
   | "service_overrun"
@@ -68,12 +71,38 @@ function customerMessage(action: OperationAction, minutes: number, rebook: boole
   return "Your refund request is recorded and can be tracked from this order until the amount is completed.";
 }
 
+/**
+ * Read the operational trail of ONE booking.
+ *
+ * This handler used to take a bookingId and return that booking's operational events, customer
+ * notifications, rebooking cases and refund cases without asking who was calling. The only gate was
+ * lib/api-gateway.ts requiring `bookings.view` - which every service_provider holds by design, and
+ * must keep holding to do their own job. So any authenticated provider could read any booking's data
+ * by supplying its id: another customer's complaint text, refund amount and the staff member who
+ * raised it. Verified against a real service_provider identity, not the development-preview actor.
+ *
+ * `bookings.view` answers "may this person see booking data at all". It cannot answer "may they see
+ * THIS booking", which is an object-ownership question - so the booking is loaded first and the
+ * caller is checked against it before a single sensitive row is fetched.
+ */
 export async function GET(request: Request) {
   try {
     const db = await database();
     await ensureTables(db);
     const bookingId = new URL(request.url).searchParams.get("bookingId");
     if (!bookingId) return json({ error: "Booking ID is required" }, 400);
+
+    const actor = await resolveActor(request);
+    requirePermission(actor, "bookings.view");
+    const booking = await db.prepare("SELECT provider_id FROM canonical_bookings WHERE id=?").bind(bookingId).first<Record<string, unknown>>();
+    if (!booking) return json({ error: "Booking not found" }, 404);
+    // Ops carry explicit booking administration and legitimately work across bookings they are not
+    // assigned to, so they are not put through provider ownership. Everyone else - including an
+    // associate, who holds bookings.view but has no record-level claim on a booking - must own it.
+    if (!hasPermission(actor.permissions, "bookings.manage")) {
+      await requireProviderOwnership(db, actor, String(booking.provider_id ?? ""));
+    }
+
     const [events, notifications, rebooking, refunds] = await Promise.all([
       db.prepare("SELECT * FROM booking_operational_events WHERE booking_id=? ORDER BY created_at DESC").bind(bookingId).all(),
       db.prepare("SELECT * FROM booking_customer_notifications WHERE booking_id=? ORDER BY created_at DESC").bind(bookingId).all(),
@@ -82,7 +111,7 @@ export async function GET(request: Request) {
     ]);
     return json({ data: { events: events.results, notifications: notifications.results, rebooking: rebooking.results, refunds: refunds.results } });
   } catch (error) {
-    return json({ error: error instanceof Error ? error.message : "Unable to load order operations" }, 500);
+    return authError(error, "Unable to load order operations");
   }
 }
 
