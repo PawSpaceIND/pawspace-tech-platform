@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import os from "node:os";
 import { DatabaseSync } from "node:sqlite";
-import * as nodeModule from "node:module";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
 // ---------------------------------------------------------------------------
 // Staging UAT sign-in: four confirmed defects, each pinned here.
@@ -23,20 +23,12 @@ import * as nodeModule from "node:module";
 // Production is unaffected by construction: every path here is gated on PAWSPACE_UAT_LOGIN === "on",
 // which only the staging build sets. The last test pins that gate.
 // ---------------------------------------------------------------------------
-const WORKERS_SHIM = `export const env = new Proxy({}, { get: (_, key) => globalThis.__PAWSPACE_TEST_ENV?.[key] });`;
-const workersUrl = `data:text/javascript,${encodeURIComponent(WORKERS_SHIM)}`;
-if (typeof nodeModule.registerHooks === "function") {
-  nodeModule.registerHooks({
-    resolve(specifier, context, nextResolve) {
-      if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
-      try { return nextResolve(specifier, context); }
-      catch (error) {
-        if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
-        throw error;
-      }
-    },
-  });
-}
+// The resolver comes from the shared helper, which carries BOTH branches: registerHooks on Node >=22.15
+// and an out-of-thread loader below it. This file used to inline only the first branch, with no else, so
+// on the Node CI pins (22.13.0) no resolver was installed at all and the whole suite died on
+// `Cannot find module .../lib/platform-security` - an extensionless import inside uat-staging-auth.ts
+// that nothing was left to rewrite. 22 security tests silently did not run.
+installWorkersHooks("__PAWSPACE_TEST_DB__", "__PAWSPACE_TEST_ENV__");
 
 const uat = await import("../lib/uat-staging-auth.ts");
 const read = (file) => fs.readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
