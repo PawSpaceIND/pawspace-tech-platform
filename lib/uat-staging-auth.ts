@@ -8,9 +8,16 @@
  * never in the production config, so this entire path is dead code in production. It never weakens the
  * real identity/session checks — it is an additional, flag-gated branch that only fires on staging.
  *
- * Identity → role: a known seeded app_user gets its real role; any other email (behind the access code)
- * gets a founder/full-access role so a single tester can exercise every admin surface. Staging data is
- * synthetic/masked and payments are sandbox, so this convenience is safe here and nowhere else.
+ * Identity → role: the email MUST resolve to an active row in app_users, and it gets exactly that
+ * row's role and that role's permissions. Nothing is synthesised.
+ *
+ * It used to default an unrecognised email to roleCode "founder" with permissions ["*"], on the
+ * reasoning that staging data is synthetic and a tester should be able to reach every admin surface.
+ * That made the access code the only thing standing between any email address and full authority over
+ * the staging workspace — including the founder-only surfaces, the payroll approvals and the
+ * governance controls — and it meant a tester could never verify that a role boundary actually holds,
+ * because every identity was a superuser. A tester who needs founder reach signs in as a seeded
+ * founder account; one who needs to test an associate's view signs in as a seeded associate.
  */
 import{parsePermissions}from"./platform-security";
 
@@ -20,7 +27,15 @@ type UatEnv={PAWSPACE_UAT_LOGIN?:unknown;PAWSPACE_UAT_ACCESS_CODE?:unknown;PAWSP
 const COOKIE="pawspace_uat";
 const enc=new TextEncoder();
 
-export function uatLoginEnabled(env:UatEnv){return String(env?.PAWSPACE_UAT_LOGIN||"")==="on"&&String(env?.PAWSPACE_UAT_SIGNING_KEY||"").length>=16;}
+/**
+ * UAT sign-in is live only when the flag is on AND the signing key clears the same 32-character floor
+ * scripts/stage-config.mjs enforces at deploy time. The two used to disagree - the deploy demanded 32,
+ * this accepted 16 - so a key too weak to deploy would still have been honoured had it reached the
+ * worker by any other route. Below the floor the whole UAT branch is off: fail closed, not "on with a
+ * weak key". Production is unaffected either way, because PAWSPACE_UAT_LOGIN is never set there.
+ */
+export const UAT_SIGNING_KEY_MIN_LENGTH=32;
+export function uatLoginEnabled(env:UatEnv){return String(env?.PAWSPACE_UAT_LOGIN||"")==="on"&&String(env?.PAWSPACE_UAT_SIGNING_KEY||"").length>=UAT_SIGNING_KEY_MIN_LENGTH;}
 
 /**
  * The UAT cookie lives for 8 hours (app/api/staging-login/route.ts). When it lapses every gated API
@@ -60,7 +75,11 @@ async function verifyUatToken(env:UatEnv,token:string):Promise<string|null>{
  return obj.email;
 }
 
-/** Resolve a staff/admin actor from a valid UAT cookie. Returns null unless UAT login is enabled and the cookie verifies. */
+/**
+ * Resolve a staff actor from a valid UAT cookie. Returns null unless UAT login is enabled, the cookie
+ * verifies, AND the email is an active app_users row. Fail-closed at every step: an unknown email, a
+ * suspended one, or a role with no definition yields no actor and no permissions, never a default.
+ */
 export async function resolveUatStaffActor(db:Db,request:Request,env:UatEnv){
  if(!uatLoginEnabled(env))return null;
  const token=readCookie(request,COOKIE);
@@ -68,11 +87,31 @@ export async function resolveUatStaffActor(db:Db,request:Request,env:UatEnv){
  const email=await verifyUatToken(env,token);
  if(!email)return null;
  const user=await db.prepare("SELECT name,role_code,status FROM app_users WHERE email=?").bind(email).first<Row>().catch(()=>null);
- let roleCode="founder",permissions:string[]=["*"],name=`UAT ${email}`;
- if(user&&String(user.status)==="active"){
-  roleCode=String(user.role_code);name=String(user.name||email);
-  const role=await db.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(roleCode).first<Row>().catch(()=>null);
-  permissions=role?parsePermissions(role.permissions_json):[];
- }
- return{email,name,roleCode,permissions,developmentPreview:false,identitySource:"workspace" as const,principalType:"email" as const,principalKey:email};
+ // No synthesised identity. A cookie proves someone knew the access code; it does not decide who they
+ // are or what they may do — the staff directory does.
+ if(!user||String(user.status)!=="active")return null;
+ const roleCode=String(user.role_code||"").trim();
+ if(!roleCode)return null;
+ const role=await db.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(roleCode).first<Row>().catch(()=>null);
+ if(!role)return null; // a role with no definition grants nothing, rather than everything
+ const permissions=parsePermissions(role.permissions_json);
+ return{email,name:String(user.name||email),roleCode,permissions,developmentPreview:false,identitySource:"workspace" as const,principalType:"email" as const,principalKey:email};
+}
+
+/**
+ * Is this email allowed to sign in for UAT?
+ *
+ * This applies the SAME rule resolveUatStaffActor applies, deliberately: an active app_users row, a
+ * role code, and a role_definitions row for that code. An earlier version checked only the status,
+ * which meant a user whose role had no definition was handed a cookie at sign-in and then refused by
+ * every subsequent request — a cookie that cannot authorise anything is worse than a refusal, because
+ * the tester has no idea why the workspace is dead.
+ */
+export async function uatStaffIdentityAllowed(db:Db,email:string){
+ const row=await db.prepare("SELECT status,role_code FROM app_users WHERE email=?").bind(String(email).trim().toLowerCase()).first<Row>().catch(()=>null);
+ if(!row||String(row.status)!=="active")return false;
+ const roleCode=String(row.role_code||"").trim();
+ if(!roleCode)return false;
+ const role=await db.prepare("SELECT code FROM role_definitions WHERE code=?").bind(roleCode).first<Row>().catch(()=>null);
+ return Boolean(role);
 }
