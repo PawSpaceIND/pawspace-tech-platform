@@ -1,3 +1,4 @@
+import{collectedForBooking}from"./collected-funds";
 import{ensureSittingLifecycleTables}from"./sitting-lifecycle";
 import{collectedForBooking}from"./collected-funds";
 
@@ -36,7 +37,11 @@ export async function ensureSittingFinanceTables(db:D1Database){await ensureSitt
  db.prepare("CREATE TABLE IF NOT EXISTS sitting_finance_reconciliation (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,booking_total REAL NOT NULL,captured_amount REAL NOT NULL,refund_total REAL NOT NULL,net_customer_amount REAL NOT NULL,settlement_amount REAL,refund_state TEXT NOT NULL,settlement_state TEXT NOT NULL,tax_state TEXT NOT NULL,status TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',checked_by TEXT NOT NULL,created_at INTEGER NOT NULL)"),
  db.prepare("CREATE TABLE IF NOT EXISTS sitting_date_change_quote_links (quote_id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,request_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
 ]);await ensureRefundLedgerUniqueness(db,"sitting_refund_ledger");}
-async function context(db:D1Database,bookingId:string){await ensureSittingFinanceTables(db);const row=await db.prepare("SELECT b.*,w.id work_order_id,w.status work_order_status,p.amount captured_amount,p.status payment_status FROM canonical_bookings b LEFT JOIN provider_work_orders w ON w.booking_id=b.id LEFT JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=? AND b.service_code='pet_sitting'").bind(bookingId).first<Row>();if(!row)throw new Response("Canonical Sitting booking not found",{status:404});return row;}
+async function context(db:D1Database,bookingId:string){await ensureSittingFinanceTables(db);const row=await db.prepare("SELECT b.*,w.id work_order_id,w.status work_order_status,p.status payment_status FROM canonical_bookings b LEFT JOIN provider_work_orders w ON w.booking_id=b.id LEFT JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=? AND b.service_code='pet_sitting'").bind(bookingId).first<Row>();if(!row)throw new Response("Canonical Sitting booking not found",{status:404});
+ // captured_amount is money actually collected — the one canonical definition, schedule-aware, never
+ // the booking price. PAWSPACE-QA-A2: this SELECT used to alias p.amount, so an unpaid booking
+ // reconciled at full price.
+ row.captured_amount=await collectedForBooking(db,bookingId);return row;}
 async function prior(db:D1Database,key:string){const row=await db.prepare("SELECT result_json FROM sitting_finance_action_keys WHERE idempotency_key=?").bind(key).first<Row>();return row?parse(row.result_json):null;}
 async function remember(db:D1Database,input:SittingFinanceInput,result:Record<string,unknown>){await db.prepare("INSERT INTO sitting_finance_action_keys (idempotency_key,booking_id,action,result_json,created_at) VALUES (?,?,?,?,?)").bind(input.idempotencyKey,input.bookingId,input.action,JSON.stringify(result),Date.now()).run();return result;}
 function why(input:SittingFinanceInput){const value=String(input.reason||"").trim();if(value.length<3)throw new Response("A reason is required",{status:400});return value;}

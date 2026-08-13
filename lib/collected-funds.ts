@@ -24,8 +24,13 @@
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
-/** booking_payments.status values that mean money changed hands. 'created' and 'failed' do not. */
-export const COLLECTED_PAYMENT_STATUSES=["captured","paid"] as const;
+/**
+ * booking_payments.status values that mean money changed hands. 'created' and 'failed' do not.
+ * 'refunded' and 'partially_refunded' DO: money was collected before any of it went back, so a
+ * reconciliation that excluded them would under-report real collections. Capping a NEW refund at that
+ * collected value is still an upper bound — you can never return more than was taken.
+ */
+export const COLLECTED_PAYMENT_STATUSES=["captured","paid","refunded","partially_refunded"] as const;
 
 const round2=(value:number)=>Math.round(value*100)/100;
 
