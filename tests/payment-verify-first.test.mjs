@@ -19,7 +19,15 @@ test("Razorpay adapter is environment-aware and fails closed", () => {
 test("Verify-first: prepaid online bookings cannot self-capture in LIVE mode (sandbox unchanged)", () => {
   // the gate exists and is LIVE-only + excludes subscriptions
   assert.match(bookingRoute, /function recordedPaymentStatus/);
-  assert.match(bookingRoute, /if\(liveMode&&!isSubscription&&\(payment\.mode==="prepaid"\|\|payment\.mode==="split_50_50"\)&&ONLINE_METHODS\.has\(payment\.method\)&&payment\.status==="captured"\)return "created"/);
+  // This used to pin the condition verbatim, INCLUDING the two mode names it tested for. The platform
+  // also uses "full" and "split", so the guard it was pinning let those bypass verification entirely —
+  // and this assertion passed the whole time, because the source matched the source. The gate no longer
+  // consults payment.mode at all; the behaviour is exercised across every mode in
+  // tests/live-payment-integrity.test.mjs.
+  assert.match(bookingRoute, /liveMode&&ONLINE_METHODS\.has\(payment\.method\)&&payment\.status==="captured"\)return "created"/);
+  assert.doesNotMatch(bookingRoute, /payment\.mode==="prepaid"\|\|payment\.mode==="split_50_50"/, "LIVE financial truth must not depend on a client-supplied mode label");
+  // Nor on whether the purchase happens to be a subscription: that carve-out was PAY-002 defect 1.
+  assert.doesNotMatch(bookingRoute, /!isSubscription/, "no payment class may be exempt from LIVE verification");
   assert.match(bookingRoute, /return payment\.status/); // sandbox/UAT keeps the submitted status
   assert.match(bookingRoute, /PAWSPACE_PAYMENT_ENV/);
   // the payment insert now records the gated status, not the raw client value

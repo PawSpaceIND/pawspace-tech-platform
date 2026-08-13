@@ -18,7 +18,10 @@ test("Grooming closure uses one canonical transaction across Customer Partner Te
   assert.match(canonical,/grooming_subscription_purchase_snapshots/);
   assert.match(canonical,/governGroomingBooking/);
   assert.match(canonical,/cityId:input\.cityId,zoneId:input\.zoneId/);
-  assert.match(canonical,/Grooming subscription purchases must be prepaid and captured/);
+  // Prepay-only still holds. The "and captured" half was dropped deliberately (PAY-002): demanding a
+  // captured payment at purchase is what forced the LIVE verify-first exemption, so the purchase may now
+  // await gateway verification while the entitlement stays pending.
+  assert.match(canonical,/Grooming subscription purchases must be prepaid/);
   assert.match(canonical,/subscription_reserved/);
   assert.match(change,/booking_cancelled/);
   assert.match(change,/booking_rescheduled/);

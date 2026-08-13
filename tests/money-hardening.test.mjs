@@ -200,9 +200,15 @@ test("real execution: capture amount mismatch and refund flow both land in the e
   assert.equal(sqlite.prepare("SELECT status FROM booking_refund_cases WHERE id='RC1'").get().status, "processed");
 });
 
-test("contract: verify-first source rule pins LIVE prepaid AND split_50_50 online payments to 'created', and the webhook checks the signature before parsing", () => {
+// The old title and assertion both named the two payment modes the guard covered — "pins LIVE prepaid
+// AND split_50_50". The platform also uses "full" and "split", so what this certified was a guard that
+// covered two spellings out of several, and it passed for as long as the bypass existed. The rule is now
+// about the METHOD being online and the environment being LIVE, never about a client-supplied label.
+test("contract: verify-first pins EVERY LIVE online payment to 'created' regardless of mode, and the webhook checks the signature before parsing", () => {
   const bookings = fs.readFileSync(new URL("../app/api/canonical-bookings/route.ts", import.meta.url), "utf8");
-  assert.match(bookings, /liveMode&&!isSubscription&&\(payment\.mode==="prepaid"\|\|payment\.mode==="split_50_50"\)&&ONLINE_METHODS\.has\(payment\.method\)&&payment\.status==="captured"\)return "created"/, "the verify-first rule must cover both prepaid and the split_50_50 branch");
+  assert.match(bookings, /liveMode&&ONLINE_METHODS\.has\(payment\.method\)&&payment\.status==="captured"\)return "created"/, "the verify-first rule keys off the online method and the environment");
+  assert.doesNotMatch(bookings, /payment\.mode==="prepaid"\|\|payment\.mode==="split_50_50"/, "a mode-name allowlist is exactly what let 'full' and 'split' through");
+  assert.doesNotMatch(bookings, /!isSubscription/, "and a subscription carve-out is what let a LIVE subscription self-declare capture");
   const webhook = fs.readFileSync(new URL("../app/api/razorpay-webhook/route.ts", import.meta.url), "utf8");
   assert.ok(webhook.indexOf("safeEqual(expected,signature)") < webhook.indexOf("JSON.parse(raw)"), "signature verification must run before the payload is even parsed");
   const gateway = fs.readFileSync(new URL("../lib/api-gateway.ts", import.meta.url), "utf8");
