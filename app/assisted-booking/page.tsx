@@ -37,7 +37,7 @@ export default function AssistedBooking(){
   return <div className={styles.shell}>
     <aside>
       <Link href="/admin" className={styles.brand}><span>paw</span>space <small>OPS</small></Link>
-      <nav><Link href="/admin">Overview</Link><Link href="/crm">Customer 360</Link><Link className={styles.active} href="/assisted-booking">Assisted orders</Link><Link href="/ops">Finance & People</Link><Link href="/control">Platform control</Link><Link href="/partner-app">Partner app</Link></nav>
+      <nav><Link href="/admin">Overview</Link><Link href="/crm">Customer 360</Link><Link className={styles.active} href="/assisted-booking">Assisted orders</Link><Link href="/team">Finance & People</Link><Link href="/control">Platform control</Link><Link href="/partner-app">Partner app</Link></nav>
       <div className={styles.access}><b>UAT ONLY</b><small>Staff identity required</small><small>Canonical booking + scheduler</small><small>No live money</small></div>
     </aside>
     <main>
