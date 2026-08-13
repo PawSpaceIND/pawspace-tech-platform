@@ -273,3 +273,32 @@ test("legacy CRM page shows only real API data: demo arrays and fabricated field
   assert.match(crmPage, /loadError/, "API failures surface to staff instead of being swallowed");
   assert.match(crmPage, /No CRM contacts yet/, "honest empty state");
 });
+
+test("the legacy CRM and Customer 360 report the SAME lifetime value for one customer", () => {
+  // The legacy screen used to render crm_contacts.lifetime_value - a stored column seeded with demo
+  // figures that no booking backs. It showed Meera Shah at Rs.4,150 while /team/sales correctly
+  // computed Rs.0 from her (nonexistent) bookings. Two numbers for one customer is worse than either.
+  //
+  // /api/crm now computes lifetime value from recognised bookings, using the platform's single
+  // recognition rule, so both screens are always the same number.
+  assert.match(crmRoute, /status NOT IN \('cancelled','draft'\)/,
+    "the CRM lifetime value must exclude cancelled and draft bookings, exactly as the P&L does");
+  assert.match(crmRoute, /contact\.lifetime_value=booked/,
+    "the stored demo column must be overwritten with the computed figure");
+  assert.match(crmRoute, /lifetime_value_basis/,
+    "the basis must be published so the screen can be explicit rather than implying money");
+  // Customer 360 applies the same exclusion, so the two cannot diverge.
+  assert.match(c360Lib, /'cancelled','refunded','draft'/,
+    "Customer 360 already excludes cancelled/refunded/draft - the rule must stay shared");
+  // And the screen says which it is instead of printing a bare number.
+  assert.match(crmPage, /No recognised booking yet/);
+  assert.match(crmPage, /From recognised bookings/);
+});
+
+test("the CRM lifetime lookup is chunked for D1's bound-parameter cap", () => {
+  // Same defect class as /api/unit-economics: one "?" per contact would exceed D1's limit as the
+  // contact list grows, and the CRM list query returns up to 100 rows.
+  assert.match(crmRoute, /index\+=50/, "the IN clause must be chunked");
+  const inClause = /IN \(\$\{slice\.map\(\(\)=>"\?"\)\.join\(","\)\}\)/.test(crmRoute);
+  assert.ok(inClause, "the chunked slice, not the full contact list, must build the placeholders");
+});
