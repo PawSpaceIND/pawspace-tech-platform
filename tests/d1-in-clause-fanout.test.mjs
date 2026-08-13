@@ -14,7 +14,7 @@ import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
 
-installWorkersHooks("__FANOUT_DB__");
+installWorkersHooks("__FANOUT_DB__", "__FANOUT_ENV__");
 
 const D1_BOUND_PARAMETER_LIMIT = 100;
 
