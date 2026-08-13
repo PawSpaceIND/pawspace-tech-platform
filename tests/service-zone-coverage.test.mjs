@@ -59,15 +59,37 @@ function makeD1(sqlite) {
 const zones = await import("../lib/service-zones.ts");
 const { resolveZoneByPincode, SERVICE_ZONES } = zones;
 
+// The city table's DDL is taken from the module that OWNS it, never re-typed here. Writing it by
+// hand is how the first version of this suite passed while the resolver queried "city_launch_config"
+// (singular) and the real table is "city_launch_configs" - the test created the table under the
+// wrong name too, so it cheerfully agreed with the bug and 560006 stayed unserviceable on staging.
+const CITY_DDL = (() => {
+  const source = read("lib/city-governance.ts");
+  const match = /CREATE TABLE IF NOT EXISTS city_launch_configs \([\s\S]*?\)(?=")/.exec(source);
+  assert.ok(match, "could not find the city_launch_configs DDL in lib/city-governance.ts");
+  return match[0];
+})();
+const CITY_TABLE = /CREATE TABLE IF NOT EXISTS ([a-z_]+)/.exec(CITY_DDL)[1];
+
 function fresh({ live = true, pincodes = "560001–560110" } = {}) {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
   globalThis.__PAWSPACE_TEST_ENV = { DB: db };
-  sqlite.exec("CREATE TABLE city_launch_config (id TEXT PRIMARY KEY,city_code TEXT,city TEXT,state TEXT,status TEXT,centre TEXT,radius_km REAL,pincodes TEXT,gst_included INTEGER,services_json TEXT,version INTEGER,updated_by TEXT,created_at INTEGER,updated_at INTEGER)");
-  sqlite.prepare("INSERT INTO city_launch_config (id,city_code,city,state,status,centre,radius_km,pincodes,gst_included,services_json,version,updated_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+  sqlite.exec(CITY_DDL);
+  sqlite.prepare(`INSERT INTO ${CITY_TABLE} (id,city_code,city,state,status,centre,radius_km,pincodes,gst_included,services_json,version,updated_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run("bengaluru", "blr", "Bengaluru", "Karnataka", live ? "Live" : "Draft", "12.9716, 77.5946", 35, pincodes, 1, "{}", 1, "test", 0, 0);
   return { sqlite, db };
 }
+
+test("the resolver queries the city table that actually exists", () => {
+  // Guard the exact mistake above: the resolver's table name must match the owning module's DDL.
+  const resolver = read("lib/service-zones.ts");
+  const referenced = [...resolver.matchAll(/FROM (city_launch_config[a-z_]*)/g)].map(match => match[1]);
+  assert.ok(referenced.length > 0, "the resolver must consult the city launch configuration");
+  for (const name of referenced) {
+    assert.equal(name, CITY_TABLE, `the resolver queries "${name}" but lib/city-governance.ts creates "${CITY_TABLE}"`);
+  }
+});
 
 // The areas PawSpace actually operates in. Each must resolve, and to the right zone.
 const CORE_AREAS = [
