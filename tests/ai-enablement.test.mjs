@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { DatabaseSync } from "node:sqlite";
 import * as nodeModule from "node:module";
+import { assertWithinBudget, freshCountingD1 } from "./helpers/d1-harness.mjs";
 
 // ---------------------------------------------------------------------------
 // Every AI screen opened empty on staging. The engine was not broken — the assistant was switched
@@ -58,37 +58,11 @@ const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), "
 const configPage = read("app/team/ai/configuration/page.tsx");
 const teamAiPage = read("app/team/ai/page.tsx");
 
-// Local stand-in for the shared harness the other branch is landing at tests/helpers/d1-harness.mjs
-// ("test the budget, not the shape"). Counts statements and enforces D1's 100-parameter bind cap, so
-// an N+1 or an over-wide IN () fails here rather than in production. Swap for the shared harness once
-// it is on main.
-const meter = { calls: 0, reset() { this.calls = 0; } };
-
-function count(sql, args) {
-  meter.calls += 1;
-  if (args.length > 100) throw new Error(`D1 allows at most 100 bind parameters; this statement used ${args.length}: ${sql.slice(0, 120)}`);
-}
-
-function makeD1(sqlite) {
-  const statement = (sql, args) => ({
-    bind: (...bound) => statement(sql, bound),
-    first: async () => { count(sql, args); const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-    run: async () => { count(sql, args); const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
-    all: async () => { count(sql, args); return { results: sqlite.prepare(sql).all(...args) }; },
-  });
-  return {
-    prepare: (sql) => statement(sql, []),
-    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
-  };
-}
-
 /** A completely empty database — exactly a freshly-deployed environment. */
 function coldDb(env = {}) {
-  const sqlite = new DatabaseSync(":memory:");
-  const db = makeD1(sqlite);
-  globalThis.__PAWSPACE_TEST_ENV = { DB: db, ...env };
-  return { sqlite, db };
+  const harness = freshCountingD1();
+  globalThis.__PAWSPACE_TEST_ENV = { DB: harness.db, ...env };
+  return harness;
 }
 const json = async (response) => {
   const payload = await response.clone().json();
@@ -218,28 +192,57 @@ test("reinstalling the grounding supersedes v1 instead of leaving two active pro
 
 
 // ---------------------------------------------------------------------------
-// 4. Budget: the status read must not grow with configuration history.
+// 4. Budget: the status read must not carry configuration history it does not use.
+//
+// A note on which guard catches this, because the first version of this test was wrong.
+//
+// The shared harness models two D1 limits: the bind cap (one over-wide statement) and the call
+// budget (many individually-legal statements — this is what catches N+1). Neither catches this
+// defect. The status handler called aiBusinessConfigurationSnapshot, which is a FIXED six queries
+// whether there are ten configuration versions or a thousand; the call count never moved. The waste
+// was in ROWS: up to 100 profiles + 200 intents + 200 knowledge + 100 prompt policies + 200 audit
+// events transferred to compute two integers.
+//
+// So this adds a third meter — rows returned — over the shared harness rather than beside it. It is
+// the guard that discriminates here, and it is worth proposing for tests/helpers/d1-harness.mjs.
 // ---------------------------------------------------------------------------
-test("the status read costs the same whether there is one config version or fifty", async () => {
-  coldDb();
+
+/** Wraps a counting harness to also tally rows returned, the cost a call budget cannot see. */
+function withRowMeter(harness) {
+  let rows = 0;
+  const inner = harness.db.prepare.bind(harness.db);
+  harness.db.prepare = (sql) => {
+    const wrap = (statement) => ({
+      ...statement,
+      bind: (...args) => wrap(statement.bind(...args)),
+      first: async () => { const row = await statement.first(); if (row) rows += 1; return row; },
+      all: async () => { const result = await statement.all(); rows += result.results.length; return result; },
+    });
+    return wrap(inner(sql));
+  };
+  return { rows: () => rows, resetRows: () => { rows = 0; } };
+}
+
+test("the status read does not carry configuration history it never uses", async () => {
+  const harness = coldDb();
+  const meter = withRowMeter(harness);
   const bootstrap = () => bootstrapRoute.POST(new Request("http://localhost/api/ai-bootstrap", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }));
   await bootstrap();
 
-  meter.reset();
-  await get("/api/ai-business-configuration?mode=status");
-  const small = meter.calls;
+  meter.resetRows();
+  await assertWithinBudget(harness, { max: 20, label: "status read on a fresh install" }, () => get("/api/ai-business-configuration?mode=status"));
+  const freshRows = meter.rows();
 
   // Nine more bootstraps: ~10 profiles, ~50 intents, ~100 knowledge versions and their audit trail.
   for (let round = 0; round < 9; round += 1) await bootstrap();
   const versions = await configLib.aiBusinessConfigurationSnapshot(globalThis.__PAWSPACE_TEST_ENV.DB);
   assert.ok(versions.knowledge.length >= 100, "the history really did grow");
 
-  meter.reset();
-  await get("/api/ai-business-configuration?mode=status");
-  const large = meter.calls;
+  meter.resetRows();
+  await assertWithinBudget(harness, { max: 20, label: "status read against 100+ versions" }, () => get("/api/ai-business-configuration?mode=status"));
+  const grownRows = meter.rows();
 
-  // This is the point of the test: not "how many queries" but "does it scale". The handler used to
-  // call aiBusinessConfigurationSnapshot and pull every version row to count two integers.
-  assert.equal(large, small, `status issued ${large} statements against 100+ versions vs ${small} against 10 — it must be constant`);
-  assert.ok(small <= 20, `status should be a bounded read, got ${small} statements`);
+  // The property: reading status must cost the same after a hundred versions as after ten.
+  assert.equal(grownRows, freshRows, `status transferred ${grownRows} rows against 100+ versions vs ${freshRows} against 10 — it must not scale with history`);
+  assert.ok(freshRows < 40, `status should read a handful of rows, not the whole configuration history (got ${freshRows})`);
 });
