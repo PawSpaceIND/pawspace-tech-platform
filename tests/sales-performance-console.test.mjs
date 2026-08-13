@@ -310,11 +310,14 @@ test("the performance console renders a real surface, not a bare instruction ban
   ]);
 
   // Built from the shared design system rather than inline system-ui styles.
-  for (const component of ["PageHeader", "StatCard", "Badge", "Button", "EmptyState"]) assert.match(page, new RegExp(component));
+  for (const component of ["OpsShell", "StatCard", "Badge", "Button", "EmptyState"]) assert.match(page, new RegExp(component));
+  // The console wears the approved Operations chrome rather than a page of its own.
+  assert.doesNotMatch(page, /PageHeader/);
   assert.doesNotMatch(page, /fontFamily:"system-ui,sans-serif"/);
 
-  // The links that were indistinguishable from body text are styled, focusable navigation.
-  assert.match(css, /\.nav a \{/);
+  // Navigation lives in the Operations rail, which marks the current screen and takes keyboard focus.
+  const shell = await readFile(new URL("../app/components/ops-shell/ops-shell.module.css", import.meta.url), "utf8");
+  assert.match(shell, /\.sidebar nav a:focus-visible/);
   assert.match(css, /focus-visible/);
 
   // Setup is performed here: both governance actions the leaderboard needs are wired to buttons.

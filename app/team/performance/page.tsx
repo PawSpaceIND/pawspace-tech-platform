@@ -1,7 +1,7 @@
 "use client";
 import{useCallback,useEffect,useState}from"react";
-import Link from"next/link";
-import{Badge,Button,EmptyState,PageHeader,StatCard}from"../../components/ui";
+import{Badge,Button,EmptyState,StatCard}from"../../components/ui";
+import OpsShell from"../../components/ops-shell/OpsShell";
 import styles from"./performance.module.css";
 
 type Row={rank:number;employeeEmail:string;employeeName:string;leadsAssigned:number;meaningfulActions:number;qualifiedLeads:number;firstResponseRate:number|null;bookingConversions:number;netCollectedRevenue:number;refunds:number;cxEscalations:number;rankValue:number};
@@ -120,18 +120,12 @@ export default function PerformancePage(){
   finally{setBusy("");}
  }
 
- return <main className={styles.shell}>
-  <PageHeader
+ return <OpsShell
     eyebrow="PawSpace · Live employee performance"
     title="Sales performance leaderboard"
     description="Source-derived operating view. Rankings are for visibility and coaching only; they are not payroll, incentive or disciplinary authority."
     actions={<Badge tone={activePolicy?"success":"warning"} dot>{activePolicy?`Policy v${activePolicy.version} active`:"Policy not configured"}</Badge>}
-  />
-  <nav className={styles.nav} aria-label="Team workspaces">
-    <Link href="/team">← Team Home</Link>
-    <Link href="/crm">CRM</Link>
-    <Link href="/team/alerts">Manager Alerts</Link>
-  </nav>
+    >
 
   {error?<div className={`${styles.panel} ${styles.panelError}`}><b>{error}</b>{signInUrl?<> · <a href={signInUrl}>Sign in again</a></>:null}</div>:null}
   {notice?<div className={styles.panel}>{notice}</div>:null}
@@ -226,5 +220,5 @@ export default function PerformancePage(){
    <b>Ranking authority:</b> NO · <b>Payroll authority:</b> NO · <b>Disciplinary authority:</b> NO · <b>Production ready:</b> NO
    {data?<> · Source: {data.truth.source}</>:null}
   </footer>
- </main>;
+ </OpsShell>;
 }

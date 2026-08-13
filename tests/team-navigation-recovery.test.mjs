@@ -238,10 +238,14 @@ test("every in-app link target resolves to a real route", async () => {
   }
   assert.deepEqual(broken, [], `link targets without a route:\n${broken.join("\n")}`);
 
-  // The three links from the reported screen, pinned explicitly.
-  const performance = await repoFile("app/team/performance/page.tsx");
-  for (const href of ["/team", "/crm", "/team/alerts"]) {
-    assert.match(performance, new RegExp(`href="${href}"`));
+  // The navigation from the reported screen now lives in the Operations rail every console renders
+  // inside, so it is pinned there - and the rail's targets must resolve like any other link.
+  const rail = await repoFile("app/components/ops-shell/OpsShell.tsx");
+  for (const href of ["/team", "/team/operations", "/team/performance", "/team/marketing"]) {
+    assert.match(rail, new RegExp(`href: "${href}"`), `${href} must be reachable from the Operations rail`);
     assert.ok(routes.has(href), `${href} must be a real route`);
   }
+  // The console itself no longer carries a second navigation row.
+  const performance = await repoFile("app/team/performance/page.tsx");
+  assert.doesNotMatch(performance, /className=\{styles\.nav\}/);
 });
