@@ -37,6 +37,9 @@ export async function POST(request:Request){
     if(action==="update_user"){
       requirePermission(current,"users.manage"); const id=String(body.id||""); const target=await db.prepare("SELECT role_code FROM app_users WHERE id=?").bind(id).first<{role_code:string}>();
       if(target?.role_code==="founder")return Response.json({error:"Founder access cannot be changed from user management"},{status:400});
+      // create_user already blocks assigning founder; without the same guard here, any users.manage
+      // actor could PROMOTE an account to founder through update_user - a straight escalation path.
+      if(String(body.roleCode||"associate")==="founder")return Response.json({error:"Founder is protected and cannot be assigned here"},{status:400});
       await db.prepare("UPDATE app_users SET role_code=?,status=?,updated_at=? WHERE id=?").bind(String(body.roleCode||"associate"),String(body.status||"active"),now,id).run(); await securityAudit(db,current,"update_user","identity",id,"completed",{roleCode:body.roleCode,status:body.status});
       return Response.json({ok:true});
     }
