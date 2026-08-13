@@ -14,7 +14,7 @@ import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
 
-installWorkersHooks("__CONSOLE_DB__");
+installWorkersHooks("__CONSOLE_DB__", "__CONSOLE_ENV__");
 
 function makeD1(sqlite) {
   function statement(sql, args) {
