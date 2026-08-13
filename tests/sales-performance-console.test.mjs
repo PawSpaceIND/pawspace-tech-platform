@@ -14,17 +14,33 @@ import { DatabaseSync } from "node:sqlite";
 import * as nodeModule from "node:module";
 
 const CF_STUB = "data:text/javascript,export const env=new Proxy({},{get:(t,k)=>k===\"DB\"?globalThis.__PERF_DB__:(globalThis.__PERF_ENV__??{})[k]});";
-nodeModule.registerHooks({
-  resolve(specifier, context, nextResolve) {
-    if (specifier === "cloudflare:workers") return { url: CF_STUB, shortCircuit: true };
-    try {
-      return nextResolve(specifier, context);
-    } catch (error) {
-      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
+// registerHooks() requires Node >= 22.15; CI pins 22.13.0, where it does not exist. Without this
+// fallback the hook is never registered, "cloudflare:workers" fails to resolve, and every test in
+// this file dies on CI while passing locally on a newer Node. Same shape as the other suites.
+if (typeof nodeModule.registerHooks === "function") {
+  nodeModule.registerHooks({
+    resolve(specifier, context, nextResolve) {
+      if (specifier === "cloudflare:workers") return { url: CF_STUB, shortCircuit: true };
+      try {
+        return nextResolve(specifier, context);
+      } catch (error) {
+        if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
+        throw error;
+      }
+    },
+  });
+} else {
+  const hook = `const stub=${JSON.stringify('CF_STUB_PLACEHOLDER')};
+  export async function resolve(specifier, context, nextResolve) {
+    if (specifier === "cloudflare:workers") return { url: stub, shortCircuit: true };
+    try { return await nextResolve(specifier, context); }
+    catch (error) {
+      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(specifier + ".ts", context);
       throw error;
     }
-  },
-});
+  }`.replace('"CF_STUB_PLACEHOLDER"', JSON.stringify(CF_STUB));
+  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
+}
 
 function makeD1(sqlite) {
   function statement(sql, args) {
