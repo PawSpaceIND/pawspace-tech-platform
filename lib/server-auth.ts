@@ -1,7 +1,7 @@
 import { defaultRoles, hasPermission, parsePermissions, type Permission } from "./platform-security";
 import {ensureIdentityBindingTables,findIdentityBinding,type IdentitySource,type PrincipalType} from "./identity-binding";
 import {resolvePlatformSession} from "./platform-session";
-import {resolveUatStaffActor} from "./uat-staging-auth";
+import {resolveUatStaffActor,signInRequiredResponse} from "./uat-staging-auth";
 
 type Db = Awaited<ReturnType<typeof database>>;
 export type AuthenticatedActor = { email:string; name:string; roleCode:string; permissions:string[]; developmentPreview:boolean; identitySource:IdentitySource; principalType:PrincipalType; principalKey:string };
@@ -43,6 +43,13 @@ export async function ensureSecurityTables(db:Db){
   securityTablesEnsured.add(db);
 }
 
+/**
+ * Every gated page reads these failures with response.json(). A plain-text body therefore never reached
+ * the tester as a message - it surfaced as `Unexpected token 'A', "Authentica"... is not valid JSON`,
+ * which reads like a broken page rather than an ended session (reproduced against the built worker).
+ */
+export function authFailure(message:string,status:number){return Response.json({error:message},{status,headers:{"cache-control":"no-store"}});}
+
 export async function resolveActor(request:Request):Promise<AuthenticatedActor>{
   const db=await database(); await ensureSecurityTables(db);
   if(isDevelopmentPreview(request))return {email:"preview@pawspace.test",name:"Preview operator",roleCode:"superuser",permissions:["*"],developmentPreview:true,identitySource:"workspace",principalType:"email",principalKey:"preview@pawspace.test"};
@@ -53,22 +60,22 @@ export async function resolveActor(request:Request):Promise<AuthenticatedActor>{
   const session=await resolvePlatformSession(db,request);
   if(session)return {email:session.auditId,name:`${session.subjectType==="customer"?"Customer":"Provider"} ${session.subjectId}`,roleCode:session.roleCode,permissions:session.permissions,developmentPreview:false,identitySource:session.identitySource,principalType:session.principalType,principalKey:session.principalKey};
   const identity=forwardedIdentity(request);
-  if(!identity.email)throw new Response("Authentication required",{status:401});
+  if(!identity.email)throw signInRequiredResponse(uatEnv as unknown as Record<string,unknown>);
   let user=await db.prepare("SELECT email,name,role_code,status FROM app_users WHERE email=?").bind(identity.email).first<Record<string,unknown>>();
   if(!user){
     const {env}=await import("cloudflare:workers"); const founderEmail=String(env.FOUNDER_EMAIL||"").trim().toLowerCase();
-    if(!founderEmail||identity.email!==founderEmail)throw new Response("Access has not been provisioned for this identity",{status:403});
+    if(!founderEmail||identity.email!==founderEmail)throw authFailure("Access has not been provisioned for this identity",403);
     const now=Date.now(); await db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),identity.email,identity.name,"founder","active",now,now).run();
     user={email:identity.email,name:identity.name,role_code:"founder",status:"active"};
   }
-  if(user.status!=="active")throw new Response("Identity is disabled",{status:403});
+  if(user.status!=="active")throw authFailure("Identity is disabled",403);
   const role=await db.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(String(user.role_code)).first<{permissions_json:string}>();
-  if(!role)throw new Response("Assigned role is unavailable",{status:403});
+  if(!role)throw authFailure("Assigned role is unavailable",403);
   return {email:identity.email,name:String(user.name||identity.name),roleCode:String(user.role_code),permissions:parsePermissions(role.permissions_json),developmentPreview:false,identitySource:"workspace",principalType:"email",principalKey:identity.email};
 }
 
 export function requirePermission(actor:AuthenticatedActor,permission:Permission){
-  if(!hasPermission(actor.permissions,permission))throw new Response("Permission denied",{status:403});
+  if(!hasPermission(actor.permissions,permission))throw authFailure("Permission denied",403);
   return actor;
 }
 
@@ -77,18 +84,18 @@ export async function authorize(request:Request,permission:Permission){return re
 export async function requireCustomerOwnership(db:Db,actor:AuthenticatedActor,customerId:string){
   if(actor.developmentPreview||hasPermission(actor.permissions,"customers.manage")||hasPermission(actor.permissions,"bookings.manage"))return actor;
   const binding=await findIdentityBinding(db,{identitySource:actor.identitySource,principalType:actor.principalType,principalKey:actor.principalKey,subjectType:"customer"});
-  if(binding){if(String(binding.subject_id)!==customerId)throw new Response("Customer ownership denied",{status:403});return actor;}
+  if(binding){if(String(binding.subject_id)!==customerId)throw authFailure("Customer ownership denied",403);return actor;}
   const legacy=await db.prepare("SELECT customer_id,status FROM customer_identity_links WHERE email=?").bind(actor.email).first<Record<string,unknown>>();
-  if(!legacy||legacy.status!=="active"||String(legacy.customer_id)!==customerId)throw new Response("Customer ownership denied",{status:403});
+  if(!legacy||legacy.status!=="active"||String(legacy.customer_id)!==customerId)throw authFailure("Customer ownership denied",403);
   return actor;
 }
 
 export async function requireProviderOwnership(db:Db,actor:AuthenticatedActor,providerId:string){
   if(actor.developmentPreview||hasPermission(actor.permissions,"providers.manage")||hasPermission(actor.permissions,"grooming.manage")||hasPermission(actor.permissions,"bookings.manage"))return actor;
   const binding=await findIdentityBinding(db,{identitySource:actor.identitySource,principalType:actor.principalType,principalKey:actor.principalKey,subjectType:"provider"});
-  if(binding){if(String(binding.subject_id)!==providerId)throw new Response("Provider ownership denied",{status:403});return actor;}
+  if(binding){if(String(binding.subject_id)!==providerId)throw authFailure("Provider ownership denied",403);return actor;}
   const legacy=await db.prepare("SELECT provider_id,status FROM provider_identity_links WHERE email=?").bind(actor.email).first<Record<string,unknown>>();
-  if(!legacy||legacy.status!=="active"||String(legacy.provider_id)!==providerId)throw new Response("Provider ownership denied",{status:403});
+  if(!legacy||legacy.status!=="active"||String(legacy.provider_id)!==providerId)throw authFailure("Provider ownership denied",403);
   return actor;
 }
 
