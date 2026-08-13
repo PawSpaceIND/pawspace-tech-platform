@@ -224,7 +224,7 @@ test("real execution: setup diagnostics degrade to empty on a database without t
 
   const directory = await readJson(await governanceRoute.GET(new Request(`${PREVIEW}/api/sales-productivity-governance`)));
   assert.equal(directory.status, 200);
-  assert.deepEqual(directory.payload.data.setup, { teamRoster: [], observedActionTypes: [], observedOutcomes: [] });
+  assert.deepEqual(directory.payload.data.setup, { teamRoster: [], teamMembers: [], observedActionTypes: [], observedOutcomes: [], observedServiceCodes: [], observedCityIds: [] });
 });
 
 test("real execution: generating a report on a database without the lead engine completes instead of 500ing", async () => {
@@ -259,6 +259,50 @@ test("real execution: generating a report on a database without the lead engine 
   );
 });
 
+test("real execution: mapping a rep from the console puts them on the next report", async () => {
+  // Nothing in the app could map a rep to a team - the action existed only on the lead assignment
+  // API - so a staging leaderboard had no roster to measure and stayed empty whatever else was set up.
+  const { sqlite } = await seedWorkspace();
+  sqlite.exec("DELETE FROM lead_assignment_memberships");
+  const assignmentRoute = await import("../app/api/lead-assignment-governance/route.ts");
+  const governanceRoute = await import("../app/api/sales-productivity-governance/route.ts");
+
+  const empty = await readJson(await governanceRoute.GET(new Request(`${PREVIEW}/api/sales-productivity-governance`)));
+  assert.deepEqual(empty.payload.data.setup.teamMembers, [], "an unmapped team starts with no roster");
+
+  const added = await assignmentRoute.POST(new Request(`${PREVIEW}/api/lead-assignment-governance`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "save_member", employeeEmail: "rep.one@pawspace.in", teamCode: "sales", serviceCodes: ["grooming"], cityIds: ["blr"], active: true }),
+  }));
+  assert.equal(added.status, 200);
+
+  const withRoster = await readJson(await governanceRoute.GET(new Request(`${PREVIEW}/api/sales-productivity-governance`)));
+  assert.deepEqual(withRoster.payload.data.setup.teamMembers, [{ teamCode: "sales", employeeEmail: "rep.one@pawspace.in", name: "Rep One" }]);
+  assert.deepEqual(withRoster.payload.data.setup.teamRoster, [{ teamCode: "sales", members: 1 }]);
+  // The scope inputs are prefilled from what the bookings actually use, not from invented codes.
+  assert.deepEqual(withRoster.payload.data.setup.observedServiceCodes, ["grooming"]);
+  assert.deepEqual(withRoster.payload.data.setup.observedCityIds, ["blr"]);
+
+  const saved = await readJson(await post(governanceRoute, {
+    action: "save_policy", name: "Sales productivity (UAT baseline)", teamCode: "sales", timezone: "Asia/Kolkata",
+    meaningfulActionTypes: ["call"], qualifiedOutcomes: ["qualified"], revenueBasis: "net_collected",
+    requireCanonicalLeadBookingLink: true, effectiveFrom: NOW - 365 * DAY,
+    reason: "UAT baseline productivity policy configured from the performance console",
+  }));
+  await post(governanceRoute, { action: "activate_policy", policyId: saved.payload.data.id, approvalReference: "UAT-CONSOLE", reason: "UAT baseline productivity policy activated from the console" });
+  const generated = await readJson(await post(governanceRoute, { action: "generate_facts", periodStart: NOW - 30 * DAY, periodEnd: NOW, idempotencyKey: "console-roster" }));
+  assert.equal(generated.payload.data.facts.length, 1, "only the mapped rep is measured");
+  assert.equal(generated.payload.data.facts[0].employeeEmail, "rep.one@pawspace.in");
+
+  // Removing the rep takes them off the roster without touching the run that already measured them.
+  await assignmentRoute.POST(new Request(`${PREVIEW}/api/lead-assignment-governance`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "save_member", employeeEmail: "rep.one@pawspace.in", teamCode: "sales", serviceCodes: ["grooming"], cityIds: ["blr"], active: false }),
+  }));
+  const afterRemoval = await readJson(await governanceRoute.GET(new Request(`${PREVIEW}/api/sales-productivity-governance`)));
+  assert.deepEqual(afterRemoval.payload.data.setup.teamMembers, []);
+});
+
 test("the performance console renders a real surface, not a bare instruction banner", async () => {
   const [page, css] = await Promise.all([
     readFile(new URL("../app/team/performance/page.tsx", import.meta.url), "utf8"),
@@ -281,4 +325,7 @@ test("the performance console renders a real surface, not a bare instruction ban
   assert.match(page, /idempotencyKey:`console-\$\{days\}d-/);
   // An empty board explains which prerequisite is missing instead of showing bare zeros.
   assert.match(page, /No reps are mapped to team/);
+  // The roster itself is manageable here - the mapping action had no surface anywhere in the app.
+  assert.match(page, /action:"save_member"/);
+  assert.match(page, /Add to \{teamCode\} team/);
 });

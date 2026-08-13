@@ -57,3 +57,7 @@
   .shell { padding: 20px 14px 56px; }
   .nav a { flex: 1 1 auto; justify-content: center; }
 }
+
+.memberList { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 6px; }
+.memberList li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; border: 1px solid var(--line, #e6e1ef); border-radius: 10px; font-size: 13px; }
+.memberList small { color: #6b6480; margin-left: 6px; }

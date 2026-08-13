@@ -8,7 +8,7 @@ type Row={rank:number;employeeEmail:string;employeeName:string;leadsAssigned:num
 type SourceRun={id:string;policyId:string;policyVersion:number;periodStart:number;periodEnd:number;generatedAt:number}|null;
 type Data={metric:string;teamCode:string;rows:Row[];totals:{leads:number;conversions:number;net:number;refunds:number};truth:{rankingAuthority:boolean;payrollAuthority:boolean;disciplinaryAuthority:boolean;source:string};period:{days:number;from:number;to:number;sourceRun:SourceRun}};
 type Policy={id:string;name:string;status:string;version:number;teamCode:string;meaningfulActionTypes:string[];qualifiedOutcomes:string[];revenueBasis:string};
-type Setup={teamRoster:Array<{teamCode:string;members:number}>;observedActionTypes:string[];observedOutcomes:string[]};
+type Setup={teamRoster:Array<{teamCode:string;members:number}>;teamMembers:Array<{teamCode:string;employeeEmail:string;name:string}>;observedActionTypes:string[];observedOutcomes:string[];observedServiceCodes:string[];observedCityIds:string[]};
 type Governance={policies:Policy[];setup:Setup};
 
 const money=(v:number)=>new Intl.NumberFormat("en-IN",{style:"currency",currency:"INR",maximumFractionDigits:0}).format(v||0);
@@ -32,6 +32,9 @@ export default function PerformancePage(){
  const[busy,setBusy]=useState("");
  const[actionTypes,setActionTypes]=useState("call,whatsapp,email");
  const[outcomes,setOutcomes]=useState("qualified,quote_sent,booked");
+ const[memberEmail,setMemberEmail]=useState("");
+ const[memberServices,setMemberServices]=useState("grooming");
+ const[memberCities,setMemberCities]=useState("blr");
 
  const loadBoard=useCallback(async()=>{
   const response=await fetch(`/api/employee-performance?metric=${encodeURIComponent(metric)}&days=${days}`,{cache:"no-store"});
@@ -49,6 +52,8 @@ export default function PerformancePage(){
    setGovernance(governanceData);
    if(governanceData.setup?.observedActionTypes?.length)setActionTypes(governanceData.setup.observedActionTypes.join(","));
    if(governanceData.setup?.observedOutcomes?.length)setOutcomes(governanceData.setup.observedOutcomes.join(","));
+   if(governanceData.setup?.observedServiceCodes?.length)setMemberServices(governanceData.setup.observedServiceCodes.join(","));
+   if(governanceData.setup?.observedCityIds?.length)setMemberCities(governanceData.setup.observedCityIds.join(","));
   }
  },[]);
 
@@ -71,6 +76,24 @@ export default function PerformancePage(){
  const teamCode=data?.teamCode||"sales";
  const roster=governance?.setup?.teamRoster?.find(entry=>entry.teamCode===teamCode)?.members??0;
  const sourceRun=data?.period.sourceRun??null;
+ const members=(governance?.setup?.teamMembers||[]).filter(entry=>entry.teamCode===teamCode);
+
+ /**
+  * Mapping a rep to a team had no surface anywhere in the app - the action existed only on the lead
+  * assignment API - which is why staging reported zero reps and the leaderboard could never fill.
+  */
+ async function saveMember(employeeEmail:string,active:boolean){
+  setBusy(`member:${employeeEmail}`);setNotice("");
+  try{
+   const response=await fetch("/api/lead-assignment-governance",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"save_member",employeeEmail,teamCode,serviceCodes:memberServices.split(",").map(value=>value.trim()).filter(Boolean),cityIds:memberCities.split(",").map(value=>value.trim()).filter(Boolean),active})});
+   const payload=await response.json().catch(()=>({}) as Record<string,unknown>);
+   if(!response.ok)throw new Error(String(payload.error||`Unable to update the ${teamCode} roster (HTTP ${response.status})`));
+   setNotice(active?`${employeeEmail} is now on the ${teamCode} team. Generate a report to include them.`:`${employeeEmail} was removed from the ${teamCode} team.`);
+   if(active)setMemberEmail("");
+   await refresh();
+  }catch(cause){setError(cause instanceof Error?cause.message:String(cause));}
+  finally{setBusy("");}
+ }
 
  async function createPolicy(){
   setBusy("policy");setNotice("");
@@ -147,6 +170,21 @@ export default function PerformancePage(){
      <div className={styles.actions}><Button size="sm" variant="secondary" disabled={!activePolicy||busy==="report"} onClick={()=>{void generateReport();}}>Generate {days}-day report</Button>{activePolicy?null:<small>Available once the policy above is active.</small>}</div>
     </div>
    </div>
+  </section>:null}
+
+  {governance?<section className={styles.panel}>
+   <div className={styles.panelHead}><h2>Team roster</h2><Badge tone={members.length?"info":"warning"}>{members.length} {members.length===1?"rep":"reps"} on {teamCode}</Badge></div>
+   <p className={styles.panelNote}>The leaderboard measures the reps mapped to this team. A rep must already be an active platform user; service and city scope decide which leads they can be assigned.</p>
+   {members.length?<ul className={styles.memberList}>{members.map(member=><li key={member.employeeEmail}>
+    <span><b>{member.name||member.employeeEmail}</b> <small>{member.employeeEmail}</small></span>
+    <Button size="sm" variant="ghost" disabled={busy===`member:${member.employeeEmail}`} onClick={()=>{void saveMember(member.employeeEmail,false);}}>Remove</Button>
+   </li>)}</ul>:<p className={styles.panelNote}>No reps are mapped yet, so any report for this team will be empty.</p>}
+   <div className={styles.fieldRow}>
+    <label className={styles.field}>Employee email<input value={memberEmail} onChange={event=>setMemberEmail(event.target.value)} placeholder="rep@pawspace.in" /></label>
+    <label className={styles.field}>Service scope<input value={memberServices} onChange={event=>setMemberServices(event.target.value)} placeholder="grooming,boarding" /></label>
+    <label className={styles.field}>City scope<input value={memberCities} onChange={event=>setMemberCities(event.target.value)} placeholder="blr" /></label>
+   </div>
+   <div className={styles.actions}><Button size="sm" variant="secondary" disabled={!memberEmail.trim()||busy.startsWith("member:")} onClick={()=>{void saveMember(memberEmail.trim().toLowerCase(),true);}}>Add to {teamCode} team</Button></div>
   </section>:null}
 
   {activePolicy?<section className={styles.panel}>
