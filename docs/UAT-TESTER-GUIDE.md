@@ -120,8 +120,27 @@ to a provider" is **passing**. It is doing its job on an empty database. Only re
 flags, and check the excerpt it captured before filing — each finding carries what the page actually
 said, so triage does not need a second manual visit.
 
-`NOT TESTED` is not a pass. Roughly a dozen customer and partner routes need a real session, and the
-sweep says so rather than scoring them green.
+`NOT TESTED` is not a pass. Eleven customer and partner routes need a real session, and the sweep says
+so rather than scoring them green. Covering them takes two different sign-ins, and they are not
+interchangeable:
+
+```bash
+npm run sweep -- --login=pawspace-uat-2026 --as=founder@pawspace.in
+```
+
+signs the sweep in through the real `/api/staging-login` and covers the **staff** consoles. It does
+**not** cover `/account`, `/mobile-app`, `/partner*`, `/groomer`, `/trainer` or `/host` — verified: a
+founder cookie changes none of them. Those screens resolve a **customer or provider** subject from
+`pawspace_identity_session`, which the app's own OTP/assertion flow issues. To cover them, sign in as
+a customer in the app (any Indian mobile number; the OTP displays on screen in sandbox), copy the
+`pawspace_identity_session` cookie, and pass it:
+
+```bash
+npm run sweep -- --cookie="pawspace_identity_session=<token>"
+```
+
+A staff cookie will not stand in for a customer one, and the sweep now says which it needs rather than
+just "re-run with --cookie".
 
 ## 6. What NOT to test yet (Phase 2/3 — we'll announce)
 

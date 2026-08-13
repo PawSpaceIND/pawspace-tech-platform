@@ -25,6 +25,12 @@
 //   node scripts/screen-sweep.mjs --base=https://pawspace-staging.example.workers.dev --cookie="..."
 //   node scripts/screen-sweep.mjs --only=/team      # sweep one subtree
 //   node scripts/screen-sweep.mjs --json=sweep.json # machine-readable, for diffing between runs
+//
+// Twelve customer and partner routes correctly refuse an anonymous call, so an unauthenticated sweep
+// reports them NOT TESTED rather than passing them. --login signs in through the real
+// /api/staging-login endpoint and reuses the cookie it sets, so those screens get covered without
+// anyone copying a cookie out of DevTools:
+//   node scripts/screen-sweep.mjs --login=pawspace-uat-2026 --as=founder@pawspace.in
 
 import fs from "node:fs";
 import path from "node:path";
@@ -38,6 +44,8 @@ const BASE = arg("base", "http://localhost:5173").replace(/\/$/, "");
 const ONLY = arg("only");
 const JSON_OUT = arg("json");
 const COOKIE = arg("cookie");
+const LOGIN_CODE = arg("login");          // UAT access code — the sweep signs itself in
+const LOGIN_EMAIL = arg("as", "founder@pawspace.in");
 const TIMEOUT = Number(arg("timeout", "20000"));
 
 // Dynamic segments need a real value or the route 404s and tells us nothing. These are sampled from
@@ -112,7 +120,10 @@ function detectEmptyStates(text) {
 // filter rather than dumping every row. Neither is a broken screen — but both mean the sweep has not
 // actually tested that page yet, which is worth saying out loud rather than scoring as a pass.
 const EXPECTED_WITHOUT_SESSION = [
-  { pattern: /\/api\/identity-session/, status: 401, why: "needs a signed-in customer or provider" },
+  // NOT covered by a /staging-login staff cookie — that is a STAFF identity. These screens resolve a
+  // customer or provider subject from pawspace_identity_session, which is issued by the app's own
+  // OTP/assertion flow. Verified: signing the sweep in as founder@pawspace.in changes none of them.
+  { pattern: /\/api\/identity-session/, status: 401, why: "needs a customer/provider session (pawspace_identity_session); a staff cookie will not do" },
   { pattern: /\/api\/staging-login/, status: 404, why: "UAT login is not enabled in this environment" },
   { pattern: /\/api\/(boarding-stays|partner-job-feed|walking-lifecycle|taxi-ops|food-fulfilment)/, status: 400, why: "asks for its filter instead of dumping every row" },
 ];
@@ -226,6 +237,20 @@ async function main() {
     const [name, ...rest] = COOKIE.split("=");
     await context.addCookies([{ name, value: rest.join("="), url: BASE }]);
   }
+  // Sign in through the real endpoint rather than asking the operator for a cookie value. If this
+  // fails, say so and carry on unauthenticated — the gated routes then report NOT TESTED, which is
+  // honest, instead of the whole sweep aborting.
+  if (LOGIN_CODE) {
+    const response = await context.request.post(`${BASE}/api/staging-login`, { data: { action: "login", code: LOGIN_CODE, email: LOGIN_EMAIL } });
+    if (response.ok()) {
+      const cookies = await context.cookies(BASE);
+      const session = cookies.find((item) => item.name === "pawspace_uat");
+      console.log(session ? `Signed in as ${LOGIN_EMAIL} — gated routes will be covered.\n` : `Sign-in returned ${response.status()} but set no pawspace_uat cookie; continuing unauthenticated.\n`);
+    } else {
+      console.log(`Sign-in failed (HTTP ${response.status()}: ${(await response.text()).slice(0, 120)}). Continuing unauthenticated — gated routes will report NOT TESTED.\n`);
+    }
+  }
+
   const page = await context.newPage();
 
   const results = [];
@@ -255,7 +280,8 @@ async function main() {
   if (gated.length) {
     console.log(`NOT TESTED (${gated.length}) — the sweep did not reach the real screen for these:`);
     for (const item of gated) console.log(`   ${item.route} — ${item.verdict.why}`);
-    console.log("   Re-run with --cookie=<session cookie> to cover them.\n");
+    console.log("   --login=<UAT access code> covers STAFF routes. A customer or provider screen needs");
+    console.log("   --cookie=\"pawspace_identity_session=<token>\" from a real app sign-in; a staff cookie will not do.\n");
   }
 
   console.log("Levels: BROKEN did not load · MISSING 404 · DATA an API it calls failed");
