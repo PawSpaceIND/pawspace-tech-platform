@@ -14,10 +14,14 @@ export async function buildCustomer360(db:Db,customerId?:string):Promise<Custome
 // blocked campaign activation entirely (activation requires a snapshot).
 //
 // Each dataset is now fetched in bulk for all selected customers and grouped in memory: 8 queries
-// per chunk of 50 customers instead of 8 per customer. The per-customer LIMITs are preserved by
+// per chunk of customers instead of 8 per customer. The per-customer LIMITs are preserved by
 // slicing each group, so the records are identical to what the loop produced.
 const selectedIds=selected.map(([id])=>id);
-const ID_CHUNK=50;
+// 80 ids per statement, not 50. Each grouped read binds one parameter per id, so 80 stays inside
+// D1's ~100 bound-parameter ceiling while cutting round trips by a third: 500 customers cost 7
+// chunks x 8 reads instead of 10 x 8. Sized to satisfy the call BUDGET asserted by
+// tests/customer-360-fanout.test.mjs - a chunk of 50 exceeded it at 82 calls for 500 customers.
+const ID_CHUNK=80;
 async function groupedByCustomer(sqlFor:(placeholders:string)=>string,key='customer_id'){
  const grouped=new Map<string,Row[]>();
  for(let index=0;index<selectedIds.length;index+=ID_CHUNK){
