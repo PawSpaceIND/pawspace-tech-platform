@@ -84,6 +84,45 @@ One issue per line in the shared sheet, format:
 
 Severity guide: **P0** = money wrong / booking lost / crash · **P1** = flow blocked with workaround · **P2** = visual/copy.
 
+## 5b. Run the screen sweep FIRST
+
+Before anyone browses anything by hand, run this. It opens every route in a real browser, waits for
+the client fetches to land, and reports which screens a tester can actually use:
+
+```bash
+npm run dev &
+npm run sweep                                   # all 130 routes
+npm run sweep -- --only=/team                   # one subtree
+npm run sweep -- --json=sweep.json              # machine-readable; diff two runs
+npm run sweep -- --base=https://<staging-host> --cookie="<session cookie>"
+```
+
+**Why this and not clicking around.** Most staff screens are client components: the server sends a
+shell and the numbers arrive from `fetch()` after hydration. Every blank screen reported from staging
+so far was that shape — a page whose cards sat inside `{data && ...}` and never rendered. `curl` sees
+a 200 and calls it fine. A static test sees a file importing the design kit and calls it fine. Only a
+browser that waits for the fetches can see an empty page.
+
+What the levels mean:
+
+| Level | Meaning |
+|---|---|
+| `OK` | rendered real content, or said honestly why it had none |
+| `BLANK` | almost no text, nothing to interact with, and no explanation |
+| `THIN` | a header and little else, with no empty state and no input — a tester cannot proceed |
+| `DATA` | an API the page calls failed in a way the platform does not do by design |
+| `BROKEN` | did not load, 5xx, or an uncaught error |
+| `MISSING` | 404 |
+| `NOT TESTED` | the route correctly refused an anonymous or unfiltered call, so the sweep never saw the real screen — **re-run with `--cookie` to cover these** |
+
+A screen that says "nothing recorded yet", or "open with a canonical booking ID", or "not yet linked
+to a provider" is **passing**. It is doing its job on an empty database. Only report what the sweep
+flags, and check the excerpt it captured before filing — each finding carries what the page actually
+said, so triage does not need a second manual visit.
+
+`NOT TESTED` is not a pass. Roughly a dozen customer and partner routes need a real session, and the
+sweep says so rather than scoring them green.
+
 ## 6. What NOT to test yet (Phase 2/3 — we'll announce)
 
 - Payment edge-case abuse (double-pay, refund abuse) — payments audit is landing.
