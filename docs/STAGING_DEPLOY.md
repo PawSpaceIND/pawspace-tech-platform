@@ -76,6 +76,20 @@ npx wrangler d1 execute pawspace-staging --remote --file=scripts/staging-seed.sq
 After loading, open `/team/acquisition-funnel` and hit **Refresh sweep** to compute funnel stages, ₹300
 recoveries and App-Inbound leads from the seeded data — instant material for the CRM/Sales test.
 
+### Before any `--remote` command
+
+`npx wrangler d1 execute --remote` writes to the live staging database using `CLOUDFLARE_API_TOKEN`.
+Confirm the token you are about to use is the current one and that any previously exposed token has
+been **revoked, not merely superseded** — a superseded token still works until it is deleted:
+
+```bash
+npx wrangler whoami          # must show the expected account
+```
+
+If a token has been shared, pasted into a transcript, or committed at any point, rotate it in the
+Cloudflare dashboard (My Profile → API Tokens) and delete the old one before continuing. Every
+`--remote` step below is blocked on that.
+
 **Add the module demo layer so NO page opens empty.** The two seeds above cover customers, bookings,
 payments and the employee/payroll baseline, but leave the module-level surfaces blank (ops queues, AI
 analytics, ledger, incentives, attendance, partner earnings, intelligence reports). This third seed

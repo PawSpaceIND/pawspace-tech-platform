@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import * as nodeModule from "node:module";
-import { assertWithinBudget, freshCountingD1 } from "./helpers/d1-harness.mjs";
+import { assertDoesNotScale, assertWithinBudget, freshCountingD1 } from "./helpers/d1-harness.mjs";
 
 // ---------------------------------------------------------------------------
 // Every AI screen opened empty on staging. The engine was not broken — the assistant was switched
@@ -194,55 +194,26 @@ test("reinstalling the grounding supersedes v1 instead of leaving two active pro
 // ---------------------------------------------------------------------------
 // 4. Budget: the status read must not carry configuration history it does not use.
 //
-// A note on which guard catches this, because the first version of this test was wrong.
-//
-// The shared harness models two D1 limits: the bind cap (one over-wide statement) and the call
-// budget (many individually-legal statements — this is what catches N+1). Neither catches this
-// defect. The status handler called aiBusinessConfigurationSnapshot, which is a FIXED six queries
-// whether there are ten configuration versions or a thousand; the call count never moved. The waste
-// was in ROWS: up to 100 profiles + 200 intents + 200 knowledge + 100 prompt policies + 200 audit
-// events transferred to compute two integers.
-//
-// So this adds a third meter — rows returned — over the shared harness rather than beside it. It is
-// the guard that discriminates here, and it is worth proposing for tests/helpers/d1-harness.mjs.
+// A note on which guard catches this, because the first version of this test was wrong. The bind cap
+// catches one over-wide statement; the call budget catches many individually-legal ones (N+1).
+// Neither catches this defect: aiBusinessConfigurationSnapshot is a FIXED six queries whether there
+// are ten configuration versions or a thousand, so the call count never moved. The waste was in ROWS
+// — ~800 of them, to compute two integers. That is why the shared harness now meters rows too, and
+// why assertDoesNotScale compares both meters across a growth step rather than pinning a constant.
 // ---------------------------------------------------------------------------
-
-/** Wraps a counting harness to also tally rows returned, the cost a call budget cannot see. */
-function withRowMeter(harness) {
-  let rows = 0;
-  const inner = harness.db.prepare.bind(harness.db);
-  harness.db.prepare = (sql) => {
-    const wrap = (statement) => ({
-      ...statement,
-      bind: (...args) => wrap(statement.bind(...args)),
-      first: async () => { const row = await statement.first(); if (row) rows += 1; return row; },
-      all: async () => { const result = await statement.all(); rows += result.results.length; return result; },
-    });
-    return wrap(inner(sql));
-  };
-  return { rows: () => rows, resetRows: () => { rows = 0; } };
-}
-
 test("the status read does not carry configuration history it never uses", async () => {
   const harness = coldDb();
-  const meter = withRowMeter(harness);
   const bootstrap = () => bootstrapRoute.POST(new Request("http://localhost/api/ai-bootstrap", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }));
   await bootstrap();
 
-  meter.resetRows();
-  await assertWithinBudget(harness, { max: 20, label: "status read on a fresh install" }, () => get("/api/ai-business-configuration?mode=status"));
-  const freshRows = meter.rows();
+  const status = () => get("/api/ai-business-configuration?mode=status");
+  await assertWithinBudget(harness, { max: 20, maxRows: 40, label: "status read on a fresh install" }, status);
 
-  // Nine more bootstraps: ~10 profiles, ~50 intents, ~100 knowledge versions and their audit trail.
-  for (let round = 0; round < 9; round += 1) await bootstrap();
-  const versions = await configLib.aiBusinessConfigurationSnapshot(globalThis.__PAWSPACE_TEST_ENV.DB);
-  assert.ok(versions.knowledge.length >= 100, "the history really did grow");
-
-  meter.resetRows();
-  await assertWithinBudget(harness, { max: 20, label: "status read against 100+ versions" }, () => get("/api/ai-business-configuration?mode=status"));
-  const grownRows = meter.rows();
-
-  // The property: reading status must cost the same after a hundred versions as after ten.
-  assert.equal(grownRows, freshRows, `status transferred ${grownRows} rows against 100+ versions vs ${freshRows} against 10 — it must not scale with history`);
-  assert.ok(freshRows < 40, `status should read a handful of rows, not the whole configuration history (got ${freshRows})`);
+  const baseline = await assertDoesNotScale(harness, { label: "AI configuration status read" }, status, async () => {
+    // Nine more bootstraps: ~10 profiles, ~50 intents, ~100 knowledge versions and their audit trail.
+    for (let round = 0; round < 9; round += 1) await bootstrap();
+    const versions = await configLib.aiBusinessConfigurationSnapshot(globalThis.__PAWSPACE_TEST_ENV.DB);
+    assert.ok(versions.knowledge.length >= 100, "the history really did grow");
+  });
+  assert.ok(baseline.rows < 40, `status should read a handful of rows, not the whole configuration history (got ${baseline.rows})`);
 });
