@@ -27,7 +27,15 @@ type UatEnv={PAWSPACE_UAT_LOGIN?:unknown;PAWSPACE_UAT_ACCESS_CODE?:unknown;PAWSP
 const COOKIE="pawspace_uat";
 const enc=new TextEncoder();
 
-export function uatLoginEnabled(env:UatEnv){return String(env?.PAWSPACE_UAT_LOGIN||"")==="on"&&String(env?.PAWSPACE_UAT_SIGNING_KEY||"").length>=16;}
+/**
+ * UAT sign-in is live only when the flag is on AND the signing key clears the same 32-character floor
+ * scripts/stage-config.mjs enforces at deploy time. The two used to disagree - the deploy demanded 32,
+ * this accepted 16 - so a key too weak to deploy would still have been honoured had it reached the
+ * worker by any other route. Below the floor the whole UAT branch is off: fail closed, not "on with a
+ * weak key". Production is unaffected either way, because PAWSPACE_UAT_LOGIN is never set there.
+ */
+export const UAT_SIGNING_KEY_MIN_LENGTH=32;
+export function uatLoginEnabled(env:UatEnv){return String(env?.PAWSPACE_UAT_LOGIN||"")==="on"&&String(env?.PAWSPACE_UAT_SIGNING_KEY||"").length>=UAT_SIGNING_KEY_MIN_LENGTH;}
 
 /**
  * The UAT cookie lives for 8 hours (app/api/staging-login/route.ts). When it lapses every gated API

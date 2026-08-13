@@ -15,7 +15,7 @@
 //
 // Required env:
 //   STAGING_D1_ID                          the id from `npx wrangler d1 create pawspace-staging`
-//   PAWSPACE_UAT_ACCESS_CODE               shared code testers type at /staging-login (>=16 chars)
+//   PAWSPACE_UAT_ACCESS_CODE               shared code testers type at /staging-login (>=32 chars)
 //   PAWSPACE_UAT_SIGNING_KEY               HMAC key for the UAT session cookie   (>=32 chars)
 //   PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT signs customer/partner OTP assertions (>=32 chars)
 import { readFileSync, writeFileSync } from "node:fs";
@@ -54,7 +54,7 @@ if (!d1Id || d1Id === "00000000-0000-4000-8000-000000000000") {
 }
 
 const REQUIRED = [
-  ["PAWSPACE_UAT_ACCESS_CODE", 16, "Testers type this at /staging-login."],
+  ["PAWSPACE_UAT_ACCESS_CODE", 32, "Testers type this at /staging-login."],
   ["PAWSPACE_UAT_SIGNING_KEY", 32, "This signs the UAT session cookie that resolveActor trusts."],
   ["PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT", 32, "This signs customer and partner OTP identity assertions."],
 ];

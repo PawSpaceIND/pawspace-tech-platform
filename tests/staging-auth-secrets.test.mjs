@@ -99,7 +99,7 @@ function runStageConfig(env) {
   }
 }
 
-const GOOD = { STAGING_D1_ID: "11111111-2222-4333-8444-555555555555", PAWSPACE_UAT_ACCESS_CODE: "a-real-access-code-1", PAWSPACE_UAT_SIGNING_KEY: "0123456789abcdef0123456789abcdef01", PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: "fedcba9876543210fedcba9876543210fe" };
+const GOOD = { STAGING_D1_ID: "11111111-2222-4333-8444-555555555555", PAWSPACE_UAT_ACCESS_CODE: "a-real-access-code-of-thirty-two-plus", PAWSPACE_UAT_SIGNING_KEY: "0123456789abcdef0123456789abcdef01", PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: "fedcba9876543210fedcba9876543210fe" };
 
 test("real execution: the deploy fails closed when any required secret is missing", () => {
   for (const omit of ["PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"]) {
@@ -129,6 +129,11 @@ test("real execution: a too-weak secret is refused rather than accepted quietly"
   assert.notEqual(runStageConfig({ ...GOOD, PAWSPACE_UAT_SIGNING_KEY: "short" }).code, 0);
   assert.notEqual(runStageConfig({ ...GOOD, PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: "also-too-short" }).code, 0);
   assert.notEqual(runStageConfig({ ...GOOD, PAWSPACE_UAT_ACCESS_CODE: "tiny" }).code, 0);
+  // Just under the 32-character floor: the boundary is where an off-by-one lets a weak code through,
+  // and "shortish" values are exactly what a human picks when asked to invent a code by hand.
+  assert.notEqual(runStageConfig({ ...GOOD, PAWSPACE_UAT_ACCESS_CODE: "a".repeat(31) }).code, 0, "31 characters must be refused");
+  assert.equal(runStageConfig({ ...GOOD, PAWSPACE_UAT_ACCESS_CODE: "b".repeat(32) }).code, 0, "32 characters is the documented floor and must be accepted");
+  assert.notEqual(runStageConfig({ ...GOOD, PAWSPACE_UAT_SIGNING_KEY: "c".repeat(31) }).code, 0, "31 characters must be refused for the signing key too");
 });
 
 test("real execution: with every secret supplied, the config is written from the environment", () => {
@@ -313,4 +318,80 @@ test("every UAT path stays dead in production, where the flag is unset", async (
   assert.deepEqual(production, { error: "Authentication required" }, "the production 401 body must not change");
   const staging = await uat.signInRequiredResponse(ENV).json();
   assert.equal(staging.code, "sign_in_required", "staging keeps its recoverable message");
+});
+
+test("the runtime signing-key floor matches the floor the deploy enforces", async () => {
+  // These were 16 and 32. A key too weak to deploy would still have been honoured had it reached the
+  // worker another way, which is the sort of gap that survives review because both numbers look
+  // deliberate on their own.
+  const { UAT_SIGNING_KEY_MIN_LENGTH, uatLoginEnabled } = uat;
+  assert.equal(UAT_SIGNING_KEY_MIN_LENGTH, 32);
+  const declared = stageConfig.match(/\["PAWSPACE_UAT_SIGNING_KEY",\s*(\d+)/);
+  assert.ok(declared, "the deploy must declare a signing-key minimum");
+  assert.equal(Number(declared[1]), UAT_SIGNING_KEY_MIN_LENGTH, "the deploy floor and the runtime floor must be the same number");
+
+  // And the runtime gate actually refuses below it, rather than declaring a constant it ignores.
+  assert.equal(uatLoginEnabled({ PAWSPACE_UAT_LOGIN: "on", PAWSPACE_UAT_SIGNING_KEY: "d".repeat(31) }), false, "31 characters must not enable UAT sign-in");
+  assert.equal(uatLoginEnabled({ PAWSPACE_UAT_LOGIN: "on", PAWSPACE_UAT_SIGNING_KEY: "d".repeat(32) }), true);
+});
+
+test("the access-credential floor is 32 everywhere it is stated", () => {
+  const declared = stageConfig.match(/\["PAWSPACE_UAT_ACCESS_CODE",\s*(\d+)/);
+  assert.ok(declared, "the deploy must declare an access-code minimum");
+  assert.equal(Number(declared[1]), 32, "the confirmed requirement is 32 characters");
+  // Documentation that understates the floor sends someone to generate a credential the deploy will
+  // reject, during an incident, which is when a confusing failure costs the most.
+  assert.doesNotMatch(workflow, /PAWSPACE_UAT_ACCESS_CODE\s*\(>=16/, "the workflow must not still advertise 16");
+  assert.doesNotMatch(read("docs/STAGING_DEPLOY.md"), /PAWSPACE_UAT_ACCESS_CODE[^\n]*>=16/, "nor the deploy guide");
+});
+
+test("NO file in the repository gives any UAT credential a committed fallback", () => {
+  // The guard at the top of this file reads scripts/stage-config.mjs alone, which covered the whole
+  // problem when it was written. It does not any more: an unmerged branch moves this configuration into
+  // scripts/lib/worker-deploy-config.mjs with all three fallbacks intact, and it would land past a
+  // single-file check without a word. Containment that depends on merge order is not containment.
+  //
+  // Two earlier versions of THIS test were useless, and both failures are worth recording because they
+  // are the same mistake:
+  //   matching `NAME || "literal"` missed that file completely — its fallbacks are function arguments,
+  //   `value("PAWSPACE_UAT_ACCESS_CODE", "<burned>")`;
+  //   then matching any credential name near any literal flagged seven files, all of them error
+  //   messages and test fixtures, which is how a guard becomes noise nobody reads.
+  // What works is asking the question two precise ways rather than one fuzzy way.
+  const ALLOWED_TO_NAME_BURNED = ["./scripts/stage-config.mjs", "./tests/staging-auth-secrets.test.mjs"];
+  const skip = new Set(["node_modules", "dist", ".git", ".wrangler", ".next", "scratchpad", "coverage"]);
+  const offenders = [];
+
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (skip.has(entry.name)) continue;
+      const full = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) { walk(full); continue; }
+      if (!/\.(mjs|js|ts|tsx|yml|yaml|json|md)$/.test(entry.name)) continue;
+      const source = fs.readFileSync(full, "utf8");
+
+      // Rule 1 — syntax-free, and the one that catches the real file: a burned string may appear in the
+      // refusal list and in this test, and nowhere else, however it is written.
+      if (!ALLOWED_TO_NAME_BURNED.includes(full)) {
+        for (const burned of BURNED) {
+          if (source.includes(burned)) offenders.push(`${full}: contains a burned credential`);
+        }
+      }
+
+      // Rule 2 — structural, and scoped to the scripts that BUILD the worker's environment, because
+      // that is the only place a default takes effect. A literal in a test fixture or an error message
+      // is not a deploy fallback, and treating it as one is what made the previous version noise.
+      if (!/^\.\/scripts\//.test(full)) continue;
+      for (const name of ["PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"]) {
+        const shapes = [
+          new RegExp(`${name}[^\\n]{0,30}?\\|\\|\\s*["'\`][^"'\`]{3,}`),   // env.NAME || "x"
+          new RegExp(`${name}[^\\n]{0,30}?\\?\\?\\s*["'\`][^"'\`]{3,}`),   // env.NAME ?? "x"
+          new RegExp(`["'\`]${name}["'\`]\\s*,\\s*["'\`][^"'\`]{3,}`),      // fallback("NAME", "x")
+        ];
+        if (shapes.some((shape) => shape.test(source))) offenders.push(`${full}: ${name} has a literal fallback`);
+      }
+    }
+  };
+  walk(".");
+  assert.deepEqual([...new Set(offenders)].sort(), [], "these give a UAT credential a usable committed value");
 });

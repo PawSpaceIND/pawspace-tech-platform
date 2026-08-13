@@ -67,7 +67,7 @@ are public now, so re-supplying one would restore the defect). Generate each fre
 ```bash
 openssl rand -hex 32     # PAWSPACE_UAT_SIGNING_KEY               signs the UAT session cookie
 openssl rand -hex 32     # PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT signs OTP identity assertions
-openssl rand -hex 12     # PAWSPACE_UAT_ACCESS_CODE               the code testers type (>=16 chars)
+openssl rand -hex 32     # PAWSPACE_UAT_ACCESS_CODE               the code testers type (>=32 chars)
 ```
 
 Nothing prints them. The access code used to be echoed by the deploy script, which put it in every

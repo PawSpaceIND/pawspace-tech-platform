@@ -7,7 +7,7 @@ name: Deploy staging
 # Required repo config (added once by ops — never pasted in chat, never committed):
 #   Secrets:   CLOUDFLARE_API_TOKEN (Workers Scripts: Edit, D1: Edit)
 #              CLOUDFLARE_ACCOUNT_ID
-#              PAWSPACE_UAT_ACCESS_CODE                (>=16 chars) tester code for /staging-login
+#              PAWSPACE_UAT_ACCESS_CODE                (>=32 chars) tester code for /staging-login
 #              PAWSPACE_UAT_SIGNING_KEY                (>=32 chars) signs the UAT session cookie
 #              PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT  (>=32 chars) signs OTP identity assertions
 #   Variable:  STAGING_D1_ID  (from `npx wrangler d1 create pawspace-staging`)
