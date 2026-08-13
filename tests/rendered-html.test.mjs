@@ -245,8 +245,10 @@ test("keeps long-stay payment, paid meeting and home media rules explicit", asyn
 });
 
 test("keeps payment timing, confidence meetings and delay recovery explicit", async () => {
+  // Delay recovery moved from the retired /groomer prototype (which sent hardcoded booking IDs) to
+  // the real Partner App, where it runs against the selected canonical booking.
   const [grooming, training, stays, groomer, operations, schema] = await Promise.all(
-    ["app/mobile-app/grooming-flow.tsx", "app/mobile-app/training-flow.tsx", "app/mobile-app/stay-flow.tsx", "app/groomer/page.tsx", "app/api/booking-operations/route.ts", "db/schema.ts"].map((path) => readFile(new URL("../" + path, import.meta.url), "utf8")),
+    ["app/mobile-app/grooming-flow.tsx", "app/mobile-app/training-flow.tsx", "app/mobile-app/stay-flow.tsx", "app/partner-app/page.tsx", "app/api/booking-operations/route.ts", "db/schema.ts"].map((path) => readFile(new URL("../" + path, import.meta.url), "utf8")),
   );
   assert.ok(grooming.indexOf("Pay after service") < grooming.indexOf("Verify OTP & confirm instantly"));
   assert.match(training, /Meet the trainer first\. Book only when you feel confident/);
