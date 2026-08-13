@@ -99,7 +99,22 @@ async function resolvePayment(db:Db,event:GatewayEvent){if(event.bookingId){cons
 
 export async function processGatewayEvent(db:Db,event:GatewayEvent){
   await ensurePaymentReconciliationTables(db);if(!event.signatureVerified)throw new Error("Gateway event signature is not verified");
-  const existing=await db.prepare("SELECT id,processing_status FROM payment_gateway_events WHERE provider=? AND event_id=?").bind(event.provider,event.eventId).first<Row>();if(existing)return{duplicate:true,status:String(existing.processing_status)};
+  const existing=await db.prepare("SELECT id,processing_status,event_type,booking_id FROM payment_gateway_events WHERE provider=? AND event_id=?").bind(event.provider,event.eventId).first<Row>();
+  if(existing){
+    // A redelivery of an already-recorded event is still allowed to COMPLETE a subscription transition
+    // that a transient dependent-write failure rolled back on the first pass — otherwise a one-off failure
+    // would strand a genuinely paid entitlement at pending_payment forever (exact-eventId redelivery is
+    // the gateway's own retry). The transition helpers are idempotent and touch ONLY the subscription /
+    // usage / lifecycle tables, so this repairs a pending transition, no-ops a completed one, and never
+    // re-enters the capture path: captured_amount, settlement and gateway-reference idempotency are
+    // untouched, and no money is recounted.
+    const repairBookingId=String(existing.booking_id||event.bookingId||"").trim();
+    if(repairBookingId){
+      if(["payment.captured","order.paid"].includes(String(existing.event_type)))await activateSubscriptionOnCapture(db,{bookingId:repairBookingId,eventId:event.eventId}).catch(()=>null);
+      else if(String(existing.event_type)==="payment.failed")await failSubscriptionOnPaymentFailure(db,{bookingId:repairBookingId,eventId:event.eventId}).catch(()=>null);
+    }
+    return{duplicate:true,status:String(existing.processing_status)};
+  }
   const now=Date.now(),rowId=`PAYEV-${crypto.randomUUID().slice(0,12).toUpperCase()}`;await db.prepare("INSERT INTO payment_gateway_events (id,provider,environment,event_id,event_type,booking_id,payment_id,gateway_order_id,gateway_payment_id,gateway_refund_id,amount_subunits,currency,signature_verified,payload_hash,processing_status,detail_json,received_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,?,'received',?,?)").bind(rowId,event.provider,event.environment,event.eventId,event.eventType,event.bookingId??null,null,event.gatewayOrderId??null,event.gatewayPaymentId??null,event.gatewayRefundId??null,event.amountSubunits??null,event.currency??null,event.payloadHash,JSON.stringify(event.detail||{}),now).run();
   const finish=async(status:"processed"|"exception",reason?:string)=>db.prepare("UPDATE payment_gateway_events SET processing_status=?,failure_reason=?,processed_at=? WHERE id=?").bind(status,reason??null,now,rowId).run();
   const resolved=await resolvePayment(db,event);if(!resolved){await addException(db,{eventId:event.eventId,type:"unmatched_gateway_event",detail:{eventType:event.eventType,gatewayOrderId:event.gatewayOrderId,gatewayPaymentId:event.gatewayPaymentId}});await finish("exception","No canonical payment mapping");return{duplicate:false,status:"exception",reason:"unmatched_gateway_event"};}
@@ -128,6 +143,10 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
     const alreadyCollected=await collectedCaptures(db,paymentId,rowId);
     const isRepeat=alreadyCollected.some(item=>item.refs.some(value=>refs.includes(value)));
     if(isRepeat){
+      // Same money, a different notification: it must NOT be recounted (captured_amount and the schedule
+      // stay exactly as they are). But it may still complete a subscription transition left pending by a
+      // transiently failed first pass — idempotent, and no money moves here.
+      await activateSubscriptionOnCapture(db,{bookingId,eventId:event.eventId,at:now}).catch(()=>null);
       await finish("processed","Repeat notification for a capture already collected");
       return{duplicate:false,status:"processed",ignored:true,reason:"capture_already_collected"};
     }

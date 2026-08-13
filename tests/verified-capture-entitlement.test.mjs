@@ -332,59 +332,99 @@ function faultDb(env) {
 }
 
 const activatedCount = (sqlite) => Number(sqlite.prepare("SELECT COUNT(*) c FROM booking_lifecycle_events WHERE event_type='subscription_activated'").get().c);
+const capturedAmount = (sqlite, bookingId) => { const r = sqlite.prepare("SELECT captured_amount FROM payment_reconciliation_records WHERE booking_id=?").get(bookingId); return r ? Number(r.captured_amount) : 0; };
+/** A capture with EXPLICIT references, so a redelivery can share them (the same underlying capture). */
+const refCapture = ({ bookingId, eventId, payId, orderId, amount = 3597, type = "payment.captured" }) => ({
+  provider: "razorpay", environment: "live", eventId, eventType: type, bookingId,
+  gatewayPaymentId: payId, gatewayOrderId: orderId, amountSubunits: Math.round(amount * 100),
+  currency: "INR", signatureVerified: true, payloadHash: `hash_${eventId}`,
+});
 
-test("failure-injection: a dependent-write failure rolls the activation back atomically; a replay repairs it exactly once", async () => {
+test("retry: a transiently failed activation is repaired by EXACT-eventId gateway redelivery, exactly once, with no money recounted", async () => {
   const { sqlite, db, faults } = faultDb({ PAWSPACE_PAYMENT_ENV: "live" });
   seedScheduling(sqlite, "SG-SUB-1");
   const { POST } = await import("../app/api/canonical-bookings/route.ts");
   assert.equal((await POST(subscriptionRequest())).status, 201);
   const bookingId = sub(sqlite).source_booking_id;
-  assert.equal(sub(sqlite).status, "pending_payment");
   const { processGatewayEvent } = await import("../lib/grooming-payment-reconciliation.ts");
+  const CAP = { bookingId, eventId: "evt-cap-X", payId: "pay-X", orderId: "ord-X", amount: 3597 };
 
-  // Inject a failure into the usage write INSIDE the activation batch.
+  // First verified capture with the activation batch failing atomically.
   faults.patterns = ["UPDATE booking_subscription_usage"];
-  const first = await processGatewayEvent(db, captureEvent(bookingId, 3597, "evt-inj-1"));
-  assert.equal(first.status, "processed", "the payment capture is not held hostage to the subscription side-effect");
-  // Atomic rollback: nothing half-applied.
-  assert.equal(sub(sqlite).status, "pending_payment", "the entitlement must stay pending, not half-activate");
-  assert.equal(Number(sub(sqlite).sessions_reserved), 0, "no sessions reserved");
-  assert.equal(usage(sqlite).status, "pending_payment", "usage stays pending too — no split state");
-  assert.equal(activatedCount(sqlite), 0, "no activation event written");
-  // Surfaced, not swallowed.
-  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM payment_reconciliation_exceptions WHERE exception_type='subscription_activation_failed'").get().c, 1, "the stranded transition is a governed exception");
+  const first = await processGatewayEvent(db, refCapture(CAP));
+  assert.equal(first.status, "processed");
+  // Payment capture financial state is correct and intact...
+  assert.equal(payment(sqlite).status, "captured", "the payment itself is captured");
+  const capturedAfterFirst = capturedAmount(sqlite, bookingId);
+  assert.equal(capturedAfterFirst, 3597, "captured_amount reflects the real capture");
+  // ...while the subscription rolled back to pending.
+  assert.equal(sub(sqlite).status, "pending_payment", "the entitlement stays pending after the transient failure");
+  assert.equal(activatedCount(sqlite), 0);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM payment_reconciliation_exceptions WHERE exception_type='subscription_activation_failed'").get().c, 1);
 
-  // Repair: clear the fault and replay. Completes exactly once.
+  // The gateway redelivers the EXACT SAME event id (its own retry). It is a duplicate for money, but it
+  // completes the subscription transition.
   faults.patterns = [];
-  const repair = await processGatewayEvent(db, captureEvent(bookingId, 3597, "evt-inj-2", "order.paid"));
-  assert.equal(repair.status, "processed");
-  assert.equal(sub(sqlite).status, "active", "the replay completes the activation");
-  assert.equal(Number(sub(sqlite).sessions_reserved), 1, "exactly one session reserved — never double-granted");
+  const redeliver = await processGatewayEvent(db, refCapture(CAP));
+  assert.equal(redeliver.duplicate, true, "money-wise it is a duplicate — nothing is re-processed");
+  assert.equal(sub(sqlite).status, "active", "but the pending entitlement is now repaired");
+  assert.equal(Number(sub(sqlite).sessions_reserved), 1, "exactly one session reserved");
   assert.equal(usage(sqlite).status, "reserved");
   assert.equal(activatedCount(sqlite), 1, "activated exactly once");
+  assert.equal(capturedAmount(sqlite, bookingId), capturedAfterFirst, "captured_amount is unchanged by the repair");
 
-  // A further replay is a no-op.
-  await processGatewayEvent(db, captureEvent(bookingId, 3597, "evt-inj-3", "order.paid"));
-  assert.equal(Number(sub(sqlite).sessions_reserved), 1, "idempotent after repair");
+  // Further exact redeliveries are true no-ops.
+  await processGatewayEvent(db, refCapture(CAP));
+  assert.equal(Number(sub(sqlite).sessions_reserved), 1, "still one — never double-granted");
   assert.equal(activatedCount(sqlite), 1);
+  assert.equal(capturedAmount(sqlite, bookingId), capturedAfterFirst);
 });
 
-test("failure-injection: a payment-failure close is atomic; a replay repairs it with no usable credits", async () => {
+test("retry: a fresh notification for the SAME underlying capture also repairs the entitlement, without increasing captured_amount", async () => {
+  const { sqlite, db, faults } = faultDb({ PAWSPACE_PAYMENT_ENV: "live" });
+  seedScheduling(sqlite, "SG-SUB-1");
+  const { POST } = await import("../app/api/canonical-bookings/route.ts");
+  assert.equal((await POST(subscriptionRequest())).status, 201);
+  const bookingId = sub(sqlite).source_booking_id;
+  const { processGatewayEvent } = await import("../lib/grooming-payment-reconciliation.ts");
+
+  // payment.captured fails the activation; the money is recorded once.
+  faults.patterns = ["UPDATE booking_subscription_usage"];
+  await processGatewayEvent(db, refCapture({ bookingId, eventId: "evt-pc", payId: "pay-Y", orderId: "ord-Y", amount: 3597 }));
+  assert.equal(sub(sqlite).status, "pending_payment");
+  const capturedOnce = capturedAmount(sqlite, bookingId);
+  assert.equal(capturedOnce, 3597);
+
+  // order.paid for the SAME capture (shares the order reference) — a repeat for money, so captured_amount
+  // must NOT grow, but it repairs the pending entitlement.
+  faults.patterns = [];
+  const fresh = await processGatewayEvent(db, refCapture({ bookingId, eventId: "evt-op", payId: "pay-Y", orderId: "ord-Y", amount: 3597, type: "order.paid" }));
+  assert.equal(fresh.reason, "capture_already_collected", "the same money is recognised as already collected");
+  assert.equal(capturedAmount(sqlite, bookingId), capturedOnce, "captured_amount is NOT increased by the repair notification");
+  assert.equal(sub(sqlite).status, "active", "and the entitlement is repaired");
+  assert.equal(Number(sub(sqlite).sessions_reserved), 1);
+  assert.equal(activatedCount(sqlite), 1, "activated exactly once");
+});
+
+test("retry: a transiently failed payment-failure close is repaired by EXACT-eventId redelivery, leaving zero usable credits", async () => {
   const { sqlite, db, faults } = faultDb({ PAWSPACE_PAYMENT_ENV: "live" });
   seedScheduling(sqlite, "SG-SUB-1");
   const { POST } = await import("../app/api/canonical-bookings/route.ts");
   assert.equal((await POST(subscriptionRequest())).status, 201);
   const bookingId = sub(sqlite).source_booking_id, subscriptionId = sub(sqlite).id;
   const { processGatewayEvent } = await import("../lib/grooming-payment-reconciliation.ts");
+  const FAIL = { bookingId, eventId: "evt-fail-X", payId: "pay-F", orderId: "ord-F", amount: 3597, type: "payment.failed" };
 
   faults.patterns = ["UPDATE booking_subscription_usage"];
-  await processGatewayEvent(db, captureEvent(bookingId, 3597, "evt-f-1", "payment.failed"));
-  assert.equal(sub(sqlite).status, "pending_payment", "a dependent-write failure must not half-close the entitlement");
-  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM payment_reconciliation_exceptions WHERE exception_type='subscription_failure_recording_failed'").get().c, 1, "surfaced as a governed exception");
+  await processGatewayEvent(db, refCapture(FAIL));
+  assert.equal(sub(sqlite).status, "pending_payment", "the transient failure must not half-close the entitlement");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM payment_reconciliation_exceptions WHERE exception_type='subscription_failure_recording_failed'").get().c, 1);
 
+  // Exact-eventId redelivery repairs the closure.
   faults.patterns = [];
-  await processGatewayEvent(db, captureEvent(bookingId, 3597, "evt-f-2", "payment.failed"));
-  assert.equal(sub(sqlite).status, "payment_failed", "the replay completes the closure");
+  const redeliver = await processGatewayEvent(db, refCapture(FAIL));
+  assert.equal(redeliver.duplicate, true);
+  assert.equal(sub(sqlite).status, "payment_failed", "the redelivery completes the closure");
   assert.equal(Number(sub(sqlite).sessions_reserved), 0, "no usable sessions");
   const { mutateSubscriptionWallet } = await import("../lib/subscription-wallet.ts");
   await assert.rejects(
