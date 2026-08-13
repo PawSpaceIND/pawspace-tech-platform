@@ -90,6 +90,38 @@ If a token has been shared, pasted into a transcript, or committed at any point,
 Cloudflare dashboard (My Profile → API Tokens) and delete the old one before continuing. Every
 `--remote` step below is blocked on that.
 
+#### Finishing a rotation
+
+Creating a replacement token is not the end of a rotation. Two things are left:
+
+**1. Capture the old token's "Last used" timestamp BEFORE you delete it.** It is shown on the API
+Tokens page and is destroyed along with the token. A last-used time inside the exposure window that
+does not match your own activity means treat the token as used, not merely leaked.
+
+**2. Delete the old token, then check the audit log.** A rotated-but-undeleted token still
+authenticates. Run:
+
+```bash
+export CLOUDFLARE_API_TOKEN=…                 # the NEW token; needs Account Audit Logs (or Analytics) Read
+export CLOUDFLARE_ACCOUNT_ID=…                # npx wrangler whoami prints it
+node scripts/cloudflare-audit-check.mjs --since=<RFC3339 before the leak> --before=<now>
+```
+
+It groups every action in the window, reports whether a token deletion actually happened, and flags
+the actions that mean someone kept or widened access: a new token created, a member invited, a
+Logpush destination added, an R2 bucket or D1 database created, a Worker deployed, DNS or permissions
+changed. Exit code 0 only when a deletion was found and nothing sensitive is unexplained; any error
+exits non-zero, so it can never tick a checklist it could not actually check.
+
+**What none of this covers.** The audit log records configuration changes, not data reads. A token
+with D1 access could have run `wrangler d1 execute` against staging and left nothing in it. The only
+signals for that are the last-used timestamp above and Workers/D1 request analytics.
+
+**And settle what data was in staging during the window.** If only `staging-seed.sql`,
+`employee-seed.sql` and `uat-demo-seed.sql` had been loaded, the content is synthetic and the impact
+is low. If the masked real book (`truth-masked.sql`, below) had been loaded, this stops being
+housekeeping — treat it as a potential data incident and escalate rather than closing it out.
+
 **Add the module demo layer so NO page opens empty.** The two seeds above cover customers, bookings,
 payments and the employee/payroll baseline, but leave the module-level surfaces blank (ops queues, AI
 analytics, ledger, incentives, attendance, partner earnings, intelligence reports). This third seed
