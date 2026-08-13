@@ -331,12 +331,15 @@ export default function Control() {
                   <article className={styles.bar} key={area.code} title={area.basis}>
                     <span>
                       {area.label}
-                      <small> · {area.score === null ? "no source" : `${area.good} of ${area.total}`}</small>
+                      <small>
+                        {" · "}
+                        {area.total === null ? "not connected" : area.total === 0 ? "nothing recorded yet" : `${area.good} of ${area.total}`}
+                      </small>
                     </span>
                     <i>
                       <b style={{ width: `${area.score ?? 0}%` }}></b>
                     </i>
-                    <strong>{area.score === null ? "n/c" : area.score}</strong>
+                    <strong>{area.total === null ? "n/c" : area.total === 0 ? "—" : area.score}</strong>
                   </article>
                 ))}
                 {!!tower && (
