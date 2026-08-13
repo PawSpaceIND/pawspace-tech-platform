@@ -1,5 +1,5 @@
 import{database}from"../../../lib/server-auth";
-import{uatLoginEnabled,uatAccessCodeValid,issueUatToken,uatCookie,clearUatCookie,resolveUatStaffActor}from"../../../lib/uat-staging-auth";
+import{uatLoginEnabled,uatAccessCodeValid,issueUatToken,uatCookie,clearUatCookie,resolveUatStaffActor,uatStaffIdentityAllowed}from"../../../lib/uat-staging-auth";
 
 type Row=Record<string,unknown>;
 const text=(v:unknown)=>String(v??"").trim();
@@ -16,6 +16,12 @@ export async function POST(request:Request){
  if(!uatAccessCodeValid(env as never,text(body.code)))return json({error:"Invalid access code"},401);
  const email=text(body.email).toLowerCase();
  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return json({error:"Enter a valid email to sign in as"},400);
+ // The email must be a real staff record. This used to accept ANY address and hand it a founder
+ // identity with ["*"], so the access code alone conferred full authority over the staging workspace.
+ // Checked here as well as in resolveUatStaffActor so a tester is told at sign-in rather than handed a
+ // cookie that every later request refuses without explanation.
+ const db=await database();
+ if(!await uatStaffIdentityAllowed(db,email))return json({error:"That email is not a staff account on this environment. Sign in as one of the seeded staff identities listed in docs/UAT-TESTER-GUIDE.md — UAT sign-in no longer grants an unrecognised email full access."},403);
  const token=await issueUatToken(env as never,email,TTL);
  return json({ok:true,email},200,uatCookie(token,TTL));
 }

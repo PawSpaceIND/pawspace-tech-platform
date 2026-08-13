@@ -1,7 +1,14 @@
 # PawSpace Staging — Human UAT Tester Guide
 
 **App:** https://pawspace-staging.karthik-fce.workers.dev
-**Staff login page:** `/staging-login` · access code: `pawspace-uat-2026`
+**Staff login page:** `/staging-login` — ask ops for the current access code. It is a repository secret
+and is deliberately not written here; the code that used to be printed in this guide and in the deploy
+log is now revoked.
+
+**Sign in as one of the seeded staff identities below.** UAT sign-in resolves your role from the staff
+directory: an email that is not an active `app_users` row is refused at sign-in. It used to accept any
+address and grant it founder access with every permission, which meant no role boundary could be tested
+and the access code alone conferred full authority.
 
 ---
 
@@ -19,7 +26,9 @@
 opens with data instead of blank): `uat.demo.manager@tkpetcare.in` (manager),
 `uat.demo.sales1@tkpetcare.in` / `uat.demo.sales2@tkpetcare.in` (sales, appear on the leaderboard and
 in incentives), `uat.demo.groomer@tkpetcare.in` (linked to a real provider — sign in as this one to see
-the Partner workspace with jobs, a live assignment and earnings). Sign in with the same access code.
+the Partner workspace with jobs, a live assignment and earnings). Sign in with the same access code. Each of these is a seeded `app_users` row, which is what makes them
+usable — and each gets only its own role's permissions, so signing in as the associate really does show
+you an associate's view.
 All demo rows are prefixed `UATD-` / `Demo ·` so they are obvious in every list.
 
 **Customers do NOT log in here.** Open the app root on your phone, browse as a guest, and log in with any Indian-format mobile number when booking — the OTP is **shown on screen** (sandbox; no real SMS is sent). Every fresh number creates a fresh customer, which is the easiest way to test the new-customer welcome coupon.

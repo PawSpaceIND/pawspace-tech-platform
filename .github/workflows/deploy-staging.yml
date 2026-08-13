@@ -4,11 +4,17 @@ name: Deploy staging
 # never touches production. Deploys the vinext build output (dist/server) as worker "pawspace-staging"
 # bound to a dedicated staging D1.
 #
-# Required repo config (added once by ops — never pasted in chat):
-#   Secrets:   CLOUDFLARE_API_TOKEN (Workers Scripts: Edit, D1: Edit), CLOUDFLARE_ACCOUNT_ID
+# Required repo config (added once by ops — never pasted in chat, never committed):
+#   Secrets:   CLOUDFLARE_API_TOKEN (Workers Scripts: Edit, D1: Edit)
+#              CLOUDFLARE_ACCOUNT_ID
+#              PAWSPACE_UAT_ACCESS_CODE                (>=16 chars) tester code for /staging-login
+#              PAWSPACE_UAT_SIGNING_KEY                (>=32 chars) signs the UAT session cookie
+#              PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT  (>=32 chars) signs OTP identity assertions
 #   Variable:  STAGING_D1_ID  (from `npx wrangler d1 create pawspace-staging`)
-# After the first deploy, set the app secret once:
-#   npx wrangler secret put PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT --name pawspace-staging
+#
+# Generate each credential fresh — `openssl rand -hex 32` — and never reuse a value that has appeared
+# in this repository, a chat, or a build log. The deploy refuses to run without all three, refuses a
+# value shorter than its minimum, and refuses the specific values that were once committed here.
 
 on:
   workflow_dispatch:
@@ -32,9 +38,16 @@ jobs:
         run: npm run install:ci
       - name: Build (vinext)
         run: npm run build
+      # The three UAT credentials come from repository SECRETS. They previously came from committed
+      # fallbacks in stage-config.mjs, because this step passed only STAGING_D1_ID — so every deploy
+      # shipped credentials that were readable in a public repository. The script now fails closed if
+      # any is missing, too short, or equal to one of the values that was committed.
       - name: Configure staging (name + D1 + sandbox)
         env:
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
         run: node scripts/stage-config.mjs
       - name: Deploy to staging
         # Deploy from the repo ROOT: the @cloudflare/vite-plugin build writes a redirect at

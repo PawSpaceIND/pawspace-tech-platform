@@ -86,11 +86,23 @@ function freshDb() {
   return { sqlite, db };
 }
 
+// Test-only values. These deliberately do NOT reuse the credentials that were once committed to the
+// repository: scripts/stage-config.mjs now refuses those, and a test should not keep them in play.
 const UAT_STAGING_ENV = {
   PAWSPACE_UAT_LOGIN: "on",
-  PAWSPACE_UAT_SIGNING_KEY: "pawspace-staging-uat-signing-key-do-not-reuse-in-prod",
-  PAWSPACE_UAT_ACCESS_CODE: "pawspace-uat-2026",
+  PAWSPACE_UAT_SIGNING_KEY: "navigation-recovery-test-signing-key-32",
+  PAWSPACE_UAT_ACCESS_CODE: "navigation-recovery-code",
 };
+
+/** UAT sign-in resolves an identity from the staff directory, so a test needs a real staff row. */
+function seedStaff(sqlite, email, roleCode = "manager", permissions = ["*"]) {
+  // DDL copied from lib/api-gateway.ts, which owns both tables and may have created them already; the
+  // INSERTs name their columns so they work against either the owner's schema or this one.
+  sqlite.exec("CREATE TABLE IF NOT EXISTS app_users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, role_code TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS role_definitions (code TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, permissions_json TEXT NOT NULL, system_role INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT OR REPLACE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").run(`U-${email}`, email, email, roleCode, "active", 0, 0);
+  sqlite.prepare("INSERT OR REPLACE INTO role_definitions (code,name,description,permissions_json,system_role,updated_at) VALUES (?,?,?,?,?,?)").run(roleCode, roleCode, "seeded for this test", JSON.stringify(permissions), 1, 0);
+}
 
 test("real execution: an expired staging session is answered with JSON that names the way back in", async () => {
   const { db } = freshDb();
@@ -160,18 +172,30 @@ test("real execution: route-level auth failures are JSON, not the text body that
   assert.deepEqual(await forbidden.json(), { error: "Permission denied" });
 });
 
-test("real execution: a signed staging session still resolves to a working actor", async () => {
+// This test used to sign in as "tester@pawspace.in" — an address in no staff directory — and assert it
+// resolved to permissions ["*"]. That was the privilege-escalation defect written down as the expected
+// behaviour: the access code alone conferred full authority over the staging workspace. The test's real
+// purpose is that a VALID staging session resolves to a working actor and an invalid one is routed back
+// to sign-in, and both halves are kept — but the identity now has to exist.
+test("real execution: a signed staging session resolves to a working actor from the staff directory", async () => {
   const { sqlite } = freshDb();
   globalThis.__NAV_ENV__ = UAT_STAGING_ENV;
   const security = await import("../lib/server-auth.ts");
   const uat = await import("../lib/uat-staging-auth.ts");
+  seedStaff(sqlite, "seeded.tester@pawspace.in", "founder", ["*"]);
 
-  const token = await uat.issueUatToken(UAT_STAGING_ENV, "tester@pawspace.in", 3600);
+  const token = await uat.issueUatToken(UAT_STAGING_ENV, "seeded.tester@pawspace.in", 3600);
   const actor = await security.resolveActor(
     new Request("https://pawspace-staging.example/api/staff-alerts", { headers: { cookie: `pawspace_uat=${encodeURIComponent(token)}` } }),
   );
-  assert.equal(actor.email, "tester@pawspace.in");
-  assert.deepEqual(actor.permissions, ["*"]);
+  assert.equal(actor.email, "seeded.tester@pawspace.in");
+  assert.deepEqual(actor.permissions, ["*"], "a seeded founder gets the founder role's own permissions");
+
+  // The other half of the same property: an address that is NOT in the directory gets nothing, however
+  // valid its cookie. A valid cookie proves someone knew the access code, not who they are.
+  const strangerToken = await uat.issueUatToken(UAT_STAGING_ENV, "stranger@example.com", 3600);
+  const stranger = await uat.resolveUatStaffActor(globalThis.__NAV_DB__, new Request("https://pawspace-staging.example/api/staff-alerts", { headers: { cookie: `pawspace_uat=${encodeURIComponent(strangerToken)}` } }), UAT_STAGING_ENV);
+  assert.equal(stranger, null, "an unrecognised email must not become founder");
 
   const seeded = sqlite.prepare("SELECT COUNT(*) AS total FROM role_definitions").get();
   assert.ok(Number(seeded.total) > 0, "resolveActor seeds the role catalogue it reads");

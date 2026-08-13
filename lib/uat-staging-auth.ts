@@ -8,9 +8,16 @@
  * never in the production config, so this entire path is dead code in production. It never weakens the
  * real identity/session checks — it is an additional, flag-gated branch that only fires on staging.
  *
- * Identity → role: a known seeded app_user gets its real role; any other email (behind the access code)
- * gets a founder/full-access role so a single tester can exercise every admin surface. Staging data is
- * synthetic/masked and payments are sandbox, so this convenience is safe here and nowhere else.
+ * Identity → role: the email MUST resolve to an active row in app_users, and it gets exactly that
+ * row's role and that role's permissions. Nothing is synthesised.
+ *
+ * It used to default an unrecognised email to roleCode "founder" with permissions ["*"], on the
+ * reasoning that staging data is synthetic and a tester should be able to reach every admin surface.
+ * That made the access code the only thing standing between any email address and full authority over
+ * the staging workspace — including the founder-only surfaces, the payroll approvals and the
+ * governance controls — and it meant a tester could never verify that a role boundary actually holds,
+ * because every identity was a superuser. A tester who needs founder reach signs in as a seeded
+ * founder account; one who needs to test an associate's view signs in as a seeded associate.
  */
 import{parsePermissions}from"./platform-security";
 
@@ -60,7 +67,11 @@ async function verifyUatToken(env:UatEnv,token:string):Promise<string|null>{
  return obj.email;
 }
 
-/** Resolve a staff/admin actor from a valid UAT cookie. Returns null unless UAT login is enabled and the cookie verifies. */
+/**
+ * Resolve a staff actor from a valid UAT cookie. Returns null unless UAT login is enabled, the cookie
+ * verifies, AND the email is an active app_users row. Fail-closed at every step: an unknown email, a
+ * suspended one, or a role with no definition yields no actor and no permissions, never a default.
+ */
 export async function resolveUatStaffActor(db:Db,request:Request,env:UatEnv){
  if(!uatLoginEnabled(env))return null;
  const token=readCookie(request,COOKIE);
@@ -68,11 +79,22 @@ export async function resolveUatStaffActor(db:Db,request:Request,env:UatEnv){
  const email=await verifyUatToken(env,token);
  if(!email)return null;
  const user=await db.prepare("SELECT name,role_code,status FROM app_users WHERE email=?").bind(email).first<Row>().catch(()=>null);
- let roleCode="founder",permissions:string[]=["*"],name=`UAT ${email}`;
- if(user&&String(user.status)==="active"){
-  roleCode=String(user.role_code);name=String(user.name||email);
-  const role=await db.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(roleCode).first<Row>().catch(()=>null);
-  permissions=role?parsePermissions(role.permissions_json):[];
- }
- return{email,name,roleCode,permissions,developmentPreview:false,identitySource:"workspace" as const,principalType:"email" as const,principalKey:email};
+ // No synthesised identity. A cookie proves someone knew the access code; it does not decide who they
+ // are or what they may do — the staff directory does.
+ if(!user||String(user.status)!=="active")return null;
+ const roleCode=String(user.role_code||"").trim();
+ if(!roleCode)return null;
+ const role=await db.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(roleCode).first<Row>().catch(()=>null);
+ if(!role)return null; // a role with no definition grants nothing, rather than everything
+ const permissions=parsePermissions(role.permissions_json);
+ return{email,name:String(user.name||email),roleCode,permissions,developmentPreview:false,identitySource:"workspace" as const,principalType:"email" as const,principalKey:email};
+}
+
+/**
+ * Is this email allowed to sign in for UAT? Checked at sign-in so a tester is told immediately, rather
+ * than receiving a cookie that every subsequent request silently refuses.
+ */
+export async function uatStaffIdentityAllowed(db:Db,email:string){
+ const row=await db.prepare("SELECT status FROM app_users WHERE email=?").bind(String(email).trim().toLowerCase()).first<Row>().catch(()=>null);
+ return Boolean(row&&String(row.status)==="active");
 }

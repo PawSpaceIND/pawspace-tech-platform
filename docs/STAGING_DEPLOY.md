@@ -58,6 +58,20 @@ Set any of these as staging secrets to exercise that path; leave unset to keep i
 RAZORPAY_KEY_ID_SANDBOX / RAZORPAY_KEY_SECRET_SANDBOX / RAZORPAY_WEBHOOK_SECRET_SANDBOX
 IDFY_API_KEY / IDFY_ACCOUNT_ID / IDFY_URL
 PAWSPACE_AI_PROVIDER_API_KEY            (then set AI rollout to staff_only at /team/ai/rollout)
+
+The staging UAT sign-in needs three credentials, supplied as GitHub Actions **secrets** and read by
+`scripts/stage-config.mjs`. There are no defaults: the deploy fails closed without them, refuses a value
+below its minimum length, and refuses the three values that were once committed to this repository (they
+are public now, so re-supplying one would restore the defect). Generate each fresh:
+
+```bash
+openssl rand -hex 32     # PAWSPACE_UAT_SIGNING_KEY               signs the UAT session cookie
+openssl rand -hex 32     # PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT signs OTP identity assertions
+openssl rand -hex 12     # PAWSPACE_UAT_ACCESS_CODE               the code testers type (>=16 chars)
+```
+
+Nothing prints them. The access code used to be echoed by the deploy script, which put it in every
+build log.
 ```
 Workers AI (voice) uses the `AI` binding; on the free tier it has a daily allowance. If a first deploy
 ever complains about the `AI` binding, it is optional — voice simply stays fail-closed without it.
