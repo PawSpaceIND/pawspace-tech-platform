@@ -1,7 +1,7 @@
 "use client";
 import{useCallback,useEffect,useState}from"react";
-import Link from"next/link";
-import{Badge,Button,EmptyState,PageHeader,StatCard}from"../../../components/ui";
+import{Badge,Button,EmptyState,StatCard}from"../../../components/ui";
+import OpsShell from"../../../components/ops-shell/OpsShell";
 import styles from"./ad-spend.module.css";
 
 type Source={id:string;provider:string;external_account_id:string;label:string;status:string;currency:string;write_mode:string;max_daily_budget:number|null;supermetrics_ds_id:string|null;last_sync_at:number|null;last_synced_through:string|null;last_error:string|null};
@@ -79,14 +79,12 @@ export default function AdSpendPage(){
  const totalSpend=(data?.spendByCampaign||[]).reduce((sum,row)=>sum+Number(row.spend||0),0);
  const unmappedSpend=(data?.unmappedSpend||[]).reduce((sum,row)=>sum+Number(row.spend||0),0);
 
- return <main className={styles.shell}>
-  <PageHeader
+ return <OpsShell
     eyebrow="PawSpace · Marketing"
     title="Ad spend connectors"
     description="Google Ads and Meta directly, or the same numbers through Supermetrics. Spend is either real or absent: an account without credentials reports what is missing and writes nothing."
     actions={<Badge tone={data?.sources.some(source=>source.status==="connected")?"success":"warning"} dot>{data?.sources.filter(source=>source.status==="connected").length||0} connected</Badge>}
-  />
-  <nav className={styles.nav}><Link href="/team/marketing">← Campaign command centre</Link><Link href="/team/analytics">Analytics</Link></nav>
+    >
 
   {error?<div className={`${styles.panel} ${styles.panelError}`}><b>{error}</b></div>:null}
   {notice?<div className={styles.panel}>{notice}</div>:null}
@@ -200,5 +198,5 @@ export default function AdSpendPage(){
   <footer className={styles.footnote}>
    <b>Spend source:</b> platform-reported · <b>Fabricated spend:</b> never · <b>Conversion attribution:</b> not connected · <b>Production ready:</b> NO
   </footer>
- </main>;
+ </OpsShell>;
 }

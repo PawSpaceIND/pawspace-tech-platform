@@ -363,6 +363,9 @@ test("the operator screen and the docs describe the same guardrails the code enf
     readFile(new URL("../lib/ad-spend-connectors.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/api-gateway.ts", import.meta.url), "utf8"),
   ]);
+  // The console wears the approved Operations chrome rather than drawing a page of its own.
+  assert.match(page, /OpsShell/);
+  assert.doesNotMatch(page, /PageHeader/);
   // Both routes are offered, and the screen makes a live account visibly different from a read-only one.
   for (const provider of ["google_ads", "meta_ads", "supermetrics"]) assert.match(page, new RegExp(provider));
   assert.match(page, /Live — changes the real account/);
