@@ -12,6 +12,7 @@ import test from "node:test";
 import { readFile, readdir } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { findUnchunkedInLists, legacyFindUnchunkedInLists } from "./helpers/in-list-guard.mjs";
 
 
 installWorkersHooks("__FANOUT_DB__", "__FANOUT_ENV__");
@@ -162,42 +163,46 @@ test("chunkedIn preserves the semantics of the single query it replaces", async 
 
 // Files whose IN lists cannot grow past the cap: each is a fixed vocabulary or a per-row list, not a
 // result set. A new name appearing here must be justified the same way or routed through chunkedIn.
-const BOUNDED_IN_LISTS = {
-  "boarding-ops-governance.ts": "pet ids of a single stay",
-  "lead-assignment-governance.ts": "the service codes on one policy",
-  "meet-and-greet.ts": "the literal statuses a transition may come from",
-  "ops-work-queue.ts": "the literal statuses a task may be claimed from",
-  "staff-alert-center.ts": "the literal alert types the sweep owns",
-  "statutory-compliance.ts": "the obligations of one month",
-  "subscription-wallet.ts": "the grooming plan catalogue",
-  "tds-governance.ts": "the months of one financial year",
-};
 
 test("no library builds an IN list straight from a result set any more", async () => {
-  // This sweep used to exempt the whole FILE when it imported d1-chunked-in anywhere:
-  //
-  //   if (source.includes("d1-chunked-in") || name in BOUNDED_IN_LISTS) continue;
-  //
-  // So a module that chunked one read became immune for every other read it built. That is exactly
-  // how lib/company-analytics.ts kept three unchunked cost-ledger IN-lists (boarding, sitting and
-  // training payouts) directly beneath a payments read that PR #158 had chunked - the sweep written
-  // to catch this class walked straight past the file it was written for.
-  //
-  // The exemption is now per LINE: a raw `.map(() => "?")` counts unless that same line goes through
-  // chunkedIn. Bounded lists stay allowlisted by name, with the reason they cannot grow.
   const files = (await readdir(new URL("../lib", import.meta.url))).filter((name) => name.endsWith(".ts") && name !== "d1-chunked-in.ts");
   const offenders = [];
   for (const name of files) {
-    if (name in BOUNDED_IN_LISTS) continue;
-    const source = await readFile(new URL(`../lib/${name}`, import.meta.url), "utf8");
-    source.split("\n").forEach((line, index) => {
-      // `.map(() => "?")` over a variable-length list is the shape that breaks past 100 rows.
-      if (!/\.map\(\s*\(\s*\)\s*=>\s*"\?"\s*\)/.test(line)) return;
-      if (line.includes("chunkedIn") || line.includes("placeholders")) return;
-      offenders.push(`${name}:${index + 1}`);
-    });
+    offenders.push(...findUnchunkedInLists(name, await readFile(new URL(`../lib/${name}`, import.meta.url), "utf8")));
   }
   assert.deepEqual(offenders, [], "these call sites must build IN lists through chunkedIn so they cannot exceed D1's cap");
+});
+
+// --- the guard judging itself -------------------------------------------------------------------
+// Both corrections below came out of independent QA review. A guard that has never been shown to
+// reject anything is a guard nobody has tested, so each is proved by mutation: feed the guard source
+// it MUST reject, and show the previous version accepted it.
+
+test("guard: naming a raw build `placeholders` does not make it safe", async () => {
+  // The exempted word is what chunkedIn calls the safe value it hands its callback - and also what
+  // anyone hand-rolling the unsafe build would naturally call it.
+  const unsafe = 'const placeholders = ids.map(() => "?").join(",");';
+  assert.deepEqual(legacyFindUnchunkedInLists("victim.ts", unsafe), [], "the guard as it stood accepted this");
+  assert.deepEqual(findUnchunkedInLists("victim.ts", unsafe), ["victim.ts:1"], "the corrected guard rejects it");
+
+  // And the real chunkedIn call site, which is what the exemption was protecting, still passes.
+  const safe = 'const rows = await chunkedIn(ids, (chunk, placeholders) => read(`... IN (${placeholders})`, chunk));';
+  assert.deepEqual(findUnchunkedInLists("victim.ts", safe), [], "an actual chunkedIn call is still satisfied");
+});
+
+test("guard: a bounded allowlist covers one call site, not the whole file", async () => {
+  const name = "staff-alert-center.ts";
+  const source = await readFile(new URL(`../lib/${name}`, import.meta.url), "utf8");
+
+  // The known bounded call site - a fixed vocabulary of alert types - is accepted.
+  assert.deepEqual(findUnchunkedInLists(name, source), [], "the bounded call site stays allowed");
+  assert.ok(/check\.types\.map\(\(\)=>"\?"\)/.test(source.replace(/\s+/g, "")), "and it is the call site the allowlist names");
+
+  // A SECOND, result-set-driven list added to the same file must still be caught.
+  const withNewOffender = `${source}\nconst ids = rows.map(r => r.id); const sql = \`WHERE id IN (\${ids.map(() => "?").join(",")})\`;\n`;
+  const found = findUnchunkedInLists(name, withNewOffender);
+  assert.equal(found.length, 1, `a new unbounded list in an allowlisted file must be caught, got ${JSON.stringify(found)}`);
+  assert.deepEqual(legacyFindUnchunkedInLists(name, withNewOffender), [], "the guard as it stood gave the whole file immunity");
 });
 
 test("one chunk size for the whole platform, not one per module", async () => {
