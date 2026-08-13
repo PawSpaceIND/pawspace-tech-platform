@@ -1,19 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import * as nodeModule from "node:module";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
-// lib modules import each other extensionlessly, the way the app bundler resolves them. This suite
-// loads one of them directly, so it needs the same fallback every other real-execution suite installs.
-nodeModule.registerHooks({
-  resolve(specifier, context, nextResolve) {
-    try {
-      return nextResolve(specifier, context);
-    } catch (error) {
-      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
-      throw error;
-    }
-  },
-});
+// lib modules import each other extensionlessly; this installs the resolver on every supported Node.
+installWorkersHooks("__CRM_DB__");
 
 
 import fs from "node:fs";

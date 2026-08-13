@@ -11,20 +11,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile, readdir } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
-import * as nodeModule from "node:module";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
-const CF_STUB = "data:text/javascript,export const env=new Proxy({},{get:(t,k)=>k===\"DB\"?globalThis.__FANOUT_DB__:(globalThis.__FANOUT_ENV__??{})[k]});";
-nodeModule.registerHooks({
-  resolve(specifier, context, nextResolve) {
-    if (specifier === "cloudflare:workers") return { url: CF_STUB, shortCircuit: true };
-    try {
-      return nextResolve(specifier, context);
-    } catch (error) {
-      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
-      throw error;
-    }
-  },
-});
+
+installWorkersHooks("__FANOUT_DB__");
 
 const D1_BOUND_PARAMETER_LIMIT = 100;
 
@@ -210,4 +200,23 @@ test("one chunk size for the whole platform, not one per module", async () => {
 
   const { D1_IN_CHUNK } = await import("../lib/d1-chunked-in.ts");
   assert.equal(D1_IN_CHUNK, 80, "the size #166 measured as correct: a chunk of 50 cost 82 D1 calls for 500 customers where 58 would do");
+});
+
+test("the suites run on the Node the CI pins, not just the one on this machine", async () => {
+  // CI pins 22.13.0, where module.registerHooks does not exist. Calling it unguarded threw
+  // `TypeError: nodeModule.registerHooks is not a function` and took the whole file down before a
+  // single test ran - which is why these suites were red on GitHub while green locally.
+  const helper = await readFile(new URL("./helpers/module-hooks.mjs", import.meta.url), "utf8");
+  assert.match(helper, /typeof nodeModule\.registerHooks === "function"/, "the modern API must be feature-detected");
+  assert.match(helper, /nodeModule\.register\(/, "and an older Node must still get a resolver");
+
+  const suites = (await readdir(new URL(".", import.meta.url))).filter((name) => name.endsWith(".test.mjs"));
+  const unguarded = [];
+  for (const name of suites) {
+    const source = await readFile(new URL(name, import.meta.url), "utf8");
+    if (!source.includes("registerHooks")) continue;
+    if (source.includes('typeof nodeModule.registerHooks === "function"')) continue;
+    unguarded.push(name);
+  }
+  assert.deepEqual(unguarded, [], "these suites call registerHooks without a fallback and will die on CI's Node");
 });
