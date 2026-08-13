@@ -1,18 +1,20 @@
 /* Review usability overrides. Keep production behavior unchanged. */
 .route-control [class*="control_shell"] { grid-template-columns: 280px 1fr; }
 .route-control [class*="control_side"] { overflow-y: auto; overscroll-behavior: contain; }
-.route-control [class*="control_side"] nav button { min-height: 42px; font-size: 12px !important; }
+.route-control [class*="control_side"] nav button { min-height: 44px; font-size: 14px !important; }
 .route-control [class*="control_side"] nav b,
 .route-control [class*="control_side"] small,
-.route-control [class*="control_side"] span { font-size: 10px !important; }
+.route-control [class*="control_side"] span { font-size: 13px !important; }
 .route-control [class*="control_brand"] strong { font-size: 14px !important; }
 .route-control [class*="control_main"] { padding: 28px 30px 48px; }
+/* These once shrank the whole surface to fit more on screen; the result was unreadable at a normal
+   viewing distance. The floor is now the smallest size a person should be asked to read. */
 .route-control [class*="control_main"] p,
 .route-control [class*="control_main"] span,
 .route-control [class*="control_main"] small,
 .route-control [class*="control_main"] button,
 .route-control [class*="control_main"] b,
-.route-control [class*="control_main"] strong { font-size: max(11px, 0.78rem); }
+.route-control [class*="control_main"] strong { font-size: max(13px, 0.85rem); }
 .route-control [class*="control_main"] h1 { font-size: 30px; }
 .route-control [class*="control_main"] h2 { font-size: 20px; }
 .route-control [class*="control_main"] h3 { font-size: 16px; }
@@ -21,7 +23,7 @@
 
 @media (max-width: 1100px) {
   .route-control [class*="control_shell"] { grid-template-columns: 92px 1fr; }
-  .route-control [class*="control_side"] nav button { font-size: 11px !important; }
+  .route-control [class*="control_side"] nav button { font-size: 13px !important; }
   .route-control [class*="control_modules"] { grid-template-columns: repeat(2, minmax(220px, 1fr)); }
 }
 
