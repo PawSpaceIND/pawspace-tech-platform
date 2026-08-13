@@ -21,7 +21,7 @@ export async function POST(request:Request){
  // Checked here as well as in resolveUatStaffActor so a tester is told at sign-in rather than handed a
  // cookie that every later request refuses without explanation.
  const db=await database();
- if(!await uatStaffIdentityAllowed(db,email))return json({error:"That email is not a staff account on this environment. Sign in as one of the seeded staff identities listed in docs/UAT-TESTER-GUIDE.md — UAT sign-in no longer grants an unrecognised email full access."},403);
+ if(!await uatStaffIdentityAllowed(db,email))return json({error:"That email cannot sign in here. UAT sign-in needs an active staff account whose role has a definition — an unknown email, a suspended account, or a role nobody has defined are all refused. Sign in as one of the seeded staff identities in docs/UAT-TESTER-GUIDE.md; UAT sign-in no longer grants an unrecognised email full access."},403);
  const token=await issueUatToken(env as never,email,TTL);
  return json({ok:true,email},200,uatCookie(token,TTL));
 }

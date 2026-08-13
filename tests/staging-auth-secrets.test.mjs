@@ -204,6 +204,102 @@ test("the founder default is gone from the source, not merely unreachable", () =
 });
 
 // ---------------------------------------------------------------------------
+// Containment: rotating the signing key invalidates every cookie minted with the old one.
+//
+// The UAT token is stateless — {email, exp} plus an HMAC — with no jti, key version, not-before or
+// revocation table. That is acceptable for this incident ONLY because verification uses exactly one
+// key: the currently configured PAWSPACE_UAT_SIGNING_KEY. There is no previous-key fallback and no
+// dual-key window, so the moment staging is redeployed with a fresh key, every cookie signed with the
+// burned key stops verifying immediately — including cookies still inside their 8-hour TTL.
+//
+// These tests are the evidence for that claim, and the last one is what would fail if anybody later
+// added a compatibility path.
+// ---------------------------------------------------------------------------
+const BURNED_KEY = "pawspace-staging-uat-signing-key-do-not-reuse-in-prod";
+const ROTATED_ENV = { PAWSPACE_UAT_LOGIN: "on", PAWSPACE_UAT_SIGNING_KEY: "a-freshly-rotated-signing-key-32ch", PAWSPACE_UAT_ACCESS_CODE: "a-rotated-access-code" };
+const BURNED_ENV = { ...ROTATED_ENV, PAWSPACE_UAT_SIGNING_KEY: BURNED_KEY };
+const requestWith = (token) => new Request("http://localhost/x", { headers: { cookie: `pawspace_uat=${encodeURIComponent(token)}` } });
+
+test("real execution: a cookie signed with the burned key is refused once the key is rotated", async () => {
+  const db = staffDb();
+  // Minted while the compromised key was live, and still well inside its 8-hour TTL.
+  const oldToken = await uat.issueUatToken(BURNED_ENV, "real.manager@tkpetcare.in", 8 * 3600);
+  assert.ok(await uat.resolveUatStaffActor(db, requestWith(oldToken), BURNED_ENV), "sanity: it did work against the old key");
+
+  const afterRotation = await uat.resolveUatStaffActor(db, requestWith(oldToken), ROTATED_ENV);
+  assert.equal(afterRotation, null, "after rotation the old cookie must resolve to nobody, TTL notwithstanding");
+});
+
+test("real execution: a cookie signed with the rotated key succeeds", async () => {
+  const db = staffDb();
+  const newToken = await uat.issueUatToken(ROTATED_ENV, "real.manager@tkpetcare.in", 3600);
+  const actor = await uat.resolveUatStaffActor(db, requestWith(newToken), ROTATED_ENV);
+  assert.ok(actor, "the new key must produce a working session");
+  assert.equal(actor.roleCode, "manager");
+});
+
+test("real execution: expiry still works normally after rotation", async () => {
+  const db = staffDb();
+  // issueUatToken floors the TTL at 60s, so expire it by rewinding the clock the token was built from.
+  const realNow = Date.now;
+  Date.now = () => realNow() - 10 * 3600 * 1000;
+  const expired = await uat.issueUatToken(ROTATED_ENV, "real.manager@tkpetcare.in", 3600);
+  Date.now = realNow;
+  assert.equal(await uat.resolveUatStaffActor(db, requestWith(expired), ROTATED_ENV), null, "an expired token is refused even though its signature is valid");
+
+  const live = await uat.issueUatToken(ROTATED_ENV, "real.manager@tkpetcare.in", 3600);
+  assert.ok(await uat.resolveUatStaffActor(db, requestWith(live), ROTATED_ENV), "and a live one still works, so expiry is not refusing everything");
+});
+
+test("no previous-key fallback or dual-key verification path exists", () => {
+  const source = read("lib/uat-staging-auth.ts");
+  // Exactly one key is read, and the same one signs and verifies.
+  const keyReads = [...source.matchAll(/PAWSPACE_UAT_SIGNING_KEY/g)].length;
+  const references = [...source.matchAll(/env(?:\?)?\.PAWSPACE_UAT_SIGNING_KEY/g)].length;
+  assert.ok(references >= 2, "the key is used to sign and to verify");
+  assert.ok(keyReads <= 4, `only the one signing key may be referenced, found ${keyReads} mentions`);
+  for (const forbidden of [/PREVIOUS_SIGNING_KEY/i, /OLD_SIGNING_KEY/i, /previousKey/, /fallbackKey/, /SIGNING_KEYS/, /keyVersion/, /\bkid\b/]) {
+    assert.doesNotMatch(source, forbidden, "no key-rotation compatibility window may be introduced");
+  }
+  // verifyUatToken compares against one computed HMAC and returns null otherwise: no second attempt.
+  assert.match(source, /const expect=await hmac\(String\(env\.PAWSPACE_UAT_SIGNING_KEY\),payload\);\s*\n\s*if\(expect!==sig\)return null;/, "verification is a single comparison against the configured key");
+});
+
+// ---------------------------------------------------------------------------
+// The whole suite must not re-encode the old vulnerability.
+// ---------------------------------------------------------------------------
+test("no test anywhere treats a burned credential as a working credential", () => {
+  const offenders = [];
+  for (const name of fs.readdirSync("tests")) {
+    if (!name.endsWith(".mjs")) continue;
+    const source = fs.readFileSync(path.join("tests", name), "utf8");
+    for (const burned of BURNED) {
+      if (!source.includes(burned)) continue;
+      // This file is allowed to name them — it exists to assert they are refused.
+      if (name === "staging-auth-secrets.test.mjs") continue;
+      offenders.push(`${name} contains ${burned.slice(0, 24)}…`);
+    }
+  }
+  assert.deepEqual(offenders, [], `a test still carries a committed credential: ${offenders.join("; ")}`);
+});
+
+test("no test asserts that an unknown identity receives full permissions", () => {
+  const offenders = [];
+  for (const name of fs.readdirSync("tests")) {
+    if (!name.endsWith(".mjs")) continue;
+    const source = fs.readFileSync(path.join("tests", name), "utf8");
+    // The shape that encoded the defect: issue a UAT token, then assert permissions ["*"].
+    if (!/issueUatToken/.test(source)) continue;
+    const assertsWildcard = /permissions,\s*\[\s*["'`]\*["'`]\s*\]/.test(source);
+    if (!assertsWildcard) continue;
+    // Allowed only when the identity is explicitly seeded into the staff directory first.
+    if (/seedStaff|app_users/.test(source)) continue;
+    offenders.push(name);
+  }
+  assert.deepEqual(offenders, [], `these tests grant ["*"] to an unseeded UAT identity: ${offenders.join(", ")}`);
+});
+
+// ---------------------------------------------------------------------------
 // Production behaviour is unchanged.
 // ---------------------------------------------------------------------------
 test("every UAT path stays dead in production, where the flag is unset", async () => {

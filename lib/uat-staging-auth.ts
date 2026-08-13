@@ -91,10 +91,19 @@ export async function resolveUatStaffActor(db:Db,request:Request,env:UatEnv){
 }
 
 /**
- * Is this email allowed to sign in for UAT? Checked at sign-in so a tester is told immediately, rather
- * than receiving a cookie that every subsequent request silently refuses.
+ * Is this email allowed to sign in for UAT?
+ *
+ * This applies the SAME rule resolveUatStaffActor applies, deliberately: an active app_users row, a
+ * role code, and a role_definitions row for that code. An earlier version checked only the status,
+ * which meant a user whose role had no definition was handed a cookie at sign-in and then refused by
+ * every subsequent request — a cookie that cannot authorise anything is worse than a refusal, because
+ * the tester has no idea why the workspace is dead.
  */
 export async function uatStaffIdentityAllowed(db:Db,email:string){
- const row=await db.prepare("SELECT status FROM app_users WHERE email=?").bind(String(email).trim().toLowerCase()).first<Row>().catch(()=>null);
- return Boolean(row&&String(row.status)==="active");
+ const row=await db.prepare("SELECT status,role_code FROM app_users WHERE email=?").bind(String(email).trim().toLowerCase()).first<Row>().catch(()=>null);
+ if(!row||String(row.status)!=="active")return false;
+ const roleCode=String(row.role_code||"").trim();
+ if(!roleCode)return false;
+ const role=await db.prepare("SELECT code FROM role_definitions WHERE code=?").bind(roleCode).first<Row>().catch(()=>null);
+ return Boolean(role);
 }
