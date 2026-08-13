@@ -21,6 +21,18 @@ const COOKIE="pawspace_uat";
 const enc=new TextEncoder();
 
 export function uatLoginEnabled(env:UatEnv){return String(env?.PAWSPACE_UAT_LOGIN||"")==="on"&&String(env?.PAWSPACE_UAT_SIGNING_KEY||"").length>=16;}
+
+/**
+ * The UAT cookie lives for 8 hours (app/api/staging-login/route.ts). When it lapses every gated API
+ * answered a bare "Authentication required", so a tester saw team pages render their shell with empty
+ * data and no clue that the session - not the page - had ended; each link they clicked led to another
+ * dead-looking screen. Where UAT sign-in exists, say so and hand back the route to recover. Production
+ * keeps the original body byte-for-byte: this branch cannot fire there (PAWSPACE_UAT_LOGIN is unset).
+ */
+export function signInRequiredResponse(env:UatEnv){
+ if(!uatLoginEnabled(env))return Response.json({error:"Authentication required"},{status:401});
+ return Response.json({error:"Your staging sign-in has expired. Open /staging-login to sign in again.",code:"sign_in_required",signInUrl:"/staging-login"},{status:401,headers:{"cache-control":"no-store"}});
+}
 export function uatAccessCodeValid(env:UatEnv,code:unknown){const expected=String(env?.PAWSPACE_UAT_ACCESS_CODE||"");return expected.length>0&&String(code||"")===expected;}
 
 function b64url(bytes:Uint8Array){let s="";for(const b of bytes)s+=String.fromCharCode(b);return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");}
