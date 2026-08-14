@@ -55,10 +55,21 @@ function makeD1(sqlite, options = {}) {
   }
   return {
     prepare: (sql) => statement(sql, []),
+    // D1's batch() is one transaction. The loop this replaced committed each statement as it went,
+    // so a batch whose guarded INSERT lands fewer rows than expected left the earlier statements
+    // behind - and the double-booking guard's own comment says it relies on "db.batch runs as one
+    // transaction". That claim was never observable in this file until now.
     batch: async (statements) => {
-      const results = [];
-      for (const stmt of statements) results.push(await stmt.run());
-      return results;
+      sqlite.exec("BEGIN");
+      try {
+        const results = [];
+        for (const stmt of statements) results.push(await stmt.run());
+        sqlite.exec("COMMIT");
+        return results;
+      } catch (error) {
+        sqlite.exec("ROLLBACK");
+        throw error;
+      }
     },
   };
 }
@@ -224,6 +235,20 @@ test("route: double-booking is impossible — of two concurrent reserves for one
   assert.equal(loser.body.error, "SLOT_TAKEN");
   const active = sqlite.prepare("SELECT COUNT(*) c FROM scheduling_reservations WHERE provider_id='groom_arun' AND status!='cancelled'").get();
   assert.equal(active.c, 1, "exactly one reservation row survived the race");
+
+  // Only observable now that batch() is a transaction. The guard works by having the guarded INSERT
+  // land fewer rows than expected, then throwing after the batch - so the question the old loop shim
+  // could not answer is what the refused request left behind. A customer told SLOT_TAKEN must not
+  // still own a reservation, and must not leave an assignment decision for the next reader to treat
+  // as a real booking.
+  const loserRows = sqlite.prepare("SELECT COUNT(*) c FROM scheduling_reservations WHERE group_id='race-b'").get();
+  assert.equal(loserRows.c, 0, "the refused request must leave no reservation of its own");
+  const loserDecision = sqlite.prepare("SELECT status FROM scheduling_assignment_decisions WHERE group_id='race-b'").all();
+  assert.deepEqual(
+    loserDecision.filter((row) => String(row.status) === "assigned"),
+    [],
+    "the refused request must not leave an assigned decision behind",
+  );
 });
 
 test("route: replaying the same clientRequestId is idempotent, never a second reservation", async () => {
