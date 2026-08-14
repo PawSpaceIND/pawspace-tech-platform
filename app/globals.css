@@ -309,7 +309,7 @@ main[style*="font-family"] p, main[style*="font-family"] li { max-width: 78ch; }
 main[style*="font-family"] small { font-size: 14px; line-height: 1.45; }
 main[style*="font-family"] table { border-collapse: collapse; width: 100%; }
 main[style*="font-family"] td, main[style*="font-family"] th { padding: 10px 12px; text-align: left; font-variant-numeric: tabular-nums; }
-main[style*="font-family"] button { font-size: 15px; font-weight: 700; padding: 9px 14px; border-radius: var(--ds-radius-sm); border: 1px solid var(--ds-border); background: var(--ds-surface); color: inherit; cursor: pointer; transition: filter .12s ease; }
+main[style*="font-family"] button { font-size: 15px; font-weight: 750; padding: 9px 14px; border-radius: var(--ds-radius-sm); border: 1px solid var(--ds-primary-100); background: var(--ds-primary-50); color: var(--ds-primary-500); cursor: pointer; transition: filter .12s ease; }
 main[style*="font-family"] button:hover:not(:disabled) { filter: brightness(0.96); }
 main[style*="font-family"] button:disabled { opacity: .55; cursor: default; }
 main[style*="font-family"] input, main[style*="font-family"] select { font-size: 15.5px; padding: 9px 12px; border-radius: var(--ds-radius-sm); border: 1px solid var(--ds-border); background: var(--ds-surface); color: inherit; }
@@ -367,7 +367,8 @@ main[style*="font-family"] dd { margin: 2px 0 0; font-weight: 700; font-variant-
    next page written this way inherits it instead of arriving colourless.
    -------------------------------------------------------------------------- */
 main[style*="font-family"] h1 { color: var(--ds-primary-500); }
-main[style*="font-family"] h2 { color: var(--ds-primary-500); }
+main[style*="font-family"] h1 + p, main[style*="font-family"] header p { color: var(--ds-text-muted); }
+main[style*="font-family"] h2 { color: var(--ds-primary-400); }
 main[style*="font-family"] h3 { color: var(--ds-primary-400); }
 /* The kicker every one of these pages opens with: PAWSPACE · PEOPLE · PAYROLL. */
 main[style*="font-family"] > p[style*="letter-spacing"] { color: var(--ds-primary-400); }
