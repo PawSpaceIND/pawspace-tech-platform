@@ -27,7 +27,13 @@ export async function requestCustomerOtp(db:Db,input:{phone:string}){
  const now=Date.now(),code=String(Math.floor(100000+Math.random()*900000)),id=uid("OTP");
  await db.prepare("INSERT INTO customer_otp_challenges (id,phone,code,attempts,consumed,created_at,expires_at) VALUES (?,?,?,0,0,?,?)")
    .bind(id,phone,code,now,now+5*60000).run();
- return{challengeId:id,phone,expiresInSeconds:300,sandboxDelivery:true,sandboxCode:code,liveSmsDelivered:false};
+ // Fail-closed OTP disclosure (finding D5): the one-time code must NEVER be returned in the response
+ // outside an explicit staging/UAT gate. PAWSPACE_UAT_LOGIN==="on" is the established staging flag; in
+ // production it is unset, so no code is disclosed. Verification is unchanged — the code is persisted
+ // and checked by verifyCustomerOtp regardless of disclosure.
+ const {env}=await import("cloudflare:workers");
+ const disclose=String((env as Record<string,unknown>).PAWSPACE_UAT_LOGIN||"")==="on";
+ return{challengeId:id,phone,expiresInSeconds:300,sandboxDelivery:disclose,...(disclose?{sandboxCode:code}:{}),liveSmsDelivered:false};
 }
 
 export async function verifyCustomerOtp(db:Db,input:{challengeId:string;code:string;name?:string;cityId?:string;installId?:string}){

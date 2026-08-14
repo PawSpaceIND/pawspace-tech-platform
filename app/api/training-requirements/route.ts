@@ -1,3 +1,5 @@
+import { authorize } from "../../../lib/server-auth";
+
 type Db = Awaited<ReturnType<typeof database>>;
 
 async function database() {
@@ -46,6 +48,9 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    // Finding D3: catalogue mutation requires server-authoritative staff authorization; the actor
+    // identity is derived from the session, never a hardcoded/client value.
+    const actor = await authorize(request, "scheduling.manage");
     const db = await database();
     await ensureRequirements(db);
     const body = await request.json() as { label?: string };
@@ -56,10 +61,11 @@ export async function POST(request: Request) {
     const order = await db.prepare("SELECT COALESCE(MAX(sort_order),0)+1 AS next_order FROM training_requirements").first<{ next_order: number }>();
     const id = `training_requirement_${crypto.randomUUID().slice(0, 12)}`;
     await db.prepare(
-      "INSERT INTO training_requirements (id,label,sort_order,active,version,updated_by,updated_at) VALUES (?,?,?,1,1,'founder_uat',?)",
-    ).bind(id, label, Number(order?.next_order ?? 1), Date.now()).run();
+      "INSERT INTO training_requirements (id,label,sort_order,active,version,updated_by,updated_at) VALUES (?,?,?,1,1,?,?)",
+    ).bind(id, label, Number(order?.next_order ?? 1), actor.email, Date.now()).run();
     return Response.json({ data: { id, label, active: 1 } }, { status: 201 });
   } catch (error) {
+    if (error instanceof Response) return error;
     return Response.json(
       { error: error instanceof Error ? error.message : "Requirement was not added" },
       { status: 500 },
@@ -69,6 +75,7 @@ export async function POST(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
+    const actor = await authorize(request, "scheduling.manage");
     const db = await database();
     await ensureRequirements(db);
     const body = await request.json() as { id?: string; label?: string; active?: boolean; sortOrder?: number };
@@ -78,10 +85,11 @@ export async function PATCH(request: Request) {
     const label = body.label?.trim() || String(current.label);
     if (label.length < 3 || label.length > 80) return Response.json({ error: "Invalid requirement label" }, { status: 400 });
     await db.prepare(
-      "UPDATE training_requirements SET label=?,active=?,sort_order=?,version=version+1,updated_by='founder_uat',updated_at=? WHERE id=?",
-    ).bind(label, body.active === undefined ? Number(current.active) : body.active ? 1 : 0, body.sortOrder ?? Number(current.sort_order), Date.now(), body.id).run();
+      "UPDATE training_requirements SET label=?,active=?,sort_order=?,version=version+1,updated_by=?,updated_at=? WHERE id=?",
+    ).bind(label, body.active === undefined ? Number(current.active) : body.active ? 1 : 0, body.sortOrder ?? Number(current.sort_order), actor.email, Date.now(), body.id).run();
     return Response.json({ data: { id: body.id, label } });
   } catch (error) {
+    if (error instanceof Response) return error;
     return Response.json(
       { error: error instanceof Error ? error.message : "Requirement was not updated" },
       { status: 500 },

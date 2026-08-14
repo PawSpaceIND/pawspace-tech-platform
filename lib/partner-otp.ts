@@ -29,7 +29,11 @@ export async function requestPartnerOtp(db:Db,input:{phone:string}){
   const now=Date.now(),code=String(Math.floor(100000+Math.random()*900000)),id=uid("POTP");
   await db.prepare("INSERT INTO partner_otp_challenges (id,phone,code,attempts,consumed,created_at,expires_at) VALUES (?,?,?,0,0,?,?)")
     .bind(id,phone,code,now,now+5*60000).run();
-  return{challengeId:id,phone,expiresInSeconds:300,sandboxDelivery:true,sandboxCode:code,liveSmsDelivered:false};
+  // Fail-closed OTP disclosure (finding D5): the code is returned only under the explicit staging/UAT
+  // gate PAWSPACE_UAT_LOGIN==="on"; unset in production, so no disclosure. Verification is unchanged.
+  const {env}=await import("cloudflare:workers");
+  const disclose=String((env as Record<string,unknown>).PAWSPACE_UAT_LOGIN||"")==="on";
+  return{challengeId:id,phone,expiresInSeconds:300,sandboxDelivery:disclose,...(disclose?{sandboxCode:code}:{}),liveSmsDelivered:false};
 }
 
 export async function verifyPartnerOtp(db:Db,input:{challengeId:string;code:string;name?:string;cityId?:string}){

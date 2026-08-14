@@ -13,7 +13,10 @@ export async function GET(request: Request) {
     const providerId = new URL(request.url).searchParams.get("providerId");
     if (!providerId) return Response.json({ error: "providerId is required" }, { status: 400 });
     const db = await database();
-    await seedDemoHostProfiles(db);
+    // Finding D6: demo/synthetic host seeding must never run on a production read. Gate it behind the
+    // explicit staging flag (fail-closed: PAWSPACE_UAT_LOGIN unset in production → no seed).
+    const { env } = await import("cloudflare:workers");
+    if (String((env as Record<string, unknown>).PAWSPACE_UAT_LOGIN || "") === "on") await seedDemoHostProfiles(db);
     const profile = await getHostProfile(db, providerId);
     if (!profile) return Response.json({ error: "Profile not found" }, { status: 404 });
     return Response.json({ data: profile }, { headers: { "cache-control": "no-store" } });

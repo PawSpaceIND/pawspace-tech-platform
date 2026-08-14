@@ -42,7 +42,9 @@ async function audit(db:Db,entityType:string,entityId:string,action:string,after
 async function periodLocked(db:Db,date:string){const code=date.slice(0,7);const row=await db.prepare("SELECT status FROM finance_close_periods WHERE period_code=?").bind(code).first<{status:string}>();return row?.status==="locked";}
 async function postBalancedJournal(db:Db,sourceType:string,sourceId:string,date:string,debitAccount:string,creditAccount:string,amount:number,narration:string,costCentre:string,vertical:string){
  if(await periodLocked(db,date))throw new Error("period_locked");
- const period=date.slice(0,7),now=Date.now(),group=id("journal");
+ // Deterministic journal group id (finding D9): keyed to the source, so a duplicate post for the same
+ // expense/bill collides on the finance_journal_entries PRIMARY KEY instead of creating a second pair.
+ const period=date.slice(0,7),now=Date.now(),group=`journal-${sourceType}-${sourceId}`;
  const lines=[{account:debitAccount,debit:amount,credit:0},{account:creditAccount,debit:0,credit:amount}];
  const debits=lines.reduce((s,x)=>s+x.debit,0),credits=lines.reduce((s,x)=>s+x.credit,0);if(Math.abs(debits-credits)>.001)throw new Error("Journal debits and credits must balance");
  for(const [i,line] of lines.entries())await db.prepare("INSERT INTO finance_journal_entries (id,entry_date,source_type,source_id,account_code,cost_centre,vertical,debit,credit,narration,period_code,posted,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(`${group}_${i+1}`,date,sourceType,sourceId,line.account,costCentre,vertical,line.debit,line.credit,narration,period,1,now).run();
@@ -79,13 +81,21 @@ export async function PATCH(request:Request){try{const actor=await authorize(req
   const status=body.action==="approve"?"approved":body.action==="reject"?"rejected":body.action==="pay"?"paid":"held";
   // Replay/idempotency: only an approve of a not-yet-posted row posts the journal. A repeated approve of
   // an already-approved (or paid) row updates nothing new and never posts a second balanced pair.
-  const shouldPost=body.action==="approve"&&row.status!=="approved"&&row.status!=="paid";
-  await db.prepare("UPDATE finance_expenses SET status=?,updated_at=? WHERE id=?").bind(status,now,body.id).run();if(shouldPost)await postBalancedJournal(db,"expense",body.id,String(row.expense_date),resolveAccountCode(row.category_code?String(row.category_code):undefined,"6200-Operating expense"),"2100-Expense payable",Number(row.amount),String(row.merchant),String(row.cost_centre),String(row.vertical));await audit(db,"expense",body.id,body.action,{status},body.reason,actor.email);return json({data:{id:body.id,status}});}
+  // Atomic claim (finding D9): an approve transitions status in a single compare-and-set; only the request
+  // that actually makes the transition (changes===1) posts the journal, so concurrent/replayed approves
+  // cannot double-post. Non-approve actions keep their plain status update.
+  let shouldPost=false;
+  if(body.action==="approve"){const claim=await db.prepare("UPDATE finance_expenses SET status='approved',updated_at=? WHERE id=? AND status NOT IN ('approved','paid')").bind(now,body.id).run();shouldPost=Number(claim?.meta?.changes||0)===1;}
+  else await db.prepare("UPDATE finance_expenses SET status=?,updated_at=? WHERE id=?").bind(status,now,body.id).run();
+  if(shouldPost)await postBalancedJournal(db,"expense",body.id,String(row.expense_date),resolveAccountCode(row.category_code?String(row.category_code):undefined,"6200-Operating expense"),"2100-Expense payable",Number(row.amount),String(row.merchant),String(row.cost_centre),String(row.vertical));await audit(db,"expense",body.id,body.action,{status},body.reason,actor.email);return json({data:{id:body.id,status}});}
  if(body.entity==="bill"){const row=await db.prepare("SELECT * FROM finance_bills WHERE id=?").bind(body.id).first<Record<string,unknown>>();if(!row)return json({error:"Bill not found"},404);
   if(body.action==="approve"&&row.created_by&&String(row.created_by)===actor.email)return json({error:"Maker cannot approve their own transaction"},403);
   const status=body.action==="approve"?"approved":body.action==="pay"?"paid":"rejected";
-  const shouldPost=body.action==="approve"&&row.status!=="approved"&&row.status!=="paid";
-  await db.prepare("UPDATE finance_bills SET status=?,updated_at=? WHERE id=?").bind(status,now,body.id).run();if(shouldPost)await postBalancedJournal(db,"vendor_bill",body.id,String(row.bill_date),resolveAccountCode(row.category_code?String(row.category_code):undefined,"6300-Vendor expense"),"2200-Accounts payable",Number(row.total_amount),String(row.bill_number),String(row.cost_centre),String(row.vertical));await audit(db,"bill",body.id,body.action,{status},body.reason,actor.email);return json({data:{id:body.id,status}});}
+  // Atomic claim (finding D9): same one-transition-one-posting guarantee as the expense path.
+  let shouldPost=false;
+  if(body.action==="approve"){const claim=await db.prepare("UPDATE finance_bills SET status='approved',updated_at=? WHERE id=? AND status NOT IN ('approved','paid')").bind(now,body.id).run();shouldPost=Number(claim?.meta?.changes||0)===1;}
+  else await db.prepare("UPDATE finance_bills SET status=?,updated_at=? WHERE id=?").bind(status,now,body.id).run();
+  if(shouldPost)await postBalancedJournal(db,"vendor_bill",body.id,String(row.bill_date),resolveAccountCode(row.category_code?String(row.category_code):undefined,"6300-Vendor expense"),"2200-Accounts payable",Number(row.total_amount),String(row.bill_number),String(row.cost_centre),String(row.vertical));await audit(db,"bill",body.id,body.action,{status},body.reason,actor.email);return json({data:{id:body.id,status}});}
  if(body.entity==="period"&&body.action==="lock"){await db.prepare("INSERT INTO finance_close_periods (period_code,status,checklist_json,locked_at,locked_by,updated_at) VALUES (?,'locked','[]',?,?,?) ON CONFLICT(period_code) DO UPDATE SET status='locked',locked_at=excluded.locked_at,locked_by=excluded.locked_by,updated_at=excluded.updated_at").bind(body.id,now,actor.email,now).run();await audit(db,"period",body.id,"locked",{status:"locked"},body.reason,actor.email);return json({data:{id:body.id,status:"locked"}});}
  return json({error:"Unsupported finance change"},400);
  }catch(error){if(error instanceof Response)return error;const message=error instanceof Error?error.message:"Finance update failed";return json({error:message},message==="period_locked"?409:500);}}

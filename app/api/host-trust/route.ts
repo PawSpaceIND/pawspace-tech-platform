@@ -1,4 +1,4 @@
-import{submitHostReview,listHostReviews,ensureHostReviewsTables,seedHostReviews}from"../../../lib/host-reviews";
+import{submitHostReview,listHostReviews,ensureHostReviewsTables}from"../../../lib/host-reviews";
 import{computeHostStats,computeHostBadges}from"../../../lib/host-badges";
 
 type Db=D1Database;
@@ -44,11 +44,14 @@ export async function POST(request:Request):Promise<Response>{
   try{
     const body=await request.json() as Record<string,unknown>;
     const db=await ensureDb();
+    await ensureHostReviewsTables(db); // schema only (idempotent DDL) — never synthetic data
 
-    // Handle seed action
+    // Finding D4: seeding synthetic reviews is a write that must NEVER be reachable through this public,
+    // unauthenticated endpoint. The public seed path is removed; review seeding runs through staff
+    // tooling/migrations only. (The review-submit path below is unchanged — it already validates
+    // booking/customer/provider ownership at the data layer.)
     if(body.action==="seed"){
-      await seedHostReviews(db);
-      return new Response(JSON.stringify({message:"Host reviews seeded",productionReady:false}),{status:200,headers:{"content-type":"application/json"}});
+      return new Response(JSON.stringify({error:"Seeding is not available on this public endpoint. Run review seeding through staff tooling."}),{status:405,headers:{"content-type":"application/json","allow":"POST"}});
     }
 
     // Submit review

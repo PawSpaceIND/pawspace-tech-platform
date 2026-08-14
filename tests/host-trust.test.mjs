@@ -108,7 +108,8 @@ test("host-trust route calls submitHostReview for reviews",async()=>{
 test("host-trust route includes seed action for test data",async()=>{
   const route=await read("app/api/host-trust/route.ts");
   assert.match(route,/body\.action==="seed"/);
-  assert.match(route,/seedHostReviews/);
+  assert.doesNotMatch(route,/seedHostReviews/);
+  assert.match(route,/status:405/);
 });
 
 test("gateway allowlists host-trust as public",async()=>{

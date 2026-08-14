@@ -54,7 +54,7 @@ const SECRET = "uat-signing-secret-0123456789abcdef0123456789abcdef";
 function fresh() {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
-  globalThis.__PAWSPACE_TEST_ENV = { DB: db, PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: SECRET, PAWSPACE_IDENTITY_ENV: "sandbox" };
+  globalThis.__PAWSPACE_TEST_ENV = { DB: db, PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: SECRET, PAWSPACE_IDENTITY_ENV: "sandbox", PAWSPACE_UAT_LOGIN: "on" };
   // canonical_customers from its owning DDL (customer-otp upserts into it)
   const account = read("lib/customer-account.ts");
   for (const match of account.matchAll(/\.prepare\(\s*(["'`])([\s\S]*?)\1/g)) {
