@@ -511,10 +511,10 @@ test("real execution: delivered orders refuse cancellation; quality incidents fl
 test("contract: gateway permission map, DB access rule, and team surfaces for the food stack", () => {
   const gateway = fs.readFileSync(new URL("../lib/api-gateway.ts", import.meta.url), "utf8");
   assert.match(gateway, /food-orders"\)return "scheduling\.book"/);
-  assert.match(gateway, /food-ops"\)return method==="GET"\?"bookings\.view":"bookings\.manage"/);
+  assert.match(gateway, /food-ops"\)return "bookings\.manage"/);
   assert.match(gateway, /food-subscriptions"[\s\S]{0,250}\["process_due","record_payment"\]\.includes\(action\)\?"finance\.manage":"scheduling\.book"/);
   assert.match(gateway, /food-finance"[\s\S]{0,250}"request_cancel"\?"scheduling\.book":"finance\.manage"/);
-  assert.match(gateway, /food-fulfilment"[\s\S]{0,200}scope"\)==="customer"\?"scheduling\.book":"bookings\.view"/);
+  assert.match(gateway, /food-fulfilment"[\s\S]{0,200}scope"\)==="customer"\?"scheduling\.book":"bookings\.manage"/);
   assert.match(gateway, /food-proof"[\s\S]{0,300}acknowledge_incident"\?"scheduling\.book":"bookings\.manage"/);
   for (const route of ["food-commercial", "food-orders", "food-fulfilment", "food-subscriptions", "food-proof", "food-ops", "food-finance"]) {
     const source = fs.readFileSync(new URL(`../app/api/${route}/route.ts`, import.meta.url), "utf8");

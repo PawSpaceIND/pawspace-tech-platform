@@ -4,7 +4,7 @@ import{mutateWorkQueueTask,sweepWorkQueue,workQueueSnapshot,workQueueTaskWithEve
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 
 export async function GET(request:Request){try{
- const db=await database(),actor=await resolveActor(request);requirePermission(actor,"bookings.view");
+ const db=await database(),actor=await resolveActor(request);requirePermission(actor,"bookings.manage");
  const url=new URL(request.url),taskId=String(url.searchParams.get("taskId")||"").trim();
  if(taskId){const task=await workQueueTaskWithEvents(db,taskId);if(!task)return json({error:"Work queue task not found"},404);return json({data:task});}
  // Reads are cheap and detection is idempotent, so every ops screen load also refreshes the queue.

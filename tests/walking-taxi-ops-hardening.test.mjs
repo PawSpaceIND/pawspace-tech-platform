@@ -537,8 +537,8 @@ test("walking and taxi routes keep per-action permission boundaries", () => {
   assert.match(taxiRoute, /requireProviderOwnership/);
   for (const path of ["app/api/walking-ops/route.ts", "app/api/taxi-ops/route.ts"]) {
     const source = read(path);
-    assert.match(source, /requirePermission\(actor,"bookings\.manage"\)/, `${path} writes must be staff-only`);
-    assert.match(source, /requirePermission\(actor,"bookings\.view"\)/, `${path} reads require bookings.view`);
+    assert.match(source, /requirePermission\(actor,"bookings\.manage"\)/, `${path} reads and writes must be staff-only (bookings.manage) — these snapshots are unscoped, cross-provider ops queues`);
+    assert.doesNotMatch(source, /requirePermission\(actor,"bookings\.view"\)/, `${path} must NOT accept bookings.view: the service_provider role holds it, which would leak every provider's queue`);
   }
   for (const path of ["app/api/walking-finance/route.ts", "app/api/taxi-finance/route.ts"]) {
     const source = read(path);
