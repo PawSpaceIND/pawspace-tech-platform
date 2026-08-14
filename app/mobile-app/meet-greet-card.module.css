@@ -20,7 +20,7 @@
 
 .header span {
   display: block;
-  font-size: 12px;
+  font-size: 14px;
   color: rgba(1, 38, 31, 0.65);
   margin-top: 2px;
 }
@@ -60,25 +60,25 @@
 }
 
 .formats span {
-  font-size: 13px;
+  font-size: 14.5px;
   font-weight: 700;
 }
 
 .formats small {
-  font-size: 11px;
+  font-size: 13px;
   color: rgba(1, 38, 31, 0.6);
 }
 
 .formats em {
   font-style: normal;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   color: #e6b34e;
 }
 
 .waiver {
   margin: 0;
-  font-size: 12px;
+  font-size: 14px;
   padding: 8px 10px;
   border-radius: 8px;
   background: rgba(230, 179, 78, 0.14);
@@ -101,7 +101,7 @@
 
 .guest span,
 .datetime span {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   color: rgba(1, 38, 31, 0.8);
 }
@@ -111,7 +111,7 @@
   padding: 9px 10px;
   border: 1px solid rgba(1, 38, 31, 0.25);
   border-radius: 8px;
-  font-size: 13px;
+  font-size: 14.5px;
   font-family: inherit;
   color: #01261f;
   background: #fff;
@@ -143,7 +143,7 @@
 }
 
 .error {
-  font-size: 12px;
+  font-size: 14px;
   color: #9c2b1f;
 }
 
@@ -160,10 +160,10 @@
 
 .confirmed p {
   margin: 0;
-  font-size: 13px;
+  font-size: 14.5px;
 }
 
 .confirmed small {
-  font-size: 11px;
+  font-size: 13px;
   color: rgba(1, 38, 31, 0.65);
 }

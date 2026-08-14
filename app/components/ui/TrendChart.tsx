@@ -16,7 +16,7 @@ export interface TrendChartProps {
   valueFormatter?: (value: number) => string;
 }
 
-const palette = ["#01261F", "#f59d19", "#11885b", "#2563c9", "#c92f3f"];
+const palette = ["#01261F", "#f59d19", "#11885b", "#1f6b57", "#c92f3f"];
 
 export default function TrendChart({ data, xKey, series, type = "line", height = 260, valueFormatter }: TrendChartProps) {
   const format = valueFormatter ?? ((value: number) => String(value));

@@ -13,7 +13,7 @@
 }
 .head small {
   color: #83788b;
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .trainingSteps {
   display: grid;
@@ -28,7 +28,7 @@
   color: #82778a;
   display: grid;
   place-items: center;
-  font-size: 8px;
+  font-size: 12.5px;
   font-weight: 900;
 }
 .trainingSteps span.active {
@@ -52,7 +52,7 @@
   display: grid;
 }
 .assessmentPet span {
-  font-size: 8px;
+  font-size: 12.5px;
   color: #81758a;
 }
 .assessmentPet button {
@@ -61,14 +61,14 @@
   color: #6523a8;
   padding: 7px;
   border-radius: 8px;
-  font-size: 8px;
+  font-size: 12.5px;
   font-weight: 900;
 }
 .field {
   display: grid;
   gap: 5px;
   margin-top: 12px;
-  font-size: 9px;
+  font-size: 12.5px;
   font-weight: 900;
 }
 .field select,
@@ -79,7 +79,7 @@
   border-radius: 11px;
   padding: 10px;
   color: #33263c;
-  font-size: 9px;
+  font-size: 12.5px;
 }
 .field textarea {
   min-height: 58px;
@@ -98,7 +98,7 @@
   border-radius: 10px;
   padding: 9px;
   text-align: left;
-  font-size: 8px;
+  font-size: 12.5px;
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
@@ -133,7 +133,7 @@
   background: #01261F;
   color: white;
   padding: 3px 5px;
-  font-size: 6px;
+  font-size: 12px;
   letter-spacing: .02em;
 }
 .requirementActions {
@@ -148,7 +148,7 @@
   color: #6523aa;
   border-radius: 9px;
   padding: 8px 10px;
-  font-size: 8px;
+  font-size: 12.5px;
   font-weight: 900;
 }
 .requirementActions > div {
@@ -162,7 +162,7 @@
   border-radius: 9px;
   padding: 8px;
   color: #30223a;
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .requirementActions div button {
   border: 0;
@@ -170,7 +170,7 @@
   padding: 8px;
   background: #6523aa;
   color: white;
-  font-size: 7px;
+  font-size: 12px;
   font-weight: 900;
 }
 .requirementActions div button:last-child {
@@ -180,7 +180,7 @@
 .requirementActions div button:disabled { opacity: .45; }
 .requirementActions small {
   color: #75697d;
-  font-size: 7px;
+  font-size: 12px;
 }
 @media (max-width: 420px) {
   .requirementActions > div { grid-template-columns: 1fr 1fr; }
@@ -193,7 +193,7 @@
   color: white;
   border-radius: 12px;
   padding: 12px;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 900;
   margin-top: 10px;
 }
@@ -205,7 +205,7 @@
   background: none;
   color: #6824aa;
   padding: 12px;
-  font-size: 9px;
+  font-size: 12.5px;
 }
 .trainingPlans {
   display: grid;
@@ -227,7 +227,7 @@
   background: #faf6ff;
 }
 .trainingPlans > button > span {
-  font-size: 6px;
+  font-size: 12px;
   background: #fff0ca;
   color: #956000;
   padding: 4px 5px;
@@ -237,7 +237,7 @@
   margin: 7px 0 3px;
 }
 .trainingPlans p {
-  font-size: 8px;
+  font-size: 12.5px;
   line-height: 1.4;
   color: #82778a;
   margin: 0;
@@ -248,7 +248,7 @@
   margin: 8px 0;
 }
 .trainingPlans button > div b {
-  font-size: 7px;
+  font-size: 12px;
   background: #f3eef6;
   padding: 5px;
   border-radius: 7px;
@@ -257,7 +257,7 @@
   color: #01261F;
 }
 .editable {
-  font-size: 7px;
+  font-size: 12px;
   color: #8b8192;
   text-align: center;
   line-height: 1.4;
@@ -294,17 +294,17 @@
   gap: 2px;
 }
 .trainers div span {
-  font-size: 6px;
+  font-size: 12px;
   color: #128159;
   font-weight: 900;
 }
 .trainers h4 {
   margin: 0;
-  font-size: 11px;
+  font-size: 13px;
 }
 .trainers p,
 .trainers small {
-  font-size: 7px;
+  font-size: 12px;
   color: #82778a;
   margin: 0;
 }
@@ -336,10 +336,10 @@
   display: grid;
 }
 .protection b {
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .protection span {
-  font-size: 7px;
+  font-size: 12px;
   color: #837668;
   line-height: 1.4;
 }
@@ -355,12 +355,12 @@
   color: #30233a;
   padding: 9px 5px;
   border-radius: 10px;
-  font-size: 7px;
+  font-size: 12px;
   display: grid;
   gap: 3px;
 }
 .trainingTimes small {
-  font-size: 6px;
+  font-size: 12px;
   color: #138157;
 }
 .calendarPreview {
@@ -372,14 +372,14 @@
   gap: 7px;
 }
 .calendarPreview > b {
-  font-size: 9px;
+  font-size: 12.5px;
 }
 .calendarPreview span {
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 7px;
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .calendarPreview span i {
   width: 18px;
@@ -408,12 +408,12 @@
   gap: 6px;
 }
 .review span {
-  font-size: 8px;
+  font-size: 12.5px;
   color: #877d8f;
 }
 .review b {
   text-align: right;
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .paymentOptions {
   display: grid;
@@ -449,17 +449,17 @@
   display: grid;
 }
 .paymentOptions b {
-  font-size: 9px;
+  font-size: 12.5px;
 }
 .paymentOptions span {
-  font-size: 7px;
+  font-size: 12px;
   color: #81768a;
 }
 .consent {
   display: flex;
   gap: 7px;
   align-items: flex-start;
-  font-size: 7px;
+  font-size: 12px;
   line-height: 1.4;
   margin-top: 10px;
 }
@@ -482,7 +482,7 @@
   font-style: normal;
 }
 .trainingSuccess small {
-  font-size: 6px;
+  font-size: 12px;
   color: #ffcc6d;
 }
 .trainingSuccess h3 {
@@ -490,7 +490,7 @@
   margin: 4px 0;
 }
 .trainingSuccess p {
-  font-size: 8px;
+  font-size: 12.5px;
   color: #d3ebe3;
   margin: 0;
 }
@@ -506,11 +506,11 @@
 }
 .trainingSummary span {
   display: grid;
-  font-size: 7px;
+  font-size: 12px;
   color: #82778a;
 }
 .trainingSummary span b {
-  font-size: 11px;
+  font-size: 13px;
   color: #32253b;
   margin-top: 3px;
 }
@@ -521,7 +521,7 @@
   accent-color: #01261F;
 }
 .trainingSummary > small {
-  font-size: 7px;
+  font-size: 12px;
   color: #82778a;
 }
 .trainingTabs {
@@ -536,7 +536,7 @@
   border: 0;
   background: transparent;
   padding: 8px;
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .trainingTabs button.selected {
   background: white;
@@ -552,7 +552,7 @@
 }
 .nextSession > span,
 .homework > span {
-  font-size: 7px;
+  font-size: 12px;
   color: #138159;
   font-weight: 900;
 }
@@ -563,7 +563,7 @@
 .nextSession p,
 .homework p,
 .report p {
-  font-size: 8px;
+  font-size: 12.5px;
   color: #81768a;
   line-height: 1.5;
 }
@@ -580,7 +580,7 @@
   color: #01261F;
   padding: 7px;
   border-radius: 8px;
-  font-size: 7px;
+  font-size: 12px;
   font-weight: 900;
 }
 .cancelRule {
@@ -592,10 +592,10 @@
   margin-top: 8px;
 }
 .cancelRule b {
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .cancelRule span {
-  font-size: 7px;
+  font-size: 12px;
   color: #817568;
   line-height: 1.4;
 }
@@ -613,7 +613,7 @@
   align-items: center;
   border-bottom: 1px solid #eee8f1;
   padding: 7px;
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .sessionList i {
   width: 19px;
@@ -626,7 +626,7 @@
   font-style: normal;
 }
 .sessionList em {
-  font-size: 6px;
+  font-size: 12px;
   color: #128159;
   font-style: normal;
 }
@@ -645,14 +645,14 @@
 .milestones article > div {
   display: flex;
   justify-content: space-between;
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .milestones article span {
   color: #01261F;
   font-weight: 900;
 }
 .report span {
-  font-size: 7px;
+  font-size: 12px;
   color: #128159;
 }
 .renew {
@@ -663,7 +663,7 @@
   padding: 11px;
   border-radius: 11px;
   margin-top: 8px;
-  font-size: 9px;
+  font-size: 12.5px;
   font-weight: 900;
 }
 .planRecommendation {
@@ -684,18 +684,18 @@
 }
 .planRecommendation span {
   color: #ffd36b;
-  font-size: 6px;
+  font-size: 12px;
   font-weight: 900;
   letter-spacing: 0.08em;
 }
 .planRecommendation h4 {
   margin: 0;
-  font-size: 12px;
+  font-size: 14px;
 }
 .planRecommendation p {
   margin: 0;
   color: #e5d9ed;
-  font-size: 7px;
+  font-size: 12px;
   line-height: 1.4;
 }
 .planRecommendation > b {
@@ -703,7 +703,7 @@
   border-radius: 9px;
   background: #ffffff18;
   color: #ffd36b;
-  font-size: 8px;
+  font-size: 12.5px;
   white-space: nowrap;
 }
 .goalSummary {
@@ -716,7 +716,7 @@
 }
 .goalSummary b {
   flex: 0 0 auto;
-  font-size: 6.5px;
+  font-size: 12px;
 }
 .goalSummary span {
   display: inline-flex;
@@ -726,7 +726,7 @@
   border: 1px solid #bfe2cf;
   background: #eaf8f0;
   color: #116e4c;
-  font-size: 6.5px;
+  font-size: 12px;
   font-weight: 900;
 }
 .goalSummary span i {
@@ -738,7 +738,7 @@
   background: #14825a;
   color: white;
   font-style: normal;
-  font-size: 6px;
+  font-size: 12px;
 }
 .trainingPlans button.selected {
   border: 2px solid #01261F;
@@ -752,7 +752,7 @@
   border-radius: 8px;
   background: #eee7f4;
   color: #6e5e79;
-  font-size: 6px;
+  font-size: 12px;
   font-style: normal;
   font-weight: 900;
 }
@@ -768,7 +768,7 @@
   border-radius: 9px;
   background: #e9f8f0;
   color: #116f4d;
-  font-size: 7px;
+  font-size: 12px;
   font-weight: 900;
 }
 .planGuide {
@@ -796,16 +796,16 @@
   border-radius: 6px;
   background: #eee5f8;
   color: #01261F;
-  font-size: 6px;
+  font-size: 12px;
   font-style: normal;
   font-weight: 900;
 }
 .planGuide b {
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .planGuide small {
   color: #83788b;
-  font-size: 6.5px;
+  font-size: 12px;
   line-height: 1.25;
 }
 .planListHead {
@@ -815,11 +815,11 @@
   margin: 0 2px 7px;
 }
 .planListHead b {
-  font-size: 9px;
+  font-size: 12.5px;
 }
 .planListHead span {
   color: #83788b;
-  font-size: 6px;
+  font-size: 12px;
 }
 .goalSummary span {
   padding: 5px 7px;
@@ -868,13 +868,13 @@
   border-radius: 7px;
   background: #fff0ca;
   color: #8d5b00;
-  font-size: 7px;
+  font-size: 12px;
   font-weight: 900;
   letter-spacing: 0.05em;
 }
 .trainingPlans button > header h4 {
   margin: 0;
-  font-size: 13px;
+  font-size: 14.5px;
 }
 .trainingPlans button > header .planSelectState {
   width: auto;
@@ -886,7 +886,7 @@
   border-radius: 999px;
   background: #f5f0f7;
   color: #66566f;
-  font-size: 6.5px;
+  font-size: 12px;
   font-weight: 900;
   letter-spacing: 0;
   white-space: nowrap;
@@ -900,7 +900,7 @@
   border-radius: 50%;
   background: #fff;
   color: #fff;
-  font-size: 7px;
+  font-size: 12px;
   font-style: normal;
 }
 .trainingPlans button.selected > header .planSelectState {
@@ -918,7 +918,7 @@
   margin: 0;
   padding: 0 11px 9px;
   color: #685d70;
-  font-size: 7.5px;
+  font-size: 12.5px;
   line-height: 1.45;
 }
 .trainingPlans .planMetrics {
@@ -934,11 +934,11 @@
   gap: 2px;
   padding: 0 !important;
   background: none !important;
-  font-size: 9px !important;
+  font-size: 12.5px !important;
 }
 .planMetrics small {
   color: #82768a;
-  font-size: 6.5px;
+  font-size: 12px;
   font-weight: 500;
 }
 .planMetrics strong {
@@ -951,7 +951,7 @@
   min-height: 0;
   margin: 9px 11px 6px;
   color: #5c5263;
-  font-size: 7px;
+  font-size: 12px;
 }
 .planExpanded {
   display: grid !important;
@@ -964,7 +964,7 @@
 .planExpanded > p {
   margin: 0;
   color: #5c5263;
-  font-size: 8px;
+  font-size: 12.5px;
   line-height: 1.45;
 }
 .planExpanded > p b {
@@ -984,7 +984,7 @@
   border-radius: 7px;
   background: #f4f0f6;
   color: #665b6e;
-  font-size: 7px;
+  font-size: 12px;
   line-height: 1.3;
 }
 .planExpanded .groomingBonus {
@@ -994,12 +994,12 @@
   display: block;
   padding: 7px 11px 9px;
   color: #0a4a3c;
-  font-size: 7px;
+  font-size: 12px;
   font-weight: 900;
 }
 @media (max-width: 420px) {
   .trainingPlans button > header { align-items: start; }
-  .trainingPlans button > header h4 { font-size: 11px; line-height: 1.25; }
+  .trainingPlans button > header h4 { font-size: 13px; line-height: 1.25; }
   .trainingPlans .planMetrics { grid-template-columns: 1fr 1fr; }
   .planMetrics strong { grid-column: 1 / -1; padding-top: 4px; }
   .planIncludes { grid-template-columns: 1fr; }
@@ -1016,7 +1016,7 @@
   border-radius: 8px;
   background: #edf8f3;
   color: #177354;
-  font-size: 7px;
+  font-size: 12px;
   font-style: normal;
 }
 .groomingBonus {
@@ -1026,7 +1026,7 @@
   border-radius: 8px;
   background: #fff6df;
   color: #8c5d08;
-  font-size: 6px;
+  font-size: 12px;
   font-weight: 900;
 }
 .selectedPlanSummary {
@@ -1043,7 +1043,7 @@
 }
 .selectedPlanSummary header span {
   color: #cdb9db;
-  font-size: 6px;
+  font-size: 12px;
   font-weight: 900;
 }
 .selectedPlanSummary header strong {
@@ -1052,12 +1052,12 @@
 }
 .selectedPlanSummary h4 {
   margin: 3px 0;
-  font-size: 13px;
+  font-size: 14.5px;
 }
 .selectedPlanSummary > p {
   margin: 0 0 9px;
   color: #d8c9e1;
-  font-size: 7px;
+  font-size: 12px;
 }
 .selectedPlanSummary > div {
   display: grid;
@@ -1071,17 +1071,17 @@
   border-radius: 8px;
   background: #ffffff12;
   color: #cdbdd7;
-  font-size: 5.8px;
+  font-size: 12px;
 }
 .selectedPlanSummary > div b {
   color: white;
-  font-size: 7px;
+  font-size: 12px;
 }
 .selectedPlanSummary > small {
   display: block;
   margin-top: 8px;
   color: #c9b8d3;
-  font-size: 6px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -1127,7 +1127,7 @@
   border-radius: 0;
   background: transparent;
   color: #7227b3;
-  font-size: 7px;
+  font-size: 12px;
   font-weight: 900;
   letter-spacing: .08em;
 }
@@ -1156,7 +1156,7 @@
   margin: 7px 0 11px;
   padding: 0;
   color: #706477;
-  font-size: 8px;
+  font-size: 12.5px;
   line-height: 1.45;
 }
 .trainingPlans .planCardSelected .planCardDescription {
@@ -1178,7 +1178,7 @@
   border-radius: 10px;
   background: #f3edf6;
   color: #75677d;
-  font-size: 6.5px;
+  font-size: 12px;
   line-height: 1.3;
 }
 .trainingPlans .planCardSelected .planCardMetrics > span {
@@ -1189,21 +1189,21 @@
   padding: 0;
   background: transparent;
   color: #34243e;
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .trainingPlans .planCardSelected .planCardMetrics b {
   color: #fff;
 }
 .trainingPlans .planCardMetrics small {
   color: inherit;
-  font-size: 6px;
+  font-size: 12px;
   font-weight: 500;
 }
 .trainingPlans .planCardIncludes {
   display: block;
   margin: 10px 0 0;
   color: #7a6d81;
-  font-size: 6.5px;
+  font-size: 12px;
   line-height: 1.45;
 }
 .trainingPlans .planCardSelected .planCardIncludes {
@@ -1220,7 +1220,7 @@
 .trainingPlans .planCardExpanded p {
   margin: 0;
   color: inherit;
-  font-size: 7px;
+  font-size: 12px;
   line-height: 1.4;
 }
 .trainingPlans .planCardExpanded section {
@@ -1233,7 +1233,7 @@
   border-radius: 8px;
   background: #ffffff12;
   color: #d9cae2;
-  font-size: 6.5px;
+  font-size: 12px;
   font-style: normal;
 }
 .trainingPlans .planCardExpanded > small {
@@ -1241,7 +1241,7 @@
   border-radius: 8px;
   background: #fff0bd;
   color: #745000;
-  font-size: 6.5px;
+  font-size: 12px;
   font-weight: 900;
 }
 .trainingPlans .planCardAction {
@@ -1255,7 +1255,7 @@
   border-radius: 10px;
   background: #faf7fc;
   color: #01261F;
-  font-size: 7.5px;
+  font-size: 12.5px;
   font-weight: 900;
 }
 .trainingPlans .planCardSelected .planCardAction {
@@ -1270,13 +1270,13 @@
   height: 15px;
   border: 1px solid currentColor;
   border-radius: 50%;
-  font-size: 7px;
+  font-size: 12px;
   font-style: normal;
 }
 @media (max-width: 420px) {
   .trainingPlans .planCard { padding: 13px; }
   .trainingPlans .planCardHeader { align-items: flex-start; }
-  .trainingPlans .planCardHeader h4 { font-size: 13px; }
+  .trainingPlans .planCardHeader h4 { font-size: 14.5px; }
   .trainingPlans .planCardPrice { font-size: 15px; }
   .trainingPlans .planCardMetrics { grid-template-columns: 1fr 1fr; }
 }
@@ -1317,15 +1317,15 @@
   display: grid;
 }
 .trainingPetGrid b {
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .trainingPetGrid small {
   color: #83788b;
-  font-size: 5.5px;
+  font-size: 12px;
 }
 .trainingPetGrid em {
   color: #01261F;
-  font-size: 8px;
+  font-size: 12.5px;
   font-style: normal;
   font-weight: 900;
 }
@@ -1337,12 +1337,12 @@
   border-radius: 10px;
   background: #eee5f8;
   color: #01261F;
-  font-size: 7px;
+  font-size: 12px;
   font-weight: 900;
 }
 .durationRule span {
   color: #716579;
-  font-size: 6px;
+  font-size: 12px;
   font-weight: 500;
 }
 .meetTrainer {
@@ -1368,18 +1368,18 @@
   gap: 2px;
 }
 .meetTrainer label b {
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .meetTrainer label small,
 .meetTrainer > p {
   color: #81768a;
-  font-size: 6px;
+  font-size: 12px;
   line-height: 1.4;
 }
 .meetTrainer > p {
   margin: 0;
 }
-.meetPitch{display:grid;gap:3px;padding:10px;border-radius:10px;background:linear-gradient(135deg,#2b103e,#6423a7);color:#fff}.meetPitch span{color:#ffd36b;font-size:6px;font-weight:900;letter-spacing:.08em}.meetPitch h4{margin:0;font-size:11px;line-height:1.3}.meetPitch p{margin:0;color:#dfd1e8;font-size:6.5px;line-height:1.45}.meetOnly{width:100%;border:1px solid #6423a7;border-radius:9px;background:#fff;color:#6423a7;padding:9px;font-size:7px;font-weight:900}.meetOnly:disabled{opacity:.5}.meetConfirmed{display:grid;gap:2px;padding:9px;border-radius:9px;background:#e8f7ef;color:#116f4d}.meetConfirmed b{font-size:8px}.meetConfirmed span,.meetConfirmed small{font-size:6px;line-height:1.4}
+.meetPitch{display:grid;gap:3px;padding:10px;border-radius:10px;background:linear-gradient(135deg,#2b103e,#6423a7);color:#fff}.meetPitch span{color:#ffd36b;font-size:12px;font-weight:900;letter-spacing:.08em}.meetPitch h4{margin:0;font-size:13px;line-height:1.3}.meetPitch p{margin:0;color:#dfd1e8;font-size:12px;line-height:1.45}.meetOnly{width:100%;border:1px solid #6423a7;border-radius:9px;background:#fff;color:#6423a7;padding:9px;font-size:12px;font-weight:900}.meetOnly:disabled{opacity:.5}.meetConfirmed{display:grid;gap:2px;padding:9px;border-radius:9px;background:#e8f7ef;color:#116f4d}.meetConfirmed b{font-size:12.5px}.meetConfirmed span,.meetConfirmed small{font-size:12px;line-height:1.4}
 .meetSlots {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1393,11 +1393,11 @@
   border-radius: 9px;
   background: white;
   color: #33263c;
-  font-size: 6px;
+  font-size: 12px;
 }
 .meetSlots small {
   color: #14815b;
-  font-size: 5px;
+  font-size: 12px;
 }
 .sessionLogic {
   display: grid;
@@ -1409,10 +1409,10 @@
 }
 .sessionLogic b {
   color: #116b4b;
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .sessionLogic span {
   color: #61776d;
-  font-size: 6.5px;
+  font-size: 12px;
   line-height: 1.45;
 }

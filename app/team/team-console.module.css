@@ -21,7 +21,7 @@
 .panelHead h2 { font-size: 18px; margin: 0; }
 .panelNote { font-size: 14.5px; color: #5b6966; margin: 0 0 12px; line-height: 1.55; }
 
-.field { display: grid; gap: 5px; font-size: 13.5px; font-weight: 700; color: #5b6966; }
+.field { display: grid; gap: 5px; font-size: 14.5px; font-weight: 700; color: #5b6966; }
 .field input, .field select, .field textarea {
   min-height: 38px; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line, #dcece5);
   font: inherit; font-weight: 500; color: inherit; background: #fff;
@@ -32,13 +32,13 @@
 .tableWrap { overflow-x: auto; border: 1px solid var(--line, #dcece5); border-radius: 16px; background: #fff; }
 .table { width: 100%; border-collapse: collapse; min-width: 760px; font-size: 14.5px; }
 .table th, .table td { padding: 12px 14px; text-align: left; border-bottom: 1px solid #e9f1ee; vertical-align: top; }
-.table th { font-size: 12.5px; letter-spacing: .06em; text-transform: uppercase; color: #6a7a76; background: #f2f7f5; white-space: nowrap; }
+.table th { font-size: 14px; letter-spacing: .06em; text-transform: uppercase; color: #6a7a76; background: #f2f7f5; white-space: nowrap; }
 .table tbody tr:last-child td { border-bottom: none; }
 .numeric { text-align: right; }
 .stack { display: grid; gap: 3px; }
 .stack small { color: #6a7a76; }
 
-.footnote { margin-top: 24px; font-size: 13.5px; color: #5b6966; line-height: 1.6; }
+.footnote { margin-top: 24px; font-size: 14.5px; color: #5b6966; line-height: 1.6; }
 
 /* Conversation workspace: a list beside the selected thread. */
 .split { display: grid; grid-template-columns: minmax(300px, .8fr) minmax(480px, 1.6fr); gap: 16px; align-items: start; }
@@ -57,13 +57,13 @@
 .threadBody { padding: 18px; flex: 1; overflow-y: auto; display: grid; gap: 10px; align-content: start; }
 .bubble { max-width: 78%; padding: 11px 14px; border-radius: 14px; background: #f5f7f6; font-size: 14.5px; }
 .bubbleOut { margin-left: auto; background: #e9f1ee; }
-.bubble small { display: block; color: #6a7a76; font-size: 12.5px; }
+.bubble small { display: block; color: #6a7a76; font-size: 14px; }
 .bubble p { margin: 6px 0 0; white-space: pre-wrap; }
 
 .caseCard { border: 1px solid var(--line, #dcece5); border-radius: 16px; background: #fff; padding: 18px 20px; display: grid; gap: 10px; }
 .caseHead { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; align-items: baseline; }
 .caseHead h2 { margin: 4px 0 0; font-size: 19px; }
-.caseMeta { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13.5px; color: #5b6966; }
+.caseMeta { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 14.5px; color: #5b6966; }
 .caseMeta b { color: #06231c; }
 .caseList { display: grid; gap: 12px; }
 
@@ -88,14 +88,14 @@
 .linkCard:focus-visible { outline: 2px solid var(--purple, #01261F); outline-offset: 2px; }
 .linkCard h2 { margin: 0; font-size: 19px; }
 .linkCard p { margin: 0; font-size: 14.5px; color: #5b6966; line-height: 1.55; }
-.linkCue { font-size: 13.5px; font-weight: 800; color: var(--purple, #01261F); }
+.linkCue { font-size: 14.5px; font-weight: 800; color: var(--purple, #01261F); }
 
 /* Directory rows: a person or record per line, scannable at a glance. */
 .recordList { display: grid; gap: 10px; }
 .record { border: 1px solid var(--line, #dcece5); border-radius: 14px; background: #fff; padding: 14px 16px; display: grid; gap: 6px; }
 .recordHead { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 10px; }
 .recordHead h3 { margin: 0; font-size: 16.5px; }
-.recordMeta { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 13.5px; color: #5b6966; }
+.recordMeta { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 14.5px; color: #5b6966; }
 .recordMeta b { color: #06231c; }
 .muted { color: #859692; }
 
@@ -103,6 +103,6 @@
 .boardScroll { display: flex; gap: 14px; overflow-x: auto; padding-bottom: 8px; align-items: start; }
 .boardColumn { flex: 0 0 268px; display: grid; gap: 10px; align-content: start; }
 .boardHead { display: grid; gap: 2px; padding: 12px 14px; border: 1px solid var(--line, #dcece5); border-radius: 14px; background: #f2f7f5; }
-.boardHead small { color: #6a7a76; font-size: 12.5px; }
+.boardHead small { color: #6a7a76; font-size: 14px; }
 .slot { display: grid; gap: 8px; padding: 12px 14px; border: 1px solid var(--line, #dcece5); border-radius: 14px; background: #fff; }
-.slot small { font-size: 13px; }
+.slot small { font-size: 14.5px; }

@@ -1,7 +1,9 @@
 import{integrationLaunchBlockers}from"../../../lib/integration-readiness";
+import{hasPermission}from"../../../lib/platform-security";
+import{authError,requirePermission,resolveActor}from"../../../lib/server-auth";
 import{isPawSpaceServiceCode,listServiceControls,setServiceEnabled}from"../../../lib/service-control";
 type Status="not_started"|"in_progress"|"blocked"|"verified"|"not_applicable";
-type Actor={email:string;roleCode:string};
+type Actor={email:string;roleCode:string;canWrite:boolean};
 const allowedStatuses=new Set<Status>(["not_started","in_progress","blocked","verified","not_applicable"]);
 const seeds=[
   ["BACKEND-01","Platform","One shared database and API record","P0","Staff UAT","Engineering","internal","Customer, booking, provider, payment and event records persist across browsers and are read by every operating surface."],
@@ -19,7 +21,6 @@ const seeds=[
 ] as const;
 
 async function database(){const {env}=await import("cloudflare:workers");return env.DB;}
-function identity(request:Request){return (request.headers.get("oai-authenticated-user-email")||"").trim().toLowerCase();}
 async function ensureTables(){const db=await database();await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS app_users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, role_code TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS launch_readiness_items (code TEXT PRIMARY KEY, module TEXT NOT NULL, title TEXT NOT NULL, priority TEXT NOT NULL, launch_stage TEXT NOT NULL, owner_role TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'not_started', dependency_type TEXT NOT NULL DEFAULT 'internal', acceptance_criteria TEXT NOT NULL, evidence TEXT, blocker_reason TEXT, target_date TEXT, updated_by TEXT NOT NULL, updated_at INTEGER NOT NULL)"),
@@ -27,8 +28,20 @@ async function ensureTables(){const db=await database();await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS operational_exceptions (id TEXT PRIMARY KEY, module TEXT NOT NULL, severity TEXT NOT NULL, title TEXT NOT NULL, detail TEXT NOT NULL, booking_id TEXT, owner_role TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', resolution TEXT, created_by TEXT NOT NULL, created_at INTEGER NOT NULL, resolved_by TEXT, resolved_at INTEGER)"),
   db.prepare("CREATE TABLE IF NOT EXISTS launch_audit_events (id TEXT PRIMARY KEY, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, action TEXT NOT NULL, detail_json TEXT NOT NULL, actor_email TEXT NOT NULL, created_at INTEGER NOT NULL)"),
 ]);const now=Date.now();for(const item of seeds)await db.prepare("INSERT OR IGNORE INTO launch_readiness_items (code,module,title,priority,launch_stage,owner_role,status,dependency_type,acceptance_criteria,updated_by,updated_at) VALUES (?,?,?,?,?,?,'not_started',?,?,?,?)").bind(...item,"system",now).run();}
-async function actor(request:Request):Promise<Actor>{let email=identity(request);const host=new URL(request.url).hostname;if(!email&&["terminal.local","localhost","127.0.0.1"].includes(host))email="preview@pawspace.test";if(!email)throw new Response("Authentication required",{status:401});await ensureTables();const db=await database();const row=await db.prepare("SELECT role_code FROM app_users WHERE email=? AND status='active'").bind(email).first<{role_code:string}>();return {email,roleCode:email==="preview@pawspace.test"?"superuser":row?.role_code||"associate"};}
-function canWrite(a:Actor){return ["founder","superuser","admin","manager"].includes(a.roleCode);}
+/**
+ * This route used to authenticate itself: it read the forwarded identity header directly, threw a
+ * PLAIN-TEXT 401 that every caller's response.json() choked on ("Unexpected token 'A'..."), and gave
+ * any identity it could not find in app_users the "associate" role rather than refusing it. It also
+ * decided write access from a hard-coded role list, so a role whose permissions changed kept or lost
+ * access here without anyone touching this file. It now goes through the same resolveActor path and
+ * the same permissions as every other gated route.
+ */
+async function actor(request:Request):Promise<Actor>{
+  const resolved=requirePermission(await resolveActor(request),"launch.view");
+  await ensureTables();
+  return {email:resolved.email,roleCode:resolved.roleCode,canWrite:hasPermission(resolved.permissions,"launch.manage")};
+}
+function canWrite(a:Actor){return a.canWrite;}
 async function audit(db:Awaited<ReturnType<typeof database>>,a:Actor,entityType:string,entityId:string,action:string,detail:unknown){await db.prepare("INSERT INTO launch_audit_events (id,entity_type,entity_id,action,detail_json,actor_email,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),entityType,entityId,action,JSON.stringify(detail),a.email,Date.now()).run();}
 export async function GET(request:Request){try{const a=await actor(request);const db=await database();const [items,signoffs,exceptions,audits,services,integrationBlockers]=await Promise.all([
   db.prepare("SELECT * FROM launch_readiness_items ORDER BY CASE priority WHEN 'P0' THEN 0 ELSE 1 END, module, code").all(),
@@ -37,7 +50,7 @@ export async function GET(request:Request){try{const a=await actor(request);cons
   db.prepare("SELECT * FROM launch_audit_events ORDER BY created_at DESC LIMIT 50").all(),
   listServiceControls(db),
   integrationLaunchBlockers(db),
-]);const rows=items.results as Array<Record<string,unknown>>;const p0=rows.filter(x=>x.priority==="P0");const openCritical=(exceptions.results as Array<Record<string,unknown>>).filter(x=>x.status!=="resolved"&&["critical","high"].includes(String(x.severity))).length;return Response.json({current:a,canWrite:canWrite(a),items:rows,signoffs:signoffs.results,exceptions:exceptions.results,audits:audits.results,services,integrationBlockers,gate:{p0Total:p0.length,p0Verified:p0.filter(x=>x.status==="verified").length,openCritical,integrationBlockers:integrationBlockers.length,approved:p0.length>0&&p0.every(x=>x.status==="verified")&&openCritical===0&&integrationBlockers.length===0}});}catch(error){if(error instanceof Response)return error;return Response.json({error:"Unable to load launch readiness"},{status:500});}}
+]);const rows=items.results as Array<Record<string,unknown>>;const p0=rows.filter(x=>x.priority==="P0");const openCritical=(exceptions.results as Array<Record<string,unknown>>).filter(x=>x.status!=="resolved"&&["critical","high"].includes(String(x.severity))).length;return Response.json({current:a,canWrite:canWrite(a),items:rows,signoffs:signoffs.results,exceptions:exceptions.results,audits:audits.results,services,integrationBlockers,gate:{p0Total:p0.length,p0Verified:p0.filter(x=>x.status==="verified").length,openCritical,integrationBlockers:integrationBlockers.length,approved:p0.length>0&&p0.every(x=>x.status==="verified")&&openCritical===0&&integrationBlockers.length===0}});}catch(error){return authError(error,"Unable to load launch readiness");}}
 export async function POST(request:Request){try{const a=await actor(request);if(!canWrite(a))return Response.json({error:"Founder, Admin or Manager access required"},{status:403});const body=await request.json() as Record<string,unknown>;const action=String(body.action||"");const db=await database();const now=Date.now();
   if(action==="set_service_state"){const serviceCode=String(body.serviceCode||"");if(!isPawSpaceServiceCode(serviceCode)||typeof body.enabled!=="boolean")return Response.json({error:"Valid service and enabled state are required"},{status:400});const reason=String(body.reason||"").trim();if(body.enabled===false&&reason.length<8)return Response.json({error:"A clear reason of at least 8 characters is required before disabling a service"},{status:400});const service=await setServiceEnabled(db,{serviceCode,enabled:body.enabled,reason,actorEmail:a.email});await audit(db,a,"service_control",serviceCode,body.enabled?"enabled":"disabled",{enabled:body.enabled,reason});return Response.json({ok:true,service});}
   if(action==="update_gate"){const code=String(body.code||"");const status=String(body.status||"") as Status;if(!allowedStatuses.has(status))return Response.json({error:"Invalid status"},{status:400});if(status==="verified"&&!String(body.evidence||"").trim())return Response.json({error:"Evidence is required before verification"},{status:400});if(status==="blocked"&&!String(body.blockerReason||"").trim())return Response.json({error:"Blocker reason is required"},{status:400});await db.prepare("UPDATE launch_readiness_items SET status=?,evidence=?,blocker_reason=?,target_date=?,updated_by=?,updated_at=? WHERE code=?").bind(status,String(body.evidence||"").trim()||null,String(body.blockerReason||"").trim()||null,String(body.targetDate||"")||null,a.email,now,code).run();await audit(db,a,"launch_gate",code,"status_changed",{status,evidence:body.evidence,blockerReason:body.blockerReason});return Response.json({ok:true});}
@@ -45,4 +58,4 @@ export async function POST(request:Request){try{const a=await actor(request);if(
   if(action==="create_exception"){const moduleName=String(body.module||"").trim(),title=String(body.title||"").trim(),detail=String(body.detail||"").trim(),severity=String(body.severity||"medium");if(!moduleName||!title||!detail||!["critical","high","medium","low"].includes(severity))return Response.json({error:"Module, title, detail and valid severity are required"},{status:400});const id=`EX-${now.toString().slice(-8)}`;await db.prepare("INSERT INTO operational_exceptions (id,module,severity,title,detail,booking_id,owner_role,status,created_by,created_at) VALUES (?,?,?,?,?,?,?,'open',?,?)").bind(id,moduleName,severity,title,detail,String(body.bookingId||"")||null,String(body.ownerRole||"Operations"),a.email,now).run();await audit(db,a,"exception",id,"created",{module:moduleName,severity,title});return Response.json({ok:true,id});}
   if(action==="resolve_exception"){const id=String(body.id||""),resolution=String(body.resolution||"").trim();if(!id||resolution.length<8)return Response.json({error:"A clear resolution is required"},{status:400});await db.prepare("UPDATE operational_exceptions SET status='resolved',resolution=?,resolved_by=?,resolved_at=? WHERE id=?").bind(resolution,a.email,now,id).run();await audit(db,a,"exception",id,"resolved",{resolution});return Response.json({ok:true});}
   return Response.json({error:"Unknown action"},{status:400});
-}catch(error){if(error instanceof Response)return error;return Response.json({error:error instanceof Error?error.message:"Unable to update launch readiness"},{status:500});}}
+}catch(error){return authError(error,"Unable to update launch readiness");}}

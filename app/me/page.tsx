@@ -22,7 +22,7 @@ type View={
 
 const INR=(v?:number)=>`₹${Number(v||0).toLocaleString("en-IN")}`;
 const day=(v?:number)=>v?new Date(v).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short",year:"numeric"}):"—";
-const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",panel2:"#01261F",line:"#123c33",orange:"#F6920A",purple:"#8b6bd8",gold:"#E6B34E",emerald:"#01261F"};
+const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",panel2:"#01261F",line:"#123c33",orange:"#F6920A",purple:"#2f8a70",gold:"#E6B34E",emerald:"#01261F"};
 
 async function loadView(){const r=await fetch("/api/me",{cache:"no-store"});const p=await r.json();if(!r.ok)throw new Error(p.error||"Load failed");return p.data as View;}
 

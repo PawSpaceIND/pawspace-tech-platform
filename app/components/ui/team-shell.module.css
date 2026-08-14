@@ -102,7 +102,7 @@
   text-align: left;
   padding: 8px 14px 8px 0;
   border-bottom: 1px solid #dcece5;
-  font-size: 12.5px;
+  font-size: 14px;
   letter-spacing: .06em;
   text-transform: uppercase;
   color: #6c7c78;
@@ -127,7 +127,7 @@
 }
 
 .figures dt {
-  font-size: 12.5px;
+  font-size: 14px;
   letter-spacing: .06em;
   text-transform: uppercase;
   color: #6c7c78;

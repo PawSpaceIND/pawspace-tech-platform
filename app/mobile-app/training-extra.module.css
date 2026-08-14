@@ -2,7 +2,7 @@
   display: block;
   margin-top: 7px;
   color: #118059;
-  font-size: 7px;
+  font-size: 12px;
   font-style: normal;
   font-weight: 900;
 }
@@ -14,10 +14,10 @@
   margin-top: 10px;
 }
 .policy b {
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .policy p {
-  font-size: 7px;
+  font-size: 12px;
   line-height: 1.45;
   color: #817469;
   margin: 4px 0;
@@ -28,7 +28,7 @@
   margin: 10px 0;
 }
 .attendanceChoice > b {
-  font-size: 9px;
+  font-size: 12.5px;
 }
 .attendanceChoice > button {
   display: grid;
@@ -55,7 +55,7 @@
   border-radius: 50%;
   background: #e8e3eb;
   color: white;
-  font-size: 8px;
+  font-size: 12.5px;
   font-style: normal;
 }
 .attendanceChoice .selected i {
@@ -66,11 +66,11 @@
   gap: 3px;
 }
 .attendanceChoice strong {
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .attendanceChoice small {
   color: #746a7b;
-  font-size: 7px;
+  font-size: 12px;
   line-height: 1.45;
 }
 .balance {
@@ -87,14 +87,14 @@
   display: grid;
 }
 .balance b {
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .balance span {
-  font-size: 7px;
+  font-size: 12px;
   color: #827367;
 }
 .balance em {
-  font-size: 6px;
+  font-size: 12px;
   color: #9b6704;
   font-style: normal;
 }
@@ -127,11 +127,11 @@
 }
 .bonus b,
 .feedback b {
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .bonus span,
 .feedback span {
-  font-size: 7px;
+  font-size: 12px;
   color: #617b70;
 }
 .bonus button,
@@ -141,7 +141,7 @@
   color: white;
   padding: 7px;
   border-radius: 8px;
-  font-size: 7px;
+  font-size: 12px;
   font-weight: 900;
 }
 .trainerChecklist {
@@ -153,11 +153,11 @@
   margin-top: 8px;
 }
 .trainerChecklist b {
-  font-size: 8px;
+  font-size: 12.5px;
   margin-bottom: 2px;
 }
 .trainerChecklist span {
-  font-size: 7px;
+  font-size: 12px;
   color: #6e6377;
 }
 .feedback {
@@ -176,7 +176,7 @@
   gap: 6px;
   align-items: center;
   margin-top: 9px;
-  font-size: 7px;
+  font-size: 12px;
   font-weight: 900;
 }
 .practiceDays {
@@ -191,7 +191,7 @@
   color: #81768a;
   display: grid;
   place-items: center;
-  font-size: 7px;
+  font-size: 12px;
   font-style: normal;
 }
 .practiceDays i.checked {
@@ -222,10 +222,10 @@
   display: grid;
 }
 .certificate b {
-  font-size: 9px;
+  font-size: 12.5px;
 }
 .certificate span {
-  font-size: 7px;
+  font-size: 12px;
   color: #776443;
   line-height: 1.45;
 }
@@ -236,7 +236,7 @@
   margin-top: 8px;
 }
 .crossSell > b {
-  font-size: 9px;
+  font-size: 12.5px;
 }
 .crossSell > div {
   display: grid;
@@ -251,10 +251,10 @@
   color: #01261F;
   border-radius: 8px;
   padding: 8px 3px;
-  font-size: 7px;
+  font-size: 12px;
   font-weight: 900;
   text-decoration: none;
   text-align: center;
   display: block;
 }
-.toast{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:9;background:#281140;color:#fff;padding:11px 16px;border-radius:10px;font-size:10px;box-shadow:0 10px 28px #0005;max-width:320px;text-align:center}
+.toast{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:9;background:#281140;color:#fff;padding:11px 16px;border-radius:10px;font-size:13px;box-shadow:0 10px 28px #0005;max-width:320px;text-align:center}

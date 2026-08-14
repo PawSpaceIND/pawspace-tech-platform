@@ -15,7 +15,7 @@
   color: #887e90;
   display: grid;
   place-items: center;
-  font-size: 9px;
+  font-size: 12.5px;
   font-weight: 900;
   position: relative;
 }
@@ -45,7 +45,7 @@
   margin: 0;
 }
 .head small {
-  font-size: 8px;
+  font-size: 12.5px;
   color: #0a4a3c;
   font-weight: 900;
 }
@@ -70,10 +70,10 @@
   color: #6325a6;
 }
 .modeSwitch b {
-  font-size: 10px;
+  font-size: 13px;
 }
 .modeSwitch span {
-  font-size: 7px;
+  font-size: 12px;
   color: #84798b;
   line-height: 1.4;
 }
@@ -92,11 +92,11 @@
   color: #31243a;
 }
 .careWindows b {
-  font-size: 9px;
+  font-size: 12.5px;
 }
 .careWindows small {
   color: #867b8e;
-  font-size: 5.5px;
+  font-size: 12px;
 }
 .singleDate {
   display: grid;
@@ -108,7 +108,7 @@
 .field {
   display: grid;
   gap: 5px;
-  font-size: 8px;
+  font-size: 12.5px;
   font-weight: 900;
   margin-top: 10px;
 }
@@ -121,7 +121,7 @@
   border-radius: 10px;
   padding: 10px;
   font: inherit;
-  font-size: 9px;
+  font-size: 12.5px;
 }
 .field textarea {
   min-height: 54px;
@@ -138,11 +138,11 @@
   display: flex;
   justify-content: space-between;
   margin: 14px 2px 7px;
-  font-size: 9px;
+  font-size: 12.5px;
 }
 .sectionHead span {
   color: #8b8192;
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .petList {
   display: grid;
@@ -169,10 +169,10 @@
   display: grid;
 }
 .petList b {
-  font-size: 9px;
+  font-size: 12.5px;
 }
 .petList small {
-  font-size: 6px;
+  font-size: 12px;
   color: #877d8f;
 }
 .petList em {
@@ -194,10 +194,10 @@
   color: #5c5064;
   border-radius: 18px;
   padding: 7px 9px;
-  font-size: 7px;
+  font-size: 12px;
 }
 .hint {
-  font-size: 7px;
+  font-size: 12px;
   color: #877d8d;
   line-height: 1.5;
   text-align: center;
@@ -209,7 +209,7 @@
   background: #01261F;
   color: #fff;
   padding: 12px;
-  font-size: 9px;
+  font-size: 12.5px;
   font-weight: 900;
   margin-top: 9px;
 }
@@ -218,7 +218,7 @@
   background: none;
   color: #6724a9;
   padding: 11px 7px 5px;
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .matchIntro,
 .careHero,
@@ -257,13 +257,13 @@
 .careHero b,
 .protection b,
 .taxi b {
-  font-size: 9px;
+  font-size: 12.5px;
 }
 .matchIntro span,
 .careHero span,
 .protection span,
 .taxi span {
-  font-size: 7px;
+  font-size: 12px;
   color: #817486;
   line-height: 1.4;
 }
@@ -284,11 +284,11 @@
   border-radius: 9px;
   background: #eaf7f1;
   color: #177354;
-  font-size: 5.5px;
+  font-size: 12px;
   text-align: center;
 }
 .offerStatus b {
-  font-size: 11px;
+  font-size: 13px;
 }
 .caregivers > button {
   border: 1px solid #e3dbe8;
@@ -314,38 +314,38 @@
   display: grid;
   place-items: center;
   font-style: normal;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 900;
 }
 .caregiverTop > div {
   display: grid;
 }
 .caregiverTop span {
-  font-size: 6px;
+  font-size: 12px;
   color: #14815b;
   font-weight: 900;
 }
 .caregiverTop h4 {
-  font-size: 11px;
+  font-size: 13px;
   margin: 2px 0;
 }
 .caregiverTop small {
-  font-size: 6px;
+  font-size: 12px;
   color: #897f90;
 }
 .caregiverTop > em {
   font-style: normal;
   color: #15815b;
-  font-size: 13px;
+  font-size: 14.5px;
   font-weight: 900;
   display: grid;
   text-align: right;
 }
 .caregiverTop > em small {
-  font-size: 6px;
+  font-size: 12px;
 }
 .caregivers > button > p {
-  font-size: 7px;
+  font-size: 12px;
   color: #766b7f;
   margin: 8px 0;
 }
@@ -355,7 +355,7 @@
   gap: 4px;
 }
 .tags span {
-  font-size: 6px;
+  font-size: 12px;
   background: #eef7f2;
   color: #157a59;
   border-radius: 8px;
@@ -370,24 +370,24 @@
   border-top: 1px solid #eee8f1;
 }
 .caregiverFoot > span {
-  font-size: 6px;
+  font-size: 12px;
   color: #7f7488;
 }
 .caregiverFoot > span b {
-  font-size: 8px;
+  font-size: 12.5px;
   color: #30223a;
   margin-right: 3px;
 }
 .caregiverFoot > strong {
   color: #6223a5;
-  font-size: 13px;
+  font-size: 14.5px;
 }
 .caregiverFoot > strong small {
-  font-size: 6px;
+  font-size: 12px;
 }
 .caregivers label {
   display: block;
-  font-size: 6px;
+  font-size: 12px;
   color: #19805b;
   margin-top: 5px;
 }
@@ -404,12 +404,12 @@
 .profileNote b,
 .rules b,
 .audit b {
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .profileNote span,
 .rules span,
 .audit span {
-  font-size: 7px;
+  font-size: 12px;
   color: #766b80;
   line-height: 1.45;
 }
@@ -419,7 +419,7 @@
   background: #6424a8;
   color: white;
   padding: 7px;
-  font-size: 6px;
+  font-size: 12px;
   font-weight: 900;
 }
 .secureChat {
@@ -436,11 +436,11 @@
   justify-content: space-between;
 }
 .secureChat header b {
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .secureChat header span {
   color: #14815b;
-  font-size: 6px;
+  font-size: 12px;
 }
 .secureChat p {
   margin: 0;
@@ -448,7 +448,7 @@
   border-radius: 8px;
   background: #f3eef6;
   color: #695e71;
-  font-size: 6.5px;
+  font-size: 12px;
   line-height: 1.4;
 }
 .secureChat label {
@@ -461,7 +461,7 @@
   border: 1px solid #e0d7e6;
   border-radius: 8px;
   padding: 7px;
-  font-size: 6.5px;
+  font-size: 12px;
 }
 .secureChat button {
   border: 0;
@@ -469,7 +469,7 @@
   background: #6424a8;
   color: white;
   padding: 7px 9px;
-  font-size: 6px;
+  font-size: 12px;
   font-weight: 900;
 }
 .benefitGrid {
@@ -483,7 +483,7 @@
   border-radius: 10px;
   background: white;
   color: #514558;
-  font-size: 6.5px;
+  font-size: 12px;
   text-align: left;
 }
 .options {
@@ -491,7 +491,7 @@
   gap: 7px;
   margin-top: 11px;
 }
-.meetFormats{display:grid!important;grid-template-columns:1fr 1fr;gap:6px;padding:8px;border-radius:11px;background:#f6f1f8}.meetFormats button{display:grid;gap:3px;border:1px solid #ddd4e4;border-radius:9px;background:#fff;color:#33263c;padding:9px;text-align:left}.meetFormats button.selected{border-color:#6423a7;background:#f7f0fc;box-shadow:inset 0 0 0 1px #6423a7}.meetFormats b{font-size:7px}.meetFormats small{color:#7b7083;font-size:6px;line-height:1.4}@media(max-width:420px){.meetFormats{grid-template-columns:1fr}}
+.meetFormats{display:grid!important;grid-template-columns:1fr 1fr;gap:6px;padding:8px;border-radius:11px;background:#f6f1f8}.meetFormats button{display:grid;gap:3px;border:1px solid #ddd4e4;border-radius:9px;background:#fff;color:#33263c;padding:9px;text-align:left}.meetFormats button.selected{border-color:#6423a7;background:#f7f0fc;box-shadow:inset 0 0 0 1px #6423a7}.meetFormats b{font-size:12px}.meetFormats small{color:#7b7083;font-size:12px;line-height:1.4}@media(max-width:420px){.meetFormats{grid-template-columns:1fr}}
 .options label {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -511,10 +511,10 @@
   gap: 2px;
 }
 .options b {
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .options small {
-  font-size: 6px;
+  font-size: 12px;
   color: #887d8f;
 }
 .review {
@@ -529,7 +529,7 @@
   padding: 7px 0;
   border-bottom: 1px solid #eee9f1;
   color: #8b8192;
-  font-size: 7px;
+  font-size: 12px;
 }
 .review span:last-child {
   border: 0;
@@ -537,7 +537,7 @@
 .review b {
   text-align: right;
   color: #0b2b24;
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .bill {
   display: grid;
@@ -552,7 +552,7 @@
 .bill strong {
   display: flex;
   justify-content: space-between;
-  font-size: 7px;
+  font-size: 12px;
   color: #d8cae1;
 }
 .paymentChoice {
@@ -576,19 +576,19 @@
 }
 .paymentChoice header span {
   color: #6424a8;
-  font-size: 6px;
+  font-size: 12px;
   font-weight: 900;
   letter-spacing: .08em;
 }
 .paymentChoice header b {
-  font-size: 9px;
+  font-size: 12.5px;
 }
 .paymentChoice header em {
   padding: 4px 5px;
   border-radius: 7px;
   background: #fff1d4;
   color: #8b5b00;
-  font-size: 5.5px;
+  font-size: 12px;
   font-style: normal;
   font-weight: 900;
   white-space: nowrap;
@@ -613,7 +613,7 @@
   border: 1px solid #d6c9df;
   border-radius: 50%;
   color: #fff;
-  font-size: 7px;
+  font-size: 12px;
   font-style: normal;
 }
 .paymentChoice button.selected > i {
@@ -625,12 +625,12 @@
   gap: 2px;
 }
 .paymentChoice button b {
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .paymentChoice button small,
 .paymentChoice p {
   color: #817687;
-  font-size: 6.5px;
+  font-size: 12px;
   line-height: 1.4;
 }
 .paymentChoice p {
@@ -662,15 +662,15 @@
   gap: 2px;
 }
 .fullPaymentNote b {
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .fullPaymentNote span {
   color: #766b80;
-  font-size: 6.5px;
+  font-size: 12px;
   line-height: 1.4;
 }
 .bill strong {
-  font-size: 10px;
+  font-size: 13px;
   color: white;
   padding-top: 8px;
   border-top: 1px solid #ffffff33;
@@ -679,7 +679,7 @@
   display: flex;
   align-items: flex-start;
   gap: 6px;
-  font-size: 7px;
+  font-size: 12px;
   line-height: 1.4;
   margin-top: 9px;
 }
@@ -704,7 +704,7 @@
   font-size: 18px;
 }
 .success small {
-  font-size: 6px;
+  font-size: 12px;
   color: #a7e7cf;
   font-weight: 900;
 }
@@ -713,7 +713,7 @@
   margin: 3px 0;
 }
 .success p {
-  font-size: 7px;
+  font-size: 12px;
   color: #c6e6db;
   margin: 0;
 }
@@ -722,7 +722,7 @@
   align-items: center;
   justify-content: center;
   margin: 13px 0;
-  font-size: 6px;
+  font-size: 12px;
   color: #958b9b;
 }
 .status i {
@@ -744,7 +744,7 @@
   color: #301b04;
   border-radius: 8px;
   padding: 7px;
-  font-size: 7px;
+  font-size: 12px;
   font-weight: 900;
 }
 .tabs {
@@ -761,7 +761,7 @@
   background: transparent;
   padding: 7px;
   color: #817687;
-  font-size: 7px;
+  font-size: 12px;
 }
 .tabs .selected {
   background: white !important;
@@ -780,20 +780,20 @@
 .next > span,
 .careLive > span,
 .safety span {
-  font-size: 6px;
+  font-size: 12px;
   color: #14815b;
   font-weight: 900;
 }
 .next h4,
 .careLive h4,
 .safety h4 {
-  font-size: 13px;
+  font-size: 14.5px;
   margin: 5px 0;
 }
 .next p,
 .careLive p,
 .safety p {
-  font-size: 7px;
+  font-size: 12px;
   color: #7d7285;
   line-height: 1.5;
 }
@@ -808,7 +808,7 @@
   color: #6424a8;
   border-radius: 7px;
   padding: 7px;
-  font-size: 7px;
+  font-size: 12px;
   font-weight: 900;
 }
 .person {
@@ -826,14 +826,14 @@
   gap: 2px;
 }
 .person span {
-  font-size: 6px;
+  font-size: 12px;
   color: #15815b;
 }
 .person b {
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .person small {
-  font-size: 6px;
+  font-size: 12px;
   color: #817687;
 }
 .careLive {
@@ -863,16 +863,16 @@
   color: #16815b;
   display: grid;
   place-items: center;
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .events div {
   display: grid;
 }
 .events b {
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .events span {
-  font-size: 6px;
+  font-size: 12px;
   color: #827789;
 }
 .safety {
@@ -904,11 +904,11 @@
   color: #372a40;
   border-radius: 11px;
   padding: 9px;
-  font-size: 8px;
+  font-size: 12.5px;
   font-weight: 900;
 }
 .safetyActions small {
-  font-size: 6px;
+  font-size: 12px;
   color: #8b8192;
   margin-top: 3px;
   font-weight: 400;
@@ -943,7 +943,7 @@
   background: #6423a8;
   color: white;
   padding: 7px;
-  font-size: 6.5px;
+  font-size: 12px;
   font-weight: 900;
   white-space: nowrap;
 }
@@ -969,7 +969,7 @@
 }
 .profileHeader span {
   color: #ffd370;
-  font-size: 5.8px;
+  font-size: 12px;
   font-weight: 900;
   letter-spacing: 0.08em;
 }
@@ -980,14 +980,14 @@
 .profileHeader p {
   margin: 0;
   color: #d9cbe2;
-  font-size: 6.5px;
+  font-size: 12px;
 }
 .profileHeader > b {
   padding: 7px 9px;
   border-radius: 10px;
   background: #ffffff18;
   color: #ffd370;
-  font-size: 10px;
+  font-size: 13px;
 }
 .profileGallery {
   display: grid;
@@ -1022,7 +1022,7 @@
   border-radius: 6px;
   background: #1d1125b8;
   color: white;
-  font-size: 5.5px;
+  font-size: 12px;
 }
 .sitterGallery {
   grid-template-columns: 1.1fr 1fr;
@@ -1043,12 +1043,12 @@
   padding: 9px 4px;
   background: white;
   color: #7c7184;
-  font-size: 5.4px;
+  font-size: 12px;
   text-align: center;
 }
 .trustStats b {
   color: #302238;
-  font-size: 9px;
+  font-size: 12.5px;
 }
 .aboutProfile,
 .amenities,
@@ -1060,18 +1060,18 @@
 }
 .aboutProfile > span {
   color: #6624a6;
-  font-size: 5.7px;
+  font-size: 12px;
   font-weight: 900;
   letter-spacing: 0.07em;
 }
 .aboutProfile h4 {
   margin: 4px 0;
-  font-size: 11px;
+  font-size: 13px;
 }
 .aboutProfile p {
   margin: 0;
   color: #6e6376;
-  font-size: 7px;
+  font-size: 12px;
   line-height: 1.5;
 }
 .profileSectionHead {
@@ -1081,11 +1081,11 @@
   margin-bottom: 8px;
 }
 .profileSectionHead b {
-  font-size: 9px;
+  font-size: 12.5px;
 }
 .profileSectionHead span {
   color: #6523a6;
-  font-size: 6px;
+  font-size: 12px;
   font-weight: 800;
 }
 .amenities > div:last-child {
@@ -1098,7 +1098,7 @@
   border-radius: 8px;
   background: #eef8f3;
   color: #176f53;
-  font-size: 6px;
+  font-size: 12px;
 }
 .profileCalendar {
   background: #faf7fc;
@@ -1121,10 +1121,10 @@
   text-align: center;
 }
 .profileCalendar > div:nth-child(2) b {
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .profileCalendar > div:nth-child(2) small {
-  font-size: 4.8px;
+  font-size: 12px;
 }
 .profileCalendar .unavailable {
   border-color: #e3dce7 !important;
@@ -1135,7 +1135,7 @@
   display: block;
   margin-top: 7px;
   color: #756a7d;
-  font-size: 5.8px;
+  font-size: 12px;
   line-height: 1.4;
 }
 .profileRules {
@@ -1152,11 +1152,11 @@
 }
 .profileRules b {
   color: #7d550e;
-  font-size: 7px;
+  font-size: 12px;
 }
 .profileRules span {
   color: #756a5b;
-  font-size: 6px;
+  font-size: 12px;
   line-height: 1.4;
 }
 .reviewBlock {
@@ -1170,18 +1170,18 @@
 }
 .reviewBlock article span {
   color: #18805b;
-  font-size: 5.5px;
+  font-size: 12px;
   font-weight: 900;
 }
 .reviewBlock article p {
   margin: 4px 0;
   color: #4e4356;
-  font-size: 6.5px;
+  font-size: 12px;
   line-height: 1.45;
 }
 .reviewBlock article b {
   color: #7c7184;
-  font-size: 5.8px;
+  font-size: 12px;
 }
 .verifiedBar {
   display: grid;
@@ -1200,11 +1200,11 @@
   border-radius: 7px;
   background: #ffffff12;
   color: #d9f4e8;
-  font-size: 5.8px;
+  font-size: 12px;
 }
 .verifiedBar span {
   color: #cdbdd7;
-  font-size: 5.8px;
+  font-size: 12px;
 }
 @media (max-width: 340px) {
   .profileNote,
@@ -1223,7 +1223,7 @@
   border-radius: 9px;
   background: #e9f8f0;
   color: #116f4d;
-  font-size: 7px;
+  font-size: 12px;
   font-weight: 900;
 }
 .toast {
@@ -1236,7 +1236,7 @@
   color: white;
   padding: 11px 16px;
   border-radius: 10px;
-  font-size: 10px;
+  font-size: 13px;
   box-shadow: 0 10px 28px #0005;
   max-width: 320px;
   text-align: center;

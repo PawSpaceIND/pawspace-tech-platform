@@ -88,7 +88,7 @@ export default function FinanceCompliancePage(){
     </section>
 
     {close&&<section className={styles.panel}>
-      <h2 style={{marginTop:0}}>Monthly close — {close.period} <em style={{fontStyle:"normal",fontSize:13,padding:"2px 10px",borderRadius:12,background:close.status==="closed"?"#dff3e7":close.status==="ready"?"#fff6df":"#f3f4f6"}}>{close.status.toUpperCase()}</em></h2>
+      <h2 style={{marginTop:0}}>Monthly close — {close.period} <em style={{fontStyle:"normal",fontSize:13,padding:"2px 10px",borderRadius:12,background:close.status==="closed"?"#dff3e7":close.status==="ready"?"#fff6df":"#f4f5f5"}}>{close.status.toUpperCase()}</em></h2>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10,marginBottom:12}}>
         <article><small>Revenue</small><br/><b>{money(close.revenue.total)}</b><br/><small>{close.revenue.bookingCount} bookings · {close.revenue.foodOrderCount} food orders</small></article>
         <article><small>GST output</small><br/><b>{money(close.gst.outputTax)}</b><br/><small>{close.gst.invoiceCount} invoices</small></article>
