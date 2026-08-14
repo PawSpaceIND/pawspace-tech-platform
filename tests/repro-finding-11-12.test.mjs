@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 // The GET handler in app/api/service-zone/route.ts imports "cloudflare:workers" and reads env.DB.
 // Install the resolver so that import resolves to a shim reading globalThis.__ZONE_DB.
@@ -12,19 +13,9 @@ const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), "
 
 // Minimal D1 shim over node:sqlite (same shape as other execution suites).
 function makeD1(sqlite) {
-  function statement(sql, args) {
-    return {
-      bind: (...bound) => statement(sql, bound),
-      first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-      run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
-      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-    };
-  }
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
-    exec: async (sql) => { sqlite.exec(sql); },
-  };
+  // Uses the transactional D1 shim (BEGIN/COMMIT/ROLLBACK) from helpers/d1.mjs so a
+  // failing batch() rolls back, exactly as Cloudflare D1 does.
+  return createD1(sqlite);
 }
 
 // ---------------------------------------------------------------------------

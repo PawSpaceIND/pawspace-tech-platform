@@ -20,6 +20,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 // The shim reads globalThis.__FIN_DB__ for DB and globalThis.__FIN_ENV__ for every other env var.
 // We deliberately leave __FIN_ENV__ = {} so PAWSPACE_UAT_LOGIN / NODE_ENV / anything are all undefined:
@@ -32,19 +33,9 @@ const ROUTE_SRC = readFileSync(ROUTE_PATH, "utf8");
 // Minimal faithful D1 shim over node:sqlite: prepare/bind/first/run/all + batch + exec, mirroring the
 // pattern the repo's own suites use (tests/d1-in-clause-fanout.test.mjs).
 function makeD1(sqlite) {
-  function statement(sql, args) {
-    return {
-      bind: (...bound) => statement(sql, bound),
-      first: async () => { const r = sqlite.prepare(sql).get(...args); return r === undefined ? null : r; },
-      run: async () => { const i = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(i.changes) } }; },
-      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-    };
-  }
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (statements) => { const out = []; for (const s of statements) out.push(await s.run()); return out; },
-    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-  };
+  // Uses the transactional D1 shim (BEGIN/COMMIT/ROLLBACK) from helpers/d1.mjs so a
+  // failing batch() rolls back, exactly as Cloudflare D1 does.
+  return createD1(sqlite);
 }
 
 const MAKER_A = "maker.a@pawspace.in";
@@ -192,7 +183,9 @@ test("FINDING 9 FIXED: GET on an EMPTY db with NO UAT/staging env flag inserts Z
   assert.equal(globalThis.__FIN_ENV__.PAWSPACE_UAT_LOGIN, undefined, "no UAT login flag set");
   assert.equal(globalThis.__FIN_ENV__.NODE_ENV, undefined, "no NODE_ENV set");
 
-  const res = await route.GET();
+  // GET is gated on finance.view (held by the seeded finance role); presenting a real finance identity
+  // leaves the Finding-9 assertion (no synthetic fixtures on an empty non-UAT DB) unchanged.
+  const res = await route.GET(as(APPROVER_B));
   assert.equal(res.status, 200, "GET still works against an empty/real DB (schema is ensured)");
   const { data } = await res.json();
 

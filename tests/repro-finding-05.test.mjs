@@ -15,28 +15,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 installWorkersHooks("__RELOC_DB__");
 
 function makeD1(sqlite) {
-  function statement(sql, args) {
-    return {
-      sql, args,
-      bind: (...bound) => statement(sql, bound),
-      first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-      run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
-      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-    };
-  }
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (statements) => {
-      const out = [];
-      for (const item of statements) { const info = sqlite.prepare(item.sql).run(...(item.args ?? [])); out.push({ success: true, meta: { changes: Number(info.changes) } }); }
-      return out;
-    },
-    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-  };
+  // Transactional D1 shim (BEGIN/COMMIT/ROLLBACK) from helpers/d1.mjs — a failing batch rolls back.
+  return createD1(sqlite);
 }
 
 const route = await import("../app/api/relocation-enquiry/route.ts");

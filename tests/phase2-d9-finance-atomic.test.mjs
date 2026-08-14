@@ -25,6 +25,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 installWorkersHooks("__FIN_DB__", "__FIN_ENV__");
 
@@ -35,52 +36,28 @@ const MAKER_A = "maker.a@pawspace.in";
 const APPROVER_B = "approver.b@pawspace.in";
 const APPROVER_C = "approver.c@pawspace.in";
 
-// Faithful D1 shim over node:sqlite, returning meta.changes on run() (the route derives shouldPost from it).
+// Faithful D1 shim over node:sqlite via the transactional helper (BEGIN/COMMIT/ROLLBACK), returning
+// meta.changes on run() (the route derives shouldPost from it) — a failing batch rolls back as in D1.
 function makeD1(sqlite) {
-  function statement(sql, args) {
-    return {
-      bind: (...bound) => statement(sql, bound),
-      first: async () => { const r = sqlite.prepare(sql).get(...args); return r === undefined ? null : r; },
-      run: async () => { const i = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(i.changes) } }; },
-      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-    };
-  }
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (statements) => { const out = []; for (const s of statements) out.push(await s.run()); return out; },
-    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-  };
+  return createD1(sqlite);
 }
 
-// Barrier variant: parks the FIRST run() whose SQL matches the approve UPDATE, releasing on demand — the
-// deterministic stand-in for two Workers whose SELECTs both observed "submitted" before either UPDATE ran.
+// Barrier variant: parks the FIRST statement whose SQL matches the approve UPDATE, releasing on demand —
+// the deterministic stand-in for two Workers whose SELECTs both observed "submitted" before either
+// UPDATE ran. The barrier rides on createD1's park hook, so the shim underneath is the transactional D1.
 function racingD1(sqlite, matcher) {
   let claims = 0, parked = false, overlapped = false, release;
   const gate = new Promise((r) => { release = r; });
   const matches = (sql) => matcher.test(String(sql || ""));
-  function statement(sql, args) {
-    return {
-      bind: (...bound) => statement(sql, bound),
-      first: async () => { await null; const r = sqlite.prepare(sql).get(...args); return r === undefined ? null : r; },
-      run: async () => {
-        if (matches(sql)) {
-          claims += 1;
-          if (claims === 1) { parked = true; await gate; parked = false; }
-          else if (parked) overlapped = true;
-        }
-        await null;
-        const i = sqlite.prepare(sql).run(...args);
-        return { success: true, meta: { changes: Number(i.changes) } };
-      },
-      all: async () => { await null; return { results: sqlite.prepare(sql).all(...args) }; },
-    };
-  }
+  const park = (sql) => {
+    if (!matches(sql)) return null;
+    claims += 1;
+    if (claims === 1) { parked = true; return gate.then(() => { parked = false; }); }
+    if (parked) overlapped = true;
+    return null;
+  };
   return {
-    db: {
-      prepare: (sql) => statement(sql, []),
-      batch: async (statements) => { const out = []; for (const s of statements) out.push(await s.run()); return out; },
-      exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-    },
+    db: createD1(sqlite, { park }),
     release: () => release(),
     overlapped: () => overlapped,
   };

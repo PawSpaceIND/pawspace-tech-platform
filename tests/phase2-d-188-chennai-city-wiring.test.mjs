@@ -23,21 +23,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 installWorkersHooks("__D188_DB__", "__D188_ENV__");
 
 function makeD1(sqlite) {
-  const statement = (sql, args) => ({
-    bind: (...bound) => statement(sql, bound),
-    first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-    run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
-    all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-  });
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
-    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-  };
+  // Uses the transactional D1 shim (BEGIN/COMMIT/ROLLBACK) from helpers/d1.mjs so a
+  // failing batch() rolls back, exactly as Cloudflare D1 does.
+  return createD1(sqlite);
 }
 
 function freshDb(env = {}) {
@@ -59,7 +52,10 @@ const serviceZoneRoute = await import("../app/api/service-zone/route.ts");
 
 const HOST = "https://app.pawspace.in";
 const getServiceZone = (pincode) => serviceZoneRoute.GET(new Request(`${HOST}/api/service-zone?pincode=${encodeURIComponent(pincode)}`));
-const postScheduling = (body) => schedulingRoute.POST(new Request(`${HOST}/api/uat-scheduling`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }));
+// uat-scheduling reserve is gated on scheduling.book (gateway) and requireCustomerOwnership (handler),
+// so the customer self-reserving must present a real platform session — exactly as the fixed flow does
+// once the customer is signed in. The cookie carries the same identity the booking call below uses.
+const postScheduling = (cookie, body) => schedulingRoute.POST(new Request(`${HOST}/api/uat-scheduling`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify(body) }));
 const postBooking = (cookie, body) => bookingRoute.POST(new Request(`${HOST}/api/canonical-bookings`, { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify(body) }));
 
 /** A real customer platform session (verified identity binding + issued cookie) — canonical-bookings
@@ -109,9 +105,13 @@ test("#188 CHENNAI: address(maa pincode) -> maa zone -> maa reservation -> maa c
   const cityId = zoneId.split("-")[0]; // exactly how the fixed flow derives cityId
   assert.equal(cityId, "maa");
 
+  // The signed-in Chennai customer — the single identity that both reserves and books, so the reserve
+  // passes scheduling.book (gateway) and requireCustomerOwnership (its own id), never a bypass.
+  const cookie = await customerCookie(globalThis.__D188_DB__, "CUS-MAA", "+919000000188");
+
   // (2) reserveUatSchedule with the resolved maa city/zone — a maa provider is assigned (Sitting is
   // host-selected, so the flow passes preferredProviderId; the seeded maa host offers pet_sitting).
-  const schedRes = await postScheduling({
+  const schedRes = await postScheduling(cookie, {
     clientRequestId: "D188-MAA-1", customerId: "CUS-MAA", petIds: ["Bruno"],
     serviceCode: "pet_sitting", cityId, zoneId, scheduledStart: MAA_START, scheduledEnd: MAA_END,
     careMode: "overnight", preferredProviderId: "host_maa_meena",
@@ -126,7 +126,6 @@ test("#188 CHENNAI: address(maa pincode) -> maa zone -> maa reservation -> maa c
   assert.equal(reservation.zone_id, zoneId);
 
   // (3) createCanonicalLifecycle / canonical booking persists the maa city + zone.
-  const cookie = await customerCookie(globalThis.__D188_DB__, "CUS-MAA", "+919000000188");
   const bookRes = await postBooking(cookie, sittingBookingBody({
     idempotencyKey: "d188-maa-1", scheduleGroupId: "D188-MAA-1", customerId: "CUS-MAA", phone: "+919000000188",
     cityId, zoneId, start: MAA_START, end: MAA_END,
@@ -156,7 +155,8 @@ test("#188 BENGALURU unchanged: address(blr pincode) -> blr zone -> blr reservat
   assert.equal(cityId, "blr");
   assert.equal(zoneId, "blr-east");
 
-  const schedRes = await postScheduling({
+  const cookie = await customerCookie(globalThis.__D188_DB__, "CUS-BLR", "+919000000189");
+  const schedRes = await postScheduling(cookie, {
     clientRequestId: "D188-BLR-1", customerId: "CUS-BLR", petIds: ["Bruno"],
     serviceCode: "pet_sitting", cityId, zoneId, scheduledStart: BLR_START, scheduledEnd: BLR_END,
     careMode: "overnight", preferredProviderId: "sit_sana",
@@ -169,7 +169,6 @@ test("#188 BENGALURU unchanged: address(blr pincode) -> blr zone -> blr reservat
   assert.equal(reservation.city_id, "blr");
   assert.equal(reservation.zone_id, "blr-east");
 
-  const cookie = await customerCookie(globalThis.__D188_DB__, "CUS-BLR", "+919000000189");
   const bookRes = await postBooking(cookie, sittingBookingBody({
     idempotencyKey: "d188-blr-1", scheduleGroupId: "D188-BLR-1", customerId: "CUS-BLR", phone: "+919000000189",
     cityId, zoneId, start: BLR_START, end: BLR_END,

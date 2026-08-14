@@ -25,6 +25,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 installWorkersHooks("__D2_DB__", "__D2_ENV__");
 
@@ -42,28 +43,20 @@ function racingD1(sqlite, { holdClaimMatching = null } = {}) {
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
   const matches = (sql) => holdClaimMatching && holdClaimMatching.test(String(sql || ""));
-  const statement = (sql, args) => ({
-    sql,
-    bind: (...bound) => statement(sql, bound),
-    first: async () => { await null; const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-    run: async () => {
-      if (matches(sql)) {
-        claims += 1;
-        if (claims === 1) { parked = true; await gate; parked = false; }
-        else if (parked) overlapped = true;
-      }
-      await null;
-      const info = sqlite.prepare(sql).run(...args);
-      return { success: true, meta: { changes: Number(info.changes) } };
-    },
-    all: async () => { await null; return { results: sqlite.prepare(sql).all(...args) }; },
-  });
+  // The barrier is expressed through createD1's park hook, so the shim underneath is the transactional
+  // D1 (BEGIN/COMMIT/ROLLBACK) from helpers/d1.mjs — every batch rolls back on failure exactly as
+  // production D1 does, rather than committing statement-by-statement. The first racer to reach the
+  // claim boundary parks there before it mutates anything; a second racer reaching the same boundary
+  // while the first is parked read the still-pending request — the race, recorded as `overlapped`.
+  const park = (sql) => {
+    if (!matches(sql)) return null;
+    claims += 1;
+    if (claims === 1) { parked = true; return gate.then(() => { parked = false; }); }
+    if (parked) overlapped = true;
+    return null;
+  };
   return {
-    db: {
-      prepare: (sql) => statement(sql, []),
-      batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
-      exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-    },
+    db: createD1(sqlite, { park }),
     releaseFirstClaim: () => release(),
     claimsReached: () => claims,
     overlapped: () => overlapped,

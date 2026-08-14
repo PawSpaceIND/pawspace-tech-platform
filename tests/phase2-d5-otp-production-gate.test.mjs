@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 // ---------------------------------------------------------------------------
 // Phase 2 remediation D5 (P1) — OTP code disclosure must be production-gated.
@@ -25,17 +26,9 @@ installWorkersHooks("__OTPD_DB__", "__OTPD_ENV__");
 const SECRET = "phase2-d5-assertion-secret-0123456789abcdef";
 
 function makeD1(sqlite) {
-  const statement = (sql, args) => ({
-    bind: (...bound) => statement(sql, bound),
-    first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-    run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
-    all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-  });
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
-    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-  };
+  // Uses the transactional D1 shim (BEGIN/COMMIT/ROLLBACK) from helpers/d1.mjs so a
+  // failing batch() rolls back, exactly as Cloudflare D1 does.
+  return createD1(sqlite);
 }
 
 // env is empty by default (no PAWSPACE_UAT_LOGIN) => production-like / fail-closed.

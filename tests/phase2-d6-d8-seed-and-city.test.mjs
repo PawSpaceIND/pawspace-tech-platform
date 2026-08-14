@@ -22,6 +22,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 // The shim reads globalThis.__D68_DB__ for DB and globalThis.__D68_ENV__ for every other env var
 // (PAWSPACE_UAT_LOGIN in particular). Left at {} => production-bound (no UAT/staging flag).
@@ -30,19 +31,9 @@ installWorkersHooks("__D68_DB__", "__D68_ENV__");
 // Minimal faithful D1 shim over node:sqlite (node's real SQLite engine), mirroring the pattern the
 // repo's own real-execution suites use (tests/repro-finding-08-09.test.mjs).
 function makeD1(sqlite) {
-  function statement(sql, args) {
-    return {
-      bind: (...bound) => statement(sql, bound),
-      first: async () => { const r = sqlite.prepare(sql).get(...args); return r === undefined ? null : r; },
-      run: async () => { const i = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(i.changes) } }; },
-      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-    };
-  }
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (statements) => { const out = []; for (const s of statements) out.push(await s.run()); return out; },
-    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-  };
+  // Uses the transactional D1 shim (BEGIN/COMMIT/ROLLBACK) from helpers/d1.mjs so a
+  // failing batch() rolls back, exactly as Cloudflare D1 does.
+  return createD1(sqlite);
 }
 
 const hostRoute = await import("../app/api/host-profile/route.ts");

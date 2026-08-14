@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 // ---------------------------------------------------------------------------
 // Regression for findings 8 & 9 in app/api/finance-control/route.ts.
@@ -20,17 +21,9 @@ import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 installWorkersHooks("__FINCC_DB__", "__FINCC_ENV__");
 
 function makeD1(sqlite) {
-  const statement = (sql, args) => ({
-    bind: (...bound) => statement(sql, bound),
-    first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-    run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
-    all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-  });
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
-    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-  };
+  // Uses the transactional D1 shim (BEGIN/COMMIT/ROLLBACK) from helpers/d1.mjs so a
+  // failing batch() rolls back, exactly as Cloudflare D1 does.
+  return createD1(sqlite);
 }
 
 const MAKER_A = "maker.a@pawspace.in";
@@ -176,7 +169,9 @@ const absent = (sqlite) => {
 
 test("GET on an empty DB with no UAT flag inserts ZERO synthetic fixtures", async () => {
   const sqlite = freshDb();
-  const res = await route.GET();
+  // GET is gated on finance.view (which the seeded finance role holds), so it presents a real finance
+  // identity — the Finding-9 assertion (no fixtures on an empty DB) is unchanged.
+  const res = await route.GET(as(APPROVER_B));
   assert.equal(res.status, 200, "GET still works against an empty/real DB");
   const { vendor, expense, bill, period } = absent(sqlite);
   assert.equal(vendor, 0, "no ven_fuel/ven_food/ven_software");
