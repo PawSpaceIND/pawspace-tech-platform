@@ -118,6 +118,24 @@ const q = (v) => {
   return `'${String(v).replaceAll("'", "''")}'`;
 };
 
+/**
+ * Rows whose DATES have to move when the seed is re-applied, and the columns to move.
+ *
+ * Everything else is INSERT OR IGNORE, which is what makes this file safe to re-run: a row that already
+ * exists is left exactly as it is. For rows a rolling-window reader depends on, that guarantee is the
+ * problem. sales_productivity_fact_runs is keyed 'UATD-SPFR-1' every time, so re-applying a freshly
+ * generated seed to a database that already has it changes NOTHING - proved by loading both versions in
+ * sequence and reading the row back. The seed looked re-runnable and was in fact write-once, so the
+ * "just re-apply the seed" fix for a stale performance screen silently did nothing at all.
+ *
+ * These rows therefore upsert their date columns. Only the dates: the ids, the measures and every other
+ * value stay put, so re-applying still cannot invent or overwrite business data.
+ */
+const REFRESH_DATES = {
+  sales_productivity_fact_runs: { key: "id", columns: ["period_start", "period_end", "generated_at"] },
+  sales_productivity_facts: { key: "id", columns: ["period_start", "period_end", "created_at"] },
+};
+
 function insert(table, row) {
   const meta = ddl.get(table);
   if (!meta) throw new Error(`No DDL captured for table '${table}' — add its owning file to SOURCES`);
@@ -126,7 +144,16 @@ function insert(table, row) {
   }
   usedTables.add(table);
   const keys = Object.keys(row);
-  lines.push(`INSERT OR IGNORE INTO ${table} (${keys.join(",")}) VALUES (${keys.map((k) => q(row[k])).join(",")});`);
+  const values = `(${keys.map((k) => q(row[k])).join(",")})`;
+  const refresh = REFRESH_DATES[table];
+  if (refresh) {
+    const moved = refresh.columns.filter((c) => keys.includes(c));
+    if (!moved.length) throw new Error(`REFRESH_DATES names ${table} but this row carries none of ${refresh.columns.join(",")}`);
+    // Plain INSERT, not INSERT OR IGNORE: OR IGNORE and ON CONFLICT DO UPDATE cannot be combined.
+    lines.push(`INSERT INTO ${table} (${keys.join(",")}) VALUES ${values} ON CONFLICT(${refresh.key}) DO UPDATE SET ${moved.map((c) => `${c}=excluded.${c}`).join(",")};`);
+    return;
+  }
+  lines.push(`INSERT OR IGNORE INTO ${table} (${keys.join(",")}) VALUES ${values};`);
 }
 
 // ---------------------------------------------------------------------------

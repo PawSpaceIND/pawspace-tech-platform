@@ -180,6 +180,43 @@ test("the demo seed is fresh enough that the rolling-window screens can still se
   assert.ok(ageDays > -2, `the seed anchor is ${Math.abs(Math.floor(ageDays))} days in the future`);
 });
 
+test("re-applying the seed actually moves the dates a rolling window depends on", async () => {
+  // "Just re-apply the seed" was the fix I handed over for a stale performance screen, and it did
+  // nothing. Every row is INSERT OR IGNORE with a fixed UATD-* id, so on a database that already has
+  // them the whole file is a no-op - the seed read as re-runnable and was in fact write-once. Proved by
+  // loading a seed twice and reading the row back unchanged.
+  //
+  // The date columns of the rolling-window rows now upsert. This drives the actual scenario: a database
+  // that already holds the seed at older dates, then the current file applied on top.
+  const sql = await readFile("scripts/uat-demo-seed.sql", "utf8");
+  const stale = sql.replace(/^\s*--[^\n]*$/gm, "");
+  const sqlite = new DatabaseSync(":memory:");
+  const load = (text) => { for (const statement of text.split(/;\s*\n/)) { const trimmed = statement.trim(); if (trimmed) { try { sqlite.exec(`${trimmed};`); } catch { /* reported by the apply-cleanly test */ } } } };
+
+  load(stale);
+  const original = sqlite.prepare("SELECT period_start,period_end FROM sales_productivity_fact_runs WHERE id='UATD-SPFR-1'").get();
+  assert.ok(original, "the seed must create the productivity fact run the performance screens read");
+
+  // Age the row by 40 days, exactly as real time would.
+  const shift = 40 * 86_400_000;
+  sqlite.prepare("UPDATE sales_productivity_fact_runs SET period_start=period_start-?, period_end=period_end-? WHERE id='UATD-SPFR-1'").run(shift, shift);
+  sqlite.prepare("UPDATE sales_productivity_facts SET period_start=period_start-?, period_end=period_end-?").run(shift, shift);
+
+  load(stale); // re-apply the same file, as an operator would
+  const refreshed = sqlite.prepare("SELECT period_start,period_end FROM sales_productivity_fact_runs WHERE id='UATD-SPFR-1'").get();
+
+  assert.equal(
+    Number(refreshed.period_end), Number(original.period_end),
+    "re-applying the seed left the aged window in place, so every rolling-window screen stays empty. The dated rows need ON CONFLICT DO UPDATE - see REFRESH_DATES in scripts/uat-demo-seed-gen.mjs",
+  );
+
+  // Only the dates may move. If re-applying could rewrite a measure, "safe to re-run" would stop being
+  // true and a hand-corrected figure on staging would be silently reverted.
+  const facts = sqlite.prepare("SELECT COUNT(*) n, SUM(net_collected_revenue) net FROM sales_productivity_facts").get();
+  assert.ok(Number(facts.n) > 0, "the facts must survive a re-apply");
+  assert.ok(Number(facts.net) > 0, "re-applying must not zero the measures it is not supposed to touch");
+});
+
 test("a completed booking was actually paid for", async () => {
   const { sqlite } = await seededDatabase();
 

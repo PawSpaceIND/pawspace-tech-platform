@@ -78,7 +78,12 @@ const GET = (route, url) => route.GET(new Request(`http://localhost${url}`));
 test("the committed uat-demo-seed.sql is exactly what the generator produces", () => {
   const committed = fs.readFileSync("scripts/uat-demo-seed.sql", "utf8");
   assert.ok(committed.includes("INSERT OR IGNORE INTO canonical_bookings"), "seed must carry canonical bookings");
-  assert.ok(!/INSERT INTO /.test(committed), "every insert must be OR IGNORE so the seed is re-runnable");
+  // Not "every insert is OR IGNORE" any more - that belief is what made the seed write-once. The real
+  // invariant (OR IGNORE, or an upsert touching only dates) is asserted in
+  // tests/uat-demo-seed-sales-marketing.test.mjs; here it is enough that nothing does an unguarded
+  // INSERT, which would fail outright on a re-apply.
+  const unguarded = committed.split("\n").filter((line) => line.startsWith("INSERT INTO ") && !/ON CONFLICT\(/.test(line));
+  assert.deepEqual(unguarded.slice(0, 3), [], "an INSERT with neither OR IGNORE nor ON CONFLICT will throw the second time the seed is applied");
   assert.ok(committed.includes("CREATE TABLE IF NOT EXISTS"), "seed must create its tables so it can run before the app");
   // every seeded row is namespaced, so it can never collide with the other two seeds
   const ids = committed.match(/VALUES \('([^']+)'/g) || [];

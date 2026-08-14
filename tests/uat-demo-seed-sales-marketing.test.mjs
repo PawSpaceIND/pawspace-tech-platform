@@ -140,5 +140,20 @@ test("the generator and the checked-in seed file agree", async () => {
   assert.ok(anchor, "the seed must record the anchor it was generated with");
   assert.equal(new Date(Number(anchor[1])).getUTCHours(), 6, "the anchor is snapped to 06:00 UTC so two runs on one day agree");
   assert.match(seed, /^-- PawSpace UAT DEMO SEED/i);
-  assert.equal(seed.split("\n").filter((line) => line.startsWith("INSERT ") && !line.startsWith("INSERT OR IGNORE")).length, 0, "every insert must be INSERT OR IGNORE");
+  // Re-runnable means "applying it twice cannot damage anything", not "applying it twice cannot change
+  // anything". Every insert is either OR IGNORE, or an upsert whose DO UPDATE touches only date columns -
+  // and the second form exists because the first one made the seed write-once: a fixed UATD-* id under
+  // INSERT OR IGNORE means re-applying a freshly dated seed to a database that already holds it changes
+  // nothing at all, which is why "just re-apply the seed" did not fix a stale performance screen.
+  // tests/uat-readiness-gate.test.mjs drives that scenario end to end.
+  const writes = seed.split("\n").filter((line) => line.startsWith("INSERT "));
+  const unsafe = writes.filter((line) => {
+    if (line.startsWith("INSERT OR IGNORE ")) return false;
+    const upsert = /^INSERT INTO \w+ \([^)]*\) VALUES .* ON CONFLICT\(\w+\) DO UPDATE SET (.+);$/.exec(line);
+    if (!upsert) return true;
+    // Only dates may be rewritten. A measure in a DO UPDATE would let a re-apply revert a correction
+    // made on staging by hand.
+    return upsert[1].split(",").some((pair) => !/^(period_start|period_end|created_at|updated_at|generated_at)=excluded\.\1$/.test(pair.trim()));
+  });
+  assert.deepEqual(unsafe.slice(0, 3), [], `every insert must be OR IGNORE, or an upsert that rewrites only date columns:\n  ${unsafe.slice(0, 3).join("\n  ")}`);
 });
