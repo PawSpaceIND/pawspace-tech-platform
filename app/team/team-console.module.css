@@ -84,7 +84,7 @@
   text-decoration: none; color: inherit;
   transition: border-color .15s ease, transform .15s ease, box-shadow .15s ease;
 }
-.linkCard:hover { border-color: #dcece5; transform: translateY(-2px); box-shadow: 0 12px 28px rgba(32, 9, 67, .08); }
+.linkCard:hover { border-color: #dcece5; transform: translateY(-2px); box-shadow: 0 12px 28px rgba(6,35,28, .08); }
 .linkCard:focus-visible { outline: 2px solid var(--purple, #01261F); outline-offset: 2px; }
 .linkCard h2 { margin: 0; font-size: 19px; }
 .linkCard p { margin: 0; font-size: 14.5px; color: #5b6966; line-height: 1.55; }

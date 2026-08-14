@@ -171,7 +171,7 @@
   border: 1px solid #dcece5;
   border-radius: 16px;
   background: white;
-  box-shadow: 0 6px 22px rgba(42, 19, 61, 0.04);
+  box-shadow: 0 6px 22px rgba(6,35,28, 0.04);
 }
 .panelHead {
   display: flex;
