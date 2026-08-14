@@ -571,5 +571,8 @@ test("consolidates PawSpace into four role-based entry points", async () => {
   }
   const team = await readFile(new URL("../app/team/page.tsx", import.meta.url), "utf8");
   for (const title of ["Revenue & CRM", "Bookings & delivery", "Tickets & recovery", "Accounts & collections", "HR & performance", "Segments & campaigns"]) assert.match(team, new RegExp(title));
-  assert.match(team, /6 teams · 1 customer record · 1 audit trail/);
+  // The workspaces are now role-scoped: the menu shows only what the signed-in role can open, rather
+  // than every entry point to everyone. The subhead says so, and the list is filtered by permission.
+  assert.match(team, /Showing what your role can open/);
+  assert.match(team, /visibleWorkspaces\s*=\s*data\s*\?\s*workspaces\.filter/);
 });
