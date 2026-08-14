@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 // ---------------------------------------------------------------------------
 // GET /api/booking-operations — horizontal authorization between authenticated providers.
@@ -25,19 +26,9 @@ import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 // ---------------------------------------------------------------------------
 installWorkersHooks("__BOPS_DB__", "__BOPS_ENV__");
 
-function makeD1(sqlite) {
-  const statement = (sql, args) => ({
-    bind: (...bound) => statement(sql, bound),
-    first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-    run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
-    all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-  });
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
-    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-  };
-}
+// D1's batch() is one transaction; the loop this replaced committed as it went, so any claim in this
+// file about a half-applied write was measured against the wrong machine.
+const makeD1 = (sqlite) => createD1(sqlite);
 
 // Identifiable seeded content. If any of these strings reaches the wrong provider, that is the leak.
 const B = {

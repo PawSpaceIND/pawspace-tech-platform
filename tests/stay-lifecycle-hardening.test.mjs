@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as nodeModule from "node:module";
+import { createD1 } from "./helpers/d1.mjs";
 
 // Test-only resolve hook (same pattern as tests/customer-offers.test.mjs).
 if (typeof nodeModule.registerHooks === "function") {
@@ -31,23 +32,10 @@ const sittingRoute = read("app/api/sitting-lifecycle/route.ts");
 const statementsOf = (source) =>
   [...source.matchAll(/\.prepare\(\s*(["'`])((?:\\.|(?!\1)[\s\S])*?)\1/g)].map((m) => m[2].replace(/\\(["'`\\])/g, "$1"));
 
-function makeD1(sqlite) {
-  function statement(sql, args) {
-    return {
-      bind: (...bound) => statement(sql, bound),
-      first: async () => {
-        const row = sqlite.prepare(sql).get(...args);
-        return row === undefined ? null : row;
-      },
-      run: async () => {
-        const info = sqlite.prepare(sql).run(...args);
-        return { success: true, meta: { changes: Number(info.changes || 0) } };
-      },
-      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-    };
-  }
-  return { prepare: (sql) => statement(sql, []), batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; } };
-}
+// D1's batch() is one transaction. The loop this replaced committed each statement as it went, so a
+// lifecycle transition that failed half way left the stay in a state production would have rolled
+// back - the class of defect the #177 review found and this file could not have seen.
+const makeD1 = (sqlite) => createD1(sqlite);
 
 const DAY = 86_400_000;
 const NOW = Date.now();
