@@ -38,12 +38,17 @@ if (typeof nodeModule.registerHooks === "function") {
 function makeD1(sqlite, options = {}) {
   function statement(sql, args) {
     return {
+      // Awaited before the transaction opens. Holding one open across an await would block the other
+      // caller's BEGIN and turn the race into a deadlock.
+      __gate: async () => { const g = options.park?.(sql); if (g && typeof g.then === "function") await g; },
       bind: (...boundArgs) => statement(sql, boundArgs),
       first: async () => {
         const row = sqlite.prepare(sql).get(...args);
         return row === undefined ? null : row;
       },
       run: async () => {
+        const g = options.park?.(sql);
+        if (g && typeof g.then === "function") await g;
         const info = sqlite.prepare(sql).run(...args);
         return { success: true, meta: { changes: Number(info.changes) } };
       },
@@ -60,6 +65,7 @@ function makeD1(sqlite, options = {}) {
     // behind - and the double-booking guard's own comment says it relies on "db.batch runs as one
     // transaction". That claim was never observable in this file until now.
     batch: async (statements) => {
+      for (const stmt of statements) await stmt.__gate?.();
       sqlite.exec("BEGIN");
       try {
         const results = [];
@@ -79,11 +85,12 @@ function istInstant(daysAhead, hour, minute = 0) { const s = new Date(Date.now()
 const istDateKey = (d) => new Date(d.getTime() + IST).toISOString().slice(0, 10);
 const istWeekday = (d) => new Date(d.getTime() + IST).getUTCDay();
 
-let sqlite, hideReservations = false;
+let sqlite, hideReservations = false, parkGuardedInsert = null;
 function freshDb() {
   sqlite = new DatabaseSync(":memory:");
   hideReservations = false;
-  globalThis.__SCHED_DB__ = makeD1(sqlite, { hide: () => hideReservations });
+  parkGuardedInsert = null;
+  globalThis.__SCHED_DB__ = makeD1(sqlite, { hide: () => hideReservations, park: (sql) => parkGuardedInsert?.(sql) });
 }
 
 const routeModule = await import("../app/api/uat-scheduling/route.ts");
@@ -366,4 +373,58 @@ test("contract: the double-booking guard and restore-on-failure are present in s
   assert.match(routeSource, /COALESCE\(SUM\(capacity_units\),0\)/, "overnight services guard on capacity, not blanket overlap");
   assert.match(routeSource, /const restore=async\(\)/);
   assert.match(routeSource, /securityAudit\(db,actor,`scheduling\.\$\{input\.action\}`/);
+});
+
+test("route: two reserves genuinely interleaved on one slot — one wins, the other is refused clean", async () => {
+  freshDb();
+  const start = istInstant(9, 11);
+  const pin = [{ code: "pin", field: "providerId", operator: "eq", value: "groom_arun" }];
+  const slot = { serviceCode: "grooming", scheduledStart: start.toISOString(), scheduledEnd: new Date(start.getTime() + 120 * 60_000).toISOString(), customRules: pin };
+
+  // A real interleave rather than a simulated one. The first caller is held at its guarded INSERT,
+  // BEFORE it writes anything, so the table really is empty when the second caller evaluates
+  // availability - no hidden reads required, because there is genuinely nothing to see yet. The
+  // second then completes and takes the slot. Releasing the first puts its guarded INSERT against a
+  // slot that is now occupied, which is exactly the ordering two Workers on one D1 produce.
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let held = false, parkedNow = false, interleaved = false;
+  parkGuardedInsert = (sql) => {
+    if (!/INSERT INTO scheduling_reservations/.test(String(sql || ""))) return null;
+    if (!held) {
+      held = true; parkedNow = true;
+      return gate.then(() => { parkedNow = false; });
+    }
+    // A second guarded INSERT arrived while the first was still parked. That is the interleave, and
+    // without recording it this test would quietly degrade into the sequential case and pass for the
+    // wrong reason - the failure mode that made the original "concurrent" test weaker than its name.
+    if (parkedNow) interleaved = true;
+    return null;
+  };
+
+  const first = post(reserve({ clientRequestId: "weave-a", ...slot }));
+  // Let the first caller reach the gate before the second starts evaluating.
+  await new Promise((resolve) => setImmediate(resolve));
+  const second = await post(reserve({ clientRequestId: "weave-b", customerId: "cus_weave", ...slot }));
+  release();
+  const held_result = await first;
+
+  assert.equal(interleaved, true, "the two reserves did not interleave, so nothing below is proven");
+  const outcomes = [held_result, second];
+  assert.equal(outcomes.filter((r) => r.status === 200).length, 1, `exactly one reserve may succeed — ${JSON.stringify(outcomes.map((o) => [o.status, o.body?.error]))}`);
+  const refused = outcomes.find((r) => r.status !== 200);
+  assert.equal(refused.status, 409);
+  assert.equal(refused.body.error, "SLOT_TAKEN");
+
+  const active = sqlite.prepare("SELECT COUNT(*) c FROM scheduling_reservations WHERE provider_id='groom_arun' AND status!='cancelled'").get();
+  assert.equal(active.c, 1, "the slot must be held exactly once");
+
+  // The refused caller must leave nothing: no reservation, no assigned decision.
+  const loserId = refused === second ? "weave-b" : "weave-a";
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM scheduling_reservations WHERE group_id=?").get(loserId).c, 0, "the refused caller must own no reservation");
+  assert.deepEqual(
+    sqlite.prepare("SELECT status FROM scheduling_assignment_decisions WHERE group_id=?").all(loserId).filter((r) => String(r.status) === "assigned"),
+    [],
+    "the refused caller must not leave an assigned decision",
+  );
 });
