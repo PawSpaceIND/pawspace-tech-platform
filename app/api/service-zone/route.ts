@@ -1,4 +1,4 @@
-import {resolveZoneByPincode,listServiceZones,seedDefaultZones} from"../../../lib/service-zones";
+import {resolveZoneByPincode,listServiceZones} from"../../../lib/service-zones";
 
 type Db=D1Database;
 
@@ -29,10 +29,11 @@ export async function GET(request:Request):Promise<Response>{
       return new Response(JSON.stringify({data:zones,productionReady:false}),{status:200,headers:{"content-type":"application/json"}});
     }
 
-    if(action==="seed"){
-      await seedDefaultZones(db);
-      return new Response(JSON.stringify({message:"Default zones seeded",productionReady:false}),{status:200,headers:{"content-type":"application/json"}});
-    }
+    // GET is READ-ONLY. Seeding default zones is a DB write and must never be reachable through this
+    // public, unauthenticated endpoint (/api/service-zone is in the gateway public null-list). The
+    // former GET ?action=seed path let anyone INSERT the full zone table via a plain URL — it is
+    // removed. Seeding is an operator task run through staff tooling/migrations, not a public GET.
+    if(action==="seed")return new Response(JSON.stringify({error:"Seeding is not available on this public endpoint. Run zone seeding through staff tooling."}),{status:405,headers:{"content-type":"application/json","allow":"GET"}});
 
     return new Response(JSON.stringify({error:"Unknown action"}),{status:400,headers:{"content-type":"application/json"}});
   }catch(e){

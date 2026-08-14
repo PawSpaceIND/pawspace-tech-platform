@@ -55,11 +55,16 @@ test("customer relocation-enquiry page collects the exact field contract with a 
   const page=await read("app/relocation-enquiry/page.tsx");
   assert.match(page,/"use client"/);
   assert.match(page,/\/api\/relocation-enquiry/);
-  for(const token of["customerName","phonePrimary","phoneSecondary","email","petType","pickupDate","pickupApproxTime","pickupLocation","dropLocation","expectedTravelDate"])
+  // relocationKind added to the contract (Finding 5): the page must send domestic/international, so it
+  // is now part of the required field set and the page carries a domestic/international <select>.
+  for(const token of["customerName","phonePrimary","phoneSecondary","email","petType","relocationKind","pickupDate","pickupApproxTime","pickupLocation","dropLocation","expectedTravelDate"])
     assert.equal(page.includes(token),true,token);
   assert.match(page,/<option value="dog">Dog<\/option>/);
   assert.match(page,/<option value="cat">Cat<\/option>/);
-  assert.equal(/<option value="(?!dog|cat")/.test(page),false,"only dog/cat options allowed");
+  assert.match(page,/<option value="domestic">Domestic within India<\/option>/);
+  assert.match(page,/<option value="international">International<\/option>/);
+  // Pet-type options remain dog/cat only; relocation-type options remain domestic/international only.
+  assert.equal(/<option value="(?!dog|cat"|domestic"|international")/.test(page),false,"only dog/cat + domestic/international options allowed");
 });
 
 test("staff relocation-enquiries page lists submitted enquiries via GET",async()=>{

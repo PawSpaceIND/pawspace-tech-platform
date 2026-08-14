@@ -28,6 +28,16 @@ type Snapshot = {
 const text = (v: unknown) => String(v ?? "");
 const STEPS = ["Application", "Verification", "Qualification", "Interview", "Agreement", "Profile", "Activation"];
 
+// Never surface a raw API/error body (e.g. {"error":"Permission denied"}) to a provider. Map the
+// HTTP status to a controlled, human-readable message; the raw detail is logged for diagnostics only.
+async function safeApiError(r: Response): Promise<Error> {
+  try { console.error("provider-onboarding-self-service", r.status, await r.clone().text()); } catch { /* diagnostics only */ }
+  const message = r.status === 401 || r.status === 403
+    ? "Please sign in as a verified provider to continue."
+    : "Something went wrong. Please try again.";
+  return new Error(message);
+}
+
 export default function PartnerOnboardingUatPage() {
   const [session, setSession] = useState<Row | null>(null);
   const [sessionChecked, setSessionChecked] = useState(false);
@@ -56,7 +66,7 @@ export default function PartnerOnboardingUatPage() {
   }
 
   function refresh() {
-    return fetch("/api/provider-onboarding-self-service", { cache: "no-store" }).then(async r => { if (!r.ok) throw new Error(await r.text()); return r.json(); }).then(v => setData(v.data));
+    return fetch("/api/provider-onboarding-self-service", { cache: "no-store" }).then(async r => { if (!r.ok) throw await safeApiError(r); return r.json(); }).then(v => setData(v.data));
   }
 
   useEffect(() => {
@@ -70,7 +80,7 @@ export default function PartnerOnboardingUatPage() {
         setSession(v.data);
         return fetch("/api/provider-onboarding-self-service", { cache: "no-store" });
       })
-      .then(async r => { if (!r) return; if (!r.ok) throw new Error(await r.text()); return r.json(); })
+      .then(async r => { if (!r) return; if (!r.ok) throw await safeApiError(r); return r.json(); })
       .then(v => { if (active && v) setData(v.data); })
       .catch(e => { if (active) setError(String((e as Error)?.message || e)); });
     return () => { active = false; };
@@ -86,7 +96,7 @@ export default function PartnerOnboardingUatPage() {
     setError("");
     try {
       const r = await fetch("/api/provider-onboarding-self-service", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
-      if (!r.ok) throw new Error(await r.text());
+      if (!r.ok) throw await safeApiError(r);
       await refresh();
     } catch (e) {
       setError(String((e as Error)?.message || e));
