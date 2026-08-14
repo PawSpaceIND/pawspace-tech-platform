@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import styles from "./food-flow.module.css";
 import type { LoggedInCustomer } from "./customer-login";
+import type { ResolvedLocation } from "./resolved-location";
 import {
   loadFoodCatalogue,
   quoteFoodCart,
@@ -37,7 +38,7 @@ const renewalDate = (ms: number) => new Date(ms).toLocaleDateString("en-IN", { d
 
 type SubscriptionCreated = { subscriptionId: string; nextRenewalAt: number; renewalIntervalDays: number; sourceOrderId: string };
 
-export default function FoodFlow({ customer, onCompleted }: { customer: LoggedInCustomer; onCompleted?: (orderIds: string[]) => void }) {
+export default function FoodFlow({ customer, location, onCompleted }: { customer: LoggedInCustomer; location: ResolvedLocation; onCompleted?: (orderIds: string[]) => void }) {
   const [step, setStep] = useState(1);
   const [catalogue, setCatalogue] = useState<FoodCatalogueItem[]>([]);
   const [catalogueError, setCatalogueError] = useState("");
@@ -60,7 +61,7 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
 
   useEffect(() => {
     let active = true;
-    loadFoodCatalogue("blr-east")
+    loadFoodCatalogue(location.zoneId)
       .then((data) => {
         if (!active) return;
         setCatalogue(data.items);
@@ -75,7 +76,7 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
     return () => {
       active = false;
     };
-  }, []);
+  }, [location.zoneId]);
 
   const selectedSpecies = useMemo(() => new Set(pets.filter((pet) => selectedPets.includes(pet.name)).map((pet) => pet.species)), [selectedPets]);
   const grouped = useMemo(() => {
@@ -107,7 +108,7 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
     setQuoting(true);
     setFlowError("");
     try {
-      const result = await quoteFoodCart(cart, "blr-east");
+      const result = await quoteFoodCart(cart, location.zoneId);
       setQuotes(result.quotes);
       setServerTotal(result.serverTotal);
       setStep(5);
@@ -125,8 +126,8 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
       const created = await placeQuotedFoodOrders({
         quotes,
         customer: { id: customer.customerId, name: customer.customerName, primaryPhone: customer.phone },
-        cityId: "blr",
-        zoneId: "blr-east",
+        cityId: location.cityId,
+        zoneId: location.zoneId,
       });
       const subs: SubscriptionCreated[] = [];
       if (plan === "repeat") {
@@ -173,7 +174,7 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
               )}
               <small>
                 Delivery: {window_} · {address ? `${address}, ` : ""}
-                {pincode || "Bengaluru"} · fulfilment team confirms dispatch
+                {pincode || location.city} · fulfilment team confirms dispatch
               </small>
               {subscription && (
                 <span className={styles.subBadge}>
@@ -360,7 +361,7 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
           </label>
           <div className={styles.section}>
             <b>Preferred delivery window</b>
-            <span>BENGALURU EAST ZONE</span>
+            <span>{location.zoneId.toUpperCase()} ZONE</span>
           </div>
           <div className={styles.planRow}>
             {deliveryWindows.map((option) => (

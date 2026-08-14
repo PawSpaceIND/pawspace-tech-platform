@@ -23,6 +23,16 @@ const defaults=[
   {id:"walk_nisha",cityId:"blr",name:"Nisha P.",model:"commission",services:["dog_walking"],zones:["blr-east"],rating:4.9,qualityScore:96,capacity:1,travelBufferMinutes:20,maxDailyJobs:10,acceptanceTimeoutMinutes:3},
   {id:"walk_kiran",cityId:"blr",name:"Kiran M.",model:"commission",services:["dog_walking"],zones:["blr-east"],rating:4.8,qualityScore:92,capacity:1,travelBufferMinutes:20,maxDailyJobs:10,acceptanceTimeoutMinutes:3},
   {id:"walk_asha",cityId:"blr",name:"Asha R.",model:"commission",services:["dog_walking"],zones:["blr-east"],rating:5.0,qualityScore:94,capacity:1,travelBufferMinutes:20,maxDailyJobs:10,acceptanceTimeoutMinutes:3},
+  // Chennai (maa) governed providers — finding #188. Scheduling already accepted cityId 'maa', but the
+  // roster only ever held Bengaluru providers, so loadGovernedProviders(db,'maa',...) returned nothing
+  // and every Chennai reservation failed 409 NO_SCHEDULE_AVAILABLE. These seed a real maa pool covering
+  // the launched services in the Chennai zones, so a maa reservation can actually be assigned. They are
+  // city_id='maa' and maa-* zoned, so they NEVER leak into a Bengaluru (blr) request and vice-versa.
+  {id:"groom_maa_ravi",cityId:"maa",name:"Ravi K.",model:"full_time",services:["grooming"],zones:["maa-central","maa-south"],rating:4.9,qualityScore:96,capacity:1,travelBufferMinutes:30,maxDailyJobs:4,acceptanceTimeoutMinutes:0},
+  {id:"host_maa_meena",cityId:"maa",name:"Meena & Karthik",model:"commission",services:["boarding","pet_sitting"],zones:["maa-central","maa-south"],rating:4.9,qualityScore:95,capacity:4,travelBufferMinutes:30,maxDailyJobs:12,acceptanceTimeoutMinutes:3},
+  {id:"train_maa_deepa",cityId:"maa",name:"Deepa S.",model:"commission",services:["dog_training"],zones:["maa-central"],rating:4.8,qualityScore:92,capacity:1,travelBufferMinutes:45,maxDailyJobs:4,acceptanceTimeoutMinutes:3},
+  {id:"taxi_maa_arun",cityId:"maa",name:"Arun V.",model:"full_time",services:["pet_taxi"],zones:["maa-central","maa-south","maa-omr"],rating:4.8,qualityScore:93,capacity:1,travelBufferMinutes:20,maxDailyJobs:8,acceptanceTimeoutMinutes:0},
+  {id:"walk_maa_divya",cityId:"maa",name:"Divya R.",model:"commission",services:["dog_walking"],zones:["maa-central","maa-south"],rating:4.9,qualityScore:94,capacity:1,travelBufferMinutes:20,maxDailyJobs:10,acceptanceTimeoutMinutes:3},
 ] as const;
 
 // Per-isolate memoization: table DDL and the fixed default roster are idempotent constants, so once

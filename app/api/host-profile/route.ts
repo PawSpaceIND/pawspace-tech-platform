@@ -8,12 +8,22 @@ async function database() {
   return env.DB;
 }
 
+// D6: seeding the synthetic demo host/sitter profiles is a staging/UAT convenience only. It is gated
+// on PAWSPACE_UAT_LOGIN==="on" — the established staging flag (see lib/uat-staging-auth.ts and the
+// finance-control seed() convention). In production the flag is unset, so this public endpoint NEVER
+// inserts synthetic profile rows. The read itself stays public and getHostProfile still ensures the
+// schema, so a real/empty D1 keeps working; only the demo-data side effect is gated off.
+async function seedEnabled() {
+  const { env } = await import("cloudflare:workers");
+  return String((env as Record<string, unknown>).PAWSPACE_UAT_LOGIN || "") === "on";
+}
+
 export async function GET(request: Request) {
   try {
     const providerId = new URL(request.url).searchParams.get("providerId");
     if (!providerId) return Response.json({ error: "providerId is required" }, { status: 400 });
     const db = await database();
-    await seedDemoHostProfiles(db);
+    if (await seedEnabled()) await seedDemoHostProfiles(db);
     const profile = await getHostProfile(db, providerId);
     if (!profile) return Response.json({ error: "Profile not found" }, { status: 404 });
     return Response.json({ data: profile }, { headers: { "cache-control": "no-store" } });

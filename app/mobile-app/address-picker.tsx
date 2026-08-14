@@ -94,7 +94,7 @@ export default function AddressPicker({onZoneResolved}:{onZoneResolved?:(zone:Zo
     </section>}
 
     {zones.length>0&&!resolvedZone&&<section style={box}>
-      <p style={{margin:0,fontSize:13,color:"var(--ds-text-muted)"}}>Available zones in Bengaluru</p>
+      <p style={{margin:0,fontSize:13,color:"var(--ds-text-muted)"}}>Available service zones</p>
       <div style={{display:"grid",gap:8}}>
         {zones.map(zone=><div
           key={zone.zoneId}

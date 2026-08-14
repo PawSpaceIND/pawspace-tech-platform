@@ -4,6 +4,7 @@ import styles from "./taxi-flow.module.css";
 import { loadTaxiRouteClasses, createTaxiQuote, type TaxiRouteClass, type TaxiQuote } from "../../lib/taxi-commercial-client";
 import { createCanonicalTaxiBooking, reserveTaxiSchedule, type AssignedDriver, type TaxiBookingResult } from "../../lib/taxi-booking-client";
 import type { LoggedInCustomer } from "./customer-login";
+import type { ResolvedLocation } from "./resolved-location";
 
 // Same prop contract as the other embedded flows: the shell passes the logged-in customer; pets
 // follow the UAT roster pattern. Pet Taxi carries dogs AND cats — one pet per trip (Gate 1 rule).
@@ -26,7 +27,7 @@ const dayLabel = (value: Date) => new Intl.DateTimeFormat("en-IN", { timeZone: "
 const slotLabel = (value: Date) => new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }).format(value);
 const timeLabel = (iso: string) => new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit" }).format(new Date(iso));
 
-export default function TaxiFlow({ customer }: { customer: LoggedInCustomer }) {
+export default function TaxiFlow({ customer, location }: { customer: LoggedInCustomer; location: ResolvedLocation }) {
   const [stage, setStage] = useState(1);
   const [routes, setRoutes] = useState<TaxiRouteClass[]>([]);
   const [routeCode, setRouteCode] = useState("taxi-blr-east-short");
@@ -76,8 +77,8 @@ export default function TaxiFlow({ customer }: { customer: LoggedInCustomer }) {
       const fresh = await createTaxiQuote({ routeCode, originLabel: origin, destinationLabel: destination, petCount: 1, scheduledStart });
       const requestId = `taxi-${customer.customerId}-${fresh.routeCode}-${fresh.scheduledStart}`;
       // Auto-assignment is allowed for taxi (founder rule) — the scheduler picks the driver.
-      const reservation = await reserveTaxiSchedule({ clientRequestId: requestId, customerId: customer.customerId, petIds: [selectedPet], zoneId: "blr-east", scheduledStart: fresh.scheduledStart, scheduledEnd: fresh.scheduledEnd });
-      const created = await createCanonicalTaxiBooking({ idempotencyKey: requestId, groupId: reservation.groupId, taxiQuoteId: fresh.quoteId, customer: { id: customer.customerId, name: customer.customerName, primaryPhone: customer.phone }, pets: [{ sourceId: pet.name, name: pet.name, species: pet.species }], cityId: "blr", zoneId: "blr-east", routeCode: fresh.routeCode, originLabel: fresh.originLabel, destinationLabel: fresh.destinationLabel, scheduledStart: fresh.scheduledStart, scheduledEnd: fresh.scheduledEnd, provider: { id: reservation.driver.id, name: reservation.driver.name, model: reservation.driver.model }, totalAmount: fresh.totalAmount, amountDueNow: fresh.amountDueNow, payment: { method: "upi", mode: "sandbox_deferred", detail: "UAT sandbox-deferred Pet Taxi billing" } });
+      const reservation = await reserveTaxiSchedule({ clientRequestId: requestId, customerId: customer.customerId, petIds: [selectedPet], cityId: location.cityId, zoneId: location.zoneId, scheduledStart: fresh.scheduledStart, scheduledEnd: fresh.scheduledEnd });
+      const created = await createCanonicalTaxiBooking({ idempotencyKey: requestId, groupId: reservation.groupId, taxiQuoteId: fresh.quoteId, customer: { id: customer.customerId, name: customer.customerName, primaryPhone: customer.phone }, pets: [{ sourceId: pet.name, name: pet.name, species: pet.species }], cityId: location.cityId, zoneId: location.zoneId, routeCode: fresh.routeCode, originLabel: fresh.originLabel, destinationLabel: fresh.destinationLabel, scheduledStart: fresh.scheduledStart, scheduledEnd: fresh.scheduledEnd, provider: { id: reservation.driver.id, name: reservation.driver.name, model: reservation.driver.model }, totalAmount: fresh.totalAmount, amountDueNow: fresh.amountDueNow, payment: { method: "upi", mode: "sandbox_deferred", detail: "UAT sandbox-deferred Pet Taxi billing" } });
       setQuote(fresh); setDriver(reservation.driver); setBooking(created);
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Unable to confirm the Pet Taxi booking"); }
     finally { setBusy(false); }

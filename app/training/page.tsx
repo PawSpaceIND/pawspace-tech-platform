@@ -62,7 +62,7 @@ export default function TrainingPage(){
   setBusy(true);setError("");
   try{
    const selectedPets=pets.slice(0,petCount),duration=quote.minutesPerSession*60_000,scheduledEnd=new Date(new Date(scheduledStart).getTime()+duration).toISOString(),requestId=`training:${quote.quoteId}:${customer.id}`;
-   const schedule=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.id,petIds:selectedPets.map(pet=>pet.sourceId),serviceCode:"dog_training",zoneId:"blr-east",scheduledStart,scheduledEnd,occurrences:quote.meetAndGreet?1:quote.sessions,cadenceDays:7,preferredProviderId:activeTrainer.id});
+   const schedule=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.id,petIds:selectedPets.map(pet=>pet.sourceId),serviceCode:"dog_training",cityId:"blr",zoneId:"blr-east",scheduledStart,scheduledEnd,occurrences:quote.meetAndGreet?1:quote.sessions,cadenceDays:7,preferredProviderId:activeTrainer.id});
    const result=await createCanonicalTrainingBooking({idempotencyKey:requestId,scheduleGroupId:schedule.groupId,trainingQuote:quote,customer,pets:selectedPets,cityId:"blr",zoneId:"blr-east",scheduledStart,scheduledEnd,provider:schedule.provider});
    const nextProgramme=await materializeTrainingProgramme({bookingId:result.bookingId});
    setBooking(result);setProgramme(nextProgramme);window.scrollTo(0,0);

@@ -66,7 +66,7 @@ export default function BoardingPage(){
   setBusy(true);setError("");
   try{
    const selectedPets=pets.slice(0,petCount),requestId=`boarding:${quote.quoteId}:${customer.id}`;
-   const schedule=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.id,petIds:selectedPets.map(pet=>pet.sourceId),serviceCode:"boarding",zoneId:"blr-east",scheduledStart:quote.scheduledStart,scheduledEnd:quote.scheduledEnd,occurrences:1,careMode:window.careMode,preferredProviderId:selectedHost.providerId});
+   const schedule=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.id,petIds:selectedPets.map(pet=>pet.sourceId),serviceCode:"boarding",cityId:"blr",zoneId:"blr-east",scheduledStart:quote.scheduledStart,scheduledEnd:quote.scheduledEnd,occurrences:1,careMode:window.careMode,preferredProviderId:selectedHost.providerId});
    const result=await createCanonicalBoardingBooking({idempotencyKey:requestId,scheduleGroupId:schedule.groupId,boardingQuote:quote,customer,pets:selectedPets,cityId:"blr",zoneId:"blr-east",provider:schedule.provider});
    const canonicalStay=await loadCustomerBoardingStay(result.bookingId);
    if(!canonicalStay)throw new Error("Canonical Boarding stay was not materialized from the booking");

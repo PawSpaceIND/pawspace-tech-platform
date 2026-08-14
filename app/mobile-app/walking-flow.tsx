@@ -4,6 +4,7 @@ import styles from "./walking-flow.module.css";
 import { loadWalkingCatalogue, createWalkingQuote, type WalkingPackage, type WalkingQuote } from "../../lib/walking-commercial-client";
 import { createCanonicalWalkingBooking, reserveWalkingSchedule, type AssignedWalker, type WalkingBookingResult } from "../../lib/walking-booking-client";
 import type { LoggedInCustomer } from "./customer-login";
+import type { ResolvedLocation } from "./resolved-location";
 
 // Same prop contract as training-flow.tsx: the shell passes the logged-in customer; pets follow the
 // UAT roster pattern the other flows use. Walking is a dogs-only service, so the roster keeps the
@@ -31,7 +32,7 @@ const windowLabel = (start: string, end: string) => `${slotLabel(new Date(start)
 // First walk lands on a chosen weekday so the scheduler's occurrence 1 matches the quoted window exactly.
 function firstRecurringDay(weekdays: number[], hour: number) { for (let offset = 1; offset <= 28; offset++) { const candidate = istDate(offset, hour); if (weekdays.includes(istWeekday(candidate))) return candidate; } return istDate(1, hour); }
 
-export default function WalkingFlow({ customer }: { customer: LoggedInCustomer }) {
+export default function WalkingFlow({ customer, location }: { customer: LoggedInCustomer; location: ResolvedLocation }) {
   const [stage, setStage] = useState(1);
   const [packages, setPackages] = useState<WalkingPackage[]>([]);
   const [packageCode, setPackageCode] = useState("walking-30");
@@ -89,8 +90,8 @@ export default function WalkingFlow({ customer }: { customer: LoggedInCustomer }
       const fresh = await createWalkingQuote({ packageCode, mode, petCount: 1, walkCount: effectiveWalks, weekdays: mode === "recurring" ? weekdays : undefined, scheduledStart, scheduledEnd });
       const requestId = `walking-${customer.customerId}-${fresh.packageCode}-${scheduledStart}-${mode === "recurring" ? weekdays.join("") : "once"}x${fresh.walkCount}`;
       // Auto-assignment is allowed for walking (founder rule) — the scheduler picks the walker.
-      const reservation = await reserveWalkingSchedule({ clientRequestId: requestId, customerId: customer.customerId, petIds: [selectedPet], zoneId: "blr-east", scheduledStart, scheduledEnd, walkCount: fresh.walkCount, weekdays: mode === "recurring" ? weekdays : undefined });
-      const created = await createCanonicalWalkingBooking({ idempotencyKey: requestId, groupId: reservation.groupId, walkingQuoteId: fresh.quoteId, customer: { id: customer.customerId, name: customer.customerName, primaryPhone: customer.phone }, pets: [{ sourceId: selectedPet, name: selectedPet, species: "dog" }], cityId: "blr", zoneId: "blr-east", packageCode: fresh.packageCode, packageName: fresh.packageName, walkCount: fresh.walkCount, weekdays: fresh.weekdays, scheduledStart, scheduledEnd, provider: { id: reservation.walker.id, name: reservation.walker.name, model: reservation.walker.model }, totalAmount: fresh.totalAmount, amountDueNow: fresh.amountDueNow, payment: { method: "upi", mode: "pay_after_service", detail: "UAT pay-after-service Dog Walking sandbox billing" } });
+      const reservation = await reserveWalkingSchedule({ clientRequestId: requestId, customerId: customer.customerId, petIds: [selectedPet], cityId: location.cityId, zoneId: location.zoneId, scheduledStart, scheduledEnd, walkCount: fresh.walkCount, weekdays: mode === "recurring" ? weekdays : undefined });
+      const created = await createCanonicalWalkingBooking({ idempotencyKey: requestId, groupId: reservation.groupId, walkingQuoteId: fresh.quoteId, customer: { id: customer.customerId, name: customer.customerName, primaryPhone: customer.phone }, pets: [{ sourceId: selectedPet, name: selectedPet, species: "dog" }], cityId: location.cityId, zoneId: location.zoneId, packageCode: fresh.packageCode, packageName: fresh.packageName, walkCount: fresh.walkCount, weekdays: fresh.weekdays, scheduledStart, scheduledEnd, provider: { id: reservation.walker.id, name: reservation.walker.name, model: reservation.walker.model }, totalAmount: fresh.totalAmount, amountDueNow: fresh.amountDueNow, payment: { method: "upi", mode: "pay_after_service", detail: "UAT pay-after-service Dog Walking sandbox billing" } });
       setQuote(fresh); setWalker(reservation.walker); setBooking(created);
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Unable to confirm the Dog Walking booking"); }
     finally { setBusy(false); }
