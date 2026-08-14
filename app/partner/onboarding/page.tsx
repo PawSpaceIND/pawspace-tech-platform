@@ -26,6 +26,13 @@ type Snapshot = {
 };
 
 const text = (v: unknown) => String(v ?? "");
+// Never render a raw response body to a visitor. A not-signed-in / wrong-scope caller gets a 401/403
+// here (this is a provider-only surface); show a plain sign-in prompt instead of the API's JSON error.
+async function friendlyError(r: Response, signInMessage: string) {
+  if (r.status === 401 || r.status === 403) return signInMessage;
+  const body = await r.json().catch(() => null) as { error?: string } | null;
+  return body?.error || "Something went wrong. Please try again.";
+}
 const STEPS = ["Application", "Verification", "Qualification", "Interview", "Agreement", "Profile", "Activation"];
 
 export default function PartnerOnboardingUatPage() {
@@ -70,7 +77,7 @@ export default function PartnerOnboardingUatPage() {
         setSession(v.data);
         return fetch("/api/provider-onboarding-self-service", { cache: "no-store" });
       })
-      .then(async r => { if (!r) return; if (!r.ok) throw new Error(await r.text()); return r.json(); })
+      .then(async r => { if (!r) return; if (!r.ok) throw new Error(await friendlyError(r, "Sign in with your provider account to see your onboarding application.")); return r.json(); })
       .then(v => { if (active && v) setData(v.data); })
       .catch(e => { if (active) setError(String((e as Error)?.message || e)); });
     return () => { active = false; };
@@ -86,7 +93,7 @@ export default function PartnerOnboardingUatPage() {
     setError("");
     try {
       const r = await fetch("/api/provider-onboarding-self-service", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
-      if (!r.ok) throw new Error(await r.text());
+      if (!r.ok) throw new Error(await friendlyError(r, "Sign in with your provider account to continue your application."));
       await refresh();
     } catch (e) {
       setError(String((e as Error)?.message || e));
