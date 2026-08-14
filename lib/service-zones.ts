@@ -157,8 +157,14 @@ async function cityRangeCovers(db:Db,pincode:string):Promise<{city:string;zoneId
       const inRange=bounds.length>=2?numeric>=bounds[0]&&numeric<=bounds[1]:bounds.length===1&&numeric===bounds[0];
       if(!inRange)continue;
       const code=String(row.city_code||"blr");
-      // Default to the city's central zone; Operations reassigns precisely when the job is scheduled.
-      const zoneId=SERVICE_ZONES[`${code}-central`]?`${code}-central`:Object.keys(SERVICE_ZONES)[0];
+      // Default to THIS city's central zone; Operations reassigns precisely when the job is scheduled.
+      // NEVER fall back to another city's zone: the previous `Object.keys(SERVICE_ZONES)[0]` fallback
+      // ("blr-east") stamped a Chennai (maa) pincode with an East-Bengaluru zone, routing it to a
+      // Bengaluru provider pool. If this live city has no zone of its own configured in SERVICE_ZONES,
+      // the pincode is NOT serviceable here — we return not-serviceable rather than invent a blr zone
+      // (finding #10). BLR behavior is unchanged because "blr-central" exists.
+      const zoneId=`${code}-central`;
+      if(!SERVICE_ZONES[zoneId])continue;
       return{city:String(row.city||"Bengaluru"),zoneId};
     }
   }
