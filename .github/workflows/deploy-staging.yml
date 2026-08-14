@@ -76,3 +76,33 @@ jobs:
           done
       - name: Where to test
         run: echo "Staging deployed as pawspace-staging. The deploy log above prints the workers.dev URL — open it and append the module paths from docs/STAGING_DEPLOY.md."
+
+  # Does a real browser, signed in as a real person, get a working screen? The unit suite runs as a
+  # development-preview superuser against injected rows, so it cannot answer that - every failure
+  # found by hand during UAT lived in the seam it does not cross. This walks every route in Chromium
+  # and fails the run on a blank screen, a script error, a raw JSON parse error reaching the reader,
+  # type below 12px, a horizontal overflow or an unexpected permission wall.
+  smoke:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+      - name: Install
+        run: npm ci
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Persona smoke against deployed staging
+        env:
+          PAWSPACE_E2E_BASE: https://pawspace-staging.karthik-fce.workers.dev
+          # Read from the repository secret; never written to a file, a log line or an assertion.
+          PAWSPACE_E2E_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: node tests/e2e/persona-smoke.mjs --json smoke-report.json
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: persona-smoke-report
+          path: smoke-report.json

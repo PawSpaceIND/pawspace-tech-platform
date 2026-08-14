@@ -17,8 +17,15 @@ import { useEffect, useRef, useState } from "react";
  * expired sign-in says so and offers the way back, and a failed endpoint names itself and its status
  * instead of resolving to a blank screen.
  *
- * This only observes. It never changes a response, never retries, and never swallows an error - each
- * page still receives exactly the response it would have received without this component.
+ * It also repairs one thing, deliberately. Every page reads its errors with `response.json()`. When a
+ * failing endpoint answers with text or HTML instead - "Internal Server Error", a platform error
+ * page, a proxy notice - that call throws, and the page shows the reader
+ * `Unexpected token 'I', "Internal S"... is not valid JSON`. A browser sweep found 65 routes doing
+ * exactly that. So a non-JSON error body is re-wrapped as `{ error: <the text the server sent> }`
+ * with its status untouched, and the page shows what the server actually said. Nothing is hidden:
+ * the status, the failure and the server's own words all survive; only the encoding changes.
+ *
+ * Successful responses are never touched, and nothing is ever retried or swallowed.
  */
 
 type Failure = { endpoint: string; status: number };
@@ -45,6 +52,13 @@ function isSameOriginApi(input: RequestInfo | URL): boolean {
   }
 }
 
+/** An HTML error page is not a message; fall back to the status when the body is markup or empty. */
+function readableError(body: string, response: Response): string {
+  const trimmed = body.trim();
+  if (!trimmed || trimmed.startsWith("<")) return response.statusText || `The server answered ${response.status}.`;
+  return trimmed.slice(0, 300);
+}
+
 export default function ApiActivityMonitor() {
   const pending = useRef(0);
   const [inFlight, setInFlight] = useState(0);
@@ -66,13 +80,23 @@ export default function ApiActivityMonitor() {
       }
       try {
         const response = await original(input, init);
+        if (response.ok) return response;
+
         if (live && (response.status === 401 || response.status >= 500)) {
           // clone() so the page still reads its own body exactly once, untouched.
           const body = await response.clone().json().catch(() => ({}) as Record<string, unknown>);
           if (response.status === 401 && body.code === "sign_in_required") setSignInExpired(true);
           else if (response.status >= 500) setFailure({ endpoint: endpointOf(input), status: response.status });
         }
-        return response;
+
+        const contentType = response.headers.get("content-type") || "";
+        if (contentType.includes("json")) return response;
+        const text = await response.clone().text().catch(() => "");
+        return new Response(JSON.stringify({ error: readableError(text, response) }), {
+          status: response.status,
+          statusText: response.statusText,
+          headers: { "content-type": "application/json" },
+        });
       } catch (error) {
         if (live) setFailure({ endpoint: endpointOf(input), status: 0 });
         throw error;
