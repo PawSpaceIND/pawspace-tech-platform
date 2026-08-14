@@ -34,8 +34,9 @@
 
 import { DatabaseSync } from "node:sqlite";
 
-/** D1 rejects a statement with more than ~100 bound parameters. */
-export const D1_MAX_BOUND_PARAMS = 100;
+/** D1 rejects a statement with more than ~100 bound parameters. Declared once, in the D1 shim. */
+export { D1_MAX_BOUND_PARAMS } from "./d1.mjs";
+import { D1_MAX_BOUND_PARAMS } from "./d1.mjs";
 
 /**
  * A D1 shim over node:sqlite that enforces the bind cap and counts calls.

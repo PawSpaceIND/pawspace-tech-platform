@@ -38,8 +38,11 @@ function createLock() {
   };
 }
 
+/** D1 rejects a statement with more than ~100 bound parameters; node:sqlite accepts thousands. */
+export const D1_MAX_BOUND_PARAMS = 100;
+
 export function createD1(sqlite, options = {}) {
-  const { park = () => null, onStatement = null } = options;
+  const { park = () => null, onStatement = null, maxBoundParams = D1_MAX_BOUND_PARAMS } = options;
   const withLock = createLock();
   let inTransaction = false;
 
@@ -52,7 +55,10 @@ export function createD1(sqlite, options = {}) {
     }
     if (mode === "all") return { results: prepared.all(...args), success: true };
     const info = prepared.run(...args);
-    return { success: true, meta: { changes: Number(info.changes ?? 0), last_row_id: Number(info.lastInsertRowid ?? 0) } };
+    // rows_written is part of D1's meta and several guards read it (the invoice race guard decides
+    // whether it won the row by checking it), so a shim that omits it silently changes their branch.
+    const changes = Number(info.changes ?? 0);
+    return { success: true, meta: { changes, rows_written: changes, last_row_id: Number(info.lastInsertRowid ?? 0) } };
   };
 
   /** A gate returned by `park` lets the test decide when this statement is allowed to proceed. */
@@ -62,6 +68,12 @@ export function createD1(sqlite, options = {}) {
   };
 
   function statement(sql, args) {
+    // Refused at bind time, as D1 does. A shim that accepts an unbounded "?" list lets a query whose
+    // width grows with the row count pass every test and fail on the deployed database - which is
+    // precisely how /api/unit-economics shipped "too many SQL variables at offset 301".
+    if (args.length > maxBoundParams) {
+      throw new Error(`D1_ERROR: too many SQL variables (${args.length} > ${maxBoundParams}): ${String(sql).slice(0, 90)}`);
+    }
     return {
       bind: (...bound) => statement(sql, bound),
       first: async () => { await awaitGate(sql); return execute(sql, args, "first"); },
