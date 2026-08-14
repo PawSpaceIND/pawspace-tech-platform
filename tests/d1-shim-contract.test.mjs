@@ -139,12 +139,12 @@ test("two callers racing for one claim: exactly one wins, and the loser leaves n
 });
 
 test("the hand-rolled loop shims only ever decrease", async () => {
-  // 52 files still implement batch() as a loop, so any atomicity claim they make is measured against
+  // 48 files still implement batch() as a loop, so any atomicity claim they make is measured against
   // the wrong machine. Migrating one means checking its assertions still hold under a real
   // transaction, per file - and a blanket edit across tests/ went wrong once already, so this is a
   // burn-down rather than a sweep. The count may fall, never rise: a new hand-rolled shim fails here,
   // and each migration lowers the number visibly in the diff.
-  const BASELINE = 52;
+  const BASELINE = 48;
   const { readdir, readFile } = await import("node:fs/promises");
 
   const files = (await readdir("tests")).filter((f) => f.endsWith(".test.mjs") && f !== "d1-shim-contract.test.mjs");
