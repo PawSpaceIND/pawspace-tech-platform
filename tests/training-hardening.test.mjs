@@ -38,12 +38,25 @@ const makeD1 = (sqlite) => createD1(sqlite);
 let sqlite;
 function freshDb() { sqlite = new DatabaseSync(":memory:"); globalThis.__TRN_DB__ = makeD1(sqlite); }
 
-const sessionsRoute = await import("../app/api/training-sessions/route.ts");
-const customerChangeRoute = await import("../app/api/training-customer-session-change/route.ts");
-const cancellationRoute = await import("../app/api/training-cancellation/route.ts");
-const earningsRoute = await import("../app/api/training-provider-earnings/route.ts");
-const reconciliationRoute = await import("../app/api/training-reconciliation/route.ts");
-const opsRoute = await import("../app/api/training-ops/route.ts");
+// Each handler is remembered against its real /api path. The helpers below used to address a
+// placeholder ("/api/x"), which was harmless while the route decided its own authority - but the
+// handlers now ask the gateway what THIS url demands, and a url naming no route resolves to the
+// gateway's default rather than the route's own rule. Addressing the real path is what production
+// does anyway, so this makes the harness less of a fiction, not more of one.
+const ROUTE_PATH = new Map();
+async function routeModule(name) {
+  const loaded = await import(`../app/api/${name}/route.ts`);
+  for (const method of ["GET", "POST", "PATCH", "PUT", "DELETE"]) {
+    if (typeof loaded[method] === "function") ROUTE_PATH.set(loaded[method], `/api/${name}`);
+  }
+  return loaded;
+}
+const sessionsRoute = await routeModule("training-sessions");
+const customerChangeRoute = await routeModule("training-customer-session-change");
+const cancellationRoute = await routeModule("training-cancellation");
+const earningsRoute = await routeModule("training-provider-earnings");
+const reconciliationRoute = await routeModule("training-reconciliation");
+const opsRoute = await routeModule("training-ops");
 const { materializeTrainingProgramme } = await import("../lib/training-programme.ts");
 const { mutateTrainingSession } = await import("../lib/training-session-lifecycle.ts");
 const { requestTrainingCancellation, approveTrainingCancellation } = await import("../lib/training-cancellation.ts");
@@ -51,7 +64,7 @@ const { saveTrainingCompensationRule, refreshTrainingFinanceReadModel } = await 
 
 // Preview actor (localhost + NODE_ENV!=production) resolves to a superuser; ownership checks pass.
 const call = async (handler, method, bodyOrQuery, headers = {}) => {
-  const url = `http://localhost/api/x${method === "GET" && bodyOrQuery ? `?${bodyOrQuery}` : ""}`;
+  const url = `http://localhost${ROUTE_PATH.get(handler) || "/api/x"}${method === "GET" && bodyOrQuery ? `?${bodyOrQuery}` : ""}`;
   const request = method === "GET"
     ? new Request(url, { headers })
     : new Request(url, { method, headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(bodyOrQuery) });
@@ -66,7 +79,7 @@ async function parseBody(response) {
 // Non-preview actor: forwarded-identity headers against a non-local host — exercises the REAL
 // role + ownership path (app_users role_code=customer has scheduling.book but no manage overrides).
 const callAs = async (handler, method, bodyOrQuery, email) => {
-  const url = `https://app.pawspace.test/api/x${method === "GET" && bodyOrQuery ? `?${bodyOrQuery}` : ""}`;
+  const url = `https://app.pawspace.test${ROUTE_PATH.get(handler) || "/api/x"}${method === "GET" && bodyOrQuery ? `?${bodyOrQuery}` : ""}`;
   const headers = { "content-type": "application/json", "oai-authenticated-user-email": email };
   const request = method === "GET" ? new Request(url, { headers }) : new Request(url, { method, headers, body: JSON.stringify(bodyOrQuery) });
   const response = await handler(request);

@@ -1,3 +1,4 @@
+import{refuseUnlessGatewayPermits}from"../../../lib/api-gateway";
 import{authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{hasPermission}from"../../../lib/platform-security";
 import{getStayPaymentSchedule,payStayBalance,sweepOverdueStayBalances}from"../../../lib/stay-split-payments";
@@ -9,7 +10,7 @@ async function database(){const{env}=await import("cloudflare:workers");return e
 // role has it); staff with bookings.manage may read/settle any booking. Per-record ownership for
 // customers is enforced here via requireCustomerOwnership against the schedule's customer_id.
 
-export async function GET(request:Request){try{
+export async function GET(request:Request){const denied=await refuseUnlessGatewayPermits(request);if(denied)return denied;try{
   const url=new URL(request.url),bookingId=String(url.searchParams.get("bookingId")||"").trim();
   if(!bookingId)return json({error:"bookingId is required"},400);
   const db=await database(),actor=await resolveActor(request);

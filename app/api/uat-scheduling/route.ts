@@ -1,7 +1,8 @@
+import{refuseUnlessGatewayPermits}from"../../../lib/api-gateway";
 import type { Booking, Pet, PlatformRepository, Provider, ProviderAvailability } from "../../../backend/src/domain";
 import { schedule, type CustomScheduleRule, type ScheduleDecision, type ScheduleRequest, type SchedulingService } from "../../../backend/src/scheduling";
 import {createAssignmentOffer,getGovernedProvider,loadGovernedProviders,seedProviderCapacityDefaults} from "../../../lib/provider-capacity-governance";
-import {resolveActor,securityAudit,type AuthenticatedActor} from "../../../lib/server-auth";
+import{resolveActor,securityAudit,type AuthenticatedActor}from"../../../lib/server-auth";
 
 
 type RequestBody={action?:"reserve"|"assign"|"cancel"|"reassign"|"manual";assignmentStrategy?:"auto"|"admin_choice";clientRequestId:string;groupId?:string;customerId:string;petIds:string[];serviceCode:SchedulingService;zoneId:string;scheduledStart:string;scheduledEnd:string;occurrences?:number;cadenceDays?:number;weekdays?:number[];careMode?:"visit"|"overnight";preferredProviderId?:string;providerId?:string;reason?:string;customRules?:CustomScheduleRule[]};
@@ -70,7 +71,7 @@ async function operateAssignment(db:Awaited<ReturnType<typeof database>>,input:R
   await securityAudit(db,actor,`scheduling.${input.action}`,"scheduling_group",groupId,"completed",{fromProviderId:previousProviderId,toProviderId:decision.provider.id,reason:input.reason??null});
   return json({data:{groupId,status:"assigned",provider:decision.provider,previousProviderId,offer,shortlist:decision.shortlist,explanation:decision.explanation}});}
 
-export async function POST(request:Request){try{const db=await database();await seedProviderCapacityDefaults(db);await ensureSchedulingTables(db);const input=await request.json() as RequestBody;if(input.action&&input.action!=="reserve"){const actor=await resolveActor(request);return operateAssignment(db,input,actor);}if(!input.clientRequestId||!input.customerId||!input.petIds?.length||!input.serviceCode||!input.scheduledStart||!input.scheduledEnd)return json({error:"Missing scheduling fields"},400);
+export async function POST(request:Request){const denied=await refuseUnlessGatewayPermits(request);if(denied)return denied;try{const db=await database();await seedProviderCapacityDefaults(db);await ensureSchedulingTables(db);const input=await request.json() as RequestBody;if(input.action&&input.action!=="reserve"){const actor=await resolveActor(request);return operateAssignment(db,input,actor);}if(!input.clientRequestId||!input.customerId||!input.petIds?.length||!input.serviceCode||!input.scheduledStart||!input.scheduledEnd)return json({error:"Missing scheduling fields"},400);
   // Auto-assignment is enabled ONLY for grooming/training/taxi/walking. Boarding & pet sitting are
   // host-selected: the customer picks a host (preferredProviderId), so we never auto-rank-assign them.
   const AUTO_ASSIGN_SERVICES=new Set(["grooming","dog_training","pet_taxi","dog_walking"]);
@@ -79,7 +80,7 @@ export async function POST(request:Request){try{const db=await database();await 
 // Staff day board: reservations for one IST day grouped into per-provider columns. Gated to
 // scheduling.manage in the API gateway (GET on this path is staff-only; customers never read the
 // whole reservation board).
-export async function GET(request:Request){try{const db=await database();await seedProviderCapacityDefaults(db);await ensureSchedulingTables(db);const url=new URL(request.url);const date=String(url.searchParams.get("date")||"").trim()||new Date(Date.now()+330*60_000).toISOString().slice(0,10);if(!/^\d{4}-\d{2}-\d{2}$/.test(date))return json({error:"A valid IST date (YYYY-MM-DD) is required"},400);
+export async function GET(request:Request){const denied=await refuseUnlessGatewayPermits(request);if(denied)return denied;try{const db=await database();await seedProviderCapacityDefaults(db);await ensureSchedulingTables(db);const url=new URL(request.url);const date=String(url.searchParams.get("date")||"").trim()||new Date(Date.now()+330*60_000).toISOString().slice(0,10);if(!/^\d{4}-\d{2}-\d{2}$/.test(date))return json({error:"A valid IST date (YYYY-MM-DD) is required"},400);
   const dayStart=new Date(`${date}T00:00:00+05:30`).toISOString(),dayEnd=new Date(new Date(dayStart).getTime()+86_400_000).toISOString();
   const rows=await db.prepare("SELECT r.id,r.group_id,r.provider_id,r.service_code,r.zone_id,r.customer_id,r.scheduled_start,r.scheduled_end,r.status,r.occurrence_number,r.capacity_units,p.name provider_name,p.provider_model,d.status decision_status FROM scheduling_reservations r LEFT JOIN provider_capacity_profiles p ON p.id=r.provider_id LEFT JOIN scheduling_assignment_decisions d ON d.group_id=r.group_id WHERE r.scheduled_start>=? AND r.scheduled_start<? ORDER BY r.provider_id,r.scheduled_start").bind(dayStart,dayEnd).all<Record<string,unknown>>();
   const columns=new Map<string,{providerId:string;providerName:string;providerModel:string;reservations:Array<Record<string,unknown>>}>();

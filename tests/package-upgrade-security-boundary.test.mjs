@@ -64,12 +64,32 @@ const counts = () => ({
   events: sqlite.prepare("SELECT COUNT(*) n FROM booking_operational_events").get().n,
 });
 
-async function reset() {
-  // One call through the route creates every table it owns, including the request table.
+let bootstrapped = false;
+
+/**
+ * The route authenticates before it touches the database now, so an anonymous call no longer creates
+ * the tables it owns - which is the point of the second layer, and which broke the old bootstrap. Give
+ * it a provisioned identity first: resolveActor's own DDL creates app_users and seeds the role
+ * catalogue, so the provider below resolves to service_provider and "running late" is permitted
+ * (communications.message), which is enough to reach the handler body and its CREATE TABLEs.
+ */
+async function bootstrap() {
+  if (bootstrapped) return;
+  const { ensureSecurityTables } = await import("../lib/server-auth.ts");
+  await ensureSecurityTables(globalThis.__BOPSEC_DB__);
+  const now = Date.now();
+  for (const actor of Object.values(ACTORS)) {
+    sqlite.prepare("INSERT OR REPLACE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,'active',?,?)").run(`U-${actor.email}`, actor.email, actor.email, actor.role, now, now);
+  }
   await route.POST(new Request("https://app.pawspace.test/api/booking-operations", {
     method: "POST", headers: { "content-type": "application/json", "oai-authenticated-user-email": ACTORS.provider.email },
     body: JSON.stringify({ bookingId: "BOOTSTRAP", providerId: "PRV-REAL", action: "running_late", reason: "bootstrap only" }),
   }));
+  bootstrapped = true;
+}
+
+async function reset() {
+  await bootstrap();
   const now = Date.now();
   for (const table of ["canonical_bookings", "booking_payments", "booking_operational_events", "booking_lifecycle_events", "booking_customer_notifications", "booking_package_upgrade_requests", "app_users", "provider_identity_links"]) {
     sqlite.exec(`DELETE FROM ${table}`);

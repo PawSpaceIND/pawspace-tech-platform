@@ -1,5 +1,6 @@
+import{refuseUnlessGatewayPermits}from"../../../lib/api-gateway";
 import { defaultRoles, hasPermission, isFullAccessRole, parsePermissions, permissionCatalog, type Permission } from "../../../lib/platform-security";
-import { authError, resolveActor, securityAudit } from "../../../lib/server-auth";
+import{authError,resolveActor,securityAudit}from"../../../lib/server-auth";
 
 async function database(){const {env}=await import("cloudflare:workers");return env.DB;}
 async function ensureTables(){
@@ -51,7 +52,7 @@ async function denyAndAudit(db:D1Database,current:Awaited<ReturnType<typeof reso
  return Response.json({error:message},{status});
 }
 
-export async function GET(request:Request){
+export async function GET(request:Request){const denied=await refuseUnlessGatewayPermits(request);if(denied)return denied;
   try{await ensureTables(); const current=await resolveActor(request);
   const db=await database();
   const roles=await db.prepare("SELECT code,name,description,permissions_json,system_role FROM role_definitions ORDER BY CASE code WHEN 'founder' THEN 0 WHEN 'superuser' THEN 1 WHEN 'admin' THEN 2 ELSE 3 END,name").all();
@@ -61,7 +62,7 @@ export async function GET(request:Request){
   return Response.json({authenticated:true,current:{name:current.name,email:current.email,roleCode:current.roleCode,permissions:current.permissions},permissionCatalog,roles:roles.results.map((r)=>({...r,permissions:parsePermissions((r as Record<string,unknown>).permissions_json)})),users,batches,communications,security:{centralApiGateway:true,unknownUsersDenied:true,disabledUsersDenied:true,crossOriginWritesBlocked:true,maskingDefault:true,providerCanSeePhone:false,callsServerRouted:true,secondaryFallback:true,exportsRequirePermission:true,auditEnabled:true}});}catch(error){return authError(error,"Unable to load governance controls");}
 }
 
-export async function POST(request:Request){
+export async function POST(request:Request){const denied=await refuseUnlessGatewayPermits(request);if(denied)return denied;
   try{
     await ensureTables(); const current=await resolveActor(request); const body=await request.json() as Record<string,unknown>; const action=String(body.action||""); const db=await database(); const now=Date.now();
     if(action==="create_user"){

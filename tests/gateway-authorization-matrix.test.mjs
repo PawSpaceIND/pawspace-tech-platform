@@ -81,9 +81,16 @@ test("no route silently changes what it demands", async () => {
   const source = await readFile(new URL("../lib/api-gateway.ts", import.meta.url), "utf8");
   const routes = [...new Set([...source.matchAll(/url\.pathname==="(\/api\/[a-z0-9-]+)"/g)].map((m) => m[1]))].sort();
 
+  // Every method, not just GET and POST. The gateway routes by pathname with a
+  // `method === "GET" ? … : …` shape, so PATCH and DELETE land in the write branch and ARE gated - but
+  // while this only probed two methods they were absent from the frozen policy, and so invisible both
+  // here and to the enforcement suite next door, which takes its gated set from this file.
+  //
+  // Methods no handler exports are recorded too, on purpose. The pair is what the gateway WOULD demand,
+  // so freezing it means adding a DELETE to a route later cannot quietly arrive ungated.
   const live = {};
   for (const route of routes) {
-    for (const method of ["GET", "POST"]) {
+    for (const method of ["GET", "POST", "PATCH", "PUT", "DELETE"]) {
       const decision = await decide(authorizeApiRequest, env, route, method, "founder");
       if (decision.allowed && decision.permission) live[`${method} ${route}`] = decision.permission;
     }

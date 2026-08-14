@@ -1,4 +1,5 @@
-import { authError, requirePermission, requireProviderOwnership, resolveActor } from "../../../lib/server-auth";
+import{refuseUnlessGatewayPermits}from"../../../lib/api-gateway";
+import{authError,requirePermission,requireProviderOwnership,resolveActor}from"../../../lib/server-auth";
 import { repairSchemaDrift } from "../../../lib/schema-drift-repair";
 
 /** Per-isolate guard so the in-place column repair runs once, not on every request. */
@@ -162,7 +163,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+export async function POST(request: Request){const denied=await refuseUnlessGatewayPermits(request);if(denied)return denied;
   try {
     const input = (await request.json()) as OperationInput;
     const problem = validate(input);

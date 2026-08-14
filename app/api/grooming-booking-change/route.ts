@@ -1,3 +1,4 @@
+import{refuseUnlessGatewayPermits}from"../../../lib/api-gateway";
 import{authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{evaluateBookingChange,parsePolicySnapshot,resolveGroomingPolicy}from"../../../lib/grooming-policy-governance";
 import{handleReferralBookingCancellation}from"../../../lib/referral-booking-governance";
@@ -16,7 +17,7 @@ async function ensureTables(db:Db){await db.batch([
 ]);}
 async function event(db:Db,bookingId:string,eventType:string,actorId:string,detail:unknown,now:number){await db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),bookingId,eventType,"booking",bookingId,actorId,JSON.stringify(detail),now).run();}
 
-export async function POST(request:Request){
+export async function POST(request:Request){const denied=await refuseUnlessGatewayPermits(request);if(denied)return denied;
   try{
     const input=await request.json() as Input;
     if(!input.bookingId||!input.customerId||!input.action)return json({error:"Booking, customer and action are required"},400);

@@ -1,3 +1,4 @@
+import{refuseUnlessGatewayPermits}from"../../../lib/api-gateway";
 import{authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{claimReferral,ensureReferralCode,listReferralDirectory,qualifyReferralClaim,reserveReferralReward,reviewReferralClaim,reverseReferralReward,saveReferralProgramme,type ReferralClaimInput,type ReferralProgramme,type ReferralService}from"../../../lib/referral-governance";
 
@@ -8,7 +9,7 @@ const unsupportedServices=(values:ReferralService[]|undefined)=>(values??[]).fil
 
 export async function GET(request:Request){try{const actor=await resolveActor(request);requirePermission(actor,"pricing.view");const db=await database();return json({data:await listReferralDirectory(db),testOnly:true,liveMoney:false,productionReady:false});}catch(error){return authError(error,"Unable to load referral governance");}}
 
-export async function POST(request:Request){try{const body=await request.json() as Record<string,unknown>,action=String(body.action||"");const actor=await resolveActor(request),db=await database();
+export async function POST(request:Request){const denied=await refuseUnlessGatewayPermits(request);if(denied)return denied;try{const body=await request.json() as Record<string,unknown>,action=String(body.action||"");const actor=await resolveActor(request),db=await database();
   if(action==="claim"){
     requirePermission(actor,"scheduling.book");const input=body.input as ReferralClaimInput|undefined;if(!input?.referredCustomerId)return json({error:"Referred customer is required"},400);if(!bookingReadyServices.has(input.serviceCode))return json({error:`Referral booking lifecycle for ${input.serviceCode} is configuration_required`},409);await requireCustomerOwnership(db,actor,input.referredCustomerId);const result=await claimReferral(db,input);await securityAudit(db,actor,"referral.claim","customer",input.referredCustomerId,result.matched&&!result.error?"completed":"denied",{claimId:result.claimId??null,code:input.code,serviceCode:input.serviceCode,cityId:input.cityId,testOnly:true});return json({data:result,testOnly:true,liveMoney:false},result.error?409:200);
   }

@@ -125,20 +125,28 @@ test("a gated handler refuses an identity that holds nothing, without relying on
       const outsider = await statusOf(handler, route, method, "nobody@pawspace.test");
       if (outsider === 0) continue;
       exercised += 1;
-      if (outsider >= 200 && outsider < 300) gatewayOnly.push(`${method} /api/${route} (gateway requires ${approved[`${method} /api/${route}`]})`);
-      else if (outsider === -1) served.push(`${method} /api/${route} threw a non-Response instead of refusing`);
+      // A refusal is 401 or 403 and nothing else. This used to accept any non-2xx, which quietly
+      // counted the wrong thing: POST /api/scheduling-rules validates its body before it looks at
+      // who is asking, so an outsider got 400 "Rule name is required" and the route was scored as
+      // defended. With a valid body the same caller would have got 201. A handler that happens to
+      // fail is not a handler that refuses.
+      if (outsider === 401 || outsider === 403) continue;
+      if (outsider === -1) served.push(`${method} /api/${route} threw a non-Response instead of refusing`);
+      else gatewayOnly.push(`${method} /api/${route} → ${outsider} (gateway requires ${approved[`${method} /api/${route}`]})`);
     }
   }
 
-  assert.ok(exercised > 40, `expected to exercise many gated handlers, only reached ${exercised}`);
+  assert.ok(exercised > 150, `expected to exercise the gated handlers, only reached ${exercised}`);
   assert.deepEqual(served, [], `a gated handler failed in a way that is not a refusal:\n  ${served.join("\n  ")}`);
-  // Reported, not asserted. These are defended in production by the gateway; the list is the
-  // defence-in-depth backlog, and it is printed so it cannot quietly grow.
-  if (gatewayOnly.length) {
-    console.log(`  ${gatewayOnly.length} of ${exercised} gated handlers rely on the gateway alone:`);
-    for (const line of gatewayOnly.slice(0, 10)) console.log(`    ${line}`);
-    if (gatewayOnly.length > 10) console.log(`    … ${gatewayOnly.length - 10} more`);
-  }
+  // Asserted, not reported. This was a printed backlog of 8 while a refusal meant "any non-2xx"; once
+  // that was tightened to 401/403 the real number was 71, and once PATCH and DELETE entered the frozen
+  // policy it was 75. All of them now hold their own line via refuseUnlessPermitted, so an empty list
+  // is the enforceable state and a new unguarded handler fails here by name.
+  assert.deepEqual(
+    gatewayOnly, [],
+    `these gated handlers rely on the worker gateway alone - called directly they do not refuse an identity holding nothing. Add refuseUnlessGatewayPermits(request) from lib/api-gateway as the first statement:\n  ${gatewayOnly.join("\n  ")}`,
+  );
+  console.log(`  ${exercised} gated handler+method pairs each refuse an outsider on their own.`);
 });
 
 test("the spelled-permission assertions never grow, and burn down deliberately", async () => {
