@@ -52,7 +52,8 @@ test("pickup/drop use the real commercial contract fields and mirror the server 
 
 test("the flow is a standalone client component: no imports from other flow/checkout files, no globalThis", () => {
   assert.match(flowSource, /^"use client";/m);
-  assert.match(flowSource, /export default function TaxiFlow\(\{ customer \}: \{ customer: LoggedInCustomer \}\)/);
+  // Finding #188: the flow now also receives the resolved location {cityId,zoneId} from the shell.
+  assert.match(flowSource, /export default function TaxiFlow\(\{ customer, location \}: \{ customer: LoggedInCustomer; location: ResolvedLocation \}\)/);
   assert.doesNotMatch(flowSource, /from\s*["'][^"']*(grooming-flow|stay-flow|training-flow|walking-flow|food-flow)/, "must not import from any other flow file");
   assert.doesNotMatch(flowSource, /globalThis/);
   assert.doesNotMatch(bookingClientSource, /globalThis/);

@@ -93,6 +93,23 @@ const PINCODE_ZONE_MAP:Record<string,ZoneAssignment>={
   "560086":{pincode:"560086",zoneId:"blr-west",city:"Bengaluru",area:"Mahalakshmi Layout"},
   "560091":{pincode:"560091",zoneId:"blr-west",city:"Bengaluru",area:"Kengeri Satellite Town"},
   "560098":{pincode:"560098",zoneId:"blr-west",city:"Bengaluru",area:"Rajarajeshwari Nagar"},
+  // Chennai (maa) — finding #188. PawSpace launched a second city, but SERVICE_ZONES/PINCODE_ZONE_MAP
+  // only ever described Bengaluru, so every Chennai address resolved to not-serviceable (404) and the
+  // whole Chennai customer journey was dead on arrival. These are real Chennai pincodes mapped to real
+  // Chennai zones, mirroring the Bengaluru entries exactly. cityId is derived as zoneId.split("-")[0].
+  // maa-central
+  "600004":{pincode:"600004",zoneId:"maa-central",city:"Chennai",area:"Mylapore"},
+  "600017":{pincode:"600017",zoneId:"maa-central",city:"Chennai",area:"T. Nagar"},
+  "600018":{pincode:"600018",zoneId:"maa-central",city:"Chennai",area:"Teynampet"},
+  "600020":{pincode:"600020",zoneId:"maa-central",city:"Chennai",area:"Adyar"},
+  "600028":{pincode:"600028",zoneId:"maa-central",city:"Chennai",area:"R.A. Puram"},
+  // maa-south
+  "600041":{pincode:"600041",zoneId:"maa-south",city:"Chennai",area:"Thiruvanmiyur"},
+  "600090":{pincode:"600090",zoneId:"maa-south",city:"Chennai",area:"Besant Nagar"},
+  "600091":{pincode:"600091",zoneId:"maa-south",city:"Chennai",area:"Madipakkam"},
+  // maa-omr
+  "600096":{pincode:"600096",zoneId:"maa-omr",city:"Chennai",area:"Perungudi"},
+  "600097":{pincode:"600097",zoneId:"maa-omr",city:"Chennai",area:"Thoraipakkam"},
 };
 
 export const SERVICE_ZONES:Record<string,ServiceZone>={
@@ -101,6 +118,12 @@ export const SERVICE_ZONES:Record<string,ServiceZone>={
   "blr-west":{zoneId:"blr-west",zoneName:"West Bengaluru",description:"Rajajinagar, Vijayanagar, Nagarbhavi, RR Nagar",color:"#4CAF50",serviceAvailable:true},
   "blr-south":{zoneId:"blr-south",zoneName:"South Bengaluru",description:"Koramangala, HSR Layout, JP Nagar, Jayanagar, BTM",color:"#9C27B0",serviceAvailable:true},
   "blr-central":{zoneId:"blr-central",zoneName:"Central Bengaluru",description:"CBD, Shivajinagar, Ulsoor",color:"#E91E63",serviceAvailable:true},
+  // Chennai (maa) service zones — finding #188. Each is serviceAvailable so a resolved Chennai pincode
+  // is accepted end-to-end. `maa-central` must exist for resolveZoneByPincode's `${cityCode}-central`
+  // live-range fallback to produce a Chennai (never a Bengaluru) zone for a launched maa city.
+  "maa-central":{zoneId:"maa-central",zoneName:"Central Chennai",description:"T. Nagar, Mylapore, Adyar, R.A. Puram, Teynampet",color:"#3F51B5",serviceAvailable:true},
+  "maa-south":{zoneId:"maa-south",zoneName:"South Chennai",description:"Velachery, Thiruvanmiyur, Besant Nagar, Madipakkam",color:"#009688",serviceAvailable:true},
+  "maa-omr":{zoneId:"maa-omr",zoneName:"OMR Corridor",description:"Perungudi, Thoraipakkam, Sholinganallur",color:"#795548",serviceAvailable:true},
 };
 
 export async function ensureServiceZonesTables(db:Db){

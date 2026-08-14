@@ -43,7 +43,9 @@ test("Boarding customer search renders only governed discovered hosts",()=>{
   assert.doesNotMatch(flow,/const boardingHosts: Caregiver\[\] =/);
   assert.match(flow,/toBoardingCaregiver/);
   assert.match(flow,/boardingHostWindowKey === boardingHostQueryKey \? boardingHosts : \[\]/);
-  assert.match(flow,/loadBoardingCommercial\(\{cityId:"blr",zoneId:"blr-east",scheduledStart:/);
+  // Finding #188: the Boarding host search now uses the customer's RESOLVED location (city+zone from
+  // their address), not a hardcoded Bengaluru literal, so a Chennai customer searches Chennai hosts.
+  assert.match(flow,/loadBoardingCommercial\(\{cityId:location\.cityId,zoneId:location\.zoneId,scheduledStart:/);
   assert.match(flow,/species:selectedSpecies/);
   assert.match(flow,/item\.providerId===caregiver\.providerId/);
   assert.match(flow,/Selected Boarding host is no longer available for this stay window/);
@@ -67,7 +69,9 @@ test("Boarding customer host cards do not fabricate marketplace proof",()=>{
 test("Boarding customer search does not pretend an unimplemented area or production availability feed",()=>{
   const flow=read("app/mobile-app/stay-flow.tsx"),api=read("app/api/boarding-commercial/route.ts");
   assert.match(flow,/Service zone/);
-  assert.match(flow,/Bengaluru East · UAT/);
+  // Finding #188: the service-zone label is driven by the resolved location (city · zone), not a
+  // hardcoded "Bengaluru East · UAT" string, so it reflects the customer's actual city.
+  assert.match(flow,/\$\{location\.city\} · \$\{location\.zoneId\}/);
   assert.match(flow,/selected-window availability verified in UAT/);
   assert.match(flow,/Host profile \+ leave blocks \+ accepted stay locks \+ pending Boarding scheduler reservations/);
   assert.match(api,/liveAvailability:false/);

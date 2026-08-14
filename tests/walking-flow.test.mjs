@@ -39,7 +39,8 @@ test("the dogs-only guard is present and cats can never be selected", () => {
 
 test("the flow is a standalone client component: no imports from other flow/checkout files, no globalThis", () => {
   assert.match(flowSource, /^"use client";/m);
-  assert.match(flowSource, /export default function WalkingFlow\(\{ customer \}: \{ customer: LoggedInCustomer \}\)/);
+  // Finding #188: the flow now also receives the resolved location {cityId,zoneId} from the shell.
+  assert.match(flowSource, /export default function WalkingFlow\(\{ customer, location \}: \{ customer: LoggedInCustomer; location: ResolvedLocation \}\)/);
   assert.doesNotMatch(flowSource, /from\s*["'][^"']*(grooming-flow|stay-flow|training-flow|checkout)/, "must not import from any other flow/checkout file");
   assert.doesNotMatch(flowSource, /globalThis/);
   assert.doesNotMatch(bookingClientSource, /globalThis/);

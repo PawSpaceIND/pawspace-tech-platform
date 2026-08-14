@@ -17,8 +17,14 @@
  *   FINDING 7  — canonical-bookings now rejects (409) a booking whose city/zone does not match the
  *                reserved provider's city/zone: a blr reservation can no longer be confirmed into a
  *                booking labelled Chennai. The provider-mismatch 409 control still holds.
- *   FINDING 10 — resolveZoneByPincode returns not-serviceable (null) for a live city whose
- *                `${cityCode}-central` zone does not exist, instead of falling back to "blr-east".
+ *   FINDING 10 — resolveZoneByPincode never falls back to "blr-east" for another city. UPDATED for
+ *                finding #188: Chennai (maa) zones are now configured, so a maa pincode resolves to a
+ *                genuine Chennai zone (never a Bengaluru one) rather than not-serviceable.
+ *
+ * NOTE (finding #188): a Chennai (maa) provider pool is now seeded by default. The FINDING 6 Chennai
+ * cases below still fail closed (NO_SCHEDULE_AVAILABLE, never a blr reservation) because their request
+ * window / zone does not match the seeded maa roster — the invariant they pin (a maa request is never
+ * stamped as a Bengaluru reservation) is unchanged.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -189,21 +195,30 @@ test("FINDING 7 (control) — the route STILL rejects a mismatched PROVIDER (409
 // FINDING 10 — resolveZoneByPincode falls back to Object.keys(SERVICE_ZONES)[0] ('blr-east').
 // =====================================================================================================
 
-test("FINDING 10 (fixed) — a Chennai pincode in a Live 'maa' city range now resolves NOT-serviceable (null), never an East Bengaluru zone", async () => {
+test("FINDING 10 (fixed) — a Chennai pincode in a Live 'maa' city range resolves to a Chennai (maa) zone, never an East Bengaluru zone", async () => {
+  // UPDATED for finding #188: the original assertion (a maa pincode resolves NOT-serviceable/null)
+  // pinned the intermediate state where the fix for #10 was in — resolveZoneByPincode no longer invents
+  // Object.keys(SERVICE_ZONES)[0] ('blr-east') for another city — but Chennai itself had NO zone
+  // configured yet, so a Chennai pincode was still not serviceable. #188 completes the launch: Chennai
+  // zones (maa-central/…) now exist in SERVICE_ZONES, so a Chennai pincode inside a Live 'maa' range
+  // resolves to its OWN Chennai zone. The invariant the #10 fix guarantees is unchanged and re-asserted:
+  // the resolved zone is a genuine maa zone, NEVER a Bengaluru (blr) fallback.
   const sqlite = freshDb();
-  // A launched second city whose city_code is 'maa'. No 'maa-central' zone exists in SERVICE_ZONES.
   sqlite.exec("CREATE TABLE IF NOT EXISTS city_launch_configs (city TEXT,city_code TEXT,pincodes TEXT,status TEXT)");
   sqlite.prepare("INSERT INTO city_launch_configs (city,city_code,pincodes,status) VALUES (?,?,?,?)")
     .run("Chennai", "maa", "600001-600100", "Live");
 
-  const resolved = await serviceZones.resolveZoneByPincode(globalThis.__CITY_DB__, "600042"); // T. Nagar, Chennai
+  // 600042 (Velachery) is inside the Live maa range but not in the explicit pincode table, so it
+  // resolves via the city launch config's `${cityCode}-central` fallback — which is a Chennai zone.
+  const resolved = await serviceZones.resolveZoneByPincode(globalThis.__CITY_DB__, "600042");
   console.log("[F10] pincode 600042 ->", JSON.stringify(resolved));
 
-  // No blr zone is ever invented: with no 'maa-central' in SERVICE_ZONES the pincode is not serviceable,
-  // rather than being mislabelled with an East-Bengaluru zone (the old Object.keys(SERVICE_ZONES)[0] fallback).
-  assert.equal(resolved, null, "a Chennai pincode with no maa zone resolves not-serviceable (null), not a blr fallback");
+  assert.ok(resolved, "a Chennai pincode inside a Live maa range now resolves (Chennai is launched)");
+  assert.equal(resolved.assignment.city, "Chennai", "it resolves as a Chennai address");
+  assert.equal(String(resolved.zone.zoneId).slice(0, 3), "maa", "to a genuine Chennai (maa) zone");
+  assert.notEqual(String(resolved.zone.zoneId).slice(0, 3), "blr", "NEVER an East-Bengaluru fallback (finding #10 invariant holds)");
 
-  // Control: a real Bengaluru pincode still resolves to a blr zone — the fix is targeted, not always-null.
+  // Control: a real Bengaluru pincode still resolves to a blr zone — cross-city resolution is clean.
   const blr = await serviceZones.resolveZoneByPincode(globalThis.__CITY_DB__, "560001");
   assert.ok(blr && String(blr.zone.zoneId).startsWith("blr"), "a real Bengaluru pincode still resolves to a blr zone");
 });

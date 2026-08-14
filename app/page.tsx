@@ -191,7 +191,7 @@ export default function Home() {
       const customerId=`WEB-${digits||"UAT"}`;
       const chosenPets=selectedPetIds.map(id=>savedPets.find(pet=>pet.id===id)).filter((pet):pet is SavedPet=>Boolean(pet));
       const requestId=`web-groom-${customerId}-${selectedDate}-${slotIndex}-${selectedPackage.id}-${selectedPetIds.slice().sort().join("-")}`;
-      const decision=await reserveUatSchedule({clientRequestId:requestId,customerId,petIds:selectedPetIds,serviceCode:"grooming",zoneId:"blr-east",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),preferredProviderId:"groom_arun"});
+      const decision=await reserveUatSchedule({clientRequestId:requestId,customerId,petIds:selectedPetIds,serviceCode:"grooming",cityId:"blr",zoneId:"blr-east",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),preferredProviderId:"groom_arun"});
       const canonical=await createCanonicalLifecycle({
         idempotencyKey:requestId,
         scheduleGroupId:decision.groupId,
@@ -237,7 +237,7 @@ export default function Home() {
         const customerId = `WEB-${digits || "UAT"}`;
         const requestId = `web-groom-${customerId}-${selectedDate}-${slotIndex}-${selectedPackage.id}-${selectedPetIds.slice().sort().join("-")}`;
         // Same idempotency key finishBooking uses - this is a harmless, safe pre-fetch, not a second reservation.
-        const decision = await reserveUatSchedule({ clientRequestId: requestId, customerId, petIds: selectedPetIds, serviceCode: "grooming", zoneId: "blr-east", scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(), preferredProviderId: "groom_arun" });
+        const decision = await reserveUatSchedule({ clientRequestId: requestId, customerId, petIds: selectedPetIds, serviceCode: "grooming", cityId: "blr", zoneId: "blr-east", scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(), preferredProviderId: "groom_arun" });
         if (cancelled) return;
         const response = await fetch(`/api/provider-public-profile?providerId=${encodeURIComponent(decision.provider.id)}`);
         const body = await response.json() as { data?: typeof matchedProvider; error?: string };

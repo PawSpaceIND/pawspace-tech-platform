@@ -71,7 +71,7 @@ export default function SittingPage(){
   setBookingLoading(true);setBookingError("");
   try{
    const pets=uatPets.slice(0,petCount),groupId=`sit-${quote.quoteId}`,idempotencyKey=`sitting:${quote.quoteId}:${uatCustomer.id}`;
-   const schedule=await reserveUatSchedule({clientRequestId:groupId,customerId:uatCustomer.id,petIds:pets.map(pet=>pet.sourceId),serviceCode:"pet_sitting",zoneId:"blr-east",scheduledStart:quote.scheduledStart,scheduledEnd:quote.scheduledEnd,occurrences:1,careMode:mode,preferredProviderId:chosen.providerId});
+   const schedule=await reserveUatSchedule({clientRequestId:groupId,customerId:uatCustomer.id,petIds:pets.map(pet=>pet.sourceId),serviceCode:"pet_sitting",cityId:"blr",zoneId:"blr-east",scheduledStart:quote.scheduledStart,scheduledEnd:quote.scheduledEnd,occurrences:1,careMode:mode,preferredProviderId:chosen.providerId});
    const capture=await captureSittingQuoteSandbox({quoteId:quote.quoteId,amount:quote.amountDueNow});
    const result=await createCanonicalSittingBooking({idempotencyKey,groupId:schedule.groupId,sittingQuoteId:quote.quoteId,customer:uatCustomer,pets,cityId:"blr",zoneId:"blr-east",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:quote.scheduledStart,scheduledEnd:quote.scheduledEnd,provider:schedule.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"payment_link",mode:"prepaid",detail:`Server-attested Sitting sandbox capture ${capture.reference}`}});
    setAssignedProvider(schedule.provider);setPaymentReference(capture.reference);setBooking(result);

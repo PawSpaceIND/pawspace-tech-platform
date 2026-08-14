@@ -51,7 +51,8 @@ test("subscription options offered by the flow are all supported by the real API
 test("flow is standalone: no imports from other flow/checkout files, no globalThis", () => {
   assert.doesNotMatch(flow, /from\s*"\.\/(grooming-flow|stay-flow|training-flow|page)/, "must not import other flows or the app shell");
   assert.match(flow, /from "\.\/customer-login"/, "shares only the LoggedInCustomer type, like every flow");
-  assert.match(flow, /\{ customer, onCompleted \}: \{ customer: LoggedInCustomer/, "mirrors the flows' prop contract");
+  // Finding #188: every flow now also receives the resolved location {cityId,zoneId} from the shell.
+  assert.match(flow, /\{ customer, location, onCompleted \}: \{ customer: LoggedInCustomer; location: ResolvedLocation/, "mirrors the flows' prop contract (customer + resolved location)");
   assert.doesNotMatch(flow, /globalThis/);
   assert.doesNotMatch(foodClient, /globalThis/);
   assert.doesNotMatch(flowCss, /globalThis/);
