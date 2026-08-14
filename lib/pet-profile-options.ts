@@ -78,7 +78,36 @@ export function validatePetProfile(species: PetSpecies, p: Partial<PetProfile>):
   if (!p.ageBand || !VALID.age.has(String(p.ageBand).toLowerCase())) return "Select the pet's age";
   if (!p.aggression || !VALID.aggression.has(String(p.aggression).toLowerCase())) return "Select the pet's temperament";
   if (!p.weightBand || !VALID.weight.has(String(p.weightBand).toLowerCase())) return "Select the pet's weight range";
+  if (p.gender && !VALID.gender.has(String(p.gender).toLowerCase())) return "Select a valid gender";
   if (typeof p.vaccinated !== "boolean") return "Tell us whether the pet is vaccinated";
-  if (p.dateOfBirth && !/^\d{4}-\d{2}-\d{2}$/.test(p.dateOfBirth)) return "Date of birth must be a valid date";
+  if (p.dateOfBirth) {
+    // Shape *and* calendar validity — "2024-02-31" rolls over, so a round-trip mismatch catches it —
+    // and a birth date can't be in the future.
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(p.dateOfBirth);
+    if (!match) return "Date of birth must be a valid date";
+    const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+    const date = new Date(Date.UTC(year, month - 1, day));
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return "Date of birth must be a valid date";
+    if (date.getTime() > Date.now()) return "Date of birth can't be in the future";
+  }
   return null;
+}
+
+// Reverse-derive the band selections from the legacy typed columns, so editing a pet captured before
+// this profile existed pre-fills everything we can and only genuinely-new fields need a choice.
+export function ageBandFromYears(years: number | null | undefined): string {
+  if (years === null || years === undefined || !Number.isFinite(years) || years < 0) return "";
+  if (years < 0.5) return "< 6 months";
+  if (years < 1) return "6–12 months";
+  if (years >= 20) return "20+ years";
+  const whole = Math.round(years);
+  const band = `${whole} year${whole === 1 ? "" : "s"}`;
+  return (AGE_BANDS as readonly string[]).includes(band) ? band : "";
+}
+export function weightBandFromKg(kg: number | null | undefined): string {
+  if (kg === null || kg === undefined || !Number.isFinite(kg) || kg <= 0) return "";
+  if (kg < 20) return "3–20 kg";
+  if (kg < 45) return "20–45 kg";
+  if (kg < 60) return "45–60 kg";
+  return "60+ kg";
 }

@@ -5,7 +5,7 @@ import styles from "./pet-manager.module.css";
 import type { LoggedInCustomer } from "./customer-login";
 import { petProfileIssues } from "../../lib/customer-account";
 import { loadCustomerPets, upsertCustomerPet, type CustomerPet } from "../../lib/customer-account-client";
-import { AGE_BANDS, AGGRESSION_LEVELS, PET_GENDERS, WEIGHT_BANDS, breedsFor, validatePetProfile, type PetProfile, type PetSpecies } from "../../lib/pet-profile-options";
+import { AGE_BANDS, AGGRESSION_LEVELS, PET_GENDERS, WEIGHT_BANDS, ageBandFromYears, breedsFor, validatePetProfile, weightBandFromKg, type PetProfile, type PetSpecies } from "../../lib/pet-profile-options";
 
 type PetForm = {
   id?: string;
@@ -65,6 +65,7 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
   const [form, setForm] = useState<PetForm | null>(null); // null = closed; id set = edit-in-place
   const [issues, setIssues] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const todayISO = new Date().toISOString().slice(0, 10);
 
   useEffect(() => {
     let active = true;
@@ -93,18 +94,21 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
     setIssues([]);
     const profile = pet.profile;
     const species: PetSpecies = pet.species === "cat" ? "cat" : "dog";
+    // Pre-fill everything we can derive from a legacy pet (captured before this profile existed) so editing
+    // it doesn't force re-entering data we already have — only genuinely-new fields (temperament) need a pick.
+    const legacyBreed = pet.breed && (breedsFor(species) as readonly string[]).includes(pet.breed) ? pet.breed : "";
     setForm({
       id: pet.id,
       name: pet.name,
       species,
       gender: profile?.gender ?? "",
-      breed: profile?.breed ?? pet.breed ?? "",
-      ageBand: profile?.ageBand ?? "",
+      breed: profile?.breed ?? legacyBreed,
+      ageBand: profile?.ageBand ?? ageBandFromYears(pet.ageYears),
       dateOfBirth: profile?.dateOfBirth ?? "",
-      vaccinated: profile ? (profile.vaccinated ? "yes" : "no") : pet.vaccinationStatus === "verified" ? "yes" : "",
+      vaccinated: profile ? (profile.vaccinated ? "yes" : "no") : pet.vaccinationStatus === "verified" ? "yes" : pet.vaccinationStatus === "not_provided" ? "no" : "",
       vaccinationDose: profile?.vaccinationDose ?? "",
       aggression: profile?.aggression ?? "",
-      weightBand: profile?.weightBand ?? "",
+      weightBand: profile?.weightBand ?? weightBandFromKg(pet.weightKg),
       photo: profile?.photo ?? "",
     });
   };
@@ -157,12 +161,21 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
         customerId: customer.customerId,
         pet: { id: form.id, name: candidate.name, species: form.species, breed: profile.breed || null, vaccinationStatus: candidate.vaccinationStatus, profile },
       });
+    } catch (error) {
+      // The save itself failed — nothing committed, so keep the form open for a safe retry.
+      setIssues([error instanceof Error ? error.message : "Unable to save the pet"]);
+      setSaving(false);
+      return;
+    }
+    // The pet is committed. A failure refreshing the list must NOT reopen the resubmit path: a retry
+    // mints a fresh idempotency key and would create a duplicate pet. Close the form, refresh best-effort.
+    setForm(null);
+    try {
       const refreshed = await loadCustomerPets(customer.customerId);
       setPets(refreshed);
-      setForm(null);
       onPetsChanged?.(refreshed);
-    } catch (error) {
-      setIssues([error instanceof Error ? error.message : "Unable to save the pet"]);
+    } catch {
+      setLoadError("Pet saved — reload to see the updated list.");
     } finally {
       setSaving(false);
     }
@@ -227,7 +240,7 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
           </label>
           <label>
             Date of birth (optional)
-            <input type="date" value={form.dateOfBirth} max="2100-12-31" onChange={(event) => setField({ dateOfBirth: event.target.value })} />
+            <input type="date" value={form.dateOfBirth} max={todayISO} onChange={(event) => setField({ dateOfBirth: event.target.value })} />
           </label>
           <label>
             Weight

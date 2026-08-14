@@ -196,6 +196,8 @@ test("pet manager offers the rich profile capture with add and edit-in-place", (
     assert.ok(component.includes(source), `form maps over ${source}`);
   }
   assert.match(component, /validatePetProfile\(form\.species, profile\)/, "the shared profile validator runs before submit");
+  assert.match(component, /ageBandFromYears\(pet\.ageYears\)/, "editing a legacy pet derives its age band");
+  assert.match(component, /weightBandFromKg\(pet\.weightKg\)/, "editing a legacy pet derives its weight band");
   assert.match(component, /compressImage/, "photo is downscaled to a compact data-URL for inline storage");
   assert.match(component, /openEdit/, "edit-in-place entry point exists");
   assert.match(component, /form\?\.id === pet\.id \?/, "the pet row itself becomes the edit form");
@@ -234,6 +236,55 @@ test("real execution: a rich profile with an off-catalogue breed is rejected", a
     }),
     400, /Select the pet's breed/
   );
+});
+
+test("rich profile validation: DOB calendar/future, gender allow-list, and derive helpers", async () => {
+  const { validatePetProfile, ageBandFromYears, weightBandFromKg } = await import("../lib/pet-profile-options.ts");
+  const base = { breed: "Labrador Retriever", ageBand: "3 years", vaccinated: true, aggression: "Friendly", weightBand: "20–45 kg" };
+  assert.equal(validatePetProfile("dog", base), null);
+  assert.match(validatePetProfile("dog", { ...base, dateOfBirth: "2024-02-31" }), /valid date/, "impossible calendar dates are rejected");
+  assert.match(validatePetProfile("dog", { ...base, dateOfBirth: "2999-01-01" }), /future/, "future birth dates are rejected");
+  assert.equal(validatePetProfile("dog", { ...base, dateOfBirth: "2023-05-10" }), null, "a real past date is accepted");
+  assert.match(validatePetProfile("dog", { ...base, gender: "Alien" }), /valid gender/, "off-catalogue gender is rejected");
+  assert.equal(validatePetProfile("dog", { ...base, gender: "Male" }), null);
+  assert.equal(ageBandFromYears(0.3), "< 6 months");
+  assert.equal(ageBandFromYears(3), "3 years");
+  assert.equal(ageBandFromYears(25), "20+ years");
+  assert.equal(ageBandFromYears(null), "");
+  assert.equal(weightBandFromKg(4), "3–20 kg");
+  assert.equal(weightBandFromKg(50), "45–60 kg");
+  assert.equal(weightBandFromKg(null), "");
+});
+
+test("real execution: the profile is authoritative — top-level fields don't override, dose clears when unvaccinated", async () => {
+  const { db, account } = await accountStack();
+  const created = await account.mutateCustomerAccount(db, {
+    customerId: "CUS-PET-1", action: "upsert_pet", idempotencyKey: "pm-rich-auth",
+    // Conflicting top-level breed + a vaccine dose on an unvaccinated pet — both must be reconciled to the profile.
+    pet: { name: "Rex", species: "dog", breed: "Labrador Retriever", vaccinationStatus: "verified", profile: { breed: "German Shepherd", ageBand: "2 years", vaccinated: false, vaccinationDose: "Rabies", aggression: "Moderate", weightBand: "20–45 kg" } },
+  });
+  const record = await account.readCustomerAccount(db, "CUS-PET-1");
+  const pet = record.pets.find((p) => p.id === created.entityId);
+  assert.equal(pet.breed, "German Shepherd", "profile breed wins over the top-level breed");
+  assert.equal(pet.vaccinationStatus, "not_provided", "typed vaccination derived from the profile, not the top-level value");
+  assert.equal(pet.profile.vaccinationDose, undefined, "vaccine dose is dropped for an unvaccinated pet");
+});
+
+test("real execution: a rich profile on a non-dog/cat species is rejected", async () => {
+  const { db, account } = await accountStack();
+  await rejectsWith(
+    account.mutateCustomerAccount(db, {
+      customerId: "CUS-PET-1", action: "upsert_pet", idempotencyKey: "pm-rich-other",
+      pet: { name: "Nibbles", species: "other", breed: "Labrador Retriever", vaccinationStatus: "not_provided", profile: { breed: "Labrador Retriever", ageBand: "1 year", vaccinated: false, aggression: "Friendly", weightBand: "3–20 kg" } },
+    }),
+    400, /only supported for dogs and cats/
+  );
+});
+
+test("real execution: repeated table ensure is idempotent (concurrency-safe migration)", async () => {
+  const { db, account } = await accountStack();
+  await account.ensureCustomerAccountTables(db);
+  await account.ensureCustomerAccountTables(db);
 });
 
 test("the account route keeps ownership server-side via the platform session", () => {
