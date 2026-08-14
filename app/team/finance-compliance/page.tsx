@@ -6,7 +6,7 @@ import styles from"../team-console.module.css";
 
 type Obligation={code:string;label:string;authority:string;period:string;dueDate:string;kind:string;notes:string;status:"upcoming"|"due_soon"|"overdue"|"filed";daysToDue:number;acknowledgementRef:string|null;amount:number|null};
 type ChecklistItem={key:string;label:string;ok:boolean;value:number|string|null;detail:string};
-type CloseView={period:string;status:"open"|"ready"|"closed";checklist:ChecklistItem[];revenue:{bookings:number;bookingCount:number;foodOrders:number;foodOrderCount:number;total:number};gst:{outputTax:number;eligibleInputTax:number;netPayable:number;invoiceCount:number};tds:{total:number;sections:Record<string,{base:number;tds:number;deductees:number}>;deposited:boolean;depositDueDate:string};payroll:{runStatus:string|null;employees:number;grossTotal:number};boardApproval:{approved:boolean;approvedBy:string|null};closedBy:string|null;closedAt:number|null};
+type CloseView={period:string;status:"open"|"ready"|"closed";checklist:ChecklistItem[];revenue:{delivered:number;deliveredCount:number;committed:number;committedCount:number;bookings:number;bookingCount:number;foodOrders:number;foodOrderCount:number;total:number};gst:{outputTax:number;eligibleInputTax:number;netPayable:number;invoiceCount:number};tds:{total:number;sections:Record<string,{base:number;tds:number;deductees:number}>;deposited:boolean;depositDueDate:string};payroll:{runStatus:string|null;employees:number;grossTotal:number};boardApproval:{approved:boolean;approvedBy:string|null};closedBy:string|null;closedAt:number|null};
 type TdsRow={section:string;deductee_type:string;deductee_id:string;base_amount:number;rate_pct:number;tds_amount:number;pan_status:string};
 type Dashboard={period:string;calendar:Obligation[];close:CloseView;tds:{deductions:TdsRow[];deposit:{amount:number;challan_reference:string}|null;quarterlyReturns:Array<{fy_label:string;quarter:number;form:string;total_tds:number;total_deposited:number;status:string;acknowledgement_ref:string|null}>}};
 
@@ -90,7 +90,11 @@ export default function FinanceCompliancePage(){
     {close&&<section className={styles.panel}>
       <h2 style={{marginTop:0}}>Monthly close — {close.period} <em style={{fontStyle:"normal",fontSize:13,padding:"2px 10px",borderRadius:12,background:close.status==="closed"?"#dff3e7":close.status==="ready"?"#fff6df":"#f4f5f5"}}>{close.status.toUpperCase()}</em></h2>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10,marginBottom:12}}>
-        <article><small>Revenue</small><br/><b>{money(close.revenue.total)}</b><br/><small>{close.revenue.bookingCount} bookings · {close.revenue.foodOrderCount} food orders</small></article>
+        {/* Two figures, never one. A single "Revenue" total put delivered work and work merely booked
+            behind the same number, and the board approved it as though it had been earned. */}
+        <article><small>Revenue delivered</small><br/><b>{money(close.revenue.delivered)}</b><br/><small>{close.revenue.deliveredCount} completed</small></article>
+        <article><small>Committed, not yet delivered</small><br/><b>{money(close.revenue.committed)}</b><br/><small>{close.revenue.committedCount} booked · excluded from earned revenue</small></article>
+        <article><small>Revenue total</small><br/><b>{money(close.revenue.total)}</b><br/><small>delivered + committed · {close.revenue.bookingCount} bookings · {close.revenue.foodOrderCount} food orders</small></article>
         <article><small>GST output</small><br/><b>{money(close.gst.outputTax)}</b><br/><small>{close.gst.invoiceCount} invoices</small></article>
         <article><small>GSTR-3B net payable</small><br/><b>{money(close.gst.netPayable)}</b><br/><small>after eligible input {money(close.gst.eligibleInputTax)}</small></article>
         <article><small>TDS liability</small><br/><b>{money(close.tds.total)}</b><br/><small>deposit due {close.tds.depositDueDate}</small></article>

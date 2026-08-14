@@ -1,6 +1,6 @@
 // Monthly finance close: one governed checklist per calendar month, computed from REAL platform
 // data, gated by the founder's monthly board approval, and locked once closed.
-//   revenue        - canonical_bookings totals + food orders for the month
+//   revenue        - delivered (completed) and committed (booked, not yet delivered), reported apart
 //   gst            - output tax from finance_invoices, eligible input tax from finance_bills via
 //                    approved vendor reviews; GSTR-3B net payable = output - eligible input
 //   tds            - the month's computed TDS liability + deposit status (lib/tds-governance)
@@ -38,7 +38,7 @@ async function safeFirst(db:Db,sql:string,bindings:unknown[]=[]){
 }
 
 export type CloseChecklistItem={key:string;label:string;ok:boolean;value:number|string|null;detail:string};
-export type MonthlyCloseView={period:string;status:"open"|"ready"|"closed";checklist:CloseChecklistItem[];revenue:{bookings:number;bookingCount:number;foodOrders:number;foodOrderCount:number;total:number};gst:{outputTax:number;eligibleInputTax:number;netPayable:number;invoiceCount:number};tds:{total:number;sections:Record<string,{base:number;tds:number;deductees:number}>;deposited:boolean;depositDueDate:string};payroll:{runStatus:string|null;employees:number;grossTotal:number};boardApproval:{approved:boolean;approvedBy:string|null;approvedAt:number|null};closedBy:string|null;closedAt:number|null};
+export type MonthlyCloseView={period:string;status:"open"|"ready"|"closed";checklist:CloseChecklistItem[];revenue:{delivered:number;deliveredCount:number;committed:number;committedCount:number;bookings:number;bookingCount:number;foodOrders:number;foodOrderCount:number;total:number};gst:{outputTax:number;eligibleInputTax:number;netPayable:number;invoiceCount:number};tds:{total:number;sections:Record<string,{base:number;tds:number;deductees:number}>;deposited:boolean;depositDueDate:string};payroll:{runStatus:string|null;employees:number;grossTotal:number};boardApproval:{approved:boolean;approvedBy:string|null;approvedAt:number|null};closedBy:string|null;closedAt:number|null};
 
 /** Build (or rebuild) the month's close view from real data. Never mutates a locked close. */
 export async function monthlyCloseView(db:Db,input:{period:string;actorId:string;asOf?:number}):Promise<MonthlyCloseView>{
@@ -52,10 +52,39 @@ export async function monthlyCloseView(db:Db,input:{period:string;actorId:string
  }
 
  // Revenue: service bookings (scheduled in the month, not cancelled) + food orders (created in month).
- const bookings=await safeFirst(db,"SELECT COALESCE(SUM(total_amount),0) total,COUNT(*) count FROM canonical_bookings WHERE scheduled_start>=? AND scheduled_start<? AND status NOT IN ('cancelled','refunded')",[startDate,endDate]);
- const food=await safeFirst(db,"SELECT COALESCE(SUM(total_amount),0) total,COUNT(*) count FROM food_orders WHERE created_at>=? AND created_at<? AND status NOT IN ('cancelled','refunded')",[startMs,endMs]);
- const revenue={bookings:round2(Number(bookings?.total||0)),bookingCount:Number(bookings?.count||0),foodOrders:round2(Number(food?.total||0)),foodOrderCount:Number(food?.count||0),total:0};
- revenue.total=round2(revenue.bookings+revenue.foodOrders);
+ // Revenue is reported as TWO figures, not one. This asked for `status NOT IN ('cancelled','refunded')`
+ // and called the result revenue, so 58% of the number the board approved was work that had been booked
+ // and not yet delivered - and, because the filter was a denylist of two, it also counted a booking the
+ // customer never confirmed (draft, pending), one the provider never accepted (awaiting_*), and one where
+ // nobody turned up (no_show). Founder's decision, recorded on task #37: split delivered from committed,
+ // and drop the four that are not revenue on any basis.
+ //
+ // Deliberately an ALLOWLIST now. The denylist was the defect: every status added to the product since
+ // became revenue by default, silently, which is how no_show came to be counted.
+ const DELIVERED="('completed')";
+ const COMMITTED="('confirmed','in_progress')";
+ const delivered=await safeFirst(db,`SELECT COALESCE(SUM(total_amount),0) total,COUNT(*) count FROM canonical_bookings WHERE scheduled_start>=? AND scheduled_start<? AND status IN ${DELIVERED}`,[startDate,endDate]);
+ const committed=await safeFirst(db,`SELECT COALESCE(SUM(total_amount),0) total,COUNT(*) count FROM canonical_bookings WHERE scheduled_start>=? AND scheduled_start<? AND status IN ${COMMITTED}`,[startDate,endDate]);
+ // Food orders keep their own vocabulary: 'delivered' is the terminal state. The four booking statuses
+ // above were a decision about BOOKING statuses and are not extended here - food's statuses
+ // (reserved, picked, packed, revoked, ops_review_required, stock_recovery_required) need their own
+ // call, so the split changes how food revenue is PRESENTED without changing which rows count.
+ const foodDelivered=await safeFirst(db,"SELECT COALESCE(SUM(total_amount),0) total,COUNT(*) count FROM food_orders WHERE created_at>=? AND created_at<? AND status='delivered'",[startMs,endMs]);
+ const foodCommitted=await safeFirst(db,"SELECT COALESCE(SUM(total_amount),0) total,COUNT(*) count FROM food_orders WHERE created_at>=? AND created_at<? AND status NOT IN ('cancelled','refunded','delivered')",[startMs,endMs]);
+
+ const revenue={
+  delivered:round2(Number(delivered?.total||0)+Number(foodDelivered?.total||0)),
+  deliveredCount:Number(delivered?.count||0)+Number(foodDelivered?.count||0),
+  committed:round2(Number(committed?.total||0)+Number(foodCommitted?.total||0)),
+  committedCount:Number(committed?.count||0)+Number(foodCommitted?.count||0),
+  // Kept so the two halves stay separable per stream on the screen.
+  bookings:round2(Number(delivered?.total||0)+Number(committed?.total||0)),
+  bookingCount:Number(delivered?.count||0)+Number(committed?.count||0),
+  foodOrders:round2(Number(foodDelivered?.total||0)+Number(foodCommitted?.total||0)),
+  foodOrderCount:Number(foodDelivered?.count||0)+Number(foodCommitted?.count||0),
+  total:0,
+ };
+ revenue.total=round2(revenue.delivered+revenue.committed);
 
  // GST: output tax from issued invoices in the month; input tax only where the vendor review
  // approved eligibility (never claim unreviewed input credit).
@@ -76,7 +105,7 @@ export async function monthlyCloseView(db:Db,input:{period:string;actorId:string
  const boardApproval={approved:Boolean(approval),approvedBy:approval?.approvedBy??null,approvedAt:approval?.approvedAt??null};
 
  const checklist:CloseChecklistItem[]=[
-  {key:"revenue_reconciled",label:"Revenue aggregated from canonical bookings + food orders",ok:true,value:revenue.total,detail:`${revenue.bookingCount} bookings + ${revenue.foodOrderCount} food orders`},
+  {key:"revenue_reconciled",label:"Revenue split: delivered vs committed but not yet delivered",ok:true,value:revenue.total,detail:`delivered ${revenue.deliveredCount} for ${revenue.delivered}; committed ${revenue.committedCount} for ${revenue.committed}`},
   {key:"gst_computed",label:"GSTR-3B net payable computed (output - eligible input)",ok:true,value:gst.netPayable,detail:`output ${gst.outputTax} - eligible input ${gst.eligibleInputTax}`},
   {key:"tds_computed",label:"TDS liability computed from payroll + payouts",ok:true,value:tds.totalTds,detail:Object.entries(tds.sections).map(([section,bucket])=>`${section}: ${bucket.tds}`).join(" · ")||"no deductions this month"},
   {key:"tds_deposited",label:`TDS deposited (due ${tds.depositDueDate})`,ok:tds.totalTds===0||Boolean(deposit),value:deposit?round2(Number(deposit.amount)):null,detail:tds.totalTds===0?"no liability":deposit?"challan recorded":"deposit pending"},
@@ -107,6 +136,6 @@ export async function closeMonth(db:Db,input:{period:string;actorId:string;asOf?
   .bind(input.actorId,now,JSON.stringify({...view,status:"closed",closedBy:input.actorId,closedAt:now}),now,input.period).run();
  if(!Number(result.meta.changes))throw new Response(`${input.period} is already closed and locked`,{status:409});
  await db.prepare("INSERT INTO finance_close_events (id,period,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?)")
-  .bind(`FCE-${crypto.randomUUID().slice(0,10).toUpperCase()}`,input.period,"closed",input.actorId,JSON.stringify({revenue:view.revenue.total,gstNetPayable:view.gst.netPayable,tds:view.tds.total}),now).run();
+  .bind(`FCE-${crypto.randomUUID().slice(0,10).toUpperCase()}`,input.period,"closed",input.actorId,JSON.stringify({revenue:view.revenue.total,revenueDelivered:view.revenue.delivered,revenueCommitted:view.revenue.committed,gstNetPayable:view.gst.netPayable,tds:view.tds.total}),now).run();
  return{period:input.period,status:"closed" as const,closedBy:input.actorId,closedAt:now};
 }
