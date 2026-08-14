@@ -1,24 +1,24 @@
 /**
- * REPRO — FINDINGS 6, 7, 10 (city / zone data-integrity) against EXACT main (commit 1240359).
+ * FINDINGS 6, 7, 10 (city / zone data-integrity) — FIXED. Converted to assert the SECURE result.
  *
- * All three defects share one root: the scheduling + booking chain has no city as a first-class,
- * validated field. Bengaluru ("blr") is baked into the code, and the one place that should prove
- * "the booking's city/zone == the reserved provider's city/zone" never checks it.
+ * All three defects shared one root: the scheduling + booking chain had no city as a first-class,
+ * validated field. cityId is now a first-class, validated, normalized input threaded through the
+ * scheduling path, canonical-bookings now enforces booking city/zone == the reserved provider's
+ * city/zone, and resolveZoneByPincode no longer invents a Bengaluru zone for another city.
  *
  * This suite runs the REAL route handlers (app/api/uat-scheduling/route.ts and
  * app/api/canonical-bookings/route.ts) and the REAL zone resolver (lib/service-zones.ts) against a
- * real node:sqlite D1, for a Bengaluru customer+provider pair AND a second synthetic city
- * (Chennai, cityId "maa"). It asserts where the city/zone chain BREAKS for the second city.
+ * real node:sqlite D1, for a Bengaluru customer+provider pair AND a second city (Chennai, cityId
+ * "maa"). It asserts the chain is now consistent / fails closed for the second city.
  *
- *   FINDING 6  — scheduling is hardcoded to "blr": provider pool, availability, rules, scheduling
- *                request and reservation persistence all use the literal "blr". The scheduling input
- *                (RequestBody) has no cityId at all. Proven by EXECUTION + file:line citations.
- *   FINDING 7  — canonical-bookings validates the reservation's PROVIDER but never its city_id/zone_id
- *                against the client-supplied cityId/zoneId. Proven by EXECUTION: a blr reservation is
- *                confirmed into a booking labelled Chennai (maa/maa-central) with a 201.
- *   FINDING 10 — resolveZoneByPincode falls back to Object.keys(SERVICE_ZONES)[0] ("blr-east") for a
- *                live city whose `${cityCode}-central` zone does not exist. Proven by EXECUTION: a
- *                Chennai pincode resolves to city:Chennai but zone:East Bengaluru.
+ *   FINDING 6  — cityId is now honored: a Chennai request carries cityId="maa" and is scheduled
+ *                against the maa provider pool. No maa providers are seeded, so it resolves
+ *                NO_SCHEDULE_AVAILABLE — and is NEVER stamped as a Bengaluru reservation.
+ *   FINDING 7  — canonical-bookings now rejects (409) a booking whose city/zone does not match the
+ *                reserved provider's city/zone: a blr reservation can no longer be confirmed into a
+ *                booking labelled Chennai. The provider-mismatch 409 control still holds.
+ *   FINDING 10 — resolveZoneByPincode returns not-serviceable (null) for a live city whose
+ *                `${cityCode}-central` zone does not exist, instead of falling back to "blr-east".
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -83,40 +83,40 @@ test("FINDING 6 — BENGALURU pair: real reserve yields a blr provider pool + a 
   // Consistency across the chain holds for Bengaluru: selected city (blr) == zone city == provider city == reservation city.
 });
 
-test("FINDING 6 — CHENNAI pair (a): a Chennai customer sending their own city zone 'maa-central' gets NO provider pool", async () => {
+test("FINDING 6 (fixed) — CHENNAI pair (a): a Chennai customer sends cityId='maa' + zone 'maa-central' and is scheduled maa-scoped: NO_SCHEDULE_AVAILABLE, never a Bengaluru reservation", async () => {
   const sqlite = freshDb();
-  // The scheduling RequestBody has NO cityId field — a Chennai customer can only send a zoneId.
-  // Their real city zone is maa-central. The provider pool is loaded as loadGovernedProviders(db,"blr",...)
-  // (literal "blr"), and no seeded provider carries zone "maa-central", so the pool is empty.
+  // cityId is now a first-class input. The provider pool is loaded for 'maa'
+  // (loadGovernedProviders(db,'maa',...)); no seeded provider is in maa, so the pool is empty and the
+  // request fails closed — critically, it is NEVER stamped as a Bengaluru reservation.
   const res = await postScheduling({
     clientRequestId: "SG-MAA-6a", customerId: "CUS-MAA", petIds: ["Simba"],
-    serviceCode: "grooming", zoneId: "maa-central", scheduledStart: START, scheduledEnd: END,
+    serviceCode: "grooming", cityId: "maa", zoneId: "maa-central", scheduledStart: START, scheduledEnd: END,
   });
   const body = await res.json();
   console.log("[F6 MAA-a] status =", res.status, "error =", body?.error);
 
-  assert.equal(res.status, 409, "a genuine Chennai zone produces no schedule");
-  assert.equal(body.error, "NO_SCHEDULE_AVAILABLE", "Chennai customer + Chennai zone -> no eligible provider pool exists");
-  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM scheduling_reservations WHERE group_id=?").get("SG-MAA-6a").c, 0, "no reservation for a real Chennai zone");
+  assert.equal(res.status, 409, "a genuine Chennai city+zone produces no schedule (no maa providers seeded)");
+  assert.equal(body.error, "NO_SCHEDULE_AVAILABLE", "Chennai request -> maa provider pool -> empty");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM scheduling_reservations WHERE group_id=?").get("SG-MAA-6a").c, 0, "no reservation for an unserviceable Chennai request");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM scheduling_reservations WHERE group_id=? AND city_id='blr'").get("SG-MAA-6a").c, 0, "and NEVER a Bengaluru reservation for a maa request");
 });
 
-test("FINDING 6 — CHENNAI pair (b): even when a Chennai customer is routed to a blr zone, the reservation is stamped city_id='blr', never 'maa'", async () => {
+test("FINDING 6 (fixed) — CHENNAI pair (b): a maa request is never stamped city_id='blr'; with no maa providers it resolves NO_SCHEDULE_AVAILABLE, not a Bengaluru reservation", async () => {
   const sqlite = freshDb();
-  // Per FINDING 10 a Chennai pincode can resolve to a blr-* zone. So the Chennai customer reaches
-  // scheduling with zoneId 'blr-east'. They DO get a reservation now — but it is a Bengaluru one:
-  // there is no way to ask for or record a Chennai (maa) reservation. cityId is not an input.
+  // cityId='maa' is now carried and honored. Even if a mis-routed zone is supplied, scheduling loads
+  // the maa provider pool, so a maa request can NEVER be silently fulfilled as a Bengaluru reservation.
   const res = await postScheduling({
     clientRequestId: "SG-MAA-6b", customerId: "CUS-MAA", petIds: ["Simba"],
-    serviceCode: "grooming", zoneId: "blr-east", scheduledStart: START, scheduledEnd: END,
+    serviceCode: "grooming", cityId: "maa", zoneId: "blr-east", scheduledStart: START, scheduledEnd: END,
   });
   const body = await res.json();
-  console.log("[F6 MAA-b] status =", res.status, "provider =", body?.data?.provider?.id, "providerCity =", body?.data?.provider?.cityId);
+  console.log("[F6 MAA-b] status =", res.status, "error =", body?.error);
 
-  assert.equal(res.status, 200);
-  const reservation = sqlite.prepare("SELECT city_id,zone_id FROM scheduling_reservations WHERE group_id=?").get("SG-MAA-6b");
-  // THE CHAIN BREAKS: the Chennai customer's reservation is Bengaluru's.
-  assert.equal(reservation.city_id, "blr", "the reservation is stamped Bengaluru, not Chennai");
-  assert.notEqual(reservation.city_id, "maa", "a Chennai (maa) reservation is unreachable — scheduling has no cityId to carry");
+  assert.equal(res.status, 409, "a maa request with no maa providers yields no schedule");
+  assert.equal(body.error, "NO_SCHEDULE_AVAILABLE", "the pool is loaded for maa, of which none are seeded");
+  // THE CHAIN NO LONGER BREAKS: no reservation exists, and certainly not a Bengaluru one.
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM scheduling_reservations WHERE group_id=?").get("SG-MAA-6b").c, 0, "no reservation is created for an unserviceable maa request");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM scheduling_reservations WHERE group_id=? AND city_id='blr'").get("SG-MAA-6b").c, 0, "a Chennai (maa) request is NEVER stamped as a Bengaluru reservation");
 });
 
 // =====================================================================================================
@@ -155,7 +155,7 @@ function bookingBody(overrides = {}) {
   };
 }
 
-test("FINDING 7 — a BENGALURU reservation is confirmed into a booking labelled CHENNAI (maa/maa-central): mismatch accepted", async () => {
+test("FINDING 7 (fixed) — a BENGALURU reservation confirmed into a booking labelled CHENNAI (maa/maa-central) is now REJECTED 409 (city/zone mismatch)", async () => {
   const sqlite = freshDb();                       // sandbox payment env (default)
   seedBlrReservation(sqlite, "SG-F7", "groom_kiran");
 
@@ -163,22 +163,17 @@ test("FINDING 7 — a BENGALURU reservation is confirmed into a booking labelled
   const body = await res.json();
   console.log("[F7] status =", res.status, "body =", JSON.stringify(body));
 
-  assert.equal(res.status, 201, `the mismatched-city booking is ACCEPTED: ${JSON.stringify(body)}`);
+  // The provider matches (so the provider guard passes) but the city/zone invariant now rejects it.
+  assert.equal(res.status, 409, `the mismatched-city booking is now REJECTED: ${JSON.stringify(body)}`);
+  assert.match(body.error, /city\/zone does not match|city and zone/i, "the error names the city/zone mismatch invariant");
 
+  // No booking row is written for the mismatched request.
   const booking = sqlite.prepare("SELECT city_id,zone_id,provider_id FROM canonical_bookings WHERE schedule_group_id=?").get("SG-F7");
-  const reservation = sqlite.prepare("SELECT city_id,zone_id,provider_id FROM scheduling_reservations WHERE group_id=?").get("SG-F7");
-  console.log("[F7] booking city/zone =", booking.city_id, booking.zone_id, "| reservation city/zone =", reservation.city_id, reservation.zone_id);
-
-  // The provider matched (the route DOES check provider) ...
-  assert.equal(booking.provider_id, reservation.provider_id, "provider is the one guard the route enforces");
-  // ... but the CITY and ZONE were never checked: the booking is Chennai, the reservation Bengaluru.
-  assert.equal(booking.city_id, "maa", "booking persisted the client's Chennai cityId");
-  assert.equal(reservation.city_id, "blr", "the reservation it was validated against is Bengaluru");
-  assert.notEqual(booking.city_id, reservation.city_id, "CHAIN BREAK: booking city != reservation city, yet accepted");
-  assert.notEqual(booking.zone_id, reservation.zone_id, "CHAIN BREAK: booking zone != reservation zone, yet accepted");
+  assert.equal(booking, undefined, "no booking row persisted on the city/zone mismatch");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM canonical_bookings").get().c, 0, "no canonical_bookings written for a mismatched-city request");
 });
 
-test("FINDING 7 (control) — the route DOES reject a mismatched PROVIDER, proving city/zone is the missing invariant", async () => {
+test("FINDING 7 (control) — the route STILL rejects a mismatched PROVIDER (409), alongside the new city/zone invariant", async () => {
   const sqlite = freshDb();
   seedBlrReservation(sqlite, "SG-F7C", "groom_kiran");
   // Same mismatched Chennai city/zone, but now the provider does NOT match the reservation.
@@ -194,7 +189,7 @@ test("FINDING 7 (control) — the route DOES reject a mismatched PROVIDER, provi
 // FINDING 10 — resolveZoneByPincode falls back to Object.keys(SERVICE_ZONES)[0] ('blr-east').
 // =====================================================================================================
 
-test("FINDING 10 — a Chennai pincode in a Live 'maa' city range resolves to city:Chennai, zone:East Bengaluru", async () => {
+test("FINDING 10 (fixed) — a Chennai pincode in a Live 'maa' city range now resolves NOT-serviceable (null), never an East Bengaluru zone", async () => {
   const sqlite = freshDb();
   // A launched second city whose city_code is 'maa'. No 'maa-central' zone exists in SERVICE_ZONES.
   sqlite.exec("CREATE TABLE IF NOT EXISTS city_launch_configs (city TEXT,city_code TEXT,pincodes TEXT,status TEXT)");
@@ -204,10 +199,11 @@ test("FINDING 10 — a Chennai pincode in a Live 'maa' city range resolves to ci
   const resolved = await serviceZones.resolveZoneByPincode(globalThis.__CITY_DB__, "600042"); // T. Nagar, Chennai
   console.log("[F10] pincode 600042 ->", JSON.stringify(resolved));
 
-  assert.ok(resolved, "the Chennai pincode is inside a Live city range, so it is not turned away");
-  assert.equal(resolved.assignment.city, "Chennai", "the city is correctly Chennai");
-  // CHAIN BREAK: because SERVICE_ZONES has no 'maa-central', the fallback picks Object.keys(SERVICE_ZONES)[0].
-  assert.equal(resolved.zone.zoneId, "blr-east", "zone fell back to the FIRST SERVICE_ZONES key");
-  assert.equal(resolved.zone.zoneName, "East Bengaluru", "a Chennai pincode is labelled with an East Bengaluru zone");
-  assert.notEqual(resolved.zone.zoneId.slice(0, 3), "maa", "no Chennai zone is ever produced");
+  // No blr zone is ever invented: with no 'maa-central' in SERVICE_ZONES the pincode is not serviceable,
+  // rather than being mislabelled with an East-Bengaluru zone (the old Object.keys(SERVICE_ZONES)[0] fallback).
+  assert.equal(resolved, null, "a Chennai pincode with no maa zone resolves not-serviceable (null), not a blr fallback");
+
+  // Control: a real Bengaluru pincode still resolves to a blr zone — the fix is targeted, not always-null.
+  const blr = await serviceZones.resolveZoneByPincode(globalThis.__CITY_DB__, "560001");
+  assert.ok(blr && String(blr.zone.zoneId).startsWith("blr"), "a real Bengaluru pincode still resolves to a blr zone");
 });

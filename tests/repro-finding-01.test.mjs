@@ -146,45 +146,41 @@ async function gateway(url, email) {
   return authorizeApiRequest(asRole(url, email), { DB: globalThis.__CC_DB__, FOUNDER_EMAIL: "" });
 }
 
-test("GATEWAY: service_provider is GRANTED GET /api/booking-command-center with bookings.view (mapping api-gateway.ts:118) — THE BUG", async () => {
+test("GATEWAY: service_provider is now REFUSED GET /api/booking-command-center — route requires bookings.manage (mapping api-gateway.ts:118) — FIXED", async () => {
   await seed();
   const resolved = await gateway(CC_URL, EMAIL.service_provider);
-  assert.ok(!(resolved instanceof Response), `gateway refused (a Response) instead of granting — got ${resolved instanceof Response ? await resolved.clone().text() : ""}`);
-  assert.equal(resolved.permission, "bookings.view", "GET must resolve to bookings.view");
-  assert.equal(resolved.actor.roleCode, "service_provider", "the granted actor really is a service_provider");
-  assert.ok(resolved.actor.permissions.includes("bookings.view"));
+  assert.ok(resolved instanceof Response, "gateway must REFUSE the service_provider (a Response), not grant the platform-wide read");
+  assert.equal(resolved.status, 403, "service_provider is denied 403 at the gateway (lacks bookings.manage)");
 });
 
-test("GATEWAY: service_provider is GRANTED GET /api/canonical-bookings with bookings.view (mapping api-gateway.ts:110) — THE BUG", async () => {
+test("GATEWAY: service_provider is now REFUSED GET /api/canonical-bookings — requires bookings.manage (mapping api-gateway.ts:110) — FIXED", async () => {
   await seed();
   const resolved = await gateway(CB_URL, EMAIL.service_provider);
-  assert.ok(!(resolved instanceof Response), "gateway refused instead of granting the platform-wide read");
-  assert.equal(resolved.permission, "bookings.view");
-  assert.equal(resolved.actor.roleCode, "service_provider");
+  assert.ok(resolved instanceof Response, "gateway must REFUSE the platform-wide read for a field service_provider");
+  assert.equal(resolved.status, 403);
 });
 
-test("GATEWAY: associate is ALSO GRANTED both reads with bookings.view (finding names associate too)", async () => {
+test("GATEWAY: associate is ALSO now REFUSED both reads (associate lacks bookings.manage too)", async () => {
   await seed();
   for (const url of [CC_URL, CB_URL]) {
     const resolved = await gateway(url, EMAIL.associate);
-    assert.ok(!(resolved instanceof Response), `associate refused for ${url}`);
-    assert.equal(resolved.permission, "bookings.view");
-    assert.equal(resolved.actor.roleCode, "associate");
+    assert.ok(resolved instanceof Response, `associate should be REFUSED for ${url}`);
+    assert.equal(resolved.status, 403);
   }
 });
 
-test("GATEWAY baseline: manager and founder are granted (legitimate cross-booking staff)", async () => {
+test("GATEWAY baseline: manager and founder are still granted (legitimate cross-booking staff)", async () => {
   await seed();
   for (const role of ["manager", "founder"]) {
     for (const url of [CC_URL, CB_URL]) {
       const resolved = await gateway(url, EMAIL[role]);
       assert.ok(!(resolved instanceof Response), `${role} unexpectedly refused for ${url}`);
-      assert.equal(resolved.permission, "bookings.view");
+      assert.equal(resolved.permission, "bookings.manage", "the reads now resolve to bookings.manage, which manager/founder hold");
     }
   }
 });
 
-test("GATEWAY discriminates: finance (no bookings.view) is REFUSED 403 — proves the grant above is real, not fail-open", async () => {
+test("GATEWAY discriminates: finance (no bookings.manage) is REFUSED 403 — proves the check is real, not fail-open", async () => {
   await seed();
   for (const url of [CC_URL, CB_URL]) {
     const resolved = await gateway(url, EMAIL.finance);
@@ -196,7 +192,7 @@ test("GATEWAY discriminates: finance (no bookings.view) is REFUSED 403 — prove
 // ===========================================================================
 // PART B — the permission catalogue that makes the grant happen.
 // ===========================================================================
-test("PERMISSIONS: service_provider and associate hold bookings.view; service_provider lacks the manage permissions (platform-security.ts:25/:23)", async () => {
+test("PERMISSIONS: service_provider/associate hold only bookings.view and LACK bookings.manage — that gap is exactly what now denies them (platform-security.ts:25/:23)", async () => {
   const { defaultRoles } = await import("../lib/platform-security.ts");
   const sp = defaultRoles.find((r) => r.code === "service_provider");
   const assoc = defaultRoles.find((r) => r.code === "associate");
@@ -213,59 +209,41 @@ test("PERMISSIONS: service_provider and associate hold bookings.view; service_pr
 // ===========================================================================
 const payload = (body) => JSON.stringify(body ?? {});
 
-test("LEAK — booking-command-center: a service_provider receives the customer's exact phone + email + payment + refund/notification/ticket", async () => {
+test("SECURE — booking-command-center: a service_provider is REFUSED (403) by the route's own authorize(bookings.manage), and receives NONE of the customer PII", async () => {
   await seed();
   const { GET } = await import("../app/api/booking-command-center/route.ts");
   const response = await GET(asRole(CC_URL, EMAIL.service_provider));
   const body = await response.json();
   const dump = payload(body);
 
-  assert.equal(response.status, 200, `service_provider must be allowed by the route: ${dump.slice(0, 200)}`);
-  assert.ok(Array.isArray(body.bookings) && body.bookings.length === 1, `expected the seeded booking back, got ${body.bookings?.length}`);
+  assert.equal(response.status, 403, `service_provider must be refused by the route: ${dump.slice(0, 200)}`);
+  assert.equal(body.error, "Permission denied", "the route returns a controlled permission-denied body");
+  assert.ok(!Array.isArray(body.bookings), "no bookings array is returned on the refusal");
 
-  // The load-bearing assertion: the exact customer PII strings appear in what a field provider received.
+  // The load-bearing assertion: NONE of the exact customer PII strings appear in what a field provider received.
   const leaked = CC_SECRETS.filter((secret) => dump.includes(secret));
-  assert.deepEqual(
-    leaked.slice().sort(),
-    CC_SECRETS.slice().sort(),
-    `every seeded secret must appear in the service_provider's response. Present: ${leaked.join(" | ")}`
-  );
+  assert.deepEqual(leaked, [], `no seeded secret may reach a service_provider. Leaked: ${leaked.join(" | ")}`);
   // Spell out the two that matter most, individually, so the evidence is unambiguous.
-  assert.ok(dump.includes(C.primaryPhone), "customer primary phone leaked to service_provider");
-  assert.ok(dump.includes(C.email), "customer email leaked to service_provider");
-
-  const bk = body.bookings[0];
-  assert.equal(bk.primary_phone, C.primaryPhone, "phone is a first-class field on the returned booking");
-  assert.equal(bk.customer_email, C.email, "email is a first-class field on the returned booking");
-  assert.equal(bk.payment_method, C.paymentMethod);
-  assert.equal(bk.payment_status, C.paymentStatus);
-  assert.equal(bk.refunds[0].gateway_reference, C.refundGatewayRef, "refund gateway reference exposed");
-  assert.equal(bk.notifications[0].message, C.notification, "customer notification body exposed");
-  assert.equal(bk.tickets[0].subject, C.ticketSubject, "CX ticket exposed");
+  assert.ok(!dump.includes(C.primaryPhone), "customer primary phone is NOT disclosed to service_provider");
+  assert.ok(!dump.includes(C.email), "customer email is NOT disclosed to service_provider");
 });
 
-test("LEAK — canonical-bookings: the handler does NO auth of its own; the gateway grant hands a service_provider a platform-wide booking it does not own", async () => {
+test("SECURE — canonical-bookings: the GET handler now resolves the actor and requires bookings.manage; a service_provider is REFUSED (403), no platform-wide data", async () => {
   await seed();
-  // 1) The gateway is the only gate, and it grants the service_provider (proven again here concretely).
+  // 1) The gateway now REFUSES the service_provider for this read.
   const resolved = await gateway(CB_URL, EMAIL.service_provider);
-  assert.ok(!(resolved instanceof Response) && resolved.permission === "bookings.view", "service_provider granted at the gateway");
+  assert.ok(resolved instanceof Response && resolved.status === 403, "service_provider refused at the gateway");
 
-  // 2) The handler ignores identity entirely (GET() takes no Request) and returns platform-wide data
-  //    with no provider-ownership filter. The seeded booking is owned by PRV-OTHER.
+  // 2) The handler itself now performs auth: resolveActor(request) + requirePermission("bookings.manage").
+  //    A service_provider identity is denied 403 and receives no bookings — even called directly.
   const { GET } = await import("../app/api/canonical-bookings/route.ts");
-  const response = await GET();
+  const response = await GET(asRole(CB_URL, EMAIL.service_provider));
   const body = await response.json();
   const dump = payload(body);
 
-  assert.equal(response.status, 200);
-  assert.ok(Array.isArray(body.bookings) && body.bookings.length === 1, "platform-wide read returns the booking regardless of ownership");
-  const bk = body.bookings[0];
-  assert.equal(bk.customer_name, C.customerName, "identifiable customer name exposed platform-wide");
-  assert.equal(bk.provider_id, C.providerId, "the booking belongs to PRV-OTHER — no ownership filter was applied");
-  assert.equal(bk.payment_status, C.paymentStatus);
-  assert.equal(bk.gateway, "uat_sandbox");
-  assert.ok(dump.includes(C.customerName), "customer name present in the platform-wide response");
-  // Honest scope note: this projection selects c.name (not phone/email). The disclosure here is the
-  // identifiable customer name + booking/payment detail read platform-wide with no ownership filter,
-  // granted to a field service_provider by the gateway mapping at api-gateway.ts:110.
+  assert.equal(response.status, 403, "the handler denies a service_provider directly, no longer ownership-blind");
+  assert.equal(body.error, "Permission denied");
+  assert.ok(!Array.isArray(body.bookings), "no platform-wide bookings are returned to a service_provider");
+  assert.ok(!dump.includes(C.customerName), "the identifiable customer name is NOT disclosed");
+  assert.ok(!dump.includes(C.providerId), "the booking owned by PRV-OTHER is NOT disclosed");
 });

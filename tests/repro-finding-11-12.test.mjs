@@ -28,10 +28,11 @@ function makeD1(sqlite) {
 }
 
 // ---------------------------------------------------------------------------
-// FINDING 11 (P2 SECURITY / DATA INTEGRITY):
-// A PUBLIC, unauthenticated GET mutates the DB. /api/service-zone is in the
-// gateway's null (public) list, yet GET ...?action=seed calls seedDefaultZones(db)
-// which INSERTs zone mappings. A public GET must never be a write mechanism.
+// FINDING 11 (P2 SECURITY / DATA INTEGRITY) — FIXED.
+// The public, unauthenticated GET is now READ-ONLY. /api/service-zone is still in
+// the gateway's null (public) list, but GET ...?action=seed no longer writes: it
+// returns 405 and inserts ZERO rows. Seeding is an operator task via staff tooling.
+// list/resolve reads still work.
 // ---------------------------------------------------------------------------
 
 test("Finding 11a: /api/service-zone is declared PUBLIC (returns null permission) at the gateway", () => {
@@ -40,21 +41,23 @@ test("Finding 11a: /api/service-zone is declared PUBLIC (returns null permission
   const match = /if\(url\.pathname==="\/api\/pricing-quote"[\s\S]*?\)return null;/.exec(gw);
   assert.ok(match, "could not locate the gateway public null-list");
   assert.match(match[0], /url\.pathname==="\/api\/service-zone"/,
-    "/api/service-zone must be in the public null-list for this finding to hold");
+    "/api/service-zone remains in the public null-list — which is exactly why its GET must be read-only");
   console.log("Finding 11a: /api/service-zone IS in the gateway public null-list (requiredPermission => null).");
 });
 
-test("Finding 11b: GET action=seed routes to seedDefaultZones, which INSERTs rows", () => {
+test("Finding 11b FIXED: GET action=seed no longer routes to seedDefaultZones — it returns 405 (read-only endpoint)", () => {
   const route = read("app/api/service-zone/route.ts");
-  assert.match(route, /if\(action==="seed"\)\{\s*await seedDefaultZones\(db\)/,
-    "GET handler must call seedDefaultZones on action=seed");
-  const zones = read("lib/service-zones.ts");
-  assert.match(zones, /export async function seedDefaultZones/, "seedDefaultZones must exist");
-  assert.match(zones, /INSERT INTO service_zone_mappings/, "seedDefaultZones must INSERT into service_zone_mappings");
-  console.log("Finding 11b: GET ?action=seed -> seedDefaultZones(db) -> INSERT INTO service_zone_mappings.");
+  // The GET handler must NOT call seedDefaultZones anymore.
+  assert.doesNotMatch(route, /if\(action==="seed"\)\{\s*await seedDefaultZones\(db\)/,
+    "GET handler must NOT seed on action=seed");
+  assert.doesNotMatch(route, /await seedDefaultZones\(/, "the GET route no longer invokes seedDefaultZones at all");
+  // Instead, action=seed is refused with a 405.
+  assert.match(route, /if\(action==="seed"\)return new Response[\s\S]*?status:405/,
+    "GET ?action=seed must return a 405 refusal");
+  console.log("Finding 11b: GET ?action=seed -> 405, no seedDefaultZones call (read-only public endpoint).");
 });
 
-test("Finding 11c: EXECUTION — public GET ?action=seed writes rows (0 -> N) to an EMPTY DB", async () => {
+test("Finding 11c FIXED: EXECUTION — public GET ?action=seed writes NO rows (stays 0) and returns 405; list/resolve reads still work", async () => {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
   globalThis.__ZONE_DB = db; // env.DB for the route handler
@@ -70,58 +73,63 @@ test("Finding 11c: EXECUTION — public GET ?action=seed writes rows (0 -> N) to
 
   // A PUBLIC, UNAUTHENTICATED GET request — no auth headers whatsoever.
   const res = await GET(new Request("https://pawspace.example/api/service-zone?action=seed", { method: "GET" }));
-  assert.equal(res.status, 200, "the public GET seed succeeds");
+  assert.equal(res.status, 405, "the public GET seed is now REFUSED with 405");
   const body = await res.json();
 
   const after = sqlite.prepare("SELECT COUNT(*) AS n FROM service_zone_mappings").get().n;
   console.log(`Finding 11c: public GET ?action=seed response = ${JSON.stringify(body)}`);
-  console.log(`Finding 11c: service_zone_mappings row count ${before} -> ${after} (rows INSERTED by an unauthenticated GET).`);
-  assert.ok(after > 0, "a public unauthenticated GET INSERTED rows — DB mutation via public GET REPRODUCED");
-  assert.ok(after >= 60, `expected the full default zone table to be seeded, got ${after}`);
+  console.log(`Finding 11c: service_zone_mappings row count ${before} -> ${after} (NO rows inserted by an unauthenticated GET).`);
+  assert.equal(after, 0, "a public unauthenticated GET INSERTED nothing — DB mutation via public GET is BLOCKED");
+
+  // list/resolve reads still work through the same public endpoint.
+  const list = await GET(new Request("https://pawspace.example/api/service-zone?action=list", { method: "GET" }));
+  assert.equal(list.status, 200, "action=list still returns 200 (reads preserved)");
+  const resolve = await GET(new Request("https://pawspace.example/api/service-zone?action=resolve&pincode=560001", { method: "GET" }));
+  assert.equal(resolve.status, 200, "action=resolve of a real Bengaluru pincode still returns 200 (reads preserved)");
 });
 
 // ---------------------------------------------------------------------------
-// FINDING 12 (P2): Provider onboarding surfaces RAW API error bodies to users.
-// In app/partner/onboarding/page.tsx, both the refresh path and the submit path
-// throw `new Error(await r.text())` on non-OK responses, and that message is set
-// into the `error` state and rendered verbatim. A raw ownership/auth JSON body
-// (e.g. {"error":"Authentication required"} / {"error":"Permission denied"})
-// reaches the UI unmodified instead of a controlled user message.
+// FINDING 12 (P2) — FIXED. Provider onboarding no longer surfaces RAW API error
+// bodies to users. app/partner/onboarding/page.tsx routes non-OK responses through
+// safeApiError(), which logs the raw body for diagnostics only and returns a
+// controlled, human-readable message (401/403 -> a safe sign-in prompt, else a
+// generic retry message). No `throw new Error(await r.text())` sites remain.
 // ---------------------------------------------------------------------------
 
-test("Finding 12: refresh AND submit paths throw new Error(await r.text()) — raw body reaches UI", () => {
+test("Finding 12 FIXED: refresh, submit and initial-load paths map errors through safeApiError — no raw body reaches the UI", () => {
   const ui = read("app/partner/onboarding/page.tsx");
-  const lines = ui.split("\n");
-  const hits = [];
-  lines.forEach((line, i) => {
-    if (/throw new Error\(await r\.text\(\)\)/.test(line)) hits.push({ line: i + 1, text: line.trim() });
-  });
-  for (const h of hits) console.log(`Finding 12: app/partner/onboarding/page.tsx:${h.line}  ${h.text}`);
 
-  // refresh() surfaces raw text on non-OK.
-  assert.match(ui, /function refresh\(\)\s*\{[\s\S]*?if \(!r\.ok\) throw new Error\(await r\.text\(\)\)/,
-    "refresh() must throw the raw response text on non-OK");
-  // post() (submit path) surfaces raw text on non-OK.
-  assert.match(ui, /async function post\([\s\S]*?if \(!r\.ok\) throw new Error\(await r\.text\(\)\)/,
-    "post()/submit must throw the raw response text on non-OK");
-  // The thrown message is written into the error state and rendered verbatim.
-  assert.match(ui, /setError\(String\(\(e as Error\)\?\.message \|\| e\)\)/,
-    "the raw thrown message is set into the visible error state");
-  assert.match(ui, /error \? <p className=\{styles\.errorBox\} role="alert">\{error\}<\/p>/,
-    "the error state is rendered verbatim in the UI");
+  // No raw-body throws remain anywhere in the page.
+  const rawHits = ui.split("\n").filter((line) => /throw new Error\(await r\.text\(\)\)/.test(line));
+  assert.equal(rawHits.length, 0, `no raw \`throw new Error(await r.text())\` sites may remain, found ${rawHits.length}`);
+  assert.doesNotMatch(ui, /throw new Error\(await r\.text\(\)\)/, "the raw-body throw is gone");
 
-  // At least two raw-body throws (refresh initial-load + submit; plus refresh()).
-  assert.ok(hits.length >= 2, `expected >=2 raw \`await r.text()\` throws, found ${hits.length}`);
-  console.log(`Finding 12: ${hits.length} raw \`throw new Error(await r.text())\` sites; message flows to <p role="alert">{error}</p>.`);
+  // A safeApiError mapper exists and maps 401/403 -> a controlled message, else a generic one.
+  assert.match(ui, /async function safeApiError\(r: Response\)/, "safeApiError mapper exists");
+  assert.match(ui, /r\.status === 401 \|\| r\.status === 403/, "401/403 are mapped specifically");
+  assert.match(ui, /"Please sign in as a verified provider to continue\."/, "safe 401/403 message");
+  assert.match(ui, /"Something went wrong\. Please try again\."/, "generic fallback message");
+
+  // refresh() and post()/submit throw the MAPPED error, not raw text.
+  assert.match(ui, /function refresh\(\)\s*\{[\s\S]*?if \(!r\.ok\) throw await safeApiError\(r\)/,
+    "refresh() routes non-OK through safeApiError");
+  assert.match(ui, /async function post\([\s\S]*?if \(!r\.ok\) throw await safeApiError\(r\)/,
+    "post()/submit routes non-OK through safeApiError");
+
+  // The raw body is only LOGGED for diagnostics, never rendered.
+  assert.match(ui, /console\.error\("provider-onboarding-self-service", r\.status, await r\.clone\(\)\.text\(\)\)/,
+    "the raw body is logged for diagnostics only");
+  console.log("Finding 12: all non-OK paths go through safeApiError(); no raw `await r.text()` throw remains.");
 });
 
-test("Finding 12: example raw body an auth/ownership failure would return (shown verbatim)", () => {
+test("Finding 12: the gateway still returns raw 401/403 JSON — now mapped by safeApiError to a safe message, never rendered verbatim", () => {
   const gw = read("lib/api-gateway.ts");
   // These are the exact raw JSON bodies the gateway returns for the self-service endpoint
-  // when the caller is unauthenticated / unauthorized. `throw new Error(await r.text())`
-  // would render the whole JSON string as the user-facing error.
+  // when the caller is unauthenticated / unauthorized.
   assert.match(gw, /Response\.json\(\{error:"Authentication required"\},\{status:401\}\)/);
   assert.match(gw, /Response\.json\(\{error:"Permission denied"\},\{status:403\}\)/);
-  console.log('Finding 12: raw 401 body shown to provider = {"error":"Authentication required"}');
-  console.log('Finding 12: raw 403 body shown to provider = {"error":"Permission denied"}');
+  // The onboarding page no longer renders these raw bodies — it maps the status to a controlled message.
+  const ui = read("app/partner/onboarding/page.tsx");
+  assert.doesNotMatch(ui, /throw new Error\(await r\.text\(\)\)/, "raw gateway bodies are no longer thrown into the UI");
+  console.log('Finding 12: raw 401/403 gateway bodies are mapped by safeApiError -> "Please sign in as a verified provider to continue."');
 });

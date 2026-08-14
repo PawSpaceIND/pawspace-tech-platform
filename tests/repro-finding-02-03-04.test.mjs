@@ -110,31 +110,24 @@ const FINDING2_ROUTES = [
 ];
 
 for (const route of FINDING2_ROUTES) {
-  test(`FINDING 2 — customer session is DENIED at the gateway for POST ${route}`, async () => {
+  test(`FINDING 2 — customer session is now GRANTED at the gateway for POST ${route} (scheduling.book)`, async () => {
     const { db } = freshDb();
     const cookie = await customerCookie(db, "CUS-OWNER", "+919900000001");
 
     const access = await driveGateway(post(route, cookie, { customerId: "CUS-OWNER" }), db);
 
-    // It is a refusal, not an access grant.
-    assert.ok(access instanceof Response, `${route}: expected a gateway Response refusal, got an access grant`);
-    assert.equal(access.status, 403, `${route}: expected 403 at the gateway`);
-    assert.equal((await bodyOf(access))?.error, "Permission denied", `${route}: expected the main gateway's permission-denied body`);
-
-    // Prove WHY: the main gateway resolves this route to the `dashboard.view` default (a localhost
-    // request short-circuits to the preview actor so we can read the resolved permission directly).
-    const { authorizeApiRequest } = await import("../lib/api-gateway.ts");
-    const resolved = await authorizeApiRequest(new Request(`http://localhost${route}`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), { DB: db });
-    assert.ok(!(resolved instanceof Response), `${route}: preview actor should resolve, not refuse`);
-    assert.equal(resolved.permission, "dashboard.view", `${route}: falls to the dashboard.view default (lib/api-gateway.ts:136)`);
+    // It is an access grant now (via the platform-session gateway), not a refusal.
+    assert.ok(!(access instanceof Response), `${route}: expected a gateway access grant, got a Response refusal`);
+    assert.equal(access.permission, "scheduling.book", `${route}: the customer self-service scope resolves scheduling.book (session-api-gateway.ts:28)`);
+    assert.equal(access.actor.roleCode, "customer", `${route}: the granted actor is the customer platform session`);
   });
 }
 
-test("FINDING 2 — the customer role genuinely lacks dashboard.view, so the deny is a permission gap not a bug in the deny path", async () => {
+test("FINDING 2 — the customer role holds scheduling.book, which is exactly what now grants these self-service routes at the session gateway", async () => {
   const { defaultRoles } = await import("../lib/platform-security.ts");
   const customer = defaultRoles.find((r) => r.code === "customer");
   assert.deepEqual([...customer.permissions], ["pricing.view", "scheduling.book"], "customer holds only pricing.view + scheduling.book (platform-security.ts:24)");
-  assert.ok(!customer.permissions.includes("dashboard.view"), "customer does NOT hold dashboard.view — that is why the dashboard.view default refuses it");
+  assert.ok(customer.permissions.includes("scheduling.book"), "customer holds scheduling.book — the permission the session gateway maps these routes to");
 });
 
 test("FINDING 2 — ALLOWED baseline: payment-order's OWN ownership check is correct (fix is a gateway mapping, not the route)", async () => {
@@ -169,19 +162,17 @@ test("FINDING 2 — ALLOWED baseline: payment-order's OWN ownership check is cor
 // so an anonymous OTP request falls to the dashboard.view default and is rejected
 // BEFORE the route runs. Contrast /api/customer-otp, which IS in that null list.
 // ===========================================================================
-test("FINDING 3 — anonymous POST /api/partner-otp {action:request} is rejected at the gateway BEFORE the route runs", async () => {
+test("FINDING 3 — anonymous POST /api/partner-otp {action:request} now resolves PUBLIC at the gateway (allowed through)", async () => {
   const { db } = freshDb();
   const access = await driveGateway(post("/api/partner-otp", null, { action: "request", phone: "+919812345678" }), db);
-  assert.ok(access instanceof Response, "expected a gateway refusal for the anonymous OTP request");
-  // No identity + non-public route + PAWSPACE_UAT_LOGIN unset -> 401 "Authentication required".
-  assert.equal(access.status, 401, "anonymous partner-otp is rejected before the route");
-  assert.equal((await bodyOf(access))?.error, "Authentication required");
+  assert.ok(!(access instanceof Response), "partner-otp is now public -> the gateway lets the anonymous OTP request through");
+  assert.equal(access.permission, null, "anonymous partner-otp resolves to null (public), just like customer-otp");
 
-  // Prove WHY: partner-otp resolves to the dashboard.view default (not public), so it needs identity.
+  // Prove WHY: partner-otp is now in the gateway's public null-list, so requiredPermission returns null.
   const { authorizeApiRequest } = await import("../lib/api-gateway.ts");
   const resolved = await authorizeApiRequest(new Request("http://localhost/api/partner-otp", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "request" }) }), { DB: db });
   assert.ok(!(resolved instanceof Response));
-  assert.equal(resolved.permission, "dashboard.view", "partner-otp is unmapped -> dashboard.view default (lib/api-gateway.ts:136)");
+  assert.equal(resolved.permission, null, "partner-otp is in the public null-list (lib/api-gateway.ts:14-15)");
 });
 
 test("FINDING 3 — contrast: /api/customer-otp IS public, so the same anonymous request is allowed through the gateway", async () => {
@@ -203,25 +194,27 @@ test("FINDING 3 — contrast: /api/customer-otp IS public, so the same anonymous
 // service_provider role lacks dashboard.view (lib/platform-security.ts:25) -> an
 // authenticated provider cannot toggle their OWN availability.
 // ===========================================================================
-test("FINDING 4 — provider session is DENIED at the gateway for POST /api/provider-availability", async () => {
+test("FINDING 4 — provider session is now GRANTED at the gateway for POST /api/provider-availability (bookings.view)", async () => {
   const { db } = freshDb();
   const cookie = await providerCookie(db, "groom_arun", "+919900000003");
   const access = await driveGateway(post("/api/provider-availability", cookie, { providerId: "groom_arun", available: false, reason: "Taking the evening off" }), db);
-  assert.ok(access instanceof Response, "expected a gateway Response refusal");
-  assert.equal(access.status, 403, "provider is refused at the gateway");
-  assert.equal((await bodyOf(access))?.error, "Permission denied");
+  assert.ok(!(access instanceof Response), "expected a gateway access grant, not a Response refusal");
+  assert.equal(access.permission, "bookings.view", "the provider self-availability scope resolves bookings.view (session-api-gateway.ts:30)");
+  assert.equal(access.actor.roleCode, "service_provider", "the granted actor is the provider platform session");
 
-  // Prove WHY: unmapped -> dashboard.view default, and service_provider lacks dashboard.view.
-  const { authorizeApiRequest } = await import("../lib/api-gateway.ts");
-  const resolved = await authorizeApiRequest(new Request("http://localhost/api/provider-availability", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }), { DB: db });
-  assert.equal(resolved.permission, "dashboard.view", "provider-availability falls to dashboard.view default (lib/api-gateway.ts:136)");
-
+  // The provider role holds bookings.view — the permission the session gateway maps this route to.
   const { defaultRoles } = await import("../lib/platform-security.ts");
   const provider = defaultRoles.find((r) => r.code === "service_provider");
-  assert.ok(!provider.permissions.includes("dashboard.view"), "service_provider does NOT hold dashboard.view (platform-security.ts:25) — that is the deny");
+  assert.ok(provider.permissions.includes("bookings.view"), "service_provider holds bookings.view (platform-security.ts:25) — that is the grant");
+
+  // Ownership is still enforced: a provider session may only toggle its OWN providerId. A session for
+  // groom_arun asking to toggle a DIFFERENT provider is refused 403 by the session gateway's scope.
+  const otherAccess = await driveGateway(post("/api/provider-availability", cookie, { providerId: "groom_someone_else", available: false, reason: "not mine" }), db);
+  assert.ok(otherAccess instanceof Response, "cross-provider toggle must be refused");
+  assert.equal(otherAccess.status, 403, "same-provider ownership is still enforced at the gateway scope");
 });
 
-test("FINDING 4 — but the route ITSELF would allow the owning provider (deny is purely the gateway mapping)", async () => {
+test("FINDING 4 — the route ITSELF allows the owning provider (end-to-end: gateway grants, route toggles)", async () => {
   const { db } = freshDb();
   const { POST } = await import("../app/api/provider-availability/route.ts");
   const cookie = await providerCookie(db, "groom_arun", "+919900000003");
