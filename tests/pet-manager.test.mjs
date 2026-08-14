@@ -191,11 +191,11 @@ test("pet manager offers the rich profile capture with add and edit-in-place", (
   }
   // The dropdowns are populated from the single shared catalogue, not hand-typed per form.
   assert.match(component, /from "\.\.\/\.\.\/lib\/pet-profile-options"/);
-  assert.match(component, /breedsFor\(form\.species\)/, "breed list follows the selected species");
+  assert.match(component, /breedsFor\(form\.species/, "breed list follows the selected species");
   for (const source of ["AGE_BANDS", "AGGRESSION_LEVELS", "WEIGHT_BANDS", "PET_GENDERS"]) {
     assert.ok(component.includes(source), `form maps over ${source}`);
   }
-  assert.match(component, /validatePetProfile\(form\.species, profile\)/, "the shared profile validator runs before submit");
+  assert.match(component, /validatePetProfile\(form\.species/, "the shared profile validator runs before submit");
   assert.match(component, /ageBandFromYears\(pet\.ageYears\)/, "editing a legacy pet derives its age band");
   assert.match(component, /weightBandFromKg\(pet\.weightKg\)/, "editing a legacy pet derives its weight band");
   assert.match(component, /compressImage/, "photo is downscaled to a compact data-URL for inline storage");
@@ -251,9 +251,17 @@ test("rich profile validation: DOB calendar/future, gender allow-list, and deriv
   assert.equal(ageBandFromYears(3), "3 years");
   assert.equal(ageBandFromYears(25), "20+ years");
   assert.equal(ageBandFromYears(null), "");
+  // Age boundary: floor keeps fractional ages in their completed-year band; only a true 20 is terminal.
+  assert.equal(ageBandFromYears(19.5), "19 years");
+  assert.equal(ageBandFromYears(19.99), "19 years");
+  assert.equal(ageBandFromYears(20), "20+ years");
   assert.equal(weightBandFromKg(4), "3–20 kg");
   assert.equal(weightBandFromKg(50), "45–60 kg");
   assert.equal(weightBandFromKg(null), "");
+  // Weight boundary: below the first band is not silently promoted into "3–20 kg".
+  assert.equal(weightBandFromKg(2.99), "");
+  assert.equal(weightBandFromKg(3), "3–20 kg");
+  assert.equal(weightBandFromKg(20), "20–45 kg");
 });
 
 test("real execution: the profile is authoritative — top-level fields don't override, dose clears when unvaccinated", async () => {
@@ -281,10 +289,29 @@ test("real execution: a rich profile on a non-dog/cat species is rejected", asyn
   );
 });
 
-test("real execution: repeated table ensure is idempotent (concurrency-safe migration)", async () => {
+test("real execution: concurrent table ensure is safe (duplicate-column ALTER is tolerated)", async () => {
   const { db, account } = await accountStack();
-  await account.ensureCustomerAccountTables(db);
-  await account.ensureCustomerAccountTables(db);
+  // Start both before awaiting either, so the PRAGMA/ALTER migration paths can interleave.
+  await Promise.all([account.ensureCustomerAccountTables(db), account.ensureCustomerAccountTables(db)]);
+});
+
+test("real execution: editing keeps a legacy 'other' species — a rich profile can't rewrite it to dog", async () => {
+  const { db, account } = await accountStack();
+  const created = await account.mutateCustomerAccount(db, {
+    customerId: "CUS-PET-1", action: "upsert_pet", idempotencyKey: "pm-other-legacy",
+    pet: { name: "Coco", species: "other", vaccinationStatus: "not_provided", ageYears: 2, weightKg: 5 },
+  });
+  // The server refuses a rich profile on a non-dog/cat species (the client guard is the first line;
+  // this is the server backstop).
+  await rejectsWith(
+    account.mutateCustomerAccount(db, {
+      customerId: "CUS-PET-1", action: "upsert_pet", idempotencyKey: "pm-other-rich",
+      pet: { id: created.entityId, name: "Coco", species: "other", vaccinationStatus: "not_provided", profile: { breed: "Labrador Retriever", ageBand: "2 years", vaccinated: false, aggression: "Friendly", weightBand: "3–20 kg" } },
+    }),
+    400, /only supported for dogs and cats/
+  );
+  const record = await account.readCustomerAccount(db, "CUS-PET-1");
+  assert.equal(record.pets.find((p) => p.id === created.entityId).species, "other", "species is preserved");
 });
 
 test("the account route keeps ownership server-side via the platform session", () => {

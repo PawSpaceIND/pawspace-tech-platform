@@ -100,12 +100,14 @@ export function ageBandFromYears(years: number | null | undefined): string {
   if (years < 0.5) return "< 6 months";
   if (years < 1) return "6–12 months";
   if (years >= 20) return "20+ years";
-  const whole = Math.round(years);
+  // Floor (not round) so a fractional age stays in its completed-year band and only a true 20 reaches
+  // the terminal "20+ years" band above.
+  const whole = Math.floor(years);
   const band = `${whole} year${whole === 1 ? "" : "s"}`;
   return (AGE_BANDS as readonly string[]).includes(band) ? band : "";
 }
 export function weightBandFromKg(kg: number | null | undefined): string {
-  if (kg === null || kg === undefined || !Number.isFinite(kg) || kg <= 0) return "";
+  if (kg === null || kg === undefined || !Number.isFinite(kg) || kg < 3) return "";
   if (kg < 20) return "3–20 kg";
   if (kg < 45) return "20–45 kg";
   if (kg < 60) return "45–60 kg";

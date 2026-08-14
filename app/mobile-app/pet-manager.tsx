@@ -10,7 +10,7 @@ import { AGE_BANDS, AGGRESSION_LEVELS, PET_GENDERS, WEIGHT_BANDS, ageBandFromYea
 type PetForm = {
   id?: string;
   name: string;
-  species: PetSpecies;
+  species: string; // "dog" | "cat" for the rich form; a legacy value (e.g. "other") is preserved, not coerced
   gender: string;
   breed: string;
   ageBand: string;
@@ -65,7 +65,8 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
   const [form, setForm] = useState<PetForm | null>(null); // null = closed; id set = edit-in-place
   const [issues, setIssues] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
-  const todayISO = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`; // local calendar date, not UTC
 
   useEffect(() => {
     let active = true;
@@ -93,10 +94,11 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
   const openEdit = (pet: CustomerPet) => {
     setIssues([]);
     const profile = pet.profile;
-    const species: PetSpecies = pet.species === "cat" ? "cat" : "dog";
+    // Preserve the real species — never coerce a legacy "other" pet to dog (that would rewrite it on save).
+    const species = pet.species || "dog";
     // Pre-fill everything we can derive from a legacy pet (captured before this profile existed) so editing
     // it doesn't force re-entering data we already have — only genuinely-new fields (temperament) need a pick.
-    const legacyBreed = pet.breed && (breedsFor(species) as readonly string[]).includes(pet.breed) ? pet.breed : "";
+    const legacyBreed = pet.breed && species !== "other" && (breedsFor(species as PetSpecies) as readonly string[]).includes(pet.breed) ? pet.breed : "";
     setForm({
       id: pet.id,
       name: pet.name,
@@ -127,6 +129,11 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
 
   const save = async () => {
     if (!form || saving) return;
+    if (form.species !== "dog" && form.species !== "cat") {
+      // Only reachable when editing a legacy pet recorded as another species — don't rewrite it to a dog.
+      setIssues(["Rich profiles are available for dogs and cats. Switch this pet's species to Dog or Cat to edit its full profile."]);
+      return;
+    }
     const profile: PetProfile = {
       gender: form.gender || undefined,
       breed: form.breed,
@@ -148,7 +155,7 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
     // Shared pure validators — the form flags exactly what the API would reject.
     const found = [...petProfileIssues(candidate)];
     if (form.vaccinated === "") found.push("Tell us whether the pet is vaccinated");
-    const profileIssue = validatePetProfile(form.species, profile);
+    const profileIssue = validatePetProfile(form.species as PetSpecies, profile);
     if (profileIssue) found.push(profileIssue);
     if (found.length) {
       setIssues(found);
@@ -173,6 +180,7 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
     try {
       const refreshed = await loadCustomerPets(customer.customerId);
       setPets(refreshed);
+      setLoadError("");
       onPetsChanged?.(refreshed);
     } catch {
       setLoadError("Pet saved — reload to see the updated list.");
@@ -185,6 +193,9 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
     form && (
       <div className={styles.form}>
         <b>{heading}</b>
+        {form.species !== "dog" && form.species !== "cat" && (
+          <p className={styles.hint}>This pet is recorded as “{form.species}”. Rich profiles are available for dogs and cats — switch species above to edit the full profile.</p>
+        )}
 
         <div className={styles.photoRow}>
           <div className={styles.photoPreview} aria-hidden>{form.photo ? <img src={form.photo} alt="" /> : <span>{speciesIcon(form.species)}</span>}</div>
@@ -206,9 +217,10 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
           </label>
           <label>
             Species
-            <select value={form.species} onChange={(event) => setField({ species: event.target.value as PetSpecies, breed: "" })}>
+            <select value={form.species} onChange={(event) => setField({ species: event.target.value, breed: "" })}>
               <option value="dog">Dog</option>
               <option value="cat">Cat</option>
+              {form.species !== "dog" && form.species !== "cat" && <option value={form.species}>{form.species}</option>}
             </select>
           </label>
           <label>
@@ -224,7 +236,7 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
             Breed
             <select value={form.breed} onChange={(event) => setField({ breed: event.target.value })}>
               <option value="">Select a breed…</option>
-              {breedsFor(form.species).map((breed) => (
+              {breedsFor(form.species === "cat" ? "cat" : "dog").map((breed) => (
                 <option key={breed} value={breed}>{breed}</option>
               ))}
             </select>
