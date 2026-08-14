@@ -131,3 +131,39 @@ test("the seed applies cleanly, so nothing downstream is silently missing", asyn
   const broken = applied.flatMap(({ path, skipped }) => skipped.map((detail) => `${path}: ${detail}`));
   assert.deepEqual(broken.slice(0, 8), [], `seed statements failed to apply; everything they feed is missing:\n  ${broken.slice(0, 8).join("\n  ")}`);
 });
+
+test("a completed booking closes: it is invoiced and its provider is paid", async () => {
+  const { sqlite } = await seededDatabase();
+
+  const completed = one(sqlite, "SELECT COUNT(*) AS n FROM canonical_bookings WHERE status='completed'");
+  assert.ok(completed && Number(completed.n) > 0, "the seed must complete some bookings, or closure is untestable");
+  const total = Number(completed.n);
+
+  // Closure is the second half of the lifecycle: money in is only reconciliation. A finished job also
+  // owes the customer a document and the provider their share. booking_invoices and
+  // provider_payout_computations are what the finance screens read (13 and 3 call sites), so a seed
+  // that completes bookings without them leaves every payout and invoice screen honestly empty - the
+  // same class as the reconciliation gap, one layer further down the funnel.
+  const invoices = one(sqlite, "SELECT COUNT(*) AS n FROM booking_invoices");
+  assert.ok(invoices !== null, `booking_invoices is absent from the seed: ${total} completed bookings, no invoice for any of them`);
+  assert.ok(Number(invoices.n) > 0, `${total} completed bookings and no invoice rows`);
+
+  const payouts = one(sqlite, "SELECT COUNT(*) AS n FROM provider_payout_computations");
+  assert.ok(payouts !== null, `provider_payout_computations is absent from the seed: ${total} completed bookings, no provider is owed anything`);
+  assert.ok(Number(payouts.n) > 0, `${total} completed bookings and no payout computation`);
+});
+
+test("a completed booking was actually paid for", async () => {
+  const { sqlite } = await seededDatabase();
+
+  // Service delivered with no money collected is a revenue leak, and it is invisible on a screen that
+  // only ever sums what it finds. Reported per booking so the list is actionable rather than a count.
+  const unpaid = rows(sqlite, `SELECT b.id, b.service_code, b.total_amount FROM canonical_bookings b
+    LEFT JOIN booking_payments p ON p.booking_id = b.id
+    WHERE b.status='completed' AND b.total_amount > 0 AND (p.id IS NULL OR p.status NOT IN ('captured','paid'))`) || [];
+
+  assert.deepEqual(
+    unpaid.map((b) => `${b.id} (${b.service_code}, ₹${b.total_amount}) completed with no captured payment`), [],
+    "a completed booking with no collected payment is a revenue leak no screen will surface",
+  );
+});
