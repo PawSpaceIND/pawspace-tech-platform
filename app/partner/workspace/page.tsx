@@ -31,6 +31,7 @@ export default function PartnerWorkspacePage(){
     <div style={{maxWidth:1000,margin:"0 auto",padding:"28px 20px 60px"}}>
       <p style={{margin:0}}><Link href="/partner" style={{color:C.dim,textDecoration:"none"}}>← Partner hub</Link></p>
       <p style={{fontWeight:800,letterSpacing:2,color:C.dim,fontSize:12,marginTop:10}}>PAWSPACE · PARTNER WORKSPACE</p>
+      {!data?<h1 style={{margin:"6px 0",fontSize:28}}>Partner workspace</h1>:null}
       {error?<p style={{color:"#ff9a9a"}}>{error}</p>:null}
       {loading&&!data?<p style={{color:C.dim}}>Loading your workspace…</p>:null}
       {msg?<p style={{color:C.gold}}>{msg}</p>:null}

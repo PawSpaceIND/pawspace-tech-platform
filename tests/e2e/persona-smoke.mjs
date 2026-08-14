@@ -147,7 +147,9 @@ for (const route of ROUTES) {
   const add = (kind, detail) => findings.push({ route, kind, detail });
   if (status >= 400) add("http", `HTTP ${status}`);
   if (pageErrors.length) add("script", pageErrors[0]);
-  if (seen.textLength < 40) add("blank", `only ${seen.textLength} characters rendered`);
+  // A heading plus a way onward is a legitimate minimal state (an empty-state screen waiting for an
+  // id, for instance). Only a page with neither is blank.
+  if (seen.textLength < 40 && !seen.headings) add("blank", `${seen.textLength} characters and no heading`);
   if (!seen.headings) add("no-heading", "no <h1> on the page");
   if (seen.overflowPx > 2) add("overflow", `${seen.overflowPx}px wider than the viewport`);
   if (seen.tooSmall.length) add("tiny-type", seen.tooSmall.join(", "));

@@ -48,6 +48,7 @@ export default function MyPortalPage(){
     <div style={{maxWidth:1080,margin:"0 auto",padding:"28px 20px 60px"}}>
       <p style={{margin:0}}><Link href="/" style={{color:C.dim,textDecoration:"none"}}>← PawSpace</Link></p>
       <p style={{fontWeight:800,letterSpacing:2,color:C.dim,fontSize:12,marginTop:10}}>PAWSPACE · MY WORKSPACE</p>
+      {!data?<h1 style={{margin:"6px 0",fontSize:30}}>My workspace</h1>:null}
       {error?<p style={{color:"#ff9a9a"}}>{error}</p>:null}
       {loading&&!data?<p style={{color:C.dim}}>Loading your workspace…</p>:null}
 

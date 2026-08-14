@@ -36,7 +36,11 @@ export default function SystemIntegrationPage() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Confirmation failed"); }
     finally { setBusy(false); }
   }
-  if (!data) return <main className={styles.loading}>{error || "Checking every PawSpace system connection…"}</main>;
+  if (!data) return <main className={styles.loading} role={error ? "alert" : "status"}>
+    <h1>System integration control</h1>
+    <p>{error || "Checking every PawSpace system connection…"}</p>
+    {error && <p><button type="button" onClick={() => window.location.reload()}>Try again</button> · <Link href="/team">Back to Team</Link></p>}
+  </main>;
   const internalDone = data.summary.internalPassed === data.summary.internalTotal;
   return <main className={styles.shell}>
     <aside className={styles.side}>

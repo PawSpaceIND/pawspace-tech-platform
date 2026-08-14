@@ -31,7 +31,11 @@ export default function IntegrationReadinessControl(){
   }catch(cause){setFormError(cause instanceof Error?cause.message:"Unable to update integration readiness");}
   finally{setSaving(false);}
  };
- if(!data)return <main className={styles.loading}>{error||"Loading canonical integration readiness…"}</main>;
+ if(!data)return <main className={styles.loading} role={error?"alert":"status"}>
+    <h1>Integration readiness</h1>
+    <p>{error||"Loading canonical integration readiness…"}</p>
+    {error&&<p><button type="button" onClick={()=>window.location.reload()}>Try again</button> · <Link href="/control">Back to Control tower</Link></p>}
+  </main>;
  return <main className={styles.shell}>
   <aside className={styles.side}><Link href="/control" className={styles.brand}><b>paw</b>space <span>CONTROL</span></Link><nav><Link href="/team">⌂ Team</Link><Link href="/control">◇ Launch essentials</Link><Link className={styles.active} href="/control/integrations">◎ Integration readiness</Link><Link href="/system-integration">↗ Legacy system confirmation</Link></nav><div className={styles.boundary}><b>PRE-LIVE CONTROL</b><span>No secret values displayed</span><span>No live traffic enabled</span><span>Controlled-live proof is a separate gate</span></div></aside>
   <section className={styles.workspace}>

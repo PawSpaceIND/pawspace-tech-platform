@@ -36,6 +36,7 @@ export default function StagingLoginPage(){
   return <main style={{minHeight:"100vh",background:C.ground,color:C.ink,fontFamily:"system-ui,-apple-system,Segoe UI,sans-serif",display:"flex",alignItems:"center",padding:"40px 20px"}}>
     <div style={{width:"100%"}}>
       <p style={{textAlign:"center",fontWeight:800,letterSpacing:2,color:C.dim,fontSize:12}}>PAWSPACE · STAGING UAT SIGN-IN</p>
+      <h1 style={{textAlign:"center",margin:"8px 0 16px",fontSize:26}}>Sign in to staging</h1>
       <div style={card}>
         {enabled===false?<p style={{color:"#ff9a9a",margin:0}}>UAT sign-in is not enabled on this environment.</p>:null}
         {enabled===null?<p style={{color:C.dim,margin:0}}>Checking…</p>:null}

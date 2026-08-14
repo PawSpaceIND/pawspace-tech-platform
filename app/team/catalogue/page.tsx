@@ -17,7 +17,7 @@ export default function CataloguePage() {
   return <main style={wrap}><div style={{ maxWidth: 1200, margin: "0 auto" }}>
     <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 18 }}><div><small style={{ fontWeight: 800, color: "#1f6b57" }}>PAWSPACE TEAM · CATALOGUE</small><h1 style={{ margin: "7px 0" }}>Packages & prices</h1><p style={{ margin: 0, color: "#6c7c78" }}>Create packages for any service, city- and zone-wise. Zone &gt; city &gt; global price precedence.</p></div><Link href="/team" style={{ padding: 10, background: "#01261F", color: "white", borderRadius: 10, textDecoration: "none" }}>Team home</Link></header>
     {error && <div style={{ padding: 12, background: "#fff1f1", borderRadius: 10, marginBottom: 12 }}>{error}</div>}
-    <form onSubmit={create} style={{ ...card, padding: 16, display: "grid", gridTemplateColumns: "1.3fr 1.3fr 2fr 1fr 1fr 1fr 1fr auto", gap: 8, marginBottom: 16 }}>
+    <form onSubmit={create} style={{ ...card, padding: 16, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8, marginBottom: 16 }}>
       <select name="serviceCode" required>{SERVICES.map(s => <option key={s} value={s}>{s}</option>)}</select>
       <input name="packageCode" required placeholder="package-code" />
       <input name="name" required placeholder="Display name" />
