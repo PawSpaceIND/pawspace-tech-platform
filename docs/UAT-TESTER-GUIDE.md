@@ -22,6 +22,11 @@ and the access code alone conferred full authority.
 | Groomer (employee) | `asha.groomer1@tkpetcare.in` | Partner/self-service surfaces |
 | Associate | `anita.associate17@tkpetcare.in` | Limited staff view |
 
+These five are seeded as active `app_users` rows by **`scripts/employee-seed.sql`** — load it (alongside
+`staging-seed.sql` and `uat-demo-seed.sql`) or none of them can sign in, because sign-in refuses any
+email that is not an active staff row. `founder@pawspace.in` is the owner identity (not on a payroll
+band), seeded by that same file.
+
 **Demo module identities** (present once `scripts/uat-demo-seed.sql` is loaded — every module page then
 opens with data instead of blank): `uat.demo.manager@tkpetcare.in` (manager),
 `uat.demo.sales1@tkpetcare.in` / `uat.demo.sales2@tkpetcare.in` (sales, appear on the leaderboard and
