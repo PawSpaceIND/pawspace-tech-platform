@@ -22,6 +22,16 @@ async function sessionScope(request:Request):Promise<Scope|undefined>{const url=
   if(url.pathname==="/api/grooming-route"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return{permission:"bookings.view",subjectType:"provider",subjectId:String(body.providerId||"")};}
   if(url.pathname==="/api/grooming-lifecycle"){if(method==="GET")return{permission:"bookings.view",subjectType:"provider"};if(method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="mark_paid"?undefined:{permission:"bookings.view",subjectType:"provider"};}}
   if(url.pathname==="/api/provider-assignment-recovery"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["accept","decline"].includes(String(body.action))?{permission:"bookings.view",subjectType:"provider",subjectId:String(body.providerId||"")}:undefined;}
+  // A provider toggling their own availability from the partner app. The route enforces
+  // requireProviderOwnership(body.providerId); the scope binds the session to that same provider.
+  if(url.pathname==="/api/provider-availability"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return{permission:"bookings.view",subjectType:"provider",subjectId:String(body.providerId||"")};}
+  // Customer self-service surfaces reached with a customer platform-session cookie. Each route enforces
+  // requireCustomerOwnership on the specific record (via its ownedContext helper); the gateway only
+  // confirms the caller is a customer session holding the customer role's scheduling.book. Without these
+  // entries requiredPermission() falls to the dashboard.view default and every customer is 403'd in
+  // production - the flows work on localhost only because authorizeApiRequest short-circuits localhost to
+  // a preview superuser, which is why this was invisible in development.
+  if(["/api/payment-order","/api/pawspace-wallet","/api/paw-points","/api/pet-passport","/api/pet-vaccination","/api/pet-emergency","/api/pet-birthday","/api/service-review"].includes(url.pathname))return{permission:"scheduling.book",subjectType:"customer"};
   return undefined;
 }
 

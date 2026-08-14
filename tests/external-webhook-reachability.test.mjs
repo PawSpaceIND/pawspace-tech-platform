@@ -91,9 +91,12 @@ test("no gateway-exempt route is left without any caller authentication", () => 
     "/api/pricing-quote", "/api/training-commercial", "/api/training-trainers", "/api/boarding-commercial",
     "/api/sitting-commercial", "/api/taxi-commercial", "/api/food-commercial", "/api/walking-commercial",
     "/api/identity-session", "/api/service-availability", "/api/public-contact", "/api/provider-public-profile",
-    "/api/staging-login", "/api/customer-offers", "/api/host-profile", "/api/customer-otp", "/api/customer-profile",
+    "/api/staging-login", "/api/customer-offers", "/api/host-profile", "/api/customer-otp", "/api/partner-otp", "/api/customer-profile",
     "/api/customer-account", "/api/booking-rating", "/api/customer-support-case", "/api/live-price-quote",
-    "/api/training-requirements", "/api/host-trust", "/api/service-zone",
+    // partner-otp is the partner-login analog of customer-otp (self-protects via OTP challenge/verify +
+    // same-origin). pet-passport-public is a capability-token public read: it requires an unguessable
+    // share token, 404s on a missing/revoked one, and returns a privacy-safe card with no owner PII.
+    "/api/training-requirements", "/api/host-trust", "/api/service-zone", "/api/pet-passport-public",
   ]);
   const unguarded = [];
   for (const path of exemptPaths) {
