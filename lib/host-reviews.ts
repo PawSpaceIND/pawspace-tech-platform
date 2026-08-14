@@ -72,8 +72,10 @@ export async function submitHostReview(db:Db,input:HostReviewInput):Promise<Host
 
 export async function listHostReviews(db:Db,hostProviderId:string,options:{limit?:number;offset?:number}={}):Promise<{reviews:HostReview[];stats:HostReviewStats}>{
   await ensureHostReviewsTables(db);
-  const limit=Math.min(options.limit||10,100);
-  const offset=options.offset||0;
+  // Clamp both bounds: host-trust is a PUBLIC route, and a negative limit becomes LIMIT -1 in SQLite
+  // (unbounded) — GET /api/host-trust?limit=-1 would dump the entire reviews table.
+  const limit=Math.max(1,Math.min(Number(options.limit)||10,100));
+  const offset=Math.max(0,Number(options.offset)||0);
 
   // Fetch reviews
   const reviewRows=await safeAll(db,"SELECT * FROM host_reviews WHERE host_provider_id=? ORDER BY created_at DESC LIMIT ? OFFSET ?",[hostProviderId,limit,offset]);

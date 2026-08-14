@@ -1,4 +1,5 @@
 import{generatePnlReport}from"../../../lib/pnl-reporting";
+import{authError,authorize}from"../../../lib/server-auth";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 async function database(){const{env}=await import("cloudflare:workers");return env.DB;}
@@ -12,6 +13,7 @@ function defaultMonths(){
 
 export async function GET(request:Request){
   try{
+    await authorize(request,"finance.view");
     const url=new URL(request.url);
     const defaults=defaultMonths();
     const fromMonth=url.searchParams.get("fromMonth")||defaults.fromMonth;
@@ -21,5 +23,5 @@ export async function GET(request:Request){
     const db=await database();
     const report=await generatePnlReport(db,{fromMonth,toMonth});
     return json({data:report});
-  }catch(error){return json({error:error instanceof Error?error.message:"Unable to generate P&L report"},500);}
+  }catch(error){return authError(error,"Unable to generate P&L report");}
 }
