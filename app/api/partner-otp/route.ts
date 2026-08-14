@@ -5,6 +5,11 @@ import { issuePlatformSession, platformSessionCookie } from "../../../lib/platfo
 import { verifyIdentityAssertion } from "../../../lib/verified-identity-assertion";
 
 const json = (value: unknown, status = 200, headers?: HeadersInit) => Response.json(value, { status, headers });
+// D5: the freshly generated OTP is a shared secret and must NEVER appear in the API response by
+// default — echoing it lets anyone request→read→verify and take over any phone's account. It is only
+// disclosed when the UAT switch is explicitly on (fail-closed: unset/any-other value ⇒ no disclosure),
+// matching the established PAWSPACE_UAT_LOGIN==="on" convention (see app/api/finance-control seedEnabled).
+async function otpDisclosureEnabled() { const { env } = await import("cloudflare:workers"); return String((env as unknown as Record<string, unknown>).PAWSPACE_UAT_LOGIN || "") === "on"; }
 function sameOriginWrite(request: Request) {
   const origin = request.headers.get("origin");
   if (origin && origin !== new URL(request.url).origin) throw new Response("Cross-origin write blocked", { status: 403 });
@@ -22,6 +27,7 @@ export async function POST(request: Request) {
     if (body.action === "request") {
       if (!body.phone) return json({ error: "Phone number is required" }, 400);
       const result = await requestPartnerOtp(db, { phone: body.phone });
+      if (!(await otpDisclosureEnabled())) delete (result as { sandboxCode?: string }).sandboxCode;
       return json({ data: result });
     }
     if (body.action === "verify") {
