@@ -124,7 +124,7 @@ test("every rebuilt team screen is built from the design system, not inline styl
     if (!screen.startsWith("operations") && !screen.startsWith("finance-compliance")) assert.match(source, /EmptyState/, `${screen} must render a real empty state`);
     // The bare-prototype markers these screens shipped with.
     assert.doesNotMatch(source, /fontFamily:\s*"(system-ui|Arial)/, `${screen} must not set its own font`);
-    assert.doesNotMatch(source, /background:\s*"#f7f4fb"/, `${screen} must not paint its own page background`);
+    assert.doesNotMatch(source, /background:\s*"#f2f7f5"/, `${screen} must not paint its own page background`);
     assert.doesNotMatch(source, /<main style=/, `${screen} must use the shared console shell, not its own <main> styling`);
     // A raw <button> is only allowed for a list row that carries a shell class; every actual control
     // must be the shared Button so focus, sizing and disabled states are the same everywhere.
@@ -145,8 +145,8 @@ test("the Operations shell is the approved chrome, responsive and keyboard-navig
   // The chrome matches the admin surface it was lifted from: same rail width, colour and workspace.
   assert.match(shellCss, /grid-template-columns: 238px 1fr/);
   assert.match(adminCss, /grid-template-columns: 238px 1fr/);
-  assert.match(shellCss, /background: #2d0a5d/);
-  assert.match(adminCss, /background: #2d0a5d/);
+  assert.match(shellCss, /background: #01261F/);
+  assert.match(adminCss, /background: #01261F/);
   // The current screen is marked from the route, and the rail is reachable by keyboard.
   assert.match(shell, /usePathname/);
   assert.match(shell, /aria-current/);

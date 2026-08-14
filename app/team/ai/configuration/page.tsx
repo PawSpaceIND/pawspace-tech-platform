@@ -5,14 +5,14 @@ import{useCallback,useEffect,useState}from"react";
 type Row=Record<string,unknown>;
 type Snapshot={profiles:Row[];intents:Row[];knowledge:Row[];prompts:Row[];killSwitches:Row[];auditEvents:Row[];productionReady:boolean};
 type Status={provider:{connected:boolean;providerRef:string|null;modelRef:string|null;reason:string};rollout:{stage:string;staffEnabled:boolean;customersEnabled:boolean};configurationRequired:boolean;activeProfile:{key:string;version:number}|null;activePromptPolicy:{key:string;version:number}|null;killSwitches:Array<{scopeType:string;scopeKey:string;reason:string}>;activeKnowledge:number;activeIntents:number;answersStaff:boolean;answersCustomers:boolean};
-const card={background:"white",border:"1px solid #e5dcef",borderRadius:14,padding:14};
+const card={background:"white",border:"1px solid #dcece5",borderRadius:14,padding:14};
 const STAGE:Record<string,string>={off:"Off · everyone gets a human",staff_only:"Staff only · internal preview",customers:"Customers · full rollout"};
 
 /** One requirement line: what it is, whether it is met, and what to do when it is not. */
 function Requirement({label,met,detail}:{label:string;met:boolean;detail:string}){
   return <li style={{display:"grid",gridTemplateColumns:"22px 1fr",gap:8,alignItems:"start",padding:"6px 0"}}>
     <span aria-hidden="true" style={{fontWeight:800,color:met?"#177245":"#b42318"}}>{met?"✓":"✗"}</span>
-    <span><b>{label}</b> <small style={{display:"block",color:"#746b7d"}}>{detail}</small></span>
+    <span><b>{label}</b> <small style={{display:"block",color:"#6c7c78"}}>{detail}</small></span>
   </li>;
 }
 
@@ -47,11 +47,11 @@ export default function AiConfigurationPage(){
     }catch(e){setError(e instanceof Error?e.message:"Unable to install the starter assistant grounding")}finally{setBusy("")}
   }
 
-  const section=(title:string,entityType:string,rows:Row[])=><section style={{...card,marginBottom:14}}><h2 style={{marginTop:0}}>{title}</h2>{rows.length===0?<p style={{color:"#746b7d"}}>No versions configured.</p>:rows.map(row=><article key={String(row.id)} style={{borderTop:"1px solid #eee6f5",padding:"10px 0",display:"grid",gridTemplateColumns:"2fr 1fr 2fr",gap:10,alignItems:"center"}}><div><b>{String(row.profile_key||row.intent_code||row.source_key||row.policy_key||row.id)}</b><small style={{display:"block"}}>v{String(row.version)} · {String(row.status)} · {String(row.immutable_hash||"").slice(0,12)}</small></div><span>{String(row.business_owner||row.title||row.brand_voice||"versioned policy")}</span><div>{row.status==="draft"&&<button disabled={busy===row.id} onClick={()=>transition(entityType,String(row.id),"submit_review")}>Submit review</button>} {row.status==="review"&&<button disabled={busy===row.id} onClick={()=>transition(entityType,String(row.id),"approve")}>Approve</button>} {row.status==="approved"&&<button disabled={busy===row.id} onClick={()=>transition(entityType,String(row.id),"activate")}>Activate</button>} {row.status==="retired"&&<button disabled={busy===row.id} onClick={()=>transition(entityType,String(row.id),"rollback")}>Rollback</button>}</div></article>)}</section>;
+  const section=(title:string,entityType:string,rows:Row[])=><section style={{...card,marginBottom:14}}><h2 style={{marginTop:0}}>{title}</h2>{rows.length===0?<p style={{color:"#6c7c78"}}>No versions configured.</p>:rows.map(row=><article key={String(row.id)} style={{borderTop:"1px solid #e9f1ee",padding:"10px 0",display:"grid",gridTemplateColumns:"2fr 1fr 2fr",gap:10,alignItems:"center"}}><div><b>{String(row.profile_key||row.intent_code||row.source_key||row.policy_key||row.id)}</b><small style={{display:"block"}}>v{String(row.version)} · {String(row.status)} · {String(row.immutable_hash||"").slice(0,12)}</small></div><span>{String(row.business_owner||row.title||row.brand_voice||"versioned policy")}</span><div>{row.status==="draft"&&<button disabled={busy===row.id} onClick={()=>transition(entityType,String(row.id),"submit_review")}>Submit review</button>} {row.status==="review"&&<button disabled={busy===row.id} onClick={()=>transition(entityType,String(row.id),"approve")}>Approve</button>} {row.status==="approved"&&<button disabled={busy===row.id} onClick={()=>transition(entityType,String(row.id),"activate")}>Activate</button>} {row.status==="retired"&&<button disabled={busy===row.id} onClick={()=>transition(entityType,String(row.id),"rollback")}>Rollback</button>}</div></article>)}</section>;
 
-  return <main style={{minHeight:"100vh",background:"#f7f4fb",padding:28,fontFamily:"Arial,sans-serif",color:"#24133f"}}><div style={{maxWidth:1300,margin:"0 auto"}}>
+  return <main style={{minHeight:"100vh",background:"#f2f7f5",padding:28,fontFamily:"Arial,sans-serif",color:"#06231c"}}><div style={{maxWidth:1300,margin:"0 auto"}}>
     <header style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
-      <div><small style={{fontWeight:800,color:"#6c39a8"}}>PAWSPACE TEAM · AI BUSINESS CONFIGURATION</small><h1 style={{margin:"7px 0"}}>Assistant configuration & knowledge</h1><p style={{margin:0,color:"#746b7d"}}>Versioned, reviewed and auditable AI business configuration. Production provider activation remains separate.</p></div>
+      <div><small style={{fontWeight:800,color:"#1f6b57"}}>PAWSPACE TEAM · AI BUSINESS CONFIGURATION</small><h1 style={{margin:"7px 0"}}>Assistant configuration & knowledge</h1><p style={{margin:0,color:"#6c7c78"}}>Versioned, reviewed and auditable AI business configuration. Production provider activation remains separate.</p></div>
       <div><button disabled={busy==="global"} onClick={()=>globalKill(true)}>Disable AI</button> <button disabled={busy==="global"} onClick={()=>globalKill(false)}>Enable AI</button> <Link href="/team/ai" style={{marginLeft:10}}>AI review</Link> <Link href="/team/ai/rollout" style={{marginLeft:10}}>Rollout</Link></div>
     </header>
     {error&&<div role="alert" style={{padding:12,background:"#fff1f1",borderRadius:10,marginBottom:12}}>{error}</div>}
@@ -59,7 +59,7 @@ export default function AiConfigurationPage(){
 
     {status&&<section style={{...card,marginBottom:14}}>
       <h2 style={{marginTop:0}}>Is the assistant switched on?</h2>
-      <p style={{margin:"0 0 8px",color:"#746b7d"}}>
+      <p style={{margin:"0 0 8px",color:"#6c7c78"}}>
         Answering staff: <b style={{color:status.answersStaff?"#177245":"#b42318"}}>{status.answersStaff?"yes":"no"}</b> ·
         answering customers: <b style={{color:status.answersCustomers?"#177245":"#b42318"}}>{status.answersCustomers?"yes":"no"}</b>.
         Every requirement below has to be met — any one of them missing sends every conversation to a human.
@@ -71,8 +71,8 @@ export default function AiConfigurationPage(){
         <Requirement label="No kill switch thrown" met={status.killSwitches.length===0} detail={status.killSwitches.length===0?"Nothing is disabled.":status.killSwitches.map(item=>`${item.scopeType}:${item.scopeKey} — ${item.reason}`).join("; ")} />
       </ul>
       <div style={{marginTop:12,display:"flex",gap:10,alignItems:"center",flexWrap:"wrap"}}>
-        <button disabled={busy==="bootstrap"} onClick={()=>void installStarterGrounding()} style={{padding:"10px 14px",background:"#4b168c",color:"white",border:"none",borderRadius:10,fontWeight:700,cursor:"pointer"}}>{busy==="bootstrap"?"Installing…":status.configurationRequired?"Install starter assistant grounding":"Reinstall starter grounding (new version)"}</button>
-        <small style={{color:"#746b7d"}}>Creates the PawSpace assistant profile, system policy, approved knowledge and intent catalogue through the normal draft → review → approve → activate lifecycle. Re-running supersedes the current versions rather than editing them.</small>
+        <button disabled={busy==="bootstrap"} onClick={()=>void installStarterGrounding()} style={{padding:"10px 14px",background:"#01261F",color:"white",border:"none",borderRadius:10,fontWeight:700,cursor:"pointer"}}>{busy==="bootstrap"?"Installing…":status.configurationRequired?"Install starter assistant grounding":"Reinstall starter grounding (new version)"}</button>
+        <small style={{color:"#6c7c78"}}>Creates the PawSpace assistant profile, system policy, approved knowledge and intent catalogue through the normal draft → review → approve → activate lifecycle. Re-running supersedes the current versions rather than editing them.</small>
       </div>
     </section>}
 
@@ -81,7 +81,7 @@ export default function AiConfigurationPage(){
       {section("Intent catalogue","intent",data.intents)}
       {section("Approved knowledge registry","knowledge",data.knowledge)}
       {section("Prompt / system-policy versions","prompt",data.prompts)}
-      <section style={card}><h2 style={{marginTop:0}}>Kill switches &amp; audit</h2><p>Active switches: {data.killSwitches.filter(row=>Number(row.disabled)===1).length} · Audit events: {data.auditEvents.length}</p><p style={{fontSize:12,color:"#746b7d"}}>Configuration changes require settings.manage and are separately security-audited. Active versions are immutable snapshots; changes create new versions.</p></section>
+      <section style={card}><h2 style={{marginTop:0}}>Kill switches &amp; audit</h2><p>Active switches: {data.killSwitches.filter(row=>Number(row.disabled)===1).length} · Audit events: {data.auditEvents.length}</p><p style={{fontSize:12,color:"#6c7c78"}}>Configuration changes require settings.manage and are separately security-audited. Active versions are immutable snapshots; changes create new versions.</p></section>
     </>}
   </div></main>;
 }
