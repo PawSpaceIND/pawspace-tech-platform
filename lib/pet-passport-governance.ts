@@ -8,6 +8,7 @@
  */
 
 import { pawPointsBalance } from "./paw-points-governance";
+import { notFound, ownershipDenied } from "./http-errors";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
@@ -50,7 +51,7 @@ async function petCore(db: Db, petId: string) {
 export async function getPetPassport(db: Db, input: { customerId: string; petId: string }) {
   await ensurePetPassportTables(db);
   const core = await petCore(db, input.petId);
-  if (!core || String(core.pet.customer_id) !== input.customerId) throw new Error("Pet not found");
+  if (!core || String(core.pet.customer_id) !== input.customerId) throw notFound("Pet not found");
   const points = await pawPointsBalance(db, input.customerId).catch(() => 0);
   return {
     petId: input.petId, name: String(core.pet.name), species: String(core.pet.species), breed: core.pet.breed ? String(core.pet.breed) : null,
@@ -65,8 +66,8 @@ export async function getPetPassport(db: Db, input: { customerId: string; petId:
 export async function createPetPassportShare(db: Db, input: { customerId: string; petId: string; actorId: string }) {
   await ensurePetPassportTables(db);
   const pet = await db.prepare("SELECT customer_id FROM canonical_pets WHERE id=?").bind(input.petId).first<Row>();
-  if (!pet) throw new Error("Pet not found");
-  if (String(pet.customer_id) !== input.customerId) throw new Error("You can only share your own pet's passport");
+  if (!pet) throw notFound("Pet not found");
+  if (String(pet.customer_id) !== input.customerId) throw ownershipDenied("You can only share your own pet's passport");
   const existing = await db.prepare("SELECT token FROM pet_passport_shares WHERE pet_id=? AND customer_id=? AND revoked=0 ORDER BY created_at DESC LIMIT 1").bind(input.petId, input.customerId).first<Row>();
   if (existing) return { token: String(existing.token), sharePath: `/pet-passport/${String(existing.token)}` };
   const t = token();
@@ -77,8 +78,8 @@ export async function createPetPassportShare(db: Db, input: { customerId: string
 export async function revokePetPassportShare(db: Db, input: { customerId: string; token: string }) {
   await ensurePetPassportTables(db);
   const row = await db.prepare("SELECT customer_id FROM pet_passport_shares WHERE token=?").bind(input.token).first<Row>();
-  if (!row) throw new Error("Share link not found");
-  if (String(row.customer_id) !== input.customerId) throw new Error("You can only revoke your own share link");
+  if (!row) throw notFound("Share link not found");
+  if (String(row.customer_id) !== input.customerId) throw ownershipDenied("You can only revoke your own share link");
   await db.prepare("UPDATE pet_passport_shares SET revoked=1 WHERE token=?").bind(input.token).run();
   return { token: input.token, revoked: true };
 }

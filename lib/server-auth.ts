@@ -2,6 +2,7 @@ import { defaultRoles, hasPermission, parsePermissions, type Permission } from "
 import {ensureIdentityBindingTables,findIdentityBinding,type IdentitySource,type PrincipalType} from "./identity-binding";
 import {resolvePlatformSession} from "./platform-session";
 import {resolveUatStaffActor,signInRequiredResponse} from "./uat-staging-auth";
+import {clientStatusOf} from "./http-errors";
 
 type Db = Awaited<ReturnType<typeof database>>;
 export type AuthenticatedActor = { email:string; name:string; roleCode:string; permissions:string[]; developmentPreview:boolean; identitySource:IdentitySource; principalType:PrincipalType; principalKey:string };
@@ -147,7 +148,21 @@ export async function securityAudit(db:Db,actor:AuthenticatedActor,action:string
     .bind(crypto.randomUUID(),actor.email,actor.roleCode,action,resourceType,resourceId,outcome,JSON.stringify(detail),Date.now()).run();
 }
 
+/**
+ * Turn a thrown value into the response the caller should see.
+ *
+ * Three cases, in order:
+ *  - a thrown Response (authFailure, signInRequiredResponse) is already the answer;
+ *  - an error that classified itself (lib/http-errors.ts, or backend/src/scheduling.ts's
+ *    statusCode:422) is answered with that class - 401/403/404/409/422/429;
+ *  - anything else is a genuine unexpected failure and stays a 500, so a real outage is never
+ *    downgraded into a client error and quietly dropped out of the alerting path.
+ *
+ * Before this, only the first case existed: an ownership refusal thrown as a plain Error came back as
+ * 500, which reads as an outage to the customer and as "not refused" to every test looking for 403.
+ */
 export function authError(error:unknown,fallback="Request failed"){
   if(error instanceof Response)return error;
-  return Response.json({error:error instanceof Error?error.message:fallback},{status:500});
+  const status=clientStatusOf(error)??500;
+  return Response.json({error:error instanceof Error?error.message:fallback},{status});
 }

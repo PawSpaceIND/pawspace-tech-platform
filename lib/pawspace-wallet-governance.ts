@@ -15,6 +15,7 @@
  */
 
 import { ACCT, postJournal, periodOf, round } from "./finance-accounts";
+import { badInput, notFound, ownershipDenied, stateConflict } from "./http-errors";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
@@ -51,10 +52,10 @@ export async function creditWallet(db: Db, input: { customerId: string; amount: 
   const customerId = String(input.customerId || "").trim();
   const amount = round(Number(input.amount));
   const source = String(input.source || "").toLowerCase();
-  if (!customerId) throw new Error("A customer is required");
-  if (!CREDIT_SOURCES.includes(source)) throw new Error("Wallet credit source must be refund, cancellation or goodwill");
-  if (!(amount > 0) || amount > MAX_CREDIT) throw new Error(`Credit amount must be between 1 and ${MAX_CREDIT}`);
-  if (!input.idempotencyKey) throw new Error("An idempotency key is required");
+  if (!customerId) throw badInput("A customer is required");
+  if (!CREDIT_SOURCES.includes(source)) throw badInput("Wallet credit source must be refund, cancellation or goodwill");
+  if (!(amount > 0) || amount > MAX_CREDIT) throw badInput(`Credit amount must be between 1 and ${MAX_CREDIT}`);
+  if (!input.idempotencyKey) throw badInput("An idempotency key is required");
   const prior = await db.prepare("SELECT * FROM pawspace_wallet_ledger WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();
   if (prior) return { alreadyCredited: true, ledgerId: String(prior.id), amount: Number(prior.amount), balance: await walletBalance(db, customerId) };
   const balance = await applyDelta(db, customerId, amount);
@@ -97,27 +98,30 @@ export async function redeemWalletForBooking(db: Db, input: { customerId: string
   await ensurePawspaceWalletTables(db);
   const customerId = String(input.customerId || "").trim();
   const bookingId = String(input.bookingId || "").trim();
-  if (!customerId || !bookingId) throw new Error("A customer and booking are required");
+  if (!customerId || !bookingId) throw badInput("A customer and booking are required");
   const booking = await db.prepare("SELECT customer_id,total_amount,service_code FROM canonical_bookings WHERE id=?").bind(bookingId).first<Row>();
-  if (!booking) throw new Error("Booking not found");
-  if (String(booking.customer_id) !== customerId) throw new Error("You can only spend wallet credit on your own booking");
+  if (!booking) throw notFound("Booking not found");
+  // The cross-customer case Tester 3 hit live: B, signed in as B, pointing at A's bookingId. This
+  // sits ahead of every write - the guarded debit is 16 lines below - so the refusal never moved
+  // money. It just answered 500, so the customer saw an outage and no test scored it as refused.
+  if (String(booking.customer_id) !== customerId) throw ownershipDenied("You can only spend wallet credit on your own booking");
   const idempotencyKey = `wallet-redeem:${bookingId}`;
   const prior = await db.prepare("SELECT * FROM pawspace_wallet_ledger WHERE idempotency_key=?").bind(idempotencyKey).first<Row>();
-  if (prior) throw new Error("Wallet credit has already been applied to this booking");
+  if (prior) throw stateConflict("Wallet credit has already been applied to this booking");
   const balance = await walletBalance(db, customerId);
-  if (!(balance > 0)) throw new Error("No wallet balance to redeem");
+  if (!(balance > 0)) throw stateConflict("No wallet balance to redeem");
   const bookingTotal = round(Number(booking.total_amount || 0));
-  if (!(bookingTotal > 0)) throw new Error("This booking has no payable amount");
+  if (!(bookingTotal > 0)) throw stateConflict("This booking has no payable amount");
   // customer may cap how much wallet to spend; default is as much as helps this booking
   const requestedWallet = input.walletAmount != null ? round(Math.min(Number(input.walletAmount), balance)) : balance;
-  if (!(requestedWallet > 0)) throw new Error("Wallet redemption amount must be positive");
+  if (!(requestedWallet > 0)) throw badInput("Wallet redemption amount must be positive");
   const q = quoteWalletRedemption(requestedWallet, bookingTotal);
-  if (!(q.walletUsed > 0)) throw new Error("Wallet redemption amount must be positive");
+  if (!(q.walletUsed > 0)) throw badInput("Wallet redemption amount must be positive");
   // Guarded debit: the balance row is only decremented when it can absorb the full spend, so two
   // concurrent redemptions can never drive the wallet negative (the read above is advisory only).
   const now = Date.now();
   const debited = await db.prepare("UPDATE pawspace_wallet_accounts SET balance=balance-?,updated_at=? WHERE customer_id=? AND balance>=?").bind(q.walletUsed, now, customerId, q.walletUsed).run();
-  if (!Number(debited.meta?.changes || 0)) throw new Error("Wallet balance is no longer sufficient for this redemption");
+  if (!Number(debited.meta?.changes || 0)) throw stateConflict("Wallet balance is no longer sufficient for this redemption");
   const newBalance = await walletBalance(db, customerId);
   const id = uid("WAL");
   try {
@@ -128,7 +132,7 @@ export async function redeemWalletForBooking(db: Db, input: { customerId: string
     // so a lost race never burns balance without a ledger row.
     if (!(error instanceof Error && /UNIQUE/i.test(error.message))) throw error;
     await applyDelta(db, customerId, q.walletUsed);
-    throw new Error("Wallet credit has already been applied to this booking");
+    throw stateConflict("Wallet credit has already been applied to this booking");
   }
   const vertical = booking.service_code ? String(booking.service_code) : null;
   await postJournal(db, { groupKey: `wallet-redeem-${bookingId}`, entryDate: today(), periodCode: periodOf(today()), sourceType: "wallet_redeem", sourceId: id, narration: `Wallet redeemed on booking ${bookingId}`, lines: [

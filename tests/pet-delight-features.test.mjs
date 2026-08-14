@@ -12,7 +12,11 @@ test("pet birthday reward: flat Rs.500 grooming, one per pet per year, ownership
   assert.match(birthday, /BIRTHDAY_GROOMING_DISCOUNT = 500/);
   assert.match(birthday, /UNIQUE\(pet_id,reward_year\)/);
   assert.match(birthday, /You can only set the birthday for your own pet/);
-  assert.match(birthday, /service_code\) !== "grooming"\) throw new Error\("The birthday reward is valid on doorstep grooming only"\)/);
+  // The grooming-scope rule used to be asserted here as a literal source line, including the exact
+  // `throw new Error(...)` spelling. That assertion broke on a refactor that changed only the response
+  // class and not the rule, having never once proven the rule WORKS - so it moved to
+  // tests/refusal-response-class.test.mjs, which redeems a real reward against a real non-grooming
+  // booking and reads the refusal.
   assert.match(birthday, /export async function runPetBirthdaySweep/);
   assert.match(birthday, /status='redeemed'/); // single-use redemption
 });

@@ -13,6 +13,8 @@
  * looks like for a new provider).
  */
 
+import { badInput, notFound, ownershipDenied, stateConflict } from "./http-errors";
+
 type Db = D1Database;
 type Row = Record<string, unknown>;
 
@@ -28,13 +30,16 @@ export async function ensureBookingRatingTables(db: Db) {
 export async function submitBookingRating(db: Db, input: { customerId: string; bookingId: string; stars: number; comment?: string; actorId: string }) {
   await ensureBookingRatingTables(db);
   const stars = Number(input.stars);
-  if (!Number.isInteger(stars) || stars < 1 || stars > 5) throw new Error("Rating must be a whole number from 1 to 5");
+  if (!Number.isInteger(stars) || stars < 1 || stars > 5) throw badInput("Rating must be a whole number from 1 to 5");
   const booking = await db.prepare("SELECT id,customer_id,provider_id,service_code,status FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>();
-  if (!booking) throw new Error("Booking not found");
-  if (String(booking.customer_id) !== input.customerId) throw new Error("You can only rate your own bookings");
-  if (String(booking.status) !== "completed") throw new Error("You can only rate a completed booking");
+  if (!booking) throw notFound("Booking not found");
+  // The route already holds the caller to their own customerId, so this is the cross-customer case:
+  // B, signed in as B, naming B, and pointing at A's bookingId. The refusal always held - it just
+  // came back as a 500, so the customer saw an outage and no test scored it as a refusal.
+  if (String(booking.customer_id) !== input.customerId) throw ownershipDenied("You can only rate your own bookings");
+  if (String(booking.status) !== "completed") throw stateConflict("You can only rate a completed booking");
   const existing = await db.prepare("SELECT id FROM booking_ratings WHERE booking_id=?").bind(input.bookingId).first<Row>();
-  if (existing) throw new Error("This booking has already been rated");
+  if (existing) throw stateConflict("This booking has already been rated");
   const id = uid("RATE"), now = Date.now();
   await db.prepare("INSERT INTO booking_ratings (id,booking_id,customer_id,provider_id,service_code,stars,comment,created_at) VALUES (?,?,?,?,?,?,?,?)")
     .bind(id, input.bookingId, input.customerId, String(booking.provider_id), String(booking.service_code), stars, input.comment?.trim() || null, now).run();

@@ -8,6 +8,8 @@
  * it does not fabricate savings or auto-apply anything without an explicit redeem call.
  */
 
+import { badInput, notFound, ownershipDenied, stateConflict } from "./http-errors";
+
 type Db = D1Database;
 type Row = Record<string, unknown>;
 
@@ -26,11 +28,11 @@ export async function ensurePetBirthdayTables(db: Db) {
 /** Record/update a pet's date of birth (ownership-checked against the canonical pet record). */
 export async function savePetBirthday(db: Db, input: { petId: string; customerId: string; dateOfBirth: string; actorId: string }) {
   await ensurePetBirthdayTables(db);
-  if (!isDate(input.dateOfBirth)) throw new Error("Date of birth must be a valid YYYY-MM-DD date");
-  if (Date.parse(input.dateOfBirth) > Date.now()) throw new Error("Date of birth cannot be in the future");
+  if (!isDate(input.dateOfBirth)) throw badInput("Date of birth must be a valid YYYY-MM-DD date");
+  if (Date.parse(input.dateOfBirth) > Date.now()) throw badInput("Date of birth cannot be in the future");
   const pet = await db.prepare("SELECT id,customer_id FROM canonical_pets WHERE id=?").bind(input.petId).first<Row>();
-  if (!pet) throw new Error("Pet not found");
-  if (String(pet.customer_id) !== input.customerId) throw new Error("You can only set the birthday for your own pet");
+  if (!pet) throw notFound("Pet not found");
+  if (String(pet.customer_id) !== input.customerId) throw ownershipDenied("You can only set the birthday for your own pet");
   const now = Date.now();
   await db.prepare("INSERT INTO pet_birthdays (pet_id,customer_id,date_of_birth,created_at,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(pet_id) DO UPDATE SET date_of_birth=excluded.date_of_birth,updated_at=excluded.updated_at")
     .bind(input.petId, input.customerId, input.dateOfBirth, now, now).run();
@@ -68,14 +70,14 @@ export async function runPetBirthdaySweep(db: Db, input: { today?: string } = {}
 export async function redeemBirthdayReward(db: Db, input: { code: string; customerId: string; bookingId: string; actorId: string }) {
   await ensurePetBirthdayTables(db);
   const reward = await db.prepare("SELECT * FROM pet_birthday_rewards WHERE code=?").bind(input.code.trim()).first<Row>();
-  if (!reward) throw new Error("Birthday reward code not found");
-  if (String(reward.customer_id) !== input.customerId) throw new Error("This birthday reward belongs to another account");
-  if (String(reward.status) !== "issued") throw new Error("This birthday reward has already been used");
-  if (Number(reward.expires_at) < Date.now()) throw new Error("This birthday reward has expired");
+  if (!reward) throw notFound("Birthday reward code not found");
+  if (String(reward.customer_id) !== input.customerId) throw ownershipDenied("This birthday reward belongs to another account");
+  if (String(reward.status) !== "issued") throw stateConflict("This birthday reward has already been used");
+  if (Number(reward.expires_at) < Date.now()) throw stateConflict("This birthday reward has expired");
   const booking = await db.prepare("SELECT id,customer_id,service_code FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>();
-  if (!booking) throw new Error("Booking not found");
-  if (String(booking.customer_id) !== input.customerId) throw new Error("You can only apply your reward to your own booking");
-  if (String(booking.service_code) !== "grooming") throw new Error("The birthday reward is valid on doorstep grooming only");
+  if (!booking) throw notFound("Booking not found");
+  if (String(booking.customer_id) !== input.customerId) throw ownershipDenied("You can only apply your reward to your own booking");
+  if (String(booking.service_code) !== "grooming") throw stateConflict("The birthday reward is valid on doorstep grooming only");
   // The status='issued' guard makes the claim atomic, but its result has to be checked: without this
   // two concurrent redeems (or a double-tapped button) both passed the read above and both reported
   // a Rs.500 discount applied, while only one row actually moved to 'redeemed'.
@@ -84,7 +86,7 @@ export async function redeemBirthdayReward(db: Db, input: { code: string; custom
   if (!Number(claim.meta.changes)) {
     const winner = await db.prepare("SELECT redeemed_booking_id FROM pet_birthday_rewards WHERE id=?").bind(String(reward.id)).first<Row>();
     if (winner && String(winner.redeemed_booking_id) === input.bookingId) return { code: String(reward.code), bookingId: input.bookingId, discountApplied: Number(reward.discount_amount), serviceScope: "grooming", duplicatePrevented: true };
-    throw new Error("This birthday reward has already been used");
+    throw stateConflict("This birthday reward has already been used");
   }
   return { code: String(reward.code), bookingId: input.bookingId, discountApplied: Number(reward.discount_amount), serviceScope: "grooming", duplicatePrevented: false };
 }
