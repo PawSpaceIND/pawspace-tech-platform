@@ -189,3 +189,92 @@ test("reward reversal is idempotent, and refuses when the reward's policy does n
     /does not authorize automatic reversal/,
   );
 });
+
+// P1-4 sub-case: shared-contact / shared-identity self-dealing. One person, two accounts sharing a
+// canonical phone, cannot mint a referral reward: identityRisk flags 'hold' at claim time and, on a real
+// completed+paid first booking, qualification refuses (held) and creates ZERO reward.
+test("shared-contact referral (referrer and friend share a canonical phone) is HELD at qualification with zero reward", async () => {
+  const { sqlite, db } = freshDb();
+  await ref.seedReferralProgramme(db);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY, name TEXT, primary_phone TEXT, email TEXT)");
+  // The friend shares the referrer's phone (distinct email, so ONLY the phone match drives the hold).
+  sqlite.prepare("INSERT INTO canonical_customers VALUES ('CUS-REFERRER','Refe Rrer','+919000001111','referrer@pawspace.test')").run();
+  sqlite.prepare("INSERT INTO canonical_customers VALUES ('CUS-SHARED','Sha Red','+919000001111','shared-friend@pawspace.test')").run();
+  const now = Date.now();
+  await ref.saveReferralProgramme(db, {
+    id: "uat-referral-programme", name: "UAT Referral Programme", status: "active",
+    eligibleServices: ["grooming"], cityIds: ["blr"], rewardUseServices: ["grooming"],
+    friendDiscount: 100, referrerReward: 200, perReferrerMonthlyLimit: 5, rewardValidityDays: 30,
+    oneRewardPerFriend: true, reversalOnRefund: true, validFrom: now - DAY, validUntil: now + 365 * DAY,
+  });
+  const { code } = await ref.ensureReferralCode(db, { programmeId: "uat-referral-programme", customerId: "CUS-REFERRER" });
+
+  // The claim registers, but is already flagged 'hold' on the shared canonical phone.
+  const claim = await ref.claimReferral(db, { code, referredCustomerId: "CUS-SHARED", serviceCode: "grooming", cityId: "blr", idempotencyKey: "shared-c1" });
+  assert.equal(claim.matched, true, `claim should register: ${JSON.stringify(claim)}`);
+  assert.equal(claim.fraudState, "hold", "a shared-phone claim is flagged for review at claim time");
+  assert.match(String(claim.reviewReason), /share the same canonical phone/i);
+
+  // A completed + paid first booking that would otherwise qualify the reward.
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,status TEXT,service_code TEXT,city_id TEXT,total_amount REAL,created_at INTEGER)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (booking_id TEXT PRIMARY KEY,status TEXT,amount REAL)");
+  sqlite.prepare("INSERT INTO canonical_bookings VALUES ('BK-SHARED','CUS-SHARED','completed','grooming','blr',1500,?)").run(now);
+  sqlite.prepare("INSERT INTO booking_payments VALUES ('BK-SHARED','captured',1500)").run();
+
+  const q = await ref.qualifyReferralClaim(db, { claimId: claim.claimId, bookingId: "BK-SHARED", idempotencyKey: "shared-q1", actorId: "ops@pawspace.in" });
+  assert.equal(q.qualified, false, `a shared-identity claim must not qualify: ${JSON.stringify(q)}`);
+  assert.equal(q.status, "held", "the claim is held, not rewarded");
+  assert.match(String(q.reason), /share the same canonical phone/i);
+
+  // Zero reward — for this claim and for the referrer overall — and the claim is persisted as held.
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM referral_rewards WHERE claim_id=?").get(claim.claimId).c, 0, "a held claim creates no reward");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM referral_rewards WHERE referrer_customer_id='CUS-REFERRER'").get().c, 0, "the referrer earns nothing from a shared-identity referral");
+  assert.equal(sqlite.prepare("SELECT status FROM referral_claims WHERE id=?").get(claim.claimId).status, "held");
+});
+
+// P1-4 sub-case: monthly cap. With perReferrerMonthlyLimit=2 and three DISTINCT (clear) friends, the
+// third qualification exceeds the cap and is refused (held, 'limit_reached') — exactly cap rewards exist,
+// no extra reward is minted.
+test("monthly referral cap: the qualification beyond perReferrerMonthlyLimit is refused with zero extra reward", async () => {
+  const { sqlite, db } = freshDb();
+  await ref.seedReferralProgramme(db);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY, name TEXT, primary_phone TEXT, email TEXT)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,status TEXT,service_code TEXT,city_id TEXT,total_amount REAL,created_at INTEGER)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (booking_id TEXT PRIMARY KEY,status TEXT,amount REAL)");
+  const now = Date.now();
+  sqlite.prepare("INSERT INTO canonical_customers VALUES ('CUS-REFERRER','Refe Rrer','+919000001111','referrer@pawspace.test')").run();
+  await ref.saveReferralProgramme(db, {
+    id: "uat-referral-programme", name: "UAT Referral Programme", status: "active",
+    eligibleServices: ["grooming"], cityIds: ["blr"], rewardUseServices: ["grooming"],
+    friendDiscount: 100, referrerReward: 200, perReferrerMonthlyLimit: 2, rewardValidityDays: 30,
+    oneRewardPerFriend: true, reversalOnRefund: true, validFrom: now - DAY, validUntil: now + 365 * DAY,
+  });
+  const { code } = await ref.ensureReferralCode(db, { programmeId: "uat-referral-programme", customerId: "CUS-REFERRER" });
+
+  // Each friend is a genuinely distinct identity (distinct phone + email), so identity-risk stays clear
+  // and only the monthly cap can gate them.
+  async function qualifyFriend(n) {
+    const friend = `CUS-FRIEND-${n}`, booking = `BK-FRIEND-${n}`;
+    sqlite.prepare("INSERT INTO canonical_customers VALUES (?,?,?,?)").run(friend, `Friend ${n}`, `+91900000${2000 + n}`, `friend${n}@pawspace.test`);
+    const claim = await ref.claimReferral(db, { code, referredCustomerId: friend, serviceCode: "grooming", cityId: "blr", idempotencyKey: `cap-c-${n}` });
+    assert.equal(claim.fraudState, "clear", `friend ${n} must be a distinct, clear identity: ${JSON.stringify(claim)}`);
+    sqlite.prepare("INSERT INTO canonical_bookings VALUES (?,?,'completed','grooming','blr',1500,?)").run(booking, friend, now);
+    sqlite.prepare("INSERT INTO booking_payments VALUES (?,'captured',1500)").run(booking);
+    return ref.qualifyReferralClaim(db, { claimId: claim.claimId, bookingId: booking, idempotencyKey: `cap-q-${n}`, actorId: "ops@pawspace.in" });
+  }
+
+  const q1 = await qualifyFriend(1);
+  assert.equal(q1.qualified, true, `first within the cap qualifies: ${JSON.stringify(q1)}`);
+  const q2 = await qualifyFriend(2);
+  assert.equal(q2.qualified, true, `second within the cap qualifies: ${JSON.stringify(q2)}`);
+  // The third exceeds the monthly cap of 2.
+  const q3 = await qualifyFriend(3);
+  assert.equal(q3.qualified, false, `the qualification beyond the cap must be refused: ${JSON.stringify(q3)}`);
+  assert.equal(q3.status, "held");
+  assert.equal(q3.fraudState, "limit_reached");
+  assert.match(String(q3.reason), /monthly reward limit/i);
+
+  // Exactly cap-many rewards exist; the over-cap qualification added nothing, and its claim is held.
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM referral_rewards WHERE referrer_customer_id='CUS-REFERRER'").get().c, 2, "no reward is minted beyond the configured monthly cap");
+  assert.equal(sqlite.prepare("SELECT status FROM referral_claims WHERE referred_customer_id='CUS-FRIEND-3'").get().status, "held");
+});

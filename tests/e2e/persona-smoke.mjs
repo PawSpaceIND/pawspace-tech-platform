@@ -65,14 +65,30 @@ function isVioletish(colour) {
 async function signIn(page) {
   if (!ACCESS_CODE) return "public";
   await page.goto(`${BASE}/staging-login`, { waitUntil: "domcontentloaded", timeout: 30000 });
-  const code = page.locator('input[type="password"], input[name*="code" i]').first();
-  const email = page.locator('input[type="email"], input[name*="email" i]').first();
-  if (await email.count()) await email.fill(IDENTITY);
-  if (await code.count()) await code.fill(ACCESS_CODE);
-  await page.locator('button[type="submit"], button').first().click().catch(() => {});
-  await page.waitForTimeout(2000);
-  const signedIn = !page.url().includes("/staging-login");
-  if (!signedIn) throw new Error("staging sign-in did not complete (check the access code secret)");
+  // The sign-in card renders only AFTER an async GET /api/staging-login resolves (it shows "Checking…"
+  // until then). Locating inputs immediately raced that render and left them unfilled; wait for the real
+  // fields to appear first. Selectors match what the page actually renders: the access-code field is a
+  // password input (placeholder "shared UAT access code"); the identity field is the free-text staff-email
+  // input (placeholder "seeded staff email …") — neither carries type="email" nor a name attribute.
+  const code = page.getByPlaceholder(/shared UAT access code/i);
+  const email = page.getByPlaceholder(/seeded staff email/i);
+  await code.waitFor({ state: "visible", timeout: 30000 });
+  await email.waitFor({ state: "visible", timeout: 30000 });
+  await code.fill(ACCESS_CODE);
+  await email.fill(IDENTITY);
+  // On a successful sign-in the page runs window.location.assign("/me"), so success IS a navigation away
+  // from /staging-login. Assert exactly that, and do NOT swallow interaction failures: a bad code or an
+  // unrecognised identity leaves the URL on /staging-login, so waitForURL rejects and the run fails loudly.
+  try {
+    await Promise.all([
+      page.waitForURL((url) => !url.pathname.startsWith("/staging-login"), { timeout: 30000 }),
+      page.getByRole("button", { name: /^sign in$/i }).click(),
+    ]);
+  } catch {
+    const message = (await page.locator("p").filter({ hasText: /refused|cannot sign in|invalid|failed|expired/i }).first().textContent().catch(() => null))
+      || "no on-screen error captured";
+    throw new Error(`staging sign-in did not complete — the page stayed on /staging-login. On-screen message: ${message.trim()}`);
+  }
   return "signed-in";
 }
 
