@@ -5,6 +5,7 @@
 // near-zero until real bookings and approved expenses exist.
 
 import{revenueChartOfAccounts,indirectIncomeChartOfAccounts,expenseChartOfAccounts}from"./chart-of-accounts";
+import{RECOGNIZED_BOOKING_STATUS_SQL}from"./revenue-recognition";
 
 type D1=D1Database;
 type Row=Record<string,unknown>;
@@ -35,10 +36,13 @@ export async function generatePnlReport(db:D1,input:{fromMonth:string;toMonth:st
   const bookingsTableExists=await ensurePnlSourceTables(db);
 
   // --- Revenue side: real canonical_bookings, grouped by service_code -> mapped to MIS revenue categories.
-  // Only non-cancelled bookings count as recognized revenue (matches BookingStatus in backend/src/domain.ts).
+  // Recognized revenue is the founder-approved allowlist (delivered=completed, committed=confirmed/
+  // in_progress) — the same set the monthly close and company analytics use. Task #55: this was a
+  // denylist (NOT cancelled/draft), which silently recognized no_show / awaiting_* / pending / refunded
+  // and any new status. Now an unclassified status fails closed (is not turnover).
   const revenueByServiceMonth=new Map<string,Record<string,number>>();
   if(bookingsTableExists){
-    const rows=await db.prepare("SELECT service_code,scheduled_start,total_amount FROM canonical_bookings WHERE status!='cancelled' AND status!='draft'").all<Row>();
+    const rows=await db.prepare(`SELECT service_code,scheduled_start,total_amount FROM canonical_bookings WHERE status IN ${RECOGNIZED_BOOKING_STATUS_SQL}`).all<Row>();
     for(const row of rows.results){
       const service=String(row.service_code||""),month=monthKey(String(row.scheduled_start)),amount=Number(row.total_amount||0);
       if(!revenueByServiceMonth.has(service))revenueByServiceMonth.set(service,{});

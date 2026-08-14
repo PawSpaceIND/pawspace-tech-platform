@@ -13,6 +13,7 @@
  */
 
 import{chunkedIn}from"./d1-chunked-in";
+import{isRecognizedBookingRevenue,RECOGNIZED_BOOKING_STATUS_SQL}from"./revenue-recognition";
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
@@ -50,7 +51,11 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
  if(!bookings.length)return{from,to,cityId:input.cityId??null,services:{},company:emptyCompany(),dataCoverage:coverageNote(),truth:truthNote()};
 
  const ids=bookings.map(row=>String(row.id));
- const active=bookings.filter(row=>!["cancelled","draft"].includes(String(row.status)));
+ // Task #55: recognized revenue is the founder-approved allowlist (delivered=completed, committed=
+ // confirmed/in_progress) — the same set the monthly close, P&L and company analytics use. This was a
+ // denylist (NOT cancelled/draft), so no_show / awaiting_* / pending / refunded silently counted toward
+ // GMV/LTV and any new status would too. Now an unclassified status fails closed.
+ const active=bookings.filter(row=>isRecognizedBookingRevenue(row.status));
  const serviceOf=new Map(bookings.map(row=>[String(row.id),String(row.service_code)]));
 
  // Real per-booking money components (each guarded on its owning table)
@@ -66,7 +71,7 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
  const ladders:Record<string,Ladder>={};
  const ladderFor=(service:string)=>ladders[service]??={gmv:0,orders:0,cancelled:0,discounts:0,providerPayout:0,refunds:0,tax:null,paymentFee:null,variableCost:null,contributionKnown:0,contributionPctOfGmv:null,avgOrderValue:null,reviews:0,csatAvgStars:null,csatPct:null,complaintsPer100:null,repeatRatePct:null,revenuePerProviderDay:null};
 
- for(const row of bookings){const ladder=ladderFor(String(row.service_code));if(["cancelled","draft"].includes(String(row.status))){ladder.cancelled++;continue;}ladder.orders++;ladder.gmv+=Number(row.total_amount||0);}
+ for(const row of bookings){const ladder=ladderFor(String(row.service_code));if(!isRecognizedBookingRevenue(row.status)){ladder.cancelled++;continue;}ladder.orders++;ladder.gmv+=Number(row.total_amount||0);}
  const addByBooking=(rows:Row[],pick:(row:Row)=>number,apply:(ladder:Ladder,value:number)=>void)=>{for(const row of rows){const service=serviceOf.get(String(row.booking_id));if(!service)continue;apply(ladderFor(service),pick(row));}};
  addByBooking(coupons,row=>Number(row.discount_amount||0),(ladder,value)=>{ladder.discounts+=value;});
  addByBooking(points,row=>Math.abs(Number(row.points||0))*0.5,(ladder,value)=>{ladder.discounts+=value;});
@@ -101,7 +106,7 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
  const activeCustomers=[...new Set(active.map(row=>String(row.customer_id)))];
  let ltvPerActiveCustomer:number|null=null;
  if(activeCustomers.length){
-  const lifetime=await chunkedIn(activeCustomers,(chunk,placeholders)=>safeAll(db,["canonical_bookings"],`SELECT customer_id,SUM(total_amount) total FROM canonical_bookings WHERE status NOT IN ('cancelled','draft') AND customer_id IN (${placeholders}) GROUP BY customer_id`,chunk,guards));
+  const lifetime=await chunkedIn(activeCustomers,(chunk,placeholders)=>safeAll(db,["canonical_bookings"],`SELECT customer_id,SUM(total_amount) total FROM canonical_bookings WHERE status IN ${RECOGNIZED_BOOKING_STATUS_SQL} AND customer_id IN (${placeholders}) GROUP BY customer_id`,chunk,guards));
   ltvPerActiveCustomer=round2(lifetime.reduce((sum,row)=>sum+Number(row.total||0),0)/activeCustomers.length);
  }
  // Roster utilisation: booked reservation hours / rostered window hours across the window
@@ -120,7 +125,7 @@ export async function buildUnitEconomics(db:Db,input:UnitEconomicsFilters={}){
   const spendRow=await db.prepare("SELECT COALESCE(SUM(spend_amount),0) spend,COUNT(*) rows FROM marketing_attribution_facts WHERE spend_amount IS NOT NULL").first<Row>();
   const spend=Number(spendRow?.spend||0);
   if(Number(spendRow?.rows||0)>0&&spend>0){
-   const firsts=await safeAll(db,["canonical_bookings"],`SELECT customer_id,MIN(substr(scheduled_start,1,10)) first_day FROM canonical_bookings WHERE status NOT IN ('cancelled','draft') GROUP BY customer_id`,[],guards);
+   const firsts=await safeAll(db,["canonical_bookings"],`SELECT customer_id,MIN(substr(scheduled_start,1,10)) first_day FROM canonical_bookings WHERE status IN ${RECOGNIZED_BOOKING_STATUS_SQL} GROUP BY customer_id`,[],guards);
    const newCustomers=firsts.filter(row=>String(row.first_day)>=from&&String(row.first_day)<=to).length;
    cac={status:"derived_from_recorded_spend",spend:round2(spend),newCustomers,cacPerNewCustomer:newCustomers>0?round2(spend/newCustomers):null};
   }

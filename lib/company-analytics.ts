@@ -1,6 +1,7 @@
 import{createDegradationLog,degradationNotice,type DegradationLog}from"./degraded-reads";
 import { attributeGroomingBookingCosts } from "./grooming-cost-attribution";
 import{chunkedIn}from"./d1-chunked-in";
+import{isRecognizedBookingRevenue}from"./revenue-recognition";
 
 type Row=Record<string,unknown>;
 const rows=<T=Row>(r:{results?:unknown[]})=>(r.results||[]) as T[];
@@ -10,10 +11,11 @@ const rows=<T=Row>(r:{results?:unknown[]})=>(r.results||[]) as T[];
 async function safeAll(db:D1Database,sql:string,binds:unknown[]=[],log?:DegradationLog,source?:string){try{let q=db.prepare(sql);if(binds.length)q=q.bind(...binds);return rows(await q.all<Row>());}catch(error){return log&&source?log.note(source,error,[] as Row[]):[] as Row[];}}
 export async function buildCompanyAnalytics(db:D1Database,input:{from?:string;to?:string;serviceCode?:string;zoneId?:string}={}){const from=input.from||"1970-01-01",to=input.to||"2999-12-31",filters:string[]=["scheduled_start>=?","scheduled_start<?"],binds:unknown[]=[from,to];if(input.serviceCode){filters.push("service_code=?");binds.push(input.serviceCode);}if(input.zoneId){filters.push("zone_id=?");binds.push(input.zoneId);}const where=filters.join(" AND ");const degradation=createDegradationLog();const bookings=await safeAll(db,`SELECT id,customer_id,service_code,package_code,zone_id,provider_id,status,total_amount,currency,scheduled_start,scheduled_end FROM canonical_bookings WHERE ${where}`,binds,degradation,"bookings");const ids=bookings.map(item=>String(item.id));let payments:Row[]=[],tickets:Row[]=[];if(ids.length){payments=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,`SELECT booking_id,amount,status,gateway FROM booking_payments WHERE booking_id IN (${placeholders})`,chunk,degradation,"payments"));tickets=await chunkedIn(ids,(chunk,placeholders)=>safeAll(db,`SELECT booking_id,category,priority,status,created_at,resolved_at,reopened_count FROM customer_experience_tickets WHERE booking_id IN (${placeholders})`,chunk,degradation,"customer experience tickets"));}const providers=await safeAll(db,"SELECT id,provider_model,status,live,quality_score,rating FROM provider_capacity_profiles",[],degradation,"providers");const paymentByBooking=new Map(payments.map(p=>[String(p.booking_id),p]));const completed=bookings.filter(b=>String(b.status)==="completed"),cancelled=bookings.filter(b=>String(b.status)==="cancelled");
   const capturedFor=(b:Row)=>{const p=paymentByBooking.get(String(b.id));return p&&["captured","paid"].includes(String(p.status))?Number(p.amount||0):0;};
-  // GMV recognizes the same bookings as the P&L (lib/pnl-reporting.ts): cancelled and draft
-  // bookings carry a total_amount but no recognizable revenue, so counting them silently
-  // inflated GMV above the P&L turnover for the identical period.
-  const revenueRecognized=(b:Row)=>!["cancelled","draft"].includes(String(b.status));
+  // GMV recognizes the same bookings as the P&L (lib/pnl-reporting.ts) and the monthly close: only the
+  // founder-approved allowlist (delivered=completed, committed=confirmed/in_progress) counts. Task #55:
+  // this was a denylist (NOT cancelled/draft), so no_show / awaiting_* / pending / refunded silently
+  // inflated GMV above the recognized turnover, and any new status counted by default. Fail-closed now.
+  const revenueRecognized=(b:Row)=>isRecognizedBookingRevenue(b.status);
   const gmv=bookings.reduce((s,b)=>s+(revenueRecognized(b)?Number(b.total_amount||0):0),0);
   // Collected has to be counted over the same bookings GMV recognizes, or the pair contradicts each
   // other: cash captured against a booking that was later cancelled used to be added to `collected`
