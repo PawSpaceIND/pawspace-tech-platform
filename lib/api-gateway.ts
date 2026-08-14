@@ -12,7 +12,7 @@ async function ensureGatewayTables(env:GatewayEnv){const now=Date.now();await en
 ]);for(const role of defaultRoles)await env.DB.prepare("INSERT OR IGNORE INTO role_definitions (code,name,description,permissions_json,system_role,updated_at) VALUES (?,?,?,?,?,?)").bind(role.code,role.name,role.description,JSON.stringify(role.permissions),1,now).run();}
 
 async function requiredPermission(request:Request):Promise<Permission|null>{const url=new URL(request.url),method=request.method.toUpperCase();if(url.pathname==="/api/pricing-quote"||url.pathname==="/api/training-commercial"||url.pathname==="/api/training-trainers"||url.pathname==="/api/boarding-commercial"||url.pathname==="/api/sitting-commercial"||url.pathname==="/api/taxi-commercial"||url.pathname==="/api/food-commercial"||url.pathname==="/api/walking-commercial"||url.pathname==="/api/razorpay-webhook"||url.pathname==="/api/haptik"||url.pathname==="/api/whatsapp-uat-webhook"||url.pathname==="/api/identity-session"||url.pathname==="/api/service-availability"||url.pathname==="/api/public-contact"||url.pathname==="/api/provider-public-profile"||url.pathname==="/api/staging-login"
-    ||url.pathname==="/api/customer-offers"||url.pathname==="/api/host-profile"||url.pathname==="/api/customer-otp"||url.pathname==="/api/customer-profile"||url.pathname==="/api/customer-account"||url.pathname==="/api/booking-rating"||url.pathname==="/api/customer-support-case"||url.pathname==="/api/live-price-quote"||url.pathname==="/api/training-requirements"||url.pathname==="/api/host-trust"||url.pathname==="/api/service-zone")return null;
+    ||url.pathname==="/api/customer-offers"||url.pathname==="/api/host-profile"||url.pathname==="/api/customer-otp"||url.pathname==="/api/partner-otp"||url.pathname==="/api/customer-profile"||url.pathname==="/api/customer-account"||url.pathname==="/api/booking-rating"||url.pathname==="/api/customer-support-case"||url.pathname==="/api/live-price-quote"||url.pathname==="/api/training-requirements"||url.pathname==="/api/host-trust"||url.pathname==="/api/service-zone")return null;
   if(url.pathname==="/api/relocation-enquiry")return method==="POST"?null:"customers.view";
   if(url.pathname==="/api/content-controls"){if(method==="GET")return url.searchParams.get("view")==="admin"?"marketing.manage":null;const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="set_feature"?"settings.manage":"marketing.manage";}
   if(url.pathname==="/api/operations-overview")return "dashboard.view";
@@ -107,7 +107,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/city-governance")return method==="GET"?"launch.view":"launch.manage";
   if(url.pathname==="/api/integration-readiness")return method==="GET"?"launch.view":"launch.manage";
   if(url.pathname==="/api/uat-scheduling"){if(method==="GET")return "scheduling.manage";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action&&body.action!=="reserve"?"scheduling.manage":"scheduling.book";}
-  if(url.pathname==="/api/canonical-bookings")return method==="GET"?"bookings.view":"scheduling.book";
+  if(url.pathname==="/api/canonical-bookings")return method==="GET"?"bookings.manage":"scheduling.book";
   if(url.pathname==="/api/referral-governance"){if(method==="GET")return "pricing.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");if(action==="save_programme")return "pricing.manage";if(["qualify","review"].includes(action))return "bookings.manage";if(action==="reverse_reward")return "finance.manage";return "scheduling.book";}
   if(url.pathname==="/api/training-programmes")return "scheduling.book";
   if(url.pathname==="/api/training-session-media")return "bookings.view";
@@ -115,7 +115,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/grooming-service-location")return "scheduling.book";
   if(url.pathname==="/api/address-autocomplete")return "scheduling.book";
   if(url.pathname==="/api/grooming-route")return "bookings.view";
-  if(url.pathname==="/api/booking-command-center")return method==="GET"?"bookings.view":"bookings.manage";
+  if(url.pathname==="/api/booking-command-center")return "bookings.manage";
   if(url.pathname==="/api/ops-work-queue")return method==="GET"?"bookings.view":"bookings.manage";
   if(url.pathname==="/api/partner-grooming-jobs")return "bookings.view";
   if(url.pathname==="/api/service-media")return "bookings.view";

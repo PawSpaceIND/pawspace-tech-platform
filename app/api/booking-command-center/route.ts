@@ -26,7 +26,7 @@ function parse(value: unknown) {
 
 export async function GET(request: Request) {
   try {
-    await authorize(request, "bookings.view");
+    await authorize(request, "bookings.manage");
     const db = await database();
     await ensureTables(db);
     const rows = await db.prepare(`SELECT b.*,c.name customer_name,c.primary_phone,c.secondary_phone,c.email customer_email,c.source customer_source,

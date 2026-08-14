@@ -22,6 +22,12 @@ async function sessionScope(request:Request):Promise<Scope|undefined>{const url=
   if(url.pathname==="/api/grooming-route"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return{permission:"bookings.view",subjectType:"provider",subjectId:String(body.providerId||"")};}
   if(url.pathname==="/api/grooming-lifecycle"){if(method==="GET")return{permission:"bookings.view",subjectType:"provider"};if(method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="mark_paid"?undefined:{permission:"bookings.view",subjectType:"provider"};}}
   if(url.pathname==="/api/provider-assignment-recovery"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["accept","decline"].includes(String(body.action))?{permission:"bookings.view",subjectType:"provider",subjectId:String(body.providerId||"")}:undefined;}
+  // Customer self-service routes: a customer platform session reaches them with the permission the
+  // customer role holds (scheduling.book); the route's own requireCustomerOwnership still enforces
+  // per-record isolation.
+  if(["/api/payment-order","/api/pawspace-wallet","/api/paw-points","/api/pet-passport","/api/pet-vaccination","/api/pet-emergency","/api/pet-birthday","/api/service-review"].includes(url.pathname))return{permission:"scheduling.book",subjectType:"customer"};
+  // Provider toggling their OWN availability; the route's requireProviderOwnership enforces same-provider.
+  if(url.pathname==="/api/provider-availability"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return{permission:"bookings.view",subjectType:"provider",subjectId:String(body.providerId||"")};}
   return undefined;
 }
 
