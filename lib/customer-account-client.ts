@@ -1,4 +1,5 @@
 import type { CustomerAccountRecord } from "./customer-account";
+import type { PetProfile } from "./pet-profile-options";
 
 export type CustomerPet = CustomerAccountRecord["pets"][number];
 export type PetProfileInput = {
@@ -9,6 +10,7 @@ export type PetProfileInput = {
   vaccinationStatus: string;
   ageYears?: number | null;
   weightKg?: number | null;
+  profile?: PetProfile;
 };
 
 async function payload<T>(response: Response, fallback: string): Promise<T> {
