@@ -24,6 +24,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 installWorkersHooks("__RACE_DB__", "__RACE_ENV__");
 
@@ -44,34 +45,25 @@ function racingD1(sqlite, { holdClaimMatching = null } = {}) {
   // Matching the statement means the same barrier holds for the pre-fix shape (claim inside the batch,
   // reached via batch -> item.run()) and the post-fix shape (claim alone), so the before/after
   // comparison is like for like.
+  // The barrier now rides on the shared shim (tests/helpers/d1.mjs), whose batch() is a real
+  // transaction. This matters here more than anywhere: the loser's INSERT is refused by the
+  // one-refund-per-request index, and under the old loop shim its earlier status UPDATEs had already
+  // committed. A rolled-back batch is what D1 actually does, so the loser now leaves nothing at all.
   let claims = 0, parked = false, overlapped = false;
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
-  const matches = (sql) => holdClaimMatching && holdClaimMatching.test(String(sql || ""));
-  const statement = (sql, args) => ({
-    sql,
-    bind: (...bound) => statement(sql, bound),
-    first: async () => { await null; const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-    run: async () => {
-      if (matches(sql)) {
-        claims += 1;
-        // Park the first approver AT the claim boundary, before it mutates anything.
-        if (claims === 1) { parked = true; await gate; parked = false; }
-        // A second approver reached the same boundary while the first was still parked: both had read
-        // the request while it was policy_review_required. That is the race, recorded where it happens.
-        else if (parked) overlapped = true;
-      }
-      await null;
-      const info = sqlite.prepare(sql).run(...args);
-      return { success: true, meta: { changes: Number(info.changes) } };
+  const db = createD1(sqlite, {
+    park: (sql) => {
+      if (!holdClaimMatching || !holdClaimMatching.test(String(sql || ""))) return null;
+      claims += 1;
+      // Park the first approver AT the claim boundary, before it mutates anything.
+      if (claims === 1) { parked = true; return gate.then(() => { parked = false; }); }
+      // A second approver reached the same boundary while the first was still parked: both had read
+      // the request while it was policy_review_required. That is the race, recorded where it happens.
+      if (parked) overlapped = true;
+      return null;
     },
-    all: async () => { await null; return { results: sqlite.prepare(sql).all(...args) }; },
   });
-  const db = {
-    prepare: (sql) => statement(sql, []),
-    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
-    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-  };
   return { db, releaseFirstBatch: () => release(), approvalBatchCount: () => claims, overlapped: () => overlapped };
 }
 
@@ -161,6 +153,19 @@ function assertSingleRefund(service, result, expected) {
   assert.equal(result.outcomes.filter((o) => o.status === "fulfilled").length, 1, `only one approver may succeed — ${detail}`);
   assert.equal(result.outcomes.filter((o) => o.status === "rejected").length, 1, `the loser must be refused, not silently succeed — ${detail}`);
   assert.match(result.reasons.join(" "), /409/, `the loser's refusal must be a conflict — ${detail}`);
+
+  // Only assertable now that batch() is a real transaction. The loser's batch carries status updates
+  // AND the ledger insert the unique index refuses; on the old loop shim its updates had already
+  // committed, so a half-applied approval was indistinguishable from a clean refusal. A refused
+  // approver must leave the request exactly as the winner left it - no second decision, no stray
+  // approved_at, no residue for the next reader to trip over.
+  const decided = result.requests.filter((r) => r.decision_by);
+  assert.equal(decided.length, 1, `only the winner may have recorded a decision — ${detail}`);
+  const untouched = result.requests.filter((r) => r.status !== "approved");
+  for (const row of untouched) {
+    assert.ok(!row.decision_by, `a refused approver left a decision behind on ${row.id} — ${detail}`);
+    assert.ok(!Number(row.approved_refund_amount), `a refused approver left an approved amount on ${row.id} — ${detail}`);
+  }
   return detail;
 }
 

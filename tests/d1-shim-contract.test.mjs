@@ -137,3 +137,29 @@ test("two callers racing for one claim: exactly one wins, and the loser leaves n
   // loser's first statement commits before its second one fails.
   assert.equal(count(sqlite, "ledger"), 1, "the losing caller must leave no partial write");
 });
+
+test("the hand-rolled loop shims only ever decrease", async () => {
+  // 67 files still implement batch() as a loop, so any atomicity claim they make is measured against
+  // the wrong machine. Migrating one means checking its assertions still hold under a real
+  // transaction, per file - and a blanket edit across tests/ went wrong once already, so this is a
+  // burn-down rather than a sweep. The count may fall, never rise: a new hand-rolled shim fails here,
+  // and each migration lowers the number visibly in the diff.
+  const BASELINE = 67;
+  const { readdir, readFile } = await import("node:fs/promises");
+
+  const files = (await readdir("tests")).filter((f) => f.endsWith(".test.mjs") && f !== "d1-shim-contract.test.mjs");
+  const remaining = [];
+  for (const file of files) {
+    const source = await readFile(`tests/${file}`, "utf8");
+    if (!/batch:/.test(source)) continue;
+    if (/ROLLBACK/.test(source) || /helpers\/d1\.mjs/.test(source)) continue;
+    remaining.push(file);
+  }
+
+  assert.ok(
+    remaining.length <= BASELINE,
+    `hand-rolled batch() shims rose from ${BASELINE} to ${remaining.length}. Use createD1 from tests/helpers/d1.mjs:\n  ${remaining.slice(0, 5).join("\n  ")}`,
+  );
+  if (remaining.length < BASELINE) console.log(`  ${BASELINE - remaining.length} migrated since the baseline; lower BASELINE to ${remaining.length}.`);
+  console.log(`  ${remaining.length} files still measure atomicity against a loop.`);
+});

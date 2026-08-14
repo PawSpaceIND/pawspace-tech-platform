@@ -24,25 +24,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 installWorkersHooks("__PAYIDEM_DB__", "__PAYIDEM_ENV__");
 
 /** The DEFAULT split: splitPaymentPlan halves the total, so both stages are the same figure. */
 const PRICE = 8000, FIRST = 4000, BALANCE = 4000;
 
-function makeD1(sqlite) {
-  const statement = (sql, args) => ({
-    bind: (...bound) => statement(sql, bound),
-    first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-    run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
-    all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-  });
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
-    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-  };
-}
+// D1's batch() is one transaction. The hand-rolled loop this replaced committed each statement as it
+// went, so a capture that failed half way left half its writes behind - the opposite of production,
+// and invisible to every assertion in this file. createD1 rolls the whole batch back.
+const makeD1 = (sqlite) => createD1(sqlite);
 
 function seed({ paidNow = FIRST, balance = BALANCE, split = true } = {}) {
   const sqlite = new DatabaseSync(":memory:");
