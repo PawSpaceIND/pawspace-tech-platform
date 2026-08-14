@@ -2,6 +2,30 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import * as nodeModule from "node:module";
+
+// customer-account.ts now value-imports a sibling (.ts) — pet-profile-options — so, like the other
+// suites that runtime-import libs with sibling imports, resolve extensionless relative specifiers to .ts.
+if (typeof nodeModule.registerHooks === "function") {
+  nodeModule.registerHooks({
+    resolve(specifier, context, nextResolve) {
+      try { return nextResolve(specifier, context); }
+      catch (error) {
+        if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
+        throw error;
+      }
+    },
+  });
+} else {
+  const hook = `export async function resolve(specifier, context, nextResolve) {
+    try { return await nextResolve(specifier, context); }
+    catch (error) {
+      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(specifier + ".ts", context);
+      throw error;
+    }
+  }`;
+  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
+}
 
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const component = read("app/mobile-app/pet-manager.tsx");
@@ -161,16 +185,133 @@ test("pet manager is embeddable with the required props and performs no direct f
   assert.doesNotMatch(component, /from\s*"\.\/(grooming-flow|stay-flow|training-flow|walking-flow|food-flow|page)/);
 });
 
-test("pet manager offers the required fields with add and edit-in-place", () => {
-  for (const marker of ['value="dog"', 'value="cat"', "Age (years)", "Weight (kg)", 'value="not_provided"', 'value="verified"', 'value="pending"']) {
+test("pet manager offers the rich profile capture with add and edit-in-place", () => {
+  for (const marker of ['value="dog"', 'value="cat"', 'value="yes"', 'value="no"', "Breed", "Age", "Date of birth", "Weight", "Temperament", "Vaccinated?", "Photo (optional)"]) {
     assert.ok(component.includes(marker), `form offers ${marker}`);
   }
+  // The dropdowns are populated from the single shared catalogue, not hand-typed per form.
+  assert.match(component, /from "\.\.\/\.\.\/lib\/pet-profile-options"/);
+  assert.match(component, /breedsFor\(form\.species/, "breed list follows the selected species");
+  for (const source of ["AGE_BANDS", "AGGRESSION_LEVELS", "WEIGHT_BANDS", "PET_GENDERS"]) {
+    assert.ok(component.includes(source), `form maps over ${source}`);
+  }
+  assert.match(component, /validatePetProfile\(form\.species/, "the shared profile validator runs before submit");
+  assert.match(component, /ageBandFromYears\(pet\.ageYears\)/, "editing a legacy pet derives its age band");
+  assert.match(component, /weightBandFromKg\(pet\.weightKg\)/, "editing a legacy pet derives its weight band");
+  assert.match(component, /compressImage/, "photo is downscaled to a compact data-URL for inline storage");
   assert.match(component, /openEdit/, "edit-in-place entry point exists");
   assert.match(component, /form\?\.id === pet\.id \?/, "the pet row itself becomes the edit form");
   assert.match(component, /Save changes/);
   assert.match(componentCss, /#01261f/i);
   assert.match(componentCss, /#e6b34e/i);
   assert.match(componentCss, /system-ui/);
+});
+
+test("real execution: the owning lib adds the profile_json column and round-trips a rich profile", async () => {
+  const { db, account } = await accountStack();
+  const profile = {
+    gender: "Male", breed: "Golden Retriever", ageBand: "3 years", dateOfBirth: "2023-01-01",
+    vaccinated: true, vaccinationDose: "Rabies", aggression: "Aggressive during bath", weightBand: "20–45 kg",
+  };
+  const created = await account.mutateCustomerAccount(db, {
+    customerId: "CUS-PET-1", action: "upsert_pet", idempotencyKey: "pm-rich-1",
+    pet: { name: "Simba", species: "dog", breed: profile.breed, vaccinationStatus: "verified", profile },
+  });
+  const record = await account.readCustomerAccount(db, "CUS-PET-1");
+  const pet = record.pets.find((p) => p.id === created.entityId);
+  assert.ok(pet, "the rich pet reads back");
+  assert.deepEqual(pet.profile, profile, "the full profile is persisted verbatim");
+  assert.equal(pet.breed, "Golden Retriever", "typed breed column stays populated");
+  assert.equal(pet.vaccinationStatus, "verified", "vaccination derived into the typed column");
+  assert.equal(pet.weightKg, 32, "weight band derives a representative typed weight");
+  assert.ok(pet.ageYears !== null && pet.ageYears >= 0, "age derives a typed value");
+});
+
+test("real execution: a rich profile with an off-catalogue breed is rejected", async () => {
+  const { db, account } = await accountStack();
+  await rejectsWith(
+    account.mutateCustomerAccount(db, {
+      customerId: "CUS-PET-1", action: "upsert_pet", idempotencyKey: "pm-rich-bad-1",
+      pet: { name: "Ghost", species: "dog", breed: "Direwolf", vaccinationStatus: "not_provided", profile: { breed: "Direwolf", ageBand: "3 years", vaccinated: false, aggression: "Friendly", weightBand: "20–45 kg" } },
+    }),
+    400, /Select the pet's breed/
+  );
+});
+
+test("rich profile validation: DOB calendar/future, gender allow-list, and derive helpers", async () => {
+  const { validatePetProfile, ageBandFromYears, weightBandFromKg } = await import("../lib/pet-profile-options.ts");
+  const base = { breed: "Labrador Retriever", ageBand: "3 years", vaccinated: true, aggression: "Friendly", weightBand: "20–45 kg" };
+  assert.equal(validatePetProfile("dog", base), null);
+  assert.match(validatePetProfile("dog", { ...base, dateOfBirth: "2024-02-31" }), /valid date/, "impossible calendar dates are rejected");
+  assert.match(validatePetProfile("dog", { ...base, dateOfBirth: "2999-01-01" }), /future/, "future birth dates are rejected");
+  assert.equal(validatePetProfile("dog", { ...base, dateOfBirth: "2023-05-10" }), null, "a real past date is accepted");
+  assert.match(validatePetProfile("dog", { ...base, gender: "Alien" }), /valid gender/, "off-catalogue gender is rejected");
+  assert.equal(validatePetProfile("dog", { ...base, gender: "Male" }), null);
+  assert.equal(ageBandFromYears(0.3), "< 6 months");
+  assert.equal(ageBandFromYears(3), "3 years");
+  assert.equal(ageBandFromYears(25), "20+ years");
+  assert.equal(ageBandFromYears(null), "");
+  // Age boundary: floor keeps fractional ages in their completed-year band; only a true 20 is terminal.
+  assert.equal(ageBandFromYears(19.5), "19 years");
+  assert.equal(ageBandFromYears(19.99), "19 years");
+  assert.equal(ageBandFromYears(20), "20+ years");
+  assert.equal(weightBandFromKg(4), "3–20 kg");
+  assert.equal(weightBandFromKg(50), "45–60 kg");
+  assert.equal(weightBandFromKg(null), "");
+  // Weight boundary: below the first band is not silently promoted into "3–20 kg".
+  assert.equal(weightBandFromKg(2.99), "");
+  assert.equal(weightBandFromKg(3), "3–20 kg");
+  assert.equal(weightBandFromKg(20), "20–45 kg");
+});
+
+test("real execution: the profile is authoritative — top-level fields don't override, dose clears when unvaccinated", async () => {
+  const { db, account } = await accountStack();
+  const created = await account.mutateCustomerAccount(db, {
+    customerId: "CUS-PET-1", action: "upsert_pet", idempotencyKey: "pm-rich-auth",
+    // Conflicting top-level breed + a vaccine dose on an unvaccinated pet — both must be reconciled to the profile.
+    pet: { name: "Rex", species: "dog", breed: "Labrador Retriever", vaccinationStatus: "verified", profile: { breed: "German Shepherd", ageBand: "2 years", vaccinated: false, vaccinationDose: "Rabies", aggression: "Moderate", weightBand: "20–45 kg" } },
+  });
+  const record = await account.readCustomerAccount(db, "CUS-PET-1");
+  const pet = record.pets.find((p) => p.id === created.entityId);
+  assert.equal(pet.breed, "German Shepherd", "profile breed wins over the top-level breed");
+  assert.equal(pet.vaccinationStatus, "not_provided", "typed vaccination derived from the profile, not the top-level value");
+  assert.equal(pet.profile.vaccinationDose, undefined, "vaccine dose is dropped for an unvaccinated pet");
+});
+
+test("real execution: a rich profile on a non-dog/cat species is rejected", async () => {
+  const { db, account } = await accountStack();
+  await rejectsWith(
+    account.mutateCustomerAccount(db, {
+      customerId: "CUS-PET-1", action: "upsert_pet", idempotencyKey: "pm-rich-other",
+      pet: { name: "Nibbles", species: "other", breed: "Labrador Retriever", vaccinationStatus: "not_provided", profile: { breed: "Labrador Retriever", ageBand: "1 year", vaccinated: false, aggression: "Friendly", weightBand: "3–20 kg" } },
+    }),
+    400, /only supported for dogs and cats/
+  );
+});
+
+test("real execution: concurrent table ensure is safe (duplicate-column ALTER is tolerated)", async () => {
+  const { db, account } = await accountStack();
+  // Start both before awaiting either, so the PRAGMA/ALTER migration paths can interleave.
+  await Promise.all([account.ensureCustomerAccountTables(db), account.ensureCustomerAccountTables(db)]);
+});
+
+test("real execution: editing keeps a legacy 'other' species — a rich profile can't rewrite it to dog", async () => {
+  const { db, account } = await accountStack();
+  const created = await account.mutateCustomerAccount(db, {
+    customerId: "CUS-PET-1", action: "upsert_pet", idempotencyKey: "pm-other-legacy",
+    pet: { name: "Coco", species: "other", vaccinationStatus: "not_provided", ageYears: 2, weightKg: 5 },
+  });
+  // The server refuses a rich profile on a non-dog/cat species (the client guard is the first line;
+  // this is the server backstop).
+  await rejectsWith(
+    account.mutateCustomerAccount(db, {
+      customerId: "CUS-PET-1", action: "upsert_pet", idempotencyKey: "pm-other-rich",
+      pet: { id: created.entityId, name: "Coco", species: "other", vaccinationStatus: "not_provided", profile: { breed: "Labrador Retriever", ageBand: "2 years", vaccinated: false, aggression: "Friendly", weightBand: "3–20 kg" } },
+    }),
+    400, /only supported for dogs and cats/
+  );
+  const record = await account.readCustomerAccount(db, "CUS-PET-1");
+  assert.equal(record.pets.find((p) => p.id === created.entityId).species, "other", "species is preserved");
 });
 
 test("the account route keeps ownership server-side via the platform session", () => {

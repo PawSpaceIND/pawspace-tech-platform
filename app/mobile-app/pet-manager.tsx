@@ -5,16 +5,58 @@ import styles from "./pet-manager.module.css";
 import type { LoggedInCustomer } from "./customer-login";
 import { petProfileIssues } from "../../lib/customer-account";
 import { loadCustomerPets, upsertCustomerPet, type CustomerPet } from "../../lib/customer-account-client";
+import { AGE_BANDS, AGGRESSION_LEVELS, PET_GENDERS, WEIGHT_BANDS, ageBandFromYears, breedsFor, validatePetProfile, weightBandFromKg, type PetProfile, type PetSpecies } from "../../lib/pet-profile-options";
 
-type PetForm = { id?: string; name: string; species: string; breed: string; ageYears: string; weightKg: string; vaccinationStatus: string };
+type PetForm = {
+  id?: string;
+  name: string;
+  species: string; // "dog" | "cat" for the rich form; a legacy value (e.g. "other") is preserved, not coerced
+  gender: string;
+  breed: string;
+  ageBand: string;
+  dateOfBirth: string;
+  vaccinated: "" | "yes" | "no";
+  vaccinationDose: string;
+  aggression: string;
+  weightBand: string;
+  photo: string; // compact JPEG data-URL, or ""
+};
 
-const emptyForm: PetForm = { name: "", species: "dog", breed: "", ageYears: "", weightKg: "", vaccinationStatus: "not_provided" };
+const emptyForm: PetForm = { name: "", species: "dog", gender: "", breed: "", ageBand: "", dateOfBirth: "", vaccinated: "", vaccinationDose: "", aggression: "", weightBand: "", photo: "" };
 const speciesIcon = (species: string) => (species === "cat" ? "🐈" : species === "dog" ? "🐕" : "🐾");
-const vaccinationLabel: Record<string, string> = { not_provided: "Vaccination not provided", verified: "Vaccination verified", pending: "Vaccination pending" };
-const optional = (value: string) => (value.trim() === "" ? null : Number(value));
 
-/** Compact embeddable pet manager: booking flows render it inline so customers add or edit
- *  pets without leaving the flow. All reads/writes go through the customer-account client lib;
+/** Resize any picked image down to a small square-ish JPEG data-URL so we can persist it inline in D1
+ *  for UAT (no object storage yet). Keeps profiles light — ~220px, quality 0.6. */
+async function compressImage(file: File): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error("read failed"));
+    reader.readAsDataURL(file);
+  });
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("image failed"));
+    image.src = dataUrl;
+  });
+  const max = 220;
+  const scale = Math.min(1, max / Math.max(img.width || 1, img.height || 1));
+  const w = Math.max(1, Math.round((img.width || max) * scale));
+  const h = Math.max(1, Math.round((img.height || max) * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return dataUrl;
+  ctx.drawImage(img, 0, 0, w, h);
+  return canvas.toDataURL("image/jpeg", 0.6);
+}
+
+/** Compact embeddable pet manager: booking flows render it inline so customers add or edit pets without
+ *  leaving the flow. Captures the full pet profile — species, breed (from a curated popular-first list),
+ *  gender, age band + optional DOB, vaccination, temperament, weight band and a photo — validated by the
+ *  same pure functions the server runs. All reads/writes go through the customer-account client lib;
  *  ownership stays server-side via the platform session. */
 export default function PetManager({ customer, onPetsChanged }: { customer: LoggedInCustomer; onPetsChanged?: (pets: CustomerPet[]) => void }) {
   const [pets, setPets] = useState<CustomerPet[]>([]);
@@ -23,6 +65,8 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
   const [form, setForm] = useState<PetForm | null>(null); // null = closed; id set = edit-in-place
   const [issues, setIssues] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const now = new Date();
+  const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`; // local calendar date, not UTC
 
   useEffect(() => {
     let active = true;
@@ -49,28 +93,70 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
   };
   const openEdit = (pet: CustomerPet) => {
     setIssues([]);
+    const profile = pet.profile;
+    // Preserve the real species — never coerce a legacy "other" pet to dog (that would rewrite it on save).
+    const species = pet.species || "dog";
+    // Pre-fill everything we can derive from a legacy pet (captured before this profile existed) so editing
+    // it doesn't force re-entering data we already have — only genuinely-new fields (temperament) need a pick.
+    const legacyBreed = pet.breed && species !== "other" && (breedsFor(species as PetSpecies) as readonly string[]).includes(pet.breed) ? pet.breed : "";
     setForm({
       id: pet.id,
       name: pet.name,
-      species: pet.species,
-      breed: pet.breed ?? "",
-      ageYears: pet.ageYears === null ? "" : String(pet.ageYears),
-      weightKg: pet.weightKg === null ? "" : String(pet.weightKg),
-      vaccinationStatus: pet.vaccinationStatus,
+      species,
+      gender: profile?.gender ?? "",
+      breed: profile?.breed ?? legacyBreed,
+      ageBand: profile?.ageBand ?? ageBandFromYears(pet.ageYears),
+      dateOfBirth: profile?.dateOfBirth ?? "",
+      vaccinated: profile ? (profile.vaccinated ? "yes" : "no") : pet.vaccinationStatus === "verified" ? "yes" : pet.vaccinationStatus === "not_provided" ? "no" : "",
+      vaccinationDose: profile?.vaccinationDose ?? "",
+      aggression: profile?.aggression ?? "",
+      weightBand: profile?.weightBand ?? weightBandFromKg(pet.weightKg),
+      photo: profile?.photo ?? "",
     });
+  };
+
+  const setField = (patch: Partial<PetForm>) => setForm((current) => (current ? { ...current, ...patch } : current));
+
+  const onPhoto = async (file?: File | null) => {
+    if (!file) return;
+    try {
+      const photo = await compressImage(file);
+      setForm((current) => (current ? { ...current, photo } : current));
+    } catch {
+      setIssues(["Could not read that image — try another photo"]);
+    }
   };
 
   const save = async () => {
     if (!form || saving) return;
+    if (form.species !== "dog" && form.species !== "cat") {
+      // Only reachable when editing a legacy pet recorded as another species — don't rewrite it to a dog.
+      setIssues(["Rich profiles are available for dogs and cats. Switch this pet's species to Dog or Cat to edit its full profile."]);
+      return;
+    }
+    const profile: PetProfile = {
+      gender: form.gender || undefined,
+      breed: form.breed,
+      ageBand: form.ageBand,
+      dateOfBirth: form.dateOfBirth || undefined,
+      vaccinated: form.vaccinated === "yes",
+      vaccinationDose: form.vaccinated === "yes" ? form.vaccinationDose.trim() || undefined : undefined,
+      aggression: form.aggression,
+      weightBand: form.weightBand,
+      photo: form.photo || undefined,
+    };
     const candidate = {
       name: form.name.trim(),
       species: form.species,
-      vaccinationStatus: form.vaccinationStatus,
-      ageYears: optional(form.ageYears),
-      weightKg: optional(form.weightKg),
+      vaccinationStatus: profile.vaccinated ? "verified" : "not_provided",
+      ageYears: null,
+      weightKg: null,
     };
-    // Same pure validator the server runs — the form flags exactly what the API would reject.
-    const found = petProfileIssues(candidate);
+    // Shared pure validators — the form flags exactly what the API would reject.
+    const found = [...petProfileIssues(candidate)];
+    if (form.vaccinated === "") found.push("Tell us whether the pet is vaccinated");
+    const profileIssue = validatePetProfile(form.species as PetSpecies, profile);
+    if (profileIssue) found.push(profileIssue);
     if (found.length) {
       setIssues(found);
       return;
@@ -80,14 +166,24 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
     try {
       await upsertCustomerPet({
         customerId: customer.customerId,
-        pet: { id: form.id, name: candidate.name, species: candidate.species, breed: form.breed.trim() || null, vaccinationStatus: candidate.vaccinationStatus, ageYears: candidate.ageYears, weightKg: candidate.weightKg },
+        pet: { id: form.id, name: candidate.name, species: form.species, breed: profile.breed || null, vaccinationStatus: candidate.vaccinationStatus, profile },
       });
+    } catch (error) {
+      // The save itself failed — nothing committed, so keep the form open for a safe retry.
+      setIssues([error instanceof Error ? error.message : "Unable to save the pet"]);
+      setSaving(false);
+      return;
+    }
+    // The pet is committed. A failure refreshing the list must NOT reopen the resubmit path: a retry
+    // mints a fresh idempotency key and would create a duplicate pet. Close the form, refresh best-effort.
+    setForm(null);
+    try {
       const refreshed = await loadCustomerPets(customer.customerId);
       setPets(refreshed);
-      setForm(null);
+      setLoadError("");
       onPetsChanged?.(refreshed);
-    } catch (error) {
-      setIssues([error instanceof Error ? error.message : "Unable to save the pet"]);
+    } catch {
+      setLoadError("Pet saved — reload to see the updated list.");
     } finally {
       setSaving(false);
     }
@@ -97,39 +193,101 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
     form && (
       <div className={styles.form}>
         <b>{heading}</b>
+        {form.species !== "dog" && form.species !== "cat" && (
+          <p className={styles.hint}>This pet is recorded as “{form.species}”. Rich profiles are available for dogs and cats — switch species above to edit the full profile.</p>
+        )}
+
+        <div className={styles.photoRow}>
+          <div className={styles.photoPreview} aria-hidden>{form.photo ? <img src={form.photo} alt="" /> : <span>{speciesIcon(form.species)}</span>}</div>
+          <label className={styles.photoPick}>
+            Photo (optional)
+            <input type="file" accept="image/*" onChange={(event) => void onPhoto(event.target.files?.[0])} />
+            {form.photo && (
+              <button type="button" className={styles.linkBtn} onClick={() => setField({ photo: "" })}>
+                Remove photo
+              </button>
+            )}
+          </label>
+        </div>
+
         <div className={styles.fields}>
-          <label>
+          <label className={styles.full}>
             Name
-            <input value={form.name} maxLength={60} placeholder="Pet name" onChange={(event) => setForm({ ...form, name: event.target.value })} />
+            <input value={form.name} maxLength={60} placeholder="Pet name" onChange={(event) => setField({ name: event.target.value })} />
           </label>
           <label>
             Species
-            <select value={form.species} onChange={(event) => setForm({ ...form, species: event.target.value })}>
+            <select value={form.species} onChange={(event) => setField({ species: event.target.value, breed: "" })}>
               <option value="dog">Dog</option>
               <option value="cat">Cat</option>
+              {form.species !== "dog" && form.species !== "cat" && <option value={form.species}>{form.species}</option>}
             </select>
           </label>
           <label>
-            Breed (optional)
-            <input value={form.breed} maxLength={60} placeholder="e.g. Labrador" onChange={(event) => setForm({ ...form, breed: event.target.value })} />
-          </label>
-          <label>
-            Age (years)
-            <input value={form.ageYears} inputMode="decimal" placeholder="e.g. 3" onChange={(event) => setForm({ ...form, ageYears: event.target.value })} />
-          </label>
-          <label>
-            Weight (kg)
-            <input value={form.weightKg} inputMode="decimal" placeholder="e.g. 22" onChange={(event) => setForm({ ...form, weightKg: event.target.value })} />
-          </label>
-          <label>
-            Vaccination
-            <select value={form.vaccinationStatus} onChange={(event) => setForm({ ...form, vaccinationStatus: event.target.value })}>
-              <option value="not_provided">Not provided</option>
-              <option value="verified">Verified</option>
-              <option value="pending">Pending</option>
+            Gender (optional)
+            <select value={form.gender} onChange={(event) => setField({ gender: event.target.value })}>
+              <option value="">Select…</option>
+              {PET_GENDERS.map((gender) => (
+                <option key={gender} value={gender}>{gender}</option>
+              ))}
             </select>
           </label>
+          <label className={styles.full}>
+            Breed
+            <select value={form.breed} onChange={(event) => setField({ breed: event.target.value })}>
+              <option value="">Select a breed…</option>
+              {breedsFor(form.species === "cat" ? "cat" : "dog").map((breed) => (
+                <option key={breed} value={breed}>{breed}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Age
+            <select value={form.ageBand} onChange={(event) => setField({ ageBand: event.target.value })}>
+              <option value="">Select…</option>
+              {AGE_BANDS.map((band) => (
+                <option key={band} value={band}>{band}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Date of birth (optional)
+            <input type="date" value={form.dateOfBirth} max={todayISO} onChange={(event) => setField({ dateOfBirth: event.target.value })} />
+          </label>
+          <label>
+            Weight
+            <select value={form.weightBand} onChange={(event) => setField({ weightBand: event.target.value })}>
+              <option value="">Select…</option>
+              {WEIGHT_BANDS.map((band) => (
+                <option key={band} value={band}>{band}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Temperament
+            <select value={form.aggression} onChange={(event) => setField({ aggression: event.target.value })}>
+              <option value="">Select…</option>
+              {AGGRESSION_LEVELS.map((level) => (
+                <option key={level} value={level}>{level}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Vaccinated?
+            <select value={form.vaccinated} onChange={(event) => setField({ vaccinated: event.target.value as PetForm["vaccinated"] })}>
+              <option value="">Select…</option>
+              <option value="yes">Yes</option>
+              <option value="no">No</option>
+            </select>
+          </label>
+          {form.vaccinated === "yes" && (
+            <label>
+              Latest vaccine (optional)
+              <input value={form.vaccinationDose} maxLength={60} placeholder="e.g. Rabies / DHPPi" onChange={(event) => setField({ vaccinationDose: event.target.value })} />
+            </label>
+          )}
         </div>
+
         {issues.length > 0 && (
           <ul role="alert" className={styles.issues}>
             {issues.map((issue) => (
@@ -147,6 +305,18 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
         </div>
       </div>
     );
+
+  const petSummary = (pet: CustomerPet) => {
+    const profile = pet.profile;
+    const parts = profile
+      ? [profile.breed, profile.gender, profile.ageBand, profile.weightBand, profile.aggression]
+      : [pet.breed, pet.species, pet.ageYears !== null ? `${pet.ageYears} yr` : null, pet.weightKg !== null ? `${pet.weightKg} kg` : null];
+    return parts.filter(Boolean).join(" · ");
+  };
+  const vaccinationTag = (pet: CustomerPet) => {
+    if (pet.profile) return pet.profile.vaccinated ? `Vaccinated${pet.profile.vaccinationDose ? ` · ${pet.profile.vaccinationDose}` : ""}` : "Not vaccinated";
+    return pet.vaccinationStatus === "verified" ? "Vaccination verified" : pet.vaccinationStatus === "pending" ? "Vaccination pending" : "Vaccination not provided";
+  };
 
   return (
     <section className={styles.manager}>
@@ -175,13 +345,11 @@ export default function PetManager({ customer, onPetsChanged }: { customer: Logg
           <div key={pet.id}>{renderForm(`Edit ${pet.name}`)}</div>
         ) : (
           <article key={pet.id} className={styles.pet}>
-            <i>{speciesIcon(pet.species)}</i>
+            {pet.profile?.photo ? <img className={styles.avatar} src={pet.profile.photo} alt="" /> : <i>{speciesIcon(pet.species)}</i>}
             <div>
               <b>{pet.name}</b>
-              <small>
-                {[pet.breed, pet.species, pet.ageYears !== null ? `${pet.ageYears} yr` : null, pet.weightKg !== null ? `${pet.weightKg} kg` : null].filter(Boolean).join(" · ")}
-              </small>
-              <em>{vaccinationLabel[pet.vaccinationStatus] ?? pet.vaccinationStatus}</em>
+              <small>{petSummary(pet)}</small>
+              <em>{vaccinationTag(pet)}</em>
             </div>
             <button type="button" className={styles.edit} disabled={Boolean(form)} onClick={() => openEdit(pet)}>
               Edit
