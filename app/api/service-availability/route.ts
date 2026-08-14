@@ -9,5 +9,5 @@ export async function GET(){
     // Customer-safe subset only: no internal disable reason, no audit metadata.
     const data=services.map(service=>({code:service.code,name:service.name,group:service.group,enabled:service.enabled}));
     return json({data});
-  }catch(error){return json({error:error instanceof Error?error.message:"Unable to load service availability"},500);}
+  }catch(error){console.error("[api] unhandled error:", error); return json({error:"Unable to load service availability"},500);}
 }

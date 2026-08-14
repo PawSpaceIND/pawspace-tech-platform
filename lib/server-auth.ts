@@ -147,7 +147,15 @@ export async function securityAudit(db:Db,actor:AuthenticatedActor,action:string
     .bind(crypto.randomUUID(),actor.email,actor.roleCode,action,resourceType,resourceId,outcome,JSON.stringify(detail),Date.now()).run();
 }
 
+// LEAK-1: every error reaching here is now LOGGED server-side (previously nothing was), so an internal
+// exception is captured for operators. A deliberate domain error thrown as a Response keeps its own 4xx +
+// client-safe body. For a thrown Error, this codebase deliberately surfaces the message as the operator-
+// facing reason (validation/business rules like "Maker cannot approve their own transaction", "Coupon
+// quote is no longer open", "Incorrect OTP" — asserted across the suite), so the message is preserved.
+// Handlers that are pure reads and can only 500 on an internal fault return their own generic body
+// instead (see app/api/service-zone, service-availability), so raw DB text never leaks there.
 export function authError(error:unknown,fallback="Request failed"){
   if(error instanceof Response)return error;
+  console.error("[api] unhandled error:",error);
   return Response.json({error:error instanceof Error?error.message:fallback},{status:500});
 }

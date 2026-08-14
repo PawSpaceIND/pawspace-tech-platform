@@ -37,7 +37,8 @@ export async function GET(request:Request):Promise<Response>{
 
     return new Response(JSON.stringify({error:"Unknown action"}),{status:400,headers:{"content-type":"application/json"}});
   }catch(e){
-    const message=e instanceof Error?e.message:String(e);
-    return new Response(JSON.stringify({error:message}),{status:500,headers:{"content-type":"application/json"}});
+    if(e instanceof Response)return e;
+    console.error("[api] unhandled error:",e);
+    return new Response(JSON.stringify({error:"Unable to resolve the service zone"}),{status:500,headers:{"content-type":"application/json"}});
   }
 }

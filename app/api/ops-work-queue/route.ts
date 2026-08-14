@@ -7,8 +7,9 @@ export async function GET(request:Request){try{
  const db=await database(),actor=await resolveActor(request);requirePermission(actor,"bookings.view");
  const url=new URL(request.url),taskId=String(url.searchParams.get("taskId")||"").trim();
  if(taskId){const task=await workQueueTaskWithEvents(db,taskId);if(!task)return json({error:"Work queue task not found"},404);return json({data:task});}
- // Reads are cheap and detection is idempotent, so every ops screen load also refreshes the queue.
- await sweepWorkQueue(db,{actorId:actor.email});
+ // D7: GET is read-only. Detection/escalation writes task rows and escalation state, so refreshing the
+ // queue is a mutation and belongs on the write path — POST {action:"sweep"} (bookings.manage), which a
+ // cron or an explicit "Refresh" action drives. A read must never open/escalate tasks as a side effect.
  return json({data:await workQueueSnapshot(db)});
 }catch(error){return authError(error,"Unable to load the operations work queue");}}
 

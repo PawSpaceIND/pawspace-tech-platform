@@ -200,7 +200,7 @@ test("real execution: an open task past its SLA due time escalates exactly once 
 
 // ---- 4. Route + command centre TODAY block -------------------------------------------------------
 
-test("real execution: GET sweeps + returns queues and the command-centre TODAY block with exact numbers", async () => {
+test("real execution: an explicit sweep (POST) then GET returns queues and the command-centre TODAY block with exact numbers", async () => {
   freshDb(); seedSourceTables(); seedOneOfEachCondition();
   // Deterministic clock for the TODAY block: noon UTC on a fixed date, bookings at fixed hours.
   const noon = Date.UTC(2026, 8, 15, 12, 0, 0);
@@ -210,10 +210,12 @@ test("real execution: GET sweeps + returns queues and the command-centre TODAY b
   insert.run("B2", "k2", "cus_2", "boarding", "g2", at(17), at(20), "confirmed", 4000, NOW, NOW);
   insert.run("B3", "k3", "cus_3", "grooming", "g3", at(15), at(16), "cancelled", 900, NOW, NOW);
   sqlite.prepare("INSERT INTO customer_experience_tickets (id,customer_id,category,priority,subject,detail,owner,manager,sla_due_at,status,created_by,created_at,updated_at) VALUES ('T1','cus_1','complaint','high','Groomer arrived late','detail','ops:a','mgr:b',?,'open','uat',?,?)").run(NOW + DAY, NOW, NOW);
+  // D7: detection/escalation is a WRITE, so it runs on POST {action:"sweep"}, not as a GET side effect.
+  await call("POST", { action: "sweep" });
   const res = await call("GET");
   assert.equal(res.status, 200, JSON.stringify(res.body));
   const snapshot = res.body.data;
-  assert.equal(snapshot.metrics.open, 7, "GET must sweep before reading");
+  assert.equal(snapshot.metrics.open, 7, "the swept queue is read back by GET");
   assert.equal(snapshot.queues.finance.open, 2);
   assert.equal(snapshot.queues.operations.open, 1);
   assert.equal(snapshot.commandCentre.available, true, "the route serves the TODAY block");
@@ -229,6 +231,21 @@ test("real execution: GET sweeps + returns queues and the command-centre TODAY b
   assert.equal(centre.openComplaints, 1);
   assert.deepEqual({ ...centre.byService.grooming }, { bookings: 1, revenue: 1200, completed: 1, cancelled: 1 });
   assert.deepEqual({ ...centre.byService.boarding }, { bookings: 1, revenue: 4000, completed: 0, cancelled: 0 });
+});
+
+test("D7: GET is read-only — a read opens no tasks and escalates nothing; the sweep is on the write path", async () => {
+  freshDb(); seedSourceTables(); seedOneOfEachCondition();
+  // Source conditions are present: a sweep WOULD open 7 tasks. A GET must not perform that write.
+  const res = await call("GET");
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  const opened = sqlite.prepare("SELECT COUNT(*) AS c FROM ops_work_queue_tasks").get().c;
+  assert.equal(opened, 0, "a GET must not open any work-queue task rows (D7: detection/escalation is a write)");
+  assert.equal(res.body.data.metrics.open, 0, "the read reflects the unmutated queue, not a freshly-swept one");
+  const escalated = sqlite.prepare("SELECT COUNT(*) AS c FROM ops_work_queue_tasks WHERE escalated=1").get().c;
+  assert.equal(escalated, 0, "a GET must not escalate tasks");
+  // Control: the sweep still works, on POST (bookings.manage), so nothing is lost — only moved off read.
+  await call("POST", { action: "sweep" });
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS c FROM ops_work_queue_tasks").get().c, 7, "the write path opens the tasks");
 });
 
 test("real execution: POST actions work through the route and per-task events are readable", async () => {
