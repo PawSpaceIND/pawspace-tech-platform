@@ -5,9 +5,10 @@ import { createD1 } from "./helpers/d1.mjs";
 
 // ---------------------------------------------------------------------------
 // The shim has to behave like D1, or every atomicity test in this directory is asserting the wrong
-// machine. D1's batch() is one transaction; the loop shim used by 73 of the 78 test files commits
-// each statement as it goes, so a batch that fails half way leaves half its work behind while
-// production would have rolled all of it back.
+// machine. D1's batch() is one transaction; the loop shim that 73 of the 78 test files started with
+// commits each statement as it goes, so a batch that fails half way leaves half its work behind while
+// production would have rolled all of it back. All 78 now use createD1, and the last test in this
+// file is what keeps a new loop from being written.
 //
 // Each test below pairs the new shim against that loop, so the difference is demonstrated rather
 // than described. If createD1 ever regresses to loop behaviour, the paired assertion fails.
@@ -138,13 +139,15 @@ test("two callers racing for one claim: exactly one wins, and the loser leaves n
   assert.equal(count(sqlite, "ledger"), 1, "the losing caller must leave no partial write");
 });
 
-test("the hand-rolled loop shims only ever decrease", async () => {
-  // 9 files still implement batch() as a loop, so any atomicity claim they make is measured against
-  // the wrong machine. Migrating one means checking its assertions still hold under a real
-  // transaction, per file - and a blanket edit across tests/ went wrong once already, so this is a
-  // burn-down rather than a sweep. The count may fall, never rise: a new hand-rolled shim fails here,
-  // and each migration lowers the number visibly in the diff.
-  const BASELINE = 9;
+test("no test hand-rolls its own batch(), so nothing measures atomicity against a loop", async () => {
+  // This started at 78 files and is now empty: every suite in tests/ gets its D1 from createD1, so
+  // batch() rolls back everywhere and an atomicity claim means what it says. The burn-down ran in
+  // batches, each file run on its own before it was committed, because a blanket edit across tests/
+  // went wrong once already.
+  //
+  // At zero the ratchet changes job: it stops being a burn-down and becomes the thing that keeps a
+  // new hand-rolled shim from being written. Adding one fails here with the name of the file.
+  const BASELINE = 0;
   const { readdir, readFile } = await import("node:fs/promises");
 
   const files = (await readdir("tests")).filter((f) => f.endsWith(".test.mjs") && f !== "d1-shim-contract.test.mjs");
@@ -156,10 +159,9 @@ test("the hand-rolled loop shims only ever decrease", async () => {
     remaining.push(file);
   }
 
-  assert.ok(
-    remaining.length <= BASELINE,
-    `hand-rolled batch() shims rose from ${BASELINE} to ${remaining.length}. Use createD1 from tests/helpers/d1.mjs:\n  ${remaining.slice(0, 5).join("\n  ")}`,
+  assert.deepEqual(
+    remaining, [],
+    `these files hand-roll batch() instead of using createD1 from tests/helpers/d1.mjs, so a failing batch leaves its earlier statements written:\n  ${remaining.join("\n  ")}`,
   );
-  if (remaining.length < BASELINE) console.log(`  ${BASELINE - remaining.length} migrated since the baseline; lower BASELINE to ${remaining.length}.`);
-  console.log(`  ${remaining.length} files still measure atomicity against a loop.`);
+  assert.equal(BASELINE, 0, "the burn-down is finished; this is now a floor, not a ceiling");
 });

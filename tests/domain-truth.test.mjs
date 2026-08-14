@@ -25,25 +25,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 installWorkersHooks("__TRUTH_DB__", "__TRUTH_ENV__");
 
-function makeD1(sqlite, { failOn } = {}) {
-  function statement(sql, args) {
-    const guard = () => { if (failOn && failOn.test(sql)) throw new Error("D1_ERROR: no such table: booking_payments"); };
-    return {
-      bind: (...bound) => statement(sql, bound),
-      first: async () => { guard(); const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-      run: async () => { guard(); const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
-      all: async () => { guard(); return { results: sqlite.prepare(sql).all(...args) }; },
-    };
-  }
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (statements) => { const out = []; for (const item of statements) out.push(await item.run()); return out; },
-    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-  };
-}
+// batch() is one transaction in D1: see tests/helpers/d1.mjs. The failOn injection moves to the
+// helper's onStatement hook, which fires for every statement including the ones inside a batch - so a
+// simulated table-missing failure now rolls the batch back the way the deployed database would.
+const makeD1 = (sqlite, { failOn } = {}) => createD1(sqlite, {
+  onStatement: (sql) => { if (failOn && failOn.test(sql)) throw new Error("D1_ERROR: no such table: booking_payments"); },
+});
 
 // DDL copied from drizzle/0011_serious_shaman.sql and scripts/staging-seed.sql.
 const BOOKINGS = "CREATE TABLE IF NOT EXISTS canonical_bookings (id text PRIMARY KEY NOT NULL, idempotency_key text NOT NULL, customer_id text NOT NULL, pet_ids_json text NOT NULL, source_pet_ids_json text NOT NULL, city_id text NOT NULL, zone_id text NOT NULL, service_code text NOT NULL, package_code text NOT NULL, package_name text NOT NULL, schedule_group_id text NOT NULL, provider_id text NOT NULL, scheduled_start text NOT NULL, scheduled_end text NOT NULL, status text DEFAULT 'confirmed' NOT NULL, channel text DEFAULT 'customer_app' NOT NULL, total_amount real NOT NULL, currency text DEFAULT 'INR' NOT NULL, pricing_json text DEFAULT '{}' NOT NULL, created_by text NOT NULL, created_at integer NOT NULL, updated_at integer NOT NULL)";

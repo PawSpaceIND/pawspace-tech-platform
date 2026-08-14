@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 // ---------------------------------------------------------------------------
 // Does the handler actually refuse someone who lacks the permission?
@@ -24,17 +25,26 @@ installWorkersHooks("__RPE_DB__", "__RPE_ENV__");
 const HOST = "https://pawspace-staging.example.dev";
 const METHODS = ["GET", "POST", "PATCH", "DELETE"];
 
+// This shim is deliberately permissive: the routes under test write to tables this harness does not
+// create, and the shape being measured is whether an outsider is refused - not whether the write
+// lands. So it delegates to createD1 (one transaction per batch, rolled back on failure) and then
+// swallows the error, rather than hand-rolling a shim that never had a transaction to begin with.
 function makeD1(sqlite) {
-  const statement = (sql, args) => ({
-    bind: (...bound) => statement(sql, bound),
-    first: async () => { try { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; } catch { return null; } },
-    run: async () => { try { sqlite.prepare(sql).run(...args); } catch { /* the shape under test is the refusal, not the write */ } return { success: true, meta: { changes: 0 } }; },
-    all: async () => { try { return { results: sqlite.prepare(sql).all(...args) }; } catch { return { results: [] }; } },
+  const inner = createD1(sqlite);
+  const tolerant = (statement) => ({
+    ...statement,
+    bind: (...bound) => tolerant(statement.bind(...bound)),
+    first: async () => { try { return await statement.first(); } catch { return null; } },
+    all: async () => { try { return await statement.all(); } catch { return { results: [] }; } },
+    run: async () => { try { return await statement.run(); } catch { return { success: true, meta: { changes: 0 } }; } },
   });
   return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
-    exec: async (sql) => { try { sqlite.exec(sql); } catch { /* ignore */ } return { count: 0, duration: 0 }; },
+    prepare: (sql) => tolerant(inner.prepare(sql)),
+    batch: async (list) => {
+      try { return await inner.batch(list); }
+      catch { return list.map(() => ({ success: true, meta: { changes: 0 } })); }
+    },
+    exec: async (sql) => { try { return await inner.exec(sql); } catch { return { count: 0, duration: 0 }; } },
   };
 }
 

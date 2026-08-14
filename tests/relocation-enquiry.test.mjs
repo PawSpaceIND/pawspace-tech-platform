@@ -81,6 +81,7 @@ test("relocation-enquiry does not touch the existing relocation-case feature",as
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import * as nodeModule from "node:module";
+import { createD1 } from "./helpers/d1.mjs";
 if (typeof nodeModule.registerHooks === "function") {
   nodeModule.registerHooks({
     resolve(specifier, context, nextResolve) {
@@ -101,17 +102,8 @@ if (typeof nodeModule.registerHooks === "function") {
   }`;
   nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
 }
-function wrapD1(sqlite) {
-  function statement(sql, args) {
-    return {
-      bind: (...boundArgs) => statement(sql, boundArgs),
-      first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-      run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
-      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-    };
-  }
-  return { prepare: (sql) => statement(sql, []), batch: async (statements) => { const results = []; for (const stmt of statements) results.push(await stmt.run()); return results; } };
-}
+// batch() is one transaction in D1: see tests/helpers/d1.mjs.
+const wrapD1 = (sqlite) => createD1(sqlite);
 const makeDb = () => wrapD1(new DatabaseSync(":memory:"));
 
 // --- Domestic / International capture (founder requirement) --------------------------------------

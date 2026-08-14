@@ -47,6 +47,12 @@ export function createD1(sqlite, options = {}) {
   let inTransaction = false;
 
   const execute = (sql, args, mode) => {
+    // At execution, not at bind. D1's bind() is synchronous and does not validate the parameter
+    // count; the statement is rejected when it runs, so a caller sees a rejected promise rather than
+    // a synchronous throw. A shim that throws early makes assert.rejects miss it entirely.
+    if (args.length > maxBoundParams) {
+      throw new Error(`D1_ERROR: too many SQL variables (${args.length} > ${maxBoundParams}): ${String(sql).slice(0, 90)}`);
+    }
     if (onStatement) onStatement(sql, args, mode);
     const prepared = sqlite.prepare(sql);
     if (mode === "first") {
@@ -68,12 +74,9 @@ export function createD1(sqlite, options = {}) {
   };
 
   function statement(sql, args) {
-    // Refused at bind time, as D1 does. A shim that accepts an unbounded "?" list lets a query whose
-    // width grows with the row count pass every test and fail on the deployed database - which is
-    // precisely how /api/unit-economics shipped "too many SQL variables at offset 301".
-    if (args.length > maxBoundParams) {
-      throw new Error(`D1_ERROR: too many SQL variables (${args.length} > ${maxBoundParams}): ${String(sql).slice(0, 90)}`);
-    }
+    // The bind cap is enforced in execute(). A shim that accepts an unbounded "?" list lets a query
+    // whose width grows with the row count pass every test and fail on the deployed database - which
+    // is precisely how /api/unit-economics shipped "too many SQL variables at offset 301".
     return {
       bind: (...bound) => statement(sql, bound),
       first: async () => { await awaitGate(sql); return execute(sql, args, "first"); },

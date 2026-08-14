@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import * as nodeModule from "node:module";
+import { createD1 } from "./helpers/d1.mjs";
 
 // Regression for the staging outage: /team/sales died with Cloudflare's "Too many API requests by
 // single Worker invocation" because buildCustomer360 ran 8 queries PER CUSTOMER (up to ~4000 D1
@@ -49,20 +50,24 @@ function makeD1(sqlite) {
   };
 }
 // batch needs the real statements — rebuild with closures that carry sql+args
+// The meter wraps createD1 rather than reimplementing it. The hand-rolled version had a second
+// defect beyond the loop: its batch() ran `stmt.__sql ?? "SELECT 1"` with no bound arguments, and
+// nothing set __sql - so every batched write in this suite executed SELECT 1 and wrote nothing, while
+// the tests passed. Delegating removes both problems at once.
 function makeCountingD1(sqlite) {
-  function statement(sql, args) {
-    return {
-      sql, args,
-      bind: (...boundArgs) => statement(sql, boundArgs),
-      first: async () => { queryCount++; const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-      run: async () => { queryCount++; const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
-      all: async () => { queryCount++; const rows = sqlite.prepare(sql).all(...args); return { results: rows }; },
-    };
-  }
+  const inner = createD1(sqlite);
+  const meter = (statement) => ({
+    ...statement,
+    bind: (...bound) => meter(statement.bind(...bound)),
+    first: async () => { queryCount++; return statement.first(); },
+    all: async () => { queryCount++; return statement.all(); },
+    run: async () => { queryCount++; return statement.run(); },
+  });
   return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (statements) => { queryCount++; const results = []; for (const stmt of statements) { const info = sqlite.prepare(stmt.sql).run(...stmt.args); results.push({ success: true, meta: { changes: Number(info.changes) } }); } return results; },
-    exec: async (sql) => { queryCount++; sqlite.exec(sql); return { count: 0, duration: 0 }; },
+    prepare: (sql) => meter(inner.prepare(sql)),
+    // Real D1 counts a batch as ONE request; mirror that so the budget models production.
+    batch: async (statements) => { queryCount++; return inner.batch(statements); },
+    exec: async (sql) => { queryCount++; return inner.exec(sql); },
   };
 }
 void makeD1;

@@ -13,29 +13,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 installWorkersHooks("__PSCOPE_DB__", "__PSCOPE_ENV__");
 
-const D1_MAX_BOUND_PARAMS = 100;
 
-function makeD1(sqlite) {
-  function statement(sql, args) {
-    const guard = () => {
-      if (args.length > D1_MAX_BOUND_PARAMS) throw new Error("D1_ERROR: too many SQL variables at offset 0: SQLITE_ERROR");
-    };
-    return {
-      bind: (...bound) => statement(sql, bound),
-      first: async () => { guard(); const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-      run: async () => { guard(); const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
-      all: async () => { guard(); return { results: sqlite.prepare(sql).all(...args) }; },
-    };
-  }
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (statements) => { const out = []; for (const item of statements) out.push(await item.run()); return out; },
-    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-  };
-}
+// batch() is one transaction in D1: see tests/helpers/d1.mjs. The bind cap this shim modelled by
+// hand now lives in the helper, so there is one number rather than three copies of 100.
+const makeD1 = (sqlite) => createD1(sqlite);
 
 async function seed(directReports) {
   const sqlite = new DatabaseSync(":memory:");

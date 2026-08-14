@@ -33,6 +33,7 @@
  */
 
 import { DatabaseSync } from "node:sqlite";
+import { createD1 } from "./d1.mjs";
 
 /** D1 rejects a statement with more than ~100 bound parameters. Declared once, in the D1 shim. */
 export { D1_MAX_BOUND_PARAMS } from "./d1.mjs";
@@ -46,37 +47,31 @@ import { D1_MAX_BOUND_PARAMS } from "./d1.mjs";
  * @returns { db, calls(), reset() } - `calls()` is the D1 subrequest count since the last reset
  */
 export function makeCountingD1(sqlite, options = {}) {
-  const maxBoundParams = options.maxBoundParams ?? D1_MAX_BOUND_PARAMS;
   let calls = 0;
   let rows = 0;
 
-  function statement(sql, args) {
-    if (args.length > maxBoundParams) {
-      throw new Error(`D1_ERROR: too many SQL variables (${args.length} > ${maxBoundParams}): ${String(sql).slice(0, 90)}`);
-    }
+  // The metering wraps createD1 rather than re-implementing a shim. This harness used to carry its
+  // own, whose batch() committed statement by statement - so a suite could hold a call budget while
+  // measuring atomicity against a machine that does not roll back. One shim, both properties.
+  const inner = createD1(sqlite, { maxBoundParams: options.maxBoundParams ?? D1_MAX_BOUND_PARAMS });
+
+  /** Meters the three reads/writes and leaves the internals (including __runInTransaction) intact. */
+  function meter(statement) {
     return {
-      sql, args,
-      bind: (...bound) => statement(sql, bound),
-      first: async () => { calls++; const row = sqlite.prepare(sql).get(...args); if (row !== undefined) rows++; return row === undefined ? null : row; },
-      run: async () => { calls++; const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
-      all: async () => { calls++; const results = sqlite.prepare(sql).all(...args); rows += results.length; return { results }; },
+      ...statement,
+      bind: (...bound) => meter(statement.bind(...bound)),
+      first: async () => { calls++; const row = await statement.first(); if (row !== null) rows++; return row; },
+      all: async () => { calls++; const out = await statement.all(); rows += out.results.length; return out; },
+      run: async () => { calls++; return statement.run(); },
     };
   }
 
   const db = {
-    prepare: (sql) => statement(sql, []),
+    prepare: (sql) => meter(inner.prepare(sql)),
     // Real D1 charges a batch as ONE subrequest regardless of statement count. Model that, or the
     // budget would punish batching - the very thing we want code to do.
-    batch: async (statements) => {
-      calls++;
-      const results = [];
-      for (const item of statements) {
-        const info = sqlite.prepare(item.sql).run(...(item.args ?? []));
-        results.push({ success: true, meta: { changes: Number(info.changes) } });
-      }
-      return results;
-    },
-    exec: async (sql) => { calls++; sqlite.exec(sql); return { count: 0, duration: 0 }; },
+    batch: async (statements) => { calls++; return inner.batch(statements); },
+    exec: async (sql) => { calls++; return inner.exec(sql); },
   };
 
   return { db, calls: () => calls, rows: () => rows, reset: () => { calls = 0; rows = 0; } };
