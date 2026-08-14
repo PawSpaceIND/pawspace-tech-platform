@@ -30,5 +30,9 @@ jobs:
         run: npx wrangler@4 d1 execute pawspace-staging --remote --yes --file=scripts/staging-seed.sql
       - name: Load 40-employee + payroll + GST-invoice seed
         run: npx wrangler@4 d1 execute pawspace-staging --remote --yes --file=scripts/employee-seed.sql
+      - name: Load module demo layer (so no team page opens empty)
+        run: npx wrangler@4 d1 execute pawspace-staging --remote --yes --file=scripts/uat-demo-seed.sql
+      - name: Load full-access founder login (founder@pawspace.in)
+        run: npx wrangler@4 d1 execute pawspace-staging --remote --yes --file=scripts/staging-founder-login.sql
       - name: Done
-        run: echo "Staging D1 seeded (idempotent). Open the app and the modules are pre-populated."
+        run: echo "Staging D1 seeded (idempotent). Sign in at /staging-login as founder@pawspace.in with the UAT access code — every module is pre-populated."
