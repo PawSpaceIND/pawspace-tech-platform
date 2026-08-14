@@ -2,7 +2,8 @@
 import{useEffect,useState}from"react";
 
 const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",line:"#123c33",orange:"#F6920A",gold:"#E6B34E",green:"#3ecf8e"};
-// Seeded identities a tester can jump in as. Any other email works too (gets full/founder access for UAT).
+// Seeded identities a tester can jump in as. Sign-in resolves the role from the staff directory, so
+// only an ACTIVE seeded staff email works — an unrecognised email is refused (lib/uat-staging-auth.ts).
 const QUICK=[
   {label:"Founder (full access)",email:"founder@pawspace.in"},
   {label:"Finance (payroll, GST, payouts)",email:"anjali.finance33@tkpetcare.in"},
@@ -43,8 +44,8 @@ export default function StagingLoginPage(){
           <label style={{fontSize:13,color:C.dim}}>Access code<input style={inp} value={code} type="password" placeholder="shared UAT access code" onChange={e=>setCode(e.target.value)}/></label>
           <p style={{fontSize:13,color:C.dim,margin:"16px 0 6px"}}>Jump in as a seeded identity:</p>
           <div style={{display:"grid",gap:8}}>{QUICK.map(q=><button key={q.email} disabled={busy} onClick={()=>void login(q.email)} style={{...btn,background:"transparent",color:C.ink,border:`1px solid ${C.line}`,textAlign:"left"}}><b>{q.label}</b><br/><small style={{color:C.dim}}>{q.email}</small></button>)}</div>
-          <p style={{fontSize:13,color:C.dim,margin:"16px 0 6px"}}>…or any email (gets full access for testing):</p>
-          <div style={{display:"flex",gap:8}}><input style={{...inp,marginTop:0}} value={email} placeholder="you@example.com" onChange={e=>setEmail(e.target.value)}/><button disabled={busy} style={btn} onClick={()=>void login(email)}>{busy?"…":"Sign in"}</button></div>
+          <p style={{fontSize:13,color:C.dim,margin:"16px 0 6px"}}>…or another seeded staff email (must be an active staff identity — an unrecognised email is refused):</p>
+          <div style={{display:"flex",gap:8}}><input style={{...inp,marginTop:0}} value={email} placeholder="seeded staff email (e.g. founder@pawspace.in)" onChange={e=>setEmail(e.target.value)}/><button disabled={busy} style={btn} onClick={()=>void login(email)}>{busy?"…":"Sign in"}</button></div>
           {msg?<p style={{color:msg.includes("out")?C.green:"#ff9a9a",marginTop:12}}>{msg}</p>:null}
           <p style={{fontSize:12,color:C.dim,marginTop:18}}>Staging only · synthetic test data · sandbox payments. This sign-in does not exist on production.</p>
         </>:null}

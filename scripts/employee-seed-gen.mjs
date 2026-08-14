@@ -93,6 +93,15 @@ s.push("CREATE TABLE IF NOT EXISTS tax_classifications (id TEXT PRIMARY KEY,poli
 s.push("CREATE TABLE IF NOT EXISTS finance_invoices (id TEXT PRIMARY KEY,invoice_number TEXT NOT NULL UNIQUE,entity_id TEXT NOT NULL,customer_id TEXT NOT NULL,source_type TEXT NOT NULL,source_id TEXT NOT NULL,source_event_key TEXT NOT NULL UNIQUE,policy_id TEXT NOT NULL,registration_id TEXT NOT NULL,issue_date TEXT NOT NULL,currency TEXT NOT NULL,subtotal REAL NOT NULL,tax_total REAL NOT NULL,total REAL NOT NULL,status TEXT NOT NULL DEFAULT 'issued',tax_snapshot_json TEXT NOT NULL,document_reference TEXT,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,UNIQUE(source_type,source_id));");
 s.push("CREATE TABLE IF NOT EXISTS finance_invoice_lines (id TEXT PRIMARY KEY,invoice_id TEXT NOT NULL,line_key TEXT NOT NULL,description TEXT NOT NULL,service_code TEXT NOT NULL,taxable_amount REAL NOT NULL,tax_amount REAL NOT NULL,tax_snapshot_json TEXT NOT NULL,UNIQUE(invoice_id,line_key));");
 
+// ---- Platform-owner identity for UAT sign-in ----
+// founder@pawspace.in is offered as the "Founder (full access)" identity on /staging-login and in
+// docs/UAT-TESTER-GUIDE.md, but it is the OWNER identity, not an employee on a payroll band, so the
+// employee loop below never created it. UAT sign-in (lib/uat-staging-auth.ts) requires an ACTIVE
+// app_users row whose role has a definition; without this row the advertised Founder identity could
+// never sign in. Its role is 'founder' (permissions ["*"] via defaultRoles) — a real seeded active
+// row, exactly like every other staff identity here. Nothing is synthesised.
+s.push(`INSERT OR IGNORE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (${q("SEEDUSR-FOUNDER")},${q("founder@pawspace.in")},'PawSpace Founder','founder','active',${JOINED},${BASE});`);
+
 // ---- Salary structures (one per band) ----
 const structures = {};
 Object.entries(BANDS).forEach(([band, cfg]) => {

@@ -96,6 +96,15 @@ payments, 23 subscriptions, marketing consent on ~⅓). Idempotent (`INSERT OR I
 npx wrangler d1 execute pawspace-staging --remote --file=scripts/staging-seed.sql
 ```
 (Regenerate any time with `node scripts/staging-seed-gen.mjs` — deterministic output.)
+
+**Load the staff sign-in directory** so the `/staging-login` identities in `docs/UAT-TESTER-GUIDE.md`
+(Founder, Finance, Manager, Groomer, Associate) can actually sign in — UAT sign-in refuses any email
+that is not an active `app_users` row, so without this seed every advertised staff identity is rejected:
+```bash
+npx wrangler d1 execute pawspace-staging --remote --file=scripts/employee-seed.sql
+```
+Idempotent (`INSERT OR IGNORE`), regenerate with `node scripts/employee-seed-gen.mjs`. It seeds 40
+employees plus the `founder@pawspace.in` owner identity, one approved payroll run, and the GST entity.
 After loading, open `/team/acquisition-funnel` and hit **Refresh sweep** to compute funnel stages, ₹300
 recoveries and App-Inbound leads from the seeded data — instant material for the CRM/Sales test.
 
