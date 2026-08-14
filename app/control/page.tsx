@@ -2,6 +2,7 @@
 /* eslint-disable @next/next/no-img-element */
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { hasPermission, type Permission } from "../../lib/platform-security";
 import styles from "./control.module.css";
 import CouponsControlPanel from "./coupons-control-panel";
 import ReferralsControlPanel from "./referrals-control-panel";
@@ -43,32 +44,32 @@ type View =
   | "health";
 // Nav badges carried invented queue lengths (12 launch items, 14 audit items, 9 approvals). None
 // had a source, so none are shown.
-const nav: { id: View; label: string; icon: string }[] = [
-  { id: "command", label: "Control tower", icon: "⌂" },
-  { id: "launch", label: "Launch essentials", icon: "◎" },
-  { id: "lifecycle", label: "Customer booking lifecycle", icon: "⛓" },
-  { id: "audit", label: "Platform audit & release", icon: "✓" },
-  { id: "business", label: "Business 360 & reports", icon: "▥" },
-  { id: "scheduling", label: "Auto-scheduling", icon: "◷" },
-  { id: "pricing", label: "Pricing, packages & slots", icon: "₹" },
-  { id: "marketing", label: "Marketing command center", icon: "↗" },
-  { id: "finance", label: "Finance, expenses & accounts", icon: "₹" },
-  { id: "access2", label: "Users, roles & access", icon: "♟" },
-  { id: "approvals", label: "Approvals", icon: "✓" },
-  { id: "master", label: "Master settings", icon: "⚙" },
-  { id: "cities", label: "Cities & geofences", icon: "◎" },
+const nav: { id: View; permission: Permission; label: string; icon: string }[] = [
+  { id: "command", permission: "audit.view" as Permission, label: "Control tower", icon: "⌂" },
+  { id: "launch", permission: "settings.manage" as Permission, label: "Launch essentials", icon: "◎" },
+  { id: "lifecycle", permission: "bookings.view" as Permission, label: "Customer booking lifecycle", icon: "⛓" },
+  { id: "audit", permission: "audit.view" as Permission, label: "Platform audit & release", icon: "✓" },
+  { id: "business", permission: "reports.view" as Permission, label: "Business 360 & reports", icon: "▥" },
+  { id: "scheduling", permission: "scheduling.manage" as Permission, label: "Auto-scheduling", icon: "◷" },
+  { id: "pricing", permission: "pricing.manage" as Permission, label: "Pricing, packages & slots", icon: "₹" },
+  { id: "marketing", permission: "marketing.manage" as Permission, label: "Marketing command center", icon: "↗" },
+  { id: "finance", permission: "finance.view" as Permission, label: "Finance, expenses & accounts", icon: "₹" },
+  { id: "access2", permission: "users.manage" as Permission, label: "Users, roles & access", icon: "♟" },
+  { id: "approvals", permission: "audit.view" as Permission, label: "Approvals", icon: "✓" },
+  { id: "master", permission: "settings.manage" as Permission, label: "Master settings", icon: "⚙" },
+  { id: "cities", permission: "settings.manage" as Permission, label: "Cities & geofences", icon: "◎" },
   {
-    id: "subscriptions",
+    id: "subscriptions", permission: "pricing.manage" as Permission,
     label: "Grooming subscriptions",
     icon: "◈",
   },
-  { id: "coupons", label: "Coupon management", icon: "₹" },
-  { id: "referrals", label: "Referral management", icon: "↗" },
-  { id: "data2", label: "Customer data & contact", icon: "⇄" },
-  { id: "inventory", label: "Inventory & buying", icon: "▦" },
-  { id: "quality", label: "Quality & incidents", icon: "◆" },
-  { id: "security", label: "Privacy & security", icon: "◇" },
-  { id: "health", label: "System health", icon: "⚡" },
+  { id: "coupons", permission: "marketing.manage" as Permission, label: "Coupon management", icon: "₹" },
+  { id: "referrals", permission: "marketing.manage" as Permission, label: "Referral management", icon: "↗" },
+  { id: "data2", permission: "customers.manage" as Permission, label: "Customer data & contact", icon: "⇄" },
+  { id: "inventory", permission: "settings.manage" as Permission, label: "Inventory & buying", icon: "▦" },
+  { id: "quality", permission: "audit.view" as Permission, label: "Quality & incidents", icon: "◆" },
+  { id: "security", permission: "settings.manage" as Permission, label: "Privacy & security", icon: "◇" },
+  { id: "health", permission: "audit.view" as Permission, label: "System health", icon: "⚡" },
 ];
 const roles = [
   ["Super Admin", "2", "All modules + settings", "Critical"],
@@ -171,15 +172,17 @@ const AUTHORED_REGISTER_VIEWS = new Set(["audit"]);
 /** The approvals backlog is a real count of what is waiting on a human, from /api/team-overview.
  *  Cold-safe: an environment without those tables reports null, which renders as "—". */
 function useApprovals() {
-  const [approvals, setApprovals] = useState<{ pending: number | null }>({ pending: null });
+  // Also carries the signed-in actor's permissions (same /api/team-overview payload) so the side-nav
+  // can show only the control surfaces this role is allowed to open — Founder/Superuser see them all.
+  const [approvals, setApprovals] = useState<{ pending: number | null; permissions: string[]; loaded: boolean }>({ pending: null, permissions: [], loaded: false });
   useEffect(() => {
     let active = true;
     void fetch("/api/team-overview", { cache: "no-store" })
       .then(async (response) => {
-        const body = await response.json() as { data?: { approvals?: { pending: number | null } } };
-        if (active && response.ok) setApprovals({ pending: body.data?.approvals?.pending ?? null });
+        const body = await response.json() as { data?: { approvals?: { pending: number | null }; actor?: { permissions?: string[] } } };
+        if (active && response.ok) setApprovals({ pending: body.data?.approvals?.pending ?? null, permissions: body.data?.actor?.permissions ?? [], loaded: true });
       })
-      .catch(() => {});
+      .catch(() => { if (active) setApprovals((prior) => ({ ...prior, loaded: true })); });
     return () => { active = false; };
   }, []);
   return approvals;
@@ -196,6 +199,17 @@ export default function Control() {
     setToast(m);
     setTimeout(() => setToast(""), 2300);
   };
+  // Only the control surfaces this role may open are listed; Founder/Superuser (["*"]) see them all.
+  const visibleNav = approvals.loaded ? nav.filter((n) => hasPermission(approvals.permissions, n.permission)) : [];
+  // If the current view isn't one this role can open, land on the first one it can. Deferred so the
+  // correction happens after paint rather than as a synchronous cascading re-render inside the effect.
+  useEffect(() => {
+    if (!approvals.loaded || visibleNav.some((n) => n.id === view) || !visibleNav[0]) return;
+    const firstAllowed = visibleNav[0].id;
+    const timer = setTimeout(() => setView(firstAllowed), 0);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [approvals.loaded]);
   const title = nav.find((n) => n.id === view)?.label;
   return (
     <main className={styles.shell}>
@@ -213,7 +227,7 @@ export default function Control() {
           <small>Restricted prototype</small>
         </div>
         <nav>
-          {nav.map((n) => (
+          {visibleNav.map((n) => (
             <button
               key={n.id}
               className={view === n.id ? styles.active : ""}

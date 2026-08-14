@@ -3,9 +3,10 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import styles from "./team.module.css";
 import TestSyncPanel from "../components/test-sync-panel";
+import { hasPermission, type Permission } from "../../lib/platform-security";
 
 type Overview = {
-  actor: { name: string; email: string; roleCode: string };
+  actor: { name: string; email: string; roleCode: string; permissions: string[] };
   today: string;
   commandStrip: { revenueActions: number | null; firstResponseMinutes: number | null; managerAlertMinutes: number | null; openEscalations: number | null; openTickets: number | null; commandPackReports: number | null };
   workspaces: { bookingsToday: number | null; ticketsNeedAttention: number | null; dayCloseStatus: string | null; activeEmployees: number | null; aiHandoffsWaiting: number | null; aiTurnsToday: number | null; aiRolloutStage: string | null };
@@ -14,18 +15,18 @@ type Overview = {
 // Static copy stays static; every COUNT comes from the API. `metric` is the label shown when the
 // live figure is not available, so the card never asserts a number the platform cannot back.
 const workspaces = [
-  { group: "Sales", title: "Revenue & CRM", detail: "Leads, RNR, renewals, cross-sell, incentives and leaderboard.", href: "/team/sales", metric: "Live CRM", tone: "purple", live: () => null as string | null },
-  { group: "Sales", title: "Daily revenue priority", detail: "Real, targetable daily opportunity list combining customer scoring, open inbound leads and subscription renewals - not fabricated demo rows.", href: "/team/daily-revenue", metric: "Real ₹ target", tone: "purple", live: (data: Overview) => data.commandStrip.revenueActions == null ? null : `${data.commandStrip.revenueActions} ranked today` },
-  { group: "Sales", title: "Customer reminders", detail: "Grooming rebooking cadence, subscription unused-session prompts and renewal reminders - real, governed, queued into the outbox automatically.", href: "/team/customer-reminders", metric: "Auto every 5 min", tone: "purple", live: () => null },
-  { group: "Operations", title: "Bookings & delivery", detail: "Live bookings, assignments, delays, partner work orders, completion evidence and escalations.", href: "/team/operations", metric: "Live bookings", tone: "orange", live: (data: Overview) => data.workspaces.bookingsToday == null ? null : `${data.workspaces.bookingsToday} booking${data.workspaces.bookingsToday === 1 ? "" : "s"} today` },
-  { group: "Customer experience", title: "Tickets & recovery", detail: "Customer 360, complaints, refund cases, RNR compliance, SLA and resolution evidence.", href: "/team/customer-experience", metric: "Open tickets", tone: "rose", live: (data: Overview) => data.workspaces.ticketsNeedAttention == null ? null : `${data.workspaces.ticketsNeedAttention} need attention` },
-  { group: "Finance", title: "Accounts & collections", detail: "Collections, payouts, refunds, reconciliation and mandatory day closure.", href: "/team/finance", metric: "Day close", tone: "green", live: (data: Overview) => data.workspaces.dayCloseStatus == null ? null : `Day close ${data.workspaces.dayCloseStatus.replace(/_/g, " ")}` },
-  { group: "People", title: "HR & performance", detail: "Employees, attendance, payroll, targets, incentives and team achievement.", href: "/team/people", metric: "Team directory", tone: "blue", live: (data: Overview) => data.workspaces.activeEmployees == null ? null : `${data.workspaces.activeEmployees} active employee${data.workspaces.activeEmployees === 1 ? "" : "s"}` },
+  { group: "Sales", title: "Revenue & CRM", detail: "Leads, RNR, renewals, cross-sell, incentives and leaderboard.", href: "/team/sales", permission: "customers.view" as Permission, metric: "Live CRM", tone: "purple", live: () => null as string | null },
+  { group: "Sales", title: "Daily revenue priority", detail: "Real, targetable daily opportunity list combining customer scoring, open inbound leads and subscription renewals - not fabricated demo rows.", href: "/team/daily-revenue", permission: "customers.view" as Permission, metric: "Real ₹ target", tone: "purple", live: (data: Overview) => data.commandStrip.revenueActions == null ? null : `${data.commandStrip.revenueActions} ranked today` },
+  { group: "Sales", title: "Customer reminders", detail: "Grooming rebooking cadence, subscription unused-session prompts and renewal reminders - real, governed, queued into the outbox automatically.", href: "/team/customer-reminders", permission: "customers.view" as Permission, metric: "Auto every 5 min", tone: "purple", live: () => null },
+  { group: "Operations", title: "Bookings & delivery", detail: "Live bookings, assignments, delays, partner work orders, completion evidence and escalations.", href: "/team/operations", permission: "bookings.view" as Permission, metric: "Live bookings", tone: "orange", live: (data: Overview) => data.workspaces.bookingsToday == null ? null : `${data.workspaces.bookingsToday} booking${data.workspaces.bookingsToday === 1 ? "" : "s"} today` },
+  { group: "Customer experience", title: "Tickets & recovery", detail: "Customer 360, complaints, refund cases, RNR compliance, SLA and resolution evidence.", href: "/team/customer-experience", permission: "customers.view" as Permission, metric: "Open tickets", tone: "rose", live: (data: Overview) => data.workspaces.ticketsNeedAttention == null ? null : `${data.workspaces.ticketsNeedAttention} need attention` },
+  { group: "Finance", title: "Accounts & collections", detail: "Collections, payouts, refunds, reconciliation and mandatory day closure.", href: "/team/finance", permission: "finance.view" as Permission, metric: "Day close", tone: "green", live: (data: Overview) => data.workspaces.dayCloseStatus == null ? null : `Day close ${data.workspaces.dayCloseStatus.replace(/_/g, " ")}` },
+  { group: "People", title: "HR & performance", detail: "Employees, attendance, payroll, targets, incentives and team achievement.", href: "/team/people", permission: "people.view" as Permission, metric: "Team directory", tone: "blue", live: (data: Overview) => data.workspaces.activeEmployees == null ? null : `${data.workspaces.activeEmployees} active employee${data.workspaces.activeEmployees === 1 ? "" : "s"}` },
   // The AI workspace had no entry point anywhere in Team: nothing linked to /team/ai, so the whole
   // module was reachable only by typing the URL. The metric leads with the rollout stage because
   // that is what decides whether the assistant is talking to anyone at all.
-  { group: "AI", title: "Assistant & handoff", detail: "Conversation analytics, the human handoff queue, assistant grounding and the staff-first rollout switch. The assistant never acts autonomously on money, refunds or assignments.", href: "/team/ai", metric: "Rollout off", tone: "blue", live: (data: Overview) => data.workspaces.aiRolloutStage == null ? null : data.workspaces.aiRolloutStage === "off" ? "Rollout off · humans answer" : `${data.workspaces.aiRolloutStage.replace(/_/g, " ")}${data.workspaces.aiHandoffsWaiting ? ` · ${data.workspaces.aiHandoffsWaiting} awaiting staff` : ""}` },
-  { group: "Marketing", title: "Segments & campaigns", detail: "Consent-safe audiences, WATI and SMS queues, promotions and campaign performance.", href: "/team/marketing", metric: "Live delivery locked", tone: "gold", live: () => null },
+  { group: "AI", title: "Assistant & handoff", detail: "Conversation analytics, the human handoff queue, assistant grounding and the staff-first rollout switch. The assistant never acts autonomously on money, refunds or assignments.", href: "/team/ai", permission: "reports.view" as Permission, metric: "Rollout off", tone: "blue", live: (data: Overview) => data.workspaces.aiRolloutStage == null ? null : data.workspaces.aiRolloutStage === "off" ? "Rollout off · humans answer" : `${data.workspaces.aiRolloutStage.replace(/_/g, " ")}${data.workspaces.aiHandoffsWaiting ? ` · ${data.workspaces.aiHandoffsWaiting} awaiting staff` : ""}` },
+  { group: "Marketing", title: "Segments & campaigns", detail: "Consent-safe audiences, WATI and SMS queues, promotions and campaign performance.", href: "/team/marketing", permission: "marketing.view" as Permission, metric: "Live delivery locked", tone: "gold", live: () => null },
 ] as const;
 
 const DASH = "—";
@@ -62,6 +63,8 @@ export default function TeamHome() {
   const packReports = strip?.commandPackReports;
   const packLabel = packReports == null ? DASH : packReports > 0 ? "Ready" : "Not generated";
   const packNote = packReports == null ? "command reports unavailable" : packReports > 0 ? `${packReports} report${packReports === 1 ? "" : "s"} generated today` : "daily pack runs after 7 PM IST";
+  // Role-scoped menu: the signed-in actor's permissions decide which workspaces are offered.
+  const visibleWorkspaces = data ? workspaces.filter((workspace) => hasPermission(data.actor.permissions, workspace.permission)) : [];
 
   return (
     <main className={styles.shell}>
@@ -84,8 +87,13 @@ export default function TeamHome() {
       {/* The synthetic transaction engine lived on /admin and /ops; this front door replaced them. */}
       <TestSyncPanel surface="ops" />
       <section className={styles.workspaceSection}>
-        <div className={styles.sectionHead}><div><p>ROLE-BASED WORKSPACES</p><h2>Choose what you need to run.</h2></div><span>6 teams · 1 customer record · 1 audit trail</span></div>
-        <div className={styles.grid}>{workspaces.map((workspace) => <Link href={workspace.href} className={`${styles.card} ${styles[workspace.tone]}`} key={workspace.group + workspace.title}><div><span>{workspace.group}</span><i aria-hidden="true">↗</i></div><h3>{workspace.title}</h3><p>{workspace.detail}</p><footer><b>{(data && workspace.live(data)) || workspace.metric}</b><span>Open workspace →</span></footer></Link>)}</div>
+        <div className={styles.sectionHead}><div><p>ROLE-BASED WORKSPACES</p><h2>Choose what you need to run.</h2></div><span>Showing what your role can open</span></div>
+        {/* Only the workspaces this role can actually open are shown. A tile the role has no permission
+            for is hidden, not shown-then-denied — Founder/Superuser hold ["*"] and see everything. Until
+            the actor loads we show nothing rather than flashing tiles the role may not be allowed. */}
+        {!data && !error && <p className={styles.hint ?? ""}>Loading your workspaces…</p>}
+        <div className={styles.grid}>{visibleWorkspaces.map((workspace) => <Link href={workspace.href} className={`${styles.card} ${styles[workspace.tone]}`} key={workspace.group + workspace.title}><div><span>{workspace.group}</span><i aria-hidden="true">↗</i></div><h3>{workspace.title}</h3><p>{workspace.detail}</p><footer><b>{(data && workspace.live(data)) || workspace.metric}</b><span>Open workspace →</span></footer></Link>)}</div>
+        {data && visibleWorkspaces.length === 0 && <p className={styles.hint ?? ""}>Your role has no team workspaces enabled. Contact an admin if you need access.</p>}
       </section>
       <footer className={styles.footer}><div><i></i><span>UAT workspace · sandbox payments and queued communications</span></div><Link href="/control">Founder &amp; system controls →</Link></footer>
     </main>

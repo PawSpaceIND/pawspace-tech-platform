@@ -8,6 +8,6 @@ const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cac
 export async function GET(request:Request){
   try{
     const db=await database(),actor=await resolveActor(request);requirePermission(actor,"dashboard.view");
-    return json({data:await buildTeamOverview(db,{actorEmail:actor.email,actorName:actor.name,roleCode:actor.roleCode})});
+    return json({data:await buildTeamOverview(db,{actorEmail:actor.email,actorName:actor.name,roleCode:actor.roleCode,permissions:actor.permissions})});
   }catch(error){return authError(error,"Unable to load the Team overview");}
 }

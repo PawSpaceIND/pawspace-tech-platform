@@ -28,7 +28,7 @@ async function one(db: Db, sql: string, binds: unknown[] = []): Promise<Row | nu
 /** IST calendar day — the same day key the CRM engine and finance closure use. */
 const istDay = (at: number) => new Date(at + 19_800_000).toISOString().slice(0, 10);
 
-export async function buildTeamOverview(db: Db, input: { actorEmail: string; actorName: string; roleCode: string; asOf?: number }) {
+export async function buildTeamOverview(db: Db, input: { actorEmail: string; actorName: string; roleCode: string; permissions?: string[]; asOf?: number }) {
   const asOf = input.asOf ?? Date.now();
   const today = istDay(asOf);
   const startIso = `${today}T00:00:00.000Z`, endIso = `${today}T23:59:59.999Z`;
@@ -68,7 +68,7 @@ export async function buildTeamOverview(db: Db, input: { actorEmail: string; act
   const pendingApprovals = approvalParts.every((part) => part === null) ? null : approvalParts.reduce((sum, part) => sum + (part ? num(part.count) : 0), 0);
 
   return {
-    actor: { name: input.actorName || input.actorEmail, email: input.actorEmail, roleCode: input.roleCode },
+    actor: { name: input.actorName || input.actorEmail, email: input.actorEmail, roleCode: input.roleCode, permissions: input.permissions ?? [] },
     today,
     commandStrip: {
       revenueActions: opportunities ? num(opportunities.count) : null,
