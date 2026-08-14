@@ -34,5 +34,7 @@ jobs:
         run: npx wrangler@4 d1 execute pawspace-staging --remote --yes --file=scripts/uat-demo-seed.sql
       - name: Load full-access founder login (founder@pawspace.in)
         run: npx wrangler@4 d1 execute pawspace-staging --remote --yes --file=scripts/staging-founder-login.sql
+      - name: Reconcile captured payments (so collected revenue is real)
+        run: npx wrangler@4 d1 execute pawspace-staging --remote --yes --file=scripts/staging-payment-reconciliation.sql
       - name: Done
         run: echo "Staging D1 seeded (idempotent). Sign in at /staging-login as founder@pawspace.in with the UAT access code — every module is pre-populated."

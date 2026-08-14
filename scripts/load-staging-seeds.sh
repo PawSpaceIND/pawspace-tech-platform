@@ -13,7 +13,7 @@ set -euo pipefail
 DB="${STAGING_D1_NAME:-pawspace-staging}"
 cd "$(dirname "$0")/.."
 
-for file in staging-seed.sql employee-seed.sql uat-demo-seed.sql staging-founder-login.sql; do
+for file in staging-seed.sql employee-seed.sql uat-demo-seed.sql staging-founder-login.sql staging-payment-reconciliation.sql; do
   echo "==> loading scripts/${file}"
   npx wrangler d1 execute "$DB" --remote --file="scripts/${file}"
 done
