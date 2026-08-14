@@ -83,7 +83,7 @@ export default function DailyRevenuePriorityPage() {
           </div>
         </div>
         <div style={{ background: "#eee", borderRadius: 8, height: 10, overflow: "hidden" }}>
-          <div style={{ background: progressPercent >= 100 ? "#2e7d4f" : "#4c8bf5", height: "100%", width: `${Math.min(100, progressPercent)}%` }} />
+          <div style={{ background: progressPercent >= 100 ? "#11885b" : "#E6B34E", height: "100%", width: `${Math.min(100, progressPercent)}%` }} />
         </div>
         <div style={{ marginTop: 16, display: "flex", gap: 10, alignItems: "center" }}>
           <label>Set target (₹)<br /><input type="number" min={1} value={targetInput} onChange={(e) => setTargetInput(Number(e.target.value))} style={{ width: 200, padding: 8 }} /></label>
