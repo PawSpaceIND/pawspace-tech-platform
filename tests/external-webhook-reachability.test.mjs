@@ -96,7 +96,10 @@ test("no gateway-exempt route is left without any caller authentication", () => 
     // partner-otp is the partner-login analog of customer-otp: it must be reachable before a provider
     // has a session (finding #3), and self-protects via its own OTP challenge/verify + same-origin write —
     // a login flow externalAuth() cannot detect (it only recognises API-key/HMAC webhook signatures).
-    "/api/training-requirements", "/api/host-trust", "/api/service-zone", "/api/partner-otp",
+    // NOTE: training-requirements and host-trust were removed from this list by the D3/D4 remediation.
+    // Their GET is still public, but it is now served by a method-aware mapping (GET->null, writes->a
+    // permission), NOT by the flat public short-circuit, so they are no longer on `exemptPaths` at all.
+    "/api/service-zone", "/api/partner-otp",
   ]);
   const unguarded = [];
   for (const path of exemptPaths) {

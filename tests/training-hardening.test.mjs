@@ -538,7 +538,7 @@ test("contract: gateway permission map, DB access rule, and team surfaces for th
   const gateway = fs.readFileSync(new URL("../lib/api-gateway.ts", import.meta.url), "utf8");
   assert.match(gateway, /training-finance"\)return method==="GET"\?"finance\.view":"finance\.manage"/);
   assert.match(gateway, /training-customer-session-change"\)return "scheduling\.book"/);
-  assert.match(gateway, /training-ops"\)return "bookings\.view"/);
+  assert.match(gateway, /training-ops"\)return "bookings\.manage"/);
   assert.match(gateway, /training-provider-earnings"\)return "bookings\.view"/);
   assert.match(gateway, /training-reconciliation"\)return "reports\.view"/);
   assert.match(gateway, /training-cancellation"[\s\S]{0,200}"request"\?"scheduling\.book":"finance\.manage"/);

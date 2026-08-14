@@ -92,12 +92,16 @@ test("host-badges lib exports computeHostStats with real queries",async()=>{
   assert.match(lib,/host_reviews/);
 });
 
-test("host-trust route is public (GET and POST, no authorize call)",async()=>{
+test("host-trust GET is a public read, but POST now requires an authenticated staff session (D4 tightening)",async()=>{
   const route=await read("app/api/host-trust/route.ts");
   assert.match(route,/export async function GET/);
   assert.match(route,/export async function POST/);
-  assert.equal(route.includes("authorize("),false,"host-trust must not call authorize() — it is public");
+  // GET stays a public catalog read (still driven by the hostProviderId query param, no session).
   assert.match(route,/hostProviderId=url\.searchParams\.get\("hostProviderId"\)/);
+  // POST is no longer anonymous: it resolves a real staff actor and enforces providers.manage before any write.
+  assert.match(route,/resolveActor\(request\)/);
+  assert.match(route,/requirePermission/);
+  assert.match(route,/"providers\.manage"/);
 });
 
 test("host-trust route calls submitHostReview for reviews",async()=>{
@@ -105,15 +109,17 @@ test("host-trust route calls submitHostReview for reviews",async()=>{
   assert.match(route,/submitHostReview/);
 });
 
-test("host-trust route includes seed action for test data",async()=>{
+test("host-trust route includes seed action for test data, fail-closed behind the UAT switch",async()=>{
   const route=await read("app/api/host-trust/route.ts");
   assert.match(route,/body\.action==="seed"/);
   assert.match(route,/seedHostReviews/);
+  // The synthetic seed fixture can only run on a staging/UAT build with the explicit switch on.
+  assert.match(route,/PAWSPACE_UAT_LOGIN/);
 });
 
-test("gateway allowlists host-trust as public",async()=>{
+test("gateway makes host-trust GET public but gates its writes on providers.manage (D4)",async()=>{
   const gateway=await read("lib/api-gateway.ts");
-  assert.match(gateway,/url\.pathname===\"\/api\/host-trust\"/);
+  assert.match(gateway,/url\.pathname===\"\/api\/host-trust\"\)return method===\"GET\"\?null:\"providers\.manage\"/);
 });
 
 test("host-trust-panel component does not import flows",async()=>{

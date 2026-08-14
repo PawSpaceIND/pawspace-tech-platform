@@ -1,5 +1,6 @@
 import{submitHostReview,listHostReviews,ensureHostReviewsTables,seedHostReviews}from"../../../lib/host-reviews";
 import{computeHostStats,computeHostBadges}from"../../../lib/host-badges";
+import{resolveActor,requirePermission}from"../../../lib/server-auth";
 
 type Db=D1Database;
 
@@ -42,13 +43,24 @@ export async function GET(request:Request):Promise<Response>{
 
 export async function POST(request:Request):Promise<Response>{
   try{
+    // D4 remediation: this write was fully public. It now requires a real staff session holding
+    // providers.manage (host trust/reputation is provider-management data). resolveActor throws a
+    // 401/403 Response when the caller is anonymous or under-privileged; we surface it below.
+    const actor=requirePermission(await resolveActor(request),"providers.manage");
     const body=await request.json() as Record<string,unknown>;
     const db=await ensureDb();
 
     // Handle seed action
     if(body.action==="seed"){
+      // Synthetic fixture seeding is fail-closed: even an authorized staff member may only run it on a
+      // staging/UAT build with the explicit switch on. In production PAWSPACE_UAT_LOGIN is never set, so
+      // seeding host reviews can never run there regardless of who is calling.
+      const{env}=await import("cloudflare:workers");
+      if(String((env as Record<string,unknown>).PAWSPACE_UAT_LOGIN||"")!=="on"){
+        return new Response(JSON.stringify({error:"Host review seeding is only available on UAT/staging"}),{status:403,headers:{"content-type":"application/json"}});
+      }
       await seedHostReviews(db);
-      return new Response(JSON.stringify({message:"Host reviews seeded",productionReady:false}),{status:200,headers:{"content-type":"application/json"}});
+      return new Response(JSON.stringify({message:"Host reviews seeded",seededBy:actor.email,productionReady:false}),{status:200,headers:{"content-type":"application/json"}});
     }
 
     // Submit review
@@ -68,6 +80,9 @@ export async function POST(request:Request):Promise<Response>{
     const review=await submitHostReview(db,input);
     return new Response(JSON.stringify({data:review,productionReady:false}),{status:201,headers:{"content-type":"application/json"}});
   }catch(e){
+    // resolveActor/requirePermission throw a ready-made 401/403 Response — propagate it verbatim so an
+    // auth failure is not masked as a 400 validation error.
+    if(e instanceof Response)return e;
     const message=e instanceof Error?e.message:String(e);
     return new Response(JSON.stringify({error:message}),{status:400,headers:{"content-type":"application/json"}});
   }

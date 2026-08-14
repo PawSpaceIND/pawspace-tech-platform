@@ -221,7 +221,7 @@ test("real execution: the route drives the full supplier -> PO -> receive -> was
 
 test("contract: gateway permission line, DB access rule, and the team surface exist", () => {
   const gateway = fs.readFileSync(new URL("../lib/api-gateway.ts", import.meta.url), "utf8");
-  assert.match(gateway, /food-supply-chain"\)return method==="GET"\?"bookings\.view":"bookings\.manage"/);
+  assert.match(gateway, /food-supply-chain"\)return "bookings\.manage"/);
   const source = fs.readFileSync(new URL("../app/api/food-supply-chain/route.ts", import.meta.url), "utf8");
   assert.doesNotMatch(source, /globalThis/, "the route must get the DB via cloudflare:workers env, never globalThis");
   const page = fs.readFileSync(new URL("../app/team/operations/food/supply-chain/page.tsx", import.meta.url), "utf8");
