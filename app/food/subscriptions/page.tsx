@@ -50,7 +50,7 @@ export default function FoodSubscriptionsPage(){
  }
 
  const subscription=data?.subscription||{},renewals=data?.renewals||[],invoices=data?.invoices||[];
- return <main style={{maxWidth:980,margin:"0 auto",padding:28,fontFamily:"system-ui",display:"grid",gap:16}}>
+ return <main style={{maxWidth:1180,margin:"0 auto",padding:28,fontFamily:"system-ui",display:"grid",gap:16}}>
   <header><Link href="/food">← Food</Link><p>FOOD SUBSCRIPTION · CANONICAL UAT</p><h1>Renew by payment link, never silent auto-charge</h1><p>When a configured renewal becomes due, PawSpace creates one idempotent payment-link cycle and queues the transactional message. After canonical payment confirmation, the paid message and UAT invoice are queued automatically.</p></header>
   {error&&<p role="alert">{error}</p>}
   {!data&&<section style={box}><h2>Start from an existing canonical Food order</h2><label>Source order ID<input value={sourceOrderId} onChange={event=>setSourceOrderId(event.target.value)} style={{display:"block",width:"100%",padding:10,marginTop:6}}/></label><label>Customer-selected renewal interval (days)<input type="number" min={7} max={90} value={days} onChange={event=>setDays(Number(event.target.value))} style={{display:"block",width:"100%",padding:10,marginTop:6}}/></label><p><small>The interval is explicit per subscription; PawSpace does not invent a production cadence or silently change price.</small></p><button disabled={!!busy||!sourceOrderId} onClick={()=>void create()}>{busy?"Creating…":"Create subscription"}</button></section>}
