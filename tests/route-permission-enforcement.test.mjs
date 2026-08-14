@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { enumerateProbes, probeKey, probeRequest } from "./helpers/gateway-policy-probe.mjs";
 import { createD1 } from "./helpers/d1.mjs";
 
 // ---------------------------------------------------------------------------
@@ -23,7 +24,6 @@ import { createD1 } from "./helpers/d1.mjs";
 installWorkersHooks("__RPE_DB__", "__RPE_ENV__");
 
 const HOST = "https://pawspace-staging.example.dev";
-const METHODS = ["GET", "POST", "PATCH", "DELETE"];
 
 // This shim is deliberately permissive: the routes under test write to tables this harness does not
 // create, and the shape being measured is whether an outsider is refused - not whether the write
@@ -70,16 +70,10 @@ async function bootstrap() {
   return env;
 }
 
-function request(route, method, email) {
-  const init = { method, headers: { "oai-authenticated-user-email": email } };
-  if (method !== "GET") { init.body = "{}"; init.headers["content-type"] = "application/json"; }
-  return new Request(`${HOST}/api/${route}`, init);
-}
-
 /** A handler may legitimately throw; what matters is whether an outsider ever gets a 2xx. */
-async function statusOf(handler, route, method, email) {
+async function statusOf(handler, probe, email) {
   try {
-    const response = await handler(request(route, method, email));
+    const response = await handler(probeRequest(HOST, probe, email));
     return response && typeof response.status === "number" ? response.status : 0;
   } catch (error) {
     if (error instanceof Response) return error.status;
@@ -100,43 +94,45 @@ test("a gated handler refuses an identity that holds nothing, without relying on
   // The gated set comes from the frozen policy, not from grepping for the word requirePermission. A
   // route the gateway leaves public (GET /api/i18n, the non-admin view of /api/content-controls) is
   // correctly served to anyone, and counting it as a leak would be a false alarm.
+  // The gated set comes from the frozen policy, not from grepping for the word requirePermission. A
+  // route the gateway leaves public - GET /api/i18n, the non-admin view of /api/content-controls - is
+  // correctly served to anyone, and counting it as a leak would be a false alarm. That distinction is
+  // why each frozen BRANCH is driven as its own case rather than collapsing the fixture to route+method:
+  // GET /api/content-controls is public, GET /api/content-controls?view=admin is not, and a set built
+  // from route+method alone cannot tell them apart - it reported the public one as a leak.
   const approved = JSON.parse(await readFile(new URL("./fixtures/route-permissions.json", import.meta.url), "utf8"));
-  const gated = new Map();
-  for (const key of Object.keys(approved)) {
-    const [method, path] = key.split(" ");
-    const name = path.replace("/api/", "");
-    if (!gated.has(name)) gated.set(name, new Set());
-    gated.get(name).add(method);
-  }
-  assert.ok(gated.size > 40, `expected many gated routes in the frozen policy, found ${gated.size}`);
+  const source = await readFile(new URL("../lib/api-gateway.ts", import.meta.url), "utf8");
+  const probes = enumerateProbes(source).filter((probe) => approved[probeKey(probe)]);
+  assert.ok(probes.length > 300, `expected the frozen policy to name many gated decisions, found ${probes.length}`);
 
   const served = [];
   const gatewayOnly = [];
   let exercised = 0;
+  const loaded = new Map();
 
-  for (const [route, methods] of gated) {
-    let handlers;
-    try { handlers = await import(`../app/api/${route}/route.ts`); }
-    catch { continue; } // cannot load in this harness; the gateway matrix still covers it
-    for (const method of METHODS) {
-      if (!methods.has(method)) continue;
-      const handler = handlers[method];
-      if (typeof handler !== "function") continue;
-      const outsider = await statusOf(handler, route, method, "nobody@pawspace.test");
-      if (outsider === 0) continue;
-      exercised += 1;
-      // A refusal is 401 or 403 and nothing else. This used to accept any non-2xx, which quietly
-      // counted the wrong thing: POST /api/scheduling-rules validates its body before it looks at
-      // who is asking, so an outsider got 400 "Rule name is required" and the route was scored as
-      // defended. With a valid body the same caller would have got 201. A handler that happens to
-      // fail is not a handler that refuses.
-      if (outsider === 401 || outsider === 403) continue;
-      if (outsider === -1) served.push(`${method} /api/${route} threw a non-Response instead of refusing`);
-      else gatewayOnly.push(`${method} /api/${route} → ${outsider} (gateway requires ${approved[`${method} /api/${route}`]})`);
+  for (const probe of probes) {
+    if (!loaded.has(probe.route)) {
+      try { loaded.set(probe.route, await import(`../app/api/${probe.route.replace("/api/", "")}/route.ts`)); }
+      catch { loaded.set(probe.route, null); } // cannot load here; the gateway matrix still covers it
     }
+    const handlers = loaded.get(probe.route);
+    if (!handlers) continue;
+    const handler = handlers[probe.method];
+    if (typeof handler !== "function") continue;
+    const outsider = await statusOf(handler, probe, "nobody@pawspace.test");
+    if (outsider === 0) continue;
+    exercised += 1;
+    // A refusal is 401 or 403 and nothing else. This used to accept any non-2xx, which quietly
+    // counted the wrong thing: POST /api/scheduling-rules validates its body before it looks at
+    // who is asking, so an outsider got 400 "Rule name is required" and the route was scored as
+    // defended. With a valid body the same caller would have got 201. A handler that happens to
+    // fail is not a handler that refuses.
+    if (outsider === 401 || outsider === 403) continue;
+    if (outsider === -1) served.push(`${probeKey(probe)} threw a non-Response instead of refusing`);
+    else gatewayOnly.push(`${probeKey(probe)} → ${outsider} (gateway requires ${approved[probeKey(probe)]})`);
   }
 
-  assert.ok(exercised > 150, `expected to exercise the gated handlers, only reached ${exercised}`);
+  assert.ok(exercised > 200, `expected to exercise the gated decisions, only reached ${exercised}`);
   assert.deepEqual(served, [], `a gated handler failed in a way that is not a refusal:\n  ${served.join("\n  ")}`);
   // Asserted, not reported. This was a printed backlog of 8 while a refusal meant "any non-2xx"; once
   // that was tightened to 401/403 the real number was 71, and once PATCH and DELETE entered the frozen
@@ -146,7 +142,7 @@ test("a gated handler refuses an identity that holds nothing, without relying on
     gatewayOnly, [],
     `these gated handlers rely on the worker gateway alone - called directly they do not refuse an identity holding nothing. Add refuseUnlessGatewayPermits(request) from lib/api-gateway as the first statement:\n  ${gatewayOnly.join("\n  ")}`,
   );
-  console.log(`  ${exercised} gated handler+method pairs each refuse an outsider on their own.`);
+  console.log(`  ${exercised} gated decisions - route, method and action branch - each refuse an outsider on their own.`);
 });
 
 test("the spelled-permission assertions never grow, and burn down deliberately", async () => {

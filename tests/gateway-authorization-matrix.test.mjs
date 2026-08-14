@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { enumerateProbes, probeKey, probeRequest } from "./helpers/gateway-policy-probe.mjs";
 import { createD1 } from "./helpers/d1.mjs";
 
 // ---------------------------------------------------------------------------
@@ -65,8 +66,8 @@ async function decide(authorizeApiRequest, env, route, method, roleCode) {
 // widen a route and both the expectation and the decision move together, and the test stays green.
 //
 // So the policy is frozen in tests/fixtures/route-permissions.json. Changing what a route demands
-// now fails here and has to be re-approved deliberately, which is the guard that matters: 54 of the
-// 219 gated pairs sit behind bookings.view, a permission the service_provider role holds, and
+// now fails here and has to be re-approved deliberately, which is the guard that matters: a large share
+// of the gated pairs sit behind bookings.view, a permission the service_provider role holds, and
 // quietly moving a route into that set is exactly how the ops-console disclosure happened.
 // ---------------------------------------------------------------------------
 test("no route silently changes what it demands", async () => {
@@ -79,22 +80,24 @@ test("no route silently changes what it demands", async () => {
 
   const approved = JSON.parse(await readFile(new URL("./fixtures/route-permissions.json", import.meta.url), "utf8"));
   const source = await readFile(new URL("../lib/api-gateway.ts", import.meta.url), "utf8");
-  const routes = [...new Set([...source.matchAll(/url\.pathname==="(\/api\/[a-z0-9-]+)"/g)].map((m) => m[1]))].sort();
 
-  // Every method, not just GET and POST. The gateway routes by pathname with a
-  // `method === "GET" ? … : …` shape, so PATCH and DELETE land in the write branch and ARE gated - but
-  // while this only probed two methods they were absent from the frozen policy, and so invisible both
-  // here and to the enforcement suite next door, which takes its gated set from this file.
-  //
-  // Methods no handler exports are recorded too, on purpose. The pair is what the gateway WOULD demand,
-  // so freezing it means adding a DELETE to a route later cannot quietly arrive ungated.
+  // The probe list is derived from the gateway's own source - see tests/helpers/gateway-policy-probe.mjs
+  // for why route+method alone was not enough. In short: 36 rules read the request body, so one route
+  // demands up to four different permissions depending on the action, and freezing route+method froze
+  // only whichever branch an empty body reached. apply_package_upgrade (pricing.manage) and
+  // refund_status (payments.manage) on /api/booking-operations were both unfrozen; either could have
+  // been moved onto a permission most roles hold without failing a test.
+  const probes = enumerateProbes(source);
   const live = {};
-  for (const route of routes) {
-    for (const method of ["GET", "POST", "PATCH", "PUT", "DELETE"]) {
-      const decision = await decide(authorizeApiRequest, env, route, method, "founder");
-      if (decision.allowed && decision.permission) live[`${method} ${route}`] = decision.permission;
-    }
+  for (const probe of probes) {
+    const request = probeRequest(HOST, probe, "founder@pawspace.test");
+    const result = await authorizeApiRequest(request, env);
+    if (!(result instanceof Response) && result.permission) live[probeKey(probe)] = result.permission;
   }
+  assert.ok(
+    Object.keys(live).filter((key) => key.includes("[action=")).length > 60,
+    "the action branches are not being probed; a body-dependent rule would freeze only its default",
+  );
 
   const changed = [];
   for (const key of new Set([...Object.keys(approved), ...Object.keys(live)])) {

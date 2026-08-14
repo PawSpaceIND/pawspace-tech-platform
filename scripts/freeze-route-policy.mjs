@@ -15,12 +15,12 @@ import { DatabaseSync } from "node:sqlite";
 import { writeFile } from "node:fs/promises";
 import { readFile } from "node:fs/promises";
 import { installWorkersHooks } from "../tests/helpers/module-hooks.mjs";
+import { enumerateProbes, probeKey, probeRequest } from "../tests/helpers/gateway-policy-probe.mjs";
 import { createD1 } from "../tests/helpers/d1.mjs";
 
 installWorkersHooks("__FREEZE_DB__", "__FREEZE_ENV__");
 
 const HOST = "https://pawspace-staging.example.dev";
-const METHODS = ["GET", "POST", "PATCH", "PUT", "DELETE"];
 
 const { defaultRoles } = await import("../lib/platform-security.ts");
 const sqlite = new DatabaseSync(":memory:");
@@ -40,16 +40,12 @@ globalThis.__FREEZE_ENV__ = env;
 
 const { authorizeApiRequest } = await import("../lib/api-gateway.ts");
 const source = await readFile(new URL("../lib/api-gateway.ts", import.meta.url), "utf8");
-const routes = [...new Set([...source.matchAll(/url\.pathname==="(\/api\/[a-z0-9-]+)"/g)].map((m) => m[1]))].sort();
 
+const probes = enumerateProbes(source);
 const live = {};
-for (const route of routes) {
-  for (const method of METHODS) {
-    const init = { method, headers: { "oai-authenticated-user-email": "founder@pawspace.test" } };
-    if (method !== "GET") { init.body = "{}"; init.headers["content-type"] = "application/json"; }
-    const result = await authorizeApiRequest(new Request(`${HOST}${route}`, init), env);
-    if (!(result instanceof Response) && result.permission) live[`${method} ${route}`] = result.permission;
-  }
+for (const probe of probes) {
+  const result = await authorizeApiRequest(probeRequest(HOST, probe, "founder@pawspace.test"), env);
+  if (!(result instanceof Response) && result.permission) live[probeKey(probe)] = result.permission;
 }
 
 const out = new URL("../tests/fixtures/route-permissions.json", import.meta.url);
