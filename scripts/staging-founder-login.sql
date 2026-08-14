@@ -18,3 +18,13 @@ VALUES ('founder','Founder','Permanent owner-level identity with complete oversi
 
 INSERT OR IGNORE INTO app_users (id,email,name,role_code,status,created_at,updated_at)
 VALUES ('UATD-USR-FOUNDER','founder@pawspace.in','UAT Founder','founder','active',1705276800000,1785542400000);
+
+-- Loginable PROVIDER phone for the Partner-app OTP flow. partner-otp (lib/partner-otp.ts) resolves a
+-- provider from canonical_providers by phone; nothing seeded that table, so a phone OTP login always
+-- minted a brand-new empty provider and the /partner assignments widget stayed at "Identity session
+-- required". This row ties phone 9000000001 to provider groom_arun — the same provider that owns the
+-- seeded grooming work orders and is linked to uat.demo.groomer@tkpetcare.in via provider_identity_links
+-- — so a tester logs into the Partner app with 9000000001 (OTP shown on screen) and sees the real jobs.
+CREATE TABLE IF NOT EXISTS canonical_providers (id TEXT PRIMARY KEY,city_id TEXT,name TEXT NOT NULL,phone TEXT NOT NULL UNIQUE,email TEXT,source TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
+INSERT OR IGNORE INTO canonical_providers (id,city_id,name,phone,email,source,created_at,updated_at)
+VALUES ('groom_arun','blr','Arun (UAT Groomer)','9000000001',NULL,'uat_demo_seed',1705276800000,1785542400000);
