@@ -380,3 +380,21 @@ main[style*="font-family"] article > small:first-child {
 }
 main[style*="font-family"] article strong { color: var(--ds-primary-500); }
 main[style*="font-family"] section > article + article { margin-top: 2px; }
+
+/* Forms on the pages that never adopted the design system are written as bare
+   <label>Pet name<input/></label>. With no layout, the label text and its field flow like prose:
+   /relocation put "Destination" at the end of one line and its input at the start of the next.
+   Making the label an inline grid gives every one of these forms a wrapping, column-aligned layout
+   without needing a wrapper element that these pages do not have. */
+main[style*="font-family"] label {
+  display: inline-grid; gap: 5px; min-width: 220px; margin: 0 12px 14px 0; vertical-align: top;
+  font-size: 14px; font-weight: 750; color: var(--ds-text-muted);
+}
+main[style*="font-family"] label > input,
+main[style*="font-family"] label > select,
+main[style*="font-family"] label > textarea { width: 100%; font-weight: 500; color: var(--ds-text); }
+/* A checkbox or radio still reads as one line with its text beside it. */
+main[style*="font-family"] label:has(> input[type="checkbox"]),
+main[style*="font-family"] label:has(> input[type="radio"]) { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+main[style*="font-family"] label:has(> input[type="checkbox"]) > input,
+main[style*="font-family"] label:has(> input[type="radio"]) > input { width: auto; }
