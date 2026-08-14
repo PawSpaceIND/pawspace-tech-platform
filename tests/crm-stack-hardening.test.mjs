@@ -8,6 +8,7 @@ installWorkersHooks("__CRM_DB__");
 
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { createD1 } from "./helpers/d1.mjs";
 
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const crmRoute = read("app/api/crm/route.ts");
@@ -50,23 +51,9 @@ function schemaDb() {
 }
 
 // Minimal D1 shim over node:sqlite (real SQLite engine) for lib real-execution.
-function makeD1(sqlite) {
-  function statement(sql, args) {
-    return {
-      bind: (...bound) => statement(sql, bound),
-      first: async () => {
-        const row = sqlite.prepare(sql).get(...args);
-        return row === undefined ? null : row;
-      },
-      run: async () => {
-        sqlite.prepare(sql).run(...args);
-        return { success: true, meta: {} };
-      },
-      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-    };
-  }
-  return { prepare: (sql) => statement(sql, []), batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; } };
-}
+// batch() is one transaction in D1: see tests/helpers/d1.mjs. The loop this replaced committed
+// each statement as it went, so any atomicity claim below was measured against the wrong machine.
+const makeD1 = (sqlite, options) => createD1(sqlite, options);
 
 // ---------------------------------------------------------------------------
 // 1. Phantom-column audit: EVERY SQL statement in the three routes and the

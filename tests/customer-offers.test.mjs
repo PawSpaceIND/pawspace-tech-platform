@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as nodeModule from "node:module";
+import { createD1 } from "./helpers/d1.mjs";
 
 // lib/customer-offers.ts imports lib/coupon-governance.ts with an extensionless specifier
 // ("./coupon-governance") - required as-is for tsc/the real bundler build, but Node's native ESM
@@ -110,30 +111,9 @@ test("the card fetches the public route, shows the welcome banner distinctly, an
 // proves the actual exported functions from lib/customer-offers.ts (which in turn call the real,
 // unmodified lib/coupon-governance.ts logic) genuinely seed WELCOME, list it only for a first-time
 // customer, and never auto-apply it for a customer with a prior booking.
-function makeD1(sqlite) {
-  function statement(sql, args) {
-    return {
-      bind: (...boundArgs) => statement(sql, boundArgs),
-      first: async () => {
-        const row = sqlite.prepare(sql).get(...args);
-        return row === undefined ? null : row;
-      },
-      run: async () => {
-        sqlite.prepare(sql).run(...args);
-        return { success: true };
-      },
-      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-    };
-  }
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (statements) => {
-      const results = [];
-      for (const stmt of statements) results.push(await stmt.run());
-      return results;
-    },
-  };
-}
+// batch() is one transaction in D1: see tests/helpers/d1.mjs. The loop this replaced committed
+// each statement as it went, so any atomicity claim below was measured against the wrong machine.
+const makeD1 = (sqlite, options) => createD1(sqlite, options);
 
 function freshDb() {
   const sqlite = new DatabaseSync(":memory:");
