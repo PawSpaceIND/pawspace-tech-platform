@@ -16,6 +16,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 installWorkersHooks("__REFUND_DB__", "__REFUND_ENV__");
 
@@ -24,19 +25,10 @@ const HALF = 4000;       // a 50/50 split instalment
 const REQUESTER = "customer.care@pawspace.in";
 const APPROVER = "finance.manager@pawspace.in";   // segregation of duties: must differ
 
-function makeD1(sqlite) {
-  const statement = (sql, args) => ({
-    bind: (...bound) => statement(sql, bound),
-    first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-    run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
-    all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-  });
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
-    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-  };
-}
+// D1's batch() is one transaction. The hand-rolled loop this replaced committed each statement as it
+// went, so a capture that failed half way left half its writes behind - the opposite of production,
+// and invisible to every assertion in this file. createD1 rolls the whole batch back.
+const makeD1 = (sqlite) => createD1(sqlite);
 
 /**
  * A booking of each service, with a payment row described by `payment`:

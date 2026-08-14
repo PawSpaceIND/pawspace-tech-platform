@@ -7,10 +7,10 @@ type Sug = { name: string; serviceCode: string; cityId: string; effectiveFrom: s
 type City = { cityId: string; label: string; source: string };
 type RuleType = "weekend" | "time_band" | "weekday" | "season" | "date_range";
 
-const wrap = { minHeight: "100vh", background: "#f7f4fb", padding: 28, fontFamily: "Arial,sans-serif", color: "#24133f" } as const;
-const card = { background: "white", border: "1px solid #e5dcef", borderRadius: 14 } as const;
-const field: React.CSSProperties = { padding: "9px 10px", border: "1px solid #d9cfe8", borderRadius: 9, font: "inherit", color: "inherit", background: "white", width: "100%" };
-const labelStyle: React.CSSProperties = { display: "block", fontSize: 11, fontWeight: 800, letterSpacing: ".05em", textTransform: "uppercase", color: "#6c39a8", marginBottom: 4 };
+const wrap = { minHeight: "100vh", background: "#f2f7f5", padding: 28, fontFamily: "Arial,sans-serif", color: "#06231c" } as const;
+const card = { background: "white", border: "1px solid #dcece5", borderRadius: 14 } as const;
+const field: React.CSSProperties = { padding: "9px 10px", border: "1px solid #dcece5", borderRadius: 9, font: "inherit", color: "inherit", background: "white", width: "100%" };
+const labelStyle: React.CSSProperties = { display: "block", fontSize: 11, fontWeight: 800, letterSpacing: ".05em", textTransform: "uppercase", color: "#1f6b57", marginBottom: 4 };
 const SERVICES = ["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi"];
 // Sunday-indexed to match the pricing engine's day numbering (lib/pricing-engine.ts isoDay).
 const DAYS = [{ n: 0, s: "Sun" }, { n: 1, s: "Mon" }, { n: 2, s: "Tue" }, { n: 3, s: "Wed" }, { n: 4, s: "Thu" }, { n: 5, s: "Fri" }, { n: 6, s: "Sat" }];
@@ -144,11 +144,11 @@ export default function PricingRulesPage() {
   const needs = NEEDS[ruleType];
   return <main style={wrap}><div style={{ maxWidth: 1200, margin: "0 auto" }}>
     <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, marginBottom: 18 }}>
-      <div><small style={{ fontWeight: 800, color: "#6c39a8" }}>PAWSPACE TEAM · DYNAMIC PRICING</small><h1 style={{ margin: "7px 0" }}>Rules &amp; holiday surcharge</h1><p style={{ margin: 0, color: "#746b7d" }}>City/zone rules (weekend, time band, weekday, season, date-range) + long-weekend auto-suggest for {YEAR}.</p></div>
-      <div style={{ display: "flex", gap: 8 }}><button type="button" disabled={busy} onClick={suggest} style={{ padding: 10, background: "#E6B34E", color: "#041517", border: 0, borderRadius: 10, fontWeight: 800 }}>{busy ? "…" : `Suggest ${YEAR} long weekends`}</button><Link href="/team" style={{ padding: 10, background: "#4b168c", color: "white", borderRadius: 10, textDecoration: "none" }}>Team home</Link></div>
+      <div><small style={{ fontWeight: 800, color: "#1f6b57" }}>PAWSPACE TEAM · DYNAMIC PRICING</small><h1 style={{ margin: "7px 0" }}>Rules &amp; holiday surcharge</h1><p style={{ margin: 0, color: "#6c7c78" }}>City/zone rules (weekend, time band, weekday, season, date-range) + long-weekend auto-suggest for {YEAR}.</p></div>
+      <div style={{ display: "flex", gap: 8 }}><button type="button" disabled={busy} onClick={suggest} style={{ padding: 10, background: "#E6B34E", color: "#041517", border: 0, borderRadius: 10, fontWeight: 800 }}>{busy ? "…" : `Suggest ${YEAR} long weekends`}</button><Link href="/team" style={{ padding: 10, background: "#01261F", color: "white", borderRadius: 10, textDecoration: "none" }}>Team home</Link></div>
     </header>
     {error && <div role="alert" style={{ padding: 12, background: "#fff1f1", borderRadius: 10, marginBottom: 12 }}>{error}</div>}
-    {sugs.length > 0 && <div style={{ ...card, padding: 14, marginBottom: 16, background: "#fffaf0" }}><b>Suggested surcharge windows (boarding · {selectedCity || "blr"} · +20%)</b>{sugs.map((s, i) => <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderBottom: "1px solid #f0ebf4" }}><div><strong>{s.effectiveFrom} → {s.effectiveTo}</strong> <small style={{ color: "#746b7d" }}>· {s.lengthDays} days · {s.holidays.join(", ")}</small></div><button type="button" disabled={busy} onClick={() => apply(s)} style={{ background: "#F6920A", color: "white", border: 0, borderRadius: 8, fontWeight: 800, padding: "7px 12px" }}>Apply +{s.adjustmentValue}%</button></div>)}</div>}
+    {sugs.length > 0 && <div style={{ ...card, padding: 14, marginBottom: 16, background: "#fffaf0" }}><b>Suggested surcharge windows (boarding · {selectedCity || "blr"} · +20%)</b>{sugs.map((s, i) => <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 0", borderBottom: "1px solid #e9f1ee" }}><div><strong>{s.effectiveFrom} → {s.effectiveTo}</strong> <small style={{ color: "#6c7c78" }}>· {s.lengthDays} days · {s.holidays.join(", ")}</small></div><button type="button" disabled={busy} onClick={() => apply(s)} style={{ background: "#F6920A", color: "white", border: 0, borderRadius: 8, fontWeight: 800, padding: "7px 12px" }}>Apply +{s.adjustmentValue}%</button></div>)}</div>}
 
     <form onSubmit={create} style={{ ...card, padding: 18, marginBottom: 16, display: "grid", gap: 14 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12 }}>
@@ -168,14 +168,14 @@ export default function PricingRulesPage() {
         <label><span style={labelStyle}>Adjustment %</span><input name="adjustmentValue" type="number" step="0.5" required placeholder="+15 or -10" style={field} /></label>
       </div>
 
-      <p style={{ margin: 0, fontSize: 13, color: "#746b7d" }}>{needs.hint}</p>
+      <p style={{ margin: 0, fontSize: 13, color: "#6c7c78" }}>{needs.hint}</p>
 
       {(needs.days || ruleType === "time_band") && <div>
         <span style={labelStyle}>{needs.days ? "Days this rule applies" : "Limit to days (optional)"}</span>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {DAYS.map(d => {
             const on = days.includes(d.n);
-            return <button key={d.n} type="button" onClick={() => toggleDay(d.n)} aria-pressed={on} style={{ padding: "7px 13px", borderRadius: 999, cursor: "pointer", fontWeight: 700, border: on ? "1px solid #4b168c" : "1px solid #d9cfe8", background: on ? "#4b168c" : "white", color: on ? "white" : "#24133f" }}>{d.s}</button>;
+            return <button key={d.n} type="button" onClick={() => toggleDay(d.n)} aria-pressed={on} style={{ padding: "7px 13px", borderRadius: 999, cursor: "pointer", fontWeight: 700, border: on ? "1px solid #01261F" : "1px solid #dcece5", background: on ? "#01261F" : "white", color: on ? "white" : "#06231c" }}>{d.s}</button>;
           })}
         </div>
       </div>}
@@ -190,12 +190,12 @@ export default function PricingRulesPage() {
       </div>
 
       <div><button disabled={busy || !selectedCity} style={{ background: "#F6920A", color: "white", border: 0, borderRadius: 9, fontWeight: 800, padding: "11px 20px", cursor: busy ? "wait" : "pointer" }}>{busy ? "Saving…" : "Add rule"}</button>
-        <small style={{ marginLeft: 12, color: "#746b7d" }}>Rules are created as <b>draft</b> — publishing stays a separate governed step.</small></div>
+        <small style={{ marginLeft: 12, color: "#6c7c78" }}>Rules are created as <b>draft</b> — publishing stays a separate governed step.</small></div>
     </form>
 
     <div style={{ ...card, overflow: "hidden" }}>
-      <div style={{ padding: 14, borderBottom: "1px solid #eee6f5" }}><b>{rows.length} rule{rows.length === 1 ? "" : "s"}</b></div>
-      {rows.length === 0 ? <p style={{ padding: 18, color: "#746b7d" }}>No rules yet.</p> : rows.map(p => <article key={p.id} style={{ padding: 14, borderBottom: "1px solid #f0ebf4", display: "flex", justifyContent: "space-between", gap: 12 }}><div><strong>{p.name}</strong> <small style={{ color: "#746b7d" }}>· {p.serviceCode} · {p.cityId} · {p.ruleType}</small><small style={{ display: "block", marginTop: 3, color: "#746b7d" }}>{p.effectiveFrom}{p.effectiveTo ? ` → ${p.effectiveTo}` : ""} · {p.status}</small></div><div style={{ fontWeight: 800, fontSize: 16 }}>{p.adjustmentValue > 0 ? "+" : ""}{p.adjustmentValue}%</div></article>)}
+      <div style={{ padding: 14, borderBottom: "1px solid #e9f1ee" }}><b>{rows.length} rule{rows.length === 1 ? "" : "s"}</b></div>
+      {rows.length === 0 ? <p style={{ padding: 18, color: "#6c7c78" }}>No rules yet.</p> : rows.map(p => <article key={p.id} style={{ padding: 14, borderBottom: "1px solid #e9f1ee", display: "flex", justifyContent: "space-between", gap: 12 }}><div><strong>{p.name}</strong> <small style={{ color: "#6c7c78" }}>· {p.serviceCode} · {p.cityId} · {p.ruleType}</small><small style={{ display: "block", marginTop: 3, color: "#6c7c78" }}>{p.effectiveFrom}{p.effectiveTo ? ` → ${p.effectiveTo}` : ""} · {p.status}</small></div><div style={{ fontWeight: 800, fontSize: 16 }}>{p.adjustmentValue > 0 ? "+" : ""}{p.adjustmentValue}%</div></article>)}
     </div>
   </div></main>;
 }

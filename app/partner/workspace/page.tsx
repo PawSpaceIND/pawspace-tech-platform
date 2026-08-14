@@ -10,7 +10,7 @@ type WS={linked:boolean;email?:string;engagement?:string;features?:{surface:stri
   liveAssignments?:Offer[];earnings?:{netPayout?:number;orders?:number;grossOrderValue?:number;visible?:boolean};pendingProof?:Pending[]};
 
 const INR=(v?:number)=>`₹${Number(v||0).toLocaleString("en-IN")}`;
-const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",panel2:"#01261F",line:"#123c33",orange:"#F6920A",purple:"#8b6bd8",gold:"#E6B34E",green:"#3ecf8e"};
+const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",panel2:"#01261F",line:"#123c33",orange:"#F6920A",purple:"#2f8a70",gold:"#E6B34E",green:"#3ecf8e"};
 async function load(){const r=await fetch("/api/provider-workspace",{cache:"no-store"});const p=await r.json();if(!r.ok)throw new Error(p.error||"Load failed");return p.data as WS;}
 
 export default function PartnerWorkspacePage(){
@@ -31,6 +31,7 @@ export default function PartnerWorkspacePage(){
     <div style={{maxWidth:1000,margin:"0 auto",padding:"28px 20px 60px"}}>
       <p style={{margin:0}}><Link href="/partner" style={{color:C.dim,textDecoration:"none"}}>← Partner hub</Link></p>
       <p style={{fontWeight:800,letterSpacing:2,color:C.dim,fontSize:12,marginTop:10}}>PAWSPACE · PARTNER WORKSPACE</p>
+      {!data?<h1 style={{margin:"6px 0",fontSize:28}}>Partner workspace</h1>:null}
       {error?<p style={{color:"#ff9a9a"}}>{error}</p>:null}
       {loading&&!data?<p style={{color:C.dim}}>Loading your workspace…</p>:null}
       {msg?<p style={{color:C.gold}}>{msg}</p>:null}

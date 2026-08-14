@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as nodeModule from "node:module";
+import { createD1 } from "./helpers/d1.mjs";
 
 // ---------------------------------------------------------------------------
 // Regression: staff surfaces must not 500 on a COLD database (fresh staging D1
@@ -43,34 +44,9 @@ const managerDashboardRoute = await import("../app/api/manager-dashboard/route.t
 const walkingOpsRoute = await import("../app/api/walking-ops/route.ts");
 const taxiOpsRoute = await import("../app/api/taxi-ops/route.ts");
 
-function makeD1(sqlite) {
-  function statement(sql, args) {
-    return {
-      bind: (...boundArgs) => statement(sql, boundArgs),
-      first: async () => {
-        const row = sqlite.prepare(sql).get(...args);
-        return row === undefined ? null : row;
-      },
-      run: async () => {
-        const info = sqlite.prepare(sql).run(...args);
-        return { success: true, meta: { changes: Number(info.changes) } };
-      },
-      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-    };
-  }
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (statements) => {
-      const results = [];
-      for (const stmt of statements) results.push(await stmt.run());
-      return results;
-    },
-    exec: async (sql) => {
-      sqlite.exec(sql);
-      return { count: 0, duration: 0 };
-    },
-  };
-}
+// batch() is one transaction in D1: see tests/helpers/d1.mjs. The loop this replaced committed
+// each statement as it went, so any atomicity claim below was measured against the wrong machine.
+const makeD1 = (sqlite, options) => createD1(sqlite, options);
 
 // A completely empty database: not a single application table pre-created.
 function coldDb() {

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { createD1 } from "./helpers/d1.mjs";
 
 const flowSource = fs.readFileSync("app/mobile-app/walking-flow.tsx", "utf8");
 const cssSource = fs.readFileSync("app/mobile-app/walking-flow.module.css", "utf8");
@@ -73,30 +74,9 @@ test("confirmation screen shows walker name + rating and the session list", () =
 // Minimal D1 shim over node:sqlite (a real SQLite engine), running the real, unmodified
 // lib/walking-governance.ts against the real walking tables its own DDL creates.
 
-function makeD1(sqlite) {
-  function statement(sql, args) {
-    return {
-      bind: (...boundArgs) => statement(sql, boundArgs),
-      first: async () => {
-        const row = sqlite.prepare(sql).get(...args);
-        return row === undefined ? null : row;
-      },
-      run: async () => {
-        sqlite.prepare(sql).run(...args);
-        return { success: true };
-      },
-      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-    };
-  }
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (statements) => {
-      const results = [];
-      for (const stmt of statements) results.push(await stmt.run());
-      return results;
-    },
-  };
-}
+// batch() is one transaction in D1: see tests/helpers/d1.mjs. The loop this replaced committed
+// each statement as it went, so any atomicity claim below was measured against the wrong machine.
+const makeD1 = (sqlite, options) => createD1(sqlite, options);
 
 const DAY = 86400000;
 const tomorrow7am = () => { const d = new Date(Date.now() + DAY); d.setHours(7, 0, 0, 0); return d; };

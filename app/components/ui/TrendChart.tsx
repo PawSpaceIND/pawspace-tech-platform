@@ -16,7 +16,7 @@ export interface TrendChartProps {
   valueFormatter?: (value: number) => string;
 }
 
-const palette = ["#5d22a8", "#f59d19", "#11885b", "#2563c9", "#c92f3f"];
+const palette = ["#01261F", "#f59d19", "#11885b", "#1f6b57", "#c92f3f"];
 
 export default function TrendChart({ data, xKey, series, type = "line", height = 260, valueFormatter }: TrendChartProps) {
   const format = valueFormatter ?? ((value: number) => String(value));
@@ -25,10 +25,10 @@ export default function TrendChart({ data, xKey, series, type = "line", height =
       <ResponsiveContainer width="100%" height="100%">
         {type === "line" ? (
           <LineChart data={data} margin={{ top: 6, right: 12, left: 0, bottom: 0 }}>
-            <CartesianGrid stroke="#e9e1f4" strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey={xKey} stroke="#8b818f" fontSize={11} tickLine={false} axisLine={false} />
-            <YAxis stroke="#8b818f" fontSize={11} tickLine={false} axisLine={false} width={44} tickFormatter={format} />
-            <Tooltip formatter={(value) => format(Number(value))} contentStyle={{ borderRadius: 12, border: "1px solid #e9e1f4", fontSize: 12 }} />
+            <CartesianGrid stroke="#dcece5" strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey={xKey} stroke="#828e8b" fontSize={11} tickLine={false} axisLine={false} />
+            <YAxis stroke="#828e8b" fontSize={11} tickLine={false} axisLine={false} width={44} tickFormatter={format} />
+            <Tooltip formatter={(value) => format(Number(value))} contentStyle={{ borderRadius: 12, border: "1px solid #dcece5", fontSize: 12 }} />
             {series.length > 1 && <Legend wrapperStyle={{ fontSize: 11 }} />}
             {series.map((s, i) => (
               <Line key={s.key} type="monotone" dataKey={s.key} name={s.label ?? s.key} stroke={s.color ?? palette[i % palette.length]} strokeWidth={2.5} dot={false} />
@@ -36,10 +36,10 @@ export default function TrendChart({ data, xKey, series, type = "line", height =
           </LineChart>
         ) : (
           <BarChart data={data} margin={{ top: 6, right: 12, left: 0, bottom: 0 }}>
-            <CartesianGrid stroke="#e9e1f4" strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey={xKey} stroke="#8b818f" fontSize={11} tickLine={false} axisLine={false} />
-            <YAxis stroke="#8b818f" fontSize={11} tickLine={false} axisLine={false} width={44} tickFormatter={format} />
-            <Tooltip formatter={(value) => format(Number(value))} contentStyle={{ borderRadius: 12, border: "1px solid #e9e1f4", fontSize: 12 }} />
+            <CartesianGrid stroke="#dcece5" strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey={xKey} stroke="#828e8b" fontSize={11} tickLine={false} axisLine={false} />
+            <YAxis stroke="#828e8b" fontSize={11} tickLine={false} axisLine={false} width={44} tickFormatter={format} />
+            <Tooltip formatter={(value) => format(Number(value))} contentStyle={{ borderRadius: 12, border: "1px solid #dcece5", fontSize: 12 }} />
             {series.length > 1 && <Legend wrapperStyle={{ fontSize: 11 }} />}
             {series.map((s, i) => (
               <Bar key={s.key} dataKey={s.key} name={s.label ?? s.key} fill={s.color ?? palette[i % palette.length]} radius={[6, 6, 0, 0]} />

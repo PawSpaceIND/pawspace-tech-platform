@@ -10,9 +10,9 @@ type Dashboard = {
   note: string;
 };
 
-const card: React.CSSProperties = { border: "1px solid #e3dbea", borderRadius: 14, padding: 18, background: "white", marginBottom: 16 };
-const th: React.CSSProperties = { textAlign: "left", padding: "8px 10px", fontSize: 12, color: "#6a2daf", fontWeight: 700, borderBottom: "2px solid #eee" };
-const td: React.CSSProperties = { padding: "8px 10px", fontSize: 13, borderBottom: "1px solid #f2eef7" };
+const card: React.CSSProperties = { border: "1px solid #dcece5", borderRadius: 14, padding: 18, background: "white", marginBottom: 16 };
+const th: React.CSSProperties = { textAlign: "left", padding: "8px 10px", fontSize: 12, color: "#1f6b57", fontWeight: 700, borderBottom: "2px solid #e9f1ee" };
+const td: React.CSSProperties = { padding: "8px 10px", fontSize: 13, borderBottom: "1px solid #e9f1ee" };
 
 export default function ManagerDashboardPage() {
   const [data, setData] = useState<Dashboard | null>(null);
@@ -27,11 +27,11 @@ export default function ManagerDashboardPage() {
   useEffect(load, []);
 
   return (
-    <main style={{ maxWidth: 1180, margin: "0 auto", padding: "32px 20px 64px", fontFamily: "system-ui,sans-serif", color: "#24133f" }}>
+    <main style={{ maxWidth: 1180, margin: "0 auto", padding: "32px 20px 64px", fontFamily: "system-ui,sans-serif", color: "#06231c" }}>
       <header style={{ marginBottom: 20 }}>
-        <p style={{ fontWeight: 900, letterSpacing: 1.2, margin: 0, color: "#6a2daf" }}>PAWSPACE · PEOPLE</p>
+        <p style={{ fontWeight: 900, letterSpacing: 1.2, margin: 0, color: "#1f6b57" }}>PAWSPACE · PEOPLE</p>
         <h1 style={{ margin: "8px 0", fontSize: 30 }}>Manager / Founder dashboard</h1>
-        <p style={{ maxWidth: 900, color: "#6e6576" }}>
+        <p style={{ maxWidth: 900, color: "#667571" }}>
           A real, complete company view before your meeting - only the people who actually report to you (managers), or everyone across every vertical (founders, People, Payroll, Audit).
           Every figure here is a live read from the same governed engines used for real pay. <Link href="/team/people">Back to People</Link>
         </p>
@@ -44,11 +44,11 @@ export default function ManagerDashboardPage() {
         <>
           <section style={card}>
             <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-              <div><small style={{ color: "#6e6576" }}>Scope</small><h3 style={{ margin: "4px 0", textTransform: "capitalize" }}>{data.scope === "all" ? "Everyone" : "Your direct reports"}</h3></div>
-              <div><small style={{ color: "#6e6576" }}>Employees in view</small><h3 style={{ margin: "4px 0" }}>{data.employeeCount}</h3></div>
-              <div><small style={{ color: "#6e6576" }}>As of</small><h3 style={{ margin: "4px 0" }}>{data.today}</h3></div>
+              <div><small style={{ color: "#667571" }}>Scope</small><h3 style={{ margin: "4px 0", textTransform: "capitalize" }}>{data.scope === "all" ? "Everyone" : "Your direct reports"}</h3></div>
+              <div><small style={{ color: "#667571" }}>Employees in view</small><h3 style={{ margin: "4px 0" }}>{data.employeeCount}</h3></div>
+              <div><small style={{ color: "#667571" }}>As of</small><h3 style={{ margin: "4px 0" }}>{data.today}</h3></div>
             </div>
-            <p style={{ fontSize: 12, color: "#6e6576", marginTop: 12, marginBottom: 0 }}>{data.note}</p>
+            <p style={{ fontSize: 12, color: "#667571", marginTop: 12, marginBottom: 0 }}>{data.note}</p>
           </section>
 
           {data.verticals.sales.length > 0 && (

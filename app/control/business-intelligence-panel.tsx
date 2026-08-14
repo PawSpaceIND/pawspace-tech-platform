@@ -220,7 +220,7 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
     <nav className={css.tabs}>{(["Overview", "Verticals", "Accounts", "Customers", "Subscriptions", "Reports"] as View[]).map(item => <button key={item} className={view === item ? css.active : ""} onClick={() => setView(item)}>{item}</button>)}</nav>
 
     {view === "Overview" && <>
-      {!liveDataLoaded && <p style={{ padding: 12, color: "#6c39a8" }}>Loading live company data…</p>}
+      {!liveDataLoaded && <p style={{ padding: 12, color: "#1f6b57" }}>Loading live company data…</p>}
       {liveDataError && <p style={{ padding: 12, background: "#fff1f1", borderRadius: 10, color: "#9a3d32" }}>Live company data unavailable: {liveDataError}</p>}
       <section className={css.metrics}>
         <article><span>Gross revenue</span><strong>{money(revenue)}</strong><small>Canonical bookings · GST-inclusive</small></article>
@@ -231,7 +231,7 @@ export default function BusinessIntelligencePanel({ notify }: { notify: (message
         {netProfit != null && <article><span>Net profit (P&amp;L, 12 months)</span><strong>{money(netProfit)}</strong><small>From real canonical_bookings + finance_journal_entries</small></article>}
       </section>
       <section className={css.grid}>
-        <div className={css.panel}><header><div><span>VERTICAL PERFORMANCE</span><h3>Revenue and contribution</h3><p>Real GST-inclusive booking revenue by vertical.</p></div><button onClick={() => setView("Verticals")}>Drill down →</button></header><TrendChart type="bar" data={shownVerticals} xKey="name" series={[{ key: "revenue", label: "Revenue", color: "#5d22a8" }]} valueFormatter={(value) => money(value)} height={240} /></div>        <aside className={css.panel}><header><div><span>ACTION CENTRE</span><h3>What needs attention</h3></div></header>{[
+        <div className={css.panel}><header><div><span>VERTICAL PERFORMANCE</span><h3>Revenue and contribution</h3><p>Real GST-inclusive booking revenue by vertical.</p></div><button onClick={() => setView("Verticals")}>Drill down →</button></header><TrendChart type="bar" data={shownVerticals} xKey="name" series={[{ key: "revenue", label: "Revenue", color: "#01261F" }]} valueFormatter={(value) => money(value)} height={240} /></div>        <aside className={css.panel}><header><div><span>ACTION CENTRE</span><h3>What needs attention</h3></div></header>{[
           ["Renewals", "Open the subscription renewal queue", "Subscriptions"], ["Customers", "Review customer accounts", "Customers"], ["Verticals", "Compare vertical performance", "Verticals"], ["Reports", "Generate a governed report", "Reports"],
         ].map(item => <button className={css.action} key={item[0]} onClick={() => setView(item[2] as View)}><i>{item[0].slice(0, 1)}</i><span><strong>{item[0]}</strong><small>{item[1]}</small></span><b>Open →</b></button>)}</aside>
       </section>

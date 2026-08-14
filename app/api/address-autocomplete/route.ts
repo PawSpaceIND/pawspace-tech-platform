@@ -1,8 +1,9 @@
+import{refuseUnlessGatewayPermits}from"../../../lib/api-gateway";
 import{resolvePlaceToAddress,reverseGeocode,searchAddressSuggestions}from"../../../lib/address-autocomplete";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 
-export async function GET(request:Request){
+export async function GET(request:Request){const denied=await refuseUnlessGatewayPermits(request);if(denied)return denied;
   try{
     const url=new URL(request.url),mode=url.searchParams.get("mode")||"search";
     if(mode==="search"){

@@ -12,38 +12,14 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 
 installWorkersHooks("__CONSOLE_DB__", "__CONSOLE_ENV__");
 
-function makeD1(sqlite) {
-  function statement(sql, args) {
-    return {
-      bind: (...bound) => statement(sql, bound),
-      first: async () => {
-        const row = sqlite.prepare(sql).get(...args);
-        return row === undefined ? null : row;
-      },
-      run: async () => {
-        const info = sqlite.prepare(sql).run(...args);
-        return { success: true, meta: { changes: Number(info.changes) } };
-      },
-      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-    };
-  }
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (statements) => {
-      const out = [];
-      for (const item of statements) out.push(await item.run());
-      return out;
-    },
-    exec: async (sql) => {
-      sqlite.exec(sql);
-      return { count: 0, duration: 0 };
-    },
-  };
-}
+// batch() is one transaction in D1: see tests/helpers/d1.mjs. The loop this replaced committed
+// each statement as it went, so any atomicity claim below was measured against the wrong machine.
+const makeD1 = (sqlite, options) => createD1(sqlite, options);
 
 const PREVIEW = "http://localhost";
 const page = (path) => readFile(new URL(`../app/team/${path}`, import.meta.url), "utf8");
@@ -124,7 +100,7 @@ test("every rebuilt team screen is built from the design system, not inline styl
     if (!screen.startsWith("operations") && !screen.startsWith("finance-compliance")) assert.match(source, /EmptyState/, `${screen} must render a real empty state`);
     // The bare-prototype markers these screens shipped with.
     assert.doesNotMatch(source, /fontFamily:\s*"(system-ui|Arial)/, `${screen} must not set its own font`);
-    assert.doesNotMatch(source, /background:\s*"#f7f4fb"/, `${screen} must not paint its own page background`);
+    assert.doesNotMatch(source, /background:\s*"#f2f7f5"/, `${screen} must not paint its own page background`);
     assert.doesNotMatch(source, /<main style=/, `${screen} must use the shared console shell, not its own <main> styling`);
     // A raw <button> is only allowed for a list row that carries a shell class; every actual control
     // must be the shared Button so focus, sizing and disabled states are the same everywhere.
@@ -145,8 +121,8 @@ test("the Operations shell is the approved chrome, responsive and keyboard-navig
   // The chrome matches the admin surface it was lifted from: same rail width, colour and workspace.
   assert.match(shellCss, /grid-template-columns: 238px 1fr/);
   assert.match(adminCss, /grid-template-columns: 238px 1fr/);
-  assert.match(shellCss, /background: #2d0a5d/);
-  assert.match(adminCss, /background: #2d0a5d/);
+  assert.match(shellCss, /background: #01261F/);
+  assert.match(adminCss, /background: #01261F/);
   // The current screen is marked from the route, and the rail is reachable by keyboard.
   assert.match(shell, /usePathname/);
   assert.match(shell, /aria-current/);

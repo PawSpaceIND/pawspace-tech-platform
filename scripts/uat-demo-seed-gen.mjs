@@ -118,6 +118,24 @@ const q = (v) => {
   return `'${String(v).replaceAll("'", "''")}'`;
 };
 
+/**
+ * Rows whose DATES have to move when the seed is re-applied, and the columns to move.
+ *
+ * Everything else is INSERT OR IGNORE, which is what makes this file safe to re-run: a row that already
+ * exists is left exactly as it is. For rows a rolling-window reader depends on, that guarantee is the
+ * problem. sales_productivity_fact_runs is keyed 'UATD-SPFR-1' every time, so re-applying a freshly
+ * generated seed to a database that already has it changes NOTHING - proved by loading both versions in
+ * sequence and reading the row back. The seed looked re-runnable and was in fact write-once, so the
+ * "just re-apply the seed" fix for a stale performance screen silently did nothing at all.
+ *
+ * These rows therefore upsert their date columns. Only the dates: the ids, the measures and every other
+ * value stay put, so re-applying still cannot invent or overwrite business data.
+ */
+const REFRESH_DATES = {
+  sales_productivity_fact_runs: { key: "id", columns: ["period_start", "period_end", "generated_at"] },
+  sales_productivity_facts: { key: "id", columns: ["period_start", "period_end", "created_at"] },
+};
+
 function insert(table, row) {
   const meta = ddl.get(table);
   if (!meta) throw new Error(`No DDL captured for table '${table}' — add its owning file to SOURCES`);
@@ -126,19 +144,48 @@ function insert(table, row) {
   }
   usedTables.add(table);
   const keys = Object.keys(row);
-  lines.push(`INSERT OR IGNORE INTO ${table} (${keys.join(",")}) VALUES (${keys.map((k) => q(row[k])).join(",")});`);
+  const values = `(${keys.map((k) => q(row[k])).join(",")})`;
+  const refresh = REFRESH_DATES[table];
+  if (refresh) {
+    const moved = refresh.columns.filter((c) => keys.includes(c));
+    if (!moved.length) throw new Error(`REFRESH_DATES names ${table} but this row carries none of ${refresh.columns.join(",")}`);
+    // Plain INSERT, not INSERT OR IGNORE: OR IGNORE and ON CONFLICT DO UPDATE cannot be combined.
+    lines.push(`INSERT INTO ${table} (${keys.join(",")}) VALUES ${values} ON CONFLICT(${refresh.key}) DO UPDATE SET ${moved.map((c) => `${c}=excluded.${c}`).join(",")};`);
+    return;
+  }
+  lines.push(`INSERT OR IGNORE INTO ${table} (${keys.join(",")}) VALUES ${values};`);
 }
 
 // ---------------------------------------------------------------------------
-// 3. The demo data. Fixed timestamps → byte-identical output on every run.
+// 3. The demo data, anchored to the day the seed is generated.
+//
+// This used to be a fixed `Date.UTC(2026, 7, 13)` for byte-identical output, and the determinism cost
+// more than it bought. Half the product reads a ROLLING window - employeePerformanceCenter takes
+// `days: 30` and computes `Date.now() - days` - so a seed frozen to one calendar day drifts out of
+// every one of those windows as real time passes, and the screens go quietly empty. Measured, not
+// guessed: the sales_productivity_fact_runs row was only visible to the reader between
+// 2026-08-12 10:00 and 2026-08-14 10:00 UTC, a two-day window, because the reader wants
+// `period_start >= now-31d AND period_end <= now+1d`. Outside it, employee self-service and
+// /team/people/performance report no facts at all, and the founder sees an empty screen with nothing
+// wrong in the logs.
+//
+// So the anchor is today by default. Pass PAWSPACE_SEED_NOW (epoch ms) to reproduce a specific day's
+// output byte for byte - which is what a test wanting determinism should do, rather than the seed
+// being frozen for everyone. tests/uat-readiness-gate.test.mjs fails when the checked-in .sql has aged
+// out of the windows the product reads, so this rots loudly instead of silently.
 // ---------------------------------------------------------------------------
-const NOW = Date.UTC(2026, 7, 13, 6, 0, 0); // 2026-08-13, the UAT "today"
+const ANCHOR = Number(process.env.PAWSPACE_SEED_NOW || Date.now());
+// Snapped to 06:00 UTC (11:30 IST) on the anchor day, so `at()` keeps producing business hours in IST
+// and regenerating twice on the same day gives identical output.
+const NOW = new Date(ANCHOR).setUTCHours(6, 0, 0, 0);
 const DAY = 86_400_000;
 const at = (offsetDays, hour = 10) => NOW + offsetDays * DAY + (hour - 6) * 3_600_000;
 const isoAt = (offsetDays, hour = 10) => new Date(at(offsetDays, hour)).toISOString();
 const dateAt = (offsetDays) => new Date(NOW + offsetDays * DAY).toISOString().slice(0, 10);
 const MONTH = dateAt(0).slice(0, 7);
-const PREV_MONTH = new Date(Date.UTC(2026, 6, 1)).toISOString().slice(0, 7);
+// Relative to the anchor too - hard-coded 2026-07 would name the wrong month the moment the seed is
+// generated on any other day, and the monthly-close screens read it as their prior period.
+const PREV_MONTH = (() => { const d = new Date(NOW); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 1); return d.toISOString().slice(0, 7); })();
 
 // --- customers + pets -------------------------------------------------------
 const CUSTOMERS = [
@@ -521,6 +568,12 @@ for (const table of AI_TABLES) {
 
 const header = [
   "-- PawSpace UAT DEMO SEED (generated by scripts/uat-demo-seed-gen.mjs — do not hand-edit).",
+  // The anchor makes the output reproducible without freezing it. Regenerate this exact file with:
+  //   PAWSPACE_SEED_NOW=<anchor> node --experimental-strip-types scripts/uat-demo-seed-gen.mjs
+  // and tests/uat-demo-seed-sales-marketing.test.mjs uses it to check the generator still produces the
+  // checked-in bytes. It is also how the readiness gate knows how stale this seed is: the product reads
+  // rolling windows, so a seed generated months ago is data no screen will find.
+  `-- Anchor: ${NOW} (${new Date(NOW).toISOString().slice(0, 10)}) — the day this seed calls "today".`,
   "-- Puts real, derivable demo data behind every module UI so no staging page opens empty.",
   "-- Every CREATE TABLE below is copied verbatim from the source file that owns it.",
   "-- All rows carry a UATD marker and are inserted with INSERT OR IGNORE: safe to re-run,",

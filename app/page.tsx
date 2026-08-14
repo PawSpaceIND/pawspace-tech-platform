@@ -203,7 +203,7 @@ export default function Home() {
         pricing:{discount:0,subscription:offerType==="subscription"?selectedPackage.name:undefined},
       });
       await saveGroomingServiceLocation({bookingId:canonical.bookingId,customerId,address:serviceAddress});
-      createTestTransaction({customerId,customerName:`PawSpace Customer ${digits.slice(-4)||"UAT"}`,primary:digits||"9999999999",secondary:"",pets:chosenPets.map(pet=>pet.name).join(", "),petCount,service:"Grooming",packageName:selectedPackage.name,area:"Bengaluru",slot:`${dates[selectedDate].date} · ${selectedSlot}`,duration,amount:total,payment:payment==="after"?"Pay after service":"Paid online",provider:decision.provider.name,providerModel:decision.provider.model==="full_time"?"Full-time":"Commission",subscription:offerType==="subscription"?selectedPackage.name:"No active plan",creditsBefore:offerType==="subscription"?Number(selectedPackage.id.match(/\d+/)?.[0]||1):0,crmOwner:"Unassigned",crmNextAction:"Post-booking care follow-up",reminder:"Booking confirmation queued"},canonical.bookingId);
+      createTestTransaction({customerId,customerName:`PawSpace Customer ${digits.slice(-4)||"UAT"}`,primary:digits||"9999999999",secondary:"",pets:chosenPets.map(pet=>pet.name).join(", "),petCount,service:"Grooming",packageName:selectedPackage.name,area:"Bengaluru",slot:`${dates[selectedDate].date} · ${selectedSlot}`,duration,amount:total,payment:payment==="after"?"Pay after service":"Paid online",paymentState:payment==="after"?"due_after_service":"paid",provider:decision.provider.name,providerModel:decision.provider.model==="full_time"?"Full-time":"Commission",subscription:offerType==="subscription"?selectedPackage.name:"No active plan",creditsBefore:offerType==="subscription"?Number(selectedPackage.id.match(/\d+/)?.[0]||1):0,crmOwner:"Unassigned",crmNextAction:"Post-booking care follow-up",reminder:"Booking confirmation queued"},canonical.bookingId);
       setShowDetails(false);
       setConfirmed(true);
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -361,19 +361,19 @@ export default function Home() {
       {showDetails && <div className="modal-backdrop details-backdrop"><section className="modal details-modal" role="dialog" aria-modal="true"><button className="modal-close" onClick={() => setShowDetails(false)} aria-label="Close">×</button>
         <p className="eyebrow">Final details</p><h2>Tell us where to come</h2>
         {matchedProvider && (
-          <div className="matched-provider-card" style={{ display: "flex", gap: 14, alignItems: "flex-start", border: "1px solid #e6ddf1", borderRadius: 14, padding: 14, margin: "14px 0", background: "#faf8fd" }}>
+          <div className="matched-provider-card" style={{ display: "flex", gap: 14, alignItems: "flex-start", border: "1px solid #dcece5", borderRadius: 14, padding: 14, margin: "14px 0", background: "#f2f7f5" }}>
             {matchedProvider.photoUrl
               ? <img src={matchedProvider.photoUrl} alt={matchedProvider.displayName} style={{ width: 56, height: 56, borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
-              : <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#5d22a8", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 20, flexShrink: 0 }}>{matchedProvider.displayName.charAt(0)}</div>}
+              : <div style={{ width: 56, height: 56, borderRadius: "50%", background: "#01261F", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 20, flexShrink: 0 }}>{matchedProvider.displayName.charAt(0)}</div>}
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <b>{matchedProvider.displayName}</b>
                 {matchedProvider.verified && <span style={{ fontSize: 11, color: "#1f4b3d", background: "#e4ede9", padding: "2px 7px", borderRadius: 100 }}>✓ Verified</span>}
               </div>
-              {matchedProvider.bio && <p style={{ fontSize: 13, color: "#6f687b", margin: "4px 0 0" }}>{matchedProvider.bio}</p>}
+              {matchedProvider.bio && <p style={{ fontSize: 13, color: "#697a76", margin: "4px 0 0" }}>{matchedProvider.bio}</p>}
               {matchedProvider.stats
-                ? <p style={{ fontSize: 12, color: "#6f687b", margin: "6px 0 0" }}>{matchedProvider.stats.completedServices} services completed · {matchedProvider.stats.happyPets} pets cared for</p>
-                : matchedProvider.isNewProvider && <p style={{ fontSize: 12, color: "#6f687b", margin: "6px 0 0" }}>New to PawSpace</p>}
+                ? <p style={{ fontSize: 12, color: "#697a76", margin: "6px 0 0" }}>{matchedProvider.stats.completedServices} services completed · {matchedProvider.stats.happyPets} pets cared for</p>
+                : matchedProvider.isNewProvider && <p style={{ fontSize: 12, color: "#697a76", margin: "6px 0 0" }}>New to PawSpace</p>}
             </div>
           </div>
         )}

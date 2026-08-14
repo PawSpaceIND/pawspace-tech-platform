@@ -13,50 +13,15 @@ import { readFile, readdir } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 import { findUnchunkedInLists, legacyFindUnchunkedInLists } from "./helpers/in-list-guard.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 
 installWorkersHooks("__FANOUT_DB__", "__FANOUT_ENV__");
 
-const D1_BOUND_PARAMETER_LIMIT = 100;
 
-function makeD1(sqlite) {
-  function statement(sql, args) {
-    const guard = () => {
-      if (args.length > D1_BOUND_PARAMETER_LIMIT) {
-        throw new Error(`D1_ERROR: too many SQL variables at offset 0: SQLITE_ERROR (${args.length} bound parameters, limit ${D1_BOUND_PARAMETER_LIMIT})`);
-      }
-    };
-    return {
-      bind: (...bound) => statement(sql, bound),
-      first: async () => {
-        guard();
-        const row = sqlite.prepare(sql).get(...args);
-        return row === undefined ? null : row;
-      },
-      run: async () => {
-        guard();
-        const info = sqlite.prepare(sql).run(...args);
-        return { success: true, meta: { changes: Number(info.changes) } };
-      },
-      all: async () => {
-        guard();
-        return { results: sqlite.prepare(sql).all(...args) };
-      },
-    };
-  }
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (statements) => {
-      const out = [];
-      for (const item of statements) out.push(await item.run());
-      return out;
-    },
-    exec: async (sql) => {
-      sqlite.exec(sql);
-      return { count: 0, duration: 0 };
-    },
-  };
-}
+// batch() is one transaction in D1: see tests/helpers/d1.mjs. The bind cap this shim modelled by
+// hand now lives in the helper, so there is one number rather than three copies of 100.
+const makeD1 = (sqlite) => createD1(sqlite);
 
 // DDL copied verbatim from scripts/staging-seed.sql (booking_payments) and
 // drizzle/0011_serious_shaman.sql (canonical_bookings) - the same shapes staging runs.

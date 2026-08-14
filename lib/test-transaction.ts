@@ -24,9 +24,22 @@ export function readTestLedger():TestLedger{
 export function readTestTransaction():TestTransaction|null{const ledger=readTestLedger();return ledger.transactions.find(item=>item.id===ledger.activeId)??ledger.transactions[0]??null;}
 function persistLedger(ledger:TestLedger){const raw=JSON.stringify(ledger);cachedRaw=raw;cachedLedger=ledger;window.localStorage.setItem(ledgerKey,raw);window.dispatchEvent(new CustomEvent(changeEvent,{detail:ledger}));return ledger;}
 
-export function createTestTransaction(input:Omit<TestTransaction,"id"|"status"|"paymentStatus"|"creditsAfter"|"updatedAt"|"events">,canonicalBookingId?:string){
+/**
+ * `payment` is the sentence shown to a human ("50% deposit paid in UAT sandbox · ₹4,500 due 24 hours
+ * before check-in"). The money state used to be *inferred* from that sentence by matching it against
+ * two exact strings, so anything that read naturally fell through to "due_after_service": every
+ * Boarding and Sitting stay, every Training programme, and any Grooming booking with a coupon
+ * appended. Paid bookings were recorded as unpaid, and every finance screen counted them that way.
+ *
+ * The caller now states the money state outright. It is required, so a new flow cannot be added
+ * without saying whether its money was collected - the compiler asks the question.
+ */
+export type TestPaymentState=TestTransaction["paymentStatus"];
+type NewTestTransaction=Omit<TestTransaction,"id"|"status"|"paymentStatus"|"creditsAfter"|"updatedAt"|"events">&{paymentState:TestPaymentState};
+
+export function createTestTransaction({paymentState,...input}:NewTestTransaction,canonicalBookingId?:string){
   const ledger=readTestLedger();const at=timestamp();const suffix=input.customerId.replace(/\D/g,"").slice(-3)||String(Date.now()).slice(-3);const sequence=ledger.transactions.filter(item=>item.customerId===input.customerId).length+1;
-  const status:TestBookingStatus=input.providerModel==="Commission"?"awaiting_acceptance":"assigned";const paymentStatus=input.payment==="Subscription credit"?"credit_reserved":input.payment==="Paid online"?"paid":"due_after_service";
+  const status:TestBookingStatus=input.providerModel==="Commission"?"awaiting_acceptance":"assigned";const paymentStatus=paymentState;
   const transaction:TestTransaction={...input,id:canonicalBookingId??`PS-T${suffix}-${String(sequence).padStart(2,"0")}`,status,paymentStatus,creditsAfter:input.creditsBefore,referralStatus:input.offerCode==="KARTHIK"?"pending_completion":input.referralStatus,updatedAt:at,events:[
     {at,surface:"customer",label:"Booking confirmed instantly"},{at,surface:"crm",label:"Customer timeline and opportunity updated"},{at,surface:"admin",label:status==="awaiting_acceptance"?"Commission-provider offer created":"Full-time provider assigned automatically"},{at,surface:"system",label:"Payment state recorded and reminder queued"},
   ]};persistLedger({version:2,activeId:transaction.id,transactions:[transaction,...ledger.transactions].slice(0,100)});return transaction;

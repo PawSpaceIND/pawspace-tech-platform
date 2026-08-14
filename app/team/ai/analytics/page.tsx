@@ -30,7 +30,7 @@ type Data = {
 const DASH = "—";
 const CHANNELS = [["", "All channels"], ["whatsapp", "WhatsApp"], ["chat", "Chat"], ["voice", "Voice"]] as const;
 const pretty = (value: string) => value.replaceAll("_", " ");
-const field = { padding: 9, borderRadius: 8, border: "1px solid #e5dcef", background: "white" } as const;
+const field = { padding: 9, borderRadius: 8, border: "1px solid #dcece5", background: "white" } as const;
 const NAV = [
   { href: "/team/ai", label: "AI home" },
   { href: "/team/ai/handoff", label: "Handoff queue" },
@@ -87,19 +87,19 @@ export default function AiAnalyticsPage() {
     >
       <TeamSection title="Filter" note="The API supports these; nothing on this page previously exposed them.">
         <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
-          <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#746b7d" }}>Channel
+          <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#6c7c78" }}>Channel
             <select value={channel} onChange={(event) => setChannel(event.target.value)} style={{ ...field, minWidth: 160 }}>
               {CHANNELS.map(([value, text]) => <option key={value} value={value}>{text}</option>)}
             </select>
           </label>
-          <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#746b7d" }}>From
+          <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#6c7c78" }}>From
             <input type="date" value={from} onChange={(event) => setFrom(event.target.value)} style={field} />
           </label>
-          <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#746b7d" }}>To
+          <label style={{ display: "grid", gap: 4, fontSize: 12, color: "#6c7c78" }}>To
             <input type="date" value={to} onChange={(event) => setTo(event.target.value)} style={field} />
           </label>
           <button onClick={() => { setChannel(""); setFrom(""); setTo(""); }} style={{ ...field, cursor: "pointer", fontWeight: 700 }}>Clear</button>
-          {loading && <span style={{ color: "#746b7d", fontSize: 13 }}>Loading…</span>}
+          {loading && <span style={{ color: "#6c7c78", fontSize: 13 }}>Loading…</span>}
         </div>
       </TeamSection>
 

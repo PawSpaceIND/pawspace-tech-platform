@@ -291,6 +291,7 @@ export default function StayFlow({ mode: initialMode, customer, location }: { mo
       amount: governedBoardingQuote?.totalAmount ?? total,
       offerCode: mode === "boarding" ? undefined : couponCode || undefined,
       discount: mode === "boarding" ? 0 : discount,
+      paymentState: splitEligible && splitPayment ? "due_after_service" : "paid",
       payment:
         mode === "boarding"
           ? splitEligible && splitPayment

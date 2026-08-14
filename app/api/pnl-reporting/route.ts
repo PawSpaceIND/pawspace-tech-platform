@@ -1,3 +1,4 @@
+import{refuseUnlessGatewayPermits}from"../../../lib/api-gateway";
 import{generatePnlReport}from"../../../lib/pnl-reporting";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
@@ -10,7 +11,7 @@ function defaultMonths(){
   return{fromMonth,toMonth};
 }
 
-export async function GET(request:Request){
+export async function GET(request:Request){const denied=await refuseUnlessGatewayPermits(request);if(denied)return denied;
   try{
     const url=new URL(request.url);
     const defaults=defaultMonths();

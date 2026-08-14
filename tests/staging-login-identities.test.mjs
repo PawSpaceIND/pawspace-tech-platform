@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 installWorkersHooks("__UAT_DB__", "__UAT_ENV__");
 const uat = await import("../lib/uat-staging-auth.ts");
@@ -41,15 +42,8 @@ test("the login page no longer claims an unrecognised email gets full access", (
   assert.doesNotMatch(page, /Any other email works too/i, "and its stale source comment");
 });
 
-function makeD1(sqlite) {
-  const st = (sql, args) => ({
-    bind: (...b) => st(sql, b),
-    first: async () => { const r = sqlite.prepare(sql).get(...args); return r === undefined ? null : r; },
-    run: async () => { const i = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(i.changes) } }; },
-    all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-  });
-  return { prepare: (sql) => st(sql, []), batch: async (l) => { const o = []; for (const it of l) o.push(await it.run()); return o; }, exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; } };
-}
+// batch() is one transaction in D1: see tests/helpers/d1.mjs.
+const makeD1 = (sqlite) => createD1(sqlite);
 
 test("behaviour: the seeded founder resolves to the founder role; an unknown email is still refused", async () => {
   const s = new DatabaseSync(":memory:");

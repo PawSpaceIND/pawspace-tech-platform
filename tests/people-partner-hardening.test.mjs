@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as nodeModule from "node:module";
+import { createD1 } from "./helpers/d1.mjs";
 
 // ---------------------------------------------------------------------------
 // Module hooks: extensionless relative .ts imports + a live "cloudflare:workers"
@@ -55,30 +56,9 @@ const revenueCrmRoute = await import("../app/api/revenue-crm/route.ts");
 // ---------------------------------------------------------------------------
 // D1-over-node:sqlite shim + verbatim canonical DDL from its owning route.
 // ---------------------------------------------------------------------------
-function makeD1(sqlite) {
-  function statement(sql, args) {
-    return {
-      bind: (...boundArgs) => statement(sql, boundArgs),
-      first: async () => {
-        const row = sqlite.prepare(sql).get(...args);
-        return row === undefined ? null : row;
-      },
-      run: async () => {
-        const info = sqlite.prepare(sql).run(...args);
-        return { success: true, meta: { changes: Number(info.changes) } };
-      },
-      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-    };
-  }
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (statements) => {
-      const results = [];
-      for (const stmt of statements) results.push(await stmt.run());
-      return results;
-    },
-  };
-}
+// batch() is one transaction in D1: see tests/helpers/d1.mjs. The loop this replaced committed
+// each statement as it went, so any atomicity claim below was measured against the wrong machine.
+const makeD1 = (sqlite, options) => createD1(sqlite, options);
 
 function statementsOf(source) {
   const out = [];

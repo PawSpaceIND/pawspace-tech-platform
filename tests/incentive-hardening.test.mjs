@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as nodeModule from "node:module";
+import { createD1 } from "./helpers/d1.mjs";
 
 // ---------------------------------------------------------------------------
 // Task 22 audit — incentives (employee schemes, groomer brackets, PawPoints).
@@ -40,21 +41,9 @@ if (typeof nodeModule.registerHooks === "function") {
 
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-function makeD1(sqlite) {
-  function statement(sql, args) {
-    return {
-      bind: (...bound) => statement(sql, bound),
-      first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-      run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
-      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-    };
-  }
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
-    exec: async (sql) => { sqlite.exec(sql); },
-  };
-}
+// batch() is one transaction in D1: see tests/helpers/d1.mjs. The loop this replaced committed
+// each statement as it went, so any atomicity claim below was measured against the wrong machine.
+const makeD1 = (sqlite, options) => createD1(sqlite, options);
 
 function applyOwnedDdl(sqlite, path) {
   const source = read(path);
@@ -69,9 +58,9 @@ const MONTH_END = Date.UTC(2026, 6, 31);    // 2026-07-31
 const MANAGER = "manager@pawspace.in";
 const CALCULATOR = "finance@pawspace.in";
 
-function fresh() {
+function fresh(options) {
   const sqlite = new DatabaseSync(":memory:");
-  const db = makeD1(sqlite);
+  const db = makeD1(sqlite, options);
   globalThis.__PAWSPACE_TEST_ENV = { DB: db };
   sqlite.exec("CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,service_code TEXT NOT NULL,package_name TEXT,provider_id TEXT,status TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT,total_amount REAL NOT NULL,currency TEXT DEFAULT 'INR',created_at INTEGER,updated_at INTEGER)");
   sqlite.exec("CREATE TABLE app_users (id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,name TEXT NOT NULL,role_code TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
@@ -199,7 +188,32 @@ test("quality guardrails hold, zero or scale a payout using real fact values", a
 // 2. Approval governance: no self-approval, no double approval.
 // ---------------------------------------------------------------------------
 test("incentive approval: calculator cannot self-approve and concurrent approvals settle once", async () => {
-  const { sqlite, db } = fresh();
+  // The guard under test is a conditional claim: UPDATE … WHERE status='calculated'. It only does
+  // anything when two managers both read the row as unpaid and then both try to write it, so the
+  // race has to be driven rather than hoped for. Holding the first claimant at its UPDATE until the
+  // second has arrived at its own produces exactly that overlap every run.
+  //
+  // Before this was explicit, the interleaving came from whatever order the old shim's awaits
+  // happened to resolve in, and the second manager was usually refused by the early status read
+  // instead - so the conditional claim was never the thing being exercised.
+  let claims = 0;
+  let interleaved = false;
+  let release = () => {};
+  const gate = new Promise((resolve) => { release = resolve; });
+  const CLAIM = "SET status='approved'";
+  const { sqlite, db } = fresh({
+    park: (sql) => {
+      if (!String(sql).includes(CLAIM)) return null;
+      claims += 1;
+      if (claims === 1) return gate;
+      interleaved = true;
+      release();
+      return null;
+    },
+  });
+  // If the second claimant never reaches its UPDATE the gate would never open, so let it through and
+  // fail on the interleaved assertion below rather than hanging until the runner's timeout.
+  setTimeout(release, 2000).unref?.();
   seedSalesperson(sqlite, { employeeId: "E-APP", email: "app@pawspace.in", facts: { netCollectedRevenue: 200000 } });
   const { engine, schemeId } = await activeScheme(db, { metric: "net_collected_revenue", target: 100000, payoutType: "percent_of_revenue_above_target", payoutValue: 10 });
   const run = await engine.calculateIncentivePeriod(db, { schemeId, periodStart: MONTH_START, periodEnd: MONTH_END, idempotencyKey: "approve-1", actorId: CALCULATOR });
@@ -211,6 +225,7 @@ test("incentive approval: calculator cannot self-approve and concurrent approval
     engine.approveIncentiveResult(db, { resultId, actorId: MANAGER }),
     engine.approveIncentiveResult(db, { resultId, actorId: "manager.two@pawspace.in" }),
   ]);
+  assert.equal(interleaved, true, "the two approvals did not overlap, so nothing below is proven");
   assert.equal([first, second].filter((r) => r.duplicatePrevented).length, 1, "exactly one approval is real");
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM incentive_approval_events WHERE result_id=? AND event_type='approved'").get(resultId).c, 1, "one approval event, not two");
   assert.equal(Number(sqlite.prepare("SELECT approved_amount FROM employee_incentive_results WHERE id=?").get(resultId).approved_amount), 10000);

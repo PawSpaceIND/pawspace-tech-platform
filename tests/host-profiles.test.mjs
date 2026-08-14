@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { createD1 } from "./helpers/d1.mjs";
 
 const libSource = fs.readFileSync("lib/host-profiles.ts", "utf8");
 const routeSource = fs.readFileSync("app/api/host-profile/route.ts", "utf8");
@@ -71,30 +72,9 @@ test("the card fetches the public route and renders photo/badges/rating/reviews/
 // D1's behaviour) - proves the actual exported functions from lib/host-profiles.ts genuinely
 // create the table, seed real rows, and read back a full, well-formed profile. Same spirit as
 // this repo's "real execution, not just static regex" verification convention (see HANDOFF.md).
-function makeD1(sqlite) {
-  function statement(sql, args) {
-    return {
-      bind: (...boundArgs) => statement(sql, boundArgs),
-      first: async () => {
-        const row = sqlite.prepare(sql).get(...args);
-        return row === undefined ? null : row;
-      },
-      run: async () => {
-        sqlite.prepare(sql).run(...args);
-        return { success: true };
-      },
-      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-    };
-  }
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (statements) => {
-      const results = [];
-      for (const stmt of statements) results.push(await stmt.run());
-      return results;
-    },
-  };
-}
+// batch() is one transaction in D1: see tests/helpers/d1.mjs. The loop this replaced committed
+// each statement as it went, so any atomicity claim below was measured against the wrong machine.
+const makeD1 = (sqlite, options) => createD1(sqlite, options);
 
 test("real execution: seedDemoHostProfiles + getHostProfile returns a full profile with reviews, badges and stats", async () => {
   const { ensureHostProfileTables, seedDemoHostProfiles, getHostProfile, upsertHostProfile } = await import("../lib/host-profiles.ts");

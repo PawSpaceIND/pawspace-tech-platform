@@ -22,10 +22,10 @@ async function loadResult(kind: Kind, employeeId: string, monthStart: string) {
   return p;
 }
 
-const card: React.CSSProperties = { border: "1px solid #e3dbea", borderRadius: 14, padding: 18, background: "white", marginBottom: 16 };
-const label: React.CSSProperties = { display: "block", fontSize: 12, fontWeight: 700, color: "#6a2daf", marginBottom: 4, marginTop: 10 };
-const input: React.CSSProperties = { width: "100%", padding: "8px 10px", border: "1px solid #ddd5e2", borderRadius: 8, fontSize: 13 };
-const btn: React.CSSProperties = { marginTop: 12, padding: "9px 16px", border: 0, borderRadius: 8, background: "#6524a0", color: "white", fontWeight: 700, fontSize: 13, cursor: "pointer" };
+const card: React.CSSProperties = { border: "1px solid #dcece5", borderRadius: 14, padding: 18, background: "white", marginBottom: 16 };
+const label: React.CSSProperties = { display: "block", fontSize: 12, fontWeight: 700, color: "#1f6b57", marginBottom: 4, marginTop: 10 };
+const input: React.CSSProperties = { width: "100%", padding: "8px 10px", border: "1px solid #d9dedd", borderRadius: 8, fontSize: 13 };
+const btn: React.CSSProperties = { marginTop: 12, padding: "9px 16px", border: 0, borderRadius: 8, background: "#01261F", color: "white", fontWeight: 700, fontSize: 13, cursor: "pointer" };
 const row: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 10 };
 
 function Field({ text, onChange, placeholder }: { text: string; onChange: (v: string) => void; placeholder: string }) {
@@ -67,12 +67,12 @@ export default function ServiceIncentivesPage() {
   const [revEmployee, setRevEmployee] = useState(""), [revDate, setRevDate] = useState(""), [revAmount, setRevAmount] = useState(""), [revRef, setRevRef] = useState("");
 
   return (
-    <main style={{ maxWidth: 1180, margin: "0 auto", padding: "32px 20px 64px", fontFamily: "system-ui,sans-serif", color: "#24133f" }}>
-      {toast && <div style={{ position: "fixed", top: 18, left: "50%", transform: "translateX(-50%)", zIndex: 20, background: "#1a0d2e", color: "white", padding: "11px 18px", borderRadius: 10, fontSize: 13, maxWidth: 500, boxShadow: "0 10px 28px rgba(0,0,0,.35)" }}>{toast}</div>}
+    <main style={{ maxWidth: 1180, margin: "0 auto", padding: "32px 20px 64px", fontFamily: "system-ui,sans-serif", color: "#06231c" }}>
+      {toast && <div style={{ position: "fixed", top: 18, left: "50%", transform: "translateX(-50%)", zIndex: 20, background: "#06231c", color: "white", padding: "11px 18px", borderRadius: 10, fontSize: 13, maxWidth: 500, boxShadow: "0 10px 28px rgba(0,0,0,.35)" }}>{toast}</div>}
       <header style={{ marginBottom: 20 }}>
-        <p style={{ fontWeight: 900, letterSpacing: 1.2, margin: 0, color: "#6a2daf" }}>PAWSPACE · PEOPLE</p>
+        <p style={{ fontWeight: 900, letterSpacing: 1.2, margin: 0, color: "#1f6b57" }}>PAWSPACE · PEOPLE</p>
         <h1 style={{ margin: "8px 0", fontSize: 30 }}>Groomer / Trainer / Sales incentive engine</h1>
-        <p style={{ maxWidth: 900, color: "#6e6576" }}>
+        <p style={{ maxWidth: 900, color: "#667571" }}>
           Real, governed calculation - matches the published rate sheets exactly, sourced from real completed bookings.
           Every input here is an explicit record with a real reason, never invented. <Link href="/team/people">Back to People</Link>
         </p>
@@ -80,7 +80,7 @@ export default function ServiceIncentivesPage() {
 
       <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
         {(["groomer", "trainer", "sales"] as Kind[]).map((k) => (
-          <button key={k} onClick={() => { setTab(k); setLookupResult(null); }} style={{ padding: "8px 16px", borderRadius: 8, border: tab === k ? "2px solid #6524a0" : "1px solid #ddd5e2", background: tab === k ? "#f2ebfa" : "white", color: "#6524a0", fontWeight: 700, textTransform: "capitalize", cursor: "pointer" }}>{k}</button>
+          <button key={k} onClick={() => { setTab(k); setLookupResult(null); }} style={{ padding: "8px 16px", borderRadius: 8, border: tab === k ? "2px solid #01261F" : "1px solid #d9dedd", background: tab === k ? "#e9f1ee" : "white", color: "#01261F", fontWeight: 700, textTransform: "capitalize", cursor: "pointer" }}>{k}</button>
         ))}
       </div>
 
@@ -91,7 +91,7 @@ export default function ServiceIncentivesPage() {
           <div><span style={label}>Month (YYYY-MM-01)</span><Field text={lookupMonth} onChange={setLookupMonth} placeholder="2026-08-01" /></div>
         </div>
         <button style={btn} onClick={runLookup}>Load {tab} breakdown</button>
-        {lookupResult && <pre style={{ marginTop: 14, padding: 12, background: "#f7f3fa", borderRadius: 8, fontSize: 12, overflowX: "auto" }}>{JSON.stringify(lookupResult, null, 2)}</pre>}
+        {lookupResult && <pre style={{ marginTop: 14, padding: 12, background: "#f2f7f5", borderRadius: 8, fontSize: 12, overflowX: "auto" }}>{JSON.stringify(lookupResult, null, 2)}</pre>}
       </section>
 
       {tab === "groomer" && (
@@ -208,7 +208,7 @@ export default function ServiceIncentivesPage() {
 
           <section style={card}>
             <h2 style={{ marginTop: 0, fontSize: 16 }}>Attribute a booking to the employee who converted it</h2>
-            <p style={{ fontSize: 12, color: "#6e6576" }}>Only bookings attributed here count toward anyone&apos;s number. A customer&apos;s own direct booking is real revenue but is never credited to an individual.</p>
+            <p style={{ fontSize: 12, color: "#667571" }}>Only bookings attributed here count toward anyone&apos;s number. A customer&apos;s own direct booking is real revenue but is never credited to an individual.</p>
             <div style={row}>
               <div><span style={label}>Booking ID</span><Field text={sBookingId} onChange={setSBookingId} placeholder="real booking ID" /></div>
               <div><span style={label}>Employee ID</span><Field text={sAttribEmployee} onChange={setSAttribEmployee} placeholder="who converted this sale" /></div>

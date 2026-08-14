@@ -81,6 +81,31 @@ export function requirePermission(actor:AuthenticatedActor,permission:Permission
 
 export async function authorize(request:Request,permission:Permission){return requirePermission(await resolveActor(request),permission);}
 
+/**
+ * The handler's own copy of the gateway's decision, as a Response to return rather than an error to
+ * throw. worker/index.ts already runs authorizeApiRequest in front of every /api/* request, so this
+ * is the second layer: a route that only refuses because of the gateway is one refactor away from
+ * being open, and /api/identity-session already bypasses the gateway by design.
+ *
+ * It returns instead of throwing because most handlers wrap their body in `catch(error){ return
+ * json({error:…},500) }`, which turns a thrown 403 into a 500 - a refusal the caller cannot tell from
+ * an outage, and one that reads as "not refused" to any test looking for 401/403.
+ *
+ * Pass the SAME permission the gateway requires for that route and method (tests/fixtures/
+ * route-permissions.json is the frozen policy). resolveActor resolves customer and provider platform
+ * sessions exactly as the gateway does, so a self-service caller is unaffected.
+ *
+ * Cost is two D1 reads on a warm isolate - the app_users and role_definitions lookups - against a
+ * ~1000 subrequest ceiling. The DDL behind it is memoised per binding.
+ */
+export async function refuseUnlessPermitted(request:Request,permission:Permission):Promise<Response|null>{
+  try{ await authorize(request,permission); return null; }
+  catch(error){
+    if(error instanceof Response)return error;
+    return Response.json({error:error instanceof Error?error.message:"Permission denied"},{status:403});
+  }
+}
+
 export async function requireCustomerOwnership(db:Db,actor:AuthenticatedActor,customerId:string){
   if(actor.developmentPreview||hasPermission(actor.permissions,"customers.manage")||hasPermission(actor.permissions,"bookings.manage"))return actor;
   const binding=await findIdentityBinding(db,{identitySource:actor.identitySource,principalType:actor.principalType,principalKey:actor.principalKey,subjectType:"customer"});
@@ -88,6 +113,24 @@ export async function requireCustomerOwnership(db:Db,actor:AuthenticatedActor,cu
   const legacy=await db.prepare("SELECT customer_id,status FROM customer_identity_links WHERE email=?").bind(actor.email).first<Record<string,unknown>>();
   if(!legacy||legacy.status!=="active"||String(legacy.customer_id)!==customerId)throw authFailure("Customer ownership denied",403);
   return actor;
+}
+
+/**
+ * Which customer IS this actor, if any - the reverse of requireCustomerOwnership, for the case where
+ * there is no id in the request to compare against and the record has to be attributed instead.
+ *
+ * Returns null for staff and for the development preview: they act on behalf of customers rather than
+ * being one, so a caller reading this should treat null as "not customer-scoped", never as "no
+ * ownership". The lookup order is identical to requireCustomerOwnership - binding first, legacy
+ * customer_identity_links second - so the two cannot disagree about who someone is.
+ */
+export async function resolveCustomerForActor(db:Db,actor:AuthenticatedActor):Promise<string|null>{
+  if(actor.developmentPreview||hasPermission(actor.permissions,"customers.manage")||hasPermission(actor.permissions,"bookings.manage"))return null;
+  const binding=await findIdentityBinding(db,{identitySource:actor.identitySource,principalType:actor.principalType,principalKey:actor.principalKey,subjectType:"customer"}).catch(()=>null);
+  if(binding)return String(binding.subject_id);
+  const legacy=await db.prepare("SELECT customer_id,status FROM customer_identity_links WHERE email=?").bind(actor.email).first<Record<string,unknown>>().catch(()=>null);
+  if(legacy&&legacy.status==="active")return String(legacy.customer_id);
+  return null;
 }
 
 export async function requireProviderOwnership(db:Db,actor:AuthenticatedActor,providerId:string){

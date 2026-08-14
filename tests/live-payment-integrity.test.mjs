@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 // ---------------------------------------------------------------------------
 // PAY-001. Two live-payment integrity defects, both about money and neither caught by the tests that
@@ -31,19 +32,9 @@ const read = (file) => fs.readFileSync(new URL(`../${file}`, import.meta.url), "
 const bookingRoute = read("app/api/canonical-bookings/route.ts");
 const intent = await import("../lib/payment-order-intent.ts");
 
-function makeD1(sqlite) {
-  const statement = (sql, args) => ({
-    bind: (...bound) => statement(sql, bound),
-    first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-    run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
-    all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-  });
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
-    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-  };
-}
+// D1's batch() is one transaction; the loop this replaced committed as it went, so any claim in this
+// file about a half-applied write was measured against the wrong machine.
+const makeD1 = (sqlite) => createD1(sqlite);
 
 // ---------------------------------------------------------------------------
 // Defect 1. recordedPaymentStatus is module-private, so its exact source is extracted and evaluated.

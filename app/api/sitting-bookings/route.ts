@@ -1,3 +1,4 @@
+import{refuseUnlessGatewayPermits}from"../../../lib/api-gateway";
 import{database,requireCustomerOwnership,resolveActor}from"../../../lib/server-auth";
 import{governSittingBooking}from"../../../lib/sitting-governance";
 import{ensureStayPaymentTables,splitPaymentPlan,staySplitScheduleStatement}from"../../../lib/stay-split-payments";
@@ -30,7 +31,7 @@ function validate(input:Input){if(!input.idempotencyKey||!input.scheduleGroupId|
 async function readBundle(db:D1Database,booking:Row,duplicatePrevented:boolean){const[workOrder,payment]=await Promise.all([db.prepare("SELECT id FROM provider_work_orders WHERE booking_id=?").bind(booking.id).first<Row>(),db.prepare("SELECT id FROM booking_payments WHERE booking_id=?").bind(booking.id).first<Row>()]);return{bookingId:String(booking.id),customerId:String(booking.customer_id),scheduleGroupId:String(booking.schedule_group_id),workOrderId:String(workOrder?.id||""),paymentId:String(payment?.id||""),status:String(booking.status),duplicatePrevented};}
 async function failure(error:unknown){if(error instanceof Response){const message=await error.text().catch(()=>"");return json({error:message||"Sitting booking failed"},error.status||500);}return json({error:error instanceof Error?error.message:"Sitting booking failed"},500);}
 
-export async function POST(request:Request){try{
+export async function POST(request:Request){const denied=await refuseUnlessGatewayPermits(request);if(denied)return denied;try{
  sameOriginWrite(request);const input=await request.json() as Input,problem=validate(input);if(problem)return json({error:problem},400);
  const db=await database();await ensureTables(db);const actor=await resolveActor(request);await requireCustomerOwnership(db,actor,input.customer.id);
  const prior=await db.prepare("SELECT * FROM canonical_bookings WHERE idempotency_key=? OR schedule_group_id=?").bind(input.idempotencyKey,input.scheduleGroupId).first<Row>();if(prior)return json({data:await readBundle(db,prior,true)});

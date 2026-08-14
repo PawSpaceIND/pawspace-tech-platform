@@ -3,7 +3,7 @@
 .wrap h3{margin:0;font-size:20px}
 .wrap small{color:#b8c6c0}
 .steps{display:flex;gap:8px;margin:4px 0 16px}
-.steps span{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:700;background:#0b2b24;border:1px solid #123c33;color:#b8c6c0}
+.steps span{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-size:14.5px;font-weight:700;background:#0b2b24;border:1px solid #123c33;color:#b8c6c0}
 .steps span.active{background:#E6B34E;border-color:#E6B34E;color:#01261F}
 .head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;gap:8px}
 .card{display:block;width:100%;text-align:left;background:#0b2b24;border:1px solid #123c33;border-radius:14px;padding:14px;margin-bottom:10px;color:inherit;cursor:pointer}
@@ -11,20 +11,20 @@
 .cardTop{display:flex;justify-content:space-between;align-items:center;gap:10px}
 .cardTop b{font-size:16px}
 .price{color:#E6B34E;font-weight:800;font-size:16px;white-space:nowrap}
-.meta{display:block;margin-top:4px;font-size:13px;color:#b8c6c0}
+.meta{display:block;margin-top:4px;font-size:14.5px;color:#b8c6c0}
 .chipRow{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 14px}
-.chip{padding:8px 12px;border-radius:999px;border:1px solid #123c33;background:#0b2b24;color:#FDF3E1;font-size:13px;font-weight:600;cursor:pointer}
+.chip{padding:8px 12px;border-radius:999px;border:1px solid #123c33;background:#0b2b24;color:#FDF3E1;font-size:14.5px;font-weight:600;cursor:pointer}
 .chip.selected{background:#E6B34E;border-color:#E6B34E;color:#01261F}
-.label{display:block;font-size:13px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#E6B34E;margin:16px 0 6px}
+.label{display:block;font-size:14.5px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#E6B34E;margin:16px 0 6px}
 .input{width:100%;box-sizing:border-box;padding:12px 14px;border-radius:12px;border:1px solid #123c33;background:#0b2b24;color:#FDF3E1;font-size:15px;font-family:inherit}
 .input::placeholder{color:#7d8f89}
-.note{background:rgba(230,179,78,.08);border:1px solid rgba(230,179,78,.4);border-radius:12px;padding:10px 12px;font-size:13px;color:#FDF3E1;margin:10px 0}
+.note{background:rgba(230,179,78,.08);border:1px solid rgba(230,179,78,.4);border-radius:12px;padding:10px 12px;font-size:14.5px;color:#FDF3E1;margin:10px 0}
 .petGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:6px}
 .petGrid button{display:flex;align-items:center;gap:10px;background:#0b2b24;border:1px solid #123c33;border-radius:14px;padding:12px;color:inherit;text-align:left;cursor:pointer}
 .petGrid button.selected{border-color:#E6B34E;box-shadow:0 0 0 1px #E6B34E inset}
 .petGrid i{font-style:normal;font-size:22px}
 .petGrid b{display:block;font-size:14px}
-.petGrid small{display:block;font-size:12px}
+.petGrid small{display:block;font-size:14px}
 .review{background:#0b2b24;border:1px solid #123c33;border-radius:14px;padding:6px 14px;margin-bottom:12px}
 .review>div{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid #123c33;font-size:14px}
 .review>div:last-child{border-bottom:none}
@@ -41,11 +41,11 @@
 .driver{display:flex;align-items:center;gap:12px;background:#0b2b24;border:1px solid #123c33;border-radius:14px;padding:14px;margin-bottom:12px}
 .driver i{font-style:normal;width:44px;height:44px;border-radius:50%;background:#123c33;display:grid;place-items:center;font-weight:800;color:#E6B34E}
 .driver b{display:block;font-size:15px}
-.driver small{display:block;font-size:12px;margin-top:2px}
+.driver small{display:block;font-size:14px;margin-top:2px}
 .rating{color:#E6B34E;font-weight:700}
 .trip{background:#0b2b24;border:1px solid #123c33;border-radius:14px;padding:14px;display:grid;gap:8px}
 .trip b{font-size:15px}
-.trip small{font-size:12px}
+.trip small{font-size:14px}
 .tripLeg{display:flex;align-items:center;gap:10px}
-.tripLeg i{font-style:normal;width:26px;height:26px;border-radius:50%;background:#123c33;display:grid;place-items:center;font-size:12px;color:#E6B34E;flex-shrink:0}
+.tripLeg i{font-style:normal;width:26px;height:26px;border-radius:50%;background:#123c33;display:grid;place-items:center;font-size:14px;color:#E6B34E;flex-shrink:0}
 @media (min-width:640px){.petGrid{grid-template-columns:1fr 1fr 1fr 1fr}}

@@ -24,13 +24,13 @@ export default function PartnerUatHub() {
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 16 }}>
           <Link
             href="/partner-mobile"
-            style={{ ...linkStyle, background: "#5b21b6", color: "white" }}
+            style={{ ...linkStyle, background: "#1f6b57", color: "white" }}
           >
             Open Partner Mobile App →
           </Link>
           <Link
             href="/partner/onboarding"
-            style={{ ...linkStyle, border: "1px solid #d8cbea", color: "#5b21b6" }}
+            style={{ ...linkStyle, border: "1px solid #dcece5", color: "#1f6b57" }}
           >
             Open canonical provider onboarding →
           </Link>

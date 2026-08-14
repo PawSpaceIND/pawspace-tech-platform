@@ -13,7 +13,11 @@ if(body.action==="activate_promotion"){if(!body.id)return json({error:"Promotion
 if(body.action==="set_promotion_status"){if(!body.id||!["paused","completed"].includes(String(body.status)))return json({error:"Only paused or completed status may be set directly"},400);const result=await setPromotionStatus(db,{promotionId:body.id,status:body.status as "paused"|"completed",actor:actor.email});await securityAudit(db,actor,"marketing.promotion.status","promotion",body.id,"completed",{status:body.status});return json({data:result});}
 if(body.action==="create_automation_rule"){try{const result=await createAutomationRule(db,{name:String(body.name||""),triggerCode:String(body.triggerCode||""),condition:body.condition||{},action:body.actionDefinition||{},approvalMode:body.approvalMode,actor:actor.email});await securityAudit(db,actor,"marketing.automation_rule.create","automation_rule",result.id,"completed",{triggerCode:body.triggerCode});return json({data:result},201);}catch(error){return json({error:error instanceof Error?error.message:"Unable to create automation rule"},400);}}
 if(body.action==="set_automation_rule_enabled"){if(!body.id||typeof body.enabled!=="boolean"||!body.reason)return json({error:"Rule ID, enabled flag and reason are required"},400);try{const result=await setAutomationRuleEnabled(db,{ruleId:body.id,enabled:body.enabled,reason:body.reason,actor:actor.email});await securityAudit(db,actor,"marketing.automation_rule.toggle","automation_rule",body.id,"completed",{enabled:body.enabled,reason:body.reason});return json({data:result});}catch(error){return json({error:error instanceof Error?error.message:"Unable to update automation rule"},409);}}
-return json({error:"Unsupported Marketing action"},400);}catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);return authError(error,"Unable to update Marketing governance");}}
+return json({error:"Unsupported Marketing action"},400);}catch(error){// authError returns a thrown Response untouched. Re-wrapping it in json({error: await error.text()})
+    // double-encoded an already-JSON body, so the screen showed the literal text {"error":"Permission
+    // denied"} where the message should be - the same class as the plain-text 401 that surfaced as
+    // `Unexpected token 'A'` on every gated page.
+    return authError(error,"Unable to update Marketing governance");}}
 
 export async function PATCH(request:Request){try{sameOrigin(request);const actor=await authorize(request,"marketing.manage"),body=await request.json() as {entity?:string;id?:string;status?:string;reason?:string},db=await database();await ensureMarketingGovernance(db);
  if(!body.id||!["paused","completed"].includes(String(body.status)))return json({error:"Only paused or completed status may be set directly"},400);
@@ -23,4 +27,8 @@ export async function PATCH(request:Request){try{sameOrigin(request);const actor
  await db.prepare("UPDATE governed_marketing_campaigns SET status=?,updated_at=? WHERE id=?").bind(body.status,now,body.id).run();
  await securityAudit(db,actor,"marketing.campaign.status","campaign",body.id,"completed",{status:body.status,reason:body.reason});
  return json({data:{id:body.id,status:body.status}});
-}catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);return authError(error,"Unable to update Marketing status");}}
+}catch(error){// authError returns a thrown Response untouched. Re-wrapping it in json({error: await error.text()})
+    // double-encoded an already-JSON body, so the screen showed the literal text {"error":"Permission
+    // denied"} where the message should be - the same class as the plain-text 401 that surfaced as
+    // `Unexpected token 'A'` on every gated page.
+    return authError(error,"Unable to update Marketing status");}}

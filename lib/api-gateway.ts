@@ -11,7 +11,7 @@ async function ensureGatewayTables(env:GatewayEnv){const now=Date.now();await en
   env.DB.prepare("CREATE TABLE IF NOT EXISTS security_audit_events (id TEXT PRIMARY KEY, actor_email TEXT NOT NULL, actor_role TEXT NOT NULL, action TEXT NOT NULL, resource_type TEXT NOT NULL, resource_id TEXT, outcome TEXT NOT NULL, detail_json TEXT NOT NULL, created_at INTEGER NOT NULL)"),
 ]);for(const role of defaultRoles)await env.DB.prepare("INSERT OR IGNORE INTO role_definitions (code,name,description,permissions_json,system_role,updated_at) VALUES (?,?,?,?,?,?)").bind(role.code,role.name,role.description,JSON.stringify(role.permissions),1,now).run();}
 
-async function requiredPermission(request:Request):Promise<Permission|null>{const url=new URL(request.url),method=request.method.toUpperCase();if(url.pathname==="/api/pricing-quote"||url.pathname==="/api/training-commercial"||url.pathname==="/api/training-trainers"||url.pathname==="/api/boarding-commercial"||url.pathname==="/api/sitting-commercial"||url.pathname==="/api/taxi-commercial"||url.pathname==="/api/food-commercial"||url.pathname==="/api/walking-commercial"||url.pathname==="/api/razorpay-webhook"||url.pathname==="/api/haptik"||url.pathname==="/api/whatsapp-uat-webhook"||url.pathname==="/api/identity-session"||url.pathname==="/api/service-availability"||url.pathname==="/api/public-contact"||url.pathname==="/api/provider-public-profile"||url.pathname==="/api/staging-login"
+export async function requiredPermission(request:Request):Promise<Permission|null>{const url=new URL(request.url),method=request.method.toUpperCase();if(url.pathname==="/api/pricing-quote"||url.pathname==="/api/training-commercial"||url.pathname==="/api/training-trainers"||url.pathname==="/api/boarding-commercial"||url.pathname==="/api/sitting-commercial"||url.pathname==="/api/taxi-commercial"||url.pathname==="/api/food-commercial"||url.pathname==="/api/walking-commercial"||url.pathname==="/api/razorpay-webhook"||url.pathname==="/api/haptik"||url.pathname==="/api/whatsapp-uat-webhook"||url.pathname==="/api/identity-session"||url.pathname==="/api/service-availability"||url.pathname==="/api/public-contact"||url.pathname==="/api/provider-public-profile"||url.pathname==="/api/staging-login"
     ||url.pathname==="/api/customer-offers"||url.pathname==="/api/host-profile"||url.pathname==="/api/customer-otp"||url.pathname==="/api/partner-otp"||url.pathname==="/api/customer-profile"||url.pathname==="/api/customer-account"||url.pathname==="/api/booking-rating"||url.pathname==="/api/customer-support-case"||url.pathname==="/api/live-price-quote"||url.pathname==="/api/service-zone")return null;
   // D3/D4 remediation: these were fully public (all methods -> null), which let anyone write to the DB
   // unauthenticated. The catalog/trust READ stays public, but every WRITE now requires a real staff
@@ -163,3 +163,25 @@ export async function authorizeApiRequest(request:Request,env:GatewayEnv):Promis
   const actor={email,roleCode:String(user.role_code),permissions,preview:false};if(!hasPermission(permissions,permission)){await audit(env,actor,request,"denied",{permission});return Response.json({error:"Permission denied"},{status:403});}return {actor,permission};}
 
 export async function auditApiResponse(env:GatewayEnv,actor:GatewayActor,permission:Permission|null,request:Request,response:Response){if(!permission||actor.roleCode==="public")return;await audit(env,actor,request,response.ok?"allowed":"failed",{permission,status:response.status});}
+
+/**
+ * The handler's own copy of the gateway's decision, computed by the SAME function the gateway uses.
+ *
+ * worker/index.ts runs authorizeApiRequest in front of every /api/* request, so this is the second
+ * layer, not the first. It exists because a route that refuses only because of the gateway is one
+ * refactor away from being open, and /api/identity-session already bypasses the gateway by design.
+ *
+ * It asks requiredPermission rather than naming a permission, because for several routes the answer
+ * depends on the body: POST /api/booking-operations wants communications.message for a provider
+ * reporting "running late", pricing.manage to apply a priced upgrade, and bookings.manage for anything
+ * else. Hard-coding one of those in the handler would either lock out the partner app or quietly widen
+ * the route, and the two copies would drift the first time the policy changed. One function, one answer.
+ *
+ * Returns null when the caller may proceed - including for routes the policy leaves public.
+ */
+export async function refuseUnlessGatewayPermits(request:Request):Promise<Response|null>{
+  const permission=await requiredPermission(request);
+  if(permission===null)return null;
+  const {refuseUnlessPermitted}=await import("./server-auth");
+  return refuseUnlessPermitted(request,permission);
+}

@@ -8,7 +8,7 @@ type Train={rank:number;trainerId:string;orderValue:number;meetGreetConversions:
 type Board={asOf:number;monthStart:string;metric:string;employees:Emp[];groomers:Groom[];trainers:Train[];counts:{employees:number;groomers:number;trainers:number}};
 
 const INR=(v?:number)=>`₹${Number(v||0).toLocaleString("en-IN")}`;
-const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",panel2:"#01261F",line:"#123c33",orange:"#F6920A",purple:"#8b6bd8",gold:"#E6B34E"};
+const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",panel2:"#01261F",line:"#123c33",orange:"#F6920A",purple:"#2f8a70",gold:"#E6B34E"};
 const METRICS=[["net_collected_revenue","Net collected"],["booking_conversions","Conversions"],["qualified_leads","Qualified leads"],["first_response_rate","First response %"]];
 const medal=(r:number)=>r===1?"🥇":r===2?"🥈":r===3?"🥉":`#${r}`;
 

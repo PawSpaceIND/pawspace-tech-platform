@@ -31,27 +31,27 @@ export default function UnitEconomicsPage(){
   {company&&<p><b>CAC:</b> {company.cac.status==="derived_from_recorded_spend"?`${money(company.cac.spend)} spend ÷ ${company.cac.newCustomers} new customers = ${money(company.cac.cacPerNewCustomer)}`:"configuration required — no recorded marketing spend facts yet"}</p>}
   {report&&<section style={{overflowX:"auto"}}>
    <table style={{borderCollapse:"collapse",width:"100%"}}>
-    <thead><tr>{["Service","GMV","Orders","AOV","Discounts","Provider payout","Refunds","Known contribution","Contribution %","Repeat %","Cancelled","Complaints/100","CSAT ★","CSAT ≥4★ %","Rev / provider-day"].map(header=><th key={header} style={{textAlign:"left",borderBottom:"2px solid #ddd",padding:"8px 10px"}}>{header}</th>)}</tr></thead>
+    <thead><tr>{["Service","GMV","Orders","AOV","Discounts","Provider payout","Refunds","Known contribution","Contribution %","Repeat %","Cancelled","Complaints/100","CSAT ★","CSAT ≥4★ %","Rev / provider-day"].map(header=><th key={header} style={{textAlign:"left",borderBottom:"2px solid #dcece5",padding:"8px 10px"}}>{header}</th>)}</tr></thead>
     <tbody>{Object.entries(report.services).sort(([,a],[,b])=>b.gmv-a.gmv).map(([service,ladder])=><tr key={service}>
-     <td style={{padding:"8px 10px",borderBottom:"1px solid #eee"}}><b>{label(service)}</b></td>
-     <td style={{padding:"8px 10px",borderBottom:"1px solid #eee"}}>{money(ladder.gmv)}</td>
-     <td style={{padding:"8px 10px",borderBottom:"1px solid #eee"}}>{ladder.orders}</td>
-     <td style={{padding:"8px 10px",borderBottom:"1px solid #eee"}}>{money(ladder.avgOrderValue)}</td>
-     <td style={{padding:"8px 10px",borderBottom:"1px solid #eee"}}>{money(ladder.discounts)}</td>
-     <td style={{padding:"8px 10px",borderBottom:"1px solid #eee"}}>{money(ladder.providerPayout)}</td>
-     <td style={{padding:"8px 10px",borderBottom:"1px solid #eee"}}>{money(ladder.refunds)}</td>
-     <td style={{padding:"8px 10px",borderBottom:"1px solid #eee"}}><b>{money(ladder.contributionKnown)}</b></td>
-     <td style={{padding:"8px 10px",borderBottom:"1px solid #eee"}}>{show(ladder.contributionPctOfGmv,"%")}</td>
-     <td style={{padding:"8px 10px",borderBottom:"1px solid #eee"}}>{show(ladder.repeatRatePct,"%")}</td>
-     <td style={{padding:"8px 10px",borderBottom:"1px solid #eee"}}>{ladder.cancelled}</td>
-     <td style={{padding:"8px 10px",borderBottom:"1px solid #eee"}}>{show(ladder.complaintsPer100)}</td>
-     <td style={{padding:"8px 10px",borderBottom:"1px solid #eee"}}>{show(ladder.csatAvgStars)}</td>
-     <td style={{padding:"8px 10px",borderBottom:"1px solid #eee"}}>{show(ladder.csatPct,"%")}</td>
-     <td style={{padding:"8px 10px",borderBottom:"1px solid #eee"}}>{money(ladder.revenuePerProviderDay)}</td>
+     <td style={{padding:"8px 10px",borderBottom:"1px solid #e9f1ee"}}><b>{label(service)}</b></td>
+     <td style={{padding:"8px 10px",borderBottom:"1px solid #e9f1ee"}}>{money(ladder.gmv)}</td>
+     <td style={{padding:"8px 10px",borderBottom:"1px solid #e9f1ee"}}>{ladder.orders}</td>
+     <td style={{padding:"8px 10px",borderBottom:"1px solid #e9f1ee"}}>{money(ladder.avgOrderValue)}</td>
+     <td style={{padding:"8px 10px",borderBottom:"1px solid #e9f1ee"}}>{money(ladder.discounts)}</td>
+     <td style={{padding:"8px 10px",borderBottom:"1px solid #e9f1ee"}}>{money(ladder.providerPayout)}</td>
+     <td style={{padding:"8px 10px",borderBottom:"1px solid #e9f1ee"}}>{money(ladder.refunds)}</td>
+     <td style={{padding:"8px 10px",borderBottom:"1px solid #e9f1ee"}}><b>{money(ladder.contributionKnown)}</b></td>
+     <td style={{padding:"8px 10px",borderBottom:"1px solid #e9f1ee"}}>{show(ladder.contributionPctOfGmv,"%")}</td>
+     <td style={{padding:"8px 10px",borderBottom:"1px solid #e9f1ee"}}>{show(ladder.repeatRatePct,"%")}</td>
+     <td style={{padding:"8px 10px",borderBottom:"1px solid #e9f1ee"}}>{ladder.cancelled}</td>
+     <td style={{padding:"8px 10px",borderBottom:"1px solid #e9f1ee"}}>{show(ladder.complaintsPer100)}</td>
+     <td style={{padding:"8px 10px",borderBottom:"1px solid #e9f1ee"}}>{show(ladder.csatAvgStars)}</td>
+     <td style={{padding:"8px 10px",borderBottom:"1px solid #e9f1ee"}}>{show(ladder.csatPct,"%")}</td>
+     <td style={{padding:"8px 10px",borderBottom:"1px solid #e9f1ee"}}>{money(ladder.revenuePerProviderDay)}</td>
     </tr>)}</tbody>
    </table>
   </section>}
-  {report&&<footer style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
+  {report&&<footer style={{border:"1px solid #dcece5",borderRadius:14,padding:16}}>
    <h2>What each number is made of</h2>
    <ul>{Object.entries(report.dataCoverage).map(([key,source])=><li key={key}><b>{label(key)}:</b> {source}</li>)}</ul>
    <small>Known contribution = GMV − discounts − provider payout − refunds. Tax, payment fees and variable cost join the ladder once their policies are configured; a service is never shown profitable because a cost is unrecorded.</small>

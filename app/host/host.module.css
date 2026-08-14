@@ -2,15 +2,15 @@
   min-height: 100vh;
   display: grid;
   grid-template-columns: 225px 1fr;
-  background: #f5f2f7;
-  color: #21152d;
+  background: #e9f1ee;
+  color: #06231c;
 }
 .shell > aside {
   height: 100vh;
   position: sticky;
   top: 0;
   padding: 18px 13px;
-  background: #201039;
+  background: #06231c;
   color: white;
 }
 .shell > aside img {
@@ -36,7 +36,7 @@
   border-radius: 10px;
   background: #f0a11d;
   color: #351b00;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 950;
 }
 .host div {
@@ -44,11 +44,11 @@
   flex-direction: column;
 }
 .host strong {
-  font-size: 11px;
+  font-size: 13px;
 }
 .host small {
-  font-size: 8px;
-  color: #bfb0ca;
+  font-size: 12.5px;
+  color: #b8c2bf;
 }
 .shell nav {
   display: flex;
@@ -63,9 +63,9 @@
   border: 0;
   border-radius: 9px;
   background: transparent;
-  color: #bcaec8;
+  color: #b6c0bd;
   text-align: left;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 800;
 }
 .shell nav button i {
@@ -80,7 +80,7 @@
   color: #291400;
 }
 .shell nav .active {
-  background: #6530a0;
+  background: #1f6b57;
   color: white;
 }
 .sideFoot {
@@ -96,10 +96,10 @@
 .sideFoot button {
   border: 0;
   background: transparent;
-  color: #b9aac5;
+  color: #b2bdba;
   text-decoration: none;
   text-align: left;
-  font-size: 9px;
+  font-size: 12.5px;
 }
 .main {
   min-width: 0;
@@ -115,8 +115,8 @@
 .panelHead span,
 .profileGrid aside > span {
   margin: 0;
-  color: #75697e;
-  font-size: 8px;
+  color: #6b7c78;
+  font-size: 12.5px;
   font-weight: 900;
   letter-spacing: 0.12em;
 }
@@ -130,7 +130,7 @@
   border-radius: 99px;
   background: #e5f5ed;
   color: #16704f;
-  font-size: 9px;
+  font-size: 12.5px;
   font-weight: 850;
 }
 .metrics {
@@ -141,23 +141,23 @@
 }
 .metrics article {
   padding: 16px;
-  border: 1px solid #e6ddeb;
+  border: 1px solid #dcece5;
   border-radius: 14px;
   background: white;
   display: flex;
   flex-direction: column;
 }
 .metrics span {
-  font-size: 9px;
-  color: #796f81;
+  font-size: 12.5px;
+  color: #70807c;
 }
 .metrics strong {
   font-size: 21px;
   margin: 6px 0;
 }
 .metrics small {
-  font-size: 8px;
-  color: #8a7f91;
+  font-size: 12.5px;
+  color: #80908c;
 }
 .todayGrid,
 .requestLayout,
@@ -168,10 +168,10 @@
 }
 .panel {
   padding: 20px;
-  border: 1px solid #e5dce9;
+  border: 1px solid #dcece5;
   border-radius: 16px;
   background: white;
-  box-shadow: 0 6px 22px rgba(42, 19, 61, 0.04);
+  box-shadow: 0 6px 22px rgba(6,35,28, 0.04);
 }
 .panelHead {
   display: flex;
@@ -188,9 +188,9 @@
   border: 0;
   border-radius: 8px;
   padding: 8px 10px;
-  background: #5b2494;
+  background: #01261F;
   color: white;
-  font-size: 9px;
+  font-size: 12.5px;
   font-weight: 850;
 }
 .petHero {
@@ -199,7 +199,7 @@
   gap: 11px;
   padding: 14px;
   border-radius: 13px;
-  background: linear-gradient(135deg, #321052, #6c2ba1);
+  background: linear-gradient(135deg, #01261F, #1f6b57);
   color: white;
 }
 .petHero > span {
@@ -218,8 +218,8 @@
 }
 .petHero p {
   margin: 3px 0;
-  font-size: 8px;
-  color: #d7c6e3;
+  font-size: 12.5px;
+  color: #dcece5;
 }
 .petHero button {
   margin-left: auto;
@@ -228,7 +228,7 @@
   background: transparent;
   color: white;
   padding: 8px;
-  font-size: 8px;
+  font-size: 12.5px;
 }
 .tasks {
   margin-top: 10px;
@@ -240,7 +240,7 @@
   align-items: center;
   gap: 10px;
   border: 0;
-  border-bottom: 1px solid #eee8f1;
+  border-bottom: 1px solid #e9f1ee;
   background: white;
   text-align: left;
 }
@@ -260,11 +260,11 @@
   flex-direction: column;
 }
 .tasks strong {
-  font-size: 10px;
+  font-size: 13px;
 }
 .tasks small {
-  font-size: 8px;
-  color: #81768a;
+  font-size: 12.5px;
+  color: #778984;
   margin-top: 2px;
 }
 .quick {
@@ -275,11 +275,11 @@
 }
 .quick button {
   padding: 9px 4px;
-  border: 1px solid #dfd4e6;
+  border: 1px solid #dcece5;
   border-radius: 8px;
-  background: #f9f6fb;
-  color: #502078;
-  font-size: 8px;
+  background: #f2f7f5;
+  color: #01261F;
+  font-size: 12.5px;
   font-weight: 800;
 }
 .timeline {
@@ -287,22 +287,22 @@
   grid-template-columns: 58px 1fr;
   gap: 9px;
   padding: 13px 0;
-  border-top: 1px solid #eee8f1;
+  border-top: 1px solid #e9f1ee;
 }
 .timeline b {
-  font-size: 9px;
-  color: #5b2494;
+  font-size: 12.5px;
+  color: #01261F;
 }
 .timeline div {
   display: flex;
   flex-direction: column;
 }
 .timeline strong {
-  font-size: 10px;
+  font-size: 13px;
 }
 .timeline small {
-  font-size: 8px;
-  color: #807489;
+  font-size: 12.5px;
+  color: #758883;
   margin-top: 3px;
 }
 .emergency {
@@ -313,7 +313,7 @@
   border-radius: 9px;
   background: #fff7f7;
   color: #af2636;
-  font-size: 9px;
+  font-size: 12.5px;
   font-weight: 850;
 }
 .request {
@@ -325,7 +325,7 @@
   align-items: center;
   border: 1px solid transparent;
   border-radius: 11px;
-  background: #faf8fb;
+  background: #f2f7f5;
   text-align: left;
   margin-bottom: 7px;
 }
@@ -335,9 +335,9 @@
   display: grid;
   place-items: center;
   border-radius: 10px;
-  background: #e9ddf2;
-  color: #55227f;
-  font-size: 10px;
+  background: #dcece5;
+  color: #01261F;
+  font-size: 13px;
   font-weight: 950;
 }
 .request div {
@@ -345,48 +345,48 @@
   flex-direction: column;
 }
 .request strong {
-  font-size: 10px;
+  font-size: 13px;
 }
 .request small {
-  font-size: 8px;
-  color: #80758a;
+  font-size: 12.5px;
+  color: #768984;
   margin-top: 3px;
 }
 .request b {
-  font-size: 8px;
+  font-size: 12.5px;
   color: #17704f;
 }
 .request.selected {
-  border-color: #8a59b3;
-  background: #f6effb;
+  border-color: #2f8a70;
+  background: #f2f7f5;
 }
 .match {
   padding: 5px 8px;
   border-radius: 99px;
   background: #e7f6ef;
   color: #14704e;
-  font-size: 8px;
+  font-size: 12.5px;
   font-weight: 900;
 }
 .panel > p {
-  font-size: 10px;
+  font-size: 13px;
   line-height: 1.6;
-  color: #786d81;
+  color: #6e807b;
 }
 .careNotes {
   padding: 13px;
   border-radius: 11px;
-  background: #f7f3f9;
+  background: #f2f7f5;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 .careNotes strong {
-  font-size: 10px;
+  font-size: 13px;
 }
 .careNotes span {
-  font-size: 8px;
-  color: #6f6478;
+  font-size: 12.5px;
+  color: #667672;
 }
 .panel dl {
   margin: 15px 0;
@@ -395,15 +395,15 @@
   display: flex;
   justify-content: space-between;
   padding: 9px 0;
-  border-top: 1px solid #ece5ef;
+  border-top: 1px solid #dcece5;
 }
 .panel dt {
-  font-size: 9px;
-  color: #7d7285;
+  font-size: 12.5px;
+  color: #738480;
 }
 .panel dd {
   margin: 0;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 850;
 }
 .actions {
@@ -413,16 +413,16 @@
 }
 .actions button {
   padding: 10px;
-  border: 1px solid #d9cee1;
+  border: 1px solid #dcece5;
   border-radius: 8px;
   background: white;
-  color: #53227b;
-  font-size: 8px;
+  color: #01261F;
+  font-size: 12.5px;
   font-weight: 900;
 }
 .actions button:last-child {
-  border-color: #5d2494;
-  background: #5d2494;
+  border-color: #01261F;
+  background: #01261F;
   color: white;
 }
 .calendar {
@@ -433,7 +433,7 @@
 .calendar button {
   min-height: 68px;
   padding: 8px;
-  border: 1px solid #e6ddea;
+  border: 1px solid #dcece5;
   border-radius: 9px;
   background: #f4fbf7;
   text-align: left;
@@ -444,37 +444,37 @@
   font-weight: 900;
 }
 .calendar button small {
-  font-size: 7px;
+  font-size: 12px;
 }
 .calendar .booked {
-  background: #eee4f6;
-  color: #56217f;
+  background: #e9f1ee;
+  color: #01261F;
 }
 .calendar .pending {
   background: #fff4dd;
   color: #8a5406;
 }
 .calendar .blocked {
-  background: #eeecef;
-  color: #7f7884;
+  background: #ecefee;
+  color: #798381;
 }
 .legend {
   display: flex;
   gap: 16px;
   margin-top: 13px;
-  font-size: 8px;
-  color: #796f81;
+  font-size: 12.5px;
+  color: #70807c;
 }
 .earning {
   display: grid;
   grid-template-columns: 100px 1fr 120px 90px;
   gap: 10px;
   padding: 12px 5px;
-  border-top: 1px solid #ece5ef;
-  font-size: 9px;
+  border-top: 1px solid #dcece5;
+  font-size: 12.5px;
 }
 .earning small {
-  color: #7c7184;
+  color: #72837f;
 }
 .earning strong {
   text-align: right;
@@ -505,9 +505,9 @@
   left: 8px;
   padding: 6px 8px;
   border-radius: 7px;
-  background: #21112bbd;
+  background: #06231cbd;
   color: white;
-  font-size: 8px;
+  font-size: 12.5px;
   font-weight: 850;
 }
 .panel h3 {
@@ -524,7 +524,7 @@
   border-radius: 7px;
   background: #eaf7f1;
   color: #156a4c;
-  font-size: 8px;
+  font-size: 12.5px;
   font-weight: 800;
 }
 .marketSync {
@@ -534,17 +534,17 @@
   align-items: center;
   margin-top: 14px;
   padding: 12px;
-  border: 1px solid #d8c7e4;
+  border: 1px solid #dcece5;
   border-radius: 12px;
-  background: #f4eef8;
+  background: #e9f1ee;
 }
 .marketSync b {
-  color: #552080;
-  font-size: 10px;
+  color: #01261F;
+  font-size: 13px;
 }
 .marketSync span {
-  color: #706479;
-  font-size: 8px;
+  color: #677672;
+  font-size: 12.5px;
   line-height: 1.45;
 }
 .marketSync button {
@@ -552,10 +552,10 @@
   grid-row: 1 / 3;
   border: 0;
   border-radius: 8px;
-  background: #6423a8;
+  background: #01261F;
   color: white;
   padding: 9px 11px;
-  font-size: 8px;
+  font-size: 12.5px;
   font-weight: 900;
 }
 .toast {
@@ -567,7 +567,7 @@
   border-radius: 9px;
   background: #17704f;
   color: white;
-  font-size: 9px;
+  font-size: 12.5px;
   font-weight: 900;
 }
 @media (max-width: 820px) {
@@ -638,6 +638,6 @@
     align-items: flex-start;
   }
   .live {
-    font-size: 7px;
+    font-size: 12px;
   }
 }

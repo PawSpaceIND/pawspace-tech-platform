@@ -38,7 +38,7 @@ type Handoff = {
 
 const box = {
   background: "white",
-  border: "1px solid #e5dcef",
+  border: "1px solid #dcece5",
   borderRadius: 14,
 };
 
@@ -160,10 +160,10 @@ export default function AiHandoffPage() {
     <main
       style={{
         minHeight: "100vh",
-        background: "#f7f4fb",
+        background: "#f2f7f5",
         padding: 28,
         fontFamily: "Arial, sans-serif",
-        color: "#24133f",
+        color: "#06231c",
       }}
     >
       <div style={{ maxWidth: 1400, margin: "0 auto" }}>
@@ -177,9 +177,9 @@ export default function AiHandoffPage() {
           }}
         >
           <div>
-            <small style={{ fontWeight: 800, color: "#6c39a8" }}>PAWSPACE TEAM · AI GATE 4</small>
+            <small style={{ fontWeight: 800, color: "#1f6b57" }}>PAWSPACE TEAM · AI GATE 4</small>
             <h1 style={{ margin: "6px 0" }}>Human handoff & staff takeover</h1>
-            <p style={{ margin: 0, color: "#756c7d" }}>
+            <p style={{ margin: 0, color: "#6d7c78" }}>
               AI pauses during staff ownership. Return to AI requires an explicit governed staff action.
             </p>
           </div>
@@ -210,15 +210,15 @@ export default function AiHandoffPage() {
           }}
         >
           <aside style={{ ...box, overflow: "hidden" }}>
-            <div style={{ padding: 16, borderBottom: "1px solid #eee6f5" }}>
+            <div style={{ padding: 16, borderBottom: "1px solid #e9f1ee" }}>
               <b>Open canonical threads</b>
-              <div style={{ fontSize: 12, color: "#746b7d", marginTop: 4 }}>
+              <div style={{ fontSize: 12, color: "#6c7c78", marginTop: 4 }}>
                 {queue.length === 0
                   ? "No conversation is currently escalated to a human."
                   : `${queue.filter((entry) => entry.status === "queued").length} waiting · ${queue.filter((entry) => entry.status === "staff_active").length} with staff`}
               </div>
             </div>
-            {threads.length === 0 && <p style={{ padding: 16, color: "#746b7d" }}>No open conversations.</p>}
+            {threads.length === 0 && <p style={{ padding: 16, color: "#6c7c78" }}>No open conversations.</p>}
             {threads.map((thread) => (
               <button
                 key={thread.id}
@@ -229,8 +229,8 @@ export default function AiHandoffPage() {
                   textAlign: "left",
                   padding: 14,
                   border: 0,
-                  borderBottom: "1px solid #f0ebf4",
-                  background: selected?.id === thread.id ? "#f2ebfa" : "white",
+                  borderBottom: "1px solid #e9f1ee",
+                  background: selected?.id === thread.id ? "#e9f1ee" : "white",
                 }}
               >
                 <strong>{thread.customer_name || thread.customer_id || "Customer"}</strong>
@@ -267,7 +267,7 @@ export default function AiHandoffPage() {
                   </div>
                 </div>
 
-                <hr style={{ border: 0, borderTop: "1px solid #eee6f5", margin: "18px 0" }} />
+                <hr style={{ border: 0, borderTop: "1px solid #e9f1ee", margin: "18px 0" }} />
 
                 {!current ? (
                   <p>No Gate-4 handoff is active or recorded for this thread.</p>
@@ -296,12 +296,12 @@ export default function AiHandoffPage() {
                     </div>
                     <h3>Handoff transcript summary</h3>
                     {transcript.length === 0 ? (
-                      <p style={{ color: "#756c7d" }}>No transcript excerpt captured.</p>
+                      <p style={{ color: "#6d7c78" }}>No transcript excerpt captured.</p>
                     ) : (
                       transcript.map((message, index) => (
                         <div
                           key={index}
-                          style={{ padding: 10, marginBottom: 8, background: "#f6f5f7", borderRadius: 10 }}
+                          style={{ padding: 10, marginBottom: 8, background: "#f5f7f6", borderRadius: 10 }}
                         >
                           <small>
                             {label(message.direction)} · {label(message.channel)}

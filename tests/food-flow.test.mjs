@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { createD1 } from "./helpers/d1.mjs";
 
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const flow = read("app/mobile-app/food-flow.tsx");
@@ -69,30 +70,9 @@ test("flow styling uses the Emerald/Gold palette with system fonts", () => {
 // dispatch to the real, unmodified lib/food-governance.ts functions, so quoteFoodCart and
 // placeQuotedFoodOrders are proven against the actual CREATE TABLE statements and pricing rules.
 
-function makeD1(sqlite) {
-  function statement(sql, args) {
-    return {
-      bind: (...boundArgs) => statement(sql, boundArgs),
-      first: async () => {
-        const row = sqlite.prepare(sql).get(...args);
-        return row === undefined ? null : row;
-      },
-      run: async () => {
-        sqlite.prepare(sql).run(...args);
-        return { success: true, meta: {} };
-      },
-      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-    };
-  }
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (statements) => {
-      const results = [];
-      for (const stmt of statements) results.push(await stmt.run());
-      return results;
-    },
-  };
-}
+// batch() is one transaction in D1: see tests/helpers/d1.mjs. The loop this replaced committed
+// each statement as it went, so any atomicity claim below was measured against the wrong machine.
+const makeD1 = (sqlite, options) => createD1(sqlite, options);
 
 async function withFoodBackend(run) {
   const sqlite = new DatabaseSync(":memory:");

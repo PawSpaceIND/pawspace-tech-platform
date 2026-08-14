@@ -3,7 +3,7 @@
 .wrap h3{margin:0;font-size:20px}
 .wrap small{color:#b8c6c0}
 .steps{display:flex;gap:8px;margin:4px 0 16px}
-.steps span{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-size:13px;font-weight:700;background:#0b2b24;border:1px solid #123c33;color:#b8c6c0}
+.steps span{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;font-size:14.5px;font-weight:700;background:#0b2b24;border:1px solid #123c33;color:#b8c6c0}
 .steps span.active{background:#E6B34E;border-color:#E6B34E;color:#01261F}
 .head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;gap:8px}
 .card{display:block;width:100%;text-align:left;background:#0b2b24;border:1px solid #123c33;border-radius:14px;padding:14px;margin-bottom:10px;color:inherit;cursor:pointer}
@@ -12,23 +12,23 @@
 .cardTop{display:flex;justify-content:space-between;align-items:center;gap:10px}
 .cardTop b{font-size:16px}
 .price{color:#E6B34E;font-weight:800;font-size:16px;white-space:nowrap}
-.meta{display:block;margin-top:4px;font-size:13px;color:#b8c6c0}
+.meta{display:block;margin-top:4px;font-size:14.5px;color:#b8c6c0}
 .modeRow,.chipRow{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 14px}
-.chip{padding:8px 12px;border-radius:999px;border:1px solid #123c33;background:#0b2b24;color:#FDF3E1;font-size:13px;font-weight:600;cursor:pointer}
+.chip{padding:8px 12px;border-radius:999px;border:1px solid #123c33;background:#0b2b24;color:#FDF3E1;font-size:14.5px;font-weight:600;cursor:pointer}
 .chip.selected{background:#E6B34E;border-color:#E6B34E;color:#01261F}
-.label{display:block;font-size:13px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#E6B34E;margin:16px 0 6px}
+.label{display:block;font-size:14.5px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:#E6B34E;margin:16px 0 6px}
 .stepper{display:inline-flex;align-items:center;gap:14px;background:#0b2b24;border:1px solid #123c33;border-radius:12px;padding:6px 10px}
 .stepper button{width:34px;height:34px;border-radius:9px;border:none;background:#123c33;color:#FDF3E1;font-size:18px;font-weight:700;cursor:pointer}
 .stepper button:disabled{opacity:.4;cursor:not-allowed}
 .stepper b{min-width:72px;text-align:center}
-.note{background:rgba(230,179,78,.08);border:1px solid rgba(230,179,78,.4);border-radius:12px;padding:10px 12px;font-size:13px;color:#FDF3E1;margin:10px 0}
+.note{background:rgba(230,179,78,.08);border:1px solid rgba(230,179,78,.4);border-radius:12px;padding:10px 12px;font-size:14.5px;color:#FDF3E1;margin:10px 0}
 .petGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:6px}
 .petGrid button{display:flex;align-items:center;gap:10px;background:#0b2b24;border:1px solid #123c33;border-radius:14px;padding:12px;color:inherit;text-align:left;cursor:pointer}
 .petGrid button.selected{border-color:#E6B34E;box-shadow:0 0 0 1px #E6B34E inset}
 .petGrid i{font-style:normal;font-size:22px}
 .petGrid b{display:block;font-size:14px}
-.petGrid small{display:block;font-size:12px}
-.dogsOnly{display:inline-block;margin-top:2px;font-size:11px;color:#E6B34E;font-weight:700;letter-spacing:.4px}
+.petGrid small{display:block;font-size:14px}
+.dogsOnly{display:inline-block;margin-top:2px;font-size:13px;color:#E6B34E;font-weight:700;letter-spacing:.4px}
 .review{background:#0b2b24;border:1px solid #123c33;border-radius:14px;padding:6px 14px;margin-bottom:12px}
 .review>div{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid #123c33;font-size:14px}
 .review>div:last-child{border-bottom:none}
@@ -38,7 +38,7 @@
 .primary:disabled{opacity:.55;cursor:not-allowed}
 .back{background:none;border:none;color:#b8c6c0;font-size:14px;cursor:pointer;padding:10px 0;margin-top:4px}
 .alert{color:#ff9a9a;font-size:14px;margin:10px 0}
-.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;background:#E6B34E;color:#01261F;font-weight:700;font-size:13px;padding:10px 16px;border-radius:999px;z-index:40;max-width:90vw}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:24px;background:#E6B34E;color:#01261F;font-weight:700;font-size:14.5px;padding:10px 16px;border-radius:999px;z-index:40;max-width:90vw}
 .success{background:#0b2b24;border:1px solid #E6B34E;border-radius:16px;padding:18px;margin-bottom:14px}
 .success i{font-style:normal;display:inline-grid;place-items:center;width:38px;height:38px;border-radius:50%;background:#E6B34E;color:#01261F;font-weight:800;margin-bottom:10px}
 .success small{display:block;letter-spacing:1px;color:#E6B34E;font-weight:700}
@@ -46,11 +46,11 @@
 .walker{display:flex;align-items:center;gap:12px;background:#0b2b24;border:1px solid #123c33;border-radius:14px;padding:14px;margin-bottom:12px}
 .walker i{font-style:normal;width:44px;height:44px;border-radius:50%;background:#123c33;display:grid;place-items:center;font-weight:800;color:#E6B34E}
 .walker b{display:block;font-size:15px}
-.walker small{display:block;font-size:12px;margin-top:2px}
+.walker small{display:block;font-size:14px;margin-top:2px}
 .rating{color:#E6B34E;font-weight:700}
 .sessions{background:#0b2b24;border:1px solid #123c33;border-radius:14px;padding:6px 14px}
 .sessions span{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #123c33;font-size:14px}
 .sessions span:last-child{border-bottom:none}
-.sessions i{font-style:normal;width:26px;height:26px;border-radius:50%;background:#123c33;display:grid;place-items:center;font-size:12px;font-weight:700;color:#E6B34E;flex-shrink:0}
-.sessions em{margin-left:auto;font-style:normal;font-size:12px;color:#b8c6c0;text-transform:capitalize}
+.sessions i{font-style:normal;width:26px;height:26px;border-radius:50%;background:#123c33;display:grid;place-items:center;font-size:14px;font-weight:700;color:#E6B34E;flex-shrink:0}
+.sessions em{margin-left:auto;font-style:normal;font-size:14px;color:#b8c6c0;text-transform:capitalize}
 @media (min-width:640px){.petGrid{grid-template-columns:1fr 1fr 1fr 1fr}}

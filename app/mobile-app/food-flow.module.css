@@ -20,7 +20,7 @@
   color: #8c8195;
   display: grid;
   place-items: center;
-  font-size: 9px;
+  font-size: 12.5px;
   font-weight: 900;
 }
 
@@ -45,7 +45,7 @@
 
 .head small,
 .section span {
-  font-size: 8px;
+  font-size: 12.5px;
   color: #0a4a3c;
   font-weight: 900;
   letter-spacing: 0.4px;
@@ -56,7 +56,7 @@
 }
 
 .section b {
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .petRow {
@@ -85,11 +85,11 @@
 }
 
 .petRow button b {
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .petRow button small {
-  font-size: 8px;
+  font-size: 12.5px;
   color: #71667c;
   text-align: center;
 }
@@ -122,24 +122,24 @@
 }
 
 .item b {
-  font-size: 13px;
+  font-size: 14.5px;
 }
 
 .item small {
-  font-size: 10px;
+  font-size: 13px;
   color: #71667c;
 }
 
 .item em {
   font-style: normal;
-  font-size: 13px;
+  font-size: 14.5px;
   font-weight: 800;
   color: #01261f;
   white-space: nowrap;
 }
 
 .forPets {
-  font-size: 9px;
+  font-size: 12.5px;
   font-weight: 800;
   color: #01261f;
   background: rgba(230, 179, 78, 0.25);
@@ -161,7 +161,7 @@
   color: #e6b34e;
   border-radius: 9px;
   padding: 6px 16px;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 800;
   font-family: inherit;
   cursor: pointer;
@@ -193,7 +193,7 @@
 }
 
 .stepper b {
-  font-size: 13px;
+  font-size: 14.5px;
   min-width: 14px;
   text-align: center;
 }
@@ -219,11 +219,11 @@
 }
 
 .planRow button b {
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .planRow button span {
-  font-size: 9px;
+  font-size: 12.5px;
   color: #71667c;
 }
 
@@ -240,7 +240,7 @@
 .field {
   display: grid;
   gap: 5px;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   margin-bottom: 10px;
 }
@@ -273,14 +273,14 @@
 .review span {
   display: grid;
   gap: 1px;
-  font-size: 9px;
+  font-size: 12.5px;
   font-weight: 800;
   color: #71667c;
   text-transform: uppercase;
 }
 
 .review span b {
-  font-size: 12px;
+  font-size: 14px;
   color: #01261f;
   text-transform: none;
 }
@@ -298,7 +298,7 @@
 .totalRow span {
   display: flex;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
 }
 
@@ -307,7 +307,7 @@
 }
 
 .totalRow small {
-  font-size: 9px;
+  font-size: 12.5px;
   color: #4c5b52;
 }
 
@@ -334,7 +334,7 @@
   border: none;
   background: none;
   color: #0a4a3c;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
   font-family: inherit;
   cursor: pointer;
@@ -342,13 +342,13 @@
 }
 
 .hint {
-  font-size: 10px;
+  font-size: 13px;
   color: #71667c;
   margin: 8px 2px;
 }
 
 .error {
-  font-size: 12px;
+  font-size: 14px;
   color: #9c2b1f;
   margin: 8px 2px;
 }
@@ -378,7 +378,7 @@
 }
 
 .success small {
-  font-size: 8px;
+  font-size: 12.5px;
   font-weight: 900;
   color: #0a4a3c;
   letter-spacing: 0.5px;
@@ -391,7 +391,7 @@
 
 .success p {
   margin: 0;
-  font-size: 11px;
+  font-size: 13px;
   color: #4c5b52;
 }
 
@@ -412,27 +412,27 @@
 }
 
 .orderCard header b {
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .orderCard header em {
   font-style: normal;
-  font-size: 13px;
+  font-size: 14.5px;
   font-weight: 800;
 }
 
 .orderCard p {
   margin: 0;
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .orderCard small {
-  font-size: 10px;
+  font-size: 13px;
   color: #71667c;
 }
 
 .subBadge {
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 700;
   color: #01261f;
   background: rgba(230, 179, 78, 0.25);

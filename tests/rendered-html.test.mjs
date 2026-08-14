@@ -381,7 +381,10 @@ test("provides governed launch gates, UAT evidence and an exception queue", asyn
   assert.match(panel, /Close basics with evidence, not confidence/);
   assert.match(panel, /UAT sign-off/);
   assert.match(panel, /Exception queue/);
-  assert.match(route, /Authentication required/);
+  // The route used to hand-roll its own 401 with a plain-text body. It now goes through the shared
+  // resolveActor/requirePermission path, so the guarantee to lock is that it is gated at all.
+  assert.match(route, /requirePermission\(await resolveActor\(request\),"launch\.view"\)/);
+  assert.match(route, /hasPermission\(resolved\.permissions,"launch\.manage"\)/);
   assert.match(route, /Evidence is required before verification/);
   assert.match(route, /p0Verified/);
   assert.match(schema, /launchReadinessItems/);

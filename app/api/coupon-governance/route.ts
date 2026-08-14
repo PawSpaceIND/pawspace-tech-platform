@@ -1,3 +1,4 @@
+import{refuseUnlessGatewayPermits}from"../../../lib/api-gateway";
 import{authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{consumeCouponQuote,listCouponCampaigns,quoteCoupon,saveCouponCampaign,type CouponCampaign,type CouponQuoteInput}from"../../../lib/coupon-governance";
 
@@ -7,7 +8,7 @@ async function couponsLiveApproved(){const{env}=await import("cloudflare:workers
 
 export async function GET(request:Request){try{const actor=await resolveActor(request);requirePermission(actor,"pricing.view");const db=await database();return json({data:await listCouponCampaigns(db),testOnly:true,liveMoney:false,productionReady:false});}catch(error){return authError(error,"Unable to load coupon governance");}}
 
-export async function POST(request:Request){try{const body=await request.json() as Record<string,unknown>,action=String(body.action||"");const actor=await resolveActor(request),db=await database();
+export async function POST(request:Request){const denied=await refuseUnlessGatewayPermits(request);if(denied)return denied;try{const body=await request.json() as Record<string,unknown>,action=String(body.action||"");const actor=await resolveActor(request),db=await database();
   if(action==="quote"){
     requirePermission(actor,"scheduling.book");const input=body.input as CouponQuoteInput|undefined;if(!input?.customerId)return json({error:"Customer is required"},400);await requireCustomerOwnership(db,actor,input.customerId);const liveApproved=await couponsLiveApproved();const result=await quoteCoupon(db,input,{liveApproved});await securityAudit(db,actor,"coupon.quote","coupon",String(input.code||""),result.valid?"completed":"rejected",{customerId:input.customerId,serviceCode:input.serviceCode,cityId:input.cityId,channel:input.channel,packageCode:input.packageCode,testOnly:result.valid?result.testOnly:null});return json({data:result,testOnly:result.valid?result.testOnly:null,liveMoney:result.valid?result.liveMoney:false},result.valid?200:409);
   }

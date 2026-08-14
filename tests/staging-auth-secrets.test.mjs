@@ -6,6 +6,7 @@ import path from "node:path";
 import os from "node:os";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 // ---------------------------------------------------------------------------
 // Staging UAT sign-in: four confirmed defects, each pinned here.
@@ -38,15 +39,9 @@ const workflow = read(".github/workflows/deploy-staging.yml");
 // The exact strings that were committed. They are public forever, so they must never work again.
 const BURNED = ["pawspace-uat-2026", "pawspace-staging-uat-signing-key-do-not-reuse-in-prod", "pawspace-staging-identity-assertion-uat-secret"];
 
-function makeD1(sqlite) {
-  const statement = (sql, args) => ({
-    bind: (...bound) => statement(sql, bound),
-    first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-    run: async () => { sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: 0 } }; },
-    all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-  });
-  return { prepare: (sql) => statement(sql, []), batch: async (list) => { for (const item of list) await item.run(); return []; }, exec: async (sql) => { sqlite.exec(sql); } };
-}
+// batch() is one transaction in D1: see tests/helpers/d1.mjs. The loop this replaced committed
+// each statement as it went, so any atomicity claim below was measured against the wrong machine.
+const makeD1 = (sqlite, options) => createD1(sqlite, options);
 
 /** A staff directory with one active user, one suspended, and one role that has no definition. */
 function staffDb() {
