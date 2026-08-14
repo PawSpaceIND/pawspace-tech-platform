@@ -19,24 +19,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createD1 } from "./helpers/d1.mjs";
 
 installWorkersHooks("__BOPSEC_DB__", "__BOPSEC_ENV__");
 
-function makeD1(sqlite) {
-  function statement(sql, args) {
-    return {
-      bind: (...bound) => statement(sql, bound),
-      first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-      run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
-      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-    };
-  }
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
-    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-  };
-}
+// batch() is one transaction in D1: see tests/helpers/d1.mjs. The loop this replaced committed
+// each statement as it went, so any atomicity claim below was measured against the wrong machine.
+const makeD1 = (sqlite, options) => createD1(sqlite, options);
 
 const BOOKING_TOTAL = 6000;
 // The security DDL and role catalogue are memoized per isolate, so the suite shares one database and

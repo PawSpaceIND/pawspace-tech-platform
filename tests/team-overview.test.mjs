@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as nodeModule from "node:module";
+import { createD1 } from "./helpers/d1.mjs";
 
 // ---------------------------------------------------------------------------
 // /team was a static shell: "Revenue actions 100", "Open escalations 3", "7 PM command pack
@@ -41,21 +42,9 @@ if (typeof nodeModule.registerHooks === "function") {
 const teamOverviewRoute = await import("../app/api/team-overview/route.ts");
 const { buildTeamOverview } = await import("../lib/team-overview.ts");
 
-function makeD1(sqlite) {
-  function statement(sql, args) {
-    return {
-      bind: (...boundArgs) => statement(sql, boundArgs),
-      first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-      run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
-      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-    };
-  }
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (statements) => { const results = []; for (const stmt of statements) results.push(await stmt.run()); return results; },
-    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
-  };
-}
+// batch() is one transaction in D1: see tests/helpers/d1.mjs. The loop this replaced committed
+// each statement as it went, so any atomicity claim below was measured against the wrong machine.
+const makeD1 = (sqlite, options) => createD1(sqlite, options);
 
 const NOW = Date.UTC(2026, 7, 13, 6, 0, 0);
 const TODAY = new Date(NOW + 19_800_000).toISOString().slice(0, 10);

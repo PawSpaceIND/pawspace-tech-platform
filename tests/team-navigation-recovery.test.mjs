@@ -18,6 +18,7 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as nodeModule from "node:module";
+import { createD1 } from "./helpers/d1.mjs";
 
 const CF_STUB = "data:text/javascript,export const env=new Proxy({},{get:(t,k)=>k===\"DB\"?globalThis.__NAV_DB__:(globalThis.__NAV_ENV__??{})[k]});";
 // registerHooks() requires Node >= 22.15; CI pins 22.13.0, where it does not exist. Without this
@@ -48,34 +49,9 @@ if (typeof nodeModule.registerHooks === "function") {
   nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
 }
 
-function makeD1(sqlite) {
-  function statement(sql, args) {
-    return {
-      bind: (...bound) => statement(sql, bound),
-      first: async () => {
-        const row = sqlite.prepare(sql).get(...args);
-        return row === undefined ? null : row;
-      },
-      run: async () => {
-        const info = sqlite.prepare(sql).run(...args);
-        return { success: true, meta: { changes: Number(info.changes) } };
-      },
-      all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
-    };
-  }
-  return {
-    prepare: (sql) => statement(sql, []),
-    batch: async (statements) => {
-      const out = [];
-      for (const item of statements) out.push(await item.run());
-      return out;
-    },
-    exec: async (sql) => {
-      sqlite.exec(sql);
-      return { count: 0, duration: 0 };
-    },
-  };
-}
+// batch() is one transaction in D1: see tests/helpers/d1.mjs. The loop this replaced committed
+// each statement as it went, so any atomicity claim below was measured against the wrong machine.
+const makeD1 = (sqlite, options) => createD1(sqlite, options);
 
 const repoFile = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
