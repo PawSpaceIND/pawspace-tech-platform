@@ -391,18 +391,28 @@ for (const b of BOOKINGS.filter((x) => x.status === "completed" && ["grooming", 
 }
 // identity links so the partner workspace and self-service resolve a real subject
 insert("provider_identity_links", { email: "uat.demo.groomer@tkpetcare.in", provider_id: "groom_arun", status: "active", verified_at: at(-100), updated_at: at(-100) });
-// A SECOND bound provider. Tester 3's Journey D stalled here: two provider personas authenticated
-// fine, but only one was ever bound, so ownProviderId() resolved null for the other and every
-// provider-owned lifecycle read answered "no provider bound to this identity". With one binding you
-// also cannot test the case that matters - provider B acting on provider A's work order - because
-// there is no second provider to refuse.
+// The two provider personas Tester 3 actually signs in as. Both already exist as service_provider
+// logins in scripts/employee-seed.sql (EMP001 Asha A., EMP002 Rahul B.) and both authenticated
+// correctly on staging - they simply had no provider profile, so ownProviderId() resolved null and
+// every provider-owned read answered "no active provider identity is linked to this session".
 //
-// groom_kiran is deliberate rather than arbitrary: it is already on the capacity roster AND already
-// owns a seeded booking, so provider B has real work of their own to progress while groom_arun's two
-// bookings are the cross-provider negative case. This adds an app_users login and a binding only -
-// NOT an employees/payroll row - so every seeded payroll and finance figure is byte-identical.
-insert("app_users", { id: "UATD-PROV-GROOM2-USER", email: "uat.demo.groomer2@tkpetcare.in", name: "Demo · Kiran (Groomer)", role_code: "service_provider", status: "active", created_at: at(-400), updated_at: at(-400) });
-insert("provider_identity_links", { email: "uat.demo.groomer2@tkpetcare.in", provider_id: "groom_kiran", status: "active", verified_at: at(-100), updated_at: at(-100) });
+// They are bound here rather than in employee-seed.sql because provider_identity_links is a fixture
+// concern, and .github/workflows/seed-staging.yml loads employee-seed.sql FIRST and this pack LAST -
+// so the app_users rows always exist by the time these rows land. Nothing is duplicated: no app_users
+// or employees row is created for either persona.
+//
+// WHY THESE TWO PROFILES. There is no name linkage between the staff directory and the capacity
+// roster - the roster is a separate synthetic identity space ("Arun R.", "Kiran S."), and `employees`
+// has no provider column. Matching on first name would actively pick the WRONG profiles: the only
+// "Asha" on the roster is sit_asha/walk_asha (a sitter and a walker) and the only "Rahul" is
+// taxi_rahul (a driver), so a name match would bind two GROOMERS to a sitting, walking and taxi
+// profile. The criterion that does exist is service + city + roster ownership, and on that both
+// mappings hold: groom_arun and groom_kiran are the two blr/blr-east grooming providers that already
+// own seeded grooming work, they are distinct (so cross-provider refusal is testable), and they carry
+// different payout models (full_time vs commission) so Journey D exercises both. groom_arun is
+// further corroborated by the pre-existing demo binding, which already treats it as Asha's profile.
+insert("provider_identity_links", { email: "asha.groomer1@tkpetcare.in", provider_id: "groom_arun", status: "active", verified_at: at(-100), updated_at: at(-100) });
+insert("provider_identity_links", { email: "rahul.groomer2@tkpetcare.in", provider_id: "groom_kiran", status: "active", verified_at: at(-100), updated_at: at(-100) });
 insert("customer_identity_links", { email: "uat.demo.customer@tkpetcare.in", customer_id: "UATD-CUS-1", status: "active", verified_at: at(-100), updated_at: at(-100) });
 // a live job offer so the partner workspace has something to accept
 insert("provider_job_offers", { id: "UATD-OFFER-1", provider_id: "groom_arun", booking_id: "UATD-BK-GROOM-2", status: "offered", offered_at: at(-1), responded_at: null, expires_at: at(2), detail_json: JSON.stringify({ demoSeed: true }) });
