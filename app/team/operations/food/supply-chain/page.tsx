@@ -35,14 +35,14 @@ export default function FoodSupplyChainPage(){
    {snapshot.expiry.expiringWithin48h.map(item=><p key={item.batchId}>{item.batchId} · {item.sku} · {item.remaining} units · expires {item.expiryDate}</p>)}
   </section>}
   <section style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(320px,1fr))",gap:16}}>
-   <article style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
+   <article style={{border:"1px solid #dcece5",borderRadius:14,padding:16}}>
     <h2>Supplier</h2>
     <input placeholder="Supplier name" value={supplierName} onChange={event=>setSupplierName(event.target.value)} style={{width:"100%",marginBottom:6}}/>
     <input placeholder="Contact phone" value={supplierPhone} onChange={event=>setSupplierPhone(event.target.value)} style={{width:"100%",marginBottom:6}}/>
     <button disabled={busy} onClick={()=>void run({action:"save_supplier",name:supplierName,contactPhone:supplierPhone},"Supplier saved")}>Save supplier</button>
     <ul>{(snapshot?.suppliers??[]).map(supplier=><li key={String(supplier.id)}>{String(supplier.name)} · {label(supplier.status)} · <code>{String(supplier.id)}</code></li>)}</ul>
    </article>
-   <article style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
+   <article style={{border:"1px solid #dcece5",borderRadius:14,padding:16}}>
     <h2>Purchase order</h2>
     <input placeholder="Supplier ID" value={poSupplier} onChange={event=>setPoSupplier(event.target.value)} style={{width:"100%",marginBottom:6}}/>
     <input placeholder="SKU" value={poSku} onChange={event=>setPoSku(event.target.value)} style={{width:"100%",marginBottom:6}}/>
@@ -51,14 +51,14 @@ export default function FoodSupplyChainPage(){
     <input placeholder="Unit cost" value={poCost} onChange={event=>setPoCost(event.target.value)} style={{width:"100%",marginBottom:6}}/>
     <button disabled={busy} onClick={()=>void run({action:"create_po",supplierId:poSupplier,sku:poSku,zoneId:poZone,quantity:Number(poQty),unitCost:Number(poCost),idempotencyKey:`po:${crypto.randomUUID()}`},"Purchase order created")}>Create PO</button>
    </article>
-   <article style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
+   <article style={{border:"1px solid #dcece5",borderRadius:14,padding:16}}>
     <h2>Receive → batch</h2>
     <input placeholder="Purchase order ID" value={receiveId} onChange={event=>setReceiveId(event.target.value)} style={{width:"100%",marginBottom:6}}/>
     <label>Preparation <input type="date" value={prepDate} onChange={event=>setPrepDate(event.target.value)}/></label>
     <label style={{marginLeft:8}}>Expiry <input type="date" value={expiryDate} onChange={event=>setExpiryDate(event.target.value)}/></label>
     <div style={{marginTop:6}}><button disabled={busy} onClick={()=>void run({action:"receive_po",purchaseOrderId:receiveId,preparationDate:prepDate,expiryDate},"Stock received into a dated batch")}>Receive</button></div>
    </article>
-   <article style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
+   <article style={{border:"1px solid #dcece5",borderRadius:14,padding:16}}>
     <h2>Wastage</h2>
     <input placeholder="Batch ID" value={wasteBatch} onChange={event=>setWasteBatch(event.target.value)} style={{width:"100%",marginBottom:6}}/>
     <input placeholder="Quantity" value={wasteQty} onChange={event=>setWasteQty(event.target.value)} style={{width:"100%",marginBottom:6}}/>
@@ -70,17 +70,17 @@ export default function FoodSupplyChainPage(){
   {snapshot&&<section style={{overflowX:"auto"}}>
    <h2>Batches</h2>
    <table style={{borderCollapse:"collapse",width:"100%"}}>
-    <thead><tr>{["Batch","SKU","Zone","Kitchen","Received","Remaining","Prepared","Expiry","Status"].map(header=><th key={header} style={{textAlign:"left",borderBottom:"2px solid #ddd",padding:"6px 10px"}}>{header}</th>)}</tr></thead>
+    <thead><tr>{["Batch","SKU","Zone","Kitchen","Received","Remaining","Prepared","Expiry","Status"].map(header=><th key={header} style={{textAlign:"left",borderBottom:"2px solid #dcece5",padding:"6px 10px"}}>{header}</th>)}</tr></thead>
     <tbody>{snapshot.batches.map(batch=><tr key={String(batch.id)}>
-     <td style={{padding:"6px 10px",borderBottom:"1px solid #eee"}}><code>{String(batch.id)}</code></td>
-     <td style={{padding:"6px 10px",borderBottom:"1px solid #eee"}}>{String(batch.sku)}</td>
-     <td style={{padding:"6px 10px",borderBottom:"1px solid #eee"}}>{String(batch.zone_id)}</td>
-     <td style={{padding:"6px 10px",borderBottom:"1px solid #eee"}}>{String(batch.kitchen_id||"—")}</td>
-     <td style={{padding:"6px 10px",borderBottom:"1px solid #eee"}}>{Number(batch.quantity_received)}</td>
-     <td style={{padding:"6px 10px",borderBottom:"1px solid #eee"}}>{Number(batch.quantity_remaining)}</td>
-     <td style={{padding:"6px 10px",borderBottom:"1px solid #eee"}}>{String(batch.preparation_date)}</td>
-     <td style={{padding:"6px 10px",borderBottom:"1px solid #eee"}}>{String(batch.expiry_date)}</td>
-     <td style={{padding:"6px 10px",borderBottom:"1px solid #eee"}}>{label(batch.status)}</td>
+     <td style={{padding:"6px 10px",borderBottom:"1px solid #e9f1ee"}}><code>{String(batch.id)}</code></td>
+     <td style={{padding:"6px 10px",borderBottom:"1px solid #e9f1ee"}}>{String(batch.sku)}</td>
+     <td style={{padding:"6px 10px",borderBottom:"1px solid #e9f1ee"}}>{String(batch.zone_id)}</td>
+     <td style={{padding:"6px 10px",borderBottom:"1px solid #e9f1ee"}}>{String(batch.kitchen_id||"—")}</td>
+     <td style={{padding:"6px 10px",borderBottom:"1px solid #e9f1ee"}}>{Number(batch.quantity_received)}</td>
+     <td style={{padding:"6px 10px",borderBottom:"1px solid #e9f1ee"}}>{Number(batch.quantity_remaining)}</td>
+     <td style={{padding:"6px 10px",borderBottom:"1px solid #e9f1ee"}}>{String(batch.preparation_date)}</td>
+     <td style={{padding:"6px 10px",borderBottom:"1px solid #e9f1ee"}}>{String(batch.expiry_date)}</td>
+     <td style={{padding:"6px 10px",borderBottom:"1px solid #e9f1ee"}}>{label(batch.status)}</td>
     </tr>)}</tbody>
    </table>
   </section>}

@@ -66,18 +66,18 @@ export default function IncentivesPage(){
     {error?<p>{error}</p>:null}
     {actionError?<p style={{color:"crimson"}}>{actionError}</p>:null}
     <section style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(220px,1fr))",gap:10,margin:"18px 0"}}>
-      <article style={{border:"1px solid #ddd",borderRadius:12,padding:14}}><small>Scheme versions</small><strong style={{display:"block",fontSize:28}}>{data?.schemes.length||0}</strong></article>
-      <article style={{border:"1px solid #ddd",borderRadius:12,padding:14}}><small>Incentive results</small><strong style={{display:"block",fontSize:28}}>{data?.results.length||0}</strong></article>
-      <article style={{border:"1px solid #ddd",borderRadius:12,padding:14}}><small>Open disputes</small><strong style={{display:"block",fontSize:28}}>{data?.disputes.length||0}</strong></article>
-      <article style={{border:"1px solid #ddd",borderRadius:12,padding:14}}><small>Payroll bridge</small><strong style={{display:"block",fontSize:20}}>{data?.truth.payrollInclusionOneTime?"ONE-TIME LINKED":"NOT READY"}</strong></article>
+      <article style={{border:"1px solid #dcece5",borderRadius:12,padding:14}}><small>Scheme versions</small><strong style={{display:"block",fontSize:28}}>{data?.schemes.length||0}</strong></article>
+      <article style={{border:"1px solid #dcece5",borderRadius:12,padding:14}}><small>Incentive results</small><strong style={{display:"block",fontSize:28}}>{data?.results.length||0}</strong></article>
+      <article style={{border:"1px solid #dcece5",borderRadius:12,padding:14}}><small>Open disputes</small><strong style={{display:"block",fontSize:28}}>{data?.disputes.length||0}</strong></article>
+      <article style={{border:"1px solid #dcece5",borderRadius:12,padding:14}}><small>Payroll bridge</small><strong style={{display:"block",fontSize:20}}>{data?.truth.payrollInclusionOneTime?"ONE-TIME LINKED":"NOT READY"}</strong></article>
     </section>
     <h2>Schemes</h2>
-    <p style={{color:"#666",fontSize:13}}>Creating or activating a scheme requires real formula, target and guardrail values from People Ops - not shown here to avoid fabricating defaults for a business decision. Use the incentives API directly with a reviewed scheme configuration.</p>
-    <section style={{display:"grid",gap:8}}>{data?.schemes.map(s=><article key={s.id} style={{border:"1px solid #ddd",borderRadius:10,padding:12}}><b>{s.scheme_code} v{s.version} · {s.status}</b><div>{s.role_code} · {s.team_code} · {day(s.effective_from)}{s.effective_until?` → ${day(s.effective_until)}`:""}</div></article>)}</section>
+    <p style={{color:"#5c6b66",fontSize:13}}>Creating or activating a scheme requires real formula, target and guardrail values from People Ops - not shown here to avoid fabricating defaults for a business decision. Use the incentives API directly with a reviewed scheme configuration.</p>
+    <section style={{display:"grid",gap:8}}>{data?.schemes.map(s=><article key={s.id} style={{border:"1px solid #dcece5",borderRadius:10,padding:12}}><b>{s.scheme_code} v{s.version} · {s.status}</b><div>{s.role_code} · {s.team_code} · {day(s.effective_from)}{s.effective_until?` → ${day(s.effective_until)}`:""}</div></article>)}</section>
     <h2>Results</h2>
     <section style={{display:"grid",gap:8}}>{data?.results.map(r=>{
       const dispute=disputeFor(r.id),busy=busyId===r.id||busyId===dispute?.id;
-      return <article key={r.id} style={{border:"1px solid #ddd",borderRadius:10,padding:12}}>
+      return <article key={r.id} style={{border:"1px solid #dcece5",borderRadius:10,padding:12}}>
         <b>{r.employee_email} · {r.status}</b>
         <div>{r.scheme_code} v{r.version} · {day(r.period_start)} → {day(r.period_end)}</div>
         <div>Metric: {r.metric_value} · Calculated: ₹{Number(r.calculated_amount||0).toLocaleString("en-IN")} · Approved: ₹{Number(r.approved_amount||0).toLocaleString("en-IN")}</div>

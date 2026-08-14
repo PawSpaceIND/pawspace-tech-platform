@@ -25,7 +25,7 @@ export default function ContentControlsPage(){
   </section>}
   {error&&<p role="alert">{error}</p>}{message&&<p>{message}</p>}
   <section style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(340px,1fr))",gap:16,alignItems:"start"}}>
-   <article style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
+   <article style={{border:"1px solid #dcece5",borderRadius:14,padding:16}}>
     <h2>Author a content block</h2>
     <input placeholder="Title" value={title} onChange={event=>setTitle(event.target.value)} style={{width:"100%",marginBottom:6}}/>
     <textarea placeholder="Body (markdown)" value={bodyMd} onChange={event=>setBodyMd(event.target.value)} style={{width:"100%",minHeight:80,marginBottom:6}}/>
@@ -34,7 +34,7 @@ export default function ContentControlsPage(){
     <input placeholder="Service scope (blank = all services)" value={serviceCode} onChange={event=>setServiceCode(event.target.value)} style={{width:"100%",marginBottom:6}}/>
     <button disabled={busy} onClick={()=>void run({action:"save_block",title,bodyMd,placement,cityId:cityId||null,serviceCode:serviceCode||null},"Content saved as draft")}>Save draft</button>
    </article>
-   <article style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
+   <article style={{border:"1px solid #dcece5",borderRadius:14,padding:16}}>
     <h2>Feature control</h2>
     <input placeholder="Feature key (e.g. show_referral_banner)" value={featureKey} onChange={event=>setFeatureKey(event.target.value)} style={{width:"100%",marginBottom:6}}/>
     <input placeholder="Description" value={featureDescription} onChange={event=>setFeatureDescription(event.target.value)} style={{width:"100%",marginBottom:6}}/>
@@ -46,9 +46,9 @@ export default function ContentControlsPage(){
     <ul>{(overview?.features??[]).map(feature=><li key={feature.key}><code>{feature.key}</code> · {Number(feature.enabled)===1?"ON":"off"} · {feature.cityIds.length?`cities: ${feature.cityIds.join(", ")}`:"all cities"}</li>)}</ul>
    </article>
   </section>
-  {overview&&<section style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
+  {overview&&<section style={{border:"1px solid #dcece5",borderRadius:14,padding:16}}>
    <h2>Content blocks</h2>
-   {overview.blocks.map(block=><div key={String(block.id)} style={{borderBottom:"1px solid #eee",padding:"8px 0"}}>
+   {overview.blocks.map(block=><div key={String(block.id)} style={{borderBottom:"1px solid #e9f1ee",padding:"8px 0"}}>
     <b>{String(block.title)}</b> · {label(block.placement)} · v{Number(block.version)} · {label(block.status)} · {block.city_id?`city ${String(block.city_id)}`:"all cities"} · {block.service_code?String(block.service_code):"all services"}
     <div style={{display:"flex",gap:8,marginTop:4}}>
      {String(block.status)==="draft"&&<button disabled={busy} onClick={()=>void run({action:"publish_block",blockId:block.id},"Content published")}>Publish</button>}

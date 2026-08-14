@@ -11,7 +11,7 @@ type Dashboard = {
 };
 
 const card: React.CSSProperties = { border: "1px solid #dcece5", borderRadius: 14, padding: 18, background: "white", marginBottom: 16 };
-const th: React.CSSProperties = { textAlign: "left", padding: "8px 10px", fontSize: 12, color: "#1f6b57", fontWeight: 700, borderBottom: "2px solid #eee" };
+const th: React.CSSProperties = { textAlign: "left", padding: "8px 10px", fontSize: 12, color: "#1f6b57", fontWeight: 700, borderBottom: "2px solid #e9f1ee" };
 const td: React.CSSProperties = { padding: "8px 10px", fontSize: 13, borderBottom: "1px solid #e9f1ee" };
 
 export default function ManagerDashboardPage() {

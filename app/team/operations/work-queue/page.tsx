@@ -27,10 +27,10 @@ export default function OpsWorkQueuePage(){
   {snapshot&&<section style={{display:"grid",gridTemplateColumns:"repeat(5,minmax(120px,1fr))",gap:12}}>
    {[["Open",snapshot.metrics.open],["Escalated",snapshot.metrics.escalated],["Critical",snapshot.metrics.critical],["Resolved today",snapshot.metrics.resolvedToday],["All tasks",snapshot.metrics.total]].map(([name,value])=><StatCard key={String(name)} label={String(name)} value={value as number}/>)}
   </section>}
-  {centre?.available===true&&<section style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
+  {centre?.available===true&&<section style={{border:"1px solid #dcece5",borderRadius:14,padding:16}}>
    <h2>Business command centre · today</h2>
    <p>{String(centre.bookings)} bookings · {money(centre.revenue)} · {String(centre.completed)} completed · {String(centre.upcoming)} upcoming · {String(centre.unassigned)} unassigned · {String(centre.cancelled)} cancelled · {String(centre.refundPending)} refunds pending · {String(centre.openComplaints)} open complaints</p>
-   <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{Object.entries(centre.byService||{}).map(([service,stats])=><span key={service} style={{border:"1px solid #eee",borderRadius:10,padding:"6px 10px"}}><b>{label(service)}</b> · {stats.bookings} bookings · {money(stats.revenue)}</span>)}</div>
+   <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>{Object.entries(centre.byService||{}).map(([service,stats])=><span key={service} style={{border:"1px solid #e9f1ee",borderRadius:10,padding:"6px 10px"}}><b>{label(service)}</b> · {stats.bookings} bookings · {money(stats.revenue)}</span>)}</div>
   </section>}
   <div>
    {["all","operations","finance","qc","sales_relocation","retention","crm_escalation"].map(item=><button key={item} disabled={queueFilter===item} onClick={()=>setQueueFilter(item)}>{label(item)}{item!=="all"&&snapshot?.queues[item]?` (${snapshot.queues[item].open})`:""}</button>)}
@@ -38,9 +38,9 @@ export default function OpsWorkQueuePage(){
   </div>
   {error&&<p role="alert">{error}</p>}{message&&<p>{message}</p>}
   <section style={{display:"grid",gridTemplateColumns:"minmax(360px,.9fr) minmax(520px,1.1fr)",gap:16,alignItems:"start"}}>
-   <aside style={{border:"1px solid #ddd",borderRadius:14,overflow:"hidden"}}>
+   <aside style={{border:"1px solid #dcece5",borderRadius:14,overflow:"hidden"}}>
     {tasks.length===0&&<p style={{padding:16}}>No open tasks in this queue. 🎉</p>}
-    {tasks.map(task=><button key={task.id} onClick={()=>setSelectedId(task.id)} style={{display:"block",width:"100%",padding:12,textAlign:"left",border:0,borderBottom:"1px solid #eee",background:selected?.id===task.id?"#f3f3f3":"white"}}>
+    {tasks.map(task=><button key={task.id} onClick={()=>setSelectedId(task.id)} style={{display:"block",width:"100%",padding:12,textAlign:"left",border:0,borderBottom:"1px solid #e9f1ee",background:selected?.id===task.id?"#f3f3f3":"white"}}>
      <strong>{Number(task.escalated)===1?"⚠️ ":""}{label(task.priority)} · {label(task.queue)}</strong><br/>
      <span>{task.title}</span><br/>
      <small>{label(task.status)} · {task.owner?`owner ${task.owner}`:"unowned"} · {due(Number(task.due_at))}</small>
@@ -48,13 +48,13 @@ export default function OpsWorkQueuePage(){
    </aside>
    <section style={{display:"grid",gap:12}}>
     {selected&&<>
-     <article style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
+     <article style={{border:"1px solid #dcece5",borderRadius:14,padding:16}}>
       <small>{label(selected.rule)}</small>
       <h2 style={{margin:"4px 0"}}>{selected.title}</h2>
       <p>Status {label(selected.status)} · owner {selected.owner||"unowned"} · {due(Number(selected.due_at))}{Number(selected.escalated)===1?" · SLA ESCALATED":""}</p>
       <p><small>{selected.booking_id?`Booking ${selected.booking_id} · `:""}{selected.customer_id?`Customer ${selected.customer_id} · `:""}{selected.provider_id?`Provider ${selected.provider_id}`:""}</small></p>
      </article>
-     <article style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
+     <article style={{border:"1px solid #dcece5",borderRadius:14,padding:16}}>
       <h2>Act</h2>
       <textarea value={note} onChange={event=>setNote(event.target.value)} placeholder="Resolution / dismissal / progress note" style={{width:"100%",minHeight:70}}/>
       <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:8}}>
