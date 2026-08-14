@@ -31,6 +31,10 @@ const REQUIRED_COLUMNS: Array<{ table: string; column: string; definition: strin
     why: "lib/customer-360.ts created this table without the opt-out flag lib/revenue-opportunity-governance.ts filters on",
   },
   {
+    table: "sitting_commercial_quotes", column: "customer_id", definition: "TEXT",
+    why: "the quote shipped anonymous, so any holder of scheduling.book could sandbox-capture any open quote; the capture now claims the quote for the calling customer and refuses a quote already claimed by someone else",
+  },
+  {
     table: "booking_package_upgrade_requests", column: "claim_token", definition: "TEXT",
     why: "the table shipped without claim_token before the package-upgrade approval became a claim-token compare-and-set; on a database that already created it, every apply_package_upgrade fails with 'no such column: claim_token'",
   },

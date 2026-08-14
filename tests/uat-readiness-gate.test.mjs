@@ -153,6 +153,33 @@ test("a completed booking closes: it is invoiced and its provider is paid", asyn
   assert.ok(Number(payouts.n) > 0, `${total} completed bookings and no payout computation`);
 });
 
+test("the demo seed is fresh enough that the rolling-window screens can still see it", async () => {
+  // The seed is a snapshot of one day, and a large part of the product reads a window relative to
+  // Date.now() - employeePerformanceCenter takes days:30, the incentive period is a month, the funnel
+  // and analytics screens all narrow to "recent". So the seed does not fail, it FADES: each week more
+  // of it falls outside what any screen will fetch, and the founder opens a page that is empty with
+  // nothing wrong in the logs. That is not a hypothetical - it is what happened, and the test that
+  // caught it had itself been passing by calendar coincidence for weeks.
+  //
+  // Reported as a hard failure with the command to fix it, because the fix is thirty seconds of work
+  // and the alternative is discovering it during someone's UAT session.
+  const sql = await readFile("scripts/uat-demo-seed.sql", "utf8");
+  const anchor = /^-- Anchor: (\d+) /m.exec(sql);
+  assert.ok(anchor, "scripts/uat-demo-seed.sql records no anchor; regenerate it with node --experimental-strip-types scripts/uat-demo-seed-gen.mjs");
+
+  const ageDays = (Date.now() - Number(anchor[1])) / 86_400_000;
+  assert.ok(
+    ageDays < 21,
+    `the demo seed is ${Math.floor(ageDays)} days old, so the rolling-window screens (performance, incentives, funnel) `
+    + `are reading past the end of it. Regenerate and re-apply:\n`
+    + `  node --experimental-strip-types scripts/uat-demo-seed-gen.mjs\n`
+    + `  npx wrangler d1 execute pawspace-staging --remote --file=scripts/uat-demo-seed.sql`,
+  );
+  // Negative ages mean someone hand-edited the anchor or generated with a future PAWSPACE_SEED_NOW;
+  // either way the arithmetic above stops meaning anything.
+  assert.ok(ageDays > -2, `the seed anchor is ${Math.abs(Math.floor(ageDays))} days in the future`);
+});
+
 test("a completed booking was actually paid for", async () => {
   const { sqlite } = await seededDatabase();
 

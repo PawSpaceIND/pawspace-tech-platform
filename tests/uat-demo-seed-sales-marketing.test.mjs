@@ -125,8 +125,20 @@ test("the generator and the checked-in seed file agree", async () => {
     readFile(new URL("../scripts/uat-demo-seed-gen.mjs", import.meta.url), "utf8"),
     readFile(new URL("../scripts/uat-demo-seed.sql", import.meta.url), "utf8"),
   ]);
-  // Deterministic output: no clock, no randomness, and every write is re-runnable.
-  assert.doesNotMatch(generator, /Date\.now\(\)|Math\.random\(\)/);
+  // Reproducible output, which is not the same as frozen output. The generator used to hard-code its
+  // "today" so that running it twice gave identical bytes - and that determinism is exactly what broke
+  // the product: the demo data sat at fixed timestamps while half the app reads rolling windows off
+  // Date.now(), so every one of those screens drifted to empty as real time passed. The fix anchors the
+  // seed to the day it is generated and RECORDS that anchor, so the same bytes can be reproduced on
+  // demand without the data being permanently stuck in one week of 2026.
+  //
+  // So: no randomness (nothing reproducible about that), a recorded anchor, and the clock read only
+  // through PAWSPACE_SEED_NOW.
+  assert.doesNotMatch(generator, /Math\.random\(\)/, "randomness cannot be reproduced");
+  assert.match(generator, /process\.env\.PAWSPACE_SEED_NOW/, "the anchor must be overridable, or the output cannot be reproduced");
+  const anchor = /^-- Anchor: (\d+) /m.exec(seed);
+  assert.ok(anchor, "the seed must record the anchor it was generated with");
+  assert.equal(new Date(Number(anchor[1])).getUTCHours(), 6, "the anchor is snapped to 06:00 UTC so two runs on one day agree");
   assert.match(seed, /^-- PawSpace UAT DEMO SEED/i);
   assert.equal(seed.split("\n").filter((line) => line.startsWith("INSERT ") && !line.startsWith("INSERT OR IGNORE")).length, 0, "every insert must be INSERT OR IGNORE");
 });

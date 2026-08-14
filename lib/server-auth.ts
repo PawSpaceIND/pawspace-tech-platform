@@ -115,6 +115,24 @@ export async function requireCustomerOwnership(db:Db,actor:AuthenticatedActor,cu
   return actor;
 }
 
+/**
+ * Which customer IS this actor, if any - the reverse of requireCustomerOwnership, for the case where
+ * there is no id in the request to compare against and the record has to be attributed instead.
+ *
+ * Returns null for staff and for the development preview: they act on behalf of customers rather than
+ * being one, so a caller reading this should treat null as "not customer-scoped", never as "no
+ * ownership". The lookup order is identical to requireCustomerOwnership - binding first, legacy
+ * customer_identity_links second - so the two cannot disagree about who someone is.
+ */
+export async function resolveCustomerForActor(db:Db,actor:AuthenticatedActor):Promise<string|null>{
+  if(actor.developmentPreview||hasPermission(actor.permissions,"customers.manage")||hasPermission(actor.permissions,"bookings.manage"))return null;
+  const binding=await findIdentityBinding(db,{identitySource:actor.identitySource,principalType:actor.principalType,principalKey:actor.principalKey,subjectType:"customer"}).catch(()=>null);
+  if(binding)return String(binding.subject_id);
+  const legacy=await db.prepare("SELECT customer_id,status FROM customer_identity_links WHERE email=?").bind(actor.email).first<Record<string,unknown>>().catch(()=>null);
+  if(legacy&&legacy.status==="active")return String(legacy.customer_id);
+  return null;
+}
+
 export async function requireProviderOwnership(db:Db,actor:AuthenticatedActor,providerId:string){
   if(actor.developmentPreview||hasPermission(actor.permissions,"providers.manage")||hasPermission(actor.permissions,"grooming.manage")||hasPermission(actor.permissions,"bookings.manage"))return actor;
   const binding=await findIdentityBinding(db,{identitySource:actor.identitySource,principalType:actor.principalType,principalKey:actor.principalKey,subjectType:"provider"});
