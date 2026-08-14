@@ -55,11 +55,13 @@ test("customer relocation-enquiry page collects the exact field contract with a 
   const page=await read("app/relocation-enquiry/page.tsx");
   assert.match(page,/"use client"/);
   assert.match(page,/\/api\/relocation-enquiry/);
-  for(const token of["customerName","phonePrimary","phoneSecondary","email","petType","pickupDate","pickupApproxTime","pickupLocation","dropLocation","expectedTravelDate"])
+  for(const token of["customerName","phonePrimary","phoneSecondary","email","petType","relocationKind","pickupDate","pickupApproxTime","pickupLocation","dropLocation","expectedTravelDate"])
     assert.equal(page.includes(token),true,token);
   assert.match(page,/<option value="dog">Dog<\/option>/);
   assert.match(page,/<option value="cat">Cat<\/option>/);
-  assert.equal(/<option value="(?!dog|cat")/.test(page),false,"only dog/cat options allowed");
+  // The pet type offers only dog/cat; the only other allowed options are the relocation-type control
+  // (domestic/international), which the server hard-requires — a page that omits it 400s on every submit.
+  assert.equal(/<option value="(?!dog"|cat"|domestic"|international")/.test(page),false,"only dog/cat pet options and domestic/international relocation options allowed");
 });
 
 test("staff relocation-enquiries page lists submitted enquiries via GET",async()=>{
@@ -155,4 +157,16 @@ test("the embedded relocation flow posts every founder field including relocatio
   assert.deepEqual([...new Set(fetches)], ["/api/relocation-enquiry"], "flow talks only to the enquiry endpoint");
   const shell = readFileSync(new URL("../app/mobile-app/page.tsx", import.meta.url), "utf8");
   assert.match(shell, /service\.name==="Relocation"\)return flow\(<RelocationFlow customer=\{customer\}\/>\)/);
+});
+
+test("the relocation-enquiry intake PAGE collects and submits relocationKind (regression: the form 400'd on every submit without it)",async()=>{
+  // The server hard-requires relocationKind (validated above: not in ["domestic","international"] -> throw ->
+  // route returns 400). The page's FormState originally omitted it, and submit() posts {...form}, so every
+  // real submission was rejected and no enquiry was ever logged. There is no execution path for a React
+  // form's field presence, so guard the exact three things that make the field reach the server.
+  const page=await read("app/relocation-enquiry/page.tsx");
+  assert.match(page,/type FormState=\{[^}]*relocationKind:"domestic"\|"international"/,"FormState must carry relocationKind");
+  assert.match(page,/const empty:FormState=\{[^}]*relocationKind:"domestic"/,"the default form must set a valid relocationKind");
+  assert.match(page,/set\("relocationKind"/,"there must be a control that lets the customer choose the relocation type");
+  assert.match(page,/body:JSON\.stringify\(\{\.\.\.form/,"submit must spread the whole form, so relocationKind is sent");
 });
