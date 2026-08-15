@@ -3,6 +3,7 @@ import {subscriptionExpiry} from "../../../lib/grooming-governance";
 import {governGroomingBookingWithLiveMultiPet} from "../../../lib/live-grooming-governance";
 import{authError,requireCustomerOwnership,resolveActor}from"../../../lib/server-auth";
 import{releaseReservationForRefusedBooking}from"../../../lib/reservation-compensation";
+import{schedulingGroupOwnership}from"../../../lib/scheduling-group-ownership";
 import {hasPermission} from "../../../lib/platform-security";
 import {policySnapshot,policyVersion,resolveGroomingPolicy} from "../../../lib/grooming-policy-governance";
 import {consumeTrainingQuote,governTrainingBooking,trainingQuoteLinkStatement} from "../../../lib/training-commercial-governance";
@@ -68,7 +69,19 @@ async function readBundle(db:Awaited<ReturnType<typeof database>>,booking:Record
 
 export async function GET(request:Request){const denied=await refuseUnlessGatewayPermits(request);if(denied)return denied;try{const db=await database();await ensureTables(db);const rows=await db.prepare("SELECT b.*,c.name customer_name,w.id work_order_id,w.provider_name,w.provider_model,w.status work_order_status,w.occurrence_count,p.id payment_id,p.status payment_status,p.amount_due_now,p.gateway FROM canonical_bookings b JOIN canonical_customers c ON c.id=b.customer_id JOIN provider_work_orders w ON w.booking_id=b.id JOIN booking_payments p ON p.booking_id=b.id ORDER BY b.created_at DESC LIMIT 100").all<Record<string,unknown>>();const bookings=[];for(const row of rows.results){const [pets,events]=await Promise.all([db.prepare("SELECT id,name,species,breed,vaccination_status FROM canonical_pets WHERE customer_id=? AND id IN (SELECT value FROM json_each(?)) ORDER BY name").bind(row.customer_id,row.pet_ids_json).all(),db.prepare("SELECT * FROM booking_lifecycle_events WHERE booking_id=? ORDER BY occurred_at ASC").bind(row.id).all()]);bookings.push({...row,pets:pets.results,events:events.results});}return json({bookings});}catch(error){return authError(error,"Unable to load lifecycle records");}}
 
-export async function POST(request:Request){const denied=await refuseUnlessGatewayPermits(request);if(denied)return denied;try{const input=await request.json() as LifecycleInput;const problem=validate(input);if(problem)return json({error:problem},400);const db=await database();await ensureTables(db);const actor=await resolveActor(request);await requireCustomerOwnership(db,actor,input.customer.id);const prior=await db.prepare("SELECT * FROM canonical_bookings WHERE idempotency_key=? OR schedule_group_id=?").bind(input.idempotencyKey,input.scheduleGroupId).first<Record<string,unknown>>();if(prior)return json({data:await readBundle(db,prior,true)});
+export async function POST(request:Request){const denied=await refuseUnlessGatewayPermits(request);if(denied)return denied;try{const input=await request.json() as LifecycleInput;const problem=validate(input);if(problem)return json({error:problem},400);const db=await database();await ensureTables(db);const actor=await resolveActor(request);await requireCustomerOwnership(db,actor,input.customer.id);
+  // ---- scheduling-group authority gate ---------------------------------------------------------
+  // requireCustomerOwnership above proved the caller owns the customer id in the BODY. It proves
+  // nothing about the scheduleGroupId in that same body, and nothing else here compared the two - so a
+  // byte-identical valid request with only the group swapped confirmed a booking, captured a payment and
+  // raised a work order against a stranger's reserved slot. This is an AUTHORITY refusal (403), not a
+  // state conflict (409), and it runs before ANY mutation and before the replay lookup below - that
+  // lookup matches on schedule_group_id, so without this gate it would hand the victim's booking bundle
+  // straight back to the attacker. It also runs before the compensation path is reachable, so a refused
+  // attacker cannot release the victim's hold: the victim's rows are not touched at all.
+  const groupOwnership=await schedulingGroupOwnership(db,{groupId:input.scheduleGroupId,customerId:input.customer.id});
+  if(groupOwnership.state==="foreign")return json({error:"This scheduling group belongs to a different customer"},403);
+  const prior=await db.prepare("SELECT * FROM canonical_bookings WHERE idempotency_key=? OR schedule_group_id=?").bind(input.idempotencyKey,input.scheduleGroupId).first<Record<string,unknown>>();if(prior)return json({data:await readBundle(db,prior,true)});
   // ---- ownership boundary ----------------------------------------------------------------------
   // requireCustomerOwnership above has proven this caller owns input.customer.id. EVERY refusal below
   // this line releases the hold the booking was for; NOTHING above it may, because validate()'s 400 and
