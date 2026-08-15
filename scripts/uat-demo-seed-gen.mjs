@@ -214,6 +214,12 @@ const BOOKINGS = [
   { id: "UATD-BK-TRAIN-3", cus: "UATD-CUS-3", svc: "dog_training", provider: "train_kiran", pkg: "Basic Obedience", amount: 5999, status: "confirmed", start: -4, pay: "captured" },
   { id: "UATD-BK-BOARD-1", cus: "UATD-CUS-1", svc: "boarding", provider: "host_maya_rohan", pkg: "Home Boarding · 3 nights", amount: 3600, status: "in_progress", start: -1, pay: "captured" },
   { id: "UATD-BK-BOARD-2", cus: "UATD-CUS-5", svc: "boarding", provider: "host_sana", pkg: "Home Boarding · 2 nights", amount: 2400, status: "confirmed", start: 4, pay: "created" },
+  // Journey C fixture: the ONLY boarding booking that can produce a genuine non-zero sandbox refund.
+  // BOARD-1 is unusable (stay in_progress + check_in_status complete trips the approve_cancel guard)
+  // and BOARD-2 is unusable (payment 'created' => collectedForBooking is 0, so any refund > 0 is
+  // refused and a refund of 0 writes no ledger row at all). This one is cancellable AND funded.
+  // 2 nights at the seed's own Rs1200/night (3600/3 and 2400/2 both agree) = Rs2400. Not invented.
+  { id: "UATD-BK-BOARD-3", cus: "UATD-CUS-2", svc: "boarding", provider: "host_sana", pkg: "Home Boarding · 2 nights", amount: 2400, status: "confirmed", start: 11, pay: "captured" },
   { id: "UATD-BK-SIT-1", cus: "UATD-CUS-2", svc: "pet_sitting", provider: "sit_neha", pkg: "Daily Visit ×3", amount: 1800, status: "completed", start: -8, pay: "captured" },
   { id: "UATD-BK-WALK-1", cus: "UATD-CUS-4", svc: "dog_walking", provider: "walk_nisha", pkg: "30-minute Solo Walk", amount: 698, status: "completed", start: -5, pay: "captured" },
   { id: "UATD-BK-WALK-2", cus: "UATD-CUS-5", svc: "dog_walking", provider: "walk_kiran", pkg: "30-minute Solo Walk", amount: 1047, status: "confirmed", start: 1, pay: "created" },
@@ -275,6 +281,10 @@ for (const host of ["host_maya_rohan", "host_sana"]) {
 }
 insert("boarding_stays", { id: "UATD-STAY-1", booking_id: "UATD-BK-BOARD-1", customer_id: "UATD-CUS-1", host_provider_id: "host_maya_rohan", city_id: "blr", zone_id: "blr-east", package_code: "boarding", check_in_at: isoAt(-1, 10), check_out_at: isoAt(2, 11), billed_units: 3, pet_count: 1, status: "in_progress", care_plan_status: "ready", check_in_status: "complete", check_out_status: "pending", extension_status: "none", created_at: at(-3), updated_at: at(-1) });
 insert("boarding_stays", { id: "UATD-STAY-2", booking_id: "UATD-BK-BOARD-2", customer_id: "UATD-CUS-5", host_provider_id: "host_sana", city_id: "blr", zone_id: "blr-east", package_code: "boarding", check_in_at: isoAt(4, 10), check_out_at: isoAt(6, 11), billed_units: 2, pet_count: 1, status: "awaiting_host_acceptance", care_plan_status: "required", check_in_status: "pending", check_out_status: "pending", extension_status: "none", created_at: at(-1), updated_at: at(-1) });
+// Journey C stay. status must NOT be 'in_progress' and check_in_status must be 'pending': together
+// those are exactly the two halves of the approve_cancel guard in lib/boarding-finance-governance.ts.
+// Slot is day +11..+13 so it cannot overlap host_sana's existing +4..+6 stay (UATD-STAY-2).
+insert("boarding_stays", { id: "UATD-STAY-3", booking_id: "UATD-BK-BOARD-3", customer_id: "UATD-CUS-2", host_provider_id: "host_sana", city_id: "blr", zone_id: "blr-east", package_code: "boarding", check_in_at: isoAt(11, 10), check_out_at: isoAt(13, 11), billed_units: 2, pet_count: 1, status: "awaiting_host_acceptance", care_plan_status: "required", check_in_status: "pending", check_out_status: "pending", extension_status: "none", created_at: at(-1), updated_at: at(-1) });
 
 // --- walking sessions (Walking ops queue) ------------------------------------
 insert("walking_sessions", { id: "UATD-WALK-1-1", booking_id: "UATD-BK-WALK-1", schedule_group_id: "UATD-GRP-UATD-BK-WALK-1", reservation_id: "UATD-BK-WALK-1-RES", provider_id: "walk_nisha", occurrence_number: 1, scheduled_start: isoAt(-5, 8), scheduled_end: isoAt(-5, 9), status: "completed", handover_status: "complete", completion_status: "complete", created_at: at(-7), updated_at: at(-5) });
