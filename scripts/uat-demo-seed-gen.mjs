@@ -37,6 +37,7 @@ import { AI_TABLES, runRealAiDemo } from "./ai-demo-run.mjs";
 // ---------------------------------------------------------------------------
 const SOURCES = [
   "lib/server-auth.ts",
+  "lib/training-programme.ts",
   "lib/people-foundation.ts",
   "lib/payroll-engine.ts",
   "lib/attendance-leave.ts",
@@ -208,6 +209,9 @@ const BOOKINGS = [
   { id: "UATD-BK-GROOM-2", cus: "UATD-CUS-2", svc: "grooming", provider: "groom_kiran", pkg: "Bath & Brush", amount: 799, status: "confirmed", start: 2, pay: "created" },
   { id: "UATD-BK-TRAIN-1", cus: "UATD-CUS-3", svc: "dog_training", provider: "train_kiran", pkg: "Basic Obedience", amount: 4999, status: "completed", start: -10, pay: "captured" },
   { id: "UATD-BK-TRAIN-2", cus: "UATD-CUS-4", svc: "dog_training", provider: "train_meera", pkg: "Puppy Programme", amount: 3999, status: "cancelled", start: -3, pay: "created" },
+  // C-06 fixture: the ONLY dog_training booking that can reach the cancellation-policy boundary.
+  // confirmed (not terminal) + captured (so capturedAmount > 0) + amount > 0.
+  { id: "UATD-BK-TRAIN-3", cus: "UATD-CUS-3", svc: "dog_training", provider: "train_kiran", pkg: "Basic Obedience", amount: 5999, status: "confirmed", start: -4, pay: "captured" },
   { id: "UATD-BK-BOARD-1", cus: "UATD-CUS-1", svc: "boarding", provider: "host_maya_rohan", pkg: "Home Boarding · 3 nights", amount: 3600, status: "in_progress", start: -1, pay: "captured" },
   { id: "UATD-BK-BOARD-2", cus: "UATD-CUS-5", svc: "boarding", provider: "host_sana", pkg: "Home Boarding · 2 nights", amount: 2400, status: "confirmed", start: 4, pay: "created" },
   { id: "UATD-BK-SIT-1", cus: "UATD-CUS-2", svc: "pet_sitting", provider: "sit_neha", pkg: "Daily Visit ×3", amount: 1800, status: "completed", start: -8, pay: "captured" },
@@ -224,6 +228,40 @@ for (const b of BOOKINGS) {
   insert("provider_work_orders", { id: `${b.id}-WO`, booking_id: b.id, schedule_group_id: `UATD-GRP-${b.id}`, provider_id: b.provider, provider_name: b.provider.replace(/_/g, " "), provider_model: b.provider.startsWith("groom_kiran") ? "commission" : "full_time", service_code: b.svc, scheduled_start: start, scheduled_end: end, occurrence_count: 1, status: b.status === "completed" ? "completed" : b.status === "cancelled" ? "cancelled" : "assigned", assignment_json: JSON.stringify({ demoSeed: true }), created_at: at(b.start - 2), updated_at: at(b.start) });
   insert("scheduling_reservations", { id: `${b.id}-RES`, group_id: `UATD-GRP-${b.id}`, provider_id: b.provider, service_code: b.svc, city_id: "blr", zone_id: "blr-east", customer_id: b.cus, pet_ids_json: JSON.stringify([`${b.cus}-PET`]), scheduled_start: start, scheduled_end: end, capacity_units: 1, occurrence_number: 1, care_mode: null, status: b.status === "cancelled" ? "cancelled" : b.status === "completed" ? "completed" : "assigned", explanation_json: "{}", created_at: at(b.start - 2) });
   insert("scheduling_assignment_decisions", { group_id: `UATD-GRP-${b.id}`, strategy: "governed", shortlist_json: "[]", selected_provider_id: b.provider, status: "assigned", actor_id: "uat_demo_seed", reason: "demo seed assignment", updated_at: at(b.start - 2) });
+}
+
+// --- C-06: training programme + sessions for UATD-BK-TRAIN-3 -----------------
+// requestTrainingCancellation() reaches 'blocked_policy_configuration' ONLY when it gets past three
+// earlier exits: context() 404s with no training_programmes row, the guard 409s on a terminal or
+// cancelled programme, and calculate() needs sessions to price against. This block supplies all
+// three so the case fails for the RIGHT reason - the BLR cancellation policy is seeded
+// 'configuration_required' (lib/training-cancellation.ts) and calculate() returns null for any
+// policy that is not 'published'. No policy is published here: the block is the point.
+{
+  const bk = BOOKINGS.find((b) => b.id === "UATD-BK-TRAIN-3");
+  const progId = "UATD-TPROG-1";
+  insert("training_programmes", {
+    id: progId, booking_id: bk.id, customer_id: bk.cus, provider_id: bk.provider, city_id: "blr", zone_id: "blr-east",
+    plan_code: "train-basic-6", plan_name: bk.pkg, pet_ids_json: JSON.stringify([`${bk.cus}-PET`]), requirements_json: "[]",
+    meet_booking_id: null, status: "in_progress", total_sessions: 2, completed_sessions: 1, no_show_sessions: 0,
+    cancelled_sessions: 0, pricing_snapshot_json: JSON.stringify({ demoSeed: true, totalAmount: bk.amount }),
+    created_at: at(bk.start - 2), updated_at: at(bk.start),
+  });
+  // Two sessions, deliberately one completed + one still scheduled: completed drives chargeable
+  // service value, scheduled proves the programme is genuinely mid-flight rather than finished.
+  for (const s of [
+    { n: 1, status: "completed", day: bk.start, completedAt: at(bk.start) },
+    { n: 2, status: "scheduled", day: bk.start + 7, completedAt: null },
+  ]) {
+    insert("training_sessions", {
+      id: `UATD-TSESS-${s.n}`, programme_id: progId, booking_id: bk.id,
+      schedule_reservation_id: `${bk.id}-RES-S${s.n}`, sequence_no: s.n, provider_id: bk.provider,
+      scheduled_start: isoAt(s.day, 10), scheduled_end: isoAt(s.day, 12), status: s.status,
+      attendance_json: "{}", homework_json: "{}", progress_json: "{}", evidence_json: "[]",
+      started_at: s.status === "completed" ? at(s.day) : null, completed_at: s.completedAt,
+      created_at: at(bk.start - 2), updated_at: at(s.day),
+    });
+  }
 }
 
 // --- ratings (ops-intelligence provider ranking) -----------------------------

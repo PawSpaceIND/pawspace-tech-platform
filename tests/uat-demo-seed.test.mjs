@@ -96,7 +96,10 @@ test("seeded DB: company analytics reports real revenue, services and CX", async
   assert.ok(data.bookings.total >= 12, `expected the demo bookings, got ${data.bookings.total}`);
   assert.ok(data.money.gmv > 0, "GMV must be non-zero");
   assert.equal(data.services.dog_training.cancelled, 1, "the deliberately cancelled training booking is visible");
-  assert.equal(data.services.dog_training.gmv, 4999, "cancelled value excluded, completed 4999 counted");
+  // 4999 completed (TRAIN-1) + 5999 confirmed (TRAIN-3, the C-06 policy-boundary fixture); the 3999
+  // cancelled booking (TRAIN-2) is still excluded. The invariant under test is unchanged - cancelled
+  // value never counts - the total simply grew when the C-06 fixture added a real confirmed booking.
+  assert.equal(data.services.dog_training.gmv, 10998, "cancelled value excluded; completed + confirmed counted");
   assert.ok(data.cx.tickets >= 2, "CX tickets are seeded");
   assert.ok(data.customers.unique >= 6);
 });
