@@ -2,6 +2,7 @@ import{refuseUnlessGatewayPermits}from"../../../lib/api-gateway";
 import {subscriptionExpiry} from "../../../lib/grooming-governance";
 import {governGroomingBookingWithLiveMultiPet} from "../../../lib/live-grooming-governance";
 import{authError,requireCustomerOwnership,resolveActor}from"../../../lib/server-auth";
+import{releaseReservationForRefusedBooking}from"../../../lib/reservation-compensation";
 import {hasPermission} from "../../../lib/platform-security";
 import {policySnapshot,policyVersion,resolveGroomingPolicy} from "../../../lib/grooming-policy-governance";
 import {consumeTrainingQuote,governTrainingBooking,trainingQuoteLinkStatement} from "../../../lib/training-commercial-governance";
@@ -68,6 +69,19 @@ async function readBundle(db:Awaited<ReturnType<typeof database>>,booking:Record
 export async function GET(request:Request){const denied=await refuseUnlessGatewayPermits(request);if(denied)return denied;try{const db=await database();await ensureTables(db);const rows=await db.prepare("SELECT b.*,c.name customer_name,w.id work_order_id,w.provider_name,w.provider_model,w.status work_order_status,w.occurrence_count,p.id payment_id,p.status payment_status,p.amount_due_now,p.gateway FROM canonical_bookings b JOIN canonical_customers c ON c.id=b.customer_id JOIN provider_work_orders w ON w.booking_id=b.id JOIN booking_payments p ON p.booking_id=b.id ORDER BY b.created_at DESC LIMIT 100").all<Record<string,unknown>>();const bookings=[];for(const row of rows.results){const [pets,events]=await Promise.all([db.prepare("SELECT id,name,species,breed,vaccination_status FROM canonical_pets WHERE customer_id=? AND id IN (SELECT value FROM json_each(?)) ORDER BY name").bind(row.customer_id,row.pet_ids_json).all(),db.prepare("SELECT * FROM booking_lifecycle_events WHERE booking_id=? ORDER BY occurred_at ASC").bind(row.id).all()]);bookings.push({...row,pets:pets.results,events:events.results});}return json({bookings});}catch(error){return authError(error,"Unable to load lifecycle records");}}
 
 export async function POST(request:Request){const denied=await refuseUnlessGatewayPermits(request);if(denied)return denied;try{const input=await request.json() as LifecycleInput;const problem=validate(input);if(problem)return json({error:problem},400);const db=await database();await ensureTables(db);const actor=await resolveActor(request);await requireCustomerOwnership(db,actor,input.customer.id);const prior=await db.prepare("SELECT * FROM canonical_bookings WHERE idempotency_key=? OR schedule_group_id=?").bind(input.idempotencyKey,input.scheduleGroupId).first<Record<string,unknown>>();if(prior)return json({data:await readBundle(db,prior,true)});
+  // ---- ownership boundary ----------------------------------------------------------------------
+  // requireCustomerOwnership above has proven this caller owns input.customer.id. EVERY refusal below
+  // this line releases the hold the booking was for; NOTHING above it may, because validate()'s 400 and
+  // any auth failure happen before we know who the caller is - compensating there would let an unproven
+  // caller free a hold. The release is additionally scoped to this proven customer inside
+  // releaseReservationForRefusedBooking, so quoting somebody else's group mutates nothing.
+  // The replay above returns BEFORE this point, so a duplicate confirm never releases a live booking's hold.
+  const refuse=async(message:string,status:number,extra:Record<string,unknown>={})=>{
+    const compensation=await releaseReservationForRefusedBooking(db,{groupId:input.scheduleGroupId,ownershipProvenCustomerId:input.customer.id});
+    // Report the cleanup honestly: if it failed, say so rather than implying the slot is free.
+    const capacity=compensation.ok?{capacityReleased:compensation.released}:{capacityReleased:null,capacityReleaseFailed:true};
+    return json({error:message,...extra,...capacity},status);
+  };
   let governed:{packageCode:string;packageName:string;catalogueVersion?:string;offerType?:string;petCount:number;totalAmount:number;amountDueNow:number;subscriptionPlan?:SubscriptionPlan}={packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,totalAmount:input.totalAmount,amountDueNow:input.amountDueNow};
   // Resolved before the subscription gate, because in LIVE the gate has to reason about what the payment
   // will be RECORDED as (verify-first), not what the client claimed it already was.
@@ -77,35 +91,44 @@ export async function POST(request:Request){const denied=await refuseUnlessGatew
   // and no unknown/blank method can slip through — the method is not what decides.
   const offlineAuthorized=OFFLINE_METHODS.has(input.payment.method)&&hasPermission(actor.permissions,"payments.manage");
   const liveMode=(await paymentEnv())!=="sandbox",paymentStatusRecorded=recordedPaymentStatus(liveMode,input.payment,offlineAuthorized);
-  const commercialPolicy=input.serviceCode==="grooming"?await resolveGroomingPolicy(db,input.cityId,input.zoneId):null;
-  if(commercialPolicy?.enforcementMode==="enforce"&&input.pets.length>commercialPolicy.multiPetMax)return json({error:`This city policy supports up to ${commercialPolicy.multiPetMax} pets per Grooming booking`,policyVersion:policyVersion(commercialPolicy)},409);
+  let commercialPolicy=null as Awaited<ReturnType<typeof resolveGroomingPolicy>>|null;
   if(input.serviceCode==="grooming"){
-    try{governed=await governGroomingBookingWithLiveMultiPet(db,{packageCode:input.packageCode,packageName:input.packageName,pets:input.pets.map(pet=>({species:(pet.species??"other") as "dog"|"cat"|"other"})),submittedTotal:input.totalAmount,submittedAmountDueNow:input.amountDueNow,paymentMode:input.payment.mode,cityId:input.cityId,zoneId:input.zoneId,scheduledStart:input.scheduledStart});}catch(error){return json({error:error instanceof Error?error.message:"Invalid Grooming package or price"},409);}
+    // A city with no active Grooming commercial policy (Chennai on this candidate) is a configuration
+    // refusal, not an outage. It threw a bare Error from OUTSIDE the governance try/catch below, so it
+    // reached the outer catch unclassified and was answered 500 - and, being an exception, it also
+    // skipped every compensation path and stranded the hold. Both halves are fixed here: the refusal is
+    // answered with the 409 the surrounding commercial contract already uses, and the hold is released.
+    try{commercialPolicy=await resolveGroomingPolicy(db,input.cityId,input.zoneId);}
+    catch(error){return refuse(error instanceof Error?error.message:"No active Grooming commercial policy is configured for this city/zone",409);}
+  }
+  if(commercialPolicy?.enforcementMode==="enforce"&&input.pets.length>commercialPolicy.multiPetMax)return refuse(`This city policy supports up to ${commercialPolicy.multiPetMax} pets per Grooming booking`,409,{policyVersion:policyVersion(commercialPolicy)});
+  if(input.serviceCode==="grooming"){
+    try{governed=await governGroomingBookingWithLiveMultiPet(db,{packageCode:input.packageCode,packageName:input.packageName,pets:input.pets.map(pet=>({species:(pet.species??"other") as "dog"|"cat"|"other"})),submittedTotal:input.totalAmount,submittedAmountDueNow:input.amountDueNow,paymentMode:input.payment.mode,cityId:input.cityId,zoneId:input.zoneId,scheduledStart:input.scheduledStart});}catch(error){return refuse(error instanceof Error?error.message:"Invalid Grooming package or price",409);}
     // A subscription is still prepay-only — no split, no pay-after-service — but it no longer has to be
     // CAPTURED at purchase time. Requiring that was what forced the verify-first exemption. It may now be
     // an online payment awaiting gateway verification; the entitlement simply stays pending until the
     // verified capture arrives, so an unpaid purchase yields no usable credits either way.
     if(governed.subscriptionPlan){
-      if(input.payment.mode!=="prepaid")return json({error:"Grooming subscription purchases must be prepaid"},409);
+      if(input.payment.mode!=="prepaid")return refuse("Grooming subscription purchases must be prepaid",409);
       const awaitingGateway=ONLINE_METHODS.has(input.payment.method)&&paymentStatusRecorded==="created";
-      if(paymentStatusRecorded!=="captured"&&!awaitingGateway)return json({error:"A Grooming subscription purchase needs a captured payment, or an online payment awaiting gateway verification"},409);
+      if(paymentStatusRecorded!=="captured"&&!awaitingGateway)return refuse("A Grooming subscription purchase needs a captured payment, or an online payment awaiting gateway verification",409);
     }
   }
-  const assignment=await db.prepare("SELECT selected_provider_id,status,shortlist_json FROM scheduling_assignment_decisions WHERE group_id=?").bind(input.scheduleGroupId).first<Record<string,unknown>>();if(!assignment||assignment.status!=="assigned")return json({error:"Scheduling must be assigned before booking confirmation"},409);if(String(assignment.selected_provider_id)!==input.provider.id)return json({error:"The provider does not match the scheduling decision"},409);const reservations=await db.prepare("SELECT id,provider_id,city_id,zone_id,scheduled_start,scheduled_end,occurrence_number,status FROM scheduling_reservations WHERE group_id=? AND status!='cancelled' ORDER BY occurrence_number").bind(input.scheduleGroupId).all<Record<string,unknown>>();if(!reservations.results.length||reservations.results.some(row=>String(row.provider_id)!==input.provider.id))return json({error:"A valid provider reservation is required"},409);
+  const assignment=await db.prepare("SELECT selected_provider_id,status,shortlist_json FROM scheduling_assignment_decisions WHERE group_id=?").bind(input.scheduleGroupId).first<Record<string,unknown>>();if(!assignment||assignment.status!=="assigned")return refuse("Scheduling must be assigned before booking confirmation",409);if(String(assignment.selected_provider_id)!==input.provider.id)return refuse("The provider does not match the scheduling decision",409);const reservations=await db.prepare("SELECT id,provider_id,city_id,zone_id,scheduled_start,scheduled_end,occurrence_number,status FROM scheduling_reservations WHERE group_id=? AND status!='cancelled' ORDER BY occurrence_number").bind(input.scheduleGroupId).all<Record<string,unknown>>();if(!reservations.results.length||reservations.results.some(row=>String(row.provider_id)!==input.provider.id))return refuse("A valid provider reservation is required",409);
   // City/zone integrity invariant (finding #7): the provider equality above is not enough. The booking
   // is persisted with the CLIENT-supplied cityId/zoneId, but the reservation it confirms was made for a
   // specific city and zone. Trust the reservation, never the client: reject if the booking's city or
   // zone does not match the reserved provider's city/zone, so a Bengaluru reservation can never be
   // confirmed into a booking labelled (and routed/priced as) Chennai.
-  if(reservations.results.some(row=>String(row.city_id)!==input.cityId||String(row.zone_id)!==input.zoneId))return json({error:"The booking city/zone does not match the reserved provider's city and zone"},409);
+  if(reservations.results.some(row=>String(row.city_id)!==input.cityId||String(row.zone_id)!==input.zoneId))return refuse("The booking city/zone does not match the reserved provider's city and zone",409);
   let trainingCommercial:Awaited<ReturnType<typeof governTrainingBooking>>|null=null;
   if(input.serviceCode==="dog_training"){
-    const quoteId=String(input.pricing.trainingQuoteId||"").trim();if(!quoteId)return json({error:"A server Training quote is required before booking confirmation"},409);const first=reservations.results[0];if(String(first.scheduled_start)!==input.scheduledStart||String(first.scheduled_end)!==input.scheduledEnd)return json({error:"Training booking window does not match the first reserved session"},409);
+    const quoteId=String(input.pricing.trainingQuoteId||"").trim();if(!quoteId)return refuse("A server Training quote is required before booking confirmation",409);const first=reservations.results[0];if(String(first.scheduled_start)!==input.scheduledStart||String(first.scheduled_end)!==input.scheduledEnd)return refuse("Training booking window does not match the first reserved session",409);
     trainingCommercial=await governTrainingBooking(db,{quoteId,packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,scheduledStart:input.scheduledStart,submittedTotal:input.totalAmount,submittedAmountDueNow:input.amountDueNow,paymentMode:input.payment.mode,paymentStatus:input.payment.status,reservationCount:reservations.results.length});governed={packageCode:trainingCommercial.packageCode,packageName:trainingCommercial.packageName,catalogueVersion:trainingCommercial.catalogueVersion,petCount:trainingCommercial.petCount,totalAmount:trainingCommercial.totalAmount,amountDueNow:trainingCommercial.amountDueNow};
   }
   let boardingCommercial:Awaited<ReturnType<typeof governBoardingBooking>>|null=null;
   if(input.serviceCode==="boarding"){
-    const quoteId=String(input.pricing.boardingQuoteId||"").trim();if(!quoteId)return json({error:"A server Boarding quote is required before booking confirmation"},409);const first=reservations.results[0];if(String(first.scheduled_start)!==input.scheduledStart||String(first.scheduled_end)!==input.scheduledEnd)return json({error:"Boarding booking window does not match the continuous stay reservation"},409);
+    const quoteId=String(input.pricing.boardingQuoteId||"").trim();if(!quoteId)return refuse("A server Boarding quote is required before booking confirmation",409);const first=reservations.results[0];if(String(first.scheduled_start)!==input.scheduledStart||String(first.scheduled_end)!==input.scheduledEnd)return refuse("Boarding booking window does not match the continuous stay reservation",409);
     boardingCommercial=await governBoardingBooking(db,{quoteId,packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,submittedTotal:input.totalAmount,submittedAmountDueNow:input.amountDueNow,paymentMode:input.payment.mode,paymentStatus:input.payment.status,reservationCount:reservations.results.length,providerId:input.provider.id,cityId:input.cityId,zoneId:input.zoneId,species:input.pets.map(pet=>String(pet.species||"other")),vaccinationStatuses:input.pets.map(pet=>String(pet.vaccinationStatus||"not_provided"))});governed={packageCode:boardingCommercial.packageCode,packageName:boardingCommercial.packageName,catalogueVersion:boardingCommercial.catalogueVersion,petCount:boardingCommercial.petCount,totalAmount:boardingCommercial.totalAmount,amountDueNow:boardingCommercial.amountDueNow};
   }
   let referralCommercial:ReferralBookingPreparation|null=null;
@@ -133,7 +156,7 @@ export async function POST(request:Request){const denied=await refuseUnlessGatew
   // Pet Sitting on this path is client-priced (no server quote yet); record the split schedule from
   // the submitted amounts so the balance is tracked and collectable, requiring a real outstanding
   // balance and a stay that starts more than 24h out (splitPaymentPlan enforces the lead time).
-  if(input.serviceCode==="pet_sitting"&&input.payment.mode==="split_50_50"){if(!(input.totalAmount>input.amountDueNow))return json({error:"Split payment requires an outstanding balance below the total"},409);await ensureStayPaymentTables(db);const plan=splitPaymentPlan({totalAmount:input.totalAmount,scheduledStart:input.scheduledStart});statements.push(staySplitScheduleStatement(db,{bookingId,serviceCode:"pet_sitting",customerId:input.customer.id,totalAmount:input.totalAmount,paidNowAmount:input.amountDueNow,balanceAmount:Math.round((input.totalAmount-input.amountDueNow)*100)/100,balanceDueAt:plan.balanceDueAt}));}
+  if(input.serviceCode==="pet_sitting"&&input.payment.mode==="split_50_50"){if(!(input.totalAmount>input.amountDueNow))return refuse("Split payment requires an outstanding balance below the total",409);await ensureStayPaymentTables(db);const plan=splitPaymentPlan({totalAmount:input.totalAmount,scheduledStart:input.scheduledStart});statements.push(staySplitScheduleStatement(db,{bookingId,serviceCode:"pet_sitting",customerId:input.customer.id,totalAmount:input.totalAmount,paidNowAmount:input.amountDueNow,balanceAmount:Math.round((input.totalAmount-input.amountDueNow)*100)/100,balanceDueAt:plan.balanceDueAt}));}
   if(referralCommercial)statements.push(referralBookingLinkStatement(db,{preparation:referralCommercial,bookingId,now}),referralClaimBoundStatement(db,{claimId:referralCommercial.claimId,now}));
   if(subscriptionId&&governed.subscriptionPlan){const expiresAt=subscriptionExpiry(now,governed.subscriptionPlan.validityValue,governed.subscriptionPlan.validityUnit);
     // Pending is not a label — mutateSubscriptionWallet only moves credits for a subscription in
