@@ -115,14 +115,80 @@ export async function POST(request:Request){const denied=await refuseUnlessGatew
     referralCommercial=await prepareReferralBooking(db,{claimId:referralClaimId,customer:{id:input.customer.id,primaryPhone:input.customer.primaryPhone,email:input.customer.email},serviceCode:input.serviceCode,cityId:input.cityId,baseAmount:governed.totalAmount,baseAmountDueNow:governed.amountDueNow,hasOtherOffer:Boolean(trainingCommercial?.couponCode||input.pricing.couponCode||existingDiscount>0),isSubscription:Boolean(governed.subscriptionPlan||input.pricing.subscription)});
     governed={...governed,totalAmount:referralCommercial.totalAmount,amountDueNow:referralCommercial.amountDueNow};
   }
-  const now=Date.now(),bookingId=`PS-UAT-${now.toString(36).toUpperCase()}-${crypto.randomUUID().slice(0,4).toUpperCase()}`,workOrderId=`WO-${crypto.randomUUID().slice(0,8).toUpperCase()}`,paymentId=`PAY-${crypto.randomUUID().slice(0,8).toUpperCase()}`,subscriptionId=governed.subscriptionPlan?`GSUB-${crypto.randomUUID().slice(0,10).toUpperCase()}`:null,ids=input.pets.map(item=>petId(input.customer.id,item.sourceId));
+  const now=Date.now(),bookingId=`PS-UAT-${now.toString(36).toUpperCase()}-${crypto.randomUUID().slice(0,4).toUpperCase()}`,workOrderId=`WO-${crypto.randomUUID().slice(0,8).toUpperCase()}`,paymentId=`PAY-${crypto.randomUUID().slice(0,8).toUpperCase()}`,subscriptionId=governed.subscriptionPlan?`GSUB-${crypto.randomUUID().slice(0,10).toUpperCase()}`:null;
+  // A booking used to mint its own canonical_pets row keyed by the pet NAME. A pet the customer had
+  // already saved lives under a different source id (the account flow uses `account-<hash>`), so the
+  // booking created a SECOND, empty row for the same animal — and pet_ids_json pointed at that one.
+  // Every reader that resolves pets through pet_ids_json (Booking Command Center, canonical-bookings
+  // GET, partner job feed, boarding host-replacement eligibility) therefore saw an empty profile for
+  // a pet whose details were filled in.
+  //
+  // Three rules govern the resolution, and each exists because dropping it broke something real:
+  //
+  //   IDENTITY OUTRANKS PROFILE RICHNESS. An exact source_pet_id match names the animal; a same-name
+  //   row must never displace it. Two of a customer's pets can share a name, and binding a booking to
+  //   the wrong animal is worse than showing a blank profile — that id reaches the groomer's work
+  //   order and boarding's vaccination gating.
+  //
+  //   A MATCHED ROW IS READ-ONLY TO THE BOOKING. Reuse makes the customer's real pet the write
+  //   target, so a payload may only fill fields the stored row leaves blank. Several flows GUESS
+  //   species from the pet's name; without this, booking a cat could rewrite it to a dog, and the
+  //   payload's capitalisation could rename the pet.
+  //
+  //   ONE STORED ROW PER BOOKING PET. Two same-named pets in one booking must not collapse onto the
+  //   same row, or a two-pet booking bills for two and records one animal.
+  const existingPets=await db.prepare("SELECT id,source_pet_id,name,species,breed,vaccination_status FROM canonical_pets WHERE customer_id=? ORDER BY updated_at DESC").bind(input.customer.id).all<Record<string,unknown>>().catch(()=>({results:[] as Record<string,unknown>[]}));
+  const petKey=(value:unknown)=>String(value??"").trim().toLowerCase();
+  const petText=(value:unknown)=>petKey(value)?String(value).trim():null;
+  // 'not_provided' is the column's own sentinel for "unknown", so it counts as blank on both sides.
+  const petVaccination=(value:unknown)=>petKey(value)&&petKey(value)!=="not_provided"?String(value).trim():null;
+  const petHasProfile=(row:Record<string,unknown>)=>Boolean(petText(row.breed))||Boolean(petVaccination(row.vaccination_status));
+  // The ONLY row a pre-fix booking could mint carries a specific fingerprint: those bookings passed
+  // the pet's NAME as the source id, so source_pet_id equals the row's own name, and they never wrote
+  // a profile. Nothing the account flow saves looks like this — an account pet's source id is an
+  // issued `account-<hash>`. Naming the legacy condition this precisely is what lets duplicate-healing
+  // stay without opening the door to arbitrary same-name substitution.
+  const isLegacyBookingArtifact=(row:Record<string,unknown>)=>petKey(row.source_pet_id)===petKey(row.name)&&!petHasProfile(row);
+  const claimedPetIds=new Set<string>();
+  const resolvedPets=input.pets.map(pet=>{
+    // A row already claimed by an earlier pet in THIS booking is out of the running for every later
+    // one, so a second same-named pet falls through to its own freshly minted id.
+    const unclaimed=(rows:Record<string,unknown>[])=>rows.filter(row=>!claimedPetIds.has(String(row.id)));
+    const identityMatches=unclaimed(existingPets.results.filter(row=>petKey(row.source_pet_id)&&petKey(row.source_pet_id)===petKey(pet.sourceId)));
+    const nameMatches=unclaimed(existingPets.results.filter(row=>petKey(row.name)===petKey(pet.name)));
+    // TIER 1 — identity. Profile preference applies only WITHIN this tier, so it can break a tie
+    // between rows that are the same animal but can never reach across to a different one.
+    let match=identityMatches.find(petHasProfile)??identityMatches[0];
+    // LEGACY EXCEPTION, narrowly gated: the sole identity match is a pre-fix artifact for this name
+    // with no profile to offer. Only then may a saved pet of the same name be adopted, and only a
+    // genuine saved one — another artifact cannot stand in.
+    if(match&&isLegacyBookingArtifact(match)&&!identityMatches.some(petHasProfile))match=nameMatches.find(row=>petHasProfile(row)&&!isLegacyBookingArtifact(row))??match;
+    // TIER 2 — no identity match at all. The ordinary case: flows send the pet's name as the source
+    // id and nothing has been minted yet, so the saved pet of that name is the intended animal.
+    if(!match)match=nameMatches.find(petHasProfile)??nameMatches[0];
+    if(match)claimedPetIds.add(String(match.id));
+    // Stored values win wherever they are non-blank; the payload may only populate what is missing.
+    return {
+      id:match?String(match.id):petId(input.customer.id,pet.sourceId),
+      name:(match&&petText(match.name))??petText(pet.name)??String(pet.name),
+      species:(match&&petText(match.species))??petText(pet.species)??"dog",
+      breed:(match&&petText(match.breed))??petText(pet.breed),
+      vaccinationStatus:(match&&petVaccination(match.vaccination_status))??petVaccination(pet.vaccinationStatus)??"not_provided",
+      sourceId:pet.sourceId,
+    };
+  });
+  const ids=resolvedPets.map(pet=>pet.id);
   const pricingJson={...input.pricing,discount:referralCommercial?.discountAmount??trainingCommercial?.discount??input.pricing.discount,couponCode:trainingCommercial?.couponCode??input.pricing.couponCode,referralClaimId:referralCommercial?.claimId,referralCode:referralCommercial?.code,referralPolicy:referralCommercial?.policySnapshot,referralBaseAmount:referralCommercial?.baseAmount,catalogueVersion:governed.catalogueVersion,offerType:governed.offerType,subscription:subscriptionId??input.pricing.subscription,subscriptionPlanCode:governed.subscriptionPlan?.planCode,subscriptionConfig:governed.subscriptionPlan,commercialPolicy:commercialPolicy?policySnapshot(commercialPolicy):undefined,trainingCommercial:trainingCommercial??undefined,boardingCommercial:boardingCommercial??undefined};
   // The entitlement is only live money's to grant. Captured (sandbox, or an offline capture) creates it
   // active; anything awaiting gateway verification creates it pending with zero sessions reserved.
   const entitlementActive=paymentStatusRecorded==="captured";
   const statements=[
     db.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?, ?,?,?) ON CONFLICT(id) DO UPDATE SET city_id=excluded.city_id,name=excluded.name,primary_phone=excluded.primary_phone,secondary_phone=excluded.secondary_phone,email=excluded.email,updated_at=excluded.updated_at").bind(input.customer.id,input.cityId,input.customer.name,input.customer.primaryPhone,input.customer.secondaryPhone??null,input.customer.email??null,"uat_customer_app",JSON.stringify({serviceUpdates:true,marketing:false}),now,now),
-    ...input.pets.map((pet,index)=>db.prepare("INSERT INTO canonical_pets (id,customer_id,name,species,breed,vaccination_status,source_pet_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,species=excluded.species,breed=excluded.breed,vaccination_status=excluded.vaccination_status,updated_at=excluded.updated_at").bind(ids[index],input.customer.id,pet.name,pet.species??"dog",pet.breed??null,pet.vaccinationStatus??"not_provided",pet.sourceId,now,now)),
+    // The conflict clause enforces the same read-only rule at the database, so a booking can only
+    // ever fill a blank: every stored non-blank value survives, 'not_provided' never demotes a
+    // recorded vaccination, and the customer_id guard keeps a booking from writing over another
+    // customer's pet. Before this, booking the same pet twice erased its breed and vaccination.
+    ...resolvedPets.map(pet=>db.prepare("INSERT INTO canonical_pets (id,customer_id,name,species,breed,vaccination_status,source_pet_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=COALESCE(NULLIF(TRIM(canonical_pets.name),''),excluded.name),species=COALESCE(NULLIF(TRIM(canonical_pets.species),''),excluded.species),breed=COALESCE(NULLIF(TRIM(canonical_pets.breed),''),excluded.breed),vaccination_status=CASE WHEN TRIM(COALESCE(canonical_pets.vaccination_status,'')) NOT IN ('','not_provided') THEN canonical_pets.vaccination_status ELSE excluded.vaccination_status END,source_pet_id=COALESCE(canonical_pets.source_pet_id,excluded.source_pet_id),updated_at=excluded.updated_at WHERE canonical_pets.customer_id=excluded.customer_id").bind(pet.id,input.customer.id,pet.name,pet.species,pet.breed,pet.vaccinationStatus,pet.sourceId,now,now)),
     db.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(bookingId,input.idempotencyKey,input.customer.id,JSON.stringify(ids),JSON.stringify(input.pets.map(p=>p.sourceId)),input.cityId,input.zoneId,input.serviceCode,governed.packageCode,governed.packageName,input.scheduleGroupId,input.provider.id,input.scheduledStart,input.scheduledEnd,"confirmed","customer_app",governed.totalAmount,"INR",JSON.stringify(pricingJson),input.customer.id,now,now),
     db.prepare("INSERT INTO provider_work_orders (id,booking_id,schedule_group_id,provider_id,provider_name,provider_model,service_code,scheduled_start,scheduled_end,occurrence_count,status,assignment_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(workOrderId,bookingId,input.scheduleGroupId,input.provider.id,input.provider.name,input.provider.model,input.serviceCode,input.scheduledStart,input.scheduledEnd,reservations.results.length,input.provider.model==="commission"?"awaiting_acceptance":"assigned",JSON.stringify({reservations:reservations.results,decision:assignment}),now,now),
     db.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,amount_due_now,currency,method,mode,status,gateway,idempotency_key,detail_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(paymentId,bookingId,input.customer.id,governed.totalAmount,governed.amountDueNow,"INR",input.payment.method,input.payment.mode,paymentStatusRecorded,"uat_sandbox",`${input.idempotencyKey}:payment`,JSON.stringify({detail:input.payment.detail,liveMoney:false,catalogueVersion:governed.catalogueVersion,trainingQuoteId:trainingCommercial?.quoteId,boardingQuoteId:boardingCommercial?.quoteId,referralClaimId:referralCommercial?.claimId,referralDiscount:referralCommercial?.discountAmount}),now,now),
