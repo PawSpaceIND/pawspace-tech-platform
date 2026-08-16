@@ -1,5 +1,26 @@
 name: Deploy staging
 
+# PINNED DEPLOY HARNESS — this copy lives on deploy-harness/pinned-e49cffe, NOT on main.
+#
+# WHY THIS BRANCH EXISTS
+# workflow_dispatch runs the workflow file from the ref the operator selects, and the stock version of
+# this file checks out that same ref. So a deploy could only ever verify itself with code from the ref
+# being deployed, and pinning the deployed commit would have meant committing a guard onto the release
+# candidate — producing a different SHA than the one that was reviewed.
+#
+# This branch breaks that circularity. It is cut from trusted main and changes ONLY this file. The
+# operator dispatches THIS branch, so the guard logic comes from main's history; the `sha` input names
+# the commit to deploy, and the tree that is installed, built and shipped is that commit and nothing
+# else. The release candidate branch is never dispatched and never modified.
+#
+# The `sha` input is an allowlist of exactly one value, not free-form. Widening it is a deliberate act:
+# change APPROVED_SHA below, and only for a commit that has cleared the same review gate.
+#
+# THIS HARNESS IS UNUSED UNTIL SEPARATE-PARTY CLEARANCE OR AN AUTHORIZED WRITTEN WAIVER EXISTS for the
+# candidate named in APPROVED_SHA. Author-generated review evidence is not clearance. Existing gates
+# are preserved untouched: the "staging" confirmation, the single-deploy concurrency group, and
+# stage-config.mjs failing closed on a missing, too-short, or previously-committed credential.
+#
 # One-click ISOLATED STAGING deploy for human UAT. Manual only (workflow_dispatch) — never auto-runs,
 # never touches production. Deploys the vinext build output (dist/server) as worker "pawspace-staging"
 # bound to a dedicated staging D1.
@@ -23,6 +44,18 @@ on:
         description: 'Type "staging" to confirm this is the isolated staging deploy'
         required: true
         default: ''
+      sha:
+        description: 'Full 40-character approved candidate SHA to deploy (must be e49cffe592dc6dda0946077a5760d2f8a17047d8)'
+        required: true
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  # The one commit this harness is authorized to deploy. Full 40 characters: an abbreviation is not an
+  # identity — it can become ambiguous, and it cannot be compared against `git rev-parse HEAD`.
+  APPROVED_SHA: e49cffe592dc6dda0946077a5760d2f8a17047d8
 
 jobs:
   deploy:
@@ -30,8 +63,66 @@ jobs:
     runs-on: ubuntu-latest
     concurrency: pawspace-staging-deploy
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # BEFORE the checkout, because everything after it puts repository code on the runner. Nothing
+      # here reads the working tree, so it cannot be influenced by whatever the input names. A wrong
+      # value fails the job loudly rather than skipping it green: a deploy guard that refuses by
+      # silently not running reads, in the Actions list, exactly like a deploy that never happened.
+      #
+      # SHA_INPUT goes through the environment rather than the template because `${{ }}` is expanded
+      # before Bash parses the script, and this input is operator-supplied text.
+      - name: Reject any commit except the approved candidate
+        env:
+          SHA_INPUT: ${{ inputs.sha }}
+        run: |
+          if [ "$SHA_INPUT" != "$APPROVED_SHA" ]; then
+            echo "::error::This harness deploys exactly one approved commit."
+            echo "::error::Requested '$SHA_INPUT' is not the approved '$APPROVED_SHA'. Nothing was checked out or deployed."
+            exit 1
+          fi
+          echo "requested commit matches the approved candidate"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The point of the harness: the tree that gets built and shipped is the approved commit, not
+          # the tip of whatever branch was dispatched. Detached at an immutable SHA, so there is no
+          # window in which a branch could move between dispatch and checkout.
+          ref: ${{ inputs.sha }}
+          # This job runs no Git operation of its own, so the checkout token has no reason to remain in
+          # the runner's Git config while third-party build code executes.
+          persist-credentials: false
+
+      # The assertion the harness exists for, and the first thing after checkout: prove what is
+      # actually on disk BEFORE npm install runs a single lifecycle script, before the build, before
+      # stage-config.mjs touches a credential, and before wrangler is allowed near staging. Checking
+      # the input again would prove nothing — this reads the runner's own resolved HEAD.
+      - name: Assert the checked-out HEAD is the approved candidate
+        run: |
+          set -euo pipefail
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if [ "$HEAD_SHA" != "$APPROVED_SHA" ]; then
+            echo "::error::Checked-out HEAD is $HEAD_SHA, expected $APPROVED_SHA. Refusing to build, configure or deploy."
+            exit 1
+          fi
+          echo "HEAD verified as $HEAD_SHA"
+
+      # Recorded here rather than at the end so the run carries its provenance even if a later step
+      # fails: which harness produced the deploy, and which commit it was pinned to.
+      - name: Record the harness and candidate SHAs
+        run: |
+          {
+            echo "### Pinned staging deploy"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Harness workflow ref | \`${{ github.ref_name }}\` |"
+            echo "| Harness workflow SHA | \`${{ github.sha }}\` |"
+            echo "| Candidate SHA deployed | \`$APPROVED_SHA\` |"
+            echo "| Checked-out HEAD (verified) | \`$(git rev-parse HEAD)\` |"
+            echo ""
+            echo "The workflow definition came from the harness SHA above; the built and deployed tree is the candidate SHA."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
       - name: Install
@@ -75,4 +166,7 @@ jobs:
             printf '%s' "${!name}" | npx wrangler secret put "$name" --name pawspace-staging
           done
       - name: Where to test
-        run: echo "Staging deployed as pawspace-staging. The deploy log above prints the workers.dev URL — open it and append the module paths from docs/STAGING_DEPLOY.md."
+        run: |
+          echo "Staging deployed as pawspace-staging. The deploy log above prints the workers.dev URL — open it and append the module paths from docs/STAGING_DEPLOY.md."
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Deploy completed: \`pawspace-staging\` is running candidate \`$APPROVED_SHA\`." >> "$GITHUB_STEP_SUMMARY"
