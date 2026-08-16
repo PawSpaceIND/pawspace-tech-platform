@@ -69,6 +69,45 @@ async function call(persona, path, { method = "GET", body } = {}) {
 const authGap = (p) => !JAR.get(p);
 
 /**
+ * Derive a customer that GENUINELY owns a canonical pet, instead of assuming an id shape.
+ *
+ * Run #1 blocked Journey D on a 403 "A pet in this request does not belong to this customer": the
+ * gate assumed the pet id was `PET-UATD-CUS-2`, but the seeded pet is `UATD-CUS-2-PET`, and
+ * /api/uat-scheduling checks pet ownership against canonical_pets before it will reserve. An id
+ * invented by the harness can never satisfy that check, so the gate could only ever block.
+ *
+ * customer-360 is the read model over canonical_customers + canonical_pets, so the pair it returns is
+ * the same relationship the reserve validates against. Preferred ids are still tried first, but they
+ * are VERIFIED to have a pet rather than trusted; if none does, any customer with a real pet is used.
+ * The customer's own name and phone come back with it, so the confirm step can echo them instead of
+ * overwriting a seeded customer's identity (canonical-bookings upserts those columns).
+ */
+async function resolveCustomerWithPet(persona, preferred = []) {
+  const attempts = [];
+  const pick = (records) => (Array.isArray(records) ? records : []).find((r) => Array.isArray(r?.pets) && r.pets.length > 0);
+  const shape = (record, derivedFrom) => ({
+    customerId: String(record.customerId), pet: record.pets[0],
+    name: record.name ?? null, primaryPhone: record.primaryPhone ?? null, derivedFrom, attempts,
+  });
+
+  for (const customerId of preferred) {
+    const r = await call(persona, `/api/customer-360?customerId=${encodeURIComponent(customerId)}`);
+    const records = r.ok ? r.body?.data?.records : null;
+    const record = pick(records);
+    attempts.push({ scope: customerId, http: r.status, records: Array.isArray(records) ? records.length : null, hasPet: Boolean(record) });
+    if (record) return shape(record, `customer-360?customerId=${customerId}`);
+  }
+
+  const all = await call(persona, "/api/customer-360");
+  const records = all.ok ? all.body?.data?.records : null;
+  const record = pick(records);
+  attempts.push({ scope: "all", http: all.status, records: Array.isArray(records) ? records.length : null, hasPet: Boolean(record) });
+  if (record) return shape(record, "customer-360 (scan for any customer owning a canonical pet)");
+
+  return { customerId: null, pet: null, name: null, primaryPhone: null, derivedFrom: null, attempts };
+}
+
+/**
  * JOURNEY D — fresh unique runtime state, then a GENUINE unauthorized mutation.
  *
  * A new grooming booking is reserved onto groom_kiran and confirmed, producing a brand-new work order
@@ -83,21 +122,33 @@ async function gateJourneyD() {
   const group = `CLOSURE-JD-${stamp}`;
   const start = "2026-09-20T04:30:00.000Z", end = "2026-09-20T06:30:00.000Z";
 
+  const subject = await resolveCustomerWithPet("manager", ["UATD-CUS-2", "UATD-CUS-1"]);
+  if (!subject.customerId || !subject.pet?.id) {
+    return { status: "blocked", detail: { reason: "no customer owning a canonical pet could be derived — a valid reserve cannot be built", derivationAttempts: subject.attempts } };
+  }
+
   const reserve = await call("manager", "/api/uat-scheduling", {
     method: "POST",
-    body: { clientRequestId: group, customerId: "UATD-CUS-2", petIds: ["PET-UATD-CUS-2"], serviceCode: "grooming", cityId: "blr", zoneId: "blr-east", scheduledStart: start, scheduledEnd: end, preferredProviderId: "groom_kiran" },
+    body: { clientRequestId: group, customerId: subject.customerId, petIds: [subject.pet.id], serviceCode: "grooming", cityId: "blr", zoneId: "blr-east", scheduledStart: start, scheduledEnd: end, preferredProviderId: "groom_kiran" },
   });
   if (!reserve.ok) return { status: "blocked", detail: { reason: "could not reserve fresh state onto groom_kiran", http: reserve.status, group, error: scrub(reserve.body?.error || JSON.stringify(reserve.body)) } };
   const provider = reserve.body?.data?.provider || {};
   if (provider.id !== "groom_kiran") return { status: "blocked", detail: { reason: "matching did not select groom_kiran; Rahul would not own the work order", selected: provider.id ?? null } };
 
+  // canonical-bookings upserts canonical_customers with ON CONFLICT DO UPDATE over name and
+  // primary_phone, so a placeholder identity here would RENAME the seeded customer as a side effect of
+  // the gate. The derived name and phone are written straight back, making that upsert a no-op on
+  // identity. Refuse to proceed rather than overwrite a real record with a placeholder.
+  if (!subject.name || !subject.primaryPhone) {
+    return { status: "blocked", detail: { reason: "derived customer exposed no name/phone; confirming would overwrite the seeded customer identity", customerId: subject.customerId, derivedFrom: subject.derivedFrom } };
+  }
   const bookingId = `CLOSURE-BK-${stamp}`;
   const confirm = await call("manager", "/api/canonical-bookings", {
     method: "POST",
     body: {
       idempotencyKey: `closure-jd-${stamp}`, scheduleGroupId: group,
-      customer: { id: "UATD-CUS-2", name: "Closure", primaryPhone: "+919000000002" },
-      pets: [{ sourceId: "p1", name: "Rex", species: "dog" }],
+      customer: { id: subject.customerId, name: subject.name, primaryPhone: subject.primaryPhone },
+      pets: [{ sourceId: "p1", name: subject.pet.name, species: subject.pet.species || "dog" }],
       cityId: "blr", zoneId: "blr-east", serviceCode: "grooming",
       packageCode: "dog-bath", packageName: "Essential Bath",
       scheduledStart: start, scheduledEnd: end,
@@ -129,6 +180,7 @@ async function gateJourneyD() {
     status: securityDefect ? "product_security_defect" : (own.status === 200 && crossRefused === true && victimUnchanged && advanced ? "pass" : "fail"),
     detail: {
       freshState: true, bookingId: realBookingId, group, provider: "groom_kiran",
+      customerId: subject.customerId, petId: subject.pet.id, subjectDerivedFrom: subject.derivedFrom,
       endpoint: "/api/grooming-lifecycle", action: "complete",
       crossProviderMutationHttp: cross?.status ?? "skipped (no asha session)",
       crossRefused403: crossRefused, victimByteIdenticalAfterUnauthorizedAttempt: victimUnchanged,
@@ -187,7 +239,24 @@ async function gateJourneyE() {
 
   const afterCreate = await read();
   if (!afterCreate) return { status: "blocked", detail: { reason: "canonical case read unavailable after create", caseId } };
-  const doc = await call(actor, "/api/relocation", { method: "POST", body: { action: "register_document", caseId, documentType: "vaccination_record", objectId: `closure-doc-${Date.now()}`, note: "targeted closure" } });
+  // The checklist is SEEDED at case creation: createRelocationCase inserts one relocation_documents
+  // row per required type at status 'required', and relocation_documents is UNIQUE(case_id,
+  // document_type). register_document is therefore an UPDATE of an existing row — object_id set,
+  // status 'required' -> 'uploaded' — and the array length is CONSTANT by design.
+  //
+  // Run #1 failed here asserting the array had GROWN, which this schema can never do. That was the
+  // harness reading the wrong field, not the product dropping the document: verified by real
+  // execution against lib/relocation-governance.ts on a real SQLite database — the row transitioned to
+  // 'uploaded' with the exact object_id, and a document_uploaded event was written.
+  //
+  // The assertion below is the correct one and is STRICTER than a length check: it pins the specific
+  // document's state transition AND the exact object id round-tripping, at every later read.
+  const DOC_TYPE = "vaccination_record";
+  const DOC_OBJECT_ID = `closure-doc-${Date.now()}`;
+  const findDoc = (snapshot) => !Array.isArray(snapshot?.documents) ? undefined : snapshot.documents.find((d) => d?.document_type === DOC_TYPE);
+  const docBefore = findDoc(afterCreate);
+
+  const doc = await call(actor, "/api/relocation", { method: "POST", body: { action: "register_document", caseId, documentType: DOC_TYPE, objectId: DOC_OBJECT_ID, note: "targeted closure" } });
   const afterDoc = await read();
   const support = await call(actor, "/api/relocation", { method: "POST", body: { action: "open_support", caseId, note: "Targeted closure non-money journey", reason: "closure" } });
   const afterSupport = await read();
@@ -197,15 +266,31 @@ async function gateJourneyE() {
   const allChecks = Object.values(stages).filter(Boolean).flatMap((s) => Object.values(s));
   const blockedEvidence = allChecks.filter((v) => typeof v === "string");
   const held = allChecks.every((v) => v === true);
-  const docRegistered = Array.isArray(afterSupport?.documents) && afterSupport.documents.length > (Array.isArray(afterCreate.documents) ? afterCreate.documents.length : 0);
+  const docAfter = findDoc(afterDoc), docPersisted = findDoc(afterSupport);
+  // Not exposing the checklist at all is missing evidence, not a product failure — same treatment as
+  // the money invariants above, so it reports as blocked rather than as a false FAIL.
+  const docEvidenceMissing = [afterCreate, afterDoc, afterSupport].some((s) => !Array.isArray(s?.documents))
+    ? "blocked: data.documents not exposed"
+    : (docBefore === undefined ? `blocked: no ${DOC_TYPE} row seeded on the case` : null);
+  if (docEvidenceMissing) blockedEvidence.push(docEvidenceMissing);
+
+  const docRegistered = !docEvidenceMissing
+    && docAfter?.status === "uploaded" && docAfter?.object_id === DOC_OBJECT_ID
+    && docPersisted?.status === "uploaded" && docPersisted?.object_id === DOC_OBJECT_ID;
 
   return {
     status: blockedEvidence.length ? "blocked" : (doc.ok && support.ok && docRegistered && held ? "pass" : "fail"),
     detail: {
       freshState: true, caseId, actorUsed: actor, createAttempts: attempts, createHttp: created.status, documentHttp: doc.status, supportHttp: support.status,
       invariantsByStage: stages, documentActuallyRegistered: docRegistered,
+      documentEvidence: {
+        documentType: DOC_TYPE,
+        statusBefore: docBefore?.status ?? null, statusAfter: docAfter?.status ?? null, statusAfterSupport: docPersisted?.status ?? null,
+        objectIdRoundTripped: docAfter?.object_id === DOC_OBJECT_ID,
+        checklistLengthConstant: Array.isArray(afterCreate?.documents) && Array.isArray(afterSupport?.documents) && afterCreate.documents.length === afterSupport.documents.length,
+      },
       blockedEvidence: [...new Set(blockedEvidence)], moneyActionsInvoked: [],
-      assertion: "quote/vendor/payment/refund asserted null-or-empty at every stage",
+      assertion: "quote/vendor/payment/refund asserted null-or-empty at every stage; the registered document asserted 'required'->'uploaded' with its exact object id, still true after the next mutation",
     },
   };
 }

@@ -1,12 +1,20 @@
-# Targeted closure evidence — deliberately its OWN workflow.
+# Targeted closure evidence — manual, staging-only, read-mostly UAT evidence run.
 #
-# It previously lived in closure-ci.yml alongside web-tests, so a known intermittent Web-test harness
-# failure turned the whole run red even when every targeted gate passed. Isolating it means the
-# targeted evidence stands or falls on its own gates. Normal CI is untouched and still runs every job
-# it always did.
+# WHY THIS FILE IS ON THE DEFAULT BRANCH
+# GitHub only lists a workflow_dispatch workflow in the Actions UI if the file exists on the default
+# branch. The runner scripts it invokes live on the temporary harness branch
+# (uat/final-live-runner-64f6952), not here. That is deliberate and correct: dispatching this workflow
+# and selecting that branch runs THAT branch's checkout, so the scripts are present at run time.
 #
-# workflow_dispatch only: this never fires on push or pull_request, so it cannot touch staging
-# accidentally.
+# Selecting any other branch — the default branch included — is refused by the guard below with an
+# explicit message rather than an opaque "module not found" several steps in. That guard is a security
+# boundary, not just ergonomics: the steps after it run the selected ref's code, npm lifecycle scripts
+# included, with the Cloudflare and UAT secrets in scope, so only the harness branch gets that far.
+# When the harness branch is renamed or replaced, EXPECTED_REF below has to move with it.
+#
+# workflow_dispatch ONLY: this never fires on push or pull_request and so cannot touch staging
+# accidentally. It performs no deploy and no seed. Its only mutations are the fresh, uniquely-named
+# UAT fixtures its own gates create on staging; the reconciliation evidence step is SELECT-only.
 name: Targeted closure evidence
 
 on:
@@ -24,16 +32,52 @@ jobs:
     name: Targeted closure evidence (manual)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # This job runs code from the ref the operator selected and needs no Git operation of its
+          # own, so the checkout token has no reason to stay in the runner's Git config afterwards.
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22.13.0'
           cache: npm
-      - run: npm ci
 
-      # B-07 read-only canonical D1 evidence. SELECT only; no mutation. Runs first so the gate below
-      # can consume its verdict. continue-on-error so an unreadable D1 is reported as a blocked gate
-      # in the artifact rather than killing the job before the other gates produce evidence.
+      # Everything below this step runs code that came off the SELECTED REF — npm lifecycle scripts
+      # included — with the Cloudflare and UAT secrets in the environment. So the ref itself is
+      # checked here, before the install and before any secret is exposed: only the harness branch
+      # carries a runner this workflow will hand credentials to. Fail fast and legibly otherwise,
+      # rather than letting the run die later on an unhelpful module-resolution error.
+      #
+      # github.ref_name goes through the environment, never through the template, because a branch
+      # name is attacker-controllable text and `${{ }}` is expanded before Bash parses the script:
+      # a ref legitimately named `attack/$(id)` would otherwise execute inside these echoes.
+      - name: Verify the selected ref is the trusted runner harness
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          EXPECTED_REF: uat/final-live-runner-64f6952
+        run: |
+          if [ "$REF_NAME" != "$EXPECTED_REF" ]; then
+            echo "::error::This workflow runs credentialed gates and only accepts the harness branch."
+            echo "::error::Selected ref '$REF_NAME' is not '$EXPECTED_REF'. Re-run and select that branch."
+            exit 1
+          fi
+          for runner in tools/uat/targeted-closure.mjs tools/uat/b07-reconciliation-evidence.mjs; do
+            if [ ! -f "$runner" ]; then
+              echo "::error::$runner is not present on ref '$REF_NAME'."
+              echo "::error::Re-run this workflow and select the harness branch ($EXPECTED_REF)."
+              exit 1
+            fi
+          done
+          echo "both runners present on $REF_NAME"
+
+      # The repository's own installer: it adds the environment checks, the lockfile tarball
+      # integrity check, the install lock and the timeout that a bare `npm ci` skips.
+      - run: npm run install:ci
+
+      # B-07 canonical reconciliation evidence, read directly from D1 because the deployed build
+      # predates /api/payment-reconciliation. SELECT-only; performs no mutation. continue-on-error so
+      # an unreadable D1 is reported as a blocked gate in the artifact instead of killing the job
+      # before the remaining gates produce their evidence.
       - name: B-07 - read-only reconciliation evidence from D1
         continue-on-error: true
         env:
@@ -49,11 +93,27 @@ jobs:
           PAWSPACE_CANDIDATE_SHA: 64f69524a5c09b7a385cbd61fb5650aff1735b99
         run: node tools/uat/targeted-closure.mjs --json=targeted-closure-report.json
 
+      # A gate that produced no evidence must not read as a gate that passed. This fails the job when
+      # either report is missing or empty — but it runs BEFORE the upload, and the upload is
+      # if: always(), so whatever evidence the run did produce is still collected for the operator.
+      - name: Verify both evidence files were written
+        if: always()
+        run: |
+          missing=0
+          for report in targeted-closure-report.json b07-reconciliation-evidence.json; do
+            if [ ! -s "$report" ]; then
+              echo "::error::$report is missing or empty — that gate produced no evidence."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
       - name: Upload the targeted closure evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: targeted-closure-report
+          if-no-files-found: error
           path: |
             targeted-closure-report.json
             b07-reconciliation-evidence.json
