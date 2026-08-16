@@ -294,19 +294,64 @@ async function gateProviderJourneyD() {
 /** Journey E — NON-MONEY ONLY. MANAGER (scheduling.book + ownership bypass). */
 async function gateRelocationJourneyE() {
   if (authGap("manager")) return { status: "blocked", detail: { reason: "manager session unavailable — RUNNER auth gap" } };
+
+  // Verified contract (app/api/relocation/route.ts + lib/relocation-governance.ts):
+  //   GET /api/relocation?caseId=<id>  ->  { data: { ...relocation_cases row, documents[],
+  //                                          milestones[], quote|null, payment|null, refunds[],
+  //                                          events[] } }
+  // Every non-money invariant is therefore provable from real canonical fields - quote, payment,
+  // refunds and the case's own vendor_id - with no proxy field invented. The previous version read a
+  // 404 baseline (GET without the case existing yet), which proved nothing.
   const created = await call("manager", "/api/relocation", {
     method: "POST",
     body: { action: "create", customerId: "UATD-CUS-2", petName: "Rex", breed: "Indie", ageYears: 3, sizeClass: "medium", travelMode: "air", originCountry: "India", originCity: "blr", destinationCountry: "India", destinationCity: "maa", targetTravelDate: "2026-10-15", crateRequirement: "assessment_required" },
   });
   const caseId = created.body?.data?.id ?? created.body?.data?.caseId ?? created.body?.id ?? null;
-  if (!created.ok || !caseId) return { status: "blocked", detail: { reason: "relocation case not created; document/support cannot be exercised", createHttp: created.status, error: scrub(created.body?.error || "") } };
+  if (!created.ok || !caseId) return { status: "blocked", detail: { reason: "relocation case not created; the journey cannot be exercised", createHttp: created.status, error: scrub(created.body?.error || "") } };
+
+  // Canonical baseline: read the case that now genuinely exists (not a 404).
+  const baseline = await call("manager", `/api/relocation?caseId=${encodeURIComponent(caseId)}`);
+  if (!baseline.ok || !baseline.body?.data) return { status: "blocked", detail: { reason: "canonical case read unavailable; before/after money invariants cannot be evidenced", http: baseline.status, caseId } };
+  const before = baseline.body.data;
+
   const doc = await call("manager", "/api/relocation", { method: "POST", body: { action: "register_document", caseId, documentType: "vaccination_record", objectId: `residual-doc-${Date.now()}`, note: "residual run" } });
   const support = await call("manager", "/api/relocation", { method: "POST", body: { action: "open_support", caseId, note: "Residual non-money journey", reason: "Final residual live run" } });
-  const after = await call("manager", `/api/relocation?caseId=${encodeURIComponent(caseId)}`);
-  const payload = JSON.stringify(after.body || {});
+
+  const final = await call("manager", `/api/relocation?caseId=${encodeURIComponent(caseId)}`);
+  if (!final.ok || !final.body?.data) return { status: "blocked", detail: { reason: "canonical case read after the journey unavailable; invariants unproven", http: final.status, caseId } };
+  const after = final.body.data;
+
+  // Each invariant is asserted against a real field, or reported 'blocked' if the field is absent -
+  // never silently assumed satisfied.
+  const evidence = {
+    quote: after.quote === undefined ? "blocked: data.quote not exposed" : after.quote === null,
+    vendor: after.vendor_id === undefined ? "blocked: data.vendor_id not exposed" : (after.vendor_id ?? null) === null,
+    payment: after.payment === undefined ? "blocked: data.payment not exposed" : after.payment === null,
+    refunds: !Array.isArray(after.refunds) ? "blocked: data.refunds not exposed" : after.refunds.length === 0,
+  };
+  const blockedEvidence = Object.entries(evidence).filter(([, v]) => typeof v === "string").map(([k, v]) => `${k} (${v})`);
+  const invariantsHeld = Object.values(evidence).every((v) => v === true);
+
+  // The journey's own positive effects must still be visible, otherwise "no money moved" is trivially
+  // true because nothing happened at all.
+  const docCount = Array.isArray(after.documents) ? after.documents.length : null;
+  const docRegistered = docCount !== null && docCount > (Array.isArray(before.documents) ? before.documents.length : 0);
+  const journeyPerformed = doc.ok && support.ok && docRegistered;
+
   return {
-    status: doc.ok && support.ok ? "pass" : "fail",
-    detail: { persona: "manager", caseId, createHttp: created.status, documentHttp: doc.status, supportHttp: support.status, moneyActionsInvoked: [], quoteSideEffects: payload.includes("\"quote") ? "present-in-read-only-view" : "none", assertion: "record_payment / request_refund / resolve_refund never called" },
+    status: blockedEvidence.length ? "blocked" : (journeyPerformed && invariantsHeld ? "pass" : "fail"),
+    detail: {
+      persona: "manager", caseId,
+      createHttp: created.status, documentHttp: doc.status, supportHttp: support.status,
+      canonicalBaselineHttp: baseline.status, canonicalFinalHttp: final.status,
+      zeroQuoteCreated: evidence.quote, zeroVendorAssigned: evidence.vendor,
+      zeroPaymentCreatedOrCaptured: evidence.payment, zeroRefund: evidence.refunds,
+      documentsBefore: Array.isArray(before.documents) ? before.documents.length : null,
+      documentsAfter: docCount, documentActuallyRegistered: docRegistered,
+      blockedEvidence,
+      moneyActionsInvoked: [],
+      assertion: "record_payment / request_refund / resolve_refund / issue_quote / assign_vendor never called",
+    },
   };
 }
 
