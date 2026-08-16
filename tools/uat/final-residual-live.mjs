@@ -232,7 +232,10 @@ async function gateC06() {
   const replay = await call("manager", "/api/training-cancellation", { method: "POST", body: { action: "request", bookingId: booking, reason: "Final residual live run", idempotencyKey: key } });
   const after = await call("manager", `/api/training-cancellation?bookingId=${booking}`);
   const status = result.body?.data?.status ?? result.body?.status ?? null;
-  const reached = status === "blocked_policy_configuration";
+  // Verified contract: app/api/training-cancellation/route.ts returns json({data}) - HTTP 200 -
+  // carrying the business status. So the pass condition is 200 AND blocked_policy_configuration;
+  // a 4xx is a wrong refusal, not the boundary.
+  const reached = result.status === 200 && status === "blocked_policy_configuration";
   const wrongRefusal = [400, 403, 404].includes(result.status);
   return {
     status: reached ? "pass" : wrongRefusal ? "fail" : "blocked",
@@ -321,27 +324,43 @@ async function gateCityIsolation() {
 /** B-07 — canonical read-only reconciliation. FINANCE (finance.view). 4xx is blocked, never pass. */
 async function gateB07Reconciliation() {
   if (authGap("finance")) return { status: "blocked", detail: { reason: "finance session unavailable — RUNNER auth gap, not a product refusal" } };
+  // Verified contract: /api/payment-reconciliation returns data.exceptions - the canonical
+  // orphan/partial reconciliation rows (status filter defaults to "open").
   const report = await call("finance", "/api/payment-reconciliation");
-  if (!report.ok) return { status: "blocked", detail: { persona: "finance", reason: "reconciliation view unavailable; no real values asserted", http: report.status } };
-  const payload = report.body?.data ?? report.body ?? {};
-  const real = payload && typeof payload === "object" && Object.keys(payload).length > 0;
-  return { status: real ? "pass" : "blocked", detail: { persona: "finance", endpoint: "/api/payment-reconciliation", http: report.status, assertedRealValues: real, keys: Object.keys(payload).slice(0, 12) } };
+  if (!report.ok) return { status: "blocked", detail: { persona: "finance", reason: "reconciliation view unavailable; no canonical condition could be asserted", http: report.status } };
+  const exceptions = report.body?.data?.exceptions;
+  if (!Array.isArray(exceptions)) return { status: "blocked", detail: { persona: "finance", reason: "data.exceptions absent or not an array — contract not satisfied, so nothing is asserted", http: report.status, keys: Object.keys(report.body?.data ?? {}) } };
+  // Each row must carry the canonical linkage fields that make it a real orphan/partial record.
+  const wellFormed = exceptions.every((e) => e && typeof e === "object" && "id" in e && "booking_id" in e);
+  return {
+    status: wellFormed ? "pass" : "fail",
+    detail: { persona: "finance", endpoint: "/api/payment-reconciliation", http: report.status, exceptionCount: exceptions.length, allRowsCarryCanonicalLinkage: wellFormed, sampleBookingIds: exceptions.slice(0, 3).map((e) => e.booking_id ?? null) },
+  };
 }
 
 /** A-13 — reconciliation idempotency. MANAGER holds reports.view. */
 async function gateA13() {
   if (authGap("manager")) return { status: "blocked", detail: { reason: "manager session unavailable — RUNNER auth gap" } };
+  // Verified contract: /api/training-reconciliation returns data.summary
+  // {programmes, reconciled, exceptions}.
   const first = await call("manager", "/api/training-reconciliation");
   if (!first.ok) return { status: "blocked", detail: { persona: "manager", reason: "training reconciliation unavailable", http: first.status } };
+  const summary = first.body?.data?.summary;
+  if (!summary || typeof summary.programmes !== "number") {
+    return { status: "blocked", detail: { persona: "manager", reason: "data.summary.programmes absent — contract not satisfied, nothing asserted", http: first.status, keys: Object.keys(first.body?.data ?? {}) } };
+  }
   const second = await call("manager", "/api/training-reconciliation");
   const stable = JSON.stringify(first.body) === JSON.stringify(second.body);
-  const payload = first.body?.data ?? first.body ?? {};
-  const real = payload && typeof payload === "object" && Object.keys(payload).length > 0;
-  return { status: stable && real ? "pass" : "fail", detail: { persona: "manager", endpoint: "/api/training-reconciliation", http: first.status, repeatReadStable: stable, assertedRealValues: real, keys: Object.keys(payload).slice(0, 12) } };
+  // Reconciliation must balance: every programme is either reconciled or an exception, with no
+  // double-count. A repeated read must not change the totals (duplicate-capture protection).
+  const balances = summary.reconciled + summary.exceptions <= summary.programmes;
+  const secondSummary = second.body?.data?.summary ?? {};
+  const noDuplicateCapture = secondSummary.programmes === summary.programmes && secondSummary.reconciled === summary.reconciled;
+  return {
+    status: stable && balances && noDuplicateCapture ? "pass" : "fail",
+    detail: { persona: "manager", endpoint: "/api/training-reconciliation", http: first.status, summary, reconciliationBalances: balances, repeatReadStable: stable, noDuplicateCapture },
+  };
 }
-
-// P0 / release stop conditions. Only these force a non-zero exit.
-
 
 const RUNNERS = [
   ["scheduling-group-ownership-P0", gateSchedulingGroupOwnership],
