@@ -33,13 +33,15 @@ test("booking creation goes through lib/taxi-booking-client.ts — the component
 });
 
 test("pet selection welcomes dogs AND cats, one pet per trip", () => {
-  assert.match(flowSource, /species: "cat"/);
-  assert.match(flowSource, /species: "dog"/);
+  // The customer's OWN pets are loaded and selectable — any species, no dogs-only guard.
+  assert.match(flowSource, /loadCustomerPets/, "the flow loads the customer's real pets");
   assert.match(flowSource, /Dogs and cats welcome/);
   assert.match(flowSource, /one pet per trip/);
-  // no dogs-only guard — the cat is selectable like any other pet
+  // no dogs-only guard — a cat is selectable like any other pet
   assert.doesNotMatch(flowSource, /DOGS ONLY|dogs-only/);
-  assert.match(flowSource, /species: pet\.species/, "the selected pet's real species is sent to the booking");
+  // the selected pet's real canonical id and real species are sent to the reserve/booking
+  assert.match(flowSource, /petIds: \[pet\.id\]/, "the reserve gets the pet's owned canonical id");
+  assert.match(flowSource, /species: pet\.species === "cat"/, "the selected pet's real species is sent to the booking");
 });
 
 test("pickup/drop use the real commercial contract fields and mirror the server validation", () => {
