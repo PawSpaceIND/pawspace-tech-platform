@@ -247,5 +247,25 @@ export async function POST(request:Request){const denied=await refuseUnlessGatew
   if(referralCommercial)events.push(["referral_claim_bound","referral_claim",referralCommercial.claimId,{programmeId:referralCommercial.programmeId,code:referralCommercial.code,baseAmount:referralCommercial.baseAmount,discountAmount:referralCommercial.discountAmount,totalAmount:referralCommercial.totalAmount,testOnly:true,liveMoney:false}]);
   if(subscriptionId&&governed.subscriptionPlan)events.push([entitlementActive?"subscription_reserved":"subscription_pending_payment","subscription",subscriptionId,{planCode:governed.subscriptionPlan.planCode,sessionsReserved:entitlementActive?governed.subscriptionPlan.reserveSessions:0,totalSessions:governed.subscriptionPlan.sessions,validityValue:governed.subscriptionPlan.validityValue,validityUnit:governed.subscriptionPlan.validityUnit,cityId:governed.subscriptionPlan.cityId,zoneId:governed.subscriptionPlan.zoneId,awaitingGatewayVerification:!entitlementActive}]);
   for(const [eventType,entityType,entityId,detail] of events)statements.push(db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),bookingId,eventType,entityType,entityId,input.customer.id,JSON.stringify(detail),now));
-  await db.batch(statements);if(trainingCommercial)await consumeTrainingQuote(db,trainingCommercial.quoteId,bookingId);if(boardingCommercial)await consumeBoardingQuote(db,boardingCommercial.quoteId,bookingId);await attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId});const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=?").bind(bookingId).first<Record<string,unknown>>();return json({data:await readBundle(db,booking!,false)},201);
+  // ---- uniqueness race at the commit boundary ---------------------------------------------------
+  // The two guards above are reads, so a competing request can still commit between them and this
+  // batch. canonical_bookings.idempotency_key and .schedule_group_id are GLOBALLY unique, so that
+  // loser previously escaped as a 500 carrying the raw "UNIQUE constraint failed: ..." text. The batch
+  // is atomic, so nothing partial survives; only the response was wrong.
+  //
+  // ONLY those two collisions are handled here. Anything else - a real database fault, a programming
+  // error - is rethrown untouched, because turning an unknown failure into a 409 or, far worse, into a
+  // successful-looking replay would report a booking that does not exist.
+  try{await db.batch(statements);}
+  catch(error){
+    const detail=String((error as {message?:string})?.message??error);
+    if(!/UNIQUE constraint failed:\s*canonical_bookings\.(idempotency_key|schedule_group_id)\b/i.test(detail))throw error;
+    // Re-read under the SAME customer scope the replay lookup uses. If the row that beat us is this
+    // caller's own (a double-submit), this is simply their idempotent replay, arriving a moment late.
+    const raced=await db.prepare("SELECT * FROM canonical_bookings WHERE (idempotency_key=? OR schedule_group_id=?) AND customer_id=?").bind(input.idempotencyKey,input.scheduleGroupId,input.customer.id).first<Record<string,unknown>>();
+    if(raced)return json({data:await readBundle(db,raced,true)});
+    // Otherwise the winner belongs to someone else. Say only that, in the same words the pre-check
+    // uses: no constraint text, no column names, no identifiers belonging to the other customer.
+    return json({error:"This idempotency key or scheduling group is already in use"},409);
+  }if(trainingCommercial)await consumeTrainingQuote(db,trainingCommercial.quoteId,bookingId);if(boardingCommercial)await consumeBoardingQuote(db,boardingCommercial.quoteId,bookingId);await attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId});const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=?").bind(bookingId).first<Record<string,unknown>>();return json({data:await readBundle(db,booking!,false)},201);
 }catch(error){if(error instanceof Response){const message=await error.text().catch(()=>"");return json({error:message||"Canonical booking validation failed"},error.status||409);}return json({error:error instanceof Error?error.message:"Unable to create shared booking lifecycle"},500);}}
