@@ -251,3 +251,32 @@ jobs:
           path: |
             final-residual-report.json
             gate0-identity-report.json
+
+  # Targeted closure run: ONLY the four gates that still lack valid live evidence. Deliberately does
+  # not re-run BOARD-3 (single-use funded fixture, already proven) or the spent scheduling / orphan /
+  # C-06 / fixed work-order fixtures. Journey D and Journey E manufacture fresh unique runtime state,
+  # so neither depends on a fixture a previous run consumed. workflow_dispatch only.
+  targeted-closure:
+    name: Targeted closure evidence (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Targeted closure gates against deployed staging
+        env:
+          PAWSPACE_E2E_BASE: https://pawspace-staging.karthik-fce.workers.dev
+          # Repository secret; never written to a file, a log line or the report.
+          PAWSPACE_E2E_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_CANDIDATE_SHA: 64f69524a5c09b7a385cbd61fb5650aff1735b99
+        run: node tools/uat/targeted-closure.mjs --json=targeted-closure-report.json
+      - name: Upload the targeted closure report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: targeted-closure-report
+          path: targeted-closure-report.json
