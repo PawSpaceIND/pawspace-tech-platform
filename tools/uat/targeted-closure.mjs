@@ -78,8 +78,14 @@ function scrub(value) {
 const JAR = new Map();
 const gates = [];
 const record = (id, status, detail) => {
-  gates.push({ gate: id, status, detail: redact(detail) });
+  const safe = redact(detail);
+  gates.push({ gate: id, status, detail: safe });
   console.log(`${(status === "pass" ? "PASS" : status.toUpperCase()).padEnd(7)} ${id}`);
+  // A non-passing gate prints its reason into the job log. The artifact is the record of a run, but
+  // downloading it to answer "why did this fail" costs a round trip the operator should not need.
+  // This is the SAME object already written to the report — redact() has run over it, so secrets and
+  // cookies are replaced and every string is length-bounded before anything reaches stdout.
+  if (status !== "pass") console.log(`${" ".repeat(8)}${JSON.stringify(safe, null, 2).split("\n").join(`\n${" ".repeat(8)}`)}`);
 };
 
 async function signIn(persona) {
@@ -281,8 +287,41 @@ async function gateJourneyD() {
   if (!confirm.ok) return { status: "blocked", detail: { reason: "could not confirm the fresh booking; no active work order exists to test", http: confirm.status, group, error: scrub(confirm.body?.error || JSON.stringify(confirm.body)) } };
   const realBookingId = confirm.body?.data?.bookingId ?? confirm.body?.data?.id ?? bookingId;
 
+  // LEGAL LIFECYCLE PROGRESSION, performed by the RIGHTFUL owner before anything is asserted.
+  //
+  // Run #4 failed here: the gate called `complete` straight after confirming, and grooming-lifecycle
+  // only allows complete from in_service (transition map: complete:{in_service:"completed"}). A fresh
+  // booking is `confirmed`, so Rahul's own complete returned 409 "Action complete is not allowed from
+  // confirmed" — the product correctly enforcing its state machine, not a defect.
+  //
+  // Walking the real chain also makes the security assertion STRONGER. Previously Asha attempted an
+  // action that was illegal from `confirmed` for everyone, so her 403 could be dismissed as incidental.
+  // Now the booking is genuinely in_service with proof filed, so `complete` would really have
+  // succeeded for its owner — a 403 can then only mean "this work order is not yours".
+  const proofRef = (purpose) => `uat://proof/${realBookingId}/${purpose}`;
+  const preparation = [
+    ["accept", {}], ["on_the_way", {}], ["arrived", {}], ["start_service", {}],
+    // complete additionally requires before photo, after photo and a non-empty checklist. The
+    // uat://proof/<bookingId>/<before|after> form is the synthetic reference the product itself
+    // accepts for UAT (lib/service-media-security.ts), so no media upload is involved.
+    ["add_proof", { beforePhotoRef: proofRef("before"), afterPhotoRef: proofRef("after"), checklist: ["bath", "dry", "nail_trim"], completionNotes: "targeted closure" }],
+  ];
+  const preparationSteps = [];
+  for (const [action, extra] of preparation) {
+    const r = await call("rahul", "/api/grooming-lifecycle", { method: "POST", body: { action, bookingId: realBookingId, actorId: PERSONAS.rahul, idempotencyKey: `closure-jd-${action}-${stamp}`, ...extra } });
+    preparationSteps.push({ step: action, http: r.status, ok: r.ok, error: r.ok ? null : scrub(r.body?.error || JSON.stringify(r.body)) });
+    if (!r.ok) {
+      return { status: "blocked", detail: {
+        reason: `lifecycle preparation step '${action}' failed; the booking never reached in_service, so the authorization assertion would be meaningless`,
+        failedStep: action, http: r.status, bookingId: realBookingId, provider: JD_PROVIDER,
+        lifecyclePreparation: preparationSteps, windowAttempts,
+      } };
+    }
+  }
+
+  // Victim state is captured only AFTER the booking is genuinely progressable.
   const before = await call("rahul", `/api/grooming-lifecycle?bookingId=${encodeURIComponent(realBookingId)}`);
-  if (!before.ok) return { status: "blocked", detail: { reason: "could not read the fresh work order before mutating", http: before.status, bookingId: realBookingId } };
+  if (!before.ok) return { status: "blocked", detail: { reason: "could not read the prepared work order before mutating", http: before.status, bookingId: realBookingId, lifecyclePreparation: preparationSteps } };
 
   // THE UNAUTHORIZED MUTATION — genuine, against still-active state.
   const cross = authGap("asha") ? null : await call("asha", "/api/grooming-lifecycle", { method: "POST", body: { action: "complete", bookingId: realBookingId, actorId: PERSONAS.asha, idempotencyKey: `closure-jd-cross-${stamp}` } });
@@ -296,17 +335,24 @@ async function gateJourneyD() {
   const own = await call("rahul", "/api/grooming-lifecycle", { method: "POST", body: { action: "complete", bookingId: realBookingId, actorId: PERSONAS.rahul, idempotencyKey: `closure-jd-own-${stamp}` } });
   const after = await call("rahul", `/api/grooming-lifecycle?bookingId=${encodeURIComponent(realBookingId)}`);
   const advanced = JSON.stringify(afterCross.body) !== JSON.stringify(after.body);
+  // Not just "something changed": the owner's completion must land the booking AND its work order in
+  // completed. Byte-difference alone would also be satisfied by an event row or a timestamp moving.
+  const finalBookingStatus = after.body?.data?.booking?.status ?? null;
+  const finalWorkOrderStatus = after.body?.data?.booking?.work_order_status ?? null;
+  const reachedCompleted = finalBookingStatus === "completed" && finalWorkOrderStatus === "completed";
 
   return {
-    status: securityDefect ? "product_security_defect" : (own.status === 200 && crossRefused === true && victimUnchanged && advanced ? "pass" : "fail"),
+    status: securityDefect ? "product_security_defect" : (own.status === 200 && crossRefused === true && victimUnchanged && advanced && reachedCompleted ? "pass" : "fail"),
     detail: {
       freshState: true, bookingId: realBookingId, group, provider: JD_PROVIDER,
       scheduledWindow: { start, end, attemptsBeforeSuccess: windowAttempts.length - 1 }, windowAttempts,
       customerId: subject.customerId, petId: subject.pet.id, subjectDerivedFrom: subject.derivedFrom,
       endpoint: "/api/grooming-lifecycle", action: "complete",
+      lifecyclePreparation: preparationSteps,
       crossProviderMutationHttp: cross?.status ?? "skipped (no asha session)",
       crossRefused403: crossRefused, victimByteIdenticalAfterUnauthorizedAttempt: victimUnchanged,
       ownProgressionHttp: own.status, ownStateAdvanced: advanced,
+      finalBookingStatus, finalWorkOrderStatus, reachedCompleted,
       productSecurityDefect: securityDefect,
     },
   };
