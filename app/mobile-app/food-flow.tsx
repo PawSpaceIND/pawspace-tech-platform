@@ -43,8 +43,14 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
   const [catalogue, setCatalogue] = useState<FoodCatalogueItem[]>([]);
   const [catalogueError, setCatalogueError] = useState("");
   const [catalogueLoading, setCatalogueLoading] = useState(true);
-  const [selectedPets, setSelectedPets] = useState<string[]>([]);
-  const [pets, setPets] = useState<CustomerPet[]>([]);
+  const [selRaw, setSelectedPets] = useState<string[]>([]);
+  // pets is null until the first load resolves; that distinguishes "not hydrated yet" from
+  // "hydrated to an empty list" (e.g. the user deleted their last pet), so a late initial load
+  // can never re-insert a pet the user just removed.
+  const [petsState, setPets] = useState<CustomerPet[] | null>(null);
+  const pets = useMemo(() => petsState ?? [], [petsState]);
+  // Selection is always reconciled against the accepted pet list.
+  const selectedPets = useMemo(() => selRaw.filter((id) => pets.some((p) => p.id === id)), [selRaw, pets]);
   const [petsLoading, setPetsLoading] = useState(true);
   const [petsError, setPetsError] = useState("");
   const [showPetManager, setShowPetManager] = useState(false);
@@ -90,8 +96,8 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
     loadCustomerPets(customer.customerId)
       .then((loaded) => {
         if (!active) return;
-        // Do not clobber a pet the user just added/edited via PetManager if this initial load resolves late.
-        setPets((prev) => (prev.length ? prev : loaded));
+        // Do not clobber a pet the user just added/edited/deleted via PetManager if this initial load resolves late.
+        setPets((prev) => (prev === null ? loaded : prev));
         setSelectedPets((prev) => (prev.length ? prev : loaded[0] ? [loaded[0].id] : []));
         setPetsError("");
       })

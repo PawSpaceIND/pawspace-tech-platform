@@ -162,8 +162,8 @@ import type { LoggedInCustomer } from "./customer-login";
 export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; customer: LoggedInCustomer }) {
   const [mode, setMode] = useState<Mode>(initialMode),
     [stage, setStage] = useState(1),
-    [selectedPets, setSelectedPets] = useState<string[]>([]),
-    [pets, setPets] = useState<CustomerPet[]>([]),
+    [selRaw, setSelectedPets] = useState<string[]>([]),
+    [petsState, setPets] = useState<CustomerPet[] | null>(null),
     [petsLoading, setPetsLoading] = useState(true),
     [petsError, setPetsError] = useState(""),
     [showPetManager, setShowPetManager] = useState(false),
@@ -217,8 +217,8 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
     loadCustomerPets(customer.customerId)
       .then((loaded) => {
         if (!active) return;
-        // Do not clobber a pet the user just added/edited via PetManager if this initial load resolves late.
-        setPets((prev) => (prev.length ? prev : loaded));
+        // Do not clobber a pet the user just added/edited/deleted via PetManager if this initial load resolves late.
+        setPets((prev) => (prev === null ? loaded : prev));
         setSelectedPets((prev) => (prev.length ? prev : loaded[0] ? [loaded[0].id] : []));
         setPetsError("");
       })
@@ -233,6 +233,11 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
       return kept.length ? kept : updated[0] ? [updated[0].id] : [];
     });
   };
+  // pets is null until the first load resolves — distinguishes "not hydrated" from "hydrated empty"
+  // (e.g. the last pet was deleted), so a late initial load can't re-insert a removed pet.
+  const pets = petsState ?? [];
+  // Selection is always reconciled against the accepted pet list.
+  const selectedPets = selRaw.filter((id) => pets.some((p) => p.id === id));
   const selectedPetObjs = pets.filter((p) => selectedPets.includes(p.id));
   const selectedPetNames = selectedPetObjs.map((p) => p.name);
   const selectedSpecies = [...new Set(selectedPetObjs.map((p) => p.species).filter((value): value is string => Boolean(value)))];

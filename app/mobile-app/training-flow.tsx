@@ -86,8 +86,8 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
       "Basic obedience",
       "Leash walking",
     ]),
-    [selectedPets, setSelectedPets] = useState<string[]>([]),
-    [pets, setPets] = useState<CustomerPet[]>([]),
+    [selRaw, setSelectedPets] = useState<string[]>([]),
+    [petsState, setPets] = useState<CustomerPet[] | null>(null),
     [petsLoading, setPetsLoading] = useState(true),
     [petsError, setPetsError] = useState(""),
     [showPetManager, setShowPetManager] = useState(false),
@@ -110,6 +110,11 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
     [addingGoal, setAddingGoal] = useState(false),
     [view, setView] = useState<"plan" | "homework" | "progress">("plan"),
     [toast, setToast] = useState("");
+  // pets is null until the first load resolves — distinguishes "not hydrated" from "hydrated empty"
+  // (e.g. the last dog was deleted), so a late initial load can't re-insert a removed pet.
+  const pets = petsState ?? [];
+  // Selection is always reconciled against the accepted pet list.
+  const selectedPets = selRaw.filter((id) => pets.some((p) => p.id === id));
   const flash = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
@@ -165,9 +170,9 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
     loadCustomerPets(customer.customerId)
       .then((loaded) => {
         if (!active) return;
-        // Do not clobber a pet the user just added/edited via PetManager if this initial load resolves late.
+        // Do not clobber a pet the user just added/edited/deleted via PetManager if this initial load resolves late.
         const firstDog = loaded.find((p) => p.species === "dog");
-        setPets((prev) => (prev.length ? prev : loaded));
+        setPets((prev) => (prev === null ? loaded : prev));
         setSelectedPets((prev) => (prev.length ? prev : firstDog ? [firstDog.id] : []));
         setPetsError("");
       })

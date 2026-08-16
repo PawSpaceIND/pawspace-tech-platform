@@ -34,8 +34,13 @@ export default function TaxiFlow({ customer }: { customer: LoggedInCustomer }) {
   const [destinationLabel, setDestinationLabel] = useState("");
   const [dayOffset, setDayOffset] = useState(1);
   const [hour, setHour] = useState(9);
-  const [selectedPet, setSelectedPet] = useState("");
-  const [pets, setPets] = useState<CustomerPet[]>([]);
+  const [selRaw, setSelectedPet] = useState("");
+  // pets is null until the first load resolves — distinguishes "not hydrated" from "hydrated empty"
+  // (e.g. the last pet was deleted), so a late initial load can't re-insert a removed pet.
+  const [petsState, setPets] = useState<CustomerPet[] | null>(null);
+  const pets = petsState ?? [];
+  // Selection is always reconciled against the accepted pet list.
+  const selectedPet = pets.some((p) => p.id === selRaw) ? selRaw : "";
   const [petsLoading, setPetsLoading] = useState(true);
   const [petsError, setPetsError] = useState("");
   const [showPetManager, setShowPetManager] = useState(false);
@@ -66,8 +71,8 @@ export default function TaxiFlow({ customer }: { customer: LoggedInCustomer }) {
     loadCustomerPets(customer.customerId)
       .then((loaded) => {
         if (!active) return;
-        // Do not clobber a pet the user just added/edited via PetManager if this initial load resolves late.
-        setPets((prev) => (prev.length ? prev : loaded));
+        // Do not clobber a pet the user just added/edited/deleted via PetManager if this initial load resolves late.
+        setPets((prev) => (prev === null ? loaded : prev));
         setSelectedPet((prev) => (prev ? prev : loaded[0]?.id ?? ""));
         setPetsError("");
       })
