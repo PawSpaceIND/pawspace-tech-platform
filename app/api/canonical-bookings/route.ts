@@ -115,14 +115,60 @@ export async function POST(request:Request){const denied=await refuseUnlessGatew
     referralCommercial=await prepareReferralBooking(db,{claimId:referralClaimId,customer:{id:input.customer.id,primaryPhone:input.customer.primaryPhone,email:input.customer.email},serviceCode:input.serviceCode,cityId:input.cityId,baseAmount:governed.totalAmount,baseAmountDueNow:governed.amountDueNow,hasOtherOffer:Boolean(trainingCommercial?.couponCode||input.pricing.couponCode||existingDiscount>0),isSubscription:Boolean(governed.subscriptionPlan||input.pricing.subscription)});
     governed={...governed,totalAmount:referralCommercial.totalAmount,amountDueNow:referralCommercial.amountDueNow};
   }
-  const now=Date.now(),bookingId=`PS-UAT-${now.toString(36).toUpperCase()}-${crypto.randomUUID().slice(0,4).toUpperCase()}`,workOrderId=`WO-${crypto.randomUUID().slice(0,8).toUpperCase()}`,paymentId=`PAY-${crypto.randomUUID().slice(0,8).toUpperCase()}`,subscriptionId=governed.subscriptionPlan?`GSUB-${crypto.randomUUID().slice(0,10).toUpperCase()}`:null,ids=input.pets.map(item=>petId(input.customer.id,item.sourceId));
+  const now=Date.now(),bookingId=`PS-UAT-${now.toString(36).toUpperCase()}-${crypto.randomUUID().slice(0,4).toUpperCase()}`,workOrderId=`WO-${crypto.randomUUID().slice(0,8).toUpperCase()}`,paymentId=`PAY-${crypto.randomUUID().slice(0,8).toUpperCase()}`,subscriptionId=governed.subscriptionPlan?`GSUB-${crypto.randomUUID().slice(0,10).toUpperCase()}`:null;
+  // A booking used to mint its own canonical_pets row keyed by the pet NAME. A pet the customer had
+  // already saved lives under a different source id (the account flow uses `account-<hash>`), so the
+  // booking created a SECOND, empty row for the same animal — and pet_ids_json pointed at that one.
+  // Every reader that resolves pets through pet_ids_json (Booking Command Center, canonical-bookings
+  // GET, partner job feed) therefore showed "Breed not recorded · Vaccine Not Provided" for a pet
+  // whose profile was filled in. Most booking flows send only sourceId/name/species, so the profile
+  // could not arrive on the request either.
+  //
+  // Resolve each booking pet against THIS CUSTOMER's own pets first — by source id, then by name —
+  // and reuse that row rather than minting a duplicate, inheriting whatever the caller did not send.
+  // The query is scoped to input.customer.id, so two customers using the same pet name or source id
+  // can never resolve onto each other's row.
+  const existingPets=await db.prepare("SELECT id,source_pet_id,name,species,breed,vaccination_status FROM canonical_pets WHERE customer_id=? ORDER BY updated_at DESC").bind(input.customer.id).all<Record<string,unknown>>().catch(()=>({results:[] as Record<string,unknown>[]}));
+  const petKey=(value:unknown)=>String(value??"").trim().toLowerCase();
+  // A pet already booked before this fix left an empty duplicate behind whose source id IS the pet
+  // name, so an id-only match would keep selecting the blank row and the card would stay empty for
+  // exactly the customers who hit the bug. Prefer a candidate that actually carries a profile.
+  const petHasProfile=(row:Record<string,unknown>)=>Boolean(petKey(row.breed))||(Boolean(petKey(row.vaccination_status))&&petKey(row.vaccination_status)!=="not_provided");
+  const resolvedPets=input.pets.map(pet=>{
+    const candidates=[
+      ...existingPets.results.filter(row=>petKey(row.source_pet_id)&&petKey(row.source_pet_id)===petKey(pet.sourceId)),
+      ...existingPets.results.filter(row=>petKey(row.name)===petKey(pet.name)),
+    ];
+    const match=candidates.find(petHasProfile)??candidates[0];
+    // 'not_provided' is the column's own sentinel for "unknown", and several booking flows send it
+    // (or an empty breed) as a literal rather than omitting the field. Treat both as absent, so a
+    // caller with nothing to say cannot out-rank the profile the customer actually saved.
+    const suppliedBreed=petKey(pet.breed)?String(pet.breed):null;
+    const suppliedVaccination=petKey(pet.vaccinationStatus)&&petKey(pet.vaccinationStatus)!=="not_provided"?String(pet.vaccinationStatus):null;
+    const inheritedBreed=match&&petKey(match.breed)?String(match.breed):null;
+    const inheritedVaccination=match&&petKey(match.vaccination_status)&&petKey(match.vaccination_status)!=="not_provided"?String(match.vaccination_status):null;
+    return {
+      id:match?String(match.id):petId(input.customer.id,pet.sourceId),
+      name:pet.name,
+      species:pet.species??(match?String(match.species):undefined)??"dog",
+      breed:suppliedBreed??inheritedBreed,
+      vaccinationStatus:suppliedVaccination??inheritedVaccination??"not_provided",
+      sourceId:pet.sourceId,
+    };
+  });
+  const ids=resolvedPets.map(pet=>pet.id);
   const pricingJson={...input.pricing,discount:referralCommercial?.discountAmount??trainingCommercial?.discount??input.pricing.discount,couponCode:trainingCommercial?.couponCode??input.pricing.couponCode,referralClaimId:referralCommercial?.claimId,referralCode:referralCommercial?.code,referralPolicy:referralCommercial?.policySnapshot,referralBaseAmount:referralCommercial?.baseAmount,catalogueVersion:governed.catalogueVersion,offerType:governed.offerType,subscription:subscriptionId??input.pricing.subscription,subscriptionPlanCode:governed.subscriptionPlan?.planCode,subscriptionConfig:governed.subscriptionPlan,commercialPolicy:commercialPolicy?policySnapshot(commercialPolicy):undefined,trainingCommercial:trainingCommercial??undefined,boardingCommercial:boardingCommercial??undefined};
   // The entitlement is only live money's to grant. Captured (sandbox, or an offline capture) creates it
   // active; anything awaiting gateway verification creates it pending with zero sessions reserved.
   const entitlementActive=paymentStatusRecorded==="captured";
   const statements=[
     db.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?, ?,?,?) ON CONFLICT(id) DO UPDATE SET city_id=excluded.city_id,name=excluded.name,primary_phone=excluded.primary_phone,secondary_phone=excluded.secondary_phone,email=excluded.email,updated_at=excluded.updated_at").bind(input.customer.id,input.cityId,input.customer.name,input.customer.primaryPhone,input.customer.secondaryPhone??null,input.customer.email??null,"uat_customer_app",JSON.stringify({serviceUpdates:true,marketing:false}),now,now),
-    ...input.pets.map((pet,index)=>db.prepare("INSERT INTO canonical_pets (id,customer_id,name,species,breed,vaccination_status,source_pet_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,species=excluded.species,breed=excluded.breed,vaccination_status=excluded.vaccination_status,updated_at=excluded.updated_at").bind(ids[index],input.customer.id,pet.name,pet.species??"dog",pet.breed??null,pet.vaccinationStatus??"not_provided",pet.sourceId,now,now)),
+    // The conflict clause must not overwrite a stored profile with the blanks a booking payload
+    // carries: breed only moves when a value is actually supplied, and 'not_provided' never demotes a
+    // vaccination status that is already recorded. Without this, booking the same pet a second time
+    // erased the breed and vaccination the customer had entered. The customer_id guard keeps a
+    // booking from ever writing over another customer's pet row.
+    ...resolvedPets.map(pet=>db.prepare("INSERT INTO canonical_pets (id,customer_id,name,species,breed,vaccination_status,source_pet_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,species=excluded.species,breed=COALESCE(excluded.breed,canonical_pets.breed),vaccination_status=CASE WHEN excluded.vaccination_status='not_provided' THEN canonical_pets.vaccination_status ELSE excluded.vaccination_status END,source_pet_id=COALESCE(canonical_pets.source_pet_id,excluded.source_pet_id),updated_at=excluded.updated_at WHERE canonical_pets.customer_id=excluded.customer_id").bind(pet.id,input.customer.id,pet.name,pet.species,pet.breed,pet.vaccinationStatus,pet.sourceId,now,now)),
     db.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(bookingId,input.idempotencyKey,input.customer.id,JSON.stringify(ids),JSON.stringify(input.pets.map(p=>p.sourceId)),input.cityId,input.zoneId,input.serviceCode,governed.packageCode,governed.packageName,input.scheduleGroupId,input.provider.id,input.scheduledStart,input.scheduledEnd,"confirmed","customer_app",governed.totalAmount,"INR",JSON.stringify(pricingJson),input.customer.id,now,now),
     db.prepare("INSERT INTO provider_work_orders (id,booking_id,schedule_group_id,provider_id,provider_name,provider_model,service_code,scheduled_start,scheduled_end,occurrence_count,status,assignment_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(workOrderId,bookingId,input.scheduleGroupId,input.provider.id,input.provider.name,input.provider.model,input.serviceCode,input.scheduledStart,input.scheduledEnd,reservations.results.length,input.provider.model==="commission"?"awaiting_acceptance":"assigned",JSON.stringify({reservations:reservations.results,decision:assignment}),now,now),
     db.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,amount_due_now,currency,method,mode,status,gateway,idempotency_key,detail_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(paymentId,bookingId,input.customer.id,governed.totalAmount,governed.amountDueNow,"INR",input.payment.method,input.payment.mode,paymentStatusRecorded,"uat_sandbox",`${input.idempotencyKey}:payment`,JSON.stringify({detail:input.payment.detail,liveMoney:false,catalogueVersion:governed.catalogueVersion,trainingQuoteId:trainingCommercial?.quoteId,boardingQuoteId:boardingCommercial?.quoteId,referralClaimId:referralCommercial?.claimId,referralDiscount:referralCommercial?.discountAmount}),now,now),
