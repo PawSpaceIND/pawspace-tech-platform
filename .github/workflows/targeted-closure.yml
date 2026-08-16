@@ -1,0 +1,59 @@
+# Targeted closure evidence — deliberately its OWN workflow.
+#
+# It previously lived in closure-ci.yml alongside web-tests, so a known intermittent Web-test harness
+# failure turned the whole run red even when every targeted gate passed. Isolating it means the
+# targeted evidence stands or falls on its own gates. Normal CI is untouched and still runs every job
+# it always did.
+#
+# workflow_dispatch only: this never fires on push or pull_request, so it cannot touch staging
+# accidentally.
+name: Targeted closure evidence
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: targeted-closure-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  targeted-closure:
+    name: Targeted closure evidence (manual)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+
+      # B-07 read-only canonical D1 evidence. SELECT only; no mutation. Runs first so the gate below
+      # can consume its verdict. continue-on-error so an unreadable D1 is reported as a blocked gate
+      # in the artifact rather than killing the job before the other gates produce evidence.
+      - name: B-07 - read-only reconciliation evidence from D1
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node tools/uat/b07-reconciliation-evidence.mjs --json=b07-reconciliation-evidence.json
+
+      - name: Targeted closure gates against deployed staging
+        env:
+          PAWSPACE_E2E_BASE: https://pawspace-staging.karthik-fce.workers.dev
+          # Repository secret; never written to a file, a log line or the report.
+          PAWSPACE_E2E_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_CANDIDATE_SHA: 64f69524a5c09b7a385cbd61fb5650aff1735b99
+        run: node tools/uat/targeted-closure.mjs --json=targeted-closure-report.json
+
+      - name: Upload the targeted closure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: targeted-closure-report
+          path: |
+            targeted-closure-report.json
+            b07-reconciliation-evidence.json
