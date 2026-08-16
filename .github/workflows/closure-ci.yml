@@ -213,3 +213,32 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+
+  # Final residual live UAT run against deployed staging. Harness only — it changes no product code.
+  # workflow_dispatch ONLY: the `if` below keeps it off every push and pull_request, so a normal CI run
+  # never touches staging or moves sandbox money. Secrets are passed as env and are never echoed,
+  # written to the report, or committed; the harness redacts them defensively as well.
+  final-residual-live:
+    name: Final residual live UAT (manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Final residual gates against deployed staging
+        env:
+          PAWSPACE_E2E_BASE: https://pawspace-staging.karthik-fce.workers.dev
+          # Read from the repository secret; never written to a file, a log line or the report.
+          PAWSPACE_E2E_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_E2E_EMAIL: ${{ vars.PAWSPACE_UAT_TESTER_EMAIL }}
+        run: node tests/e2e/final-residual-live.mjs --json=final-residual-report.json
+      - name: Upload the residual report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-residual-report
+          path: final-residual-report.json
