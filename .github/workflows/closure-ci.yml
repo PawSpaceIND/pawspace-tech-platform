@@ -11,6 +11,15 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      uat_mode:
+        description: 'Which live UAT job to run (the other stays skipped). Normal CI jobs always run.'
+        type: choice
+        required: true
+        default: targeted
+        options:
+          - targeted
+          - residual
 
 permissions:
   contents: read
@@ -220,7 +229,9 @@ jobs:
   # written to the report, or committed; the harness redacts them defensively as well.
   final-residual-live:
     name: Final residual live UAT (manual)
-    if: github.event_name == 'workflow_dispatch'
+    # Dispatch-only AND mode-gated: a targeted dispatch leaves this job skipped, so the two live jobs
+    # can never run against staging in the same dispatch.
+    if: github.event_name == 'workflow_dispatch' && inputs.uat_mode == 'residual'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -258,7 +269,8 @@ jobs:
   # so neither depends on a fixture a previous run consumed. workflow_dispatch only.
   targeted-closure:
     name: Targeted closure evidence (manual)
-    if: github.event_name == 'workflow_dispatch'
+    # Dispatch-only AND mode-gated; this is the default mode.
+    if: github.event_name == 'workflow_dispatch' && inputs.uat_mode == 'targeted'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
