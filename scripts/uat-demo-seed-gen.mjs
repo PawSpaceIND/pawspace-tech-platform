@@ -274,14 +274,23 @@ insert("employee_incentive_results", { id: "UATD-IRES-1", period_id: "UATD-IPER-
 insert("employee_incentive_results", { id: "UATD-IRES-2", period_id: "UATD-IPER-1", employee_id: "UATD-EMP-SALES2", employee_email: "uat.demo.sales2@tkpetcare.in", source_fact_run_id: "UATD-SPFR-1", metric_value: 61000, calculated_amount: 550, approved_amount: 0, status: "calculated", evidence_json: JSON.stringify({ demoSeed: true, metric: "net_collected_revenue" }), approved_by: null, approved_at: null });
 
 // --- productivity facts (leaderboard + performance centre + /me rank) --------
-// The one deliberate exception to this file's INSERT OR IGNORE rule. These rows carry load-time
-// windows (see LOAD_NOW), and OR IGNORE would keep the ORIGINAL load's timestamps forever, so
-// re-running the seed to refresh a stale demo board would silently do nothing. Clearing the two
-// UATD-* rows first is what makes a reload actually refresh them. Facts before the run they point
-// at; nothing outside the UATD-* namespace is touched, so a real run generated from
-// /team/performance survives untouched.
+// These two rows are the only ones carrying load-time windows (see LOAD_NOW), and OR IGNORE alone
+// would keep the ORIGINAL load's timestamps forever — re-running the seed to refresh a stale demo
+// board would silently do nothing. Clearing them first is what makes a reload actually restamp them,
+// and it keeps every INSERT an INSERT OR IGNORE, which tests/uat-demo-seed-sales-marketing.test.mjs
+// enforces for the whole file. (OR REPLACE would read more neatly here and breaks that rule, so it
+// is out; DELETE-then-insert is just as re-runnable.)
+//
+// The run is cleared by idempotency_key as well as by id, and that is load-bearing rather than
+// belt-and-braces: idempotency_key is UNIQUE, so a row holding 'uatd-spfr-1' under some other id
+// would survive an id-only delete, suppress the run's insert, leave the facts' period subqueries
+// resolving to NULL against NOT NULL columns — and take the whole demo board down silently. Matching
+// both columns means nothing can be left behind to collide with, so the insert always lands.
+//
+// Facts before the run they point at. Nothing outside the UATD-* namespace is matched, so a real run
+// generated from /team/performance survives a reload untouched.
 lines.push("DELETE FROM sales_productivity_facts WHERE run_id='UATD-SPFR-1';");
-lines.push("DELETE FROM sales_productivity_fact_runs WHERE id='UATD-SPFR-1';");
+lines.push("DELETE FROM sales_productivity_fact_runs WHERE id='UATD-SPFR-1' OR idempotency_key='uatd-spfr-1';");
 insert("sales_productivity_fact_runs", { id: "UATD-SPFR-1", idempotency_key: "uatd-spfr-1", policy_id: "UATD-POL-1", policy_version: 1, period_start: LOAD_AGO(7), period_end: LOAD_NOW, status: "completed", source_contract_version: "v1", generated_by: "uat_demo_seed", generated_at: LOAD_NOW, detail_json: JSON.stringify({ demoSeed: true }) });
 const FACTS = [
   { email: "uat.demo.sales1@tkpetcare.in", leads: 42, accepted: 40, actions: 128, qualified: 22, clocks: 40, met: 36, breached: 4, conv: 14, booked: 118000, collected: 96000, refunds: 4000, cx: 1 },
