@@ -35,16 +35,50 @@ const PERSONAS = {
   asha: process.env.PAWSPACE_E2E_PROVIDER_ASHA || "asha.groomer1@tkpetcare.in",
 };
 const SECRETS = [ACCESS_CODE].filter((s) => s && s.length >= 6);
-function scrub(value) {
-  let out = typeof value === "string" ? value : JSON.stringify(value ?? null);
+/** Per-STRING cap. Bounds a runaway error blob without ever spanning a JSON delimiter. */
+const MAX_FIELD = 600;
+
+/**
+ * Redact one string: secrets, then cookie headers, then bound its length.
+ *
+ * Truncation happens per field, never across a serialised structure. The old scrub() sliced the
+ * WHOLE serialised detail object to 600 chars and record() then JSON.parse()d it, so any gate whose
+ * evidence exceeded 600 characters was cut mid-token and threw
+ * "Expected ',' or '}' after property value in JSON at position 600" — the gate's real result was
+ * destroyed by its own reporter and surfaced as a FAIL. That is what happened to Journey E in run #2.
+ */
+function redactText(text) {
+  let out = String(text);
   for (const s of SECRETS) out = out.split(s).join("[REDACTED]");
-  return out.replace(/(set-cookie|cookie)\s*[:=]\s*[^;,\s]+/gi, "$1=[REDACTED]").slice(0, 600);
+  out = out.replace(/(set-cookie|cookie)\s*[:=]\s*[^;,\s]+/gi, "$1=[REDACTED]");
+  return out.length > MAX_FIELD ? `${out.slice(0, MAX_FIELD)}…[truncated ${out.length - MAX_FIELD} chars]` : out;
+}
+
+/**
+ * Structure-preserving redaction. Walks the value and redacts every string in place — keys included —
+ * so the result is always valid, parseable JSON no matter how large the evidence grows. Numbers and
+ * booleans cannot carry a secret and are passed through untouched.
+ */
+function redact(value, seen = new WeakSet()) {
+  if (typeof value === "string") return redactText(value);
+  if (value === null || typeof value !== "object") return value;
+  if (seen.has(value)) return "[circular]";
+  seen.add(value);
+  if (Array.isArray(value)) return value.map((item) => redact(item, seen));
+  const out = {};
+  for (const [key, item] of Object.entries(value)) out[redactText(key)] = redact(item, seen);
+  return out;
+}
+
+/** String-path helper kept for the call sites that pass an error message or a serialised body. */
+function scrub(value) {
+  return redactText(typeof value === "string" ? value : JSON.stringify(value ?? null));
 }
 
 const JAR = new Map();
 const gates = [];
 const record = (id, status, detail) => {
-  gates.push({ gate: id, status, detail: JSON.parse(scrub(detail)) });
+  gates.push({ gate: id, status, detail: redact(detail) });
   console.log(`${(status === "pass" ? "PASS" : status.toUpperCase()).padEnd(7)} ${id}`);
 };
 
@@ -154,6 +188,16 @@ async function gateJourneyD() {
       scheduledStart: start, scheduledEnd: end,
       provider: { id: "groom_kiran", name: provider.name, model: provider.model },
       totalAmount: 1349, amountDueNow: 1349,
+      // Required by the route's own LifecycleInput type and read unconditionally
+      // (input.pricing.referralClaimId), but not covered by validate() — so omitting it did not fail
+      // the request cleanly, it threw inside the handler and returned HTTP 500 "Cannot read
+      // properties of undefined (reading 'referralClaimId')". That is what blocked Journey D in
+      // run #2, after the customer/pet derivation had already started working.
+      //
+      // discount: 0 is the minimal valid payload and is deliberately inert: no coupon, no referral
+      // claim, no subscription, so no offer/referral machinery is engaged and the gate still tests
+      // exactly the cross-provider authorization behaviour it was written for.
+      pricing: { discount: 0 },
       payment: { method: "upi", mode: "prepaid", status: "captured", detail: "closure" },
     },
   });
