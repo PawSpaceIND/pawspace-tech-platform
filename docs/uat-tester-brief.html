@@ -1,0 +1,850 @@
+<title>PawSpace UAT Run Sheet</title>
+<style>
+  :root {
+    --bg: #f2f5f4;
+    --surface: #ffffff;
+    --surface-2: #e9efec;
+    --ink: #16201e;
+    --ink-2: #55635f;
+    --ink-3: #7e8c87;
+    --line: #d7e0dc;
+    --line-strong: #b9c7c1;
+    --accent: #0d6d5f;
+    --accent-ink: #0a544a;
+    --accent-soft: #e0efe9;
+    --p0: #ab2029;
+    --p0-soft: #f8e5e5;
+    --p1: #9a5c07;
+    --p1-soft: #f8ecd9;
+    --p2: #55697a;
+    --p2-soft: #e7edf1;
+    --shadow: 0 1px 2px rgba(22, 32, 30, .05), 0 8px 24px -16px rgba(22, 32, 30, .35);
+
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1614;
+      --surface: #161f1d;
+      --surface-2: #1c2725;
+      --ink: #e5ece9;
+      --ink-2: #94a39e;
+      --ink-3: #74847f;
+      --line: #26332f;
+      --line-strong: #35453f;
+      --accent: #4fcbb2;
+      --accent-ink: #7fdcc7;
+      --accent-soft: #16302b;
+      --p0: #f4868a;
+      --p0-soft: #33191c;
+      --p1: #dda253;
+      --p1-soft: #322517;
+      --p2: #9db0be;
+      --p2-soft: #1e262c;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px -16px rgba(0, 0, 0, .8);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0f1614;
+    --surface: #161f1d;
+    --surface-2: #1c2725;
+    --ink: #e5ece9;
+    --ink-2: #94a39e;
+    --ink-3: #74847f;
+    --line: #26332f;
+    --line-strong: #35453f;
+    --accent: #4fcbb2;
+    --accent-ink: #7fdcc7;
+    --accent-soft: #16302b;
+    --p0: #f4868a;
+    --p0-soft: #33191c;
+    --p1: #dda253;
+    --p1-soft: #322517;
+    --p2: #9db0be;
+    --p2-soft: #1e262c;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px -16px rgba(0, 0, 0, .8);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0;
+    padding: 0 20px 96px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 780px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 52px;
+  }
+
+  /* ---------- masthead ---------- */
+
+  .masthead {
+    padding-top: 56px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--serif);
+    font-size: clamp(38px, 7vw, 56px);
+    line-height: 1.02;
+    letter-spacing: -.015em;
+    font-weight: 600;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    font-size: 18px;
+    line-height: 1.55;
+    color: var(--ink-2);
+    margin: 0;
+    max-width: 60ch;
+  }
+
+  .entry {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: 3px;
+    box-shadow: var(--shadow);
+    padding: 22px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .entry-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    align-items: baseline;
+  }
+
+  .entry-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    min-width: 110px;
+  }
+
+  .entry-value {
+    font-size: 15px;
+    flex: 1 1 320px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .url {
+    font-family: var(--mono);
+    font-size: 15.5px;
+    color: var(--accent);
+    font-weight: 600;
+    text-decoration: none;
+    border-bottom: 1px solid var(--line-strong);
+  }
+
+  .url:hover, .url:focus-visible { border-bottom-color: var(--accent); }
+
+  /* ---------- sections ---------- */
+
+  section {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  h2 {
+    font-family: var(--serif);
+    font-size: 27px;
+    line-height: 1.2;
+    font-weight: 600;
+    letter-spacing: -.01em;
+    margin: 0;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--line-strong);
+    text-wrap: balance;
+  }
+
+  h3 {
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: var(--ink-2);
+    margin: 6px 0 0;
+  }
+
+  p { margin: 0; max-width: 68ch; }
+
+  a { color: var(--accent); }
+
+  code {
+    font-family: var(--mono);
+    font-size: .875em;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: .1em .38em;
+    overflow-wrap: anywhere;
+  }
+
+  pre {
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.7;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 16px 18px;
+    margin: 0;
+    overflow-x: auto;
+  }
+
+  pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+
+  .cmt { color: var(--ink-3); }
+
+  /* ---------- notes ---------- */
+
+  .note {
+    background: var(--accent-soft);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 16px 18px;
+    font-size: 15px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .note strong { color: var(--accent-ink); }
+
+  .note.warn { background: var(--p1-soft); }
+  .note.warn strong { color: var(--p1); }
+
+  /* ---------- tables ---------- */
+
+  .scroller { overflow-x: auto; border: 1px solid var(--line); border-radius: 3px; background: var(--surface); }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 14.5px;
+    min-width: 480px;
+  }
+
+  th {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line-strong);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  td.mono { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
+
+  td.who { font-weight: 600; white-space: nowrap; }
+
+  /* ---------- checklist ---------- */
+
+  .runsheet {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    counter-reset: run;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .runsheet li {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 14px;
+    padding: 14px 16px;
+    align-items: start;
+  }
+
+  .runsheet li:has(input:checked) { background: var(--surface-2); }
+  .runsheet li:has(input:checked) .run-body { color: var(--ink-3); }
+  .runsheet li:has(input:checked) .run-title { text-decoration: line-through; }
+
+  .runsheet input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 19px;
+    height: 19px;
+    margin: 3px 0 0;
+    border: 1.5px solid var(--line-strong);
+    border-radius: 3px;
+    background: var(--bg);
+    cursor: pointer;
+    flex: none;
+    position: relative;
+  }
+
+  .runsheet input[type="checkbox"]:checked {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .runsheet input[type="checkbox"]:checked::after {
+    content: "";
+    position: absolute;
+    left: 5.5px;
+    top: 1.5px;
+    width: 5px;
+    height: 10px;
+    border: solid var(--surface);
+    border-width: 0 2px 2px 0;
+    transform: rotate(43deg);
+  }
+
+  :root[data-theme="dark"] .runsheet input[type="checkbox"]:checked::after { border-color: #0f1614; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .runsheet input[type="checkbox"]:checked::after { border-color: #0f1614; }
+  }
+
+  .runsheet input[type="checkbox"]:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .run-body { font-size: 15px; line-height: 1.55; }
+
+  .run-title { font-weight: 650; }
+
+  .run-title::before {
+    counter-increment: run;
+    content: counter(run, decimal-leading-zero) " ";
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--accent);
+    letter-spacing: .05em;
+  }
+
+  .nonum .run-title::before { content: none; }
+
+  .progress {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .05em;
+    color: var(--ink-3);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .bar {
+    flex: 1;
+    height: 3px;
+    background: var(--line);
+    border-radius: 2px;
+    overflow: hidden;
+    max-width: 220px;
+  }
+
+  .bar span {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: var(--accent);
+    transition: width .25s ease;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bar span { transition: none; }
+  }
+
+  /* ---------- plain lists ---------- */
+
+  ul.plain {
+    margin: 0;
+    padding-left: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    font-size: 15px;
+    max-width: 68ch;
+  }
+
+  ul.plain li::marker { color: var(--ink-3); }
+
+  /* ---------- severity chips ---------- */
+
+  .sev {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .06em;
+    padding: 2px 7px;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+
+  .sev.s0 { color: var(--p0); background: var(--p0-soft); }
+  .sev.s1 { color: var(--p1); background: var(--p1-soft); }
+  .sev.s2 { color: var(--p2); background: var(--p2-soft); }
+
+  .format {
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.9;
+    background: var(--surface);
+    border: 1px dashed var(--line-strong);
+    border-radius: 3px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  /* ---------- gates ---------- */
+
+  .gates {
+    list-style: none;
+    counter-reset: gate;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .gates li {
+    display: grid;
+    grid-template-columns: 30px 1fr;
+    gap: 12px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 13px 16px;
+    font-size: 15px;
+  }
+
+  .gates li::before {
+    counter-increment: gate;
+    content: counter(gate);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-radius: 3px;
+    height: 22px;
+    display: grid;
+    place-items: center;
+    margin-top: 1px;
+  }
+
+  /* ---------- engineer section ---------- */
+
+  .eng {
+    border-top: 3px double var(--line-strong);
+    padding-top: 44px;
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding-top: 20px;
+    font-size: 13.5px;
+    color: var(--ink-3);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  @media (max-width: 560px) {
+    .masthead { padding-top: 36px; }
+    .entry-label { min-width: 100%; }
+    .wrap { gap: 44px; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="eyebrow">PawSpace · Staging UAT · Phase 1</p>
+    <h1>PawSpace UAT Run Sheet</h1>
+    <p class="standfirst">Everything you need to test the PawSpace platform end to end — bookings, partner
+      jobs, ops, finance and the AI assistant — on an isolated staging copy. No real money moves, no real
+      messages are sent, and nothing here can touch production.</p>
+
+    <div class="entry">
+      <div class="entry-row">
+        <span class="entry-label">App</span>
+        <span class="entry-value"><a class="url" href="https://pawspace-staging.karthik-fce.workers.dev">pawspace-staging.karthik-fce.workers.dev</a></span>
+      </div>
+      <div class="entry-row">
+        <span class="entry-label">Staff login</span>
+        <span class="entry-value"><code>/staging-login</code> — ask ops for the current access code. It is a
+          repository secret and is deliberately not written down here.</span>
+      </div>
+      <div class="entry-row">
+        <span class="entry-label">Customers</span>
+        <span class="entry-value">Do not log in. Open the app root on your phone and browse as a guest.</span>
+      </div>
+      <div class="entry-row">
+        <span class="entry-label">Issue sheet</span>
+        <span class="entry-value">Ask Shweta for the link to the shared bug sheet before you start.</span>
+      </div>
+    </div>
+  </header>
+
+  <section>
+    <h2>Read this before you file anything</h2>
+    <p>These are deliberate sandbox behaviours, not defects. Filing them costs triage time.</p>
+    <ul class="plain">
+      <li><strong>No real money.</strong> Every payment is a sandbox capture. "Pay online" succeeds without a card.</li>
+      <li><strong>No real SMS, WhatsApp or push.</strong> OTPs are displayed on screen in the app; staff
+        notifications land in the in-app alert queues.</li>
+      <li><strong>Video slots are empty on purpose.</strong> Every service banner has a slot labelled as
+        awaiting real footage.</li>
+      <li><strong>Just after a deploy</strong> (we announce them) the first minute can serve a mix of old and
+        new versions. Retry once before filing.</li>
+      <li><strong>"Slot taken" or "no schedule available"</strong> with several testers on one date is usually
+        the roster genuinely being full — there are only 2–4 seeded providers per service. Spread your test
+        dates across the next 2–3 weeks.</li>
+      <li><strong>An empty screen that explains itself is passing.</strong> "Nothing recorded yet", "open with
+        a canonical booking ID" and "not yet linked to a provider" are the product doing its job on a fresh
+        database.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Who you sign in as</h2>
+    <p>Sign-in resolves your role from the staff directory — an email that is not an active staff row is
+      refused. That is what makes role boundaries real: signing in as the associate genuinely shows you an
+      associate's view, not a founder's.</p>
+
+    <div class="scroller">
+      <table>
+        <thead>
+          <tr><th>Role</th><th>Email</th><th>Sees</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="who">Founder</td><td class="mono">founder@pawspace.in</td><td>Everything — all modules</td></tr>
+          <tr><td class="who">Finance</td><td class="mono">anjali.finance33@tkpetcare.in</td><td>Finance, statutory compliance, payouts</td></tr>
+          <tr><td class="who">Manager</td><td class="mono">jyoti.manager39@tkpetcare.in</td><td>Ops, scheduling board, CRM</td></tr>
+          <tr><td class="who">Groomer</td><td class="mono">asha.groomer1@tkpetcare.in</td><td>Partner and self-service surfaces</td></tr>
+          <tr><td class="who">Associate</td><td class="mono">anita.associate17@tkpetcare.in</td><td>Limited staff view</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Demo identities — use these if a module page opens blank</h3>
+    <p>These exist once the demo seed is loaded, and every module page then opens with real data behind it.
+      Same access code as above.</p>
+    <div class="scroller">
+      <table>
+        <thead>
+          <tr><th>Email</th><th>Why you would use it</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">uat.demo.manager@tkpetcare.in</td><td>Manager view with populated ops data</td></tr>
+          <tr><td class="mono">uat.demo.sales1@tkpetcare.in<br>uat.demo.sales2@tkpetcare.in</td><td>Sales — both appear on the leaderboard and in incentives</td></tr>
+          <tr><td class="mono">uat.demo.groomer@tkpetcare.in</td><td>Linked to a real provider — the Partner workspace with jobs, a live assignment and earnings</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Every demo record is prefixed <code>UATD-</code> or <code>Demo ·</code>, so seeded data is obvious in
+      any list.</p>
+
+    <div class="note">
+      <span><strong>Testing as a customer?</strong> Do not use the staff login. Browse the app root as a guest,
+        then log in with any Indian-format mobile number at the booking step — the OTP appears on screen, no
+        SMS is sent. Every fresh number creates a fresh customer, which is the easiest way to test the
+        new-customer welcome coupon.</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Customer run sheet</h2>
+    <p>Run each of these on a <strong>real phone</strong> — iOS Safari and Android Chrome if you can cover both.
+      Tick them off as you go.</p>
+
+    <div class="progress" data-progress-for="customer">
+      <span class="bar"><span></span></span>
+      <span class="count">0 of 6</span>
+    </div>
+
+    <ol class="runsheet" data-group="customer">
+      <li><input type="checkbox" id="c1"><label class="run-body" for="c1"><span class="run-title">Guest browse to first booking (Grooming).</span>
+        Search on home → the welcome offer popup appears → pick Grooming → add or edit a pet inline on the pet
+        step → package → slot → checkout shows the available coupon codes with WELCOME pre-filled for new
+        customers → confirm → a booking ID is shown.</label></li>
+
+      <li><input type="checkbox" id="c2"><label class="run-body" for="c2"><span class="run-title">Boarding with split payment.</span>
+        An overnight stay of <strong>5+ nights</strong> starting 3+ days out → choose "Reserve with 50% now" →
+        confirm. The confirmation must state the outstanding balance and its due date, which is 24 hours before
+        check-in.</label></li>
+
+      <li><input type="checkbox" id="c3"><label class="run-body" for="c3"><span class="run-title">Boarding with a dog and a cat.</span>
+        The default pet pair must find at least one host — Priya and Dev are seeded for this.</label></li>
+
+      <li><input type="checkbox" id="c4"><label class="run-body" for="c4"><span class="run-title">The other six services.</span>
+        Pet Sitting (both a visit and an overnight), Training (a multi-session programme), Dog Walking
+        (recurring weekday walks), Pet Taxi (pickup, drop and time), Fresh Food (a cart with 2 items plus an
+        optional repeat delivery), and Relocation — submit one domestic <em>and</em> one international
+        enquiry.</label></li>
+
+      <li><input type="checkbox" id="c5"><label class="run-body" for="c5"><span class="run-title">My Pets tab.</span>
+        Add a pet with an age and weight, edit it in place, then try an invalid weight — it should be rejected
+        with a clear message rather than silently accepted.</label></li>
+
+      <li><input type="checkbox" id="c6"><label class="run-body" for="c6"><span class="run-title">Host profiles and Meet &amp; Greet.</span>
+        Open a boarding host card — badges, reviews, stats. Then request a Meet &amp; Greet: a house visit
+        against a 4-day stay should quote ₹499; against a 5-day stay it should be free.</label></li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Staff run sheet</h2>
+    <p>Phase 1 is a light pass over the staff side — deep back-office testing comes in Phase 3.</p>
+
+    <div class="progress" data-progress-for="staff">
+      <span class="bar"><span></span></span>
+      <span class="count">0 of 4</span>
+    </div>
+
+    <ul class="runsheet nonum" data-group="staff">
+      <li><input type="checkbox" id="s1"><label class="run-body" for="s1"><span class="run-title">Partner job feed —</span>
+        <code>/partner/jobs</code>, as the groomer or manager. New bookings should appear; boarding requests
+        should offer Accept and Decline.</label></li>
+
+      <li><input type="checkbox" id="s2"><label class="run-body" for="s2"><span class="run-title">Scheduling board —</span>
+        <code>/team/scheduling?date=YYYY-MM-DD</code>, as the manager. You should get a day column per provider.
+        Try a reassignment.</label></li>
+
+      <li><input type="checkbox" id="s3"><label class="run-body" for="s3"><span class="run-title">Relocation triage —</span>
+        <code>/team/relocation-enquiries</code>. The enquiries you submitted as a customer should appear here,
+        tagged Domestic or International.</label></li>
+
+      <li><input type="checkbox" id="s4"><label class="run-body" for="s4"><span class="run-title">Finance compliance —</span>
+        <code>/team/finance-compliance</code>, as the finance login. Calendar due dates, the monthly close
+        checklist and the TDS tab.</label></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>The AI assistant, before you judge it</h2>
+    <p>The assistant is deliberately fail-closed: it answers nobody until four separate conditions are met, so
+      "the AI does nothing" is the expected state rather than a bug. Start at
+      <code>/team/ai/configuration</code> — the panel at the top ticks or crosses each condition and says what
+      to do about it.</p>
+
+    <ol class="gates">
+      <li>A model provider is connected (a <code>PAWSPACE_AI_PROVIDER_API_KEY</code> secret). <strong>Not set on
+        staging by default.</strong></li>
+      <li>Assistant grounding is activated — press <strong>Install starter assistant grounding</strong> if it
+        is missing.</li>
+      <li>The rollout audience is widened on <code>/team/ai/rollout</code>: <code>off</code> →
+        <code>staff_only</code> → <code>customers</code>.</li>
+      <li>No kill switch is thrown — the Disable and Enable AI buttons on that same screen.</li>
+    </ol>
+
+    <p>With the demo seed loaded, gate 2 is already done and gate 3 sits at <code>staff_only</code>, so these
+      screens carry real data:</p>
+
+    <ul class="plain">
+      <li><code>/team/ai/analytics</code> — 7 governed turns across WhatsApp, chat and voice, with a containment
+        rate, latency, token and cost totals, and 2 explicit CSAT ratings. Conversion and first-response
+        deliberately read "not claimed" and "not attributable yet"; that is a design decision, not a gap.</li>
+      <li><code>/team/ai/handoff</code> — pick a canonical thread. <code>UATD-TH-1</code> is a customer asking
+        for a human and being taken over by staff. <code>UATD-TH-3</code> is a refund dispute the policy rules
+        blocked and routed to the finance CX queue — the assistant is not permitted to answer it at all.</li>
+      <li><code>/team/ai</code> — the safety contract result and the human review queue for AI suggestions.</li>
+      <li><code>/chat</code> — Public mode answers only from the approved knowledge base. Authenticated mode
+        needs a canonical customer ID (<code>UATD-CUS-1</code>) and uses that customer's own record.</li>
+    </ul>
+
+    <div class="note">
+      <span><strong>Every seeded AI reply is scripted.</strong> They are recorded on the turn as
+        <code>uat_demo_scripted</code> — none of it is output from a live model.</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>Filing an issue</h2>
+    <p>One issue per line in the shared sheet, in this order:</p>
+    <div class="format">[page/flow] · [what you did] · [what happened] · [what you expected] · [phone model + browser] · [screenshot]</div>
+
+    <div class="scroller">
+      <table>
+        <thead>
+          <tr><th>Severity</th><th>Use it when</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><span class="sev s0">P0</span></td><td>Money is wrong, a booking is lost, or something crashes</td></tr>
+          <tr><td><span class="sev s1">P1</span></td><td>A flow is blocked but there is a workaround</td></tr>
+          <tr><td><span class="sev s2">P2</span></td><td>Visual or copy problems</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Not in scope yet</h2>
+    <p>These are Phase 2 and 3 — we will announce them. Testing them now produces findings against work that is
+      still landing.</p>
+    <ul class="plain">
+      <li>Payment edge-case abuse (double-pay, refund abuse) — the payments audit is still landing.</li>
+      <li>OTP and identity abuse cases — the identity audit is still landing.</li>
+      <li>Deep back-office regression — that comes after the end-to-end gate.</li>
+    </ul>
+  </section>
+
+  <section class="eng">
+    <h2>For engineers on the team</h2>
+    <p>Everything above is the click-through path and needs no setup. This part does.</p>
+
+    <h3>Running it locally</h3>
+    <p>Node <code>&gt;=22.13.0</code>, and Linux is recommended — the bounded install and build helpers use
+      <code>flock</code> and GNU <code>timeout</code>.</p>
+    <pre><code>git clone https://github.com/PawSpaceIND/pawspace-tech-platform
+cd pawspace-tech-platform
+npm ci
+npm run dev        <span class="cmt"># Vite/vinext dev server</span>
+
+npm run lint       <span class="cmt"># eslint</span>
+npm run typecheck  <span class="cmt"># tsc --noEmit</span></code></pre>
+
+    <h3>Run the screen sweep before clicking anything</h3>
+    <p>This opens every route in a real browser, waits for the client fetches to land, and reports which screens
+      a tester can actually use.</p>
+    <pre><code>npm run dev &amp;
+npm run sweep                                 <span class="cmt"># all 130 routes</span>
+npm run sweep -- --only=/team                 <span class="cmt"># one subtree</span>
+npm run sweep -- --json=sweep.json            <span class="cmt"># machine-readable; diff two runs</span>
+npm run sweep -- --base=https://&lt;staging-host&gt; --cookie="&lt;session cookie&gt;"</code></pre>
+
+    <p>Most staff screens are client components: the server sends a shell and the numbers arrive from
+      <code>fetch()</code> after hydration. Every blank screen reported from staging so far had that shape — a
+      page whose cards sat inside <code>{data &amp;&amp; ...}</code> and never rendered. <code>curl</code> sees a
+      200 and calls it fine. Only a browser that waits for the fetches can see an empty page.</p>
+
+    <div class="scroller">
+      <table>
+        <thead>
+          <tr><th>Level</th><th>Meaning</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">OK</td><td>Rendered real content, or said honestly why it had none</td></tr>
+          <tr><td class="mono">BLANK</td><td>Almost no text, nothing to interact with, and no explanation</td></tr>
+          <tr><td class="mono">THIN</td><td>A header and little else, with no empty state and no input — a tester cannot proceed</td></tr>
+          <tr><td class="mono">DATA</td><td>An API the page calls failed in a way the platform does not do by design</td></tr>
+          <tr><td class="mono">BROKEN</td><td>Did not load, 5xx, or an uncaught error</td></tr>
+          <tr><td class="mono">MISSING</td><td>404</td></tr>
+          <tr><td class="mono">NOT TESTED</td><td>The route correctly refused an anonymous call, so the sweep never saw the real screen — re-run with <code>--cookie</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p><code>NOT TESTED</code> is not a pass. Roughly a dozen customer and partner routes need a real session,
+      and the sweep says so rather than scoring them green. Check the excerpt the sweep captured before filing
+      — each finding carries what the page actually said.</p>
+
+    <div class="note warn">
+      <span><strong>Do not read the test suite as verification.</strong> The ~690 tests in
+        <code>tests/*.test.mjs</code> are static regex checks against source text. They are genuinely useful for
+        catching accidental copy and markup regressions, but they do not execute application code — they will
+        not catch a runtime bug, a missing database table, a dead button or bad business logic. A green suite is
+        not evidence that a flow works. Real verification in this repo means a script that calls the production
+        functions against a real database, or the browser sweep above.</span>
+    </div>
+
+    <h3>Where things live</h3>
+    <ul class="plain">
+      <li><code>app/</code> — all web routes and API routes. Customer journeys, plus <code>app/partner/</code>,
+        <code>app/team/</code> and <code>app/control/</code> for the three staff experiences.</li>
+      <li><code>lib/</code> — the booking engine, pricing and offer engines, auth/RBAC helpers and fixture data.</li>
+      <li><code>db/</code> and <code>drizzle/</code> — D1 schema and the ordered migration history.</li>
+      <li><code>backend/</code> — the standalone Fastify platform API, with its own <code>npm ci</code>.</li>
+      <li><code>docs/</code> — per-module UAT specs and closure plans, if you need the detail behind a flow.</li>
+      <li><code>HANDOFF.md</code> — what has actually been verified by real execution, and what has not.</li>
+    </ul>
+  </section>
+
+  <footer>
+    <p>Staging is isolated from production: its own Worker, its own D1 database, sandbox posture throughout.
+      Nothing you do here can reach live customers, live providers or live money.</p>
+    <p>Questions, access codes and the issue sheet: ask Shweta.</p>
+  </footer>
+
+</div>
+
+<script>
+  (function () {
+    var KEY = "pawspace-uat-runsheet";
+    var saved = {};
+    try { saved = JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { saved = {}; }
+
+    function refresh(group) {
+      var list = document.querySelector('[data-group="' + group + '"]');
+      var meter = document.querySelector('[data-progress-for="' + group + '"]');
+      if (!list || !meter) return;
+      var boxes = list.querySelectorAll('input[type="checkbox"]');
+      var done = list.querySelectorAll('input[type="checkbox"]:checked').length;
+      meter.querySelector(".count").textContent = done + " of " + boxes.length;
+      meter.querySelector(".bar span").style.width = (boxes.length ? (done / boxes.length) * 100 : 0) + "%";
+    }
+
+    var groups = [];
+    document.querySelectorAll("[data-group]").forEach(function (list) {
+      var group = list.getAttribute("data-group");
+      groups.push(group);
+      list.querySelectorAll('input[type="checkbox"]').forEach(function (box) {
+        if (saved[box.id]) box.checked = true;
+        box.addEventListener("change", function () {
+          saved[box.id] = box.checked;
+          try { localStorage.setItem(KEY, JSON.stringify(saved)); } catch (e) { /* session-only */ }
+          refresh(group);
+        });
+      });
+      refresh(group);
+    });
+  })();
+</script>
