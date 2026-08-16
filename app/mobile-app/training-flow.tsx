@@ -13,6 +13,7 @@ import { loadCustomerPets, type CustomerPet } from "../../lib/customer-account-c
 import { loadTrainingProgramme, materializeTrainingProgramme, type CustomerTrainingProgramme } from "../../lib/training-programme-client";
 import { loadTrainingPackages, loadTrainingTrainers, quoteTraining, type TrainingPackage, type TrainingQuote, type TrainingTrainer } from "../../lib/training-commercial-client";
 import { requestTrainingCancellation, requestTrainingSessionReschedule } from "../../lib/training-cancellation-client";
+import { trainingPreviewCount, trainingSessionPreviewDates } from "../../lib/training-session-preview";
 const styles = { ...baseStyles, ...extraStyles };
 type Plan = {
   packageCode: string;
@@ -66,7 +67,7 @@ const weekdayMap:Record<string,number[]>={"Tue & Sat":[2,6],"Wed & Sun":[3,0],"E
 function futureIst(days:number,hour:number,minute=0){const now=new Date(),shifted=new Date(now.getTime()+IST_OFFSET);return new Date(Date.UTC(shifted.getUTCFullYear(),shifted.getUTCMonth(),shifted.getUTCDate()+days,hour,minute)-IST_OFFSET);}
 function nextTrainingStarts(frequency:string,time:string,count=3){const hour=time.startsWith("9")?9:time.startsWith("3")?15:17,days=weekdayMap[frequency]||weekdayMap["Choose each session myself"],result:Date[]=[];for(let offset=1;offset<=28&&result.length<count;offset++){const candidate=futureIst(offset,hour),weekday=new Date(candidate.getTime()+IST_OFFSET).getUTCDay();if(days.includes(weekday))result.push(candidate);}return result;}
 function slotLabel(value:Date){return new Intl.DateTimeFormat("en-IN",{timeZone:"Asia/Kolkata",weekday:"short",day:"numeric",month:"short",hour:"numeric",minute:"2-digit"}).format(value);}
-function calendarDates(start:Date,frequency:string,time:string,count=4){const hour=time.startsWith("9")?9:time.startsWith("3")?15:17,days=weekdayMap[frequency]||weekdayMap["Choose each session myself"],result:Date[]=[start];for(let offset=1;offset<=40&&result.length<count;offset++){const shifted=new Date(start.getTime()+IST_OFFSET),candidate=new Date(Date.UTC(shifted.getUTCFullYear(),shifted.getUTCMonth(),shifted.getUTCDate()+offset,hour,0)-IST_OFFSET),weekday=new Date(candidate.getTime()+IST_OFFSET).getUTCDay();if(days.includes(weekday))result.push(candidate);}return result;}
+function previewHour(time:string){return time.startsWith("9")?9:time.startsWith("3")?15:17;}
 function buildPlans(packages:TrainingPackage[]):Plan[]{return planMarketing.flatMap(marketing=>{const pkg=packages.find(item=>item.package_code===marketing.packageCode);if(!pkg)return[];return[{...marketing,sessions:Number(pkg.sessions),sessionLabel:`${Number(pkg.sessions)} sessions`,validityDays:Number(pkg.validity_days),validity:`${Number(pkg.validity_days)} days`,price:Number(pkg.base_price),directMinutes:Number(pkg.direct_minutes_per_pet),coachingMinutes:Number(pkg.coaching_minutes_per_pet),splitDuePercent:Number(pkg.split_due_percent),outcomes:[...marketing.outcomes]}];});}
 function jsonObject(value:string){try{return JSON.parse(value) as Record<string,unknown>}catch{return{}}}
 import type { LoggedInCustomer } from "./customer-login";
@@ -126,7 +127,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
   const startOptions=nextTrainingStarts(frequency,time);
   const selectedStart=startOptions[startDateIndex]||startOptions[0]||futureIst(1,time.startsWith("9")?9:time.startsWith("3")?15:17);
   const selectedStartIso=selectedStart.toISOString();
-  const calendarPreview=calendarDates(selectedStart,frequency,time);
+  const calendarPreview=trainingSessionPreviewDates(selectedStart,weekdayMap[frequency]||weekdayMap["Choose each session myself"],previewHour(time),trainingPreviewCount(plan.sessions));
   const serviceMinutes=selectedPets.length*(plan.directMinutes+plan.coachingMinutes);
   const meetFee=meet&&!meetBookingId?Number(meetPackage?.base_price||0):0;
   const discount=checkoutQuote?.discount??0;
@@ -595,7 +596,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
             ))}
           </div>
           <article className={styles.calendarPreview}>
-            <b>First four sessions</b>
+            <b>{plan.sessions>0?`Full session calendar · ${plan.sessions} session${plan.sessions===1?"":"s"}`:"Full session calendar"}</b>
             {calendarPreview.map((date,i)=><span key={date.toISOString()}><i>{i+1}</i>{slotLabel(date)}<em>{serviceMinutes} min</em></span>)}
           </article>
           <article className={styles.sessionLogic}>
