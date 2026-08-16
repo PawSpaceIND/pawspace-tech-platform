@@ -7,7 +7,7 @@ test("Training customer route uses canonical commercial, trainer, scheduler and 
 
 test("Training customer booking consumes a server quote and records only UAT sandbox payment truth",async()=>{const client=await read("lib/training-booking-client.ts");for(const token of["/api/canonical-bookings","serviceCode:\"dog_training\"","trainingQuoteId:quote.quoteId","status:\"captured\"","Training UAT sandbox capture marker","liveMoney:false"])assert.equal(client.includes(token),true,token)});
 
-test("Training customer programme reserves the server-governed number of sessions",async()=>{const page=await read("app/training/page.tsx");for(const token of["occurrences:quote.meetAndGreet?1:quote.sessions","cadenceDays:7","quote.minutesPerSession","quote.amountDueNow"])assert.equal(page.includes(token),true,token)});
+test("Training customer programme reserves the server-governed number of sessions",async()=>{const page=await read("app/training/page.tsx");for(const token of["occurrences:quote.meetAndGreet?1:quote.sessions","cadenceDays:7","quote.minutesPerSession","currentQuote.amountDueNow"])assert.equal(page.includes(token),true,token)});
 
 // The Training page books for the SIGNED-IN customer. It used to hardcode customer TST-101 and pets
 // TST-PET-BRUNO/TST-PET-PEPPER, so any other signed-in customer filled the form, saw a real quote and
