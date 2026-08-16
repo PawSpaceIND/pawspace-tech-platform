@@ -304,6 +304,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
   };
   const confirm = async () => {
     if (!datesValid || !agreed) return;
+    if (selectedPets.length === 0) { setScheduleError("Select at least one pet to continue."); return; }
     setScheduling(true);setScheduleError("");
     try {
     const scheduleStart=new Date(`${start}T03:30:00.000Z`);const scheduleEnd=careWindow==="24 hours"?new Date(`${end}T03:30:00.000Z`):new Date(scheduleStart.getTime()+(careWindow==="10 hours"?10:careWindow==="12 hours"?12:4)*3_600_000);const providerIds:Record<string,string>={"Sana F.":"sit_sana","Neha P.":"sit_neha"};const boardingCommercial=mode==="boarding"?await loadBoardingCommercial({cityId:"blr",zoneId:"blr-east",scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),petCount:selectedPets.length,species:selectedSpecies}):null,governedHost=boardingCommercial?.hosts.find(item=>item.providerId===caregiver.providerId);if(mode==="boarding"&&!governedHost)throw new Error("Selected Boarding host is no longer available for this stay window");const packageCode=careWindow==="4 hours"?"boarding-4h":careWindow==="10 hours"?"boarding-10h":"boarding-24h",governedBoardingQuote=mode==="boarding"?await quoteBoarding({packageCode,petCount:selectedPets.length,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),paymentMode:splitEligible&&splitPayment?"split_50_50":"prepaid"}):null;const requestId=`${mode}-${customer.customerId}-${start}-${end}-${careWindow.replaceAll(" ","")}-${selectedPets.length}-${bookingNonce()}`;const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:mode==="boarding"?"boarding":"pet_sitting",zoneId:"blr-east",scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),careMode:careWindow==="24 hours"?"overnight":"visit",preferredProviderId:mode==="boarding"?governedHost?.providerId:providerIds[caregiver.name]});
@@ -513,11 +514,13 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
               : "End date must be after the start date."}
           </p>
           <button
-            disabled={!datesValid}
+            disabled={!datesValid || selectedPets.length === 0}
             className={styles.primary}
             onClick={() => setStage(2)}
           >
-            See available {mode === "boarding" ? "homes" : "sitters"}
+            {selectedPets.length === 0
+              ? "Select a pet to continue"
+              : `See available ${mode === "boarding" ? "homes" : "sitters"}`}
           </button>
         </>
       )}
@@ -956,7 +959,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
             ← Care plan
           </button>
           <button
-            disabled={!agreed || !datesValid || scheduling}
+            disabled={!agreed || !datesValid || scheduling || selectedPets.length === 0}
             className={styles.primary}
             onClick={confirm}
           >

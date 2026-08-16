@@ -192,6 +192,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
       setAddingGoal(false);
     },
     confirmMeetFirst = async () => {
+      if(selectedPets.length===0){setScheduleError("Select at least one dog to continue.");return;}
       setScheduling(true);setScheduleError("");
       try {
         const start=new Date(meetSlot),quote=await quoteTraining({packageCode:"trainer-meet-greet",petCount:selectedPets.length,scheduledStart:start.toISOString(),paymentMode:"prepaid"}),end=new Date(start.getTime()+quote.minutesPerSession*60_000);
@@ -202,6 +203,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
       } catch(error){setScheduleError(error instanceof Error?error.message:"This Meet & Greet slot is no longer available");} finally {setScheduling(false);}
     },
     confirm = async () => {
+      if(selectedPets.length===0){setScheduleError("Select at least one dog to continue.");return;}
       setScheduling(true);setScheduleError("");
       try {
         let linkedMeetBookingId=meetBookingId;
@@ -361,11 +363,11 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
             </select>
           </label>
           <button
-            disabled={!selectedGoals.length}
+            disabled={!selectedGoals.length || selectedPets.length === 0}
             className={styles.primary}
             onClick={() => setStage(2)}
           >
-            See PawSpace plans
+            {selectedPets.length === 0 ? "Select a dog to continue" : "See PawSpace plans"}
           </button>
         </section>
       )}
@@ -545,7 +547,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
                 <p>
                   Trainer availability is checked before the slot is offered. If you continue now, the canonical Meet & Greet is created as its own paid booking before the programme booking.
                 </p>
-                <button className={styles.meetOnly} onClick={confirmMeetFirst} disabled={scheduling}>
+                <button className={styles.meetOnly} onClick={confirmMeetFirst} disabled={scheduling || selectedPets.length === 0}>
                   {scheduling ? "Reserving Meet & Greet…" : "Book only the Meet & Greet"}
                 </button>
               </>
@@ -737,7 +739,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
             ← Calendar
           </button>
           <button
-            disabled={!agreed || scheduling || !checkoutQuote}
+            disabled={!agreed || scheduling || !checkoutQuote || selectedPets.length === 0}
             className={styles.primary}
             onClick={confirm}
           >
