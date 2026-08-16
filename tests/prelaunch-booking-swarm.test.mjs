@@ -125,7 +125,10 @@ test("repository canonical booking contract enforces the supported four services
   assert.match(src,/schedule_group_id TEXT NOT NULL UNIQUE/);
   assert.match(src,/provider_work_orders[^\n]*booking_id TEXT NOT NULL UNIQUE/);
   assert.match(src,/booking_payments[^\n]*booking_id TEXT NOT NULL UNIQUE/);
-  assert.match(src,/WHERE idempotency_key=\? OR schedule_group_id=\?/);
+  // Still keyed on BOTH idempotency key and schedule group, now additionally scoped to the caller:
+  // unscoped, a caller with a valid group of their own could quote a foreign idempotency key and be
+  // handed that customer's bundle. See tests/release-p0-p1-integration.test.mjs.
+  assert.match(src,/WHERE \(idempotency_key=\? OR schedule_group_id=\?\) AND customer_id=\?/);
   assert.match(src,/duplicatePrevented/);
 });
 
