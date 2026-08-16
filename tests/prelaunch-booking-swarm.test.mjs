@@ -125,7 +125,10 @@ test("repository canonical booking contract enforces the supported four services
   assert.match(src,/schedule_group_id TEXT NOT NULL UNIQUE/);
   assert.match(src,/provider_work_orders[^\n]*booking_id TEXT NOT NULL UNIQUE/);
   assert.match(src,/booking_payments[^\n]*booking_id TEXT NOT NULL UNIQUE/);
-  assert.match(src,/WHERE idempotency_key=\? OR schedule_group_id=\?/);
+  // The replay lookup still keys on BOTH idempotency key and schedule group, and is additionally
+  // scoped to the caller's customer: keyed on group (or a guessed key) alone it handed one customer
+  // another customer's booking bundle. See tests/p0-reservation-group-ownership.test.mjs.
+  assert.match(src,/WHERE \(idempotency_key=\? OR schedule_group_id=\?\) AND customer_id=\?/);
   assert.match(src,/duplicatePrevented/);
 });
 
