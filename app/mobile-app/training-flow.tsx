@@ -154,7 +154,9 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
   const primaryPet = selectedPetObjs[0] ?? dogs[0];
   useEffect(() => {
     let active = true;
-    setPetsLoading(true);
+    queueMicrotask(() => {
+      if (active) setPetsLoading(true);
+    });
     loadCustomerPets(customer.customerId)
       .then((loaded) => {
         if (!active) return;

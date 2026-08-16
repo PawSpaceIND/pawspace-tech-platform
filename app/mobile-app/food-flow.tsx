@@ -84,7 +84,9 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
 
   useEffect(() => {
     let active = true;
-    setPetsLoading(true);
+    queueMicrotask(() => {
+      if (active) setPetsLoading(true);
+    });
     loadCustomerPets(customer.customerId)
       .then((loaded) => {
         if (!active) return;

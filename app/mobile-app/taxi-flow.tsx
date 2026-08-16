@@ -60,7 +60,9 @@ export default function TaxiFlow({ customer }: { customer: LoggedInCustomer }) {
   const pet = pets.find(p => p.id === selectedPet) || pets[0];
   useEffect(() => {
     let active = true;
-    setPetsLoading(true);
+    queueMicrotask(() => {
+      if (active) setPetsLoading(true);
+    });
     loadCustomerPets(customer.customerId)
       .then((loaded) => {
         if (!active) return;

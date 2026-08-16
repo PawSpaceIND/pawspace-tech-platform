@@ -78,7 +78,9 @@ export default function WalkingFlow({ customer }: { customer: LoggedInCustomer }
   };
   useEffect(() => {
     let active = true;
-    setPetsLoading(true);
+    queueMicrotask(() => {
+      if (active) setPetsLoading(true);
+    });
     loadCustomerPets(customer.customerId)
       .then((loaded) => {
         if (!active) return;
