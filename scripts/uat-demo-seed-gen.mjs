@@ -151,8 +151,19 @@ const PREV_MONTH = new Date(Date.UTC(2026, 6, 1)).toISOString().slice(0, 7);
 // self-service performance row goes blank — the exact "page opens empty" failure this seed exists to
 // prevent. So the demo run's window is emitted as a SQL expression and stamped when the seed is
 // LOADED, not when it is generated. Output stays byte-identical because the expression is literal text.
+//
+// How long a load stays visible: the board keeps a run while `period_start >= now - (days + 1)`, so a
+// run starting D days before the load survives (days + 1 - D) days on a `days`-wide board. At D = 7
+// that is 24 days on the 30-day board self-service reads — the full UAT cycle and then some — against
+// the ONE day the frozen window managed. It also means the 7-day board only carries it for a day;
+// that board wants a report generated for the window on screen, which is what it has always wanted.
 const LOAD_NOW = raw("(unixepoch() * 1000)");
 const LOAD_AGO = (days) => raw(`(unixepoch() * 1000 - ${days * DAY})`);
+
+// Each INSERT evaluates unixepoch() separately, so a load that straddles a second boundary would give
+// the run and its facts different windows. The facts read theirs back off the run instead.
+const RUN_PERIOD_START = raw("(SELECT period_start FROM sales_productivity_fact_runs WHERE id='UATD-SPFR-1')");
+const RUN_PERIOD_END = raw("(SELECT period_end FROM sales_productivity_fact_runs WHERE id='UATD-SPFR-1')");
 
 // --- customers + pets -------------------------------------------------------
 const CUSTOMERS = [
@@ -263,6 +274,14 @@ insert("employee_incentive_results", { id: "UATD-IRES-1", period_id: "UATD-IPER-
 insert("employee_incentive_results", { id: "UATD-IRES-2", period_id: "UATD-IPER-1", employee_id: "UATD-EMP-SALES2", employee_email: "uat.demo.sales2@tkpetcare.in", source_fact_run_id: "UATD-SPFR-1", metric_value: 61000, calculated_amount: 550, approved_amount: 0, status: "calculated", evidence_json: JSON.stringify({ demoSeed: true, metric: "net_collected_revenue" }), approved_by: null, approved_at: null });
 
 // --- productivity facts (leaderboard + performance centre + /me rank) --------
+// The one deliberate exception to this file's INSERT OR IGNORE rule. These rows carry load-time
+// windows (see LOAD_NOW), and OR IGNORE would keep the ORIGINAL load's timestamps forever, so
+// re-running the seed to refresh a stale demo board would silently do nothing. Clearing the two
+// UATD-* rows first is what makes a reload actually refresh them. Facts before the run they point
+// at; nothing outside the UATD-* namespace is touched, so a real run generated from
+// /team/performance survives untouched.
+lines.push("DELETE FROM sales_productivity_facts WHERE run_id='UATD-SPFR-1';");
+lines.push("DELETE FROM sales_productivity_fact_runs WHERE id='UATD-SPFR-1';");
 insert("sales_productivity_fact_runs", { id: "UATD-SPFR-1", idempotency_key: "uatd-spfr-1", policy_id: "UATD-POL-1", policy_version: 1, period_start: LOAD_AGO(7), period_end: LOAD_NOW, status: "completed", source_contract_version: "v1", generated_by: "uat_demo_seed", generated_at: LOAD_NOW, detail_json: JSON.stringify({ demoSeed: true }) });
 const FACTS = [
   { email: "uat.demo.sales1@tkpetcare.in", leads: 42, accepted: 40, actions: 128, qualified: 22, clocks: 40, met: 36, breached: 4, conv: 14, booked: 118000, collected: 96000, refunds: 4000, cx: 1 },
@@ -270,7 +289,7 @@ const FACTS = [
   { email: "uat.demo.manager@tkpetcare.in", leads: 12, accepted: 12, actions: 40, qualified: 8, clocks: 12, met: 12, breached: 0, conv: 5, booked: 46000, collected: 41000, refunds: 0, cx: 0 },
 ];
 for (const [i, f] of FACTS.entries()) {
-  insert("sales_productivity_facts", { id: `UATD-SPF-${i + 1}`, run_id: "UATD-SPFR-1", employee_email: f.email, team_code: "sales", period_start: LOAD_AGO(7), period_end: LOAD_NOW, leads_assigned: f.leads, assignments_accepted: f.accepted, meaningful_actions: f.actions, qualified_leads: f.qualified, first_response_clocks: f.clocks, first_response_met: f.met, first_response_breached: f.breached, booking_conversions: f.conv, booked_revenue: f.booked, collected_revenue: f.collected, refunds: f.refunds, net_collected_revenue: f.collected - f.refunds, cx_escalations: f.cx, opt_out_or_consent_blocks: 0, data_quality_blocks: 0, quote_count: null, source_detail_json: JSON.stringify({ demoSeed: true }), created_at: LOAD_NOW });
+  insert("sales_productivity_facts", { id: `UATD-SPF-${i + 1}`, run_id: "UATD-SPFR-1", employee_email: f.email, team_code: "sales", period_start: RUN_PERIOD_START, period_end: RUN_PERIOD_END, leads_assigned: f.leads, assignments_accepted: f.accepted, meaningful_actions: f.actions, qualified_leads: f.qualified, first_response_clocks: f.clocks, first_response_met: f.met, first_response_breached: f.breached, booking_conversions: f.conv, booked_revenue: f.booked, collected_revenue: f.collected, refunds: f.refunds, net_collected_revenue: f.collected - f.refunds, cx_escalations: f.cx, opt_out_or_consent_blocks: 0, data_quality_blocks: 0, quote_count: null, source_detail_json: JSON.stringify({ demoSeed: true }), created_at: RUN_PERIOD_END });
 }
 
 // --- CRM: contacts, leads + tickets (CRM engine, cases, customer experience) --
