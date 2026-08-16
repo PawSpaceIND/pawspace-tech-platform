@@ -1,0 +1,77 @@
+# Targeted closure evidence — manual, staging-only, read-mostly UAT evidence run.
+#
+# WHY THIS FILE IS ON THE DEFAULT BRANCH
+# GitHub only lists a workflow_dispatch workflow in the Actions UI if the file exists on the default
+# branch. The runner scripts it invokes live on the temporary harness branch
+# (uat/final-live-runner-64f6952), not here. That is deliberate and correct: dispatching this workflow
+# and selecting that branch runs THAT branch's checkout, so the scripts are present at run time.
+#
+# Selecting the default branch instead would check out a tree with no tools/uat/, so the guard below
+# fails fast with an explicit message rather than an opaque "module not found" several steps in.
+#
+# workflow_dispatch ONLY: this never fires on push or pull_request and so cannot touch staging
+# accidentally. It performs no deploy and no seed. Its only mutations are the fresh, uniquely-named
+# UAT fixtures its own gates create on staging; the reconciliation evidence step is SELECT-only.
+name: Targeted closure evidence
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: targeted-closure-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  targeted-closure:
+    name: Targeted closure evidence (manual)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+
+      # Fail fast and legibly when dispatched against a ref that does not carry the runner, rather
+      # than letting the run die later with an unhelpful module-resolution error.
+      - name: Verify the selected ref carries the targeted runner
+        run: |
+          if [ ! -f tools/uat/targeted-closure.mjs ]; then
+            echo "::error::tools/uat/targeted-closure.mjs is not present on ref '${{ github.ref_name }}'."
+            echo "::error::Re-run this workflow and select the harness branch (uat/final-live-runner-64f6952)."
+            exit 1
+          fi
+          echo "runner present on ${{ github.ref_name }}"
+
+      - run: npm ci
+
+      # B-07 canonical reconciliation evidence, read directly from D1 because the deployed build
+      # predates /api/payment-reconciliation. SELECT-only; performs no mutation. continue-on-error so
+      # an unreadable D1 is reported as a blocked gate in the artifact instead of killing the job
+      # before the remaining gates produce their evidence.
+      - name: B-07 - read-only reconciliation evidence from D1
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node tools/uat/b07-reconciliation-evidence.mjs --json=b07-reconciliation-evidence.json
+
+      - name: Targeted closure gates against deployed staging
+        env:
+          PAWSPACE_E2E_BASE: https://pawspace-staging.karthik-fce.workers.dev
+          # Repository secret; never written to a file, a log line or the report.
+          PAWSPACE_E2E_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_CANDIDATE_SHA: 64f69524a5c09b7a385cbd61fb5650aff1735b99
+        run: node tools/uat/targeted-closure.mjs --json=targeted-closure-report.json
+
+      - name: Upload the targeted closure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: targeted-closure-report
+          path: |
+            targeted-closure-report.json
+            b07-reconciliation-evidence.json
