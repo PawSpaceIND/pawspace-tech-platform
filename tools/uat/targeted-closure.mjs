@@ -141,6 +141,46 @@ async function resolveCustomerWithPet(persona, preferred = []) {
   return { customerId: null, pet: null, name: null, primaryPhone: null, derivedFrom: null, attempts };
 }
 
+/** The provider under test. Rahul owns it via provider_identity_links; the gate never substitutes. */
+const JD_PROVIDER = "groom_kiran";
+const IST_OFFSET_MS = 330 * 60_000;
+const GROOMING_MINUTES = 120;
+/**
+ * A small bounded set of candidate windows, tried in order until groom_kiran actually takes one.
+ *
+ * Run #3 blocked on 409 NO_SCHEDULE_AVAILABLE against a single hard-coded window
+ * (2026-09-20T04:30Z). One fixed slot is a standing bet that nothing else ever occupies it: the
+ * engine refuses a window for a conflicting reservation, the travel buffer around one, or the daily
+ * job limit, and every earlier run leaves reservations behind. A gate that manufactures fresh state
+ * cannot depend on one immovable slot.
+ *
+ * Every candidate is constructed to satisfy the rules the engine actually applies to grooming:
+ * seedUatRoster publishes 09:00-19:00 IST, and buildOccurrences requires >=120 minutes for one pet,
+ * so each window sits wholly inside the roster with exactly that duration. Days are counted from the
+ * run date, so the set is always in the future and never goes stale. Hour varies before day because
+ * a conflict is per time-of-day, so the cheapest escape is a different hour.
+ */
+const JD_DAY_OFFSETS = [30, 31, 32];
+const JD_START_HOURS_IST = [10, 13, 16];
+function candidateWindows(now = new Date()) {
+  const baseUtcMidnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const out = [];
+  for (const dayOffset of JD_DAY_OFFSETS) {
+    const istMidnight = baseUtcMidnight + dayOffset * 86_400_000;
+    for (const hour of JD_START_HOURS_IST) {
+      // hour is IST wall-clock on that IST calendar date; shift back to UTC to send it.
+      const start = new Date(istMidnight + hour * 3_600_000 - IST_OFFSET_MS);
+      const end = new Date(start.getTime() + GROOMING_MINUTES * 60_000);
+      out.push({
+        start: start.toISOString(), end: end.toISOString(),
+        istDate: new Date(istMidnight).toISOString().slice(0, 10),
+        istWindow: `${String(hour).padStart(2, "0")}:00-${String(hour + GROOMING_MINUTES / 60).padStart(2, "0")}:00 IST`,
+      });
+    }
+  }
+  return out;
+}
+
 /**
  * JOURNEY D — fresh unique runtime state, then a GENUINE unauthorized mutation.
  *
@@ -153,21 +193,58 @@ async function resolveCustomerWithPet(persona, preferred = []) {
 async function gateJourneyD() {
   if (authGap("manager") || authGap("rahul")) return { status: "blocked", detail: { reason: "manager and/or rahul session unavailable — RUNNER auth gap, not a product refusal" } };
   const stamp = Date.now();
-  const group = `CLOSURE-JD-${stamp}`;
-  const start = "2026-09-20T04:30:00.000Z", end = "2026-09-20T06:30:00.000Z";
 
   const subject = await resolveCustomerWithPet("manager", ["UATD-CUS-2", "UATD-CUS-1"]);
   if (!subject.customerId || !subject.pet?.id) {
     return { status: "blocked", detail: { reason: "no customer owning a canonical pet could be derived — a valid reserve cannot be built", derivationAttempts: subject.attempts } };
   }
 
-  const reserve = await call("manager", "/api/uat-scheduling", {
-    method: "POST",
-    body: { clientRequestId: group, customerId: subject.customerId, petIds: [subject.pet.id], serviceCode: "grooming", cityId: "blr", zoneId: "blr-east", scheduledStart: start, scheduledEnd: end, preferredProviderId: "groom_kiran" },
-  });
-  if (!reserve.ok) return { status: "blocked", detail: { reason: "could not reserve fresh state onto groom_kiran", http: reserve.status, group, error: scrub(reserve.body?.error || JSON.stringify(reserve.body)) } };
-  const provider = reserve.body?.data?.provider || {};
-  if (provider.id !== "groom_kiran") return { status: "blocked", detail: { reason: "matching did not select groom_kiran; Rahul would not own the work order", selected: provider.id ?? null } };
+  // Every window tried is recorded with its HTTP status and, on a refusal, the engine's own reasons
+  // for THIS provider — so a run that exhausts the set names the actual rule that refused it
+  // (conflict, travel buffer, daily limit, no roster) instead of blocking opaquely again.
+  const windowAttempts = [];
+  let reserve = null, provider = null, group = null, start = null, end = null;
+  for (const [index, candidate] of candidateWindows().entries()) {
+    const attemptGroup = `CLOSURE-JD-${stamp}-${index + 1}`;
+    const r = await call("manager", "/api/uat-scheduling", {
+      method: "POST",
+      body: {
+        clientRequestId: attemptGroup, customerId: subject.customerId, petIds: [subject.pet.id],
+        serviceCode: "grooming", cityId: "blr", zoneId: "blr-east",
+        scheduledStart: candidate.start, scheduledEnd: candidate.end,
+        preferredProviderId: JD_PROVIDER,
+        // preferredProviderId is ONLY a +20 ranking bonus in the engine, not a constraint. Retrying
+        // across windows on that alone would eventually reserve onto a different groomer, and the
+        // gate would silently stop testing Rahul's own work order. This rule — the engine's own rule
+        // pack, no product change — makes the provider a hard eligibility condition: if groom_kiran
+        // cannot serve a window, NOTHING is reserved and the next window is tried, so the gate can
+        // never leave a stray reservation on another provider behind.
+        customRules: [{ code: "closure-jd-provider-lock", field: "providerId", operator: "eq", value: JD_PROVIDER }],
+      },
+    });
+    const selected = r.body?.data?.provider?.id ?? null;
+    const refusals = (Array.isArray(r.body?.evaluations) ? r.body.evaluations : [])
+      .filter((e) => e?.providerId === JD_PROVIDER).flatMap((e) => (Array.isArray(e?.reasons) ? e.reasons : []));
+    windowAttempts.push({
+      attempt: index + 1, istDate: candidate.istDate, istWindow: candidate.istWindow,
+      scheduledStart: candidate.start, scheduledEnd: candidate.end, group: attemptGroup,
+      http: r.status, selectedProvider: selected,
+      duplicatePrevented: Boolean(r.body?.data?.duplicatePrevented),
+      error: r.ok ? null : scrub(r.body?.error || JSON.stringify(r.body)),
+      providerRefusalReasons: refusals.length ? refusals : null,
+    });
+    if (r.ok && selected === JD_PROVIDER && !r.body?.data?.duplicatePrevented) {
+      reserve = r; provider = r.body.data.provider; group = attemptGroup;
+      start = candidate.start; end = candidate.end;
+      break;
+    }
+  }
+  if (!reserve) {
+    return { status: "blocked", detail: { reason: `no candidate window produced a fresh reservation on ${JD_PROVIDER}`, provider: JD_PROVIDER, windowsTried: windowAttempts.length, windowAttempts } };
+  }
+  // Belt and braces: the rule above should make this unreachable, but the gate is only meaningful if
+  // Rahul genuinely owns the work order it is about to test.
+  if (provider.id !== JD_PROVIDER) return { status: "blocked", detail: { reason: "matching did not select groom_kiran; Rahul would not own the work order", selected: provider.id ?? null, windowAttempts } };
 
   // canonical-bookings upserts canonical_customers with ON CONFLICT DO UPDATE over name and
   // primary_phone, so a placeholder identity here would RENAME the seeded customer as a side effect of
@@ -186,7 +263,7 @@ async function gateJourneyD() {
       cityId: "blr", zoneId: "blr-east", serviceCode: "grooming",
       packageCode: "dog-bath", packageName: "Essential Bath",
       scheduledStart: start, scheduledEnd: end,
-      provider: { id: "groom_kiran", name: provider.name, model: provider.model },
+      provider: { id: JD_PROVIDER, name: provider.name, model: provider.model },
       totalAmount: 1349, amountDueNow: 1349,
       // Required by the route's own LifecycleInput type and read unconditionally
       // (input.pricing.referralClaimId), but not covered by validate() — so omitting it did not fail
@@ -223,7 +300,8 @@ async function gateJourneyD() {
   return {
     status: securityDefect ? "product_security_defect" : (own.status === 200 && crossRefused === true && victimUnchanged && advanced ? "pass" : "fail"),
     detail: {
-      freshState: true, bookingId: realBookingId, group, provider: "groom_kiran",
+      freshState: true, bookingId: realBookingId, group, provider: JD_PROVIDER,
+      scheduledWindow: { start, end, attemptsBeforeSuccess: windowAttempts.length - 1 }, windowAttempts,
       customerId: subject.customerId, petId: subject.pet.id, subjectDerivedFrom: subject.derivedFrom,
       endpoint: "/api/grooming-lifecycle", action: "complete",
       crossProviderMutationHttp: cross?.status ?? "skipped (no asha session)",
