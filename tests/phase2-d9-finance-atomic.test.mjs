@@ -45,21 +45,38 @@ function makeD1(sqlite) {
 // Barrier variant: parks the FIRST statement whose SQL matches the approve UPDATE, releasing on demand —
 // the deterministic stand-in for two Workers whose SELECTs both observed "submitted" before either
 // UPDATE ran. The barrier rides on createD1's park hook, so the shim underneath is the transactional D1.
+/**
+ * Deterministic two-party barrier. The old version spun `for (tick < 400) await null` and hoped both
+ * callers had reached the guarded UPDATE by then; when they had not, `overlapped` came back false and
+ * the test failed having proven nothing about contention. Nothing about a fixed tick count guarantees
+ * arrival, and a longer sleep would only make the flake rarer, not the proof sound.
+ *
+ * Now each arrival is signalled explicitly:
+ *   firstParked  resolves when caller #1 has reached the guarded UPDATE and parked
+ *   secondArrived resolves when caller #2 has reached the SAME guarded UPDATE while #1 is still parked
+ * The test awaits both before releasing, so the interleave is a precondition that is waited for rather
+ * than a timing outcome that is hoped for. `overlapped` keeps its original meaning and assertion.
+ */
 function racingD1(sqlite, matcher) {
   let claims = 0, parked = false, overlapped = false, release;
+  let signalFirstParked, signalSecondArrived;
   const gate = new Promise((r) => { release = r; });
+  const firstParked = new Promise((r) => { signalFirstParked = r; });
+  const secondArrived = new Promise((r) => { signalSecondArrived = r; });
   const matches = (sql) => matcher.test(String(sql || ""));
   const park = (sql) => {
     if (!matches(sql)) return null;
     claims += 1;
-    if (claims === 1) { parked = true; return gate.then(() => { parked = false; }); }
-    if (parked) overlapped = true;
+    if (claims === 1) { parked = true; signalFirstParked(); return gate.then(() => { parked = false; }); }
+    if (parked) { overlapped = true; signalSecondArrived(); }
     return null;
   };
   return {
     db: createD1(sqlite, { park }),
     release: () => release(),
     overlapped: () => overlapped,
+    firstParked,      // await: caller #1 is holding the guarded UPDATE
+    secondArrived,    // await: caller #2 reached it while #1 still held it
   };
 }
 
@@ -148,8 +165,13 @@ test("D9(d): two INTERLEAVED approves post exactly ONE pair — the conditional 
   globalThis.__FIN_DB__ = racing.db;
   const p1 = route.PATCH(as(APPROVER_B, { method: "PATCH", body: JSON.stringify({ entity: "expense", id, action: "approve", reason: "checker B approving" }) }));
   const p2 = route.PATCH(as(APPROVER_C, { method: "PATCH", body: JSON.stringify({ entity: "expense", id, action: "approve", reason: "checker C approving" }) }));
-  for (let tick = 0; tick < 400; tick += 1) await null; // both reach the approve UPDATE; the first parks
+  // Deterministic barrier: wait for BOTH arrivals rather than spinning a fixed number of ticks.
+  // If either never arrives the test hangs and is killed by the runner timeout - a loud, honest
+  // failure - instead of silently reporting overlapped=false and proving nothing.
+  await racing.firstParked;
+  await racing.secondArrived;
   const overlapped = racing.overlapped();
+  assert.equal(overlapped, true, "both approvals reached the guarded UPDATE concurrently before release");
   racing.release();
   const [res1, res2] = await Promise.all([p1, p2]);
   const statuses = [res1.status, res2.status];

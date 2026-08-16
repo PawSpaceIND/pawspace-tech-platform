@@ -240,14 +240,51 @@ async function gateC06() {
   };
 }
 
-/** Journey D — Rahul positive on his own work order; Asha cross-provider negative. */
+/**
+ * Journey D — a REAL provider mutation, not a read.
+ *
+ * /api/partner-mobile does not exist in this repo; partner-job-feed and partner-grooming-jobs are
+ * GET-only. The genuine provider work-order progression is POST /api/grooming-lifecycle
+ * {action:"complete"} - gateway permission bookings.view, scoped by requireProviderOwnership - which
+ * is what actually advances provider_work_orders. That is the endpoint used here.
+ *
+ * Rahul (groom_kiran) progresses HIS OWN work order and must get 200. Asha (groom_arun) then attempts
+ * the SAME mutation on that work order and must get 403, with the work order byte-identical afterwards
+ * so the unauthorized attempt is proven to have changed nothing.
+ */
 async function gateProviderJourneyD() {
   if (authGap("rahul")) return { status: "blocked", detail: { reason: "Rahul session unavailable — RUNNER auth gap, not a product refusal" } };
-  const own = await call("rahul", "/api/partner-mobile?workOrderId=UATD-BK-GROOM-2-WO");
-  const cross = authGap("asha") ? null : await call("asha", "/api/partner-mobile?workOrderId=UATD-BK-GROOM-2-WO");
+  const booking = "UATD-BK-GROOM-2", workOrder = "UATD-BK-GROOM-2-WO";
+
+  const before = await call("rahul", `/api/grooming-lifecycle?bookingId=${booking}`);
+  if (!before.ok) return { status: "blocked", detail: { reason: "could not read the work order before mutating; nothing can be proven", http: before.status, endpoint: "/api/grooming-lifecycle" } };
+
+  // Asha attempts the cross-provider MUTATION first, so the victim work order is still non-terminal
+  // and the 403 cannot be explained away by the job already being complete.
+  let crossHttp = null, victimUnchanged = null;
+  if (!authGap("asha")) {
+    const cross = await call("asha", "/api/grooming-lifecycle", { method: "POST", body: { action: "complete", bookingId: booking, actorId: PERSONAS.asha, idempotencyKey: `residual-jd-cross-${Date.now()}` } });
+    crossHttp = cross.status;
+    const afterCross = await call("rahul", `/api/grooming-lifecycle?bookingId=${booking}`);
+    victimUnchanged = JSON.stringify(before.body) === JSON.stringify(afterCross.body);
+  }
+
+  // Rahul's own allowed progression.
+  const own = await call("rahul", "/api/grooming-lifecycle", { method: "POST", body: { action: "complete", bookingId: booking, actorId: PERSONAS.rahul, idempotencyKey: `residual-jd-own-${Date.now()}` } });
+  const after = await call("rahul", `/api/grooming-lifecycle?bookingId=${booking}`);
+
+  const ownOk = own.status === 200;
+  const crossRefused = crossHttp === null ? null : crossHttp === 403;
   return {
-    status: own.status === 200 && (cross === null || cross.status === 403) ? "pass" : "fail",
-    detail: { personas: { positive: "rahul → groom_kiran", negative: "asha → groom_arun" }, ownWorkOrder: "UATD-BK-GROOM-2-WO", ownHttp: own.status, crossHttp: cross?.status ?? "skipped (no asha session)", crossRefused: cross ? cross.status === 403 : null, mutationsByAsha: 0 },
+    status: ownOk && crossRefused !== false && victimUnchanged !== false ? "pass" : "fail",
+    detail: {
+      endpoint: "/api/grooming-lifecycle", action: "complete", permission: "bookings.view + requireProviderOwnership",
+      personas: { positive: "rahul → groom_kiran", negative: "asha → groom_arun" },
+      workOrder, ownMutationHttp: own.status, ownProgressed: ownOk,
+      crossProviderMutationHttp: crossHttp, crossRefused403: crossRefused,
+      victimWorkOrderUnchangedByUnauthorizedAttempt: victimUnchanged,
+      stateAdvancedByOwner: JSON.stringify(before.body) !== JSON.stringify(after.body),
+    },
   };
 }
 
@@ -304,7 +341,7 @@ async function gateA13() {
 }
 
 // P0 / release stop conditions. Only these force a non-zero exit.
-const P0_GATES = new Set(["scheduling-group-ownership-P0", "orphaned-capacity-P0", "board3-sandbox-refund", "c06-policy-boundary", "city-isolation-chennai-blocked"]);
+
 
 const RUNNERS = [
   ["scheduling-group-ownership-P0", gateSchedulingGroupOwnership],
@@ -317,6 +354,11 @@ const RUNNERS = [
   ["b07-orphan-reconciliation", gateB07Reconciliation],
   ["a13-reconciliation-idempotency", gateA13],
 ];
+
+// CLOSURE RULE: this is the closure run - every residual gate is REQUIRED. Product failures and
+// setup/evidence blockers stay separately classified in the report, but BOTH exit non-zero. No gate
+// is advisory, and liveVerdict is true only when Gate 0 passed AND every required gate passed.
+const P0_GATES = new Set(RUNNERS.map(([id]) => id));
 
 const REQUIRED_PERSONAS = ["associate", "manager", "finance", "rahul", "asha"];
 const sessions = [];
@@ -352,7 +394,7 @@ const report = {
   base: BASE,
   targetDeployedCandidateSha: process.env.PAWSPACE_CANDIDATE_SHA || "64f69524a5c09b7a385cbd61fb5650aff1735b99",
   runnerHarnessSha: process.env.GITHUB_SHA || "(local)",
-  liveVerdict: !DRY,
+  liveVerdict: false, // set below: true only when gate 0 passed AND every required gate passed
   gate0: (() => { try { return JSON.parse(fs.readFileSync("gate0-identity-report.json", "utf8")).verdict; } catch { return "not-run-in-this-step"; } })(),
   personas: sessions.map((s) => ({ persona: s.persona, email: s.email ?? null, mode: s.mode, cookieObtained: s.cookieObtained })), // never a cookie value
   gates,
@@ -366,12 +408,18 @@ const report = {
     p0BlockedBySetup: blockedP0,
   },
 };
+const gate0Verdict = report.gate0;
+const allPassed = gates.length > 0 && gates.every((g) => g.status === "pass");
+report.liveVerdict = !DRY && gate0Verdict === "pass" && allPassed;
+report.summary.closureRule = "every residual gate is required; product failures and setup blockers both exit non-zero";
+
 fs.writeFileSync(OUT, JSON.stringify(report, null, 2));
 console.log(`\n${report.summary.pass} pass · ${report.summary.fail} fail · ${report.summary.blocked} blocked · ${report.summary.skipped} skipped`);
-console.log(`report → ${OUT}`);
+console.log(`gate0=${gate0Verdict} · liveVerdict=${report.liveVerdict} · report → ${OUT}`);
 
 if (DRY) { console.log("\nDRY RUN — not a live verdict."); process.exit(0); }
-if (trueP0Failures.length) { console.error(`\nP0 PRODUCT FAILURE: ${trueP0Failures.join(", ")}`); process.exit(1); }
-if (blockedP0.length) { console.error(`\nP0 BLOCKED BY SETUP (runner/identity/fixture, NOT a product defect): ${blockedP0.join(", ")}`); process.exit(1); }
-if (!authenticated.length) { console.error("\nSTOP: no authenticated staging session — the run proved nothing."); process.exit(1); }
+if (trueP0Failures.length) { console.error(`\nPRODUCT FAILURE (release stop): ${trueP0Failures.join(", ")}`); process.exit(1); }
+if (blockedP0.length) { console.error(`\nSETUP/EVIDENCE BLOCKER (release stop, NOT a product defect): ${blockedP0.join(", ")}`); process.exit(1); }
+if (gate0Verdict !== "pass") { console.error(`\nSTOP: gate 0 verdict is '${gate0Verdict}' — identities unverified.`); process.exit(1); }
+if (!report.liveVerdict) { console.error("\nSTOP: closure requires gate 0 pass AND every residual gate pass."); process.exit(1); }
 process.exit(0);

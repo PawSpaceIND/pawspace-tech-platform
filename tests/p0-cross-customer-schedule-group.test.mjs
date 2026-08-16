@@ -44,14 +44,26 @@ function freshDb() {
   return sqlite;
 }
 
+/**
+ * Every invocation builds a FRESH Request inside postScheduling - no Request or body stream is ever
+ * reused here. Release CI #1349 nonetheless saw one reserve return 500 "Body is unusable: Body has
+ * already been read" while the inverse case passed through the identical path, so the fault is
+ * transient rather than deterministic. The assertion below is deliberately unchanged - a 500 is never
+ * accepted - but it now names WHICH reserve failed and carries the status and raw body, so the next
+ * occurrence identifies itself instead of requiring another investigation cycle.
+ */
 async function reserve({ groupId, customerId }) {
   const res = await postScheduling({
     clientRequestId: groupId, customerId, petIds: [petOf(customerId)],
     serviceCode: "grooming", cityId: "blr", zoneId: "blr-east",
     scheduledStart: BLR_START, scheduledEnd: BLR_END,
   });
-  const body = await res.json();
-  assert.equal(res.status, 200, `reserve must succeed: ${JSON.stringify(body)}`);
+  let body = null, parseError = null;
+  try { body = await res.json(); } catch (error) { parseError = error instanceof Error ? error.message : String(error); }
+  if (res.status !== 200) {
+    console.error(`RESERVE FAILED · group=${groupId} customer=${customerId} pet=${petOf(customerId)} http=${res.status} parseError=${parseError ?? "none"} body=${JSON.stringify(body)}`);
+  }
+  assert.equal(res.status, 200, `reserve must succeed [group=${groupId} customer=${customerId} http=${res.status}]: ${JSON.stringify(body ?? parseError)}`);
   return body.data;
 }
 
