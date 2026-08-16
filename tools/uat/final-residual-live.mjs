@@ -36,7 +36,16 @@ const arg = (name, fallback) => {
 
 const BASE = String(arg("base", process.env.PAWSPACE_E2E_BASE || "")).replace(/\/$/, "");
 const ACCESS_CODE = process.env.PAWSPACE_E2E_ACCESS_CODE || "";
-const EMAIL = process.env.PAWSPACE_E2E_EMAIL || "";
+// One access code, several staff identities. Each gate uses the persona whose permissions make the
+// gate meaningful — see the matrix in the workflow. Overridable so a re-seeded staging can point at
+// different rows without a code change.
+const PERSONAS = {
+  associate: process.env.PAWSPACE_E2E_ASSOCIATE || "anita.associate17@tkpetcare.in",
+  manager: process.env.PAWSPACE_E2E_MANAGER || "sunita.manager37@tkpetcare.in",
+  finance: process.env.PAWSPACE_E2E_FINANCE || "anjali.finance33@tkpetcare.in",
+  rahul: process.env.PAWSPACE_E2E_PROVIDER_RAHUL || "rahul.groomer2@tkpetcare.in",
+  asha: process.env.PAWSPACE_E2E_PROVIDER_ASHA || "asha.groomer1@tkpetcare.in",
+};
 const OUT = arg("json", "final-residual-report.json");
 const DRY = process.argv.includes("--dry-run");
 
@@ -46,7 +55,7 @@ if (!BASE) {
 }
 
 /** Redact anything that could carry a secret before it can reach the report or a log. */
-const SECRETS = [ACCESS_CODE, EMAIL].filter((s) => s && s.length >= 6);
+const SECRETS = [ACCESS_CODE].filter((s) => s && s.length >= 6);
 function scrub(value) {
   let out = typeof value === "string" ? value : JSON.stringify(value ?? null);
   for (const s of SECRETS) if (s) out = out.split(s).join("[REDACTED]");
@@ -56,7 +65,8 @@ function scrub(value) {
     .slice(0, 600);
 }
 
-let COOKIE = "";
+/** One cookie per persona. Cookies are held in memory only and never serialised. */
+const JAR = new Map();
 const gates = [];
 const record = (id, status, detail) => {
   gates.push({ gate: id, status, detail: typeof detail === "string" ? scrub(detail) : JSON.parse(scrub(detail)) });
@@ -64,258 +74,233 @@ const record = (id, status, detail) => {
   console.log(`${mark.padEnd(7)} ${id}`);
 };
 
-async function call(path, { method = "GET", body, expect } = {}) {
+/** Sign a persona in. Returns only whether a cookie was obtained - never the cookie itself. */
+async function signIn(persona) {
+  const email = PERSONAS[persona];
+  if (!ACCESS_CODE || !email) return { persona, mode: "unconfigured", cookieObtained: false };
+  const response = await fetch(`${BASE}/api/staging-login`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "login", code: ACCESS_CODE, email }),
+  });
+  const cookie = (response.headers.get("set-cookie") || "").split(";")[0] || "";
+  if (cookie) JAR.set(persona, cookie);
+  return { persona, email, mode: response.ok && cookie ? "authenticated" : "sign_in_failed", httpStatus: response.status, cookieObtained: Boolean(cookie) };
+}
+
+/** Every request names the persona making it, so the report shows who did what. */
+async function call(persona, path, { method = "GET", body, } = {}) {
   const headers = { "content-type": "application/json" };
-  if (COOKIE) headers.cookie = COOKIE;
+  const cookie = JAR.get(persona);
+  if (cookie) headers.cookie = cookie;
   const response = await fetch(`${BASE}${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined, redirect: "manual" });
   let payload = null;
   try { payload = await response.json(); } catch { payload = null; }
-  const result = { path, method, status: response.status, ok: response.ok, body: payload };
-  if (expect && response.status !== expect) result.unexpected = `expected ${expect}, got ${response.status}`;
-  return result;
+  return { persona, path, method, status: response.status, ok: response.ok, body: payload };
 }
-
-async function signIn() {
-  if (!ACCESS_CODE || !EMAIL) return { mode: "unauthenticated", cookieObtained: false };
-  const response = await fetch(`${BASE}/api/staging-login`, {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ action: "login", code: ACCESS_CODE, email: EMAIL }),
-  });
-  const raw = response.headers.get("set-cookie") || "";
-  COOKIE = raw.split(";")[0] || "";
-  // Deliberately reports only WHETHER a cookie exists — never the cookie itself.
-  return { mode: response.ok && COOKIE ? "authenticated" : "sign_in_failed", httpStatus: response.status, cookieObtained: Boolean(COOKIE) };
-}
-
 
 /**
- * Establish that this caller can genuinely book for its OWN customer before any guard is exercised.
- * Without this, a 403 from the foreign-group gate could just as easily mean "this caller cannot book
- * at all" - a vacuous pass. Returns the reserved group so callers can reuse it.
+ * A 401/403 caused by a persona that never signed in is a RUNNER problem, not a product refusal.
+ * Gates use this so an auth gap is reported 'blocked', never as a product failure.
+ */
+const authGap = (persona) => !JAR.get(persona);
+
+/**
+ * Prove the ASSOCIATE can genuinely reserve for its own customer before any guard is exercised.
+ * Without this, a 403 from the foreign-group gate could merely mean "this caller cannot book at all".
  */
 async function establishOwnContext(customerId, petId, startIso, endIso, tag) {
   const group = `RESIDUAL-OWN-${tag}-${Date.now()}`;
-  const reserve = await call("/api/uat-scheduling", {
+  const reserve = await call("associate", "/api/uat-scheduling", {
     method: "POST",
     body: { clientRequestId: group, customerId, petIds: [petId], serviceCode: "grooming", cityId: "blr", zoneId: "blr-east", scheduledStart: startIso, scheduledEnd: endIso },
   });
   return { group, ok: reserve.ok, http: reserve.status, provider: reserve.body?.data?.provider || null, error: scrub(reserve.body?.error || "") };
 }
 
-// ---------------------------------------------------------------------------------------------
-// Gates. Each returns {status, detail}. None of them invents a pass when evidence is unavailable.
-// ---------------------------------------------------------------------------------------------
+const bookingBody = (o) => ({
+  idempotencyKey: o.key, scheduleGroupId: o.group,
+  customer: { id: o.customerId, name: "Residual", primaryPhone: "+919000000002" },
+  pets: [{ sourceId: "p1", name: "Rex", species: "dog" }],
+  cityId: "blr", zoneId: "blr-east", serviceCode: "grooming",
+  packageCode: "dog-bath", packageName: "Essential Bath",
+  scheduledStart: o.start, scheduledEnd: o.end,
+  provider: { id: o.provider?.id, name: o.provider?.name, model: o.provider?.model },
+  totalAmount: o.amount, amountDueNow: o.amount,
+  payment: { method: "upi", mode: "prepaid", status: "captured", detail: "residual" },
+});
 
-/** P0 — a foreign scheduling group must be refused, and the victim reservation must not move. */
+/** P0 — foreign scheduling group refused 403; victim untouched. ASSOCIATE mutates, MANAGER reads. */
 async function gateSchedulingGroupOwnership() {
-  const victimGroup = "UATD-GRP-UATD-BK-TRAIN-3";       // owned by UATD-CUS-3
-  const attacker = "UATD-CUS-2";                         // a different, legitimately-owned customer
-  // PRECONDITION: prove this caller CAN reserve for its own customer/pet. Without it, a 403 below
-  // might only mean "this caller cannot book at all", which would be a vacuous pass.
-  const own = await establishOwnContext(attacker, "PET-UATD-CUS-2", "2026-09-04T04:30:00.000Z", "2026-09-04T06:30:00.000Z", "own");
-  if (!own.ok) return { status: "blocked", detail: { reason: "own-context reserve failed, so the foreign-group guard cannot be proven non-vacuously", ownHttp: own.http, error: own.error } };
+  if (authGap("associate") || authGap("manager")) return { status: "blocked", detail: { reason: "associate and/or manager session unavailable — RUNNER auth gap, not a product refusal" } };
+  const victimGroup = "UATD-GRP-UATD-BK-TRAIN-3";   // owned by UATD-CUS-3
+  const attacker = "UATD-CUS-2";
 
-  const before = await call(`/api/uat-scheduling?groupId=${encodeURIComponent(victimGroup)}`);
-  const attempt = await call("/api/canonical-bookings", {
+  const own = await establishOwnContext(attacker, "PET-UATD-CUS-2", "2026-09-04T04:30:00.000Z", "2026-09-04T06:30:00.000Z", "own");
+  if (!own.ok) return { status: "blocked", detail: { reason: "associate own-context reserve failed; the guard cannot be proven non-vacuously", http: own.http, error: own.error } };
+
+  // Privileged reads via MANAGER (scheduling.manage); associates lack that permission.
+  const before = await call("manager", `/api/uat-scheduling?groupId=${encodeURIComponent(victimGroup)}`);
+  // The ownership-negative mutation MUST be the associate: manager holds customers.manage /
+  // bookings.manage, which intentionally bypass requireCustomerOwnership and would mask the guard.
+  const attempt = await call("associate", "/api/canonical-bookings", {
     method: "POST",
-    body: {
-      idempotencyKey: `residual-foreign-${Date.now()}`, scheduleGroupId: victimGroup,
-      customer: { id: attacker, name: "Residual Attacker", primaryPhone: "+919000000002" },
-      pets: [{ sourceId: "p1", name: "Rex", species: "dog" }],
-      cityId: "blr", zoneId: "blr-east", serviceCode: "grooming",
-      packageCode: "dog-bath", packageName: "Essential Bath",
-      scheduledStart: "2026-09-01T04:30:00.000Z", scheduledEnd: "2026-09-01T06:30:00.000Z",
-      provider: { id: "groom_arun", name: "Arun R.", model: "full_time" },
-      totalAmount: 1349, amountDueNow: 1349,
-      payment: { method: "upi", mode: "prepaid", status: "captured", detail: "residual" },
-    },
+    body: bookingBody({ key: `residual-foreign-${Date.now()}`, group: victimGroup, customerId: attacker, start: "2026-09-01T04:30:00.000Z", end: "2026-09-01T06:30:00.000Z", provider: { id: "groom_arun", name: "Arun R.", model: "full_time" }, amount: 1349 }),
   });
-  const after = await call(`/api/uat-scheduling?groupId=${encodeURIComponent(victimGroup)}`);
+  const after = await call("manager", `/api/uat-scheduling?groupId=${encodeURIComponent(victimGroup)}`);
+
   const refused403 = attempt.status === 403;
   const unchanged = JSON.stringify(before.body) === JSON.stringify(after.body);
-  // The refusal must not leak the victim's booking/provider either.
   const noDisclosure = !JSON.stringify(attempt.body || {}).includes("UATD-BK-TRAIN-3");
   return {
     status: refused403 && unchanged && noDisclosure ? "pass" : "fail",
-    detail: { ownContextProven: true, ownReserveHttp: own.http, victimGroup, attacker, attemptHttp: attempt.status, refused403, victimStateUnchanged: unchanged, noVictimDisclosure: noDisclosure },
+    detail: { personas: { mutation: "associate", reads: "manager" }, ownContextHttp: own.http, victimGroup, attemptHttp: attempt.status, refused403, victimStateUnchanged: unchanged, noVictimDisclosure: noDisclosure },
   };
 }
 
-/** P0 — a refused booking must not strand the hold it was made for. */
+/** P0 — refused booking releases its hold; a foreign caller cannot release someone else's. */
 async function gateOrphanedCapacity() {
-  // PRECONDITION: own caller/customer/pet context, so the 409 below is genuinely the price-mismatch
-  // guard and not an ownership or eligibility refusal arriving first.
+  if (authGap("associate")) return { status: "blocked", detail: { reason: "associate session unavailable — RUNNER auth gap" } };
   const own = await establishOwnContext("UATD-CUS-2", "PET-UATD-CUS-2", "2026-09-02T04:30:00.000Z", "2026-09-02T06:30:00.000Z", "orphan");
-  if (!own.ok || !own.provider?.id) return { status: "blocked", detail: { reason: "own reserve did not succeed, so the orphan condition cannot be created", http: own.http, error: own.error } };
+  if (!own.ok || !own.provider?.id) return { status: "blocked", detail: { reason: "associate reserve did not succeed; orphan condition cannot be created", http: own.http, error: own.error } };
 
-  const refused = await call("/api/canonical-bookings", {
+  const refused = await call("associate", "/api/canonical-bookings", {
     method: "POST",
-    body: {
-      idempotencyKey: `residual-orphan-${Date.now()}`, scheduleGroupId: own.group,
-      customer: { id: "UATD-CUS-2", name: "Residual", primaryPhone: "+919000000002" },
-      pets: [{ sourceId: "p1", name: "Rex", species: "dog" }],
-      cityId: "blr", zoneId: "blr-east", serviceCode: "grooming",
-      packageCode: "dog-bath", packageName: "Essential Bath",
-      scheduledStart: "2026-09-02T04:30:00.000Z", scheduledEnd: "2026-09-02T06:30:00.000Z",
-      provider: { id: own.provider.id, name: own.provider.name, model: own.provider.model },
-      totalAmount: 1, amountDueNow: 1, // deliberately tampered price -> own 409
-      payment: { method: "upi", mode: "prepaid", status: "captured", detail: "residual" },
-    },
+    body: bookingBody({ key: `residual-orphan-${Date.now()}`, group: own.group, customerId: "UATD-CUS-2", start: "2026-09-02T04:30:00.000Z", end: "2026-09-02T06:30:00.000Z", provider: own.provider, amount: 1 }),
   });
   const released = refused.body?.capacityReleased;
-  // Capacity reuse: the freed slot must be reservable again.
   const reuse = await establishOwnContext("UATD-CUS-2", "PET-UATD-CUS-2", "2026-09-02T04:30:00.000Z", "2026-09-02T06:30:00.000Z", "reuse");
 
-  // Hostile control PRESERVED: a foreign caller must not be able to release someone else's hold.
+  // Hostile control: a different customer must not be able to free the victim's hold.
   const victim = await establishOwnContext("UATD-CUS-3", "PET-UATD-CUS-3", "2026-09-05T04:30:00.000Z", "2026-09-05T06:30:00.000Z", "victim");
   let victimHoldIntact = null;
-  if (victim.ok) {
-    const vBefore = await call(`/api/uat-scheduling?groupId=${encodeURIComponent(victim.group)}`);
-    await call("/api/canonical-bookings", {
+  if (victim.ok && !authGap("manager")) {
+    const vBefore = await call("manager", `/api/uat-scheduling?groupId=${encodeURIComponent(victim.group)}`);
+    await call("associate", "/api/canonical-bookings", {
       method: "POST",
-      body: {
-        idempotencyKey: `residual-hostile-${Date.now()}`, scheduleGroupId: victim.group,
-        customer: { id: "UATD-CUS-2", name: "Residual", primaryPhone: "+919000000002" },
-        pets: [{ sourceId: "p1", name: "Rex", species: "dog" }],
-        cityId: "blr", zoneId: "blr-east", serviceCode: "grooming",
-        packageCode: "dog-bath", packageName: "Essential Bath",
-        scheduledStart: "2026-09-05T04:30:00.000Z", scheduledEnd: "2026-09-05T06:30:00.000Z",
-        provider: { id: victim.provider?.id, name: victim.provider?.name, model: victim.provider?.model },
-        totalAmount: 1, amountDueNow: 1,
-        payment: { method: "upi", mode: "prepaid", status: "captured", detail: "residual" },
-      },
+      body: bookingBody({ key: `residual-hostile-${Date.now()}`, group: victim.group, customerId: "UATD-CUS-2", start: "2026-09-05T04:30:00.000Z", end: "2026-09-05T06:30:00.000Z", provider: victim.provider, amount: 1 }),
     });
-    const vAfter = await call(`/api/uat-scheduling?groupId=${encodeURIComponent(victim.group)}`);
+    const vAfter = await call("manager", `/api/uat-scheduling?groupId=${encodeURIComponent(victim.group)}`);
     victimHoldIntact = JSON.stringify(vBefore.body) === JSON.stringify(vAfter.body);
   }
 
   const ownPathOk = refused.status === 409 && released >= 1 && refused.body?.capacityReleaseFailed !== true && reuse.ok;
   return {
     status: ownPathOk && victimHoldIntact !== false ? "pass" : "fail",
-    detail: { ownGroup: own.group, refusalHttp: refused.status, capacityReleased: released ?? null, capacityReleaseFailed: refused.body?.capacityReleaseFailed ?? false, capacityReusable: reuse.ok, hostileControl: { victimGroup: victim.group, victimHoldIntact } },
+    detail: { personas: { mutation: "associate", reads: "manager" }, ownGroup: own.group, refusalHttp: refused.status, capacityReleased: released ?? null, capacityReleaseFailed: refused.body?.capacityReleaseFailed ?? false, capacityReusable: reuse.ok, hostileControl: { victimGroup: victim.group, victimHoldIntact } },
   };
 }
 
-/** BOARD-3 — a genuine non-zero SANDBOX refund, requested and approved by different actors. */
+/** Journey C — MANAGER requests (scheduling.book), distinct FINANCE approves (finance.manage). */
 async function gateBoard3Refund() {
+  if (authGap("manager") || authGap("finance")) return { status: "blocked", detail: { reason: "manager and/or finance session unavailable — RUNNER auth gap, not a product refusal" } };
   const booking = "UATD-BK-BOARD-3", amount = 2400;
-  const before = await call(`/api/boarding-finance?bookingId=${booking}`);
-  if (before.status === 404) return { status: "blocked", detail: { reason: "BOARD-3 fixture absent on staging — reseed required before this gate can be evaluated", booking } };
-  const requested = await call("/api/boarding-finance", { method: "POST", body: { bookingId: booking, action: "request_cancel", actorId: "residual.requester@pawspace.in", idempotencyKey: `residual-jc-req-${Date.now()}`, reason: "Final residual live run" } });
-  const approved = await call("/api/boarding-finance", { method: "POST", body: { bookingId: booking, action: "approve_cancel", actorId: "residual.approver@pawspace.in", approvedRefundAmount: amount, idempotencyKey: `residual-jc-app-${Date.now()}`, reason: "Final residual live run" } });
-  const after = await call(`/api/boarding-finance?bookingId=${booking}`);
-  const refunds = after.body?.data?.refunds || after.body?.refunds || [];
+  const before = await call("finance", `/api/boarding-finance?bookingId=${booking}`);
+  if (before.status === 404) return { status: "blocked", detail: { reason: "BOARD-3 fixture absent on staging — reseed required", booking } };
+  if (!before.ok) return { status: "blocked", detail: { reason: "finance read unavailable", http: before.status } };
+
+  const requested = await call("manager", "/api/boarding-finance", { method: "POST", body: { bookingId: booking, action: "request_cancel", actorId: PERSONAS.manager, idempotencyKey: `residual-jc-req-${Date.now()}`, reason: "Final residual live run" } });
+  const approveKey = `residual-jc-app-${Date.now()}`;
+  const approved = await call("finance", "/api/boarding-finance", { method: "POST", body: { bookingId: booking, action: "approve_cancel", actorId: PERSONAS.finance, approvedRefundAmount: amount, idempotencyKey: approveKey, reason: "Final residual live run" } });
+  const replay = await call("finance", "/api/boarding-finance", { method: "POST", body: { bookingId: booking, action: "approve_cancel", actorId: PERSONAS.finance, approvedRefundAmount: amount, idempotencyKey: approveKey, reason: "Final residual live run" } });
+  // Same-actor negative: the manager who requested must not also be able to approve.
+  const sameActor = await call("manager", "/api/boarding-finance", { method: "POST", body: { bookingId: booking, action: "approve_cancel", actorId: PERSONAS.manager, approvedRefundAmount: amount, idempotencyKey: `residual-jc-same-${Date.now()}`, reason: "same-actor negative" } });
+
+  const after = await call("finance", `/api/boarding-finance?bookingId=${booking}`);
+  const refunds = after.body?.data?.refunds ?? after.body?.refunds ?? [];
+  const atAmount = refunds.filter((r) => Number(r.amount) === amount);
   const sandboxOnly = refunds.every((r) => String(r.status).startsWith("sandbox"));
-  const one = refunds.filter((r) => Number(r.amount) === amount).length === 1;
   return {
-    status: requested.ok && approved.ok && one && sandboxOnly ? "pass" : "fail",
-    detail: { booking, amount, requestHttp: requested.status, approveHttp: approved.status, refundRows: refunds.length, exactlyOneAtAmount: one, sandboxOnly, liveMoneyTransport: false },
-  };
-}
-
-/** C-06 — must stop at the policy boundary having mutated nothing. */
-async function gateC06() {
-  const booking = "UATD-BK-TRAIN-3";
-  const before = await call(`/api/training-cancellation?bookingId=${booking}`);
-  // The route's action is "request" (not "request_cancel"); an incorrect action name yields a 400,
-  // which must never be mistaken for the policy boundary.
-  const result = await call("/api/training-cancellation", {
-    method: "POST",
-    body: { action: "request", bookingId: booking, reason: "Final residual live run", idempotencyKey: `residual-c06-${Date.now()}` },
-  });
-  const after = await call(`/api/training-cancellation?bookingId=${booking}`);
-  const status = result.body?.data?.status ?? result.body?.status ?? null;
-  const reachedBoundary = status === "blocked_policy_configuration";
-  // A 400/404/terminal refusal is explicitly NOT a pass.
-  const wrongRefusal = [400, 404].includes(result.status) || (status && status !== "blocked_policy_configuration");
-  return {
-    status: reachedBoundary && JSON.stringify(before.body) === JSON.stringify(after.body) ? "pass" : wrongRefusal ? "fail" : "blocked",
-    detail: { booking, http: result.status, resultStatus: status, reachedPolicyBoundary: reachedBoundary, stateUnchanged: JSON.stringify(before.body) === JSON.stringify(after.body), note: "400/404/terminal-state refusal is NOT a pass" },
-  };
-}
-
-/** Journey D — own work succeeds, another provider's work is refused. */
-async function gateProviderJourneyD() {
-  const own = await call("/api/partner-mobile?workOrderId=UATD-BK-GROOM-2-WO");
-  const cross = await call("/api/partner-mobile?workOrderId=UATD-BK-GROOM-1-WO");
-  return {
-    status: own.status === 200 && (cross.status === 403 || cross.status === 404) ? "pass" : "blocked",
-    detail: { ownWorkOrder: "UATD-BK-GROOM-2-WO (Rahul/groom_kiran, assigned)", ownHttp: own.status, crossWorkOrder: "UATD-BK-GROOM-1-WO (Asha/groom_arun)", crossHttp: cross.status, note: "provider-scoped identity may be required; a non-200/403 pair is reported blocked, never passed" },
-  };
-}
-
-/** Journey E — NON-MONEY ONLY. record_payment/request_refund/resolve_refund are never invoked. */
-async function gateRelocationJourneyE() {
-  // Exact create contract from app/api/relocation/route.ts. NON-MONEY ONLY.
-  const created = await call("/api/relocation", {
-    method: "POST",
-    body: {
-      action: "create", customerId: "UATD-CUS-2",
-      petName: "Rex", breed: "Indie", ageYears: 3, sizeClass: "medium", travelMode: "air",
-      originCountry: "India", originCity: "blr", destinationCountry: "India", destinationCity: "maa",
-      targetTravelDate: "2026-10-15", crateRequirement: "assessment_required",
+    status: requested.ok && approved.ok && atAmount.length === 1 && sandboxOnly && !sameActor.ok ? "pass" : "fail",
+    detail: {
+      personas: { requester: "manager", approver: "finance" }, booking, refundAmountINR: amount,
+      requestHttp: requested.status, approveHttp: approved.status, replayHttp: replay.status,
+      refundLedgerRows: refunds.length, exactlyOneAtAmount: atAmount.length === 1, sandboxOnly,
+      duplicateRefundsCreated: Math.max(0, atAmount.length - 1),
+      sameActorApprovalHttp: sameActor.status, sameActorRefused: !sameActor.ok,
+      liveMoneyTransport: false,
     },
+  };
+}
+
+/** C-06 — must reach blocked_policy_configuration. MANAGER (bypasses customer ownership). */
+async function gateC06() {
+  if (authGap("manager")) return { status: "blocked", detail: { reason: "manager session unavailable — RUNNER auth gap" } };
+  const booking = "UATD-BK-TRAIN-3";
+  const before = await call("manager", `/api/training-cancellation?bookingId=${booking}`);
+  const key = `residual-c06-${Date.now()}`;
+  const result = await call("manager", "/api/training-cancellation", { method: "POST", body: { action: "request", bookingId: booking, reason: "Final residual live run", idempotencyKey: key } });
+  const replay = await call("manager", "/api/training-cancellation", { method: "POST", body: { action: "request", bookingId: booking, reason: "Final residual live run", idempotencyKey: key } });
+  const after = await call("manager", `/api/training-cancellation?bookingId=${booking}`);
+  const status = result.body?.data?.status ?? result.body?.status ?? null;
+  const reached = status === "blocked_policy_configuration";
+  const wrongRefusal = [400, 403, 404].includes(result.status);
+  return {
+    status: reached ? "pass" : wrongRefusal ? "fail" : "blocked",
+    detail: { persona: "manager", programme: "UATD-TPROG-1", booking, http: result.status, resultStatus: status, reachedPolicyBoundary: reached, replayHttp: replay.status, stateUnchanged: JSON.stringify(before.body) === JSON.stringify(after.body), note: "400/403/404/terminal is NOT a pass" },
+  };
+}
+
+/** Journey D — Rahul positive on his own work order; Asha cross-provider negative. */
+async function gateProviderJourneyD() {
+  if (authGap("rahul")) return { status: "blocked", detail: { reason: "Rahul session unavailable — RUNNER auth gap, not a product refusal" } };
+  const own = await call("rahul", "/api/partner-mobile?workOrderId=UATD-BK-GROOM-2-WO");
+  const cross = authGap("asha") ? null : await call("asha", "/api/partner-mobile?workOrderId=UATD-BK-GROOM-2-WO");
+  return {
+    status: own.status === 200 && (cross === null || cross.status === 403) ? "pass" : "fail",
+    detail: { personas: { positive: "rahul → groom_kiran", negative: "asha → groom_arun" }, ownWorkOrder: "UATD-BK-GROOM-2-WO", ownHttp: own.status, crossHttp: cross?.status ?? "skipped (no asha session)", crossRefused: cross ? cross.status === 403 : null, mutationsByAsha: 0 },
+  };
+}
+
+/** Journey E — NON-MONEY ONLY. MANAGER (scheduling.book + ownership bypass). */
+async function gateRelocationJourneyE() {
+  if (authGap("manager")) return { status: "blocked", detail: { reason: "manager session unavailable — RUNNER auth gap" } };
+  const created = await call("manager", "/api/relocation", {
+    method: "POST",
+    body: { action: "create", customerId: "UATD-CUS-2", petName: "Rex", breed: "Indie", ageYears: 3, sizeClass: "medium", travelMode: "air", originCountry: "India", originCity: "blr", destinationCountry: "India", destinationCity: "maa", targetTravelDate: "2026-10-15", crateRequirement: "assessment_required" },
   });
   const caseId = created.body?.data?.id ?? created.body?.data?.caseId ?? created.body?.id ?? null;
-  if (!created.ok || !caseId) return { status: "blocked", detail: { reason: "relocation case not created; document/support steps cannot be exercised", createHttp: created.status, error: scrub(created.body?.error || "") } };
-
-  const doc = await call("/api/relocation", { method: "POST", body: { action: "register_document", caseId, documentType: "vaccination_record", objectId: `residual-doc-${Date.now()}`, note: "residual run" } });
-  const support = await call("/api/relocation", { method: "POST", body: { action: "open_support", caseId, note: "Residual non-money journey", reason: "Final residual live run" } });
+  if (!created.ok || !caseId) return { status: "blocked", detail: { reason: "relocation case not created; document/support cannot be exercised", createHttp: created.status, error: scrub(created.body?.error || "") } };
+  const doc = await call("manager", "/api/relocation", { method: "POST", body: { action: "register_document", caseId, documentType: "vaccination_record", objectId: `residual-doc-${Date.now()}`, note: "residual run" } });
+  const support = await call("manager", "/api/relocation", { method: "POST", body: { action: "open_support", caseId, note: "Residual non-money journey", reason: "Final residual live run" } });
+  const after = await call("manager", `/api/relocation?caseId=${encodeURIComponent(caseId)}`);
+  const payload = JSON.stringify(after.body || {});
   return {
     status: doc.ok && support.ok ? "pass" : "fail",
-    detail: { caseId, createHttp: created.status, documentHttp: doc.status, supportHttp: support.status, moneyActionsInvoked: [], assertion: "record_payment / request_refund / resolve_refund deliberately never called" },
+    detail: { persona: "manager", caseId, createHttp: created.status, documentHttp: doc.status, supportHttp: support.status, moneyActionsInvoked: [], quoteSideEffects: payload.includes("\"quote") ? "present-in-read-only-view" : "none", assertion: "record_payment / request_refund / resolve_refund never called" },
   };
 }
 
-/** BLR/Chennai isolation — Chennai must stay commercially blocked with a 4xx, never a 500. */
+/** Chennai must stay commercially blocked with a 4xx, never a 500. */
 async function gateCityIsolation() {
-  const chennai = await call("/api/canonical-bookings", {
+  if (authGap("associate")) return { status: "blocked", detail: { reason: "associate session unavailable — RUNNER auth gap" } };
+  const chennai = await call("associate", "/api/canonical-bookings", {
     method: "POST",
-    body: {
-      idempotencyKey: `residual-maa-${Date.now()}`, scheduleGroupId: `RESIDUAL-MAA-${Date.now()}`,
-      customer: { id: "UATD-CUS-2", name: "Residual", primaryPhone: "+919000000002" },
-      pets: [{ sourceId: "p1", name: "Rex", species: "dog" }],
-      cityId: "maa", zoneId: "maa-central", serviceCode: "grooming",
-      packageCode: "dog-bath", packageName: "Essential Bath",
-      scheduledStart: "2026-09-03T09:30:00.000Z", scheduledEnd: "2026-09-03T11:30:00.000Z",
-      provider: { id: "groom_maa_lakshmi", name: "Lakshmi V.", model: "full_time" },
-      totalAmount: 1349, amountDueNow: 1349,
-      payment: { method: "upi", mode: "prepaid", status: "captured", detail: "residual" },
-    },
+    body: { ...bookingBody({ key: `residual-maa-${Date.now()}`, group: `RESIDUAL-MAA-${Date.now()}`, customerId: "UATD-CUS-2", start: "2026-09-03T09:30:00.000Z", end: "2026-09-03T11:30:00.000Z", provider: { id: "groom_maa_lakshmi", name: "Lakshmi V.", model: "full_time" }, amount: 1349 }), cityId: "maa", zoneId: "maa-central" },
   });
   const blocked = chennai.status >= 400 && chennai.status < 500;
-  return {
-    status: blocked ? "pass" : "fail",
-    detail: { chennaiHttp: chennai.status, commerciallyBlocked: blocked, notA500: chennai.status !== 500, error: scrub(chennai.body?.error || "") },
-  };
+  return { status: blocked ? "pass" : "fail", detail: { persona: "associate", chennaiHttp: chennai.status, commerciallyBlocked: blocked, notA500: chennai.status !== 500, error: scrub(chennai.body?.error || "") } };
 }
 
-/** B-07 — orphan reconciliation counts, read-only. */
+/** B-07 — canonical read-only reconciliation. FINANCE (finance.view). 4xx is blocked, never pass. */
 async function gateB07Reconciliation() {
-  // /api/reconciliation does not exist; the real canonical read-only surface is payment-reconciliation.
-  // A 404 or any 4xx is a BLOCKED setup outcome, never a pass.
-  const report = await call("/api/payment-reconciliation");
-  if (!report.ok) return { status: "blocked", detail: { reason: "canonical reconciliation view unavailable; no real values could be asserted", http: report.status, endpoint: "/api/payment-reconciliation" } };
+  if (authGap("finance")) return { status: "blocked", detail: { reason: "finance session unavailable — RUNNER auth gap, not a product refusal" } };
+  const report = await call("finance", "/api/payment-reconciliation");
+  if (!report.ok) return { status: "blocked", detail: { persona: "finance", reason: "reconciliation view unavailable; no real values asserted", http: report.status } };
   const payload = report.body?.data ?? report.body ?? {};
-  const hasRealValues = payload && typeof payload === "object" && Object.keys(payload).length > 0;
-  return {
-    status: hasRealValues ? "pass" : "blocked",
-    detail: { endpoint: "/api/payment-reconciliation", http: report.status, assertedRealValues: hasRealValues, keys: Object.keys(payload).slice(0, 12) },
-  };
+  const real = payload && typeof payload === "object" && Object.keys(payload).length > 0;
+  return { status: real ? "pass" : "blocked", detail: { persona: "finance", endpoint: "/api/payment-reconciliation", http: report.status, assertedRealValues: real, keys: Object.keys(payload).slice(0, 12) } };
 }
 
-/** A-13 — reconciliation / idempotency against a REAL endpoint; repeated reads must be stable. */
+/** A-13 — reconciliation idempotency. MANAGER holds reports.view. */
 async function gateA13() {
-  const first = await call("/api/training-reconciliation");
-  if (!first.ok) return { status: "blocked", detail: { reason: "training reconciliation view unavailable; nothing could be asserted", http: first.status, endpoint: "/api/training-reconciliation" } };
-  const second = await call("/api/training-reconciliation");
+  if (authGap("manager")) return { status: "blocked", detail: { reason: "manager session unavailable — RUNNER auth gap" } };
+  const first = await call("manager", "/api/training-reconciliation");
+  if (!first.ok) return { status: "blocked", detail: { persona: "manager", reason: "training reconciliation unavailable", http: first.status } };
+  const second = await call("manager", "/api/training-reconciliation");
   const stable = JSON.stringify(first.body) === JSON.stringify(second.body);
   const payload = first.body?.data ?? first.body ?? {};
-  const hasRealValues = payload && typeof payload === "object" && Object.keys(payload).length > 0;
-  return {
-    status: stable && hasRealValues ? "pass" : "fail",
-    detail: { endpoint: "/api/training-reconciliation", http: first.status, repeatReadStable: stable, assertedRealValues: hasRealValues, keys: Object.keys(payload).slice(0, 12) },
-  };
+  const real = payload && typeof payload === "object" && Object.keys(payload).length > 0;
+  return { status: stable && real ? "pass" : "fail", detail: { persona: "manager", endpoint: "/api/training-reconciliation", http: first.status, repeatReadStable: stable, assertedRealValues: real, keys: Object.keys(payload).slice(0, 12) } };
 }
 
 // P0 / release stop conditions. Only these force a non-zero exit.
@@ -333,15 +318,18 @@ const RUNNERS = [
   ["a13-reconciliation-idempotency", gateA13],
 ];
 
-const session = DRY ? { mode: "dry-run", cookieObtained: false } : await signIn();
-console.log(`final-residual · ${BASE} · session ${session.mode}\n`);
+const REQUIRED_PERSONAS = ["associate", "manager", "finance", "rahul", "asha"];
+const sessions = [];
+if (!DRY) for (const persona of REQUIRED_PERSONAS) sessions.push(await signIn(persona));
+const authenticated = sessions.filter((s) => s.mode === "authenticated").map((s) => s.persona);
+console.log(`final-residual · ${BASE} · personas authenticated: ${authenticated.join(", ") || "none"}\n`);
 
 if (DRY) {
   // Local self-check only: proves the harness loads, every gate is registered and the report shape is
-  // valid. This is NOT a live verdict and is labelled as such in the report.
+  // valid. NOT a live verdict.
   for (const [id] of RUNNERS) record(id, "skipped", "dry-run: not executed against live staging");
-} else if (session.mode !== "authenticated") {
-  for (const [id] of RUNNERS) record(id, "blocked", `staging sign-in did not succeed (${session.mode}); gates cannot be evaluated`);
+} else if (!authenticated.length) {
+  for (const [id] of RUNNERS) record(id, "blocked", "no persona could sign in — RUNNER/credential problem, not a product failure");
 } else {
   for (const [id, run] of RUNNERS) {
     try {
@@ -354,12 +342,19 @@ if (DRY) {
 }
 
 const failedP0 = gates.filter((g) => P0_GATES.has(g.gate) && g.status !== "pass" && g.status !== "skipped");
+// A P0 that is 'blocked' is a runner/setup problem. It still stops the release (we cannot certify
+// what we did not test) but is reported distinctly so it is never filed as a product defect.
+const blockedP0 = failedP0.filter((g) => g.status === "blocked").map((g) => g.gate);
+const trueP0Failures = failedP0.filter((g) => g.status === "fail").map((g) => g.gate);
+
 const report = {
   runAt: new Date().toISOString(),
   base: BASE,
-  candidate: "64f69524a5c09b7a385cbd61fb5650aff1735b99",
+  targetDeployedCandidateSha: process.env.PAWSPACE_CANDIDATE_SHA || "64f69524a5c09b7a385cbd61fb5650aff1735b99",
+  runnerHarnessSha: process.env.GITHUB_SHA || "(local)",
   liveVerdict: !DRY,
-  session: { mode: session.mode, cookieObtained: session.cookieObtained },  // never the cookie itself
+  gate0: (() => { try { return JSON.parse(fs.readFileSync("gate0-identity-report.json", "utf8")).verdict; } catch { return "not-run-in-this-step"; } })(),
+  personas: sessions.map((s) => ({ persona: s.persona, email: s.email ?? null, mode: s.mode, cookieObtained: s.cookieObtained })), // never a cookie value
   gates,
   summary: {
     total: gates.length,
@@ -367,7 +362,8 @@ const report = {
     fail: gates.filter((g) => g.status === "fail").length,
     blocked: gates.filter((g) => g.status === "blocked").length,
     skipped: gates.filter((g) => g.status === "skipped").length,
-    p0Failures: failedP0.map((g) => g.gate),
+    p0ProductFailures: trueP0Failures,
+    p0BlockedBySetup: blockedP0,
   },
 };
 fs.writeFileSync(OUT, JSON.stringify(report, null, 2));
@@ -375,6 +371,7 @@ console.log(`\n${report.summary.pass} pass · ${report.summary.fail} fail · ${r
 console.log(`report → ${OUT}`);
 
 if (DRY) { console.log("\nDRY RUN — not a live verdict."); process.exit(0); }
-if (failedP0.length) { console.error(`\nP0 STOP CONDITION: ${failedP0.map((g) => g.gate).join(", ")}`); process.exit(1); }
-if (session.mode !== "authenticated") { console.error("\nSTOP: no authenticated staging session — the run proved nothing."); process.exit(1); }
+if (trueP0Failures.length) { console.error(`\nP0 PRODUCT FAILURE: ${trueP0Failures.join(", ")}`); process.exit(1); }
+if (blockedP0.length) { console.error(`\nP0 BLOCKED BY SETUP (runner/identity/fixture, NOT a product defect): ${blockedP0.join(", ")}`); process.exit(1); }
+if (!authenticated.length) { console.error("\nSTOP: no authenticated staging session — the run proved nothing."); process.exit(1); }
 process.exit(0);

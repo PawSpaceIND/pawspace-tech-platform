@@ -229,16 +229,25 @@ jobs:
           node-version: '22.13.0'
           cache: npm
       - run: npm ci
+      # GATE 0 — read-only identity preflight. Fails closed BEFORE any mutating gate runs, so a missing
+      # staging identity is reported as a seeding gap rather than surfacing later as a product 403.
+      - name: Gate 0 - live identity preflight (read-only)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node tools/uat/gate0-identity-preflight.mjs --json=gate0-identity-report.json
       - name: Final residual gates against deployed staging
         env:
           PAWSPACE_E2E_BASE: https://pawspace-staging.karthik-fce.workers.dev
           # Read from the repository secret; never written to a file, a log line or the report.
           PAWSPACE_E2E_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
-          PAWSPACE_E2E_EMAIL: ${{ vars.PAWSPACE_UAT_TESTER_EMAIL }}
+          PAWSPACE_CANDIDATE_SHA: 64f69524a5c09b7a385cbd61fb5650aff1735b99
         run: node tools/uat/final-residual-live.mjs --json=final-residual-report.json
-      - name: Upload the residual report
+      - name: Upload the residual reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: final-residual-report
-          path: final-residual-report.json
+          path: |
+            final-residual-report.json
+            gate0-identity-report.json
