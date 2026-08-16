@@ -115,7 +115,7 @@ test("a governed serviced zone is accepted and carried through",()=>{
 // ---------------------------------------------------------------------------
 test("the Training page books the governed zone and never a hardcoded one",async()=>{
  const page=await read("app/training/page.tsx");
- const code=page.split("\n").filter(line=>!line.trim().startsWith("//")).join("\n");
+ const code=page.split("\n").filter(line=>!line.trim().startsWith("//")).map(line=>line.replace(/\s\/\/.*$/,"")).join("\n");
  for(const token of["trainingQuoteKey","trainingQuoteSpendable","trainingLocationPincode","trainingLocationZone"])
   assert.equal(code.includes(token),true,`page must use ${token}`);
  // Availability, reservation and the canonical booking all take the resolved zone.
@@ -133,4 +133,26 @@ test("the Training page books the governed zone and never a hardcoded one",async
  assert.equal(localBinding,true,"confirm() binds the validated quote to a local before use");
  assert.equal(/\{quote\.[a-zA-Z]+/.test(code.split("async function confirm")[0]),false,"no JSX above confirm() may read the raw quote");
  assert.ok(rawReads>0,"confirm() still consumes the server quote fields");
+});
+
+// A customer we cannot service must not be left staring at a spinner. The zone-gated availability
+// effect returns early when there is no location, so anything whose loading flag that effect owned
+// would never clear — the catalogue load is deliberately independent of the zone for that reason.
+test("a refused customer never sees a spinner that cannot finish",async()=>{
+ const page=await read("app/training/page.tsx");
+ const code=page.split("\n").filter(line=>!line.trim().startsWith("//")).map(line=>line.replace(/\s\/\/.*$/,"")).join("\n");
+ // The catalogue effect takes no location and no other dependency, so it always settles.
+ assert.match(code,/loadTrainingPackages\(\)[\s\S]{0,400}?setCatalogueLoading\(false\)/,"the catalogue must clear its own loading flag");
+ assert.equal(code.includes("loadTrainingPackages(),"),false,"the catalogue must not sit inside the zone-gated availability effect");
+ // The early return that strands a flag must not be reachable with one still set.
+ assert.equal(code.includes("if(!location)return()=>{active=false};"),true,"availability is still zone-gated");
+ assert.equal(/setCatalogueLoading\(true\)/.test(code),false,"nothing re-arms the catalogue flag after the initial state");
+ // And the confirm button no longer depends on a flag the early return could strand.
+ assert.equal(/disabled=\{[^}]*\bloading\b/.test(code),false,"the button must not gate on a strandable loading flag");
+});
+
+test("the dog picker keeps the label the removed select had",async()=>{
+ const page=await read("app/training/page.tsx");
+ assert.match(page,/role="group" aria-labelledby="training-dogs-label"/,"the button group must be labelled");
+ assert.match(page,/id="training-dogs-label"/,"and the label must carry that id");
 });
