@@ -2,6 +2,8 @@
 import { useEffect, useMemo, useState } from "react";
 import styles from "./food-flow.module.css";
 import type { LoggedInCustomer } from "./customer-login";
+import PetManager from "./pet-manager";
+import { loadCustomerPets, type CustomerPet } from "../../lib/customer-account-client";
 import {
   loadFoodCatalogue,
   quoteFoodCart,
@@ -13,12 +15,11 @@ import {
 } from "../../lib/food-client";
 import { createFoodSubscription } from "../../lib/food-subscription-client";
 
-// Same household pets the other flows present (species drives per-pet food suggestions).
-const pets = [
-  { name: "Bruno", detail: "Golden Retriever · 4 years", icon: "🐕", species: "dog" as const },
-  { name: "Coco", detail: "Persian cat · 3 years", icon: "🐈", species: "cat" as const },
-  { name: "Milo", detail: "Beagle · 2 years", icon: "🐶", species: "dog" as const },
-];
+// Species drives per-pet food suggestions; the pets are the customer's own, loaded at runtime.
+const petIcon = (species: string) => (species === "cat" ? "🐈" : species === "dog" ? "🐕" : "🐾");
+const petDetail = (pet: CustomerPet) =>
+  [pet.profile?.breed || pet.breed, pet.profile?.ageBand, pet.profile?.weightBand].filter(Boolean).join(" · ") ||
+  "Profiles, health notes and service history included";
 
 // Customer-selected renewal cadence. The Food subscription API accepts any explicit
 // 7-90 day interval (see /api/food-subscriptions), so every option below is server-valid.
@@ -42,7 +43,17 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
   const [catalogue, setCatalogue] = useState<FoodCatalogueItem[]>([]);
   const [catalogueError, setCatalogueError] = useState("");
   const [catalogueLoading, setCatalogueLoading] = useState(true);
-  const [selectedPets, setSelectedPets] = useState<string[]>([pets[0].name]);
+  const [selRaw, setSelectedPets] = useState<string[]>([]);
+  // pets is null until the first load resolves; that distinguishes "not hydrated yet" from
+  // "hydrated to an empty list" (e.g. the user deleted their last pet), so a late initial load
+  // can never re-insert a pet the user just removed.
+  const [petsState, setPets] = useState<CustomerPet[] | null>(null);
+  const pets = useMemo(() => petsState ?? [], [petsState]);
+  // Selection is always reconciled against the accepted pet list.
+  const selectedPets = useMemo(() => selRaw.filter((id) => pets.some((p) => p.id === id)), [selRaw, pets]);
+  const [petsLoading, setPetsLoading] = useState(true);
+  const [petsError, setPetsError] = useState("");
+  const [showPetManager, setShowPetManager] = useState(false);
   const [cart, setCart] = useState<FoodCartLine[]>([]);
   const [plan, setPlan] = useState<"one_time" | "repeat">("one_time");
   const [intervalDays, setIntervalDays] = useState(repeatPlans[2].intervalDays);
@@ -77,7 +88,31 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
     };
   }, []);
 
-  const selectedSpecies = useMemo(() => new Set(pets.filter((pet) => selectedPets.includes(pet.name)).map((pet) => pet.species)), [selectedPets]);
+  useEffect(() => {
+    let active = true;
+    queueMicrotask(() => {
+      if (active) setPetsLoading(true);
+    });
+    loadCustomerPets(customer.customerId)
+      .then((loaded) => {
+        if (!active) return;
+        // Do not clobber a pet the user just added/edited/deleted via PetManager if this initial load resolves late.
+        setPets((prev) => (prev === null ? loaded : prev));
+        setSelectedPets((prev) => (prev.length ? prev : loaded[0] ? [loaded[0].id] : []));
+        setPetsError("");
+      })
+      .catch((e) => { if (active) setPetsError(e instanceof Error ? e.message : "Unable to load your pets"); })
+      .finally(() => { if (active) setPetsLoading(false); });
+    return () => { active = false; };
+  }, [customer.customerId]);
+  const onPetsChanged = (updated: CustomerPet[]) => {
+    setPets(updated);
+    setSelectedPets((prev) => {
+      const kept = prev.filter((id) => updated.some((p) => p.id === id));
+      return kept.length ? kept : updated[0] ? [updated[0].id] : [];
+    });
+  };
+  const selectedSpecies = useMemo(() => new Set(pets.filter((pet) => selectedPets.includes(pet.id)).map((pet) => pet.species)), [pets, selectedPets]);
   const grouped = useMemo(() => {
     const bySpecies: Record<string, FoodCatalogueItem[]> = {};
     for (const item of catalogue) (bySpecies[item.pet_type] ||= []).push(item);
@@ -91,9 +126,9 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
   const itemBySku = useMemo(() => new Map(catalogue.map((item) => [item.sku, item])), [catalogue]);
   const cartCount = cart.reduce((sum, line) => sum + line.quantity, 0);
   const indicativeTotal = cart.reduce((sum, line) => sum + (itemBySku.get(line.sku)?.unit_price ?? 0) * line.quantity, 0);
-  const suggestedFor = (item: FoodCatalogueItem) => pets.filter((pet) => selectedPets.includes(pet.name) && pet.species === item.pet_type).map((pet) => pet.name);
+  const suggestedFor = (item: FoodCatalogueItem) => pets.filter((pet) => selectedPets.includes(pet.id) && pet.species === item.pet_type).map((pet) => pet.name);
 
-  const togglePet = (name: string) => setSelectedPets((current) => (current.includes(name) ? current.filter((pet) => pet !== name) : [...current, name]));
+  const togglePet = (id: string) => setSelectedPets((current) => (current.includes(id) ? current.filter((pet) => pet !== id) : [...current, id]));
   const qtyOf = (sku: string) => cart.find((line) => line.sku === sku)?.quantity ?? 0;
   const setQty = (item: FoodCatalogueItem, quantity: number) => {
     const capped = Math.max(0, Math.min(quantity, item.max_qty_per_order, item.uat_available_units));
@@ -204,14 +239,22 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
             <small>CATALOGUE · 1 OF 5</small>
           </div>
           <div className={styles.petRow}>
+            {petsLoading && <p className={styles.hint}>Loading your pets…</p>}
+            {petsError && <p className={styles.hint} role="alert">{petsError}</p>}
+            {!petsLoading && !petsError && pets.length === 0 && <p className={styles.hint}>No pets on your profile yet — add one below for tailored food picks.</p>}
             {pets.map((pet) => (
-              <button key={pet.name} className={selectedPets.includes(pet.name) ? styles.selected : ""} onClick={() => togglePet(pet.name)}>
-                <i>{pet.icon}</i>
+              <button key={pet.id} className={selectedPets.includes(pet.id) ? styles.selected : ""} onClick={() => togglePet(pet.id)}>
+                <i>{petIcon(pet.species)}</i>
                 <b>{pet.name}</b>
-                <small>{pet.detail}</small>
+                <small>{petDetail(pet)}</small>
               </button>
             ))}
+            <button onClick={() => setShowPetManager((v) => !v)}>
+              <i>{showPetManager ? "−" : "＋"}</i>
+              <b>{showPetManager ? "Hide" : "Add pet"}</b>
+            </button>
           </div>
+          {showPetManager && <PetManager customer={customer} onPetsChanged={onPetsChanged} />}
           {catalogueLoading && <p className={styles.hint}>Loading the live catalogue…</p>}
           {catalogueError && <p role="alert" className={styles.error}>{catalogueError}</p>}
           {grouped.map(([species, items]) => (

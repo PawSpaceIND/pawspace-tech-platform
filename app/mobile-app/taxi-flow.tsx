@@ -3,16 +3,16 @@ import { useEffect, useState } from "react";
 import styles from "./taxi-flow.module.css";
 import { loadTaxiRouteClasses, createTaxiQuote, type TaxiRouteClass, type TaxiQuote } from "../../lib/taxi-commercial-client";
 import { createCanonicalTaxiBooking, reserveTaxiSchedule, type AssignedDriver, type TaxiBookingResult } from "../../lib/taxi-booking-client";
+import PetManager from "./pet-manager";
+import { loadCustomerPets, type CustomerPet } from "../../lib/customer-account-client";
 import type { LoggedInCustomer } from "./customer-login";
 
 // Same prop contract as the other embedded flows: the shell passes the logged-in customer; pets
 // follow the UAT roster pattern. Pet Taxi carries dogs AND cats — one pet per trip (Gate 1 rule).
-const taxiPets = [
-  { name: "Bruno", detail: "Golden Retriever · 4 years", icon: "🐕", species: "dog" },
-  { name: "Milo", detail: "Beagle · 2 years", icon: "🐶", species: "dog" },
-  { name: "Luna", detail: "Indie · 3 years", icon: "🐕", species: "dog" },
-  { name: "Coco", detail: "Persian cat · 3 years", icon: "🐈", species: "cat" },
-] as const;
+const petIcon = (species: string) => (species === "cat" ? "🐈" : species === "dog" ? "🐕" : "🐾");
+const petDetail = (pet: CustomerPet) =>
+  [pet.profile?.breed || pet.breed, pet.profile?.ageBand, pet.profile?.weightBand].filter(Boolean).join(" · ") ||
+  "Profiles, health notes and service history included";
 
 // The scheduler's pet_taxi roster window is 06:00-22:00 IST; the longest UAT route class runs
 // 90 minutes, so start chips stop at 20:00 to keep every trip's end inside the roster window.
@@ -34,7 +34,16 @@ export default function TaxiFlow({ customer }: { customer: LoggedInCustomer }) {
   const [destinationLabel, setDestinationLabel] = useState("");
   const [dayOffset, setDayOffset] = useState(1);
   const [hour, setHour] = useState(9);
-  const [selectedPet, setSelectedPet] = useState("Bruno");
+  const [selRaw, setSelectedPet] = useState("");
+  // pets is null until the first load resolves — distinguishes "not hydrated" from "hydrated empty"
+  // (e.g. the last pet was deleted), so a late initial load can't re-insert a removed pet.
+  const [petsState, setPets] = useState<CustomerPet[] | null>(null);
+  const pets = petsState ?? [];
+  // Selection is always reconciled against the accepted pet list.
+  const selectedPet = pets.some((p) => p.id === selRaw) ? selRaw : "";
+  const [petsLoading, setPetsLoading] = useState(true);
+  const [petsError, setPetsError] = useState("");
+  const [showPetManager, setShowPetManager] = useState(false);
   const [quote, setQuote] = useState<TaxiQuote | null>(null);
   const [driver, setDriver] = useState<AssignedDriver | null>(null);
   const [booking, setBooking] = useState<TaxiBookingResult | null>(null);
@@ -53,7 +62,28 @@ export default function TaxiFlow({ customer }: { customer: LoggedInCustomer }) {
 
   const selectedRoute = routes.find(item => item.route_code === routeCode) || null;
   const scheduledStart = istDate(dayOffset, hour).toISOString();
-  const pet = taxiPets.find(item => item.name === selectedPet) || taxiPets[0];
+  const pet = pets.find(p => p.id === selectedPet) || pets[0];
+  useEffect(() => {
+    let active = true;
+    queueMicrotask(() => {
+      if (active) setPetsLoading(true);
+    });
+    loadCustomerPets(customer.customerId)
+      .then((loaded) => {
+        if (!active) return;
+        // Do not clobber a pet the user just added/edited/deleted via PetManager if this initial load resolves late.
+        setPets((prev) => (prev === null ? loaded : prev));
+        setSelectedPet((prev) => (prev ? prev : loaded[0]?.id ?? ""));
+        setPetsError("");
+      })
+      .catch((e) => { if (active) setPetsError(e instanceof Error ? e.message : "Unable to load your pets"); })
+      .finally(() => { if (active) setPetsLoading(false); });
+    return () => { active = false; };
+  }, [customer.customerId]);
+  const onPetsChanged = (updated: CustomerPet[]) => {
+    setPets(updated);
+    setSelectedPet((prev) => (updated.some((p) => p.id === prev) ? prev : updated[0]?.id ?? ""));
+  };
   // Mirror of the server rule: pickup and drop-off labels must be real (≥3 chars) and distinct.
   const origin = originLabel.trim(), destination = destinationLabel.trim();
   const locationsValid = origin.length >= 3 && destination.length >= 3 && origin.toLowerCase() !== destination.toLowerCase();
@@ -73,11 +103,12 @@ export default function TaxiFlow({ customer }: { customer: LoggedInCustomer }) {
     try {
       // Fresh server quote at confirmation time (the display quote may have aged past its expiry);
       // the reservation must match the quote's window exactly, so both use the quote's own end time.
+      if (!pet) { setError("Add a pet to book a Pet Taxi trip."); setBusy(false); return; }
       const fresh = await createTaxiQuote({ routeCode, originLabel: origin, destinationLabel: destination, petCount: 1, scheduledStart });
       const requestId = `taxi-${customer.customerId}-${fresh.routeCode}-${fresh.scheduledStart}`;
       // Auto-assignment is allowed for taxi (founder rule) — the scheduler picks the driver.
-      const reservation = await reserveTaxiSchedule({ clientRequestId: requestId, customerId: customer.customerId, petIds: [selectedPet], zoneId: "blr-east", scheduledStart: fresh.scheduledStart, scheduledEnd: fresh.scheduledEnd });
-      const created = await createCanonicalTaxiBooking({ idempotencyKey: requestId, groupId: reservation.groupId, taxiQuoteId: fresh.quoteId, customer: { id: customer.customerId, name: customer.customerName, primaryPhone: customer.phone }, pets: [{ sourceId: pet.name, name: pet.name, species: pet.species }], cityId: "blr", zoneId: "blr-east", routeCode: fresh.routeCode, originLabel: fresh.originLabel, destinationLabel: fresh.destinationLabel, scheduledStart: fresh.scheduledStart, scheduledEnd: fresh.scheduledEnd, provider: { id: reservation.driver.id, name: reservation.driver.name, model: reservation.driver.model }, totalAmount: fresh.totalAmount, amountDueNow: fresh.amountDueNow, payment: { method: "upi", mode: "sandbox_deferred", detail: "UAT sandbox-deferred Pet Taxi billing" } });
+      const reservation = await reserveTaxiSchedule({ clientRequestId: requestId, customerId: customer.customerId, petIds: [pet.id], zoneId: "blr-east", scheduledStart: fresh.scheduledStart, scheduledEnd: fresh.scheduledEnd });
+      const created = await createCanonicalTaxiBooking({ idempotencyKey: requestId, groupId: reservation.groupId, taxiQuoteId: fresh.quoteId, customer: { id: customer.customerId, name: customer.customerName, primaryPhone: customer.phone }, pets: [{ sourceId: pet.sourceId ?? pet.id, name: pet.name, species: pet.species === "cat" ? "cat" : pet.species === "dog" ? "dog" : "other" }], cityId: "blr", zoneId: "blr-east", routeCode: fresh.routeCode, originLabel: fresh.originLabel, destinationLabel: fresh.destinationLabel, scheduledStart: fresh.scheduledStart, scheduledEnd: fresh.scheduledEnd, provider: { id: reservation.driver.id, name: reservation.driver.name, model: reservation.driver.model }, totalAmount: fresh.totalAmount, amountDueNow: fresh.amountDueNow, payment: { method: "upi", mode: "sandbox_deferred", detail: "UAT sandbox-deferred Pet Taxi billing" } });
       setQuote(fresh); setDriver(reservation.driver); setBooking(created);
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Unable to confirm the Pet Taxi booking"); }
     finally { setBusy(false); }
@@ -88,7 +119,7 @@ export default function TaxiFlow({ customer }: { customer: LoggedInCustomer }) {
       <article className={styles.success}>
         <i>✓</i>
         <small>CANONICAL BOOKING · {booking.bookingId}</small>
-        <h3>{selectedPet}&apos;s taxi is booked.</h3>
+        <h3>{pet?.name ?? "Your pet"}&apos;s taxi is booked.</h3>
         <p style={{ margin: "4px 0 0", fontSize: 14 }}>{quote ? `${quote.routeName} · ${money(quote.totalAmount)} · ${money(0)} due today (sandbox deferred)` : "Sandbox deferred billing."}</p>
       </article>
       <span className={styles.label}>Your driver</span>
@@ -159,18 +190,26 @@ export default function TaxiFlow({ customer }: { customer: LoggedInCustomer }) {
         <section>
           <div className={styles.head}><h3>Who&apos;s riding?</h3><small>Your pet · 3 of 4</small></div>
           <div className={styles.petGrid}>
-            {taxiPets.map(item => (
-              <button key={item.name} className={selectedPet === item.name ? styles.selected : ""} onClick={() => setSelectedPet(item.name)}>
-                <i>{item.icon}</i>
+            {petsLoading && <p className={styles.note}>Loading your pets…</p>}
+            {petsError && <p className={styles.note} role="alert">{petsError}</p>}
+            {!petsLoading && !petsError && pets.length === 0 && <p className={styles.note}>No pets on your profile yet — add one below to book.</p>}
+            {pets.map(item => (
+              <button key={item.id} className={selectedPet === item.id ? styles.selected : ""} onClick={() => setSelectedPet(item.id)}>
+                <i>{petIcon(item.species)}</i>
                 <span>
                   <b>{item.name}</b>
-                  <small>{item.detail}</small>
+                  <small>{petDetail(item)}</small>
                 </span>
               </button>
             ))}
+            <button onClick={() => setShowPetManager(v => !v)}>
+              <i>{showPetManager ? "−" : "＋"}</i>
+              <span><b>{showPetManager ? "Hide pet details" : "Add or edit pets"}</b></span>
+            </button>
           </div>
+          {showPetManager && <PetManager customer={customer} onPetsChanged={onPetsChanged} />}
           <p className={styles.note}>Dogs and cats welcome — one pet per trip so the driver&apos;s full attention stays on your companion. 🐾</p>
-          <button className={styles.primary} onClick={() => { setQuote(null); setStage(4); }}>Review &amp; confirm</button>
+          <button className={styles.primary} disabled={!pet} onClick={() => { setQuote(null); setStage(4); }}>Review &amp; confirm</button>
           <button className={styles.back} onClick={() => setStage(2)}>← Trip</button>
         </section>
       )}
@@ -179,7 +218,7 @@ export default function TaxiFlow({ customer }: { customer: LoggedInCustomer }) {
         <section>
           <div className={styles.head}><h3>Review your trip</h3><small>Confirm · 4 of 4</small></div>
           <div className={styles.review}>
-            <div><span>Pet</span><b>{selectedPet} ({pet.species})</b></div>
+            <div><span>Pet</span><b>{pet ? `${pet.name} (${pet.species})` : "—"}</b></div>
             <div><span>Route class</span><b>{quote ? quote.routeName : selectedRoute?.name}</b></div>
             <div><span>Pickup</span><b>{origin}</b></div>
             <div><span>Drop-off</span><b>{destination}</b></div>

@@ -6,11 +6,16 @@ import { createTestTransaction } from "../../lib/test-transaction";
 import ProviderTrackingCard from "./provider-tracking-card";
 import CouponField from "./coupon-field";
 import PetManager from "./pet-manager";
+import { loadCustomerPets, type CustomerPet } from "../../lib/customer-account-client";
 import { reserveUatSchedule } from "../../lib/uat-scheduling-client";
 import { createCanonicalLifecycle } from "../../lib/canonical-lifecycle-client";
 import { loadBoardingCommercial, quoteBoarding, type BoardingHost, type BoardingQuote } from "../../lib/boarding-commercial-client";
 import BoardingCustomerStayPanel from "./boarding-customer-stay-panel";
 import BoardingCustomerStayStatus from "./boarding-customer-stay-status";
+
+// Unique per-booking nonce. Kept as a module-scope helper so the impure Date.now()
+// call lives outside component render (matching istDate in the taxi/walking flows).
+const bookingNonce = () => Date.now();
 
 type Mode = "boarding" | "sitting";
 type View = "stay" | "care" | "support";
@@ -81,11 +86,10 @@ const sitters: Caregiver[] = [
     capacity: "Up to 3 pets from one family",
   },
 ];
-const pets = [
-  { name: "Bruno", detail: "Golden Retriever · 4 years", icon: "🐕", species: "dog" },
-  { name: "Coco", detail: "Persian cat · 3 years", icon: "🐈", species: "cat" },
-  { name: "Milo", detail: "Beagle · 2 years", icon: "🐶", species: "dog" },
-];
+const petIcon = (species: string) => (species === "cat" ? "🐈" : species === "dog" ? "🐕" : "🐾");
+const petDetail = (pet: CustomerPet) =>
+  [pet.profile?.breed || pet.breed, pet.profile?.ageBand, pet.profile?.weightBand].filter(Boolean).join(" · ") ||
+  "Profiles, health notes and service history included";
 const needs = [
   "24/7 supervision",
   "Medication",
@@ -158,7 +162,10 @@ import type { LoggedInCustomer } from "./customer-login";
 export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; customer: LoggedInCustomer }) {
   const [mode, setMode] = useState<Mode>(initialMode),
     [stage, setStage] = useState(1),
-    [selectedPets, setSelectedPets] = useState(["Bruno", "Coco"]),
+    [selRaw, setSelectedPets] = useState<string[]>([]),
+    [petsState, setPets] = useState<CustomerPet[] | null>(null),
+    [petsLoading, setPetsLoading] = useState(true),
+    [petsError, setPetsError] = useState(""),
     [showPetManager, setShowPetManager] = useState(false),
     [selectedNeeds, setSelectedNeeds] = useState([
       "Medication",
@@ -200,7 +207,40 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
   };
-  const selectedSpecies = [...new Set(selectedPets.map(name => pets.find(pet => pet.name === name)?.species).filter((value): value is string => Boolean(value)))];
+  // The stay is for the customer's OWN pets. Load them and make selection (by canonical pet id) the
+  // single source of truth for species, count, host matching and the pet ids sent to the reserve/booking.
+  useEffect(() => {
+    let active = true;
+    queueMicrotask(() => {
+      if (active) setPetsLoading(true);
+    });
+    loadCustomerPets(customer.customerId)
+      .then((loaded) => {
+        if (!active) return;
+        // Do not clobber a pet the user just added/edited/deleted via PetManager if this initial load resolves late.
+        setPets((prev) => (prev === null ? loaded : prev));
+        setSelectedPets((prev) => (prev.length ? prev : loaded[0] ? [loaded[0].id] : []));
+        setPetsError("");
+      })
+      .catch((e) => { if (active) setPetsError(e instanceof Error ? e.message : "Unable to load your pets"); })
+      .finally(() => { if (active) setPetsLoading(false); });
+    return () => { active = false; };
+  }, [customer.customerId]);
+  const onPetsChanged = (updated: CustomerPet[]) => {
+    setPets(updated);
+    setSelectedPets((prev) => {
+      const kept = prev.filter((id) => updated.some((p) => p.id === id));
+      return kept.length ? kept : updated[0] ? [updated[0].id] : [];
+    });
+  };
+  // pets is null until the first load resolves — distinguishes "not hydrated" from "hydrated empty"
+  // (e.g. the last pet was deleted), so a late initial load can't re-insert a removed pet.
+  const pets = petsState ?? [];
+  // Selection is always reconciled against the accepted pet list.
+  const selectedPets = selRaw.filter((id) => pets.some((p) => p.id === id));
+  const selectedPetObjs = pets.filter((p) => selectedPets.includes(p.id));
+  const selectedPetNames = selectedPetObjs.map((p) => p.name);
+  const selectedSpecies = [...new Set(selectedPetObjs.map((p) => p.species).filter((value): value is string => Boolean(value)))];
   const boardingHostQueryKey = `${start}|${end}|${careWindow}|${selectedPets.slice().sort().join(",")}`;
   const caregivers = mode === "boarding" ? (boardingHostWindowKey === boardingHostQueryKey ? boardingHosts : []) : sitters;
   const nights = Math.max(
@@ -233,8 +273,8 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
     : splitEligible && splitPayment
     ? discountedStay - Math.ceil(discountedStay / 2)
     : 0;
-  useEffect(()=>{if(mode!=="boarding")return;let active=true;const scheduleStart=new Date(`${start}T03:30:00.000Z`),scheduleEnd=careWindow==="24 hours"?new Date(`${end}T03:30:00.000Z`):new Date(scheduleStart.getTime()+(careWindow==="10 hours"?10:4)*3_600_000),packageCode=careWindow==="4 hours"?"boarding-4h":careWindow==="10 hours"?"boarding-10h":"boarding-24h";void quoteBoarding({packageCode,petCount:selectedPets.length,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),paymentMode:splitEligible&&splitPayment?"split_50_50":"prepaid"}).then(value=>{if(active){setBoardingQuote(value);setScheduleError("");}}).catch(problem=>{if(active){setBoardingQuote(null);setScheduleError(problem instanceof Error?problem.message:"Unable to refresh Boarding quote");}});return()=>{active=false;};},[mode,careWindow,start,end,selectedPets.length,splitEligible,splitPayment]);
-  useEffect(()=>{if(mode!=="boarding")return;let active=true;const queryKey=boardingHostQueryKey,scheduleStart=new Date(`${start}T03:30:00.000Z`),scheduleEnd=careWindow==="24 hours"?new Date(`${end}T03:30:00.000Z`):new Date(scheduleStart.getTime()+(careWindow==="10 hours"?10:4)*3_600_000);void loadBoardingCommercial({cityId:"blr",zoneId:"blr-east",scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),petCount:selectedPets.length,species:selectedSpecies}).then(data=>{if(!active)return;const hosts=data.hosts.map(toBoardingCaregiver);setBoardingHosts(hosts);setBoardingHostWindowKey(queryKey);setBoardingHostError("");setCaregiver(current=>hosts.find(host=>host.providerId===current.providerId)??hosts[0]??boardingPlaceholder);}).catch(problem=>{if(!active)return;setBoardingHosts([]);setBoardingHostWindowKey(queryKey);setBoardingHostError(problem instanceof Error?problem.message:"Unable to load Boarding host availability");setCaregiver(boardingPlaceholder);});return()=>{active=false;};},[mode,careWindow,start,end,selectedPets.length,boardingHostQueryKey,selectedSpecies.join(",")]);
+  useEffect(()=>{if(mode!=="boarding"||selectedPets.length===0)return;let active=true;const scheduleStart=new Date(`${start}T03:30:00.000Z`),scheduleEnd=careWindow==="24 hours"?new Date(`${end}T03:30:00.000Z`):new Date(scheduleStart.getTime()+(careWindow==="10 hours"?10:4)*3_600_000),packageCode=careWindow==="4 hours"?"boarding-4h":careWindow==="10 hours"?"boarding-10h":"boarding-24h";void quoteBoarding({packageCode,petCount:selectedPets.length,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),paymentMode:splitEligible&&splitPayment?"split_50_50":"prepaid"}).then(value=>{if(active){setBoardingQuote(value);setScheduleError("");}}).catch(problem=>{if(active){setBoardingQuote(null);setScheduleError(problem instanceof Error?problem.message:"Unable to refresh Boarding quote");}});return()=>{active=false;};},[mode,careWindow,start,end,selectedPets.length,splitEligible,splitPayment]);
+  useEffect(()=>{if(mode!=="boarding"||selectedPets.length===0)return;let active=true;const queryKey=boardingHostQueryKey,scheduleStart=new Date(`${start}T03:30:00.000Z`),scheduleEnd=careWindow==="24 hours"?new Date(`${end}T03:30:00.000Z`):new Date(scheduleStart.getTime()+(careWindow==="10 hours"?10:4)*3_600_000);void loadBoardingCommercial({cityId:"blr",zoneId:"blr-east",scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),petCount:selectedPets.length,species:selectedSpecies}).then(data=>{if(!active)return;const hosts=data.hosts.map(toBoardingCaregiver);setBoardingHosts(hosts);setBoardingHostWindowKey(queryKey);setBoardingHostError("");setCaregiver(current=>hosts.find(host=>host.providerId===current.providerId)??hosts[0]??boardingPlaceholder);}).catch(problem=>{if(!active)return;setBoardingHosts([]);setBoardingHostWindowKey(queryKey);setBoardingHostError(problem instanceof Error?problem.message:"Unable to load Boarding host availability");setCaregiver(boardingPlaceholder);});return()=>{active=false;};},[mode,careWindow,start,end,selectedPets.length,boardingHostQueryKey,selectedSpecies.join(",")]);
   const togglePet = (name: string) =>
     setSelectedPets((current) =>
       current.includes(name)
@@ -267,16 +307,17 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
   };
   const confirm = async () => {
     if (!datesValid || !agreed) return;
+    if (selectedPets.length === 0) { setScheduleError("Select at least one pet to continue."); return; }
     setScheduling(true);setScheduleError("");
     try {
-    const scheduleStart=new Date(`${start}T03:30:00.000Z`);const scheduleEnd=careWindow==="24 hours"?new Date(`${end}T03:30:00.000Z`):new Date(scheduleStart.getTime()+(careWindow==="10 hours"?10:careWindow==="12 hours"?12:4)*3_600_000);const providerIds:Record<string,string>={"Sana F.":"sit_sana","Neha P.":"sit_neha"};const boardingCommercial=mode==="boarding"?await loadBoardingCommercial({cityId:"blr",zoneId:"blr-east",scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),petCount:selectedPets.length,species:selectedSpecies}):null,governedHost=boardingCommercial?.hosts.find(item=>item.providerId===caregiver.providerId);if(mode==="boarding"&&!governedHost)throw new Error("Selected Boarding host is no longer available for this stay window");const packageCode=careWindow==="4 hours"?"boarding-4h":careWindow==="10 hours"?"boarding-10h":"boarding-24h",governedBoardingQuote=mode==="boarding"?await quoteBoarding({packageCode,petCount:selectedPets.length,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),paymentMode:splitEligible&&splitPayment?"split_50_50":"prepaid"}):null;const requestId=`${mode}-${customer.customerId}-${start}-${end}-${careWindow.replaceAll(" ","")}-${selectedPets.length}-${Date.now()}`;const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:mode==="boarding"?"boarding":"pet_sitting",zoneId:"blr-east",scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),careMode:careWindow==="24 hours"?"overnight":"visit",preferredProviderId:mode==="boarding"?governedHost?.providerId:providerIds[caregiver.name]});
-    const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPets.map(name=>({sourceId:name,name,species:name==="Coco"?"cat":"dog",vaccinationStatus:mode==="boarding"?"verified":"not_provided"})),cityId:"blr",zoneId:"blr-east",serviceCode:mode==="boarding"?"boarding":"pet_sitting",packageCode:governedBoardingQuote?.packageCode??(careWindow==="24 hours"?"overnight-sitting":"home-visit"),packageName:governedBoardingQuote?.packageName??"Pet Sitting",scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),provider:decision.provider,totalAmount:governedBoardingQuote?.totalAmount??total,amountDueNow:governedBoardingQuote?.amountDueNow??reserveAmount,payment:{method:"upi",mode:splitEligible&&splitPayment?"split_50_50":"prepaid",status:"captured",detail:mode==="boarding"?(splitEligible&&splitPayment?"UAT 50% Boarding deposit captured from server quote; balance due 24h before check-in":"UAT Boarding payment captured from server quote"):splitEligible&&splitPayment?"UAT 50% stay deposit captured; balance due 24h before the stay starts":"UAT payment captured"},pricing:{discount:mode==="boarding"?0:discount,couponCode:mode==="boarding"?undefined:couponCode||undefined,boardingQuoteId:governedBoardingQuote?.quoteId}});
+    const scheduleStart=new Date(`${start}T03:30:00.000Z`);const scheduleEnd=careWindow==="24 hours"?new Date(`${end}T03:30:00.000Z`):new Date(scheduleStart.getTime()+(careWindow==="10 hours"?10:careWindow==="12 hours"?12:4)*3_600_000);const providerIds:Record<string,string>={"Sana F.":"sit_sana","Neha P.":"sit_neha"};const boardingCommercial=mode==="boarding"?await loadBoardingCommercial({cityId:"blr",zoneId:"blr-east",scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),petCount:selectedPets.length,species:selectedSpecies}):null,governedHost=boardingCommercial?.hosts.find(item=>item.providerId===caregiver.providerId);if(mode==="boarding"&&!governedHost)throw new Error("Selected Boarding host is no longer available for this stay window");const packageCode=careWindow==="4 hours"?"boarding-4h":careWindow==="10 hours"?"boarding-10h":"boarding-24h",governedBoardingQuote=mode==="boarding"?await quoteBoarding({packageCode,petCount:selectedPets.length,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),paymentMode:splitEligible&&splitPayment?"split_50_50":"prepaid"}):null;const requestId=`${mode}-${customer.customerId}-${start}-${end}-${careWindow.replaceAll(" ","")}-${selectedPets.length}-${bookingNonce()}`;const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:mode==="boarding"?"boarding":"pet_sitting",zoneId:"blr-east",scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),careMode:careWindow==="24 hours"?"overnight":"visit",preferredProviderId:mode==="boarding"?governedHost?.providerId:providerIds[caregiver.name]});
+    const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:p.species==="cat"?"cat":p.species==="dog"?"dog":"other" as const,vaccinationStatus:mode==="boarding"?"verified":"not_provided"})),cityId:"blr",zoneId:"blr-east",serviceCode:mode==="boarding"?"boarding":"pet_sitting",packageCode:governedBoardingQuote?.packageCode??(careWindow==="24 hours"?"overnight-sitting":"home-visit"),packageName:governedBoardingQuote?.packageName??"Pet Sitting",scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),provider:decision.provider,totalAmount:governedBoardingQuote?.totalAmount??total,amountDueNow:governedBoardingQuote?.amountDueNow??reserveAmount,payment:{method:"upi",mode:splitEligible&&splitPayment?"split_50_50":"prepaid",status:"captured",detail:mode==="boarding"?(splitEligible&&splitPayment?"UAT 50% Boarding deposit captured from server quote; balance due 24h before check-in":"UAT Boarding payment captured from server quote"):splitEligible&&splitPayment?"UAT 50% stay deposit captured; balance due 24h before the stay starts":"UAT payment captured"},pricing:{discount:mode==="boarding"?0:discount,couponCode:mode==="boarding"?undefined:couponCode||undefined,boardingQuoteId:governedBoardingQuote?.quoteId}});
     const booking = createTestTransaction({
       customerId: customer.customerId,
       customerName: customer.customerName,
       primary: customer.phone,
       secondary: "",
-      pets: selectedPets.join(", "),
+      pets: selectedPetNames.join(", "),
       petCount: selectedPets.length,
       service: mode === "boarding" ? "Boarding" : "Pet Sitting",
       packageName:
@@ -321,7 +362,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
           nights={nights}
           mode={mode}
           caregiver={caregiver}
-          pets={selectedPets}
+          pets={selectedPetNames}
           total={total}
           taxi={taxi}
           view={view}
@@ -424,18 +465,23 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
             <span>{selectedPets.length} of 4</span>
           </div>
           <div className={styles.petList}>
+            {petsLoading && <p className={styles.hint}>Loading your pets…</p>}
+            {petsError && <p className={styles.hint} role="alert">{petsError}</p>}
+            {!petsLoading && !petsError && pets.length === 0 && (
+              <p className={styles.hint}>No pets on your profile yet — add one below, then select it to book.</p>
+            )}
             {pets.map((p) => (
               <button
-                key={p.name}
-                className={selectedPets.includes(p.name) ? styles.selected : ""}
-                onClick={() => togglePet(p.name)}
+                key={p.id}
+                className={selectedPets.includes(p.id) ? styles.selected : ""}
+                onClick={() => togglePet(p.id)}
               >
-                <i>{p.icon}</i>
+                <i>{petIcon(p.species)}</i>
                 <span>
                   <b>{p.name}</b>
-                  <small>{p.detail}</small>
+                  <small>{petDetail(p)}</small>
                 </span>
-                <em>{selectedPets.includes(p.name) ? "✓" : "＋"}</em>
+                <em>{selectedPets.includes(p.id) ? "✓" : "＋"}</em>
               </button>
             ))}
             <button className={styles.addPet} onClick={() => setShowPetManager(v => !v)}>
@@ -446,7 +492,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
               </span>
             </button>
           </div>
-          {showPetManager && <PetManager customer={customer}/>}
+          {showPetManager && <PetManager customer={customer} onPetsChanged={onPetsChanged}/>}
           <div className={styles.sectionHead}>
             <b>Care needs</b>
             <span>Optional</span>
@@ -471,11 +517,13 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
               : "End date must be after the start date."}
           </p>
           <button
-            disabled={!datesValid}
+            disabled={!datesValid || selectedPets.length === 0}
             className={styles.primary}
             onClick={() => setStage(2)}
           >
-            See available {mode === "boarding" ? "homes" : "sitters"}
+            {selectedPets.length === 0
+              ? "Select a pet to continue"
+              : `See available ${mode === "boarding" ? "homes" : "sitters"}`}
           </button>
         </>
       )}
@@ -750,7 +798,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
               </b>
             </span>
             <span>
-              Pets<b>{selectedPets.join(" + ")}</b>
+              Pets<b>{selectedPetNames.join(" + ")}</b>
             </span>
             <span>
               Dates
@@ -914,7 +962,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
             ← Care plan
           </button>
           <button
-            disabled={!agreed || !datesValid || scheduling}
+            disabled={!agreed || !datesValid || scheduling || selectedPets.length === 0}
             className={styles.primary}
             onClick={confirm}
           >
