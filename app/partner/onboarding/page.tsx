@@ -68,6 +68,9 @@ export default function PartnerOnboardingUatPage() {
         setSessionChecked(true);
         if (!v) return;
         setSession(v.data);
+        // Only a provider identity session (partner OTP) can read/onboard here. A leftover customer
+        // session must NOT attempt the provider snapshot — it would 403; we route them to partner login.
+        if (text(v.data?.subjectType) !== "provider") return;
         return fetch("/api/provider-onboarding-self-service", { cache: "no-store" });
       })
       .then(async r => { if (!r) return; if (!r.ok) throw new Error(await r.text()); return r.json(); })
@@ -77,7 +80,7 @@ export default function PartnerOnboardingUatPage() {
   }, []);
 
   function onLoggedIn(provider: LoggedInProvider) {
-    setSession({ subjectId: provider.providerId, identitySource: "partner_otp" });
+    setSession({ subjectType: "provider", roleCode: "service_provider", subjectId: provider.providerId, identitySource: "partner_otp" });
     void refresh();
   }
 
@@ -113,13 +116,19 @@ export default function PartnerOnboardingUatPage() {
 
   if (!sessionChecked) return <main className={styles.page} />;
 
-  if (!session) {
+  // Onboarding is provider-only: every /api/provider-onboarding-self-service call requires a provider
+  // identity session (partner OTP). A brand-new applicant arrives with no session, or with a leftover
+  // customer session that does not own a provider scope — both must complete partner login first, or
+  // the very first "create_application" call is refused ("does not own this customer/provider scope").
+  const isProviderSession = text(session?.subjectType) === "provider";
+  if (!isProviderSession) {
     return (
       <main className={styles.page}>
         <div className={styles.topBar}>
           <Link className={styles.brand} href="/discover">🐾 PawSpace</Link>
           <Link className={styles.backLink} href="/careers">← Back to Careers</Link>
         </div>
+        {session ? <p className={styles.errorBox} role="status">You&apos;re signed in with a customer account. Verify your partner phone number below to start your caregiver application.</p> : null}
         <PartnerLogin onLoggedIn={onLoggedIn} />
       </main>
     );
@@ -169,7 +178,7 @@ export default function PartnerOnboardingUatPage() {
           <label className={styles.field}><span>City</span>
             <input value={form.cityCode} onChange={e => setForm({ ...form, cityCode: e.target.value })} />
           </label>
-          <button className={styles.btn} disabled={busy || !session} onClick={() => void post({ action: "create_application", payload: { verticalKey: form.verticalKey, countryCode: form.countryCode, regionCode: form.regionCode, cityCode: form.cityCode, localeCode: form.localeCode, basicInfo: {} } })}>
+          <button className={styles.btn} disabled={busy || !isProviderSession} onClick={() => void post({ action: "create_application", payload: { verticalKey: form.verticalKey, countryCode: form.countryCode, regionCode: form.regionCode, cityCode: form.cityCode, localeCode: form.localeCode, basicInfo: {} } })}>
             {busy ? "Saving…" : "Start application"}
           </button>
         </div>
