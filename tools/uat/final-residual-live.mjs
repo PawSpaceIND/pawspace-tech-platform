@@ -19,6 +19,11 @@
  * exit; everything else is reported but advisory, so a flaky non-P0 check cannot block a release on its
  * own while still being visible in the artifact.
  *
+ * LOCATION. This file lives under tools/uat/, NOT tests/, so that no test-runner glob anywhere can
+ * execute a live staging run as part of normal CI. Missing live environment never counts as a pass:
+ * a run without PAWSPACE_E2E_BASE exits 2, and a run without an authenticated session marks every
+ * gate 'blocked' and exits 1.
+ *
  * This harness asserts against the live system. It deliberately contains no fallbacks that would let a
  * gate "pass" without real evidence.
  */
@@ -82,6 +87,21 @@ async function signIn() {
   return { mode: response.ok && COOKIE ? "authenticated" : "sign_in_failed", httpStatus: response.status, cookieObtained: Boolean(COOKIE) };
 }
 
+
+/**
+ * Establish that this caller can genuinely book for its OWN customer before any guard is exercised.
+ * Without this, a 403 from the foreign-group gate could just as easily mean "this caller cannot book
+ * at all" - a vacuous pass. Returns the reserved group so callers can reuse it.
+ */
+async function establishOwnContext(customerId, petId, startIso, endIso, tag) {
+  const group = `RESIDUAL-OWN-${tag}-${Date.now()}`;
+  const reserve = await call("/api/uat-scheduling", {
+    method: "POST",
+    body: { clientRequestId: group, customerId, petIds: [petId], serviceCode: "grooming", cityId: "blr", zoneId: "blr-east", scheduledStart: startIso, scheduledEnd: endIso },
+  });
+  return { group, ok: reserve.ok, http: reserve.status, provider: reserve.body?.data?.provider || null, error: scrub(reserve.body?.error || "") };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Gates. Each returns {status, detail}. None of them invents a pass when evidence is unavailable.
 // ---------------------------------------------------------------------------------------------
@@ -90,11 +110,16 @@ async function signIn() {
 async function gateSchedulingGroupOwnership() {
   const victimGroup = "UATD-GRP-UATD-BK-TRAIN-3";       // owned by UATD-CUS-3
   const attacker = "UATD-CUS-2";                         // a different, legitimately-owned customer
+  // PRECONDITION: prove this caller CAN reserve for its own customer/pet. Without it, a 403 below
+  // might only mean "this caller cannot book at all", which would be a vacuous pass.
+  const own = await establishOwnContext(attacker, "PET-UATD-CUS-2", "2026-09-04T04:30:00.000Z", "2026-09-04T06:30:00.000Z", "own");
+  if (!own.ok) return { status: "blocked", detail: { reason: "own-context reserve failed, so the foreign-group guard cannot be proven non-vacuously", ownHttp: own.http, error: own.error } };
+
   const before = await call(`/api/uat-scheduling?groupId=${encodeURIComponent(victimGroup)}`);
   const attempt = await call("/api/canonical-bookings", {
     method: "POST",
     body: {
-      idempotencyKey: `residual-own-${Date.now()}`, scheduleGroupId: victimGroup,
+      idempotencyKey: `residual-foreign-${Date.now()}`, scheduleGroupId: victimGroup,
       customer: { id: attacker, name: "Residual Attacker", primaryPhone: "+919000000002" },
       pets: [{ sourceId: "p1", name: "Rex", species: "dog" }],
       cityId: "blr", zoneId: "blr-east", serviceCode: "grooming",
@@ -106,41 +131,68 @@ async function gateSchedulingGroupOwnership() {
     },
   });
   const after = await call(`/api/uat-scheduling?groupId=${encodeURIComponent(victimGroup)}`);
-  const refusedCorrectly = attempt.status === 403 || attempt.status === 404;
+  const refused403 = attempt.status === 403;
   const unchanged = JSON.stringify(before.body) === JSON.stringify(after.body);
+  // The refusal must not leak the victim's booking/provider either.
+  const noDisclosure = !JSON.stringify(attempt.body || {}).includes("UATD-BK-TRAIN-3");
   return {
-    status: refusedCorrectly && unchanged ? "pass" : "fail",
-    detail: { victimGroup, attacker, attemptHttp: attempt.status, refusedCorrectly, victimStateUnchanged: unchanged },
+    status: refused403 && unchanged && noDisclosure ? "pass" : "fail",
+    detail: { ownContextProven: true, ownReserveHttp: own.http, victimGroup, attacker, attemptHttp: attempt.status, refused403, victimStateUnchanged: unchanged, noVictimDisclosure: noDisclosure },
   };
 }
 
 /** P0 — a refused booking must not strand the hold it was made for. */
 async function gateOrphanedCapacity() {
-  const group = `RESIDUAL-ORPHAN-${Date.now()}`;
-  const reserve = await call("/api/uat-scheduling", {
-    method: "POST",
-    body: { clientRequestId: group, customerId: "UATD-CUS-2", petIds: ["PET-UATD-CUS-2"], serviceCode: "grooming", cityId: "blr", zoneId: "blr-east", scheduledStart: "2026-09-02T04:30:00.000Z", scheduledEnd: "2026-09-02T06:30:00.000Z" },
-  });
-  if (!reserve.ok) return { status: "blocked", detail: { reason: "reserve did not succeed, so the orphan condition cannot be created", reserveHttp: reserve.status, body: reserve.body } };
-  const provider = reserve.body?.data?.provider || {};
+  // PRECONDITION: own caller/customer/pet context, so the 409 below is genuinely the price-mismatch
+  // guard and not an ownership or eligibility refusal arriving first.
+  const own = await establishOwnContext("UATD-CUS-2", "PET-UATD-CUS-2", "2026-09-02T04:30:00.000Z", "2026-09-02T06:30:00.000Z", "orphan");
+  if (!own.ok || !own.provider?.id) return { status: "blocked", detail: { reason: "own reserve did not succeed, so the orphan condition cannot be created", http: own.http, error: own.error } };
+
   const refused = await call("/api/canonical-bookings", {
     method: "POST",
     body: {
-      idempotencyKey: `residual-orphan-${Date.now()}`, scheduleGroupId: group,
+      idempotencyKey: `residual-orphan-${Date.now()}`, scheduleGroupId: own.group,
       customer: { id: "UATD-CUS-2", name: "Residual", primaryPhone: "+919000000002" },
       pets: [{ sourceId: "p1", name: "Rex", species: "dog" }],
       cityId: "blr", zoneId: "blr-east", serviceCode: "grooming",
       packageCode: "dog-bath", packageName: "Essential Bath",
       scheduledStart: "2026-09-02T04:30:00.000Z", scheduledEnd: "2026-09-02T06:30:00.000Z",
-      provider: { id: provider.id, name: provider.name, model: provider.model },
-      totalAmount: 1, amountDueNow: 1, // deliberately tampered price
+      provider: { id: own.provider.id, name: own.provider.name, model: own.provider.model },
+      totalAmount: 1, amountDueNow: 1, // deliberately tampered price -> own 409
       payment: { method: "upi", mode: "prepaid", status: "captured", detail: "residual" },
     },
   });
   const released = refused.body?.capacityReleased;
+  // Capacity reuse: the freed slot must be reservable again.
+  const reuse = await establishOwnContext("UATD-CUS-2", "PET-UATD-CUS-2", "2026-09-02T04:30:00.000Z", "2026-09-02T06:30:00.000Z", "reuse");
+
+  // Hostile control PRESERVED: a foreign caller must not be able to release someone else's hold.
+  const victim = await establishOwnContext("UATD-CUS-3", "PET-UATD-CUS-3", "2026-09-05T04:30:00.000Z", "2026-09-05T06:30:00.000Z", "victim");
+  let victimHoldIntact = null;
+  if (victim.ok) {
+    const vBefore = await call(`/api/uat-scheduling?groupId=${encodeURIComponent(victim.group)}`);
+    await call("/api/canonical-bookings", {
+      method: "POST",
+      body: {
+        idempotencyKey: `residual-hostile-${Date.now()}`, scheduleGroupId: victim.group,
+        customer: { id: "UATD-CUS-2", name: "Residual", primaryPhone: "+919000000002" },
+        pets: [{ sourceId: "p1", name: "Rex", species: "dog" }],
+        cityId: "blr", zoneId: "blr-east", serviceCode: "grooming",
+        packageCode: "dog-bath", packageName: "Essential Bath",
+        scheduledStart: "2026-09-05T04:30:00.000Z", scheduledEnd: "2026-09-05T06:30:00.000Z",
+        provider: { id: victim.provider?.id, name: victim.provider?.name, model: victim.provider?.model },
+        totalAmount: 1, amountDueNow: 1,
+        payment: { method: "upi", mode: "prepaid", status: "captured", detail: "residual" },
+      },
+    });
+    const vAfter = await call(`/api/uat-scheduling?groupId=${encodeURIComponent(victim.group)}`);
+    victimHoldIntact = JSON.stringify(vBefore.body) === JSON.stringify(vAfter.body);
+  }
+
+  const ownPathOk = refused.status === 409 && released >= 1 && refused.body?.capacityReleaseFailed !== true && reuse.ok;
   return {
-    status: refused.status === 409 && released >= 1 && refused.body?.capacityReleaseFailed !== true ? "pass" : "fail",
-    detail: { group, refusalHttp: refused.status, capacityReleased: released ?? null, capacityReleaseFailed: refused.body?.capacityReleaseFailed ?? false },
+    status: ownPathOk && victimHoldIntact !== false ? "pass" : "fail",
+    detail: { ownGroup: own.group, refusalHttp: refused.status, capacityReleased: released ?? null, capacityReleaseFailed: refused.body?.capacityReleaseFailed ?? false, capacityReusable: reuse.ok, hostileControl: { victimGroup: victim.group, victimHoldIntact } },
   };
 }
 
@@ -165,12 +217,20 @@ async function gateBoard3Refund() {
 async function gateC06() {
   const booking = "UATD-BK-TRAIN-3";
   const before = await call(`/api/training-cancellation?bookingId=${booking}`);
-  const result = await call("/api/training-cancellation", { method: "POST", body: { bookingId: booking, action: "request_cancel", actorId: "residual.tester@pawspace.in", idempotencyKey: `residual-c06-${Date.now()}`, reason: "Final residual live run" } });
+  // The route's action is "request" (not "request_cancel"); an incorrect action name yields a 400,
+  // which must never be mistaken for the policy boundary.
+  const result = await call("/api/training-cancellation", {
+    method: "POST",
+    body: { action: "request", bookingId: booking, reason: "Final residual live run", idempotencyKey: `residual-c06-${Date.now()}` },
+  });
   const after = await call(`/api/training-cancellation?bookingId=${booking}`);
-  const status = result.body?.data?.status || result.body?.status;
+  const status = result.body?.data?.status ?? result.body?.status ?? null;
+  const reachedBoundary = status === "blocked_policy_configuration";
+  // A 400/404/terminal refusal is explicitly NOT a pass.
+  const wrongRefusal = [400, 404].includes(result.status) || (status && status !== "blocked_policy_configuration");
   return {
-    status: status === "blocked_policy_configuration" && JSON.stringify(before.body) === JSON.stringify(after.body) ? "pass" : "fail",
-    detail: { booking, resultStatus: status ?? null, http: result.status, stateUnchanged: JSON.stringify(before.body) === JSON.stringify(after.body) },
+    status: reachedBoundary && JSON.stringify(before.body) === JSON.stringify(after.body) ? "pass" : wrongRefusal ? "fail" : "blocked",
+    detail: { booking, http: result.status, resultStatus: status, reachedPolicyBoundary: reachedBoundary, stateUnchanged: JSON.stringify(before.body) === JSON.stringify(after.body), note: "400/404/terminal-state refusal is NOT a pass" },
   };
 }
 
@@ -186,14 +246,24 @@ async function gateProviderJourneyD() {
 
 /** Journey E — NON-MONEY ONLY. record_payment/request_refund/resolve_refund are never invoked. */
 async function gateRelocationJourneyE() {
-  const created = await call("/api/relocation", { method: "POST", body: { action: "create", customerId: "UATD-CUS-2", originCity: "blr", destinationCity: "maa", petCount: 1, actorId: "residual.tester@pawspace.in", idempotencyKey: `residual-e-${Date.now()}` } });
-  const caseId = created.body?.data?.id || created.body?.id || null;
-  if (!caseId) return { status: "blocked", detail: { reason: "relocation case was not created, so document/support steps cannot be exercised", createHttp: created.status } };
-  const doc = await call("/api/relocation", { method: "POST", body: { action: "register_document", caseId, documentType: "vaccination_record", reference: "residual-doc-1", actorId: "residual.tester@pawspace.in" } });
-  const support = await call("/api/relocation", { method: "POST", body: { action: "open_support", caseId, subject: "Residual run", detail: "non-money journey", actorId: "residual.tester@pawspace.in" } });
+  // Exact create contract from app/api/relocation/route.ts. NON-MONEY ONLY.
+  const created = await call("/api/relocation", {
+    method: "POST",
+    body: {
+      action: "create", customerId: "UATD-CUS-2",
+      petName: "Rex", breed: "Indie", ageYears: 3, sizeClass: "medium", travelMode: "air",
+      originCountry: "India", originCity: "blr", destinationCountry: "India", destinationCity: "maa",
+      targetTravelDate: "2026-10-15", crateRequirement: "assessment_required",
+    },
+  });
+  const caseId = created.body?.data?.id ?? created.body?.data?.caseId ?? created.body?.id ?? null;
+  if (!created.ok || !caseId) return { status: "blocked", detail: { reason: "relocation case not created; document/support steps cannot be exercised", createHttp: created.status, error: scrub(created.body?.error || "") } };
+
+  const doc = await call("/api/relocation", { method: "POST", body: { action: "register_document", caseId, documentType: "vaccination_record", objectId: `residual-doc-${Date.now()}`, note: "residual run" } });
+  const support = await call("/api/relocation", { method: "POST", body: { action: "open_support", caseId, note: "Residual non-money journey", reason: "Final residual live run" } });
   return {
-    status: created.ok && doc.ok && support.ok ? "pass" : "fail",
-    detail: { caseId, createHttp: created.status, documentHttp: doc.status, supportHttp: support.status, moneyActionsInvoked: [], assertion: "record_payment/request_refund/resolve_refund deliberately never called" },
+    status: doc.ok && support.ok ? "pass" : "fail",
+    detail: { caseId, createHttp: created.status, documentHttp: doc.status, supportHttp: support.status, moneyActionsInvoked: [], assertion: "record_payment / request_refund / resolve_refund deliberately never called" },
   };
 }
 
@@ -222,19 +292,29 @@ async function gateCityIsolation() {
 
 /** B-07 — orphan reconciliation counts, read-only. */
 async function gateB07Reconciliation() {
-  const report = await call("/api/ops-work-queue?view=reconciliation");
-  if (!report.ok) return { status: "blocked", detail: { reason: "reconciliation view unavailable; counts could not be read", http: report.status } };
-  return { status: "pass", detail: { http: report.status, counts: report.body?.data?.counts ?? report.body?.counts ?? null } };
+  // /api/reconciliation does not exist; the real canonical read-only surface is payment-reconciliation.
+  // A 404 or any 4xx is a BLOCKED setup outcome, never a pass.
+  const report = await call("/api/payment-reconciliation");
+  if (!report.ok) return { status: "blocked", detail: { reason: "canonical reconciliation view unavailable; no real values could be asserted", http: report.status, endpoint: "/api/payment-reconciliation" } };
+  const payload = report.body?.data ?? report.body ?? {};
+  const hasRealValues = payload && typeof payload === "object" && Object.keys(payload).length > 0;
+  return {
+    status: hasRealValues ? "pass" : "blocked",
+    detail: { endpoint: "/api/payment-reconciliation", http: report.status, assertedRealValues: hasRealValues, keys: Object.keys(payload).slice(0, 12) },
+  };
 }
 
-/** A-13 — reconciliation / idempotency, read-only. */
+/** A-13 — reconciliation / idempotency against a REAL endpoint; repeated reads must be stable. */
 async function gateA13() {
-  const first = await call("/api/finance-control?view=reconciliation");
-  const second = await call("/api/finance-control?view=reconciliation");
+  const first = await call("/api/training-reconciliation");
+  if (!first.ok) return { status: "blocked", detail: { reason: "training reconciliation view unavailable; nothing could be asserted", http: first.status, endpoint: "/api/training-reconciliation" } };
+  const second = await call("/api/training-reconciliation");
   const stable = JSON.stringify(first.body) === JSON.stringify(second.body);
+  const payload = first.body?.data ?? first.body ?? {};
+  const hasRealValues = payload && typeof payload === "object" && Object.keys(payload).length > 0;
   return {
-    status: first.ok && stable ? "pass" : first.ok ? "fail" : "blocked",
-    detail: { http: first.status, repeatReadStable: stable, note: "a read-only reconciliation view must be stable across identical reads" },
+    status: stable && hasRealValues ? "pass" : "fail",
+    detail: { endpoint: "/api/training-reconciliation", http: first.status, repeatReadStable: stable, assertedRealValues: hasRealValues, keys: Object.keys(payload).slice(0, 12) },
   };
 }
 

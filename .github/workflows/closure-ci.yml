@@ -235,7 +235,7 @@ jobs:
           # Read from the repository secret; never written to a file, a log line or the report.
           PAWSPACE_E2E_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           PAWSPACE_E2E_EMAIL: ${{ vars.PAWSPACE_UAT_TESTER_EMAIL }}
-        run: node tests/e2e/final-residual-live.mjs --json=final-residual-report.json
+        run: node tools/uat/final-residual-live.mjs --json=final-residual-report.json
       - name: Upload the residual report
         if: always()
         uses: actions/upload-artifact@v4
