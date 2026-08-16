@@ -84,8 +84,9 @@ export default function WalkingFlow({ customer }: { customer: LoggedInCustomer }
     loadCustomerPets(customer.customerId)
       .then((loaded) => {
         if (!active) return;
-        setPets(loaded);
-        setSelectedPet((prev) => (loaded.some((p) => p.id === prev && p.species === "dog") ? prev : loaded.find((p) => p.species === "dog")?.id ?? ""));
+        // Do not clobber a pet the user just added/edited via PetManager if this initial load resolves late.
+        setPets((prev) => (prev.length ? prev : loaded));
+        setSelectedPet((prev) => (prev ? prev : loaded.find((p) => p.species === "dog")?.id ?? ""));
         setPetsError("");
       })
       .catch((e) => { if (active) setPetsError(e instanceof Error ? e.message : "Unable to load your pets"); })

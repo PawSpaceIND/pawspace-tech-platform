@@ -90,11 +90,9 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
     loadCustomerPets(customer.customerId)
       .then((loaded) => {
         if (!active) return;
-        setPets(loaded);
-        setSelectedPets((prev) => {
-          const kept = prev.filter((id) => loaded.some((p) => p.id === id));
-          return kept.length ? kept : loaded[0] ? [loaded[0].id] : [];
-        });
+        // Do not clobber a pet the user just added/edited via PetManager if this initial load resolves late.
+        setPets((prev) => (prev.length ? prev : loaded));
+        setSelectedPets((prev) => (prev.length ? prev : loaded[0] ? [loaded[0].id] : []));
         setPetsError("");
       })
       .catch((e) => { if (active) setPetsError(e instanceof Error ? e.message : "Unable to load your pets"); })

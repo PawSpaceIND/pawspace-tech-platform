@@ -98,6 +98,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
     [meet, setMeet] = useState(true),
     [meetSlot, setMeetSlot] = useState(() => futureIst(1,11).toISOString()),
     [meetBookingId, setMeetBookingId] = useState(""),
+    [meetPetKey, setMeetPetKey] = useState(""),
     [paymentMode, setPaymentMode] = useState<"half" | "full">("half"),
     [couponCode, setCouponCode] = useState(""),
     [confirmed, setConfirmed] = useState(false),
@@ -150,6 +151,10 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
   // own dogs to enrol. Selection (by canonical pet id) is the source of truth for the reserve/booking.
   const dogs = pets.filter((p) => p.species === "dog");
   const selectedPetObjs = pets.filter((p) => selectedPets.includes(p.id));
+  // A standalone Meet & Greet is tied to the pets it was booked for. If the customer later changes the
+  // selected dogs, the earlier M&G must not be reused for a different pet set — reuse only on an exact match.
+  const petKey = [...selectedPets].sort().join(",");
+  const meetLinked = Boolean(meetBookingId) && meetPetKey === petKey;
   const selectedPetNames = selectedPetObjs.map((p) => p.name);
   const primaryPet = selectedPetObjs[0] ?? dogs[0];
   useEffect(() => {
@@ -160,12 +165,10 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
     loadCustomerPets(customer.customerId)
       .then((loaded) => {
         if (!active) return;
-        setPets(loaded);
+        // Do not clobber a pet the user just added/edited via PetManager if this initial load resolves late.
         const firstDog = loaded.find((p) => p.species === "dog");
-        setSelectedPets((prev) => {
-          const kept = prev.filter((id) => loaded.some((p) => p.id === id && p.species === "dog"));
-          return kept.length ? kept : firstDog ? [firstDog.id] : [];
-        });
+        setPets((prev) => (prev.length ? prev : loaded));
+        setSelectedPets((prev) => (prev.length ? prev : firstDog ? [firstDog.id] : []));
         setPetsError("");
       })
       .catch((e) => { if (active) setPetsError(e instanceof Error ? e.message : "Unable to load your pets"); })
@@ -199,15 +202,15 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
         const requestId=`training-meet-${customer.customerId}-${selectedTrainer?.id||"auto"}-${start.toISOString()}`;
         const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:"dog_training",zoneId:"blr-east",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,preferredProviderId:selectedTrainer?.id});
         const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:"dog" as const})),cityId:"blr",zoneId:"blr-east",serviceCode:"dog_training",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"upi",mode:"prepaid",status:"captured",detail:"UAT trainer Meet & Greet sandbox payment"},pricing:{discount:quote.discount,trainingQuoteId:quote.quoteId}});
-        setMeetBookingId(canonical.bookingId);setMeetTrainerName(decision.provider.name);setMeet(false);setCheckoutQuote(null);
+        setMeetBookingId(canonical.bookingId);setMeetPetKey(petKey);setMeetTrainerName(decision.provider.name);setMeet(false);setCheckoutQuote(null);
       } catch(error){setScheduleError(error instanceof Error?error.message:"This Meet & Greet slot is no longer available");} finally {setScheduling(false);}
     },
     confirm = async () => {
       if(selectedPets.length===0){setScheduleError("Select at least one dog to continue.");return;}
       setScheduling(true);setScheduleError("");
       try {
-        let linkedMeetBookingId=meetBookingId;
-        if(meet&&!linkedMeetBookingId){const meetStart=new Date(meetSlot),meetQuote=await quoteTraining({packageCode:"trainer-meet-greet",petCount:selectedPets.length,scheduledStart:meetStart.toISOString(),paymentMode:"prepaid"}),meetEnd=new Date(meetStart.getTime()+meetQuote.minutesPerSession*60_000),meetRequestId=`training-meet-${customer.customerId}-${selectedTrainer?.id||"auto"}-${meetStart.toISOString()}`,meetDecision=await reserveUatSchedule({clientRequestId:meetRequestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:"dog_training",zoneId:"blr-east",scheduledStart:meetStart.toISOString(),scheduledEnd:meetEnd.toISOString(),occurrences:1,preferredProviderId:selectedTrainer?.id}),meetCanonical=await createCanonicalLifecycle({idempotencyKey:meetRequestId,scheduleGroupId:meetDecision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:"dog" as const})),cityId:"blr",zoneId:"blr-east",serviceCode:"dog_training",packageCode:meetQuote.packageCode,packageName:meetQuote.packageName,scheduledStart:meetStart.toISOString(),scheduledEnd:meetEnd.toISOString(),provider:meetDecision.provider,totalAmount:meetQuote.totalAmount,amountDueNow:meetQuote.amountDueNow,payment:{method:"upi",mode:"prepaid",status:"captured",detail:"UAT trainer Meet & Greet sandbox payment"},pricing:{discount:meetQuote.discount,trainingQuoteId:meetQuote.quoteId}});linkedMeetBookingId=meetCanonical.bookingId;setMeetBookingId(linkedMeetBookingId);setMeetTrainerName(meetDecision.provider.name);}
+        let linkedMeetBookingId=meetLinked?meetBookingId:"";
+        if(meet&&!linkedMeetBookingId){const meetStart=new Date(meetSlot),meetQuote=await quoteTraining({packageCode:"trainer-meet-greet",petCount:selectedPets.length,scheduledStart:meetStart.toISOString(),paymentMode:"prepaid"}),meetEnd=new Date(meetStart.getTime()+meetQuote.minutesPerSession*60_000),meetRequestId=`training-meet-${customer.customerId}-${selectedTrainer?.id||"auto"}-${meetStart.toISOString()}`,meetDecision=await reserveUatSchedule({clientRequestId:meetRequestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:"dog_training",zoneId:"blr-east",scheduledStart:meetStart.toISOString(),scheduledEnd:meetEnd.toISOString(),occurrences:1,preferredProviderId:selectedTrainer?.id}),meetCanonical=await createCanonicalLifecycle({idempotencyKey:meetRequestId,scheduleGroupId:meetDecision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:"dog" as const})),cityId:"blr",zoneId:"blr-east",serviceCode:"dog_training",packageCode:meetQuote.packageCode,packageName:meetQuote.packageName,scheduledStart:meetStart.toISOString(),scheduledEnd:meetEnd.toISOString(),provider:meetDecision.provider,totalAmount:meetQuote.totalAmount,amountDueNow:meetQuote.amountDueNow,payment:{method:"upi",mode:"prepaid",status:"captured",detail:"UAT trainer Meet & Greet sandbox payment"},pricing:{discount:meetQuote.discount,trainingQuoteId:meetQuote.quoteId}});linkedMeetBookingId=meetCanonical.bookingId;setMeetBookingId(linkedMeetBookingId);setMeetPetKey(petKey);setMeetTrainerName(meetDecision.provider.name);}
         const mode=paymentMode==="full"?"prepaid":"split",quote=await quoteTraining({packageCode:plan.packageCode,petCount:selectedPets.length,scheduledStart:selectedStart.toISOString(),paymentMode:mode,couponCode:mode==="prepaid"&&couponCode?couponCode:undefined}),end=new Date(selectedStart.getTime()+quote.minutesPerSession*60_000),requestId=`training-TST101-${quote.packageCode}-${selectedStart.toISOString()}-${frequency.replaceAll(" ","")}`;
         const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:"dog_training",zoneId:"blr-east",scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,weekdays:weekdayMap[frequency],cadenceDays:frequency==="Choose each session myself"?7:undefined,preferredProviderId:selectedTrainer?.id});
         const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:"dog" as const})),cityId:"blr",zoneId:"blr-east",serviceCode:"dog_training",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"upi",mode,status:"captured",detail:`UAT ${mode} Training sandbox payment`},pricing:{discount:quote.discount,couponCode:couponCode||undefined,subscription:`${quote.sessions} sessions`,requirements:selectedGoals,trainingQuoteId:quote.quoteId}});
@@ -552,7 +555,8 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
                 </button>
               </>
             )}
-            {meetBookingId && <article className={styles.meetConfirmed}><b>✓ Meet & Greet booked</b><span>{slotLabel(new Date(meetSlot))} · {meetTrainerName||selectedTrainer?.name||"Assigned trainer"} · {meetBookingId}</span><small>You can decide on the training package after the meeting.</small></article>}
+            {meetLinked && <article className={styles.meetConfirmed}><b>✓ Meet & Greet booked</b><span>{slotLabel(new Date(meetSlot))} · {meetTrainerName||selectedTrainer?.name||"Assigned trainer"} · {meetBookingId}</span><small>You can decide on the training package after the meeting.</small></article>}
+            {meetBookingId && !meetLinked && <article className={styles.meetConfirmed}><b>Meet &amp; Greet needs re-booking</b><span>Your earlier Meet &amp; Greet was for a different dog selection. Select those dogs again to reuse it, or book a new Meet &amp; Greet.</span></article>}
             {scheduleError && <p role="alert">{scheduleError}</p>}
           </section>
           <button className={styles.back} onClick={() => setStage(2)}>

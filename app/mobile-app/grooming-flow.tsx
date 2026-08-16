@@ -73,7 +73,7 @@ export default function GroomingFlow({customer}:{customer:LoggedInCustomer}){
   setSelectedPetIds(prev=>[...prev,id]);
  };
  const onPetsChanged=(updated:CustomerPet[])=>{setPets(updated);setSelectedPetIds(prev=>{const kept=prev.filter(id=>updated.some(p=>p.id===id));return kept.length?kept:updated[0]?[updated[0].id]:[];});};
- useEffect(()=>{let active=true;queueMicrotask(()=>{if(active)setPetsLoading(true);});loadCustomerPets(customer.customerId).then(loaded=>{if(!active)return;setPets(loaded);const first=loaded[0];if(first&&(first.species==="dog"||first.species==="cat"))setType(first.species);setSelectedPetIds(prev=>{const kept=prev.filter(id=>loaded.some(p=>p.id===id));return kept.length?kept:first?[first.id]:[];});setPetsError("");}).catch(e=>{if(active)setPetsError(e instanceof Error?e.message:"Unable to load your pets");}).finally(()=>{if(active)setPetsLoading(false);});return()=>{active=false;};},[customer.customerId]);
+ useEffect(()=>{let active=true;queueMicrotask(()=>{if(active)setPetsLoading(true);});loadCustomerPets(customer.customerId).then(loaded=>{if(!active)return;const first=loaded[0];setPets(prev=>prev.length?prev:loaded);if(first&&(first.species==="dog"||first.species==="cat"))setType(first.species);setSelectedPetIds(prev=>prev.length?prev:first?[first.id]:[]);setPetsError("");}).catch(e=>{if(active)setPetsError(e instanceof Error?e.message:"Unable to load your pets");}).finally(()=>{if(active)setPetsLoading(false);});return()=>{active=false;};},[customer.customerId]);
  const list=packages[type],pack=list.find(p=>p.id===packId)||list[0],sub=subs.find(s=>s.id===plan);
  useEffect(()=>{
   // Clear any prior live price the instant the package/type/count/slot changes, so the selected card
