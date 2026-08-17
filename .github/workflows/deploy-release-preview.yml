@@ -31,6 +31,7 @@ name: Deploy release preview
 #   Secrets:   CLOUDFLARE_API_TOKEN                    (Workers Scripts: Edit, D1: Edit)
 #              CLOUDFLARE_ACCOUNT_ID
 #              PRODUCTION_D1_ID                        supplied ONLY so the job can refuse to match it
+#              SHARED_STAGING_D1_ID                    supplied ONLY so the job can refuse to match it
 #              PAWSPACE_UAT_ACCESS_CODE                (>=32 chars) tester code for /staging-login
 #              PAWSPACE_UAT_SIGNING_KEY                (>=32 chars) signs the UAT session cookie
 #              PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT  (>=32 chars) signs OTP identity assertions
@@ -137,12 +138,15 @@ jobs:
         env:
           RELEASE_PREVIEW_D1_ID: ${{ vars.RELEASE_PREVIEW_D1_ID }}
           PRODUCTION_D1_ID: ${{ secrets.PRODUCTION_D1_ID }}
+          SHARED_STAGING_D1_ID: ${{ secrets.SHARED_STAGING_D1_ID }}
           RELEASE_PREVIEW_WORKER_NAME: ${{ vars.RELEASE_PREVIEW_WORKER_NAME }}
         run: |
           set -euo pipefail
-          if [ -z "${RELEASE_PREVIEW_D1_ID:-}" ] || [ -z "${PRODUCTION_D1_ID:-}" ] || [ -z "${RELEASE_PREVIEW_WORKER_NAME:-}" ]; then
+          # A MISSING comparator is not "different". Isolation that cannot be checked is not isolation,
+          # so every id must be present before any of them is compared.
+          if [ -z "${RELEASE_PREVIEW_D1_ID:-}" ] || [ -z "${PRODUCTION_D1_ID:-}" ] || [ -z "${SHARED_STAGING_D1_ID:-}" ] || [ -z "${RELEASE_PREVIEW_WORKER_NAME:-}" ]; then
             echo "isolated=false" >> "$GITHUB_OUTPUT"
-            echo "RELEASE_PREVIEW_D1_ID, PRODUCTION_D1_ID and RELEASE_PREVIEW_WORKER_NAME must all be configured." >&2
+            echo "RELEASE_PREVIEW_D1_ID, PRODUCTION_D1_ID, SHARED_STAGING_D1_ID and RELEASE_PREVIEW_WORKER_NAME must all be configured." >&2
             exit 1
           fi
           case "$(printf '%s' "$RELEASE_PREVIEW_WORKER_NAME" | tr '[:upper:]' '[:lower:]')" in
@@ -154,6 +158,13 @@ jobs:
           if [ "$RELEASE_PREVIEW_D1_ID" = "$PRODUCTION_D1_ID" ]; then
             echo "isolated=false" >> "$GITHUB_OUTPUT"
             echo "The preview D1 is the production D1 — refusing to migrate or deploy." >&2
+            exit 1
+          fi
+          # A preview that lands on the shared staging database corrupts other testers' data just as
+          # surely as one that lands on production. Nothing was checking for it until now.
+          if [ "$RELEASE_PREVIEW_D1_ID" = "$SHARED_STAGING_D1_ID" ]; then
+            echo "isolated=false" >> "$GITHUB_OUTPUT"
+            echo "The preview D1 is the shared staging D1 — refusing to migrate or deploy." >&2
             exit 1
           fi
           echo "isolated=true" >> "$GITHUB_OUTPUT"
@@ -172,6 +183,7 @@ jobs:
           RELEASE_PREVIEW_WORKER_NAME: ${{ vars.RELEASE_PREVIEW_WORKER_NAME }}
           RELEASE_PREVIEW_D1_ID: ${{ vars.RELEASE_PREVIEW_D1_ID }}
           PRODUCTION_D1_ID: ${{ secrets.PRODUCTION_D1_ID }}
+          SHARED_STAGING_D1_ID: ${{ secrets.SHARED_STAGING_D1_ID }}
           RELEASE_SHA: ${{ github.event.inputs.expected_sha }}
         run: node infra/scripts/release-preview-config.mjs candidate/dist/server/wrangler.json
 

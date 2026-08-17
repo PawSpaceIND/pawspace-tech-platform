@@ -14,6 +14,10 @@
 //   RELEASE_PREVIEW_WORKER_NAME  the dedicated Worker (must not be the shared staging Worker)
 //   RELEASE_PREVIEW_D1_ID        the dedicated preview D1 (from: npx wrangler d1 create <name>)
 //   PRODUCTION_D1_ID             production's D1 id, supplied ONLY so this script can refuse to match it
+//   SHARED_STAGING_D1_ID         shared staging's D1 id, for the same reason — a preview that lands on
+//                                the staging database corrupts other testers' data just as surely as
+//                                one that lands on production, and nothing else in this repository was
+//                                checking for it
 //   RELEASE_SHA                  the exact commit being previewed, recorded as a safe version marker
 import { readFileSync, writeFileSync } from "node:fs";
 
@@ -30,6 +34,7 @@ const read = (name) => String(process.env[name] || "").trim();
 const workerName = read("RELEASE_PREVIEW_WORKER_NAME");
 const previewD1 = read("RELEASE_PREVIEW_D1_ID");
 const productionD1 = read("PRODUCTION_D1_ID");
+const sharedStagingD1 = read("SHARED_STAGING_D1_ID");
 const releaseSha = read("RELEASE_SHA");
 
 /** Worker names this deploy must never take over. Reusing one is the failure this script exists for. */
@@ -42,16 +47,29 @@ if (workerName && RESERVED_WORKER_NAMES.includes(workerName.toLowerCase())) {
 }
 if (!previewD1) problems.push("RELEASE_PREVIEW_D1_ID is not set (from: npx wrangler d1 create <preview-db>).");
 if (!productionD1) problems.push("PRODUCTION_D1_ID is not set. It is required so this script can PROVE the preview D1 is not production; without it, isolation is an assumption.");
+if (!sharedStagingD1) problems.push("SHARED_STAGING_D1_ID is not set. It is required so this script can PROVE the preview D1 is not the shared staging database; without it, isolation is an assumption.");
 if (!releaseSha || !/^[0-9a-f]{40}$/i.test(releaseSha)) problems.push("RELEASE_SHA must be the full 40-character commit sha being previewed.");
 
-// The isolation decision. Reported as a boolean and nothing else — printing either id, even partially,
+// The isolation decision. Reported as a boolean and nothing else — printing any id, even partially,
 // would put a database identifier into a build log that anyone with repository read access can see.
-const isolated = Boolean(previewD1 && productionD1 && previewD1 !== productionD1);
-if (previewD1 && productionD1 && !isolated) {
+//
+// A MISSING comparator is not "different". Isolation that cannot be checked is not isolation, so an
+// absent id is a refusal above, and `isolated` is only ever true when all three were present and the
+// preview matched neither of the other two.
+const allIdsPresent = Boolean(previewD1 && productionD1 && sharedStagingD1);
+const isolated = allIdsPresent && previewD1 !== productionD1 && previewD1 !== sharedStagingD1;
+if (previewD1 && productionD1 && previewD1 === productionD1) {
   problems.push("RELEASE_PREVIEW_D1_ID equals PRODUCTION_D1_ID. Refusing to migrate or deploy against production data.");
 }
+if (previewD1 && sharedStagingD1 && previewD1 === sharedStagingD1) {
+  problems.push("RELEASE_PREVIEW_D1_ID equals SHARED_STAGING_D1_ID. Refusing to migrate or deploy against the shared staging database.");
+}
 
-if (problems.length) {
+// The decision itself gates the write, rather than being computed and then ignored. If `problems` is
+// empty but `isolated` is somehow false, that is a bug in the checks above and this refuses anyway.
+if (!isolated && !problems.length) problems.push("Isolation could not be established from the supplied identifiers.");
+
+if (problems.length || !isolated) {
   console.error("isolated=false");
   console.error("Refusing to configure the release preview deploy:\n");
   for (const problem of problems) console.error(`  - ${problem}`);
@@ -101,5 +119,5 @@ delete cfg.vars.CLOUDFLARE_API_TOKEN;
 writeFileSync(path, JSON.stringify(cfg));
 
 // Only what is safe to read in a build log: no ids, no credentials.
-console.log("isolated=true");
+console.log(`isolated=${isolated}`);
 console.log(`Release preview config written → worker=${workerName}, DB=<preview>, payments=sandbox, live effects=off, sha=${releaseSha}`);
