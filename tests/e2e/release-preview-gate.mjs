@@ -28,6 +28,23 @@ export const TOUCHED_TABLES = [
   "booking_lifecycle_events",
 ];
 
+/**
+ * A run tag namespaces every identifier this gate creates, so a second run — a re-dispatch, or a
+ * re-attempt of the same run — starts from a clean namespace instead of colliding with the first.
+ * Without it the second run's bookings match the first run's idempotency keys and REPLAY, so the gate
+ * silently stops testing creation and starts testing duplicate prevention.
+ *
+ * It is interpolated into SQL that builds test identifiers, so it is validated as a strict identifier
+ * rather than trusted: letters, digits, hyphen and underscore only, and bounded.
+ */
+export const RUN_TAG_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+export function assertRunTag(tag) {
+  if (!tag || !RUN_TAG_PATTERN.test(tag)) {
+    throw new Error("PREVIEW_RUN_TAG must be a safe identifier: letters, digits, hyphen or underscore, 1-64 characters.");
+  }
+  return tag;
+}
+
 /** Run `tasks` with at most `limit` in flight, reporting the high-water mark actually reached. */
 export async function boundedAll(tasks, limit) {
   const results = new Array(tasks.length);
@@ -64,7 +81,9 @@ export async function runGate({ http, d1, env, log = console.log, swarmSize = 60
     return ok;
   };
 
-  const RUN = `preview-${env.EXPECTED_SHA.slice(0, 8)}-${env.RUN_TAG || "gate"}`;
+  // No constant fallback: an unnamespaced run is the defect, not a convenience.
+  const RUN = `preview-${env.EXPECTED_SHA.slice(0, 8)}-${assertRunTag(env.RUN_TAG)}`;
+  report.runTag = env.RUN_TAG;
   const CUSTOMER = `${RUN}-CUS`, OTHER_CUSTOMER = `${RUN}-CUS2`, PROVIDER = `${RUN}-PRV`;
   const START = "2027-03-04T09:00:00.000Z", END = "2027-03-04T11:00:00.000Z";
 
@@ -102,8 +121,10 @@ export async function runGate({ http, d1, env, log = console.log, swarmSize = 60
   // are seeded into the isolated preview database, signed in through /api/staging-login exactly as a
   // tester would, and the cookie that comes back is the one the Worker's own session layer minted.
   const signIn = async (email) => {
+    // The route reads body.code — NOT body.accessCode. It also requires the email to be an active
+    // staff record whose role has a definition, which is why the roles and users are seeded first.
     const res = await http("POST", "/api/staging-login", {
-      body: { accessCode: env.ACCESS_CODE, email },
+      body: { action: "login", code: env.ACCESS_CODE, email },
     });
     const cookie = String(res.headers?.["set-cookie"] ?? res.headers?.get?.("set-cookie") ?? "").split(";")[0];
     return { ok: res.status >= 200 && res.status < 400 && Boolean(cookie), cookie, status: res.status };
@@ -127,6 +148,27 @@ export async function runGate({ http, d1, env, log = console.log, swarmSize = 60
   await seedUser("preview-booker@pawspace.test", "preview_booker");
   await seedUser("preview-marketing@pawspace.test", "preview_marketing");
   await bindCustomer("preview-booker@pawspace.test", CUSTOMER);
+
+  // ── ANONYMOUS, before any session exists ───────────────────────────────────────────────────
+  //
+  // Run first and deliberately: once a cookie is in hand it is easy to write an "unauthenticated"
+  // case that quietly carries one. The POST uses an otherwise-valid payload against a REAL seeded
+  // reservation, so a refusal here is authorization and not a missing precondition.
+  await seedScheduling(`${RUN}-anon`);
+  {
+    const anonGet = await http("GET", "/api/canonical-bookings");
+    check("anonymous GET is refused", anonGet.status === 401 || anonGet.status === 403, `status=${anonGet.status}`);
+    check("an anonymous GET discloses no bookings", anonGet.body?.bookings === undefined);
+
+    const before = await snapshot();
+    const anonPost = await http("POST", "/api/canonical-bookings", {
+      body: booking({ idempotencyKey: `${RUN}-anon`, scheduleGroupId: `${RUN}-anon` }),
+    });
+    const after = await snapshot();
+    check("anonymous POST is refused", anonPost.status === 401 || anonPost.status === 403, `status=${anonPost.status}`);
+    check("an anonymous POST changed nothing across all five tables",
+      JSON.stringify(before) === JSON.stringify(after), `${JSON.stringify(before)} -> ${JSON.stringify(after)}`);
+  }
 
   const viewer = await signIn("preview-viewer@pawspace.test");
   const booker = await signIn("preview-booker@pawspace.test");
@@ -154,11 +196,18 @@ export async function runGate({ http, d1, env, log = console.log, swarmSize = 60
     check("a refused POST wrote nothing", JSON.stringify(before) === JSON.stringify(await snapshot()));
   }
   {
+    // NON-VACUOUS by construction: the scheduling decision and reservation are seeded FOR the other
+    // customer and that exact group is used, so every precondition after ownership is satisfiable.
+    // A 403 here is therefore the ownership layer and not a 409 for a reservation that never existed.
+    // Exactly 403 is required — "any 4xx" would pass on precisely the failures this rules out.
+    await seedScheduling(`${RUN}-owner`, { customer: OTHER_CUSTOMER });
     const before = await snapshot();
     const wrongOwner = await as(booker.cookie)("POST", "/api/canonical-bookings",
       booking({ idempotencyKey: `${RUN}-owner`, scheduleGroupId: `${RUN}-owner`, customer: { id: OTHER_CUSTOMER, name: "Someone else", primaryPhone: "+919000000901" } }));
-    check("POST fails for a different customer owner", wrongOwner.status >= 400 && wrongOwner.status !== 201, `status=${wrongOwner.status}`);
-    check("a wrong-owner POST wrote nothing", JSON.stringify(before) === JSON.stringify(await snapshot()));
+    const after = await snapshot();
+    check("POST fails for a different customer owner with exactly 403", wrongOwner.status === 403, `status=${wrongOwner.status}`);
+    check("a wrong-owner POST changed nothing across all five tables",
+      JSON.stringify(before) === JSON.stringify(after), `${JSON.stringify(before)} -> ${JSON.stringify(after)}`);
   }
 
   const post = as(booker.cookie);
@@ -305,10 +354,15 @@ if (isMain) {
   const EXPECTED_SHA = process.env.EXPECTED_SHA || "";
   const ACCESS_CODE = process.env.PAWSPACE_UAT_ACCESS_CODE || "";
   const PREVIEW_D1 = process.env.PREVIEW_D1 || "";
-  if (!WORKER || !EXPECTED_SHA || !ACCESS_CODE || !PREVIEW_D1) {
-    console.error("release-preview gate: required environment is not configured.");
+  const RUN_TAG = process.env.PREVIEW_RUN_TAG || "";
+  if (!WORKER || !EXPECTED_SHA || !ACCESS_CODE || !PREVIEW_D1 || !RUN_TAG) {
+    console.error("release-preview gate: required environment is not configured (PREVIEW_WORKER, EXPECTED_SHA, PAWSPACE_UAT_ACCESS_CODE, PREVIEW_D1, PREVIEW_RUN_TAG).");
     process.exit(1);
   }
+  // Validated before it reaches any generated SQL, and never defaulted: a constant tag would make
+  // every re-run replay the previous one's bookings instead of creating its own.
+  try { assertRunTag(RUN_TAG); }
+  catch (error) { console.error(`release-preview gate: ${error.message}`); process.exit(1); }
   const BASE = process.env.PREVIEW_URL || `https://${WORKER}.workers.dev`;
 
   const http = async (method, path, { headers = {}, body } = {}) => {
@@ -331,7 +385,7 @@ if (isMain) {
     return parsed?.[0]?.results ?? parsed?.result?.[0]?.results ?? [];
   };
 
-  const report = await runGate({ http, d1, env: { EXPECTED_SHA, ACCESS_CODE } });
+  const report = await runGate({ http, d1, env: { EXPECTED_SHA, ACCESS_CODE, RUN_TAG } });
   writeFileSync("release-preview-report.json", JSON.stringify(report, null, 2));
   console.log(`\nrelease preview gate: ${report.failures === 0 && report.authHarness !== "unavailable" ? "PASS" : "FAIL"}`);
   process.exit(report.failures === 0 && report.authHarness !== "unavailable" ? 0 : 1);

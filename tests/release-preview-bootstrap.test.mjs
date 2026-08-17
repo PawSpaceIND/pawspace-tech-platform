@@ -387,6 +387,17 @@ test("the post-deploy gate runs from infra/ against the HOSTED candidate", () =>
   assert.match(String(upload.with.path), /release-preview-report\.json/);
 });
 
+test("the workflow gives the gate a per-attempt run tag, not a constant", () => {
+  const gate = job.steps.find((step) => /Post-deploy gate/.test(step.name || ""));
+  const tag = String(gate.env?.PREVIEW_RUN_TAG ?? "");
+  assert.ok(tag, "the gate must be given PREVIEW_RUN_TAG");
+  assert.match(tag, /github\.run_id/, "it must vary per run");
+  // run_id alone is not enough: a re-ATTEMPT reuses it, and the second attempt would replay the
+  // first attempt's bookings instead of creating its own.
+  assert.match(tag, /github\.run_attempt/, "and per attempt");
+  assert.ok(!/['"]gate['"]/.test(tag), "no constant fallback may appear in the hosted tag");
+});
+
 test("the migration is addressed by database id, not by a name that could resolve elsewhere", () => {
   const migrate = job.steps.find((step) => /Migrate/.test(step.name || ""));
   assert.match(String(migrate.run), /migrations apply "\$PREVIEW_D1"/, "the migration target must be the preview id");

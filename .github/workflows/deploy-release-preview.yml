@@ -280,6 +280,11 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PREVIEW_D1: ${{ vars.RELEASE_PREVIEW_D1_ID }}
+          # Namespaces every identifier the gate creates. run_id alone is not enough: a re-ATTEMPT of
+          # the same run would reuse it, and the second attempt's bookings would replay the first
+          # attempt's instead of creating their own — the gate would quietly stop testing creation.
+          # Non-secret, and safe to appear in the report.
+          PREVIEW_RUN_TAG: ${{ github.run_id }}-${{ github.run_attempt }}
         run: node --experimental-strip-types "$GITHUB_WORKSPACE/infra/tests/e2e/release-preview-gate.mjs"
 
       - name: Upload sanitized evidence

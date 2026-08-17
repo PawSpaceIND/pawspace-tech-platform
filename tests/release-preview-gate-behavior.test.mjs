@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { runGate, boundedAll, TOUCHED_TABLES } from "./e2e/release-preview-gate.mjs";
+import { runGate, boundedAll, assertRunTag, TOUCHED_TABLES } from "./e2e/release-preview-gate.mjs";
 
 // ---------------------------------------------------------------------------
 // The hosted gate is the only thing that will look at the release candidate running on real Workers
@@ -24,6 +24,8 @@ import { runGate, boundedAll, TOUCHED_TABLES } from "./e2e/release-preview-gate.
  * A mock world: an in-memory row store behind a tiny SQL subset, and an HTTP surface that behaves the
  * way the real route does for the cases the gate exercises. Faults are injectable per scenario.
  */
+const ACCESS_CODE = "x".repeat(32);
+
 function makeWorld(faults = {}) {
   const tables = Object.fromEntries(TOUCHED_TABLES.map((t) => [t, []]));
   tables.scheduling_assignment_decisions = [];
@@ -76,8 +78,14 @@ function makeWorld(faults = {}) {
       return [{ n: (tables[table] || []).filter((r) => bookingIds.has(r.booking_id)).length }];
     }
     if (/GROUP BY source_pet_id HAVING COUNT\(\*\)>1/.test(sql)) {
+      // Scoped by customer_id, exactly as the gate's SQL is. Two runs share source ids like "swarm-0"
+      // under DIFFERENT customers; ignoring the filter would call that a duplicate when it is not.
+      const owner = sql.match(/customer_id='([^']*)'/)?.[1];
       const seen = {};
-      for (const p of tables.canonical_pets) if (String(p.source_pet_id).startsWith("swarm-")) seen[p.source_pet_id] = (seen[p.source_pet_id] || 0) + 1;
+      for (const p of tables.canonical_pets) {
+        if (owner && p.customer_id !== owner) continue;
+        if (String(p.source_pet_id).startsWith("swarm-")) seen[p.source_pet_id] = (seen[p.source_pet_id] || 0) + 1;
+      }
       return [{ n: Object.values(seen).filter((n) => n > 1).length }];
     }
     const select = sql.match(/^SELECT ([\w,]+) FROM (\w+) WHERE id='([^']*)'$/);
@@ -91,14 +99,22 @@ function makeWorld(faults = {}) {
   const rawHttp = async (method, path, { headers = {}, body } = {}) => {
       httpLog.push({ method, path });
       if (path === "/api/staging-login") {
+        // The real route reads body.code and returns 401 "Invalid access code" otherwise. It does NOT
+        // look at accessCode, so neither does this: a mock that accepted both would have let the
+        // original wrong-field bug through exactly as it did.
+        if (body?.code !== ACCESS_CODE) return { status: 401, body: { error: "Invalid access code" }, headers: {} };
         const email = body?.email;
-        if (!tables.app_users.some((u) => u.email === email)) return { status: 403, body: null, headers: {} };
+        // ...and the email must be an active staff record whose role has a definition.
+        const user = tables.app_users.find((u) => u.email === email && u.status === "active");
+        const role = user && tables.role_definitions.find((r) => r.code === user.role_code);
+        if (!user || !role) return { status: 403, body: { error: "That email cannot sign in here" }, headers: {} };
         const cookie = `ps=${email}`;
         sessions.set(cookie, email);
         return { status: 200, body: { ok: true }, headers: { "set-cookie": `${cookie}; Path=/` } };
       }
       const email = sessions.get(String(headers.cookie || ""));
-      const perms = email ? permissionsFor(email) : [];
+      const perms = email ? permissionsFor(email)
+        : (faults.allowAnonymous ? ["bookings.view", "scheduling.book"] : []);
       if (method === "GET") {
         if (!perms.includes("bookings.view")) return { status: 403, body: { error: "denied" }, headers: {} };
         return {
@@ -108,11 +124,14 @@ function makeWorld(faults = {}) {
       }
       if (!perms.includes("scheduling.book")) return { status: 403, body: { error: "denied" }, headers: {} };
 
+      // Ownership before the replay lookup, as requireCustomerOwnership runs before it in the route.
+      const link = tables.customer_identity_links.find((l) => l.email === email);
+      if (!faults.ownershipBypass && link && link.customer_id !== body.customer.id) {
+        return { status: 403, body: { error: "Customer ownership denied" }, headers: {} };
+      }
+
       const prior = tables.canonical_bookings.find((b) => b.idempotency_key === body.idempotencyKey || b.schedule_group_id === body.scheduleGroupId);
       if (prior) return { status: 200, body: { data: { bookingId: prior.id, duplicatePrevented: true, petIds: JSON.parse(prior.pet_ids_json) } }, headers: {} };
-
-      const link = tables.customer_identity_links.find((l) => l.email === email);
-      if (link && link.customer_id !== body.customer.id) return { status: 403, body: { error: "ownership" }, headers: {} };
 
       for (const pet of body.pets) if (typeof pet.sourceId !== "string") return { status: 400, body: { error: "A pet source id must be text" }, headers: {} };
       const reservation = tables.scheduling_reservations.find((r) => r.group_id === body.scheduleGroupId);
@@ -153,7 +172,7 @@ function makeWorld(faults = {}) {
   return { http, d1, tables, httpLog, stats: () => ({ maxInFlight }) };
 }
 
-const ENV = { EXPECTED_SHA: "b52e7dc1c04efa36d7e89e1b06ad252f9cf5ab6e", ACCESS_CODE: "x".repeat(32) };
+const ENV = { EXPECTED_SHA: "b52e7dc1c04efa36d7e89e1b06ad252f9cf5ab6e", ACCESS_CODE, RUN_TAG: "9001-1" };
 const silent = () => {};
 const run = (world, over = {}) => runGate({ http: world.http, d1: world.d1, env: ENV, log: silent, swarmSize: 6, concurrency: 3, ...over });
 const failed = (report, needle) => report.checks.filter((c) => !c.ok && c.name.includes(needle));
@@ -295,6 +314,126 @@ test("SABOTAGE — losing the saved Bruno row is caught", async () => {
   };
   const report = await run(clobber);
   assert.ok(failed(report, "breed and verification status are unchanged").length === 1);
+});
+
+// --- the login contract, the anonymous cases, ownership, and repeatability ----------------------
+
+test("sign-in uses the route's real field: body.code, never body.accessCode", async () => {
+  const world = makeWorld();
+  const seen = [];
+  const observed = { ...world, http: async (m, p, o) => { if (p === "/api/staging-login") seen.push(o?.body); return world.http(m, p, o); } };
+  const report = await run(observed);
+  assert.equal(report.failures, 0);
+  assert.ok(seen.length >= 3, "the gate must sign in for each role");
+  for (const body of seen) {
+    assert.equal(body.code, ACCESS_CODE, "the access code must be sent as `code`");
+    assert.equal(body.accessCode, undefined, "`accessCode` is not a field this route reads");
+    assert.ok(body.email, "an email must be supplied");
+  }
+});
+
+test("SABOTAGE — sending accessCode instead of code fails the auth harness", async () => {
+  // The exact defect: the previous gate sent { accessCode }, which the route ignores, so every
+  // sign-in would have returned 401 and the whole authorization section would have been meaningless.
+  const world = makeWorld();
+  const wrongField = {
+    ...world,
+    http: async (method, path, opts) => {
+      if (path === "/api/staging-login") {
+        const { code, ...rest } = opts.body;          // re-introduce the bug: rename code -> accessCode
+        return world.http(method, path, { ...opts, body: { ...rest, accessCode: code } });
+      }
+      return world.http(method, path, opts);
+    },
+  };
+  const report = await run(wrongField);
+  assert.equal(report.authHarness, "unavailable", "the gate must halt rather than report unearned refusals");
+  assert.ok(failed(report, "real UAT sessions").length === 1);
+});
+
+test("anonymous requests are checked before any session exists, and write nothing", async () => {
+  const world = makeWorld();
+  const order = [];
+  const traced = { ...world, http: async (m, p, o) => { order.push(`${m} ${p}${o?.headers?.cookie ? " +cookie" : ""}`); return world.http(m, p, o); } };
+  const report = await run(traced);
+  assert.equal(report.failures, 0);
+  const firstLogin = order.findIndex((e) => e.includes("/api/staging-login"));
+  const firstAnonBooking = order.findIndex((e) => e.includes("/api/canonical-bookings") && !e.includes("+cookie"));
+  assert.ok(firstAnonBooking >= 0, "there must be requests that carry no cookie at all");
+  assert.ok(firstLogin >= 0, "the gate must sign in at some point");
+  assert.ok(firstAnonBooking < firstLogin, "the anonymous cases must run BEFORE any session exists");
+  for (const name of ["anonymous GET is refused", "an anonymous GET discloses no bookings", "anonymous POST is refused", "an anonymous POST changed nothing"]) {
+    assert.ok(report.checks.some((c) => c.name.includes(name) && c.ok), `missing or failing: ${name}`);
+  }
+});
+
+test("SABOTAGE — an anonymous POST that is accepted is caught", async () => {
+  // allowAnonymous makes the route treat a cookieless caller as fully permitted — which is the shape
+  // of the defect an anonymous test exists to catch.
+  const report = await run(makeWorld({ allowAnonymous: true }));
+  assert.ok(failed(report, "anonymous").length > 0, "an accepted anonymous request must fail the gate");
+});
+
+test("SABOTAGE — bypassing ownership makes the wrong-owner request reach 201, proving the case is not vacuous", async () => {
+  // The point of the sabotage: with ownership removed the SAME request succeeds. That can only happen
+  // if the scheduling decision and reservation for the other customer really were seeded — so the 403
+  // in the healthy run is the ownership layer and not a 409 for a missing precondition.
+  const world = makeWorld({ ownershipBypass: true });
+  const statuses = [];
+  const observed = {
+    ...world,
+    http: async (m, p, o) => {
+      const res = await world.http(m, p, o);
+      if (String(o?.body?.scheduleGroupId || "").endsWith("-owner")) statuses.push(res.status);
+      return res;
+    },
+  };
+  const report = await run(observed);
+  assert.ok(statuses.includes(201), `the wrong-owner request must be able to reach 201, saw ${statuses.join(",")}`);
+  assert.ok(failed(report, "exactly 403").length === 1, "and the gate must fail when it does");
+});
+
+test("two runs with different tags both execute as new tests against one database", async () => {
+  const world = makeWorld();
+  const first = await runGate({ http: world.http, d1: world.d1, env: { ...ENV, RUN_TAG: "9001-1" }, log: silent, swarmSize: 4, concurrency: 3 });
+  const second = await runGate({ http: world.http, d1: world.d1, env: { ...ENV, RUN_TAG: "9001-2" }, log: silent, swarmSize: 4, concurrency: 3 });
+  assert.equal(first.failures, 0, `first run: ${first.checks.filter((c) => !c.ok).map((c) => c.name).join("; ")}`);
+  assert.equal(second.failures, 0, `second run: ${second.checks.filter((c) => !c.ok).map((c) => c.name).join("; ")}`);
+  assert.equal(first.runTag, "9001-1");
+  assert.equal(second.runTag, "9001-2");
+  // The second run CREATED its own booking rather than replaying the first run's.
+  const created = second.checks.find((c) => c.name.includes("POST succeeds with scheduling.book"));
+  assert.ok(created?.ok, "the second run must reach a fresh 201, not a replay");
+  // The tag itself contains a hyphen, so the namespaces are compared by their full RUN prefix rather
+  // than by counting hyphen-separated segments.
+  const prefixFor = (tag) => `preview-${ENV.EXPECTED_SHA.slice(0, 8)}-${tag}-`;
+  for (const tag of ["9001-1", "9001-2"]) {
+    const owned = world.tables.canonical_bookings.filter((b) => String(b.schedule_group_id).startsWith(prefixFor(tag)));
+    assert.ok(owned.length > 0, `run ${tag} must own bookings in its own namespace`);
+  }
+  const crossed = world.tables.canonical_bookings.filter((b) =>
+    String(b.schedule_group_id).startsWith(prefixFor("9001-1")) && String(b.schedule_group_id).startsWith(prefixFor("9001-2")));
+  assert.equal(crossed.length, 0, "no booking may belong to both namespaces");
+});
+
+test("SABOTAGE — a constant run tag makes the second run replay the first", async () => {
+  const world = makeWorld();
+  const tag = "constant-gate";
+  const first = await runGate({ http: world.http, d1: world.d1, env: { ...ENV, RUN_TAG: tag }, log: silent, swarmSize: 4, concurrency: 3 });
+  const second = await runGate({ http: world.http, d1: world.d1, env: { ...ENV, RUN_TAG: tag }, log: silent, swarmSize: 4, concurrency: 3 });
+  assert.equal(first.failures, 0, "the first run is healthy");
+  assert.notEqual(second.failures, 0, "the second run must NOT quietly pass by replaying the first");
+  const created = second.checks.find((c) => c.name.includes("POST succeeds with scheduling.book"));
+  assert.equal(created?.ok, false, "the booking that should have been created returned a replay instead");
+});
+
+test("the run tag is validated before it can reach generated SQL, and is never defaulted", () => {
+  for (const bad of ["", undefined, null, "a'; DROP TABLE canonical_bookings;--", "has space", "-leading", "x".repeat(65), "tag;rm"]) {
+    assert.throws(() => assertRunTag(bad), /safe identifier/, `${JSON.stringify(bad)} must be refused`);
+  }
+  for (const good of ["9001-1", "abc_123", "A1", "x".repeat(64)]) assert.equal(assertRunTag(good), good);
+  // And runGate itself refuses rather than inventing one.
+  assert.rejects(() => runGate({ http: async () => ({ status: 200, body: {} }), d1: async () => [], env: { EXPECTED_SHA: ENV.EXPECTED_SHA, ACCESS_CODE }, log: silent }), /safe identifier/);
 });
 
 // --- the concurrency primitive itself ----------------------------------------------------------
