@@ -30,19 +30,66 @@ export const TOUCHED_TABLES = [
 ];
 
 /**
- * Tables this gate must SEED before it can drive anything, and which a freshly created preview database
- * does not have. `/api/canonical-bookings` creates the tables it owns on first request; these belong to
- * routes the gate never calls, so seeding a staff identity or a reservation into a new preview database
- * fails on "no such table" before the first booking is ever attempted — and the failure reads as a
- * broken release candidate rather than a gate that never set itself up.
+ * Every table this gate touches before the deployed route can create anything, mapped to the ONE module
+ * whose definition is authoritative for it.
+ *
+ * A previous version bootstrapped only the five security and scheduling tables, on the assumption that
+ * `/api/canonical-bookings` creates the six booking tables itself on first request. It does — but only
+ * once a request reaches the handler, and the first thing this gate does is take a five-table snapshot
+ * around an ANONYMOUS request. An anonymous request is refused by the gateway before the handler runs, so
+ * `ensureTables` never executes, and on a real fresh preview D1 that snapshot dies on
+ * `no such table: canonical_bookings`. The behavioural mock hid it by pre-creating those tables, which is
+ * exactly what a mock must never do.
+ *
+ * The map is explicit and deliberately NOT a repository-wide first match. Several of these tables are
+ * declared by many modules and they do not all agree: `canonical_customers` has two distinct definitions
+ * here, differing in the DEFAULT for `source` — `uat_customer_app` in the route under test versus
+ * `customer_app` in lib/customer-account.ts. A first match would pick whichever file the directory walk
+ * reached first and seed the preview with a schema the deployed route never agreed to.
  */
-export const SUPPORT_TABLES = [
-  "app_users",
-  "role_definitions",
-  "customer_identity_links",
-  "scheduling_assignment_decisions",
-  "scheduling_reservations",
-];
+export const SCHEMA_SOURCE_MAP = {
+  // Security and identity: the module the gateway and resolveActor read through.
+  app_users: "lib/server-auth.ts",
+  role_definitions: "lib/server-auth.ts",
+  customer_identity_links: "lib/server-auth.ts",
+  // Scheduling: the module that owns reservations and assignment decisions.
+  scheduling_assignment_decisions: "app/api/uat-scheduling/route.ts",
+  scheduling_reservations: "app/api/uat-scheduling/route.ts",
+  // Canonical booking: the route under test declares all six itself, so its definitions are the ones the
+  // deployed handler expects to find.
+  canonical_customers: "app/api/canonical-bookings/route.ts",
+  canonical_pets: "app/api/canonical-bookings/route.ts",
+  canonical_bookings: "app/api/canonical-bookings/route.ts",
+  booking_payments: "app/api/canonical-bookings/route.ts",
+  provider_work_orders: "app/api/canonical-bookings/route.ts",
+  booking_lifecycle_events: "app/api/canonical-bookings/route.ts",
+  // Provider evidence: the deployed provider module. See PROVIDER_ACTIVATION_VARS for why the provider
+  // claim is made against deployed configuration rather than a `providers` table.
+  canonical_providers: "lib/partner-otp.ts",
+};
+
+/** The twelve tables bootstrapped before any HTTP request, seed, snapshot or provider read. */
+export const BOOTSTRAP_TABLES = Object.keys(SCHEMA_SOURCE_MAP);
+
+/**
+ * How the provider claim is actually made.
+ *
+ * The check this replaces counted rows in a table named for providers, filtered on three activation
+ * columns. In this product no such table exists — 47 provider-scoped tables do, and none is named that —
+ * and two of the three columns appear nowhere in `app/`, `lib/`, `worker/` or `drizzle/`. That query could
+ * never have run against a real preview; it was inherited unverified, and the mock pre-creating the table
+ * and answering the activation predicate with zero is the only reason it ever passed. The query is not
+ * reproduced here, because the behavioural suite greps this file for its shape.
+ *
+ * What a preview CAN prove about activation is what the deploy actually controls: these three variables,
+ * written into the deployed artifact by scripts/release-preview-config.mjs and read back off the deployed
+ * version. Required, like every other check here.
+ */
+export const PROVIDER_ACTIVATION_VARS = {
+  PAWSPACE_PROVIDER_MARKETPLACE_LIVE: "false",
+  PAWSPACE_PROVIDER_ORDER_ELIGIBLE: "false",
+  PAWSPACE_PROVIDER_ACTIVATION: "uat_ready",
+};
 
 /**
  * The one `CREATE TABLE IF NOT EXISTS <table> (...)` statement in a source file, parentheses balanced
@@ -65,22 +112,66 @@ export function extractDdl(source, table) {
 }
 
 /** Search a checkout for a table's DDL. Returns null when the candidate does not define it. */
-export function ddlFromCheckout(root, table) {
+export function extractAllDdl(source, table) {
+  const needle = `CREATE TABLE IF NOT EXISTS ${table} (`;
+  const found = [];
+  let from = 0;
+  for (;;) {
+    const start = source.indexOf(needle, from);
+    if (start < 0) return found;
+    const statement = extractDdl(source.slice(start), table);
+    if (!statement) return found;
+    found.push(statement);
+    from = start + needle.length;
+  }
+}
+
+/** Whitespace- and case-insensitive form, for deciding whether two declarations are the same one. */
+export const normalizeDdl = (ddl) => String(ddl).replace(/\s+/g, " ").trim().toLowerCase();
+
+/**
+ * The authoritative DDL for a table, from the ONE module SCHEMA_SOURCE_MAP names — never a
+ * repository-wide first match, which would silently pick a divergent declaration from another module.
+ *
+ * Fails closed, loudly, in every case where the answer would otherwise be a guess: no mapping, a missing
+ * file, a file that does not declare the table, or a file that declares it more than once with declarations
+ * that do not agree. Identical repeats are accepted, because a module restating the same statement is not
+ * an ambiguity.
+ */
+export function authoritativeDdl(root, table) {
+  const mapped = SCHEMA_SOURCE_MAP[table];
+  if (!mapped) throw new Error(`no authoritative source is mapped for ${table}`);
+  const file = path.join(root, mapped);
+  if (!existsSync(file)) throw new Error(`the authoritative source for ${table} is missing: ${mapped}`);
+  const declarations = extractAllDdl(readFileSync(file, "utf8"), table);
+  if (!declarations.length) throw new Error(`${mapped} does not declare ${table}`);
+  const distinct = [...new Set(declarations.map(normalizeDdl))];
+  if (distinct.length > 1) {
+    throw new Error(`${mapped} declares ${table} ${distinct.length} different ways — the authoritative source is internally ambiguous`);
+  }
+  return declarations[0];
+}
+
+/**
+ * Every module that declares a table, for the record. Used by the tests to show WHERE the declarations
+ * diverge and that the map resolves it — never by the bootstrap, which reads only the mapped module.
+ */
+export function allDeclarationsOf(root, table) {
   const roots = ["app", "lib", "worker"].map((dir) => path.join(root, dir)).filter(existsSync);
-  const files = [];
+  const sites = [];
   const walk = (dir) => {
     for (const entry of readdirSync(dir)) {
       const full = path.join(dir, entry);
       if (statSync(full).isDirectory()) walk(full);
-      else if (/\.(ts|tsx|mjs|js)$/.test(entry)) files.push(full);
+      else if (/\.(ts|tsx|mjs|js)$/.test(entry)) {
+        for (const ddl of extractAllDdl(readFileSync(full, "utf8"), table)) {
+          sites.push({ file: path.relative(root, full), ddl, normalized: normalizeDdl(ddl) });
+        }
+      }
     }
   };
   for (const dir of roots) walk(dir);
-  for (const file of files) {
-    const found = extractDdl(readFileSync(file, "utf8"), table);
-    if (found) return found;
-  }
-  return null;
+  return sites;
 }
 
 /**
@@ -167,7 +258,7 @@ export async function boundedAll(tasks, limit) {
  * @param {number} [io.swarmSize]
  * @param {number} [io.concurrency]
  */
-export async function runGate({ http, d1, ddl, hostedSha, workerLog, env, log = console.log, swarmSize = 60, concurrency = 8 }) {
+export async function runGate({ http, d1, ddl, hostedSha, workerLog, providerActivation, env, log = console.log, swarmSize = 60, concurrency = 8 }) {
   const report = { sha: env.EXPECTED_SHA, checks: [], counts: {} };
   let failures = 0;
   const check = (name, ok, detail = "") => {
@@ -263,21 +354,44 @@ export async function runGate({ http, d1, ddl, hostedSha, workerLog, env, log = 
     unavailable("the hosted version marker carries the deployed sha", String(error.message).slice(0, 160));
   }
 
-  // ── the support schema a freshly created preview database does not have ──────────────────────
+  // ── provider activation, from the deployed configuration ────────────────────────────────────
   //
-  // Created from the CANDIDATE's own DDL, before anything is seeded. Without this the very first seed
-  // fails on "no such table" and every later result is either absent or meaningless.
+  // Read off the deployed version rather than from a database table, because the table the previous check
+  // queried does not exist in this product at all (see PROVIDER_ACTIVATION_VARS). Required, and answered
+  // before any request is made, so a preview that went out with activation on is caught immediately.
+  try {
+    const deployed = await providerActivation();
+    if (!deployed) unavailable("the deployed preview has provider activation off", "the deployed configuration could not be read");
+    else {
+      const wrong = Object.entries(PROVIDER_ACTIVATION_VARS)
+        .filter(([name, expected]) => String(deployed[name] ?? "") !== expected)
+        .map(([name, expected]) => `${name}=${String(deployed[name] ?? "<unset>")} (want ${expected})`);
+      report.counts.providerActivation = Object.fromEntries(
+        Object.keys(PROVIDER_ACTIVATION_VARS).map((name) => [name, String(deployed[name] ?? "<unset>")]));
+      check("the deployed preview has provider activation off", wrong.length === 0, wrong.join(", "));
+    }
+  } catch (error) {
+    unavailable("the deployed preview has provider activation off", String(error.message).slice(0, 160));
+  }
+
+  // ── the twelve tables a freshly created preview database does not have ───────────────────────
+  //
+  // Created from the CANDIDATE's own authoritative DDL, before ANY hosted request, seed, snapshot or
+  // provider read. All twelve, not just the five this gate seeds by hand: the six booking tables are
+  // created by the route itself only once a request reaches the handler, and the first thing below is a
+  // snapshot around an ANONYMOUS request, which the gateway refuses before the handler runs. On a real
+  // fresh preview D1 that snapshot is where `no such table: canonical_bookings` lands.
   let schemaReady = true;
-  for (const table of SUPPORT_TABLES) {
+  for (const table of BOOTSTRAP_TABLES) {
     try {
       const statement = await ddl(table);
-      if (!statement) { schemaReady = unavailable(`support table ${table} is created from the candidate's DDL`, "the candidate defines no CREATE TABLE for it"); continue; }
+      if (!statement) { schemaReady = unavailable(`${table} is created from its authoritative DDL`, "the candidate declares no CREATE TABLE for it"); continue; }
       await d1(statement);
     } catch (error) {
-      schemaReady = unavailable(`support table ${table} is created from the candidate's DDL`, String(error.message).slice(0, 160));
+      schemaReady = unavailable(`${table} is created from its authoritative DDL`, String(error.message).slice(0, 160));
     }
   }
-  check("every support table the gate seeds exists", schemaReady, `${SUPPORT_TABLES.length} tables`);
+  check("every table this gate touches exists before it is touched", schemaReady, `${BOOTSTRAP_TABLES.length} tables`);
   if (!schemaReady) {
     // Nothing below can produce a real answer, and reporting refusals it did not earn is exactly what
     // this gate must never do.
@@ -486,16 +600,11 @@ export async function runGate({ http, d1, ddl, hostedSha, workerLog, env, log = 
       `payments=${orphanPayments} orders=${orphanOrders} events=${orphanEvents}`);
   }
 
-  // Provider activation. This read used to swallow its own error and substitute zero, which turned a
-  // table the gate could not read into the answer "no provider became live" — the one claim in this
-  // whole gate that nobody should take on trust, reported from a read that never happened. (The guard in
-  // tests/release-preview-gate-behavior.test.mjs greps for that shape, so it is not spelled out here.)
-  try {
-    const live = await countOf("providers", "live=1 OR marketplace_live=1 OR order_eligible=1");
-    check("no provider became live in the preview", live === 0, `live=${live}`);
-  } catch (error) {
-    unavailable("no provider became live in the preview", String(error.message).slice(0, 160));
-  }
+  // The provider claim is made from the deployed configuration at the top of this run. The COUNT that used
+  // to sit here named a provider table and three activation columns this product does not have anywhere in
+  // app/, lib/, worker/ or drizzle/, so it could only ever have thrown against a real preview or been
+  // answered by a mock. It is gone rather than made mandatory. (The guard in the behavioural suite greps
+  // for that query's shape, so it is not written out here.)
 
   // ── the Worker's own log, which sees what the database cannot ───────────────────────────────
   //
@@ -566,8 +675,20 @@ if (isMain) {
     return parsed?.[0]?.results ?? parsed?.result?.[0]?.results ?? [];
   };
 
-  // The CANDIDATE's own definition of each support table, never a copy kept beside this gate.
-  const ddl = async (table) => ddlFromCheckout(CANDIDATE_DIR, table);
+  // The CANDIDATE's own definition of each table, from the module SCHEMA_SOURCE_MAP names — never a
+  // repository-wide first match, and never a copy kept beside this gate.
+  const ddl = async (table) => authoritativeDdl(CANDIDATE_DIR, table);
+
+  /** The deployed version's variables, which is where provider activation is actually decided. */
+  const providerActivation = async () => {
+    const raw = wrangler(["versions", "list", "--name", WORKER, "--json"]);
+    const parsed = JSON.parse(raw);
+    const versions = Array.isArray(parsed) ? parsed : (parsed?.versions ?? parsed?.result ?? []);
+    const latest = versions[0] ?? {};
+    // wrangler reports a version's bindings/vars in more than one shape across releases; take whichever
+    // is present rather than assuming, and let a missing one fail the check above.
+    return latest.vars ?? latest.resources?.bindings ?? latest.annotations ?? {};
+  };
 
   const hostedSha = async () => {
     try { return wrangler(["versions", "list", "--name", WORKER, "--json"]); }
@@ -589,7 +710,7 @@ if (isMain) {
     return captured.trim() ? captured : null;
   };
 
-  const report = await runGate({ http, d1, ddl, hostedSha, workerLog, env: { EXPECTED_SHA, ACCESS_CODE, RUN_TAG } });
+  const report = await runGate({ http, d1, ddl, hostedSha, workerLog, providerActivation, env: { EXPECTED_SHA, ACCESS_CODE, RUN_TAG } });
   writeFileSync("release-preview-report.json", JSON.stringify(report, null, 2));
   // Both halt paths as well as the failure count: a run that stopped at the schema or the session
   // harness has verified nothing, whatever its failure tally happens to be.

@@ -547,3 +547,58 @@ test("B — the workflow tells the gate which checkout to read the support schem
   assert.equal(gate.env.PREVIEW_RUN_TAG, "${{ github.run_id }}-${{ github.run_attempt }}",
     "and the run namespace this branch already established must be preserved");
 });
+
+// ---------------------------------------------------------------------------
+// EMPTY-D1 — the twelve-table bootstrap, from the workflow's side.
+// ---------------------------------------------------------------------------
+test("the gate bootstraps twelve tables from an explicit source map, not a first match", async () => {
+  const gate = await import("./e2e/release-preview-gate.mjs");
+  assert.equal(gate.BOOTSTRAP_TABLES.length, 12, "twelve tables, each mapped to one module");
+  assert.deepEqual([...gate.BOOTSTRAP_TABLES].sort(), [
+    "app_users", "booking_lifecycle_events", "booking_payments", "canonical_bookings", "canonical_customers",
+    "canonical_pets", "canonical_providers", "customer_identity_links", "provider_work_orders",
+    "role_definitions", "scheduling_assignment_decisions", "scheduling_reservations",
+  ]);
+  // The five tables the gate's own snapshot reads must all be bootstrapped: they are created by the route
+  // only once a request reaches the handler, and the first snapshot is around an ANONYMOUS request.
+  for (const table of gate.TOUCHED_TABLES) {
+    assert.ok(gate.BOOTSTRAP_TABLES.includes(table), `${table} is snapshotted, so it must be bootstrapped`);
+  }
+  // Mapped by module, and the mapping is the point.
+  assert.equal(gate.SCHEMA_SOURCE_MAP.canonical_bookings, "app/api/canonical-bookings/route.ts");
+  assert.equal(gate.SCHEMA_SOURCE_MAP.app_users, "lib/server-auth.ts");
+  assert.equal(gate.SCHEMA_SOURCE_MAP.scheduling_reservations, "app/api/uat-scheduling/route.ts");
+  assert.equal(gate.SCHEMA_SOURCE_MAP.canonical_providers, "lib/partner-otp.ts");
+});
+
+test("every mapped source file exists in this repository and declares its table", async () => {
+  const gate = await import("./e2e/release-preview-gate.mjs");
+  for (const [table, file] of Object.entries(gate.SCHEMA_SOURCE_MAP)) {
+    assert.ok(fs.existsSync(path.join(repo, file)), `${file} (mapped for ${table}) must exist`);
+    const ddl = gate.authoritativeDdl(repo, table);
+    assert.ok(ddl.startsWith(`CREATE TABLE IF NOT EXISTS ${table} (`), `${table} must resolve from ${file}`);
+  }
+});
+
+test("the workflow runs the gate with the candidate checkout it reads the schema from", () => {
+  const gate = job.steps.find((step) => /\bnode\b[^\n]*release-preview-gate\.mjs/.test(String(step.run || "")));
+  assert.ok(gate, "the gate step must exist");
+  assert.equal(gate.env.CANDIDATE_DIR, "${{ github.workspace }}/candidate");
+  // The gate needs D1 and the deployed Worker to bootstrap and to read provider evidence.
+  for (const name of ["PREVIEW_D1", "PREVIEW_WORKER", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"]) {
+    assert.ok(name in gate.env, `${name} must be available to the gate`);
+  }
+});
+
+test("provider activation is asserted from the values the preview config actually writes", async () => {
+  const gate = await import("./e2e/release-preview-gate.mjs");
+  const configText = fs.readFileSync(CONFIG_SCRIPT, "utf8");
+  for (const [name, expected] of Object.entries(gate.PROVIDER_ACTIVATION_VARS)) {
+    assert.match(configText, new RegExp(`${name}:\\s*"${expected}"`), `${name} must be written as ${expected}`);
+  }
+  // And the generated artifact really carries them, so the deployed version can be read back for it.
+  const { config } = runConfig(GOOD);
+  for (const [name, expected] of Object.entries(gate.PROVIDER_ACTIVATION_VARS)) {
+    assert.equal(config.vars[name], expected, `${name} must reach the deployed artifact`);
+  }
+});
