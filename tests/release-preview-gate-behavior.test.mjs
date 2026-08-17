@@ -1,6 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { runGate, boundedAll, assertRunTag, TOUCHED_TABLES } from "./e2e/release-preview-gate.mjs";
+import { readFileSync } from "node:fs";
+import { runGate, boundedAll, assertRunTag, TOUCHED_TABLES, SUPPORT_TABLES, extractDdl, ddlFromCheckout, requiredColumnsOf, roleDefinitionInsert } from "./e2e/release-preview-gate.mjs";
+
+/**
+ * The repository itself stands in for the candidate checkout, and the DDL the mock world enforces is the
+ * REAL product DDL, extracted by the same function the CLI uses. A fixture schema written here would turn
+ * every "required column" assertion below into a test of the fixture.
+ */
+const CANDIDATE_ROOT = new URL("..", import.meta.url).pathname;
+const realDdl = async (table) => ddlFromCheckout(CANDIDATE_ROOT, table);
 
 // ---------------------------------------------------------------------------
 // The hosted gate is the only thing that will look at the release candidate running on real Workers
@@ -27,13 +36,13 @@ import { runGate, boundedAll, assertRunTag, TOUCHED_TABLES } from "./e2e/release
 const ACCESS_CODE = "x".repeat(32);
 
 function makeWorld(faults = {}) {
+  // The five booking tables exist because the product route creates them on first request. The SUPPORT
+  // tables deliberately do NOT: a freshly created preview database has none of them, and the gate has to
+  // create them from the candidate's DDL before it can seed anything. `required` comes from that same
+  // DDL, so an INSERT missing a NOT NULL column fails here exactly as it fails on real D1.
   const tables = Object.fromEntries(TOUCHED_TABLES.map((t) => [t, []]));
-  tables.scheduling_assignment_decisions = [];
-  tables.scheduling_reservations = [];
-  tables.role_definitions = [];
-  tables.app_users = [];
-  tables.customer_identity_links = [];
   tables.providers = [];
+  const required = {};
   const sessions = new Map();
   const httpLog = [];
   let inFlight = 0, maxInFlight = 0;
@@ -45,12 +54,23 @@ function makeWorld(faults = {}) {
   };
 
   const d1 = async (sql) => {
+    const create = sql.match(/^CREATE TABLE IF NOT EXISTS (\w+) \(/);
+    if (create) {
+      required[create[1]] = requiredColumnsOf(sql);
+      tables[create[1]] = tables[create[1]] || [];
+      return [];
+    }
     const insert = sql.match(/^INSERT OR REPLACE INTO (\w+) \(([^)]*)\) VALUES \((.*)\)$/s);
     if (insert) {
       const [, table, cols, vals] = insert;
       const keys = cols.split(",").map((c) => c.trim());
       const values = vals.match(/'(?:[^']|'')*'|[^,]+/g).map((v) => v.trim().replace(/^'|'$/g, "").replace(/''/g, "'"));
       const row = Object.fromEntries(keys.map((k, i) => [k, values[i]]));
+      // Real database behaviour, and the reason the gate must create these tables before it seeds them.
+      if (!tables[table]) throw new Error(`no such table: ${table}`);
+      for (const column of required[table] ?? []) {
+        if (!(column in row)) throw new Error(`NOT NULL constraint failed: ${table}.${column}`);
+      }
       tables[table] = tables[table] || [];
       const pk = keys[0];
       const existing = tables[table].findIndex((r) => r[pk] === row[pk]);
@@ -66,7 +86,10 @@ function makeWorld(faults = {}) {
       if (like) return [{ n: rows.filter((r) => String(r.schedule_group_id || "").startsWith(like[1])).length }];
       const eq = where.match(/customer_id='([^']*)' AND source_pet_id='([^']*)'/);
       if (eq) return [{ n: rows.filter((r) => r.customer_id === eq[1] && r.source_pet_id === eq[2]).length }];
-      if (/live=1/.test(where)) return [{ n: 0 }];
+      if (/live=1/.test(where)) {
+        if (faults.providersUnreadable) throw new Error("no such table: providers");
+        return [{ n: 0 }];
+      }
       return [{ n: rows.length }];
     }
     if (/LEFT JOIN canonical_bookings/.test(sql)) return [{ n: 0 }];
@@ -169,12 +192,18 @@ function makeWorld(faults = {}) {
     } finally { inFlight--; }
   };
 
-  return { http, d1, tables, httpLog, stats: () => ({ maxInFlight }) };
+  return { http, d1, tables, required, httpLog, stats: () => ({ maxInFlight }) };
 }
 
 const ENV = { EXPECTED_SHA: "b52e7dc1c04efa36d7e89e1b06ad252f9cf5ab6e", ACCESS_CODE, RUN_TAG: "9001-1" };
 const silent = () => {};
-const run = (world, over = {}) => runGate({ http: world.http, d1: world.d1, env: ENV, log: silent, swarmSize: 6, concurrency: 3, ...over });
+/** What a correct world supplies for the three mandatory-evidence adapters. */
+const okHostedSha = async () => `{"annotations":{"workers/tag":"${ENV.EXPECTED_SHA}"}}`;
+const okWorkerLog = async () => '{"outcome":"ok","status":200}';
+const run = (world, over = {}) => runGate({
+  http: world.http, d1: world.d1, ddl: realDdl, hostedSha: okHostedSha, workerLog: okWorkerLog,
+  env: ENV, log: silent, swarmSize: 6, concurrency: 3, ...over,
+});
 const failed = (report, needle) => report.checks.filter((c) => !c.ok && c.name.includes(needle));
 
 // --- the gate passes against a correct world ---------------------------------------------------
@@ -395,8 +424,8 @@ test("SABOTAGE — bypassing ownership makes the wrong-owner request reach 201, 
 
 test("two runs with different tags both execute as new tests against one database", async () => {
   const world = makeWorld();
-  const first = await runGate({ http: world.http, d1: world.d1, env: { ...ENV, RUN_TAG: "9001-1" }, log: silent, swarmSize: 4, concurrency: 3 });
-  const second = await runGate({ http: world.http, d1: world.d1, env: { ...ENV, RUN_TAG: "9001-2" }, log: silent, swarmSize: 4, concurrency: 3 });
+  const first = await run(world, { env: { ...ENV, RUN_TAG: "9001-1" }, swarmSize: 4 });
+  const second = await run(world, { env: { ...ENV, RUN_TAG: "9001-2" }, swarmSize: 4 });
   assert.equal(first.failures, 0, `first run: ${first.checks.filter((c) => !c.ok).map((c) => c.name).join("; ")}`);
   assert.equal(second.failures, 0, `second run: ${second.checks.filter((c) => !c.ok).map((c) => c.name).join("; ")}`);
   assert.equal(first.runTag, "9001-1");
@@ -419,8 +448,8 @@ test("two runs with different tags both execute as new tests against one databas
 test("SABOTAGE — a constant run tag makes the second run replay the first", async () => {
   const world = makeWorld();
   const tag = "constant-gate";
-  const first = await runGate({ http: world.http, d1: world.d1, env: { ...ENV, RUN_TAG: tag }, log: silent, swarmSize: 4, concurrency: 3 });
-  const second = await runGate({ http: world.http, d1: world.d1, env: { ...ENV, RUN_TAG: tag }, log: silent, swarmSize: 4, concurrency: 3 });
+  const first = await run(world, { env: { ...ENV, RUN_TAG: tag }, swarmSize: 4 });
+  const second = await run(world, { env: { ...ENV, RUN_TAG: tag }, swarmSize: 4 });
   assert.equal(first.failures, 0, "the first run is healthy");
   assert.notEqual(second.failures, 0, "the second run must NOT quietly pass by replaying the first");
   const created = second.checks.find((c) => c.name.includes("POST succeeds with scheduling.book"));
@@ -474,4 +503,136 @@ test("the gate snapshots all five booking tables, not a subset", () => {
   assert.deepEqual([...TOUCHED_TABLES].sort(), [
     "booking_lifecycle_events", "booking_payments", "canonical_bookings", "canonical_pets", "provider_work_orders",
   ], "a table left out of the snapshot is a table a refusal could write to unnoticed");
+});
+
+// ---------------------------------------------------------------------------
+// CONSOLIDATION — the three controls the competing implementation (#204) had and this gate did not.
+// A, C and D are this branch's own and are covered above; nothing here restates them.
+// ---------------------------------------------------------------------------
+
+// --- B. a freshly created preview database has no support tables -------------------------------
+
+test("B — every support table is created from the candidate's own DDL, before anything is seeded", async () => {
+  const world = makeWorld();
+  const asked = [];
+  const report = await run(world, { ddl: async (table) => { asked.push(table); return realDdl(table); } });
+  assert.deepEqual(asked, SUPPORT_TABLES, "all five, in order, and before the first seed");
+  for (const table of SUPPORT_TABLES) {
+    assert.ok(world.tables[table], `${table} must exist once the gate has created it`);
+    assert.ok(world.required[table]?.length > 0, `${table}'s NOT NULL columns must come from the real DDL, not a fixture`);
+  }
+  assert.equal(report.failures, 0, report.checks.filter((c) => !c.ok).map((c) => c.name).join("; "));
+});
+
+test("B — SABOTAGE: with no schema step the gate stops on an empty database instead of reporting refusals", async () => {
+  // Exactly the state of a newly created preview D1: the booking tables the product route owns exist,
+  // the support tables do not. The old gate seeded straight into them and died on "no such table".
+  const report = await run(makeWorld(), { ddl: async () => null });
+  assert.equal(report.schema, "unavailable", "it must halt, not push on");
+  assert.ok(report.failures >= SUPPORT_TABLES.length, `each missing table must count as a failure, saw ${report.failures}`);
+  assert.ok(!report.checks.some((c) => c.name.includes("real UAT sessions")), "and it must not claim results it never obtained");
+});
+
+test("B — an empty database really does reject the seeds, which is why the step exists", async () => {
+  const world = makeWorld();
+  await assert.rejects(() => world.d1(roleDefinitionInsert("preview_viewer", ["bookings.view"])),
+    /no such table: role_definitions/, "seeding a table nothing created must fail");
+  await world.d1(await realDdl("role_definitions"));
+  await world.d1(roleDefinitionInsert("preview_viewer", ["bookings.view"]));
+  assert.equal(world.tables.role_definitions.length, 1, "and succeed once the DDL has been applied");
+});
+
+test("B — the role insert satisfies every NOT NULL column, and the two-column shape is rejected", async () => {
+  const ddl = await realDdl("role_definitions");
+  assert.ok(ddl, "the product must define role_definitions");
+  // The real shape, read from the real DDL rather than restated here.
+  assert.deepEqual(requiredColumnsOf(ddl).sort(), ["description", "name", "permissions_json", "updated_at"]);
+
+  const world = makeWorld();
+  await world.d1(ddl);
+  await world.d1(roleDefinitionInsert("preview_viewer", ["bookings.view"]));
+  assert.equal(world.tables.role_definitions.length, 1, "the gate's own statement must be accepted");
+
+  // The competing implementation's shape: code + permissions_json only.
+  await assert.rejects(
+    () => world.d1(roleDefinitionInsert("preview_thin", ["bookings.view"], ["code", "permissions_json"])),
+    /NOT NULL constraint failed: role_definitions\.(name|description|updated_at)/,
+    "a role row of only code and permissions_json must be rejected, as the real database rejects it",
+  );
+  assert.equal(world.tables.role_definitions.length, 1, "and nothing may be written");
+});
+
+test("B — no schema is copied into the gate, so there is nothing to drift", () => {
+  const source = readFileSync(new URL("./e2e/release-preview-gate.mjs", import.meta.url), "utf8");
+  for (const table of SUPPORT_TABLES) {
+    assert.ok(!new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\s*\\(`).test(source),
+      `${table}'s DDL must not be duplicated here — it would drift from what the deployed candidate creates`);
+  }
+  assert.match(source, /ddlFromCheckout\(CANDIDATE_DIR, table\)/, "the CLI must read it from the candidate checkout");
+});
+
+test("B — the DDL extractor balances parentheses rather than stopping at the first bracket", () => {
+  const source = "x CREATE TABLE IF NOT EXISTS t (a TEXT NOT NULL DEFAULT (''), b INTEGER NOT NULL) y";
+  assert.equal(extractDdl(source, "t"), "CREATE TABLE IF NOT EXISTS t (a TEXT NOT NULL DEFAULT (''), b INTEGER NOT NULL)");
+  assert.equal(extractDdl(source, "absent"), null);
+  // A column with a DEFAULT is not required: the database supplies it.
+  assert.deepEqual(requiredColumnsOf(extractDdl(source, "t")), ["b"]);
+});
+
+// --- F. mandatory evidence ---------------------------------------------------------------------
+
+test("F — an unreadable providers table FAILS instead of reporting a passing zero", async () => {
+  // The replaced line was `.catch(() => 0)`, which turned a read that never happened into the claim
+  // "no provider became live" — the one claim here nobody should take on trust.
+  const report = await run(makeWorld({ providersUnreadable: true }));
+  const live = report.checks.find((c) => c.name.includes("no provider became live"));
+  assert.ok(live && !live.ok, "an unreadable providers table must fail the gate");
+  assert.match(live.detail, /NOT RUN/, "and be recorded as not run, with the reason");
+  assert.ok(report.unavailable.includes(live.name));
+});
+
+test("F — hosted-SHA evidence is required: unreadable fails, and so does the wrong sha", async () => {
+  const unreadable = await run(makeWorld(), { hostedSha: async () => null });
+  const marker = unreadable.checks.find((c) => c.name.includes("hosted version marker"));
+  assert.ok(marker && !marker.ok, "a marker that cannot be read must fail");
+  assert.match(marker.detail, /NOT RUN/);
+
+  const threw = await run(makeWorld(), { hostedSha: async () => { throw new Error("wrangler exploded"); } });
+  assert.ok(failed(threw, "hosted version marker").length === 1, "an adapter that throws must fail, not be swallowed");
+
+  const drifted = await run(makeWorld(), { hostedSha: async () => "some other build" });
+  assert.ok(failed(drifted, "hosted version marker").length === 1, "a marker for a different build is deployment drift");
+});
+
+test("F — Worker-log evidence is required, and a 5xx or exception in it fails the gate", async () => {
+  const unsampled = await run(makeWorld(), { workerLog: async () => null });
+  const logCheck = unsampled.checks.find((c) => c.name.includes("Worker log"));
+  assert.ok(logCheck && !logCheck.ok, "a log that could not be sampled must fail");
+  assert.match(logCheck.detail, /NOT RUN/);
+
+  assert.ok(failed(await run(makeWorld(), { workerLog: async () => '{"outcome":"exception"}' }), "Worker log").length === 1);
+  assert.ok(failed(await run(makeWorld(), { workerLog: async () => '{"status":503}' }), "Worker log").length === 1);
+});
+
+test("F — NO check can be recorded as not run and still leave the gate passing", async () => {
+  const source = readFileSync(new URL("./e2e/release-preview-gate.mjs", import.meta.url), "utf8");
+  const helper = source.slice(source.indexOf("const unavailable ="), source.indexOf("// No constant fallback"));
+  assert.match(helper, /ok:\s*false/, "an unavailable check is a failing check");
+  assert.match(helper, /failures\+\+/, "and it must count");
+  assert.doesNotMatch(source, /ok:\s*null/, "there is no third, softer outcome");
+  assert.doesNotMatch(source, /\.catch\(\(\) => 0\)/, "and nothing may swallow its own failure into a zero");
+  assert.match(source, /report\.failures === 0 && report\.authHarness !== "unavailable" && report\.schema !== "unavailable"/,
+    "the exit condition must cover both halt paths as well as the failure count");
+
+  // Behaviourally, for every kind of unavailability this gate can encounter.
+  for (const over of [
+    { hostedSha: async () => null },
+    { workerLog: async () => null },
+    { ddl: async () => null },
+  ]) {
+    const report = await run(makeWorld(), over);
+    assert.notEqual(report.failures, 0, `an unavailable check must fail the gate: ${Object.keys(over)}`);
+  }
+  const providers = await run(makeWorld({ providersUnreadable: true }));
+  assert.notEqual(providers.failures, 0, "including an unreadable providers table");
 });

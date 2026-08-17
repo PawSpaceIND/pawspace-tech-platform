@@ -57,12 +57,20 @@ function runConfig(env, vars = {}) {
   return { status, stdout, stderr, config };
 }
 
+// The three UAT credentials are part of a VALID configuration now, not an optional extra: the deploy
+// installs them onto the preview Worker as secrets, so the tool validates their strength before it
+// configures anything. Obviously-synthetic values, long enough to clear the 32-character floor and not
+// shaped like the hand-written credentials this repository has published. See the credential group at the
+// end of this file for the refusals.
 const GOOD = {
   RELEASE_PREVIEW_WORKER_NAME: "pawspace-release-preview",
   RELEASE_PREVIEW_D1_ID: "preview-db-0000",
   PRODUCTION_D1_ID: "production-db-9999",
   SHARED_STAGING_D1_ID: "staging-db-5555",
   RELEASE_SHA: VALID_SHA,
+  PAWSPACE_UAT_ACCESS_CODE: "not-a-real-access-code-for-tests-only",
+  PAWSPACE_UAT_SIGNING_KEY: "not-a-real-signing-key-for-tests-only",
+  PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: "not-a-real-identity-secret-for-tests",
 };
 
 // --- isolation, which is the whole point ------------------------------------------------------
@@ -445,4 +453,97 @@ test("the gate script reports statuses and counts, never a credential or an id",
   }
   assert.ok(!/console\.log\([^)]*ACCESS_CODE/.test(source), "the access code must never be logged");
   assert.ok(!/console\.log\([^)]*cookie/.test(source), "the session cookie must never be logged");
+});
+
+// ---------------------------------------------------------------------------
+// CONSOLIDATION — E: preview credential validation and the reserved UAT Worker name, ported from the
+// competing implementation (#204). The two D1 comparisons this file already covers are untouched; these
+// tests assert they still hold alongside the new refusals, because a credential check that weakened
+// isolation reporting would be a poor trade.
+// ---------------------------------------------------------------------------
+const UAT_CREDENTIALS = ["PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"];
+
+test("E — a missing credential fails the deploy closed, and configures nothing", () => {
+  for (const name of UAT_CREDENTIALS) {
+    const absent = { ...GOOD };
+    delete absent[name];
+    const result = runConfig(absent);
+    assert.notEqual(result.status, 0, `${name} must have no default`);
+    assert.match(result.stderr, new RegExp(name), "the refusal must name the variable");
+    assert.match(result.stderr, /secrets\./, "and say where to supply it");
+    assert.equal(result.config.name, "unset", "the build artifact must be left untouched");
+    assert.equal(result.config.d1_databases, undefined, "no database binding may be written");
+  }
+});
+
+test("E — a credential below the 32-character floor is refused", () => {
+  for (const name of UAT_CREDENTIALS) {
+    assert.notEqual(runConfig({ ...GOOD, [name]: "a".repeat(31) }).status, 0, `31 characters must be refused for ${name}`);
+  }
+  assert.equal(runConfig(GOOD).status, 0, "and a value that clears the floor is accepted");
+});
+
+test("E — a hand-written project credential is refused, without naming the burned values", () => {
+  const result = runConfig({ ...GOOD, PAWSPACE_UAT_SIGNING_KEY: "pawspace-staging-signing-key-long-enough" });
+  assert.notEqual(result.status, 0, "a project-shaped credential must be refused");
+  assert.match(result.stderr, /public forever/, "and the refusal must explain why");
+  assert.match(result.stderr, /openssl rand/, "and say how to generate a good one");
+  // A shape, not a list: the burned literals stay in the two files tests/staging-auth-secrets.test.mjs
+  // allows to contain them, so that guard keeps its teeth.
+  assert.match(fs.readFileSync(CONFIG_SCRIPT, "utf8"), /\^pawspace\[-_\]/);
+});
+
+test("E — a credential problem does not pretend the environment is unisolated", () => {
+  // The two failures need different fixes, so the log has to distinguish them.
+  const weak = runConfig({ ...GOOD, PAWSPACE_UAT_ACCESS_CODE: "short" });
+  assert.notEqual(weak.status, 0);
+  assert.match(weak.stderr, /^isolated=true$/m, "the environment was still the right one");
+
+  // And both original comparisons still report the environment as the problem when they are the problem.
+  assert.match(runConfig({ ...GOOD, RELEASE_PREVIEW_D1_ID: GOOD.PRODUCTION_D1_ID }).stderr, /^isolated=false$/m);
+  assert.match(runConfig({ ...GOOD, RELEASE_PREVIEW_D1_ID: GOOD.SHARED_STAGING_D1_ID }).stderr, /^isolated=false$/m);
+  assert.match(runConfig({ ...GOOD, SHARED_STAGING_D1_ID: "" }).stderr, /^isolated=false$/m);
+});
+
+test("E — pawspace-uat is reserved, in the tool AND in the runner", () => {
+  const result = runConfig({ ...GOOD, RELEASE_PREVIEW_WORKER_NAME: "pawspace-uat" });
+  assert.notEqual(result.status, 0, "the UAT Worker must not be taken over by a preview deploy");
+  assert.match(result.stderr, /^isolated=false$/m, "a shared Worker is not an isolated preview");
+  assert.equal(result.config.name, "unset");
+  assert.match(workflowText, /pawspace-uat\)/, "the runner's own refusal list must match the tool's");
+  // Case is not a way around it.
+  assert.notEqual(runConfig({ ...GOOD, RELEASE_PREVIEW_WORKER_NAME: "PawSpace-UAT" }).status, 0);
+});
+
+test("E — no credential value reaches the log or the generated artifact", () => {
+  const result = runConfig(GOOD);
+  assert.equal(result.status, 0, result.stderr);
+  const printed = `${result.stdout}${result.stderr}`;
+  for (const name of UAT_CREDENTIALS) {
+    assert.ok(!printed.includes(GOOD[name]), `${name}'s value must not be logged`);
+    assert.ok(!JSON.stringify(result.config).includes(GOOD[name]), `${name}'s value must not be serialized`);
+    assert.ok(!(name in result.config.vars), `${name} must not become a plaintext Worker var`);
+  }
+});
+
+test("E — the workflow hands the tool the credentials it is expected to validate", () => {
+  const configure = job.steps.find((step) => String(step.run || "").startsWith("node infra/scripts/release-preview-config"));
+  assert.ok(configure, "the configure step must exist");
+  for (const name of UAT_CREDENTIALS) {
+    assert.equal(configure.env[name], `\${{ secrets.${name} }}`, `${name} must arrive from a secret, or the validation has nothing to check`);
+  }
+  // The two comparators this PR exists for are still mandatory alongside them.
+  assert.equal(configure.env.PRODUCTION_D1_ID, "${{ secrets.PRODUCTION_D1_ID }}");
+  assert.equal(configure.env.SHARED_STAGING_D1_ID, "${{ secrets.SHARED_STAGING_D1_ID }}");
+});
+
+test("B — the workflow tells the gate which checkout to read the support schema from", () => {
+  // Matched on the node invocation rather than the filename: an earlier step `test -f`s the same path to
+  // prove the tooling is present, and a substring search finds that step first.
+  const gate = job.steps.find((step) => /\bnode\b[^\n]*release-preview-gate\.mjs/.test(String(step.run || "")));
+  assert.ok(gate, "the gate step must exist");
+  assert.equal(gate.env.CANDIDATE_DIR, "${{ github.workspace }}/candidate",
+    "the schema must come from the candidate, never from the infrastructure checkout");
+  assert.equal(gate.env.PREVIEW_RUN_TAG, "${{ github.run_id }}-${{ github.run_attempt }}",
+    "and the run namespace this branch already established must be preserved");
 });

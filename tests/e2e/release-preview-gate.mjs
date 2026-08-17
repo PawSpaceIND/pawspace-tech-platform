@@ -16,8 +16,9 @@
  * id are read from the environment, held in locals, and never written to the report, echoed, or put in
  * a failure message. The report records statuses, counts and booking identifiers only.
  */
-import { writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { writeFileSync, readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { execFileSync, spawn } from "node:child_process";
+import path from "node:path";
 
 /** The five tables a booking writes. A refusal must change none of them. */
 export const TOUCHED_TABLES = [
@@ -27,6 +28,101 @@ export const TOUCHED_TABLES = [
   "provider_work_orders",
   "booking_lifecycle_events",
 ];
+
+/**
+ * Tables this gate must SEED before it can drive anything, and which a freshly created preview database
+ * does not have. `/api/canonical-bookings` creates the tables it owns on first request; these belong to
+ * routes the gate never calls, so seeding a staff identity or a reservation into a new preview database
+ * fails on "no such table" before the first booking is ever attempted — and the failure reads as a
+ * broken release candidate rather than a gate that never set itself up.
+ */
+export const SUPPORT_TABLES = [
+  "app_users",
+  "role_definitions",
+  "customer_identity_links",
+  "scheduling_assignment_decisions",
+  "scheduling_reservations",
+];
+
+/**
+ * The one `CREATE TABLE IF NOT EXISTS <table> (...)` statement in a source file, parentheses balanced
+ * rather than cut at the first `)` — which lands inside `DEFAULT (...)` and quoted defaults.
+ *
+ * The schema is obtained this way instead of copied here. A second definition is a second thing to
+ * maintain, and it drifts silently from the one the deployed candidate actually creates; extracted DDL
+ * is by construction the shape the deployed code expects.
+ */
+export function extractDdl(source, table) {
+  const needle = `CREATE TABLE IF NOT EXISTS ${table} (`;
+  const start = source.indexOf(needle);
+  if (start < 0) return null;
+  let depth = 0;
+  for (let i = start + needle.length - 1; i < source.length; i++) {
+    if (source[i] === "(") depth++;
+    else if (source[i] === ")") { depth--; if (depth === 0) return source.slice(start, i + 1); }
+  }
+  return null;
+}
+
+/** Search a checkout for a table's DDL. Returns null when the candidate does not define it. */
+export function ddlFromCheckout(root, table) {
+  const roots = ["app", "lib", "worker"].map((dir) => path.join(root, dir)).filter(existsSync);
+  const files = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir)) {
+      const full = path.join(dir, entry);
+      if (statSync(full).isDirectory()) walk(full);
+      else if (/\.(ts|tsx|mjs|js)$/.test(entry)) files.push(full);
+    }
+  };
+  for (const dir of roots) walk(dir);
+  for (const file of files) {
+    const found = extractDdl(readFileSync(file, "utf8"), table);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * The columns a DDL statement makes mandatory: `NOT NULL` without a `DEFAULT`. Used by the mock world so
+ * an incomplete INSERT fails there the way the real database fails it.
+ */
+export function requiredColumnsOf(ddl) {
+  const inner = ddl.slice(ddl.indexOf("(") + 1, ddl.lastIndexOf(")"));
+  const columns = [];
+  let depth = 0, current = "";
+  for (const char of inner) {
+    if (char === "(") depth++;
+    if (char === ")") depth--;
+    if (char === "," && depth === 0) { columns.push(current); current = ""; continue; }
+    current += char;
+  }
+  columns.push(current);
+  return columns
+    .map((c) => c.trim())
+    .filter((c) => /NOT NULL/i.test(c) && !/DEFAULT/i.test(c))
+    .map((c) => c.split(/\s+/)[0]);
+}
+
+/**
+ * The role INSERT, as one exported statement builder, so a test can drive the REAL statement against the
+ * REAL extracted DDL. `role_definitions` requires name, description, permissions_json and updated_at; a
+ * row carrying only `code` and `permissions_json` is rejected by the database, and sign-in then fails
+ * with a constraint error rather than an authorization result.
+ */
+export function roleDefinitionInsert(code, permissions, columns = null) {
+  const values = {
+    code,
+    name: code,
+    description: "preview gate",
+    permissions_json: JSON.stringify(permissions),
+    system_role: 0,
+    updated_at: 1,
+  };
+  const chosen = columns ?? Object.keys(values);
+  const literal = (key) => (typeof values[key] === "number" ? String(values[key]) : `'${String(values[key]).replace(/'/g, "''")}'`);
+  return `INSERT OR REPLACE INTO role_definitions (${chosen.join(",")}) VALUES (${chosen.map(literal).join(",")})`;
+}
 
 /**
  * A run tag namespaces every identifier this gate creates, so a second run — a re-dispatch, or a
@@ -71,7 +167,7 @@ export async function boundedAll(tasks, limit) {
  * @param {number} [io.swarmSize]
  * @param {number} [io.concurrency]
  */
-export async function runGate({ http, d1, env, log = console.log, swarmSize = 60, concurrency = 8 }) {
+export async function runGate({ http, d1, ddl, hostedSha, workerLog, env, log = console.log, swarmSize = 60, concurrency = 8 }) {
   const report = { sha: env.EXPECTED_SHA, checks: [], counts: {} };
   let failures = 0;
   const check = (name, ok, detail = "") => {
@@ -79,6 +175,18 @@ export async function runGate({ http, d1, env, log = console.log, swarmSize = 60
     if (!ok) failures++;
     log(`  ${ok ? "PASS" : "FAIL"}  ${name}${detail ? ` — ${detail}` : ""}`);
     return ok;
+  };
+  /**
+   * A REQUIRED check that could not be run. It fails, and is recorded as unavailable so the reason stays
+   * legible. There is deliberately no softer third outcome: a check nobody could run is indistinguishable
+   * from an unverified release, and a gate that reports success for an unverified release is worse than
+   * no gate. This is also why nothing here swallows an error into a passing zero.
+   */
+  const unavailable = (name, reason) => {
+    report.checks.push({ name, ok: false, detail: `NOT RUN: ${reason}`, unavailable: true });
+    failures++;
+    log(`  FAIL  ${name} — NOT RUN: ${reason}`);
+    return false;
   };
 
   // No constant fallback: an unnamespaced run is the defect, not a convenience.
@@ -129,8 +237,9 @@ export async function runGate({ http, d1, env, log = console.log, swarmSize = 60
     const cookie = String(res.headers?.["set-cookie"] ?? res.headers?.get?.("set-cookie") ?? "").split(";")[0];
     return { ok: res.status >= 200 && res.status < 400 && Boolean(cookie), cookie, status: res.status };
   };
-  const seedRole = async (code, permissions) =>
-    d1(`INSERT OR REPLACE INTO role_definitions (code,name,description,permissions_json,system_role,updated_at) VALUES ('${code}','${code}','preview gate','${JSON.stringify(permissions).replace(/'/g, "''")}',0,1)`);
+  // The statement lives in roleDefinitionInsert so a test can drive the real thing against the real
+  // extracted DDL, and so the incomplete two-column shape can be shown to be rejected.
+  const seedRole = async (code, permissions) => d1(roleDefinitionInsert(code, permissions));
   const seedUser = async (email, roleCode) =>
     d1(`INSERT OR REPLACE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('U-${roleCode}','${email}','${roleCode}','${roleCode}','active',1,1)`);
   const bindCustomer = async (email, customerId) =>
@@ -139,6 +248,43 @@ export async function runGate({ http, d1, env, log = console.log, swarmSize = 60
   const as = (cookie) => (method, path, body) => http(method, path, { headers: { cookie }, body });
 
   log(`Release preview gate — ${env.EXPECTED_SHA.slice(0, 8)}`);
+
+  // ── the deployed sha, verified from inside the runner ───────────────────────────────────────
+  //
+  // Read back from the deployed version rather than served from a public endpoint: a version marker
+  // anyone can fetch is a disclosure this gate does not need. Required — a gate that cannot say WHICH
+  // build it just exercised has verified nothing in particular, and the workflow step that checks this
+  // separately cannot vouch for what the gate itself was talking to.
+  try {
+    const marker = await hostedSha();
+    if (!marker) unavailable("the hosted version marker carries the deployed sha", "the deployed version could not be read");
+    else check("the hosted version marker carries the deployed sha", String(marker).includes(env.EXPECTED_SHA));
+  } catch (error) {
+    unavailable("the hosted version marker carries the deployed sha", String(error.message).slice(0, 160));
+  }
+
+  // ── the support schema a freshly created preview database does not have ──────────────────────
+  //
+  // Created from the CANDIDATE's own DDL, before anything is seeded. Without this the very first seed
+  // fails on "no such table" and every later result is either absent or meaningless.
+  let schemaReady = true;
+  for (const table of SUPPORT_TABLES) {
+    try {
+      const statement = await ddl(table);
+      if (!statement) { schemaReady = unavailable(`support table ${table} is created from the candidate's DDL`, "the candidate defines no CREATE TABLE for it"); continue; }
+      await d1(statement);
+    } catch (error) {
+      schemaReady = unavailable(`support table ${table} is created from the candidate's DDL`, String(error.message).slice(0, 160));
+    }
+  }
+  check("every support table the gate seeds exists", schemaReady, `${SUPPORT_TABLES.length} tables`);
+  if (!schemaReady) {
+    // Nothing below can produce a real answer, and reporting refusals it did not earn is exactly what
+    // this gate must never do.
+    report.failures = failures;
+    report.schema = "unavailable";
+    return report;
+  }
 
   // ── D — authorization, with real hosted sessions ────────────────────────────────────────────
   await seedRole("preview_viewer", ["bookings.view"]);
@@ -340,10 +486,38 @@ export async function runGate({ http, d1, env, log = console.log, swarmSize = 60
       `payments=${orphanPayments} orders=${orphanOrders} events=${orphanEvents}`);
   }
 
-  const live = await countOf("providers", "live=1 OR marketplace_live=1 OR order_eligible=1").catch(() => 0);
-  check("no provider became live in the preview", live === 0, `live=${live}`);
+  // Provider activation. This read used to swallow its own error and substitute zero, which turned a
+  // table the gate could not read into the answer "no provider became live" — the one claim in this
+  // whole gate that nobody should take on trust, reported from a read that never happened. (The guard in
+  // tests/release-preview-gate-behavior.test.mjs greps for that shape, so it is not spelled out here.)
+  try {
+    const live = await countOf("providers", "live=1 OR marketplace_live=1 OR order_eligible=1");
+    check("no provider became live in the preview", live === 0, `live=${live}`);
+  } catch (error) {
+    unavailable("no provider became live in the preview", String(error.message).slice(0, 160));
+  }
+
+  // ── the Worker's own log, which sees what the database cannot ───────────────────────────────
+  //
+  // An unhandled exception can be thrown and returned as a 500 without ever reaching D1, so no amount of
+  // row counting would show it. Required for the same reason as everything else here.
+  try {
+    const captured = await workerLog();
+    if (captured === null || captured === undefined) unavailable("the Worker log shows no unhandled exception or 5xx", "the Worker log could not be sampled");
+    else {
+      const exceptions = (String(captured).match(/"outcome"\s*:\s*"exception"/g) || []).length
+        + (String(captured).match(/"exceptions"\s*:\s*\[\s*\{/g) || []).length;
+      const serverErrors = (String(captured).match(/"status"\s*:\s*5\d\d/g) || []).length;
+      report.counts.workerLog = { exceptions, serverErrors, bytes: String(captured).length };
+      check("the Worker log shows no unhandled exception or 5xx", exceptions === 0 && serverErrors === 0,
+        `exceptions=${exceptions} 5xx=${serverErrors}`);
+    }
+  } catch (error) {
+    unavailable("the Worker log shows no unhandled exception or 5xx", String(error.message).slice(0, 160));
+  }
 
   report.failures = failures;
+  report.unavailable = report.checks.filter((c) => c.unavailable).map((c) => c.name);
   return report;
 }
 
@@ -364,6 +538,13 @@ if (isMain) {
   try { assertRunTag(RUN_TAG); }
   catch (error) { console.error(`release-preview gate: ${error.message}`); process.exit(1); }
   const BASE = process.env.PREVIEW_URL || `https://${WORKER}.workers.dev`;
+  // Where the support-table DDL is read from. The workflow runs this step with the candidate checkout as
+  // the working directory, so the default is right there, but it is passed explicitly all the same: the
+  // one thing that must never happen is reading the schema out of the infrastructure checkout instead.
+  const CANDIDATE_DIR = process.env.CANDIDATE_DIR || process.cwd();
+  const wrangler = (args) => execFileSync("npx", ["wrangler", ...args], {
+    encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 32 * 1024 * 1024,
+  });
 
   const http = async (method, path, { headers = {}, body } = {}) => {
     const res = await fetch(`${BASE}${path}`, {
@@ -385,8 +566,35 @@ if (isMain) {
     return parsed?.[0]?.results ?? parsed?.result?.[0]?.results ?? [];
   };
 
-  const report = await runGate({ http, d1, env: { EXPECTED_SHA, ACCESS_CODE, RUN_TAG } });
+  // The CANDIDATE's own definition of each support table, never a copy kept beside this gate.
+  const ddl = async (table) => ddlFromCheckout(CANDIDATE_DIR, table);
+
+  const hostedSha = async () => {
+    try { return wrangler(["versions", "list", "--name", WORKER, "--json"]); }
+    catch { return wrangler(["deployments", "list", "--name", WORKER]); }
+  };
+
+  /** A bounded sample of the Worker's log, taken while a request is driven through it. */
+  const workerLog = async () => {
+    const chunks = [];
+    let tail = null;
+    try {
+      tail = spawn("npx", ["wrangler", "tail", "--name", WORKER, "--format", "json"], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+      tail.stdout.on("data", (chunk) => chunks.push(String(chunk)));
+      await new Promise((resolve) => setTimeout(resolve, 8000));
+      await http("GET", "/api/canonical-bookings");
+      await new Promise((resolve) => setTimeout(resolve, 8000));
+    } finally { if (tail) tail.kill("SIGINT"); }
+    const captured = chunks.join("");
+    return captured.trim() ? captured : null;
+  };
+
+  const report = await runGate({ http, d1, ddl, hostedSha, workerLog, env: { EXPECTED_SHA, ACCESS_CODE, RUN_TAG } });
   writeFileSync("release-preview-report.json", JSON.stringify(report, null, 2));
-  console.log(`\nrelease preview gate: ${report.failures === 0 && report.authHarness !== "unavailable" ? "PASS" : "FAIL"}`);
-  process.exit(report.failures === 0 && report.authHarness !== "unavailable" ? 0 : 1);
+  // Both halt paths as well as the failure count: a run that stopped at the schema or the session
+  // harness has verified nothing, whatever its failure tally happens to be.
+  const passed = report.failures === 0 && report.authHarness !== "unavailable" && report.schema !== "unavailable";
+  console.log(`\nrelease preview gate: ${passed ? "PASS" : "FAIL"}`);
+  if (report.unavailable?.length) for (const name of report.unavailable) console.log(`  could not run (counted as a failure): ${name}`);
+  process.exit(passed ? 0 : 1);
 }
