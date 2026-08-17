@@ -57,11 +57,18 @@ function runConfig(env, vars = {}) {
   return { status, stdout, stderr, config };
 }
 
+// The three UAT credentials are part of a valid configuration now, not an optional extra: the deploy
+// installs them onto the preview Worker as secrets, so the script validates their strength before it
+// configures anything (see tests/release-preview-gate-contract.test.mjs). Obviously-synthetic values,
+// long enough to clear the floor and not shaped like the ones this repository once committed.
 const GOOD = {
   RELEASE_PREVIEW_WORKER_NAME: "pawspace-release-preview",
   RELEASE_PREVIEW_D1_ID: "preview-db-0000",
   PRODUCTION_D1_ID: "production-db-9999",
   RELEASE_SHA: VALID_SHA,
+  PAWSPACE_UAT_ACCESS_CODE: "not-a-real-access-code-for-tests-only",
+  PAWSPACE_UAT_SIGNING_KEY: "not-a-real-signing-key-for-tests-only",
+  PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: "not-a-real-identity-secret-for-tests",
 };
 
 // --- isolation, which is the whole point ------------------------------------------------------

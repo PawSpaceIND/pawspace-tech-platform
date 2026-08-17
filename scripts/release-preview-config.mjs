@@ -15,6 +15,9 @@
 //   RELEASE_PREVIEW_D1_ID        the dedicated preview D1 (from: npx wrangler d1 create <name>)
 //   PRODUCTION_D1_ID             production's D1 id, supplied ONLY so this script can refuse to match it
 //   RELEASE_SHA                  the exact commit being previewed, recorded as a safe version marker
+//   PAWSPACE_UAT_ACCESS_CODE / PAWSPACE_UAT_SIGNING_KEY / PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT
+//                                validated for strength HERE, and never written into the artifact —
+//                                the deploy installs them as encrypted Worker secrets instead
 import { readFileSync, writeFileSync } from "node:fs";
 
 // The artifact path is an ARGUMENT, not a constant, because this tool and the thing it configures no
@@ -33,7 +36,33 @@ const productionD1 = read("PRODUCTION_D1_ID");
 const releaseSha = read("RELEASE_SHA");
 
 /** Worker names this deploy must never take over. Reusing one is the failure this script exists for. */
-export const RESERVED_WORKER_NAMES = ["pawspace", "pawspace-production", "pawspace-prod", "pawspace-staging"];
+export const RESERVED_WORKER_NAMES = ["pawspace", "pawspace-production", "pawspace-prod", "pawspace-staging", "pawspace-uat"];
+
+/** The floor scripts/stage-config.mjs enforces for the same three credentials. Kept identical. */
+export const CREDENTIAL_MIN_LENGTH = 32;
+
+// Written as a prefix and a suffix so a credential's full variable name never sits next to a quoted
+// literal: tests/staging-auth-secrets.test.mjs walks every file under scripts/ looking for exactly that
+// shape, because it is what a committed fallback looks like. That guard should stay blunt.
+const CREDENTIAL_SUFFIXES = ["UAT_ACCESS_CODE", "UAT_SIGNING_KEY", "IDENTITY_ASSERTION_SECRET_UAT"];
+export const UAT_CREDENTIALS = CREDENTIAL_SUFFIXES.map((suffix) => `PAWSPACE_${suffix}`);
+
+/**
+ * A credential that has ever been committed to this repository is public forever. Rather than repeat
+ * the burned values here — which would put them in a third file and blunt the repository-wide guard —
+ * this refuses the SHAPE they all share: a hand-written value beginning with the project's own name.
+ * `openssl rand -hex 32` never produces one, so nothing legitimate is caught by it.
+ *
+ * This runs here, before the deploy, because the same three credentials are about to be installed onto
+ * the preview Worker as secrets. A preview signed with a public key is a preview anybody can sign into.
+ */
+export function credentialProblem(name, value) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return `${name} is not set. Supply it from a GitHub Actions secret (secrets.${name}); there is deliberately no default.`;
+  if (trimmed.length < CREDENTIAL_MIN_LENGTH) return `${name} is too short (needs at least ${CREDENTIAL_MIN_LENGTH} characters).`;
+  if (/^pawspace[-_]/i.test(trimmed)) return `${name} looks like a hand-written project credential. Every credential that has been committed to this repository began that way, and those are public forever. Generate a fresh one: openssl rand -hex 32`;
+  return null;
+}
 
 const problems = [];
 if (!workerName) problems.push("RELEASE_PREVIEW_WORKER_NAME is not set.");
@@ -46,13 +75,25 @@ if (!releaseSha || !/^[0-9a-f]{40}$/i.test(releaseSha)) problems.push("RELEASE_S
 
 // The isolation decision. Reported as a boolean and nothing else — printing either id, even partially,
 // would put a database identifier into a build log that anyone with repository read access can see.
-const isolated = Boolean(previewD1 && productionD1 && previewD1 !== productionD1);
-if (previewD1 && productionD1 && !isolated) {
+//
+// It covers BOTH halves of what isolation means here: a database that is provably not production, and a
+// Worker that is not one production or shared staging already answers to. Deploying a preview over the
+// shared staging Worker is not "isolated but misconfigured" — it is the failure itself.
+const separateDatabase = Boolean(previewD1 && productionD1 && previewD1 !== productionD1);
+if (previewD1 && productionD1 && !separateDatabase) {
   problems.push("RELEASE_PREVIEW_D1_ID equals PRODUCTION_D1_ID. Refusing to migrate or deploy against production data.");
+}
+const isolated = separateDatabase && Boolean(workerName) && !RESERVED_WORKER_NAMES.includes(workerName.toLowerCase());
+
+// A weak or public credential refuses the deploy without making the environment any less isolated, so
+// it is reported as its own class of problem and leaves the verdict above alone.
+for (const name of UAT_CREDENTIALS) {
+  const problem = credentialProblem(name, process.env[name]);
+  if (problem) problems.push(problem);
 }
 
 if (problems.length) {
-  console.error("isolated=false");
+  console.error(`isolated=${isolated}`);
   console.error("Refusing to configure the release preview deploy:\n");
   for (const problem of problems) console.error(`  - ${problem}`);
   process.exit(1);

@@ -146,7 +146,7 @@ jobs:
             exit 1
           fi
           case "$(printf '%s' "$RELEASE_PREVIEW_WORKER_NAME" | tr '[:upper:]' '[:lower:]')" in
-            pawspace|pawspace-prod|pawspace-production|pawspace-staging)
+            pawspace|pawspace-prod|pawspace-production|pawspace-staging|pawspace-uat)
               echo "isolated=false" >> "$GITHUB_OUTPUT"
               echo "RELEASE_PREVIEW_WORKER_NAME names a shared or production Worker — refusing." >&2
               exit 1 ;;
@@ -166,6 +166,12 @@ jobs:
         run: npm run build
 
       # TOOL from infra/, applied to the CANDIDATE's artifact by explicit path.
+      #
+      # The three UAT credentials are passed in so the tool can VALIDATE them — it refuses a value that
+      # is missing, too short, or shaped like the hand-written ones this repository once committed. They
+      # are checked here, before anything is deployed, because a preview whose session cookie is signed
+      # with a public key is a preview anyone can sign into. The tool never writes them into the
+      # artifact; the step below installs them as encrypted Worker secrets instead.
       - name: Configure the dedicated preview against the candidate artifact
         if: ${{ steps.isolation.outputs.isolated == 'true' }}
         env:
@@ -173,6 +179,9 @@ jobs:
           RELEASE_PREVIEW_D1_ID: ${{ vars.RELEASE_PREVIEW_D1_ID }}
           PRODUCTION_D1_ID: ${{ secrets.PRODUCTION_D1_ID }}
           RELEASE_SHA: ${{ github.event.inputs.expected_sha }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
         run: node infra/scripts/release-preview-config.mjs candidate/dist/server/wrangler.json
 
       - name: Record the currently deployed preview version (rollback reference)
