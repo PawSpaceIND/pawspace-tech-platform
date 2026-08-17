@@ -398,6 +398,17 @@ test("the workflow gives the gate a per-attempt run tag, not a constant", () => 
   assert.ok(!/['"]gate['"]/.test(tag), "no constant fallback may appear in the hosted tag");
 });
 
+test("the workflow points the fresh-D1 bootstrap at the CANDIDATE checkout", () => {
+  // The preview database is empty and this candidate has no migrations, so the gate creates the tables
+  // itself — from the candidate's own CREATE TABLE text. Aimed at infra/ it would find no product
+  // source at all; aimed at nothing it would refuse to start.
+  const gate = job.steps.find((step) => /Post-deploy gate/.test(step.name || ""));
+  const dir = String(gate.env?.CANDIDATE_DIR ?? "");
+  assert.ok(dir, "the gate must be told where the candidate checkout is");
+  assert.match(dir, /\/candidate$/, "it must be the candidate checkout");
+  assert.ok(!/\/infra/.test(dir), "the schema must never be read out of the infrastructure checkout");
+});
+
 test("the migration is addressed by database id, not by a name that could resolve elsewhere", () => {
   const migrate = job.steps.find((step) => /Migrate/.test(step.name || ""));
   assert.match(String(migrate.run), /migrations apply "\$PREVIEW_D1"/, "the migration target must be the preview id");

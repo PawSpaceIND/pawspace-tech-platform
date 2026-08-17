@@ -217,7 +217,11 @@ jobs:
           if [ -d migrations ]; then
             npx wrangler d1 migrations apply "$PREVIEW_D1" --remote
           else
-            echo "No migrations directory in the candidate; the route creates its own tables on first request."
+            # No migrations directory in this candidate. The route creates the tables the ROUTE touches,
+            # but only once a request reaches it — and the gate cannot make one until the roles, users,
+            # identity binding and scheduling rows it signs in through already exist. The gate therefore
+            # bootstraps the schema itself, from the candidate's own DDL, before its first statement.
+            echo "No migrations directory in the candidate; the gate bootstraps the schema from the candidate's own CREATE TABLE statements."
           fi
 
       - name: Deploy the dedicated preview Worker from the candidate build
@@ -285,6 +289,11 @@ jobs:
           # attempt's instead of creating their own — the gate would quietly stop testing creation.
           # Non-secret, and safe to appear in the report.
           PREVIEW_RUN_TAG: ${{ github.run_id }}-${{ github.run_attempt }}
+          # The CANDIDATE checkout, so the fresh-D1 bootstrap reads the product's own CREATE TABLE
+          # statements out of the commit being previewed. Infrastructure holds no schema of its own —
+          # a copied one would drift, and the preview would then be exercising a schema no deployed
+          # Worker creates. Pointed at candidate/ explicitly, never at infra/.
+          CANDIDATE_DIR: ${{ github.workspace }}/candidate
         run: node --experimental-strip-types "$GITHUB_WORKSPACE/infra/tests/e2e/release-preview-gate.mjs"
 
       - name: Upload sanitized evidence

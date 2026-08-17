@@ -18,6 +18,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { PRIMARY_SOURCE, REQUIRED_TABLES, bootstrapSchema, candidateSource, collectSchema } from "./release-preview-schema.mjs";
 
 /** The five tables a booking writes. A refusal must change none of them. */
 export const TOUCHED_TABLES = [
@@ -66,12 +67,16 @@ export async function boundedAll(tasks, limit) {
  * @param {object} io
  * @param {(method:string, path:string, opts?:{headers?:object, body?:any}) => Promise<{status:number, body:any, headers?:object}>} io.http
  * @param {(sql:string) => Promise<Array<object>>} io.d1
- * @param {object} io.env   { EXPECTED_SHA, ACCESS_CODE }
+ * @param {object} io.env   { EXPECTED_SHA, ACCESS_CODE, RUN_TAG }
+ * @param {Array<{table:string, sql:string}>} io.schema  candidate DDL, executed before anything else
  * @param {(line:string)=>void} [io.log]
  * @param {number} [io.swarmSize]
  * @param {number} [io.concurrency]
  */
-export async function runGate({ http, d1, env, log = console.log, swarmSize = 60, concurrency = 8 }) {
+export async function runGate({ http, d1, env, schema, log = console.log, swarmSize = 60, concurrency = 8 }) {
+  // Required, not defaulted. A caller that forgot the schema is running against whatever happens to be
+  // in the database already, which on a fresh preview is nothing at all.
+  if (!Array.isArray(schema)) throw new Error("runGate requires `schema`: the CREATE TABLE statements read from the candidate checkout.");
   const report = { sha: env.EXPECTED_SHA, checks: [], counts: {} };
   let failures = 0;
   const check = (name, ok, detail = "") => {
@@ -139,6 +144,17 @@ export async function runGate({ http, d1, env, log = console.log, swarmSize = 60
   const as = (cookie) => (method, path, body) => http(method, path, { headers: { cookie }, body });
 
   log(`Release preview gate — ${env.EXPECTED_SHA.slice(0, 8)}`);
+
+  // ── FRESH-D1 SCHEMA BOOTSTRAP — before any INSERT or SELECT ─────────────────────────────────
+  //
+  // The preview database is empty and the candidate ships no migrations, so everything below —
+  // seedRole, seedUser, bindCustomer, seedScheduling, and the first snapshot — would be "no such
+  // table". The statements come from the CANDIDATE's own product source (see release-preview-schema
+  // .mjs); nothing here defines a schema, and a schema that could not be resolved has already thrown.
+  const bootstrapped = await bootstrapSchema({ d1, statements: schema, log });
+  report.schema = { tables: bootstrapped };
+  check("the fresh preview database was bootstrapped from the candidate's own DDL",
+    bootstrapped.length === REQUIRED_TABLES.length, `${bootstrapped.length}/${REQUIRED_TABLES.length} tables`);
 
   // ── D — authorization, with real hosted sessions ────────────────────────────────────────────
   await seedRole("preview_viewer", ["bookings.view"]);
@@ -355,8 +371,9 @@ if (isMain) {
   const ACCESS_CODE = process.env.PAWSPACE_UAT_ACCESS_CODE || "";
   const PREVIEW_D1 = process.env.PREVIEW_D1 || "";
   const RUN_TAG = process.env.PREVIEW_RUN_TAG || "";
-  if (!WORKER || !EXPECTED_SHA || !ACCESS_CODE || !PREVIEW_D1 || !RUN_TAG) {
-    console.error("release-preview gate: required environment is not configured (PREVIEW_WORKER, EXPECTED_SHA, PAWSPACE_UAT_ACCESS_CODE, PREVIEW_D1, PREVIEW_RUN_TAG).");
+  const CANDIDATE_DIR = process.env.CANDIDATE_DIR || "";
+  if (!WORKER || !EXPECTED_SHA || !ACCESS_CODE || !PREVIEW_D1 || !RUN_TAG || !CANDIDATE_DIR) {
+    console.error("release-preview gate: required environment is not configured (PREVIEW_WORKER, EXPECTED_SHA, PAWSPACE_UAT_ACCESS_CODE, PREVIEW_D1, PREVIEW_RUN_TAG, CANDIDATE_DIR).");
     process.exit(1);
   }
   // Validated before it reaches any generated SQL, and never defaulted: a constant tag would make
@@ -385,7 +402,23 @@ if (isMain) {
     return parsed?.[0]?.results ?? parsed?.result?.[0]?.results ?? [];
   };
 
-  const report = await runGate({ http, d1, env: { EXPECTED_SHA, ACCESS_CODE, RUN_TAG } });
+  // The candidate's own CREATE TABLE text, resolved BEFORE the gate starts so an unresolvable schema
+  // stops the run here rather than half way through seeding a real database. Only table names are
+  // printed; the database is addressed by id inside the adapter and the id is never echoed.
+  let schema;
+  try {
+    const { statements, scanned } = collectSchema(await candidateSource(CANDIDATE_DIR));
+    schema = statements;
+    console.log(`schema: ${statements.length} table(s) resolved from ${scanned} candidate product source file(s)`);
+    for (const s of statements.filter((s) => s.tieBreak)) {
+      console.log(`  note: ${s.table} is defined more than one way in the candidate; using the definition ${PRIMARY_SOURCE} executes.`);
+    }
+  } catch (error) {
+    console.error(`release-preview gate: ${error.message}`);
+    process.exit(1);
+  }
+
+  const report = await runGate({ http, d1, env: { EXPECTED_SHA, ACCESS_CODE, RUN_TAG }, schema });
   writeFileSync("release-preview-report.json", JSON.stringify(report, null, 2));
   console.log(`\nrelease preview gate: ${report.failures === 0 && report.authHarness !== "unavailable" ? "PASS" : "FAIL"}`);
   process.exit(report.failures === 0 && report.authHarness !== "unavailable" ? 0 : 1);
