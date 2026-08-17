@@ -57,12 +57,19 @@ function runConfig(env, vars = {}) {
   return { status, stdout, stderr, config };
 }
 
+// The three UAT credentials are part of a valid configuration, not an optional extra: the deploy installs
+// them onto the preview Worker as secrets, so the script validates their strength before it configures
+// anything. Obviously-synthetic values, long enough to clear the floor and not shaped like the ones this
+// repository once committed. (See the credential group at the bottom of this file.)
 const GOOD = {
   RELEASE_PREVIEW_WORKER_NAME: "pawspace-release-preview",
   RELEASE_PREVIEW_D1_ID: "preview-db-0000",
   PRODUCTION_D1_ID: "production-db-9999",
   SHARED_STAGING_D1_ID: "staging-db-5555",
   RELEASE_SHA: VALID_SHA,
+  PAWSPACE_UAT_ACCESS_CODE: "not-a-real-access-code-for-tests-only",
+  PAWSPACE_UAT_SIGNING_KEY: "not-a-real-signing-key-for-tests-only",
+  PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: "not-a-real-identity-secret-for-tests",
 };
 
 // --- isolation, which is the whole point ------------------------------------------------------
@@ -434,4 +441,81 @@ test("the gate script reports statuses and counts, never a credential or an id",
   }
   assert.ok(!/console\.log\([^)]*ACCESS_CODE/.test(source), "the access code must never be logged");
   assert.ok(!/console\.log\([^)]*cookie/.test(source), "the session cookie must never be logged");
+});
+
+// ---------------------------------------------------------------------------
+// CONSOLIDATION — controls ported from the competing implementation (#204), at the workflow and
+// configuration-tool level. The gate-side ports are proved behaviourally in
+// tests/release-preview-gate-behavior.test.mjs.
+// ---------------------------------------------------------------------------
+const UAT_CREDENTIALS = ["PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"];
+
+test("E — the workflow supplies the credentials it expects the tool to validate", () => {
+  const configure = job.steps.find((step) => String(step.run || "").startsWith("node infra/scripts/release-preview-config"));
+  assert.ok(configure, "the configure step must exist");
+  for (const name of UAT_CREDENTIALS) {
+    assert.equal(configure.env[name], `\${{ secrets.${name} }}`, `${name} must reach the tool from a secret, or the validation has nothing to check`);
+  }
+  // And the two comparators this PR exists for are still mandatory alongside them.
+  assert.equal(configure.env.PRODUCTION_D1_ID, "${{ secrets.PRODUCTION_D1_ID }}");
+  assert.equal(configure.env.SHARED_STAGING_D1_ID, "${{ secrets.SHARED_STAGING_D1_ID }}");
+});
+
+test("E — real execution: a missing, weak or project-shaped credential refuses the deploy", () => {
+  for (const name of UAT_CREDENTIALS) {
+    const absent = { ...GOOD };
+    delete absent[name];
+    const missing = runConfig(absent);
+    assert.notEqual(missing.status, 0, `${name} must have no default`);
+    assert.match(missing.stderr, new RegExp(name), "the refusal must name the variable");
+    assert.equal(missing.config.name, "unset", "and nothing may be configured");
+
+    assert.notEqual(runConfig({ ...GOOD, [name]: "a".repeat(31) }).status, 0, `31 characters must be refused for ${name}`);
+
+    const handWritten = runConfig({ ...GOOD, [name]: "pawspace-preview-code-long-enough-here" });
+    assert.notEqual(handWritten.status, 0, `${name} must refuse a hand-written project credential`);
+    assert.match(handWritten.stderr, /public forever|openssl rand/, "and explain why");
+  }
+});
+
+test("E — a credential problem does not pretend the environment is unisolated", () => {
+  // The two failures need different fixes, so the log has to tell them apart: isolated=false must keep
+  // meaning "pointed at the wrong Worker or database".
+  const weak = runConfig({ ...GOOD, PAWSPACE_UAT_ACCESS_CODE: "short" });
+  assert.notEqual(weak.status, 0);
+  assert.match(weak.stderr, /^isolated=true$/m, "the environment was still the right one");
+
+  const staging = runConfig({ ...GOOD, RELEASE_PREVIEW_D1_ID: GOOD.SHARED_STAGING_D1_ID });
+  assert.match(staging.stderr, /^isolated=false$/m, "whereas the shared staging database is not an isolated preview");
+});
+
+test("E — pawspace-uat is reserved in the tool AND in the runner", () => {
+  const result = runConfig({ ...GOOD, RELEASE_PREVIEW_WORKER_NAME: "pawspace-uat" });
+  assert.notEqual(result.status, 0, "the UAT Worker must not be taken over by a preview deploy");
+  assert.match(result.stderr, /^isolated=false$/m);
+  assert.match(workflowText, /pawspace-uat\)/, "and the runner's own refusal list must match the tool's");
+});
+
+test("D — the workflow passes a run namespace unique per run AND per re-run attempt", () => {
+  // Matched on the node invocation, not on the filename: an earlier step `test -f`s the same path to
+  // prove the tooling is present, and a substring search finds that one first.
+  const gate = job.steps.find((step) => /\bnode\b[^\n]*release-preview-gate\.mjs/.test(String(step.run || "")));
+  assert.ok(gate, "the gate step must exist");
+  assert.equal(gate.env.RUN_TAG, "${{ github.run_id }}-${{ github.run_attempt }}",
+    "run_id alone survives a re-run; run_attempt is what separates two runs of the same candidate sha");
+  assert.equal(gate.env.CANDIDATE_DIR, "${{ github.workspace }}/candidate",
+    "the gate reads its support-table DDL from the candidate, never from a copy");
+  // No constant fallback anywhere: the gate refuses rather than defaults.
+  const gateSource = fs.readFileSync(GATE_SCRIPT, "utf8");
+  assert.doesNotMatch(gateSource, /RUN_TAG \|\| ["'`]/, "a defaulted run tag makes two runs collide");
+  assert.match(gateSource, /RUN_TAG is required/, "it must refuse instead");
+});
+
+test("F — the gate has no outcome that records 'not run' and still exits zero", () => {
+  const gateSource = fs.readFileSync(GATE_SCRIPT, "utf8");
+  assert.doesNotMatch(gateSource, /ok:\s*null/, "an unavailable check must not be a third, softer outcome");
+  assert.doesNotMatch(gateSource, /\.catch\(\(\) => 0\)/, "a check that swallows its own failure is not a check");
+  assert.match(gateSource, /process\.exit\(passed \? 0 : 1\)/, "the exit code follows the verdict");
+  assert.match(gateSource, /report\.failures === 0 && report\.authHarness !== "unavailable" && report\.schema !== "unavailable"/,
+    "and the verdict covers both halt paths as well as the failure count");
 });

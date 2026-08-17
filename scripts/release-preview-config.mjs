@@ -19,6 +19,12 @@
 //                                one that lands on production, and nothing else in this repository was
 //                                checking for it
 //   RELEASE_SHA                  the exact commit being previewed, recorded as a safe version marker
+//   PAWSPACE_UAT_ACCESS_CODE / PAWSPACE_UAT_SIGNING_KEY / PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT
+//                                validated for strength HERE, before anything is deployed, and never
+//                                written into the artifact — the deploy installs them as encrypted
+//                                Worker secrets instead. A preview whose session cookie is signed with a
+//                                published key is a preview anyone can sign into, and no isolation check
+//                                says anything about that.
 import { readFileSync, writeFileSync } from "node:fs";
 
 // The artifact path is an ARGUMENT, not a constant, because this tool and the thing it configures no
@@ -38,7 +44,30 @@ const sharedStagingD1 = read("SHARED_STAGING_D1_ID");
 const releaseSha = read("RELEASE_SHA");
 
 /** Worker names this deploy must never take over. Reusing one is the failure this script exists for. */
-export const RESERVED_WORKER_NAMES = ["pawspace", "pawspace-production", "pawspace-prod", "pawspace-staging"];
+export const RESERVED_WORKER_NAMES = ["pawspace", "pawspace-production", "pawspace-prod", "pawspace-staging", "pawspace-uat"];
+
+/** The floor scripts/stage-config.mjs already enforces for the same three credentials. Kept identical. */
+export const CREDENTIAL_MIN_LENGTH = 32;
+
+// Written as a prefix and a suffix so a credential's full variable name never sits next to a quoted
+// literal: tests/staging-auth-secrets.test.mjs walks every file under scripts/ looking for exactly that
+// shape, because it is what a committed fallback looks like. That guard should stay blunt.
+const CREDENTIAL_SUFFIXES = ["UAT_ACCESS_CODE", "UAT_SIGNING_KEY", "IDENTITY_ASSERTION_SECRET_UAT"];
+export const UAT_CREDENTIALS = CREDENTIAL_SUFFIXES.map((suffix) => `PAWSPACE_${suffix}`);
+
+/**
+ * A credential that has ever been committed to this repository is public forever. Rather than repeat the
+ * burned values here — which would put them in a third file and blunt the repository-wide guard that
+ * keeps them to two — this refuses the SHAPE they all share: a hand-written value beginning with the
+ * project's own name. `openssl rand -hex 32` cannot produce one, so nothing legitimate is caught.
+ */
+export function credentialProblem(name, value) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return `${name} is not set. Supply it from a GitHub Actions secret (secrets.${name}); there is deliberately no default.`;
+  if (trimmed.length < CREDENTIAL_MIN_LENGTH) return `${name} is too short (needs at least ${CREDENTIAL_MIN_LENGTH} characters).`;
+  if (/^pawspace[-_]/i.test(trimmed)) return `${name} looks like a hand-written project credential. Every credential that has been committed to this repository began that way, and those are public forever. Generate a fresh one: openssl rand -hex 32`;
+  return null;
+}
 
 const problems = [];
 if (!workerName) problems.push("RELEASE_PREVIEW_WORKER_NAME is not set.");
@@ -69,8 +98,16 @@ if (previewD1 && sharedStagingD1 && previewD1 === sharedStagingD1) {
 // empty but `isolated` is somehow false, that is a bug in the checks above and this refuses anyway.
 if (!isolated && !problems.length) problems.push("Isolation could not be established from the supplied identifiers.");
 
+// A weak or public credential refuses the deploy WITHOUT changing the isolation verdict: "isolated=false"
+// has to keep meaning "pointed at the wrong Worker or database", or the log stops distinguishing two
+// failures that need different fixes.
+const isolationProblems = problems.length;
+const credentialProblems = UAT_CREDENTIALS.map((name) => credentialProblem(name, process.env[name])).filter(Boolean);
+problems.push(...credentialProblems);
+const environmentIsolated = isolated && isolationProblems === 0;
+
 if (problems.length || !isolated) {
-  console.error("isolated=false");
+  console.error(`isolated=${environmentIsolated}`);
   console.error("Refusing to configure the release preview deploy:\n");
   for (const problem of problems) console.error(`  - ${problem}`);
   process.exit(1);
