@@ -81,6 +81,24 @@ export function requirePermission(actor:AuthenticatedActor,permission:Permission
 
 export async function authorize(request:Request,permission:Permission){return requirePermission(await resolveActor(request),permission);}
 
+/**
+ * Turn an authorization failure into the REFUSAL it is, rather than letting it surface as a 500.
+ *
+ * authorize() signals denial by throwing — a Response for the shaped failures, an Error otherwise. A
+ * handler that only wraps its body in try/catch reports both as "Unable to ...", status 500, so a
+ * caller who is simply not permitted is told the server broke. Callers cannot distinguish "you may
+ * not" from "we failed", and a monitored 5xx rate hides real faults behind ordinary denials.
+ *
+ * Returning null for "permitted" lets a route gate itself with one line and no control flow.
+ */
+export async function refuseUnlessPermitted(request:Request,permission:Permission):Promise<Response|null>{
+  try{ await authorize(request,permission); return null; }
+  catch(error){
+    if(error instanceof Response)return error;
+    return Response.json({error:error instanceof Error?error.message:"Permission denied"},{status:403});
+  }
+}
+
 export async function requireCustomerOwnership(db:Db,actor:AuthenticatedActor,customerId:string){
   if(actor.developmentPreview||hasPermission(actor.permissions,"customers.manage")||hasPermission(actor.permissions,"bookings.manage"))return actor;
   const binding=await findIdentityBinding(db,{identitySource:actor.identitySource,principalType:actor.principalType,principalKey:actor.principalKey,subjectType:"customer"});

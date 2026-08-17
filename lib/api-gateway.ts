@@ -158,3 +158,20 @@ export async function authorizeApiRequest(request:Request,env:GatewayEnv):Promis
   const actor={email,roleCode:String(user.role_code),permissions,preview:false};if(!hasPermission(permissions,permission)){await audit(env,actor,request,"denied",{permission});return Response.json({error:"Permission denied"},{status:403});}return {actor,permission};}
 
 export async function auditApiResponse(env:GatewayEnv,actor:GatewayActor,permission:Permission|null,request:Request,response:Response){if(!permission||actor.roleCode==="public")return;await audit(env,actor,request,response.ok?"allowed":"failed",{permission,status:response.status});}
+
+/**
+ * The gateway's own answer for a route that must refuse on its own account.
+ *
+ * requiredPermission() is the single mapping of path+method to the permission it demands. A route that
+ * re-derives that mapping can drift from it; a route that relies on an outer middleware is unprotected
+ * the moment it is reached by any path that does not run it. Asking the gateway directly keeps one
+ * source of truth and makes the refusal the handler's first statement.
+ *
+ * null means the gateway does not gate this path at all (a public route), so the caller proceeds.
+ */
+export async function refuseUnlessGatewayPermits(request:Request):Promise<Response|null>{
+  const permission=await requiredPermission(request);
+  if(permission===null)return null;
+  const {refuseUnlessPermitted}=await import("./server-auth");
+  return refuseUnlessPermitted(request,permission);
+}
