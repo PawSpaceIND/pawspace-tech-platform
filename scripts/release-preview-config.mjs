@@ -17,10 +17,14 @@
 //   RELEASE_SHA                  the exact commit being previewed, recorded as a safe version marker
 import { readFileSync, writeFileSync } from "node:fs";
 
-const path = "dist/server/wrangler.json";
+// The artifact path is an ARGUMENT, not a constant, because this tool and the thing it configures no
+// longer live in the same checkout. The workflow runs the tool from the infrastructure checkout and
+// points it at the CANDIDATE's build output; a hardcoded relative path would silently resolve inside
+// whichever directory the step happened to start in.
+const path = process.argv[2] || "dist/server/wrangler.json";
 let cfg;
 try { cfg = JSON.parse(readFileSync(path, "utf8")); }
-catch { console.error(`Cannot read ${path} — run "npm run build" first.`); process.exit(1); }
+catch { console.error(`Cannot read ${path} — pass the candidate's built wrangler.json, and run "npm run build" there first.`); process.exit(1); }
 
 const read = (name) => String(process.env[name] || "").trim();
 const workerName = read("RELEASE_PREVIEW_WORKER_NAME");

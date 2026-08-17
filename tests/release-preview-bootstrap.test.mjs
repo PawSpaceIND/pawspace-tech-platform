@@ -34,7 +34,6 @@ const workflow = yaml.load(workflowText);
 // `on:` is the YAML boolean true once parsed, which is a trap worth naming rather than rediscovering.
 const triggers = workflow.on ?? workflow[true];
 const job = workflow.jobs.preview;
-const stepsText = JSON.stringify(job.steps);
 
 /** Run the config script in a throwaway directory holding a minimal build artifact. */
 function runConfig(env, vars = {}) {
@@ -42,8 +41,11 @@ function runConfig(env, vars = {}) {
   fs.mkdirSync(path.join(dir, "dist/server"), { recursive: true });
   fs.writeFileSync(path.join(dir, "dist/server/wrangler.json"), JSON.stringify({ name: "unset", vars }));
   let status = 0, stdout = "", stderr = "";
+  // The path is passed EXPLICITLY, exactly as the workflow passes the candidate's artifact — the tool
+  // and the artifact no longer share a checkout, so an implicit relative path would be a lie.
+  const artifact = path.join(dir, "dist/server/wrangler.json");
   try {
-    stdout = execFileSync("node", [CONFIG_SCRIPT], { cwd: dir, encoding: "utf8", env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"] });
+    stdout = execFileSync("node", [CONFIG_SCRIPT, artifact], { cwd: os.tmpdir(), encoding: "utf8", env: { ...process.env, ...env }, stdio: ["ignore", "pipe", "pipe"] });
   } catch (error) {
     status = error.status ?? 1;
     stdout = String(error.stdout ?? "");
@@ -162,18 +164,121 @@ test("a credential inherited from the build artifact is stripped, never serializ
   assert.ok(!serialized.includes("inherited-from-somewhere"), "no credential may survive into the deploy artifact");
 });
 
+// --- two checkouts, and the separation between tool and candidate ------------------------------
+
+/** Every `node <script>` the workflow runs, with the script path it names. */
+const nodeInvocations = job.steps
+  .flatMap((step) => String(step.run || "").split("\n"))
+  .map((line) => line.match(/\bnode\b[^|&;]*?\s(\S*(?:scripts|tests)\/\S+\.mjs)/))
+  .filter(Boolean)
+  .map((match) => match[1]);
+
+const checkouts = job.steps.filter((step) => String(step.uses || "").startsWith("actions/checkout"));
+const infraCheckout = checkouts.find((step) => step.with.path === "infra");
+const candidateCheckout = checkouts.find((step) => step.with.path === "candidate");
+
+test("there are two checkouts, at two different paths", () => {
+  assert.equal(checkouts.length, 2, "one checkout cannot hold both the tools and the candidate");
+  assert.ok(infraCheckout, "there must be an infra/ checkout");
+  assert.ok(candidateCheckout, "there must be a candidate/ checkout");
+  assert.notEqual(infraCheckout.with.path, candidateCheckout.with.path, "the two must not share a directory");
+});
+
+test("the candidate checkout is the supplied sha; the infra checkout is this workflow's own commit", () => {
+  assert.equal(candidateCheckout.with.ref, "${{ github.event.inputs.expected_sha }}",
+    "the candidate must be checked out by the sha the caller approved, never by a branch");
+  assert.equal(infraCheckout.with.ref, "${{ github.sha }}",
+    "the tools must come from the commit carrying this workflow — the default-branch commit once bootstrapped");
+});
+
+test("the candidate is verified to BE the requested sha, and refused if dirty", () => {
+  const verify = job.steps.find((step) => /Record the three shas/.test(step.name || ""));
+  assert.ok(verify, "there must be a step that records and checks the shas");
+  assert.match(String(verify.run), /git -C candidate rev-parse HEAD/, "the candidate's own HEAD must be read");
+  assert.match(String(verify.run), /!= "\$EXPECTED_SHA"/, "and compared to the requested sha");
+  assert.match(String(verify.run), /git -C candidate status --porcelain/, "the candidate tree must be checked");
+  assert.match(String(verify.run), /refusing to deploy/i);
+  // Both refusals must actually stop the job.
+  assert.equal((String(verify.run).match(/exit 1/g) || []).length >= 2, true, "each refusal must exit non-zero");
+});
+
+test("all three shas are recorded independently", () => {
+  const step = job.steps.find((s) => s.id === "shas");
+  assert.ok(step, "the sha-recording step must be addressable");
+  for (const key of ["workflow_bootstrap_sha", "candidate_sha", "requested_sha"]) {
+    assert.match(String(step.run), new RegExp(`${key}=`), `${key} must be recorded`);
+  }
+  const deployed = job.steps.find((s) => /Verify the DEPLOYED sha/.test(s.name || ""));
+  assert.ok(deployed, "the deployed sha must be verified in its own step");
+  assert.match(String(deployed.run), /deployed_sha=\$EXPECTED_SHA/, "and must equal the requested candidate sha");
+});
+
+test("infrastructure tools are executed ONLY from infra/", () => {
+  assert.ok(nodeInvocations.length >= 2, `expected the config tool and the gate, saw ${nodeInvocations.length}`);
+  for (const script of nodeInvocations) {
+    assert.match(script, /(^|\/)infra\//, `${script} must be run out of the infrastructure checkout`);
+    assert.ok(!script.startsWith("candidate/"), `${script} must never be run out of the candidate`);
+  }
+  // Named explicitly, because these are the two the first version of this workflow got wrong.
+  assert.ok(!/candidate\/scripts\/release-preview-config\.mjs/.test(workflowText), "the config tool must never be taken from the candidate");
+  assert.ok(!/candidate\/tests\/e2e\/release-preview-gate\.mjs/.test(workflowText), "the gate must never be taken from the candidate");
+});
+
+test("the config tool is pointed at the CANDIDATE artifact by an explicit path", () => {
+  const configure = job.steps.find((step) => /Configure the dedicated preview/.test(step.name || ""));
+  assert.ok(configure, "there must be a configure step");
+  assert.match(String(configure.run), /infra\/scripts\/release-preview-config\.mjs\s+candidate\/dist\/server\/wrangler\.json/,
+    "the tool comes from infra/, the artifact it edits comes from candidate/");
+});
+
+test("build, migration and deploy run against candidate/, never infra/", () => {
+  for (const name of [/Build the candidate/, /Migrate ONLY/, /Deploy the dedicated preview Worker/, /Install the candidate's dependencies/]) {
+    const step = job.steps.find((s) => name.test(s.name || ""));
+    assert.ok(step, `missing step ${name}`);
+    assert.equal(step["working-directory"], "candidate", `${step.name} must run in candidate/`);
+  }
+  // Nothing may build or deploy out of the tools checkout.
+  for (const step of job.steps) {
+    if (step["working-directory"] === "infra") assert.fail(`${step.name} must not run in infra/`);
+  }
+  assert.ok(!/working-directory:\s*infra\b/.test(workflowText), "no step may use infra/ as its working directory");
+});
+
+test("no product source is copied out of the infrastructure checkout", () => {
+  // A copy from infra/ into candidate/ would reintroduce exactly the coupling the split removes.
+  assert.ok(!/\b(cp|rsync|mv)\b[^\n]*infra\/[^\n]*candidate\//.test(workflowText),
+    "product source must never be copied from infra/ into candidate/");
+});
+
+test("a candidate that carries NO preview tooling still satisfies the workflow's structure", () => {
+  // The real PR-202-shaped case: a product candidate with route and tests and nothing else. The
+  // workflow must not require a single file from it beyond the product itself.
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "candidate-fixture-"));
+  fs.mkdirSync(path.join(fixture, "app/api/canonical-bookings"), { recursive: true });
+  fs.mkdirSync(path.join(fixture, "tests"), { recursive: true });
+  fs.writeFileSync(path.join(fixture, "app/api/canonical-bookings/route.ts"), "export async function POST(){}\n");
+  fs.writeFileSync(path.join(fixture, "tests/canonical-pet-identity.test.mjs"), "// product test\n");
+  fs.writeFileSync(path.join(fixture, "package.json"), JSON.stringify({ scripts: { build: "vinext build" } }));
+
+  // Deliberately absent, and that must be fine.
+  for (const absent of ["scripts/release-preview-config.mjs", "tests/e2e/release-preview-gate.mjs", ".github/workflows/deploy-release-preview.yml"]) {
+    assert.ok(!fs.existsSync(path.join(fixture, absent)), `the fixture must not carry ${absent}`);
+  }
+  // Every tool the workflow executes resolves under infra/, so none of them is looked for here.
+  for (const script of nodeInvocations) {
+    const candidateRelative = script.replace(/^.*?infra\//, "");
+    assert.ok(!fs.existsSync(path.join(fixture, candidateRelative)),
+      `${candidateRelative} is absent from the candidate — the workflow must not expect it there`);
+  }
+  fs.rmSync(fixture, { recursive: true, force: true });
+});
+
 // --- the workflow's own guarantees ------------------------------------------------------------
 
-test("the workflow is manual, confirmed, and deploys a sha rather than a branch", () => {
+test("the workflow is manual and confirmed", () => {
   assert.deepEqual(Object.keys(triggers), ["workflow_dispatch"], "manual dispatch only — never on push");
   assert.deepEqual(Object.keys(triggers.workflow_dispatch.inputs).sort(), ["confirm", "expected_sha"]);
   assert.match(String(job.if), /release-preview/, "the confirm phrase must gate the job");
-
-  const checkout = job.steps.find((step) => String(step.uses || "").startsWith("actions/checkout"));
-  assert.ok(checkout, "there must be a checkout step");
-  assert.equal(checkout.with.ref, "${{ github.event.inputs.expected_sha }}", "it must check out the sha, not a branch");
-  assert.match(stepsText, /rev-parse HEAD/, "and verify what it actually checked out");
-  assert.match(stepsText, /git status --porcelain/, "and refuse a dirty tree");
 });
 
 test("the workflow runs in its own environment, one at a time", () => {
@@ -183,7 +288,7 @@ test("the workflow runs in its own environment, one at a time", () => {
 });
 
 test("migration and deploy are gated on isolated=true", () => {
-  const gated = job.steps.filter((step) => /Migrate|Deploy the dedicated|Configure the dedicated|Build/.test(step.name || ""));
+  const gated = job.steps.filter((step) => /Migrate|Deploy the dedicated|Configure the dedicated|Build the candidate/.test(step.name || ""));
   assert.ok(gated.length >= 4, `expected the build, config, migrate and deploy steps to be gated, saw ${gated.length}`);
   for (const step of gated) {
     assert.match(String(step.if), /steps\.isolation\.outputs\.isolated == 'true'/, `${step.name} must be gated on isolation`);
@@ -199,8 +304,8 @@ test("the workflow never deploys to a shared or production Worker", () => {
   for (const name of ["pawspace-staging", "pawspace-production"]) {
     assert.ok(String(isolation.run).includes(name), `the isolation step must name ${name} as forbidden`);
   }
-  assert.ok(!/pawspace-staging/.test(String(job.steps.filter((s) => /Deploy|Migrate/.test(s.name || "")).map((s) => s.run).join(""))),
-    "no deploy or migrate step may reference the shared staging worker");
+  const mutating = job.steps.filter((s) => /Deploy|Migrate/.test(s.name || "")).map((s) => s.run).join("");
+  assert.ok(!/pawspace-staging/.test(mutating), "no deploy or migrate step may reference the shared staging worker");
 });
 
 test("the workflow captures a rollback reference before it deploys", () => {
@@ -212,11 +317,15 @@ test("the workflow captures a rollback reference before it deploys", () => {
   assert.ok(rollback < deploy, "the rollback reference must be captured BEFORE the deploy that would replace it");
 });
 
-test("the workflow verifies the hosted sha and runs the post-deploy gate", () => {
-  const names = job.steps.map((step) => step.name || "").join("|");
-  assert.match(names, /Verify the hosted version marker/);
-  assert.match(names, /Post-deploy gate/);
-  assert.match(stepsText, /tests\/e2e\/release-preview-gate\.mjs/, "the gate script must be the committed one");
+test("the post-deploy gate runs from infra/ against the HOSTED candidate", () => {
+  const gate = job.steps.find((step) => /Post-deploy gate/.test(step.name || ""));
+  assert.ok(gate, "there must be a post-deploy gate step");
+  assert.match(String(gate.run), /infra\/tests\/e2e\/release-preview-gate\.mjs/, "the gate script must come from infra/");
+  assert.equal(gate["working-directory"], "candidate", "but it must run against the candidate's install and hosted deploy");
+  assert.match(JSON.stringify(gate.env), /EXPECTED_SHA/, "and be told which candidate is hosted");
+  const names = job.steps.map((s) => s.name || "");
+  assert.ok(names.findIndex((n) => /Verify the DEPLOYED sha/.test(n)) < names.findIndex((n) => /Post-deploy gate/.test(n)),
+    "the hosted sha must be verified before the gate reports on it");
   const upload = job.steps.find((step) => String(step.uses || "").startsWith("actions/upload-artifact"));
   assert.ok(upload, "sanitized evidence must be uploaded");
   assert.match(String(upload.with.path), /release-preview-report\.json/);
