@@ -16,7 +16,7 @@
  * id are read from the environment, held in locals, and never written to the report, echoed, or put in
  * a failure message. The report records statuses, counts and booking identifiers only.
  */
-import { writeFileSync, readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { execFileSync, spawn } from "node:child_process";
 import path from "node:path";
 
@@ -45,42 +45,160 @@ export const SUPPORT_TABLES = [
 ];
 
 /**
- * The one `CREATE TABLE IF NOT EXISTS <table> (...)` statement in a source file, parentheses balanced
- * rather than cut at the first `)` — which lands inside `DEFAULT (...)` and quoted defaults.
+ * EVERY table this gate touches before the product does — the five support tables above plus the ones it
+ * reads. The support tables were the visible half of the problem, because seeding them throws. The other
+ * half is quieter and just as fatal: `snapshot()` runs `SELECT COUNT(*)` over the five booking tables,
+ * and the anonymous block takes its first snapshot before any request has reached the route, so on a
+ * fresh database those SELECTs are "no such table" too. `canonical_customers` is here for the same
+ * reason — the route upserts it on the first booking, and a preview whose customer table appears only
+ * as a side effect of a request the gate may never get to make is not a bootstrapped preview.
  *
- * The schema is obtained this way instead of copied here. A second definition is a second thing to
- * maintain, and it drifts silently from the one the deployed candidate actually creates; extracted DDL
- * is by construction the shape the deployed code expects.
+ * `providers` is deliberately absent. The gate only ever reads it, and F requires that read to be real:
+ * a preview where no provider route has run has no providers table, and that is a genuine "not run".
  */
-export function extractDdl(source, table) {
-  const needle = `CREATE TABLE IF NOT EXISTS ${table} (`;
-  const start = source.indexOf(needle);
-  if (start < 0) return null;
-  let depth = 0;
-  for (let i = start + needle.length - 1; i < source.length; i++) {
-    if (source[i] === "(") depth++;
-    else if (source[i] === ")") { depth--; if (depth === 0) return source.slice(start, i + 1); }
-  }
-  return null;
+export const REQUIRED_TABLES = [
+  "role_definitions",
+  "app_users",
+  "customer_identity_links",
+  "scheduling_assignment_decisions",
+  "scheduling_reservations",
+  "canonical_customers",
+  "canonical_pets",
+  "canonical_bookings",
+  "booking_payments",
+  "provider_work_orders",
+  "booking_lifecycle_events",
+];
+
+/**
+ * WHICH FILE IS ALLOWED TO DEFINE EACH TABLE.
+ *
+ * Not "the first file in the checkout that happens to contain a matching CREATE TABLE". This repository
+ * declares these tables in many places — `canonical_bookings` in eight product files, `canonical_customers`
+ * in eight with two genuinely different definitions — so a first-match search returns whatever the
+ * directory walk reached first, which is a function of file naming rather than of what the deployed code
+ * creates. Renaming a route could silently change the preview's schema.
+ *
+ * Each table is therefore mapped to the source that OWNS it — the one whose handler creates it in
+ * production — and no other file may stand in:
+ *
+ *   the booking aggregate  -> app/api/canonical-bookings/route.ts, the route this gate exercises, so the
+ *                             preview gets exactly the schema that route creates on a live request;
+ *   identity and security  -> lib/server-auth.ts, which owns sign-in and the customer binding and is what
+ *                             /api/staging-login actually runs through;
+ *   scheduling             -> app/api/uat-scheduling/route.ts, the route that writes BOTH the assignment
+ *                             decision and the reservation rows this gate stands in for.
+ *                             app/api/provider-capacity-control/route.ts also declares
+ *                             scheduling_reservations — identically, as it happens — but it only reserves
+ *                             against capacity; the scheduling route is the owner, so it is the authority.
+ */
+export const AUTHORITATIVE_DDL_SOURCES = {
+  role_definitions: "lib/server-auth.ts",
+  app_users: "lib/server-auth.ts",
+  customer_identity_links: "lib/server-auth.ts",
+  scheduling_assignment_decisions: "app/api/uat-scheduling/route.ts",
+  scheduling_reservations: "app/api/uat-scheduling/route.ts",
+  canonical_customers: "app/api/canonical-bookings/route.ts",
+  canonical_pets: "app/api/canonical-bookings/route.ts",
+  canonical_bookings: "app/api/canonical-bookings/route.ts",
+  booking_payments: "app/api/canonical-bookings/route.ts",
+  provider_work_orders: "app/api/canonical-bookings/route.ts",
+  booking_lifecycle_events: "app/api/canonical-bookings/route.ts",
+};
+
+/** Whitespace- and case-insensitive form, so one schema written two ways compares as one schema. */
+export function normalizeDdl(sql) {
+  return sql.replace(/\s+/g, " ").replace(/\s*([(),])\s*/g, "$1").trim().toLowerCase();
 }
 
-/** Search a checkout for a table's DDL. Returns null when the candidate does not define it. */
-export function ddlFromCheckout(root, table) {
-  const roots = ["app", "lib", "worker"].map((dir) => path.join(root, dir)).filter(existsSync);
-  const files = [];
-  const walk = (dir) => {
-    for (const entry of readdirSync(dir)) {
-      const full = path.join(dir, entry);
-      if (statSync(full).isDirectory()) walk(full);
-      else if (/\.(ts|tsx|mjs|js)$/.test(entry)) files.push(full);
+/**
+ * Every complete `CREATE TABLE IF NOT EXISTS <table> ( … )` in a source, parentheses balanced rather than
+ * cut at the first `)` — which lands inside `DEFAULT (...)` and `CHECK (x IN (...))`.
+ *
+ * Quoted runs are skipped, so a parenthesis inside a string literal cannot move the depth: the product
+ * really does write `DEFAULT '{}'`, and a default of `')('` would otherwise truncate the statement at a
+ * parenthesis that is data. A statement whose parentheses never close is counted as malformed rather
+ * than silently dropped, because "found nothing" and "found something broken" need different answers.
+ */
+export function extractAllDdl(source, table) {
+  const opener = new RegExp(`CREATE\\s+TABLE\\s+IF\\s+NOT\\s+EXISTS\\s+["'\`]?${table}["'\`]?\\s*\\(`, "gi");
+  const statements = [];
+  let malformed = 0;
+  let match;
+  while ((match = opener.exec(source))) {
+    let depth = 0, end = -1;
+    for (let i = match.index + match[0].length - 1; i < source.length; i++) {
+      const ch = source[i];
+      if (ch === "'" || ch === '"' || ch === "`") {
+        const quote = ch;
+        i++;
+        while (i < source.length) {
+          if (source[i] === "\\") { i += 2; continue; }
+          if (source[i] === quote) { if (source[i + 1] === quote) { i += 2; continue; } break; }
+          i++;
+        }
+        if (i >= source.length) break;
+        continue;
+      }
+      if (ch === "(") depth++;
+      else if (ch === ")") { depth--; if (depth === 0) { end = i + 1; break; } }
     }
-  };
-  for (const dir of roots) walk(dir);
-  for (const file of files) {
-    const found = extractDdl(readFileSync(file, "utf8"), table);
-    if (found) return found;
+    if (end === -1) malformed++;
+    else statements.push(source.slice(match.index, end));
   }
-  return null;
+  return { statements, malformed };
+}
+
+/**
+ * The ONE definition of a table in a source. `null` when the source does not define it; THROWS when it
+ * defines it two different ways or defines it unparseably.
+ *
+ * Failing closed here matters more than it looks. Every alternative — take the first, take the longest,
+ * take the one with the most columns — invents a preview schema nobody wrote, and the run that follows
+ * looks like a passing test of the release candidate.
+ */
+export function extractDdl(source, table) {
+  const { statements, malformed } = extractAllDdl(source, table);
+  if (malformed) throw new Error(`${table}: a CREATE TABLE statement does not parse — unbalanced parentheses`);
+  if (!statements.length) return null;
+  // First occurrence wins among IDENTICAL spellings, so the returned text is stable rather than
+  // depending on which formatting happened to appear last. Genuinely different definitions still throw.
+  const distinct = new Map();
+  for (const sql of statements) {
+    const key = normalizeDdl(sql);
+    if (!distinct.has(key)) distinct.set(key, sql);
+  }
+  if (distinct.size > 1) {
+    throw new Error(`${table}: ${distinct.size} different definitions in its authoritative source — refusing to guess which one the preview should have`);
+  }
+  return [...distinct.values()][0];
+}
+
+/** Nothing but a bare CREATE TABLE IF NOT EXISTS for the expected table may ever reach the database. */
+export function assertCreateTableOnly(sql, table) {
+  if (!new RegExp(`^CREATE\\s+TABLE\\s+IF\\s+NOT\\s+EXISTS\\s+["'\`]?${table}["'\`]?\\s*\\(`, "i").test(sql)) {
+    throw new Error(`${table}: extracted statement is not a CREATE TABLE IF NOT EXISTS for that table`);
+  }
+  if (sql.includes(";")) throw new Error(`${table}: extracted statement contains a statement terminator`);
+  if (sql.includes("--") || sql.includes("/*")) throw new Error(`${table}: extracted statement contains a comment sequence`);
+  if (!sql.trimEnd().endsWith(")")) throw new Error(`${table}: extracted statement does not end at a closing parenthesis`);
+  if (!sql.slice(sql.indexOf("(") + 1, sql.lastIndexOf(")")).trim()) throw new Error(`${table}: extracted statement declares no columns`);
+  return sql;
+}
+
+/**
+ * A table's DDL, from the single source mapped as its authority. Returns null when the candidate does not
+ * define it there; throws when that source is ambiguous, unparseable, or yields something that is not a
+ * plain CREATE TABLE. A definition in some other file is NOT a fallback — silently substituting one is
+ * the failure this map exists to prevent.
+ */
+export function ddlFromCheckout(root, table) {
+  const relative = AUTHORITATIVE_DDL_SOURCES[table];
+  if (!relative) throw new Error(`${table}: no authoritative source is mapped for this table`);
+  const file = path.join(root, ...relative.split("/"));
+  if (!existsSync(file)) return null;
+  const found = extractDdl(readFileSync(file, "utf8"), table);
+  return found === null ? null : assertCreateTableOnly(found, table);
 }
 
 /**
@@ -268,16 +386,18 @@ export async function runGate({ http, d1, ddl, hostedSha, workerLog, env, log = 
   // Created from the CANDIDATE's own DDL, before anything is seeded. Without this the very first seed
   // fails on "no such table" and every later result is either absent or meaningless.
   let schemaReady = true;
-  for (const table of SUPPORT_TABLES) {
+  for (const table of REQUIRED_TABLES) {
     try {
       const statement = await ddl(table);
-      if (!statement) { schemaReady = unavailable(`support table ${table} is created from the candidate's DDL`, "the candidate defines no CREATE TABLE for it"); continue; }
+      if (!statement) { schemaReady = unavailable(`table ${table} is created from the candidate's DDL`, "the candidate defines no CREATE TABLE for it in its authoritative source"); continue; }
       await d1(statement);
     } catch (error) {
-      schemaReady = unavailable(`support table ${table} is created from the candidate's DDL`, String(error.message).slice(0, 160));
+      // Ambiguous, unparseable, or not a plain CREATE TABLE. All of them fail here rather than being
+      // resolved by preference — a guessed schema produces a run that looks like a passing test.
+      schemaReady = unavailable(`table ${table} is created from the candidate's DDL`, String(error.message).slice(0, 160));
     }
   }
-  check("every support table the gate seeds exists", schemaReady, `${SUPPORT_TABLES.length} tables`);
+  check("every table the gate reads or seeds exists", schemaReady, `${REQUIRED_TABLES.length} tables`);
   if (!schemaReady) {
     // Nothing below can produce a real answer, and reporting refusals it did not earn is exactly what
     // this gate must never do.
@@ -529,8 +649,9 @@ if (isMain) {
   const ACCESS_CODE = process.env.PAWSPACE_UAT_ACCESS_CODE || "";
   const PREVIEW_D1 = process.env.PREVIEW_D1 || "";
   const RUN_TAG = process.env.PREVIEW_RUN_TAG || "";
-  if (!WORKER || !EXPECTED_SHA || !ACCESS_CODE || !PREVIEW_D1 || !RUN_TAG) {
-    console.error("release-preview gate: required environment is not configured (PREVIEW_WORKER, EXPECTED_SHA, PAWSPACE_UAT_ACCESS_CODE, PREVIEW_D1, PREVIEW_RUN_TAG).");
+  const CANDIDATE_DIR = process.env.CANDIDATE_DIR || "";
+  if (!WORKER || !EXPECTED_SHA || !ACCESS_CODE || !PREVIEW_D1 || !RUN_TAG || !CANDIDATE_DIR) {
+    console.error("release-preview gate: required environment is not configured (PREVIEW_WORKER, EXPECTED_SHA, PAWSPACE_UAT_ACCESS_CODE, PREVIEW_D1, PREVIEW_RUN_TAG, CANDIDATE_DIR).");
     process.exit(1);
   }
   // Validated before it reaches any generated SQL, and never defaulted: a constant tag would make
@@ -538,10 +659,10 @@ if (isMain) {
   try { assertRunTag(RUN_TAG); }
   catch (error) { console.error(`release-preview gate: ${error.message}`); process.exit(1); }
   const BASE = process.env.PREVIEW_URL || `https://${WORKER}.workers.dev`;
-  // Where the support-table DDL is read from. The workflow runs this step with the candidate checkout as
-  // the working directory, so the default is right there, but it is passed explicitly all the same: the
-  // one thing that must never happen is reading the schema out of the infrastructure checkout instead.
-  const CANDIDATE_DIR = process.env.CANDIDATE_DIR || process.cwd();
+  // CANDIDATE_DIR is required above rather than defaulted to the working directory. The default would
+  // usually have been right — the step runs with candidate/ as its cwd — but "usually right" is how the
+  // schema ends up being read out of the INFRASTRUCTURE checkout the one time the cwd differs, and a
+  // gate that silently bootstraps from the wrong tree is worse than one that refuses to start.
   const wrangler = (args) => execFileSync("npx", ["wrangler", ...args], {
     encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 32 * 1024 * 1024,
   });

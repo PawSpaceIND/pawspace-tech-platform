@@ -547,3 +547,31 @@ test("B — the workflow tells the gate which checkout to read the support schem
   assert.equal(gate.env.PREVIEW_RUN_TAG, "${{ github.run_id }}-${{ github.run_attempt }}",
     "and the run namespace this branch already established must be preserved");
 });
+
+test("the gate REFUSES to start without CANDIDATE_DIR, rather than defaulting to its own directory", () => {
+  const source = fs.readFileSync(GATE_SCRIPT, "utf8");
+  assert.match(source, /const CANDIDATE_DIR = process\.env\.CANDIDATE_DIR \|\| "";/,
+    "no cwd fallback: the one thing that must never happen is bootstrapping from the infrastructure checkout");
+  assert.match(source, /!CANDIDATE_DIR/, "and a missing value must stop the run");
+});
+
+test("no file that runs in the hosted job carries a table definition of its own", () => {
+  // The DDL is read from the candidate at run time. A copy here would be a second source of truth that
+  // drifts from the routes, and the drift would surface as a passing run against a schema no Worker makes.
+  const tables = [
+    "role_definitions", "app_users", "customer_identity_links",
+    "scheduling_assignment_decisions", "scheduling_reservations", "canonical_customers",
+    "canonical_pets", "canonical_bookings", "booking_payments", "provider_work_orders",
+    "booking_lifecycle_events",
+  ];
+  for (const file of [WORKFLOW_PATH, CONFIG_SCRIPT, GATE_SCRIPT]) {
+    const text = fs.readFileSync(file, "utf8");
+    for (const table of tables) {
+      // The shape an EXECUTABLE definition has: the statement, the table, then its column list. Prose
+      // that merely mentions both — the comment explaining why the DDL is not copied here does — is not
+      // a schema, and a guard that cannot tell the difference gets weakened the first time it misfires.
+      assert.ok(!new RegExp(`CREATE\\s+TABLE\\s+(IF\\s+NOT\\s+EXISTS\\s+)?["'\`]?${table}["'\`]?\\s*\\(`, "i").test(text),
+        `${path.basename(file)} appears to define ${table}`);
+    }
+  }
+});

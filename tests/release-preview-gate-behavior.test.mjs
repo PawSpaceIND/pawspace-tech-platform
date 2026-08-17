@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { runGate, boundedAll, assertRunTag, TOUCHED_TABLES, SUPPORT_TABLES, extractDdl, ddlFromCheckout, requiredColumnsOf, roleDefinitionInsert } from "./e2e/release-preview-gate.mjs";
+import fs, { readFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { runGate, boundedAll, assertRunTag, TOUCHED_TABLES, SUPPORT_TABLES, REQUIRED_TABLES, AUTHORITATIVE_DDL_SOURCES, extractDdl, extractAllDdl, ddlFromCheckout, requiredColumnsOf, roleDefinitionInsert } from "./e2e/release-preview-gate.mjs";
 
 /**
  * The repository itself stands in for the candidate checkout, and the DDL the mock world enforces is the
@@ -36,30 +38,48 @@ const realDdl = async (table) => ddlFromCheckout(CANDIDATE_ROOT, table);
 const ACCESS_CODE = "x".repeat(32);
 
 function makeWorld(faults = {}) {
-  // The five booking tables exist because the product route creates them on first request. The SUPPORT
-  // tables deliberately do NOT: a freshly created preview database has none of them, and the gate has to
-  // create them from the candidate's DDL before it can seed anything. `required` comes from that same
-  // DDL, so an INSERT missing a NOT NULL column fails here exactly as it fails on real D1.
-  const tables = Object.fromEntries(TOUCHED_TABLES.map((t) => [t, []]));
-  tables.providers = [];
+  // THE DATABASE STARTS EMPTY, because a freshly created preview D1 is empty and this candidate ships no
+  // migrations. Nothing is pre-created and every access goes through `rows()`, which throws "no such
+  // table" exactly as D1 does — so a gate that reads or writes before creating cannot pass here either.
+  //
+  // The booking tables are NOT pre-created on the theory that "the route makes them on first request".
+  // The gate's first snapshot runs before any request reaches the route, and the mock route does not
+  // model ensureTables on purpose: the bootstrap must be the single guarantee, not a fallback behind
+  // product DDL, or a table dropped from it would go unnoticed.
+  //
+  // `providers` is the one exception and is pre-created. The gate never creates it — F requires that
+  // read to be real — so the mock models a preview in which a provider route has already run, and the
+  // providersUnreadable fault models one in which none has.
+  //
+  // `required` comes from the REAL extracted DDL, so an INSERT missing a NOT NULL column fails here
+  // exactly as it fails on real D1.
+  const tables = { providers: [] };
   const required = {};
+  const sqlLog = [];
   const sessions = new Map();
   const httpLog = [];
   let inFlight = 0, maxInFlight = 0;
 
+  const rows = (name) => {
+    if (!(name in tables)) throw new Error(`no such table: ${name}`);
+    return tables[name];
+  };
+
   const permissionsFor = (email) => {
-    const user = tables.app_users.find((u) => u.email === email);
-    const role = tables.role_definitions.find((r) => r.code === user?.role_code);
+    const user = rows("app_users").find((u) => u.email === email);
+    const role = rows("role_definitions").find((r) => r.code === user?.role_code);
     return role ? JSON.parse(role.permissions_json) : [];
   };
 
   const d1 = async (sql) => {
     const create = sql.match(/^CREATE TABLE IF NOT EXISTS (\w+) \(/);
     if (create) {
+      sqlLog.push({ kind: "CREATE", table: create[1] });
       required[create[1]] = requiredColumnsOf(sql);
       tables[create[1]] = tables[create[1]] || [];
       return [];
     }
+    sqlLog.push({ kind: /^INSERT/i.test(sql) ? "INSERT" : "SELECT", sql });
     const insert = sql.match(/^INSERT OR REPLACE INTO (\w+) \(([^)]*)\) VALUES \((.*)\)$/s);
     if (insert) {
       const [, table, cols, vals] = insert;
@@ -67,45 +87,44 @@ function makeWorld(faults = {}) {
       const values = vals.match(/'(?:[^']|'')*'|[^,]+/g).map((v) => v.trim().replace(/^'|'$/g, "").replace(/''/g, "'"));
       const row = Object.fromEntries(keys.map((k, i) => [k, values[i]]));
       // Real database behaviour, and the reason the gate must create these tables before it seeds them.
-      if (!tables[table]) throw new Error(`no such table: ${table}`);
+      const store = rows(table);
       for (const column of required[table] ?? []) {
         if (!(column in row)) throw new Error(`NOT NULL constraint failed: ${table}.${column}`);
       }
-      tables[table] = tables[table] || [];
       const pk = keys[0];
-      const existing = tables[table].findIndex((r) => r[pk] === row[pk]);
-      if (existing >= 0) tables[table][existing] = row; else tables[table].push(row);
+      const existing = store.findIndex((r) => r[pk] === row[pk]);
+      if (existing >= 0) store[existing] = row; else store.push(row);
       return [];
     }
     const count = sql.match(/^SELECT COUNT\(\*\) n FROM (\w+)(?: WHERE (.*))?$/s);
     if (count) {
       const [, table, where] = count;
-      const rows = tables[table] || [];
-      if (!where || where === "1=1") return [{ n: rows.length }];
+      const store = rows(table);
+      if (!where || where === "1=1") return [{ n: store.length }];
       const like = where.match(/schedule_group_id LIKE '([^']*)%'/);
-      if (like) return [{ n: rows.filter((r) => String(r.schedule_group_id || "").startsWith(like[1])).length }];
+      if (like) return [{ n: store.filter((r) => String(r.schedule_group_id || "").startsWith(like[1])).length }];
       const eq = where.match(/customer_id='([^']*)' AND source_pet_id='([^']*)'/);
-      if (eq) return [{ n: rows.filter((r) => r.customer_id === eq[1] && r.source_pet_id === eq[2]).length }];
+      if (eq) return [{ n: store.filter((r) => r.customer_id === eq[1] && r.source_pet_id === eq[2]).length }];
       if (/live=1/.test(where)) {
         if (faults.providersUnreadable) throw new Error("no such table: providers");
         return [{ n: 0 }];
       }
-      return [{ n: rows.length }];
+      return [{ n: store.length }];
     }
-    if (/LEFT JOIN canonical_bookings/.test(sql)) return [{ n: 0 }];
+    if (/LEFT JOIN canonical_bookings/.test(sql)) { rows(sql.match(/FROM (\w+)/)[1]); rows("canonical_bookings"); return [{ n: 0 }]; }
     if (/JOIN canonical_bookings/.test(sql)) {
       const table = sql.match(/FROM (\w+)/)[1];
       const like = sql.match(/LIKE '([^']*)%'/);
-      const bookingIds = new Set(tables.canonical_bookings
+      const bookingIds = new Set(rows("canonical_bookings")
         .filter((b) => !like || String(b.schedule_group_id).startsWith(like[1])).map((b) => b.id));
-      return [{ n: (tables[table] || []).filter((r) => bookingIds.has(r.booking_id)).length }];
+      return [{ n: rows(table).filter((r) => bookingIds.has(r.booking_id)).length }];
     }
     if (/GROUP BY source_pet_id HAVING COUNT\(\*\)>1/.test(sql)) {
       // Scoped by customer_id, exactly as the gate's SQL is. Two runs share source ids like "swarm-0"
       // under DIFFERENT customers; ignoring the filter would call that a duplicate when it is not.
       const owner = sql.match(/customer_id='([^']*)'/)?.[1];
       const seen = {};
-      for (const p of tables.canonical_pets) {
+      for (const p of rows("canonical_pets")) {
         if (owner && p.customer_id !== owner) continue;
         if (String(p.source_pet_id).startsWith("swarm-")) seen[p.source_pet_id] = (seen[p.source_pet_id] || 0) + 1;
       }
@@ -113,7 +132,7 @@ function makeWorld(faults = {}) {
     }
     const select = sql.match(/^SELECT ([\w,]+) FROM (\w+) WHERE id='([^']*)'$/);
     if (select) {
-      const row = (tables[select[2]] || []).find((r) => r.id === select[3]);
+      const row = rows(select[2]).find((r) => r.id === select[3]);
       return row ? [row] : [];
     }
     return [];
@@ -128,8 +147,8 @@ function makeWorld(faults = {}) {
         if (body?.code !== ACCESS_CODE) return { status: 401, body: { error: "Invalid access code" }, headers: {} };
         const email = body?.email;
         // ...and the email must be an active staff record whose role has a definition.
-        const user = tables.app_users.find((u) => u.email === email && u.status === "active");
-        const role = user && tables.role_definitions.find((r) => r.code === user.role_code);
+        const user = rows("app_users").find((u) => u.email === email && u.status === "active");
+        const role = user && rows("role_definitions").find((r) => r.code === user.role_code);
         if (!user || !role) return { status: 403, body: { error: "That email cannot sign in here" }, headers: {} };
         const cookie = `ps=${email}`;
         sessions.set(cookie, email);
@@ -142,39 +161,39 @@ function makeWorld(faults = {}) {
         if (!perms.includes("bookings.view")) return { status: 403, body: { error: "denied" }, headers: {} };
         return {
           status: 200, headers: {},
-          body: { bookings: tables.canonical_bookings.map((b) => ({ ...b, pets: tables.canonical_pets.filter((p) => JSON.parse(b.pet_ids_json).includes(p.id)) })) },
+          body: { bookings: rows("canonical_bookings").map((b) => ({ ...b, pets: rows("canonical_pets").filter((p) => JSON.parse(b.pet_ids_json).includes(p.id)) })) },
         };
       }
       if (!perms.includes("scheduling.book")) return { status: 403, body: { error: "denied" }, headers: {} };
 
       // Ownership before the replay lookup, as requireCustomerOwnership runs before it in the route.
-      const link = tables.customer_identity_links.find((l) => l.email === email);
+      const link = rows("customer_identity_links").find((l) => l.email === email);
       if (!faults.ownershipBypass && link && link.customer_id !== body.customer.id) {
         return { status: 403, body: { error: "Customer ownership denied" }, headers: {} };
       }
 
-      const prior = tables.canonical_bookings.find((b) => b.idempotency_key === body.idempotencyKey || b.schedule_group_id === body.scheduleGroupId);
+      const prior = rows("canonical_bookings").find((b) => b.idempotency_key === body.idempotencyKey || b.schedule_group_id === body.scheduleGroupId);
       if (prior) return { status: 200, body: { data: { bookingId: prior.id, duplicatePrevented: true, petIds: JSON.parse(prior.pet_ids_json) } }, headers: {} };
 
       for (const pet of body.pets) if (typeof pet.sourceId !== "string") return { status: 400, body: { error: "A pet source id must be text" }, headers: {} };
-      const reservation = tables.scheduling_reservations.find((r) => r.group_id === body.scheduleGroupId);
+      const reservation = rows("scheduling_reservations").find((r) => r.group_id === body.scheduleGroupId);
       if (!reservation) return { status: 409, body: { error: "Scheduling must be assigned" }, headers: {} };
       if (reservation.city_id !== body.cityId || reservation.zone_id !== body.zoneId) {
         return { status: 409, body: { error: "The booking city/zone does not match" }, headers: {} };
       }
 
       const petIds = body.pets.map((pet) => {
-        const existing = faults.duplicatePets ? null : tables.canonical_pets.find((p) => p.customer_id === body.customer.id && p.source_pet_id === pet.sourceId);
+        const existing = faults.duplicatePets ? null : rows("canonical_pets").find((p) => p.customer_id === body.customer.id && p.source_pet_id === pet.sourceId);
         if (existing) return existing.id;
-        const id = faults.duplicatePets ? `PET-${body.customer.id}-${pet.sourceId}-${tables.canonical_pets.length}` : `PET-${body.customer.id}-${pet.sourceId}`;
-        tables.canonical_pets.push({ id, customer_id: body.customer.id, name: pet.name, species: pet.species || "dog", breed: pet.breed ?? null, vaccination_status: "not_provided", source_pet_id: String(pet.sourceId) });
+        const id = faults.duplicatePets ? `PET-${body.customer.id}-${pet.sourceId}-${rows("canonical_pets").length}` : `PET-${body.customer.id}-${pet.sourceId}`;
+        rows("canonical_pets").push({ id, customer_id: body.customer.id, name: pet.name, species: pet.species || "dog", breed: pet.breed ?? null, vaccination_status: "not_provided", source_pet_id: String(pet.sourceId) });
         return id;
       });
-      const id = `BK-${tables.canonical_bookings.length}`;
-      tables.canonical_bookings.push({ id, idempotency_key: body.idempotencyKey, schedule_group_id: body.scheduleGroupId, customer_id: body.customer.id, pet_ids_json: JSON.stringify(petIds) });
-      tables.booking_payments.push({ id: `PAY-${id}`, booking_id: id });
-      tables.provider_work_orders.push({ id: `WO-${id}`, booking_id: id });
-      tables.booking_lifecycle_events.push({ id: `EV-${id}`, booking_id: id });
+      const id = `BK-${rows("canonical_bookings").length}`;
+      rows("canonical_bookings").push({ id, idempotency_key: body.idempotencyKey, schedule_group_id: body.scheduleGroupId, customer_id: body.customer.id, pet_ids_json: JSON.stringify(petIds) });
+      rows("booking_payments").push({ id: `PAY-${id}`, booking_id: id });
+      rows("provider_work_orders").push({ id: `WO-${id}`, booking_id: id });
+      rows("booking_lifecycle_events").push({ id: `EV-${id}`, booking_id: id });
       return { status: 201, body: { data: { bookingId: id, petIds, duplicatePrevented: false } }, headers: {} };
   };
 
@@ -186,13 +205,13 @@ function makeWorld(faults = {}) {
       const res = await rawHttp(method, path, opts);
       // A route that writes on a path it then refuses — the defect the zero-write snapshots exist for.
       if (faults.writeOnRefusal && method === "POST" && path === "/api/canonical-bookings" && res.status >= 400) {
-        tables.booking_lifecycle_events.push({ id: `leak-${tables.booking_lifecycle_events.length}`, booking_id: "none" });
+        rows("booking_lifecycle_events").push({ id: `leak-${rows("booking_lifecycle_events").length}`, booking_id: "none" });
       }
       return res;
     } finally { inFlight--; }
   };
 
-  return { http, d1, tables, required, httpLog, stats: () => ({ maxInFlight }) };
+  return { http, d1, tables, required, rows, sqlLog, httpLog, stats: () => ({ maxInFlight }) };
 }
 
 const ENV = { EXPECTED_SHA: "b52e7dc1c04efa36d7e89e1b06ad252f9cf5ab6e", ACCESS_CODE, RUN_TAG: "9001-1" };
@@ -516,8 +535,11 @@ test("B — every support table is created from the candidate's own DDL, before 
   const world = makeWorld();
   const asked = [];
   const report = await run(world, { ddl: async (table) => { asked.push(table); return realDdl(table); } });
-  assert.deepEqual(asked, SUPPORT_TABLES, "all five, in order, and before the first seed");
-  for (const table of SUPPORT_TABLES) {
+  // ALL ELEVEN, not just the five the gate seeds. The other six are the ones it READS: snapshot() runs
+  // COUNT(*) over the five booking tables before any request has reached the route, and canonical_customers
+  // exists only as a side effect of a booking the gate might never get to make.
+  assert.deepEqual(asked, REQUIRED_TABLES, "all eleven, in order, and before the first seed");
+  for (const table of REQUIRED_TABLES) {
     assert.ok(world.tables[table], `${table} must exist once the gate has created it`);
     assert.ok(world.required[table]?.length > 0, `${table}'s NOT NULL columns must come from the real DDL, not a fixture`);
   }
@@ -529,7 +551,7 @@ test("B — SABOTAGE: with no schema step the gate stops on an empty database in
   // the support tables do not. The old gate seeded straight into them and died on "no such table".
   const report = await run(makeWorld(), { ddl: async () => null });
   assert.equal(report.schema, "unavailable", "it must halt, not push on");
-  assert.ok(report.failures >= SUPPORT_TABLES.length, `each missing table must count as a failure, saw ${report.failures}`);
+  assert.ok(report.failures >= REQUIRED_TABLES.length, `each missing table must count as a failure, saw ${report.failures}`);
   assert.ok(!report.checks.some((c) => c.name.includes("real UAT sessions")), "and it must not claim results it never obtained");
 });
 
@@ -564,7 +586,7 @@ test("B — the role insert satisfies every NOT NULL column, and the two-column 
 
 test("B — no schema is copied into the gate, so there is nothing to drift", () => {
   const source = readFileSync(new URL("./e2e/release-preview-gate.mjs", import.meta.url), "utf8");
-  for (const table of SUPPORT_TABLES) {
+  for (const table of REQUIRED_TABLES) {
     assert.ok(!new RegExp(`CREATE TABLE IF NOT EXISTS ${table}\\s*\\(`).test(source),
       `${table}'s DDL must not be duplicated here — it would drift from what the deployed candidate creates`);
   }
@@ -635,4 +657,190 @@ test("F — NO check can be recorded as not run and still leave the gate passing
   }
   const providers = await run(makeWorld({ providersUnreadable: true }));
   assert.notEqual(providers.failures, 0, "including an unreadable providers table");
+});
+
+// --- B (consolidated) — the fresh-D1 bootstrap covers everything the gate touches ----------------
+//
+// The support tables were the visible half. The other half is quieter: the gate SELECTs the five booking
+// tables before any request reaches the route, so on an empty database those reads fail too — and
+// canonical_customers exists only as a side effect of a booking the gate may never get to make.
+
+test("B — an empty database rejects the gate's READS too, not just its seeds", async () => {
+  const world = makeWorld();
+  // The first thing the anonymous block does after seeding is snapshot all five booking tables.
+  for (const table of TOUCHED_TABLES) {
+    await assert.rejects(() => world.d1(`SELECT COUNT(*) n FROM ${table} WHERE 1=1`),
+      new RegExp(`no such table: ${table}`), `${table} must not be readable before it is created`);
+  }
+  await assert.rejects(() => world.d1("SELECT COUNT(*) n FROM canonical_customers WHERE 1=1"),
+    /no such table: canonical_customers/);
+});
+
+test("B — every CREATE runs before the first INSERT or SELECT", async () => {
+  const world = makeWorld();
+  const report = await run(world, { ddl: realDdl });
+  assert.equal(report.failures, 0, report.checks.filter((c) => !c.ok).map((c) => c.name).join("; "));
+  const kinds = world.sqlLog.map((s) => s.kind);
+  const lastCreate = kinds.lastIndexOf("CREATE");
+  const firstUse = kinds.findIndex((k) => k !== "CREATE");
+  assert.ok(lastCreate >= 0 && firstUse >= 0, "the run must contain both DDL and DML");
+  assert.ok(lastCreate < firstUse,
+    `DDL must finish before any read or write: last CREATE at ${lastCreate}, first ${kinds[firstUse]} at ${firstUse}`);
+  assert.deepEqual(world.sqlLog.slice(0, REQUIRED_TABLES.length).map((s) => s.table), REQUIRED_TABLES);
+});
+
+test("B — removing ANY one of the eleven fails the gate, before sign-in", async () => {
+  for (const missing of REQUIRED_TABLES) {
+    const world = makeWorld();
+    const report = await run(world, { ddl: async (table) => (table === missing ? null : realDdl(table)) });
+    assert.equal(report.schema, "unavailable", `dropping ${missing} must halt the gate`);
+    assert.ok(report.failures > 0, `dropping ${missing} must fail`);
+    assert.ok(!world.httpLog.some((r) => r.path === "/api/staging-login"),
+      `dropping ${missing} must stop the run before it tries to sign anyone in`);
+    assert.ok(!report.checks.some((c) => c.name.includes("real UAT sessions")),
+      `dropping ${missing} must not claim authorization results it never obtained`);
+  }
+});
+
+// --- DDL authority: the mapped source, not an arbitrary first match -----------------------------
+
+test("every required table has exactly one mapped authoritative source", () => {
+  assert.deepEqual(Object.keys(AUTHORITATIVE_DDL_SOURCES).sort(), [...REQUIRED_TABLES].sort(),
+    "a table with no mapped owner would fall back to whatever the directory walk found first");
+});
+
+test("canonical_customers comes from the mapped booking route, not an arbitrary first match", async () => {
+  // This is the case that makes the map necessary rather than tidy: the product declares
+  // canonical_customers twice, with DIFFERENT defaults, and a first-match walk returns whichever file
+  // it reached first. The preview must get the definition the route under test actually executes.
+  const mapped = await realDdl("canonical_customers");
+  const fromRoute = extractDdl(readFileSync(new URL("../app/api/canonical-bookings/route.ts", import.meta.url), "utf8"), "canonical_customers");
+  assert.equal(mapped, fromRoute, "the mapped source must be the one that supplies it");
+  assert.equal(AUTHORITATIVE_DDL_SOURCES.canonical_customers, "app/api/canonical-bookings/route.ts");
+
+  const elsewhere = extractDdl(readFileSync(new URL("../lib/customer-account.ts", import.meta.url), "utf8"), "canonical_customers");
+  assert.ok(elsewhere, "the second definition must still exist, or this test has stopped proving anything");
+  assert.notEqual(elsewhere, mapped, "and it must genuinely differ, or the map is untested here");
+});
+
+test("the scheduling tables come from the route that writes them", async () => {
+  // uat-scheduling writes BOTH the assignment decision and the reservation rows this gate stands in for;
+  // provider-capacity-control also declares scheduling_reservations but only reserves against capacity.
+  assert.equal(AUTHORITATIVE_DDL_SOURCES.scheduling_assignment_decisions, "app/api/uat-scheduling/route.ts");
+  assert.equal(AUTHORITATIVE_DDL_SOURCES.scheduling_reservations, "app/api/uat-scheduling/route.ts");
+  const source = readFileSync(new URL("../app/api/uat-scheduling/route.ts", import.meta.url), "utf8");
+  for (const table of ["scheduling_assignment_decisions", "scheduling_reservations"]) {
+    assert.ok(/INSERT (OR REPLACE )?INTO scheduling_/.test(source), "the mapped route must be the one that writes them");
+    assert.equal(await realDdl(table), extractDdl(source, table));
+  }
+});
+
+test("identity and security tables come from lib/server-auth.ts, which sign-in runs through", async () => {
+  for (const table of ["role_definitions", "app_users", "customer_identity_links"]) {
+    assert.equal(AUTHORITATIVE_DDL_SOURCES[table], "lib/server-auth.ts");
+    assert.ok(await realDdl(table), `${table} must be defined by its mapped owner`);
+  }
+});
+
+test("a definition outside the mapped source cannot stand in for a missing one", () => {
+  // An empty checkout: every table is defined SOMEWHERE in this repository, but nowhere the map points.
+  const empty = new URL("./fixtures-that-do-not-exist/", import.meta.url).pathname;
+  for (const table of REQUIRED_TABLES) {
+    assert.equal(ddlFromCheckout(empty, table), null, `${table} must resolve to null, never to a substitute`);
+  }
+});
+
+/** A throwaway checkout with files placed exactly where the caller asks. */
+function fakeCheckout(files) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ddl-authority-"));
+  for (const [relative, text] of Object.entries(files)) {
+    const full = path.join(root, ...relative.split("/"));
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, text);
+  }
+  return root;
+}
+
+test("the mapped source WINS over a different definition the walk would reach first", () => {
+  // NON-VACUOUS BY CONSTRUCTION. Against this repository a first-match walk happens to reach
+  // app/api/canonical-bookings/route.ts before lib/customer-account.ts, so comparing the two there
+  // proves nothing about the map — it passes with or without one. Here the decoy is deliberately placed
+  // where a walk reaches it FIRST (app/ before lib/, "aaa" before anything else), and it differs.
+  const mapped = "CREATE TABLE IF NOT EXISTS role_definitions (code TEXT PRIMARY KEY, name TEXT NOT NULL)";
+  const decoy = "CREATE TABLE IF NOT EXISTS role_definitions (code TEXT PRIMARY KEY, name TEXT)";
+  const root = fakeCheckout({
+    "app/api/aaa-decoy/route.ts": decoy,
+    "lib/server-auth.ts": mapped,
+  });
+  try {
+    assert.equal(ddlFromCheckout(root, "role_definitions"), mapped,
+      "the authority is the mapped file, not whichever file the directory walk reached first");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a table defined ONLY outside its mapped source resolves to null, not to the substitute", () => {
+  const root = fakeCheckout({
+    "app/api/aaa-decoy/route.ts": "CREATE TABLE IF NOT EXISTS customer_identity_links (email TEXT PRIMARY KEY)",
+    "lib/server-auth.ts": "// the mapped owner no longer declares it",
+  });
+  try {
+    assert.equal(ddlFromCheckout(root, "customer_identity_links"), null,
+      "a definition elsewhere must not silently replace the mapped owner's");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+// --- fail closed: ambiguous, malformed, or not a plain CREATE TABLE ------------------------------
+
+test("two DIFFERENT definitions inside the authoritative source fail closed", () => {
+  const source = `
+    CREATE TABLE IF NOT EXISTS t (a TEXT PRIMARY KEY, b TEXT NOT NULL)
+    CREATE TABLE IF NOT EXISTS t (a TEXT PRIMARY KEY, b TEXT)
+  `;
+  assert.throws(() => extractDdl(source, "t"), /2 different definitions .* refusing to guess/s);
+});
+
+test("the same definition written twice is one definition, not an ambiguity", () => {
+  const source = `
+    CREATE TABLE IF NOT EXISTS t (a TEXT PRIMARY KEY, b TEXT NOT NULL)
+    CREATE   TABLE IF NOT EXISTS  t (\n  a TEXT PRIMARY KEY,\n  b TEXT NOT NULL\n)
+  `;
+  assert.match(extractDdl(source, "t"), /^CREATE TABLE IF NOT EXISTS t \(a TEXT PRIMARY KEY, b TEXT NOT NULL\)$/);
+});
+
+test("a malformed definition fails closed instead of being skipped", () => {
+  const source = "CREATE TABLE IF NOT EXISTS t (a TEXT PRIMARY KEY, b TEXT NOT NULL";
+  assert.equal(extractAllDdl(source, "t").malformed, 1);
+  assert.throws(() => extractDdl(source, "t"), /does not parse — unbalanced parentheses/);
+});
+
+test("a parenthesis inside a quoted default does not truncate the statement", () => {
+  const sql = "CREATE TABLE IF NOT EXISTS t (a TEXT PRIMARY KEY, note TEXT NOT NULL DEFAULT ')(')";
+  const found = extractAllDdl(`const ddl = \`${sql}\`;`, "t");
+  assert.equal(found.malformed, 0);
+  assert.equal(found.statements[0], sql, "a quote-blind scan would have closed the statement on data");
+});
+
+test("SABOTAGE — an ambiguous authoritative source halts the gate before sign-in", async () => {
+  const world = makeWorld();
+  const report = await run(world, {
+    ddl: async (table) => {
+      if (table !== "canonical_pets") return realDdl(table);
+      throw new Error("canonical_pets: 2 different definitions in its authoritative source");
+    },
+  });
+  assert.equal(report.schema, "unavailable");
+  const failure = report.checks.find((c) => c.name.includes("canonical_pets"));
+  assert.ok(failure && !failure.ok && /NOT RUN/.test(failure.detail), "it must be recorded as not run, with the reason");
+  assert.ok(!world.httpLog.some((r) => r.path === "/api/staging-login"));
+});
+
+test("the tables the gate SEEDS are a subset of the tables it BOOTSTRAPS", () => {
+  // SUPPORT_TABLES is the five the gate writes to during setup; REQUIRED_TABLES adds the six it only
+  // reads. Keeping the relation asserted is what stops the two lists drifting apart: a support table
+  // added without being bootstrapped would fail on the very first dispatch, not here.
+  for (const table of SUPPORT_TABLES) {
+    assert.ok(REQUIRED_TABLES.includes(table), `${table} is seeded but never created`);
+  }
+  assert.equal(SUPPORT_TABLES.length, 5);
+  assert.equal(REQUIRED_TABLES.length, 11);
 });
