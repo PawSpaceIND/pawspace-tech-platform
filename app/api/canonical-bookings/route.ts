@@ -46,7 +46,103 @@ const ONLINE_METHODS=new Set(["upi","card","netbanking","payment_link"]);
 // captured is demoted whatever method it names.
 const OFFLINE_METHODS=new Set(["cash"]);
 function recordedPaymentStatus(liveMode:boolean,payment:{status:string},offlineAuthorized:boolean){if(liveMode&&payment.status==="captured"&&!offlineAuthorized)return "created";return payment.status;}
-const petId=(customerId:string,sourceId:string)=>`PET-${customerId.replace(/[^A-Za-z0-9]/g,"").toUpperCase()}-${sourceId.replace(/[^A-Za-z0-9]/g,"").toUpperCase()}`;
+// ONE normalizer, shared by the identity check and the resolver, so validation can never accept a
+// pair the resolver would then treat as colliding.
+const petKey=(value:unknown)=>String(value??"").trim().toLowerCase();
+// A source id is identity material, and identity material is hashed with a separator. A caller able
+// to embed the separator — or any other control character — could shape one identity's digest into
+// another's, so control characters are refused outright rather than escaped.
+const CONTROL_CHARACTERS=/[\u0000-\u001F\u007F]/;
+/**
+ * Pet identity rules for a NEW booking. Deliberately NOT part of validate(): validate() runs before
+ * any database access, and these rules must run AFTER the idempotency lookup. Bookings created before
+ * these rules existed stay replayable — a matching idempotency key returns its original booking even
+ * though its payload would be refused today.
+ */
+function petIdentityProblem(pets:LifecycleInput["pets"]){
+  if(pets.some(pet=>!petKey(pet.sourceId)))return "Every pet needs a source id";
+  // The TYPE is checked, not coerced. Everything downstream reaches a source id through String(...),
+  // so a non-string arrives at the digest as one identity while the database's type affinity stores a
+  // DIFFERENT text for it — 7 hashes as "7" but persists as "7.0". The next booking's identity lookup
+  // then misses its own row, mints again, and the occupancy check pushes it to the next variant until
+  // the attempt budget is spent and every later booking for that pet fails permanently. Coercing here
+  // would paper over that; refusing keeps a malformed request a loud, harmless 400 instead of silent,
+  // persistent duplication — exactly what this route exists to prevent.
+  //
+  // It runs AFTER the blank check on purpose, so null/undefined/[] keep their existing "needs a source
+  // id" answer, and BEFORE the control-character and duplicate rules, which both read the value as text.
+  if(pets.some(pet=>typeof pet.sourceId!=="string"))return "A pet source id must be text";
+  if(pets.some(pet=>CONTROL_CHARACTERS.test(String(pet.sourceId??""))))return "A pet source id cannot contain control characters";
+  const sourceKeys=pets.map(pet=>petKey(pet.sourceId));
+  // Two entries sharing a source id name the same animal twice: binding both to one row makes a
+  // two-pet booking record one animal, minting a second fabricates a pet the customer does not own.
+  if(new Set(sourceKeys).size!==sourceKeys.length)return "Each pet in this booking needs its own source id";
+  return null;
+}
+const PET_ID_SEPARATOR="\u0000";
+/** How many deterministic ids one pet may be offered before the booking fails closed. */
+const MAX_PET_ID_ATTEMPTS=8;
+/**
+ * A NEW pet's canonical id, derived purely from the normalized customer and source identity.
+ *
+ * Suffix-on-collision needed a read before the write, which is check-then-act: two concurrent bookings
+ * both saw a candidate free, both took it, and one pet was silently absorbed into the other. A digest
+ * needs no read to be CORRECT — the same identity always yields the same id, so concurrent bookings
+ * converge, and different identities differ even when they sanitize alike.
+ *
+ * attempt 0 is the primary id. Later attempts are domain-separated by PREFIX, not by appending, so a
+ * variant hashes "alt<n>", the separator, the customer and the source. That prefix is a convention for
+ * spreading retries, NOT a security boundary, and it must not be read as one: refusing control
+ * characters in a new booking's source ids removes the obvious way to reproduce a variant's material,
+ * but the customer id is identity material too and reaches this function unfiltered, so a crafted
+ * identity can still land on an id another identity would derive.
+ *
+ * Nothing here needs to prevent that. The AUTHORITATIVE protection against an occupied id is the
+ * global occupancy check in PHASE 4: whatever an id was derived from, it is only ever reused when the
+ * row already holding it belongs to the same customer AND the same normalized source id, and the
+ * booking fails closed when no safe id is left. Collision resistance is that check's job, not the
+ * digest's.
+ */
+async function mintPetId(customerId:string,sourceId:string,attempt=0){
+  const identity=`${petKey(customerId)}${PET_ID_SEPARATOR}${petKey(sourceId)}`;
+  const material=attempt===0?identity:`alt${attempt}${PET_ID_SEPARATOR}${identity}`;
+  const digest=new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(material)));
+  const readable=customerId.replace(/[^A-Za-z0-9]/g,"").toUpperCase().slice(0,12);
+  return `PET-${readable}-${Array.from(digest.slice(0,10)).map(byte=>byte.toString(16).padStart(2,"0")).join("").toUpperCase()}`;
+}
+/**
+ * The conflict clause for canonical_pets.
+ *
+ * The upsert used to overwrite unconditionally, so a booking carrying no breed or vaccination status
+ * ERASED what the customer had already saved. A booking may now FILL a blank field and nothing else:
+ * it may not overwrite a stored value, and it may not renormalize one either. A stored value that is
+ * merely padded or oddly cased is still the customer's own value, so blankness is TESTED with a trim
+ * while the ORIGINAL column is what gets written back.
+ *
+ * 'not_provided' is the vaccination column's own sentinel for "unknown", so it counts as blank —
+ * matched case-insensitively on BOTH sides, because the sentinel has been written in more than one
+ * casing. A genuinely recorded status is preserved byte for byte, spacing and casing included, and a
+ * sentinel is only ever displaced by a real status, never rewritten into another sentinel spelling.
+ *
+ * updated_at moves only when a gap was genuinely filled, so a booking against an already-complete row
+ * leaves that row untouched down to its timestamp — nothing downstream sees a phantom edit.
+ *
+ * The WHERE guard is the last line of defence: an update proposed against a row owned by another
+ * customer is skipped rather than applied.
+ */
+const PET_FIELDS=["name","species","breed","source_pet_id"] as const;
+// SQL's bare TRIM() strips spaces ONLY, while the resolver's petKey() uses JS trim(). A tab-only value
+// was therefore blank to the resolver and non-blank to this clause, so it could never be healed. The
+// explicit character set — space, tab, LF, VT, FF, CR — brings SQL into line for ASCII whitespace.
+const BLANK_CHARS="' '||CHAR(9)||CHAR(10)||CHAR(11)||CHAR(12)||CHAR(13)";
+const blank=(expression:string)=>`TRIM(COALESCE(${expression},''),${BLANK_CHARS})`;
+// A write happens ONLY where the stored side is blank AND the payload actually carries something, so
+// "the column changed" and "updated_at moved" are the same condition — there is no write that leaves
+// the timestamp behind, and no timestamp bump without a write.
+const petFills=(column:string)=>`(${blank(`canonical_pets.${column}`)}='' AND ${blank(`excluded.${column}`)}<>'')`;
+const petKeep=(column:string)=>`${column}=CASE WHEN ${petFills(column)} THEN excluded.${column} ELSE canonical_pets.${column} END`;
+const VACCINATION_FILLS=`(LOWER(${blank("canonical_pets.vaccination_status")}) IN ('','not_provided') AND LOWER(${blank("excluded.vaccination_status")}) NOT IN ('','not_provided'))`;
+const PET_UPSERT=`INSERT INTO canonical_pets (id,customer_id,name,species,breed,vaccination_status,source_pet_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET ${PET_FIELDS.map(petKeep).join(",")},vaccination_status=CASE WHEN ${VACCINATION_FILLS} THEN excluded.vaccination_status ELSE canonical_pets.vaccination_status END,updated_at=CASE WHEN ${[...PET_FIELDS.map(petFills),VACCINATION_FILLS].join(" OR ")} THEN excluded.updated_at ELSE canonical_pets.updated_at END WHERE canonical_pets.customer_id=excluded.customer_id`;
 async function ensureTables(db:Awaited<ReturnType<typeof database>>){await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'uat_customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS canonical_pets (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,name TEXT NOT NULL,species TEXT NOT NULL,breed TEXT,vaccination_status TEXT NOT NULL DEFAULT 'not_provided',source_pet_id TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
@@ -68,6 +164,10 @@ async function readBundle(db:Awaited<ReturnType<typeof database>>,booking:Record
 export async function GET(request:Request){const denied=await refuseUnlessGatewayPermits(request);if(denied)return denied;try{const db=await database();await ensureTables(db);const rows=await db.prepare("SELECT b.*,c.name customer_name,w.id work_order_id,w.provider_name,w.provider_model,w.status work_order_status,w.occurrence_count,p.id payment_id,p.status payment_status,p.amount_due_now,p.gateway FROM canonical_bookings b JOIN canonical_customers c ON c.id=b.customer_id JOIN provider_work_orders w ON w.booking_id=b.id JOIN booking_payments p ON p.booking_id=b.id ORDER BY b.created_at DESC LIMIT 100").all<Record<string,unknown>>();const bookings=[];for(const row of rows.results){const [pets,events]=await Promise.all([db.prepare("SELECT id,name,species,breed,vaccination_status FROM canonical_pets WHERE customer_id=? AND id IN (SELECT value FROM json_each(?)) ORDER BY name").bind(row.customer_id,row.pet_ids_json).all(),db.prepare("SELECT * FROM booking_lifecycle_events WHERE booking_id=? ORDER BY occurred_at ASC").bind(row.id).all()]);bookings.push({...row,pets:pets.results,events:events.results});}return json({bookings});}catch(error){return authError(error,"Unable to load lifecycle records");}}
 
 export async function POST(request:Request){const denied=await refuseUnlessGatewayPermits(request);if(denied)return denied;try{const input=await request.json() as LifecycleInput;const problem=validate(input);if(problem)return json({error:problem},400);const db=await database();await ensureTables(db);const actor=await resolveActor(request);await requireCustomerOwnership(db,actor,input.customer.id);const prior=await db.prepare("SELECT * FROM canonical_bookings WHERE idempotency_key=? OR schedule_group_id=?").bind(input.idempotencyKey,input.scheduleGroupId).first<Record<string,unknown>>();if(prior)return json({data:await readBundle(db,prior,true)});
+  // Identity rules apply to NEW bookings only, and are checked here — after the replay path above, so
+  // history stays replayable, and before governance, quote/referral consumption, reservation reads and
+  // every write, so a bad new payload costs nothing.
+  const identityProblem=petIdentityProblem(input.pets);if(identityProblem)return json({error:identityProblem},400);
   let governed:{packageCode:string;packageName:string;catalogueVersion?:string;offerType?:string;petCount:number;totalAmount:number;amountDueNow:number;subscriptionPlan?:SubscriptionPlan}={packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,totalAmount:input.totalAmount,amountDueNow:input.amountDueNow};
   // Resolved before the subscription gate, because in LIVE the gate has to reason about what the payment
   // will be RECORDED as (verify-first), not what the client claimed it already was.
@@ -115,14 +215,138 @@ export async function POST(request:Request){const denied=await refuseUnlessGatew
     referralCommercial=await prepareReferralBooking(db,{claimId:referralClaimId,customer:{id:input.customer.id,primaryPhone:input.customer.primaryPhone,email:input.customer.email},serviceCode:input.serviceCode,cityId:input.cityId,baseAmount:governed.totalAmount,baseAmountDueNow:governed.amountDueNow,hasOtherOffer:Boolean(trainingCommercial?.couponCode||input.pricing.couponCode||existingDiscount>0),isSubscription:Boolean(governed.subscriptionPlan||input.pricing.subscription)});
     governed={...governed,totalAmount:referralCommercial.totalAmount,amountDueNow:referralCommercial.amountDueNow};
   }
-  const now=Date.now(),bookingId=`PS-UAT-${now.toString(36).toUpperCase()}-${crypto.randomUUID().slice(0,4).toUpperCase()}`,workOrderId=`WO-${crypto.randomUUID().slice(0,8).toUpperCase()}`,paymentId=`PAY-${crypto.randomUUID().slice(0,8).toUpperCase()}`,subscriptionId=governed.subscriptionPlan?`GSUB-${crypto.randomUUID().slice(0,10).toUpperCase()}`:null,ids=input.pets.map(item=>petId(input.customer.id,item.sourceId));
+  const now=Date.now(),bookingId=`PS-UAT-${now.toString(36).toUpperCase()}-${crypto.randomUUID().slice(0,4).toUpperCase()}`,workOrderId=`WO-${crypto.randomUUID().slice(0,8).toUpperCase()}`,paymentId=`PAY-${crypto.randomUUID().slice(0,8).toUpperCase()}`,subscriptionId=governed.subscriptionPlan?`GSUB-${crypto.randomUUID().slice(0,10).toUpperCase()}`:null;
+  // A booking used to mint its own canonical_pets row keyed by the pet NAME, so a pet the customer had
+  // already saved got a SECOND, empty row and pet_ids_json pointed at that one. Every reader resolving
+  // pets through pet_ids_json — Booking Command Center, canonical-bookings GET, partner job feed,
+  // boarding host-replacement eligibility — then showed an empty profile for a filled-in pet.
+  //
+  // Resolution runs in PHASES rather than per pet, because identity has to be settled for the whole
+  // payload before any weaker rule may claim a row. Deciding pet-by-pet made the outcome depend on
+  // payload order: a name-only or legacy entry listed first could take the row a later entry named by
+  // its exact source id.
+  // This read is a PRECONDITION, not an optimisation. Treating a failure as "no pets exist" was worse
+  // than failing: the booking would mint a fresh empty row beside the customer's saved profile and bind
+  // to it — precisely the defect this route is fixing — while reporting success. Nothing has been
+  // written to canonical_bookings, canonical_pets, booking_payments, provider_work_orders or
+  // booking_lifecycle_events at this point, so returning here leaves no partial booking behind.
+  // Ordered by a STABLE TOTAL order. It used to be updated_at DESC, which made an ambiguous same-name
+  // fallback depend on which row had been edited most recently: an unrelated profile edit could move a
+  // later booking onto a different row, and equal timestamps left the choice to engine order — a real
+  // divergence risk between D1 and any other SQLite. created_at breaks by age, id (the primary key)
+  // breaks every remaining tie, so the same rows always yield the same candidate order. The identity
+  // and profile rules below still decide WHICH candidate wins; this only fixes the order they see.
+  const existingPets=await db.prepare("SELECT id,source_pet_id,name,species,breed,vaccination_status FROM canonical_pets WHERE customer_id=? ORDER BY created_at ASC,id ASC").bind(input.customer.id).all<Record<string,unknown>>().catch(()=>null);
+  if(!existingPets)return json({error:"Unable to read this customer's pets right now"},503);
+  const petText=(value:unknown)=>petKey(value)?String(value).trim():null;
+  // 'not_provided' is the column's own sentinel for "unknown", so it counts as blank on both sides.
+  const petVaccination=(value:unknown)=>petKey(value)&&petKey(value)!=="not_provided"?String(value).trim():null;
+  const petHasProfile=(row:Record<string,unknown>)=>Boolean(petText(row.breed))||Boolean(petVaccination(row.vaccination_status));
+  // The ONLY row a pre-fix booking could mint carries a specific fingerprint: those bookings passed the
+  // pet's NAME as the source id, so source_pet_id equals the row's own name, and they never wrote a
+  // profile. Nothing the account flow saves looks like this. Naming the legacy condition this precisely
+  // keeps duplicate-healing without opening the door to arbitrary same-name substitution.
+  const isLegacyBookingArtifact=(row:Record<string,unknown>)=>petKey(row.source_pet_id)===petKey(row.name)&&!petHasProfile(row);
+  const identityRowsFor=(sourceId:string)=>existingPets.results.filter(row=>petKey(row.source_pet_id)&&petKey(row.source_pet_id)===petKey(sourceId));
+  const assignedRowIds=new Set<string>();
+  const matches:Array<Record<string,unknown>|undefined>=new Array(input.pets.length);
+  const take=(index:number,row:Record<string,unknown>)=>{matches[index]=row;assignedRowIds.add(String(row.id));};
+
+  // PHASE 1 — reserve genuine exact source_pet_id identities across the WHOLE payload first. Any pet
+  // already saved keeps its existing row and its existing id, whatever format that id is in; nothing is
+  // reminted or rewritten. No later phase can take a row this phase holds.
+  input.pets.forEach((pet,index)=>{
+    const genuine=identityRowsFor(pet.sourceId).filter(row=>!isLegacyBookingArtifact(row)&&!assignedRowIds.has(String(row.id)));
+    const claim=genuine.find(petHasProfile)??genuine[0];
+    if(claim)take(index,claim);
+  });
+  // PHASE 2 — legacy healing, deferred until identity is settled. A pet whose only identity match is a
+  // pre-fix artifact may adopt the saved pet of that name if one is still unclaimed; otherwise it keeps
+  // its own artifact.
+  //
+  // The adoption target is chosen by the ARTIFACT's own name — which, by the definition above, IS its
+  // source_pet_id — and never by the payload's name. Using the payload's name let one animal's booking
+  // reach another's row: a payload naming the "Rex" artifact by source id while calling the pet "Bruno"
+  // adopted Bruno's saved row and wrote Rex's details onto it. The source id is the identity the
+  // artifact was found by, so it is the identity the adoption must follow.
+  input.pets.forEach((pet,index)=>{
+    if(matches[index])return;
+    const artifact=identityRowsFor(pet.sourceId).find(row=>isLegacyBookingArtifact(row)&&!assignedRowIds.has(String(row.id)));
+    if(!artifact)return;
+    take(index,existingPets.results.find(row=>petKey(row.name)===petKey(artifact.name)&&petHasProfile(row)&&!isLegacyBookingArtifact(row)&&!assignedRowIds.has(String(row.id)))??artifact);
+  });
+  // PHASE 3 — the legacy name-as-source-id fallback, and ONLY that. It exists for one flow: the apps
+  // that send the pet's NAME as its source id, so the name is the only identity the payload carries.
+  //
+  // It used to run for any pet without an identity match, which quietly absorbed a genuinely new pet
+  // into an existing pet of the same name — a second dog also called Bruno, booked with its own account
+  // source id, was bound to the first Bruno's row and lost its own profile. A source id that does not
+  // exactly match an existing row denotes a DISTINCT pet, even when another pet shares its name; such a
+  // pet is minted in PHASE 4. A duplicate row is recoverable, binding a booking to the wrong animal is
+  // not, so the gate deliberately fails towards minting.
+  input.pets.forEach((pet,index)=>{
+    if(matches[index]||petKey(pet.sourceId)!==petKey(pet.name))return;
+    const named=existingPets.results.filter(row=>petKey(row.name)===petKey(pet.name)&&!assignedRowIds.has(String(row.id)));
+    const claim=named.find(petHasProfile)??named[0];
+    if(claim)take(index,claim);
+  });
+  // PHASE 4 — mint the rest, then CHECK the proposed ids globally.
+  //
+  // The digest makes an id correct for a given identity, but it cannot know whether some unrelated row
+  // already occupies that id. Left unchecked, the guarded upsert silently no-ops against a row owned by
+  // another customer and the booking ends up referencing a stranger's pet. So every proposed id is
+  // looked up across canonical_pets (not just this customer's rows), in bounded chunks. An occupied id
+  // is reusable only when the holder is the SAME pet — same customer and same normalized source id.
+  // Otherwise the next deterministic, domain-separated variant is tried, and the booking fails closed
+  // before the write batch if the attempt budget runs out.
+  const unresolved=input.pets.map((pet,index)=>({pet,index})).filter(entry=>!matches[entry.index]);
+  const candidatesByIndex=new Map<number,string[]>();
+  for(const entry of unresolved){
+    const candidates:string[]=[];
+    for(let attempt=0;attempt<MAX_PET_ID_ATTEMPTS;attempt++)candidates.push(await mintPetId(input.customer.id,entry.pet.sourceId,attempt));
+    candidatesByIndex.set(entry.index,candidates);
+  }
+  const holders=new Map<string,{customerId:string;sourceKey:string}>();
+  const allCandidates=[...new Set([...candidatesByIndex.values()].flat())];
+  for(let offset=0;offset<allCandidates.length;offset+=80){
+    const slice=allCandidates.slice(offset,offset+80);
+    // An unread chunk is NOT an empty chunk. Treating a failed lookup as "nothing occupies these ids"
+    // disables the very check this loop exists for, and the booking would then bind an id belonging to
+    // a stranger while the guarded upsert silently refused to write the customer a row of their own.
+    const rows=await db.prepare(`SELECT id,customer_id,source_pet_id FROM canonical_pets WHERE id IN (${slice.map(()=>"?").join(",")})`).bind(...slice).all<Record<string,unknown>>().catch(()=>null);
+    if(!rows)return json({error:"Unable to verify canonical pet identifiers right now"},503);
+    for(const row of rows.results)holders.set(String(row.id),{customerId:String(row.customer_id),sourceKey:petKey(row.source_pet_id)});
+  }
+  const mintedIds=new Map<number,string>();
+  const takenThisBooking=new Set<string>(assignedRowIds);
+  for(const entry of unresolved){
+    const sourceKey=petKey(entry.pet.sourceId);
+    const chosen=(candidatesByIndex.get(entry.index)??[]).find(candidate=>{
+      if(takenThisBooking.has(candidate))return false;              // already assigned within THIS booking
+      const holder=holders.get(candidate);
+      return !holder||(holder.customerId===input.customer.id&&holder.sourceKey===sourceKey);
+    });
+    // Fail closed: a booking that cannot be given a safe identifier must not be written at all.
+    if(!chosen)return json({error:"Unable to allocate a canonical pet identifier for this booking"},409);
+    takenThisBooking.add(chosen);mintedIds.set(entry.index,chosen);
+  }
+  // Stored values win wherever they are non-blank; the payload may only populate what is missing.
+  const resolvedPets=input.pets.map((pet,index)=>{const match=matches[index];return {
+    id:match?String(match.id):String(mintedIds.get(index)),
+    name:(match&&petText(match.name))??petText(pet.name)??String(pet.name),
+    species:(match&&petText(match.species))??petText(pet.species)??"dog",
+    breed:(match&&petText(match.breed))??petText(pet.breed),
+    vaccinationStatus:(match&&petVaccination(match.vaccination_status))??petVaccination(pet.vaccinationStatus)??"not_provided",
+    sourceId:pet.sourceId,
+  };});
+  const ids=resolvedPets.map(pet=>pet.id);
   const pricingJson={...input.pricing,discount:referralCommercial?.discountAmount??trainingCommercial?.discount??input.pricing.discount,couponCode:trainingCommercial?.couponCode??input.pricing.couponCode,referralClaimId:referralCommercial?.claimId,referralCode:referralCommercial?.code,referralPolicy:referralCommercial?.policySnapshot,referralBaseAmount:referralCommercial?.baseAmount,catalogueVersion:governed.catalogueVersion,offerType:governed.offerType,subscription:subscriptionId??input.pricing.subscription,subscriptionPlanCode:governed.subscriptionPlan?.planCode,subscriptionConfig:governed.subscriptionPlan,commercialPolicy:commercialPolicy?policySnapshot(commercialPolicy):undefined,trainingCommercial:trainingCommercial??undefined,boardingCommercial:boardingCommercial??undefined};
   // The entitlement is only live money's to grant. Captured (sandbox, or an offline capture) creates it
   // active; anything awaiting gateway verification creates it pending with zero sessions reserved.
   const entitlementActive=paymentStatusRecorded==="captured";
   const statements=[
     db.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?, ?,?,?) ON CONFLICT(id) DO UPDATE SET city_id=excluded.city_id,name=excluded.name,primary_phone=excluded.primary_phone,secondary_phone=excluded.secondary_phone,email=excluded.email,updated_at=excluded.updated_at").bind(input.customer.id,input.cityId,input.customer.name,input.customer.primaryPhone,input.customer.secondaryPhone??null,input.customer.email??null,"uat_customer_app",JSON.stringify({serviceUpdates:true,marketing:false}),now,now),
-    ...input.pets.map((pet,index)=>db.prepare("INSERT INTO canonical_pets (id,customer_id,name,species,breed,vaccination_status,source_pet_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,species=excluded.species,breed=excluded.breed,vaccination_status=excluded.vaccination_status,updated_at=excluded.updated_at").bind(ids[index],input.customer.id,pet.name,pet.species??"dog",pet.breed??null,pet.vaccinationStatus??"not_provided",pet.sourceId,now,now)),
+    ...resolvedPets.map(pet=>db.prepare(PET_UPSERT).bind(pet.id,input.customer.id,pet.name,pet.species,pet.breed,pet.vaccinationStatus,pet.sourceId,now,now)),
     db.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(bookingId,input.idempotencyKey,input.customer.id,JSON.stringify(ids),JSON.stringify(input.pets.map(p=>p.sourceId)),input.cityId,input.zoneId,input.serviceCode,governed.packageCode,governed.packageName,input.scheduleGroupId,input.provider.id,input.scheduledStart,input.scheduledEnd,"confirmed","customer_app",governed.totalAmount,"INR",JSON.stringify(pricingJson),input.customer.id,now,now),
     db.prepare("INSERT INTO provider_work_orders (id,booking_id,schedule_group_id,provider_id,provider_name,provider_model,service_code,scheduled_start,scheduled_end,occurrence_count,status,assignment_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(workOrderId,bookingId,input.scheduleGroupId,input.provider.id,input.provider.name,input.provider.model,input.serviceCode,input.scheduledStart,input.scheduledEnd,reservations.results.length,input.provider.model==="commission"?"awaiting_acceptance":"assigned",JSON.stringify({reservations:reservations.results,decision:assignment}),now,now),
     db.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,amount_due_now,currency,method,mode,status,gateway,idempotency_key,detail_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(paymentId,bookingId,input.customer.id,governed.totalAmount,governed.amountDueNow,"INR",input.payment.method,input.payment.mode,paymentStatusRecorded,"uat_sandbox",`${input.idempotencyKey}:payment`,JSON.stringify({detail:input.payment.detail,liveMoney:false,catalogueVersion:governed.catalogueVersion,trainingQuoteId:trainingCommercial?.quoteId,boardingQuoteId:boardingCommercial?.quoteId,referralClaimId:referralCommercial?.claimId,referralDiscount:referralCommercial?.discountAmount}),now,now),
