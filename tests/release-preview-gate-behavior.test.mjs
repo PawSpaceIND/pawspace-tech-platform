@@ -539,7 +539,7 @@ test("B — every support table is created from the candidate's own DDL, before 
   // ALL ELEVEN, not just the five the gate seeds. The other six are the ones it READS: snapshot() runs
   // COUNT(*) over the five booking tables before any request has reached the route, and canonical_customers
   // exists only as a side effect of a booking the gate might never get to make.
-  assert.deepEqual(asked, REQUIRED_TABLES, "all eleven, in order, and before the first seed");
+  assert.deepEqual(asked, REQUIRED_TABLES, `all ${REQUIRED_TABLES.length}, in order, and before the first seed`);
   for (const table of REQUIRED_TABLES) {
     assert.ok(world.tables[table], `${table} must exist once the gate has created it`);
     assert.ok(world.required[table]?.length > 0, `${table}'s NOT NULL columns must come from the real DDL, not a fixture`);
@@ -718,7 +718,7 @@ test("B — every CREATE runs before the first INSERT or SELECT", async () => {
   assert.deepEqual(world.sqlLog.slice(0, REQUIRED_TABLES.length).map((s) => s.table), REQUIRED_TABLES);
 });
 
-test("B — removing ANY one of the eleven fails the gate, before sign-in", async () => {
+test("B — removing ANY one of the twelve fails the gate, before sign-in", async () => {
   for (const missing of REQUIRED_TABLES) {
     const world = makeWorld();
     const report = await run(world, { ddl: async (table) => (table === missing ? null : realDdl(table)) });
@@ -864,14 +864,15 @@ test("SABOTAGE — an ambiguous authoritative source halts the gate before sign-
 });
 
 test("the tables the gate SEEDS are a subset of the tables it BOOTSTRAPS", () => {
-  // SUPPORT_TABLES is the five the gate writes to during setup; REQUIRED_TABLES adds the six it only
-  // reads. Keeping the relation asserted is what stops the two lists drifting apart: a support table
-  // added without being bootstrapped would fail on the very first dispatch, not here.
+  // SUPPORT_TABLES is the five the gate writes to during setup; REQUIRED_TABLES adds the six the booking
+  // route owns and the provider table, making twelve. Keeping the relation asserted is what stops the two
+  // lists drifting apart: a support table added without being bootstrapped would fail on the very first
+  // dispatch, not here.
   for (const table of SUPPORT_TABLES) {
     assert.ok(REQUIRED_TABLES.includes(table), `${table} is seeded but never created`);
   }
   assert.equal(SUPPORT_TABLES.length, 5);
-  assert.equal(REQUIRED_TABLES.length, 12, "eleven the gate reads or seeds, plus the provider table");
+  assert.equal(REQUIRED_TABLES.length, 12, "five support, six from the booking route, one provider table");
   // The provider table is bootstrapped but never written by a booking, so it must NOT be in the
   // snapshot set: counting it there would make every zero-write comparison include a table no refusal
   // could ever touch.

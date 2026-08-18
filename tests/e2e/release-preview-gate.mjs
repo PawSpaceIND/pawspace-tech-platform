@@ -45,16 +45,22 @@ export const SUPPORT_TABLES = [
 ];
 
 /**
- * EVERY table this gate touches before the product does — the five support tables above plus the ones it
- * reads. The support tables were the visible half of the problem, because seeding them throws. The other
- * half is quieter and just as fatal: `snapshot()` runs `SELECT COUNT(*)` over the five booking tables,
+ * EVERY table this gate touches before the product does — the five support tables above, the six the
+ * booking route owns, and the provider table: twelve in all.
+ *
+ * The support tables were the visible half of the problem, because seeding them throws. The other half
+ * is quieter and just as fatal: `snapshot()` runs `SELECT COUNT(*)` over the five booking tables,
  * and the anonymous block takes its first snapshot before any request has reached the route, so on a
  * fresh database those SELECTs are "no such table" too. `canonical_customers` is here for the same
  * reason — the route upserts it on the first booking, and a preview whose customer table appears only
  * as a side effect of a request the gate may never get to make is not a bootstrapped preview.
  *
- * `providers` is deliberately absent. The gate only ever reads it, and F requires that read to be real:
- * a preview where no provider route has run has no providers table, and that is a genuine "not run".
+ * There is no table named `providers` here, and none is queried. This product does not have one: 47
+ * provider-scoped tables exist and none carries that name, and two of the three activation columns the
+ * old check filtered on appear in no source file at all — so that read could never have succeeded, and
+ * as mandatory evidence it would have failed every dispatch. `canonical_providers`, from the module that
+ * owns it, is the provider table this preview bootstraps; the provider CLAIM is made from the deployed
+ * version variables instead (see PROVIDER_ACTIVATION_VARS).
  */
 export const REQUIRED_TABLES = [
   "role_definitions",
