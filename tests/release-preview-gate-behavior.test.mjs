@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs, { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runGate, boundedAll, assertRunTag, TOUCHED_TABLES, SUPPORT_TABLES, REQUIRED_TABLES, AUTHORITATIVE_DDL_SOURCES, extractDdl, extractAllDdl, ddlFromCheckout, requiredColumnsOf, roleDefinitionInsert } from "./e2e/release-preview-gate.mjs";
+import { runGate, boundedAll, assertRunTag, TOUCHED_TABLES, SUPPORT_TABLES, REQUIRED_TABLES, AUTHORITATIVE_DDL_SOURCES, PROVIDER_ACTIVATION_VARS, extractDdl, extractAllDdl, ddlFromCheckout, requiredColumnsOf, roleDefinitionInsert } from "./e2e/release-preview-gate.mjs";
 
 /**
  * The repository itself stands in for the candidate checkout, and the DDL the mock world enforces is the
@@ -47,13 +47,16 @@ function makeWorld(faults = {}) {
   // model ensureTables on purpose: the bootstrap must be the single guarantee, not a fallback behind
   // product DDL, or a table dropped from it would go unnoticed.
   //
-  // `providers` is the one exception and is pre-created. The gate never creates it — F requires that
-  // read to be real — so the mock models a preview in which a provider route has already run, and the
-  // providersUnreadable fault models one in which none has.
+  // NOTHING is pre-created — not even `providers`, which was the last exception. That exception modelled
+  // "a preview in which a provider route has already run", and no such preview can exist: this product
+  // has no `providers` table for any route to create, and two of the three columns that check filtered on
+  // appear in no source file at all. Pre-creating it meant the one read that could never succeed was the
+  // one the mock always answered. The gate now proves provider activation from deployed configuration
+  // instead, and this mock starts as empty as a freshly created D1 really is.
   //
   // `required` comes from the REAL extracted DDL, so an INSERT missing a NOT NULL column fails here
   // exactly as it fails on real D1.
-  const tables = { providers: [] };
+  const tables = {};
   const required = {};
   const sqlLog = [];
   const sessions = new Map();
@@ -105,10 +108,6 @@ function makeWorld(faults = {}) {
       if (like) return [{ n: store.filter((r) => String(r.schedule_group_id || "").startsWith(like[1])).length }];
       const eq = where.match(/customer_id='([^']*)' AND source_pet_id='([^']*)'/);
       if (eq) return [{ n: store.filter((r) => r.customer_id === eq[1] && r.source_pet_id === eq[2]).length }];
-      if (/live=1/.test(where)) {
-        if (faults.providersUnreadable) throw new Error("no such table: providers");
-        return [{ n: 0 }];
-      }
       return [{ n: store.length }];
     }
     if (/LEFT JOIN canonical_bookings/.test(sql)) { rows(sql.match(/FROM (\w+)/)[1]); rows("canonical_bookings"); return [{ n: 0 }]; }
@@ -219,9 +218,11 @@ const silent = () => {};
 /** What a correct world supplies for the three mandatory-evidence adapters. */
 const okHostedSha = async () => `{"annotations":{"workers/tag":"${ENV.EXPECTED_SHA}"}}`;
 const okWorkerLog = async () => '{"outcome":"ok","status":200}';
+/** A deployed configuration with activation off — what the preview config script writes. */
+const okProviderActivation = async () => ({ ...PROVIDER_ACTIVATION_VARS });
 const run = (world, over = {}) => runGate({
   http: world.http, d1: world.d1, ddl: realDdl, hostedSha: okHostedSha, workerLog: okWorkerLog,
-  env: ENV, log: silent, swarmSize: 6, concurrency: 3, ...over,
+  providerActivation: okProviderActivation, env: ENV, log: silent, swarmSize: 6, concurrency: 3, ...over,
 });
 const failed = (report, needle) => report.checks.filter((c) => !c.ok && c.name.includes(needle));
 
@@ -603,14 +604,41 @@ test("B — the DDL extractor balances parentheses rather than stopping at the f
 
 // --- F. mandatory evidence ---------------------------------------------------------------------
 
-test("F — an unreadable providers table FAILS instead of reporting a passing zero", async () => {
-  // The replaced line was `.catch(() => 0)`, which turned a read that never happened into the claim
-  // "no provider became live" — the one claim here nobody should take on trust.
-  const report = await run(makeWorld({ providersUnreadable: true }));
-  const live = report.checks.find((c) => c.name.includes("no provider became live"));
-  assert.ok(live && !live.ok, "an unreadable providers table must fail the gate");
-  assert.match(live.detail, /NOT RUN/, "and be recorded as not run, with the reason");
-  assert.ok(report.unavailable.includes(live.name));
+test("F — unreadable provider evidence FAILS instead of reporting a passing zero", async () => {
+  // Two defects lived in the line this replaces. It swallowed its own error and substituted zero — and it
+  // named a table this product does not have, so on a real preview it could only ever have thrown. The
+  // claim now comes from deployed configuration, and it is still mandatory.
+  const report = await run(makeWorld(), { providerActivation: async () => null });
+  const activation = report.checks.find((c) => c.name.includes("provider activation"));
+  assert.ok(activation && !activation.ok, "unreadable provider evidence must fail the gate");
+  assert.match(activation.detail, /NOT RUN/, "and be recorded as not run, with the reason");
+  assert.ok(report.unavailable.includes(activation.name));
+
+  const threw = await run(makeWorld(), { providerActivation: async () => { throw new Error("wrangler exploded"); } });
+  assert.ok(failed(threw, "provider activation").length === 1, "an adapter that throws must fail, not be swallowed");
+});
+
+test("F — provider activation that is ON fails the gate", async () => {
+  const live = await run(makeWorld(), {
+    providerActivation: async () => ({ ...PROVIDER_ACTIVATION_VARS, PAWSPACE_PROVIDER_MARKETPLACE_LIVE: "true" }),
+  });
+  const check = live.checks.find((c) => c.name.includes("provider activation"));
+  assert.ok(check && !check.ok, "a preview that went out with the marketplace live must fail");
+  assert.match(check.detail, /PAWSPACE_PROVIDER_MARKETPLACE_LIVE=true/);
+
+  const unset = await run(makeWorld(), { providerActivation: async () => ({}) });
+  assert.ok(failed(unset, "provider activation").length === 1, "variables that are not set at all must fail too");
+});
+
+test("F — the provider table this product does not have is no longer queried", () => {
+  const source = readFileSync(new URL("./e2e/release-preview-gate.mjs", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /FROM providers/, "no such table exists in this product");
+  assert.doesNotMatch(source, /marketplace_live=1/, "nor those columns, in any file under app, lib or worker");
+  // And the claim that replaced it names variables the deploy really writes.
+  const config = readFileSync(new URL("../scripts/release-preview-config.mjs", import.meta.url), "utf8");
+  for (const [name, expected] of Object.entries(PROVIDER_ACTIVATION_VARS)) {
+    assert.match(config, new RegExp(`${name}:\\s*"${expected}"`), `${name} must be written as ${expected}`);
+  }
 });
 
 test("F — hosted-SHA evidence is required: unreadable fails, and so does the wrong sha", async () => {
@@ -651,12 +679,13 @@ test("F — NO check can be recorded as not run and still leave the gate passing
     { hostedSha: async () => null },
     { workerLog: async () => null },
     { ddl: async () => null },
+    { providerActivation: async () => null },
   ]) {
     const report = await run(makeWorld(), over);
     assert.notEqual(report.failures, 0, `an unavailable check must fail the gate: ${Object.keys(over)}`);
   }
-  const providers = await run(makeWorld({ providersUnreadable: true }));
-  assert.notEqual(providers.failures, 0, "including an unreadable providers table");
+  const providers = await run(makeWorld(), { providerActivation: async () => null });
+  assert.notEqual(providers.failures, 0, "including unreadable provider evidence");
 });
 
 // --- B (consolidated) — the fresh-D1 bootstrap covers everything the gate touches ----------------
@@ -842,5 +871,75 @@ test("the tables the gate SEEDS are a subset of the tables it BOOTSTRAPS", () =>
     assert.ok(REQUIRED_TABLES.includes(table), `${table} is seeded but never created`);
   }
   assert.equal(SUPPORT_TABLES.length, 5);
-  assert.equal(REQUIRED_TABLES.length, 11);
+  assert.equal(REQUIRED_TABLES.length, 12, "eleven the gate reads or seeds, plus the provider table");
+  // The provider table is bootstrapped but never written by a booking, so it must NOT be in the
+  // snapshot set: counting it there would make every zero-write comparison include a table no refusal
+  // could ever touch.
+  assert.ok(REQUIRED_TABLES.includes("canonical_providers"));
+  assert.ok(!TOUCHED_TABLES.includes("canonical_providers"));
+  assert.equal(TOUCHED_TABLES.length, 5);
+});
+
+// ---------------------------------------------------------------------------
+// The last pre-created table. `providers` was kept in the mock as "a preview in which a provider route
+// has already run" — but no such preview exists: nothing in this product creates that table, and two of
+// the three columns the old check filtered on are in no source file at all. The mock now starts with
+// nothing whatsoever, which is the only state a freshly created preview D1 is ever in.
+// ---------------------------------------------------------------------------
+
+test("EMPTY-D1 — the mock starts with no tables at all, including providers", async () => {
+  const world = makeWorld();
+  assert.deepEqual(Object.keys(world.tables), [], "a fresh preview database has nothing in it");
+  await assert.rejects(() => world.d1("SELECT COUNT(*) n FROM providers WHERE live=1"), /no such table: providers/,
+    "the table the old check queried must throw, not answer zero");
+  for (const table of REQUIRED_TABLES) {
+    await assert.rejects(() => world.d1(`SELECT COUNT(*) n FROM ${table} WHERE 1=1`),
+      new RegExp(`no such table: ${table}`), `${table} must throw before it is bootstrapped`);
+  }
+});
+
+test("EMPTY-D1 — all twelve bootstrap, and the complete gate then runs against that empty database", async () => {
+  const world = makeWorld();
+  const report = await run(world);
+  assert.equal(report.failures, 0, report.checks.filter((c) => !c.ok).map((c) => c.name).join("; "));
+  assert.deepEqual(Object.keys(world.tables).sort(), [...REQUIRED_TABLES].sort(), "exactly the twelve, no more");
+  assert.ok(world.tables.canonical_providers, "including the provider table");
+  assert.ok(world.tables.canonical_bookings.length > 0, "and the run really created bookings");
+});
+
+test("EMPTY-D1 — withholding the provider table halts the gate by name", async () => {
+  const report = await run(makeWorld(), {
+    ddl: async (table) => (table === "canonical_providers" ? null : ddlFromCheckout(CANDIDATE_ROOT, table)),
+  });
+  assert.equal(report.schema, "unavailable", "the gate must halt at the schema step");
+  assert.ok(report.checks.some((c) => c.unavailable && c.name.includes("canonical_providers")));
+  assert.ok(!report.checks.some((c) => c.name.includes("anonymous")), "no HTTP result may be claimed");
+});
+
+test("SABOTAGE — restoring the pre-created providers table is caught", async () => {
+  // The mock exactly as it was: one table handed over that nothing could have created.
+  const preCreated = () => {
+    const world = makeWorld();
+    world.tables.providers = [];
+    return world;
+  };
+  assert.notDeepEqual(Object.keys(preCreated().tables), [],
+    "the sabotaged mock is not empty, and the empty-D1 assertion above is what catches it");
+
+  // And the consequence, measured: the sabotaged mock answers a passing zero for a table that cannot
+  // exist, where the honest one throws. That difference is the whole defect.
+  const answer = await preCreated().d1("SELECT COUNT(*) n FROM providers WHERE live=1 OR marketplace_live=1");
+  assert.equal(answer[0]?.n, 0, "the sabotaged mock answers zero");
+  await assert.rejects(() => makeWorld().d1("SELECT COUNT(*) n FROM providers WHERE live=1 OR marketplace_live=1"),
+    /no such table: providers/, "and the honest mock throws, as a real preview would");
+});
+
+test("SOURCE MAP — the provider table is mapped to the module that owns it", async () => {
+  assert.equal(AUTHORITATIVE_DDL_SOURCES.canonical_providers, "lib/partner-otp.ts");
+  const ddl = ddlFromCheckout(CANDIDATE_ROOT, "canonical_providers");
+  assert.ok(ddl.startsWith("CREATE TABLE IF NOT EXISTS canonical_providers ("));
+  // It is the only module that declares it, and it declares it once, so there is nothing to disambiguate.
+  const found = extractAllDdl(readFileSync(path.join(CANDIDATE_ROOT, "lib/partner-otp.ts"), "utf8"), "canonical_providers");
+  assert.equal(found.statements.length, 1);
+  assert.equal(found.malformed, 0);
 });

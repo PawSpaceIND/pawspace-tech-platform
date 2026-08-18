@@ -68,6 +68,9 @@ export const REQUIRED_TABLES = [
   "booking_payments",
   "provider_work_orders",
   "booking_lifecycle_events",
+  // Not a table a booking writes, so deliberately not in TOUCHED_TABLES — but the deployed provider
+  // module owns it, and a preview whose provider surface has no schema is not a whole preview.
+  "canonical_providers",
 ];
 
 /**
@@ -104,6 +107,17 @@ export const AUTHORITATIVE_DDL_SOURCES = {
   booking_payments: "app/api/canonical-bookings/route.ts",
   provider_work_orders: "app/api/canonical-bookings/route.ts",
   booking_lifecycle_events: "app/api/canonical-bookings/route.ts",
+  canonical_providers: "lib/partner-otp.ts",
+};
+
+/**
+ * How the provider claim is made: the three variables scripts/release-preview-config.mjs writes into the
+ * deployed artifact, read back off the deployed version. See the check itself for why it is not a table.
+ */
+export const PROVIDER_ACTIVATION_VARS = {
+  PAWSPACE_PROVIDER_MARKETPLACE_LIVE: "false",
+  PAWSPACE_PROVIDER_ORDER_ELIGIBLE: "false",
+  PAWSPACE_PROVIDER_ACTIVATION: "uat_ready",
 };
 
 /** Whitespace- and case-insensitive form, so one schema written two ways compares as one schema. */
@@ -285,7 +299,7 @@ export async function boundedAll(tasks, limit) {
  * @param {number} [io.swarmSize]
  * @param {number} [io.concurrency]
  */
-export async function runGate({ http, d1, ddl, hostedSha, workerLog, env, log = console.log, swarmSize = 60, concurrency = 8 }) {
+export async function runGate({ http, d1, ddl, hostedSha, workerLog, providerActivation, env, log = console.log, swarmSize = 60, concurrency = 8 }) {
   const report = { sha: env.EXPECTED_SHA, checks: [], counts: {} };
   let failures = 0;
   const check = (name, ok, detail = "") => {
@@ -606,15 +620,33 @@ export async function runGate({ http, d1, ddl, hostedSha, workerLog, env, log = 
       `payments=${orphanPayments} orders=${orphanOrders} events=${orphanEvents}`);
   }
 
-  // Provider activation. This read used to swallow its own error and substitute zero, which turned a
-  // table the gate could not read into the answer "no provider became live" — the one claim in this
-  // whole gate that nobody should take on trust, reported from a read that never happened. (The guard in
-  // tests/release-preview-gate-behavior.test.mjs greps for that shape, so it is not spelled out here.)
+  // Provider activation, from the deployed configuration.
+  //
+  // This check used to count rows in a table named for providers, filtered on three activation columns.
+  // It swallowed its own error and substituted zero, which was the first defect. The second is worse: no
+  // such table exists in this product. There are 47 provider-scoped tables and none is named that, and two
+  // of those three columns appear in no file under app/, lib/, worker/ or drizzle/. So the read could only
+  // ever have thrown against a real preview, or been answered by a mock that pre-created it — which is
+  // exactly what the behavioural mock was doing. Made mandatory and left as it was, it would have failed
+  // every dispatch forever, on a claim about a table nobody can create.
+  //
+  // What a preview CAN prove is what its own deploy controls: the provider-activation variables written
+  // into the artifact by scripts/release-preview-config.mjs, read back off the deployed version. Mandatory
+  // like everything else here. (The old query's shape is not written out: the behavioural suite greps for
+  // it, and that guard should stay blunt.)
   try {
-    const live = await countOf("providers", "live=1 OR marketplace_live=1 OR order_eligible=1");
-    check("no provider became live in the preview", live === 0, `live=${live}`);
+    const deployed = await providerActivation();
+    if (!deployed) unavailable("the deployed preview has provider activation off", "the deployed configuration could not be read");
+    else {
+      const wrong = Object.entries(PROVIDER_ACTIVATION_VARS)
+        .filter(([name, expected]) => String(deployed[name] ?? "") !== expected)
+        .map(([name, expected]) => `${name}=${String(deployed[name] ?? "<unset>")} (want ${expected})`);
+      report.counts.providerActivation = Object.fromEntries(
+        Object.keys(PROVIDER_ACTIVATION_VARS).map((name) => [name, String(deployed[name] ?? "<unset>")]));
+      check("the deployed preview has provider activation off", wrong.length === 0, wrong.join(", "));
+    }
   } catch (error) {
-    unavailable("no provider became live in the preview", String(error.message).slice(0, 160));
+    unavailable("the deployed preview has provider activation off", String(error.message).slice(0, 160));
   }
 
   // ── the Worker's own log, which sees what the database cannot ───────────────────────────────
@@ -690,6 +722,16 @@ if (isMain) {
   // The CANDIDATE's own definition of each support table, never a copy kept beside this gate.
   const ddl = async (table) => ddlFromCheckout(CANDIDATE_DIR, table);
 
+  /** The deployed version's variables, which is where provider activation is actually decided. */
+  const providerActivation = async () => {
+    const parsed = JSON.parse(wrangler(["versions", "list", "--name", WORKER, "--json"]));
+    const versions = Array.isArray(parsed) ? parsed : (parsed?.versions ?? parsed?.result ?? []);
+    const latest = versions[0] ?? {};
+    // wrangler has reported a version's bindings under more than one key across releases; take whichever
+    // is present rather than assuming, and let a missing one fail the mandatory check above.
+    return latest.vars ?? latest.resources?.bindings ?? latest.annotations ?? {};
+  };
+
   const hostedSha = async () => {
     try { return wrangler(["versions", "list", "--name", WORKER, "--json"]); }
     catch { return wrangler(["deployments", "list", "--name", WORKER]); }
@@ -710,7 +752,7 @@ if (isMain) {
     return captured.trim() ? captured : null;
   };
 
-  const report = await runGate({ http, d1, ddl, hostedSha, workerLog, env: { EXPECTED_SHA, ACCESS_CODE, RUN_TAG } });
+  const report = await runGate({ http, d1, ddl, hostedSha, workerLog, providerActivation, env: { EXPECTED_SHA, ACCESS_CODE, RUN_TAG } });
   writeFileSync("release-preview-report.json", JSON.stringify(report, null, 2));
   // Both halt paths as well as the failure count: a run that stopped at the schema or the session
   // harness has verified nothing, whatever its failure tally happens to be.
