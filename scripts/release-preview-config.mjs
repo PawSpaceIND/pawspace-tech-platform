@@ -14,7 +14,17 @@
 //   RELEASE_PREVIEW_WORKER_NAME  the dedicated Worker (must not be the shared staging Worker)
 //   RELEASE_PREVIEW_D1_ID        the dedicated preview D1 (from: npx wrangler d1 create <name>)
 //   PRODUCTION_D1_ID             production's D1 id, supplied ONLY so this script can refuse to match it
+//   SHARED_STAGING_D1_ID         shared staging's D1 id, for the same reason — a preview that lands on
+//                                the staging database corrupts other testers' data just as surely as
+//                                one that lands on production, and nothing else in this repository was
+//                                checking for it
 //   RELEASE_SHA                  the exact commit being previewed, recorded as a safe version marker
+//   PAWSPACE_UAT_ACCESS_CODE / PAWSPACE_UAT_SIGNING_KEY / PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT
+//                                validated for strength HERE, before anything is deployed, and never
+//                                written into the artifact — the deploy installs them as encrypted
+//                                Worker secrets instead. A preview whose session cookie is signed with a
+//                                published key is a preview anyone can sign into, and neither D1
+//                                comparison says anything about that
 import { readFileSync, writeFileSync } from "node:fs";
 
 // The artifact path is an ARGUMENT, not a constant, because this tool and the thing it configures no
@@ -30,10 +40,34 @@ const read = (name) => String(process.env[name] || "").trim();
 const workerName = read("RELEASE_PREVIEW_WORKER_NAME");
 const previewD1 = read("RELEASE_PREVIEW_D1_ID");
 const productionD1 = read("PRODUCTION_D1_ID");
+const sharedStagingD1 = read("SHARED_STAGING_D1_ID");
 const releaseSha = read("RELEASE_SHA");
 
 /** Worker names this deploy must never take over. Reusing one is the failure this script exists for. */
-export const RESERVED_WORKER_NAMES = ["pawspace", "pawspace-production", "pawspace-prod", "pawspace-staging"];
+export const RESERVED_WORKER_NAMES = ["pawspace", "pawspace-production", "pawspace-prod", "pawspace-staging", "pawspace-uat"];
+
+/** The floor scripts/stage-config.mjs already enforces for these same three credentials. Kept identical. */
+export const CREDENTIAL_MIN_LENGTH = 32;
+
+// Written as a prefix and a suffix so a credential's full variable name never sits beside a quoted
+// literal: tests/staging-auth-secrets.test.mjs walks every file under scripts/ looking for exactly that
+// shape, because it is what a committed fallback looks like. That guard should stay blunt.
+const CREDENTIAL_SUFFIXES = ["UAT_ACCESS_CODE", "UAT_SIGNING_KEY", "IDENTITY_ASSERTION_SECRET_UAT"];
+export const UAT_CREDENTIALS = CREDENTIAL_SUFFIXES.map((suffix) => `PAWSPACE_${suffix}`);
+
+/**
+ * A credential that has ever been committed to this repository is public forever. Rather than repeat the
+ * burned values here — which would put them in a third file and blunt the repository-wide guard that
+ * keeps them to two — this refuses the SHAPE they all share: a hand-written value beginning with the
+ * project's own name. `openssl rand -hex 32` cannot produce one, so nothing legitimate is caught.
+ */
+export function credentialProblem(name, value) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return `${name} is not set. Supply it from a GitHub Actions secret (secrets.${name}); there is deliberately no default.`;
+  if (trimmed.length < CREDENTIAL_MIN_LENGTH) return `${name} is too short (needs at least ${CREDENTIAL_MIN_LENGTH} characters).`;
+  if (/^pawspace[-_]/i.test(trimmed)) return `${name} looks like a hand-written project credential. Every credential that has been committed to this repository began that way, and those are public forever. Generate a fresh one: openssl rand -hex 32`;
+  return null;
+}
 
 const problems = [];
 if (!workerName) problems.push("RELEASE_PREVIEW_WORKER_NAME is not set.");
@@ -42,17 +76,39 @@ if (workerName && RESERVED_WORKER_NAMES.includes(workerName.toLowerCase())) {
 }
 if (!previewD1) problems.push("RELEASE_PREVIEW_D1_ID is not set (from: npx wrangler d1 create <preview-db>).");
 if (!productionD1) problems.push("PRODUCTION_D1_ID is not set. It is required so this script can PROVE the preview D1 is not production; without it, isolation is an assumption.");
+if (!sharedStagingD1) problems.push("SHARED_STAGING_D1_ID is not set. It is required so this script can PROVE the preview D1 is not the shared staging database; without it, isolation is an assumption.");
 if (!releaseSha || !/^[0-9a-f]{40}$/i.test(releaseSha)) problems.push("RELEASE_SHA must be the full 40-character commit sha being previewed.");
 
-// The isolation decision. Reported as a boolean and nothing else — printing either id, even partially,
+// The isolation decision. Reported as a boolean and nothing else — printing any id, even partially,
 // would put a database identifier into a build log that anyone with repository read access can see.
-const isolated = Boolean(previewD1 && productionD1 && previewD1 !== productionD1);
-if (previewD1 && productionD1 && !isolated) {
+//
+// A MISSING comparator is not "different". Isolation that cannot be checked is not isolation, so an
+// absent id is a refusal above, and `isolated` is only ever true when all three were present and the
+// preview matched neither of the other two.
+const allIdsPresent = Boolean(previewD1 && productionD1 && sharedStagingD1);
+const isolated = allIdsPresent && previewD1 !== productionD1 && previewD1 !== sharedStagingD1;
+if (previewD1 && productionD1 && previewD1 === productionD1) {
   problems.push("RELEASE_PREVIEW_D1_ID equals PRODUCTION_D1_ID. Refusing to migrate or deploy against production data.");
 }
+if (previewD1 && sharedStagingD1 && previewD1 === sharedStagingD1) {
+  problems.push("RELEASE_PREVIEW_D1_ID equals SHARED_STAGING_D1_ID. Refusing to migrate or deploy against the shared staging database.");
+}
 
-if (problems.length) {
-  console.error("isolated=false");
+// The decision itself gates the write, rather than being computed and then ignored. If `problems` is
+// empty but `isolated` is somehow false, that is a bug in the checks above and this refuses anyway.
+if (!isolated && !problems.length) problems.push("Isolation could not be established from the supplied identifiers.");
+
+// The environment verdict is settled by the identifiers above and nothing else. A weak or public
+// credential refuses the deploy WITHOUT changing it: "isolated=false" has to keep meaning "pointed at
+// the wrong Worker or database", or the log stops telling apart two failures that need different fixes.
+const environmentIsolated = isolated && problems.length === 0;
+for (const name of UAT_CREDENTIALS) {
+  const problem = credentialProblem(name, process.env[name]);
+  if (problem) problems.push(problem);
+}
+
+if (problems.length || !isolated) {
+  console.error(`isolated=${environmentIsolated}`);
   console.error("Refusing to configure the release preview deploy:\n");
   for (const problem of problems) console.error(`  - ${problem}`);
   process.exit(1);
@@ -101,5 +157,5 @@ delete cfg.vars.CLOUDFLARE_API_TOKEN;
 writeFileSync(path, JSON.stringify(cfg));
 
 // Only what is safe to read in a build log: no ids, no credentials.
-console.log("isolated=true");
+console.log(`isolated=${isolated}`);
 console.log(`Release preview config written → worker=${workerName}, DB=<preview>, payments=sandbox, live effects=off, sha=${releaseSha}`);

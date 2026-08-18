@@ -57,11 +57,20 @@ function runConfig(env, vars = {}) {
   return { status, stdout, stderr, config };
 }
 
+// The three UAT credentials are part of a VALID configuration now, not an optional extra: the deploy
+// installs them onto the preview Worker as secrets, so the tool validates their strength before it
+// configures anything. Obviously-synthetic values, long enough to clear the 32-character floor and not
+// shaped like the hand-written credentials this repository has published. See the credential group at the
+// end of this file for the refusals.
 const GOOD = {
   RELEASE_PREVIEW_WORKER_NAME: "pawspace-release-preview",
   RELEASE_PREVIEW_D1_ID: "preview-db-0000",
   PRODUCTION_D1_ID: "production-db-9999",
+  SHARED_STAGING_D1_ID: "staging-db-5555",
   RELEASE_SHA: VALID_SHA,
+  PAWSPACE_UAT_ACCESS_CODE: "not-a-real-access-code-for-tests-only",
+  PAWSPACE_UAT_SIGNING_KEY: "not-a-real-signing-key-for-tests-only",
+  PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: "not-a-real-identity-secret-for-tests",
 };
 
 // --- isolation, which is the whole point ------------------------------------------------------
@@ -83,18 +92,52 @@ test("the shared staging and production Worker names are refused", () => {
   }
 });
 
-test("isolation cannot be assumed: a missing production id is refused, not treated as different", () => {
-  const result = runConfig({ ...GOOD, PRODUCTION_D1_ID: "" });
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /PRODUCTION_D1_ID/);
-  assert.equal(result.config.name, "unset");
+test("a preview D1 that IS the shared staging D1 is refused", () => {
+  // A preview that lands on the shared staging database corrupts other testers' data just as surely
+  // as one that lands on production. Nothing in this repository was comparing against it.
+  const result = runConfig({ ...GOOD, RELEASE_PREVIEW_D1_ID: "staging-db-5555" });
+  assert.notEqual(result.status, 0, "matching the staging id must exit non-zero");
+  assert.match(`${result.stdout}${result.stderr}`, /isolated=false/);
+  assert.match(result.stderr, /SHARED_STAGING_D1_ID/);
+  assert.equal(result.config.name, "unset", "the build artifact must be left untouched");
+  assert.equal(result.config.d1_databases, undefined, "no database binding may be written");
 });
 
-test("a missing preview id or worker name is refused", () => {
-  for (const key of ["RELEASE_PREVIEW_D1_ID", "RELEASE_PREVIEW_WORKER_NAME"]) {
+test("isolation cannot be ASSUMED: every missing comparator is a refusal, not a pass", () => {
+  // The dangerous shape is treating an absent id as "different". Each of these must fail closed.
+  for (const key of ["RELEASE_PREVIEW_D1_ID", "PRODUCTION_D1_ID", "SHARED_STAGING_D1_ID", "RELEASE_PREVIEW_WORKER_NAME"]) {
     const result = runConfig({ ...GOOD, [key]: "" });
-    assert.notEqual(result.status, 0, key);
-    assert.equal(result.config.name, "unset", key);
+    assert.notEqual(result.status, 0, `${key} missing must be refused`);
+    assert.match(`${result.stdout}${result.stderr}`, /isolated=false/, key);
+    assert.match(result.stderr, new RegExp(key), `${key} must be named in the refusal`);
+    assert.equal(result.config.name, "unset", `${key}: nothing may be configured`);
+    assert.equal(result.config.d1_databases, undefined, `${key}: no database binding may be written`);
+  }
+});
+
+test("nothing can be built, migrated or deployed after any refusal", () => {
+  // The refusal is only half the guarantee; the other half is that every later step is gated on it.
+  // Proved two ways: the artifact is untouched, and the workflow gates on the isolation output.
+  const refusals = [
+    ["preview equals production", { RELEASE_PREVIEW_D1_ID: "production-db-9999" }],
+    ["preview equals shared staging", { RELEASE_PREVIEW_D1_ID: "staging-db-5555" }],
+    ["preview id missing", { RELEASE_PREVIEW_D1_ID: "" }],
+    ["production id missing", { PRODUCTION_D1_ID: "" }],
+    ["staging id missing", { SHARED_STAGING_D1_ID: "" }],
+    ["shared worker name", { RELEASE_PREVIEW_WORKER_NAME: "pawspace-staging" }],
+  ];
+  for (const [label, over] of refusals) {
+    const result = runConfig({ ...GOOD, ...over });
+    assert.notEqual(result.status, 0, label);
+    // Nothing usable was written, so a deploy step that ran anyway would have no preview binding.
+    assert.equal(result.config.d1_databases, undefined, `${label}: no binding`);
+    assert.equal(result.config.vars.PAWSPACE_PAYMENT_ENV, undefined, `${label}: not configured`);
+  }
+  // And in the workflow, build/config/migrate/deploy each require isolated=true.
+  for (const name of [/Build the candidate/, /Configure the dedicated/, /Migrate ONLY/, /Deploy the dedicated preview Worker/]) {
+    const step = job.steps.find((s) => name.test(s.name || ""));
+    assert.ok(step, `missing step ${name}`);
+    assert.match(String(step.if), /steps\.isolation\.outputs\.isolated == 'true'/, `${step.name} must be gated`);
   }
 });
 
@@ -106,16 +149,21 @@ test("only a full 40-character sha may be recorded as the version marker", () =>
   assert.equal(runConfig(GOOD).status, 0, "the valid sha must be accepted");
 });
 
-test("neither database id is ever printed, on success or on refusal", () => {
-  const ok = runConfig(GOOD);
-  const refused = runConfig({ ...GOOD, RELEASE_PREVIEW_D1_ID: "same-db", PRODUCTION_D1_ID: "same-db" });
-  for (const [label, result] of [["success", ok], ["refusal", refused]]) {
+test("no database id is ever printed, on success or on any refusal", () => {
+  const scenarios = [
+    ["success", runConfig(GOOD)],
+    ["equals production", runConfig({ ...GOOD, RELEASE_PREVIEW_D1_ID: "production-db-9999" })],
+    ["equals staging", runConfig({ ...GOOD, RELEASE_PREVIEW_D1_ID: "staging-db-5555" })],
+    ["missing staging", runConfig({ ...GOOD, SHARED_STAGING_D1_ID: "" })],
+  ];
+  for (const [label, result] of scenarios) {
     const printed = `${result.stdout}${result.stderr}`;
-    assert.ok(!printed.includes(GOOD.RELEASE_PREVIEW_D1_ID), `${label}: the preview id must not be logged`);
-    assert.ok(!printed.includes(GOOD.PRODUCTION_D1_ID), `${label}: the production id must not be logged`);
-    assert.ok(!printed.includes("same-db"), `${label}: no id may be logged`);
+    for (const id of [GOOD.RELEASE_PREVIEW_D1_ID, GOOD.PRODUCTION_D1_ID, GOOD.SHARED_STAGING_D1_ID]) {
+      assert.ok(!printed.includes(id), `${label}: no identifier may reach the log`);
+    }
+    assert.match(printed, /isolated=(true|false)/, `${label}: the only isolation output is the boolean`);
   }
-  assert.match(ok.stdout, /isolated=true/);
+  assert.match(scenarios[0][1].stdout, /isolated=true/);
 });
 
 // --- what an accepted configuration must contain ----------------------------------------------
@@ -299,6 +347,22 @@ test("migration and deploy are gated on isolated=true", () => {
   assert.match(String(isolation.run), /exit 1/, "and fail the job when it does");
 });
 
+test("the workflow compares against BOTH production and shared staging, printing neither", () => {
+  const isolation = job.steps.find((step) => step.id === "isolation");
+  const run = String(isolation.run);
+  assert.match(run, /PRODUCTION_D1_ID/, "production must be compared");
+  assert.match(run, /SHARED_STAGING_D1_ID/, "shared staging must be compared");
+  assert.match(run, /-z "\$\{RELEASE_PREVIEW_D1_ID:-\}"/, "a missing preview id must fail closed");
+  assert.match(run, /-z "\$\{SHARED_STAGING_D1_ID:-\}"/, "a missing staging id must fail closed");
+  // Only the boolean is emitted; no step may echo an identifier.
+  assert.ok(!/echo[^\n]*\$RELEASE_PREVIEW_D1_ID/.test(run), "the preview id must never be echoed");
+  assert.ok(!/echo[^\n]*\$PRODUCTION_D1_ID/.test(run), "the production id must never be echoed");
+  assert.ok(!/echo[^\n]*\$SHARED_STAGING_D1_ID/.test(run), "the staging id must never be echoed");
+  assert.equal((run.match(/isolated=false/g) || []).length >= 4, true, "each refusal path must report isolated=false");
+  const configure = job.steps.find((s) => /Configure the dedicated/.test(s.name || ""));
+  assert.match(JSON.stringify(configure.env), /SHARED_STAGING_D1_ID/, "the config tool must receive it too");
+});
+
 test("the workflow never deploys to a shared or production Worker", () => {
   const isolation = job.steps.find((step) => step.id === "isolation");
   for (const name of ["pawspace-staging", "pawspace-production"]) {
@@ -329,6 +393,17 @@ test("the post-deploy gate runs from infra/ against the HOSTED candidate", () =>
   const upload = job.steps.find((step) => String(step.uses || "").startsWith("actions/upload-artifact"));
   assert.ok(upload, "sanitized evidence must be uploaded");
   assert.match(String(upload.with.path), /release-preview-report\.json/);
+});
+
+test("the workflow gives the gate a per-attempt run tag, not a constant", () => {
+  const gate = job.steps.find((step) => /Post-deploy gate/.test(step.name || ""));
+  const tag = String(gate.env?.PREVIEW_RUN_TAG ?? "");
+  assert.ok(tag, "the gate must be given PREVIEW_RUN_TAG");
+  assert.match(tag, /github\.run_id/, "it must vary per run");
+  // run_id alone is not enough: a re-ATTEMPT reuses it, and the second attempt would replay the
+  // first attempt's bookings instead of creating its own.
+  assert.match(tag, /github\.run_attempt/, "and per attempt");
+  assert.ok(!/['"]gate['"]/.test(tag), "no constant fallback may appear in the hosted tag");
 });
 
 test("the migration is addressed by database id, not by a name that could resolve elsewhere", () => {
@@ -378,4 +453,125 @@ test("the gate script reports statuses and counts, never a credential or an id",
   }
   assert.ok(!/console\.log\([^)]*ACCESS_CODE/.test(source), "the access code must never be logged");
   assert.ok(!/console\.log\([^)]*cookie/.test(source), "the session cookie must never be logged");
+});
+
+// ---------------------------------------------------------------------------
+// CONSOLIDATION — E: preview credential validation and the reserved UAT Worker name, ported from the
+// competing implementation (#204). The two D1 comparisons this file already covers are untouched; these
+// tests assert they still hold alongside the new refusals, because a credential check that weakened
+// isolation reporting would be a poor trade.
+// ---------------------------------------------------------------------------
+const UAT_CREDENTIALS = ["PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"];
+
+test("E — a missing credential fails the deploy closed, and configures nothing", () => {
+  for (const name of UAT_CREDENTIALS) {
+    const absent = { ...GOOD };
+    delete absent[name];
+    const result = runConfig(absent);
+    assert.notEqual(result.status, 0, `${name} must have no default`);
+    assert.match(result.stderr, new RegExp(name), "the refusal must name the variable");
+    assert.match(result.stderr, /secrets\./, "and say where to supply it");
+    assert.equal(result.config.name, "unset", "the build artifact must be left untouched");
+    assert.equal(result.config.d1_databases, undefined, "no database binding may be written");
+  }
+});
+
+test("E — a credential below the 32-character floor is refused", () => {
+  for (const name of UAT_CREDENTIALS) {
+    assert.notEqual(runConfig({ ...GOOD, [name]: "a".repeat(31) }).status, 0, `31 characters must be refused for ${name}`);
+  }
+  assert.equal(runConfig(GOOD).status, 0, "and a value that clears the floor is accepted");
+});
+
+test("E — a hand-written project credential is refused, without naming the burned values", () => {
+  const result = runConfig({ ...GOOD, PAWSPACE_UAT_SIGNING_KEY: "pawspace-staging-signing-key-long-enough" });
+  assert.notEqual(result.status, 0, "a project-shaped credential must be refused");
+  assert.match(result.stderr, /public forever/, "and the refusal must explain why");
+  assert.match(result.stderr, /openssl rand/, "and say how to generate a good one");
+  // A shape, not a list: the burned literals stay in the two files tests/staging-auth-secrets.test.mjs
+  // allows to contain them, so that guard keeps its teeth.
+  assert.match(fs.readFileSync(CONFIG_SCRIPT, "utf8"), /\^pawspace\[-_\]/);
+});
+
+test("E — a credential problem does not pretend the environment is unisolated", () => {
+  // The two failures need different fixes, so the log has to distinguish them.
+  const weak = runConfig({ ...GOOD, PAWSPACE_UAT_ACCESS_CODE: "short" });
+  assert.notEqual(weak.status, 0);
+  assert.match(weak.stderr, /^isolated=true$/m, "the environment was still the right one");
+
+  // And both original comparisons still report the environment as the problem when they are the problem.
+  assert.match(runConfig({ ...GOOD, RELEASE_PREVIEW_D1_ID: GOOD.PRODUCTION_D1_ID }).stderr, /^isolated=false$/m);
+  assert.match(runConfig({ ...GOOD, RELEASE_PREVIEW_D1_ID: GOOD.SHARED_STAGING_D1_ID }).stderr, /^isolated=false$/m);
+  assert.match(runConfig({ ...GOOD, SHARED_STAGING_D1_ID: "" }).stderr, /^isolated=false$/m);
+});
+
+test("E — pawspace-uat is reserved, in the tool AND in the runner", () => {
+  const result = runConfig({ ...GOOD, RELEASE_PREVIEW_WORKER_NAME: "pawspace-uat" });
+  assert.notEqual(result.status, 0, "the UAT Worker must not be taken over by a preview deploy");
+  assert.match(result.stderr, /^isolated=false$/m, "a shared Worker is not an isolated preview");
+  assert.equal(result.config.name, "unset");
+  assert.match(workflowText, /pawspace-uat\)/, "the runner's own refusal list must match the tool's");
+  // Case is not a way around it.
+  assert.notEqual(runConfig({ ...GOOD, RELEASE_PREVIEW_WORKER_NAME: "PawSpace-UAT" }).status, 0);
+});
+
+test("E — no credential value reaches the log or the generated artifact", () => {
+  const result = runConfig(GOOD);
+  assert.equal(result.status, 0, result.stderr);
+  const printed = `${result.stdout}${result.stderr}`;
+  for (const name of UAT_CREDENTIALS) {
+    assert.ok(!printed.includes(GOOD[name]), `${name}'s value must not be logged`);
+    assert.ok(!JSON.stringify(result.config).includes(GOOD[name]), `${name}'s value must not be serialized`);
+    assert.ok(!(name in result.config.vars), `${name} must not become a plaintext Worker var`);
+  }
+});
+
+test("E — the workflow hands the tool the credentials it is expected to validate", () => {
+  const configure = job.steps.find((step) => String(step.run || "").startsWith("node infra/scripts/release-preview-config"));
+  assert.ok(configure, "the configure step must exist");
+  for (const name of UAT_CREDENTIALS) {
+    assert.equal(configure.env[name], `\${{ secrets.${name} }}`, `${name} must arrive from a secret, or the validation has nothing to check`);
+  }
+  // The two comparators this PR exists for are still mandatory alongside them.
+  assert.equal(configure.env.PRODUCTION_D1_ID, "${{ secrets.PRODUCTION_D1_ID }}");
+  assert.equal(configure.env.SHARED_STAGING_D1_ID, "${{ secrets.SHARED_STAGING_D1_ID }}");
+});
+
+test("B — the workflow tells the gate which checkout to read the support schema from", () => {
+  // Matched on the node invocation rather than the filename: an earlier step `test -f`s the same path to
+  // prove the tooling is present, and a substring search finds that step first.
+  const gate = job.steps.find((step) => /\bnode\b[^\n]*release-preview-gate\.mjs/.test(String(step.run || "")));
+  assert.ok(gate, "the gate step must exist");
+  assert.equal(gate.env.CANDIDATE_DIR, "${{ github.workspace }}/candidate",
+    "the schema must come from the candidate, never from the infrastructure checkout");
+  assert.equal(gate.env.PREVIEW_RUN_TAG, "${{ github.run_id }}-${{ github.run_attempt }}",
+    "and the run namespace this branch already established must be preserved");
+});
+
+test("the gate REFUSES to start without CANDIDATE_DIR, rather than defaulting to its own directory", () => {
+  const source = fs.readFileSync(GATE_SCRIPT, "utf8");
+  assert.match(source, /const CANDIDATE_DIR = process\.env\.CANDIDATE_DIR \|\| "";/,
+    "no cwd fallback: the one thing that must never happen is bootstrapping from the infrastructure checkout");
+  assert.match(source, /!CANDIDATE_DIR/, "and a missing value must stop the run");
+});
+
+test("no file that runs in the hosted job carries a table definition of its own", () => {
+  // The DDL is read from the candidate at run time. A copy here would be a second source of truth that
+  // drifts from the routes, and the drift would surface as a passing run against a schema no Worker makes.
+  const tables = [
+    "role_definitions", "app_users", "customer_identity_links",
+    "scheduling_assignment_decisions", "scheduling_reservations", "canonical_customers",
+    "canonical_pets", "canonical_bookings", "booking_payments", "provider_work_orders",
+    "booking_lifecycle_events",
+  ];
+  for (const file of [WORKFLOW_PATH, CONFIG_SCRIPT, GATE_SCRIPT]) {
+    const text = fs.readFileSync(file, "utf8");
+    for (const table of tables) {
+      // The shape an EXECUTABLE definition has: the statement, the table, then its column list. Prose
+      // that merely mentions both — the comment explaining why the DDL is not copied here does — is not
+      // a schema, and a guard that cannot tell the difference gets weakened the first time it misfires.
+      assert.ok(!new RegExp(`CREATE\\s+TABLE\\s+(IF\\s+NOT\\s+EXISTS\\s+)?["'\`]?${table}["'\`]?\\s*\\(`, "i").test(text),
+        `${path.basename(file)} appears to define ${table}`);
+    }
+  }
 });
