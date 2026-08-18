@@ -536,9 +536,11 @@ test("B — every support table is created from the candidate's own DDL, before 
   const world = makeWorld();
   const asked = [];
   const report = await run(world, { ddl: async (table) => { asked.push(table); return realDdl(table); } });
-  // ALL ELEVEN, not just the five the gate seeds. The other six are the ones it READS: snapshot() runs
+  // ALL TWELVE, not just the five the gate seeds. Six of the rest are the ones it READS: snapshot() runs
   // COUNT(*) over the five booking tables before any request has reached the route, and canonical_customers
-  // exists only as a side effect of a booking the gate might never get to make.
+  // exists only as a side effect of a booking the gate might never get to make. The twelfth,
+  // canonical_providers, is neither seeded nor queried — it is bootstrapped because the deployed provider
+  // module owns it and a preview missing its schema is not a whole preview.
   assert.deepEqual(asked, REQUIRED_TABLES, `all ${REQUIRED_TABLES.length}, in order, and before the first seed`);
   for (const table of REQUIRED_TABLES) {
     assert.ok(world.tables[table], `${table} must exist once the gate has created it`);
