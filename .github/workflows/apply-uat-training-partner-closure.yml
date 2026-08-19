@@ -1,0 +1,37 @@
+name: Apply UAT training partner closure
+
+on:
+  push:
+    branches:
+      - agent/uat-training-partner-closure
+    paths:
+      - scripts/apply-uat-training-partner-closure.mjs
+      - .github/workflows/apply-uat-training-partner-closure.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/uat-training-partner-closure
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Apply deterministic patch
+        run: node scripts/apply-uat-training-partner-closure.mjs
+      - name: Run focused UAT closure acceptance test
+        run: node --test tests/uat-training-partner-closure.test.mjs
+      - name: Commit patched files
+        run: |
+          git config user.name "PawSpace Closure Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add app/mobile-app/training-flow.tsx app/partner-mobile/page.tsx app/api/uat-provider-switch/route.ts lib/api-gateway.ts tests/uat-training-partner-closure.test.mjs
+          git diff --cached --check
+          git commit -m "close Training UX and partner UAT identity gaps"
+          git push origin HEAD:agent/uat-training-partner-closure
