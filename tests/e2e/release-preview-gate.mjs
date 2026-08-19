@@ -308,6 +308,14 @@ export async function boundedAll(tasks, limit) {
 export async function runGate({ http, d1, ddl, hostedSha, workerLog, providerActivation, env, log = console.log, swarmSize = 60, concurrency = 8 }) {
   const report = { sha: env.EXPECTED_SHA, checks: [], counts: {} };
   let failures = 0;
+  const safeDetail = (value) => {
+    let detail = String(value ?? "adapter failure");
+    if (env.ACCESS_CODE) detail = detail.split(env.ACCESS_CODE).join("<redacted>");
+    detail = detail
+      .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "<redacted-id>")
+      .replace(/\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{16,}\b/g, "<redacted-token>");
+    return detail.slice(0, 160);
+  };
   const check = (name, ok, detail = "") => {
     report.checks.push({ name, ok, detail });
     if (!ok) failures++;
@@ -321,9 +329,10 @@ export async function runGate({ http, d1, ddl, hostedSha, workerLog, providerAct
    * no gate. This is also why nothing here swallows an error into a passing zero.
    */
   const unavailable = (name, reason) => {
-    report.checks.push({ name, ok: false, detail: `NOT RUN: ${reason}`, unavailable: true });
+    const detail = safeDetail(reason);
+    report.checks.push({ name, ok: false, detail: `NOT RUN: ${detail}`, unavailable: true });
     failures++;
-    log(`  FAIL  ${name} — NOT RUN: ${reason}`);
+    log(`  FAIL  ${name} — NOT RUN: ${detail}`);
     return false;
   };
 
@@ -414,7 +423,7 @@ export async function runGate({ http, d1, ddl, hostedSha, workerLog, providerAct
     } catch (error) {
       // Ambiguous, unparseable, or not a plain CREATE TABLE. All of them fail here rather than being
       // resolved by preference — a guessed schema produces a run that looks like a passing test.
-      schemaReady = unavailable(`table ${table} is created from the candidate's DDL`, String(error.message).slice(0, 160));
+      schemaReady = unavailable(`table ${table} is created from the candidate's DDL`, error.message);
     }
   }
   check("every table the gate reads or seeds exists", schemaReady, `${REQUIRED_TABLES.length} tables`);
@@ -718,9 +727,17 @@ if (isMain) {
 
   // Addressed by database ID, so a reconciliation read cannot land on another database.
   const d1 = async (sql) => {
-    const out = execFileSync("npx", ["wrangler", "d1", "execute", PREVIEW_D1, "--remote", "--json", "--command", sql], {
-      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
-    });
+    let out;
+    try {
+      // `d1 execute` resolves a database by NAME OR BINDING, not by UUID. The generated candidate
+      // config binds DB to the already-isolation-checked preview id, so this stays exact without
+      // placing that id in a command line or an error message.
+      out = execFileSync("npx", ["wrangler", "d1", "execute", "DB", "--config", path.join(CANDIDATE_DIR, "dist/server/wrangler.json"), "--remote", "--json", "--command", sql], {
+        encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch {
+      throw new Error("D1 command failed");
+    }
     const parsed = JSON.parse(out);
     return parsed?.[0]?.results ?? parsed?.result?.[0]?.results ?? [];
   };
@@ -728,20 +745,21 @@ if (isMain) {
   // The CANDIDATE's own definition of each support table, never a copy kept beside this gate.
   const ddl = async (table) => ddlFromCheckout(CANDIDATE_DIR, table);
 
-  /** The deployed version's variables, which is where provider activation is actually decided. */
-  const providerActivation = async () => {
+  /** Plain-text variables from the newest deployed version. Secret bindings are never selected. */
+  const deployedVars = async () => {
     const parsed = JSON.parse(wrangler(["versions", "list", "--name", WORKER, "--json"]));
     const versions = Array.isArray(parsed) ? parsed : (parsed?.versions ?? parsed?.result ?? []);
-    const latest = versions[0] ?? {};
-    // wrangler has reported a version's bindings under more than one key across releases; take whichever
-    // is present rather than assuming, and let a missing one fail the mandatory check above.
-    return latest.vars ?? latest.resources?.bindings ?? latest.annotations ?? {};
+    versions.sort((a, b) => String(b.metadata?.created_on || "").localeCompare(String(a.metadata?.created_on || "")));
+    const versionId = versions[0]?.id;
+    if (!versionId) return null;
+    const detail = JSON.parse(wrangler(["versions", "view", versionId, "--name", WORKER, "--json"]));
+    return Object.fromEntries((detail.resources?.bindings || [])
+      .filter((binding) => binding.type === "plain_text")
+      .map((binding) => [binding.name, binding.text]));
   };
 
-  const hostedSha = async () => {
-    try { return wrangler(["versions", "list", "--name", WORKER, "--json"]); }
-    catch { return wrangler(["deployments", "list", "--name", WORKER]); }
-  };
+  const providerActivation = async () => deployedVars();
+  const hostedSha = async () => (await deployedVars())?.PAWSPACE_RELEASE_SHA ?? null;
 
   /** A bounded sample of the Worker's log, taken while a request is driven through it. */
   const workerLog = async () => {

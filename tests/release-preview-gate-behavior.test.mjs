@@ -519,6 +519,29 @@ test("no credential, cookie or database id reaches the report", async () => {
   }
 });
 
+test("adapter failures are redacted before they reach evidence", async () => {
+  const identifier = "12345678-1234-1234-1234-123456789abc";
+  const report = await run(makeWorld(), {
+    hostedSha: async () => { throw new Error(`command failed for ${identifier} using ${ENV.ACCESS_CODE}`); },
+  });
+  const serialized = JSON.stringify(report);
+  assert.ok(!serialized.includes(identifier), "an identifier embedded in a command failure must be redacted");
+  assert.ok(!serialized.includes(ENV.ACCESS_CODE), "a credential embedded in a command failure must be redacted");
+  assert.match(serialized, /<redacted-id>/, "the reason must remain legible without exposing the value");
+});
+
+test("the real adapters resolve the isolated D1 binding and deployed version detail", () => {
+  const source = readFileSync(new URL("./e2e/release-preview-gate.mjs", import.meta.url), "utf8");
+  assert.match(source, /"d1", "execute", "DB", "--config", path\.join\(CANDIDATE_DIR, "dist\/server\/wrangler\.json"\)/,
+    "D1 execute must use the binding in the generated candidate config");
+  assert.doesNotMatch(source, /"d1", "execute", PREVIEW_D1/,
+    "wrangler d1 execute does not resolve a raw database identifier as its positional name");
+  assert.match(source, /"versions", "view", versionId/,
+    "deployed variables must be read from version detail, not version-list metadata");
+  assert.match(source, /binding\.type === "plain_text"/,
+    "only non-secret deployed bindings may be selected");
+});
+
 test("the gate snapshots all five booking tables, not a subset", () => {
   assert.deepEqual([...TOUCHED_TABLES].sort(), [
     "booking_lifecycle_events", "booking_payments", "canonical_bookings", "canonical_pets", "provider_work_orders",
