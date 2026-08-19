@@ -387,6 +387,11 @@ test("the post-deploy gate runs from infra/ against the HOSTED candidate", () =>
   assert.match(String(gate.run), /infra\/tests\/e2e\/release-preview-gate\.mjs/, "the gate script must come from infra/");
   assert.equal(gate["working-directory"], "candidate", "but it must run against the candidate's install and hosted deploy");
   assert.match(JSON.stringify(gate.env), /EXPECTED_SHA/, "and be told which candidate is hosted");
+  assert.equal(gate.env.PREVIEW_URL, "${{ steps.deploy.outputs.preview_url }}",
+    "the gate must use the account-qualified URL Wrangler reported for this deploy");
+  const deploy = job.steps.find((step) => /^Deploy the dedicated preview Worker/.test(step.name || ""));
+  assert.equal(deploy.id, "deploy", "the deploy step must expose its hosted URL");
+  assert.match(String(deploy.run), /preview_url=\$PREVIEW_URL/);
   const names = job.steps.map((s) => s.name || "");
   assert.ok(names.findIndex((n) => /Verify the DEPLOYED sha/.test(n)) < names.findIndex((n) => /Post-deploy gate/.test(n)),
     "the hosted sha must be verified before the gate reports on it");

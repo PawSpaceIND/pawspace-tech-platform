@@ -308,14 +308,7 @@ export async function boundedAll(tasks, limit) {
 export async function runGate({ http, d1, ddl, hostedSha, workerLog, providerActivation, env, log = console.log, swarmSize = 60, concurrency = 8 }) {
   const report = { sha: env.EXPECTED_SHA, checks: [], counts: {} };
   let failures = 0;
-  const safeDetail = (value) => {
-    let detail = String(value ?? "adapter failure");
-    if (env.ACCESS_CODE) detail = detail.split(env.ACCESS_CODE).join("<redacted>");
-    detail = detail
-      .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "<redacted-id>")
-      .replace(/\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{16,}\b/g, "<redacted-token>");
-    return detail.slice(0, 160);
-  };
+  const safeDetail = (value) => sanitizeEvidenceDetail(value, [env.ACCESS_CODE]);
   const check = (name, ok, detail = "") => {
     report.checks.push({ name, ok, detail });
     if (!ok) failures++;
@@ -688,6 +681,18 @@ export async function runGate({ http, d1, ddl, hostedSha, workerLog, providerAct
   return report;
 }
 
+/** Redact values and common opaque identifier shapes before anything enters uploaded evidence. */
+export function sanitizeEvidenceDetail(value, sensitiveValues = []) {
+  let detail = String(value ?? "adapter failure");
+  for (const sensitive of sensitiveValues) {
+    if (sensitive) detail = detail.split(String(sensitive)).join("<redacted>");
+  }
+  return detail
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "<redacted-id>")
+    .replace(/\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{16,}\b/g, "<redacted-token>")
+    .slice(0, 160);
+}
+
 // ── CLI: wire the real adapters. Only reached when this file is executed, never when imported. ──
 const isMain = process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href;
 if (isMain) {
@@ -695,17 +700,20 @@ if (isMain) {
   const EXPECTED_SHA = process.env.EXPECTED_SHA || "";
   const ACCESS_CODE = process.env.PAWSPACE_UAT_ACCESS_CODE || "";
   const PREVIEW_D1 = process.env.PREVIEW_D1 || "";
+  const PREVIEW_URL = process.env.PREVIEW_URL || "";
   const RUN_TAG = process.env.PREVIEW_RUN_TAG || "";
   const CANDIDATE_DIR = process.env.CANDIDATE_DIR || "";
-  if (!WORKER || !EXPECTED_SHA || !ACCESS_CODE || !PREVIEW_D1 || !RUN_TAG || !CANDIDATE_DIR) {
-    console.error("release-preview gate: required environment is not configured (PREVIEW_WORKER, EXPECTED_SHA, PAWSPACE_UAT_ACCESS_CODE, PREVIEW_D1, PREVIEW_RUN_TAG, CANDIDATE_DIR).");
+  if (!WORKER || !EXPECTED_SHA || !ACCESS_CODE || !PREVIEW_D1 || !PREVIEW_URL || !RUN_TAG || !CANDIDATE_DIR) {
+    console.error("release-preview gate: required environment is not configured (PREVIEW_WORKER, PREVIEW_URL, EXPECTED_SHA, PAWSPACE_UAT_ACCESS_CODE, PREVIEW_D1, PREVIEW_RUN_TAG, CANDIDATE_DIR).");
     process.exit(1);
   }
   // Validated before it reaches any generated SQL, and never defaulted: a constant tag would make
   // every re-run replay the previous one's bookings instead of creating its own.
   try { assertRunTag(RUN_TAG); }
   catch (error) { console.error(`release-preview gate: ${error.message}`); process.exit(1); }
-  const BASE = process.env.PREVIEW_URL || `https://${WORKER}.workers.dev`;
+  // Wrangler reports the account-qualified workers.dev URL at deploy time. A guessed
+  // https://<worker>.workers.dev hostname omits the account subdomain and cannot resolve.
+  const BASE = PREVIEW_URL;
   // CANDIDATE_DIR is required above rather than defaulted to the working directory. The default would
   // usually have been right — the step runs with candidate/ as its cwd — but "usually right" is how the
   // schema ends up being read out of the INFRASTRUCTURE checkout the one time the cwd differs, and a
@@ -776,7 +784,17 @@ if (isMain) {
     return captured.trim() ? captured : null;
   };
 
-  const report = await runGate({ http, d1, ddl, hostedSha, workerLog, providerActivation, env: { EXPECTED_SHA, ACCESS_CODE, RUN_TAG } });
+  let report;
+  try {
+    report = await runGate({ http, d1, ddl, hostedSha, workerLog, providerActivation, env: { EXPECTED_SHA, ACCESS_CODE, RUN_TAG } });
+  } catch (error) {
+    report = {
+      sha: EXPECTED_SHA,
+      checks: [{ name: "hosted gate completed", ok: false, unavailable: true,
+        detail: `NOT RUN: ${sanitizeEvidenceDetail(error?.message, [ACCESS_CODE, PREVIEW_D1])}` }],
+      counts: {}, failures: 1, gate: "unavailable",
+    };
+  }
   writeFileSync("release-preview-report.json", JSON.stringify(report, null, 2));
   // Both halt paths as well as the failure count: a run that stopped at the schema or the session
   // harness has verified nothing, whatever its failure tally happens to be.
