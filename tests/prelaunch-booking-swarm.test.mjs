@@ -125,7 +125,8 @@ test("repository canonical booking contract enforces the supported four services
   assert.match(src,/schedule_group_id TEXT NOT NULL UNIQUE/);
   assert.match(src,/provider_work_orders[^\n]*booking_id TEXT NOT NULL UNIQUE/);
   assert.match(src,/booking_payments[^\n]*booking_id TEXT NOT NULL UNIQUE/);
-  assert.match(src,/WHERE idempotency_key=\? OR schedule_group_id=\?/);
+  assert.match(src,/findCustomerReplay/);
+  assert.match(src,/hasForeignReplayConflict/);
   assert.match(src,/duplicatePrevented/);
 });
 
