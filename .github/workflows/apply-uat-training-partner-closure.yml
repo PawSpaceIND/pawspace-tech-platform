@@ -1,20 +1,13 @@
 name: Apply UAT training partner closure
 
 on:
-  push:
-    branches:
-      - agent/uat-training-partner-closure
-    paths:
-      - scripts/apply-uat-training-partner-closure.mjs
-      - .github/workflows/apply-uat-training-partner-closure.yml
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   apply:
-    # Branch-scoped, one-time helper for PR #212. It commits only the explicit UAT closure files below.
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,15 +17,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Apply deterministic patch
-        run: node scripts/apply-uat-training-partner-closure.mjs
+      - name: Apply remaining Training patch
+        run: node scripts/apply-uat-training-remaining.mjs
       - name: Run focused UAT closure acceptance test
         run: node --test tests/uat-training-partner-closure.test.mjs
+      - name: Run typecheck
+        run: npm ci && npm run typecheck
       - name: Commit patched files
         run: |
           git config user.name "PawSpace Closure Bot"
           git config user.email "actions@users.noreply.github.com"
-          git add app/mobile-app/training-flow.tsx app/partner-mobile/page.tsx app/api/uat-provider-switch/route.ts lib/api-gateway.ts tests/uat-training-partner-closure.test.mjs
+          git add app/mobile-app/training-flow.tsx lib/api-gateway.ts tests/uat-training-partner-closure.test.mjs
           git diff --cached --check
-          git commit -m "close Training UX and partner UAT identity gaps"
+          git commit -m "close remaining Training UAT gaps"
           git push origin HEAD:agent/uat-training-partner-closure
