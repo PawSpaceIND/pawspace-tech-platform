@@ -259,6 +259,14 @@ test("all three shas are recorded independently", () => {
   const deployed = job.steps.find((s) => /Verify the DEPLOYED sha/.test(s.name || ""));
   assert.ok(deployed, "the deployed sha must be verified in its own step");
   assert.match(String(deployed.run), /deployed_sha=\$EXPECTED_SHA/, "and must equal the requested candidate sha");
+  assert.match(String(deployed.run), /versions view "\$LATEST_VERSION_ID"/,
+    "the marker must be read from the deployed version detail; versions list contains metadata only");
+  assert.match(String(deployed.run), /binding\.type === "plain_text" && binding\.name === "PAWSPACE_RELEASE_SHA"/,
+    "only the named non-secret marker may be selected");
+  assert.match(String(deployed.run), /"\$ACTUAL_SHA" = "\$EXPECTED_SHA"/,
+    "the deployed marker value must be compared exactly, never found by grepping unrelated metadata");
+  assert.ok(!/grep -q "\$EXPECTED_SHA" versions\.json/.test(String(deployed.run)),
+    "the version list cannot prove which sha is deployed");
 });
 
 test("infrastructure tools are executed ONLY from infra/", () => {
