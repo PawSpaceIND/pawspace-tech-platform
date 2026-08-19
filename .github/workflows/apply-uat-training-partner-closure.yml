@@ -13,6 +13,7 @@ permissions:
 
 jobs:
   apply:
+    # Branch-scoped, one-time helper for PR #212. It commits only the explicit UAT closure files below.
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
