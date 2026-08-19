@@ -542,6 +542,16 @@ test("the real adapters resolve the isolated D1 binding and deployed version det
     "only non-secret deployed bindings may be selected");
 });
 
+test("the CLI requires the account-qualified deployed URL and always writes sanitized failure evidence", () => {
+  const source = readFileSync(new URL("./e2e/release-preview-gate.mjs", import.meta.url), "utf8");
+  assert.match(source, /const PREVIEW_URL = process\.env\.PREVIEW_URL/);
+  assert.match(source, /const BASE = PREVIEW_URL/);
+  assert.doesNotMatch(source, /`https:\/\/\$\{WORKER\}\.workers\.dev`/,
+    "a Worker name alone is not a resolvable workers.dev hostname");
+  assert.match(source, /catch \(error\)[\s\S]*hosted gate completed[\s\S]*sanitizeEvidenceDetail/,
+    "an unexpected hosted failure must still produce redacted evidence");
+});
+
 test("the gate snapshots all five booking tables, not a subset", () => {
   assert.deepEqual([...TOUCHED_TABLES].sort(), [
     "booking_lifecycle_events", "booking_payments", "canonical_bookings", "canonical_pets", "provider_work_orders",
