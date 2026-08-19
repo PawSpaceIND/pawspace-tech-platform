@@ -32,8 +32,13 @@ test("release-preview deploy records the exact requested sha in the version mess
   );
   assert.match(
     deploy,
-    /run: npx wrangler deploy --message "release-preview \$EXPECTED_SHA"/,
+    /npx wrangler deploy --message "release-preview \$EXPECTED_SHA"/,
     "deploy must persist the exact candidate sha in Wrangler's version message",
+  );
+  assert.match(
+    deploy,
+    /echo "preview_url=\$PREVIEW_URL" >> "\$GITHUB_OUTPUT"/,
+    "deploy must expose the exact account-qualified URL Wrangler reported",
   );
 });
 
