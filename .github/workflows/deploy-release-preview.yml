@@ -285,6 +285,7 @@ jobs:
           console.log(`deployed_sha=${expected}`);
           console.log("deployed_sha matches the product candidate sha.");
           NODE
+          echo "deployed_sha=$EXPECTED_SHA"
 
       # GATE from infra/, run against the HOSTED candidate. cwd is candidate/ so that `npx wrangler`
       # resolves from the candidate's own install; the script itself is never taken from candidate/.
