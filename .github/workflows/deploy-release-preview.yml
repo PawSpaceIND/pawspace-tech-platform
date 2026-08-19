@@ -228,13 +228,24 @@ jobs:
           fi
 
       - name: Deploy the dedicated preview Worker from the candidate build
+        id: deploy
         if: ${{ steps.isolation.outputs.isolated == 'true' }}
         working-directory: candidate
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
-        run: npx wrangler deploy --message "release-preview $EXPECTED_SHA"
+        run: |
+          set -euo pipefail
+          DEPLOY_LOG="$(mktemp)"
+          trap 'rm -f "$DEPLOY_LOG"' EXIT
+          npx wrangler deploy --message "release-preview $EXPECTED_SHA" 2>&1 | tee "$DEPLOY_LOG"
+          PREVIEW_URL="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' "$DEPLOY_LOG" | tail -n 1)"
+          if [ -z "$PREVIEW_URL" ]; then
+            echo "Wrangler did not report a workers.dev URL for the deployed preview." >&2
+            exit 1
+          fi
+          echo "preview_url=$PREVIEW_URL" >> "$GITHUB_OUTPUT"
 
       - name: Install UAT credentials as Worker secrets
         if: ${{ steps.isolation.outputs.isolated == 'true' }}
@@ -294,6 +305,7 @@ jobs:
         working-directory: candidate
         env:
           PREVIEW_WORKER: ${{ vars.RELEASE_PREVIEW_WORKER_NAME }}
+          PREVIEW_URL: ${{ steps.deploy.outputs.preview_url }}
           EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -323,6 +335,6 @@ jobs:
       - name: Where to test
         if: ${{ steps.isolation.outputs.isolated == 'true' }}
         run: |
-          echo "Release preview deployed. The deploy log above prints its workers.dev URL."
+          echo "Release preview URL        : ${{ steps.deploy.outputs.preview_url }}"
           echo "workflow/bootstrap sha : ${{ steps.shas.outputs.workflow_bootstrap_sha }}"
           echo "product candidate sha  : ${{ steps.shas.outputs.candidate_sha }}"
