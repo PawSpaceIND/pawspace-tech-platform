@@ -233,7 +233,8 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx wrangler deploy
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+        run: npx wrangler deploy --message "release-preview $EXPECTED_SHA"
 
       - name: Install UAT credentials as Worker secrets
         if: ${{ steps.isolation.outputs.isolated == 'true' }}
@@ -262,18 +263,28 @@ jobs:
           EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
         run: |
           set -euo pipefail
-          # The marker is a Worker var, read back from the deployed version rather than served from a
-          # public endpoint: a version marker that anyone can fetch is a disclosure this gate does not
-          # need. It is only ever compared to the sha the caller asked for.
-          npx wrangler versions list --name "$WORKER" --json > versions.json 2>/dev/null || \
-            npx wrangler deployments list --name "$WORKER" > versions.json
-          if grep -q "$EXPECTED_SHA" versions.json; then
-            echo "deployed_sha=$EXPECTED_SHA"
-            echo "deployed_sha matches the product candidate sha."
-          else
-            echo "The hosted version marker does not carry $EXPECTED_SHA — deployment drift." >&2
-            exit 1
-          fi
+          # `wrangler deploy --message` is exposed by `versions list --json`; require the exact
+          # release-preview message so a partial sha or unrelated version can never satisfy this gate.
+          npx wrangler versions list --json --name "$WORKER" > versions.json
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const expected = process.env.EXPECTED_SHA;
+          const expectedMessage = `release-preview ${expected}`;
+          const versions = JSON.parse(fs.readFileSync("versions.json", "utf8"));
+          const strings = [];
+          const collect = (value) => {
+            if (typeof value === "string") strings.push(value);
+            else if (Array.isArray(value)) value.forEach(collect);
+            else if (value && typeof value === "object") Object.values(value).forEach(collect);
+          };
+          collect(versions);
+          if (!strings.includes(expectedMessage)) {
+            console.error(`No deployed version message exactly matches ${expectedMessage} — deployment drift.`);
+            process.exit(1);
+          }
+          console.log(`deployed_sha=${expected}`);
+          console.log("deployed_sha matches the product candidate sha.");
+          NODE
 
       # GATE from infra/, run against the HOSTED candidate. cwd is candidate/ so that `npx wrangler`
       # resolves from the candidate's own install; the script itself is never taken from candidate/.
