@@ -265,9 +265,26 @@ jobs:
           # The marker is a Worker var, read back from the deployed version rather than served from a
           # public endpoint: a version marker that anyone can fetch is a disclosure this gate does not
           # need. It is only ever compared to the sha the caller asked for.
-          npx wrangler versions list --name "$WORKER" --json > versions.json 2>/dev/null || \
-            npx wrangler deployments list --name "$WORKER" > versions.json
-          if grep -q "$EXPECTED_SHA" versions.json; then
+          # `versions list` only returns version metadata; Worker vars live on the version detail.
+          # Read the newest version id, then inspect only the named plain-text marker. Secret values
+          # are never selected or printed.
+          npx wrangler versions list --name "$WORKER" --json > versions.json
+          LATEST_VERSION_ID="$(node -e '
+            const versions = JSON.parse(require("node:fs").readFileSync("versions.json", "utf8"));
+            if (!Array.isArray(versions) || versions.length === 0) process.exit(1);
+            versions.sort((a, b) => String(b.metadata?.created_on || "").localeCompare(String(a.metadata?.created_on || "")));
+            process.stdout.write(String(versions[0].id || ""));
+          ')"
+          test -n "$LATEST_VERSION_ID"
+          npx wrangler versions view "$LATEST_VERSION_ID" --name "$WORKER" --json > version.json
+          ACTUAL_SHA="$(node -e '
+            const version = JSON.parse(require("node:fs").readFileSync("version.json", "utf8"));
+            const marker = (version.resources?.bindings || []).find(
+              (binding) => binding.type === "plain_text" && binding.name === "PAWSPACE_RELEASE_SHA"
+            );
+            process.stdout.write(String(marker?.text || ""));
+          ')"
+          if [ "$ACTUAL_SHA" = "$EXPECTED_SHA" ]; then
             echo "deployed_sha=$EXPECTED_SHA"
             echo "deployed_sha matches the product candidate sha."
           else
