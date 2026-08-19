@@ -63,9 +63,9 @@ const money = (n: number) =>
     maximumFractionDigits: 0,
   }).format(n);
 const IST_OFFSET=330*60_000;
-const weekdayMap:Record<string,number[]>={"Tue & Sat":[2,6],"Wed & Sun":[3,0],"Every Saturday":[6],"Choose each session myself":[0,1,2,3,4,5,6]};
+const weekdayMap:Record<string,number[]>={"Tue & Sat":[2,6],"Wed & Sun":[3,0],"Every Saturday":[6]};
 function futureIst(days:number,hour:number,minute=0){const now=new Date(),shifted=new Date(now.getTime()+IST_OFFSET);return new Date(Date.UTC(shifted.getUTCFullYear(),shifted.getUTCMonth(),shifted.getUTCDate()+days,hour,minute)-IST_OFFSET);}
-function nextTrainingStarts(frequency:string,time:string,count=3){const hour=time.startsWith("9")?9:time.startsWith("3")?15:17,days=weekdayMap[frequency]||weekdayMap["Choose each session myself"],result:Date[]=[];for(let offset=1;offset<=28&&result.length<count;offset++){const candidate=futureIst(offset,hour),weekday=new Date(candidate.getTime()+IST_OFFSET).getUTCDay();if(days.includes(weekday))result.push(candidate);}return result;}
+function nextTrainingStarts(frequency:string,time:string,count=3){const hour=time.startsWith("9")?9:time.startsWith("3")?15:17,days=weekdayMap[frequency]||weekdayMap["Tue & Sat"],result:Date[]=[];for(let offset=1;offset<=28&&result.length<count;offset++){const candidate=futureIst(offset,hour),weekday=new Date(candidate.getTime()+IST_OFFSET).getUTCDay();if(days.includes(weekday))result.push(candidate);}return result;}
 function slotLabel(value:Date){return new Intl.DateTimeFormat("en-IN",{timeZone:"Asia/Kolkata",weekday:"short",day:"numeric",month:"short",hour:"numeric",minute:"2-digit"}).format(value);}
 function previewHour(time:string){return time.startsWith("9")?9:time.startsWith("3")?15:17;}
 function buildPlans(packages:TrainingPackage[]):Plan[]{return planMarketing.flatMap(marketing=>{const pkg=packages.find(item=>item.package_code===marketing.packageCode);if(!pkg)return[];return[{...marketing,sessions:Number(pkg.sessions),sessionLabel:`${Number(pkg.sessions)} sessions`,validityDays:Number(pkg.validity_days),validity:`${Number(pkg.validity_days)} days`,price:Number(pkg.base_price),directMinutes:Number(pkg.direct_minutes_per_pet),coachingMinutes:Number(pkg.coaching_minutes_per_pet),splitDuePercent:Number(pkg.split_due_percent),outcomes:[...marketing.outcomes]}];});}
@@ -95,7 +95,6 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
     [frequency, setFrequency] = useState("Tue & Sat"),
     [time, setTime] = useState("3:00 PM"),
     [attendanceMode, setAttendanceMode] = useState<"parent" | "trainer-led">("parent"),
-    [meet, setMeet] = useState(true),
     [meetSlot, setMeetSlot] = useState(() => futureIst(1,11).toISOString()),
     [meetBookingId, setMeetBookingId] = useState(""),
     [meetPetKey, setMeetPetKey] = useState(""),
@@ -133,11 +132,10 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
   const startOptions=nextTrainingStarts(frequency,time);
   const selectedStart=startOptions[startDateIndex]||startOptions[0]||futureIst(1,time.startsWith("9")?9:time.startsWith("3")?15:17);
   const selectedStartIso=selectedStart.toISOString();
-  const calendarPreview=trainingSessionPreviewDates(selectedStart,weekdayMap[frequency]||weekdayMap["Choose each session myself"],previewHour(time),trainingPreviewCount(plan.sessions));
+  const calendarPreview=trainingSessionPreviewDates(selectedStart,weekdayMap[frequency]||weekdayMap["Tue & Sat"],previewHour(time),trainingPreviewCount(plan.sessions));
   const serviceMinutes=selectedPets.length*(plan.directMinutes+plan.coachingMinutes);
-  const meetFee=meet&&!meetBookingId?Number(meetPackage?.base_price||0):0;
   const discount=checkoutQuote?.discount??0;
-  const payableNow=(checkoutQuote?.amountDueNow??0)+meetFee;
+  const payableNow=checkoutQuote?.amountDueNow??0;
   const recommendedPlan=plans.find(item=>item.packageCode==="training-8-basic")||plan;
   const selectedTrainer=trainers.find(item=>item.id===trainerId)||trainers[0]||null;
   useEffect(()=>{let active=true;void loadTrainingTrainers({cityId:"blr",zoneId:"blr-east",at:selectedStartIso}).then(result=>{if(!active)return;setTrainers(result.providers);setTrainerId(current=>result.providers.some(item=>item.id===current)?current:result.providers[0]?.id||"");}).catch(problem=>{if(active){setTrainers([]);setTrainerId("");setScheduleError(problem instanceof Error?problem.message:"Unable to load eligible Training trainers");}});return()=>{active=false;};},[selectedStartIso]);
@@ -207,7 +205,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
         const requestId=`training-meet-${customer.customerId}-${selectedTrainer?.id||"auto"}-${start.toISOString()}`;
         const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:"dog_training",zoneId:"blr-east",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,preferredProviderId:selectedTrainer?.id});
         const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:"dog" as const})),cityId:"blr",zoneId:"blr-east",serviceCode:"dog_training",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"upi",mode:"prepaid",status:"captured",detail:"UAT trainer Meet & Greet sandbox payment"},pricing:{discount:quote.discount,trainingQuoteId:quote.quoteId}});
-        setMeetBookingId(canonical.bookingId);setMeetPetKey(petKey);setMeetTrainerName(decision.provider.name);setMeet(false);setCheckoutQuote(null);
+        setMeetBookingId(canonical.bookingId);setMeetPetKey(petKey);setMeetTrainerName(decision.provider.name);setCheckoutQuote(null);
       } catch(error){setScheduleError(error instanceof Error?error.message:"This Meet & Greet slot is no longer available");} finally {setScheduling(false);}
     },
     confirm = async () => {
@@ -215,9 +213,9 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
       setScheduling(true);setScheduleError("");
       try {
         let linkedMeetBookingId=meetLinked?meetBookingId:"";
-        if(meet&&!linkedMeetBookingId){const meetStart=new Date(meetSlot),meetQuote=await quoteTraining({packageCode:"trainer-meet-greet",petCount:selectedPets.length,scheduledStart:meetStart.toISOString(),paymentMode:"prepaid"}),meetEnd=new Date(meetStart.getTime()+meetQuote.minutesPerSession*60_000),meetRequestId=`training-meet-${customer.customerId}-${selectedTrainer?.id||"auto"}-${meetStart.toISOString()}`,meetDecision=await reserveUatSchedule({clientRequestId:meetRequestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:"dog_training",zoneId:"blr-east",scheduledStart:meetStart.toISOString(),scheduledEnd:meetEnd.toISOString(),occurrences:1,preferredProviderId:selectedTrainer?.id}),meetCanonical=await createCanonicalLifecycle({idempotencyKey:meetRequestId,scheduleGroupId:meetDecision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:"dog" as const})),cityId:"blr",zoneId:"blr-east",serviceCode:"dog_training",packageCode:meetQuote.packageCode,packageName:meetQuote.packageName,scheduledStart:meetStart.toISOString(),scheduledEnd:meetEnd.toISOString(),provider:meetDecision.provider,totalAmount:meetQuote.totalAmount,amountDueNow:meetQuote.amountDueNow,payment:{method:"upi",mode:"prepaid",status:"captured",detail:"UAT trainer Meet & Greet sandbox payment"},pricing:{discount:meetQuote.discount,trainingQuoteId:meetQuote.quoteId}});linkedMeetBookingId=meetCanonical.bookingId;setMeetBookingId(linkedMeetBookingId);setMeetPetKey(petKey);setMeetTrainerName(meetDecision.provider.name);}
+        // Meet & Greet is standalone. Package checkout may link an existing meeting but never creates one implicitly.
         const mode=paymentMode==="full"?"prepaid":"split",quote=await quoteTraining({packageCode:plan.packageCode,petCount:selectedPets.length,scheduledStart:selectedStart.toISOString(),paymentMode:mode,couponCode:mode==="prepaid"&&couponCode?couponCode:undefined}),end=new Date(selectedStart.getTime()+quote.minutesPerSession*60_000),requestId=`training-TST101-${quote.packageCode}-${selectedStart.toISOString()}-${frequency.replaceAll(" ","")}`;
-        const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:"dog_training",zoneId:"blr-east",scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,weekdays:weekdayMap[frequency],cadenceDays:frequency==="Choose each session myself"?7:undefined,preferredProviderId:selectedTrainer?.id});
+        const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:"dog_training",zoneId:"blr-east",scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,weekdays:weekdayMap[frequency],preferredProviderId:selectedTrainer?.id});
         const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:"dog" as const})),cityId:"blr",zoneId:"blr-east",serviceCode:"dog_training",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"upi",mode,status:"captured",detail:`UAT ${mode} Training sandbox payment`},pricing:{discount:quote.discount,couponCode:couponCode||undefined,subscription:`${quote.sessions} sessions`,requirements:selectedGoals,trainingQuoteId:quote.quoteId}});
         await materializeTrainingProgramme({bookingId:canonical.bookingId,meetBookingId:linkedMeetBookingId||undefined});
         setConfirmedTrainerName(decision.provider.name);
@@ -402,6 +400,22 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
               <span key={goal}><i>✓</i> {goal}</span>
             ))}
           </div>
+          <section className={styles.meetTrainer}>
+            <div className={styles.meetPitch}>
+              <span>MEET A TRAINER FIRST</span>
+              <h4>Prefer to meet a trainer before choosing a programme?</h4>
+              <p>Book a separate Meet &amp; Greet now. You can return later and choose a training package without mixing the two purchases.</p>
+            </div>
+            <b>{meetPackage?`${Number(meetPackage.direct_minutes_per_pet)+Number(meetPackage.coaching_minutes_per_pet)}-minute Meet & Greet · ${money(Number(meetPackage.base_price))}`:"Loading Meet & Greet…"}</b>
+            <div className={styles.meetSlots}>
+              {[futureIst(1,11),futureIst(2,15),futureIst(2,16)].map((date)=>{const slot=date.toISOString();return <button key={slot} className={meetSlot===slot?styles.selected:""} onClick={()=>setMeetSlot(slot)}>{slotLabel(date)}<small>{meetSlot===slot?"Selected":"Available"}</small></button>;})}
+            </div>
+            <p>Trainer availability is checked before booking. This creates one standalone, sandbox-paid canonical Meet &amp; Greet only.</p>
+            <button className={styles.meetOnly} onClick={confirmMeetFirst} disabled={scheduling || selectedPets.length === 0 || !selectedTrainer}>{scheduling?"Reserving Meet & Greet…":"Book Meet & Greet only"}</button>
+            {meetLinked&&<article className={styles.meetConfirmed}><b>✓ Meet &amp; Greet booked</b><span>{slotLabel(new Date(meetSlot))} · {meetTrainerName||selectedTrainer?.name||"Assigned trainer"} · {meetBookingId}</span><small>You can continue to a programme now or return after the meeting.</small></article>}
+            {meetBookingId&&!meetLinked&&<article className={styles.meetConfirmed}><b>Meet &amp; Greet belongs to another dog selection</b><span>Select the original dogs to link that meeting, or book another Meet &amp; Greet for the current selection.</span></article>}
+            {scheduleError&&<p role="alert">{scheduleError}</p>}
+          </section>
           <div className={styles.planGuide}>
             <span><i>1</i><b>Pick by goal</b><small>Puppy, obedience, leash or advanced</small></span>
             <span><i>2</i><b>Compare effort</b><small>Sessions, validity and price together</small></span>
@@ -528,42 +542,6 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
               </span>
             </div>
           </article>
-          <section className={styles.meetTrainer}>
-            <div className={styles.meetPitch}>
-              <span>NOT READY TO BUY A PACKAGE?</span>
-              <h4>Meet the trainer first. Book only when you feel confident.</h4>
-              <p>Understand the trainer&apos;s technique, experience and approach with your dog before committing to a programme.</p>
-            </div>
-            <label>
-              <input
-                type="checkbox"
-                checked={meet}
-                onChange={(e) => setMeet(e.target.checked)}
-              />
-              <span>
-                <b>{meetPackage?`${Number(meetPackage.direct_minutes_per_pet)+Number(meetPackage.coaching_minutes_per_pet)}-minute trainer Meet & Greet · ${money(Number(meetPackage.base_price))}`:"Loading Meet & Greet…"}</b>
-                <small>
-                  A separate, no-pressure appointment. Meet the trainer, discuss goals and see how they communicate before booking training.
-                </small>
-              </span>
-            </label>
-            {meet && (
-              <>
-                <div className={styles.meetSlots}>
-                  {[futureIst(1,11),futureIst(2,15),futureIst(2,16)].map((date)=>{const slot=date.toISOString();return <button key={slot} className={meetSlot===slot?styles.selected:""} onClick={()=>setMeetSlot(slot)}>{slotLabel(date)}<small>{meetSlot===slot?"Selected":"Available"}</small></button>;})}
-                </div>
-                <p>
-                  Trainer availability is checked before the slot is offered. If you continue now, the canonical Meet & Greet is created as its own paid booking before the programme booking.
-                </p>
-                <button className={styles.meetOnly} onClick={confirmMeetFirst} disabled={scheduling || selectedPets.length === 0}>
-                  {scheduling ? "Reserving Meet & Greet…" : "Book only the Meet & Greet"}
-                </button>
-              </>
-            )}
-            {meetLinked && <article className={styles.meetConfirmed}><b>✓ Meet & Greet booked</b><span>{slotLabel(new Date(meetSlot))} · {meetTrainerName||selectedTrainer?.name||"Assigned trainer"} · {meetBookingId}</span><small>You can decide on the training package after the meeting.</small></article>}
-            {meetBookingId && !meetLinked && <article className={styles.meetConfirmed}><b>Meet &amp; Greet needs re-booking</b><span>Your earlier Meet &amp; Greet was for a different dog selection. Select those dogs again to reuse it, or book a new Meet &amp; Greet.</span></article>}
-            {scheduleError && <p role="alert">{scheduleError}</p>}
-          </section>
           <button className={styles.back} onClick={() => setStage(2)}>
             ← Package
           </button>
@@ -593,7 +571,6 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
               <option>Tue & Sat</option>
               <option>Wed & Sun</option>
               <option>Every Saturday</option>
-              <option>Choose each session myself</option>
             </select>
           </label>
           <div className={styles.trainingTimes}>
@@ -632,9 +609,8 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
             </span>
           </article>
           <p className={styles.editable}>
-            Book every session now or keep dates flexible. App reminders go 24
-            hours and 2 hours before each session; expiry alerts start 15 days
-            before validity ends.
+            Choose one of the supported repeat schedules above. Every package session is shown before payment, and app reminders go 24
+            hours and 2 hours before each session; expiry alerts start 15 days before validity ends.
           </p>
           <button className={styles.back} onClick={() => setStage(3)}>
             ← Trainer
@@ -681,7 +657,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
             </div>
             <div>
               <span>Trainer Meet & Greet</span>
-              <b>{meet&&!meetBookingId ? `${slotLabel(new Date(meetSlot))} · ${meetPackage?Number(meetPackage.direct_minutes_per_pet)+Number(meetPackage.coaching_minutes_per_pet):"—"} min · ${money(meetFee)}` : meetBookingId?`Booked separately · ${meetBookingId}`:"Skipped"}</b>
+              <b>{meetBookingId?`Booked separately · ${meetBookingId}`:"Not booked"}</b>
             </div>
             <div>
               <span>Validity</span>
@@ -702,7 +678,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
               <div>
                 <b>Pay 50% upfront · no discount</b>
                 <span>
-                  {money(Math.round(plan.price*plan.splitDuePercent/100)+meetFee)} now · {money(plan.price-Math.round(plan.price*plan.splitDuePercent/100))} later under the canonical split schedule
+                  {money(Math.round(plan.price*plan.splitDuePercent/100))} now · {money(plan.price-Math.round(plan.price*plan.splitDuePercent/100))} later under the canonical split schedule
                 </span>
               </div>
             </button>
@@ -710,7 +686,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
               <i>{paymentMode === "full" ? "✓" : ""}</i>
               <div>
                 <b>Pay 100% upfront · coupon eligible</b>
-                <span>{money(plan.price + meetFee)} before an eligible coupon</span>
+                <span>{money(plan.price)} before an eligible coupon</span>
               </div>
             </button>
           </div>

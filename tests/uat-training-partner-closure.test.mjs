@@ -34,3 +34,7 @@ test("UAT closure: Meet & Greet uses the same governed quote/reserve/canonical l
   assert.match(training, /reserveUatSchedule/);
   assert.match(training, /createCanonicalLifecycle/);
 });
+
+const providerSwitch=fs.readFileSync(new URL("../app/api/uat-provider-switch/route.ts",import.meta.url),"utf8");
+const gateway=fs.readFileSync(new URL("../lib/api-gateway.ts",import.meta.url),"utf8");
+test("UAT provider switch route is production-dead and access-code governed",()=>{assert.match(providerSwitch,/uatLoginEnabled/);assert.match(providerSwitch,/uatAccessCodeValid/);assert.match(providerSwitch,/issuePlatformSession/);assert.match(gateway,/\/api\/uat-provider-switch/);});
