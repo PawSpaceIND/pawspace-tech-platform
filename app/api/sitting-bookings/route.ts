@@ -3,7 +3,7 @@ import{governSittingBooking}from"../../../lib/sitting-governance";
 import{ensureStayPaymentTables,splitPaymentPlan,staySplitScheduleStatement}from"../../../lib/stay-split-payments";
 import{requireSittingQuoteSandboxCapture}from"../../../lib/sitting-payment-governance";
 import{attributeBookingToOpenLead}from"../../../lib/lead-conversion-attribution";
-import{BOOKING_REPLAY_CONFLICT,SCHEDULING_GROUP_OWNERSHIP_CONFLICT,findCustomerReplay,hasForeignReplayConflict,isUniqueConstraintError,schedulingGroupBelongsToCustomer}from"../../../lib/booking-replay-governance";
+import{BOOKING_REPLAY_CONFLICT,BOOKING_WRITE_CONFLICT,SCHEDULING_GROUP_OWNERSHIP_CONFLICT,findCustomerReplay,hasForeignReplayConflict,hasReplayConflict,isUniqueConstraintError,schedulingGroupBelongsToCustomer}from"../../../lib/booking-replay-governance";
 
 type Row=Record<string,unknown>;
 type Input={
@@ -34,7 +34,7 @@ async function failure(error:unknown){if(error instanceof Response){const messag
 export async function POST(request:Request){try{
  sameOriginWrite(request);const input=await request.json() as Input,problem=validate(input);if(problem)return json({error:problem},400);
  const db=await database();await ensureTables(db);const actor=await resolveActor(request);await requireCustomerOwnership(db,actor,input.customer.id);
- const replayInput={customerId:input.customer.id,idempotencyKey:input.idempotencyKey,scheduleGroupId:input.scheduleGroupId};const prior=await findCustomerReplay(db,replayInput);if(prior)return json({data:await readBundle(db,prior,true)});if(await hasForeignReplayConflict(db,replayInput))return json({error:BOOKING_REPLAY_CONFLICT},409);
+ const replayInput={customerId:input.customer.id,serviceCode:"pet_sitting",idempotencyKey:input.idempotencyKey,scheduleGroupId:input.scheduleGroupId};const prior=await findCustomerReplay(db,replayInput);if(prior)return json({data:await readBundle(db,prior,true)});if(await hasForeignReplayConflict(db,replayInput))return json({error:BOOKING_REPLAY_CONFLICT},409);if(await hasReplayConflict(db,replayInput))return json({error:BOOKING_WRITE_CONFLICT},409);
  const assignment=await db.prepare("SELECT selected_provider_id,status,shortlist_json FROM scheduling_assignment_decisions WHERE group_id=?").bind(input.scheduleGroupId).first<Row>();
  if(!assignment||String(assignment.status)!=="assigned")return json({error:"Scheduling must be assigned before Sitting confirmation"},409);
  if(String(assignment.selected_provider_id)!==input.provider.id)return json({error:"The sitter does not match the scheduling decision"},409);
@@ -58,5 +58,5 @@ export async function POST(request:Request){try{
   db.prepare("UPDATE sitting_commercial_quotes SET status='used',used_at=?,used_booking_id=? WHERE id=? AND status='open'").bind(now,bookingId,input.sittingQuoteId),
  ];
  if(governed.paymentMode==="split_50_50"){await ensureStayPaymentTables(db);const plan=splitPaymentPlan({totalAmount:governed.totalAmount,scheduledStart:governed.scheduledStart});statements.push(staySplitScheduleStatement(db,{bookingId,serviceCode:"pet_sitting",customerId:input.customer.id,totalAmount:governed.totalAmount,paidNowAmount:governed.amountDueNow,balanceAmount:plan.balance,balanceDueAt:plan.balanceDueAt}));}
- try{await db.batch(statements)}catch(error){if(!isUniqueConstraintError(error))throw error;const raced=await findCustomerReplay(db,replayInput);if(raced)return json({data:await readBundle(db,raced,true)});return json({error:BOOKING_REPLAY_CONFLICT},409)};await attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId});return json({data:{bookingId,customerId:input.customer.id,petIds:ids,scheduleGroupId:input.scheduleGroupId,workOrderId,paymentId,status:"confirmed",duplicatePrevented:false,liveMoney:false}},201);
+ try{await db.batch(statements)}catch(error){if(!isUniqueConstraintError(error))throw error;const raced=await findCustomerReplay(db,replayInput);if(raced)return json({data:await readBundle(db,raced,true)});if(await hasForeignReplayConflict(db,replayInput))return json({error:BOOKING_REPLAY_CONFLICT},409);return json({error:BOOKING_WRITE_CONFLICT},409)};await attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId});return json({data:{bookingId,customerId:input.customer.id,petIds:ids,scheduleGroupId:input.scheduleGroupId,workOrderId,paymentId,status:"confirmed",duplicatePrevented:false,liveMoney:false}},201);
 }catch(error){return failure(error);}}

@@ -5,7 +5,7 @@ import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
 installWorkersHooks("__REPLAY_DB__", "__REPLAY_ENV__");
 
-function makeD1(sqlite) {
+function makeD1(sqlite, controller) {
   const statement = (sql, args) => ({
     sql, args,
     bind: (...bound) => statement(sql, bound),
@@ -16,6 +16,11 @@ function makeD1(sqlite) {
   return {
     prepare: (sql) => statement(sql, []),
     batch: async (list) => {
+      if (controller.beforeBookingWrite && list.some((item) => /^INSERT INTO canonical_bookings\b/.test(item.sql))) {
+        const hook = controller.beforeBookingWrite;
+        controller.beforeBookingWrite = null;
+        hook();
+      }
       sqlite.exec("BEGIN");
       try {
         const out = [];
@@ -44,9 +49,9 @@ const BOOKING_DDL = [
 const START = "2026-11-20T09:00:00.000Z", END = "2026-11-20T10:00:00.000Z";
 const OWNER = "CUS-REPLAY-OWNER", OTHER = "CUS-REPLAY-OTHER", PROVIDER = "PRV-REPLAY";
 
-async function stack() {
+async function stack(controller = {}) {
   const sqlite = new DatabaseSync(":memory:");
-  const db = makeD1(sqlite);
+  const db = makeD1(sqlite, controller);
   globalThis.__REPLAY_DB__ = db;
   globalThis.__REPLAY_ENV__ = {};
   for (const ddl of BOOKING_DDL) sqlite.exec(ddl);
@@ -144,9 +149,54 @@ for (const route of ["canonical", "walking", "taxi", "sitting"]) {
   });
 }
 
+test("a customer reusing a key on another service gets a conflict, not the wrong response bundle", async () => {
+  const { sqlite, db } = await stack();
+  const walking = seedBooking(sqlite, "walking");
+  const cookie = await customerCookie(db, OWNER, "+919350000001");
+  const result = await post("taxi", cookie, body("taxi", OWNER, walking.key, "NEW-TAXI-GROUP"));
+  assert.equal(result.status, 409);
+  assert.equal(result.body.data, undefined);
+  assert.ok(!JSON.stringify(result.body).includes(walking.bookingId));
+});
+
 test("the write-boundary classifier recognizes SQLite and D1 uniqueness collisions only", async () => {
   const { isUniqueConstraintError } = await import("../lib/booking-replay-governance.ts");
   assert.equal(isUniqueConstraintError(new Error("UNIQUE constraint failed: canonical_bookings.idempotency_key")), true);
   assert.equal(isUniqueConstraintError(new Error("D1_ERROR: UNIQUE constraint failed")), true);
+  assert.equal(isUniqueConstraintError(new Error("NOT NULL constraint failed: canonical_bookings.city_id")), false);
+  assert.equal(isUniqueConstraintError(new Error("FOREIGN KEY constraint failed")), false);
   assert.equal(isUniqueConstraintError(new Error("database is unavailable")), false);
+});
+
+test("canonical write-boundary: a concurrent same-customer winner is returned as the replay", async () => {
+  const controller = {};
+  const { sqlite, db } = await stack(controller);
+  const cookie = await customerCookie(db, OWNER, "+919400000001");
+  const group = "GROUP-CANONICAL";
+  sqlite.prepare("INSERT INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,actor_id,reason,updated_at) VALUES (?,'governed','[]',?,'assigned','test','test',1)").run(group, PROVIDER);
+  sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,1,1,NULL,'assigned','{}',1)")
+    .run("RES-CANONICAL-RACE", group, PROVIDER, "pet_sitting", "blr", "blr-central", OWNER, "[]", START, END);
+  controller.beforeBookingWrite = () => {
+    seedBooking(sqlite, "canonical");
+    throw new Error("UNIQUE constraint failed: canonical_bookings.idempotency_key");
+  };
+  const result = await post("canonical", cookie, body("canonical", OWNER, "KEY-CANONICAL", group));
+  assert.equal(result.status, 200);
+  assert.equal(result.body.data.bookingId, "BK-CANONICAL-OWNER");
+  assert.equal(result.body.data.duplicatePrevented, true);
+});
+
+test("canonical write-boundary: a non-unique constraint defect is not disguised as a replay", async () => {
+  const controller = {};
+  const { sqlite, db } = await stack(controller);
+  const cookie = await customerCookie(db, OWNER, "+919400000002");
+  const group = "GROUP-CANONICAL-DEFECT";
+  sqlite.prepare("INSERT INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,actor_id,reason,updated_at) VALUES (?,'governed','[]',?,'assigned','test','test',1)").run(group, PROVIDER);
+  sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,1,1,NULL,'assigned','{}',1)")
+    .run("RES-CANONICAL-DEFECT", group, PROVIDER, "pet_sitting", "blr", "blr-central", OWNER, "[]", START, END);
+  controller.beforeBookingWrite = () => { throw new Error("NOT NULL constraint failed: canonical_bookings.city_id"); };
+  const result = await post("canonical", cookie, body("canonical", OWNER, "KEY-CANONICAL-DEFECT", group));
+  assert.equal(result.status, 500);
+  assert.match(result.body.error, /NOT NULL constraint failed/);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings").get().n, 0);
 });
