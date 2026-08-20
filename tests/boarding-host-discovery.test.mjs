@@ -43,7 +43,7 @@ test("Boarding customer search renders only governed discovered hosts",()=>{
   assert.doesNotMatch(flow,/const boardingHosts: Caregiver\[\] =/);
   assert.match(flow,/toBoardingCaregiver/);
   assert.match(flow,/boardingHostWindowKey === boardingHostQueryKey \? boardingHosts : \[\]/);
-  assert.match(flow,/loadBoardingCommercial\(\{cityId:"blr",zoneId:"blr-east",scheduledStart:/);
+  assert.match(flow,/loadBoardingCommercial\(\{cityId:"blr",zoneId:serviceLocation\.assignment\.zoneId,scheduledStart:/);
   assert.match(flow,/species:selectedSpecies/);
   assert.match(flow,/item\.providerId===caregiver\.providerId/);
   assert.match(flow,/Selected Boarding host is no longer available for this stay window/);
@@ -66,8 +66,8 @@ test("Boarding customer host cards do not fabricate marketplace proof",()=>{
 
 test("Boarding customer search does not pretend an unimplemented area or production availability feed",()=>{
   const flow=read("app/mobile-app/stay-flow.tsx"),api=read("app/api/boarding-commercial/route.ts");
-  assert.match(flow,/Service zone/);
-  assert.match(flow,/Bengaluru East · UAT/);
+  assert.match(flow,/<AddressPicker onZoneResolved=\{setServiceLocation\}/);
+  assert.match(flow,/serviceLocation\.assignment\.zoneId/);
   assert.match(flow,/selected-window availability verified in UAT/);
   assert.match(flow,/Host profile \+ leave blocks \+ accepted stay locks \+ pending Boarding scheduler reservations/);
   assert.match(api,/liveAvailability:false/);

@@ -150,6 +150,15 @@ export default function ServiceIncentivesPage() {
             <span style={label}>Reason (min 8 characters, required)</span><Field text={gSpecialReason} onChange={setGSpecialReason} placeholder="Why this one-time bonus" />
             <button style={btn} onClick={() => runAction("record_groomer_special_incentive", { headGroomerId: gHead, monthStart: gTargetMonth, amount: Number(gSpecialAmount), reason: gSpecialReason }, "Special incentive recorded")}>Record special incentive</button>
           </section>
+
+          <section style={card}>
+            <h2 style={{ marginTop: 0, fontSize: 16 }}>Monthly incentive review and achievement</h2>
+            <p style={{ color: "#6e6576", fontSize: 13 }}>Save a calculation snapshot for review first. Finalizing is immutable and creates the employee achievement link exactly once; it does not transfer money or run payroll.</p>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button style={btn} onClick={() => runAction("save_groomer_incentive_draft", { headGroomerId: gHead, monthStart: gTargetMonth }, "Incentive draft saved")}>Save incentive draft</button>
+              <button style={{ ...btn, background: "#3d1761" }} onClick={() => runAction("finalize_groomer_incentive", { headGroomerId: gHead, monthStart: gTargetMonth }, "Reviewed incentive finalized")}>Finalize reviewed incentive</button>
+            </div>
+          </section>
         </>
       )}
 

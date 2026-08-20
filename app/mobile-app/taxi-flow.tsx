@@ -6,6 +6,7 @@ import { createCanonicalTaxiBooking, reserveTaxiSchedule, type AssignedDriver, t
 import PetManager from "./pet-manager";
 import { loadCustomerPets, type CustomerPet } from "../../lib/customer-account-client";
 import type { LoggedInCustomer } from "./customer-login";
+import { resolveServiceCoverage } from "../../lib/service-zone-client";
 
 // Same prop contract as the other embedded flows: the shell passes the logged-in customer; pets
 // follow the UAT roster pattern. Pet Taxi carries dogs AND cats — one pet per trip (Gate 1 rule).
@@ -49,6 +50,7 @@ export default function TaxiFlow({ customer }: { customer: LoggedInCustomer }) {
   const [booking, setBooking] = useState<TaxiBookingResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [pincode, setPincode] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -107,8 +109,9 @@ export default function TaxiFlow({ customer }: { customer: LoggedInCustomer }) {
       const fresh = await createTaxiQuote({ routeCode, originLabel: origin, destinationLabel: destination, petCount: 1, scheduledStart });
       const requestId = `taxi-${customer.customerId}-${fresh.routeCode}-${fresh.scheduledStart}`;
       // Auto-assignment is allowed for taxi (founder rule) — the scheduler picks the driver.
-      const reservation = await reserveTaxiSchedule({ clientRequestId: requestId, customerId: customer.customerId, petIds: [pet.id], zoneId: "blr-east", scheduledStart: fresh.scheduledStart, scheduledEnd: fresh.scheduledEnd });
-      const created = await createCanonicalTaxiBooking({ idempotencyKey: requestId, groupId: reservation.groupId, taxiQuoteId: fresh.quoteId, customer: { id: customer.customerId, name: customer.customerName, primaryPhone: customer.phone }, pets: [{ sourceId: pet.sourceId ?? pet.id, name: pet.name, species: pet.species === "cat" ? "cat" : pet.species === "dog" ? "dog" : "other" }], cityId: "blr", zoneId: "blr-east", routeCode: fresh.routeCode, originLabel: fresh.originLabel, destinationLabel: fresh.destinationLabel, scheduledStart: fresh.scheduledStart, scheduledEnd: fresh.scheduledEnd, provider: { id: reservation.driver.id, name: reservation.driver.name, model: reservation.driver.model }, totalAmount: fresh.totalAmount, amountDueNow: fresh.amountDueNow, payment: { method: "upi", mode: "sandbox_deferred", detail: "UAT sandbox-deferred Pet Taxi billing" } });
+      const coverage = await resolveServiceCoverage(pincode);
+      const reservation = await reserveTaxiSchedule({ clientRequestId: requestId, customerId: customer.customerId, petIds: [pet.id], zoneId: coverage.zoneId, scheduledStart: fresh.scheduledStart, scheduledEnd: fresh.scheduledEnd });
+      const created = await createCanonicalTaxiBooking({ idempotencyKey: requestId, groupId: reservation.groupId, taxiQuoteId: fresh.quoteId, customer: { id: customer.customerId, name: customer.customerName, primaryPhone: customer.phone }, pets: [{ sourceId: pet.sourceId ?? pet.id, name: pet.name, species: pet.species === "cat" ? "cat" : pet.species === "dog" ? "dog" : "other" }], cityId: coverage.cityId, zoneId: coverage.zoneId, routeCode: fresh.routeCode, originLabel: fresh.originLabel, destinationLabel: fresh.destinationLabel, scheduledStart: fresh.scheduledStart, scheduledEnd: fresh.scheduledEnd, provider: { id: reservation.driver.id, name: reservation.driver.name, model: reservation.driver.model }, totalAmount: fresh.totalAmount, amountDueNow: fresh.amountDueNow, payment: { method: "payment_link", mode: "sandbox_deferred", detail: "Payment remains pending until a verified payment event" } });
       setQuote(fresh); setDriver(reservation.driver); setBooking(created);
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Unable to confirm the Pet Taxi booking"); }
     finally { setBusy(false); }
@@ -228,9 +231,12 @@ export default function TaxiFlow({ customer }: { customer: LoggedInCustomer }) {
             <div><span>Fare (sandbox deferred)</span><b>{quote ? money(quote.totalAmount) : "Server quote…"}</b></div>
             <div><span>Due today</span><b>{quote ? money(quote.amountDueNow) : money(0)}</b></div>
           </div>
+          <span className={styles.label}>Pickup service PIN code</span>
+          <input className={styles.input} value={pincode} inputMode="numeric" maxLength={6} onChange={event => setPincode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="Enter six-digit PIN code" />
+          <p className={styles.note}>Coverage is checked from the pickup PIN code. Route distance and time are UAT route classes, not live maps or GPS.</p>
           <p className={styles.note}>Sandbox-deferred billing: nothing is charged now. The fare is the server-quoted route-class price. Your driver is auto-assigned from the canonical roster with full conflict checks; vehicle details are shared before pickup.</p>
           {error && <p className={styles.alert} role="alert">{error}</p>}
-          <button className={styles.primary} disabled={busy || !quote} onClick={() => void confirm()}>
+          <button className={styles.primary} disabled={busy || !quote || pincode.length !== 6} onClick={() => void confirm()}>
             {busy ? "Reserving your trip…" : !quote ? "Refreshing server quote…" : `Confirm trip · ${money(quote.totalAmount)} sandbox deferred`}
           </button>
           <button className={styles.back} onClick={() => { setQuote(null); setStage(3); }}>← Your pet</button>

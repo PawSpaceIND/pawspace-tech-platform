@@ -1,13 +1,16 @@
-import{authError,authorize,database,securityAudit}from"../../../lib/server-auth";
-import{ensurePaymentReconciliationTables,linkSandboxGatewayOrder,processGatewayEvent}from"../../../lib/grooming-payment-reconciliation";
+import{authError,authorize,database,requirePermission,requireProviderOwnership,resolveActor,securityAudit}from"../../../lib/server-auth";
+import{createPostServicePaymentRequest,ensurePaymentReconciliationTables,getPostServicePaymentRequest,linkSandboxGatewayOrder,processGatewayEvent}from"../../../lib/grooming-payment-reconciliation";
 import{createSandboxOrder,createSandboxRefund}from"../../../lib/razorpay-sandbox-client";
 
-type Input={action:"create_order"|"initiate_refund"|"link_order"|"simulate_event";bookingId:string;gatewayOrderId?:string;eventType?:"payment.authorized"|"payment.captured"|"payment.failed"|"order.paid"|"refund.created"|"refund.processed"|"refund.failed";eventId?:string;gatewayPaymentId?:string;gatewayRefundId?:string;amount?:number;currency?:string};
+type Input={action:"create_order"|"initiate_refund"|"link_order"|"simulate_event"|"request_after_service";bookingId:string;gatewayOrderId?:string;eventType?:"payment.authorized"|"payment.captured"|"payment.failed"|"order.paid"|"refund.created"|"refund.processed"|"refund.failed";eventId?:string;gatewayPaymentId?:string;gatewayRefundId?:string;amount?:number;currency?:string};
 const json=(value:unknown,status=200)=>Response.json(value,{status});
 
+export async function GET(request:Request){try{const bookingId=(new URL(request.url).searchParams.get("bookingId")||"").trim();if(!bookingId)return json({error:"Booking is required"},400);const actor=await resolveActor(request);requirePermission(actor,"bookings.view");const db=await database();const work=await db.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id=?").bind(bookingId).first<Record<string,unknown>>();if(!work)return json({error:"Provider work order not found"},404);await requireProviderOwnership(db,actor,String(work.provider_id));return json({data:await getPostServicePaymentRequest(db,{bookingId,providerId:String(work.provider_id)})});}catch(error){return authError(error,"Unable to load post-service payment request");}}
+
 export async function POST(request:Request){try{
-  const actor=await authorize(request,"payments.manage");const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;if(String(runtime.PAWSPACE_PAYMENT_ENV||"sandbox").toLowerCase()!=="sandbox")return json({error:"Payment sandbox is disabled outside sandbox"},403);
   const input=await request.json() as Input;if(!input.bookingId||!input.action)return json({error:"Booking and action are required"},400);const db=await database();await ensurePaymentReconciliationTables(db);
+  if(input.action==="request_after_service"){const actor=await resolveActor(request);requirePermission(actor,"bookings.view");const work=await db.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id=?").bind(input.bookingId).first<Record<string,unknown>>();if(!work)return json({error:"Provider work order not found"},404);const providerId=String(work.provider_id);await requireProviderOwnership(db,actor,providerId);const data=await createPostServicePaymentRequest(db,{bookingId:input.bookingId,providerId,actorId:actor.email});await securityAudit(db,actor,"grooming.payment_request.create","booking",input.bookingId,"completed",{providerId,sandboxOnly:true,capturePerformed:false});return json({data},201);}
+  const actor=await authorize(request,"payments.manage");const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;if(String(runtime.PAWSPACE_PAYMENT_ENV||"sandbox").toLowerCase()!=="sandbox")return json({error:"Payment sandbox is disabled outside sandbox"},403);
   const payment=await db.prepare("SELECT id,amount,currency,status FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Record<string,unknown>>();if(!payment)return json({error:"Canonical payment record not found"},404);
 
   if(input.action==="create_order"){

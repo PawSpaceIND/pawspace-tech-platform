@@ -2,7 +2,8 @@ import { authError, authorize, database } from "../../../lib/server-auth";
 import {
   saveGroomerBracket, currentGroomerBracket, recordHelperAttendance, saveGroomerMonthlyTarget,
   recordOfflineSubSale, saveGroomerGpayLedger, recordSpecialIncentive as recordGroomerSpecialIncentive,
-  computeGroomerMonthlyIncentive, rankGroomersForMonth, ensureGroomingIncentiveTables,
+  computeGroomerMonthlyIncentive, rankGroomersForMonth, saveGroomerIncentiveDraft,
+  finalizeGroomerIncentive, ensureGroomingIncentiveTables,
 } from "../../../lib/grooming-incentive-engine";
 import {
   computeTrainerMonthlyIncentive, recordMeetGreetConversion, ensureTrainerIncentiveTables,
@@ -73,6 +74,10 @@ export async function POST(request:Request){
         return Response.json(await recordGroomerSpecialIncentive(db,{headGroomerId:String(body.headGroomerId),monthStart:String(body.monthStart),amount:Number(body.amount),reason:String(body.reason||""),actorId:actor.email}));
       case "rank_groomers":
         return Response.json({ranking:await rankGroomersForMonth(db,{monthStart:String(body.monthStart),headGroomerIds:(body.headGroomerIds as string[])||[],actorId:actor.email})});
+      case "save_groomer_incentive_draft":
+        return Response.json(await saveGroomerIncentiveDraft(db,{headGroomerId:String(body.headGroomerId),monthStart:String(body.monthStart),actorId:actor.email}));
+      case "finalize_groomer_incentive":
+        return Response.json(await finalizeGroomerIncentive(db,{headGroomerId:String(body.headGroomerId),monthStart:String(body.monthStart),actorId:actor.email}));
 
       case "record_meet_greet_conversion":
         return Response.json(await recordMeetGreetConversion(db,{trainerId:String(body.trainerId),meetGreetBookingId:String(body.meetGreetBookingId),convertedBookingId:String(body.convertedBookingId),actorId:actor.email}));

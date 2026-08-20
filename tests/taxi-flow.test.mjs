@@ -49,7 +49,10 @@ test("pickup/drop use the real commercial contract fields and mirror the server 
   assert.match(flowSource, /destinationLabel/);
   // server rule mirrored client-side: ≥3 chars each, distinct case-insensitively
   assert.match(flowSource, /origin\.length >= 3 && destination\.length >= 3 && origin\.toLowerCase\(\) !== destination\.toLowerCase\(\)/);
-  assert.doesNotMatch(flowSource, /pincode|zoneResolver|latitude|longitude/, "no invented location fields beyond the contract's labels");
+  assert.match(flowSource, /resolveServiceCoverage\(pincode\)/, "the service PIN must resolve before scheduling");
+  assert.match(flowSource, /zoneId: coverage\.zoneId/);
+  assert.match(flowSource, /cityId: coverage\.cityId/);
+  assert.doesNotMatch(flowSource, /zoneId:\s*"blr-east"|cityId:\s*"blr"|latitude|longitude/, "no hardcoded zone/city or invented coordinates");
 });
 
 test("the flow is a standalone client component: no imports from other flow/checkout files, no globalThis", () => {

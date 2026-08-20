@@ -148,7 +148,7 @@ test("Boarding uses the founder-approved 50/50 split while coupons stay disabled
   const flow=read("app/mobile-app/stay-flow.tsx");
   assert.match(flow,/splitEligible = careWindow === "24 hours" && nights > 4/);
   assert.match(flow,/mode === \"boarding\" \? boardingQuote\?\.amountDueNow\?\?0/);
-  assert.match(flow,/Boarding coupons are disabled until a canonical coupon policy is configured/);
+  assert.match(flow,/Boarding.*coupons are disabled until that service has an explicit canonical redemption policy/s);
   assert.match(flow,/paymentMode:splitEligible&&splitPayment\?"split_50_50":"prepaid"/);
   assert.match(flow,/mode === \"boarding\" \? \(/);
   assert.match(flow,/Verified commission partners receive the request, review the Care Card and send an acceptance or flexible offer/);

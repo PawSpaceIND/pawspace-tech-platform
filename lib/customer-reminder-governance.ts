@@ -23,7 +23,36 @@ export async function ensureReminderGovernanceTables(db: Db) {
     db.prepare(
       "CREATE TABLE IF NOT EXISTS reminder_governance_events (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,reminder_type TEXT NOT NULL,cycle_key TEXT NOT NULL,message_id TEXT,duplicate_prevented INTEGER NOT NULL DEFAULT 0,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"
     ),
+    db.prepare(
+      "CREATE TABLE IF NOT EXISTS reminder_sandbox_deliveries (message_id TEXT PRIMARY KEY,delivery_status TEXT NOT NULL,adapter TEXT NOT NULL,external_delivery INTEGER NOT NULL DEFAULT 0,detail_json TEXT NOT NULL DEFAULT '{}',processed_at INTEGER NOT NULL)"
+    ),
   ]);
+}
+
+/**
+ * Executes the UAT delivery boundary without contacting a provider. This makes queued lifecycle
+ * reminders observable end-to-end while keeping WhatsApp/SMS/email fail-closed. A future provider
+ * adapter must be a separate, explicitly enabled boundary; this consumer can never send externally.
+ */
+export async function consumeCustomerReminderSandboxOutbox(db:Db,input:{asOf?:number;limit?:number}={}){
+  await ensureReminderGovernanceTables(db);await ensureCommunicationTables(db);
+  const asOf=input.asOf??Date.now(),limit=Math.max(1,Math.min(500,Math.floor(input.limit??100)));
+  const rows=await db.prepare("SELECT o.message_id,o.status,m.channel,m.template_key FROM communication_outbox o JOIN communication_messages m ON m.id=o.message_id WHERE m.purpose='lifecycle' AND o.status IN ('queued','scheduled','retry_pending') AND o.next_attempt_at<=? ORDER BY o.next_attempt_at ASC LIMIT ?").bind(asOf,limit).all<Row>();
+  let sandboxDelivered=0,duplicatePrevented=0;
+  for(const row of rows.results){
+    const messageId=String(row.message_id);
+    const prior=await db.prepare("SELECT message_id FROM reminder_sandbox_deliveries WHERE message_id=?").bind(messageId).first<Row>();
+    if(prior){duplicatePrevented++;continue;}
+    const detail={channel:String(row.channel),templateKey:String(row.template_key),providerConnector:"disabled",externalDelivery:false};
+    await db.batch([
+      db.prepare("INSERT INTO reminder_sandbox_deliveries (message_id,delivery_status,adapter,external_delivery,detail_json,processed_at) VALUES (?,'sandbox_delivered','governed_uat_sink',0,?,?)").bind(messageId,JSON.stringify(detail),asOf),
+      db.prepare("UPDATE communication_outbox SET status='sandbox_delivered',last_error=NULL,locked_at=NULL,updated_at=? WHERE message_id=?").bind(asOf,messageId),
+      db.prepare("UPDATE communication_messages SET status='sandbox_delivered',provider='governed_uat_sink',provider_reference=NULL,updated_at=? WHERE id=?").bind(asOf,messageId),
+      db.prepare("INSERT INTO communication_message_delivery_events (id,message_id,provider,event_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),messageId,"governed_uat_sink",`sandbox:${messageId}`,"delivered",JSON.stringify(detail),asOf),
+    ]);
+    sandboxDelivered++;
+  }
+  return{scanned:rows.results.length,sandboxDelivered,duplicatePrevented,deliveryStatus:"sandbox_delivered",adapter:"governed_uat_sink",externalDelivery:false,connectorsEnabled:false};
 }
 
 export async function saveReminderCadencePolicy(db: Db, input: { groomingRebookingDays: number; subscriptionInactivityDays: number; subscriptionRenewalDays: number; reason: string; actorId: string }) {
@@ -163,5 +192,6 @@ export async function runCustomerReminderSweep(db: Db, input: { actorId: string;
     generateGroomingRebookingReminders(db, input),
     generateSubscriptionReminders(db, input),
   ]);
-  return { grooming, subscription };
+  const delivery=await consumeCustomerReminderSandboxOutbox(db,{asOf:input.asOf});
+  return { grooming, subscription, delivery };
 }

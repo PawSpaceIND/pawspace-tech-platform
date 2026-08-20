@@ -30,6 +30,9 @@ type Job = {
   invoice: { invoiceNumber: string; status: string; netAmount: number } | null;
 };
 type JobsResponse = { jobs?: Job[]; error?: string };
+type MediaAsset = { ref: string; purpose: "before_service" | "after_service"; proofReady: boolean; access_status: string; scan_status: string };
+type PaymentRequest = { status: string; paymentStatus: string; amount: number; paymentPath: string; qrPayload: string; sandboxOnly: boolean; liveCapture: boolean };
+type WorkspaceEarnings = { visible: boolean; computed: { netPayout: number; orders: number; grossOrderValue: number }; settlements: Array<{ bookingId: string; payoutAmount: number | null; status: string; reason: string }>; incentives: Array<{ monthStart: string; status: string; headTotal: number; helperTotal: number; monthTotal: number }> };
 
 const activeTravelStates = new Set(["assigned", "on_the_way", "arrived"]);
 const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
@@ -52,6 +55,9 @@ export default function PartnerMobileApp() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [mediaMessage, setMediaMessage] = useState("");
+  const [paymentRequest, setPaymentRequest] = useState<PaymentRequest | null>(null);
+  const [earnings, setEarnings] = useState<WorkspaceEarnings | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,6 +111,17 @@ export default function PartnerMobileApp() {
   const actionLabel = nextAction === "accept" ? "Accept job" : nextAction === "on_the_way" ? "Start journey" : nextAction === "arrived" ? "Mark arrived" : nextAction === "start_service" ? "Start service" : nextAction === "add_proof" ? "Add service proof" : nextAction === "complete" ? "Complete job" : "No action";
   const canDecline = Boolean(selected && selected.providerModel === "commission" && (selected.status === "confirmed" || selected.workOrderStatus === "awaiting_acceptance"));
 
+  useEffect(() => { let active=true; queueMicrotask(()=>{if(active)setPaymentRequest(null)}); if (!selected?.bookingId) return()=>{active=false}; void fetch(`/api/grooming-payment-sandbox?bookingId=${encodeURIComponent(selected.bookingId)}`, { cache: "no-store" }).then(async response => { const body = await response.json() as { data?: PaymentRequest }; if (active&&response.ok) setPaymentRequest(body.data ?? null); }); return()=>{active=false}; }, [selected?.bookingId, refreshKey]);
+  useEffect(() => { if (tab !== "earnings") return; void fetch("/api/provider-workspace", { cache: "no-store" }).then(async response => { const body = await response.json() as { data?: { earnings?: WorkspaceEarnings }; error?: string }; if (!response.ok) throw new Error(body.error || "Unable to load earnings"); setEarnings(body.data?.earnings ?? null); }).catch(problem => setError(problem instanceof Error ? problem.message : "Unable to load earnings")); }, [tab, refreshKey]);
+
+  const prepareMedia = async (file: File, purpose: "before_service" | "after_service") => {
+    if (!selected) return; setBusy(true); setError(""); setMediaMessage("");
+    try { const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer()))).map(value => value.toString(16).padStart(2, "0")).join(""); const response = await fetch("/api/service-media", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bookingId: selected.bookingId, purpose, mimeType: file.type, sizeBytes: file.size, sha256: digest }) }); const body = await response.json() as { data?: { storage?: { uploadReady?: boolean } }; error?: string }; if (!response.ok) throw new Error(body.error || "Unable to prepare proof media"); setMediaMessage(body.data?.storage?.uploadReady ? "Secure upload grant prepared." : "File registered, but private storage and malware scanning are not connected. An operations adapter must upload and approve it before completion."); }
+    catch (problem) { setError(problem instanceof Error ? problem.message : "Unable to prepare proof media"); } finally { setBusy(false); }
+  };
+
+  const requestPayment = async () => { if (!selected) return; setBusy(true); setError(""); try { const response = await fetch("/api/grooming-payment-sandbox", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ bookingId: selected.bookingId, action: "request_after_service" }) }); const body = await response.json() as { data?: PaymentRequest; error?: string }; if (!response.ok) throw new Error(body.error || "Unable to create payment request"); setPaymentRequest(body.data ?? null); } catch (problem) { setError(problem instanceof Error ? problem.message : "Unable to create payment request"); } finally { setBusy(false); } };
+
   const reportOperation = async (action: "package_upgrade" | "service_overrun" | "running_late" | "vehicle_issue" | "rebook_requested") => {
     if (!selected || operationBusy) return;
     setOperationBusy(true);
@@ -142,10 +159,11 @@ export default function PartnerMobileApp() {
         if (action === "decline") throw new Error("Only commission-provider offers can be declined");
         const input: Record<string, unknown> = { bookingId: selected.bookingId, action, actorId: selected.providerId };
         if (action === "add_proof") {
-          input.beforePhotoRef = `uat://proof/${selected.bookingId}/before`;
-          input.afterPhotoRef = `uat://proof/${selected.bookingId}/after`;
+          const mediaResponse = await fetch(`/api/service-media?bookingId=${encodeURIComponent(selected.bookingId)}`, { cache: "no-store" }); const mediaBody = await mediaResponse.json() as { assets?: MediaAsset[]; error?: string }; if (!mediaResponse.ok) throw new Error(mediaBody.error || "Unable to load approved proof media"); const before = mediaBody.assets?.find(asset => asset.purpose === "before_service" && asset.proofReady), after = mediaBody.assets?.find(asset => asset.purpose === "after_service" && asset.proofReady); if (!before || !after) throw new Error("Approved before and after images are required. Register both files, then wait for private storage confirmation and malware-scan approval.");
+          input.beforePhotoRef = before.ref;
+          input.afterPhotoRef = after.ref;
           input.checklist = ["Pet identity confirmed", "Service checklist completed", "Customer handover ready"];
-          input.completionNotes = "UAT proof recorded from Partner mobile app";
+          input.completionNotes = "Approved UAT service proof recorded from Partner mobile app";
         }
         const response = await fetch("/api/grooming-lifecycle", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
         const body = await response.json() as { error?: string };
@@ -219,6 +237,8 @@ export default function PartnerMobileApp() {
               <div><small>Payment</small><b>{label(selected.payment.mode)}</b><span>{label(selected.payment.status)}</span></div>
             </div>
             <div className={styles.proof}><b>Service proof</b><span>{selected.proof ? `${selected.proof.beforePhotoRef ? "Before ✓" : "Before —"} · ${selected.proof.afterPhotoRef ? "After ✓" : "After —"} · Checklist ${selected.proof.checklist.length}` : "Not captured yet"}</span>{selected.invoice && <small>Invoice {selected.invoice.invoiceNumber} · {money(selected.invoice.netAmount)}</small>}</div>
+            {selected.status === "in_service" && !selected.proof?.beforePhotoRef && <section className={styles.notice}><b>Secure before / after proof</b><p>Choose real UAT images. Registration never marks them complete: private storage confirmation and a clean malware scan are required first.</p><label>Before photo <input type="file" accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; if (file) void prepareMedia(file, "before_service"); }} /></label><label>After photo <input type="file" accept="image/jpeg,image/png,image/webp" disabled={busy} onChange={event => { const file = event.target.files?.[0]; if (file) void prepareMedia(file, "after_service"); }} /></label>{mediaMessage && <p>{mediaMessage}</p>}</section>}
+            {selected.status === "completed" && selected.payment.mode === "pay_after_service" && selected.payment.status !== "captured" && <section className={styles.notice}><b>Payment due after service</b>{!paymentRequest ? <><p>Create a shareable UAT payment request and QR payload. This does not capture money.</p><button disabled={busy} onClick={() => void requestPayment()}>Create payment request</button></> : <><p><b>{money(paymentRequest.amount)}</b> · {label(paymentRequest.status)}</p><p><code>{paymentRequest.paymentPath}</code></p><p><code>{paymentRequest.qrPayload}</code></p><small>Sandbox request only. Payment remains unpaid until a signature-verified gateway capture is reconciled.</small></>}</section>}
             <section className={styles.notice}>
               <b>Live order impact</b>
               <p>Package upgrades, longer service time, traffic or a vehicle issue stay attached to this order. PawSpace recalculates the route and queues an update for every affected customer.</p>
@@ -250,7 +270,9 @@ export default function PartnerMobileApp() {
         {tab === "earnings" && <>
           <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>PARTNER FINANCE</small><h1>Earnings</h1></div><span /></div>
           <section className={styles.financeHero}><i>₹</i><h2>Settlement-controlled earnings</h2><p>This mobile screen never invents payout figures from booking prices. Provider earnings appear only from the canonical settlement and commission ledger after Finance controls are satisfied.</p></section>
-          <div className={styles.financeRows}><article><div><b>Completed jobs loaded</b><small>From your canonical work orders</small></div><strong>{completedJobs.length}</strong></article><article><div><b>Live money</b><small>Production payout rail</small></div><strong>OFF</strong></article><article><div><b>Adjustments</b><small>Require approved accountability + Finance evidence</small></div><strong>Governed</strong></article></div>
+          <div className={styles.financeRows}><article><div><b>Computed net payout</b><small>Governed payout computations only</small></div><strong>{money(earnings?.computed.netPayout ?? 0)}</strong></article><article><div><b>Computed orders</b><small>Not raw completed booking value</small></div><strong>{earnings?.computed.orders ?? 0}</strong></article><article><div><b>Live money</b><small>Production payout rail</small></div><strong>OFF</strong></article></div>
+          {earnings?.settlements.map(item => <section key={item.bookingId} className={styles.notice}><b>{item.bookingId} · {label(item.status)}</b><p>{item.payoutAmount == null ? "Payout amount pending an approved rule" : money(item.payoutAmount)}</p><small>{item.reason}</small></section>)}
+          {earnings?.incentives.map(item => <section key={item.monthStart} className={styles.notice}><b>{item.monthStart} incentive · {label(item.status)}</b><p>Head {money(item.headTotal)} · helper {money(item.helperTotal)} · achievement value {money(item.monthTotal)}</p></section>)}
           <p className={styles.note}>Booking value is deliberately not shown as partner earnings. Payout instructions remain sandbox-only in this UAT candidate.</p>
         </>}
 

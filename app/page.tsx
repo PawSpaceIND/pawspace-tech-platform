@@ -8,6 +8,7 @@ import { reserveUatSchedule } from "../lib/uat-scheduling-client";
 import { createCanonicalLifecycle } from "../lib/canonical-lifecycle-client";
 import { saveGroomingServiceLocation } from "../lib/grooming-location-client";
 import { searchAddresses, resolveAddress, reverseGeocodeCoordinates, type AddressSuggestion } from "../lib/address-autocomplete-client";
+import { resolveServiceCoverage } from "../lib/service-zone-client";
 import { createTestTransaction } from "../lib/test-transaction";
 
 type PetType = "dog" | "cat";
@@ -63,16 +64,30 @@ const subscriptionPackages: Package[] = [
 ];
 
 const slots = ["9:00–11:00 AM", "11:00 AM–1:00 PM", "1:00–3:00 PM", "3:00–5:00 PM", "5:00–7:00 PM"];
-const dates = [
-  { day: "Today", date: "3 Aug" },
-  { day: "Tue", date: "4 Aug" },
-  { day: "Wed", date: "5 Aug" },
-  { day: "Thu", date: "6 Aug" },
-];
+const slotStartHours = [9, 11, 13, 15, 17];
+
+function bookingDates(now = new Date()) {
+  const todayInIndia = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+  const [year, month, day] = todayInIndia.split("-").map(Number);
+  return Array.from({ length: 4 }, (_, index) => {
+    const value = new Date(Date.UTC(year, month - 1, day + index, 12));
+    return {
+      day: index === 0 ? "Today" : new Intl.DateTimeFormat("en-IN", { weekday: "short", timeZone: "UTC" }).format(value),
+      date: new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", timeZone: "UTC" }).format(value),
+      iso: value.toISOString().slice(0, 10),
+    };
+  });
+}
 
 const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
 
 export default function Home() {
+  const dates = useMemo(() => bookingDates(), []);
   const [petType, setPetType] = useState<PetType>("dog");
   const [offerType, setOfferType] = useState<OfferType>("regular");
   const [petCount, setPetCount] = useState(1);
@@ -184,26 +199,28 @@ export default function Home() {
     setPetSelectionError("");
     try {
       const slotIndex=Math.max(0,slots.indexOf(selectedSlot));
-      const start=new Date(Date.UTC(2026,7,3+selectedDate,3+slotIndex*2,30));
+      const start=new Date(`${dates[selectedDate].iso}T${String(slotStartHours[slotIndex]).padStart(2,"0")}:00:00+05:30`);
       const durationMinutes=petCount<=2?120:petCount===3?150:240;
       const end=new Date(start.getTime()+durationMinutes*60_000);
       const digits=phone.replace(/\D/g,"").slice(-10);
       const customerId=`WEB-${digits||"UAT"}`;
       const chosenPets=selectedPetIds.map(id=>savedPets.find(pet=>pet.id===id)).filter((pet):pet is SavedPet=>Boolean(pet));
       const requestId=`web-groom-${customerId}-${selectedDate}-${slotIndex}-${selectedPackage.id}-${selectedPetIds.slice().sort().join("-")}`;
-      const decision=await reserveUatSchedule({clientRequestId:requestId,customerId,petIds:selectedPetIds,serviceCode:"grooming",zoneId:"blr-east",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),preferredProviderId:"groom_arun"});
+      const pincode=serviceAddress.match(/\b\d{6}\b/)?.[0]||"";
+      const coverage=await resolveServiceCoverage(pincode);
+      const decision=await reserveUatSchedule({clientRequestId:requestId,customerId,petIds:selectedPetIds,serviceCode:"grooming",zoneId:coverage.zoneId,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),preferredProviderId:"groom_arun"});
       const canonical=await createCanonicalLifecycle({
         idempotencyKey:requestId,
         scheduleGroupId:decision.groupId,
         customer:{id:customerId,name:`PawSpace Customer ${digits.slice(-4)||"UAT"}`,primaryPhone:digits||"9999999999"},
         pets:chosenPets.map(pet=>({sourceId:pet.id,name:pet.name,species:pet.type,breed:pet.breed,vaccinationStatus:"not_provided"})),
-        cityId:"blr",zoneId:"blr-east",serviceCode:"grooming",packageCode:selectedPackage.id,packageName:selectedPackage.name,
+        cityId:coverage.cityId,zoneId:coverage.zoneId,serviceCode:"grooming",packageCode:selectedPackage.id,packageName:selectedPackage.name,
         scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:total,amountDueNow:payment==="after"?0:total,
-        payment:{method:payment==="after"?"cash":"upi",mode:payment==="after"?"pay_after_service":"prepaid",status:payment==="after"?"created":"captured",detail:payment==="after"?"Pay after service · UAT":"Online payment captured · UAT"},
+        payment:{method:payment==="after"?"cash":"upi",mode:payment==="after"?"pay_after_service":"prepaid",status:"created",detail:payment==="after"?"Pay after service · sandbox request pending":"Pay now · sandbox authorization pending"},
         pricing:{discount:0,subscription:offerType==="subscription"?selectedPackage.name:undefined},
       });
       await saveGroomingServiceLocation({bookingId:canonical.bookingId,customerId,address:serviceAddress});
-      createTestTransaction({customerId,customerName:`PawSpace Customer ${digits.slice(-4)||"UAT"}`,primary:digits||"9999999999",secondary:"",pets:chosenPets.map(pet=>pet.name).join(", "),petCount,service:"Grooming",packageName:selectedPackage.name,area:"Bengaluru",slot:`${dates[selectedDate].date} · ${selectedSlot}`,duration,amount:total,payment:payment==="after"?"Pay after service":"Paid online",provider:decision.provider.name,providerModel:decision.provider.model==="full_time"?"Full-time":"Commission",subscription:offerType==="subscription"?selectedPackage.name:"No active plan",creditsBefore:offerType==="subscription"?Number(selectedPackage.id.match(/\d+/)?.[0]||1):0,crmOwner:"Unassigned",crmNextAction:"Post-booking care follow-up",reminder:"Booking confirmation queued"},canonical.bookingId);
+      createTestTransaction({customerId,customerName:`PawSpace Customer ${digits.slice(-4)||"UAT"}`,primary:digits||"9999999999",secondary:"",pets:chosenPets.map(pet=>pet.name).join(", "),petCount,service:"Grooming",packageName:selectedPackage.name,area:`Bengaluru · ${coverage.zoneId}`,slot:`${dates[selectedDate].date} · ${selectedSlot}`,duration,amount:total,payment:payment==="after"?"Pay after service · pending":"Pay now · sandbox authorization pending",provider:decision.provider.name,providerModel:decision.provider.model==="full_time"?"Full-time":"Commission",subscription:offerType==="subscription"?selectedPackage.name:"No active plan",creditsBefore:offerType==="subscription"?Number(selectedPackage.id.match(/\d+/)?.[0]||1):0,crmOwner:"Unassigned",crmNextAction:"Post-booking care follow-up",reminder:"Booking confirmation queued"},canonical.bookingId);
       setShowDetails(false);
       setConfirmed(true);
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -230,14 +247,16 @@ export default function Home() {
       try {
         setMatchedProviderError("");
         const slotIndex = Math.max(0, slots.indexOf(selectedSlot));
-        const start = new Date(Date.UTC(2026, 7, 3 + selectedDate, 3 + slotIndex * 2, 30));
+        const start = new Date(`${dates[selectedDate].iso}T${String(slotStartHours[slotIndex]).padStart(2, "0")}:00:00+05:30`);
         const durationMinutes = petCount <= 2 ? 120 : petCount === 3 ? 150 : 240;
         const end = new Date(start.getTime() + durationMinutes * 60_000);
         const digits = phone.replace(/\D/g, "").slice(-10);
         const customerId = `WEB-${digits || "UAT"}`;
         const requestId = `web-groom-${customerId}-${selectedDate}-${slotIndex}-${selectedPackage.id}-${selectedPetIds.slice().sort().join("-")}`;
         // Same idempotency key finishBooking uses - this is a harmless, safe pre-fetch, not a second reservation.
-        const decision = await reserveUatSchedule({ clientRequestId: requestId, customerId, petIds: selectedPetIds, serviceCode: "grooming", zoneId: "blr-east", scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(), preferredProviderId: "groom_arun" });
+        const pincode = serviceAddress.match(/\b\d{6}\b/)?.[0] || "";
+        const coverage = await resolveServiceCoverage(pincode);
+        const decision = await reserveUatSchedule({ clientRequestId: requestId, customerId, petIds: selectedPetIds, serviceCode: "grooming", zoneId: coverage.zoneId, scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(), preferredProviderId: "groom_arun" });
         if (cancelled) return;
         const response = await fetch(`/api/provider-public-profile?providerId=${encodeURIComponent(decision.provider.id)}`);
         const body = await response.json() as { data?: typeof matchedProvider; error?: string };
@@ -249,7 +268,7 @@ export default function Home() {
       }
     })();
     return () => { cancelled = true; };
-  }, [showDetails, selectedSlot, selectedDate, petCount, selectedPackage, selectedPetIds, phone]);
+  }, [showDetails, selectedSlot, selectedDate, petCount, selectedPackage, selectedPetIds, phone, serviceAddress, dates]);
 
   if (confirmed) {
     return (
@@ -337,13 +356,10 @@ export default function Home() {
       </section>
 
       <section className="booking-panel slots-panel">
-        <div className="section-heading"><div><p className="eyebrow">Live groomer calendar</p><h2>Choose your time</h2></div><span className="step-badge">2 of 3</span></div>
-        <p className="muted">No login needed to browse. These slots update automatically from groomer calendars in your Bengaluru service zone.</p>
+        <div className="section-heading"><div><p className="eyebrow">Grooming time preferences</p><h2>Choose your time</h2></div><span className="step-badge">2 of 3</span></div>
+        <p className="muted">Choose a preferred time. PawSpace verifies the address, service zone and provider capacity before creating the booking.</p>
         <div className="date-row">{dates.map((d, index) => <button key={d.date} className={selectedDate === index ? "active" : ""} onClick={() => {setSelectedDate(index); setSelectedSlot(null);}}><span>{d.day}</span><strong>{d.date}</strong></button>)}</div>
-        <div className="slots-grid">{slots.map((slot, index) => {
-          const unavailable = (selectedDate === 0 && index === 0) || (petCount === 4 && index % 2 === 1);
-          return <button key={slot} disabled={unavailable} className={selectedSlot === slot ? "selected" : ""} onClick={() => setSelectedSlot(slot)}><span>{slot}</span>{unavailable ? <small>Unavailable</small> : <small>{index % 2 === 0 ? "2 groomers" : "1 groomer"}</small>}</button>;
-        })}</div>
+        <div className="slots-grid">{slots.map((slot) => <button key={slot} className={selectedSlot === slot ? "selected" : ""} onClick={() => setSelectedSlot(slot)}><span>{slot}</span><small>Capacity verified on confirmation</small></button>)}</div>
       </section>
 
       <aside className="checkout-bar">
@@ -355,7 +371,7 @@ export default function Home() {
         <button className="modal-close" onClick={() => setShowOtp(false)} aria-label="Close">×</button><div className="modal-icon">📱</div>
         <p className="eyebrow">Almost booked</p><h2 id="otp-title">Confirm your mobile number</h2><p>We’ll use it for booking updates, payment details and groomer tracking.</p>
         <form onSubmit={verifyOtp}><label>Primary mobile number</label><div className="phone-input"><span>+91</span><input value={phone} onChange={e => setPhone(e.target.value)} inputMode="numeric" placeholder="99969 99505" autoFocus /></div><button className="primary-button" type="submit">Continue</button></form>
-        <small>Prototype note: OTP verification is simulated for review.</small>
+        <small>UAT sandbox: no real SMS is sent; production OTP delivery remains disabled.</small>
       </section></div>}
 
       {showDetails && <div className="modal-backdrop details-backdrop"><section className="modal details-modal" role="dialog" aria-modal="true"><button className="modal-close" onClick={() => setShowDetails(false)} aria-label="Close">×</button>
@@ -408,7 +424,7 @@ export default function Home() {
             {petSelectionError && <p className="field-error">{petSelectionError}</p>}
           </div>
           <label>Safety notes<select defaultValue="friendly"><option value="friendly">Friendly / comfortable with grooming</option><option value="anxious">Anxious or first grooming</option><option value="aggressive">Aggressive / bite history</option></select></label>
-          <fieldset><legend>Payment preference</legend><label className={payment === "online" ? "payment-choice active" : "payment-choice"}><input type="radio" name="payment" value="online" checked={payment === "online"} onChange={() => setPayment("online")} /><span>Pay online now<small>UPI, card or net banking</small></span></label><label className={payment === "after" ? "payment-choice active" : "payment-choice"}><input type="radio" name="payment" value="after" checked={payment === "after"} onChange={() => setPayment("after")} /><span>Pay after service<small>Dynamic Razorpay QR, UPI or cash</small></span></label></fieldset>
+          <fieldset><legend>Payment preference</legend><label className={payment === "online" ? "payment-choice active" : "payment-choice"}><input type="radio" name="payment" value="online" checked={payment === "online"} onChange={() => setPayment("online")} /><span>Pay online now<small>Sandbox authorization is created after booking</small></span></label><label className={payment === "after" ? "payment-choice active" : "payment-choice"}><input type="radio" name="payment" value="after" checked={payment === "after"} onChange={() => setPayment("after")} /><span>Pay after service<small>Sandbox payment request is issued after verified completion</small></span></label></fieldset>
           <div className="mini-summary"><span>Total due</span><strong>{money(total)}</strong></div><button className="primary-button" type="submit">Confirm instantly</button>
         </form>
       </section></div>}

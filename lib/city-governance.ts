@@ -1,5 +1,6 @@
 type Db=D1Database;
 type Row=Record<string,unknown>;
+import{BENGALURU_SUPPORTED_PINCODES}from"./service-zones";
 
 export type CityLaunchStatus="Draft"|"Pilot"|"Live"|"Paused";
 export type CityLaunchService="Grooming"|"Training"|"Boarding"|"Pet Sitting";
@@ -21,7 +22,11 @@ export async function ensureCityLaunchTables(db:Db){await db.batch([
 
 export async function seedDefaultCityLaunchConfigs(db:Db){await ensureCityLaunchTables(db);const now=Date.now();
   const services:Record<CityLaunchService,CityServicePrice>={Grooming:{enabled:true,price:1349},Training:{enabled:true,price:3500},Boarding:{enabled:true,price:899},"Pet Sitting":{enabled:true,price:699}};
-  await db.prepare("INSERT OR IGNORE INTO city_launch_configs (id,city_code,city,state,status,centre,radius_km,pincodes,gst_included,services_json,version,updated_by,created_at,updated_at) VALUES ('bengaluru','blr','Bengaluru','Karnataka','Live','12.9716, 77.5946',35,'560001–560110',1,?,1,'founder_seed',?,?)").bind(JSON.stringify(services),now,now).run();
+  const exactPincodes=BENGALURU_SUPPORTED_PINCODES.join(",");
+  await db.prepare("INSERT OR IGNORE INTO city_launch_configs (id,city_code,city,state,status,centre,radius_km,pincodes,gst_included,services_json,version,updated_by,created_at,updated_at) VALUES ('bengaluru','blr','Bengaluru','Karnataka','Live','12.9716, 77.5946',35,?,1,?,1,'founder_seed',?,?)").bind(exactPincodes,JSON.stringify(services),now,now).run();
+  // Correct the previous seed which advertised every pincode from 560001-560110 even though only
+  // explicitly mapped zones are fulfilment-ready. Never overwrite an operator-managed config.
+  await db.prepare("UPDATE city_launch_configs SET pincodes=?,version=version+1,updated_at=? WHERE id='bengaluru' AND updated_by='founder_seed' AND REPLACE(pincodes,'–','-')='560001-560110'").bind(exactPincodes,now).run();
 }
 
 function rowToConfig(row:Row):CityLaunchConfig{return{
@@ -32,6 +37,23 @@ function rowToConfig(row:Row):CityLaunchConfig{return{
 };}
 
 export async function listCityLaunchConfigs(db:Db):Promise<CityLaunchConfig[]>{await seedDefaultCityLaunchConfigs(db);const rows=await db.prepare("SELECT * FROM city_launch_configs ORDER BY created_at ASC").all<Row>();return rows.results.map(rowToConfig);}
+
+const serviceAlias:Record<string,CityLaunchService>={grooming:"Grooming",training:"Training",boarding:"Boarding",sitting:"Pet Sitting",pet_sitting:"Pet Sitting","pet sitting":"Pet Sitting"};
+export async function resolveCityServiceCoverage(db:Db,input:{cityCode:string;serviceCode:string;pincode?:string}){
+  await seedDefaultCityLaunchConfigs(db);
+  const cityCode=input.cityCode.trim().toLowerCase(),service=serviceAlias[input.serviceCode.trim().toLowerCase()];
+  if(!service)return{supported:false,reason:"unsupported_service",cityCode,serviceCode:input.serviceCode};
+  const row=await db.prepare("SELECT * FROM city_launch_configs WHERE city_code=? AND status='Live'").bind(cityCode).first<Row>();
+  if(!row)return{supported:false,reason:"city_not_live",cityCode,serviceCode:input.serviceCode};
+  const config=rowToConfig(row);
+  if(!config.services[service]?.enabled)return{supported:false,reason:"service_not_live",cityCode,serviceCode:input.serviceCode};
+  const pincode=String(input.pincode||"").replace(/\D/g,"").slice(0,6);
+  if(pincode){
+    const advertised=new Set(config.pincodes.split(",").map(value=>value.replace(/\D/g,"").slice(0,6)).filter(value=>value.length===6));
+    if(!advertised.has(pincode))return{supported:false,reason:"pincode_not_supported",cityCode,serviceCode:input.serviceCode,pincode};
+  }
+  return{supported:true,reason:"live_and_explicitly_supported",cityCode,city:config.city,serviceCode:input.serviceCode,pincode:pincode||null,startingPrice:config.services[service].price};
+}
 
 function validate(input:CityLaunchConfigInput):string|null{
   const code=input.cityCode.trim().toLowerCase();

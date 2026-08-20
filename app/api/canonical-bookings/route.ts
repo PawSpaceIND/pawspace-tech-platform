@@ -10,13 +10,14 @@ import {prepareReferralBooking,referralBookingLinkStatement,referralClaimBoundSt
 import {attributeBookingToOpenLead} from "../../../lib/lead-conversion-attribution";
 import {PENDING_PAYMENT_STATUS} from "../../../lib/subscription-payment-activation";
 import {BOOKING_REPLAY_CONFLICT,BOOKING_WRITE_CONFLICT,SCHEDULING_GROUP_OWNERSHIP_CONFLICT,findCustomerReplay,hasForeignReplayConflict,hasReplayConflict,isUniqueConstraintError,schedulingGroupBelongsToCustomer} from "../../../lib/booking-replay-governance";
+import {prepareCouponBooking,type CouponBookingPreparation} from "../../../lib/coupon-governance";
 
 type LifecycleInput={
   idempotencyKey:string;scheduleGroupId:string;customer:{id:string;name:string;primaryPhone:string;secondaryPhone?:string;email?:string};
   pets:Array<{sourceId:string;name:string;species?:string;breed?:string;vaccinationStatus?:string}>;cityId:string;zoneId:string;
   serviceCode:"grooming"|"dog_training"|"boarding"|"pet_sitting";packageCode:string;packageName:string;scheduledStart:string;scheduledEnd:string;
   provider:{id:string;name:string;model:"full_time"|"commission"};totalAmount:number;amountDueNow:number;
-  payment:{method:string;mode:string;status:string;detail:string};pricing:{discount:number;couponCode?:string;subscription?:string;requirements?:string[];trainingQuoteId?:string;boardingQuoteId?:string;referralClaimId?:string};
+  payment:{method:string;mode:string;status:string;detail:string};pricing:{discount:number;couponCode?:string;couponQuoteId?:string;addOns?:string[];subscription?:string;requirements?:string[];trainingQuoteId?:string;boardingQuoteId?:string;referralClaimId?:string};
 };
 
 type SubscriptionPlan={planCode:string;sessions:number;validityValue:number;validityUnit:"days"|"months";reserveSessions:number;servicePackageCode:string;cityId:string;zoneId?:string|null;familyWallet:boolean;pauseDays:number;graceDays:number;renewalWindowDays:number;benefits:unknown[];terms:Record<string,unknown>};
@@ -168,6 +169,17 @@ export async function POST(request:Request){try{const input=await request.json()
   // history stays replayable, and before governance, quote/referral consumption, reservation reads and
   // every write, so a bad new payload costs nothing.
   const identityProblem=petIdentityProblem(input.pets);if(identityProblem)return json({error:identityProblem},400);
+  const groomingAddOnPrices:Record<string,number>={"Tick & flea treatment":499,"Full-body oil massage":299};
+  const submittedAddOns=(input.pricing.addOns??[]).map(value=>String(value));
+  if(input.serviceCode!=="grooming"&&submittedAddOns.length)return json({error:"Add-ons are only supported for Grooming bookings"},409);
+  if(submittedAddOns.some(value=>groomingAddOnPrices[value]===undefined)||new Set(submittedAddOns).size!==submittedAddOns.length)return json({error:"The Grooming add-on selection is invalid"},409);
+  const groomingAddOnTotal=submittedAddOns.reduce((sum,value)=>sum+groomingAddOnPrices[value],0);
+  let couponCommercial:CouponBookingPreparation|null=null;
+  const couponQuoteId=String(input.pricing.couponQuoteId||"").trim();
+  if(couponQuoteId){
+    if(input.pricing.referralClaimId)return json({error:"A coupon and referral offer cannot be combined"},409);
+    couponCommercial=await prepareCouponBooking(db,{quoteId:couponQuoteId,bookingId:"pending",customerId:input.customer.id,serviceCode:input.serviceCode,cityId:input.cityId,packageCode:input.packageCode,submittedTotal:input.totalAmount,submittedDiscount:Number(input.pricing.discount||0),idempotencyKey:`coupon:${input.idempotencyKey}:${couponQuoteId}`,now:Date.now()});
+  }else if(input.serviceCode==="grooming"&&(Number(input.pricing.discount||0)>0||input.pricing.couponCode))return json({error:"A governed coupon quote is required for a Grooming booking discount"},409);
   let governed:{packageCode:string;packageName:string;catalogueVersion?:string;offerType?:string;petCount:number;totalAmount:number;amountDueNow:number;subscriptionPlan?:SubscriptionPlan}={packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,totalAmount:input.totalAmount,amountDueNow:input.amountDueNow};
   // Resolved before the subscription gate, because in LIVE the gate has to reason about what the payment
   // will be RECORDED as (verify-first), not what the client claimed it already was.
@@ -180,7 +192,11 @@ export async function POST(request:Request){try{const input=await request.json()
   const commercialPolicy=input.serviceCode==="grooming"?await resolveGroomingPolicy(db,input.cityId,input.zoneId):null;
   if(commercialPolicy?.enforcementMode==="enforce"&&input.pets.length>commercialPolicy.multiPetMax)return json({error:`This city policy supports up to ${commercialPolicy.multiPetMax} pets per Grooming booking`,policyVersion:policyVersion(commercialPolicy)},409);
   if(input.serviceCode==="grooming"){
-    try{governed=await governGroomingBookingWithLiveMultiPet(db,{packageCode:input.packageCode,packageName:input.packageName,pets:input.pets.map(pet=>({species:(pet.species??"other") as "dog"|"cat"|"other"})),submittedTotal:input.totalAmount,submittedAmountDueNow:input.amountDueNow,paymentMode:input.payment.mode,cityId:input.cityId,zoneId:input.zoneId,scheduledStart:input.scheduledStart});}catch(error){return json({error:error instanceof Error?error.message:"Invalid Grooming package or price"},409);}
+    const governedGross=couponCommercial?.orderValue??input.totalAmount;
+    try{governed=await governGroomingBookingWithLiveMultiPet(db,{packageCode:input.packageCode,packageName:input.packageName,pets:input.pets.map(pet=>({species:(pet.species??"other") as "dog"|"cat"|"other"})),submittedTotal:governedGross-groomingAddOnTotal,submittedAmountDueNow:input.payment.mode==="prepaid"?governedGross-groomingAddOnTotal:0,paymentMode:input.payment.mode,cityId:input.cityId,zoneId:input.zoneId,scheduledStart:input.scheduledStart});}catch(error){return json({error:error instanceof Error?error.message:"Invalid Grooming package or price"},409);}
+    const gross=governed.totalAmount+groomingAddOnTotal,finalAmount=couponCommercial?.finalAmount??gross;
+    if(Math.round(gross)!==Math.round(governedGross))return json({error:"The Grooming total does not match the governed package and add-ons"},409);
+    governed={...governed,totalAmount:finalAmount,amountDueNow:input.payment.mode==="prepaid"?finalAmount:0};
     // A subscription is still prepay-only — no split, no pay-after-service — but it no longer has to be
     // CAPTURED at purchase time. Requiring that was what forced the verify-first exemption. It may now be
     // an online payment awaiting gateway verification; the entitlement simply stays pending until the
@@ -217,6 +233,7 @@ export async function POST(request:Request){try{const input=await request.json()
     governed={...governed,totalAmount:referralCommercial.totalAmount,amountDueNow:referralCommercial.amountDueNow};
   }
   const now=Date.now(),bookingId=`PS-UAT-${now.toString(36).toUpperCase()}-${crypto.randomUUID().slice(0,4).toUpperCase()}`,workOrderId=`WO-${crypto.randomUUID().slice(0,8).toUpperCase()}`,paymentId=`PAY-${crypto.randomUUID().slice(0,8).toUpperCase()}`,subscriptionId=governed.subscriptionPlan?`GSUB-${crypto.randomUUID().slice(0,10).toUpperCase()}`:null;
+  if(couponCommercial)couponCommercial=await prepareCouponBooking(db,{quoteId:couponCommercial.quoteId,bookingId,customerId:input.customer.id,serviceCode:input.serviceCode,cityId:input.cityId,packageCode:input.packageCode,submittedTotal:input.totalAmount,submittedDiscount:Number(input.pricing.discount||0),idempotencyKey:`coupon:${input.idempotencyKey}:${couponCommercial.quoteId}`,now});
   // A booking used to mint its own canonical_pets row keyed by the pet NAME, so a pet the customer had
   // already saved got a SECOND, empty row and pet_ids_json pointed at that one. Every reader resolving
   // pets through pet_ids_json — Booking Command Center, canonical-bookings GET, partner job feed,
@@ -341,7 +358,7 @@ export async function POST(request:Request){try{const input=await request.json()
     sourceId:pet.sourceId,
   };});
   const ids=resolvedPets.map(pet=>pet.id);
-  const pricingJson={...input.pricing,discount:referralCommercial?.discountAmount??trainingCommercial?.discount??input.pricing.discount,couponCode:trainingCommercial?.couponCode??input.pricing.couponCode,referralClaimId:referralCommercial?.claimId,referralCode:referralCommercial?.code,referralPolicy:referralCommercial?.policySnapshot,referralBaseAmount:referralCommercial?.baseAmount,catalogueVersion:governed.catalogueVersion,offerType:governed.offerType,subscription:subscriptionId??input.pricing.subscription,subscriptionPlanCode:governed.subscriptionPlan?.planCode,subscriptionConfig:governed.subscriptionPlan,commercialPolicy:commercialPolicy?policySnapshot(commercialPolicy):undefined,trainingCommercial:trainingCommercial??undefined,boardingCommercial:boardingCommercial??undefined};
+  const pricingJson={...input.pricing,discount:couponCommercial?.discount??referralCommercial?.discountAmount??trainingCommercial?.discount??input.pricing.discount,couponCode:couponCommercial?.code??trainingCommercial?.couponCode??input.pricing.couponCode,couponQuoteId:couponCommercial?.quoteId,addOns:submittedAddOns,addOnTotal:groomingAddOnTotal,referralClaimId:referralCommercial?.claimId,referralCode:referralCommercial?.code,referralPolicy:referralCommercial?.policySnapshot,referralBaseAmount:referralCommercial?.baseAmount,catalogueVersion:governed.catalogueVersion,offerType:governed.offerType,subscription:subscriptionId??input.pricing.subscription,subscriptionPlanCode:governed.subscriptionPlan?.planCode,subscriptionConfig:governed.subscriptionPlan,commercialPolicy:commercialPolicy?policySnapshot(commercialPolicy):undefined,trainingCommercial:trainingCommercial??undefined,boardingCommercial:boardingCommercial??undefined};
   // The entitlement is only live money's to grant. Captured (sandbox, or an offline capture) creates it
   // active; anything awaiting gateway verification creates it pending with zero sessions reserved.
   const entitlementActive=paymentStatusRecorded==="captured";
@@ -360,6 +377,7 @@ export async function POST(request:Request){try{const input=await request.json()
   // balance and a stay that starts more than 24h out (splitPaymentPlan enforces the lead time).
   if(input.serviceCode==="pet_sitting"&&input.payment.mode==="split_50_50"){if(!(input.totalAmount>input.amountDueNow))return json({error:"Split payment requires an outstanding balance below the total"},409);await ensureStayPaymentTables(db);const plan=splitPaymentPlan({totalAmount:input.totalAmount,scheduledStart:input.scheduledStart});statements.push(staySplitScheduleStatement(db,{bookingId,serviceCode:"pet_sitting",customerId:input.customer.id,totalAmount:input.totalAmount,paidNowAmount:input.amountDueNow,balanceAmount:Math.round((input.totalAmount-input.amountDueNow)*100)/100,balanceDueAt:plan.balanceDueAt}));}
   if(referralCommercial)statements.push(referralBookingLinkStatement(db,{preparation:referralCommercial,bookingId,now}),referralClaimBoundStatement(db,{claimId:referralCommercial.claimId,now}));
+  if(couponCommercial)statements.push(couponCommercial.redemptionStatement,couponCommercial.claimStatement);
   if(subscriptionId&&governed.subscriptionPlan){const expiresAt=subscriptionExpiry(now,governed.subscriptionPlan.validityValue,governed.subscriptionPlan.validityUnit);
     // Pending is not a label — mutateSubscriptionWallet only moves credits for a subscription in
     // ('active','exhausted'), and coupon/reminder/BI reads filter on 'active'. Zero reserved sessions on
@@ -377,5 +395,5 @@ export async function POST(request:Request){try{const input=await request.json()
   if(referralCommercial)events.push(["referral_claim_bound","referral_claim",referralCommercial.claimId,{programmeId:referralCommercial.programmeId,code:referralCommercial.code,baseAmount:referralCommercial.baseAmount,discountAmount:referralCommercial.discountAmount,totalAmount:referralCommercial.totalAmount,testOnly:true,liveMoney:false}]);
   if(subscriptionId&&governed.subscriptionPlan)events.push([entitlementActive?"subscription_reserved":"subscription_pending_payment","subscription",subscriptionId,{planCode:governed.subscriptionPlan.planCode,sessionsReserved:entitlementActive?governed.subscriptionPlan.reserveSessions:0,totalSessions:governed.subscriptionPlan.sessions,validityValue:governed.subscriptionPlan.validityValue,validityUnit:governed.subscriptionPlan.validityUnit,cityId:governed.subscriptionPlan.cityId,zoneId:governed.subscriptionPlan.zoneId,awaitingGatewayVerification:!entitlementActive}]);
   for(const [eventType,entityType,entityId,detail] of events)statements.push(db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),bookingId,eventType,entityType,entityId,input.customer.id,JSON.stringify(detail),now));
-  try{await db.batch(statements)}catch(error){if(!isUniqueConstraintError(error))throw error;const raced=await findCustomerReplay(db,replayInput);if(raced)return json({data:await readBundle(db,raced,true)});if(await hasForeignReplayConflict(db,replayInput))return json({error:BOOKING_REPLAY_CONFLICT},409);return json({error:BOOKING_WRITE_CONFLICT},409)};if(trainingCommercial)await consumeTrainingQuote(db,trainingCommercial.quoteId,bookingId);if(boardingCommercial)await consumeBoardingQuote(db,boardingCommercial.quoteId,bookingId);await attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId});const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=?").bind(bookingId).first<Record<string,unknown>>();return json({data:await readBundle(db,booking!,false)},201);
+  try{await db.batch(statements)}catch(error){if(couponCommercial&&/coupon_redemptions\.campaign_id|coupon quote/i.test(error instanceof Error?error.message:String(error)))return json({error:"Coupon quote is no longer available; refresh the quote and try again"},409);if(!isUniqueConstraintError(error))throw error;const raced=await findCustomerReplay(db,replayInput);if(raced)return json({data:await readBundle(db,raced,true)});if(await hasForeignReplayConflict(db,replayInput))return json({error:BOOKING_REPLAY_CONFLICT},409);return json({error:BOOKING_WRITE_CONFLICT},409)};if(trainingCommercial)await consumeTrainingQuote(db,trainingCommercial.quoteId,bookingId);if(boardingCommercial)await consumeBoardingQuote(db,boardingCommercial.quoteId,bookingId);await attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId});const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=?").bind(bookingId).first<Record<string,unknown>>();return json({data:await readBundle(db,booking!,false)},201);
 }catch(error){if(error instanceof Response){const message=await error.text().catch(()=>"");return json({error:message||"Canonical booking validation failed"},error.status||409);}return json({error:error instanceof Error?error.message:"Unable to create shared booking lifecycle"},500);}}

@@ -12,6 +12,10 @@ export type CouponQuoteInput={code:string;customerId:string;serviceCode:CouponSe
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
+export type CouponBookingPreparation={
+  quoteId:string;code:string;campaignId:string;discount:number;orderValue:number;finalAmount:number;
+  redemptionId:string;redemptionStatement:D1PreparedStatement;claimStatement:D1PreparedStatement;
+};
 const DAY=86_400_000;
 const couponServices:CouponService[]=["grooming","dog_training","boarding","pet_sitting"];
 const jsonList=(value:unknown)=>{try{return JSON.parse(String(value||"[]")) as string[]}catch{return [] as string[]}};
@@ -67,6 +71,37 @@ export async function consumeCouponQuote(db:Db,input:{quoteId:string;bookingId:s
   const inserted=await db.prepare("INSERT INTO coupon_redemptions (id,idempotency_key,quote_id,campaign_id,code,customer_id,booking_id,discount_amount,status,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?, 'consumed',?,? WHERE (SELECT COUNT(*) FROM coupon_redemptions WHERE campaign_id=? AND status='consumed')<? AND (SELECT COUNT(*) FROM coupon_redemptions WHERE campaign_id=? AND customer_id=? AND status='consumed')<?").bind(redemptionId,input.idempotencyKey,input.quoteId,quote.campaign_id,quote.code,input.customerId,input.bookingId,quote.discount_amount,now,now,quote.campaign_id,campaign.totalLimit,quote.campaign_id,input.customerId,campaign.perCustomerLimit).run();
   if(!Number(inserted.meta?.changes||0)){await db.prepare("UPDATE coupon_quotes SET status='open',booking_id=NULL,updated_at=? WHERE id=? AND status='consumed' AND booking_id=?").bind(now,input.quoteId,input.bookingId).run();const customerNow=await db.prepare("SELECT COUNT(*) count FROM coupon_redemptions WHERE campaign_id=? AND customer_id=? AND status='consumed'").bind(quote.campaign_id,input.customerId).first<Row>();throw new Error(Number(customerNow?.count||0)>=campaign.perCustomerLimit?"Customer coupon limit reached":"Coupon total redemption limit reached");}
   return{redemption:{id:redemptionId,quoteId:input.quoteId,bookingId:input.bookingId,code:String(quote.code),discountAmount:Number(quote.discount_amount),status:"consumed"},duplicatePrevented:false};}
+
+/**
+ * Validate a customer coupon against the exact booking commercial context and build the two writes
+ * that must be included in the canonical booking's D1 batch.  The redemption INSERT deliberately
+ * obtains its required campaign_id from a guarded subquery. If the quote is consumed/expired or a
+ * limit is reached between validation and commit, that subquery yields NULL, the NOT NULL constraint
+ * aborts the batch, and D1 rolls the booking back with it. This prevents an orphan booking or an
+ * unconsumed discount while retaining friendly validation errors before the transaction.
+ */
+export async function prepareCouponBooking(db:Db,input:{quoteId:string;bookingId:string;customerId:string;serviceCode:CouponService;cityId:string;packageCode:string;submittedTotal:number;submittedDiscount:number;idempotencyKey:string;now:number}):Promise<CouponBookingPreparation>{
+  await ensureCouponTables(db);
+  const quote=await db.prepare("SELECT q.*,c.status campaign_status,c.per_customer_limit,c.total_limit FROM coupon_quotes q JOIN coupon_campaigns c ON c.id=q.campaign_id WHERE q.id=?").bind(input.quoteId).first<Row>();
+  if(!quote)throw new Error("Coupon quote not found");
+  if(String(quote.customer_id)!==input.customerId)throw new Error("Coupon quote customer mismatch");
+  if(String(quote.service_code)!==input.serviceCode||String(quote.city_id)!==input.cityId||String(quote.package_code)!==input.packageCode)throw new Error("Coupon quote does not match this booking");
+  if(String(quote.status)!=="open"||String(quote.campaign_status)!=="active")throw new Error("Coupon quote is no longer open");
+  if(Number(quote.expires_at)<input.now)throw new Error("Coupon quote has expired");
+  const discount=Number(quote.discount_amount),orderValue=Number(quote.order_value),finalAmount=Number(quote.final_amount);
+  if(Math.round(input.submittedDiscount)!==Math.round(discount)||Math.round(input.submittedTotal)!==Math.round(finalAmount))throw new Error("Booking amount does not match the governed coupon quote");
+  const [totalUsed,customerUsed]=await Promise.all([
+    db.prepare("SELECT COUNT(*) count FROM coupon_redemptions WHERE campaign_id=? AND status='consumed'").bind(quote.campaign_id).first<Row>(),
+    db.prepare("SELECT COUNT(*) count FROM coupon_redemptions WHERE campaign_id=? AND customer_id=? AND status='consumed'").bind(quote.campaign_id,input.customerId).first<Row>(),
+  ]);
+  if(Number(totalUsed?.count||0)>=Number(quote.total_limit))throw new Error("Coupon total redemption limit reached");
+  if(Number(customerUsed?.count||0)>=Number(quote.per_customer_limit))throw new Error("Customer coupon limit reached");
+  const redemptionId=`CPR-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
+  const eligibleCampaign="SELECT q.campaign_id FROM coupon_quotes q JOIN coupon_campaigns c ON c.id=q.campaign_id WHERE q.id=? AND q.customer_id=? AND q.service_code=? AND q.city_id=? AND q.package_code=? AND q.status='open' AND q.expires_at>=? AND c.status='active' AND (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=q.campaign_id AND r.status='consumed')<c.total_limit AND (SELECT COUNT(*) FROM coupon_redemptions r WHERE r.campaign_id=q.campaign_id AND r.customer_id=? AND r.status='consumed')<c.per_customer_limit";
+  const redemptionStatement=db.prepare(`INSERT INTO coupon_redemptions (id,idempotency_key,quote_id,campaign_id,code,customer_id,booking_id,discount_amount,status,created_at,updated_at) VALUES (?,?,?,(${eligibleCampaign}),?,?,?,?, 'consumed',?,?)`).bind(redemptionId,input.idempotencyKey,input.quoteId,input.quoteId,input.customerId,input.serviceCode,input.cityId,input.packageCode,input.now,input.customerId,String(quote.code),input.customerId,input.bookingId,discount,input.now,input.now);
+  const claimStatement=db.prepare("UPDATE coupon_quotes SET status='consumed',booking_id=?,updated_at=? WHERE id=? AND status='open' AND EXISTS (SELECT 1 FROM coupon_redemptions WHERE id=? AND booking_id=?)").bind(input.bookingId,input.now,input.quoteId,redemptionId,input.bookingId);
+  return{quoteId:input.quoteId,code:String(quote.code),campaignId:String(quote.campaign_id),discount,orderValue,finalAmount,redemptionId,redemptionStatement,claimStatement};
+}
 
 export async function saveCouponCampaign(db:Db,input:Omit<CouponCampaign,"createdAt"|"updatedAt"|"testOnly">&{id?:string;live?:boolean},opts:{liveApproved?:boolean}={}){
   await ensureCouponTables(db);const code=normalize(input.code),now=Date.now(),crossSellFromServices=(input.crossSellFromServices??[]).filter(isCouponService);if(!code||!input.name.trim())throw new Error("Coupon code and name are required");if(!input.serviceCodes.length||!input.cityIds.length||!input.channels.length||!input.customerKinds.length)throw new Error("Coupon eligibility scope is required");if(input.discountValue<=0||input.perCustomerLimit<1||input.totalLimit<1)throw new Error("Coupon discount and limits must be positive");if(input.discountType==="percent"&&input.discountValue>100)throw new Error("Percentage discount cannot exceed 100");if(input.maxOrder!=null&&input.maxOrder<input.minOrder)throw new Error("Maximum order cannot be below minimum order");if(input.validUntil<=input.validFrom)throw new Error("Coupon validity window is invalid");

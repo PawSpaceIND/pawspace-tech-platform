@@ -48,6 +48,7 @@ const selfService = await import("../lib/employee-self-service.ts");
 const leaderboardLib = await import("../lib/live-leaderboard.ts");
 const commercialTerms = await import("../lib/provider-commercial-terms.ts");
 const workspaceLib = await import("../lib/provider-workspace.ts");
+const serviceMedia = await import("../lib/service-media-security.ts");
 const tds = await import("../lib/tds-governance.ts");
 const capacity = await import("../lib/provider-capacity-governance.ts");
 const revenueCrmRoute = await import("../app/api/revenue-crm/route.ts");
@@ -409,7 +410,10 @@ test("provider workspace: proof is own-bookings-only and job offers are first-ac
   stack.seedProviderProfile("prov_b", "full_time");
   stack.seedBooking("BK-J1", { providerId: "prov_a", serviceCode: "grooming", amount: 1_500 });
   await assert.rejects(workspaceLib.submitJobProof(db, { providerId: "prov_b", bookingId: "BK-J1", proofType: "before_photo" }), /not assigned to you/);
-  const proof = await workspaceLib.submitJobProof(db, { providerId: "prov_a", bookingId: "BK-J1", proofType: "before_photo", objectId: "obj-1" });
+  await serviceMedia.ensureServiceMediaTable(db);
+  await db.prepare("INSERT INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .bind("media-1","BK-J1","prov_a","before_service","private/BK-J1/before","image/jpeg",1024,"a".repeat(64),"clean","ready","active",0,"prov_a",NOW,NOW).run();
+  const proof = await workspaceLib.submitJobProof(db, { providerId: "prov_a", bookingId: "BK-J1", proofType: "before_photo", objectId: "media://asset/media-1" });
   assert.equal(proof.mirroredToCustomer, true);
   assert.equal(stack.sqlite.prepare("SELECT COUNT(*) c FROM customer_job_updates WHERE booking_id='BK-J1'").get().c, 1);
   await assert.rejects(workspaceLib.submitJobProof(db, { providerId: "prov_a", bookingId: "BK-J1", proofType: "walk_route" }), /not expected for grooming/);
