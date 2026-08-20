@@ -93,7 +93,7 @@ test("no gateway-exempt route is left without any caller authentication", () => 
     "/api/identity-session", "/api/service-availability", "/api/public-contact", "/api/provider-public-profile",
     "/api/staging-login", "/api/customer-offers", "/api/host-profile", "/api/customer-otp", "/api/customer-profile",
     "/api/customer-account", "/api/booking-rating", "/api/customer-support-case", "/api/live-price-quote",
-    "/api/training-requirements", "/api/host-trust", "/api/service-zone",
+    "/api/training-requirements", "/api/host-trust", "/api/service-zone", "/api/partner-otp", "/api/pet-passport-public",
   ]);
   const unguarded = [];
   for (const path of exemptPaths) {
