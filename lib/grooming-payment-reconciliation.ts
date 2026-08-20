@@ -1,6 +1,7 @@
 import{convertLeadOnPaymentCaptured}from"./lead-conversion-attribution";
 import{cancelRecoveryEntitlements}from"./payment-recovery-governance";
 import{activateSubscriptionOnCapture,failSubscriptionOnPaymentFailure}from"./subscription-payment-activation";
+import{tryQualifyLinkedReferral}from"./referral-booking-governance";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -12,7 +13,36 @@ export async function ensurePaymentReconciliationTables(db:Db){await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS payment_gateway_events (id TEXT PRIMARY KEY,provider TEXT NOT NULL,environment TEXT NOT NULL,event_id TEXT NOT NULL,event_type TEXT NOT NULL,booking_id TEXT,payment_id TEXT,gateway_order_id TEXT,gateway_payment_id TEXT,gateway_refund_id TEXT,amount_subunits INTEGER,currency TEXT,signature_verified INTEGER NOT NULL,payload_hash TEXT NOT NULL,processing_status TEXT NOT NULL DEFAULT 'received',failure_reason TEXT,detail_json TEXT NOT NULL DEFAULT '{}',received_at INTEGER NOT NULL,processed_at INTEGER,UNIQUE(provider,event_id))"),
   db.prepare("CREATE TABLE IF NOT EXISTS payment_reconciliation_records (payment_id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,gateway TEXT NOT NULL,environment TEXT NOT NULL,expected_amount REAL NOT NULL,captured_amount REAL NOT NULL DEFAULT 0,refunded_amount REAL NOT NULL DEFAULT 0,currency TEXT NOT NULL,gateway_status TEXT NOT NULL DEFAULT 'not_started',reconciliation_status TEXT NOT NULL DEFAULT 'pending',variance_amount REAL NOT NULL DEFAULT 0,last_event_id TEXT,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS payment_reconciliation_exceptions (id TEXT PRIMARY KEY,booking_id TEXT,payment_id TEXT,event_id TEXT,exception_type TEXT NOT NULL,severity TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,resolved_at INTEGER,resolved_by TEXT)"),
+  db.prepare("CREATE TABLE IF NOT EXISTS post_service_payment_requests (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,payment_id TEXT NOT NULL,provider_id TEXT NOT NULL,amount REAL NOT NULL,currency TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'awaiting_payment',payment_path TEXT NOT NULL,qr_payload TEXT NOT NULL,expires_at INTEGER NOT NULL,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
 ]);}
+
+/**
+ * Creates the provider-shareable UAT request used for pay-after-service. This is deliberately not a
+ * capture operation: only a signature-verified gateway event may move booking_payments to captured.
+ */
+export async function createPostServicePaymentRequest(db:Db,input:{bookingId:string;providerId:string;actorId:string}){
+ await ensurePaymentReconciliationTables(db);
+ const row=await db.prepare("SELECT b.status booking_status,b.provider_id,p.id payment_id,p.amount,p.currency,p.status payment_status,p.mode FROM canonical_bookings b JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=?").bind(input.bookingId).first<Row>();
+ if(!row)throw new Error("Canonical booking payment was not found");
+ if(String(row.provider_id)!==input.providerId)throw new Error("This booking is not assigned to this provider");
+ if(String(row.booking_status)!=="completed")throw new Error("Post-service payment can be requested only after service completion");
+ if(["captured","refunded","partially_refunded"].includes(String(row.payment_status)))throw new Error("This booking is already paid or refunded");
+ if(String(row.mode)!=="pay_after_service")throw new Error("This booking is not configured for pay after service");
+ const existing=await db.prepare("SELECT * FROM post_service_payment_requests WHERE booking_id=?").bind(input.bookingId).first<Row>();
+ if(existing)return paymentRequestView(existing,String(row.payment_status));
+ const now=Date.now(),id=`PSPR-${crypto.randomUUID().slice(0,12).toUpperCase()}`,token=crypto.randomUUID().replaceAll("-","");
+ const path=`/grooming/payment-request?token=${encodeURIComponent(token)}`;
+ const qrPayload=path;
+ await db.prepare("INSERT INTO post_service_payment_requests (id,booking_id,payment_id,provider_id,amount,currency,status,payment_path,qr_payload,expires_at,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,'awaiting_payment',?,?,?,?,?,?)")
+  .bind(id,input.bookingId,row.payment_id,input.providerId,Number(row.amount||0),String(row.currency||"INR"),path,qrPayload,now+24*60*60*1000,input.actorId,now,now).run();
+ return{id,bookingId:input.bookingId,amount:Number(row.amount||0),currency:String(row.currency||"INR"),status:"awaiting_payment",paymentStatus:String(row.payment_status),paymentPath:path,qrPayload,expiresAt:now+24*60*60*1000,sandboxOnly:true,liveCapture:false};
+}
+
+function paymentRequestView(row:Row,paymentStatus:string){return{id:String(row.id),bookingId:String(row.booking_id),amount:Number(row.amount||0),currency:String(row.currency||"INR"),status:["captured","refunded","partially_refunded"].includes(paymentStatus)?paymentStatus:String(row.status),paymentStatus,paymentPath:String(row.payment_path),qrPayload:String(row.qr_payload),expiresAt:Number(row.expires_at),sandboxOnly:true,liveCapture:false};}
+
+export async function getPostServicePaymentRequest(db:Db,input:{bookingId:string;providerId:string}){
+ await ensurePaymentReconciliationTables(db);const row=await db.prepare("SELECT r.*,p.status payment_status FROM post_service_payment_requests r JOIN booking_payments p ON p.id=r.payment_id WHERE r.booking_id=? AND r.provider_id=?").bind(input.bookingId,input.providerId).first<Row>();return row?paymentRequestView(row,String(row.payment_status)):null;
+}
 
 const round2=(value:number)=>Math.round(value*100)/100;
 
@@ -172,8 +202,13 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
     const collectedInFull=schedule?capturedTotal+0.009>=scheduleTotal:capturedTotal+0.009>=expected;
     await db.prepare("UPDATE booking_payments SET status='captured',gateway=?,detail_json=json_set(detail_json,'$.gatewayPaymentId',?,'$.gatewayOrderId',?,'$.lastGatewayEventId',?),updated_at=? WHERE id=?").bind(event.environment==="sandbox"?"razorpay_sandbox":"razorpay",event.gatewayPaymentId??null,event.gatewayOrderId??null,event.eventId,now,paymentId).run();
     await upsert("captured",collectedInFull?"matched":"partially_captured",capturedTotal,refundedCurrent,0);
+    if(collectedInFull)await db.prepare("UPDATE provider_settlement_readiness SET status=CASE WHEN payout_amount IS NULL THEN 'payment_verified_rule_pending' ELSE 'eligible' END,reason=CASE WHEN payout_amount IS NULL THEN reason ELSE 'Verified gateway capture reconciled; eligible after the recorded hold period' END,updated_at=? WHERE booking_id=?").bind(now,bookingId).run().catch(()=>null);
     if(settlesBalance)await settleStayBalance(db,{bookingId,eventId:event.eventId,paymentRef:event.gatewayPaymentId??null,now});
     await lifecycle(db,bookingId,"payment_captured",{gateway:event.provider,environment:event.environment,gatewayPaymentId:event.gatewayPaymentId,eventId:event.eventId,amount,capturedTotal,stagesCollected,settledStayBalance:settlesBalance});
+    // Referral qualification requires both completion and verified payment. Calling it from each
+    // side makes event order irrelevant; the referral bridge is idempotent and a referral failure
+    // must never roll back or counterfeit a verified gateway capture.
+    await tryQualifyLinkedReferral(db,{bookingId,actorId:"razorpay_webhook"}).catch(async(error)=>{await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"referral_qualification_failed",severity:"warning",detail:{stage:"verified_capture",message:error instanceof Error?error.message:String(error)}}).catch(()=>null);});
     // A verified capture is the ONLY thing that may activate a subscription entitlement (PAY-002). The
     // purchase wrote it pending with zero sessions reserved; this reserves them, exactly once — the
     // atomic, guarded transition means a replayed capture (or an order.paid following payment.captured)

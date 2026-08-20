@@ -227,7 +227,8 @@ test("keeps long-stay payment, paid meeting and home media rules explicit", asyn
   assert.match(stays, /4 hours/);
   assert.match(stays, /12 hours/);
   assert.match(stays, /15 km service radius/);
-  assert.match(stays, /Flexible offer/);
+  assert.match(stays, /loadBoardingCommercial/);
+  assert.match(stays, /AddressPicker/);
   assert.match(stays, /Three walks/);
   assert.match(stays, /1-hour play time/);
   assert.match(training, /meetPackage\.direct_minutes_per_pet/);
@@ -252,7 +253,9 @@ test("keeps payment timing, confidence meetings and delay recovery explicit", as
   const [grooming, training, stays, groomer, operations, schema] = await Promise.all(
     ["app/mobile-app/grooming-flow.tsx", "app/mobile-app/training-flow.tsx", "app/mobile-app/stay-flow.tsx", "app/partner-app/page.tsx", "app/api/booking-operations/route.ts", "db/schema.ts"].map((path) => readFile(new URL("../" + path, import.meta.url), "utf8")),
   );
-  assert.ok(grooming.indexOf("Pay after service") < grooming.indexOf("Verify OTP & confirm instantly"));
+  assert.match(grooming, /Pay after service/);
+  assert.match(grooming, /Create canonical UAT booking/);
+  assert.match(grooming, /status:pay==="online"\?"captured":"created"/);
   assert.match(training, /Meet the trainer first\. Book only when you feel confident/);
   assert.match(training, /Book only the Meet & Greet/);
   assert.match(stays, /10-minute phone call · Included/);
@@ -277,8 +280,9 @@ test("uses 60 minutes per training pet and one GPS policy for doorstep providers
   assert.match(training, /Every pet has one paid \{plan\.directMinutes\+plan\.coachingMinutes\}-minute session/);
   assert.match(trainer, /loadTrainerSessions/);
   assert.match(trainer, /selected.total_sessions/);
-  assert.match(tracking, /Tracking starts when the/);
-  assert.match(tracking, /Primary and secondary contacts/);
+  assert.match(tracking, /LOCATION SHARING · NOT CONNECTED IN UAT/);
+  assert.match(tracking, /No location is collected or displayed by this UAT placeholder/);
+  assert.match(tracking, /Live route unavailable/);
   assert.match(grooming, /role="Groomer"/);
   assert.match(training, /loadTrainingTrainers/);
   assert.match(training, /confirmedTrainerName/);

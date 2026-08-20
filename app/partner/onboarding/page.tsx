@@ -176,8 +176,11 @@ export default function PartnerOnboardingUatPage() {
             </select>
           </label>
           <label className={styles.field}><span>City</span>
-            <input value={form.cityCode} onChange={e => setForm({ ...form, cityCode: e.target.value })} />
+            <select value={form.cityCode} onChange={e => setForm({ ...form, cityCode: e.target.value })}>
+              <option value="BLR">Bengaluru (supported pilot)</option>
+            </select>
           </label>
+          <p>Provider onboarding is currently open only for the explicitly supported Bengaluru pilot coverage. Other cities fail closed until their launch configuration and service zones are approved.</p>
           <button className={styles.btn} disabled={busy || !isProviderSession} onClick={() => void post({ action: "create_application", payload: { verticalKey: form.verticalKey, countryCode: form.countryCode, regionCode: form.regionCode, cityCode: form.cityCode, localeCode: form.localeCode, basicInfo: {} } })}>
             {busy ? "Saving…" : "Start application"}
           </button>

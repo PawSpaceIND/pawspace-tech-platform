@@ -27,9 +27,9 @@ test("Boarding Gate 1 owns catalogue quotes verified hosts and canonical stay cr
  assert.match(booking,/boardingQuoteId/);
  assert.match(flow,/loadBoardingCommercial/);
  assert.match(flow,/quoteBoarding/);
- assert.match(flow,/boardingQuoteId:governedBoardingQuote\?\.quoteId/);
+ assert.match(flow,/boardingQuoteId:quote\.quoteId/);
  assert.match(flow,/splitEligible = careWindow === "24 hours" && nights > 4/);
- assert.match(flow,/Boarding coupons are disabled until a canonical coupon policy is configured/);
+ assert.match(flow,/Boarding.*coupons are disabled until that service has an explicit canonical redemption policy/s);
  assert.match(flow,/Pet Taxi pricing is not enabled in Boarding Gate 1/);
  assert.match(flow,/Full prepaid UAT payment from the canonical Boarding quote/);
  assert.doesNotMatch(flow,/mode==="boarding"\?"home-boarding"/);

@@ -50,7 +50,7 @@ async function bundle(db:Db,bookingId:string){const booking=await db.prepare("SE
 
 export async function GET(request:Request){try{const bookingId=new URL(request.url).searchParams.get("bookingId");if(!bookingId)return json({error:"Booking ID is required"},400);const db=await database();await ensureTables(db);const actor=await resolveActor(request);requirePermission(actor,"bookings.view");const work=await db.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id=?").bind(bookingId).first<Row>();if(work)await requireProviderOwnership(db,actor,String(work.provider_id));const data=await bundle(db,bookingId);return data?json({data}):json({error:"Booking not found"},404);}catch(error){return authError(error,"Unable to load grooming lifecycle");}}
 
-export async function POST(request:Request){try{const input=await request.json() as LifecycleInput;if(!input.bookingId||!input.action)return json({error:"Booking ID and action are required"},400);const db=await database();await ensureTables(db);const actorIdentity=await resolveActor(request);if(input.action==="mark_paid")requirePermission(actorIdentity,"payments.manage");else requirePermission(actorIdentity,"bookings.view");const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=? AND service_code='grooming'").bind(input.bookingId).first<Row>();if(!booking)return json({error:"Grooming booking not found"},404);const work=await db.prepare("SELECT * FROM provider_work_orders WHERE booking_id=?").bind(input.bookingId).first<Row>();if(!work)return json({error:"Provider work order not found"},409);if(input.action!=="mark_paid")await requireProviderOwnership(db,actorIdentity,String(work.provider_id));const current=String(booking.status),next=transition(current,input.action);if(!next)return json({error:`Action ${input.action} is not allowed from ${current}`},409);const actor=actorIdentity.email,now=Date.now();
+export async function POST(request:Request){try{const input=await request.json() as LifecycleInput;if(!input.bookingId||!input.action)return json({error:"Booking ID and action are required"},400);const db=await database();await ensureTables(db);const actorIdentity=await resolveActor(request);if(input.action==="mark_paid")requirePermission(actorIdentity,"payments.manage");else requirePermission(actorIdentity,"bookings.view");if(input.action==="mark_paid")return json({error:"Direct payment marking is disabled. Only a signature-verified gateway capture may update payment, CRM and accounts."},409);const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=? AND service_code='grooming'").bind(input.bookingId).first<Row>();if(!booking)return json({error:"Grooming booking not found"},404);const work=await db.prepare("SELECT * FROM provider_work_orders WHERE booking_id=?").bind(input.bookingId).first<Row>();if(!work)return json({error:"Provider work order not found"},409);await requireProviderOwnership(db,actorIdentity,String(work.provider_id));const current=String(booking.status),next=transition(current,input.action);if(!next)return json({error:`Action ${input.action} is not allowed from ${current}`},409);const actor=actorIdentity.email,now=Date.now();
 
   if(input.action==="add_proof"){
     if(!input.beforePhotoRef&&!input.afterPhotoRef&&!(input.checklist?.length))return json({error:"Photo reference or checklist evidence is required"},400);
@@ -59,14 +59,6 @@ export async function POST(request:Request){try{const input=await request.json()
     await event(db,input.bookingId,"service_proof_updated",actor,{providerId:work.provider_id,beforePhotoRef:input.beforePhotoRef,afterPhotoRef:input.afterPhotoRef,checklist:input.checklist??[]},now);
     await securityAudit(db,actorIdentity,"grooming.add_proof","booking",input.bookingId,"completed",{providerId:work.provider_id});
     return json({data:await bundle(db,input.bookingId)});
-  }
-
-  if(input.action==="mark_paid"){
-    await db.prepare("UPDATE booking_payments SET status='captured',gateway=CASE WHEN gateway='uat_sandbox' THEN gateway ELSE gateway END,detail_json=json_set(detail_json,'$.paymentReference',?),updated_at=? WHERE booking_id=?").bind(input.paymentReference??"manual-reconciliation",now,input.bookingId).run();
-    const referral=await referralQualification(db,input.bookingId,actor);
-    await event(db,input.bookingId,"payment_captured",actor,{paymentReference:input.paymentReference??"manual-reconciliation",referral},now);
-    await securityAudit(db,actorIdentity,"grooming.mark_paid","booking",input.bookingId,"completed",{paymentReference:input.paymentReference??"manual-reconciliation",referral});
-    return json({data:await bundle(db,input.bookingId),referral});
   }
 
   if(input.action==="complete"){

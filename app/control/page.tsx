@@ -844,7 +844,7 @@ export default function Control() {
                   <i>▦</i>
                   <strong>{x[0]}</strong>
                   <p>{x[1]}</p>
-                  <button>Open →</button>
+                  <button disabled title="This sample module is not connected to a canonical workflow">Unavailable</button>
                 </article>
               ))}
             </section>

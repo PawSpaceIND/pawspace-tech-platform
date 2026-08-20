@@ -62,6 +62,12 @@ export async function submitJobProof(db:Db,input:{providerId:string;bookingId:st
  if(text(booking.provider_id)!==text(input.providerId))throw new Error("This booking is not assigned to you");
  const allowed=PROOF_REQUIREMENTS[text(booking.service_code)]||["reached","completed"];
  if(!allowed.includes(text(input.proofType)))throw new Error(`Proof type '${input.proofType}' is not expected for ${text(booking.service_code)}`);
+ if(text(booking.service_code)==="grooming"&&["before_photo","after_photo"].includes(text(input.proofType))){
+  const expectedPurpose=text(input.proofType)==="before_photo"?"before_service":"after_service",ref=text(input.objectId),mediaId=ref.startsWith("media://asset/")?ref.slice("media://asset/".length):"";
+  if(!mediaId)throw new Error("Grooming photo proof must use a registered private media reference");
+  const asset=await db.prepare("SELECT booking_id,provider_id,purpose,scan_status,access_status,retention_status,synthetic FROM service_media_assets WHERE id=?").bind(mediaId).first<Row>().catch(()=>null);
+  if(!asset||text(asset.booking_id)!==input.bookingId||text(asset.provider_id)!==input.providerId||text(asset.purpose)!==expectedPurpose||text(asset.scan_status)!=="clean"||text(asset.access_status)!=="ready"||text(asset.retention_status)!=="active"||num(asset.synthetic)!==0)throw new Error("Grooming photo proof is not storage-confirmed and scan-approved");
+ }
  const now=Date.now();
  await db.prepare("INSERT INTO provider_job_proofs (id,booking_id,provider_id,proof_type,object_id,note,distance_km,created_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(booking_id,proof_type) DO UPDATE SET object_id=excluded.object_id,note=excluded.note,distance_km=excluded.distance_km,created_at=excluded.created_at")
   .bind(uid("PRF"),input.bookingId,input.providerId,text(input.proofType),text(input.objectId)||null,text(input.note)||null,input.distanceKm==null?null:Number(input.distanceKm),now).run();
@@ -117,10 +123,12 @@ export async function providerWorkspace(db:Db,input:{providerId:string}){
  const providerId=text(input.providerId);
  const engagement=await resolveEngagementForWorker(db,{providerId});
  const features=featuresFor(engagement);
- const[bookings,offers,earnings,link]=await Promise.all([
+ const[bookings,offers,earnings,settlements,incentives,link]=await Promise.all([
   bookingsForProvider(db,providerId),
   db.prepare("SELECT o.booking_id,o.offered_at,o.expires_at,o.status,b.service_code,b.package_name,b.scheduled_start,b.total_amount FROM provider_job_offers o JOIN canonical_bookings b ON b.id=o.booking_id WHERE o.provider_id=? AND o.status='offered' ORDER BY o.offered_at DESC LIMIT 50").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]})),
   db.prepare("SELECT COALESCE(SUM(provider_net_payout),0) net,COUNT(*) orders,COALESCE(SUM(order_value),0) gross FROM provider_payout_computations WHERE provider_id=?").bind(providerId).first<Row>().catch(()=>null),
+  db.prepare("SELECT booking_id,gross_booking_amount,payout_amount,status,eligible_after,rule_version,reason,updated_at FROM provider_settlement_readiness WHERE provider_id=? ORDER BY updated_at DESC LIMIT 100").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]})),
+  db.prepare("SELECT month_start,status,result_json,finalized_at FROM groomer_incentive_results WHERE head_groomer_id=? ORDER BY month_start DESC LIMIT 12").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]})),
   db.prepare("SELECT status FROM provider_identity_links WHERE provider_id=? LIMIT 1").bind(providerId).first<Row>().catch(()=>null),
  ]);
  // proof still pending on completed/past jobs → the customer-reminder source
@@ -138,8 +146,8 @@ export async function providerWorkspace(db:Db,input:{providerId:string}){
   onboardingStatus:link?text(link.status):"not_linked",
   bookings,
   liveAssignments:offers.results.map(o=>({bookingId:text(o.booking_id),serviceCode:text(o.service_code),package:text(o.package_name),start:text(o.scheduled_start),orderValue:money(o.total_amount),offeredAt:num(o.offered_at),expiresAt:o.expires_at?num(o.expires_at):null})),
-  earnings:features.payslip?{netPayout:money(earnings?.net),orders:num(earnings?.orders),grossOrderValue:money(earnings?.gross),note:"Contract earnings from computed order payouts; payslip/advance/leave in the employee portal."}:{visible:false,reason:"Commission providers see only their booking dashboard, not payslip/earnings ledgers."},
+  earnings:features.payslip?{netPayout:money(earnings?.net),orders:num(earnings?.orders),grossOrderValue:money(earnings?.gross),visible:true,computed:{netPayout:money(earnings?.net),orders:num(earnings?.orders),grossOrderValue:money(earnings?.gross)},settlements:settlements.results.map(row=>({bookingId:text(row.booking_id),grossBookingAmount:money(row.gross_booking_amount),payoutAmount:row.payout_amount==null?null:money(row.payout_amount),status:text(row.status),eligibleAfter:num(row.eligible_after),ruleVersion:row.rule_version?text(row.rule_version):null,reason:text(row.reason),updatedAt:num(row.updated_at)})),incentives:incentives.results.map(row=>{let result:Record<string,unknown>={};try{result=JSON.parse(text(row.result_json)||"{}")}catch{}return{monthStart:text(row.month_start),status:text(row.status),headTotal:money(result.headTotal),helperTotal:money(result.helperTotal),monthTotal:money(result.monthTotal),finalizedAt:row.finalized_at?num(row.finalized_at):null}}),note:"Computed payouts and finalized incentive results; payslip, advance and leave remain in the employee portal."}:{visible:false,netPayout:0,orders:0,grossOrderValue:0,computed:{netPayout:0,orders:0,grossOrderValue:0},settlements:[],incentives:[],note:"Commission providers see only their booking dashboard; governed payouts remain Finance-only."},
   pendingProof,
-  truth:{ownRecordOnly:true,liveMoney:false,mediaByReference:true,productionReady:false},
+  truth:{ownRecordOnly:true,liveMoney:false,mediaByReference:true,earningsFromGovernedLedgersOnly:true,productionReady:false},
  };
 }
