@@ -86,13 +86,43 @@ function routeAuthGuards(routeSource) {
   return guards;
 }
 
-function routePermissionChecks(routeSource) {
+function routePermissionChecks(routeSource, fileName = "route.ts") {
+  const parsed = ts.createSourceFile(fileName, routeSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const permissions = new Set();
-  const patterns = [
-    /\bauthorize\s*\([^,]+,\s*[\"']([a-z_]+\.[a-z_]+)[\"']/g,
-    /\brequirePermission\s*\([^,]+,\s*[\"']([a-z_]+\.[a-z_]+)[\"']/g,
-  ];
-  for (const pattern of patterns) for (const match of routeSource.matchAll(pattern)) permissions.add(match[1]);
+  const variableInitializers = new Map();
+
+  const indexVariables = (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      variableInitializers.set(node.name.text, node.initializer);
+    }
+    ts.forEachChild(node, indexVariables);
+  };
+  indexVariables(parsed);
+
+  const collectPermissionLiterals = (node) => {
+    if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && /^[a-z_]+\.[a-z_]+$/.test(node.text)) {
+      permissions.add(node.text);
+    }
+    ts.forEachChild(node, collectPermissionLiterals);
+  };
+
+  const visit = (node) => {
+    if (
+      ts.isCallExpression(node)
+      && ts.isIdentifier(node.expression)
+      && (node.expression.text === "authorize" || node.expression.text === "requirePermission")
+      && node.arguments[1]
+    ) {
+      const permissionArgument = node.arguments[1];
+      if (ts.isIdentifier(permissionArgument) && variableInitializers.has(permissionArgument.text)) {
+        collectPermissionLiterals(variableInitializers.get(permissionArgument.text));
+      } else {
+        collectPermissionLiterals(permissionArgument);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(parsed);
   return [...permissions].sort();
 }
 
@@ -158,15 +188,17 @@ export async function generateAuthorizationMatrix({ root = DEFAULT_ROOT } = {}) 
     if (!gateway.includes(`url.pathname===\"${item.route}\"`)) throw new Error(`${item.route} is missing from the authoritative gateway registry`);
     const routeKindsPossible = routeOwnership(item.source);
     const sessionKindsPossible = sessionOwnership(sessionGateway, item.route);
-    const options = permissionOptions(gateway, item.route);
+    const gatewayOptions = permissionOptions(gateway, item.route);
 
     for (const method of item.methods) {
       const methodSource = exportedMethodText(item.source, method, `${item.route}/route.ts`);
       const routeKinds = routeOwnership(methodSource);
       const guards = routeAuthGuards(methodSource);
-      const directPermissionChecks = routePermissionChecks(methodSource);
+      const directPermissionChecks = routePermissionChecks(methodSource, `${item.route}/route.ts`);
       const request = requestFor(item.route, method);
       const permission = await requiredPermission(request.clone());
+      const gatewayPermissionOptions = gatewayOptions.length ? gatewayOptions : [permission === null ? "public" : permission];
+      const effectivePermissionOptions = [...new Set([...gatewayPermissionOptions, ...directPermissionChecks])].sort();
       const scopes = await sessionScopesFor(sessionScope, item.route, method, sessionActions);
       const sessionKinds = [...new Set(scopes.map((scope) => scope.subjectType))].sort();
       const ownership = new Set([...routeKinds, ...sessionKinds]);
@@ -182,7 +214,11 @@ export async function generateAuthorizationMatrix({ root = DEFAULT_ROOT } = {}) 
         method,
         access: permission === null ? "public" : "protected",
         permission: permission === null ? "public" : permission,
-        permissionOptions: options.length ? options : [permission === null ? "public" : permission],
+        permissionOptions: effectivePermissionOptions,
+        permissionLayers: {
+          "worker-gateway": gatewayPermissionOptions,
+          ...(directPermissionChecks.length ? { "route-guard": directPermissionChecks } : {}),
+        },
         ownership: ownership.size ? [...ownership].sort() : ["none"],
         ownershipOptions: ownershipOptions.size ? [...ownershipOptions].sort() : ["none"],
         ownershipSources,

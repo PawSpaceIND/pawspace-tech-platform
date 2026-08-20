@@ -89,6 +89,29 @@ test("read and write decisions are explicit for the #201 launch blockers", () =>
   assert.equal(row("/api/canonical-bookings", "POST").permission, "scheduling.book");
 });
 
+test("layered gateway and route permissions preserve the effective AND policy", () => {
+  const pricingGet = row("/api/pricing-rules", "GET");
+  assert.deepEqual(pricingGet.permissionLayers["worker-gateway"], ["dashboard.view"]);
+  assert.deepEqual(pricingGet.permissionLayers["route-guard"], ["pricing.view"]);
+  assert.deepEqual(pricingGet.permissionOptions, ["dashboard.view", "pricing.view"]);
+
+  const pricingPost = row("/api/pricing-rules", "POST");
+  assert.deepEqual(pricingPost.permissionLayers["worker-gateway"], ["dashboard.view"]);
+  assert.deepEqual(pricingPost.permissionLayers["route-guard"], ["pricing.manage"]);
+  assert.deepEqual(pricingPost.permissionOptions, ["dashboard.view", "pricing.manage"]);
+
+  const payrollGet = row("/api/payroll", "GET");
+  assert.deepEqual(payrollGet.permissionLayers["worker-gateway"], ["dashboard.view"]);
+  assert.deepEqual(payrollGet.permissionLayers["route-guard"], ["payroll.view"]);
+
+  const payrollPost = row("/api/payroll", "POST");
+  assert.deepEqual(payrollPost.permissionLayers["worker-gateway"], ["dashboard.view"]);
+  for (const permission of ["compensation.manage", "payroll.approve", "payroll.manage"]) {
+    assert.ok(payrollPost.permissionLayers["route-guard"].includes(permission), `POST /api/payroll lost ${permission}`);
+    assert.ok(payrollPost.permissionOptions.includes(permission), `POST /api/payroll effective policy omitted ${permission}`);
+  }
+});
+
 test("ownership-classified rows name their enforcement source", () => {
   const owned = matrix.filter((entry) => !entry.ownershipOptions.includes("none"));
   assert.ok(owned.length > 0, "matrix must contain ownership-classified routes");
@@ -99,12 +122,12 @@ test("ownership-classified rows name their enforcement source", () => {
   }
 });
 
-test("direct route permission checks cannot silently disagree with their gateway clause", () => {
+test("direct route permission checks are represented in effective policy", () => {
   for (const entry of matrix) {
     for (const direct of entry.routePermissionChecks) {
       assert.ok(
         entry.permissionOptions.includes(direct),
-        `${entry.method} ${entry.route} has direct route permission ${direct} outside authoritative gateway outcomes ${entry.permissionOptions.join(", ")}`,
+        `${entry.method} ${entry.route} omits direct route permission ${direct} from effective outcomes ${entry.permissionOptions.join(", ")}`,
       );
     }
   }
