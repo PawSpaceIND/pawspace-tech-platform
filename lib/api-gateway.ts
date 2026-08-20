@@ -11,12 +11,18 @@ async function ensureGatewayTables(env:GatewayEnv){const now=Date.now();await en
   env.DB.prepare("CREATE TABLE IF NOT EXISTS security_audit_events (id TEXT PRIMARY KEY, actor_email TEXT NOT NULL, actor_role TEXT NOT NULL, action TEXT NOT NULL, resource_type TEXT NOT NULL, resource_id TEXT, outcome TEXT NOT NULL, detail_json TEXT NOT NULL, created_at INTEGER NOT NULL)"),
 ]);for(const role of defaultRoles)await env.DB.prepare("INSERT OR IGNORE INTO role_definitions (code,name,description,permissions_json,system_role,updated_at) VALUES (?,?,?,?,?,?)").bind(role.code,role.name,role.description,JSON.stringify(role.permissions),1,now).run();}
 
-export async function requiredPermission(request:Request):Promise<Permission|null>{const url=new URL(request.url),method=request.method.toUpperCase();if(url.pathname==="/api/pricing-quote"||url.pathname==="/api/training-commercial"||url.pathname==="/api/training-trainers"||url.pathname==="/api/boarding-commercial"||url.pathname==="/api/sitting-commercial"||url.pathname==="/api/taxi-commercial"||url.pathname==="/api/food-commercial"||url.pathname==="/api/walking-commercial"||url.pathname==="/api/razorpay-webhook"||url.pathname==="/api/haptik"||url.pathname==="/api/whatsapp-uat-webhook"||url.pathname==="/api/identity-session"||url.pathname==="/api/service-availability"||url.pathname==="/api/public-contact"||url.pathname==="/api/provider-public-profile"||url.pathname==="/api/staging-login"
-    ||url.pathname==="/api/customer-offers"||url.pathname==="/api/host-profile"||url.pathname==="/api/customer-otp"||url.pathname==="/api/customer-profile"||url.pathname==="/api/customer-account"||url.pathname==="/api/booking-rating"||url.pathname==="/api/customer-support-case"||url.pathname==="/api/live-price-quote"||url.pathname==="/api/service-zone")return null;
+export async function requiredPermission(request:Request):Promise<Permission|null>{const url=new URL(request.url),method=request.method.toUpperCase();if(url.pathname==="/api/pricing-quote"||url.pathname==="/api/training-commercial"||url.pathname==="/api/training-trainers"||url.pathname==="/api/boarding-commercial"||url.pathname==="/api/sitting-commercial"||url.pathname==="/api/taxi-commercial"||url.pathname==="/api/food-commercial"||url.pathname==="/api/walking-commercial"||url.pathname==="/api/razorpay-webhook"||url.pathname==="/api/haptik"||url.pathname==="/api/whatsapp-uat-webhook"||url.pathname==="/api/identity-session"||url.pathname==="/api/service-availability"||url.pathname==="/api/public-contact"||url.pathname==="/api/provider-public-profile"||url.pathname==="/api/staging-login"||url.pathname==="/api/partner-otp"||url.pathname==="/api/pet-passport-public"
+    ||url.pathname==="/api/host-profile"||url.pathname==="/api/customer-otp"||url.pathname==="/api/customer-profile"||url.pathname==="/api/customer-account"||url.pathname==="/api/booking-rating"||url.pathname==="/api/customer-support-case"||url.pathname==="/api/live-price-quote"||url.pathname==="/api/service-zone")return null;
+  if(url.pathname==="/api/customer-offers")return "scheduling.book";
+  if(url.pathname==="/api/pawspace-wallet"){if(method==="GET")return "scheduling.book";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="credit"?"finance.manage":"scheduling.book";}
+  if(url.pathname==="/api/paw-points"){if(method==="GET")return "scheduling.book";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["grant_goodwill","grant_winback"].includes(String(body.action||""))?"marketing.manage":"scheduling.book";}
+  if(url.pathname==="/api/payment-order"||url.pathname==="/api/pet-passport"||url.pathname==="/api/pet-vaccination"||url.pathname==="/api/pet-birthday"||url.pathname==="/api/pet-emergency")return "scheduling.book";
   if(url.pathname==="/api/provider-onboarding-self-service")return "bookings.view";
   if(url.pathname==="/api/training-requirements")return method==="GET"?null:"pricing.manage";
   if(url.pathname==="/api/host-trust"){if(method==="GET")return null;const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="seed"?"providers.manage":"scheduling.book";}
   if(url.pathname==="/api/provider-availability")return "bookings.view";
+  if(url.pathname==="/api/service-review"){if(method==="GET")return "scheduling.book";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");if(action==="request")return "bookings.manage";if(action==="verify_claim")return "marketing.manage";return "scheduling.book";}
+  if(url.pathname==="/api/location-recovery"){if(method==="GET")return "bookings.manage";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");if(["start_session","record_location","calculate_eta"].includes(action))return "bookings.view";if(action==="create_financial_adjustment")return "finance.manage";return "bookings.manage";}
   if(url.pathname==="/api/relocation-enquiry")return method==="POST"?null:"customers.view";
   if(url.pathname==="/api/content-controls"){if(method==="GET")return url.searchParams.get("view")==="admin"?"marketing.manage":null;const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="set_feature"?"settings.manage":"marketing.manage";}
   if(url.pathname==="/api/operations-overview")return "dashboard.view";
@@ -153,24 +159,14 @@ export async function requiredPermission(request:Request):Promise<Permission|nul
   if(url.pathname==="/api/haptik-outbound")return "dashboard.view";
   if(url.pathname==="/api/i18n")return "dashboard.view";
   if(url.pathname==="/api/incentives")return "dashboard.view";
-  if(url.pathname==="/api/location-recovery")return "dashboard.view";
   if(url.pathname==="/api/manager-dashboard")return "dashboard.view";
   if(url.pathname==="/api/ops-intelligence")return "dashboard.view";
-  if(url.pathname==="/api/partner-otp")return "dashboard.view";
-  if(url.pathname==="/api/paw-points")return "dashboard.view";
-  if(url.pathname==="/api/pawspace-wallet")return "dashboard.view";
-  if(url.pathname==="/api/payment-order")return "dashboard.view";
   if(url.pathname==="/api/payment-readiness")return "dashboard.view";
   if(url.pathname==="/api/payment-reconciliation")return "dashboard.view";
   if(url.pathname==="/api/payroll")return "dashboard.view";
   if(url.pathname==="/api/people-finance")return "dashboard.view";
   if(url.pathname==="/api/people-foundation")return "dashboard.view";
   if(url.pathname==="/api/people-reports")return "dashboard.view";
-  if(url.pathname==="/api/pet-birthday")return "dashboard.view";
-  if(url.pathname==="/api/pet-emergency")return "dashboard.view";
-  if(url.pathname==="/api/pet-passport")return "dashboard.view";
-  if(url.pathname==="/api/pet-passport-public")return "dashboard.view";
-  if(url.pathname==="/api/pet-vaccination")return "dashboard.view";
   if(url.pathname==="/api/pricing-rules")return "dashboard.view";
   if(url.pathname==="/api/provider-onboarding")return "dashboard.view";
   if(url.pathname==="/api/provider-onboarding-configuration")return "dashboard.view";
@@ -179,7 +175,6 @@ export async function requiredPermission(request:Request):Promise<Permission|nul
   if(url.pathname==="/api/review-config")return "dashboard.view";
   if(url.pathname==="/api/risk-anomaly")return "dashboard.view";
   if(url.pathname==="/api/service-incentives")return "dashboard.view";
-  if(url.pathname==="/api/service-review")return "dashboard.view";
   if(url.pathname==="/api/subscription-business-view")return "dashboard.view";
   if(url.pathname==="/api/subscription-plans")return "dashboard.view";
   if(url.pathname==="/api/system-integration")return "dashboard.view";
