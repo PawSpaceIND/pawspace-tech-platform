@@ -6,6 +6,7 @@ type Scope={permission:Permission;subjectType:"customer"|"provider";subjectId?:s
 
 async function sessionScope(request:Request):Promise<Scope|undefined>{const url=new URL(request.url),method=request.method.toUpperCase();
   if(url.pathname==="/api/provider-onboarding-self-service"&&["GET","POST"].includes(method))return{permission:"bookings.view",subjectType:"provider"};
+  if(url.pathname==="/api/provider-availability"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return{permission:"bookings.view",subjectType:"provider",subjectId:String(body.providerId||"")};}
   if(url.pathname==="/api/uat-scheduling"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return !body.action||body.action==="reserve"?{permission:"scheduling.book",subjectType:"customer",subjectId:String(body.customerId||"")}:undefined;}
   if(url.pathname==="/api/canonical-bookings"&&method==="POST"){const body=await request.clone().json().catch(()=>({})) as {customer?:{id?:string}};return{permission:"scheduling.book",subjectType:"customer",subjectId:String(body.customer?.id||"")};}
   if(url.pathname==="/api/training-programmes"&&["GET","POST"].includes(method))return{permission:"scheduling.book",subjectType:"customer"};
