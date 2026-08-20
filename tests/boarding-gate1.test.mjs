@@ -18,7 +18,9 @@ test("Boarding Gate 1 owns catalogue quotes verified hosts and canonical stay cr
  assert.match(governance,/Selected Boarding host capacity is lower than the pet count/);
  assert.match(api,/canonical_boarding_governance/);
  assert.match(api,/liveAvailability:false/);
- assert.match(api,/liveMoney:true/);
+ assert.match(api,/productionReady:false/);
+ assert.match(api,/paymentMode:"uat_sandbox"/);
+ assert.match(api,/liveMoney:false/);
  assert.match(client,/\/api\/boarding-commercial/);
  assert.match(booking,/governBoardingBooking/);
  assert.match(booking,/boardingQuoteLinkStatement/);
