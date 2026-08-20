@@ -1,5 +1,6 @@
 import{submitHostReview,listHostReviews,ensureHostReviewsTables,seedHostReviews}from"../../../lib/host-reviews";
 import{computeHostStats,computeHostBadges}from"../../../lib/host-badges";
+import{authorize,requireCustomerOwnership,resolveActor}from"../../../lib/server-auth";
 
 type Db=D1Database;
 
@@ -45,13 +46,12 @@ export async function POST(request:Request):Promise<Response>{
     const body=await request.json() as Record<string,unknown>;
     const db=await ensureDb();
 
-    // Handle seed action
     if(body.action==="seed"){
+      await authorize(request,"providers.manage");
       await seedHostReviews(db);
       return new Response(JSON.stringify({message:"Host reviews seeded",productionReady:false}),{status:200,headers:{"content-type":"application/json"}});
     }
 
-    // Submit review
     const input={
       hostProviderId:String(body.hostProviderId||"").trim(),
       customerId:String(body.customerId||"").trim(),
@@ -65,9 +65,12 @@ export async function POST(request:Request):Promise<Response>{
       return new Response(JSON.stringify({error:"hostProviderId, customerId, and bookingId are required"}),{status:400,headers:{"content-type":"application/json"}});
     }
 
+    const actor=await resolveActor(request);
+    await requireCustomerOwnership(db,actor,input.customerId);
     const review=await submitHostReview(db,input);
     return new Response(JSON.stringify({data:review,productionReady:false}),{status:201,headers:{"content-type":"application/json"}});
   }catch(e){
+    if(e instanceof Response)return e;
     const message=e instanceof Error?e.message:String(e);
     return new Response(JSON.stringify({error:message}),{status:400,headers:{"content-type":"application/json"}});
   }
