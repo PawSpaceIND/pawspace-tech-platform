@@ -38,10 +38,12 @@ export async function POST(request:Request){try{
  const assignment=await db.prepare("SELECT selected_provider_id,status,shortlist_json FROM scheduling_assignment_decisions WHERE group_id=?").bind(input.scheduleGroupId).first<Row>();
  if(!assignment||String(assignment.status)!=="assigned")return json({error:"Scheduling must be assigned before Sitting confirmation"},409);
  if(String(assignment.selected_provider_id)!==input.provider.id)return json({error:"The sitter does not match the scheduling decision"},409);
- const reservations=await db.prepare("SELECT id,provider_id,customer_id,scheduled_start,scheduled_end,occurrence_number,status FROM scheduling_reservations WHERE group_id=? AND status!='cancelled' ORDER BY occurrence_number").bind(input.scheduleGroupId).all<Row>();
+ const reservations=await db.prepare("SELECT id,provider_id,customer_id,service_code,city_id,zone_id,scheduled_start,scheduled_end,occurrence_number,status FROM scheduling_reservations WHERE group_id=? AND status!='cancelled' ORDER BY occurrence_number").bind(input.scheduleGroupId).all<Row>();
  if(!schedulingGroupBelongsToCustomer(reservations.results,input.customer.id))return json({error:SCHEDULING_GROUP_OWNERSHIP_CONFLICT},409);
  if(reservations.results.length!==1)return json({error:"Sitting Gate 1 requires exactly one canonical care reservation"},409);
  const reservation=reservations.results[0];if(String(reservation.provider_id)!==input.provider.id)return json({error:"The Sitting reservation belongs to a different provider"},409);
+ if(String(reservation.service_code)!=="pet_sitting")return json({error:"Scheduling group is not a Sitting reservation"},409);
+ if(String(reservation.city_id)!==input.cityId||String(reservation.zone_id)!==input.zoneId)return json({error:"The Sitting city/zone does not match the scheduling reservation"},409);
  if(!sameInstant(reservation.scheduled_start,input.scheduledStart)||!sameInstant(reservation.scheduled_end,input.scheduledEnd))return json({error:"Sitting booking window does not match the canonical reservation"},409);
  const capture=await requireSittingQuoteSandboxCapture(db,{quoteId:input.sittingQuoteId,amount:input.amountDueNow});
  const governed=await governSittingBooking(db,{quoteId:input.sittingQuoteId,packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,submittedTotal:input.totalAmount,submittedAmountDueNow:input.amountDueNow,paymentMode:input.payment.mode,paymentStatus:capture.status,reservationCount:reservations.results.length});

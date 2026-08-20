@@ -149,6 +149,39 @@ for (const route of ["canonical", "walking", "taxi", "sitting"]) {
   });
 }
 
+for (const [route, reservationService, reservationCity, reservationZone] of [
+  ["canonical", "pet_taxi", "blr", "blr-central"],
+  ["sitting", "pet_taxi", "blr", "blr-central"],
+  ["taxi", "pet_taxi", "maa", "maa-central"],
+  ["walking", "dog_walking", "maa", "maa-central"],
+]) {
+  test(`${route}: scheduling service and location identity cannot be relabelled by the booking payload`, async () => {
+    const { sqlite, db } = await stack();
+    const group = `INTEGRITY-${route}`;
+    sqlite.prepare("INSERT INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,actor_id,reason,updated_at) VALUES (?,'governed','[]',?,'assigned','test','test',1)").run(group, PROVIDER);
+    sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,1,1,NULL,'assigned','{}',1)")
+      .run(`RES-INTEGRITY-${route}`, group, PROVIDER, reservationService, reservationCity, reservationZone, OWNER, "[]", START, END);
+    const cookie = await customerCookie(db, OWNER, `+91936000000${route.length}`);
+    const result = await post(route, cookie, body(route, OWNER, `INTEGRITY-KEY-${route}`, group));
+    assert.equal(result.status, 409);
+    assert.equal(result.body.data, undefined);
+    assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings").get().n, 0);
+  });
+}
+
+test("sitting: reservation location cannot be relabelled by the booking payload", async () => {
+  const { sqlite, db } = await stack();
+  const group = "INTEGRITY-SITTING-LOCATION";
+  sqlite.prepare("INSERT INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,actor_id,reason,updated_at) VALUES (?,'governed','[]',?,'assigned','test','test',1)").run(group, PROVIDER);
+  sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,1,1,NULL,'assigned','{}',1)")
+    .run("RES-INTEGRITY-SITTING-LOCATION", group, PROVIDER, "pet_sitting", "maa", "maa-central", OWNER, "[]", START, END);
+  const cookie = await customerCookie(db, OWNER, "+919360000099");
+  const result = await post("sitting", cookie, body("sitting", OWNER, "INTEGRITY-KEY-SITTING-LOCATION", group));
+  assert.equal(result.status, 409);
+  assert.equal(result.body.data, undefined);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings").get().n, 0);
+});
+
 test("a customer reusing a key on another service gets a conflict, not the wrong response bundle", async () => {
   const { sqlite, db } = await stack();
   const walking = seedBooking(sqlite, "walking");
