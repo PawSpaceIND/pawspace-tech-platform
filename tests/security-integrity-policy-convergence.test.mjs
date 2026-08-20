@@ -31,5 +31,5 @@ test("canonical read and provider availability use the approved policy",()=>{
   assert.match(gateway,/url\.pathname==="\/api\/provider-availability"\)return "bookings\.view"/);
   assert.match(sessionGateway,/url\.pathname==="\/api\/provider-availability"&&method==="POST"/);
   assert.match(sessionGateway,/subjectType:"provider",subjectId:String\(body\.providerId\|\|""\)/);
-  assert.match(providerAvailability,/requireProviderOwnership\(db,actor,body\.providerId\)/);
+  assert.match(providerAvailability,/requireProviderOwnership\(db,\s*actor,\s*body\.providerId\)/);
 });
