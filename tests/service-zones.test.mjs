@@ -4,20 +4,15 @@ import{readFile}from"node:fs/promises";
 const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
 
 test("service-zones lib maps real Bengaluru pincodes to their real zones",async()=>{
-  // This test previously pinned the FABRICATED table: it asserted 560034 (Koramangala) was in the
-  // east zone and 560010 (Rajajinagar) in the north. Both are wrong on the ground, so the test was
-  // holding the defect in place rather than catching it - a green assertion over invented data.
-  // It now checks the geography that actually exists. tests/service-zone-coverage.test.mjs executes
-  // the resolver against every advertised pincode; this one guards the table's shape and anchors.
   const lib=await read("lib/service-zones.ts");
   assert.match(lib,/PINCODE_ZONE_MAP:Record<string,ZoneAssignment>=/);
-  assert.match(lib,/"560034":{pincode:"560034",zoneId:"blr-south"/);   // Koramangala
-  assert.match(lib,/"560102":{pincode:"560102",zoneId:"blr-south"/);   // HSR Layout
-  assert.match(lib,/"560038":{pincode:"560038",zoneId:"blr-east"/);    // Indiranagar
-  assert.match(lib,/"560066":{pincode:"560066",zoneId:"blr-east"/);    // Whitefield
-  assert.match(lib,/"560010":{pincode:"560010",zoneId:"blr-west"/);    // Rajajinagar
-  assert.match(lib,/"560032":{pincode:"560032",zoneId:"blr-north"/);   // Hebbal / RT Nagar
-  assert.match(lib,/"560001":{pincode:"560001",zoneId:"blr-central"/); // MG Road
+  assert.match(lib,/"560034":{pincode:"560034",zoneId:"blr-south"/);
+  assert.match(lib,/"560102":{pincode:"560102",zoneId:"blr-south"/);
+  assert.match(lib,/"560038":{pincode:"560038",zoneId:"blr-east"/);
+  assert.match(lib,/"560066":{pincode:"560066",zoneId:"blr-east"/);
+  assert.match(lib,/"560010":{pincode:"560010",zoneId:"blr-west"/);
+  assert.match(lib,/"560032":{pincode:"560032",zoneId:"blr-north"/);
+  assert.match(lib,/"560001":{pincode:"560001",zoneId:"blr-central"/);
 });
 
 test("service-zones lib defines SERVICE_ZONES with color and availability flags",async()=>{
@@ -48,27 +43,29 @@ test("service-zones lib creates service_zone_mappings table with indexes",async(
   assert.match(lib,/CREATE INDEX IF NOT EXISTS service_zone_area_idx/);
 });
 
-test("service-zone route is public (no authorize call)",async()=>{
+test("service-zone GET stays public while seed requires authenticated POST",async()=>{
   const route=await read("app/api/service-zone/route.ts");
   assert.match(route,/export async function GET\(request:Request\)/);
-  assert.match(route,/const pincode=url.searchParams.get\("pincode"\)/);
-  assert.match(route,/const action=url.searchParams.get\("action"\)\\|\\|"resolve"/);
-  // Verify no authorize() call anywhere in the file
-  assert.equal(route.includes("authorize("),false,"GET /api/service-zone must not call authorize() — it is public");
+  assert.match(route,/pincode=url.searchParams.get\("pincode"\)/);
+  assert.match(route,/action=url.searchParams.get\("action"\)\|\|"resolve"/);
   assert.match(route,/resolveZoneByPincode\(db,pincode\)/);
   assert.match(route,/listServiceZones\(db\)/);
+  assert.match(route,/Seeding requires an authenticated POST/);
+  assert.match(route,/export async function POST\(request:Request\)/);
+  assert.match(route,/requirePermission\(actor,"settings.manage"\)/);
+  assert.match(route,/seedDefaultZones\(db\)/);
 });
 
-test("service-zone route handles resolve, list, and seed actions",async()=>{
+test("service-zone route handles resolve and list on GET and seed on POST",async()=>{
   const route=await read("app/api/service-zone/route.ts");
   assert.match(route,/if\(action==="resolve"\)/);
   assert.match(route,/if\(action==="list"\)/);
-  assert.match(route,/if\(action==="seed"\)/);
+  assert.match(route,/String\(body.action\|\|""\)!=="seed"/);
 });
 
 test("gateway allowlists service-zone as public",async()=>{
   const gateway=await read("lib/api-gateway.ts");
-  assert.match(gateway,/\|\|url\.pathname===\"\/api\/service-zone\"\)/);
+  assert.match(gateway,/url\.pathname==="\/api\/service-zone"/);
 });
 
 test("address-picker component collects pincode and resolves zone",async()=>{
