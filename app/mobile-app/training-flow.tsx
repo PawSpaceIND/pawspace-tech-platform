@@ -212,7 +212,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
       if(selectedPets.length===0){setScheduleError("Select at least one dog to continue.");return;}
       setScheduling(true);setScheduleError("");
       try {
-        let linkedMeetBookingId=meetLinked?meetBookingId:"";
+        const linkedMeetBookingId=meetLinked?meetBookingId:"";
         // Meet & Greet is standalone. Package checkout may link an existing meeting but never creates one implicitly.
         const mode=paymentMode==="full"?"prepaid":"split",quote=await quoteTraining({packageCode:plan.packageCode,petCount:selectedPets.length,scheduledStart:selectedStart.toISOString(),paymentMode:mode,couponCode:mode==="prepaid"&&couponCode?couponCode:undefined}),end=new Date(selectedStart.getTime()+quote.minutesPerSession*60_000),requestId=`training-TST101-${quote.packageCode}-${selectedStart.toISOString()}-${frequency.replaceAll(" ","")}`;
         const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:"dog_training",zoneId:"blr-east",scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,weekdays:weekdayMap[frequency],preferredProviderId:selectedTrainer?.id});
