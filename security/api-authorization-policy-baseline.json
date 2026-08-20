@@ -1,0 +1,12 @@
+{
+  "issue": 201,
+  "reviewedHead": "1197845de374f732e40a816032623304634adf51",
+  "fingerprints": {
+    "app/api": "a263ee249fd0a1befbd80dfb6b17324e814d154c",
+    "lib/api-gateway.ts": "df7cc1684c4c4d86715cd78d885d62acd80a68a1",
+    "lib/session-api-gateway.ts": "740836c5889def775491dee7a3dd8365e67861c6",
+    "lib/server-auth.ts": "6e60793363fe5f8635bde1def5a07245a4e3fa50",
+    "lib/platform-security.ts": "782e861f2312f15219415ce8ad099fcc4698b126",
+    "worker/index.ts": "1b24a3538a8f205359adcad4ef6e8f490a5ec15c"
+  }
+}
