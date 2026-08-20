@@ -82,8 +82,6 @@ test("wires the synthetic transaction engine into every operating surface", asyn
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("transaction-surfaces", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
-  // /admin, /ops and /account were fabricated dashboards and now redirect; the engine is checked
-  // on the real surfaces that replaced them.
   for (const path of ["/", "/team", "/crm", "/partner-app"]) {
     const response = await worker.fetch(
       new Request(`http://localhost${path}`, { headers: { accept: "text/html" } }),
@@ -123,10 +121,6 @@ test("mobile-app SSR shell never leaks real booking content before the client-si
   );
   assert.equal(response.status, 200);
   const html = await response.text();
-  // The login gate is a client-side session check (useEffect), so the raw SSR shell is
-  // intentionally blank until hydration confirms a real session - it must never leak real
-  // booking-app content (service catalogue, wallet balance, pet history) to an unauthenticated
-  // request, even transiently.
   assert.doesNotMatch(html, /PawCare Wallet/i);
   assert.doesNotMatch(html, /Eight care services/i);
   assert.match(html, /<html/i);
@@ -150,7 +144,7 @@ test("renders the connected Booking Command Center", async () => {
   assert.match(page, /UNIFIED ORDER TIMELINE/);
   assert.match(api, /canonical_bookings/);
   assert.match(api, /booking_admin_actions/);
-  assert.match(admin, /\/team\/operations\/bookings/); // the real Team front door links to the Command Center
+  assert.match(admin, /\/team\/operations\/bookings/);
 });
 
 test("renders the evidence-based System Integration Control", async () => {
@@ -247,14 +241,12 @@ test("keeps long-stay payment, paid meeting and home media rules explicit", asyn
 });
 
 test("keeps payment timing, confidence meetings and delay recovery explicit", async () => {
-  // Delay recovery moved from the retired /groomer prototype (which sent hardcoded booking IDs) to
-  // the real Partner App, where it runs against the selected canonical booking.
   const [grooming, training, stays, groomer, operations, schema] = await Promise.all(
     ["app/mobile-app/grooming-flow.tsx", "app/mobile-app/training-flow.tsx", "app/mobile-app/stay-flow.tsx", "app/partner-app/page.tsx", "app/api/booking-operations/route.ts", "db/schema.ts"].map((path) => readFile(new URL("../" + path, import.meta.url), "utf8")),
   );
   assert.ok(grooming.indexOf("Pay after service") < grooming.indexOf("Verify OTP & confirm instantly"));
-  assert.match(training, /Meet the trainer first\. Book only when you feel confident/);
-  assert.match(training, /Book only the Meet & Greet/);
+  assert.match(training, /MEET A TRAINER FIRST/);
+  assert.match(training, /Book Meet & Greet only/);
   assert.match(stays, /10-minute phone call · Included/);
   assert.match(groomer, /Package upgraded/);
   assert.match(groomer, /Bike issue/);
@@ -402,17 +394,14 @@ test("provides protected customer import, configurable roles and routed contact 
   );
   assert.match(control, /Users, roles & access/);
   assert.match(control, /Customer data & contact/);
-  // Was: /Founder permissions cannot be downgraded/ on the access panel. That named founder alone
-  // while the panel offered superuser — also ["*"] — in both role dropdowns, and claimed a permission
-  // editor that did not exist. Protection is now derived from permissions.
-  assert.match(access, /isFullAccessRole/, "the panel must derive protection from permissions, not a role name");
-  assert.match(access, /assignableRoles/, "and offer only roles it is permitted to assign");
+  assert.match(access, /isFullAccessRole/);
+  assert.match(access, /assignableRoles/);
   assert.match(access, /Create user/);
   assert.match(customerData, /Import protected customer data/);
   assert.match(customerData, /Call primary/);
   assert.match(customerData, /Try secondary/);
   assert.match(governance, /create_user/);
-  assert.match(governance, /isFullAccessRole/, "the route must derive the protected set from permissions");
+  assert.match(governance, /isFullAccessRole/);
   assert.match(importer, /ON CONFLICT\(customer_key\)/);
   assert.match(contact, /enqueueCommunication/);
   assert.match(contact, /governed_outbox/);
@@ -571,8 +560,6 @@ test("consolidates PawSpace into four role-based entry points", async () => {
   }
   const team = await readFile(new URL("../app/team/page.tsx", import.meta.url), "utf8");
   for (const title of ["Revenue & CRM", "Bookings & delivery", "Tickets & recovery", "Accounts & collections", "HR & performance", "Segments & campaigns"]) assert.match(team, new RegExp(title));
-  // The workspaces are now role-scoped: the menu shows only what the signed-in role can open, rather
-  // than every entry point to everyone. The subhead says so, and the list is filtered by permission.
   assert.match(team, /Showing what your role can open/);
   assert.match(team, /visibleWorkspaces\s*=\s*data\s*\?\s*workspaces\.filter/);
 });
