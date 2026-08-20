@@ -1,7 +1,7 @@
 import test from"node:test";import assert from"node:assert/strict";import fs from"node:fs";
-const read=p=>fs.readFileSync(new URL(`../${p}`,import.meta.url),"utf8"),lib=read("lib/provider-onboarding-self-service.ts"),route=read("app/api/provider-onboarding-self-service/route.ts"),sessionGateway=read("lib/session-api-gateway.ts"),page=read("app/partner/onboarding/page.tsx");
+const read=p=>fs.readFileSync(new URL(`../${p}`,import.meta.url),"utf8"),lib=read("lib/provider-onboarding-self-service.ts"),route=read("app/api/provider-onboarding-self-service/route.ts"),gateway=read("lib/api-gateway.ts"),sessionGateway=read("lib/session-api-gateway.ts"),page=read("app/partner/onboarding/page.tsx");
 
-test("provider onboarding self service is platform-session scoped",()=>{assert.match(route,/resolvePlatformSession/);assert.match(route,/actor\.subjectType!==\"provider\"/);assert.match(route,/actor\.roleCode!==\"service_provider\"/);assert.match(sessionGateway,/provider-onboarding-self-service/);assert.match(sessionGateway,/permission:\"bookings\.view\",subjectType:\"provider\"/);});
+test("provider onboarding self service is platform-session scoped",()=>{assert.match(route,/resolvePlatformSession/);assert.match(route,/actor\.subjectType!==\"provider\"/);assert.match(route,/actor\.roleCode!==\"service_provider\"/);assert.match(gateway,/url\.pathname==="\/api\/provider-onboarding-self-service"\)return "bookings\.view"/);assert.match(sessionGateway,/provider-onboarding-self-service/);assert.match(sessionGateway,/await requiredPermission\(request\)/);assert.doesNotMatch(sessionGateway,/provider-onboarding-self-service"\?"bookings\.view"/);});
 
 test("provider application ownership is server authoritative",()=>{assert.match(lib,/WHERE id=\?/);assert.match(lib,/Provider onboarding ownership denied/);assert.match(lib,/payload=\{\.\.\.input\.payload,providerId:input\.providerId\}/);assert.doesNotMatch(route,/providerId\?:/);});
 

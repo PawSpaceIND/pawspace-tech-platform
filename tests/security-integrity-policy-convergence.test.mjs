@@ -13,9 +13,8 @@ test("platform-session authorization derives classified permissions from the gat
   assert.match(sessionGateway,/import\{requiredPermission\}from"\.\/api-gateway"/);
   assert.match(sessionGateway,/await requiredPermission\(request\)/);
   assert.doesNotMatch(sessionGateway,/permission:"(?:bookings|scheduling|pricing|providers|dashboard)\./);
-  // Provider onboarding already enforced a provider identity session before this convergence pass.
-  // Preserve that established bookings.view contract until the global registry line is migrated too.
-  assert.match(sessionGateway,/provider-onboarding-self-service"\?"bookings\.view":await requiredPermission/);
+  assert.match(gateway,/url\.pathname==="\/api\/provider-onboarding-self-service"\)return "bookings\.view"/);
+  assert.doesNotMatch(sessionGateway,/provider-onboarding-self-service"\?"bookings\.view"/);
 });
 
 test("approved public-read/write policies are explicit",()=>{
@@ -32,5 +31,5 @@ test("canonical read and provider availability use the approved policy",()=>{
   assert.match(gateway,/url\.pathname==="\/api\/provider-availability"\)return "bookings\.view"/);
   assert.match(sessionGateway,/url\.pathname==="\/api\/provider-availability"&&method==="POST"/);
   assert.match(sessionGateway,/subjectType:"provider",subjectId:String\(body\.providerId\|\|""\)/);
-  assert.match(providerAvailability,/requireProviderOwnership\(db,actor,providerId\)/);
+  assert.match(providerAvailability,/requireProviderOwnership\(db,actor,body\.providerId\)/);
 });

@@ -25,7 +25,9 @@ test("Training programme API is customer-owned and session-safe",async()=>{
  assert.match(api,/training\.programme\.materialize/);
  assert.match(gateway,/\/api\/training-programmes/);
  assert.match(sessionGateway,/\/api\/training-programmes/);
- assert.match(sessionGateway,/permission:"scheduling.book",subjectType:"customer"/);
+ assert.match(sessionGateway,/await requiredPermission\(request\)/);
+ assert.match(sessionGateway,/url\.pathname==="\/api\/training-programmes"&&\["GET","POST"\]\.includes\(method\)\)return\{subjectType:"customer"\}/);
+ assert.doesNotMatch(sessionGateway,/permission:"scheduling\.book"/);
 });
 
 test("Training customer confirmation materializes the programme before showing success",async()=>{

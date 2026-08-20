@@ -92,12 +92,15 @@ test("host-badges lib exports computeHostStats with real queries",async()=>{
   assert.match(lib,/host_reviews/);
 });
 
-test("host-trust route is public (GET and POST, no authorize call)",async()=>{
+test("host-trust keeps GET public and gates POST seed/review writes",async()=>{
   const route=await read("app/api/host-trust/route.ts");
   assert.match(route,/export async function GET/);
   assert.match(route,/export async function POST/);
-  assert.equal(route.includes("authorize("),false,"host-trust must not call authorize() — it is public");
   assert.match(route,/hostProviderId=url\.searchParams\.get\("hostProviderId"\)/);
+  assert.match(route,/body\.action==="seed"/);
+  assert.match(route,/authorize\(request,"providers\.manage"\)/);
+  assert.match(route,/resolveActor\(request\)/);
+  assert.match(route,/requireCustomerOwnership\(db,actor,input\.customerId\)/);
 });
 
 test("host-trust route calls submitHostReview for reviews",async()=>{
@@ -111,9 +114,11 @@ test("host-trust route includes seed action for test data",async()=>{
   assert.match(route,/seedHostReviews/);
 });
 
-test("gateway allowlists host-trust as public",async()=>{
+test("gateway keeps host-trust GET public and classifies both write modes",async()=>{
   const gateway=await read("lib/api-gateway.ts");
-  assert.match(gateway,/url\.pathname===\"\/api\/host-trust\"/);
+  assert.match(gateway,/url\.pathname==="\/api\/host-trust"/);
+  assert.match(gateway,/if\(method==="GET"\)return null/);
+  assert.match(gateway,/body\.action==="seed"\?"providers\.manage":"scheduling\.book"/);
 });
 
 test("host-trust-panel component does not import flows",async()=>{
