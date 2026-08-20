@@ -5,6 +5,7 @@ import { auditApiResponse, authorizeApiRequest } from "../lib/api-gateway";
 import {authorizePlatformSessionRequest} from "../lib/session-api-gateway";
 import {blockDisabledServiceRequest} from "../lib/service-control";
 import {runBackgroundScheduler} from "../lib/background-scheduler";
+import {malformedCanonicalPetIdentityResponse} from "../lib/canonical-pet-input-guard";
 
 interface Env {
   ASSETS: Fetcher;
@@ -50,6 +51,8 @@ const worker = {
       if (access instanceof Response) return access;
       const serviceBlock=await blockDisabledServiceRequest(request,env.DB);
       if(serviceBlock){ctx.waitUntil(auditApiResponse(env,access.actor,access.permission,request,serviceBlock.clone()));return secureApiResponse(serviceBlock);}
+      const petIdentityBlock=await malformedCanonicalPetIdentityResponse(request,env.DB);
+      if(petIdentityBlock){ctx.waitUntil(auditApiResponse(env,access.actor,access.permission,request,petIdentityBlock.clone()));return secureApiResponse(petIdentityBlock);}
       const response = await handler.fetch(request, env, ctx);
       ctx.waitUntil(auditApiResponse(env, access.actor, access.permission, request, response.clone()));
       return secureApiResponse(response);
