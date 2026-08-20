@@ -14,7 +14,9 @@ test("Training commercial truth is server-quoted and consumed exactly once",asyn
  assert.match(commercial,/Training quote expired/);
  assert.match(commercial,/reservationCount!==Number\(quote\.sessions\)/);
  assert.match(commercialApi,/sameOriginWrite/);
- assert.match(commercialApi,/liveMoney:true/);
+ assert.match(commercialApi,/productionReady:false/);
+ assert.match(commercialApi,/paymentMode:"uat_sandbox"/);
+ assert.match(commercialApi,/liveMoney:false/);
  assert.match(booking,/governTrainingBooking/);
  assert.match(booking,/trainingQuoteId/);
  assert.match(booking,/trainingQuoteLinkStatement/);
