@@ -23,7 +23,7 @@ const RATE_LIMIT=5;
 
 function clean(value:unknown,max:number){return String(value??"").replace(/[\u0000-\u001F\u007F]/g," ").replace(/\s+/g," ").trim().slice(0,max);}
 async function fingerprintFor(request:Request){
-  const ip=clean(request.headers.get("cf-connecting-ip")||request.headers.get("x-forwarded-for")?.split(",")[0],80);
+  const ip=clean(request.headers.get("cf-connecting-ip"),80);
   if(!ip)throw new Response("Request origin could not be verified",{status:429});
   const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(ip));
   return Array.from(new Uint8Array(digest)).map(value=>value.toString(16).padStart(2,"0")).join("");
@@ -45,7 +45,8 @@ export async function POST(request:Request){
     const body=await request.json() as Record<string,unknown>;
     const name=clean(body.name,80),phone=clean(body.phone,20),email=clean(body.email,160),area=clean(body.area||"Bangalore",80),petNames=clean(body.petNames||"Not shared",160),service=clean(body.service||"General enquiry",120),message=clean(body.message||"No message left",500);
     if(name.length<2)return json({error:"Please enter your name"},400);
-    if(!/^[0-9+\s-]{10,15}$/.test(phone))return json({error:"Please enter a valid phone number"},400);
+    const phoneDigits=phone.replace(/\D/g,"");
+    if(phoneDigits.length<10||phoneDigits.length>15||!/^[0-9+\s-]+$/.test(phone))return json({error:"Please enter a valid phone number"},400);
     if(email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return json({error:"Please enter a valid email address"},400);
     const id=`CU-${crypto.randomUUID()}`,activityId=`ACT-${crypto.randomUUID()}`,taskId=`TASK-${crypto.randomUUID()}`,leadId=`LEAD-${crypto.randomUUID()}`;
     const loads=await db.prepare("SELECT owner,COUNT(*) count FROM lead_work_items WHERE status IN ('active','sla_breached','qualified') GROUP BY owner").all<Record<string,unknown>>();
@@ -60,6 +61,6 @@ export async function POST(request:Request){
     return json({ok:true,leadId},201);
   }catch(error){
     if(error instanceof Response)return error;
-    return json({error:error instanceof Error?error.message:"Unable to submit your enquiry - please try again"},500);
+    return json({error:"Unable to submit your enquiry - please try again"},500);
   }
 }
