@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import TestSyncPanel from "./components/test-sync-panel";
 import { reserveUatSchedule } from "../lib/uat-scheduling-client";
@@ -10,7 +10,7 @@ import { saveGroomingServiceLocation } from "../lib/grooming-location-client";
 import { searchAddresses, resolveAddress, reverseGeocodeCoordinates, type AddressSuggestion } from "../lib/address-autocomplete-client";
 import { resolveServiceCoverage } from "../lib/service-zone-client";
 import { createTestTransaction } from "../lib/test-transaction";
-import { createAddressSessionToken, groomingBookingDates, groomingSlotWindow } from "../lib/grooming-booking-calendar";
+import { createAddressSessionToken, groomingBookingDates, groomingSlotFitsRoster, groomingSlotWindow } from "../lib/grooming-booking-calendar";
 
 type PetType = "dog" | "cat";
 type OfferType = "regular" | "young" | "subscription";
@@ -24,6 +24,7 @@ type Package = {
 };
 
 type SavedPet = { id: string; name: string; type: PetType; breed: string; age: string };
+type MatchedProvider = { providerId: string; displayName: string; bio: string | null; businessName: string | null; services: string[]; photoUrl: string | null; verified: boolean; memberSince: string | null; stats: { completedServices: number; happyPets: number } | null; isNewProvider: boolean };
 
 const savedPets: SavedPet[] = [
   { id: "bruno", name: "Bruno", type: "dog", breed: "Golden Retriever", age: "4 years" },
@@ -66,6 +67,14 @@ const subscriptionPackages: Package[] = [
 
 const slots = ["9:00–11:00 AM", "11:00 AM–1:00 PM", "1:00–3:00 PM", "3:00–5:00 PM", "5:00–7:00 PM"];
 const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
+function stableBookingInputKey(values: string[]) {
+  let hash = 2166136261;
+  for (const character of values.join("\u001f")) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
 
 export default function Home() {
   const [petType, setPetType] = useState<PetType>("dog");
@@ -77,7 +86,7 @@ export default function Home() {
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
   const [showOtp, setShowOtp] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
-  const [matchedProvider, setMatchedProvider] = useState<{ providerId: string; displayName: string; bio: string | null; businessName: string | null; services: string[]; photoUrl: string | null; verified: boolean; memberSince: string | null; stats: { completedServices: number; happyPets: number } | null; isNewProvider: boolean } | null>(null);
+  const [matchedProvider, setMatchedProvider] = useState<MatchedProvider | null>(null);
   const [matchedProviderError, setMatchedProviderError] = useState("");
   const [toast, setToast] = useState("");
   const flash = (message: string) => {
@@ -111,6 +120,7 @@ export default function Home() {
   }, [offerType, petCount, selectedPackage]);
 
   const duration = petCount <= 2 ? "2 hours" : petCount === 3 ? "2.5 hours" : "4 hours";
+  const durationMinutes = petCount <= 2 ? 120 : petCount === 3 ? 150 : 240;
 
   function switchPet(type: PetType) {
     setPetType(type);
@@ -179,39 +189,67 @@ export default function Home() {
       return;
     }
     if (!selectedSlot) {
-      setPetSelectionError("Please select a live grooming slot before confirming.");
+      setPetSelectionError("Please select a grooming slot before confirming.");
       return;
     }
+    const normalizedCustomerName = customerName.trim();
+    const normalizedSecondaryPhone = secondaryPhone.replace(/\D/g, "").slice(-10);
+    const normalizedAddress = serviceAddress.trim();
+    if (!normalizedCustomerName) { setPetSelectionError("Please enter your name."); return; }
+    if (normalizedSecondaryPhone.length !== 10) { setPetSelectionError("Please enter a valid 10-digit secondary number."); return; }
+    if (normalizedAddress.length < 5) { setPetSelectionError("Please enter a valid doorstep address."); return; }
     setPetSelectionError("");
     setBookingSubmitting(true);
     try {
-      const slotIndex=Math.max(0,slots.indexOf(selectedSlot));
-      const durationMinutes=petCount<=2?120:petCount===3?150:240;
-      const {start,end}=groomingSlotWindow(dates[selectedDate].isoDate,slotIndex,durationMinutes);
-      const digits=phone.replace(/\D/g,"").slice(-10);
-      const customerId=`WEB-${digits||"UAT"}`;
-      const chosenPets=selectedPetIds.map(id=>savedPets.find(pet=>pet.id===id)).filter((pet):pet is SavedPet=>Boolean(pet));
-      const requestId=`web-groom-${customerId}-${dates[selectedDate].isoDate}-${slotIndex}-${selectedPackage.id}-${selectedPetIds.slice().sort().join("-")}`;
-      const pincode=serviceAddress.match(/\b\d{6}\b/)?.[0]||"";
-      const coverage=await resolveServiceCoverage(pincode);
-      const decision=await reserveUatSchedule({clientRequestId:requestId,customerId,petIds:selectedPetIds,serviceCode:"grooming",zoneId:coverage.zoneId,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),preferredProviderId:"groom_arun"});
-      const canonical=await createCanonicalLifecycle({
-        idempotencyKey:requestId,
-        scheduleGroupId:decision.groupId,
-        customer:{id:customerId,name:customerName.trim(),primaryPhone:digits||"9999999999",secondaryPhone:secondaryPhone.replace(/\D/g,"")},
-        pets:chosenPets.map(pet=>({sourceId:pet.id,name:pet.name,species:pet.type,breed:pet.breed,vaccinationStatus:"not_provided"})),
-        cityId:coverage.cityId,zoneId:coverage.zoneId,serviceCode:"grooming",packageCode:selectedPackage.id,packageName:selectedPackage.name,
-        scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:total,amountDueNow:payment==="after"?0:total,
-        payment:{method:payment==="after"?"cash":"upi",mode:payment==="after"?"pay_after_service":"prepaid",status:"created",detail:payment==="after"?"Pay after service · sandbox request pending":"Pay now · sandbox authorization pending"},
-        pricing:{discount:0,subscription:offerType==="subscription"?selectedPackage.name:undefined,requirements:[`grooming_safety:${safetyNotes}`]},
+      const slotIndex = Math.max(0, slots.indexOf(selectedSlot));
+      if (!groomingSlotFitsRoster(slotIndex, durationMinutes)) throw new Error("Selected grooming slot cannot finish within service hours");
+      const { start, end } = groomingSlotWindow(dates[selectedDate].isoDate, slotIndex, durationMinutes);
+      const digits = phone.replace(/\D/g, "").slice(-10);
+      if (digits.length !== 10) throw new Error("Please enter a valid primary mobile number");
+      const customerId = `WEB-${digits}`;
+      const chosenPets = selectedPetIds.map(id => savedPets.find(pet => pet.id === id)).filter((pet): pet is SavedPet => Boolean(pet));
+      const bookingInputKey = stableBookingInputKey([
+        normalizedCustomerName,
+        digits,
+        normalizedSecondaryPhone,
+        normalizedAddress.toLowerCase(),
+        payment,
+        safetyNotes,
+        offerType,
+        selectedPackage.name,
+        String(total),
+      ]);
+      const requestId = `web-groom-${customerId}-${dates[selectedDate].isoDate}-${slotIndex}-${selectedPackage.id}-${selectedPetIds.slice().sort().join("-")}-${bookingInputKey}`;
+      const pincode = normalizedAddress.match(/\b\d{6}\b/)?.[0] || "";
+      const coverage = await resolveServiceCoverage(pincode);
+      const decision = await reserveUatSchedule({ clientRequestId: requestId, customerId, petIds: selectedPetIds, serviceCode: "grooming", zoneId: coverage.zoneId, scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(), preferredProviderId: "groom_arun" });
+      setMatchedProvider({ providerId: decision.provider.id, displayName: decision.provider.name, bio: null, businessName: null, services: ["grooming"], photoUrl: null, verified: false, memberSince: null, stats: null, isNewProvider: true });
+      setMatchedProviderError("");
+      const canonical = await createCanonicalLifecycle({
+        idempotencyKey: requestId,
+        scheduleGroupId: decision.groupId,
+        customer: { id: customerId, name: normalizedCustomerName, primaryPhone: digits, secondaryPhone: normalizedSecondaryPhone },
+        pets: chosenPets.map(pet => ({ sourceId: pet.id, name: pet.name, species: pet.type, breed: pet.breed, vaccinationStatus: "not_provided" })),
+        cityId: coverage.cityId, zoneId: coverage.zoneId, serviceCode: "grooming", packageCode: selectedPackage.id, packageName: selectedPackage.name,
+        scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(), provider: decision.provider, totalAmount: total, amountDueNow: payment === "after" ? 0 : total,
+        payment: { method: payment === "after" ? "cash" : "upi", mode: payment === "after" ? "pay_after_service" : "prepaid", status: "created", detail: payment === "after" ? "Pay after service · sandbox request pending" : "Pay now · sandbox authorization pending" },
+        pricing: { discount: 0, subscription: offerType === "subscription" ? selectedPackage.name : undefined, requirements: [`grooming_safety:${safetyNotes}`] },
       });
-      await saveGroomingServiceLocation({bookingId:canonical.bookingId,customerId,address:serviceAddress});
-      createTestTransaction({customerId,customerName:customerName.trim(),primary:digits||"9999999999",secondary:secondaryPhone.replace(/\D/g,""),pets:chosenPets.map(pet=>pet.name).join(", "),petCount,service:"Grooming",packageName:selectedPackage.name,area:`Bengaluru · ${coverage.zoneId}`,slot:`${dates[selectedDate].date} · ${selectedSlot}`,duration,amount:total,payment:payment==="after"?"Pay after service · pending":"Pay now · sandbox authorization pending",provider:decision.provider.name,providerModel:decision.provider.model==="full_time"?"Full-time":"Commission",subscription:offerType==="subscription"?selectedPackage.name:"No active plan",creditsBefore:offerType==="subscription"?Number(selectedPackage.id.match(/\d+/)?.[0]||1):0,crmOwner:"Unassigned",crmNextAction:"Post-booking care follow-up",reminder:`Booking confirmation queued · safety ${safetyNotes}`},canonical.bookingId);
+      await saveGroomingServiceLocation({ bookingId: canonical.bookingId, customerId, address: normalizedAddress });
+      try {
+        const response = await fetch(`/api/provider-public-profile?providerId=${encodeURIComponent(decision.provider.id)}`);
+        const body = await response.json() as { data?: MatchedProvider; error?: string };
+        if (response.ok && body.data) setMatchedProvider(body.data);
+        else setMatchedProviderError(body.error || "Provider profile details are unavailable");
+      } catch {
+        setMatchedProviderError("Provider profile details are unavailable");
+      }
+      createTestTransaction({ customerId, customerName: normalizedCustomerName, primary: digits, secondary: normalizedSecondaryPhone, pets: chosenPets.map(pet => pet.name).join(", "), petCount, service: "Grooming", packageName: selectedPackage.name, area: `Bengaluru · ${coverage.zoneId}`, slot: `${dates[selectedDate].date} · ${selectedSlot}`, duration, amount: total, payment: payment === "after" ? "Pay after service · pending" : "Pay now · sandbox authorization pending", initialPaymentStatus: payment === "after" ? "due_after_service" : "payment_pending", provider: decision.provider.name, providerModel: decision.provider.model === "full_time" ? "Full-time" : "Commission", subscription: offerType === "subscription" ? selectedPackage.name : "No active plan", creditsBefore: offerType === "subscription" ? Number(selectedPackage.id.match(/\d+/)?.[0] || 1) : 0, crmOwner: "Unassigned", crmNextAction: "Post-booking care follow-up", reminder: `Booking confirmation queued · safety ${safetyNotes}` }, canonical.bookingId);
       setShowDetails(false);
       setConfirmed(true);
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (error) {
-      setPetSelectionError(error instanceof Error?error.message:"Unable to confirm this grooming booking");
+      setPetSelectionError(error instanceof Error ? error.message : "Unable to confirm this grooming booking");
     } finally {
       setBookingSubmitting(false);
     }
@@ -227,35 +265,6 @@ export default function Home() {
   }
 
   const selectedPetNames = selectedPetIds.map((id) => savedPets.find((pet) => pet.id === id)?.name).filter(Boolean).join(", ");
-
-  useEffect(() => {
-    if (!showDetails || !selectedSlot) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        setMatchedProviderError("");
-        const slotIndex = Math.max(0, slots.indexOf(selectedSlot));
-        const durationMinutes = petCount <= 2 ? 120 : petCount === 3 ? 150 : 240;
-        const { start, end } = groomingSlotWindow(dates[selectedDate].isoDate, slotIndex, durationMinutes);
-        const digits = phone.replace(/\D/g, "").slice(-10);
-        const customerId = `WEB-${digits || "UAT"}`;
-        const requestId = `web-groom-${customerId}-${dates[selectedDate].isoDate}-${slotIndex}-${selectedPackage.id}-${selectedPetIds.slice().sort().join("-")}`;
-        // Same idempotency key finishBooking uses - this is a harmless, safe pre-fetch, not a second reservation.
-        const pincode=serviceAddress.match(/\b\d{6}\b/)?.[0]||"";
-        const coverage=await resolveServiceCoverage(pincode);
-        const decision = await reserveUatSchedule({ clientRequestId: requestId, customerId, petIds: selectedPetIds, serviceCode: "grooming", zoneId: coverage.zoneId, scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(), preferredProviderId: "groom_arun" });
-        if (cancelled) return;
-        const response = await fetch(`/api/provider-public-profile?providerId=${encodeURIComponent(decision.provider.id)}`);
-        const body = await response.json() as { data?: typeof matchedProvider; error?: string };
-        if (cancelled) return;
-        if (!response.ok || !body.data) { setMatchedProvider(null); setMatchedProviderError(body.error || "Unable to load provider details"); return; }
-        setMatchedProvider(body.data);
-      } catch (error) {
-        if (!cancelled) { setMatchedProvider(null); setMatchedProviderError(error instanceof Error ? error.message : "Unable to load provider details"); }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [showDetails, selectedSlot, selectedDate, petCount, selectedPackage, selectedPetIds, phone, serviceAddress, dates]);
 
   if (confirmed) {
     return (
@@ -308,7 +317,7 @@ export default function Home() {
         <div className="hero-copy">
           <span className="trust-chip">Bengaluru · canonical UAT booking</span>
           <h1>Grooming that comes <em>home.</em></h1>
-          <p>Choose the care, pick a live slot and stay in control—from booking to your groomer’s arrival.</p>
+          <p>Choose the care, pick a preferred slot and stay in control—from booking to your groomer’s arrival.</p>
           <div className="hero-benefits"><span>✓ One canonical booking record</span><span>✓ Verification shown when earned</span><span>✓ Payment status stays explicit</span></div>
         </div>
         <div className="hero-art"><div className="pet-orb"><span>🐶</span><span>🐱</span></div><div className="floating-note">At-home care<br/><strong>Happy pets.</strong></div></div>
@@ -343,17 +352,17 @@ export default function Home() {
       </section>
 
       <section className="booking-panel slots-panel">
-        <div className="section-heading"><div><p className="eyebrow">Live groomer calendar</p><h2>Choose your time</h2></div><span className="step-badge">2 of 3</span></div>
-        <p className="muted">No login needed to browse. These slots update automatically from groomer calendars in your Bengaluru service zone.</p>
-        <div className="date-row">{dates.map((d, index) => <button key={d.isoDate} className={selectedDate === index ? "active" : ""} onClick={() => {setSelectedDate(index); setSelectedSlot(null);}}><span>{d.day}</span><strong>{d.date}</strong></button>)}</div>
+        <div className="section-heading"><div><p className="eyebrow">Grooming schedule</p><h2>Choose your time</h2></div><span className="step-badge">2 of 3</span></div>
+        <p className="muted">No login needed to browse. Provider capacity and zone availability are checked when you confirm the booking.</p>
+        <div className="date-row">{dates.map((d, index) => <button key={d.isoDate} className={selectedDate === index ? "active" : ""} onClick={() => { setSelectedDate(index); setSelectedSlot(null); }}><span>{d.day}</span><strong>{d.date}</strong></button>)}</div>
         <div className="slots-grid">{slots.map((slot, index) => {
-          const unavailable = (selectedDate === 0 && index === 0) || (petCount === 4 && index % 2 === 1);
-          return <button key={slot} disabled={unavailable} className={selectedSlot === slot ? "selected" : ""} onClick={() => setSelectedSlot(slot)}><span>{slot}</span>{unavailable ? <small>Unavailable</small> : <small>{index % 2 === 0 ? "2 groomers" : "1 groomer"}</small>}</button>;
+          const withinRoster = groomingSlotFitsRoster(index, durationMinutes);
+          return <button key={slot} disabled={!withinRoster} className={selectedSlot === slot ? "selected" : ""} onClick={() => setSelectedSlot(slot)}><span>{slot}</span><small>{withinRoster ? "Availability checked at confirmation" : "Outside service hours"}</small></button>;
         })}</div>
       </section>
 
       <aside className="checkout-bar">
-        <div><span>{selectedPackage.name} · {petCount} {petCount === 1 ? "pet" : "pets"}</span><strong>{money(total)}</strong><small>{selectedSlot ? `${dates[selectedDate].date} · ${selectedSlot}` : "Select a live slot to continue"}</small></div>
+        <div><span>{selectedPackage.name} · {petCount} {petCount === 1 ? "pet" : "pets"}</span><strong>{money(total)}</strong><small>{selectedSlot ? `${dates[selectedDate].date} · ${selectedSlot}` : "Select a slot to continue"}</small></div>
         <button disabled={!selectedSlot} onClick={() => setShowOtp(true)}>Confirm booking →</button>
       </aside>
 
@@ -384,6 +393,7 @@ export default function Home() {
           </div>
         )}
         {matchedProviderError && <p style={{ fontSize: 12, color: "#a33", margin: "8px 0" }}>{matchedProviderError}</p>}
+        {!matchedProvider && <p className="muted">Your eligible groomer is matched when you confirm; this screen does not reserve capacity while you edit details.</p>}
         <form onSubmit={finishBooking} className="details-form">
           <div className="field-row"><label>Customer name<input required value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Your name" /></label><label>Secondary number<input required value={secondaryPhone} onChange={(event) => setSecondaryPhone(event.target.value)} inputMode="numeric" placeholder="Alternative contact" /></label></div>
           <label className="address-field">Doorstep address
@@ -414,7 +424,7 @@ export default function Home() {
             {petSelectionError && <p className="field-error">{petSelectionError}</p>}
           </div>
           <label>Safety notes<select value={safetyNotes} onChange={(event) => setSafetyNotes(event.target.value)}><option value="friendly">Friendly / comfortable with grooming</option><option value="anxious">Anxious or first grooming</option><option value="aggressive">Aggressive / bite history</option></select></label>
-          <fieldset><legend>Payment preference</legend><label className={payment === "online" ? "payment-choice active" : "payment-choice"}><input type="radio" name="payment" value="online" checked={payment === "online"} onChange={() => setPayment("online")} /><span>Pay online now<small>UPI, card or net banking</small></span></label><label className={payment === "after" ? "payment-choice active" : "payment-choice"}><input type="radio" name="payment" value="after" checked={payment === "after"} onChange={() => setPayment("after")} /><span>Pay after service<small>Dynamic Razorpay QR, UPI or cash</small></span></label></fieldset>
+          <fieldset><legend>Payment preference</legend><label className={payment === "online" ? "payment-choice active" : "payment-choice"}><input type="radio" name="payment" value="online" checked={payment === "online"} onChange={() => setPayment("online")} /><span>Pay online now<small>Sandbox authorization; live gateway remains separate</small></span></label><label className={payment === "after" ? "payment-choice active" : "payment-choice"}><input type="radio" name="payment" value="after" checked={payment === "after"} onChange={() => setPayment("after")} /><span>Pay after service<small>UAT payment request; live QR/UPI collection is not connected</small></span></label></fieldset>
           <div className="mini-summary"><span>Total due</span><strong>{money(total)}</strong></div><button className="primary-button" type="submit" disabled={bookingSubmitting}>{bookingSubmitting ? "Confirming…" : "Confirm instantly"}</button>
         </form>
       </section></div>}

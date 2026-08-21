@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   createAddressSessionToken,
   groomingBookingDates,
+  groomingSlotFitsRoster,
   groomingSlotWindow,
 } from "../lib/grooming-booking-calendar.ts";
 
@@ -22,9 +23,17 @@ test("grooming slot windows convert the selected Bengaluru date and time to UTC"
   const first = groomingSlotWindow("2026-08-19", 0, 120);
   assert.equal(first.start.toISOString(), "2026-08-19T03:30:00.000Z");
   assert.equal(first.end.toISOString(), "2026-08-19T05:30:00.000Z");
-  const last = groomingSlotWindow("2026-08-19", 4, 240);
-  assert.equal(last.start.toISOString(), "2026-08-19T11:30:00.000Z");
-  assert.equal(last.end.toISOString(), "2026-08-19T15:30:00.000Z");
+  const lastTwoHour = groomingSlotWindow("2026-08-19", 4, 120);
+  assert.equal(lastTwoHour.start.toISOString(), "2026-08-19T11:30:00.000Z");
+  assert.equal(lastTwoHour.end.toISOString(), "2026-08-19T13:30:00.000Z");
+});
+
+test("multi-pet durations cannot run past the 7 PM Bengaluru roster", () => {
+  assert.equal(groomingSlotFitsRoster(0, 240), true);
+  assert.equal(groomingSlotFitsRoster(3, 240), false);
+  assert.equal(groomingSlotFitsRoster(4, 240), false);
+  assert.equal(groomingSlotFitsRoster(4, 120), true);
+  assert.throws(() => groomingSlotWindow("2026-08-19", 4, 240), /service hours/);
 });
 
 test("address session token works when randomUUID is unavailable", () => {
@@ -39,6 +48,7 @@ test("address session token works when randomUUID is unavailable", () => {
 
 test("invalid grooming dates, slots and durations fail closed", () => {
   assert.throws(() => groomingSlotWindow("19-08-2026", 0, 120));
+  assert.throws(() => groomingSlotWindow("2026-02-31", 0, 120));
   assert.throws(() => groomingSlotWindow("2026-08-19", 5, 120));
   assert.throws(() => groomingSlotWindow("2026-08-19", 0, 0));
 });
