@@ -2,12 +2,13 @@
 import Link from"next/link";
 import{useEffect,useState}from"react";
 import{loadSittingProof,updateSittingProof,type SittingProofSnapshot}from"../../../lib/sitting-proof-client";
+import{useQueryParameter}from"../../../lib/use-query-parameter";
 
 const label=(value:unknown)=>String(value||"not set").replaceAll("_"," ").replace(/\b\w/g,letter=>letter.toUpperCase());
 async function checksum(file:File){const hash=await crypto.subtle.digest("SHA-256",await file.arrayBuffer());return Array.from(new Uint8Array(hash)).map(byte=>byte.toString(16).padStart(2,"0")).join("");}
 
 export default function SittingProofPage(){
- const[bookingId]=useState(()=>typeof window==="undefined"?"":new URLSearchParams(window.location.search).get("bookingId")||""),[snapshot,setSnapshot]=useState<SittingProofSnapshot|null>(null),[busy,setBusy]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState(""),[mediaRef,setMediaRef]=useState(""),[medicationName,setMedicationName]=useState(""),[dose,setDose]=useState(""),[incidentSummary,setIncidentSummary]=useState(""),[actionTaken,setActionTaken]=useState(""),[severity,setSeverity]=useState<"attention"|"urgent"|"emergency">("attention");
+ const bookingId=useQueryParameter("bookingId"),[snapshot,setSnapshot]=useState<SittingProofSnapshot|null>(null),[busy,setBusy]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState(""),[mediaRef,setMediaRef]=useState(""),[medicationName,setMedicationName]=useState(""),[dose,setDose]=useState(""),[incidentSummary,setIncidentSummary]=useState(""),[actionTaken,setActionTaken]=useState(""),[severity,setSeverity]=useState<"attention"|"urgent"|"emergency">("attention");
  useEffect(()=>{if(!bookingId)return;let active=true;void loadSittingProof({bookingId}).then(next=>{if(active)setSnapshot(next)}).catch(problem=>{if(active)setError(problem instanceof Error?problem.message:"Unable to load Sitting proof workspace")});return()=>{active=false}},[bookingId]);
  async function refresh(){if(bookingId)setSnapshot(await loadSittingProof({bookingId}))}
  async function prepare(file:File,purpose:"sitting_update"|"sitting_medication"|"sitting_incident"){setBusy("prepare");setError("");setMessage("");try{const result=await updateSittingProof({bookingId,action:"prepare_media",idempotencyKey:`sitting:${bookingId}:media:${crypto.randomUUID()}`,purpose,mimeType:file.type,sizeBytes:file.size,sha256:await checksum(file)});setMediaRef(String(result.mediaRef||""));setMessage("Private proof contract prepared. The asset remains pending until the sandbox storage adapter and staff scan review finalize it; no public URL is created.");await refresh()}catch(problem){setError(problem instanceof Error?problem.message:"Unable to prepare Sitting proof")}finally{setBusy("")}}

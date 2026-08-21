@@ -2,13 +2,15 @@
 import Link from"next/link";
 import{useEffect,useState}from"react";
 import{createFoodSubscription,loadFoodSubscription,updateFoodSubscription,type FoodSubscriptionSnapshot}from"../../../lib/food-subscription-client";
+import{useQueryParameter}from"../../../lib/use-query-parameter";
 
 const box={background:"white",border:"1px solid #e1e1e1",borderRadius:14,padding:18} as const;
 const label=(value:unknown)=>String(value||"not set").replaceAll("_"," ");
 
 export default function FoodSubscriptionsPage(){
- const[subscriptionId,setSubscriptionId]=useState(()=>typeof window==="undefined"?"":new URLSearchParams(window.location.search).get("subscriptionId")||"");
- const[sourceOrderId,setSourceOrderId]=useState(()=>typeof window==="undefined"?"":new URLSearchParams(window.location.search).get("sourceOrderId")||"");
+ const querySubscriptionId=useQueryParameter("subscriptionId"),querySourceOrderId=useQueryParameter("sourceOrderId");
+ const[subscriptionOverride,setSubscriptionId]=useState<string|null>(null),subscriptionId=subscriptionOverride??querySubscriptionId;
+ const[sourceOrderOverride,setSourceOrderId]=useState<string|null>(null),sourceOrderId=sourceOrderOverride??querySourceOrderId;
  const[days,setDays]=useState(30);
  const[data,setData]=useState<FoodSubscriptionSnapshot|null>(null);
  const[busy,setBusy]=useState("");
