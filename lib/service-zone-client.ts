@@ -33,7 +33,7 @@ export async function resolveServiceCoverage(pincodeInput: string): Promise<Reso
   const cityId = String(assignment.cityId || cityIdFromZoneId(assignment.zoneId)).trim().toLowerCase();
   return {
     cityId,
-    city: assignment.city,
+    city: assignment.city || "",
     zoneId: assignment.zoneId,
     zoneName: zone.zoneName || assignment.zoneId,
     pincode: assignment.pincode || pincode,
