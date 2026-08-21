@@ -32,9 +32,9 @@ export default function AssistedBooking(){
 
   useEffect(()=>{let active=true;
     const requested=new URLSearchParams(window.location.search).get("customerId")?.trim()||"";
-    setRequestedCustomerId(requested);
+    queueMicrotask(()=>{if(!active)return;setRequestedCustomerId(requested);if(requested)setCrmLoading(true);});
     void loadAssistedOrderConfig().then(data=>{if(!active)return;setConfig(data);setPackageCode(data.packages[0]?.code??"");}).catch(err=>{if(active)setError(err instanceof Error?err.message:"Unable to load Assisted Orders UAT")});
-    if(requested){setCrmLoading(true);void (async()=>{try{
+    if(requested){void (async()=>{try{
       const response=await fetch(`/api/customer-360?customerId=${encodeURIComponent(requested)}`,{cache:"no-store"});
       const body=await response.json().catch(()=>({})) as {data?:{records?:Customer360Record[]};error?:string};
       if(!response.ok)throw new Error(body.error||"Selected CRM customer could not be loaded");
