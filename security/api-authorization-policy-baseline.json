@@ -1,9 +1,9 @@
 {
   "issue": 201,
-  "reviewedHead": "1197845de374f732e40a816032623304634adf51",
+  "reviewedHead": "df919754095d8465a50c24acce1cd1c3ab71e52d",
   "fingerprints": {
-    "app/api": "a263ee249fd0a1befbd80dfb6b17324e814d154c",
-    "lib/api-gateway.ts": "df7cc1684c4c4d86715cd78d885d62acd80a68a1",
+    "app/api": "06b967902edb232883dab8c48c1a93c6891a5b7f",
+    "lib/api-gateway.ts": "06be91bf4a0d49a69deddb143fe0adcab462c4db",
     "lib/session-api-gateway.ts": "740836c5889def775491dee7a3dd8365e67861c6",
     "lib/server-auth.ts": "6e60793363fe5f8635bde1def5a07245a4e3fa50",
     "lib/platform-security.ts": "782e861f2312f15219415ce8ad099fcc4698b126",
