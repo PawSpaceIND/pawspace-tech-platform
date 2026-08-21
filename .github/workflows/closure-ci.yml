@@ -43,16 +43,34 @@ jobs:
       - name: Run focused regressions
         run: node --experimental-strip-types --test tests/walking-per-session-amount.test.mjs tests/uat-demo-seed.test.mjs tests/walking-gate2.test.mjs tests/uat-closure-home-booking.test.mjs tests/grooming-booking-calendar.test.mjs
       - name: Run repository tests
-        run: npm test
+        shell: bash
+        run: |
+          set +e
+          npm test > .github/tmp-pr220-npm-test-failure.txt 2>&1
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            tail -n 180 .github/tmp-pr220-npm-test-failure.txt
+            exit "$status"
+          fi
+          rm -f .github/tmp-pr220-npm-test-failure.txt
+      - name: Upload npm test failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr220-npm-test-failure
+          path: .github/tmp-pr220-npm-test-failure.txt
+          if-no-files-found: ignore
+          retention-days: 1
       - name: Commit clean tested tree to disposable head
         shell: bash
         run: |
           git config user.name "PawSpace CI"
           git config user.email "actions@users.noreply.github.com"
           git checkout af8612bdac973619a124fdb81159f1a5929a7ce4 -- .github/workflows/closure-ci.yml
-          git rm -f .github/pr220-exec-marker.txt .github/tmp-pr220-npm-test-failure.txt
+          git rm -f --ignore-unmatch .github/pr220-exec-marker.txt .github/tmp-pr220-npm-test-failure.txt
           git add -- .github/workflows/closure-ci.yml lib/walking-lifecycle.ts lib/walking-lifecycle-client.ts scripts/uat-demo-seed-gen.mjs scripts/uat-demo-seed.sql tests/walking-per-session-amount.test.mjs tests/uat-demo-seed.test.mjs tests/walking-gate2.test.mjs tests/uat-closure-home-booking.test.mjs
           git commit -m "fix(uat): close walking and training review blockers"
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
 
-# retry after stale source-format assertion alignment
+# capture repository-test failure evidence without touching PR 220
