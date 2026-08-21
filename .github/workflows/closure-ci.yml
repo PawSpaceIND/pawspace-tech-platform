@@ -54,3 +54,5 @@ jobs:
           git add -- .github/workflows/closure-ci.yml lib/walking-lifecycle.ts lib/walking-lifecycle-client.ts scripts/uat-demo-seed-gen.mjs scripts/uat-demo-seed.sql tests/walking-per-session-amount.test.mjs tests/uat-demo-seed.test.mjs tests/walking-gate2.test.mjs tests/uat-closure-home-booking.test.mjs
           git commit -m "fix(uat): close walking and training review blockers"
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
+
+# retry after stale source-format assertion alignment
