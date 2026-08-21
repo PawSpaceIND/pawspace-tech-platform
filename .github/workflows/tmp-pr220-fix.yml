@@ -1,5 +1,6 @@
 name: Temporary PR 220 bounded fix
 on:
+  pull_request:
   push:
     branches:
       - tmp/pr220-walking-training-fix
