@@ -7,6 +7,7 @@ const route=read("app/api/assisted-orders/route.ts");
 const page=read("app/assisted-booking/page.tsx");
 const crmPage=read("app/crm/page.tsx");
 const canonicalBooking=read("app/api/canonical-bookings/route.ts");
+const customer360=read("lib/customer-360.ts");
 const client=read("lib/assisted-orders-client.ts");
 const gateway=read("lib/api-gateway.ts");
 const assistedInput=client.match(/export type AssistedOrderInput=\{([\s\S]*?)\};/)?.[1]??"";
@@ -60,10 +61,13 @@ test("assisted booking page uses the canonical client rather than a fake confirm
   assert.doesNotMatch(page,/Booking .* confirmed; customer and provider notified/);
 });
 
-test("CRM lead hands the same customer identity into governed booking and conversion",()=>{
+test("CRM lead hands the same customer and pet identity into governed booking and conversion",()=>{
   assert.match(crmPage,/assisted-booking\?customerId=\$\{encodeURIComponent\(selected\.id\)\}/,"selected CRM record must have a booking action");
   assert.match(page,/new URLSearchParams\(window\.location\.search\)\.get\("customerId"\)/,"assisted booking must hydrate the selected CRM identity");
   assert.match(page,/\/api\/customer-360\?customerId=\$\{encodeURIComponent\(requested\)\}/,"canonical Customer 360 must be the first selected-customer read");
+  assert.match(customer360,/SELECT customer_id,id,source_pet_id,name,species,breed,vaccination_status FROM canonical_pets/,"Customer 360 must read the canonical pet source identity");
+  assert.match(customer360,/sourceId:row\.source_pet_id\?String\(row\.source_pet_id\):null/,"Customer 360 must expose the canonical pet source identity");
+  assert.match(page,/p\.sourceId\|\|p\.name\|\|p\.id/,"assisted booking must prefer the canonical source identity");
   assert.match(page,/fetch\("\/api\/crm"/,"CRM pet name is used only when a canonical pet does not exist");
   assert.match(page,/Confirm the missing pet species/,"staff must confirm missing pet identity data rather than invent it");
   assert.match(page,/customer:\{id:customer\.id,name:customer\.name,primaryPhone:customer\.primaryPhone/,"the selected CRM customer ID must be submitted unchanged");
