@@ -5,6 +5,8 @@ import fs from "node:fs";
 const read=path=>fs.readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
 const route=read("app/api/assisted-orders/route.ts");
 const page=read("app/assisted-booking/page.tsx");
+const crmPage=read("app/crm/page.tsx");
+const canonicalBooking=read("app/api/canonical-bookings/route.ts");
 const client=read("lib/assisted-orders-client.ts");
 const gateway=read("lib/api-gateway.ts");
 const assistedInput=client.match(/export type AssistedOrderInput=\{([\s\S]*?)\};/)?.[1]??"";
@@ -56,4 +58,15 @@ test("assisted booking page uses the canonical client rather than a fake confirm
   assert.match(page,/No live money/);
   assert.doesNotMatch(page,/PS-GR-8518/);
   assert.doesNotMatch(page,/Booking .* confirmed; customer and provider notified/);
+});
+
+test("CRM lead hands the same customer identity into governed booking and conversion",()=>{
+  assert.match(crmPage,/assisted-booking\?customerId=\$\{encodeURIComponent\(selected\.id\)\}/,"selected CRM record must have a booking action");
+  assert.match(page,/new URLSearchParams\(window\.location\.search\)\.get\("customerId"\)/,"assisted booking must hydrate the selected CRM identity");
+  assert.match(page,/\/api\/customer-360\?customerId=\$\{encodeURIComponent\(requested\)\}/,"canonical Customer 360 must be the first selected-customer read");
+  assert.match(page,/fetch\("\/api\/crm"/,"CRM pet name is used only when a canonical pet does not exist");
+  assert.match(page,/Confirm the missing pet species/,"staff must confirm missing pet identity data rather than invent it");
+  assert.match(page,/customer:\{id:customer\.id,name:customer\.name,primaryPhone:customer\.primaryPhone/,"the selected CRM customer ID must be submitted unchanged");
+  assert.match(route,/customer:input\.customer,pets:input\.pets/,"assisted orders must pass that identity unchanged to canonical booking");
+  assert.match(canonicalBooking,/attributeBookingToOpenLead\(db,\{customerId:input\.customer\.id,bookingId\}\)/,"canonical booking must attribute the result back to the open CRM lead");
 });
