@@ -226,7 +226,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
-      - name: Checkout bounded patch script
+      - name: Checkout bounded patch scripts
         uses: actions/checkout@v4
         with:
           ref: tmp/pr220-walking-training-fix
@@ -238,7 +238,9 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Apply bounded Walking and Training fixes
-        run: python3 .runner/.github/tmp-pr220-patch.py
+        run: |
+          python3 .runner/.github/tmp-pr220-patch.py
+          python3 .runner/.github/tmp-pr220-patch2.py
       - name: Regenerate deterministic UAT seed
         run: node --experimental-strip-types scripts/uat-demo-seed-gen.mjs
       - name: Run focused regressions
