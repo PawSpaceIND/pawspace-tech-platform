@@ -51,11 +51,11 @@ export async function saveLifecycleReminderRule(db: Db, input: { id: string; del
   }
   const row = await db.prepare("SELECT * FROM lifecycle_reminder_rules WHERE id=?").bind(input.id).first<Row>();
   if (!row) throw new Error("Reminder rule not found");
-  const configRequired = input.active && row.trigger_code !== "customer_created" && input.delayDays == null ? 1 : 0;
-  if (input.active && configRequired) throw new Error("An active scheduled reminder requires an approved delay/cadence");
+  const configurationRequired = input.delayDays == null ? 1 : 0;
+  if (input.active && configurationRequired) throw new Error("An active scheduled reminder requires an approved delay/cadence");
   const now = Date.now();
   await db.prepare("UPDATE lifecycle_reminder_rules SET delay_days=?,repeat_days=?,template_key=?,active=?,configuration_required=?,updated_by=?,updated_at=? WHERE id=?")
-    .bind(input.delayDays ?? null, input.repeatDays ?? null, input.templateKey.trim(), input.active ? 1 : 0, input.active ? 0 : configRequired, input.actorId, now, input.id).run();
+    .bind(input.delayDays ?? null, input.repeatDays ?? null, input.templateKey.trim(), input.active ? 1 : 0, configurationRequired, input.actorId, now, input.id).run();
   await db.prepare("INSERT INTO lifecycle_reminder_rule_events (id,rule_id,action,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?)")
     .bind(crypto.randomUUID(), input.id, "rule_saved", input.actorId, JSON.stringify({ reason: input.reason, delayDays: input.delayDays ?? null, repeatDays: input.repeatDays ?? null, active: input.active }), now).run();
   return db.prepare("SELECT * FROM lifecycle_reminder_rules WHERE id=?").bind(input.id).first<Row>();
