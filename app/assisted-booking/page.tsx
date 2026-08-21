@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { createAssistedOrder, loadAssistedOrderConfig, type AssistedOrderConfig, type AssistedOrderCustomer, type AssistedOrderPet, type AssistedOrderResult } from "../../lib/assisted-orders-client";
+import { useQueryParameter } from "../../lib/use-query-parameter";
 import styles from "./assisted.module.css";
 
 function localInput(days:number,hour:number){const date=new Date();date.setDate(date.getDate()+days);date.setHours(hour,0,0,0);const pad=(value:number)=>String(value).padStart(2,"0");return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;}
@@ -12,6 +13,7 @@ type Customer360Record={customerId:string;name:string;primaryPhone:string;email?
 type CrmRow={id?:string;pet_names?:string};
 
 export default function AssistedBooking(){
+  const requestedCustomerIdQuery=useQueryParameter("customerId");
   const [config,setConfig]=useState<AssistedOrderConfig|null>(null);
   const [selected,setSelected]=useState(0);
   const [packageCode,setPackageCode]=useState("");
@@ -31,7 +33,7 @@ export default function AssistedBooking(){
   const [crmLoading,setCrmLoading]=useState(false);
 
   useEffect(()=>{let active=true;
-    const requested=new URLSearchParams(window.location.search).get("customerId")?.trim()||"";
+    const requested=requestedCustomerIdQuery.trim();
     queueMicrotask(()=>{if(!active)return;setRequestedCustomerId(requested);if(requested)setCrmLoading(true);});
     void loadAssistedOrderConfig().then(data=>{if(!active)return;setConfig(data);setPackageCode(data.packages[0]?.code??"");}).catch(err=>{if(active)setError(err instanceof Error?err.message:"Unable to load Assisted Orders UAT")});
     if(requested){void (async()=>{try{
@@ -50,7 +52,7 @@ export default function AssistedBooking(){
       if(!active)return;setCrmCustomer({id:record.customerId,name:record.name,primaryPhone:record.primaryPhone,email:record.email||undefined,pets:canonicalPets});setCrmPendingPetName(pendingPetName);
     }catch(err){if(active)setError(err instanceof Error?err.message:"Unable to load selected CRM customer");}finally{if(active)setCrmLoading(false)}})();}
     return()=>{active=false};
-  },[]);
+  },[requestedCustomerIdQuery]);
 
   const effectiveCrmCustomer=useMemo<AssistedOrderCustomer|null>(()=>{if(!crmCustomer)return null;if(crmCustomer.pets.length||!crmPendingPetName||!crmSpecies)return crmCustomer;return{...crmCustomer,pets:[{sourceId:crmPendingPetName,name:crmPendingPetName,species:crmSpecies}]};},[crmCustomer,crmPendingPetName,crmSpecies]);
   const customer=requestedCustomerId?effectiveCrmCustomer:(config?.customers[selected]??null);
