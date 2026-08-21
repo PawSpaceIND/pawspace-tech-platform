@@ -63,7 +63,7 @@ test("assisted booking page uses the canonical client rather than a fake confirm
 
 test("CRM lead hands the same customer and pet identity into governed booking and conversion",()=>{
   assert.match(crmPage,/assisted-booking\?customerId=\$\{encodeURIComponent\(selected\.id\)\}/,"selected CRM record must have a booking action");
-  assert.match(page,/new URLSearchParams\(window\.location\.search\)\.get\("customerId"\)/,"assisted booking must hydrate the selected CRM identity");
+  assert.match(page,/useQueryParameter\("customerId"\)/,"assisted booking must hydrate the selected CRM identity through the hydration-safe query hook");
   assert.match(page,/\/api\/customer-360\?customerId=\$\{encodeURIComponent\(requested\)\}/,"canonical Customer 360 must be the first selected-customer read");
   assert.match(customer360,/SELECT customer_id,id,source_pet_id,name,species,breed,vaccination_status FROM canonical_pets/,"Customer 360 must read the canonical pet source identity");
   assert.match(customer360,/sourceId:row\.source_pet_id\?String\(row\.source_pet_id\):null/,"Customer 360 must expose the canonical pet source identity");
