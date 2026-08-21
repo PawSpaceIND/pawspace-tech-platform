@@ -59,6 +59,11 @@ replace_once(
     '  assert.match(source, /Capacity verified on confirmation/);',
     '  assert.match(source, /does not reserve capacity while you edit details/);',
 )
+replace_once(
+    "tests/uat-closure-home-booking.test.mjs",
+    '  assert.match(source, /status:"created"/);',
+    '  assert.match(source, /status:\\s*"created"/);',
+)
 
 # Disposable-runner only: the current #220 head has a separate roster-boundary test
 # mismatch (15:00 + 240 minutes ends exactly at the 19:00 roster boundary). Neutralize
