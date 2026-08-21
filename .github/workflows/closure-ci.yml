@@ -1,78 +1,215 @@
 name: Release CI
 
 on:
+  push:
+    branches:
+      - main
+      - grooming-integration-closure
+      - agent/food-gates1-5
+      - agent/platform-stack-recertification
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: pr220-final-runner-${{ github.ref }}
+  group: release-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  pr220-final-runner:
-    name: PR220 final bounded runner
-    if: github.head_ref == 'tmp/pr220-fix-exec'
+  web-tests:
+    name: Web tests
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout disposable head
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          fetch-depth: 0
-      - name: Checkout trusted patch scripts
-        uses: actions/checkout@v4
-        with:
-          ref: tmp/pr220-walking-training-fix
-          path: .runner
-          fetch-depth: 1
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22.13.0'
           cache: npm
       - run: npm ci
-      - name: Apply bounded Walking and Training fixes
-        run: |
-          python3 .runner/.github/tmp-pr220-patch.py
-          python3 .runner/.github/tmp-pr220-patch2.py
-      - name: Regenerate deterministic UAT seed
-        run: node --experimental-strip-types scripts/uat-demo-seed-gen.mjs
-      - name: Run focused regressions
-        run: node --experimental-strip-types --test tests/walking-per-session-amount.test.mjs tests/uat-demo-seed.test.mjs tests/walking-gate2.test.mjs tests/uat-closure-home-booking.test.mjs tests/grooming-booking-calendar.test.mjs tests/grooming-maps.test.mjs
-      - name: Remove disposable helper checkout
-        run: rm -rf .runner
-      - name: Run repository tests
-        shell: bash
-        run: |
-          set +e
-          npm test > .github/tmp-pr220-npm-test-failure.txt 2>&1
-          status=$?
-          set -e
-          if [ "$status" -ne 0 ]; then
-            tail -n 180 .github/tmp-pr220-npm-test-failure.txt
-            exit "$status"
-          fi
-          rm -f .github/tmp-pr220-npm-test-failure.txt
-      - name: Upload npm test failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pr220-npm-test-failure
-          path: .github/tmp-pr220-npm-test-failure.txt
-          if-no-files-found: ignore
-          retention-days: 1
-      - name: Commit clean tested tree to disposable head
-        shell: bash
-        run: |
-          git config user.name "PawSpace CI"
-          git config user.email "actions@users.noreply.github.com"
-          git checkout af8612bdac973619a124fdb81159f1a5929a7ce4 -- .github/workflows/closure-ci.yml
-          git rm -f --ignore-unmatch .github/pr220-exec-marker.txt .github/tmp-pr220-npm-test-failure.txt
-          git add -- .github/workflows/closure-ci.yml lib/walking-lifecycle.ts lib/walking-lifecycle-client.ts scripts/uat-demo-seed-gen.mjs scripts/uat-demo-seed.sql tests/walking-per-session-amount.test.mjs tests/uat-demo-seed.test.mjs tests/walking-gate2.test.mjs tests/uat-closure-home-booking.test.mjs tests/grooming-maps.test.mjs
-          git commit -m "fix(uat): close walking and training review blockers"
-          git push origin HEAD:${{ github.event.pull_request.head.ref }}
+      - run: npm test
 
-# final bounded run: source-regex alignment and disposable checkout isolation
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
+  artifact:
+    name: Artifact validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run validate:artifact
+
+  runtime-d1:
+    name: Runtime D1 regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Execute production flow against isolated local D1
+        shell: bash
+        run: |
+          rm -rf .runtime-d1
+          npx wrangler dev --config wrangler.runtime-d1.jsonc --persist-to .runtime-d1 --port 8788 > /tmp/runtime-d1-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'cat /tmp/runtime-d1-worker.log; kill "$worker_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8788/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = 1
+          status=$(curl -sS -o /tmp/runtime-d1-result.json -w '%{http_code}' http://127.0.0.1:8788/run)
+          cat /tmp/runtime-d1-result.json
+          test "$status" = 200
+          node -e "const fs=require('fs');const r=JSON.parse(fs.readFileSync('/tmp/runtime-d1-result.json','utf8'));if(!r.ok)throw new Error(r.error||'Runtime D1 regression failed');const expected={canonicalPets:2,accountMutations:3};for(const [k,v] of Object.entries(r.assertions||{})){const want=expected[k]??1;if(v!==want)throw new Error(k+' cardinality was '+v+', expected '+want)}"
+
+  scheduler-d1:
+    name: Background scheduler D1
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Fire real scheduled handler against isolated local D1
+        shell: bash
+        run: |
+          rm -rf .scheduler-d1
+          npx wrangler dev --config wrangler.background-scheduler.jsonc --persist-to .scheduler-d1 --port 8789 --test-scheduled > /tmp/scheduler-d1-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'cat /tmp/scheduler-d1-worker.log; kill "$worker_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8789/health >/dev/null; then ready=1; break; fi
+            sleep 1
+          done
+          test "$ready" = 1
+          curl -fsS http://127.0.0.1:8789/seed
+          curl -fsS 'http://127.0.0.1:8789/cdn-cgi/handler/scheduled?cron=%2A%2F5+%2A+%2A+%2A+%2A&time=1786458600000&format=json'
+          curl -fsS 'http://127.0.0.1:8789/cdn-cgi/handler/scheduled?cron=%2A%2F5+%2A+%2A+%2A+%2A&time=1786458600000&format=json'
+          curl -fsS http://127.0.0.1:8789/assert > /tmp/scheduler-state.json
+          cat /tmp/scheduler-state.json
+          node -e "const s=require('/tmp/scheduler-state.json');if(s.cold?.status!=='active'||Number(s.cold?.recycle_cycle)!==1)throw Error('cold lead did not reopen');if(s.sla?.status!=='sla_breached')throw Error('SLA did not escalate');if(Number(s.ops?.escalation_level)!==1)throw Error('ops did not escalate');if(s.callback?.status!=='missed')throw Error('callback did not sweep');if(Number(s.reports?.count)!==3)throw Error('command reports were not generated');if(Number(s.runs?.count)!==1||Number(s.runs?.attempts)!==1||s.runs?.status!=='completed')throw Error('scheduled replay was not idempotent')"
+
+  pricing-control-d1:
+    name: Pricing Control D1 regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Prove Pricing Control changes real canonical quotes
+        shell: bash
+        run: |
+          rm -rf .pricing-control-d1
+          npx wrangler dev --config wrangler.pricing-control.jsonc --persist-to .pricing-control-d1 --port 8790 > /tmp/pricing-control-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'cat /tmp/pricing-control-worker.log; kill "$worker_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8790/health >/dev/null; then ready=1; break; fi
+            sleep 1
+          done
+          test "$ready" = 1
+          status=$(curl -sS -o /tmp/pricing-control-result.json -w '%{http_code}' http://127.0.0.1:8790/run)
+          cat /tmp/pricing-control-result.json
+          test "$status" = 200
+          node -e "const fs=require('fs');const r=JSON.parse(fs.readFileSync('/tmp/pricing-control-result.json','utf8'));if(!r.ok)throw new Error(r.error||'Pricing Control regression failed');const e={training:13000,boarding:1600,sitting:1350,grooming:3600,activeCanonicalRows:5};for(const [k,v] of Object.entries(e)){if(r.assertions?.[k]!==v)throw new Error(k+' expected '+v+' got '+r.assertions?.[k]);}if(!r.oldGroomingRejected)throw new Error('old Grooming multi-pet amount was accepted');"
+
+  production-readiness-d1:
+    name: Production readiness truth D1
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: No code may hardcode productionReady:true - it must always be a computed claim
+        shell: bash
+        run: |
+          if grep -rnoE "productionReady\s*:\s*true" lib/*.ts app/api/*/route.ts 2>/dev/null; then
+            echo "A hardcoded productionReady:true literal was found - this must always be a computed expression, never a bare literal, so it can never silently claim readiness a dependency does not actually have."
+            exit 1
+          fi
+          echo "No hardcoded productionReady:true literal found."
+      - name: Verify the Production Readiness registry's own safety enforcement cannot be bypassed
+        shell: bash
+        run: |
+          rm -rf .production-readiness-d1
+          npx wrangler dev --config wrangler.production-readiness.jsonc --persist-to .production-readiness-d1 --port 8791 > /tmp/production-readiness-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'cat /tmp/production-readiness-worker.log; kill "$worker_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8791/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = 1
+          status=$(curl -sS -o /tmp/production-readiness-result.json -w '%{http_code}' http://127.0.0.1:8791/run)
+          cat /tmp/production-readiness-result.json
+          test "$status" = 200
+          node -e "const fs=require('fs');const r=JSON.parse(fs.readFileSync('/tmp/production-readiness-result.json','utf8'));if(!r.ok)throw new Error(r.error||'Production readiness regression failed');const a=r.assertions||{};if(a.razorpayCredentialStatus!=='missing')throw new Error('expected missing credential status, got '+a.razorpayCredentialStatus);if(a.registryProductionReady!==false)throw new Error('registry must honestly report productionReady=false');if(!a.bypassBlocked)throw new Error('controlled_live_verified bypass was not blocked');if(!a.secretLeakBlocked)throw new Error('secret value leak into secret_reference was not blocked');if(!a.razorpayIsLaunchBlocker)throw new Error('Razorpay must appear as a real launch blocker');"
+
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test

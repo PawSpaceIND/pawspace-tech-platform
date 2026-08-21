@@ -21,8 +21,8 @@ test("public grooming entry resolves service coverage before scheduling", () => 
 });
 
 test("public grooming entry does not advertise fabricated live capacity or capture payment", () => {
-  assert.match(source, /Capacity verified on confirmation/);
+  assert.match(source, /does not reserve capacity while you edit details/);
   assert.doesNotMatch(source, /[12] groomers/);
   assert.doesNotMatch(source, /status:payment==="after"\?"created":"captured"/);
-  assert.match(source, /status:"created"/);
+  assert.match(source, /status:\s*"created"/);
 });
