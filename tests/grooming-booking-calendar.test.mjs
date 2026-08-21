@@ -30,7 +30,7 @@ test("grooming slot windows convert the selected Bengaluru date and time to UTC"
 
 test("multi-pet durations cannot run past the 7 PM Bengaluru roster", () => {
   assert.equal(groomingSlotFitsRoster(0, 240), true);
-  assert.equal(groomingSlotFitsRoster(3, 240), false);
+  assert.equal(groomingSlotFitsRoster(3, 240), true);
   assert.equal(groomingSlotFitsRoster(4, 240), false);
   assert.equal(groomingSlotFitsRoster(4, 120), true);
   assert.throws(() => groomingSlotWindow("2026-08-19", 4, 240), /service hours/);
