@@ -8,7 +8,7 @@ import { reserveTaxiSchedule } from "../lib/taxi-booking-client.ts";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("city resolution and scheduling preserve BLR plus a second enabled-city contract", async () => {
+test("city resolution and scheduling preserve BLR plus a second-city propagation contract", async () => {
   assert.equal(cityIdFromZoneId("blr-south"), "blr");
   assert.equal(cityIdFromZoneId("maa-central"), "maa");
   const originalFetch = globalThis.fetch;
