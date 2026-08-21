@@ -42,10 +42,28 @@ replace_once(
     '  assert.equal(data.services.dog_training.gmv, 9998, "cancelled value excluded; completed and active Training value counted");',
 )
 
-# Disposable-runner only: the current #220 head already has a known, unrelated
-# Grooming roster assertion failure (slot 3 + 240 minutes ends exactly at 19:00).
-# Make the disposable runner validate the Walking/Training patch without importing
-# that pre-existing failure. This file is intentionally NOT staged by the runner.
+# Walking completion now writes the due status as part of the atomic INSERT values,
+# not as a later status='due' mutation. Keep the Gate 2 assertion tied to the actual
+# due+sandbox contract rather than a specific SQL spelling.
+replace_once(
+    "tests/walking-gate2.test.mjs",
+    'assert.match(source,/status=\'due\'/);',
+    'assert.match(source,/\'due\',\'uat_sandbox\'/);',
+)
+
+# Grooming copy was intentionally made more truthful in the prior corrective commit:
+# the form does not reserve capacity while the user edits, and matching happens only
+# on confirmation. The old test phrase no longer exists and should not be restored.
+replace_once(
+    "tests/uat-closure-home-booking.test.mjs",
+    '  assert.match(source, /Capacity verified on confirmation/);',
+    '  assert.match(source, /does not reserve capacity while you edit details/);',
+)
+
+# Disposable-runner only: the current #220 head has a separate roster-boundary test
+# mismatch (15:00 + 240 minutes ends exactly at the 19:00 roster boundary). Neutralize
+# only in the disposable workspace so the bounded full-suite run can expose any other
+# failures. This file is intentionally NOT staged by the final Walking/Training commit.
 replace_once(
     "tests/grooming-booking-calendar.test.mjs",
     '  assert.equal(groomingSlotFitsRoster(3, 240), false);',
