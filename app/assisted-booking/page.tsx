@@ -2,13 +2,18 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { createAssistedOrder, loadAssistedOrderConfig, type AssistedOrderConfig, type AssistedOrderResult } from "../../lib/assisted-orders-client";
+import { createAssistedOrder, loadAssistedOrderConfig, type AssistedOrderConfig, type AssistedOrderCustomer, type AssistedOrderPet, type AssistedOrderResult } from "../../lib/assisted-orders-client";
+import { useQueryParameter } from "../../lib/use-query-parameter";
 import styles from "./assisted.module.css";
 
 function localInput(days:number,hour:number){const date=new Date();date.setDate(date.getDate()+days);date.setHours(hour,0,0,0);const pad=(value:number)=>String(value).padStart(2,"0");return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;}
 const money=(value:number)=>`₹${value.toLocaleString("en-IN")}`;
+const species=(value:unknown):AssistedOrderPet["species"]=>value==="dog"||value==="cat"||value==="other"?value:"other";
+type Customer360Record={customerId:string;name:string;primaryPhone:string;email?:string|null;pets?:Array<{id?:string;sourceId?:string|null;name?:string;species?:string;breed?:string|null;vaccinationStatus?:string}>};
+type CrmRow={id?:string;pet_names?:string};
 
 export default function AssistedBooking(){
+  const requestedCustomerIdQuery=useQueryParameter("customerId");
   const [config,setConfig]=useState<AssistedOrderConfig|null>(null);
   const [selected,setSelected]=useState(0);
   const [packageCode,setPackageCode]=useState("");
@@ -21,17 +26,45 @@ export default function AssistedBooking(){
   const [notice,setNotice]=useState("");
   const [error,setError]=useState("");
   const [result,setResult]=useState<AssistedOrderResult|null>(null);
+  const [requestedCustomerId,setRequestedCustomerId]=useState("");
+  const [crmCustomer,setCrmCustomer]=useState<AssistedOrderCustomer|null>(null);
+  const [crmPendingPetName,setCrmPendingPetName]=useState("");
+  const [crmSpecies,setCrmSpecies]=useState<""|AssistedOrderPet["species"]>("");
+  const [crmLoading,setCrmLoading]=useState(false);
 
-  useEffect(()=>{let active=true;void loadAssistedOrderConfig().then(data=>{if(!active)return;setConfig(data);setPackageCode(data.packages[0]?.code??"");}).catch(err=>{if(active)setError(err instanceof Error?err.message:"Unable to load Assisted Orders UAT")});return()=>{active=false};},[]);
-  const customer=config?.customers[selected]??null;
-  const eligiblePackages=useMemo(()=>{const species=customer?.pets[0]?.species;return config?.packages.filter(item=>!species||item.eligiblePetTypes.includes(species))??[];},[config,customer]);
+  useEffect(()=>{let active=true;
+    const requested=requestedCustomerIdQuery.trim();
+    queueMicrotask(()=>{if(!active)return;setRequestedCustomerId(requested);if(requested)setCrmLoading(true);});
+    void loadAssistedOrderConfig().then(data=>{if(!active)return;setConfig(data);setPackageCode(data.packages[0]?.code??"");}).catch(err=>{if(active)setError(err instanceof Error?err.message:"Unable to load Assisted Orders UAT")});
+    if(requested){void (async()=>{try{
+      const response=await fetch(`/api/customer-360?customerId=${encodeURIComponent(requested)}`,{cache:"no-store"});
+      const body=await response.json().catch(()=>({})) as {data?:{records?:Customer360Record[]};error?:string};
+      if(!response.ok)throw new Error(body.error||"Selected CRM customer could not be loaded");
+      const record=body.data?.records?.[0];if(!record||record.customerId!==requested)throw new Error("Selected CRM customer was not found");
+      const canonicalPets=(record.pets||[]).filter(p=>String(p.name||"").trim()).map(p=>({sourceId:String(p.sourceId||p.name||p.id||"").trim(),name:String(p.name||"Pet").trim(),species:species(p.species),breed:p.breed?String(p.breed):undefined,vaccinationStatus:p.vaccinationStatus?String(p.vaccinationStatus):undefined})).filter(p=>p.sourceId);
+      let pendingPetName="";
+      if(!canonicalPets.length){
+        const crmResponse=await fetch("/api/crm",{cache:"no-store"});const crmBody=await crmResponse.json().catch(()=>({})) as {contacts?:CrmRow[];error?:string};
+        if(!crmResponse.ok)throw new Error(crmBody.error||"CRM pet details could not be loaded");
+        const crmRow=(crmBody.contacts||[]).find(row=>String(row.id||"")===requested);pendingPetName=String(crmRow?.pet_names||"").trim();
+        if(!pendingPetName)throw new Error("Add the pet name in CRM before creating this booking");
+      }
+      if(!active)return;setCrmCustomer({id:record.customerId,name:record.name,primaryPhone:record.primaryPhone,email:record.email||undefined,pets:canonicalPets});setCrmPendingPetName(pendingPetName);
+    }catch(err){if(active)setError(err instanceof Error?err.message:"Unable to load selected CRM customer");}finally{if(active)setCrmLoading(false)}})();}
+    return()=>{active=false};
+  },[requestedCustomerIdQuery]);
+
+  const effectiveCrmCustomer=useMemo<AssistedOrderCustomer|null>(()=>{if(!crmCustomer)return null;if(crmCustomer.pets.length||!crmPendingPetName||!crmSpecies)return crmCustomer;return{...crmCustomer,pets:[{sourceId:crmPendingPetName,name:crmPendingPetName,species:crmSpecies}]};},[crmCustomer,crmPendingPetName,crmSpecies]);
+  const customer=requestedCustomerId?effectiveCrmCustomer:(config?.customers[selected]??null);
+  const eligiblePackages=useMemo(()=>{const selectedSpecies=customer?.pets[0]?.species;return config?.packages.filter(item=>!selectedSpecies||item.eligiblePetTypes.includes(selectedSpecies))??[];},[config,customer]);
   const selectedPackage=eligiblePackages.find(item=>item.code===packageCode)??eligiblePackages[0];
   const effectivePackageCode=selectedPackage?.code??"";
+  const crmNeedsSpecies=Boolean(requestedCustomerId&&crmCustomer&&crmCustomer.pets.length===0&&crmPendingPetName);
 
-  async function submit(event:FormEvent){event.preventDefault();if(!customer||!selectedPackage)return;setBusy(true);setError("");setNotice("");setResult(null);try{
+  async function submit(event:FormEvent){event.preventDefault();setError("");if(crmNeedsSpecies&&!crmSpecies){setError("Confirm the pet species before creating this CRM booking");return;}if(!customer||!customer.pets.length||!selectedPackage){setError("Complete customer, pet and package details before creating the order");return;}setBusy(true);setNotice("");setResult(null);try{
     const idempotencyKey=`uat-${customer.id}-${selectedPackage.code}-${scheduledStart}`.replace(/[^A-Za-z0-9:_-]/g,"-");
     const created=await createAssistedOrder({idempotencyKey,customer:{id:customer.id,name:customer.name,primaryPhone:customer.primaryPhone,secondaryPhone:customer.secondaryPhone,email:customer.email},pets:customer.pets,cityId:"blr",zoneId:"blr-east",packageCode:selectedPackage.code,scheduledStart:new Date(scheduledStart).toISOString(),scheduledEnd:new Date(scheduledEnd).toISOString(),consent:{captured:consentCaptured,method:consentMethod,reference:consentReference}});
-    setResult(created);setNotice(created.duplicatePrevented?"Existing UAT assisted order returned safely":"Canonical UAT assisted order created");
+    setResult(created);setNotice(created.duplicatePrevented?"Existing UAT assisted order returned safely":requestedCustomerId?"CRM customer converted to a canonical UAT booking":"Canonical UAT assisted order created");
   }catch(err){setError(err instanceof Error?err.message:"Unable to create Assisted Order UAT");}finally{setBusy(false);}}
 
   return <div className={styles.shell}>
@@ -42,21 +75,22 @@ export default function AssistedBooking(){
     </aside>
     <main>
       {notice&&<div className={styles.toast}>✓ {notice}</div>}
-      <header><div><small>ASSISTED ORDERS · TESTING GATE</small><h1>Create an order for a customer</h1><p>Staff-assisted Grooming orders now use the same canonical scheduler and booking ledger as the governed customer flow. This page is for testing only.</p></div><div className={styles.headerMeta}><span>⌾ Bengaluru UAT</span><button disabled>{config?.environment??"Loading"}</button></div></header>
+      <header><div><small>ASSISTED ORDERS · CRM CONVERSION GATE</small><h1>{requestedCustomerId?"Book the selected CRM customer":"Create an order for a customer"}</h1><p>{requestedCustomerId?"The selected CRM customer ID is preserved through scheduling, canonical booking and Customer 360. Missing pet species must be confirmed before booking.":"Staff-assisted Grooming orders use the same canonical scheduler and booking ledger as the governed customer flow. This page is for testing only."}</p></div><div className={styles.headerMeta}><span>⌾ Bengaluru UAT</span><button disabled>{config?.environment??"Loading"}</button></div></header>
       <section className={styles.stats}><article><small>Live money</small><b>OFF</b><em>Pay-after-service test state</em></article><article><small>Commercial truth</small><b>SERVER</b><em>Browser does not set final price</em></article><article><small>Assignment</small><b>CANONICAL</b><em>Existing UAT scheduler</em></article><article><small>Audit</small><b>ON</b><em>Staff + consent evidence</em></article></section>
       <div className={styles.grid}>
         <section className={styles.customerPanel}>
-          <div className={styles.panelHead}><div><small>STEP 1</small><h2>Select UAT customer</h2></div></div>
-          <div className={styles.security}>Synthetic test identities only. Production customer migration is not part of this gate.</div>
-          <div className={styles.customerList}>{config?.customers.map((item,index)=><button key={item.id} className={selected===index?styles.selected:""} onClick={()=>{setSelected(index);setPackageCode("");setResult(null)}}><span>{item.name.split(" ").map(part=>part[0]).join("")}</span><div><b>{item.name}</b><small>{item.primaryPhone.replace(/(\d{5})\d{3}(\d{2})$/, "$1•••$2")} · {item.pets.map(p=>p.name).join(", ")}</small><em className={styles.repeat}>UAT fixture</em></div><strong>{item.id}</strong></button>)}</div>
+          <div className={styles.panelHead}><div><small>STEP 1</small><h2>{requestedCustomerId?"Selected CRM customer":"Select UAT customer"}</h2></div></div>
+          <div className={styles.security}>{requestedCustomerId?"CRM identity is locked to this booking. The canonical record will keep the same customer ID.":"Synthetic test identities only. Production customer migration is not part of this gate."}</div>
+          {requestedCustomerId?<div className={styles.customerList}>{crmLoading?<p style={{padding:14}}>Loading selected CRM customer…</p>:customer?<button type="button" className={styles.selected}><span>{customer.name.split(" ").map(part=>part[0]).join("")}</span><div><b>{customer.name}</b><small>{customer.primaryPhone.replace(/(\d{5})\d{3}(\d{2})$/, "$1•••$2")} · {customer.pets.length?customer.pets.map(p=>p.name).join(", "):crmPendingPetName}</small><em className={styles.repeat}>CRM selected</em></div><strong>{customer.id}</strong></button>:<p style={{padding:14}}>CRM customer unavailable.</p>}</div>:<div className={styles.customerList}>{config?.customers.map((item,index)=><button key={item.id} className={selected===index?styles.selected:""} onClick={()=>{setSelected(index);setPackageCode("");setResult(null)}}><span>{item.name.split(" ").map(part=>part[0]).join("")}</span><div><b>{item.name}</b><small>{item.primaryPhone.replace(/(\d{5})\d{3}(\d{2})$/, "$1•••$2")} · {item.pets.map(p=>p.name).join(", ")}</small><em className={styles.repeat}>UAT fixture</em></div><strong>{item.id}</strong></button>)}</div>}
         </section>
         <section className={styles.workspace}>
-          <div className={styles.customerHead}><div className={styles.avatar}>{customer?.name.split(" ").map(part=>part[0]).join("")||"UAT"}</div><div><small>CANONICAL ASSISTED ORDER · GROOMING ONLY</small><h2>{customer?.name??"Loading test customer…"}</h2><p>{customer?.pets.map(p=>`${p.name} · ${p.species}`).join(" · ")}</p></div><span className={styles.health}>Test only</span></div>
+          <div className={styles.customerHead}><div className={styles.avatar}>{customer?.name.split(" ").map(part=>part[0]).join("")||"UAT"}</div><div><small>{requestedCustomerId?"CRM → CANONICAL ASSISTED ORDER · GROOMING":"CANONICAL ASSISTED ORDER · GROOMING ONLY"}</small><h2>{customer?.name??(crmLoading?"Loading CRM customer…":"Loading test customer…")}</h2><p>{customer?.pets.length?customer.pets.map(p=>`${p.name} · ${p.species}`).join(" · "):crmPendingPetName?`${crmPendingPetName} · species confirmation required`:"Pet profile unavailable"}</p></div><span className={styles.health}>Test only</span></div>
           <form className={styles.builder} onSubmit={submit}>
+            {crmNeedsSpecies&&<div className={styles.stage}><small>CRM PET PROFILE</small><h3>Confirm the missing pet species</h3><div className={styles.two}><label>Pet<input value={crmPendingPetName} disabled/></label><label>Species<select value={crmSpecies} onChange={e=>{setCrmSpecies(e.target.value as typeof crmSpecies);setPackageCode("");setResult(null)}} required><option value="">Select species</option><option value="dog">Dog</option><option value="cat">Cat</option><option value="other">Other</option></select></label></div><div className={styles.info}>CRM captured the pet name but not species. Staff must confirm it; PawSpace will not invent pet identity data.</div></div>}
             <div className={styles.stage}><small>SERVER-GOVERNED PACKAGE</small><h3>Choose the Grooming service to test</h3><div className={styles.serviceGrid}>{eligiblePackages.map(item=><button type="button" className={effectivePackageCode===item.code?styles.chosen:""} key={item.code} onClick={()=>setPackageCode(item.code)}><span>✂</span><b>{item.name}</b><small>{money(item.singlePrice)} single · {money(item.multiPetPrice)} multi-pet</small></button>)}</div><div className={styles.info}>Displayed catalogue values come from the server. The server recomputes the final governed amount when the assisted order is created.</div></div>
             <div className={styles.stage}><small>CANONICAL SCHEDULE</small><h3>Choose the UAT service window</h3><div className={styles.two}><label>Start<input type="datetime-local" value={scheduledStart} onChange={e=>setScheduledStart(e.target.value)} required/></label><label>End<input type="datetime-local" value={scheduledEnd} onChange={e=>setScheduledEnd(e.target.value)} required/></label></div><div className={styles.assignment}><div><b>Assignment rule</b><p>The staff member does not choose or fabricate a provider. The existing canonical UAT scheduler selects and reserves the eligible provider.</p></div><span>Auto</span></div></div>
             <div className={styles.stage}><small>CUSTOMER AUTHORITY</small><h3>Capture consent evidence</h3><div className={styles.two}><label>Consent method<select value={consentMethod} onChange={e=>setConsentMethod(e.target.value as typeof consentMethod)}><option value="recorded_call">Recorded call</option><option value="whatsapp">WhatsApp</option><option value="email">Email</option><option value="in_person">In person</option></select></label><label>Evidence reference<input value={consentReference} onChange={e=>setConsentReference(e.target.value)} required minLength={5}/></label></div><label className={styles.consent}><input type="checkbox" checked={consentCaptured} onChange={e=>setConsentCaptured(e.target.checked)}/> Customer explicitly authorized PawSpace staff to create this test booking.</label></div>
-            <div className={styles.stage}><small>FINAL TEST BOUNDARY</small><h3>Create canonical UAT order</h3><div className={styles.review}><div><small>Service</small><b>Grooming · {selectedPackage?.name??"—"}</b></div><div><small>Customer</small><b>{customer?.name??"—"}</b></div><div><small>Payment</small><b>Pay after service · ₹0 due now</b></div><div><small>Channel</small><b>assisted_staff</b></div><div><small>Pricing</small><b>Server governed</b></div><div><small>Environment</small><b>UAT only</b></div></div><div className={styles.confirmActions}><button className={styles.primary} disabled={busy||!customer||!selectedPackage||!consentCaptured}>{busy?"Creating canonical test order…":"Create UAT assisted order"}</button></div>{error&&<div className={styles.security}>{error}</div>}</div>
+            <div className={styles.stage}><small>FINAL TEST BOUNDARY</small><h3>Create canonical UAT order</h3><div className={styles.review}><div><small>Service</small><b>Grooming · {selectedPackage?.name??"—"}</b></div><div><small>Customer</small><b>{customer?.name??"—"}</b></div><div><small>Payment</small><b>Pay after service · ₹0 due now</b></div><div><small>Channel</small><b>assisted_staff</b></div><div><small>Pricing</small><b>Server governed</b></div><div><small>Environment</small><b>UAT only</b></div></div><div className={styles.confirmActions}><button className={styles.primary} disabled={busy||!customer||!selectedPackage||!consentCaptured||(crmNeedsSpecies&&!crmSpecies)}>{busy?"Creating canonical test order…":requestedCustomerId?"Create CRM-assisted UAT order":"Create UAT assisted order"}</button></div>{error&&<div className={styles.security}>{error}</div>}</div>
           </form>
           {result&&<div className={styles.stage}><small>CANONICAL RESULT</small><h3>{result.bookingId}</h3><div className={styles.review}><div><small>Assisted order</small><b>{result.assistedOrderId}</b></div><div><small>Provider</small><b>{result.provider.name}</b></div><div><small>Governed total</small><b>{money(result.totalAmount)}</b></div><div><small>Due now</small><b>{money(result.amountDueNow)}</b></div><div><small>Duplicate safe</small><b>{result.duplicatePrevented?"Existing order reused":"New order"}</b></div><div><small>Live money</small><b>{result.liveMoney?"Unexpected":"No"}</b></div></div></div>}
         </section>
