@@ -19,6 +19,19 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Repair applicator bootstrap pattern
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = 'scripts/apply-city-propagation-fix.mjs';
+          let source = fs.readFileSync(path, 'utf8');
+          const start = source.indexOf('  source = replaceOne(\n    source,\n    `  if (assignment.city !==');
+          const end = source.indexOf('  );\n  return source;', start);
+          if (start < 0 || end < 0) throw new Error('Unable to locate service-zone bootstrap replacement');
+          const fixed = `  source = replaceOne(\n    source,\n    '  if (assignment.city !== "Bengaluru") {\\n    throw new Error(\`\${assignment.city || "This city"} is not enabled for customer bookings yet.\`);\\n  }\\n',\n    '  const cityId = String(assignment.cityId || cityIdFromZoneId(assignment.zoneId)).trim().toLowerCase();\\n',\n    "service-zone Bengaluru guard",\n  );\n  source = replaceOne(source, '    cityId: "blr",', '    cityId,', "service-zone Bengaluru city id");\n`;
+          source = source.slice(0, start) + fixed + source.slice(end + 5);
+          fs.writeFileSync(path, source);
+          NODE
       - name: Apply bounded city propagation patch
         run: node scripts/apply-city-propagation-fix.mjs
       - name: Remove disposable applicator
