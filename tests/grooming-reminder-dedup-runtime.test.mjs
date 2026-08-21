@@ -37,24 +37,24 @@ function makeD1(sqlite) {
   };
 }
 
-test("grooming 15-day reminder: two scheduler runs create one notification and one history row", async () => {
+test("grooming 15-day reminder: two five-minute scheduler slots create one notification and one history row", async () => {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
   globalThis.__PAWSPACE_TEST_ENV = { DB: db };
   sqlite.exec("CREATE TABLE canonical_customers (id TEXT PRIMARY KEY,consent_json TEXT); CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,service_code TEXT NOT NULL,status TEXT NOT NULL,scheduled_start TEXT,scheduled_end TEXT);");
 
-  const asOf = Date.now();
+  const asOf = Math.floor(Date.now() / 300_000) * 300_000;
   const completedAt = new Date(asOf - 16 * 86_400_000).toISOString();
   sqlite.prepare("INSERT INTO canonical_customers (id,consent_json) VALUES (?,?)").run("CUS-REMINDER-1", JSON.stringify({ serviceUpdates: true }));
   sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,status,scheduled_start,scheduled_end) VALUES (?,?,?,?,?,?)")
     .run("BK-REMINDER-1", "CUS-REMINDER-1", "grooming", "completed", completedAt, completedAt);
 
-  const reminders = await import("../lib/customer-reminder-governance.ts");
-  const first = await reminders.runCustomerReminderSweep(db, { actorId: "system:test", asOf });
-  const second = await reminders.runCustomerReminderSweep(db, { actorId: "system:test", asOf });
+  const scheduler = await import("../lib/background-scheduler.ts");
+  const first = await scheduler.runBackgroundScheduler(db, { actorId: "system:test", asOf });
+  const second = await scheduler.runBackgroundScheduler(db, { actorId: "system:test", asOf: asOf + 300_000 });
 
-  assert.equal(first.grooming.queued, 1, "first due run queues the reminder");
-  assert.equal(second.grooming.queued, 0, "second run does not queue another reminder");
+  assert.equal(first.customerReminders.grooming.queued, 1, "first due scheduler slot queues the reminder");
+  assert.equal(second.customerReminders.grooming.queued, 0, "next scheduler slot does not queue another reminder in the same cadence cycle");
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM communication_messages WHERE idempotency_key LIKE 'grooming_rebooking:%'").get().c, 1, "one customer notification message");
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM communication_outbox").get().c, 1, "one communications outbox record");
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM reminder_governance_events WHERE customer_id='CUS-REMINDER-1' AND reminder_type='grooming_rebooking'").get().c, 1, "CRM/reminder history is updated once");
