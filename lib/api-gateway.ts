@@ -26,6 +26,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/control-tower")return "audit.view";
   if(url.pathname==="/api/stay-balance")return "scheduling.book";
   if(url.pathname==="/api/partner-job-feed")return "bookings.view";
+  if(url.pathname==="/api/uat-provider-switch")return "bookings.view";
   if(url.pathname==="/api/provider-lms"){if(method==="GET")return "bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="complete_module"?"bookings.view":"settings.manage";}
   if(url.pathname==="/api/me"||url.pathname==="/api/leaderboard"||url.pathname==="/api/provider-workspace")return "self_service.view";
   if(url.pathname==="/api/provider-commercial-terms")return method==="GET"?"finance.view":"finance.manage";
