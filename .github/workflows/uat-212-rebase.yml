@@ -1,0 +1,50 @@
+name: Temporary UAT 212 rebase
+
+on:
+  push:
+    branches:
+      - agent/uat-training-partner-closure-v2
+
+permissions:
+  contents: write
+
+jobs:
+  transplant:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout closure branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: agent/uat-training-partner-closure-v2
+
+      - name: Apply PR 212 delta onto current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main agent/uat-training-partner-closure
+          BASE="$(git merge-base origin/main origin/agent/uat-training-partner-closure)"
+          echo "merge-base=$BASE"
+          git diff --binary "$BASE" origin/agent/uat-training-partner-closure -- \
+            app/api/uat-provider-switch/route.ts \
+            app/mobile-app/training-flow.tsx \
+            app/partner-mobile/page.tsx \
+            lib/api-gateway.ts \
+            tests/rendered-html.test.mjs \
+            tests/uat-training-partner-closure.test.mjs \
+            > /tmp/uat212.patch
+          set +e
+          git apply --3way --index /tmp/uat212.patch
+          APPLY_RC=$?
+          set -e
+          git status --short
+          if [ "$APPLY_RC" -ne 0 ]; then
+            echo "Three-way apply needs manual conflict resolution"
+            git diff --name-only --diff-filter=U || true
+            exit "$APPLY_RC"
+          fi
+          git rm .github/workflows/uat-212-rebase.yml
+          git commit -m "Rebase UAT training and partner closure onto current main"
+          git push origin HEAD:agent/uat-training-partner-closure-v2
