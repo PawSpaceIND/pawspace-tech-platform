@@ -86,6 +86,7 @@ async function preferredChannel(db: Db, customerId: string): Promise<Communicati
 }
 
 async function logEvent(db: Db, customerId: string, reminderType: string, cycleKey: string, result: Awaited<ReturnType<typeof enqueueCommunication>>, detail: unknown) {
+  if (result.duplicatePrevented) return;
   const messageId = "messageId" in result ? result.messageId : (result.message ? String((result.message as Row).id) : null);
   await db.prepare("INSERT INTO reminder_governance_events (id,customer_id,reminder_type,cycle_key,message_id,duplicate_prevented,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?)")
     .bind(crypto.randomUUID(), customerId, reminderType, cycleKey, messageId, result.duplicatePrevented ? 1 : 0, JSON.stringify(detail), Date.now()).run();
