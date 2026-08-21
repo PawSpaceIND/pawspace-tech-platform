@@ -109,6 +109,20 @@ test("the committed uat-demo-seed.sql is exactly what the generator produces", (
   assert.ok(ids.length > 100, "seed should carry a meaningful number of rows");
 });
 
+test("seed materializes Training programmes and sessions, not booking shells", () => {
+  const sqlite = seededDb();
+  const programmes = sqlite.prepare("SELECT booking_id,status,total_sessions,completed_sessions,cancelled_sessions FROM training_programmes ORDER BY booking_id").all().map((row) => ({ ...row }));
+  const sessions = sqlite.prepare("SELECT booking_id,status,schedule_reservation_id FROM training_sessions ORDER BY booking_id").all().map((row) => ({ ...row }));
+  assert.deepEqual(programmes, [
+    { booking_id: "UATD-BK-TRAIN-1", status: "completed", total_sessions: 1, completed_sessions: 1, cancelled_sessions: 0 },
+    { booking_id: "UATD-BK-TRAIN-2", status: "completed_with_exceptions", total_sessions: 1, completed_sessions: 0, cancelled_sessions: 1 },
+  ]);
+  assert.deepEqual(sessions, [
+    { booking_id: "UATD-BK-TRAIN-1", status: "completed", schedule_reservation_id: "UATD-BK-TRAIN-1-RES" },
+    { booking_id: "UATD-BK-TRAIN-2", status: "cancelled", schedule_reservation_id: "UATD-BK-TRAIN-2-RES" },
+  ]);
+});
+
 test("seeded DB: company analytics reports real revenue, services and CX", async () => {
   seededDb();
   const { data } = await body(await GET(companyAnalyticsRoute, "/api/company-analytics"));

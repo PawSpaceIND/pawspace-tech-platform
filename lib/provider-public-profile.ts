@@ -23,6 +23,10 @@
 //     only returned once they cross a real minimum threshold, so a brand-new provider shows a
 //     "New to PawSpace" state instead of an awkward zero.
 
+import { ensureCanonicalBookingReadModel } from "./canonical-booking-read-model";
+import { seedProviderCapacityDefaults } from "./provider-capacity-governance";
+import { ensureProviderOnboardingHumanActivation } from "./provider-onboarding-human-activation";
+
 type Db = D1Database;
 type Row = Record<string, unknown>;
 
@@ -42,6 +46,12 @@ export type ProviderPublicProfile = {
 };
 
 export async function getProviderPublicProfile(db: Db, providerId: string): Promise<ProviderPublicProfile | null> {
+  await Promise.all([
+    ensureProviderOnboardingHumanActivation(db),
+    ensureCanonicalBookingReadModel(db),
+  ]);
+  await seedProviderCapacityDefaults(db);
+
   const capacity = await db.prepare("SELECT id,name FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();
   if (!capacity) return null;
 
