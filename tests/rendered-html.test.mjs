@@ -256,8 +256,8 @@ test("keeps payment timing, confidence meetings and delay recovery explicit", as
   assert.match(grooming, /Pay after service/);
   assert.match(grooming, /Create canonical UAT booking/);
   assert.match(grooming, /status:pay==="online"\?"captured":"created"/);
-  assert.match(training, /Meet the trainer first\. Book only when you feel confident/);
-  assert.match(training, /Book only the Meet & Greet/);
+  assert.match(training, /MEET A TRAINER FIRST/);
+  assert.match(training, /Book Meet & Greet only/);
   assert.match(stays, /10-minute phone call · Included/);
   assert.match(groomer, /Package upgraded/);
   assert.match(groomer, /Bike issue/);
