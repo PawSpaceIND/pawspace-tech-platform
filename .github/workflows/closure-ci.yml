@@ -213,3 +213,45 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+
+  pr220-bounded-fix:
+    name: PR220 bounded fix runner
+    if: github.event_name == 'pull_request' && github.head_ref == 'tmp/pr220-fix-exec'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout disposable head branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - name: Checkout bounded patch script
+        uses: actions/checkout@v4
+        with:
+          ref: tmp/pr220-walking-training-fix
+          path: .runner
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Apply bounded Walking and Training fixes
+        run: python3 .runner/.github/tmp-pr220-patch.py
+      - name: Regenerate deterministic UAT seed
+        run: node --experimental-strip-types scripts/uat-demo-seed-gen.mjs
+      - name: Run focused regressions
+        run: node --experimental-strip-types --test tests/walking-per-session-amount.test.mjs tests/uat-demo-seed.test.mjs tests/grooming-booking-calendar.test.mjs
+      - name: Run repository tests
+        run: npm test
+      - name: Commit tested bounded fix to disposable head
+        shell: bash
+        run: |
+          git config user.name "PawSpace CI"
+          git config user.email "actions@users.noreply.github.com"
+          git checkout af8612bdac973619a124fdb81159f1a5929a7ce4 -- .github/workflows/closure-ci.yml
+          git rm .github/pr220-exec-marker.txt
+          git add .github/workflows/closure-ci.yml lib/walking-lifecycle.ts lib/walking-lifecycle-client.ts scripts/uat-demo-seed-gen.mjs scripts/uat-demo-seed.sql tests/walking-per-session-amount.test.mjs tests/uat-demo-seed.test.mjs
+          git commit -m "fix(uat): close walking and training review blockers"
+          git push origin HEAD:${{ github.event.pull_request.head.ref }}
