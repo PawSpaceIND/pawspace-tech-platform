@@ -1,5 +1,6 @@
 import{
   approveAnnualReturn as approveAnnualReturnBase,
+  ConfigurationRequired,
   ensureGstAccountingTables,
   generateAnnualReturn as generateAnnualReturnBase,
   generateStatutoryPackage as generateStatutoryPackageBase,
@@ -95,7 +96,7 @@ export async function generateAccountingExportSafe(db:Db,input:Row,actor:string)
   const entityId=text(input.entityId),period=text(input.periodCode),target=text(input.target)||"generic";
   if(!entityId||!/^\d{4}-\d{2}$/.test(period))throw new Error("accounting_export_scope_required");
   const mapping=await db.prepare("SELECT * FROM accounting_mapping_versions WHERE entity_id=? AND status='active' AND effective_from<=? ORDER BY version DESC LIMIT 1").bind(entityId,`${period}-31`).first<Row>();
-  if(!mapping)throw new Error("configuration_required:active_accounting_mapping");
+  if(!mapping)throw new ConfigurationRequired("active_accounting_mapping");
   const journals=await db.prepare("SELECT id,entity_id,entry_date,source_type,source_id,account_code,cost_centre,vertical,debit,credit,narration,period_code FROM finance_journal_entries WHERE entity_id=? AND period_code=? AND posted=1 ORDER BY created_at,id").bind(entityId,period).all<Row>();
   const snapshot={entityId,period,target,mappingId:text(mapping.id),mappingVersion:num(mapping.version),journals:journals.results},raw=JSON.stringify(snapshot),checksum=await sha256(raw);
   const existing=await db.prepare("SELECT * FROM accounting_export_runs WHERE entity_id=? AND period_code=? AND target=? AND mapping_id=? AND checksum=?").bind(entityId,period,target,text(mapping.id),checksum).first<Row>();
