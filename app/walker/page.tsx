@@ -3,11 +3,12 @@
 import Link from"next/link";
 import{useEffect,useMemo,useState}from"react";
 import{loadWalkingLifecycle,updateWalkingLifecycle,type WalkingLifecycleBooking}from"../../lib/walking-lifecycle-client";
+import{useQueryParameter}from"../../lib/use-query-parameter";
 import styles from"../driver/driver.module.css";
 const label=(value:unknown)=>String(value||"not set").replaceAll("_"," ");
 const when=(value:unknown)=>{const date=new Date(String(value||""));return Number.isFinite(date.getTime())?date.toLocaleString("en-IN",{day:"numeric",month:"short",hour:"numeric",minute:"2-digit"}):"Not scheduled"};
 export default function WalkerPage(){
- const[bookingId]=useState(()=>typeof window==="undefined"?"":new URLSearchParams(window.location.search).get("bookingId")||""),[booking,setBooking]=useState<WalkingLifecycleBooking|null>(null),[selectedSessionId,setSelectedSessionId]=useState(""),[busy,setBusy]=useState(""),[error,setError]=useState(""),[message,setMessage]=useState(""),[lookup,setLookup]=useState("");
+ const bookingId=useQueryParameter("bookingId"),[booking,setBooking]=useState<WalkingLifecycleBooking|null>(null),[selectedSessionId,setSelectedSessionId]=useState(""),[busy,setBusy]=useState(""),[error,setError]=useState(""),[message,setMessage]=useState(""),[lookup,setLookup]=useState("");
  const openBooking=(id:string)=>{const trimmed=id.trim();if(trimmed)window.location.assign(`/walker?bookingId=${encodeURIComponent(trimmed)}`)};
  useEffect(()=>{if(!bookingId)return;let active=true;void loadWalkingLifecycle({bookingId}).then(rows=>{if(!active)return;const next=rows[0]||null;setBooking(next);const sessions=(next?.sessions||[]) as Array<Record<string,unknown>>;setSelectedSessionId(String(sessions.find(item=>String(item.status)!=="completed")?.id||sessions[0]?.id||""))}).catch(problem=>{if(active)setError(problem instanceof Error?problem.message:"Unable to load canonical walk schedule")});return()=>{active=false}},[bookingId]);
  async function refresh(){if(!bookingId)return;const rows=await loadWalkingLifecycle({bookingId}),next=rows[0]||null;setBooking(next);const sessions=(next?.sessions||[]) as Array<Record<string,unknown>>;setSelectedSessionId(current=>current&&sessions.some(item=>String(item.id)===current)?current:String(sessions.find(item=>String(item.status)!=="completed")?.id||sessions[0]?.id||""))}

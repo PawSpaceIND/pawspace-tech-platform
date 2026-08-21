@@ -1,13 +1,15 @@
 export type TestBookingStatus="confirmed"|"awaiting_acceptance"|"assigned"|"on_the_way"|"arrived"|"in_service"|"completed"|"cancelled";
 export type TestBookingEvent={at:string;surface:"customer"|"crm"|"admin"|"provider"|"ops"|"accounts"|"system";label:string};
+export type TestPaymentStatus="paid"|"payment_pending"|"due_after_service"|"credit_reserved"|"credit_consumed"|"cancelled";
 export type TestTransaction={
   id:string;customerId:string;customerName:string;primary:string;secondary:string;pets:string;petCount:number;service:string;packageName:string;
-  area:string;slot:string;duration:string;amount:number;payment:string;paymentStatus:"paid"|"due_after_service"|"credit_reserved"|"credit_consumed"|"cancelled";
+  area:string;slot:string;duration:string;amount:number;payment:string;paymentStatus:TestPaymentStatus;
   provider:string;providerModel:"Full-time"|"Commission";status:TestBookingStatus;subscription:string;creditsBefore:number;creditsAfter:number;
   crmOwner:string;crmNextAction:string;reminder:string;updatedAt:string;events:TestBookingEvent[];
   offerCode?:string;discount?:number;referralStatus?:"pending_completion"|"reward_released"|"reversed";
 };
 export type TestLedger={version:2;activeId:string|null;transactions:TestTransaction[]};
+type CreateTestTransactionInput=Omit<TestTransaction,"id"|"status"|"paymentStatus"|"creditsAfter"|"updatedAt"|"events">&{initialPaymentStatus?:TestPaymentStatus};
 
 const ledgerKey="pawspace:synthetic-ledger:v2";const legacyKey="pawspace:synthetic-transaction:v1";const changeEvent="pawspace-test-ledger-change";
 const timestamp=()=>new Date().toISOString();const emptyLedger:TestLedger={version:2,activeId:null,transactions:[]};
@@ -24,10 +26,10 @@ export function readTestLedger():TestLedger{
 export function readTestTransaction():TestTransaction|null{const ledger=readTestLedger();return ledger.transactions.find(item=>item.id===ledger.activeId)??ledger.transactions[0]??null;}
 function persistLedger(ledger:TestLedger){const raw=JSON.stringify(ledger);cachedRaw=raw;cachedLedger=ledger;window.localStorage.setItem(ledgerKey,raw);window.dispatchEvent(new CustomEvent(changeEvent,{detail:ledger}));return ledger;}
 
-export function createTestTransaction(input:Omit<TestTransaction,"id"|"status"|"paymentStatus"|"creditsAfter"|"updatedAt"|"events">,canonicalBookingId?:string){
+export function createTestTransaction(input:CreateTestTransactionInput,canonicalBookingId?:string){
   const ledger=readTestLedger();const at=timestamp();const suffix=input.customerId.replace(/\D/g,"").slice(-3)||String(Date.now()).slice(-3);const sequence=ledger.transactions.filter(item=>item.customerId===input.customerId).length+1;
-  const status:TestBookingStatus=input.providerModel==="Commission"?"awaiting_acceptance":"assigned";const paymentStatus=input.payment==="Subscription credit"?"credit_reserved":input.payment==="Paid online"?"paid":"due_after_service";
-  const transaction:TestTransaction={...input,id:canonicalBookingId??`PS-T${suffix}-${String(sequence).padStart(2,"0")}`,status,paymentStatus,creditsAfter:input.creditsBefore,referralStatus:input.offerCode==="KARTHIK"?"pending_completion":input.referralStatus,updatedAt:at,events:[
+  const status:TestBookingStatus=input.providerModel==="Commission"?"awaiting_acceptance":"assigned";const{initialPaymentStatus,...transactionInput}=input;const paymentStatus:TestPaymentStatus=initialPaymentStatus??(input.payment==="Subscription credit"?"credit_reserved":input.payment==="Paid online"?"paid":"due_after_service");
+  const transaction:TestTransaction={...transactionInput,id:canonicalBookingId??`PS-T${suffix}-${String(sequence).padStart(2,"0")}`,status,paymentStatus,creditsAfter:input.creditsBefore,referralStatus:input.offerCode==="KARTHIK"?"pending_completion":input.referralStatus,updatedAt:at,events:[
     {at,surface:"customer",label:"Booking confirmed instantly"},{at,surface:"crm",label:"Customer timeline and opportunity updated"},{at,surface:"admin",label:status==="awaiting_acceptance"?"Commission-provider offer created":"Full-time provider assigned automatically"},{at,surface:"system",label:"Payment state recorded and reminder queued"},
   ]};persistLedger({version:2,activeId:transaction.id,transactions:[transaction,...ledger.transactions].slice(0,100)});return transaction;
 }

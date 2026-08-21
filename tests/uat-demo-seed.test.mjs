@@ -109,13 +109,29 @@ test("the committed uat-demo-seed.sql is exactly what the generator produces", (
   assert.ok(ids.length > 100, "seed should carry a meaningful number of rows");
 });
 
+test("seed materializes Training programmes and sessions, not booking shells", () => {
+  const sqlite = seededDb();
+  const programmes = sqlite.prepare("SELECT booking_id,status,total_sessions,completed_sessions,cancelled_sessions FROM training_programmes ORDER BY booking_id").all().map((row) => ({ ...row }));
+  const sessions = sqlite.prepare("SELECT booking_id,status,schedule_reservation_id FROM training_sessions ORDER BY booking_id").all().map((row) => ({ ...row }));
+  assert.deepEqual(programmes, [
+    { booking_id: "UATD-BK-TRAIN-1", status: "completed", total_sessions: 1, completed_sessions: 1, cancelled_sessions: 0 },
+    { booking_id: "UATD-BK-TRAIN-2", status: "completed_with_exceptions", total_sessions: 1, completed_sessions: 0, cancelled_sessions: 1 },
+    { booking_id: "UATD-BK-TRAIN-3", status: "active", total_sessions: 1, completed_sessions: 0, cancelled_sessions: 0 },
+  ]);
+  assert.deepEqual(sessions, [
+    { booking_id: "UATD-BK-TRAIN-1", status: "completed", schedule_reservation_id: "UATD-BK-TRAIN-1-RES" },
+    { booking_id: "UATD-BK-TRAIN-2", status: "cancelled", schedule_reservation_id: "UATD-BK-TRAIN-2-RES" },
+    { booking_id: "UATD-BK-TRAIN-3", status: "arrived", schedule_reservation_id: "UATD-BK-TRAIN-3-RES" },
+  ]);
+});
+
 test("seeded DB: company analytics reports real revenue, services and CX", async () => {
   seededDb();
   const { data } = await body(await GET(companyAnalyticsRoute, "/api/company-analytics"));
   assert.ok(data.bookings.total >= 12, `expected the demo bookings, got ${data.bookings.total}`);
   assert.ok(data.money.gmv > 0, "GMV must be non-zero");
   assert.equal(data.services.dog_training.cancelled, 1, "the deliberately cancelled training booking is visible");
-  assert.equal(data.services.dog_training.gmv, 4999, "cancelled value excluded, completed 4999 counted");
+  assert.equal(data.services.dog_training.gmv, 9998, "cancelled value excluded; completed and active Training value counted");
   assert.ok(data.cx.tickets >= 2, "CX tickets are seeded");
   assert.ok(data.customers.unique >= 6);
 });
@@ -332,4 +348,15 @@ test("seeded DB: employee self-service is populated for a demo employee identity
   // and the route itself never accepts a caller-supplied identity
   const meResponse = await meRoute.GET(new Request("http://localhost/api/me"));
   assert.equal(meResponse.status, 200);
+});
+
+
+test("UAT demo seed preserves Walking pricing and exposes Training recovery evidence", () => {
+  const sql = fs.readFileSync(new URL("../scripts/uat-demo-seed.sql", import.meta.url), "utf8");
+  assert.doesNotMatch(sql, /UPDATE canonical_bookings SET pricing_json = json_set/);
+  assert.match(sql, /INSERT OR IGNORE INTO training_session_consumptions .*UATD-TS-1/);
+  assert.match(sql, /UATD-BK-TRAIN-3/);
+  assert.match(sql, /UATD-TP-3/);
+  assert.match(sql, /UATD-TS-3/);
+  assert.match(sql, /'arrived'/);
 });
