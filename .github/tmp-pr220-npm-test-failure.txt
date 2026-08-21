@@ -1,0 +1,625 @@
+npm test exit status: 1
+
+--- extracted failure context ---
+10804:       '  badge?: string;\n' +
+10805:       '};\n' +
+10942:       '    }, 350);\n' +
+10943:       '  }\n' +
+10944:       '  async function chooseAddressSuggestion(suggestion: AddressSuggestion) {\n' +
+10945:       '    setAddressSuggestionsOpen(false);\n' +
+10946:       '    setServiceAddress(suggestion.fullText);\n' +
+10947:       '    try {\n' +
+10948:       '      const resolved = await resolveAddress(suggestion.placeId, addressSessionToken);\n' +
+10949:       '      if (resolved.status === "configured" && resolved.address) setServiceAddress(resolved.address);\n' +
+10950:       '    } catch { /* keep the suggestion text if resolving details fails */ }\n' +
+10951:       '  }\n' +
+10952:       '  function useCurrentLocation() {\n' +
+10953:       '    if (!navigator.geolocation) { setAddressLookupNote("Location is not supported on this device"); return; }\n' +
+10954:       '    setLocatingAddress(true); setAddressLookupNote(""); setAddressSuggestionsOpen(false);\n' +
+10955:       '  '... 23222 more characters
+10956:     
+10957:   code: 'ERR_ASSERTION'
+10958:   name: 'AssertionError'
+10959:   expected:
+10960:   actual: |-
+10961:     "use client";
+10962:     /* eslint-disable @next/next/no-img-element */
+10963:     
+10964:     import { FormEvent, useMemo, useRef, useState } from "react";
+10965:     import Link from "next/link";
+10966:     import TestSyncPanel from "./components/test-sync-panel";
+10967:     import { reserveUatSchedule } from "../lib/uat-scheduling-client";
+10968:     import { createCanonicalLifecycle } from "../lib/canonical-lifecycle-client";
+10969:     import { saveGroomingServiceLocation } from "../lib/grooming-location-client";
+10970:     import { searchAddresses, resolveAddress, reverseGeocodeCoordinates, type AddressSuggestion } from "../lib/address-autocomplete-client";
+10971:     import { resolveServiceCoverage } from "../lib/service-zone-client";
+10972:     import { createTestTransaction } from "../lib/test-transaction";
+10973:     import { createAddressSessionToken, groomingBookingDates, groomingSlotFitsRoster, groomingSlotWindow } from "../lib/grooming-booking-calendar";
+10974:     
+10975:     type PetType = "dog" | "cat";
+10976:     type OfferType = "regular" | "young" | "subscription";
+10977:     type Package = {
+10978:       id: string;
+10979:       name: string;
+10980:       detail: string;
+10981:       price: number;
+10982:       multiPrice?: number;
+10983:       badge?: string;
+10984:     };
+10985:     
+10986:     type SavedPet = { id: string; name: string; type: PetType; breed: string; age: string };
+10987:     type MatchedProvider = { providerId: string; displayName: string; bio: string | null; businessName: string | null; services: string[]; photoUrl: string | null; verified: boolean; memberSince: string | null; stats: { completedServices: number; happyPets: number } | null; isNewProvider: boolean };
+11121:         }, 350);
+11122:       }
+11123:       async function chooseAddressSuggestion(suggestion: AddressSuggestion) {
+11124:         setAddressSuggestionsOpen(false);
+11125:         setServiceAddress(suggestion.fullText);
+11126:         try {
+11127:           const resolved = await resolveAddress(suggestion.placeId, addressSessionToken);
+11128:           if (resolved.status === "configured" && resolved.address) setServiceAddress(resolved.address);
+11129:         } catch { /* keep the suggestion text if resolving details fails */ }
+11130:       }
+11131:       function useCurrentLocation() {
+11132:         if (!navigator.geolocation) { setAddressLookupNote("Location is not supported on this device"); return; }
+11133:         setLocatingAddress(true); setAddressLookupNote(""); setAddressSuggestionsOpen(false);
+11134:         navigator.geolocation.getCurrentPosition(async (position) => {
+11135:           try {
+11136:             const resolved = await reverseGeocodeCoordinates(position.coords.latitude, position.coords.longitude);
+11137:             if (resolved.status === "configured" && resolved.address) setServiceAddress(resolved.address);
+11138:             else setAddressLookupNote(resolved.error || "Could not determine an address for your current location");
+11139:           } catch { setAddressLookupNote("Could not determine an address for your current location"); }
+11140:           finally { setLocatingAddress(false); }
+11141:         }, (geoError) => { setLocatingAddress(false); setAddressLookupNote(geoError.message || "Location permission denied"); }, { enableHighAccuracy: true, timeout: 15000 });
+11142:       }
+11143:     
+11144:       async function finishBooking(event: FormEvent) {
+11145:         event.preventDefault();
+11146:         if (bookingSubmitting) return;
+11147:         if (selectedPetIds.length !== petCount) {
+11148:           setPetSelectionError(`Please select exactly ${petCount} ${petCount === 1 ? "pet" : "pets"} for this booking.`);
+11149:           return;
+11150:         }
+11151:         if (!selectedSlot) {
+11152:           setPetSelectionError("Please select a grooming slot before confirming.");
+11153:           return;
+11154:         }
+11155:         const normalizedCustomerName = customerName.trim();
+11156:         const normalizedSecondaryPhone = secondaryPhone.replace(/\D/g, "").slice(-10);
+11397:     Test.runInAsyncScope (node:async_hooks:211:14)
+11398:     Test.run (node:internal/test_runner/test:931:25)
+11399:     Test.processPendingSubtests (node:internal/test_runner/test:629:18)
+11400:     Test.postRun (node:internal/test_runner/test:1042:19)
+11401:     Test.run (node:internal/test_runner/test:970:12)
+11402:     async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+11403:   ...
+11404: # Subtest: public grooming entry does not advertise fabricated live capacity or capture payment
+11405: not ok 1687 - public grooming entry does not advertise fabricated live capacity or capture payment
+11406:   ---
+11407:   duration_ms: 0.602732
+11408:   location: '/home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/uat-closure-home-booking.test.mjs:21:1'
+11409:   failureType: 'testCodeFailure'
+11410:   error: |-
+11411:     The input did not match the regular expression /Capacity verified on confirmation/. Input:
+11412:     
+11413:     '"use client";\n' +
+11414:       '/* eslint-disable @next/next/no-img-element */\n' +
+11415:       '\n' +
+11416:       'import { FormEvent, useMemo, useRef, useState } from "react";\n' +
+11417:       'import Link from "next/link";\n' +
+11418:       'import TestSyncPanel from "./components/test-sync-panel";\n' +
+11419:       'import { reserveUatSchedule } from "../lib/uat-scheduling-client";\n' +
+11420:       'import { createCanonicalLifecycle } from "../lib/canonical-lifecycle-client";\n' +
+11421:       'import { saveGroomingServiceLocation } from "../lib/grooming-location-client";\n' +
+11422:       'import { searchAddresses, resolveAddress, reverseGeocodeCoordinates, type AddressSuggestion } from "../lib/address-autocomplete-client";\n' +
+11423:       'import { resolveServiceCoverage } from "../lib/service-zone-client";\n' +
+11424:       'import { createTestTransaction } from "../lib/test-transaction";\n' +
+11425:       'import { createAddressSessionToken, groomingBookingDates, groomingSlotFitsRoster, groomingSlotWindow } from "../lib/grooming-booking-calendar";\n' +
+11426:       '\n' +
+11427:       'type PetType = "dog" | "cat";\n' +
+11428:       'type OfferType = "regular" | "young" | "subscription";\n' +
+11429:       'type Package = {\n' +
+11430:       '  id: string;\n' +
+11431:       '  name: string;\n' +
+11432:       '  detail: string;\n' +
+11433:       '  price: number;\n' +
+11434:       '  multiPrice?: number;\n' +
+11435:       '  badge?: string;\n' +
+11436:       '};\n' +
+11573:       '    }, 350);\n' +
+11574:       '  }\n' +
+11575:       '  async function chooseAddressSuggestion(suggestion: AddressSuggestion) {\n' +
+11576:       '    setAddressSuggestionsOpen(false);\n' +
+11577:       '    setServiceAddress(suggestion.fullText);\n' +
+11578:       '    try {\n' +
+11579:       '      const resolved = await resolveAddress(suggestion.placeId, addressSessionToken);\n' +
+11580:       '      if (resolved.status === "configured" && resolved.address) setServiceAddress(resolved.address);\n' +
+11581:       '    } catch { /* keep the suggestion text if resolving details fails */ }\n' +
+11582:       '  }\n' +
+11583:       '  function useCurrentLocation() {\n' +
+11584:       '    if (!navigator.geolocation) { setAddressLookupNote("Location is not supported on this device"); return; }\n' +
+11585:       '    setLocatingAddress(true); setAddressLookupNote(""); setAddressSuggestionsOpen(false);\n' +
+11586:       '  '... 23222 more characters
+11587:     
+11588:   code: 'ERR_ASSERTION'
+11589:   name: 'AssertionError'
+11590:   expected:
+11591:   actual: |-
+11592:     "use client";
+11593:     /* eslint-disable @next/next/no-img-element */
+11594:     
+11595:     import { FormEvent, useMemo, useRef, useState } from "react";
+11596:     import Link from "next/link";
+11597:     import TestSyncPanel from "./components/test-sync-panel";
+11598:     import { reserveUatSchedule } from "../lib/uat-scheduling-client";
+11599:     import { createCanonicalLifecycle } from "../lib/canonical-lifecycle-client";
+11600:     import { saveGroomingServiceLocation } from "../lib/grooming-location-client";
+11601:     import { searchAddresses, resolveAddress, reverseGeocodeCoordinates, type AddressSuggestion } from "../lib/address-autocomplete-client";
+11602:     import { resolveServiceCoverage } from "../lib/service-zone-client";
+11603:     import { createTestTransaction } from "../lib/test-transaction";
+11604:     import { createAddressSessionToken, groomingBookingDates, groomingSlotFitsRoster, groomingSlotWindow } from "../lib/grooming-booking-calendar";
+11605:     
+11606:     type PetType = "dog" | "cat";
+11607:     type OfferType = "regular" | "young" | "subscription";
+11608:     type Package = {
+11609:       id: string;
+11610:       name: string;
+11611:       detail: string;
+11612:       price: number;
+11613:       multiPrice?: number;
+11614:       badge?: string;
+11615:     };
+11616:     
+11617:     type SavedPet = { id: string; name: string; type: PetType; breed: string; age: string };
+11618:     type MatchedProvider = { providerId: string; displayName: string; bio: string | null; businessName: string | null; services: string[]; photoUrl: string | null; verified: boolean; memberSince: string | null; stats: { completedServices: number; happyPets: number } | null; isNewProvider: boolean };
+11752:         }, 350);
+11753:       }
+11754:       async function chooseAddressSuggestion(suggestion: AddressSuggestion) {
+11755:         setAddressSuggestionsOpen(false);
+11756:         setServiceAddress(suggestion.fullText);
+11757:         try {
+11758:           const resolved = await resolveAddress(suggestion.placeId, addressSessionToken);
+11759:           if (resolved.status === "configured" && resolved.address) setServiceAddress(resolved.address);
+11760:         } catch { /* keep the suggestion text if resolving details fails */ }
+11761:       }
+11762:       function useCurrentLocation() {
+11763:         if (!navigator.geolocation) { setAddressLookupNote("Location is not supported on this device"); return; }
+11764:         setLocatingAddress(true); setAddressLookupNote(""); setAddressSuggestionsOpen(false);
+11765:         navigator.geolocation.getCurrentPosition(async (position) => {
+11766:           try {
+11767:             const resolved = await reverseGeocodeCoordinates(position.coords.latitude, position.coords.longitude);
+11768:             if (resolved.status === "configured" && resolved.address) setServiceAddress(resolved.address);
+11769:             else setAddressLookupNote(resolved.error || "Could not determine an address for your current location");
+11770:           } catch { setAddressLookupNote("Could not determine an address for your current location"); }
+11771:           finally { setLocatingAddress(false); }
+11772:         }, (geoError) => { setLocatingAddress(false); setAddressLookupNote(geoError.message || "Location permission denied"); }, { enableHighAccuracy: true, timeout: 15000 });
+11773:       }
+11774:     
+11775:       async function finishBooking(event: FormEvent) {
+11776:         event.preventDefault();
+11777:         if (bookingSubmitting) return;
+11778:         if (selectedPetIds.length !== petCount) {
+11779:           setPetSelectionError(`Please select exactly ${petCount} ${petCount === 1 ? "pet" : "pets"} for this booking.`);
+11780:           return;
+11781:         }
+11782:         if (!selectedSlot) {
+11783:           setPetSelectionError("Please select a grooming slot before confirming.");
+11784:           return;
+11785:         }
+11786:         const normalizedCustomerName = customerName.trim();
+11787:         const normalizedSecondaryPhone = secondaryPhone.replace(/\D/g, "").slice(-10);
+12066:   ...
+12067: # (node:5687) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+12068: # (Use `node --trace-warnings ...` to show where the warning was created)
+12069: # Subtest: embedded walking and taxi resolve a six-digit service PIN before scheduling
+12070: ok 1694 - embedded walking and taxi resolve a six-digit service PIN before scheduling
+12071:   ---
+12072:   duration_ms: 2.833064
+12073:   ...
+12074: # Subtest: standalone Walking and Taxi also fail closed through the governed service PIN
+12075: ok 1695 - standalone Walking and Taxi also fail closed through the governed service PIN
+12076:   ---
+12077:   duration_ms: 0.416527
+12078:   ...
+12079: # Subtest: embedded training uses resolved coverage and never marks an unverified payment captured
+12080: ok 1696 - embedded training uses resolved coverage and never marks an unverified payment captured
+12081:   ---
+12082:   duration_ms: 0.457667
+12083:   ...
+12084: # Subtest: food catalogue and quote use PIN-resolved coverage without live inventory claims
+12085: ok 1697 - food catalogue and quote use PIN-resolved coverage without live inventory claims
+12086:   ---
+12087:   duration_ms: 0.500601
+12088:   ...
+12089: # Subtest: customer Activity renders canonical account bookings instead of dated demo cards
+12090: ok 1698 - customer Activity renders canonical account bookings instead of dated demo cards
+12091:   ---
+12092:   duration_ms: 0.334586
+12093:   ...
+12094: # Subtest: service cards do not advertise live GPS or tracking that UAT has not activated
+12095: ok 1699 - service cards do not advertise live GPS or tracking that UAT has not activated
+12096:   ---
+12097:   duration_ms: 1.433081
+12098:   ...
+12099: # (node:5693) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+12100: # (Use `node --trace-warnings ...` to show where the warning was created)
+12101: # (node:5693) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+12102: # (node:5693) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+12404:   ---
+12405:   duration_ms: 26.538437
+12406:   ...
+12407: # Subtest: a duplicate webhook creates no duplicate subscription and no duplicate sessions
+12408: ok 1756 - a duplicate webhook creates no duplicate subscription and no duplicate sessions
+12409:   ---
+12410:   duration_ms: 8.636536
+12411:   ...
+12412: # Subtest: a verified payment failure leaves no usable subscription credits
+12413: ok 1757 - a verified payment failure leaves no usable subscription credits
+12414:   ---
+12415:   duration_ms: 6.974671
+12416:   ...
+12417: # Subtest: sandbox/UAT behaviour is unchanged and explicitly environment-gated
+12418: ok 1758 - sandbox/UAT behaviour is unchanged and explicitly environment-gated
+12419:   ---
+12420:   duration_ms: 6.024749
+12421:   ...
+12422: # Subtest: LIVE: an arbitrary/unsupported method + submitted captured fails closed, even for a superuser
+12423: ok 1759 - LIVE: an arbitrary/unsupported method + submitted captured fails closed, even for a superuser
+12424:   ---
+12425:   duration_ms: 3.225057
+12426:   ...
+12427: # Subtest: LIVE: the authorized offline path (cash + payments.manage) keeps captured
+12428: ok 1760 - LIVE: the authorized offline path (cash + payments.manage) keeps captured
+12429:   ---
+12430:   duration_ms: 10.013752
+12431:   ...
+12432: # Subtest: LIVE: the SAME cash capture is demoted for a caller without payments.manage — authorization decides, not the method
+12433: ok 1761 - LIVE: the SAME cash capture is demoted for a caller without payments.manage — authorization decides, not the method
+12434:   ---
+12435:   duration_ms: 6.674887
+12436:   ...
+12437: # Subtest: retry: a transiently failed activation is repaired by EXACT-eventId gateway redelivery, exactly once, with no money recounted
+12438: ok 1762 - retry: a transiently failed activation is repaired by EXACT-eventId gateway redelivery, exactly once, with no money recounted
+12439:   ---
+12440:   duration_ms: 11.0927
+12441:   ...
+12442: # Subtest: retry: a fresh notification for the SAME underlying capture also repairs the entitlement, without increasing captured_amount
+12443: ok 1763 - retry: a fresh notification for the SAME underlying capture also repairs the entitlement, without increasing captured_amount
+12444:   ---
+12445:   duration_ms: 8.845146
+12446:   ...
+12447: # Subtest: retry: a transiently failed payment-failure close is repaired by EXACT-eventId redelivery, leaving zero usable credits
+12448: ok 1764 - retry: a transiently failed payment-failure close is repaired by EXACT-eventId redelivery, leaving zero usable credits
+12449:   ---
+12450:   duration_ms: 9.051677
+12451:   ...
+12452: # (node:5790) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+12453: # (Use `node --trace-warnings ...` to show where the warning was created)
+12454: # Subtest: first-party voice runs on Cloudflare Workers AI, fail-closed on the env.AI binding
+12455: ok 1765 - first-party voice runs on Cloudflare Workers AI, fail-closed on the env.AI binding
+12456:   ---
+12457:   duration_ms: 0.933492
+12458:   ...
+12459: # Subtest: the unified selector prefers our own Workers AI engine, with self-hosted fallback
+12460: ok 1766 - the unified selector prefers our own Workers AI engine, with self-hosted fallback
+12461:   ---
+12462:   duration_ms: 0.172936
+12463:   ...
+12464: # Subtest: the in-app voice-speech route is fail-closed and permission-gated
+12465: ok 1767 - the in-app voice-speech route is fail-closed and permission-gated
+12466:   ---
+12467:   duration_ms: 0.146276
+12468:   ...
+12469: # (node:5801) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+12470: # (Use `node --trace-warnings ...` to show where the warning was created)
+12471: # Subtest: Dog Walking closes one canonical customer to walker to Ops to Finance path
+12472: ok 1768 - Dog Walking closes one canonical customer to walker to Ops to Finance path
+12473:   ---
+12474:   duration_ms: 5.930684
+12475:   ...
+12476: # Subtest: Dog Walking completion is server-gated by canonical route evidence
+12477: ok 1769 - Dog Walking completion is server-gated by canonical route evidence
+12478:   ---
+12479:   duration_ms: 2.095554
+12480:   ...
+12481: # Subtest: Dog Walking customer confirmation reaches canonical management
+12482: ok 1770 - Dog Walking customer confirmation reaches canonical management
+12483:   ---
+12484:   duration_ms: 1.326836
+12485:   ...
+12486: # Subtest: Dog Walking recovery acceptance is explicit and preserves completed history
+12487: ok 1771 - Dog Walking recovery acceptance is explicit and preserves completed history
+12488:   ---
+12489:   duration_ms: 1.396138
+12490:   ...
+12491: # Subtest: Dog Walking gateway routes every gate to the correct authority
+12492: ok 1772 - Dog Walking gateway routes every gate to the correct authority
+12556:   ---
+12557:   duration_ms: 0.743671
+12558:   ...
+12559: # Subtest: real execution: reserveWalkingSchedule sends the dog_walking scheduling contract and maps the walker rating
+12560: ok 1785 - real execution: reserveWalkingSchedule sends the dog_walking scheduling contract and maps the walker rating
+12561:   ---
+12562:   duration_ms: 6.729337
+12563:   ...
+12564: # Subtest: real execution: reserveWalkingSchedule fails loudly when no walker is assigned, and hides an absent rating
+12565: ok 1786 - real execution: reserveWalkingSchedule fails loudly when no walker is assigned, and hides an absent rating
+12566:   ---
+12567:   duration_ms: 3.98346
+12568:   ...
+12569: # (node:5823) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+12570: # (Use `node --trace-warnings ...` to show where the warning was created)
+12571: # Subtest: Dog Walking Gate 1 extends the shared scheduler instead of creating a separate allocator
+12572: ok 1787 - Dog Walking Gate 1 extends the shared scheduler instead of creating a separate allocator
+12573:   ---
+12574:   duration_ms: 7.741681
+12575:   ...
+12576: # Subtest: Dog Walking provider capacity is governed by the existing provider model
+12577: ok 1788 - Dog Walking provider capacity is governed by the existing provider model
+12578:   ---
+12579:   duration_ms: 1.349679
+12580:   ...
+12581: # Subtest: Dog Walking commercial truth is server-owned and bounded
+12582: ok 1789 - Dog Walking commercial truth is server-owned and bounded
+12583:   ---
+12584:   duration_ms: 2.578338
+12585:   ...
+12586: # Subtest: Dog Walking quote binds scheduling shape and normalizes timestamp instants
+12587: ok 1790 - Dog Walking quote binds scheduling shape and normalizes timestamp instants
+12588:   ---
+12589:   duration_ms: 1.952638
+12590:   ...
+12591: # Subtest: Dog Walking booking creates one canonical bundle plus one row per reserved walk
+12592: ok 1791 - Dog Walking booking creates one canonical bundle plus one row per reserved walk
+12621:   duration_ms: 1.177654
+12622:   ...
+12623: # Subtest: Dog Walking Gate 2 restricts lifecycle events and leaves evidence to proof governance
+12624: ok 1797 - Dog Walking Gate 2 restricts lifecycle events and leaves evidence to proof governance
+12625:   ---
+12626:   duration_ms: 0.995054
+12627:   ...
+12628: # Subtest: Dog Walking completion creates a payment-due event instead of fake capture
+12629: not ok 1798 - Dog Walking completion creates a payment-due event instead of fake capture
+12630:   ---
+12631:   duration_ms: 2.438947
+12632:   location: '/home/runner/work/pawspace-tech-platform/pawspace-tech-platform/tests/walking-gate2.test.mjs:12:1'
+12633:   failureType: 'testCodeFailure'
+12634:   error: |-
+12635:     The input did not match the regular expression /status='due'/. Input:
+12636:     
+12637:     'import{ensureWalkingGovernanceTables}from"./walking-governance";\n' +
+12638:       '\n' +
+12639:       'type Row=Record<string,unknown>;\n' +
+12640:       'export type WalkingAction="accept"|"decline"|"confirm_handover"|"start_walk"|"walk_event"|"complete_walk"|"walker_unavailable"|"no_show";\n' +
+12641:       'export type WalkingMutation={bookingId:string;action:WalkingAction;actorId:string;idempotencyKey:string;sessionId?:string;reason?:string;handoverMethod?:"owner"|"building_staff"|"secure_key";walkEventType?:string;detail?:Record<string,unknown>};\n' +
+12642:       'const parse=<T>(value:unknown,fallback:T):T=>{try{return JSON.parse(String(value??"")) as T}catch{return fallback}};\n' +
+12643:       'export function walkingPerSessionAmount(pricing:Record<string,unknown>|null|undefined,totalAmount:unknown,sessionCount:unknown){const configured=Number(pricing?.perWalkAmount||0),configuredPaise=Math.round(configured*100);if(Number.isFinite(configured)&&configured>0&&Number.isSafeInteger(configuredPaise)&&Math.abs(configured*100-configuredPaise)<1e-9)return configuredPaise/100;if(pricing?.demoSeed===true){const total=Number(totalAmount),count=Number(sessionCount),totalPaise=Math.round(total*100);if(Number.isFinite(total)&&total>0&&Number.isSafeInteger(totalPaise)&&Math.abs(total*100-totalPaise)<1e-9&&Number.isInteger(count)&&count>0&&totalPaise%count===0)return totalPaise/count/100}return 0}\n' +
+12644:       '\n' +
+12645:       'export async function ensureWalkingLifecycleTables(db:D1Database){await ensureWalkingGovernanceTables(db);await db.batch([\n' +
+12646:       ' db.prepare("CREATE TABLE IF NOT EXISTS walking_action_keys (idempotency_key TEXT PRIMARY KEY,booking_id TEXT NOT NULL,action TEXT NOT NULL,result_json TEXT NOT NULL,created_at INTEGER NOT NULL)"),\n' +
+12647:       ` db.prepare("CREATE TABLE IF NOT EXISTS walking_session_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,session_id TEXT,provider_id TEXT NOT NULL,event_type TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),\n` +
+12648:       ' db.prepare("CREATE INDEX IF NOT EXISTS idx_walking_events_booking ON walking_session_events(booking_id,created_at)"),\n' +
+12649:       ` db.prepare("CREATE TABLE IF NOT EXISTS walking_handover_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,session_id TEXT NOT NULL UNIQUE,provider_id TEXT NOT NULL,method TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'confirmed',detail_json TEXT NOT NULL DEFAULT '{}',confirmed_by TEXT NOT NULL,confirmed_at INTEGER NOT NULL)"),\n` +
+12650:       ` db.prepare("CREATE TABLE IF NOT EXISTS walking_recovery_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,failed_session_id TEXT,failed_provider_id TEXT NOT NULL,reason_code TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'ops_escalation',replacement_provider_id TEXT,detail_json TEXT NOT NULL DEFAULT '{}',opened_at INTEGER NOT NULL,resolved_at INTEGER,updated_at INTEGER NOT NULL)"),\n` +
+12651:       ` db.prepare("CREATE TABLE IF NOT EXISTS walking_customer_notifications (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,customer_id TEXT,channel TEXT NOT NULL,template_code TEXT NOT NULL,message TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',event_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),\n` +
+12652:       ` db.prepare("CREATE TABLE IF NOT EXISTS walking_session_payment_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,session_id TEXT NOT NULL UNIQUE,amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',status TEXT NOT NULL DEFAULT 'due',gateway TEXT NOT NULL DEFAULT 'uat_sandbox',reference TEXT,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),\n` +
+12653:       ']);}\n' +
+12654:       `async function bookingRow(db:D1Database,bookingId:string){await ensureWalkingLifecycleTables(db);return db.prepare("SELECT b.*,w.status work_order_status,w.provider_id work_order_provider_id,w.provider_name,p.status payment_status,p.amount payment_amount,p.amount_due_now FROM canonical_bookings b LEFT JOIN provider_work_orders w ON w.booking_id=b.id LEFT JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=? AND b.service_code='dog_walking'").bind(bookingId).first<Row>();}\n` +
+12655:       'export async function getWalkingBooking(db:D1Database,bookingId:string){return bookingRow(db,bookingId)}\n' +
+12656:       'async function sessionRow(db:D1Database,bookingId:string,sessionId:string){return db.prepare("SELECT * FROM walking_sessions WHERE id=? AND booking_id=?").bind(sessionId,bookingId).first<Row>()}\n' +
+12657:       'async function event(db:D1Database,booking:Row,sessionId:string|null,eventType:string,actorId:string,detail:unknown={}){const id=crypto.randomUUID();await db.prepare("INSERT INTO walking_session_events (id,booking_id,session_id,provider_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(id,booking.id,sessionId,booking.provider_id,eventType,actorId,JSON.stringify(detail),Date.now()).run();return id}\n' +
+12658:       `async function notify(db:D1Database,booking:Row,eventId:string,message:string){for(const channel of["push","whatsapp"])await db.prepare("INSERT INTO walking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) VALUES (?,?,?,?,?,?, 'queued',?,?)").bind(crypto.randomUUID(),booking.id,booking.customer_id,channel,"walking_update",message,eventId,Date.now()).run()}\n` +
+12659:       'async function prior(db:D1Database,key:string){const row=await db.prepare("SELECT result_json FROM walking_action_keys WHERE idempotency_key=?").bind(key).first<Row>();return row?parse<Record<string,unknown>>(row.result_json,{}):null}\n' +
+12660:       'async function remember(db:D1Database,input:WalkingMutation,result:unknown){await db.prepare("INSERT INTO walking_action_keys (idempotency_key,booking_id,action,result_json,created_at) VALUES (?,?,?,?,?)").bind(input.idempotencyKey,input.bookingId,input.action,JSON.stringify(result),Date.now()).run();return result}\n' +
+12661:       '\n' +
+12662:       'export async function listWalkingBookings(db:D1Database,input:{providerId?:string;customerId?:string;bookingId?:string}){await ensureWalkingLifecycleTables(db);const where=["b.service_code=\'dog_walking\'"],binds:unknown[]=[];if(input.providerId){where.push("b.provider_id=?");binds.push(input.providerId)}if(input.customerId){where.push("b.customer_id=?");binds.push(input.customerId)}if(input.bookingId){where.push("b.id=?");binds.push(input.bookingId)}const rows=await db.prepare(`SELECT b.*,w.status work_order_status,w.provider_name,p.status payment_status,p.amount payment_amount FROM canonical_bookings b LEFT JOIN provider_work_orders w ON w.booking_id=b.id LEFT JOIN booking_payments p ON p.booking_id=b.id WHERE ${where.join(" AND ")} ORDER BY b.scheduled_start DESC`).bind(...binds).all<Row>(),out=[];for(const booking of rows.results){const[sessions,events,recovery,payments]=await Promise.all([db.prepare("SELECT * FROM walking_sessions WHERE booking_id=? ORDER BY occurrence_number").bind(booking.id).all<Row>(),db.prepare("SELECT * FROM walking_session_events WHERE booking_id=? ORDER BY created_at DESC LIMIT 50").bind(booking.id).all<Row>(),db.prepare("SELECT * FROM walking_recovery_cases WHERE booking_id=? ORDER BY opened_at DESC LIMIT 1").bind(booking.id).first<Row>(),db.prepare("SELECT * FROM walking_session_payment_events WHERE booking_id=? ORDER BY created_at DESC").bind(booking.id).all<Row>()]);out.push({...booking,sessions:sessions.results,events:events.results.map(item=>({...item,detail:parse(item.detail_json,{})})),recovery:recovery??null,sessionPayments:payments.results})}return out}\n' +
+12663:       '\n' +
+12664:       'export async function mutateWalkingBooking(db:D1Database,input:WalkingMutation){if(!input.bookingId||!input.action||!input.actorId||!input.idempotencyKey)throw new Response("Booking, action, actor and idempotency key are required",{status:400});await ensureWalkingLifecycleTables(db);const old=await prior(db,input.idempotencyKey);if(old)return{...old,duplicatePrevented:true};const booking=await bookingRow(db,input.bookingId);if(!booking)throw new Response("Dog Walking booking not found",{status:404});const now=Date.now(),bookingStatus=String(booking.status),groupId=String(booking.schedule_group_id||"");\n' +
+12665:       ' if(input.action==="accept"){\n' +
+12666:       '  // Replacement offers (reassignment_offered) must go through acceptWalkingReplacement, which\n' +
+12667:       '  // verifies recovery case, sessions and reservations and marks the case replacement_accepted.\n' +
+12668:       `  if(bookingStatus!=="confirmed")throw new Response("Dog Walking booking is not awaiting walker acceptance",{status:409});if(String(booking.provider_id)!==String(booking.work_order_provider_id))throw new Response("Walker no longer matches the canonical work order",{status:409});const offer=await db.prepare("SELECT * FROM provider_assignment_offers WHERE group_id=?").bind(groupId).first<Row>();if(offer){if(String(offer.provider_id)!==String(booking.provider_id)||String(offer.status)!=="pending")throw new Response("No pending walker offer is available",{status:409});if(Number(offer.expires_at)<now)throw new Response("Walker acceptance offer expired; Operations recovery is required",{status:409})}const statements=[db.prepare("UPDATE canonical_bookings SET status='assigned',updated_at=? WHERE id=?").bind(now,booking.id),db.prepare("UPDATE provider_work_orders SET status='accepted',updated_at=? WHERE booking_id=?").bind(now,booking.id)];if(offer)statements.push(db.prepare("UPDATE provider_assignment_offers SET status='accepted',responded_at=?,response_reason='Accepted in Walker workspace',updated_at=? WHERE group_id=?").bind(now,now,groupId));await db.batch(statements);const eventId=await event(db,booking,null,"walker_accepted",input.actorId,{providerId:booking.provider_id,walkCount:parse<Record<string,unknown>>(booking.pricing_json,{}).walkCount});await notify(db,booking,eventId,"Your PawSpace walker accepted the canonical walk schedule. The booking ID and reserved walk times are unchanged.");return remember(db,input,{bookingId:booking.id,status:"assigned",providerId:booking.provider_id})\n` +
+12669:       ' }\n' +
+12670:       ' if(input.action==="decline"||input.action==="walker_unavailable"||input.action==="no_show"){\n' +
+12671:       '  const reason=String(input.reason||"").trim();if(reason.length<3)throw new Response("A Dog Walking recovery reason is required",{status:400});const failedSessionId=String(input.sessionId||"").trim()||null;if(failedSessionId&&!aw'... 9721 more characters
+12672:     
+12673:   code: 'ERR_ASSERTION'
+12674:   name: 'AssertionError'
+12675:   expected:
+12676:   actual: |-
+12677:     import{ensureWalkingGovernanceTables}from"./walking-governance";
+12678:     
+12679:     type Row=Record<string,unknown>;
+12680:     export type WalkingAction="accept"|"decline"|"confirm_handover"|"start_walk"|"walk_event"|"complete_walk"|"walker_unavailable"|"no_show";
+12681:     export type WalkingMutation={bookingId:string;action:WalkingAction;actorId:string;idempotencyKey:string;sessionId?:string;reason?:string;handoverMethod?:"owner"|"building_staff"|"secure_key";walkEventType?:string;detail?:Record<string,unknown>};
+12682:     const parse=<T>(value:unknown,fallback:T):T=>{try{return JSON.parse(String(value??"")) as T}catch{return fallback}};
+12683:     export function walkingPerSessionAmount(pricing:Record<string,unknown>|null|undefined,totalAmount:unknown,sessionCount:unknown){const configured=Number(pricing?.perWalkAmount||0),configuredPaise=Math.round(configured*100);if(Number.isFinite(configured)&&configured>0&&Number.isSafeInteger(configuredPaise)&&Math.abs(configured*100-configuredPaise)<1e-9)return configuredPaise/100;if(pricing?.demoSeed===true){const total=Number(totalAmount),count=Number(sessionCount),totalPaise=Math.round(total*100);if(Number.isFinite(total)&&total>0&&Number.isSafeInteger(totalPaise)&&Math.abs(total*100-totalPaise)<1e-9&&Number.isInteger(count)&&count>0&&totalPaise%count===0)return totalPaise/count/100}return 0}
+12684:     
+12685:     export async function ensureWalkingLifecycleTables(db:D1Database){await ensureWalkingGovernanceTables(db);await db.batch([
+12686:      db.prepare("CREATE TABLE IF NOT EXISTS walking_action_keys (idempotency_key TEXT PRIMARY KEY,booking_id TEXT NOT NULL,action TEXT NOT NULL,result_json TEXT NOT NULL,created_at INTEGER NOT NULL)"),
+12687:      db.prepare("CREATE TABLE IF NOT EXISTS walking_session_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,session_id TEXT,provider_id TEXT NOT NULL,event_type TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),
+12688:      db.prepare("CREATE INDEX IF NOT EXISTS idx_walking_events_booking ON walking_session_events(booking_id,created_at)"),
+12689:      db.prepare("CREATE TABLE IF NOT EXISTS walking_handover_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,session_id TEXT NOT NULL UNIQUE,provider_id TEXT NOT NULL,method TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'confirmed',detail_json TEXT NOT NULL DEFAULT '{}',confirmed_by TEXT NOT NULL,confirmed_at INTEGER NOT NULL)"),
+12690:      db.prepare("CREATE TABLE IF NOT EXISTS walking_recovery_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,failed_session_id TEXT,failed_provider_id TEXT NOT NULL,reason_code TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'ops_escalation',replacement_provider_id TEXT,detail_json TEXT NOT NULL DEFAULT '{}',opened_at INTEGER NOT NULL,resolved_at INTEGER,updated_at INTEGER NOT NULL)"),
+12691:      db.prepare("CREATE TABLE IF NOT EXISTS walking_customer_notifications (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,customer_id TEXT,channel TEXT NOT NULL,template_code TEXT NOT NULL,message TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',event_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
+12692:      db.prepare("CREATE TABLE IF NOT EXISTS walking_session_payment_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,session_id TEXT NOT NULL UNIQUE,amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',status TEXT NOT NULL DEFAULT 'due',gateway TEXT NOT NULL DEFAULT 'uat_sandbox',reference TEXT,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+12693:     ]);}
+12694:     async function bookingRow(db:D1Database,bookingId:string){await ensureWalkingLifecycleTables(db);return db.prepare("SELECT b.*,w.status work_order_status,w.provider_id work_order_provider_id,w.provider_name,p.status payment_status,p.amount payment_amount,p.amount_due_now FROM canonical_bookings b LEFT JOIN provider_work_orders w ON w.booking_id=b.id LEFT JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=? AND b.service_code='dog_walking'").bind(bookingId).first<Row>();}
+12695:     export async function getWalkingBooking(db:D1Database,bookingId:string){return bookingRow(db,bookingId)}
+12696:     async function sessionRow(db:D1Database,bookingId:string,sessionId:string){return db.prepare("SELECT * FROM walking_sessions WHERE id=? AND booking_id=?").bind(sessionId,bookingId).first<Row>()}
+12697:     async function event(db:D1Database,booking:Row,sessionId:string|null,eventType:string,actorId:string,detail:unknown={}){const id=crypto.randomUUID();await db.prepare("INSERT INTO walking_session_events (id,booking_id,session_id,provider_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(id,booking.id,sessionId,booking.provider_id,eventType,actorId,JSON.stringify(detail),Date.now()).run();return id}
+12698:     async function notify(db:D1Database,booking:Row,eventId:string,message:string){for(const channel of["push","whatsapp"])await db.prepare("INSERT INTO walking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) VALUES (?,?,?,?,?,?, 'queued',?,?)").bind(crypto.randomUUID(),booking.id,booking.customer_id,channel,"walking_update",message,eventId,Date.now()).run()}
+12699:     async function prior(db:D1Database,key:string){const row=await db.prepare("SELECT result_json FROM walking_action_keys WHERE idempotency_key=?").bind(key).first<Row>();return row?parse<Record<string,unknown>>(row.result_json,{}):null}
+12700:     async function remember(db:D1Database,input:WalkingMutation,result:unknown){await db.prepare("INSERT INTO walking_action_keys (idempotency_key,booking_id,action,result_json,created_at) VALUES (?,?,?,?,?)").bind(input.idempotencyKey,input.bookingId,input.action,JSON.stringify(result),Date.now()).run();return result}
+12701:     
+12702:     export async function listWalkingBookings(db:D1Database,input:{providerId?:string;customerId?:string;bookingId?:string}){await ensureWalkingLifecycleTables(db);const where=["b.service_code='dog_walking'"],binds:unknown[]=[];if(input.providerId){where.push("b.provider_id=?");binds.push(input.providerId)}if(input.customerId){where.push("b.customer_id=?");binds.push(input.customerId)}if(input.bookingId){where.push("b.id=?");binds.push(input.bookingId)}const rows=await db.prepare(`SELECT b.*,w.status work_order_status,w.provider_name,p.status payment_status,p.amount payment_amount FROM canonical_bookings b LEFT JOIN provider_work_orders w ON w.booking_id=b.id LEFT JOIN booking_payments p ON p.booking_id=b.id WHERE ${where.join(" AND ")} ORDER BY b.scheduled_start DESC`).bind(...binds).all<Row>(),out=[];for(const booking of rows.results){const[sessions,events,recovery,payments]=await Promise.all([db.prepare("SELECT * FROM walking_sessions WHERE booking_id=? ORDER BY occurrence_number").bind(booking.id).all<Row>(),db.prepare("SELECT * FROM walking_session_events WHERE booking_id=? ORDER BY created_at DESC LIMIT 50").bind(booking.id).all<Row>(),db.prepare("SELECT * FROM walking_recovery_cases WHERE booking_id=? ORDER BY opened_at DESC LIMIT 1").bind(booking.id).first<Row>(),db.prepare("SELECT * FROM walking_session_payment_events WHERE booking_id=? ORDER BY created_at DESC").bind(booking.id).all<Row>()]);out.push({...booking,sessions:sessions.results,events:events.results.map(item=>({...item,detail:parse(item.detail_json,{})})),recovery:recovery??null,sessionPayments:payments.results})}return out}
+12703:     
+12704:     export async function mutateWalkingBooking(db:D1Database,input:WalkingMutation){if(!input.bookingId||!input.action||!input.actorId||!input.idempotencyKey)throw new Response("Booking, action, actor and idempotency key are required",{status:400});await ensureWalkingLifecycleTables(db);const old=await prior(db,input.idempotencyKey);if(old)return{...old,duplicatePrevented:true};const booking=await bookingRow(db,input.bookingId);if(!booking)throw new Response("Dog Walking booking not found",{status:404});const now=Date.now(),bookingStatus=String(booking.status),groupId=String(booking.schedule_group_id||"");
+12705:      if(input.action==="accept"){
+12706:       // Replacement offers (reassignment_offered) must go through acceptWalkingReplacement, which
+12707:       // verifies recovery case, sessions and reservations and marks the case replacement_accepted.
+12708:       if(bookingStatus!=="confirmed")throw new Response("Dog Walking booking is not awaiting walker acceptance",{status:409});if(String(booking.provider_id)!==String(booking.work_order_provider_id))throw new Response("Walker no longer matches the canonical work order",{status:409});const offer=await db.prepare("SELECT * FROM provider_assignment_offers WHERE group_id=?").bind(groupId).first<Row>();if(offer){if(String(offer.provider_id)!==String(booking.provider_id)||String(offer.status)!=="pending")throw new Response("No pending walker offer is available",{status:409});if(Number(offer.expires_at)<now)throw new Response("Walker acceptance offer expired; Operations recovery is required",{status:409})}const statements=[db.prepare("UPDATE canonical_bookings SET status='assigned',updated_at=? WHERE id=?").bind(now,booking.id),db.prepare("UPDATE provider_work_orders SET status='accepted',updated_at=? WHERE booking_id=?").bind(now,booking.id)];if(offer)statements.push(db.prepare("UPDATE provider_assignment_offers SET status='accepted',responded_at=?,response_reason='Accepted in Walker workspace',updated_at=? WHERE group_id=?").bind(now,now,groupId));await db.batch(statements);const eventId=await event(db,booking,null,"walker_accepted",input.actorId,{providerId:booking.provider_id,walkCount:parse<Record<string,unknown>>(booking.pricing_json,{}).walkCount});await notify(db,booking,eventId,"Your PawSpace walker accepted the canonical walk schedule. The booking ID and reserved walk times are unchanged.");return remember(db,input,{bookingId:booking.id,status:"assigned",providerId:booking.provider_id})
+12709:      }
+12710:      if(input.action==="decline"||input.action==="walker_unavailable"||input.action==="no_show"){
+12711:       const reason=String(input.reason||"").trim();if(reason.length<3)throw new Response("A Dog Walking recovery reason is required",{status:400});const failedSessionId=String(input.sessionId||"").trim()||null;if(failedSessionId&&!await sessionRow(db,input.bookingId,failedSessionId))throw new Response("Dog Walking session not found",{status:404});const recoveryId=crypto.randomUUID();await db.batch([db.prepare("UPDATE canonical_bookings SET status='reassignment_needed',updated_at=? WHERE id=?").bind(now,booking.id),db.prepare("UPDATE provider_work_orders SET status='recovery_pending',updated_at=? WHERE booking_id=?").bind(now,booking.id),db.prepare("UPDATE walking_sessions SET status='recovery_pending',handover_status='pending',updated_at=? WHERE booking_id=? AND status NOT IN ('completed','cancelled')").bind(now,booking.id),db.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=? AND status NOT IN ('completed','cancelled')").bind(groupId),db.prepare("UPDATE scheduling_assignment_decisions SET status='reassignment_needed',actor_id=?,reason=?,updated_at=? WHERE group_id=?").bind(input.actorId,reason,now,groupId),db.prepare("UPDATE provider_assignment_offers SET status=?,responded_at=?,response_reason=?,updated_at=? WHERE group_id=? AND status='pending'").bind(input.action==="decline"?"declined":"cancelled",now,reason,now,groupId),db.prepare("INSERT INTO walking_recovery_cases (id,booking_id,failed_session_id,failed_provider_id,reason_code,status,replacement_provider_id,detail_json,opened_at,resolved_at,updated_at) VALUES (?,?,?,?,?,'ops_escalation',NULL,?,?,NULL,?)").bind(recoveryId,booking.id,failedSessionId,booking.provider_id,input.action,JSON.stringify({reason,bookingPreserved:true,completedSessionsPreserved:true}),now,now)]);const eventId=await event(db,booking,failedSessionId,`walker_${input.action}`,input.actorId,{reason,recoveryId,bookingPreserved:true});await notify(db,booking,eventId,"Your Dog Walking schedule needs walker recovery. PawSpace Operations is protecting the same booking and completed walks while a replacement is arranged.");return remember(db,input,{bookingId:booking.id,status:"ops_escalation",recoveryId,bookingPreserved:true})
+12712:      }
+12713:      const sessionId=String(input.sessionId||"").trim();if(!sessionId)throw new Response("Dog Walking session ID is required",{status:400});const session=await sessionRow(db,input.bookingId,sessionId);if(!session)throw new Response("Dog Walking session not found",{status:404});if(String(session.provider_id)!==String(booking.provider_id))throw new Response("Dog Walking session walker does not match the canonical booking",{status:409});const sessionStatus=String(session.status);
+12714:      if(input.action==="confirm_handover"){
+12715:       if(bookingStatus!=="assigned")throw new Response("Walker acceptance is required before handover",{status:409});if(sessionStatus!=="scheduled")throw new Response("Dog Walking session is not awaiting handover",{status:409});const method=input.handoverMethod;if(!method||!["owner","building_staff","secure_key"].includes(method))throw new Response("A governed Dog Walking handover method is required",{status:400});await db.batch([db.prepare("INSERT INTO walking_handover_events (id,booking_id,session_id,provider_id,method,status,detail_json,confirmed_by,confirmed_at) VALUES (?,?,?,?,?,'confirmed',?,?,?) ON CONFLICT(session_id) DO UPDATE SET provider_id=excluded.provider_id,method=excluded.method,status='confirmed',detail_json=excluded.detail_json,confirmed_by=excluded.confirmed_by,confirmed_at=excluded.confirmed_at").bind(crypto.randomUUID(),booking.id,session.id,booking.provider_id,method,JSON.stringify({uatAttestation:true,otpConnected:false}),input.actorId,now),db.prepare("UPDATE walking_sessions SET status='ready_to_start',handover_status='complete',updated_at=? WHERE id=?").bind(now,session.id)]);await event(db,booking,sessionId,"handover_confirmed",input.actorId,{method,uatAttestation:true,otpConnected:false});return remember(db,input,{bookingId:booking.id,sessionId,status:"ready_to_start",handoverStatus:"complete",otpConnected:false})
+12716:      }
+12717:      if(input.action==="start_walk"){
+12718:       if(bookingStatus!=="assigned")throw new Response("Canonical booking must be assigned before a walk starts",{status:409});if(sessionStatus!=="ready_to_start"||String(session.handover_status)!=="complete")throw new Response("Confirmed handover is required before a walk starts",{status:409});await db.batch([db.prepare("UPDATE walking_sessions SET status='in_progress',updated_at=? WHERE id=?").bind(now,session.id),db.prepare("UPDATE canonical_bookings SET status='in_progress',updated_at=? WHERE id=?").bind(now,booking.id)]);const eventId=await event(db,booking,sessionId,"walk_started",input.actorId,{gpsConnected:false});await notify(db,booking,eventId,"Bruno's PawSpace walk has started. GPS route proof is not connected in UAT yet.");return remember(db,input,{bookingId:booking.id,sessionId,status:"in_progress",gpsConnected:false})
+12719:      }
+12720:      if(input.action==="walk_event"){
+12721:       if(sessionStatus!=="in_progress")throw new Response("Dog Walking events can be logged only during an active walk",{status:409});const eventType=String(input.walkEventType||"").trim();if(!["pee","poop","water","general_update"].includes(eventType))throw new Response("Photo, route and incident evidence must use the governed Walking proof workflow",{status:409});const eventId=await event(db,booking,sessionId,`walk_${eventType}`,input.actorId,input.detail??{});return remember(db,input,{bookingId:booking.id,sessionId,status:"logged",eventId,eventType})
+12722:      }
+12723:      if(input.action==="complete_walk"){
+12724:       if(sessionStatus!=="in_progress")throw new Response("Only an active Dog Walking session can be completed",{status:409});const routeSamples=await db.prepare("SELECT COUNT(*) count FROM walking_session_events WHERE booking_id=? AND session_id=? AND event_type='route_location_sample'").bind(booking.id,sessionId).first<{count:number}>();if(Number(routeSamples?.count||0)<2)throw new Response("Dog Walking UAT completion requires at least two canonical sandbox route samples",{status:409});
+12725:       const pricing=parse<Record<string,unknown>>(booking.pricing_json,{}),sessionCount=await db.prepare("SELECT COUNT(*) count FROM walking_sessions WHERE booking_id=?").bind(booking.id).first<{count:number}>(),amount=walkingPerSessionAmount(pricing,booking.total_amount,sessionCount?.count);if(!Number.isFinite(amount)||amount<=0)throw new Response("Canonical per-walk amount is missing",{status:409});
+12726:       const paymentEventId=crypto.randomUUID(),eventId=crypto.randomUUID(),pushNotificationId=crypto.randomUUID(),whatsappNotificationId=crypto.randomUUID(),routeSampleCount=Number(routeSamples?.count||0);const message=`Your PawSpace walk is complete. ${amount.toLocaleString("en-IN",{style:"currency",currency:"INR"})} is due in the UAT payment ledger; no live charge was made.`;
+12727:       await db.batch([
+12728:        db.prepare("UPDATE walking_sessions SET status='completed',completion_status='complete',updated_at=? WHERE id=? AND status='in_progress'").bind(now,session.id),
+12729:        db.prepare("UPDATE scheduling_reservations SET status='completed' WHERE id=?").bind(session.reservation_id),
+12730:        db.prepare("INSERT INTO walking_session_payment_events (id,booking_id,session_id,amount,currency,status,gateway,reference,detail_json,created_at,updated_at) VALUES (?,?,?,?,'INR','due','uat_sandbox',NULL,?,?,?)").bind(paymentEventId,booking.id,session.id,amount,JSON.stringify({captureRequired:true,liveMoney:false,trigger:"canonical_walk_completion"}),now,now),
+12731:        db.prepare("UPDATE canonical_bookings SET status=CASE WHEN EXISTS (SELECT 1 FROM walking_sessions WHERE booking_id=? AND status!='completed') THEN 'assigned' ELSE 'completed' END,updated_at=? WHERE id=?").bind(booking.id,now,booking.id),
+12732:        db.prepare("UPDATE provider_work_orders SET status=CASE WHEN EXISTS (SELECT 1 FROM walking_sessions WHERE booking_id=? AND status!='completed') THEN 'accepted' ELSE 'completed' END,updated_at=? WHERE booking_id=?").bind(booking.id,now,booking.id),
+12733:        db.prepare("INSERT INTO walking_session_events (id,booking_id,session_id,provider_id,event_type,actor_id,detail_json,created_at) SELECT ?,?,?,?,?,?,json_object('paymentEventId',?,'amount',?,'paymentStatus','due','liveMoney',json('false'),'allComplete',CASE WHEN EXISTS (SELECT 1 FROM walking_sessions WHERE booking_id=? AND status!='completed') THEN json('false') ELSE json('true') END,'routeSamples',?),?").bind(eventId,booking.id,sessionId,booking.provider_id,"walk_completed",input.actorId,paymentEventId,amount,booking.id,routeSampleCount,now),
+12734:        db.prepare("INSERT INTO walking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) VALUES (?,?,?,?,?,?,'queued',?,?)").bind(pushNotificationId,booking.id,booking.customer_id,"push","walking_update",message,eventId,now),
+12735:        db.prepare("INSERT INTO walking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) VALUES (?,?,?,?,?,?,'queued',?,?)").bind(whatsappNotificationId,booking.id,booking.customer_id,"whatsapp","walking_update",message,eventId,now),
+12736:        db.prepare("INSERT INTO walking_action_keys (idempotency_key,booking_id,action,result_json,created_at) SELECT ?,?,?,json_object('bookingId',?,'sessionId',?,'status','completed','paymentEventId',?,'paymentStatus','due','amount',?,'allComplete',CASE WHEN EXISTS (SELECT 1 FROM walking_sessions WHERE booking_id=? AND status!='completed') THEN json('false') ELSE json('true') END,'liveMoney',json('false'),'routeSamples',?),?").bind(input.idempotencyKey,input.bookingId,input.action,booking.id,sessionId,paymentEventId,amount,booking.id,routeSampleCount,now),
+12737:       ]);const stored=await prior(db,input.idempotencyKey);if(!stored)throw new Response("Dog Walking completion idempotency record is missing",{status:500});return stored
+12738:      }
+12979: ok 1842 - Cash flow statement: direct method from journals, non-cash excluded, reconciled
+12980:   ---
+12981:   duration_ms: 0.121861
+12982:   ...
+12983: 1..1842
+12984: # tests 1842
+12985: # suites 0
+12986: # pass 1836
+12987: # fail 6
+12988: # cancelled 0
+12989: # skipped 0
+12990: # todo 0
+12991: # duration_ms 18601.918034
+
+--- final 120 lines ---
+12872:   duration_ms: 1.191825
+12873:   ...
+12874: # Subtest: Dog Walking Team Operations surface keeps specialist authority separate
+12875: ok 1823 - Dog Walking Team Operations surface keeps specialist authority separate
+12876:   ---
+12877:   duration_ms: 1.72156
+12878:   ...
+12879: # Subtest: Dog Walking Gate 5 is engineering closed but explicitly not production ready
+12880: ok 1824 - Dog Walking Gate 5 is engineering closed but explicitly not production ready
+12881:   ---
+12882:   duration_ms: 1.254358
+12883:   ...
+12884: # (node:5873) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+12885: # (Use `node --trace-warnings ...` to show where the warning was created)
+12886: # Subtest: Walking completion accepts only paise-safe configured pricing
+12887: ok 1825 - Walking completion accepts only paise-safe configured pricing
+12888:   ---
+12889:   duration_ms: 0.996205
+12890:   ...
+12891: # Subtest: Walking demo fallback divides only when total paise divides exactly
+12892: ok 1826 - Walking demo fallback divides only when total paise divides exactly
+12893:   ---
+12894:   duration_ms: 0.260906
+12895:   ...
+12896: # Subtest: Walking pricing parser tolerates null pricing
+12897: ok 1827 - Walking pricing parser tolerates null pricing
+12898:   ---
+12899:   duration_ms: 0.170643
+12900:   ...
+12901: # Subtest: Walking completion commits state, payment, audit, notifications and idempotency in one batch
+12902: ok 1828 - Walking completion commits state, payment, audit, notifications and idempotency in one batch
+12903:   ---
+12904:   duration_ms: 1.571728
+12905:   ...
+12906: # Subtest: Walking client rejects parsed null or non-object JSON safely
+12907: ok 1829 - Walking client rejects parsed null or non-object JSON safely
+12908:   ---
+12909:   duration_ms: 0.1894
+12910:   ...
+12911: # (node:5885) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+12912: # (Use `node --trace-warnings ...` to show where the warning was created)
+12913: # (node:5885) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+12914: # (node:5885) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+12915: # (Use `node --trace-warnings ...` to show where the warning was created)
+12916: # Subtest: full chain: walking-flow booking path -> walking_sessions -> partner job feed -> completion -> finance
+12917: ok 1830 - full chain: walking-flow booking path -> walking_sessions -> partner job feed -> completion -> finance
+12918:   ---
+12919:   duration_ms: 60.50744
+12920:   ...
+12921: # Subtest: regression: mid-programme replacement resets handover state so the replacement walker can actually walk
+12922: ok 1831 - regression: mid-programme replacement resets handover state so the replacement walker can actually walk
+12923:   ---
+12924:   duration_ms: 29.851805
+12925:   ...
+12926: # Subtest: regression: taxi driver replacement re-attributes pickup/dropoff handover to the replacement driver
+12927: ok 1832 - regression: taxi driver replacement re-attributes pickup/dropoff handover to the replacement driver
+12928:   ---
+12929:   duration_ms: 29.706956
+12930:   ...
+12931: # Subtest: taxi settlement cannot be prepared for an incomplete trip
+12932: ok 1833 - taxi settlement cannot be prepared for an incomplete trip
+12933:   ---
+12934:   duration_ms: 7.674446
+12935:   ...
+12936: # Subtest: regression: walking proof cannot be scan-approved by its submitter; incidents cannot be self-acknowledged or self-resolved
+12937: ok 1834 - regression: walking proof cannot be scan-approved by its submitter; incidents cannot be self-acknowledged or self-resolved
+12938:   ---
+12939:   duration_ms: 16.781016
+12940:   ...
+12941: # Subtest: regression: taxi proof self-approval is refused the same way
+12942: ok 1835 - regression: taxi proof self-approval is refused the same way
+12943:   ---
+12944:   duration_ms: 16.384267
+12945:   ...
+12946: # Subtest: regression: paying the preserved completed walk on a cancelled booking settles booking_payments to paid
+12947: ok 1836 - regression: paying the preserved completed walk on a cancelled booking settles booking_payments to paid
+12948:   ---
+12949:   duration_ms: 13.133222
+12950:   ...
+12951: # Subtest: walking offer expiry, no_show recovery and evidence-class walk events stay governed
+12952: ok 1837 - walking offer expiry, no_show recovery and evidence-class walk events stay governed
+12953:   ---
+12954:   duration_ms: 10.994955
+12955:   ...
+12956: # Subtest: walking and taxi routes keep per-action permission boundaries
+12957: ok 1838 - walking and taxi routes keep per-action permission boundaries
+12958:   ---
+12959:   duration_ms: 0.629722
+12960:   ...
+12961: # (node:5901) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+12962: # (Use `node --trace-warnings ...` to show where the warning was created)
+12963: # Subtest: Finance foundation: balanced, idempotent double-entry postings + cash-flow classification
+12964: ok 1839 - Finance foundation: balanced, idempotent double-entry postings + cash-flow classification
+12965:   ---
+12966:   duration_ms: 0.847446
+12967:   ...
+12968: # Subtest: PawSpace Wallet: refund/cancellation credit, 10% enhanced redemption, idempotent, owned
+12969: ok 1840 - PawSpace Wallet: refund/cancellation credit, 10% enhanced redemption, idempotent, owned
+12970:   ---
+12971:   duration_ms: 0.240877
+12972:   ...
+12973: # Subtest: Revenue recognition: subscriptions per used session, advance bookings on utilisation
+12974: ok 1841 - Revenue recognition: subscriptions per used session, advance bookings on utilisation
+12975:   ---
+12976:   duration_ms: 0.132786
+12977:   ...
+12978: # Subtest: Cash flow statement: direct method from journals, non-cash excluded, reconciled
+12979: ok 1842 - Cash flow statement: direct method from journals, non-cash excluded, reconciled
+12980:   ---
+12981:   duration_ms: 0.121861
+12982:   ...
+12983: 1..1842
+12984: # tests 1842
+12985: # suites 0
+12986: # pass 1836
+12987: # fail 6
+12988: # cancelled 0
+12989: # skipped 0
+12990: # todo 0
+12991: # duration_ms 18601.918034
