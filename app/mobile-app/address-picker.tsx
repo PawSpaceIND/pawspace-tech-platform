@@ -3,7 +3,7 @@ import{useState,useEffect}from"react";
 import{resolveServiceCoverage}from"../../lib/service-zone-client";
 
 export type Zone={zoneId:string;zoneName:string;description:string;color:string;serviceAvailable:boolean};
-export type ZoneResult={zone:Zone;assignment:{pincode:string;zoneId:string;city:string;area:string};address:string};
+export type ZoneResult={zone:Zone;assignment:{pincode:string;zoneId:string;cityId:string;city:string;area:string};address:string};
 
 const container={maxWidth:600,margin:"0 auto",padding:20,fontFamily:"system-ui",display:"grid",gap:16} as const;
 const box={background:"var(--ds-surface)",border:"1px solid var(--ds-border)",borderRadius:"var(--ds-radius-lg)",padding:16,display:"grid",gap:12} as const;
@@ -44,7 +44,7 @@ export default function AddressPicker({onZoneResolved}:{onZoneResolved?:(zone:Zo
       const coverage=await resolveServiceCoverage(pincode);
       const zone=zones.find(item=>item.zoneId===coverage.zoneId);
       if(!zone){setError("The resolved service zone is not enabled in this UAT build");return;}
-      const result:ZoneResult={zone,assignment:{pincode:coverage.pincode,zoneId:coverage.zoneId,city:coverage.city,area:coverage.area},address:address.trim()};
+      const result:ZoneResult={zone,assignment:{pincode:coverage.pincode,zoneId:coverage.zoneId,cityId:coverage.cityId,city:coverage.city,area:coverage.area},address:address.trim()};
       setResolvedZone(result);
       onZoneResolved?.(result);
     }catch(e){
