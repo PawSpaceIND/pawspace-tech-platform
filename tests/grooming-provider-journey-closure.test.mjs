@@ -105,12 +105,18 @@ async function setup() {
     .run("CUS-GROOM-1", "blr", "Ananya Sharma", "9999900601", null, "ananya@example.test", "customer_app", "{}", now, now);
   sqlite.prepare("INSERT INTO canonical_pets (id,customer_id,name,species,breed,vaccination_status,source_pet_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)")
     .run("PET-GROOM-1", "CUS-GROOM-1", "Milo", "dog", "Labrador", "vaccinated", "SRC-MILO", now, now);
-  sqlite.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-    .run("BK-GROOM-JOURNEY", "ik-groom-journey", "CUS-GROOM-1", JSON.stringify(["PET-GROOM-1"]), JSON.stringify(["SRC-MILO"]), "blr", "blr-east", "grooming", "dog-basic", "Bath & Basic", "GRP-GROOM-JOURNEY", "PRV-GROOM-A", "2026-08-22T04:30:00.000Z", "2026-08-22T06:30:00.000Z", "confirmed", "customer_app", 1899, "INR", "{}", "customer:CUS-GROOM-1", now, now);
-  sqlite.prepare("INSERT INTO provider_work_orders (id,booking_id,schedule_group_id,provider_id,provider_name,provider_model,service_code,scheduled_start,scheduled_end,occurrence_count,status,assignment_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-    .run("WO-GROOM-JOURNEY", "BK-GROOM-JOURNEY", "GRP-GROOM-JOURNEY", "PRV-GROOM-A", "Arun Groomer", "full_time", "grooming", "2026-08-22T04:30:00.000Z", "2026-08-22T06:30:00.000Z", 1, "assigned", "{}", now, now);
-  sqlite.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,amount_due_now,currency,method,mode,status,gateway,idempotency_key,detail_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-    .run("PAY-GROOM-JOURNEY", "BK-GROOM-JOURNEY", "CUS-GROOM-1", 1899, 0, "INR", "cash", "pay_after_service", "created", "uat_sandbox", "pik-groom-journey", "{}", now, now);
+
+  const insertBooking = sqlite.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  insertBooking.run("BK-GROOM-JOURNEY", "ik-groom-journey", "CUS-GROOM-1", JSON.stringify(["PET-GROOM-1"]), JSON.stringify(["SRC-MILO"]), "blr", "blr-east", "grooming", "dog-basic", "Bath & Basic", "GRP-GROOM-JOURNEY", "PRV-GROOM-A", "2026-08-22T04:30:00.000Z", "2026-08-22T06:30:00.000Z", "confirmed", "customer_app", 1899, "INR", "{}", "customer:CUS-GROOM-1", now, now);
+  insertBooking.run("BK-GROOM-OTHER", "ik-groom-other", "CUS-GROOM-1", JSON.stringify(["PET-GROOM-1"]), JSON.stringify(["SRC-MILO"]), "blr", "blr-east", "grooming", "dog-basic", "Bath & Basic", "GRP-GROOM-OTHER", "PRV-GROOM-B", "2026-08-22T07:30:00.000Z", "2026-08-22T09:30:00.000Z", "confirmed", "customer_app", 1899, "INR", "{}", "customer:CUS-GROOM-1", now, now);
+
+  const insertWork = sqlite.prepare("INSERT INTO provider_work_orders (id,booking_id,schedule_group_id,provider_id,provider_name,provider_model,service_code,scheduled_start,scheduled_end,occurrence_count,status,assignment_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  insertWork.run("WO-GROOM-JOURNEY", "BK-GROOM-JOURNEY", "GRP-GROOM-JOURNEY", "PRV-GROOM-A", "Arun Groomer", "full_time", "grooming", "2026-08-22T04:30:00.000Z", "2026-08-22T06:30:00.000Z", 1, "assigned", "{}", now, now);
+  insertWork.run("WO-GROOM-OTHER", "BK-GROOM-OTHER", "GRP-GROOM-OTHER", "PRV-GROOM-B", "Bala Groomer", "full_time", "grooming", "2026-08-22T07:30:00.000Z", "2026-08-22T09:30:00.000Z", 1, "assigned", "{}", now, now);
+
+  const insertPayment = sqlite.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,amount_due_now,currency,method,mode,status,gateway,idempotency_key,detail_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+  insertPayment.run("PAY-GROOM-JOURNEY", "BK-GROOM-JOURNEY", "CUS-GROOM-1", 1899, 0, "INR", "cash", "pay_after_service", "created", "uat_sandbox", "pik-groom-journey", "{}", now, now);
+  insertPayment.run("PAY-GROOM-OTHER", "BK-GROOM-OTHER", "CUS-GROOM-1", 1899, 0, "INR", "cash", "pay_after_service", "created", "uat_sandbox", "pik-groom-other", "{}", now, now);
 
   return { sqlite, db };
 }
@@ -140,11 +146,14 @@ test("authenticated groomer sees the correct assigned booking with minimized cus
   assert.equal(result.body.jobs.length, 1);
   assert.equal(result.body.jobs[0].bookingId, "BK-GROOM-JOURNEY");
   assert.equal(result.body.jobs[0].providerId, "PRV-GROOM-A");
+  assert.equal(result.body.jobs.some((job) => job.bookingId === "BK-GROOM-OTHER"), false, "provider A must never receive provider B's booking");
   assert.equal(result.body.jobs[0].customer.name, "Ananya");
   assert.equal(result.body.jobs[0].customer.maskedPhone, "+91 ••••••0601");
   assert.equal(result.body.jobs[0].pets[0].name, "Milo");
-  assert.equal(JSON.stringify(result.body).includes("9999900601"), false, "raw customer phone must not reach the provider payload");
-  assert.equal(JSON.stringify(result.body).includes("Ananya Sharma"), false, "full customer name must not reach the provider payload");
+  const serialized = JSON.stringify(result.body);
+  assert.equal(serialized.includes("9999900601"), false, "raw customer phone must not reach the provider payload");
+  assert.equal(serialized.includes("Ananya Sharma"), false, "full customer name must not reach the provider payload");
+  assert.equal(serialized.includes("ananya@example.test"), false, "customer email must not reach the provider payload");
 });
 
 test("authenticated groomer can accept, start journey, arrive, and start service with synchronized canonical state", async () => {
@@ -173,7 +182,13 @@ test("authenticated groomer can accept, start journey, arrive, and start service
     assert.equal(event.actor_id, "provider:PRV-GROOM-A", `${action} event must be attributable to the authenticated provider`);
   }
 
-  const actions = sqlite.prepare("SELECT action,outcome FROM security_audit_events WHERE resource_id='BK-GROOM-JOURNEY' ORDER BY created_at").all();
+  const actions = sqlite.prepare(`SELECT action,outcome FROM security_audit_events WHERE resource_id='BK-GROOM-JOURNEY'
+    ORDER BY CASE action
+      WHEN 'grooming.accept' THEN 1
+      WHEN 'grooming.on_the_way' THEN 2
+      WHEN 'grooming.arrived' THEN 3
+      WHEN 'grooming.start_service' THEN 4
+      ELSE 99 END`).all();
   assert.deepEqual(actions.map((row) => [row.action, row.outcome]), [
     ["grooming.accept", "completed"],
     ["grooming.on_the_way", "completed"],
@@ -192,5 +207,6 @@ test("another authenticated provider cannot list or mutate the groomer's booking
   const mutation = await lifecycle(otherCookie, "on_the_way");
   assert.equal(mutation.status, 403);
   assert.equal(sqlite.prepare("SELECT status FROM canonical_bookings WHERE id='BK-GROOM-JOURNEY'").get().status, "confirmed");
+  assert.equal(sqlite.prepare("SELECT status FROM provider_work_orders WHERE booking_id='BK-GROOM-JOURNEY'").get().status, "assigned");
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM booking_lifecycle_events WHERE booking_id='BK-GROOM-JOURNEY'").get().c, 0);
 });
