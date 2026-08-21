@@ -8,6 +8,7 @@ import { reserveUatSchedule } from "../lib/uat-scheduling-client";
 import { createCanonicalLifecycle } from "../lib/canonical-lifecycle-client";
 import { saveGroomingServiceLocation } from "../lib/grooming-location-client";
 import { searchAddresses, resolveAddress, reverseGeocodeCoordinates, type AddressSuggestion } from "../lib/address-autocomplete-client";
+import { resolveServiceCoverage } from "../lib/service-zone-client";
 import { createTestTransaction } from "../lib/test-transaction";
 import { createAddressSessionToken, groomingBookingDates, groomingSlotWindow } from "../lib/grooming-booking-calendar";
 
@@ -191,19 +192,21 @@ export default function Home() {
       const customerId=`WEB-${digits||"UAT"}`;
       const chosenPets=selectedPetIds.map(id=>savedPets.find(pet=>pet.id===id)).filter((pet):pet is SavedPet=>Boolean(pet));
       const requestId=`web-groom-${customerId}-${dates[selectedDate].isoDate}-${slotIndex}-${selectedPackage.id}-${selectedPetIds.slice().sort().join("-")}`;
-      const decision=await reserveUatSchedule({clientRequestId:requestId,customerId,petIds:selectedPetIds,serviceCode:"grooming",zoneId:"blr-east",scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),preferredProviderId:"groom_arun"});
+      const pincode=serviceAddress.match(/\b\d{6}\b/)?.[0]||"";
+      const coverage=await resolveServiceCoverage(pincode);
+      const decision=await reserveUatSchedule({clientRequestId:requestId,customerId,petIds:selectedPetIds,serviceCode:"grooming",zoneId:coverage.zoneId,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),preferredProviderId:"groom_arun"});
       const canonical=await createCanonicalLifecycle({
         idempotencyKey:requestId,
         scheduleGroupId:decision.groupId,
         customer:{id:customerId,name:customerName.trim(),primaryPhone:digits||"9999999999",secondaryPhone:secondaryPhone.replace(/\D/g,"")},
         pets:chosenPets.map(pet=>({sourceId:pet.id,name:pet.name,species:pet.type,breed:pet.breed,vaccinationStatus:"not_provided"})),
-        cityId:"blr",zoneId:"blr-east",serviceCode:"grooming",packageCode:selectedPackage.id,packageName:selectedPackage.name,
+        cityId:coverage.cityId,zoneId:coverage.zoneId,serviceCode:"grooming",packageCode:selectedPackage.id,packageName:selectedPackage.name,
         scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:total,amountDueNow:payment==="after"?0:total,
-        payment:{method:payment==="after"?"cash":"upi",mode:payment==="after"?"pay_after_service":"prepaid",status:payment==="after"?"created":"captured",detail:payment==="after"?"Pay after service · UAT":"Online payment captured · UAT"},
+        payment:{method:payment==="after"?"cash":"upi",mode:payment==="after"?"pay_after_service":"prepaid",status:"created",detail:payment==="after"?"Pay after service · sandbox request pending":"Pay now · sandbox authorization pending"},
         pricing:{discount:0,subscription:offerType==="subscription"?selectedPackage.name:undefined,requirements:[`grooming_safety:${safetyNotes}`]},
       });
       await saveGroomingServiceLocation({bookingId:canonical.bookingId,customerId,address:serviceAddress});
-      createTestTransaction({customerId,customerName:customerName.trim(),primary:digits||"9999999999",secondary:secondaryPhone.replace(/\D/g,""),pets:chosenPets.map(pet=>pet.name).join(", "),petCount,service:"Grooming",packageName:selectedPackage.name,area:"Bengaluru",slot:`${dates[selectedDate].date} · ${selectedSlot}`,duration,amount:total,payment:payment==="after"?"Pay after service":"Paid online",provider:decision.provider.name,providerModel:decision.provider.model==="full_time"?"Full-time":"Commission",subscription:offerType==="subscription"?selectedPackage.name:"No active plan",creditsBefore:offerType==="subscription"?Number(selectedPackage.id.match(/\d+/)?.[0]||1):0,crmOwner:"Unassigned",crmNextAction:"Post-booking care follow-up",reminder:`Booking confirmation queued · safety ${safetyNotes}`},canonical.bookingId);
+      createTestTransaction({customerId,customerName:customerName.trim(),primary:digits||"9999999999",secondary:secondaryPhone.replace(/\D/g,""),pets:chosenPets.map(pet=>pet.name).join(", "),petCount,service:"Grooming",packageName:selectedPackage.name,area:`Bengaluru · ${coverage.zoneId}`,slot:`${dates[selectedDate].date} · ${selectedSlot}`,duration,amount:total,payment:payment==="after"?"Pay after service · pending":"Pay now · sandbox authorization pending",provider:decision.provider.name,providerModel:decision.provider.model==="full_time"?"Full-time":"Commission",subscription:offerType==="subscription"?selectedPackage.name:"No active plan",creditsBefore:offerType==="subscription"?Number(selectedPackage.id.match(/\d+/)?.[0]||1):0,crmOwner:"Unassigned",crmNextAction:"Post-booking care follow-up",reminder:`Booking confirmation queued · safety ${safetyNotes}`},canonical.bookingId);
       setShowDetails(false);
       setConfirmed(true);
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -238,7 +241,9 @@ export default function Home() {
         const customerId = `WEB-${digits || "UAT"}`;
         const requestId = `web-groom-${customerId}-${dates[selectedDate].isoDate}-${slotIndex}-${selectedPackage.id}-${selectedPetIds.slice().sort().join("-")}`;
         // Same idempotency key finishBooking uses - this is a harmless, safe pre-fetch, not a second reservation.
-        const decision = await reserveUatSchedule({ clientRequestId: requestId, customerId, petIds: selectedPetIds, serviceCode: "grooming", zoneId: "blr-east", scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(), preferredProviderId: "groom_arun" });
+        const pincode=serviceAddress.match(/\b\d{6}\b/)?.[0]||"";
+        const coverage=await resolveServiceCoverage(pincode);
+        const decision = await reserveUatSchedule({ clientRequestId: requestId, customerId, petIds: selectedPetIds, serviceCode: "grooming", zoneId: coverage.zoneId, scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(), preferredProviderId: "groom_arun" });
         if (cancelled) return;
         const response = await fetch(`/api/provider-public-profile?providerId=${encodeURIComponent(decision.provider.id)}`);
         const body = await response.json() as { data?: typeof matchedProvider; error?: string };
@@ -250,7 +255,7 @@ export default function Home() {
       }
     })();
     return () => { cancelled = true; };
-  }, [showDetails, selectedSlot, selectedDate, petCount, selectedPackage, selectedPetIds, phone, dates]);
+  }, [showDetails, selectedSlot, selectedDate, petCount, selectedPackage, selectedPetIds, phone, serviceAddress, dates]);
 
   if (confirmed) {
     return (
@@ -272,7 +277,7 @@ export default function Home() {
             <div><span>Package</span><strong>{selectedPackage.name}</strong></div>
             <div><span>{petCount === 1 ? "Pet" : "Pets"}</span><strong>{selectedPetNames || petCount}</strong></div>
             <div><span>Duration</span><strong>{duration}</strong></div>
-            <div><span>Payment</span><strong>{payment === "after" ? "Pay after service" : "Paid online"}</strong></div>
+            <div><span>Payment</span><strong>{payment === "after" ? "Pay after service" : "Pay now · pending verification"}</strong></div>
             <div className="summary-total"><span>Total</span><strong>{money(total)}</strong></div>
           </div>
           <div className="status-rail"><span className="done">Confirmed</span><i></i><span>On the way</span><i></i><span>Arrived</span><i></i><span>Completed</span></div>
@@ -404,7 +409,7 @@ export default function Home() {
                   <span className="pet-avatar">{pet.type === "dog" ? "🐶" : "🐱"}</span><span><strong>{pet.name}</strong><small>{pet.breed} · {pet.age}</small></span><i>{checked ? "✓" : ""}</i>
                 </button>;
               })}
-              <button type="button" className="add-pet-option" onClick={() => flash("Add a new pet is managed from My PawSpace \u2192 My Pets.")}><span className="pet-avatar">＋</span><span><strong>Add a new pet</strong><small>Create another pet profile</small></span><i>→</i></button>
+              <button type="button" className="add-pet-option" onClick={() => flash("Add a new pet is managed from My PawSpace → My Pets.")}><span className="pet-avatar">＋</span><span><strong>Add a new pet</strong><small>Create another pet profile</small></span><i>→</i></button>
             </div>}
             {petSelectionError && <p className="field-error">{petSelectionError}</p>}
           </div>
