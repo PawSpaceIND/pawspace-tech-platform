@@ -1,0 +1,147 @@
+name: Temporary PR 220 bounded fix
+on:
+  push:
+    branches:
+      - tmp/pr220-walking-training-fix
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp/pr220-walking-training-fix
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Apply bounded fixes
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  raise SystemExit(f"expected text not found in {path}")
+              p.write_text(text.replace(old, new, 1))
+
+          path = Path("lib/walking-lifecycle.ts")
+          text = path.read_text()
+          old_money = 'export function walkingPerSessionAmount(pricing:Record<string,unknown>,totalAmount:unknown,sessionCount:unknown){const configured=Number(pricing.perWalkAmount||0);if(Number.isFinite(configured)&&configured>0)return configured;if(pricing.demoSeed===true){const total=Number(totalAmount),count=Number(sessionCount);if(Number.isFinite(total)&&total>0&&Number.isInteger(count)&&count>0)return total/count}return 0}'
+          new_money = 'export function walkingPerSessionAmount(pricing:Record<string,unknown>|null|undefined,totalAmount:unknown,sessionCount:unknown){const configured=Number(pricing?.perWalkAmount||0);if(Number.isFinite(configured)&&configured>0)return Math.round(configured*100)/100;if(pricing?.demoSeed===true){const total=Number(totalAmount),count=Number(sessionCount),totalPaise=Math.round(total*100);if(Number.isFinite(total)&&total>0&&Number.isSafeInteger(totalPaise)&&Number.isInteger(count)&&count>0&&totalPaise%count===0)return totalPaise/count/100}return 0}'
+          if old_money not in text:
+              raise SystemExit("walking money helper changed unexpectedly")
+          text = text.replace(old_money, new_money, 1)
+          pattern = re.compile(r' if\(input\.action==="complete_walk"\)\{[\s\S]*?\n \}\n throw new Response\("Unsupported Dog Walking lifecycle action"', re.M)
+          replacement = ''' if(input.action==="complete_walk"){
+  if(sessionStatus!=="in_progress")throw new Response("Only an active Dog Walking session can be completed",{status:409});const routeSamples=await db.prepare("SELECT COUNT(*) count FROM walking_session_events WHERE booking_id=? AND session_id=? AND event_type='route_location_sample'").bind(booking.id,sessionId).first<{count:number}>();if(Number(routeSamples?.count||0)<2)throw new Response("Dog Walking UAT completion requires at least two canonical sandbox route samples",{status:409});
+  const pricing=parse<Record<string,unknown>>(booking.pricing_json,{}),sessionCount=await db.prepare("SELECT COUNT(*) count FROM walking_sessions WHERE booking_id=?").bind(booking.id).first<{count:number}>(),amount=walkingPerSessionAmount(pricing,booking.total_amount,sessionCount?.count);if(!Number.isFinite(amount)||amount<=0)throw new Response("Canonical per-walk amount is missing",{status:409});
+  const remaining=await db.prepare("SELECT COUNT(*) count FROM walking_sessions WHERE booking_id=? AND id!=? AND status!='completed'").bind(booking.id,sessionId).first<{count:number}>(),allComplete=Number(remaining?.count||0)===0;
+  const paymentEventId=crypto.randomUUID(),eventId=crypto.randomUUID(),pushNotificationId=crypto.randomUUID(),whatsappNotificationId=crypto.randomUUID();const routeSampleCount=Number(routeSamples?.count||0);const result={bookingId:booking.id,sessionId,status:"completed",paymentEventId,paymentStatus:"due",amount,allComplete,liveMoney:false,routeSamples:routeSampleCount};const message=`Your PawSpace walk is complete. ${amount.toLocaleString("en-IN",{style:"currency",currency:"INR"})} is due in the UAT payment ledger; no live charge was made.`;const eventDetail=JSON.stringify({paymentEventId,amount,paymentStatus:"due",liveMoney:false,allComplete,routeSamples:routeSampleCount});
+  await db.batch([
+   db.prepare("UPDATE walking_sessions SET status='completed',completion_status='complete',updated_at=? WHERE id=? AND status='in_progress'").bind(now,session.id),
+   db.prepare("UPDATE scheduling_reservations SET status='completed' WHERE id=?").bind(session.reservation_id),
+   db.prepare("INSERT INTO walking_session_payment_events (id,booking_id,session_id,amount,currency,status,gateway,reference,detail_json,created_at,updated_at) VALUES (?,?,?,?,'INR','due','uat_sandbox',NULL,?,?,?)").bind(paymentEventId,booking.id,session.id,amount,JSON.stringify({captureRequired:true,liveMoney:false,trigger:"canonical_walk_completion"}),now,now),
+   db.prepare("UPDATE canonical_bookings SET status=?,updated_at=? WHERE id=?").bind(allComplete?"completed":"assigned",now,booking.id),
+   db.prepare("UPDATE provider_work_orders SET status=?,updated_at=? WHERE booking_id=?").bind(allComplete?"completed":"accepted",now,booking.id),
+   db.prepare("INSERT INTO walking_session_events (id,booking_id,session_id,provider_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(eventId,booking.id,sessionId,booking.provider_id,"walk_completed",input.actorId,eventDetail,now),
+   db.prepare("INSERT INTO walking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) VALUES (?,?,?,?,?,?,'queued',?,?)").bind(pushNotificationId,booking.id,booking.customer_id,"push","walking_update",message,eventId,now),
+   db.prepare("INSERT INTO walking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) VALUES (?,?,?,?,?,?,'queued',?,?)").bind(whatsappNotificationId,booking.id,booking.customer_id,"whatsapp","walking_update",message,eventId,now),
+   db.prepare("INSERT INTO walking_action_keys (idempotency_key,booking_id,action,result_json,created_at) VALUES (?,?,?,?,?)").bind(input.idempotencyKey,input.bookingId,input.action,JSON.stringify(result),now),
+  ]);return result
+ }
+ throw new Response("Unsupported Dog Walking lifecycle action"'''
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f"walking completion replacement count={count}")
+          path.write_text(text)
+
+          replace_once(
+              "lib/walking-lifecycle-client.ts",
+              'async function payload(response:Response){const text=await response.text(),body=(()=>{try{return JSON.parse(text) as {data?:unknown;error?:string}}catch{return{error:text.trim()||undefined}}})();return{response,body}}',
+              'async function payload(response:Response){const text=await response.text(),body=(()=>{try{const parsed=JSON.parse(text);return parsed&&typeof parsed==="object"&&!Array.isArray(parsed)?parsed as {data?:unknown;error?:string}:{error:`Walking lifecycle request failed (${response.status})`}}catch{return{error:text.trim()||`Walking lifecycle request failed (${response.status})`}}})();return{response,body}}',
+          )
+
+          g = Path("scripts/uat-demo-seed-gen.mjs")
+          text = g.read_text()
+          text = text.replace('  "lib/training-programme.ts",\n', '  "lib/training-programme.ts",\n  "lib/training-session-lifecycle.ts",\n', 1)
+          text = text.replace('  { id: "UATD-BK-TRAIN-2", cus: "UATD-CUS-4", svc: "dog_training", provider: "train_meera", pkg: "Puppy Programme", amount: 3999, status: "cancelled", start: -3, pay: "created" },\n', '  { id: "UATD-BK-TRAIN-2", cus: "UATD-CUS-4", svc: "dog_training", provider: "train_meera", pkg: "Puppy Programme", amount: 3999, status: "cancelled", start: -3, pay: "created" },\n  { id: "UATD-BK-TRAIN-3", cus: "UATD-CUS-5", svc: "dog_training", provider: "train_kiran", pkg: "Basic Obedience", amount: 4999, status: "in_progress", start: 0, pay: "captured" },\n', 1)
+          unsafe = 'lines.push("UPDATE canonical_bookings SET pricing_json = json_set(COALESCE(pricing_json, \'{}\'), \'$.demoSeed\', json(\'true\'), \'$.perWalkAmount\', total_amount) WHERE id IN (\'UATD-BK-WALK-1\',\'UATD-BK-WALK-2\');");\n'
+          if unsafe not in text:
+              raise SystemExit("unsafe walking seed update changed unexpectedly")
+          text = text.replace(unsafe, '', 1)
+          anchor1 = 'insert("training_programme_events", { id: "UATD-TPE-1", programme_id: "UATD-TP-1", booking_id: "UATD-BK-TRAIN-1", event_type: "demo_programme_completed", actor_id: "uat_demo_seed", detail_json: JSON.stringify({ demoSeed: true, sessionCount: 1 }), created_at: at(-10, 12) });\n'
+          addition1 = anchor1 + 'insert("training_session_consumptions", { session_id: "UATD-TS-1", programme_id: "UATD-TP-1", booking_id: "UATD-BK-TRAIN-1", actor_id: "train_kiran", consumed_at: at(-10, 12) });\n'
+          if anchor1 not in text:
+              raise SystemExit("training completed fixture anchor missing")
+          text = text.replace(anchor1, addition1, 1)
+          anchor2 = 'insert("training_programme_events", { id: "UATD-TPE-2", programme_id: "UATD-TP-2", booking_id: "UATD-BK-TRAIN-2", event_type: "demo_programme_cancelled", actor_id: "uat_demo_seed", detail_json: JSON.stringify({ demoSeed: true, sessionCount: 1 }), created_at: at(-3) });\n'
+          addition2 = anchor2 + '\ninsert("training_programmes", { id: "UATD-TP-3", booking_id: "UATD-BK-TRAIN-3", customer_id: "UATD-CUS-5", provider_id: "train_kiran", city_id: "blr", zone_id: "blr-east", plan_code: "dog_training", plan_name: "Basic Obedience", pet_ids_json: JSON.stringify(["UATD-CUS-5-PET"]), requirements_json: JSON.stringify(["demo_seed", "recovery_uat"]), meet_booking_id: null, status: "active", total_sessions: 1, completed_sessions: 0, no_show_sessions: 0, cancelled_sessions: 0, pricing_snapshot_json: JSON.stringify({ demoSeed: true }), created_at: at(-2), updated_at: at(0) });\ninsert("training_sessions", { id: "UATD-TS-3", programme_id: "UATD-TP-3", booking_id: "UATD-BK-TRAIN-3", schedule_reservation_id: "UATD-BK-TRAIN-3-RES", sequence_no: 1, provider_id: "train_kiran", scheduled_start: isoAt(0, 10), scheduled_end: isoAt(0, 12), status: "arrived", attendance_json: "{}", homework_json: "{}", progress_json: "{}", evidence_json: "[]", started_at: null, completed_at: null, created_at: at(-2), updated_at: at(0) });\ninsert("training_programme_events", { id: "UATD-TPE-3", programme_id: "UATD-TP-3", booking_id: "UATD-BK-TRAIN-3", event_type: "demo_session_arrived_for_recovery", actor_id: "uat_demo_seed", detail_json: JSON.stringify({ demoSeed: true, recoveryActionable: true }), created_at: at(0) });\n'
+          if anchor2 not in text:
+              raise SystemExit("training recovery fixture anchor missing")
+          text = text.replace(anchor2, addition2, 1)
+          g.write_text(text)
+
+          t = Path("tests/walking-per-session-amount.test.mjs")
+          tests = t.read_text()
+          tests = re.sub(
+              r'test\("walking completion only falls back to per-session total for demo seeds",\(\)=>\{[\s\S]*?\}\);',
+              '''test("walking completion only uses exact paise division for demo-seed fallback",()=>{
+ assert.match(source,/pricing\?\.perWalkAmount/);
+ assert.match(source,/totalPaise%count===0/);
+ assert.match(source,/return totalPaise\/count\/100/);
+ assert.doesNotMatch(source,/return total\/count/);
+});''',
+              tests,
+              count=1,
+          )
+          tests += '''\n\ntest("walking completion commits state, due event, audit, notifications and idempotency together",()=>{
+ const block=source.slice(source.indexOf('if(input.action==="complete_walk")'),source.indexOf('throw new Response("Unsupported Dog Walking lifecycle action"'));
+ assert.match(block,/walking_session_payment_events/);
+ assert.match(block,/walking_session_events/);
+ assert.match(block,/walking_customer_notifications/);
+ assert.match(block,/walking_action_keys/);
+ assert.match(block,/UPDATE canonical_bookings SET status=/);
+ assert.doesNotMatch(block,/await event\(/);
+ assert.doesNotMatch(block,/await notify\(/);
+ assert.doesNotMatch(block,/return remember\(/);
+});
+
+test("walking lifecycle client rejects parsed null payloads",()=>{
+ const client=fs.readFileSync(new URL("../lib/walking-lifecycle-client.ts",import.meta.url),"utf8");
+ assert.match(client,/parsed&&typeof parsed==="object"&&!Array\.isArray\(parsed\)/);
+});\n'''
+          t.write_text(tests)
+
+          seed_test = Path("tests/uat-demo-seed.test.mjs")
+          seed_tests = seed_test.read_text()
+          seed_tests += '''\n\ntest("UAT demo seed preserves walking commercial pricing and exposes training recovery evidence",()=>{
+  assert.doesNotMatch(sql,/UPDATE canonical_bookings SET pricing_json = json_set/);
+  assert.match(sql,/INSERT OR IGNORE INTO training_session_consumptions .*UATD-TS-1/);
+  assert.match(sql,/UATD-BK-TRAIN-3/);
+  assert.match(sql,/UATD-TP-3/);
+  assert.match(sql,/UATD-TS-3/);
+  assert.match(sql,/arrived/);
+});\n'''
+          seed_test.write_text(seed_tests)
+          PY
+      - name: Regenerate deterministic UAT seed
+        run: node --experimental-strip-types scripts/uat-demo-seed-gen.mjs
+      - name: Run focused regression tests
+        run: node --test tests/walking-per-session-amount.test.mjs tests/uat-demo-seed.test.mjs tests/grooming-booking-calendar.test.mjs
+      - name: Commit bounded fix
+        shell: bash
+        run: |
+          git config user.name "PawSpace CI"
+          git config user.email "actions@users.noreply.github.com"
+          git rm .github/workflows/tmp-pr220-fix.yml
+          git add lib/walking-lifecycle.ts lib/walking-lifecycle-client.ts scripts/uat-demo-seed-gen.mjs scripts/uat-demo-seed.sql tests/walking-per-session-amount.test.mjs tests/uat-demo-seed.test.mjs
+          git commit -m "fix(uat): close walking and training review blockers"
+          git push origin HEAD:tmp/pr220-walking-training-fix
