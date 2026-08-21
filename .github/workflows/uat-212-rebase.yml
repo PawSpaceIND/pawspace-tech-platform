@@ -48,3 +48,5 @@ jobs:
           git rm .github/workflows/uat-212-rebase.yml
           git commit -m "Rebase UAT training and partner closure onto current main"
           git push origin HEAD:agent/uat-training-partner-closure-v2
+
+# trigger: 2026-08-21
