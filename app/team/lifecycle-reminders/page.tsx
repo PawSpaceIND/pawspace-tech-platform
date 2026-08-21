@@ -46,13 +46,16 @@ export default function LifecycleRemindersPage() {
   const selected = useMemo(() => directory?.rules.find((rule) => rule.id === selectedId) || null, [directory, selectedId]);
   useEffect(() => {
     if (!selected) return;
-    setForm({
-      delayDays: selected.delay_days == null ? "" : String(selected.delay_days),
-      repeatDays: selected.repeat_days == null ? "" : String(selected.repeat_days),
-      templateKey: selected.template_key,
-      active: Boolean(selected.active),
-      reason: "",
-    });
+    const timer = setTimeout(() => {
+      setForm({
+        delayDays: selected.delay_days == null ? "" : String(selected.delay_days),
+        repeatDays: selected.repeat_days == null ? "" : String(selected.repeat_days),
+        templateKey: selected.template_key,
+        active: Boolean(selected.active),
+        reason: "",
+      });
+    }, 0);
+    return () => clearTimeout(timer);
   }, [selected]);
 
   async function save() {
