@@ -185,4 +185,20 @@ main canvas { max-width: 100%; height: auto; }
   .topbar { padding: 8px 12px; gap: 8px; }
   .header-links { width: 100%; justify-content: flex-start; gap: 6px; }
   .header-links > a, .header-links .login-link { flex: 1 1 auto; text-align: center; }
+
+  /* Closure #12 evidence: four date buttons must fit the phone instead of
+     inheriting the legacy 100px minimum that pushed the final date offscreen. */
+  .date-row { overflow-x: visible !important; grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
+  .date-row button { min-width: 0 !important; padding-left: 6px; padding-right: 6px; }
+
+  /* Admin's old 650px mobile rail deliberately overflowed horizontally. Keep
+     every operation available, but let the navigation form shrinkable rows. */
+  .route-admin aside { height: auto !important; max-height: 45vh; overflow-y: auto !important; overflow-x: visible !important; }
+  .route-admin aside nav { min-width: 0 !important; width: 100% !important; grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+  .route-admin aside nav button { min-width: 0 !important; white-space: normal !important; overflow-wrap: anywhere; }
+
+  /* Assisted Booking's three intrinsic nav columns measured 396px on a 390px
+     viewport. Two shrinkable columns keep the same links without page overflow. */
+  [class*="assisted_shell"] nav { width: 100% !important; min-width: 0 !important; grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  [class*="assisted_shell"] nav a { min-width: 0 !important; white-space: normal !important; overflow-wrap: anywhere; }
 }
