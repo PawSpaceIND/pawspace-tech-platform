@@ -67,6 +67,30 @@ jobs:
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
         run: node scripts/release-ui-closure.mjs --base="$PREVIEW_URL" --json=release-ui-closure-report.json
 
+      - name: Print actionable UI closure failures
+        if: ${{ always() }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const path = 'release-ui-closure-report.json';
+          if (!fs.existsSync(path)) {
+            console.log('No release UI closure report was produced.');
+            process.exit(0);
+          }
+          const report = JSON.parse(fs.readFileSync(path, 'utf8'));
+          const visual = Array.isArray(report.visualFailures) ? report.visualFailures : [];
+          const controls = Array.isArray(report.controlFailures) ? report.controlFailures : [];
+          console.log(`visual_failures=${visual.length}`);
+          for (const item of visual) {
+            const reasons = Array.isArray(item.failures) ? item.failures.join(' || ') : '';
+            console.log(`VISUAL actor=${item.actor || 'unknown'} route=${item.route || 'unknown'} viewport=${item.viewport || 'unknown'} status=${item.status ?? 'unknown'} :: ${reasons}`);
+          }
+          console.log(`control_failures=${controls.length}`);
+          for (const item of controls) {
+            console.log(`CONTROL actor=${item.actor || 'unknown'} route=${item.route || 'unknown'} result=${item.result || 'unknown'} text=${JSON.stringify(item.text || '')} :: ${item.error || item.mutationAttempt || item.requestSeen || item.navigationSeen || 'no detail'}`);
+          }
+          NODE
+
       - name: Upload UI closure evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
