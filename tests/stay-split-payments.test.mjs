@@ -174,9 +174,9 @@ test("createSittingQuote with split_50_50 halves amountDueNow; sandbox capture v
   const quote = await createSittingQuote(db, { packageCode: "sitting-overnight", petCount: 1, scheduledStart: start.toISOString(), scheduledEnd: end.toISOString(), paymentMode: "split_50_50" });
   assert.equal(quote.amountDueNow, Math.round((quote.totalAmount / 2) * 100) / 100);
   // Capture must accept the 50% deposit, and reject the wrong amount.
-  const capture = await captureSittingQuoteSandbox(db, { quoteId: quote.quoteId, amount: quote.amountDueNow });
+  const capture = await captureSittingQuoteSandbox(db, { quoteId: quote.quoteId, amount: quote.amountDueNow, paymentKey: "stay-split-payment-test" });
   assert.equal(capture.status, "captured");
-  await assert.rejects(() => captureSittingQuoteSandbox(db, { quoteId: quote.quoteId, amount: quote.totalAmount + 1 }), (error) => error instanceof Response && error.status === 409);
+  await assert.rejects(() => captureSittingQuoteSandbox(db, { quoteId: quote.quoteId, amount: quote.totalAmount + 1, paymentKey: "stay-split-payment-test" }), (error) => error instanceof Response && error.status === 409);
 });
 
 // --- Contracts ---------------------------------------------------------------------------------
