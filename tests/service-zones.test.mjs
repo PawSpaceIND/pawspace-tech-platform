@@ -48,7 +48,7 @@ test("service-zone GET stays public while seed requires authenticated POST",asyn
   assert.match(route,/export async function GET\(request:Request\)/);
   assert.match(route,/pincode=url.searchParams.get\("pincode"\)/);
   assert.match(route,/action=url.searchParams.get\("action"\)\|\|"resolve"/);
-  assert.match(route,/resolveZoneByPincode\(db,pincode\)/);
+  assert.match(route,/resolveZoneByPincode\(db,validated\.pincode\)/);
   assert.match(route,/listServiceZones\(db\)/);
   assert.match(route,/Seeding requires an authenticated POST/);
   assert.match(route,/export async function POST\(request:Request\)/);
