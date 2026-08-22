@@ -45,15 +45,21 @@ test("review route families receive responsive shrink guards", () => {
     '.route-partner main [style*="grid-template-columns"],',
     '.route-customer main [style*="grid-template-columns"]',
   ]);
-  assert.match(phoneGrid, /grid-template-columns:\s*1fr !important/);
+  assert.match(phoneGrid, /grid-template-columns:\s*minmax\(0,\s*1fr\) !important/);
   const phoneFlex = groupedRuleBlock(overrides, [
     '.route-team main [style*="display: flex"],',
     '.route-partner main [style*="display: flex"],',
     '.route-customer main [style*="display: flex"]',
   ]);
   assert.match(phoneFlex, /flex-wrap:\s*wrap !important/);
-  const teamInlineMin = ruleBlock(overrides, '.route-team main select[style*="min-width"]');
-  assert.match(teamInlineMin, /min-width:\s*0 !important/);
+  const inlineMin = groupedRuleBlock(overrides, [
+    '.route-team main [style*="min-width"]',
+    '.route-partner main [style*="min-width"]',
+    '.route-customer main [style*="min-width"]',
+    '.route-admin main [style*="min-width"]',
+    '.route-regression-lab main [style*="min-width"]',
+  ]);
+  assert.match(inlineMin, /min-width:\s*0 !important/);
   assert.doesNotMatch(overrides, /body:not\(\.route-mobile-app\)\s+main/);
   assert.doesNotMatch(overrides, /\.route-team main table\s*\{[^}]*display:\s*block/ims);
 });
