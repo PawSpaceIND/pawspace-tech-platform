@@ -34,6 +34,29 @@ test("release UI closure checks visual failures instead of screenshot-only evide
   assert.match(script, /apiFailures/);
 });
 
+test("release UI closure returns visual findings before expensive control probing", () => {
+  assert.match(script, /stopped after visual phase/);
+  assert.match(script, /Control probing was intentionally skipped/);
+  assert.match(script, /writeReport\(baseReport\(\)\)/);
+});
+
+test("release UI closure treats explicit links as wiring without reloading for every anchor", () => {
+  assert.match(script, /function linkWiringResult/);
+  assert.match(script, /if \(target\.tag !== "a"\) return null/);
+  assert.match(script, /new URL\(href, BASE\)/);
+});
+
+test("release UI closure observes DOM mutations for button wiring", () => {
+  assert.match(script, /MutationObserver/);
+  assert.match(script, /__pawspaceUiMutationCount/);
+  assert.match(script, /domMutations > 0/);
+});
+
+test("release UI closure no longer waits for networkidle on every route/control", () => {
+  assert.match(script, /waitUntil: "domcontentloaded"/);
+  assert.doesNotMatch(script, /waitForLoadState\("networkidle"/);
+});
+
 test("manual workflow is isolated-preview only and exact-SHA bound", () => {
   assert.match(workflow, /workflow_dispatch/);
   assert.match(workflow, /environment: pawspace-release-preview/);
