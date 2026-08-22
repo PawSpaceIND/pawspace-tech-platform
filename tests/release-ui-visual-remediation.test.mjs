@@ -5,6 +5,7 @@ import fs from "node:fs";
 const nextConfig = fs.readFileSync(new URL("../next.config.ts", import.meta.url), "utf8");
 const overrides = fs.readFileSync(new URL("../app/review-overrides.css", import.meta.url), "utf8");
 const reviewUx = fs.readFileSync(new URL("../app/components/review-ux-fixes.tsx", import.meta.url), "utf8");
+const assistedCss = fs.readFileSync(new URL("../app/assisted-booking/assisted.module.css", import.meta.url), "utf8");
 
 function ruleBlock(css, selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -71,6 +72,12 @@ test("phone control navigation wraps instead of placing controls outside the vie
   assert.ok(phoneShellMatches.some((match) => /grid-template-columns:\s*1fr !important/.test(match[1])), "missing phone control shell override");
   const phoneNav = ruleBlock(overrides, '.route-control [class*="control_side"] nav');
   assert.match(phoneNav, /flex-wrap:\s*wrap !important/);
+});
+
+test("Assisted Booking phone header cannot recreate the 396px overflow", () => {
+  assert.match(assistedCss, /@media\(max-width:650px\)[\s\S]*\.shell header\{flex-direction:column;gap:12px;min-width:0\}/);
+  assert.match(assistedCss, /\.headerMeta\{width:100%;min-width:0;flex-wrap:wrap;justify-content:flex-start\}/);
+  assert.match(assistedCss, /\.headerMeta span,\.headerMeta button\{min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere\}/);
 });
 
 test("responsive remediation does not hide page overflow to game the release gate", () => {
