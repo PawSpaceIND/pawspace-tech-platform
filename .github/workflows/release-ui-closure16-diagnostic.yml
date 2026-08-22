@@ -12,6 +12,7 @@ permissions:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
+    environment: pawspace-release-preview
     env:
       PREVIEW_URL: https://pawspace-release-preview.karthik-fce.workers.dev
       PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
