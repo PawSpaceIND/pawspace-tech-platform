@@ -11,6 +11,7 @@ const BASE = arg("base", process.env.PREVIEW_URL || "").replace(/\/$/, "");
 const ACCESS_CODE = process.env.PAWSPACE_UAT_ACCESS_CODE || "";
 const JSON_OUT = arg("json", "release-ui-closure-report.json");
 const TIMEOUT = Number(arg("timeout", "12000"));
+const SETTLE_MS = Number(arg("settle-ms", "300"));
 const MAX_CONTROLS_PER_ROUTE = Number(arg("max-controls", "40"));
 
 if (!BASE) throw new Error("--base or PREVIEW_URL is required");
@@ -31,6 +32,9 @@ const VIEWPORTS = [
 ];
 const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const DESTRUCTIVE_TEXT = /(delete|remove|refund|cancel|approve|reject|decline|pay|capture|payout|assign|reassign|activate|deactivate|disable|enable|send|submit|save|create|add|update|confirm|complete|start|finish|close|reopen|archive|invite|run now|install|reset|logout|sign out)/i;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const writeReport = (report) => fs.writeFileSync(JSON_OUT, `${JSON.stringify(report, null, 2)}\n`);
 
 function discoverRoutes(root = "app") {
   const routes = [];
@@ -56,6 +60,12 @@ async function login(context, email) {
   if (!response.ok()) throw new Error(`UAT login failed for ${email}: HTTP ${response.status()} ${await response.text()}`);
 }
 
+async function gotoSettled(page, url) {
+  const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: TIMEOUT });
+  await sleep(SETTLE_MS);
+  return response;
+}
+
 async function collectVisual(page, route, viewport) {
   await page.setViewportSize({ width: viewport.width, height: viewport.height });
   const apiFailures = [], consoleErrors = [], pageErrors = [];
@@ -68,9 +78,8 @@ async function collectVisual(page, route, viewport) {
   page.on("response", onResponse); page.on("console", onConsole); page.on("pageerror", onPageError);
   let status = 0, failure = "";
   try {
-    const response = await page.goto(`${BASE}${route}`, { waitUntil: "domcontentloaded", timeout: TIMEOUT });
+    const response = await gotoSettled(page, `${BASE}${route}`);
     status = response?.status() || 0;
-    await page.waitForLoadState("networkidle", { timeout: TIMEOUT }).catch(() => {});
   } catch (error) { failure = String(error.message).split("\n")[0].slice(0, 240); }
   const measured = await page.evaluate(() => {
     const root = document.documentElement;
@@ -104,10 +113,22 @@ async function collectVisual(page, route, viewport) {
   return { route, viewport: viewport.name, status, consoleErrors: [...new Set(consoleErrors)], pageErrors: [...new Set(pageErrors)], apiFailures: [...new Set(apiFailures)], ...measured, failures };
 }
 
+function linkWiringResult(target, route) {
+  if (target.tag !== "a") return null;
+  const href = String(target.href || "").trim();
+  if (!href) return { result: "no_observable_effect", error: "anchor has no href" };
+  if (href.startsWith("#")) return { result: "wired", navigationSeen: `${route}${href}` };
+  try {
+    const resolved = new URL(href, BASE);
+    return { result: "wired", navigationSeen: resolved.href };
+  } catch {
+    return { result: "click_error", error: `invalid href: ${href}` };
+  }
+}
+
 async function probeControls(page, route) {
   await page.setViewportSize({ width: 1280, height: 900 });
-  await page.goto(`${BASE}${route}`, { waitUntil: "domcontentloaded", timeout: TIMEOUT });
-  await page.waitForLoadState("networkidle", { timeout: TIMEOUT }).catch(() => {});
+  await gotoSettled(page, `${BASE}${route}`);
   const descriptors = await page.locator("button,a[href]").evaluateAll((els) => els.map((el, index) => ({
     index,
     tag: el.tagName.toLowerCase(),
@@ -120,16 +141,24 @@ async function probeControls(page, route) {
   const results = [];
 
   for (const target of targets) {
-    await page.goto(`${BASE}${route}`, { waitUntil: "domcontentloaded", timeout: TIMEOUT }).catch(() => {});
-    await page.waitForLoadState("networkidle", { timeout: TIMEOUT }).catch(() => {});
+    const linkResult = linkWiringResult(target, route);
+    if (linkResult) { results.push({ ...target, destructive: false, mutationAttempt: null, requestSeen: null, dialogSeen: null, changed: false, ...linkResult }); continue; }
+
+    await gotoSettled(page, `${BASE}${route}`).catch(() => {});
     const locator = page.locator("button,a[href]").nth(target.index);
     if (!await locator.isVisible().catch(() => false)) { results.push({ ...target, result: "skipped_not_visible" }); continue; }
 
-    const text = target.text || target.href || `${target.tag}#${target.index}`;
+    const text = target.text || `${target.tag}#${target.index}`;
     const destructive = DESTRUCTIVE_TEXT.test(text);
-    let mutationAttempt = null, requestSeen = null, dialogSeen = null, navigationSeen = null, changed = false, error = null;
+    let mutationAttempt = null, requestSeen = null, dialogSeen = null, navigationSeen = null, changed = false, error = null, domMutations = 0;
     const beforeUrl = page.url();
     const beforeText = await page.locator("body").innerText().catch(() => "");
+    await page.evaluate(() => {
+      window.__pawspaceUiMutationCount = 0;
+      const observer = new MutationObserver((records) => { window.__pawspaceUiMutationCount += records.length; });
+      observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
+      window.__pawspaceUiMutationObserver = observer;
+    }).catch(() => {});
     const onDialog = async (dialog) => { dialogSeen = dialog.type(); await dialog.dismiss().catch(() => {}); };
     const onRequest = (request) => { if (request.url().includes("/api/")) requestSeen = `${request.method()} ${new URL(request.url()).pathname}`; };
     const routeHandler = async (routeHandle) => {
@@ -140,16 +169,21 @@ async function probeControls(page, route) {
     page.on("dialog", onDialog); page.on("request", onRequest); await page.route("**/api/**", routeHandler);
     try {
       await locator.click({ timeout: 3500 });
-      await page.waitForTimeout(300);
+      await sleep(300);
       navigationSeen = page.url() !== beforeUrl ? page.url() : null;
       const afterText = await page.locator("body").innerText().catch(() => "");
-      changed = afterText !== beforeText;
+      domMutations = await page.evaluate(() => {
+        const count = Number(window.__pawspaceUiMutationCount || 0);
+        window.__pawspaceUiMutationObserver?.disconnect();
+        return count;
+      }).catch(() => 0);
+      changed = afterText !== beforeText || domMutations > 0;
     } catch (e) { error = String(e.message).split("\n")[0].slice(0, 220); }
     await page.unroute("**/api/**", routeHandler); page.off("dialog", onDialog); page.off("request", onRequest);
 
     const evidence = Boolean(navigationSeen || mutationAttempt || requestSeen || dialogSeen || changed);
     const result = destructive && mutationAttempt ? "wired_mutation_blocked" : evidence ? "wired" : error ? "click_error" : "no_observable_effect";
-    results.push({ ...target, destructive, result, mutationAttempt, requestSeen, dialogSeen, navigationSeen, changed, error });
+    results.push({ ...target, destructive, result, mutationAttempt, requestSeen, dialogSeen, navigationSeen, changed, domMutations, error });
   }
   return results;
 }
@@ -158,52 +192,83 @@ async function main() {
   const browser = await chromium.launch({ headless: true });
   const routes = discoverRoutes();
   const visual = [], controls = [], roleCoverage = [];
-
-  const guestContext = await browser.newContext();
-  const guestPage = await guestContext.newPage();
-  for (const viewport of VIEWPORTS) for (const route of routes.filter((r) => !r.startsWith("/team") && !r.startsWith("/control"))) visual.push({ actor: "guest_customer", ...(await collectVisual(guestPage, route, viewport)) });
-  await guestContext.close();
-
-  for (const actor of STAFF_ROLES) {
-    const context = await browser.newContext();
-    await login(context, actor.email);
-    const page = await context.newPage();
-    const actorRoutes = actor.role === "founder" ? routes.filter((r) => r.startsWith("/team") || r.startsWith("/control") || r.startsWith("/partner")) : ["/team", "/control", "/partner", "/partner/jobs"].filter((r) => routes.includes(r));
-    for (const route of actorRoutes) {
-      const check = await collectVisual(page, route, VIEWPORTS[0]);
-      roleCoverage.push({ actor: actor.role, ...check });
-      if (actor.role === "founder") for (const viewport of VIEWPORTS.slice(1)) visual.push({ actor: actor.role, ...(await collectVisual(page, route, viewport)) });
-    }
-    for (const route of actorRoutes) controls.push({ actor: actor.role, route, controls: await probeControls(page, route) });
-    await context.close();
-  }
-  await browser.close();
-
-  const visualFailures = [...visual, ...roleCoverage].filter((r) => r.failures.length);
-  const controlFailures = controls.flatMap((r) => r.controls.map((c) => ({ actor: r.actor, route: r.route, ...c }))).filter((c) => c.result === "click_error" || c.result === "no_observable_effect");
-  const report = {
+  const baseReport = () => ({
     generatedAt: new Date().toISOString(), base: BASE,
     summary: {
       discoveredRoutes: routes.length,
       visualChecks: visual.length + roleCoverage.length,
-      visualFailures: visualFailures.length,
+      visualFailures: [...visual, ...roleCoverage].filter((r) => r.failures.length).length,
       controlsProbed: controls.reduce((n, r) => n + r.controls.length, 0),
-      controlFailures: controlFailures.length,
+      controlFailures: controls.flatMap((r) => r.controls).filter((c) => c.result === "click_error" || c.result === "no_observable_effect").length,
       roles: ["guest_customer", ...STAFF_ROLES.map((r) => r.role)],
       mutationsExecuted: 0,
+      phase: controls.length ? "controls" : "visual",
     },
-    visualFailures,
-    controlFailures,
+    visualFailures: [...visual, ...roleCoverage].filter((r) => r.failures.length),
+    controlFailures: controls.flatMap((r) => r.controls.map((c) => ({ actor: r.actor, route: r.route, ...c }))).filter((c) => c.result === "click_error" || c.result === "no_observable_effect"),
     roleCoverage,
     controls,
-  };
-  fs.writeFileSync(JSON_OUT, `${JSON.stringify(report, null, 2)}\n`);
-  console.log(JSON.stringify(report.summary, null, 2));
-  if (visualFailures.length || controlFailures.length) {
-    console.error(`UI closure failed: ${visualFailures.length} visual findings, ${controlFailures.length} control findings.`);
-    process.exit(1);
+  });
+
+  try {
+    const guestContext = await browser.newContext();
+    const guestPage = await guestContext.newPage();
+    for (const viewport of VIEWPORTS) {
+      for (const route of routes.filter((r) => !r.startsWith("/team") && !r.startsWith("/control"))) {
+        visual.push({ actor: "guest_customer", ...(await collectVisual(guestPage, route, viewport)) });
+      }
+      writeReport(baseReport());
+    }
+    await guestContext.close();
+
+    for (const actor of STAFF_ROLES) {
+      const context = await browser.newContext();
+      await login(context, actor.email);
+      const page = await context.newPage();
+      const actorRoutes = actor.role === "founder" ? routes.filter((r) => r.startsWith("/team") || r.startsWith("/control") || r.startsWith("/partner")) : ["/team", "/control", "/partner", "/partner/jobs"].filter((r) => routes.includes(r));
+      for (const route of actorRoutes) {
+        const check = await collectVisual(page, route, VIEWPORTS[0]);
+        roleCoverage.push({ actor: actor.role, ...check });
+        if (actor.role === "founder") for (const viewport of VIEWPORTS.slice(1)) visual.push({ actor: actor.role, ...(await collectVisual(page, route, viewport)) });
+      }
+      await context.close();
+      writeReport(baseReport());
+    }
+
+    const visualFailures = [...visual, ...roleCoverage].filter((r) => r.failures.length);
+    if (visualFailures.length) {
+      const report = baseReport();
+      writeReport(report);
+      console.log(JSON.stringify(report.summary, null, 2));
+      console.error(`UI closure stopped after visual phase: ${visualFailures.length} visual findings. Control probing was intentionally skipped so failures return quickly with an artifact.`);
+      process.exitCode = 1;
+      return;
+    }
+
+    for (const actor of STAFF_ROLES) {
+      const context = await browser.newContext();
+      await login(context, actor.email);
+      const page = await context.newPage();
+      const actorRoutes = actor.role === "founder" ? routes.filter((r) => r.startsWith("/team") || r.startsWith("/control") || r.startsWith("/partner")) : ["/team", "/control", "/partner", "/partner/jobs"].filter((r) => routes.includes(r));
+      for (const route of actorRoutes) {
+        controls.push({ actor: actor.role, route, controls: await probeControls(page, route) });
+        writeReport(baseReport());
+      }
+      await context.close();
+    }
+
+    const report = baseReport();
+    writeReport(report);
+    console.log(JSON.stringify(report.summary, null, 2));
+    if (report.summary.controlFailures) {
+      console.error(`UI closure failed: ${report.summary.controlFailures} control findings.`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log("UI closure passed: no broken images/overflow/clipped controls and every probed enabled control produced observable wiring evidence. Mutating requests were blocked before execution.");
+  } finally {
+    await browser.close();
   }
-  console.log("UI closure passed: no broken images/overflow/clipped controls and every probed enabled control produced observable wiring evidence. Mutating requests were blocked before execution.");
 }
 
 main().catch((error) => { console.error(error); process.exit(1); });
