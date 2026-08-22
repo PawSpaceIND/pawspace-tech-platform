@@ -8,12 +8,13 @@ const about = read("app/about/page.tsx");
 const service = read("app/services/[slug]/page.tsx");
 const breed = read("app/dog-breeds/[breed]/page.tsx");
 const overrides = read("app/review-overrides.css");
+const reviewUx = read("app/components/review-ux-fixes.tsx");
 
 test("release marketing images bypass Vinext runtime image optimization", () => {
   assert.match(marketing, /export function StaticImage/);
   assert.match(marketing, /<img\s+src=\{src\}/);
   for (const [name, source] of [["marketing", marketing], ["about", about], ["service", service], ["breed", breed]]) {
-    assert.doesNotMatch(source, /from["']next\/image["']/, `${name} still imports next/image`);
+    assert.doesNotMatch(source, /from\s*["']next\/image["']/, `${name} still imports next/image`);
     assert.doesNotMatch(source, /\/_vinext\/image/, `${name} depends on Vinext image optimization`);
   }
   assert.match(about, /StaticImage as Image/);
@@ -31,7 +32,8 @@ test("admin phone navigation no longer requires a 650px rail", () => {
   assert.match(overrides, /\.route-admin aside nav button\s*\{[^}]*overflow-wrap:\s*anywhere;/s);
 });
 
-test("assisted booking navigation uses shrinkable phone columns", () => {
+test("assisted booking navigation uses a stable runtime marker and shrinkable phone columns", () => {
+  assert.match(reviewUx, /classList\.toggle\("assisted_shell",\s*isAssistedBooking\)/);
   assert.match(overrides, /\[class\*=["']assisted_shell["']\] nav\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\) !important;/s);
   assert.match(overrides, /\[class\*=["']assisted_shell["']\] nav a\s*\{[^}]*overflow-wrap:\s*anywhere;/s);
 });
