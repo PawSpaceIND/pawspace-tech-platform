@@ -14,14 +14,17 @@ function ruleBlock(css, selector) {
 }
 
 function groupedRuleBlock(css, selectors) {
-  for (const selector of selectors) {
-    const index = css.indexOf(selector);
-    if (index < 0) continue;
-    const open = css.indexOf("{", index);
-    const close = css.indexOf("}", open + 1);
-    if (open >= 0 && close > open) return css.slice(open + 1, close);
+  const rulePattern = /([^{}]+)\{([^{}]*)\}/g;
+  for (const match of css.matchAll(rulePattern)) {
+    const selectorList = match[1];
+    if (selectors.every((selector) => selectorList.includes(selector))) return match[2];
   }
   assert.fail(`missing grouped CSS rule containing ${selectors.join(", ")}`);
+}
+
+function assertRouteToggle(marker, conditionPattern) {
+  const escapedMarker = marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  assert.match(reviewUx, new RegExp(`classList\\.toggle\\("${escapedMarker}"\\s*,\\s*${conditionPattern}\\)`));
 }
 
 test("Worker image delivery bypasses the broken runtime optimizer path", () => {
@@ -29,15 +32,30 @@ test("Worker image delivery bypasses the broken runtime optimizer path", () => {
 });
 
 test("review route families receive responsive shrink guards", () => {
-  for (const marker of ["route-team", "route-partner", "route-customer"]) assert.match(reviewUx, new RegExp(marker));
+  assertRouteToggle("route-team", "isTeam");
+  assertRouteToggle("route-partner", "isPartner");
+  assertRouteToggle("route-customer", "isCustomer");
+  assertRouteToggle("route-mobile-app", "isMobileApp");
+  assert.match(reviewUx, /const isCustomer = !isMobileApp/);
+
   const routeShrink = groupedRuleBlock(overrides, [".route-team main,", ".route-partner main,", ".route-customer main,"]);
   assert.match(routeShrink, /min-width:\s*0/);
-  const phoneGrid = ruleBlock(overrides, 'body:not(.route-mobile-app) main [style*="grid-template-columns"]');
+  const phoneGrid = groupedRuleBlock(overrides, [
+    '.route-team main [style*="grid-template-columns"],',
+    '.route-partner main [style*="grid-template-columns"],',
+    '.route-customer main [style*="grid-template-columns"]',
+  ]);
   assert.match(phoneGrid, /grid-template-columns:\s*1fr !important/);
-  const phoneFlex = ruleBlock(overrides, 'body:not(.route-mobile-app) main [style*="display: flex"]');
+  const phoneFlex = groupedRuleBlock(overrides, [
+    '.route-team main [style*="display: flex"],',
+    '.route-partner main [style*="display: flex"],',
+    '.route-customer main [style*="display: flex"]',
+  ]);
   assert.match(phoneFlex, /flex-wrap:\s*wrap !important/);
   const teamInlineMin = ruleBlock(overrides, '.route-team main select[style*="min-width"]');
   assert.match(teamInlineMin, /min-width:\s*0 !important/);
+  assert.doesNotMatch(overrides, /body:not\(\.route-mobile-app\)\s+main/);
+  assert.doesNotMatch(overrides, /\.route-team main table\s*\{[^}]*display:\s*block/ims);
 });
 
 test("phone control navigation wraps instead of placing controls outside the viewport", () => {
@@ -50,5 +68,9 @@ test("phone control navigation wraps instead of placing controls outside the vie
 });
 
 test("responsive remediation does not hide page overflow to game the release gate", () => {
-  assert.doesNotMatch(overrides, /(?:^|[},\n]\s*)(?:html|body|main)(?:\s*,\s*(?:html|body|main))*\s*\{[^}]*overflow-x:\s*hidden/ims);
+  const globalRule = /(?:^|\})(\s*(?:html|body|main)(?:\s*,\s*(?:html|body|main))*)\s*\{([^}]*)\}/gims;
+  for (const match of overrides.matchAll(globalRule)) {
+    assert.doesNotMatch(match[2], /overflow-x\s*:\s*hidden/i);
+    assert.doesNotMatch(match[2], /(?:^|;)\s*overflow\s*:\s*hidden(?:\s|;|$)/i);
+  }
 });
