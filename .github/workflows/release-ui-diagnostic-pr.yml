@@ -1,0 +1,78 @@
+name: Release UI diagnostic PR
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/release-ui-diagnostic-pr.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    if: ${{ github.head_ref == 'fix/release-ui-closure-diagnostics' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-release-preview
+    steps:
+      - name: Checkout exact deployed candidate
+        uses: actions/checkout@v4
+        with:
+          ref: 080281eb19f7cb5531675b621c8d20e0de20b506
+          fetch-depth: 0
+
+      - name: Verify exact checkout
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "080281eb19f7cb5531675b621c8d20e0de20b506"
+          test -z "$(git status --porcelain)"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run closure diagnostics against existing isolated preview
+        continue-on-error: true
+        env:
+          PREVIEW_URL: https://pawspace-release-preview.karthik-fce.workers.dev
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: node scripts/release-ui-closure.mjs --base="$PREVIEW_URL" --json=release-ui-closure-report.json
+
+      - name: Print every actionable finding
+        if: ${{ always() }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const path = 'release-ui-closure-report.json';
+          if (!fs.existsSync(path)) {
+            console.log('No release UI closure report was produced.');
+            process.exit(1);
+          }
+          const report = JSON.parse(fs.readFileSync(path, 'utf8'));
+          const visual = Array.isArray(report.visualFailures) ? report.visualFailures : [];
+          const controls = Array.isArray(report.controlFailures) ? report.controlFailures : [];
+          console.log(`visual_failures=${visual.length}`);
+          for (const item of visual) {
+            const reasons = Array.isArray(item.failures) ? item.failures.join(' || ') : '';
+            console.log(`VISUAL actor=${item.actor || 'unknown'} route=${item.route || 'unknown'} viewport=${item.viewport || 'unknown'} status=${item.status ?? 'unknown'} scrollWidth=${item.scrollWidth ?? 'unknown'} viewportWidth=${item.viewportWidth ?? 'unknown'} :: ${reasons}`);
+          }
+          console.log(`control_failures=${controls.length}`);
+          for (const item of controls) {
+            console.log(`CONTROL actor=${item.actor || 'unknown'} route=${item.route || 'unknown'} result=${item.result || 'unknown'} text=${JSON.stringify(item.text || '')} :: ${item.error || item.mutationAttempt || item.requestSeen || item.navigationSeen || 'no detail'}`);
+          }
+          NODE
+
+      - name: Upload diagnostic evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-ui-diagnostic-evidence
+          path: release-ui-closure-report.json
+          if-no-files-found: error
