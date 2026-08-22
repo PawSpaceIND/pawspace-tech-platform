@@ -27,7 +27,7 @@ export default function ProviderTrainingPage(){
    {[["Published modules",overview.metrics.published],["Drafts",overview.metrics.draft],["Providers not ready",overview.metrics.providersNotReady]].map(([name,value])=><StatCard key={String(name)} label={String(name)} value={value as number}/>)}
   </section>}
   {error&&<p role="alert">{error}</p>}{message&&<p>{message}</p>}
-  <section style={{display:"grid",gridTemplateColumns:"minmax(360px,.9fr) minmax(480px,1.1fr)",gap:16,alignItems:"start"}}>
+  <section style={{display:"grid",gridTemplateColumns:"minmax(0,.9fr) minmax(0,1.1fr)",gap:16,alignItems:"start"}}>
    <article style={{border:"1px solid #ddd",borderRadius:14,padding:16}}>
     <h2>Author a module</h2>
     <input placeholder="Title" value={title} onChange={event=>setTitle(event.target.value)} style={{width:"100%",marginBottom:6}}/>
