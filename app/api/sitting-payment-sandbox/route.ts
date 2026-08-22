@@ -6,8 +6,9 @@ function sameOriginWrite(request:Request){const origin=request.headers.get("orig
 async function failure(error:unknown){if(error instanceof Response){const message=await error.text().catch(()=>"");return json({error:message||"Sitting sandbox payment failed"},error.status||500);}return json({error:error instanceof Error?error.message:"Sitting sandbox payment failed"},500);}
 
 export async function POST(request:Request){try{
- sameOriginWrite(request);const body=await request.json() as {quoteId?:string;amount?:number};const quoteId=String(body.quoteId||"").trim(),amount=Number(body.amount);
+ sameOriginWrite(request);const paymentKey=String(request.headers.get("x-payment-capture-key")||"").trim();if(!paymentKey)return json({error:"MISSING_CAPTURE_KEY"},400);
+ const body=await request.json() as {quoteId?:string;amount?:number};const quoteId=String(body.quoteId||"").trim(),amount=Number(body.amount);
  if(!quoteId||!Number.isFinite(amount)||amount<0)return json({error:"Quote and valid amount are required"},400);
  const{env}=await import("cloudflare:workers");if(String((env as unknown as Record<string,unknown>).PAWSPACE_PAYMENT_ENV||"sandbox").toLowerCase()!=="sandbox")return json({error:"Sitting sandbox payment is disabled outside sandbox"},403);
- const result=await captureSittingQuoteSandbox(await database(),{quoteId,amount});return json({data:{...result,liveMoney:false,synthetic:true}},201);
+ const result=await captureSittingQuoteSandbox(await database(),{quoteId,amount,paymentKey});return json({data:{...result,liveMoney:false,synthetic:true}},201);
 }catch(error){return failure(error);}}
