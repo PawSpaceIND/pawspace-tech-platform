@@ -1,11 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
 installWorkersHooks("__LEAK1_DB__", "__LEAK1_ENV__");
 
 const { authError, authFailure } = await import("../lib/server-auth.ts");
+const schedulingRoute = await import("../app/api/uat-scheduling/route.ts");
 
 test("unexpected API exceptions are logged internally but return only the generic fallback", async () => {
   const internalDetail = "SQLITE_CONSTRAINT secret_table.customer_email";
@@ -54,8 +54,25 @@ test("an arbitrary thrown 500 Response cannot bypass redaction", async () => {
   }
 });
 
-test("scheduling GET uses the shared redactor instead of echoing error.message", () => {
-  const route = fs.readFileSync(new URL("../app/api/uat-scheduling/route.ts", import.meta.url), "utf8");
-  assert.match(route, /catch\(error\)\{return authError\(error,"Unable to load the scheduling day board"\);\}\}/);
-  assert.doesNotMatch(route, /error instanceof Error\?error\.message/);
+test("scheduling GET behavior redacts an actual database-path failure", async () => {
+  const internalDetail = "D1_ERROR no such table: secret_customer_table";
+  const originalDb = globalThis.__LEAK1_DB__;
+  const originalError = console.error;
+  globalThis.__LEAK1_DB__ = {
+    prepare() { throw new Error(internalDetail); },
+    batch() { throw new Error(internalDetail); },
+    exec() { throw new Error(internalDetail); },
+  };
+  console.error = () => {};
+  try {
+    const response = await schedulingRoute.GET(new Request("http://localhost/api/uat-scheduling?date=2026-08-22"));
+    assert.equal(response.status, 500);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const body = await response.json();
+    assert.deepEqual(body, { error: "Unable to load the scheduling day board" });
+    assert.doesNotMatch(JSON.stringify(body), /D1_ERROR|secret_customer_table|no such table/);
+  } finally {
+    globalThis.__LEAK1_DB__ = originalDb;
+    console.error = originalError;
+  }
 });

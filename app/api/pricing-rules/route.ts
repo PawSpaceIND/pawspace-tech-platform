@@ -4,8 +4,8 @@ import{createPricingRule,listPricingRules,listPricingCities,addHoliday,seedNatio
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw authFailure("Cross-origin pricing write blocked",403);}
 
-// Pricing-rule validation is an expected operator outcome. Preserve the route's existing status/body
-// contract only for this exact allow-list; database/runtime details continue through generic authError.
+// Pricing-rule validation is an expected operator outcome. Only this exact allow-list may expose its
+// message; database/runtime details continue through generic authError.
 const pricingFailures=[
   "name, serviceCode and cityId are required",
   "ruleType must be one of: weekday, weekend, time_band, season, date_range",
@@ -24,7 +24,7 @@ const pricingFailures=[
   "A date_range rule needs an end date, or it would never expire",
   "A valid date (YYYY-MM-DD) and name are required",
 ]as const;
-function governedPricingFailure(error:unknown){const detail=error instanceof Error?error.message:"";const message=pricingFailures.find(item=>item===detail);return message?authFailure(message,500):null;}
+function governedPricingFailure(error:unknown){const detail=error instanceof Error?error.message:"";const message=pricingFailures.find(item=>item===detail);return message?authFailure(message,400):null;}
 
 // City/zone-wise dynamic pricing rules + holiday/long-weekend surcharge auto-suggest.
 export async function GET(request:Request){
