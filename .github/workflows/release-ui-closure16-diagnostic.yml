@@ -39,3 +39,10 @@ jobs:
           }
           NODE
           exit $code
+      - name: Upload diagnostic report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-ui-closure16-diagnostic
+          path: release-ui-closure16-diagnostic.json
+          if-no-files-found: error
