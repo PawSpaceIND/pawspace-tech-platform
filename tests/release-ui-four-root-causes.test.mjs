@@ -9,6 +9,7 @@ const service = read("app/services/[slug]/page.tsx");
 const breed = read("app/dog-breeds/[breed]/page.tsx");
 const overrides = read("app/review-overrides.css");
 const reviewUx = read("app/components/review-ux-fixes.tsx");
+const assistedCss = read("app/assisted-booking/assisted.module.css");
 
 test("release marketing images bypass Vinext runtime image optimization", () => {
   assert.match(marketing, /export function StaticImage/);
@@ -32,12 +33,14 @@ test("admin phone navigation no longer requires a 650px rail", () => {
   assert.match(overrides, /\.route-admin aside nav button\s*\{[^}]*overflow-wrap:\s*anywhere;/s);
 });
 
-test("assisted booking navigation uses a stable runtime marker and shrinkable phone columns", () => {
-  assert.match(reviewUx, /classList\.toggle\("assisted_shell",\s*isAssistedBooking\)/);
-  assert.match(overrides, /\[class\*=["']assisted_shell["']\] nav\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\) !important;/s);
-  assert.match(overrides, /\[class\*=["']assisted_shell["']\] nav a\s*\{[^}]*overflow-wrap:\s*anywhere;/s);
+test("assisted booking phone layout is constrained at component source", () => {
+  assert.match(reviewUx, /classList\.toggle\("route-assisted-booking",\s*isAssistedBooking\)/);
+  assert.match(assistedCss, /@media\(max-width:650px\)[\s\S]*\.shell aside\{[^}]*box-sizing:border-box;[^}]*min-width:0;[^}]*width:100%[^}]*\}/);
+  assert.match(assistedCss, /@media\(max-width:650px\)[\s\S]*\.shell nav\{[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\);[^}]*min-width:0;[^}]*width:100%[^}]*\}/);
+  assert.match(assistedCss, /@media\(max-width:650px\)[\s\S]*\.shell nav a\{[^}]*min-width:0;[^}]*white-space:normal;[^}]*overflow-wrap:anywhere[^}]*\}/);
 });
 
 test("targeted remediation never hides page overflow", () => {
   assert.doesNotMatch(overrides, /overflow-x\s*:\s*hidden/i);
+  assert.doesNotMatch(assistedCss, /overflow-x\s*:\s*hidden/i);
 });
