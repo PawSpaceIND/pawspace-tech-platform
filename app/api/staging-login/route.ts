@@ -17,7 +17,7 @@ const UAT_IDENTITIES=[
  {id:"UAT-FINANCE",email:"anjali.finance33@tkpetcare.in",name:"Anjali Finance",role:"finance"},
  {id:"UAT-MANAGER",email:"jyoti.manager39@tkpetcare.in",name:"Jyoti Manager",role:"manager"},
  {id:"UAT-GROOMER",email:"asha.groomer1@tkpetcare.in",name:"Asha Groomer",role:"service_provider"},
- {id:"UAT-ASSOCIATE",email:"anita.associate17@tkpetcare.in",name:"Anita Associate",role:"sales"},
+ {id:"UAT-ASSOCIATE",email:"anita.associate17@tkpetcare.in",name:"Anita Associate",role:"associate"},
 ] as const;
 async function ensureUatIdentities(db:Db){const now=Date.now();await db.batch(UAT_IDENTITIES.map(identity=>db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?, 'active',?,?) ON CONFLICT(email) DO NOTHING").bind(identity.id,identity.email,identity.name,identity.role,now,now)));}
 

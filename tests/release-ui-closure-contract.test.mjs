@@ -4,6 +4,7 @@ import fs from "node:fs";
 
 const script = fs.readFileSync(new URL("../scripts/release-ui-closure.mjs", import.meta.url), "utf8");
 const workflow = fs.readFileSync(new URL("../.github/workflows/release-ui-closure.yml", import.meta.url), "utf8");
+const stagingLogin = fs.readFileSync(new URL("../app/api/staging-login/route.ts", import.meta.url), "utf8");
 
 test("release UI closure covers representative roles and responsive viewports", () => {
   for (const marker of ["founder@pawspace.in", "anjali.finance33@tkpetcare.in", "jyoti.manager39@tkpetcare.in", "asha.groomer1@tkpetcare.in", "anita.associate17@tkpetcare.in"]) {
@@ -11,6 +12,11 @@ test("release UI closure covers representative roles and responsive viewports", 
   }
   for (const width of ["390", "768", "1440"]) assert.match(script, new RegExp(`width: ${width}`));
   assert.match(script, /guest_customer/);
+});
+
+test("release UI associate identity uses a defined platform role", () => {
+  assert.match(stagingLogin, /email:"anita\.associate17@tkpetcare\.in",name:"Anita Associate",role:"associate"/);
+  assert.doesNotMatch(stagingLogin, /email:"anita\.associate17@tkpetcare\.in"[^\n]*role:"sales"/);
 });
 
 test("release UI closure blocks mutations while probing controls", () => {
