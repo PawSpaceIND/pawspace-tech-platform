@@ -1,0 +1,40 @@
+name: Release UI closure16 diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/release-ui-closure16-diagnostic.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    env:
+      PREVIEW_URL: https://pawspace-release-preview.karthik-fce.workers.dev
+      PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Run closure and print exact remaining visual finding
+        shell: bash
+        run: |
+          set +e
+          node scripts/release-ui-closure.mjs --base="$PREVIEW_URL" --json=release-ui-closure16-diagnostic.json
+          code=$?
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const report = JSON.parse(fs.readFileSync('release-ui-closure16-diagnostic.json','utf8'));
+          console.log('SUMMARY', JSON.stringify(report.summary));
+          for (const f of report.visualFailures || []) {
+            console.log(`VISUAL actor=${f.actor} route=${f.route} viewport=${f.viewport} status=${f.status} failures=${(f.failures||[]).join(' || ')} scroll=${f.scrollWidth}/${f.viewportWidth} clipped=${(f.clippedControls||[]).join(' | ')} broken=${(f.brokenImages||[]).join(' | ')}`);
+          }
+          NODE
+          exit $code
