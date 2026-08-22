@@ -139,3 +139,13 @@ test("D10 route requires a capture key and passes it into governance", async () 
   assert.match(source, /MISSING_CAPTURE_KEY/);
   assert.match(source, /captureSittingQuoteSandbox\(await database\(\),\{quoteId,amount,paymentKey\}\)/);
 });
+
+test("D10 client sends one retained random capture key per quote", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("../lib/sitting-payment-client.ts", import.meta.url), "utf8");
+  assert.match(source, /x-payment-capture-key/);
+  assert.match(source, /crypto\.randomUUID\(\)/);
+  assert.match(source, /captureKeys/);
+  assert.match(source, /captureKeyForQuote\(input\.quoteId\)/);
+  assert.match(source, /input:\{quoteId:string;amount:number\}/);
+});
