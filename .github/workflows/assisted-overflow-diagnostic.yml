@@ -1,0 +1,58 @@
+name: Assisted overflow diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/assisted-overflow-diagnostic.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Print overflowing elements at 390px
+        env:
+          PREVIEW_URL: https://pawspace-release-preview.karthik-fce.workers.dev
+        run: |
+          node --input-type=module <<'NODE'
+          import { chromium } from 'playwright';
+          const browser = await chromium.launch({ headless: true });
+          const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+          const response = await page.goto(`${process.env.PREVIEW_URL}/assisted-booking`, { waitUntil: 'domcontentloaded', timeout: 12000 });
+          await page.waitForTimeout(500);
+          const result = await page.evaluate(() => {
+            const nodes = [...document.querySelectorAll('body *')].map((el) => {
+              const r = el.getBoundingClientRect();
+              const s = getComputedStyle(el);
+              return {
+                tag: el.tagName.toLowerCase(),
+                cls: String(el.className || '').slice(0, 180),
+                text: (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 100),
+                left: Math.round(r.left * 100) / 100,
+                right: Math.round(r.right * 100) / 100,
+                width: Math.round(r.width * 100) / 100,
+                display: s.display,
+                position: s.position,
+                marginLeft: s.marginLeft,
+                marginRight: s.marginRight,
+                paddingLeft: s.paddingLeft,
+                paddingRight: s.paddingRight,
+                boxSizing: s.boxSizing,
+              };
+            }).filter((x) => x.width > 0 && (x.left < -2 || x.right > innerWidth + 2)).sort((a,b) => b.right - a.right);
+            return { innerWidth, rootScrollWidth: document.documentElement.scrollWidth, bodyScrollWidth: document.body.scrollWidth, nodes: nodes.slice(0, 30) };
+          });
+          console.log(`status=${response?.status()}`);
+          console.log(JSON.stringify(result, null, 2));
+          await browser.close();
+          NODE
