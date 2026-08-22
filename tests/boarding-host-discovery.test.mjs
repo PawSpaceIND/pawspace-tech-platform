@@ -43,7 +43,7 @@ test("Boarding customer search renders only governed discovered hosts",()=>{
   assert.doesNotMatch(flow,/const boardingHosts: Caregiver\[\] =/);
   assert.match(flow,/toBoardingCaregiver/);
   assert.match(flow,/boardingHostWindowKey === boardingHostQueryKey \? boardingHosts : \[\]/);
-  assert.match(flow,/loadBoardingCommercial\(\{cityId:"blr",zoneId:serviceLocation\.assignment\.zoneId,scheduledStart:/);
+  assert.match(flow,/loadBoardingCommercial\(\{cityId:serviceLocation\.assignment\.cityId,zoneId:serviceLocation\.assignment\.zoneId,scheduledStart:/);
   assert.match(flow,/species:selectedSpecies/);
   assert.match(flow,/item\.providerId===caregiver\.providerId/);
   assert.match(flow,/Selected Boarding host is no longer available for this stay window/);
