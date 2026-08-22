@@ -1,5 +1,5 @@
-import type{Metadata}from"next";import{notFound}from"next/navigation";import Image from"next/image";
-import{Breadcrumbs,MarketingShell,QuickFacts,DidYouKnow,SectionHeader,Faqs,JsonLd,services as allServices}from"../../components/marketing/premium-marketing";
+import type{Metadata}from"next";import{notFound}from"next/navigation";
+import{Breadcrumbs,MarketingShell,QuickFacts,DidYouKnow,SectionHeader,Faqs,JsonLd,services as allServices,StaticImage as Image}from"../../components/marketing/premium-marketing";
 import styles from"../../components/marketing/premium-marketing.module.css";
 import{getBreedGuide,breedGuides}from"../../../lib/breed-content";
 

@@ -1,8 +1,11 @@
-import Link from"next/link";import Image from"next/image";import styles from"./premium-marketing.module.css";
+/* eslint-disable @next/next/no-img-element */
+import type{CSSProperties}from"react";import Link from"next/link";import styles from"./premium-marketing.module.css";
 export type ServiceCard={title:string;description:string;href:string;image?:string;eyebrow?:string};
 export type ProofItem={value:string;label:string};
 export type PackageCard={name:string;price?:string;description?:string;items:string[];featured?:boolean;badge?:string;href?:string};
 export type Faq={q:string;a:string};
+export function StaticImage({src,alt,style,priority}:{src:string;alt:string;fill?:boolean;sizes?:string;priority?:boolean;style?:CSSProperties}){return <img src={src} alt={alt} loading={priority?"eager":"lazy"} decoding="async" style={{position:"absolute",inset:0,width:"100%",height:"100%",...style}}/>}
+const Image=StaticImage;
 export const verifiedProof:ProofItem[]=[{value:"At-home care",label:"Comfortable, familiar surroundings for your pet"},{value:"Verified people",label:"Every caregiver identity-checked before their first visit"},{value:"Real updates",label:"Photos and progress, not just a chat message"},{value:"PawSpace support",label:"One connected customer and care record"}];
 export const services:ServiceCard[]=[
  {title:"Pet Grooming",description:"Doorstep dog and cat grooming with clear packages and care instructions.",href:"/services/grooming",image:"/assets/banners/grooming-groomer-action.jpg"},
