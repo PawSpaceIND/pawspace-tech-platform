@@ -104,7 +104,9 @@ export async function securityAudit(db:Db,actor:AuthenticatedActor,action:string
     .bind(crypto.randomUUID(),actor.email,actor.roleCode,action,resourceType,resourceId,outcome,JSON.stringify(detail),Date.now()).run();
 }
 
+/** Preserve governed HTTP errors, but never return an unexpected exception's message to the caller. */
 export function authError(error:unknown,fallback="Request failed"){
   if(error instanceof Response)return error;
-  return Response.json({error:error instanceof Error?error.message:fallback},{status:500});
+  console.error("[api] unexpected error",error);
+  return Response.json({error:fallback},{status:500,headers:{"cache-control":"no-store"}});
 }
