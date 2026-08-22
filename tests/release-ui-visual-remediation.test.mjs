@@ -36,7 +36,7 @@ test("review route families receive responsive shrink guards", () => {
   assertRouteToggle("route-partner", "isPartner");
   assertRouteToggle("route-customer", "isCustomer");
   assertRouteToggle("route-mobile-app", "isMobileApp");
-  assert.match(reviewUx, /const isCustomer = !isMobileApp/);
+  assert.match(reviewUx, /const isCustomer = !isMobileApp && !isTeam && !isControl && !isPartner && !isAdmin && !isRegressionLab/);
 
   const routeShrink = groupedRuleBlock(overrides, [".route-team main,", ".route-partner main,", ".route-customer main,"]);
   assert.match(routeShrink, /min-width:\s*0/);
