@@ -32,6 +32,23 @@ jobs:
       - run: npm ci
       - run: npm test
 
+  readability-responsive:
+    name: Readability & responsive
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      # Reuses scripts/screen-sweep.mjs's route discovery and adds the two dimensions that sweep does
+      # not measure: type below a readable floor, and horizontal scroll on a 390px phone. Gated on
+      # tests/e2e/ui-baseline.json, so it fails on new breakage rather than on existing debt.
+      - run: node tests/e2e/readability-responsive.mjs --serve
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
