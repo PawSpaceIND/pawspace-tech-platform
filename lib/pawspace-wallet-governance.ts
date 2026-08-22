@@ -1,35 +1,86 @@
 /**
  * PawSpace Wallet - a customer-owned store-credit ledger.
  *
- * Credit goes into the wallet from refunds, cancellations and goodwill instead of (or alongside) a
- * cash refund. When the customer later spends wallet credit on a booking they get 10% ENHANCED
- * value: every Rs.100 of wallet becomes Rs.110 of booking value. The 10% top-up is a marketing
- * incentive (wallet-bonus expense); it never inflates the customer's cash balance, only their
- * purchasing power at redemption.
- *
- * Accounting (all via finance-accounts.postJournal, balanced + idempotent):
- *   credit:  Dr Refunds and Cancellations   Cr Customer Wallet Liability          (non-cash)
- *   redeem:  Dr Customer Wallet Liability + Dr Wallet Bonus Expense
- *            Cr Customer Credits Applied (= walletUsed x 1.10)                     (non-cash)
- * Neither touches a cash account, so wallet activity never distorts the cash-flow statement.
+ * Manual staff credits use maker/checker governance before this ledger is touched. System-generated
+ * refunds may still call creditWallet directly with their own deterministic idempotency key. Customer
+ * redemptions remain customer-owned and never pass through the manual approval workflow.
  */
 
 import { ACCT, postJournal, periodOf, round } from "./finance-accounts";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
+type CreditInput = { customerId: string; amount: number; source: string; sourceId?: string; idempotencyKey: string; note?: string; actorId: string };
+
+type CreditRequestInput = Omit<CreditInput, "actorId"> & { requestedBy: string };
 
 const uid = (p: string) => `${p}-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
 const today = () => new Date().toISOString().slice(0, 10);
-export const WALLET_BONUS_RATE = 0.10; // 10% enhanced value on redemption
+export const WALLET_BONUS_RATE = 0.10;
+export const MANUAL_CREDIT_DUAL_CONTROL_THRESHOLD = 0; // every positive manual credit needs a checker
 const CREDIT_SOURCES = ["refund", "cancellation", "goodwill"];
-const MAX_CREDIT = 1_000_000; // guard-rail on a single credit
+const MAX_CREDIT = 1_000_000;
+
+function workflowError(message: string, status: number): never {
+  throw Response.json({ error: message }, { status, headers: { "cache-control": "no-store" } });
+}
+
+function canonicalCredit(input: CreditInput | CreditRequestInput) {
+  const customerId = String(input.customerId || "").trim();
+  const amount = round(Number(input.amount));
+  const source = String(input.source || "").trim().toLowerCase();
+  const sourceId = String(input.sourceId || "").trim() || null;
+  const idempotencyKey = String(input.idempotencyKey || "").trim();
+  const note = String(input.note || "").trim() || null;
+  if (!customerId) throw new Error("A customer is required");
+  if (!CREDIT_SOURCES.includes(source)) throw new Error("Wallet credit source must be refund, cancellation or goodwill");
+  if (!(amount > 0) || amount > MAX_CREDIT) throw new Error(`Credit amount must be between 0.01 and ${MAX_CREDIT}`);
+  if (!idempotencyKey) throw new Error("An idempotency key is required");
+  return { customerId, amount, source, sourceId, idempotencyKey, note };
+}
+
+async function hashPayload(value: unknown) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify(value)));
+  return Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function sameNullable(a: unknown, b: string | null) {
+  return (a == null || String(a) === "") ? b === null : String(a) === b;
+}
+
+function creditMatches(row: Row, input: ReturnType<typeof canonicalCredit>) {
+  return String(row.customer_id) === input.customerId
+    && round(Number(row.amount)) === input.amount
+    && String(row.source_type) === input.source
+    && sameNullable(row.source_id, input.sourceId)
+    && sameNullable(row.note, input.note);
+}
+
+function requestView(row: Row) {
+  return {
+    id: String(row.id),
+    customerId: String(row.customer_id),
+    amount: Number(row.amount),
+    source: String(row.source_type),
+    sourceId: row.source_id ? String(row.source_id) : null,
+    note: row.note ? String(row.note) : null,
+    status: String(row.status),
+    requestedBy: String(row.requested_by),
+    requestedAt: Number(row.requested_at),
+    approvedBy: row.approved_by ? String(row.approved_by) : null,
+    approvedAt: row.approved_at ? Number(row.approved_at) : null,
+    ledgerId: row.ledger_id ? String(row.ledger_id) : null,
+    creditedAt: row.credited_at ? Number(row.credited_at) : null,
+  };
+}
 
 export async function ensurePawspaceWalletTables(db: Db) {
   await db.batch([
     db.prepare("CREATE TABLE IF NOT EXISTS pawspace_wallet_accounts (customer_id TEXT PRIMARY KEY,balance REAL NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS pawspace_wallet_ledger (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,entry_type TEXT NOT NULL,amount REAL NOT NULL,bonus_amount REAL NOT NULL DEFAULT 0,applied_value REAL NOT NULL DEFAULT 0,source_type TEXT NOT NULL,source_id TEXT,idempotency_key TEXT NOT NULL UNIQUE,note TEXT,balance_after REAL NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_wallet_ledger_customer ON pawspace_wallet_ledger(customer_id,created_at)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS pawspace_wallet_credit_requests (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,amount REAL NOT NULL,source_type TEXT NOT NULL,source_id TEXT,idempotency_key TEXT NOT NULL UNIQUE,payload_hash TEXT NOT NULL,note TEXT,status TEXT NOT NULL DEFAULT 'pending',requested_by TEXT NOT NULL,requested_at INTEGER NOT NULL,approved_by TEXT,approved_at INTEGER,ledger_id TEXT,credited_at INTEGER,updated_at INTEGER NOT NULL)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_wallet_credit_requests_status ON pawspace_wallet_credit_requests(status,requested_at)"),
   ]);
 }
 
@@ -41,46 +92,109 @@ export async function walletBalance(db: Db, customerId: string): Promise<number>
 
 async function applyDelta(db: Db, customerId: string, delta: number) {
   const now = Date.now();
-  await db.prepare("INSERT INTO pawspace_wallet_accounts (customer_id,balance,updated_at) VALUES (?,?,?) ON CONFLICT(customer_id) DO UPDATE SET balance=balance+?,updated_at=?").bind(customerId, round(delta), now, round(delta), now).run();
+  await db.prepare("INSERT INTO pawspace_wallet_accounts (customer_id,balance,updated_at) VALUES (?,?,?) ON CONFLICT(customer_id) DO UPDATE SET balance=balance+?,updated_at=?")
+    .bind(customerId, round(delta), now, round(delta), now).run();
   return walletBalance(db, customerId);
 }
 
-/** Credit store credit into a customer's wallet (from a refund / cancellation / goodwill). Idempotent. */
-export async function creditWallet(db: Db, input: { customerId: string; amount: number; source: string; sourceId?: string; idempotencyKey: string; note?: string; actorId: string }) {
+async function postCreditJournal(db: Db, input: { ledgerId: string; idempotencyKey: string; customerId: string; amount: number; source: string }) {
+  return postJournal(db, {
+    groupKey: `wallet-credit-${input.idempotencyKey}`,
+    entryDate: today(),
+    periodCode: periodOf(today()),
+    sourceType: "wallet_credit",
+    sourceId: input.ledgerId,
+    narration: `Wallet credit (${input.source}) for ${input.customerId}`,
+    lines: [
+      { accountCode: ACCT.REFUNDS, debit: input.amount },
+      { accountCode: ACCT.WALLET_LIABILITY, credit: input.amount },
+    ],
+  });
+}
+
+/** Direct/system credit primitive. Manual staff routes must request + approve instead. */
+export async function creditWallet(db: Db, raw: CreditInput) {
   await ensurePawspaceWalletTables(db);
-  const customerId = String(input.customerId || "").trim();
-  const amount = round(Number(input.amount));
-  const source = String(input.source || "").toLowerCase();
-  if (!customerId) throw new Error("A customer is required");
-  if (!CREDIT_SOURCES.includes(source)) throw new Error("Wallet credit source must be refund, cancellation or goodwill");
-  if (!(amount > 0) || amount > MAX_CREDIT) throw new Error(`Credit amount must be between 1 and ${MAX_CREDIT}`);
-  if (!input.idempotencyKey) throw new Error("An idempotency key is required");
+  const input = canonicalCredit(raw);
   const prior = await db.prepare("SELECT * FROM pawspace_wallet_ledger WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();
-  if (prior) return { alreadyCredited: true, ledgerId: String(prior.id), amount: Number(prior.amount), balance: await walletBalance(db, customerId) };
-  const balance = await applyDelta(db, customerId, amount);
+  if (prior) {
+    if (!creditMatches(prior, input)) workflowError("Wallet credit idempotency key is already bound to another payload", 409);
+    await postCreditJournal(db, { ledgerId: String(prior.id), ...input });
+    return { alreadyCredited: true, ledgerId: String(prior.id), amount: Number(prior.amount), balance: await walletBalance(db, input.customerId) };
+  }
+
+  const balance = await applyDelta(db, input.customerId, input.amount);
   const id = uid("WAL");
   try {
     await db.prepare("INSERT INTO pawspace_wallet_ledger (id,customer_id,entry_type,amount,bonus_amount,applied_value,source_type,source_id,idempotency_key,note,balance_after,actor_id,created_at) VALUES (?,?,'credit',?,0,0,?,?,?,?,?,?,?)")
-      .bind(id, customerId, amount, source, input.sourceId || null, input.idempotencyKey, input.note || null, balance, input.actorId, Date.now()).run();
+      .bind(id, input.customerId, input.amount, input.source, input.sourceId, input.idempotencyKey, input.note, balance, raw.actorId, Date.now()).run();
   } catch (error) {
-    // Same idempotency key raced past the prior-check: undo this call's balance delta so the wallet
-    // is credited exactly once, then answer as the idempotent replay it is.
+    await applyDelta(db, input.customerId, -input.amount);
     if (!(error instanceof Error && /UNIQUE/i.test(error.message))) throw error;
-    await applyDelta(db, customerId, -amount);
     const raced = await db.prepare("SELECT * FROM pawspace_wallet_ledger WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();
-    return { alreadyCredited: true, ledgerId: String(raced?.id || ""), amount: Number(raced?.amount || amount), balance: await walletBalance(db, customerId) };
+    if (!raced || !creditMatches(raced, input)) workflowError("Wallet credit idempotency key is already bound to another payload", 409);
+    await postCreditJournal(db, { ledgerId: String(raced.id), ...input });
+    return { alreadyCredited: true, ledgerId: String(raced.id), amount: Number(raced.amount), balance: await walletBalance(db, input.customerId) };
   }
-  await postJournal(db, { groupKey: `wallet-credit-${input.idempotencyKey}`, entryDate: today(), periodCode: periodOf(today()), sourceType: "wallet_credit", sourceId: id, narration: `Wallet credit (${source}) for ${customerId}`, lines: [
-    { accountCode: ACCT.REFUNDS, debit: amount },
-    { accountCode: ACCT.WALLET_LIABILITY, credit: amount },
-  ] });
-  return { alreadyCredited: false, ledgerId: id, amount, balance };
+
+  await postCreditJournal(db, { ledgerId: id, ...input });
+  return { alreadyCredited: false, ledgerId: id, amount: input.amount, balance };
 }
 
-/**
- * Preview how much booking value a customer's wallet can fund for a given booking total, honouring
- * the 10% enhancement and never over-applying beyond the booking total.
- */
+/** Maker step: records a pending manual credit without changing wallet balance or finance journals. */
+export async function requestWalletCredit(db: Db, raw: CreditRequestInput) {
+  await ensurePawspaceWalletTables(db);
+  const input = canonicalCredit(raw);
+  const requestedBy = String(raw.requestedBy || "").trim().toLowerCase();
+  if (!requestedBy) throw new Error("A requesting actor is required");
+  if (!(input.amount > MANUAL_CREDIT_DUAL_CONTROL_THRESHOLD)) throw new Error("Manual wallet credit does not meet the configured approval threshold");
+  const payloadHash = await hashPayload([input.customerId, input.amount, input.source, input.sourceId, input.note]);
+  const id = uid("WCR");
+  const now = Date.now();
+  const inserted = await db.prepare("INSERT OR IGNORE INTO pawspace_wallet_credit_requests (id,customer_id,amount,source_type,source_id,idempotency_key,payload_hash,note,status,requested_by,requested_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'pending',?,?,?)")
+    .bind(id, input.customerId, input.amount, input.source, input.sourceId, input.idempotencyKey, payloadHash, input.note, requestedBy, now, now).run();
+  const row = await db.prepare("SELECT * FROM pawspace_wallet_credit_requests WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();
+  if (!row) throw new Error("Unable to create wallet credit request");
+  if (String(row.payload_hash) !== payloadHash) workflowError("Wallet credit request idempotency key is already bound to another payload", 409);
+  return { ...requestView(row), alreadyRequested: !Number(inserted.meta?.changes || 0), requiresApproval: true, threshold: MANUAL_CREDIT_DUAL_CONTROL_THRESHOLD };
+}
+
+/** Checker step: a distinct finance actor approves; the deterministic credit is safe to retry. */
+export async function approveWalletCreditRequest(db: Db, input: { requestId: string; approvedBy: string }) {
+  await ensurePawspaceWalletTables(db);
+  const requestId = String(input.requestId || "").trim();
+  const approvedBy = String(input.approvedBy || "").trim().toLowerCase();
+  if (!requestId || !approvedBy) throw new Error("A credit request and approving actor are required");
+  let row = await db.prepare("SELECT * FROM pawspace_wallet_credit_requests WHERE id=?").bind(requestId).first<Row>();
+  if (!row) workflowError("Wallet credit request not found", 404);
+  if (String(row.requested_by).toLowerCase() === approvedBy) workflowError("Wallet credit requires approval by a distinct finance actor", 403);
+
+  let newlyApproved = false;
+  if (String(row.status) === "pending") {
+    const now = Date.now();
+    const claimed = await db.prepare("UPDATE pawspace_wallet_credit_requests SET status='approved',approved_by=?,approved_at=?,updated_at=? WHERE id=? AND status='pending' AND requested_by<>?")
+      .bind(approvedBy, now, now, requestId, approvedBy).run();
+    newlyApproved = Number(claimed.meta?.changes || 0) === 1;
+    row = await db.prepare("SELECT * FROM pawspace_wallet_credit_requests WHERE id=?").bind(requestId).first<Row>();
+  }
+  if (!row || String(row.status) !== "approved") workflowError("Wallet credit request is not available for approval", 409);
+
+  const credit = await creditWallet(db, {
+    customerId: String(row.customer_id),
+    amount: Number(row.amount),
+    source: String(row.source_type),
+    sourceId: row.source_id ? String(row.source_id) : undefined,
+    idempotencyKey: `manual-wallet-credit:${requestId}`,
+    note: row.note ? String(row.note) : undefined,
+    actorId: String(row.approved_by || approvedBy),
+  });
+  const now = Date.now();
+  await db.prepare("UPDATE pawspace_wallet_credit_requests SET ledger_id=COALESCE(ledger_id,?),credited_at=COALESCE(credited_at,?),updated_at=? WHERE id=? AND status='approved'")
+    .bind(credit.ledgerId, now, now, requestId).run();
+  const completed = await db.prepare("SELECT * FROM pawspace_wallet_credit_requests WHERE id=?").bind(requestId).first<Row>();
+  return { ...requestView(completed || row), newlyApproved, alreadyApproved: !newlyApproved, credit };
+}
+
 export function quoteWalletRedemption(balance: number, bookingTotal: number) {
   const maxAppliedByBalance = round(balance * (1 + WALLET_BONUS_RATE));
   const appliedValue = round(Math.min(maxAppliedByBalance, bookingTotal));
@@ -89,10 +203,6 @@ export function quoteWalletRedemption(balance: number, bookingTotal: number) {
   return { appliedValue, walletUsed, bonus };
 }
 
-/**
- * Redeem wallet credit against a real customer-owned booking, at 10% enhanced value. One redemption
- * per booking. Returns the value applied to the booking (wallet used + 10% bonus).
- */
 export async function redeemWalletForBooking(db: Db, input: { customerId: string; bookingId: string; walletAmount?: number; actorId: string }) {
   await ensurePawspaceWalletTables(db);
   const customerId = String(input.customerId || "").trim();
@@ -108,13 +218,10 @@ export async function redeemWalletForBooking(db: Db, input: { customerId: string
   if (!(balance > 0)) throw new Error("No wallet balance to redeem");
   const bookingTotal = round(Number(booking.total_amount || 0));
   if (!(bookingTotal > 0)) throw new Error("This booking has no payable amount");
-  // customer may cap how much wallet to spend; default is as much as helps this booking
   const requestedWallet = input.walletAmount != null ? round(Math.min(Number(input.walletAmount), balance)) : balance;
   if (!(requestedWallet > 0)) throw new Error("Wallet redemption amount must be positive");
   const q = quoteWalletRedemption(requestedWallet, bookingTotal);
   if (!(q.walletUsed > 0)) throw new Error("Wallet redemption amount must be positive");
-  // Guarded debit: the balance row is only decremented when it can absorb the full spend, so two
-  // concurrent redemptions can never drive the wallet negative (the read above is advisory only).
   const now = Date.now();
   const debited = await db.prepare("UPDATE pawspace_wallet_accounts SET balance=balance-?,updated_at=? WHERE customer_id=? AND balance>=?").bind(q.walletUsed, now, customerId, q.walletUsed).run();
   if (!Number(debited.meta?.changes || 0)) throw new Error("Wallet balance is no longer sufficient for this redemption");
@@ -124,8 +231,6 @@ export async function redeemWalletForBooking(db: Db, input: { customerId: string
     await db.prepare("INSERT INTO pawspace_wallet_ledger (id,customer_id,entry_type,amount,bonus_amount,applied_value,source_type,source_id,idempotency_key,note,balance_after,actor_id,created_at) VALUES (?,?,'redeem',?,?,?,'booking',?,?,?,?,?,?)")
       .bind(id, customerId, -q.walletUsed, q.bonus, q.appliedValue, bookingId, idempotencyKey, `Applied Rs.${q.appliedValue} (incl. Rs.${q.bonus} bonus) to booking`, newBalance, input.actorId, Date.now()).run();
   } catch (error) {
-    // One-redemption-per-booking raced past the prior-check: give the money back before failing,
-    // so a lost race never burns balance without a ledger row.
     if (!(error instanceof Error && /UNIQUE/i.test(error.message))) throw error;
     await applyDelta(db, customerId, q.walletUsed);
     throw new Error("Wallet credit has already been applied to this booking");
