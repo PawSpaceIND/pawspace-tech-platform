@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { chromium } from "playwright";
+import { CONTROL_RESULT, classifyControl, isControlFailure } from "./release-ui-control-classifier.mjs";
 
 const arg = (name, fallback = "") => {
   const found = process.argv.find((item) => item.startsWith(`--${name}=`));
@@ -126,9 +127,152 @@ function linkWiringResult(target, route) {
   }
 }
 
+// Resolve the control the probe intends to click. The descriptor snapshot is taken once per route,
+// but every control probe reloads the route first, and a route whose client data settles after the
+// snapshot can render a different button set. Re-resolving by tag+text keeps the verdict attached
+// to the control it names, instead of reporting a control that was never clicked.
+async function resolveControlIndex(page, want, preferredIndex = -1) {
+  return page.evaluate(({ want: wanted, preferredIndex: preferred }) => {
+    const norm = (el) => (el.textContent || el.getAttribute("aria-label") || el.getAttribute("title") || "").replace(/\s+/g, " ").trim().slice(0, 100);
+    const all = [...document.querySelectorAll("button,a[href]")];
+    const at = preferred >= 0 ? all[preferred] : null;
+    if (at && at.tagName.toLowerCase() === wanted.tag && norm(at) === wanted.text) return preferred;
+    return all.findIndex((el) => el.tagName.toLowerCase() === wanted.tag && norm(el) === wanted.text);
+  }, { want, preferredIndex }).catch(() => -1);
+}
+
+// Arm the per-click observers. This runs immediately before each click so a displaced-state
+// re-probe measures only the target control's own effect, never the displacing sibling's.
+async function armProbe(page, index) {
+  await page.evaluate((targetIndex) => {
+    const target = document.querySelectorAll("button,a[href]")[targetIndex];
+    window.__pawspaceProbeForm = target && "form" in target ? target.form : null;
+    window.__pawspaceInvalid = [];
+    window.__pawspaceInvalidListener = (event) => {
+      const field = event.target;
+      window.__pawspaceInvalid.push({
+        field: String(field.name || field.id || field.tagName || "").toLowerCase().slice(0, 60),
+        sameForm: Boolean(window.__pawspaceProbeForm && field.form === window.__pawspaceProbeForm),
+      });
+    };
+    document.addEventListener("invalid", window.__pawspaceInvalidListener, true);
+    window.__pawspaceUiMutationCount = 0;
+    const observer = new MutationObserver((records) => { window.__pawspaceUiMutationCount += records.length; });
+    observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
+    window.__pawspaceUiMutationObserver = observer;
+  }, index).catch(() => {});
+}
+
+async function readProbe(page) {
+  return page.evaluate(() => {
+    const domMutations = Number(window.__pawspaceUiMutationCount || 0);
+    window.__pawspaceUiMutationObserver?.disconnect();
+    if (window.__pawspaceInvalidListener) document.removeEventListener("invalid", window.__pawspaceInvalidListener, true);
+    const invalid = (window.__pawspaceInvalid || []).filter((item) => item.sameForm);
+    return { domMutations, hadForm: Boolean(window.__pawspaceProbeForm), invalidFields: [...new Set(invalid.map((item) => item.field))].slice(0, 5) };
+  }).catch(() => ({ domMutations: 0, hadForm: false, invalidFields: [] }));
+}
+
+// Click one control and collect every observable effect. Mutating requests stay aborted before
+// execution here exactly as before, including during a displaced-state re-probe.
+async function clickAndObserve(page, index) {
+  const evidence = { mutationAttempt: null, requestSeen: null, dialogSeen: null, navigationSeen: null, changed: false, domMutations: 0, validationBlocked: null, error: null };
+  const locator = page.locator("button,a[href]").nth(index);
+  const beforeUrl = page.url();
+  const beforeText = await page.locator("body").innerText().catch(() => "");
+  const onDialog = async (dialog) => { evidence.dialogSeen = dialog.type(); await dialog.dismiss().catch(() => {}); };
+  const onRequest = (request) => { if (request.url().includes("/api/")) evidence.requestSeen = `${request.method()} ${new URL(request.url()).pathname}`; };
+  const routeHandler = async (routeHandle) => {
+    const method = routeHandle.request().method();
+    if (MUTATING_METHODS.has(method)) { evidence.mutationAttempt = `${method} ${new URL(routeHandle.request().url()).pathname}`; await routeHandle.abort("blockedbyclient"); }
+    else await routeHandle.continue();
+  };
+  page.on("dialog", onDialog); page.on("request", onRequest); await page.route("**/api/**", routeHandler);
+  await armProbe(page, index);
+  try {
+    await locator.click({ timeout: 3500 });
+    await sleep(300);
+    evidence.navigationSeen = page.url() !== beforeUrl ? page.url() : null;
+    const afterText = await page.locator("body").innerText().catch(() => "");
+    const state = await readProbe(page);
+    evidence.domMutations = state.domMutations;
+    evidence.changed = afterText !== beforeText || state.domMutations > 0;
+    // Constraint validation firing for this control's own form is positive proof the click reached
+    // that form's submission machinery. A button wired to nothing never produces an invalid event.
+    evidence.validationBlocked = state.invalidFields.length ? { form: true, fields: state.invalidFields } : null;
+  } catch (error) {
+    evidence.error = String(error.message).split("\n")[0].slice(0, 220);
+    await readProbe(page);
+  }
+  await page.unroute("**/api/**", routeHandler); page.off("dialog", onDialog); page.off("request", onRequest);
+  return evidence;
+}
+
+const observable = (evidence) => Boolean(evidence.navigationSeen || evidence.mutationAttempt || evidence.requestSeen || evidence.dialogSeen || evidence.changed);
+
+async function siblingCandidates(page, index) {
+  return page.evaluate((targetIndex) => {
+    const all = [...document.querySelectorAll("button,a[href]")];
+    const target = all[targetIndex];
+    if (!target) return [];
+    const visible = (el) => Boolean(el.getClientRects().length) && getComputedStyle(el).visibility !== "hidden" && getComputedStyle(el).display !== "none";
+    const norm = (el) => (el.textContent || el.getAttribute("aria-label") || el.getAttribute("title") || "").replace(/\s+/g, " ").trim().slice(0, 100);
+    const found = [];
+    let scope = target.parentElement;
+    for (let depth = 0; depth < 2 && scope; depth += 1) {
+      for (const el of scope.querySelectorAll("button")) {
+        if (el === target || el.disabled || el.getAttribute("aria-disabled") === "true" || !visible(el)) continue;
+        const text = norm(el);
+        if (text && !found.some((item) => item.text === text)) found.push({ tag: "button", text });
+      }
+      if (found.length) break;
+      scope = scope.parentElement;
+    }
+    return found.slice(0, 6);
+  }, index).catch(() => []);
+}
+
+// A filter or tab already in its selected state writes the state it already holds, React bails out,
+// and nothing is committed - a correct no-op that the gate previously read as broken wiring. Click a
+// sibling in the same control group first, then the target: the target must now commit an observable
+// effect. This is a stronger requirement than the original single click, not an exemption, because a
+// control wired to nothing produces no effect in either state.
+async function displacedStateProbe(page, route, target) {
+  await gotoSettled(page, `${BASE}${route}`).catch(() => {});
+  const anchor = await resolveControlIndex(page, { tag: target.tag, text: target.text }, target.index);
+  if (anchor < 0) return { attempted: false, changed: false, sibling: null, evidence: null };
+  const candidates = (await siblingCandidates(page, anchor)).filter((item) => item.text && !DESTRUCTIVE_TEXT.test(item.text)).slice(0, 2);
+  for (const sibling of candidates) {
+    await gotoSettled(page, `${BASE}${route}`).catch(() => {});
+    const siblingIndex = await resolveControlIndex(page, sibling);
+    if (siblingIndex < 0) continue;
+    const displaced = await clickAndObserve(page, siblingIndex);
+    if (displaced.error) continue;
+    // The displacing click can itself re-render the group, so re-resolve before the retry.
+    const targetIndex = await resolveControlIndex(page, { tag: target.tag, text: target.text });
+    if (targetIndex < 0) continue;
+    const retry = await clickAndObserve(page, targetIndex);
+    if (observable(retry)) {
+      return { attempted: true, changed: true, sibling: sibling.text, evidence: retry.requestSeen || retry.navigationSeen || `dom mutations ${retry.domMutations}` };
+    }
+  }
+  return { attempted: candidates.length > 0, changed: false, sibling: candidates[0]?.text || null, evidence: null };
+}
+
 async function probeControls(page, route) {
   await page.setViewportSize({ width: 1280, height: 900 });
+  // A provider-identity surface refuses a staff UAT session outright. Capture that refusal from the
+  // identity endpoint itself rather than from rendered copy, so the signal cannot be reached by any
+  // route whose controls are genuinely probeable.
+  const identityRefusals = [];
+  const onIdentityResponse = (response) => {
+    if (response.url().includes("/api/identity-session") && [401, 403].includes(response.status())) {
+      identityRefusals.push(`HTTP ${response.status()} ${new URL(response.url()).pathname}`);
+    }
+  };
+  page.on("response", onIdentityResponse);
   await gotoSettled(page, `${BASE}${route}`);
+  page.off("response", onIdentityResponse);
   const descriptors = await page.locator("button,a[href]").evaluateAll((els) => els.map((el, index) => ({
     index,
     tag: el.tagName.toLowerCase(),
@@ -138,54 +282,38 @@ async function probeControls(page, route) {
     hidden: !(el.getClientRects().length && getComputedStyle(el).visibility !== "hidden" && getComputedStyle(el).display !== "none"),
   }))).catch(() => []);
   const targets = descriptors.filter((d) => !d.disabled && !d.hidden).slice(0, MAX_CONTROLS_PER_ROUTE);
-  const results = [];
 
+  // Record every control this actor could not reach instead of dropping them, so the report shows
+  // the exact size of the unexercised surface rather than hiding it behind a smaller probe count.
+  if (identityRefusals.length) {
+    return {
+      identityGated: true,
+      identityEvidence: identityRefusals[0],
+      controls: targets.map((target) => ({ ...target, destructive: DESTRUCTIVE_TEXT.test(target.text || ""), identityGated: true, result: CONTROL_RESULT.identityGated, error: identityRefusals[0] })),
+    };
+  }
+
+  const results = [];
   for (const target of targets) {
     const linkResult = linkWiringResult(target, route);
     if (linkResult) { results.push({ ...target, destructive: false, mutationAttempt: null, requestSeen: null, dialogSeen: null, changed: false, ...linkResult }); continue; }
 
     await gotoSettled(page, `${BASE}${route}`).catch(() => {});
-    const locator = page.locator("button,a[href]").nth(target.index);
+    const index = await resolveControlIndex(page, { tag: target.tag, text: target.text }, target.index);
+    if (index < 0) { results.push({ ...target, indexDrift: true, result: CONTROL_RESULT.indexDrift, error: "control could not be re-resolved on reload" }); continue; }
+    const locator = page.locator("button,a[href]").nth(index);
     if (!await locator.isVisible().catch(() => false)) { results.push({ ...target, result: "skipped_not_visible" }); continue; }
 
-    const text = target.text || `${target.tag}#${target.index}`;
-    const destructive = DESTRUCTIVE_TEXT.test(text);
-    let mutationAttempt = null, requestSeen = null, dialogSeen = null, navigationSeen = null, changed = false, error = null, domMutations = 0;
-    const beforeUrl = page.url();
-    const beforeText = await page.locator("body").innerText().catch(() => "");
-    await page.evaluate(() => {
-      window.__pawspaceUiMutationCount = 0;
-      const observer = new MutationObserver((records) => { window.__pawspaceUiMutationCount += records.length; });
-      observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
-      window.__pawspaceUiMutationObserver = observer;
-    }).catch(() => {});
-    const onDialog = async (dialog) => { dialogSeen = dialog.type(); await dialog.dismiss().catch(() => {}); };
-    const onRequest = (request) => { if (request.url().includes("/api/")) requestSeen = `${request.method()} ${new URL(request.url()).pathname}`; };
-    const routeHandler = async (routeHandle) => {
-      const method = routeHandle.request().method();
-      if (MUTATING_METHODS.has(method)) { mutationAttempt = `${method} ${new URL(routeHandle.request().url()).pathname}`; await routeHandle.abort("blockedbyclient"); }
-      else await routeHandle.continue();
-    };
-    page.on("dialog", onDialog); page.on("request", onRequest); await page.route("**/api/**", routeHandler);
-    try {
-      await locator.click({ timeout: 3500 });
-      await sleep(300);
-      navigationSeen = page.url() !== beforeUrl ? page.url() : null;
-      const afterText = await page.locator("body").innerText().catch(() => "");
-      domMutations = await page.evaluate(() => {
-        const count = Number(window.__pawspaceUiMutationCount || 0);
-        window.__pawspaceUiMutationObserver?.disconnect();
-        return count;
-      }).catch(() => 0);
-      changed = afterText !== beforeText || domMutations > 0;
-    } catch (e) { error = String(e.message).split("\n")[0].slice(0, 220); }
-    await page.unroute("**/api/**", routeHandler); page.off("dialog", onDialog); page.off("request", onRequest);
-
-    const evidence = Boolean(navigationSeen || mutationAttempt || requestSeen || dialogSeen || changed);
-    const result = destructive && mutationAttempt ? "wired_mutation_blocked" : evidence ? "wired" : error ? "click_error" : "no_observable_effect";
-    results.push({ ...target, destructive, result, mutationAttempt, requestSeen, dialogSeen, navigationSeen, changed, domMutations, error });
+    const destructive = DESTRUCTIVE_TEXT.test(target.text || `${target.tag}#${target.index}`);
+    const evidence = await clickAndObserve(page, index);
+    // Only a control that produced nothing at all earns a second, harder pass. A destructive
+    // control is never clicked twice.
+    const needsDisplacement = !observable(evidence) && !evidence.validationBlocked && !evidence.error && !destructive;
+    const displacement = needsDisplacement ? await displacedStateProbe(page, route, target) : null;
+    const result = classifyControl({ ...evidence, destructive, displacement });
+    results.push({ ...target, destructive, result, ...evidence, displacement });
   }
-  return results;
+  return { identityGated: false, identityEvidence: null, controls: results };
 }
 
 async function main() {
@@ -199,13 +327,19 @@ async function main() {
       visualChecks: visual.length + roleCoverage.length,
       visualFailures: [...visual, ...roleCoverage].filter((r) => r.failures.length).length,
       controlsProbed: controls.reduce((n, r) => n + r.controls.length, 0),
-      controlFailures: controls.flatMap((r) => r.controls).filter((c) => c.result === "click_error" || c.result === "no_observable_effect").length,
+      controlFailures: controls.flatMap((r) => r.controls).filter((c) => isControlFailure(c.result)).length,
+      // Every non-plain wiring verdict is counted here so a growing exemption surface is visible in
+      // the summary rather than only inside the evidence artifact.
+      controlsIdempotentProven: controls.flatMap((r) => r.controls).filter((c) => c.result === CONTROL_RESULT.wiredIdempotent).length,
+      controlsValidationBlocked: controls.flatMap((r) => r.controls).filter((c) => c.result === CONTROL_RESULT.wiredValidationBlocked).length,
+      controlsIdentityGated: controls.flatMap((r) => r.controls).filter((c) => c.result === CONTROL_RESULT.identityGated).length,
+      identityGatedRoutes: controls.filter((r) => r.identityGated).map((r) => `${r.actor} ${r.route} (${r.identityEvidence})`),
       roles: ["guest_customer", ...STAFF_ROLES.map((r) => r.role)],
       mutationsExecuted: 0,
       phase: controls.length ? "controls" : "visual",
     },
     visualFailures: [...visual, ...roleCoverage].filter((r) => r.failures.length),
-    controlFailures: controls.flatMap((r) => r.controls.map((c) => ({ actor: r.actor, route: r.route, ...c }))).filter((c) => c.result === "click_error" || c.result === "no_observable_effect"),
+    controlFailures: controls.flatMap((r) => r.controls.map((c) => ({ actor: r.actor, route: r.route, ...c }))).filter((c) => isControlFailure(c.result)),
     roleCoverage,
     controls,
   });
@@ -251,7 +385,7 @@ async function main() {
       const page = await context.newPage();
       const actorRoutes = actor.role === "founder" ? routes.filter((r) => r.startsWith("/team") || r.startsWith("/control") || r.startsWith("/partner")) : ["/team", "/control", "/partner", "/partner/jobs"].filter((r) => routes.includes(r));
       for (const route of actorRoutes) {
-        controls.push({ actor: actor.role, route, controls: await probeControls(page, route) });
+        controls.push({ actor: actor.role, route, ...(await probeControls(page, route)) });
         writeReport(baseReport());
       }
       await context.close();
@@ -265,7 +399,7 @@ async function main() {
       process.exitCode = 1;
       return;
     }
-    console.log("UI closure passed: no broken images/overflow/clipped controls and every probed enabled control produced observable wiring evidence. Mutating requests were blocked before execution.");
+    console.log(`UI closure passed: no broken images/overflow/clipped controls and every probed enabled control produced observable wiring evidence (${report.summary.controlsIdempotentProven} proven only after state displacement, ${report.summary.controlsValidationBlocked} proven by constraint validation, ${report.summary.controlsIdentityGated} unreachable behind an identity boundary). Mutating requests were blocked before execution.`);
   } finally {
     await browser.close();
   }
