@@ -7,6 +7,12 @@ export type ResolvedServiceCoverage = {
   area: string;
 };
 
+export function cityIdFromZoneId(zoneId: string): string {
+  const cityId = zoneId.trim().split("-")[0]?.toLowerCase() || "";
+  if (!/^[a-z0-9]{2,16}$/.test(cityId)) throw new Error("Service zone is missing a valid city identifier.");
+  return cityId;
+}
+
 export async function resolveServiceCoverage(pincodeInput: string): Promise<ResolvedServiceCoverage> {
   const pincode = pincodeInput.replace(/\D/g, "").slice(0, 6);
   if (pincode.length !== 6) throw new Error("Enter a valid six-digit service PIN code.");
@@ -15,7 +21,7 @@ export async function resolveServiceCoverage(pincodeInput: string): Promise<Reso
   const body = await response.json() as {
     data?: {
       zone?: { zoneId?: string; zoneName?: string; serviceAvailable?: boolean };
-      assignment?: { pincode?: string; zoneId?: string; city?: string; area?: string };
+      assignment?: { pincode?: string; zoneId?: string; cityId?: string; city?: string; area?: string };
     };
     error?: string;
   };
@@ -24,12 +30,10 @@ export async function resolveServiceCoverage(pincodeInput: string): Promise<Reso
   if (!response.ok || !assignment?.zoneId || !zone?.serviceAvailable) {
     throw new Error(body.error || `PIN code ${pincode} is outside the currently enabled service area.`);
   }
-  if (assignment.city !== "Bengaluru") {
-    throw new Error(`${assignment.city || "This city"} is not enabled for customer bookings yet.`);
-  }
+  const cityId = String(assignment.cityId || cityIdFromZoneId(assignment.zoneId)).trim().toLowerCase();
   return {
-    cityId: "blr",
-    city: assignment.city,
+    cityId,
+    city: assignment.city || "",
     zoneId: assignment.zoneId,
     zoneName: zone.zoneName || assignment.zoneId,
     pincode: assignment.pincode || pincode,
