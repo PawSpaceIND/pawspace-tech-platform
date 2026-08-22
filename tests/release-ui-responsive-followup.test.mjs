@@ -15,8 +15,10 @@ test("control UI keeps a 12px minimum in release overrides", () => {
 });
 
 test("all reviewed desktop route families can shrink their minimum content", () => {
+  const shrinkGroup = css.match(/\.route-team main,\n[\s\S]*?\.route-regression-lab main \* \{ min-width: 0; box-sizing: border-box; \}/)?.[0];
+  assert.ok(shrinkGroup, "reviewed route shrink group must keep the minimum-content declaration");
   for (const route of ["route-team", "route-partner", "route-customer", "route-admin", "route-regression-lab"]) {
-    has(new RegExp(`\\.${route} main,\\n[\\s\\S]*\\.${route} main \\* \\{ min-width: 0; box-sizing: border-box; \\}`), `${route} must participate in minimum-content shrink rules`);
+    assert.match(shrinkGroup, new RegExp(`\\.${route} main,\\n\\.${route} main \\*(?:,| \\{)`), `${route} must participate in minimum-content shrink rules`);
   }
   has(/route-team main \[style\*="min-width"\],[\s\S]*route-regression-lab main \[style\*="min-width"\]\s*\{ min-width:\s*0 !important; \}/s, "inline minimum widths must not force phone overflow");
 });
