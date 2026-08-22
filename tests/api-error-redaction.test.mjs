@@ -5,7 +5,7 @@ import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
 installWorkersHooks("__LEAK1_DB__", "__LEAK1_ENV__");
 
-const { authError } = await import("../lib/server-auth.ts");
+const { authError, authFailure } = await import("../lib/server-auth.ts");
 
 test("unexpected API exceptions are logged internally but return only the generic fallback", async () => {
   const internalDetail = "SQLITE_CONSTRAINT secret_table.customer_email";
@@ -28,11 +28,30 @@ test("unexpected API exceptions are logged internally but return only the generi
 });
 
 test("intentional governed HTTP responses retain their status and safe body", async () => {
-  const governed = Response.json({ error: "Customer ownership denied" }, { status: 403 });
+  const governed = authFailure("Customer ownership denied", 403);
   const response = authError(governed, "Scheduling failed");
   assert.equal(response, governed);
   assert.equal(response.status, 403);
+  assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(await response.json(), { error: "Customer ownership denied" });
+});
+
+test("an arbitrary thrown 500 Response cannot bypass redaction", async () => {
+  const internalDetail = "SQLITE_CONSTRAINT secret_table.customer_email";
+  const unsafe = Response.json({ error: internalDetail }, { status: 500 });
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const response = authError(unsafe, "Request failed");
+    assert.notEqual(response, unsafe);
+    assert.equal(response.status, 500);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const body = await response.json();
+    assert.deepEqual(body, { error: "Request failed" });
+    assert.doesNotMatch(JSON.stringify(body), /SQLITE_CONSTRAINT|secret_table|customer_email/);
+  } finally {
+    console.error = originalError;
+  }
 });
 
 test("scheduling GET uses the shared redactor instead of echoing error.message", () => {

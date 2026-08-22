@@ -2,7 +2,7 @@ import{authError,authFailure,database,requirePermission,resolveActor,securityAud
 import{createPricingRule,listPricingRules,listPricingCities,addHoliday,seedNationalHolidays,listHolidays,suggestSurcharge,applySurchargeSuggestion}from"../../../lib/pricing-rule-governance";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
-function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin pricing write blocked",{status:403});}
+function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw authFailure("Cross-origin pricing write blocked",403);}
 
 // Pricing-rule validation is an expected operator outcome. Preserve the route's existing status/body
 // contract only for this exact allow-list; database/runtime details continue through generic authError.
