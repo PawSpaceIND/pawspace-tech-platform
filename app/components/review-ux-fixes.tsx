@@ -59,8 +59,12 @@ export default function ReviewUxFixes() {
   const pathname = usePathname();
 
   useEffect(() => {
-    document.body.classList.toggle("route-control", pathname === "/control");
-    document.body.classList.toggle("route-mobile-app", pathname === "/mobile-app");
+    const body = document.body;
+    body.classList.toggle("route-control", pathname === "/control");
+    body.classList.toggle("route-mobile-app", pathname === "/mobile-app");
+    body.classList.toggle("route-team", pathname === "/team" || pathname.startsWith("/team/"));
+    body.classList.toggle("route-partner", pathname === "/partner" || pathname.startsWith("/partner/"));
+    body.classList.toggle("route-customer", !pathname.startsWith("/team") && !pathname.startsWith("/control") && !pathname.startsWith("/partner") && !pathname.startsWith("/admin") && !pathname.startsWith("/regression-lab"));
     enhanceAddressInputs();
     hideCustomerTestPanels();
 
