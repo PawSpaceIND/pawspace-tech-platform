@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const css = fs.readFileSync(new URL("../app/review-overrides.css", import.meta.url), "utf8");
+const providerTraining = fs.readFileSync(new URL("../app/team/people/provider-training/page.tsx", import.meta.url), "utf8");
 
 function has(pattern, message) {
   assert.match(css, pattern, message);
@@ -30,4 +31,9 @@ test("phone grids, flex rows and fixed-width controls adapt instead of hiding ov
   has(/table-layout:\s*fixed/s, "reviewed phone tables must fit their container");
   has(/overflow-wrap:\s*anywhere/s, "long labels must wrap rather than push controls off-screen");
   assert.doesNotMatch(css, /(?:html|body|main)[^{]*\{[^}]*overflow-x\s*:\s*hidden/is, "must not hide page overflow to game the release gate");
+});
+
+test("provider training source grid can shrink at the 768px tablet closure viewport", () => {
+  assert.match(providerTraining, /gridTemplateColumns:\"minmax\(0,\.9fr\) minmax\(0,1\.1fr\)\"/, "provider training columns must use zero intrinsic minimums");
+  assert.doesNotMatch(providerTraining, /minmax\(360px,\.9fr\) minmax\(480px,1\.1fr\)/, "provider training must not restore the 856px rigid tablet grid");
 });
