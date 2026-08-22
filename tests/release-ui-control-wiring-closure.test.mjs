@@ -27,6 +27,23 @@ test("a control that stays inert even after its state is displaced remains a fai
   assert.equal(isControlFailure(result), true, "the displaced re-probe must not become a blanket pass");
 });
 
+test("state can be displaced through a sibling field, not only a sibling button", () => {
+  // /team/ai/analytics Clear sits with a <select> and two date <input>s and no sibling button, so
+  // button-only displacement could never reach it.
+  assert.match(harness, /querySelectorAll\("select"\)/);
+  assert.match(harness, /querySelectorAll\("input"\)/);
+  assert.match(harness, /async function displaceField/);
+  assert.match(harness, /Object\.getOwnPropertyDescriptor\(prototype, "value"\)\?\.set/, "React's value tracker requires the native setter");
+  assert.match(harness, /new Event\("input", \{ bubbles: true \}\)/);
+  const result = classifyControl({ ...NOTHING, displacement: { attempted: true, changed: true, sibling: "select channel", kind: "select", evidence: "dom mutations 3" } });
+  assert.equal(result, CONTROL_RESULT.wiredIdempotent);
+});
+
+test("field displacement runs inside the same mutation-blocking guard as a click", () => {
+  assert.match(harness, /async function withMutationBlocking/);
+  assert.match(harness, /withMutationBlocking\(page, \(\) => displaceField\(page, candidate\)\)/);
+});
+
 test("a control with no sibling to displace against is still judged on its own evidence", () => {
   const result = classifyControl({ ...NOTHING, displacement: { attempted: false, changed: false, sibling: null, evidence: null } });
   assert.equal(result, CONTROL_RESULT.noObservableEffect);
@@ -57,27 +74,107 @@ test("the probe only records invalid events raised inside the clicked control's 
 });
 
 // ---------------------------------------------------------------------------
-// Root cause 3 - a provider-identity surface refuses a staff UAT session, so no
-// control on it can produce evidence. Closure #17 reported 3 such controls as
-// unwired.
+// Root cause 3 - a provider-identity surface refuses a staff UAT session. That
+// is recorded as route context ONLY. It is never a verdict, because a verdict
+// would exempt every no-effect control on the route, including one that is
+// genuinely wired to nothing and merely sits next to a background 401.
 // ---------------------------------------------------------------------------
 
-test("a surface that refused the probe's session is reported separately, not as broken wiring", () => {
-  const result = classifyControl({ ...NOTHING, identityGated: true });
-  assert.equal(result, CONTROL_RESULT.identityGated);
-  assert.equal(isControlFailure(result), false, "an RBAC refusal is not a control defect");
+test("there is no identity or authorisation exemption in the classifier at all", () => {
+  assert.equal(Object.values(CONTROL_RESULT).includes("blocked_identity_precondition"), false);
+  for (const key of Object.keys(CONTROL_RESULT)) {
+    assert.doesNotMatch(key, /identity|auth|permission|rbac/i, `${key} must not be an identity exemption`);
+  }
+  assert.doesNotMatch(classifier, /identityGated|blocked_identity_precondition/, "the classifier must carry no identity branch");
 });
 
-test("identity gating is taken from the identity endpoint's own status, never from rendered copy", () => {
-  assert.match(harness, /api\/identity-session/);
+test("NEGATIVE REGRESSION: a background 401 must not rescue an unrelated inert control", () => {
+  // Same route, same page, same background identity refusal: one control produces evidence, the
+  // other is genuinely wired to nothing. The inert one must still fail.
+  const inert = classifyControl({
+    ...NOTHING,
+    identityRefused: "HTTP 401 /api/identity-session",
+    identityGated: true,
+    blockedByIdentity: true,
+    displacement: { attempted: true, changed: false, sibling: "Some sibling", evidence: null },
+  });
+  assert.equal(inert, CONTROL_RESULT.noObservableEffect, "identity context must not change the verdict");
+  assert.equal(isControlFailure(inert), true, "an inert control on a 401 route must still fail the gate");
+
+  const wired = classifyControl({ ...NOTHING, identityRefused: "HTTP 401 /api/identity-session", changed: true });
+  assert.equal(wired, CONTROL_RESULT.wired, "a control that does work is still wired on a 401 route");
+});
+
+test("stray identity-shaped evidence keys can never produce a passing verdict", () => {
+  for (const key of ["identityGated", "identityRefused", "blockedByIdentity", "authRefused", "rbacBlocked"]) {
+    const verdict = classifyControl({ ...NOTHING, [key]: true });
+    assert.equal(isControlFailure(verdict), true, `${key} must not exempt a no-effect control`);
+  }
+});
+
+test("identity refusal is reported as route context, separately from any verdict", () => {
+  assert.match(harness, /identityRefusedRoutes:/);
+  assert.match(harness, /Informational only\. An unmet identity precondition never exempts a control/);
   assert.match(harness, /\[401, 403\]\.includes\(response\.status\(\)\)/);
-  assert.doesNotMatch(harness, /Verified provider session required/, "the gate must not key off product copy that a page could change");
 });
 
-test("controls behind an identity boundary are still enumerated so the unexercised surface is visible", () => {
-  assert.match(harness, /identityGated: true,\s*\n\s*identityEvidence: identityRefusals\[0\]/);
-  assert.match(harness, /controlsIdentityGated:/);
-  assert.match(harness, /identityGatedRoutes:/);
+// ---------------------------------------------------------------------------
+// Route serviceability - a Cloudflare edge error page is not PawSpace, and its
+// controls must never enter PawSpace coverage.
+// ---------------------------------------------------------------------------
+
+test("an unserviceable route fails explicitly as route_unavailable", () => {
+  const verdict = classifyControl({ ...NOTHING, routeUnavailable: true });
+  assert.equal(verdict, CONTROL_RESULT.routeUnavailable);
+  assert.equal(isControlFailure(verdict), true, "an unreachable route must never look like a clean route");
+});
+
+test("route_unavailable outranks every other signal, including apparent evidence", () => {
+  const verdict = classifyControl({ ...NOTHING, routeUnavailable: true, changed: true, requestSeen: "GET /api/x" });
+  assert.equal(verdict, CONTROL_RESULT.routeUnavailable);
+});
+
+test("route loading is validated as a real PawSpace document before controls are snapshotted", () => {
+  assert.match(harness, /async function loadRouteForProbe/);
+  assert.match(harness, /pawspaceDocument/);
+  assert.match(harness, /classList\.contains\("antialiased"\)/);
+  assert.match(harness, /meta\[name="codex-preview"\]/);
+  // The descriptor snapshot must come from a validated load, not a raw goto.
+  const probe = harness.slice(harness.indexOf("async function probeControls"));
+  const snapshotAt = probe.indexOf("const descriptors =");
+  const loadAt = probe.indexOf("const load = await loadRouteForProbe(page, route);");
+  assert.ok(loadAt >= 0 && loadAt < snapshotAt, "the route must be validated before the descriptor snapshot");
+});
+
+test("a 5xx or Cloudflare error page is retried a bounded number of times, at most two retries", () => {
+  assert.match(harness, /const ROUTE_LOAD_ATTEMPTS = 3;/, "one initial load plus at most two retries");
+  assert.match(harness, /for \(let attempt = 1; attempt <= ROUTE_LOAD_ATTEMPTS; attempt \+= 1\)/);
+  assert.match(harness, /status < 500/);
+  assert.match(harness, /cloudflareError/);
+});
+
+test("Cloudflare edge-error controls are excluded from PawSpace control coverage", () => {
+  assert.match(harness, /cloudflareChrome: Boolean\(el\.closest\(selector\)\)/);
+  assert.match(harness, /!d\.cloudflareChrome/, "Cloudflare controls must be filtered out of the probe targets");
+  assert.match(harness, /cloudflareControlsExcluded:/, "the excluded count must be reported");
+  assert.match(harness, /CF_ERROR_SELECTOR/);
+});
+
+test("Cloudflare detection keys off edge markers, not words the product may legitimately use", () => {
+  const marker = harness.match(/const CF_ERROR_TEXT = \/\((.*?)\)\/i;/)?.[1] || "";
+  assert.ok(marker.length > 0, "Cloudflare error text pattern must exist");
+  assert.doesNotMatch(marker, /\|cloudflare\)|^cloudflare$/i, "a bare 'cloudflare' match would flag legitimate product copy");
+  for (const needed of ["worker threw exception", "cloudflare ray id"]) {
+    assert.ok(marker.toLowerCase().includes(needed), `${needed} must be one of the edge markers`);
+  }
+});
+
+test("genuine index_drift stays a failure for a real PawSpace control", () => {
+  const verdict = classifyControl({ ...NOTHING, indexDrift: true });
+  assert.equal(verdict, CONTROL_RESULT.indexDrift);
+  assert.equal(isControlFailure(verdict), true);
+  // and it must not be reachable by simply waiting: the harness has no blind polling retry
+  assert.doesNotMatch(harness, /for \(let poll = 0; poll < \d+; poll/, "drift must not be papered over by blind polling");
 });
 
 // ---------------------------------------------------------------------------
@@ -125,12 +222,16 @@ test("a destructive control is never clicked a second time to manufacture eviden
 });
 
 test("mutating requests stay blocked during the displaced-state re-probe", () => {
-  const displaced = harness.slice(harness.indexOf("async function clickAndObserve"));
-  assert.match(displaced, /MUTATING_METHODS\.has\(method\)/, "the re-probe reuses the aborting route handler");
+  // Every interaction, primary click and displacement alike, is wrapped by the single guard that
+  // aborts mutating requests before execution.
+  const guard = harness.slice(harness.indexOf("async function withMutationBlocking"), harness.indexOf("async function clickAndObserve"));
+  assert.match(guard, /MUTATING_METHODS\.has\(method\)/, "the shared guard aborts mutating methods");
+  assert.match(guard, /routeHandle\.abort\("blockedbyclient"\)/);
   assert.match(harness, /mutationsExecuted: 0/);
-  // displacedStateProbe must reach the browser only through clickAndObserve, which aborts mutations.
+  // displacedStateProbe must reach the browser only through guarded helpers.
   const probe = harness.slice(harness.indexOf("async function displacedStateProbe"), harness.indexOf("async function probeControls"));
   assert.doesNotMatch(probe, /locator\([^)]*\)\.click|\.click\(\{/, "the re-probe must not click outside the mutation-blocking helper");
+  assert.match(probe, /clickAndObserve|withMutationBlocking/, "displacement interacts only through guarded helpers");
 });
 
 test("the gate still fails the run on any control failure", () => {
@@ -144,17 +245,18 @@ test("summary counting reports every non-plain verdict so exemptions cannot grow
     { result: CONTROL_RESULT.wired },
     { result: CONTROL_RESULT.wiredIdempotent },
     { result: CONTROL_RESULT.wiredValidationBlocked },
-    { result: CONTROL_RESULT.identityGated },
+    { result: CONTROL_RESULT.routeUnavailable },
     { result: CONTROL_RESULT.noObservableEffect },
     { result: CONTROL_RESULT.indexDrift },
   ]);
   assert.equal(summary.probed, 6);
-  assert.equal(summary.failures, 2);
+  assert.equal(summary.failures, 3);
   assert.equal(summary.byResult[CONTROL_RESULT.wiredIdempotent], 1);
-  assert.equal(summary.byResult[CONTROL_RESULT.identityGated], 1);
-  for (const field of ["controlsIdempotentProven", "controlsValidationBlocked", "controlsIdentityGated"]) {
+  assert.equal(summary.byResult[CONTROL_RESULT.routeUnavailable], 1);
+  for (const field of ["controlsIdempotentProven", "controlsValidationBlocked", "controlsRouteUnavailable", "cloudflareControlsExcluded", "identityRefusedRoutes", "routesRetriedForLoad"]) {
     assert.match(harness, new RegExp(`${field}:`), `${field} must appear in the run summary`);
   }
+  assert.doesNotMatch(harness, /controlsIdentityGated/, "the removed identity exemption must not reappear in the summary");
 });
 
 test("the closure gate never resorts to hiding overflow or to visual edits", () => {
