@@ -19,7 +19,11 @@ const UAT_IDENTITIES=[
  {id:"UAT-GROOMER",email:"asha.groomer1@tkpetcare.in",name:"Asha Groomer",role:"service_provider"},
  {id:"UAT-ASSOCIATE",email:"anita.associate17@tkpetcare.in",name:"Anita Associate",role:"associate"},
 ] as const;
-async function ensureUatIdentities(db:Db){const now=Date.now();await db.batch(UAT_IDENTITIES.map(identity=>db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?, 'active',?,?) ON CONFLICT(email) DO NOTHING").bind(identity.id,identity.email,identity.name,identity.role,now,now)));}
+// The dedicated preview D1 persists between candidate deploys. These exact, hard-coded UAT identities
+// are configuration, not mutable employee truth, so re-assert their advertised name/role/active state
+// if a prior run left a stale, suspended or differently-role'd row behind. Preserve id + created_at;
+// unknown emails are still refused by the allowlist/uatStaffIdentityAllowed gate below.
+async function ensureUatIdentities(db:Db){const now=Date.now();await db.batch(UAT_IDENTITIES.map(identity=>db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?, 'active',?,?) ON CONFLICT(email) DO UPDATE SET name=excluded.name,role_code=excluded.role_code,status='active',updated_at=excluded.updated_at").bind(identity.id,identity.email,identity.name,identity.role,now,now)));}
 
 export async function GET(request:Request){const {env}=await import("cloudflare:workers");if(!uatLoginEnabled(env as never))return json({enabled:false},404);const db=await database();await ensureSecurityTables(db);await ensureUatIdentities(db);const actor=await resolveUatStaffActor(db,request,env as never);return json({enabled:true,signedInAs:actor?{email:actor.email,role:actor.roleCode}:null});}
 
