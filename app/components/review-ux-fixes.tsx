@@ -60,11 +60,21 @@ export default function ReviewUxFixes() {
 
   useEffect(() => {
     const body = document.body;
-    body.classList.toggle("route-control", pathname === "/control");
-    body.classList.toggle("route-mobile-app", pathname === "/mobile-app");
-    body.classList.toggle("route-team", pathname === "/team" || pathname.startsWith("/team/"));
-    body.classList.toggle("route-partner", pathname === "/partner" || pathname.startsWith("/partner/"));
-    body.classList.toggle("route-customer", !pathname.startsWith("/team") && !pathname.startsWith("/control") && !pathname.startsWith("/partner") && !pathname.startsWith("/admin") && !pathname.startsWith("/regression-lab"));
+    const isControl = pathname === "/control" || pathname.startsWith("/control/");
+    const isMobileApp = pathname === "/mobile-app";
+    const isTeam = pathname === "/team" || pathname.startsWith("/team/");
+    const isPartner = pathname === "/partner" || pathname.startsWith("/partner/");
+    const isAdmin = pathname === "/admin" || pathname.startsWith("/admin/");
+    const isRegressionLab = pathname === "/regression-lab" || pathname.startsWith("/regression-lab/");
+    const isCustomer = !isMobileApp && !isTeam && !isControl && !pathname.startsWith("/partner") && !isAdmin && !isRegressionLab;
+
+    body.classList.toggle("route-control", isControl);
+    body.classList.toggle("route-mobile-app", isMobileApp);
+    body.classList.toggle("route-team", isTeam);
+    body.classList.toggle("route-partner", isPartner);
+    body.classList.toggle("route-admin", isAdmin);
+    body.classList.toggle("route-regression-lab", isRegressionLab);
+    body.classList.toggle("route-customer", isCustomer);
     enhanceAddressInputs();
     hideCustomerTestPanels();
 
