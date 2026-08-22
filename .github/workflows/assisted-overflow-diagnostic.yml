@@ -20,7 +20,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - name: Print overflowing elements at 390px
+      - name: Prove candidate phone-header fix removes the 6px overflow
         env:
           PREVIEW_URL: https://pawspace-release-preview.karthik-fce.workers.dev
         run: |
@@ -30,69 +30,20 @@ jobs:
           const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
           const response = await page.goto(`${process.env.PREVIEW_URL}/assisted-booking`, { waitUntil: 'domcontentloaded', timeout: 12000 });
           await page.waitForTimeout(500);
-          const result = await page.evaluate(() => {
-            const root = document.documentElement;
-            const body = document.body;
-            const baseline = Math.max(root.scrollWidth, body.scrollWidth);
-            const describe = (el) => {
-              const r = el.getBoundingClientRect();
-              const s = getComputedStyle(el);
-              return {
-                tag: el.tagName.toLowerCase(),
-                cls: String(el.className || '').slice(0, 180),
-                text: (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 100),
-                left: Math.round(r.left * 100) / 100,
-                right: Math.round(r.right * 100) / 100,
-                width: Math.round(r.width * 100) / 100,
-                clientWidth: el.clientWidth,
-                scrollWidth: el.scrollWidth,
-                display: s.display,
-                position: s.position,
-                overflowX: s.overflowX,
-                marginLeft: s.marginLeft,
-                marginRight: s.marginRight,
-                paddingLeft: s.paddingLeft,
-                paddingRight: s.paddingRight,
-                boxSizing: s.boxSizing,
-                depth: (() => { let n = el, d = 0; while (n?.parentElement) { d++; n = n.parentElement; } return d; })(),
-              };
-            };
-            const all = [...document.querySelectorAll('body *')].filter((el) => {
-              const r = el.getBoundingClientRect();
-              const s = getComputedStyle(el);
-              return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
-            });
-            const rectOverflow = all.map(describe).filter((x) => x.left < -2 || x.right > innerWidth + 2).sort((a,b) => b.right - a.right);
-            const scrollContainers = all.map(describe).filter((x) => x.scrollWidth > x.clientWidth + 2).sort((a,b) => (b.scrollWidth-b.clientWidth) - (a.scrollWidth-a.clientWidth));
-            const hideHits = [];
-            for (const el of all) {
-              const beforeStyle = el.getAttribute('style');
-              el.style.setProperty('display', 'none', 'important');
-              const after = Math.max(root.scrollWidth, body.scrollWidth);
-              if (after < baseline) hideHits.push({ ...describe(el), documentWidthAfterHide: after, reduction: baseline - after });
-              if (beforeStyle === null) el.removeAttribute('style'); else el.setAttribute('style', beforeStyle);
+          const before = await page.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth));
+          await page.addStyleTag({ content: `
+            @media (max-width:650px) {
+              [class*="_shell_"] header { flex-direction:column; gap:12px; min-width:0; }
+              [class*="_shell_"] header > div { min-width:0; }
+              [class*="_headerMeta_"] { width:100%; min-width:0; flex-wrap:wrap; justify-content:flex-start; }
+              [class*="_headerMeta_"] span,
+              [class*="_headerMeta_"] button { min-width:0; max-width:100%; white-space:normal; overflow-wrap:anywhere; }
             }
-            const pseudo = all.flatMap((el) => ['::before','::after'].map((which) => {
-              const p = getComputedStyle(el, which);
-              if (!p || p.content === 'none' || p.content === 'normal' || p.display === 'none') return null;
-              return { ...describe(el), pseudo: which, content: p.content.slice(0,120), pseudoDisplay: p.display, pseudoPosition: p.position, pseudoWidth: p.width, pseudoLeft: p.left, pseudoRight: p.right, pseudoMarginLeft: p.marginLeft, pseudoMarginRight: p.marginRight };
-            }).filter(Boolean));
-            const htmlStyle = getComputedStyle(root), bodyStyle = getComputedStyle(body);
-            return {
-              innerWidth,
-              rootClientWidth: root.clientWidth,
-              rootScrollWidth: root.scrollWidth,
-              bodyClientWidth: body.clientWidth,
-              bodyScrollWidth: body.scrollWidth,
-              html: { margin: htmlStyle.margin, padding: htmlStyle.padding, width: htmlStyle.width, overflowX: htmlStyle.overflowX },
-              body: { margin: bodyStyle.margin, padding: bodyStyle.padding, width: bodyStyle.width, overflowX: bodyStyle.overflowX },
-              rectOverflow: rectOverflow.slice(0, 30),
-              scrollContainers: scrollContainers.slice(0, 40),
-              hideHits: hideHits.sort((a,b) => b.depth-a.depth || b.reduction-a.reduction).slice(0, 60),
-              pseudo: pseudo.slice(0, 60),
-            };
-          });
-          console.log(`status=${response?.status()}`);
-          console.log(JSON.stringify(result, null, 2));
+          ` });
+          await page.waitForTimeout(50);
+          const after = await page.evaluate(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth));
+          console.log(JSON.stringify({ status: response?.status(), before, after, viewport: 390 }, null, 2));
+          if (before !== 396) throw new Error(`Expected current overflow baseline 396px, got ${before}px`);
+          if (after > 392) throw new Error(`Candidate CSS did not remove overflow: ${after}px > 392px tolerance`);
           await browser.close();
           NODE
