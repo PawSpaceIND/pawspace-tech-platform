@@ -19,13 +19,58 @@
 .route-control [class*="control_modules"] { grid-template-columns: repeat(3, minmax(240px, 1fr)); }
 .route-control [class*="control_modules"] article { min-height: 126px; }
 
+/* Inline-style-heavy operational screens need a common minimum-content escape hatch.
+   This does not hide overflow: it allows grid/flex children to actually shrink to their
+   responsive container instead of forcing the document wider than the viewport. */
+.route-team main,
+.route-team main *,
+.route-partner main,
+.route-partner main *,
+.route-customer main,
+.route-customer main * { min-width: 0; }
+
 @media (max-width: 1100px) {
   .route-control [class*="control_shell"] { grid-template-columns: 92px 1fr; }
   .route-control [class*="control_side"] nav button { font-size: 11px !important; }
   .route-control [class*="control_modules"] { grid-template-columns: repeat(2, minmax(220px, 1fr)); }
+
+  /* Tablet: dense back-office grids become two fluid columns rather than preserving
+     desktop minimum widths that generated 800-1520px documents in the release gate. */
+  .route-team main [style*="grid-template-columns"] { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .route-team main [style*="display: flex"],
+  .route-partner main [style*="display: flex"] { flex-wrap: wrap !important; }
+  .route-team main table { display: block; max-width: 100%; overflow-x: auto; }
+  .route-partner main > div[style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
+
+  .topbar { height: auto; min-height: 68px; flex-wrap: wrap; }
+  .header-links { margin-left: 0; flex: 1 1 100%; flex-wrap: wrap; justify-content: flex-end; }
 }
 
 @media (max-width: 760px) {
-  .route-control [class*="control_main"] { padding: 16px 12px 90px; }
+  /* Control navigation must wrap on a phone. A horizontally scrollable sidebar still
+     leaves visible controls outside the viewport and is not a valid field-mobile UI. */
+  .route-control [class*="control_shell"] { grid-template-columns: 1fr !important; }
+  .route-control [class*="control_side"] { width: 100% !important; max-height: none !important; overflow: visible !important; }
+  .route-control [class*="control_side"] nav { display: flex !important; flex-wrap: wrap !important; gap: 6px !important; }
+  .route-control [class*="control_side"] nav button { flex: 1 1 140px !important; width: auto !important; min-width: 0 !important; }
+  .route-control [class*="control_main"] { padding: 16px 12px 90px; min-width: 0 !important; }
   .route-control [class*="control_modules"] { grid-template-columns: 1fr; }
+
+  /* Phone: operational/customer screens stack their inline desktop grids and allow
+     flex rows to wrap. This targets actual inline layout primitives rather than masking
+     failures with overflow-x:hidden. */
+  body:not(.route-mobile-app) main { max-width: 100vw !important; }
+  body:not(.route-mobile-app) main [style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
+  body:not(.route-mobile-app) main [style*="display: flex"] { flex-wrap: wrap !important; }
+  body:not(.route-mobile-app) main input,
+  body:not(.route-mobile-app) main select,
+  body:not(.route-mobile-app) main textarea,
+  body:not(.route-mobile-app) main button,
+  body:not(.route-mobile-app) main a { max-width: 100%; }
+  body:not(.route-mobile-app) main img { max-width: 100%; height: auto; }
+  body:not(.route-mobile-app) main table { display: block; max-width: 100%; overflow-x: auto; }
+
+  .topbar { padding: 8px 12px; gap: 8px; }
+  .header-links { width: 100%; justify-content: flex-start; gap: 6px; }
+  .header-links > a, .header-links .login-link { flex: 1 1 auto; text-align: center; }
 }
