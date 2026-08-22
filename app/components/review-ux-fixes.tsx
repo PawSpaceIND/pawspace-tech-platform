@@ -66,6 +66,7 @@ export default function ReviewUxFixes() {
     const isPartner = pathname === "/partner" || pathname.startsWith("/partner/");
     const isAdmin = pathname === "/admin" || pathname.startsWith("/admin/");
     const isRegressionLab = pathname === "/regression-lab" || pathname.startsWith("/regression-lab/");
+    const isAssistedBooking = pathname === "/assisted-booking";
     const isCustomer = !isMobileApp && !isTeam && !isControl && !isPartner && !isAdmin && !isRegressionLab;
 
     body.classList.toggle("route-control", isControl);
@@ -74,6 +75,7 @@ export default function ReviewUxFixes() {
     body.classList.toggle("route-partner", isPartner);
     body.classList.toggle("route-admin", isAdmin);
     body.classList.toggle("route-regression-lab", isRegressionLab);
+    body.classList.toggle("route-assisted-booking", isAssistedBooking);
     body.classList.toggle("route-customer", isCustomer);
     enhanceAddressInputs();
     hideCustomerTestPanels();
