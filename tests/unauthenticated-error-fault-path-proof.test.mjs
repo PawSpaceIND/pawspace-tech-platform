@@ -171,8 +171,8 @@ async function fixtureFor(label, route, method) {
 async function exportedHandlers() {
   const labels = [];
   for (const route of ROUTES) {
-    const module = await import(`../app/api/${route}/route.ts`);
-    for (const method of METHODS) if (typeof module[method] === "function") labels.push(`${route}.${method}`);
+    const routeModule = await import(`../app/api/${route}/route.ts`);
+    for (const method of METHODS) if (typeof routeModule[method] === "function") labels.push(`${route}.${method}`);
   }
   return labels.sort();
 }
@@ -195,9 +195,9 @@ test("every consolidated route handler is covered by a fault fixture or explicit
 });
 
 for (const route of ROUTES) {
-  const module = await import(`../app/api/${route}/route.ts`);
+  const routeModule = await import(`../app/api/${route}/route.ts`);
   for (const method of METHODS) {
-    if (typeof module[method] !== "function") continue;
+    if (typeof routeModule[method] !== "function") continue;
     const label = `${route}.${method}`;
     if (EXCLUSIONS.has(label)) {
       test(`${label}: D1 fault-path exclusion is documented`, () => {
@@ -216,7 +216,7 @@ for (const route of ROUTES) {
       console.error = () => {};
       let response;
       try {
-        response = await module[method](request);
+        response = await routeModule[method](request);
       } finally {
         console.error = original;
       }
