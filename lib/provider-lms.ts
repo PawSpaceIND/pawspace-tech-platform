@@ -106,10 +106,15 @@ async function tableExists(db:Db,name:string){const row=await db.prepare("SELECT
 /** Which required modules cover this provider, and is each one passed at the CURRENT version? */
 export async function providerTrainingReadiness(db:Db,providerId:string){
  await ensureLmsTables(db);
+ // Whether the provider's service set could be ESTABLISHED, kept separate from what it contains. A
+ // provider with no capacity profile — anyone not yet activated — resolves to an empty service list, and
+ // an empty list makes every "is each required module complete?" question vacuously true. Reporting that
+ // as training-ready tells staff a provider who has completed nothing is cleared to work.
  let services:string[]=[];
+ let servicesResolved=false;
  if(await tableExists(db,"provider_capacity_profiles")){
   const profile=await db.prepare("SELECT services_json FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();
-  services=parse<string[]>(profile?.services_json,[]);
+  if(profile){services=parse<string[]>(profile?.services_json,[]);servicesResolved=services.length>0;}
  }
  const modules=await db.prepare("SELECT id,title,service_code,version,pass_pct,required,summary FROM lms_modules WHERE status='published' ORDER BY created_at").all<Row>();
  const applicable=modules.results.filter(row=>String(row.service_code)==="all"||services.includes(String(row.service_code)));
@@ -122,7 +127,15 @@ export async function providerTrainingReadiness(db:Db,providerId:string){
    completedAt:passedNow?Number(passedNow.created_at):null,scorePct:passedNow?Number(passedNow.score_pct):null});
  }
  const requiredItems=items.filter(item=>item.required);
- return{providerId,services,modules:items,requiredTotal:requiredItems.length,requiredComplete:requiredItems.filter(item=>item.state==="complete").length,trainingReady:requiredItems.every(item=>item.state==="complete")};
+ const allComplete=requiredItems.every(item=>item.state==="complete");
+ // Unknown is not satisfied. Readiness is claimed only when we know what the provider does AND every
+ // module required for it is complete; otherwise the reason is stated rather than left to be inferred
+ // from a bare `false`.
+ const trainingReady=servicesResolved&&allComplete;
+ const readinessReason=servicesResolved
+  ?(allComplete?"required_modules_complete":"required_modules_outstanding")
+  :"provider_services_unknown";
+ return{providerId,services,servicesResolved,modules:items,requiredTotal:requiredItems.length,requiredComplete:requiredItems.filter(item=>item.state==="complete").length,trainingReady,readinessReason};
 }
 
 /** Staff overview: every module with live pass stats, and provider compliance across the fleet. */
