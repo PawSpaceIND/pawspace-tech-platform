@@ -2,7 +2,7 @@ type Db=D1Database;
 type Row=Record<string,unknown>;
 
 export type ServiceZone={zoneId:string;zoneName:string;description:string;color:string;serviceAvailable:boolean};
-export type ZoneAssignment={pincode:string;zoneId:string;city:string;area:string};
+export type ZoneAssignment={pincode:string;zoneId:string;city:string;cityId?:string;area:string};
 
 // Bengaluru service zone mapping: pincode -> zone
 // Zones: blr-east, blr-west, blr-north, blr-south, blr-central
@@ -110,6 +110,8 @@ export async function ensureServiceZonesTables(db:Db){
     db.prepare("CREATE TABLE IF NOT EXISTS service_zone_mappings (pincode TEXT PRIMARY KEY, zone_id TEXT NOT NULL, city TEXT NOT NULL, area TEXT NOT NULL, created_at INTEGER NOT NULL)"),
     db.prepare("CREATE INDEX IF NOT EXISTS service_zone_area_idx ON service_zone_mappings(zone_id,city)"),
   ]);
+  const columns=await db.prepare("PRAGMA table_info(service_zone_mappings)").all<Row>();
+  if(!columns.results.some(row=>String(row.name)==="city_id"))await db.prepare("ALTER TABLE service_zone_mappings ADD COLUMN city_id TEXT").run().catch(error=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
 }
 
 export async function resolveZoneByPincode(db:Db,pincode:string):Promise<{zone:ServiceZone;assignment:ZoneAssignment}|null>{
@@ -120,15 +122,20 @@ export async function resolveZoneByPincode(db:Db,pincode:string):Promise<{zone:S
   const assignment=PINCODE_ZONE_MAP[normalized];
   if(assignment){
     const zone=SERVICE_ZONES[assignment.zoneId];
-    if(zone)return{zone,assignment};
+    if(zone)return{zone,assignment:{...assignment,cityId:"blr"}};
   }
 
   // Fallback to database query (for custom/extended zones)
-  const row=await db.prepare("SELECT zone_id,city,area FROM service_zone_mappings WHERE pincode=?").bind(normalized).first<Row>();
+  const row=await db.prepare("SELECT zone_id,city_id,city,area FROM service_zone_mappings WHERE pincode=?").bind(normalized).first<Row>();
   if(row){
-    const zone=SERVICE_ZONES[String(row.zone_id)];
-    if(zone){
-      const assignment:ZoneAssignment={pincode:normalized,zoneId:String(row.zone_id),city:String(row.city||"Bengaluru"),area:String(row.area||"")};
+    const zoneId=String(row.zone_id),city=String(row.city||"").trim(),area=String(row.area||"").trim();
+    // A database row is an explicit, operations-reviewed mapping.  It must be usable for a launched
+    // second city without requiring a code deployment to extend Bengaluru's presentation constants.
+    // We still fail closed when any identity field is missing: a broad city launch range never reaches
+    // this branch, and an incomplete row cannot silently open a service area.
+    if(zoneId&&city&&area){
+      const zone=SERVICE_ZONES[zoneId]??{zoneId,zoneName:`${city} service zone`,description:area,color:"#6B3FA0",serviceAvailable:true};
+      const assignment:ZoneAssignment={pincode:normalized,zoneId,cityId:row.city_id?String(row.city_id).trim().toLowerCase():undefined,city,area};
       return{zone,assignment};
     }
   }
@@ -148,7 +155,7 @@ export async function seedDefaultZones(db:Db){
   const now=Date.now();
   const entries=Object.values(PINCODE_ZONE_MAP);
   const batch=entries.map(entry=>
-    db.prepare("INSERT INTO service_zone_mappings (pincode,zone_id,city,area,created_at) VALUES (?,?,?,?,?) ON CONFLICT(pincode) DO NOTHING")
+    db.prepare("INSERT INTO service_zone_mappings (pincode,zone_id,city_id,city,area,created_at) VALUES (?,?,'blr',?,?,?) ON CONFLICT(pincode) DO UPDATE SET city_id=COALESCE(service_zone_mappings.city_id,'blr')")
       .bind(entry.pincode,entry.zoneId,entry.city,entry.area,now)
   );
   if(batch.length>0)await db.batch(batch);

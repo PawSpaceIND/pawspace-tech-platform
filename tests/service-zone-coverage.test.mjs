@@ -136,6 +136,19 @@ test("a pincode outside the published range is still refused", async () => {
   }
 });
 
+test("an explicit reviewed database mapping enables a second-city zone without opening a broad range", async () => {
+  const { db, sqlite } = fresh();
+  await zones.ensureServiceZonesTables(db);
+  sqlite.prepare("INSERT INTO service_zone_mappings (pincode,zone_id,city_id,city,area,created_at) VALUES (?,?,?,?,?,?)")
+    .run("600001", "opaque-zone-name", "maa", "Chennai", "Parrys", 0);
+  const resolved = await resolveZoneByPincode(db, "600001");
+  assert.equal(resolved?.assignment.zoneId, "opaque-zone-name");
+  assert.equal(resolved?.assignment.cityId, "maa");
+  assert.equal(resolved?.assignment.city, "Chennai");
+  assert.equal(resolved?.zone.serviceAvailable, true);
+  assert.equal(await resolveZoneByPincode(db, "600002"), null, "an adjacent unreviewed pincode must remain closed");
+});
+
 test("a city that is not Live does not make its range serviceable", async () => {
   const { db } = fresh({ live: false });
   // 560102 is in the explicit table, so it still resolves - that is intended.

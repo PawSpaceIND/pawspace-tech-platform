@@ -27,7 +27,8 @@ export async function POST(request: Request) {
 
     const resolved = await resolveZoneByPincode(db, pincode);
     if (!resolved || !resolved.zone.serviceAvailable) return json({ error: "The service address is outside an enabled PawSpace zone" }, 409);
-    if (String(booking.zone_id) !== resolved.assignment.zoneId || String(booking.city_id) !== "blr") return json({ error: "The verified address zone does not match the booking reservation" }, 409);
+    const resolvedCityId = String(resolved.assignment.cityId || "").trim().toLowerCase();
+    if (!resolvedCityId || String(booking.zone_id) !== resolved.assignment.zoneId || String(booking.city_id).toLowerCase() !== resolvedCityId) return json({ error: "The verified address zone does not match the booking reservation" }, 409);
 
     const lat = Number(input.latitude), lng = Number(input.longitude);
     const hasCoords = Number.isFinite(lat) && lat >= -90 && lat <= 90 && Number.isFinite(lng) && lng >= -180 && lng <= 180;
@@ -39,7 +40,7 @@ export async function POST(request: Request) {
       db.prepare("INSERT INTO customer_addresses (id,customer_id,label,line1,line2,area,city,postal_code,is_default,created_at,updated_at) VALUES (?,?,?,?,NULL,?,?,?,1,?,?) ON CONFLICT(id) DO UPDATE SET line1=excluded.line1,area=excluded.area,city=excluded.city,postal_code=excluded.postal_code,is_default=1,updated_at=excluded.updated_at WHERE customer_addresses.customer_id=excluded.customer_id").bind(addressId, customerId, "Service address", address, resolved.assignment.area, resolved.assignment.city, pincode, now, now),
     ]);
     await securityAudit(db, actor, "grooming.service_location.save", "booking", bookingId, "completed", { hasCoordinates: hasCoords, addressLength: address.length, zoneId: resolved.assignment.zoneId });
-    return json({ data: { bookingId, addressSaved: true, coordinatesSaved: hasCoords, navigationUrl: mapsNavigationUrl(completeAddress), zoneId: resolved.assignment.zoneId } }, 201);
+    return json({ data: { bookingId, addressSaved: true, coordinatesSaved: hasCoords, navigationUrl: mapsNavigationUrl(completeAddress), cityId: resolvedCityId, zoneId: resolved.assignment.zoneId } }, 201);
   } catch (error) {
     return authError(error, "Unable to save Grooming service location");
   }
