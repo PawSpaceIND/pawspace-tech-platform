@@ -2,6 +2,7 @@ import { defaultRoles, hasPermission, parsePermissions, type Permission } from "
 import {ensureIdentityBindingTables,findIdentityBinding,type IdentitySource,type PrincipalType} from "./identity-binding";
 import {resolvePlatformSession} from "./platform-session";
 import {resolveUatStaffActor,signInRequiredResponse} from "./uat-staging-auth";
+import {governedJsonError,isGovernedHttpError,markGovernedHttpError} from "./governed-http-error";
 
 type Db = Awaited<ReturnType<typeof database>>;
 export type AuthenticatedActor = { email:string; name:string; roleCode:string; permissions:string[]; developmentPreview:boolean; identitySource:IdentitySource; principalType:PrincipalType; principalKey:string };
@@ -43,12 +44,8 @@ export async function ensureSecurityTables(db:Db){
   securityTablesEnsured.add(db);
 }
 
-/**
- * Every gated page reads these failures with response.json(). A plain-text body therefore never reached
- * the tester as a message - it surfaced as `Unexpected token 'A', "Authentica"... is not valid JSON`,
- * which reads like a broken page rather than an ended session (reproduced against the built worker).
- */
-export function authFailure(message:string,status:number){return Response.json({error:message},{status,headers:{"cache-control":"no-store"}});}
+/** Every governed API failure is JSON, caller-safe, marked, and non-cacheable. */
+export function authFailure(message:string,status:number){return governedJsonError({error:message},status);}
 
 export async function resolveActor(request:Request):Promise<AuthenticatedActor>{
   const db=await database(); await ensureSecurityTables(db);
@@ -60,7 +57,7 @@ export async function resolveActor(request:Request):Promise<AuthenticatedActor>{
   const session=await resolvePlatformSession(db,request);
   if(session)return {email:session.auditId,name:`${session.subjectType==="customer"?"Customer":"Provider"} ${session.subjectId}`,roleCode:session.roleCode,permissions:session.permissions,developmentPreview:false,identitySource:session.identitySource,principalType:session.principalType,principalKey:session.principalKey};
   const identity=forwardedIdentity(request);
-  if(!identity.email)throw signInRequiredResponse(uatEnv as unknown as Record<string,unknown>);
+  if(!identity.email)throw markGovernedHttpError(signInRequiredResponse(uatEnv as unknown as Record<string,unknown>));
   let user=await db.prepare("SELECT email,name,role_code,status FROM app_users WHERE email=?").bind(identity.email).first<Record<string,unknown>>();
   if(!user){
     const {env}=await import("cloudflare:workers"); const founderEmail=String(env.FOUNDER_EMAIL||"").trim().toLowerCase();
@@ -104,7 +101,15 @@ export async function securityAudit(db:Db,actor:AuthenticatedActor,action:string
     .bind(crypto.randomUUID(),actor.email,actor.roleCode,action,resourceType,resourceId,outcome,JSON.stringify(detail),Date.now()).run();
 }
 
+/** Preserve factory-marked 4xx responses exactly. For legacy unmarked 4xx control responses, preserve only the status and redact the body. */
 export function authError(error:unknown,fallback="Request failed"){
-  if(error instanceof Response)return error;
-  return Response.json({error:error instanceof Error?error.message:fallback},{status:500});
+  if(error instanceof Response){
+    if(isGovernedHttpError(error))return error;
+    if(error.status>=400&&error.status<500){
+      console.error("[api] ungoverned client error redacted",error);
+      return Response.json({error:fallback},{status:error.status,headers:{"cache-control":"no-store"}});
+    }
+  }
+  console.error("[api] unexpected error",error);
+  return Response.json({error:fallback},{status:500,headers:{"cache-control":"no-store"}});
 }
