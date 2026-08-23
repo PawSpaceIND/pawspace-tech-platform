@@ -1,4 +1,5 @@
 import { authError, authorize, database, securityAudit } from "../../../lib/server-auth";
+import { VOICE_TELEPHONY_SECRET_NAMES } from "../../../lib/voice-call-gate";
 
 type Db = Awaited<ReturnType<typeof database>>;
 type Row = Record<string, unknown>;
@@ -56,7 +57,13 @@ async function buildSnapshot(db: Db, performSync = false) {
   const credentials = {
     wati: Boolean(runtime.WATI_API_TOKEN && runtime.WATI_TENANT_URL),
     sms: Boolean(runtime.SMS_API_KEY && runtime.SMS_SENDER_ID),
-    telephony: Boolean(runtime.EXOTEL_API_KEY && runtime.EXOTEL_API_TOKEN && runtime.EXOTEL_SID),
+    // Derived from the same list the dial gate enforces (lib/voice-call-gate.ts). Held separately, this
+    // surface reported telephony as "configured" on three of the six variables the receiver actually
+    // needs - a line that could neither place a call nor verify a callback - and a future change to one
+    // list would silently disagree with the other.
+    // Trimmed, like the dial gate and lib/integration-readiness.ts: a whitespace-only secret reported
+    // as "configured" here while the gate refused it is the same disagreement in a subtler form.
+    telephony: VOICE_TELEPHONY_SECRET_NAMES.every(name => String(runtime[name] ?? "").trim().length > 0),
     scheduler: Boolean(runtime.AUTOMATION_CRON_SECRET),
   };
   const controls = [

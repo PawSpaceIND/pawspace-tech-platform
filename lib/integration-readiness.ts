@@ -1,3 +1,4 @@
+import { VOICE_TELEPHONY_SECRET_NAMES } from "./voice-call-gate";
 export type IntegrationReadinessState=
   |"not_started"|"code_ready"|"sandbox_setup_required"|"sandbox_ready_for_test"|"sandbox_verified"
   |"production_setup_required"|"production_ready_for_controlled_test"|"controlled_live_verified"|"blocked"|"not_applicable";
@@ -31,7 +32,7 @@ const seeds:Seed[]=[
  {code:"INT-COMMS-02",capability:"SMS messaging",provider:"Exotel SMS / configured SMS provider",category:"communications",owner:"CRM/CX + Engineering",backupOwner:"Operations",priority:"P1",required:true,environment:"sandbox",codeBoundaryStatus:"code_ready",readinessState:"sandbox_setup_required",credentialDetector:"sms",dataClassification:"customer contact + transactional content",launchGateCode:"COMMS-01",notes:"Canonical communications adapter boundary exists."},
  {code:"INT-COMMS-03",capability:"Email delivery",provider:"Provider not selected",category:"communications",owner:"CRM/CX",backupOwner:"Finance",priority:"P1",required:true,environment:"none",codeBoundaryStatus:"code_ready",readinessState:"not_started",dataClassification:"customer contact + documents",launchGateCode:"COMMS-01",notes:"Canonical email channel exists; external provider execution is not connected."},
  {code:"INT-COMMS-04",capability:"Push notifications",provider:"Provider not selected",category:"communications",owner:"Product + Engineering",backupOwner:"Operations",priority:"P1",required:true,environment:"none",codeBoundaryStatus:"code_ready",readinessState:"not_started",dataClassification:"device token + transactional metadata",launchGateCode:"COMMS-01",notes:"Canonical push channel exists; external push provider is not connected."},
- {code:"INT-VOICE-01",capability:"Telephony / call tracking",provider:"Exotel",category:"communications",owner:"Sales/CX + Engineering",backupOwner:"Operations",priority:"P1",required:true,environment:"sandbox",codeBoundaryStatus:"partial",readinessState:"sandbox_setup_required",credentialDetector:"exotel",dataClassification:"customer contact + call metadata",notes:"Credential presence is not proof of call/webhook/recording compliance."},
+ {code:"INT-VOICE-01",capability:"Telephony / call tracking",provider:"Exotel",category:"communications",owner:"Sales/CX + Engineering",backupOwner:"Operations",priority:"P1",required:true,environment:"sandbox",codeBoundaryStatus:"code_ready",readinessState:"sandbox_setup_required",credentialDetector:"exotel",dataClassification:"customer contact + call metadata",notes:"Provider contract, call state machine, pre-dial policy gate, signed callback receiver and audit exist (lib/voice-outbound-governance.ts). No credentials in any environment, so no call has ever been placed: credential presence is not proof of call/webhook/recording compliance. Setup steps in docs/VOICE_UAT_CHECKLIST.md."},
  {code:"INT-MAPS-01",capability:"Maps / geocoding / routing",provider:"Google Routes",category:"location",owner:"Operations + Engineering",backupOwner:"Product",priority:"P1",required:true,environment:"sandbox",codeBoundaryStatus:"code_ready",readinessState:"production_setup_required",credentialDetector:"maps_uat",dataClassification:"service address + route data",notes:"Routes adapter is sandbox-locked and stores route snapshots."},
  {code:"INT-GPS-01",capability:"Provider GPS/location evidence",provider:"Device location + route provider",category:"location",owner:"Operations + Safety + Engineering",backupOwner:"Security",priority:"P1",required:true,environment:"sandbox",codeBoundaryStatus:"code_ready",readinessState:"production_setup_required",dataClassification:"precise location + booking/provider identity",notes:"Canonical provider location events exist; production device trust and retention policy remain unverified."},
  {code:"INT-MEDIA-01",capability:"Private object storage",provider:"Provider not selected",category:"media",owner:"Engineering + Security",backupOwner:"Operations",priority:"P1",required:true,environment:"none",codeBoundaryStatus:"code_ready",readinessState:"production_setup_required",dataClassification:"service evidence + private documents",notes:"Media lifecycle is canonical but storage backend reports not_connected."},
@@ -57,12 +58,35 @@ function detectedCredentialStatus(runtime:Record<string,unknown>,detector:unknow
   case"razorpay_sandbox":return configured(runtime,["RAZORPAY_KEY_ID_SANDBOX","RAZORPAY_KEY_SECRET_SANDBOX","RAZORPAY_WEBHOOK_SECRET_SANDBOX"])?"configured":"missing";
   case"wati":return configured(runtime,["WATI_API_TOKEN","WATI_TENANT_URL"])?"configured":"missing";
   case"sms":return configured(runtime,["SMS_API_KEY","SMS_SENDER_ID"])?"configured":"missing";
-  case"exotel":return configured(runtime,["EXOTEL_API_KEY","EXOTEL_API_TOKEN","EXOTEL_SID"])?"configured":"missing";
+  case"exotel":return configured(runtime,[...VOICE_TELEPHONY_SECRET_NAMES])?"configured":"missing";
   case"maps_uat":return configured(runtime,["GOOGLE_MAPS_SERVER_API_KEY_UAT"])?"configured":"missing";
   case"scheduler":return configured(runtime,["AUTOMATION_CRON_SECRET"])?"configured":"missing";
   case"ai_provider":return configured(runtime,["PAWSPACE_AI_PROVIDER_API_KEY"])?"configured":"missing";
   default:return null;
  }
+}
+
+/**
+ * Seeds are inserted with INSERT OR IGNORE, so correcting a seed value only reaches fresh databases -
+ * any environment that already holds INT-VOICE-01 would keep code_boundary_status='partial' and the old
+ * notes, and the readiness surface would report stale telephony information exactly where the
+ * correction matters.
+ *
+ * Advanced only when the row has never been touched by a HUMAN: still on the old status, and last
+ * written by one of this module's own automated writers. 'runtime_presence_check' has to be in that set -
+ * syncIntegrationCredentialPresence stamps it whenever a credential's presence changes, so any database
+ * where that has ever run would otherwise fail the predicate and keep the stale status forever, defeating
+ * the migration entirely. An operator edit through updateIntegrationReadiness stamps the actor's own id
+ * and is left alone.
+ *
+ * readiness_state is deliberately NOT touched - the provider still has no credentials anywhere, so it
+ * stays sandbox_setup_required.
+ */
+async function advanceVoiceBoundarySeed(db:Db,now:number){
+ const seed=seeds.find(item=>item.code==="INT-VOICE-01");
+ if(!seed)return;
+ await db.prepare("UPDATE integration_registry SET code_boundary_status=?,notes=?,updated_at=? WHERE integration_code='INT-VOICE-01' AND updated_by IN ('system_seed','runtime_presence_check') AND code_boundary_status='partial'")
+  .bind(seed.codeBoundaryStatus,seed.notes,now).run();
 }
 
 export async function ensureIntegrationReadinessTables(db:Db){
@@ -72,6 +96,7 @@ export async function ensureIntegrationReadinessTables(db:Db){
   db.prepare("CREATE INDEX IF NOT EXISTS integration_readiness_events_code_idx ON integration_readiness_events(integration_code,created_at)"),
  ]);
  const now=Date.now();
+ await advanceVoiceBoundarySeed(db,now);
  for(const item of seeds)await db.prepare("INSERT OR IGNORE INTO integration_registry (integration_code,category,capability,provider,owner,backup_owner,priority,required,launch_gate_code,environment,code_boundary_status,credential_status,credential_detector,data_classification,readiness_state,notes,updated_by,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
   .bind(item.code,item.category,item.capability,item.provider,item.owner,item.backupOwner,item.priority,sqlBool(item.required),item.launchGateCode??null,item.environment,item.codeBoundaryStatus,item.credentialDetector?"unknown":"unknown",item.credentialDetector??null,item.dataClassification,item.readinessState,item.notes,"system_seed",now).run();
 }
