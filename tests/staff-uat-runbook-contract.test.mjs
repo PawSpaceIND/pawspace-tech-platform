@@ -4,9 +4,12 @@ import fs from "node:fs";
 
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("staff UAT runbook documents the canonical cross-role sequence", () => {
+test("staff UAT runbook documents the canonical cross-role sequence, in order", () => {
   const doc = read("docs/END_TO_END_STAFF_UAT_EXECUTION.md");
-  for (const marker of [
+  // Presence alone would let the runbook be reordered - a provider activated before Ops verification,
+  // say - while every marker still appears and CI stays green. The stages are therefore required to
+  // appear in this order, which is the claim the test name makes.
+  const sequence = [
     "Customer identity and booking",
     "Provider self-service",
     "Ops verification and interview",
@@ -20,7 +23,14 @@ test("staff UAT runbook documents the canonical cross-role sequence", () => {
     "Human handoff",
     "Analytics/reporting",
     "Hosted real-D1 60-booking swarm",
-  ]) assert.match(doc, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  ];
+  let previous = -1, previousMarker = "start of document";
+  for (const marker of sequence) {
+    const at = doc.indexOf(marker);
+    assert.notEqual(at, -1, `the runbook no longer documents "${marker}"`);
+    assert.ok(at > previous, `"${marker}" appears before "${previousMarker}"; the canonical sequence is out of order`);
+    previous = at; previousMarker = marker;
+  }
 });
 
 test("staff UAT runbook documents production and provider boundaries as fail closed", () => {
