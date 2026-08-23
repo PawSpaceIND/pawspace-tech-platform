@@ -30,6 +30,8 @@ function assertCompleted(result, expected) {
   assert.equal(result.persisted.payment.status, "captured");
   assert.equal(result.persisted.payment.amount, result.persisted.booking.total_amount);
   assert.equal(result.persisted.location.customer_id, expected.customerId);
+  assert.equal(result.persisted.location.latitude, expected.latitude);
+  assert.equal(result.persisted.location.longitude, expected.longitude);
   assert.match(result.persisted.location.address_text, new RegExp(expected.pincode));
   assert.equal(result.persisted.address.postal_code, expected.pincode);
   assert.equal(result.jobs.status, 200);
@@ -45,7 +47,7 @@ function assertCompleted(result, expected) {
 
 test("Bengaluru customer completes one canonical discounted Grooming booking through real routes", async (t) => {
   const ctx = await setupJourney(); t.after(ctx.close);
-  const config = { customerId: "CUST-BLR-GOLD", customerName: "Asha Rao", phone: "+919900000101", petSourceId: "PET-SOURCE-BLR", petName: "Milo", cityId: "blr", zoneId: "blr-east", pincode: "560038", preferredProviderId: "groom_arun", groupId: "GROOM-GOLD-BLR", couponCode: "UATCARE100", start: future(4) };
+  const config = { customerId: "CUST-BLR-GOLD", customerName: "Asha Rao", phone: "+919900000101", petSourceId: "PET-SOURCE-BLR", petName: "Milo", cityId: "blr", zoneId: "blr-east", pincode: "560038", latitude: 12.9716, longitude: 77.5946, preferredProviderId: "groom_arun", groupId: "GROOM-GOLD-BLR", couponCode: "UATCARE100", start: future(4) };
   const result = await runCompletedJourney(ctx, config);
   assertCompleted(result, config);
   assert.equal(result.total, 1799);
@@ -60,7 +62,7 @@ test("Bengaluru customer completes one canonical discounted Grooming booking thr
 
 test("second-city journey preserves city/zone/provider and rejects cross-city confirmation without orphans", async (t) => {
   const ctx = await setupJourney(); t.after(ctx.close);
-  const config = { customerId: "CUST-MAA-GOLD", customerName: "Divya Iyer", phone: "+919900000202", petSourceId: "PET-SOURCE-MAA", petName: "Kavi", cityId: "maa", zoneId: "chennai-core", pincode: "600001", preferredProviderId: "groom_maa", groupId: "GROOM-GOLD-MAA", start: future(9) };
+  const config = { customerId: "CUST-MAA-GOLD", customerName: "Divya Iyer", phone: "+919900000202", petSourceId: "PET-SOURCE-MAA", petName: "Kavi", cityId: "maa", zoneId: "chennai-core", pincode: "600001", latitude: 13.0827, longitude: 80.2707, preferredProviderId: "groom_maa", groupId: "GROOM-GOLD-MAA", start: future(9) };
   const result = await runCompletedJourney(ctx, config);
   assertCompleted(result, config);
 
@@ -114,7 +116,7 @@ test("session expiry between coupon quote and booking fails closed without busin
 
 test("captured booking cancellation releases work and capacity and refund simulation is idempotent", async (t) => {
   const ctx = await setupJourney(); t.after(ctx.close);
-  const config = { customerId: "CUST-CANCEL", customerName: "Nila Shah", phone: "+919900000505", petSourceId: "PET-CANCEL", petName: "Loki", cityId: "blr", zoneId: "blr-east", pincode: "560038", preferredProviderId: "groom_arun", groupId: "GROOM-CANCEL", start: future(10), stopAfterCapture: true };
+  const config = { customerId: "CUST-CANCEL", customerName: "Nila Shah", phone: "+919900000505", petSourceId: "PET-CANCEL", petName: "Loki", cityId: "blr", zoneId: "blr-east", pincode: "560038", latitude: 12.9716, longitude: 77.5946, preferredProviderId: "groom_arun", groupId: "GROOM-CANCEL", start: future(10), stopAfterCapture: true };
   const result = await runCompletedJourney(ctx, config);
   const cancelled = await routeCall("../../app/api/grooming-booking-change/route.ts", "POST", "/api/grooming-booking-change", { bookingId: result.bookingId, customerId: config.customerId, action: "cancel", reason: "Customer requested cancellation" }, result.customerCookie);
   assert.equal(cancelled.status, 200, JSON.stringify(cancelled.body));

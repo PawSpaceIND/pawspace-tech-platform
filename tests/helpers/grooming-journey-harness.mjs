@@ -62,11 +62,14 @@ export async function setupJourney() {
   const { seedDefaultZones } = await import("../../lib/service-zones.ts");
   const { seedProviderCapacityDefaults } = await import("../../lib/provider-capacity-governance.ts");
   const { seedDefaultGroomingPolicy } = await import("../../lib/grooming-policy-governance.ts");
+  const { ensureSecurityTables } = await import("../../lib/server-auth.ts");
+  await ensureSecurityTables(db);
   await seedDefaultZones(db);
   await seedProviderCapacityDefaults(db);
   await seedDefaultGroomingPolicy(db);
   const now = Date.now();
   await db.batch([
+    db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('USR-GROOM-CLOSURE','closure-admin@pawspace.test','Grooming closure operator','founder','active',?,?)").bind(now,now),
     db.prepare("INSERT OR REPLACE INTO service_zone_mappings (pincode,zone_id,city_id,city,area,created_at) VALUES ('600001','chennai-core','maa','Chennai','George Town',?)").bind(now),
     db.prepare("INSERT INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('groom_maa','maa','Meena R.','full_time','[\"grooming\"]','[\"chennai-core\"]',1,4.9,96,1,30,4,3,'active',1,'2026-08-01',NULL,'journey_seed',?)").bind(now),
     db.prepare("INSERT INTO grooming_commercial_policies (id,policy_code,city_id,zone_id,enforcement_mode,cancellation_cutoff_minutes,refund_percent_before_cutoff,refund_percent_after_cutoff,reschedule_cutoff_minutes,reschedule_allowed_after_cutoff,max_reschedules,reschedule_fee_type,reschedule_fee_value,no_show_refund_percent,multi_pet_max,multi_pet_pricing_mode,change_lock_statuses_json,active,version,effective_from,effective_to,updated_by,updated_at) VALUES ('gpolicy_maa','grooming-default','maa',NULL,'enforce',0,100,100,0,1,2,'none',0,0,4,'catalogue','[\"completed\",\"cancelled\"]',1,1,'2026-08-01',NULL,'journey_seed',?)").bind(now),
@@ -74,10 +77,10 @@ export async function setupJourney() {
   return { sqlite, db, close: () => sqlite.close() };
 }
 
-async function routeCall(modulePath, method, path, body, cookie = "", origin = "http://localhost") {
+async function routeCall(modulePath, method, path, body, cookie = "", origin = "https://uat.pawspace.in") {
   const route = await import(modulePath);
   const request = new Request(`${origin}${path}`, {
-    method, headers: { ...(body ? { "content-type": "application/json" } : {}), ...(cookie ? { cookie } : {}) },
+    method, headers: { ...(body ? { "content-type": "application/json" } : {}), ...(cookie ? { cookie } : { "oai-authenticated-user-email": "closure-admin@pawspace.test", "oai-authenticated-user-full-name": "Grooming%20closure%20operator", "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8" }) },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
   const response = await route[method](request);
@@ -122,7 +125,7 @@ export async function runCompletedJourney(ctx, config) {
   const booked = await routeCall("../../app/api/canonical-bookings/route.ts", "POST", "/api/canonical-bookings", bookingPayload, customerCookie);
   const bookingReplay = await routeCall("../../app/api/canonical-bookings/route.ts", "POST", "/api/canonical-bookings", bookingPayload, customerCookie);
   const bookingId = booked.body.data?.bookingId;
-  const location = await routeCall("../../app/api/grooming-service-location/route.ts", "POST", "/api/grooming-service-location", { bookingId, customerId: config.customerId, address: `${config.customerName} service address`, pincode: config.pincode, latitude: 12.97, longitude: 77.64 }, customerCookie);
+  const location = await routeCall("../../app/api/grooming-service-location/route.ts", "POST", "/api/grooming-service-location", { bookingId, customerId: config.customerId, address: `${config.customerName} service address`, pincode: config.pincode, latitude: config.latitude, longitude: config.longitude }, customerCookie);
 
   const linked = await routeCall("../../app/api/grooming-payment-sandbox/route.ts", "POST", "/api/grooming-payment-sandbox", { action: "link_order", bookingId, gatewayOrderId: `order_${config.groupId}` });
   const capture = { action: "simulate_event", bookingId, eventType: "payment.captured", eventId: `evt_${config.groupId}`, gatewayPaymentId: `pay_${config.groupId}`, amount: total, currency: "INR" };
