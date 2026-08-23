@@ -1,6 +1,7 @@
 // Public, unauthenticated endpoint - a customer needs to see who they've been matched with before
 // they've logged in or booked anything. Deliberately returns only the safe fields assembled by
 // getProviderPublicProfile - no internal IDs, no address, no phone, no rating/quality_score.
+import{redactUnexpected}from"../../../lib/governed-http-error";
 import { getProviderPublicProfile } from "../../../lib/provider-public-profile";
 
 async function getDatabase() {
@@ -17,6 +18,6 @@ export async function GET(request: Request) {
     if (!profile) return Response.json({ error: "Provider not found" }, { status: 404 });
     return Response.json({ data: profile }, { headers: { "cache-control": "no-store" } });
   } catch (error) {
-    return Response.json({ error: error instanceof Error ? error.message : "Unable to load provider profile" }, { status: 500 });
+    return Response.json({ error: redactUnexpected(error,"Unable to load provider profile") }, { status: 500 });
   }
 }

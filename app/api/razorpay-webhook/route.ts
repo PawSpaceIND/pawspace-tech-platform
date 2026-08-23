@@ -1,3 +1,4 @@
+import{redactUnexpected}from"../../../lib/governed-http-error";
 import{database}from"../../../lib/server-auth";
 import{processGatewayEvent,type GatewayEvent}from"../../../lib/grooming-payment-reconciliation";
 import{resolvePaymentWebhookGate}from"../../../lib/payment-webhook-gate";
@@ -26,5 +27,5 @@ export async function POST(request:Request){
     const raw=await request.text();const expected=await hmac(gate.secret,raw);if(!safeEqual(expected,signature))return json({error:"Invalid Razorpay webhook signature"},401);
     let payload:RazorPayload;try{payload=JSON.parse(raw) as RazorPayload;}catch{return json({error:"Invalid webhook JSON"},400);}if(!payload.event)return json({error:"Webhook event type is required"},400);
     const db=await database();const result=await processGatewayEvent(db,extract(payload,eventId,await sha256(raw),gate.environment));return json({ok:true,environment:gate.environment,...result});
-  }catch(error){return json({error:error instanceof Error?error.message:"Unable to process Razorpay webhook"},500);}
+  }catch(error){return json({error:redactUnexpected(error,"Unable to process Razorpay webhook")},500);}
 }
