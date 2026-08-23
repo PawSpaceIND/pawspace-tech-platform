@@ -149,6 +149,14 @@ test("an explicit reviewed database mapping enables a second-city zone without o
   assert.equal(await resolveZoneByPincode(db, "600002"), null, "an adjacent unreviewed pincode must remain closed");
 });
 
+test("a custom mapping without canonical city identity fails closed", async () => {
+  const { db, sqlite } = fresh();
+  await zones.ensureServiceZonesTables(db);
+  sqlite.prepare("INSERT INTO service_zone_mappings (pincode,zone_id,city_id,city,area,created_at) VALUES (?,?,?,?,?,?)")
+    .run("600003", "opaque-zone-name", null, "Chennai", "Sowcarpet", 0);
+  assert.equal(await resolveZoneByPincode(db, "600003"), null);
+});
+
 test("a city that is not Live does not make its range serviceable", async () => {
   const { db } = fresh({ live: false });
   // 560102 is in the explicit table, so it still resolves - that is intended.

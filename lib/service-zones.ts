@@ -128,14 +128,14 @@ export async function resolveZoneByPincode(db:Db,pincode:string):Promise<{zone:S
   // Fallback to database query (for custom/extended zones)
   const row=await db.prepare("SELECT zone_id,city_id,city,area FROM service_zone_mappings WHERE pincode=?").bind(normalized).first<Row>();
   if(row){
-    const zoneId=String(row.zone_id),city=String(row.city||"").trim(),area=String(row.area||"").trim();
+    const zoneId=String(row.zone_id||"").trim(),cityId=String(row.city_id||"").trim().toLowerCase(),city=String(row.city||"").trim(),area=String(row.area||"").trim();
     // A database row is an explicit, operations-reviewed mapping.  It must be usable for a launched
     // second city without requiring a code deployment to extend Bengaluru's presentation constants.
     // We still fail closed when any identity field is missing: a broad city launch range never reaches
     // this branch, and an incomplete row cannot silently open a service area.
-    if(zoneId&&city&&area){
+    if(zoneId&&cityId&&city&&area){
       const zone=SERVICE_ZONES[zoneId]??{zoneId,zoneName:`${city} service zone`,description:area,color:"#6B3FA0",serviceAvailable:true};
-      const assignment:ZoneAssignment={pincode:normalized,zoneId,cityId:row.city_id?String(row.city_id).trim().toLowerCase():undefined,city,area};
+      const assignment:ZoneAssignment={pincode:normalized,zoneId,cityId,city,area};
       return{zone,assignment};
     }
   }
