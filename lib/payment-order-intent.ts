@@ -11,6 +11,7 @@
 import { createPaymentOrder, publicKeyId, paymentEnvironment } from "./razorpay-client";
 import { paymentStageAmount } from "./payment-stage-amount";
 import { linkGatewayOrder } from "./grooming-payment-reconciliation";
+import { governedJsonError } from "./governed-http-error";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
@@ -20,7 +21,7 @@ export async function createBookingPaymentOrder(db: Db, env: Record<string, unkn
   if (!bookingId || !customerId) throw new Error("A booking and customer are required");
   const row = await db.prepare("SELECT b.customer_id customer_id,p.id payment_id,p.amount amount,p.currency currency,p.status status FROM canonical_bookings b JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=?").bind(bookingId).first<Row>();
   if (!row) throw new Error("Booking or its payment record was not found");
-  if (String(row.customer_id) !== customerId) throw new Error("You can only pay for your own booking");
+  if (String(row.customer_id) !== customerId) throw governedJsonError({ error: "You can only pay for your own booking" }, 403);
   // The order is for the amount payable at THIS stage, not the booking's price. A 50/50 stay used to
   // open an order for the full total because this read p.amount; the stage helper distinguishes a full
   // payment, a split's first instalment and its outstanding balance from state already recorded.
