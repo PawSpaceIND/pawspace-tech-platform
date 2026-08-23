@@ -1,26 +1,28 @@
-/** Marker carried only by PawSpace's deliberate, caller-safe HTTP error responses. */
-export const GOVERNED_HTTP_ERROR_HEADER="x-pawspace-governed-error";
-const GOVERNED_HTTP_ERROR_VALUE="1";
+/** Caller-safe HTTP errors are trusted by in-process object identity, never by client-visible metadata. */
+const governedHttpErrors=new WeakSet<Response>();
 
-function governedHeaders(source?:HeadersInit){
+function noStoreHeaders(source?:HeadersInit){
   const headers=new Headers(source);
   headers.set("cache-control","no-store");
-  headers.set(GOVERNED_HTTP_ERROR_HEADER,GOVERNED_HTTP_ERROR_VALUE);
   return headers;
 }
 
 /** Create a non-cacheable JSON response whose body is explicitly approved for the caller. */
 export function governedJsonError(body:Record<string,unknown>,status:number){
-  return Response.json(body,{status,headers:governedHeaders()});
+  const response=Response.json(body,{status,headers:noStoreHeaders()});
+  governedHttpErrors.add(response);
+  return response;
 }
 
-/** Mark an already-created trusted 4xx response without trusting arbitrary response objects globally. */
+/** Mark an already-created trusted 4xx response without trusting arbitrary response headers or bodies. */
 export function markGovernedHttpError(response:Response){
   if(response.status<400||response.status>=500)throw new Error("Only caller-safe 4xx responses may be governed");
-  return new Response(response.body,{status:response.status,statusText:response.statusText,headers:governedHeaders(response.headers)});
+  const governed=new Response(response.body,{status:response.status,statusText:response.statusText,headers:noStoreHeaders(response.headers)});
+  governedHttpErrors.add(governed);
+  return governed;
 }
 
-/** Arbitrary thrown Responses are untrusted; only factory-marked 4xx responses may pass through. */
+/** Arbitrary thrown Responses are untrusted; only factory-marked response objects may pass through. */
 export function isGovernedHttpError(response:Response){
-  return response.status>=400&&response.status<500&&response.headers.get(GOVERNED_HTTP_ERROR_HEADER)===GOVERNED_HTTP_ERROR_VALUE;
+  return response.status>=400&&response.status<500&&governedHttpErrors.has(response);
 }

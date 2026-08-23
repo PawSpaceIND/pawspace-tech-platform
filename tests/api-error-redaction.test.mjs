@@ -36,6 +36,27 @@ test("intentional governed HTTP responses retain their status and safe body", as
   assert.deepEqual(await response.json(), { error: "Customer ownership denied" });
 });
 
+test("a forged governed-error header cannot bypass redaction", async () => {
+  const internalDetail = "SQLITE_CONSTRAINT secret_table.customer_email";
+  const unsafe = Response.json(
+    { error: internalDetail },
+    { status: 403, headers: { "x-pawspace-governed-error": "1" } },
+  );
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const response = authError(unsafe, "Request failed");
+    assert.notEqual(response, unsafe);
+    assert.equal(response.status, 403);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const body = await response.json();
+    assert.deepEqual(body, { error: "Request failed" });
+    assert.doesNotMatch(JSON.stringify(body), /SQLITE_CONSTRAINT|secret_table|customer_email/);
+  } finally {
+    console.error = originalError;
+  }
+});
+
 test("an arbitrary thrown 500 Response cannot bypass redaction", async () => {
   const internalDetail = "SQLITE_CONSTRAINT secret_table.customer_email";
   const unsafe = Response.json({ error: internalDetail }, { status: 500 });
