@@ -36,7 +36,7 @@ test("embedded training uses resolved coverage and never marks an unverified pay
 test("food catalogue and quote use PIN-resolved coverage without live inventory claims", () => {
   const source = read("app/mobile-app/food-flow.tsx");
   assert.match(source, /loadFoodCatalogue\(resolved\.zoneId\)/);
-  assert.match(source, /quoteFoodCart\(cart, resolved\.zoneId\)/);
+  assert.match(source, /quoteFoodCart\(cart, resolved\.zoneId, customer\.id\)/);
   assert.match(source, /stock is a test allocation, not live warehouse inventory/i);
   assert.doesNotMatch(source, /Loading the live catalogue/);
   assert.doesNotMatch(source, /zoneId:\s*"blr-east"/);

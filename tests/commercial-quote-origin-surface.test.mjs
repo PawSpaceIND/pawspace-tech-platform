@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import * as nodeModule from "node:module";
 
 // ---------------------------------------------------------------------------
-// The six public *-commercial quote routes are reachable without authentication — the gateway maps them
+// Five public *-commercial quote routes remain reachable without authentication — the gateway maps them
 // to no permission on purpose, because a visitor has to be able to price a stay before signing up. Each
 // guards its POST with a per-route copy of:
 //
@@ -85,8 +85,6 @@ const ROUTES = [
     body: () => ({ packageCode: "sitting-visit-60", petCount: 1, scheduledStart: at(20 * DAY), scheduledEnd: at(20 * DAY + HOUR), paymentMode: "prepaid" }) },
   { name: "taxi", quoteTable: "taxi_commercial_quotes",
     body: () => ({ routeCode: "taxi-blr-east-short", originLabel: "Indiranagar", destinationLabel: "Koramangala", petCount: 1, scheduledStart: at(20 * DAY) }) },
-  { name: "food", quoteTable: "food_commercial_quotes",
-    body: () => ({ sku: "food-uat-cat-adult-1kg", quantity: 1, zoneId: "blr-east" }) },
   { name: "walking", quoteTable: "walking_commercial_quotes",
     body: () => ({ packageCode: "walking-30", mode: "once", petCount: 1, walkCount: 1, scheduledStart: at(20 * DAY), scheduledEnd: at(20 * DAY + 30 * 60000) }) },
   { name: "training", quoteTable: "training_commercial_quotes",
@@ -201,13 +199,31 @@ for (const route of ROUTES) {
   });
 }
 
+test("food-commercial is identity-bound and requires an owned compatible pet", async () => {
+  const { sqlite, mod } = await clean("food");
+  const anonymous = await call(mod, "food", { sku: "food-uat-cat-adult-1kg", quantity: 1, zoneId: "blr-east" }, {});
+  assert.equal(anonymous.status, 400);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM food_commercial_quotes").get().n, 0);
+  sqlite.exec("CREATE TABLE canonical_pets (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,species TEXT NOT NULL)");
+  sqlite.prepare("INSERT INTO canonical_pets (id,customer_id,species) VALUES (?,?,?)").run("pet-food-cat","customer-food","cat");
+  const body = { sku: "food-uat-cat-adult-1kg", quantity: 1, zoneId: "blr-east", customerId: "customer-food", petIds: ["pet-food-cat"] };
+  const request = (payload) => mod.POST(new Request("http://localhost/api/food-commercial", { method: "POST", headers: { "content-type": "application/json", origin: "http://localhost" }, body: JSON.stringify(payload) }));
+  const coupon = await request({ ...body, couponCode: "ANYTHING" });
+  assert.equal(coupon.status, 409, "Food still refuses coupons after identity validation");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM food_commercial_quotes").get().n, 0);
+  const accepted = await request(body);
+  assert.equal(accepted.status, 201, await accepted.text().catch(() => ""));
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM food_commercial_quotes").get().n, 1);
+  assert.deepEqual(sqlite.prepare("SELECT pet_id,customer_id,pet_type FROM food_quote_pets").get(), { pet_id: "pet-food-cat", customer_id: "customer-food", pet_type: "cat" });
+});
+
 // --- coupons: the one lever that could have consumed a limited resource ----------------------------
 
-test("five of the six refuse coupons outright, and the sixth only READS a coupon rule", async () => {
+test("four of the five anonymous routes refuse coupons outright, and training only READS a coupon rule", async () => {
   // A coupon that decremented a redemption budget would turn an anonymous quote into resource
   // consumption. Boarding/sitting/taxi/food/walking reject any coupon with 409; training resolves one,
   // but training_coupon_rules has no usage counter — discountFor is a pure lookup, so nothing is spent.
-  for (const name of ["boarding", "sitting", "taxi", "food", "walking"]) {
+  for (const name of ["boarding", "sitting", "taxi", "walking"]) {
     const route = ROUTES.find((item) => item.name === name);
     const { sqlite, mod } = await clean(name);
     const response = await call(mod, name, { ...route.body(), couponCode: "ANYTHING" }, {});
@@ -264,14 +280,14 @@ test("missing Origin is accepted here because that is the repository-wide conven
     assert.ok(match, `${route.name} defines its own sameOriginWrite copy`);
     // The CONDITION is the security-relevant half. How each copy throws is not: sitting raises a
     // governedJsonError where the others construct a Response, and both produce 403 — proven
-    // behaviourally for all six by the foreign-Origin tests above. Comparing whole bodies would fail on
+    // behaviourally for all five by the foreign-Origin tests above. Comparing whole bodies would fail on
     // that cosmetic difference while telling us nothing about the policy.
     const condition = match[0].match(/if\((origin[^)]*\)[^)]*\))/);
     assert.ok(condition, `${route.name} guards on the origin header`);
     return condition[1];
   });
   assert.equal(new Set(helpers).size, 1,
-    "all six copies must test the SAME condition — divergence in the policy is the real hazard here");
+    "all five copies must test the SAME condition — divergence in the policy is the real hazard here");
   assert.match(helpers[0], /^origin&&origin!==new URL\(request\.url\)\.origin\)$/,
     "the guard refuses a wrong Origin and tolerates an absent one, matching the other 69 routes");
 });
