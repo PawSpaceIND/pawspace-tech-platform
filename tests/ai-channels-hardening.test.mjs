@@ -325,7 +325,7 @@ test("voice call: consent required, segment replay is safe, transfer keeps one c
   assert.equal(sqlite.prepare("SELECT status,live_agent_transfer FROM ai_voice_calls WHERE id=?").get(call.callId).live_agent_transfer, 1);
 
   // A transferred call must NOT be reportable as an AI-completed call.
-  const complete = await voice.completeAiVoiceCall(db, { callId: call.callId, outcome: "resolved", disposition: "ai_completed" });
+  const complete = await voice.completeAiVoiceCall(db, { actor: staffActor, callId: call.callId, outcome: "resolved", disposition: "ai_completed" });
   assert.equal(complete.completed, false, "completing a transferred call is refused, not silently reported as done");
   assert.equal(complete.status, "transferred");
   assert.equal(sqlite.prepare("SELECT outcome FROM ai_voice_calls WHERE id=?").get(call.callId).outcome, "human_handoff");
@@ -337,11 +337,11 @@ test("voice transport failure without reconnect requires a staff fallback", asyn
   seedCustomer(sqlite, "CUS-VF", "Voice Fail", "9876500021");
   const call = await voice.startAiVoiceUatCall(db, { actor: staffActor, customerId: "CUS-VF", direction: "outbound", transportProvider: "sandbox_simulator", consent: true });
 
-  const reconnected = await voice.recordAiVoiceTransportFailure(db, { callId: call.callId, reason: "media_stream_dropped", reconnected: true });
+  const reconnected = await voice.recordAiVoiceTransportFailure(db, { actor: staffActor, callId: call.callId, reason: "media_stream_dropped", reconnected: true });
   assert.equal(reconnected.staffFallbackRequired, false);
   assert.equal(sqlite.prepare("SELECT reconnect_count,status FROM ai_voice_calls WHERE id=?").get(call.callId).reconnect_count, 1);
 
-  const dead = await voice.recordAiVoiceTransportFailure(db, { callId: call.callId, reason: "carrier_unavailable", reconnected: false });
+  const dead = await voice.recordAiVoiceTransportFailure(db, { actor: staffActor, callId: call.callId, reason: "carrier_unavailable", reconnected: false });
   assert.equal(dead.staffFallbackRequired, true);
   const row = sqlite.prepare("SELECT status,outcome FROM ai_voice_calls WHERE id=?").get(call.callId);
   assert.equal(row.status, "failed");

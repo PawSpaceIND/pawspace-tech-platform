@@ -37,17 +37,73 @@ const routeFiles = fs.readdirSync(new URL("../app/api", import.meta.url), { with
   .map(entry => entry.name)
   .filter(name => fs.existsSync(new URL(`../app/api/${name}/route.ts`, import.meta.url)));
 
+/**
+ * The source a route's caller-authentication can live in: the route file plus every lib module it
+ * reaches through relative imports.
+ *
+ * Originally this looked at the route file alone, which assumed webhook verification is always written
+ * inline. /api/voice-provider-webhook verifies its callers through the telephony provider boundary
+ * (lib/voice-telephony-provider.ts, shared with the simulator and exercised by
+ * tests/voice-provider-webhook.test.mjs), so an inline-only scan reported it as unauthenticated - a
+ * false positive that would push crypto back into the route to satisfy the check.
+ *
+ * This is a widening of WHERE the guard looks, not of WHAT counts. Holding that line needs the modules
+ * kept SEPARATE rather than concatenated: on a joined string, a WEBHOOK_SECRET reference in one module
+ * plus a crypto.subtle.sign call in an unrelated one satisfies the hmac signal even though nothing
+ * verifies a caller. Each module is therefore tested on its own, so a signal must be complete inside a
+ * single module. The sabotage cases at the end of this file prove both halves of that claim.
+ */
+const libSource = new Map();
+function readLib(name) {
+  if (libSource.has(name)) return libSource.get(name);
+  let source = "";
+  try { source = read(`lib/${name}.ts`); } catch { source = ""; }
+  libSource.set(name, source);
+  return source;
+}
+function reachableModules(routeName) {
+  const start = read(`app/api/${routeName}/route.ts`);
+  const parts = [start];
+  const seen = new Set(), queue = [];
+  // Route files import as "../../../lib/x"; lib modules import their siblings as "./x". Both resolve
+  // to lib/x.ts, so the specifier is reduced to its basename.
+  const enqueue = (source) => {
+    for (const match of source.matchAll(/from\s*["'](\.[^"']*)["']/g)) {
+      const name = match[1].split("/").pop().replace(/\.ts$/, "");
+      if (name && !seen.has(name)) { seen.add(name); queue.push(name); }
+    }
+  };
+  enqueue(start);
+  while (queue.length) {
+    const name = queue.shift();
+    const source = readLib(name);
+    if (!source) continue;
+    parts.push(source);
+    enqueue(source);
+  }
+  return parts;
+}
+
 // A route authenticates an EXTERNAL caller when it verifies a shared key or an HMAC signature
 // itself, rather than resolving a staff/customer session through authorize().
 function externalAuth(source) {
   const signals = [];
   if (/env\.[A-Z_]*API_KEY|runtime\.[A-Z_]*API_KEY|[A-Z_]+_API_KEY\s*\|\|/.test(source) && /request\.headers\.get\(/.test(source)) signals.push("shared_key_header");
-  if (/WEBHOOK_SECRET/.test(source) && /crypto\.subtle\.(sign|importKey)/.test(source)) signals.push("hmac_signature");
+  // An hmac signal needs EVIDENCE OF VERIFICATION, not merely the ingredients. A module that reads a
+  // webhook secret and imports a key but never reads a signature header or compares a MAC is not
+  // authenticating anything - it might only be signing outbound requests. All four parts, in one module.
+  if (/WEBHOOK_SECRET/.test(source)
+    && /crypto\.subtle\.(sign|importKey)/.test(source)
+    && /headers\.get\(/.test(source)
+    && /safeEqual|timingSafeEqual|constantTimeEqual/.test(source)) signals.push("hmac_signature");
   if (/x-razorpay-signature|x-pawspace-signature|x-haptik-key/i.test(source)) signals.push("provider_signature_header");
   return signals;
 }
 
 test("every route that authenticates an external caller is reachable through the gateway", () => {
+  // Deliberately inline-only, unlike the exemption check below: a staff route can reach a shared
+  // verifier transitively without being a webhook, and demanding a gateway exemption for it would be
+  // the opposite mistake - publishing a staff endpoint to satisfy a guard.
   const unreachable = [];
   for (const name of routeFiles) {
     const source = read(`app/api/${name}/route.ts`);
@@ -100,9 +156,65 @@ test("no gateway-exempt route is left without any caller authentication", () => 
     if (knownPublicSurfaces.has(path)) continue;
     const name = path.replace("/api/", "");
     if (!fs.existsSync(new URL(`../app/api/${name}/route.ts`, import.meta.url))) continue;
-    const source = read(`app/api/${name}/route.ts`);
-    if (externalAuth(source).length) continue;
+    if (reachableModules(name).some(source => externalAuth(source).length)) continue;
     unguarded.push(path);
   }
   assert.deepEqual(unguarded, [], `gateway-exempt with no caller authentication at all: ${unguarded.join(", ")}`);
+});
+
+test("the telephony callback is reachable and fail-closed on its verification", () => {
+  assert.ok(exemptPaths.has("/api/voice-provider-webhook"), "a carrier has no session and must be able to deliver call events");
+  // Reachable is not open. The receiver refuses with 401 unless a shared-secret signature or Basic
+  // credential verifies, and it refuses outright when no secret is configured. Behaviour is executed in
+  // tests/voice-provider-webhook.test.mjs; this only asserts the wiring the gateway depends on.
+  const provider = read("lib/voice-telephony-provider.ts");
+  assert.match(provider, /EXOTEL_WEBHOOK_SECRET/);
+  assert.match(provider, /crypto\.subtle\.importKey/);
+  assert.match(provider, /function safeEqual/, "signatures are compared in constant time");
+  assert.match(provider, /Webhook secret is not configured/);
+  const route = read("app/api/voice-provider-webhook/route.ts");
+  assert.match(route, /recordVoiceProviderEvent/);
+  assert.doesNotMatch(route, /\bauthorize\(/, "the callback must not require a staff session");
+});
+
+test("following imports did not turn the exemption guard into a rubber stamp", () => {
+  // Sabotage 1: a module with no verification of any kind must report no signal.
+  assert.deepEqual(externalAuth("export async function POST(){return Response.json({ok:true})}"), []);
+  // Sabotage 2 - the one that matters for the widening. Two modules that each hold HALF of a signal must
+  // NOT satisfy it between them. Concatenating the reachable modules would pass this; testing each on its
+  // own does not, which is why reachableModules() returns the parts rather than one joined string.
+  const halfA = "const secret = env.EXOTEL_WEBHOOK_SECRET; export const x = secret; const h = request.headers.get('x-sig'); function safeEqual(a,b){return a===b}";
+  const halfB = "export async function sign(k){ return crypto.subtle.importKey('raw', k); }";
+  assert.deepEqual(externalAuth(halfA), [], "a secret plus a header read, with no signing, is not verification");
+  assert.deepEqual(externalAuth(halfB), [], "a signing helper alone is not verification");
+  assert.ok(externalAuth([halfA, halfB].join("\n")).includes("hmac_signature"), "joined, the halves would have passed");
+  assert.ok(![halfA, halfB].some(source => externalAuth(source).length), "per-module, they do not");
+  // Sabotage 3: ONE module holding the secret and doing real key work, but never reading a signature
+  // header and never comparing a MAC. It is signing, not verifying, and must not count as caller
+  // authentication - the previous two-part signal accepted exactly this shape.
+  const signsOnly = `const secret = env.EXOTEL_WEBHOOK_SECRET;
+    export async function signOutbound(body){
+      const key = await crypto.subtle.importKey('raw', secret, {name:'HMAC'}, false, ['sign']);
+      return crypto.subtle.sign('HMAC', key, body);
+    }`;
+  assert.deepEqual(externalAuth(signsOnly), [], "signing outbound requests is not verifying inbound ones");
+  const noComparison = `const secret = env.EXOTEL_WEBHOOK_SECRET;
+    export async function check(request, body){
+      const presented = request.headers.get('x-pawspace-voice-signature');
+      const key = await crypto.subtle.importKey('raw', secret, {name:'HMAC'}, false, ['sign']);
+      const expected = await crypto.subtle.sign('HMAC', key, body);
+      return { presented, expected };
+    }`;
+  assert.deepEqual(externalAuth(noComparison), [], "computing a MAC without comparing it verifies nothing");
+  // And a module that genuinely verifies still registers, so this is a bound and not a blanket refusal.
+  assert.ok(externalAuth(read("lib/voice-telephony-provider.ts")).includes("hmac_signature"));
+  // A staff route reached through the same import-following must not acquire a webhook's credentials.
+  // /api/voice-outbound reaches lib/voice-telephony-provider transitively and IS gateway-mapped, so it
+  // is the sharpest case: it must not be on the exempt list.
+  assert.ok(!exemptPaths.has("/api/voice-outbound"), "a staff voice route must stay behind the gateway");
+  assert.ok(!exemptPaths.has("/api/ai-voice-uat"));
+  assert.ok(!exemptPaths.has("/api/voice-speech"));
+  // And the exemption list itself must not have grown a staff surface: every exempt path either
+  // authenticates an external caller or is on the known-public list asserted above.
+  assert.ok(exemptPaths.size > 20 && exemptPaths.size < 40, `exempt list is ${exemptPaths.size} paths - review it if this moved a lot`);
 });

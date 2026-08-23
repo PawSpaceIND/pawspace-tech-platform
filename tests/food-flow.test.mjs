@@ -77,8 +77,8 @@ function makeD1(sqlite) {
         return row === undefined ? null : row;
       },
       run: async () => {
-        sqlite.prepare(sql).run(...args);
-        return { success: true, meta: {} };
+        const info = sqlite.prepare(sql).run(...args);
+        return { success: true, meta: { changes: Number(info.changes) } };
       },
       all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
     };
@@ -98,6 +98,8 @@ async function withFoodBackend(run) {
   const db = makeD1(sqlite);
   const governance = await import("../lib/food-governance.ts");
   await governance.ensureFoodGovernanceTables(db);
+  sqlite.exec("CREATE TABLE canonical_pets (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,species TEXT NOT NULL)");
+  for (const pet of [["pet-dog-1","cus-food-1","dog"],["pet-cat-1","cus-food-1","cat"],["pet-dog-2","cus-food-2","dog"]]) sqlite.prepare("INSERT INTO canonical_pets (id,customer_id,species) VALUES (?,?,?)").run(...pet);
 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, init = {}) => {
@@ -106,7 +108,7 @@ async function withFoodBackend(run) {
     const reply = (data, status = 200) => ({ ok: status < 400, status, json: async () => data });
     try {
       if (path.startsWith("/api/food-commercial") && init.method === "POST") {
-        const quote = await governance.createFoodQuote(db, { sku: body.sku, quantity: Number(body.quantity || 0), zoneId: body.zoneId || "blr-east", paymentMode: body.paymentMode || "sandbox_deferred", couponCode: body.couponCode });
+        const quote = await governance.createFoodQuote(db, { sku: body.sku, quantity: Number(body.quantity || 0), zoneId: body.zoneId || "blr-east", paymentMode: body.paymentMode || "sandbox_deferred", customerId: body.customerId, petIds: body.petIds, couponCode: body.couponCode });
         return reply({ data: quote }, 201);
       }
       if (path.startsWith("/api/food-commercial")) {
@@ -137,9 +139,9 @@ test("real execution: quoteFoodCart returns server-priced quotes summing to the 
     const catPrice = sqlite.prepare("SELECT unit_price FROM food_catalogue_items WHERE sku=?").get("food-uat-cat-adult-1kg").unit_price;
 
     const { quotes, serverTotal } = await quoteFoodCart([
-      { sku: "food-uat-dog-adult-2kg", quantity: 2 },
-      { sku: "food-uat-cat-adult-1kg", quantity: 1 },
-    ]);
+      { sku: "food-uat-dog-adult-2kg", quantity: 2, petIds: ["pet-dog-1"] },
+      { sku: "food-uat-cat-adult-1kg", quantity: 1, petIds: ["pet-cat-1"] },
+    ], "blr-east", "cus-food-1");
 
     assert.equal(quotes.length, 2, "one server quote per cart line");
     assert.equal(serverTotal, dogPrice * 2 + catPrice * 1, "total is the sum of DB-priced server quotes");
@@ -152,9 +154,9 @@ test("real execution: placeQuotedFoodOrders creates one canonical order per quot
   await withFoodBackend(async ({ sqlite }) => {
     const { quoteFoodCart, placeQuotedFoodOrders } = await import("../lib/food-client.ts");
     const { quotes, serverTotal } = await quoteFoodCart([
-      { sku: "food-uat-dog-adult-2kg", quantity: 2 },
-      { sku: "food-uat-cat-adult-1kg", quantity: 1 },
-    ]);
+      { sku: "food-uat-dog-adult-2kg", quantity: 2, petIds: ["pet-dog-1"] },
+      { sku: "food-uat-cat-adult-1kg", quantity: 1, petIds: ["pet-cat-1"] },
+    ], "blr-east", "cus-food-1");
 
     const customer = { id: "cus-food-1", name: "Asha", primaryPhone: "9999900001" };
     const orders = await placeQuotedFoodOrders({ quotes, customer });
@@ -179,7 +181,7 @@ test("real execution: placeQuotedFoodOrders creates one canonical order per quot
 test("real execution: retrying placeQuotedFoodOrders is idempotent (no duplicate orders)", async () => {
   await withFoodBackend(async ({ sqlite }) => {
     const { quoteFoodCart, placeQuotedFoodOrders } = await import("../lib/food-client.ts");
-    const { quotes } = await quoteFoodCart([{ sku: "food-uat-dog-puppy-2kg", quantity: 1 }]);
+    const { quotes } = await quoteFoodCart([{ sku: "food-uat-dog-puppy-2kg", quantity: 1, petIds: ["pet-dog-2"] }], "blr-east", "cus-food-2");
     const customer = { id: "cus-food-2", name: "Ravi", primaryPhone: "9999900002" };
 
     const first = await placeQuotedFoodOrders({ quotes, customer });
@@ -197,7 +199,7 @@ test("real execution: quantity above the per-order cap is rejected by the server
   await withFoodBackend(async () => {
     const { quoteFoodCart } = await import("../lib/food-client.ts");
     await assert.rejects(
-      () => quoteFoodCart([{ sku: "food-uat-dog-adult-2kg", quantity: 99 }]),
+      () => quoteFoodCart([{ sku: "food-uat-dog-adult-2kg", quantity: 99, petIds: ["pet-dog-1"] }], "blr-east", "cus-food-1"),
       /quantity must be 1-/,
       "the real governance quantity rule fires through the client lib"
     );

@@ -138,7 +138,15 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
     try {
       const resolved = await resolveServiceCoverage(pincode);
       if (!coverage || coverage.zoneId !== resolved.zoneId) throw new Error("Service coverage changed. Check the delivery PIN code again.");
-      const result = await quoteFoodCart(cart, resolved.zoneId);
+      if (!selectedPets.length) throw new Error("Select at least one pet before ordering Fresh Food.");
+      const petBoundCart = cart.map((line) => {
+        const item = itemBySku.get(line.sku);
+        if (!item) throw new Error("Food catalogue changed. Reload the catalogue before ordering.");
+        const petIds = pets.filter((pet) => selectedPets.includes(pet.id) && pet.species === item.pet_type).map((pet) => pet.id);
+        if (!petIds.length) throw new Error(`Select at least one ${item.pet_type} for ${lineName(item)}.`);
+        return { ...line, petIds };
+      });
+      const result = await quoteFoodCart(petBoundCart, resolved.zoneId, customer.customerId);
       setQuotes(result.quotes);
       setServerTotal(result.serverTotal);
       setStep(5);
