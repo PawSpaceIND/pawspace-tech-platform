@@ -1,0 +1,48 @@
+name: Web Diagnostic
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  web-diagnostic:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: git clean -ffdx
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Capture tracked Web test output
+        id: web_tests
+        shell: bash
+        run: |
+          npm run build
+          tracked_tests=()
+          for test_file in tests/*.test.mjs; do
+            if git ls-files --error-unmatch -- "$test_file" >/dev/null 2>&1; then
+              tracked_tests+=("$test_file")
+            fi
+          done
+          test "${#tracked_tests[@]}" -gt 0
+          set +e
+          node --experimental-strip-types --test "${tracked_tests[@]}" 2>&1 | tee web-test-diagnostic.txt
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+      - name: Upload Web diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-test-diagnostic
+          path: web-test-diagnostic.txt
+          if-no-files-found: error
+      - name: Preserve failing result
+        if: steps.web_tests.outputs.status != '0'
+        run: exit 1
