@@ -47,7 +47,7 @@ function makeD1(sqlite) {
 }
 
 let sqlite;
-function freshDb() { sqlite = new DatabaseSync(":memory:"); globalThis.__FOOD_DB__ = makeD1(sqlite); }
+function freshDb() { sqlite = new DatabaseSync(":memory:"); globalThis.__FOOD_DB__ = makeD1(sqlite); sqlite.exec("CREATE TABLE canonical_pets (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,species TEXT NOT NULL)"); sqlite.prepare("INSERT INTO canonical_pets (id,customer_id,species) VALUES (?,?,?)").run("pet-dog-f1","cus_f1","dog"); sqlite.prepare("INSERT INTO canonical_pets (id,customer_id,species) VALUES (?,?,?)").run("pet-cat-f1","cus_f1","cat"); }
 
 const commercialRoute = await import("../app/api/food-commercial/route.ts");
 const ordersRoute = await import("../app/api/food-orders/route.ts");
@@ -106,7 +106,8 @@ const NOW = Date.now();
 const DAY = 86_400_000;
 
 async function quoteVia(sku, quantity, zoneId = "blr-east") {
-  const res = await call(commercialRoute.POST, "POST", { sku, quantity, zoneId });
+  const petId = sku === CAT_SKU ? "pet-cat-f1" : "pet-dog-f1";
+  const res = await call(commercialRoute.POST, "POST", { sku, quantity, zoneId, customerId: CUSTOMER.id, petIds: [petId] });
   return { status: res.status, quote: res.body.data, error: res.body.error };
 }
 async function orderVia(quote, key, customer = CUSTOMER, zoneId = "blr-east") {
@@ -189,7 +190,7 @@ test("real execution: order derives everything from the server quote, reserves i
 test("REGRESSION lib/food-governance.ts: a single-use quote can no longer produce two orders under a concurrent double-submit", async () => {
   freshDb();
   const db = globalThis.__FOOD_DB__;
-  const quote = await createFoodQuote(db, { sku: DOG_SKU, quantity: 2, zoneId: "blr-east", paymentMode: "sandbox_deferred" });
+  const quote = await createFoodQuote(db, { sku: DOG_SKU, quantity: 2, zoneId: "blr-east", paymentMode: "sandbox_deferred", customerId: CUSTOMER.id, petIds: ["pet-dog-f1"] });
   // Two requests, DIFFERENT idempotency keys, same quote, in flight together (retry-after-timeout shape).
   // Pre-fix both passed the read-only status pre-check and both committed: 2 orders, 4 units reserved.
   const results = await Promise.allSettled([
@@ -417,7 +418,7 @@ test("real execution: renewal generates a payment LINK (no auto-charge), payment
 
 test("full chain: quoteFoodCart/placeQuotedFoodOrders (the food-flow path) surface in food-ops and food-finance with exact amounts", async () => {
   freshDb(); installFetchStub();
-  const cart = await quoteFoodCart([{ sku: DOG_SKU, quantity: 1 }, { sku: CAT_SKU, quantity: 2 }]);
+  const cart = await quoteFoodCart([{ sku: DOG_SKU, quantity: 1, petIds: ["pet-dog-f1"] }, { sku: CAT_SKU, quantity: 2, petIds: ["pet-cat-f1"] }], "blr-east", CUSTOMER.id);
   assert.equal(cart.serverTotal, 1797, "799 + 2 x 499, all server-computed");
   const orders = await placeQuotedFoodOrders({ quotes: cart.quotes, customer: CUSTOMER });
   assert.equal(orders.length, 2);
@@ -523,6 +524,8 @@ test("contract: gateway permission map, DB access rule, and team surfaces for th
   // The fixes stay in place
   const governance = fs.readFileSync(new URL("../lib/food-governance.ts", import.meta.url), "utf8");
   assert.match(governance, /WHERE id=\? AND status='open'"\)\.bind\(now,orderId,input\.quoteId\)\.run\(\)/, "quote claim must stay an atomic checked UPDATE");
+  assert.match(governance, /reserved_units\+\?<=available_units/, "inventory reservation must be capacity-guarded in the mutation");
+  assert.match(governance, /reservation\.meta\?\.changes/, "the capacity claim must be checked before order records are created");
   const subscription = fs.readFileSync(new URL("../lib/food-subscription-governance.ts", import.meta.url), "utf8");
   assert.match(subscription, /!Number\.isFinite\(interval\)\|\|interval<7\|\|interval>90/, "interval validation must reject non-finite values");
   // Team surfaces wire to the food APIs through the client libs

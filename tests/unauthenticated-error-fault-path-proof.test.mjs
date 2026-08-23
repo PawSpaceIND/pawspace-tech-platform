@@ -91,7 +91,7 @@ async function fixtureFor(label, route, method) {
       init = jsonInit(method, { packageCode: "BOARD-24H", petCount: 1, scheduledStart: FUTURE_START, scheduledEnd: FUTURE_END, paymentMode: "sandbox_deferred" });
       break;
     case "food-commercial.POST":
-      init = jsonInit(method, { sku: "FOOD-TEST", quantity: 1, zoneId: "blr-east", paymentMode: "sandbox_deferred" });
+      init = jsonInit(method, { sku: "FOOD-TEST", quantity: 1, zoneId: "blr-east", paymentMode: "sandbox_deferred", customerId: "CUS-LEAK3", petIds: ["PET-LEAK3"] });
       break;
     case "haptik.POST":
       env = { HAPTIK_API_KEY: "test-haptik-key" };
