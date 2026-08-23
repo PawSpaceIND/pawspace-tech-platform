@@ -150,7 +150,10 @@ test("verification mandate: category mandates are configurable and vertical-mapp
   assert.equal(mandate.verificationCategoryForVertical("dog_walking"), null, "verticals with no mandate defined are reported as such, not silently mapped");
 
   await assert.rejects(() => mandate.setCategoryMandate(db, { category: "astrologer", verificationTypes: ["pan"], actorId: OPS }), /Unknown category/);
-  await assert.rejects(() => mandate.setCategoryMandate(db, { category: "groomer", verificationTypes: ["nonsense"], actorId: OPS }), /At least one valid verification type/);
+  await assert.rejects(() => mandate.setCategoryMandate(db, { category: "groomer", verificationTypes: ["nonsense"], actorId: OPS }), /Unknown verification type\(s\): nonsense/);
+  // A recognised type alongside an unrecognised one used to succeed with the unknown one silently
+  // dropped, so an operator was told a check was mandated that nothing would ever require.
+  await assert.rejects(() => mandate.setCategoryMandate(db, { category: "groomer", verificationTypes: ["aadhaar", "nonsense"], actorId: OPS }), /Unknown verification type\(s\): nonsense/);
   const updated = await mandate.setCategoryMandate(db, { category: "groomer", verificationTypes: ["aadhaar", "pan", "police_verification"], actorId: OPS });
   assert.deepEqual(updated.verificationTypes, ["aadhaar", "pan", "police_verification"]);
   const status = await mandate.verificationMandateStatus(db, { applicationId: "APP-G", category: "groomer" });
