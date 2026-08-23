@@ -15,6 +15,7 @@ import { loadTrainingPackages, loadTrainingTrainers, quoteTraining, type Trainin
 import { requestTrainingCancellation, requestTrainingSessionReschedule } from "../../lib/training-cancellation-client";
 import { trainingPreviewCount, trainingSessionPreviewDates } from "../../lib/training-session-preview";
 import { resolveServiceCoverage, type ResolvedServiceCoverage } from "../../lib/service-zone-client";
+import { trainingProgrammeRequestId } from "../../lib/booking-state-integrity";
 const styles = { ...baseStyles, ...extraStyles };
 type Plan = {
   packageCode: string;
@@ -139,7 +140,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
   const recommendedPlan=plans.find(item=>item.packageCode==="training-8-basic")||plan;
   const selectedTrainer=trainers.find(item=>item.id===trainerId)||trainers[0]||null;
   useEffect(()=>{let active=true;if(pincode.length!==6){queueMicrotask(()=>{if(active){setCoverage(null);setTrainers([]);setTrainerId("");}});return()=>{active=false;};}void resolveServiceCoverage(pincode).then(resolved=>{if(!active)return;setCoverage(resolved);return loadTrainingTrainers({cityId:resolved.cityId,zoneId:resolved.zoneId,at:selectedStartIso});}).then(result=>{if(!active||!result)return;setTrainers(result.providers);setTrainerId(current=>result.providers.some(item=>item.id===current)?current:result.providers[0]?.id||"");setScheduleError("");}).catch(problem=>{if(active){setCoverage(null);setTrainers([]);setTrainerId("");setScheduleError(problem instanceof Error?problem.message:"Unable to resolve Training coverage");}});return()=>{active=false;};},[pincode,selectedStartIso]);
-  useEffect(()=>{if(stage!==5||!plan.sessions)return;let active=true;const mode=paymentMode==="full"?"prepaid":"split";void quoteTraining({packageCode:plan.packageCode,petCount:selectedPets.length,scheduledStart:selectedStartIso,paymentMode:mode,couponCode:mode==="prepaid"&&couponCode?couponCode:undefined}).then(value=>{if(active){setCheckoutQuote(value);setScheduleError("");}}).catch(problem=>{if(active){setCheckoutQuote(null);setScheduleError(problem instanceof Error?problem.message:"Unable to refresh Training quote");}});return()=>{active=false;};},[stage,plan.packageCode,plan.sessions,selectedPets.length,paymentMode,couponCode,frequency,time,startDateIndex,selectedStartIso]);
+  useEffect(()=>{if(stage!==5||!plan.sessions)return;let active=true;const mode=paymentMode==="full"?"prepaid":"split";queueMicrotask(()=>{if(active)setCheckoutQuote(null);});void quoteTraining({packageCode:plan.packageCode,petCount:selectedPets.length,scheduledStart:selectedStartIso,paymentMode:mode,couponCode:mode==="prepaid"&&couponCode?couponCode:undefined}).then(value=>{if(active){setCheckoutQuote(value);setScheduleError("");}}).catch(problem=>{if(active){setCheckoutQuote(null);setScheduleError(problem instanceof Error?problem.message:"Unable to refresh Training quote");}});return()=>{active=false;};},[stage,plan.packageCode,plan.sessions,selectedPets.length,paymentMode,couponCode,frequency,time,startDateIndex,selectedStartIso]);
   const togglePet = (pet: string) =>
     setSelectedPets((current) =>
       current.includes(pet)
@@ -210,11 +211,12 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
     },
     confirm = async () => {
       if(selectedPets.length===0){setScheduleError("Select at least one dog to continue.");return;}
+      if(!checkoutQuote){setScheduleError("Refresh the Training quote before confirming.");return;}
       setScheduling(true);setScheduleError("");
       try {
         const serviceCoverage=await resolveServiceCoverage(pincode);
         const linkedMeetBookingId=meetLinked?meetBookingId:"";
-        const mode=paymentMode==="full"?"prepaid":"split",quote=await quoteTraining({packageCode:plan.packageCode,petCount:selectedPets.length,scheduledStart:selectedStart.toISOString(),paymentMode:mode,couponCode:mode==="prepaid"&&couponCode?couponCode:undefined}),end=new Date(selectedStart.getTime()+quote.minutesPerSession*60_000),requestId=`training-TST101-${quote.packageCode}-${selectedStart.toISOString()}-${frequency.replaceAll(" ","")}`;
+        const mode=paymentMode==="full"?"prepaid":"split",quote=checkoutQuote,end=new Date(selectedStart.getTime()+quote.minutesPerSession*60_000),requestId=trainingProgrammeRequestId({customerId:customer.customerId,petIds:selectedPets,packageCode:quote.packageCode,scheduledStart:selectedStart.toISOString(),frequency});
         const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:"dog_training",cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,weekdays:weekdayMap[frequency],preferredProviderId:selectedTrainer?.id});
         const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:"dog" as const})),cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,serviceCode:"dog_training",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"payment_link",mode,status:"created",detail:"Awaiting a verified payment event"},pricing:{discount:quote.discount,couponCode:couponCode||undefined,subscription:`${quote.sessions} sessions`,requirements:selectedGoals,trainingQuoteId:quote.quoteId}});
         await materializeTrainingProgramme({bookingId:canonical.bookingId,meetBookingId:linkedMeetBookingId||undefined});
@@ -325,7 +327,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
       )}
       {stage === 2 && (
         <section>
-          <div className={styles.head}><h3>Bruno&apos;s training options</h3><small>Package · 2 of 5</small></div>
+          <div className={styles.head}><h3>{primaryPet?.name ? `${primaryPet.name}'s training options` : "Your dog's training options"}</h3><small>Package · 2 of 5</small></div>
           <article className={styles.planRecommendation}><div><span>PAWSPACE RECOMMENDS</span><h4>Basic Obedience Plan</h4><p>Best match for the goals you selected: {selectedGoals.slice(0, 2).join(" + ")}.</p></div><b>{recommendedPlan.sessionLabel}</b></article>
           <div className={styles.goalSummary}><b>Selected requirements</b>{selectedGoals.map((goal) => <span key={goal}><i>✓</i> {goal}</span>)}</div>
           <section className={styles.meetTrainer}>
