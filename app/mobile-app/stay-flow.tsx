@@ -197,6 +197,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
     [start, setStart] = useState(() => dateOffset(3)),
     [end, setEnd] = useState(() => dateOffset(10)),
     [bookingId, setBookingId] = useState(""),
+    [confirmedTotal, setConfirmedTotal] = useState<number | null>(null),
     [scheduling, setScheduling] = useState(false),
     [scheduleError, setScheduleError] = useState(""),
     [profileOpen, setProfileOpen] = useState(true),
@@ -212,8 +213,6 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
   };
-  // The stay is for the customer's OWN pets. Load them and make selection (by canonical pet id) the
-  // single source of truth for species, count, host matching and the pet ids sent to the reserve/booking.
   useEffect(() => {
     let active = true;
     queueMicrotask(() => {
@@ -222,7 +221,6 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
     loadCustomerPets(customer.customerId)
       .then((loaded) => {
         if (!active) return;
-        // Do not clobber a pet the user just added/edited/deleted via PetManager if this initial load resolves late.
         setPets((prev) => (prev === null ? loaded : prev));
         setSelectedPets((prev) => (prev.length ? prev : loaded[0] ? [loaded[0].id] : []));
         setPetsError("");
@@ -238,10 +236,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
       return kept.length ? kept : updated[0] ? [updated[0].id] : [];
     });
   };
-  // pets is null until the first load resolves — distinguishes "not hydrated" from "hydrated empty"
-  // (e.g. the last pet was deleted), so a late initial load can't re-insert a removed pet.
   const pets = petsState ?? [];
-  // Selection is always reconciled against the accepted pet list.
   const selectedPets = selRaw.filter((id) => pets.some((p) => p.id === id));
   const selectedPetObjs = pets.filter((p) => selectedPets.includes(p.id));
   const selectedPetNames = selectedPetObjs.map((p) => p.name);
@@ -309,6 +304,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
     if (selectedPets.length === 0) { setScheduleError("Select at least one pet to continue."); return; }
     if (!serviceLocation) { setScheduleError("Verify the service address before continuing."); return; }
     if (mode === "sitting" && !sittingQuote) { setScheduleError(sittingQuoteError || "Wait for the canonical Sitting quote."); return; }
+    if (mode === "boarding" && selectedPetObjs.some((pet) => pet.vaccinationStatus !== "verified")) { setScheduleError("Boarding requires verified vaccination for every selected pet."); return; }
     setScheduling(true);setScheduleError("");
     try {
     const{scheduledStart:scheduleStart,scheduledEnd:scheduleEnd}=careWindowDates(start,end,careWindow),zoneId=serviceLocation.assignment.zoneId,providerIds:Record<string,string>={"Sana F.":"sit_sana","Neha P.":"sit_neha","Asha R.":"sit_asha"};
@@ -319,7 +315,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
     if(mode==="sitting"){
       const quote=sittingQuote!;await captureSittingQuoteSandbox({quoteId:quote.quoteId,amount:quote.amountDueNow});const result=await createCanonicalSittingBooking({idempotencyKey:`sitting:${quote.quoteId}:${customer.customerId}`,groupId:decision.groupId,sittingQuoteId:quote.quoteId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:p.species==="cat"?"cat":p.species==="dog"?"dog":"other",vaccinationStatus:"not_provided"})),cityId:serviceLocation.assignment.cityId,zoneId,packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:quote.scheduledStart,scheduledEnd:quote.scheduledEnd,provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"payment_link",mode:quote.paymentMode,detail:"Server-attested Sitting UAT sandbox capture"}});canonicalBookingId=result.bookingId;
     }else{
-      const quote=governedBoardingQuote!;const result=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:p.species==="cat"?"cat":p.species==="dog"?"dog":"other" as const,vaccinationStatus:"verified"})),cityId:serviceLocation.assignment.cityId,zoneId,serviceCode:"boarding",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"upi",mode:quote.paymentMode,status:"captured",detail:"UAT Boarding sandbox payment from server quote"},pricing:{discount:0,boardingQuoteId:quote.quoteId}});canonicalBookingId=result.bookingId;
+      const quote=governedBoardingQuote!;const result=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:p.species==="cat"?"cat":p.species==="dog"?"dog":"other" as const,vaccinationStatus:p.vaccinationStatus})),cityId:serviceLocation.assignment.cityId,zoneId,serviceCode:"boarding",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:scheduleStart.toISOString(),scheduledEnd:scheduleEnd.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"upi",mode:quote.paymentMode,status:"captured",detail:"UAT Boarding sandbox payment from server quote"},pricing:{discount:0,boardingQuoteId:quote.quoteId}});canonicalBookingId=result.bookingId;
     }
     const booking = createTestTransaction({
       customerId: customer.customerId,
@@ -356,6 +352,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
       crmNextAction: "Commission caregiver approval, secure chat and Meet & Greet",
       reminder: "Care Card and emergency-contact updates queued",
     },canonicalBookingId);
+    setConfirmedTotal(governedBoardingQuote?.totalAmount ?? sittingQuote?.totalAmount ?? total);
     setBookingId(booking.id);
     setConfirmed(true);
     } catch(error){setScheduleError(error instanceof Error?error.message:"No host or sitter is available for the full care window");} finally {setScheduling(false);}
@@ -372,7 +369,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
           mode={mode}
           caregiver={caregiver}
           pets={selectedPetNames}
-          total={total}
+          total={confirmedTotal??total}
           taxi={taxi}
           view={view}
           setView={setView}
