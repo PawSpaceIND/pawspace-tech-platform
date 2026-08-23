@@ -1,0 +1,114 @@
+/**
+ * Controlled unlock for voice calling. Voice is OFF unless the deployment environment says otherwise,
+ * and every unlock step is fail-closed. This mirrors lib/payment-webhook-gate.ts deliberately: the
+ * same shape already governs whether real money may move, and voice is the other capability that can
+ * reach a real person without anyone watching.
+ *
+ * Resolution:
+ *   PAWSPACE_VOICE_ENV unset / anything but uat|live  -> DISABLED. Nothing dials. This is the default,
+ *     so a fresh deployment, a preview, and CI all have voice off without anyone configuring anything.
+ *   PAWSPACE_VOICE_ENV=uat   -> needs PAWSPACE_VOICE_UAT_APPROVED="true", the telephony credentials,
+ *     a caller ID, a webhook secret, AND a non-empty PAWSPACE_VOICE_UAT_ALLOWLIST. In UAT we only ever
+ *     dial numbers a human explicitly put on that list.
+ *   PAWSPACE_VOICE_ENV=live  -> additionally needs PAWSPACE_VOICE_LIVE_APPROVED="true". Not exercised;
+ *     no live voice traffic has been authorised.
+ *
+ * ONLY the worker environment is consulted. There is no request header, query parameter, cookie or
+ * request-body field anywhere in this module - a browser cannot turn voice on, in any environment.
+ *
+ * Secrets are referenced by NAME only. Nothing here returns, logs or echoes a credential value.
+ */
+
+type Env = Record<string, unknown>;
+const val = (env: Env, key: string) => String(env?.[key] ?? "").trim();
+const isTrue = (env: Env, key: string) => val(env, key).toLowerCase() === "true";
+
+export type VoiceMode = "disabled" | "uat" | "live";
+
+/** Telephony credentials, by name. Presence is necessary and nowhere near sufficient. */
+export const VOICE_TELEPHONY_SECRET_NAMES = ["EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_SID", "EXOTEL_CALLER_ID", "EXOTEL_VOICE_APP_ID", "EXOTEL_WEBHOOK_SECRET"] as const;
+
+export type VoiceCallGate =
+  | { ok: true; mode: "uat" | "live"; allowlist: string[]; recordingApproved: boolean; salesOutboundApproved: boolean }
+  | { ok: false; status: number; reason: string; mode: VoiceMode };
+
+export function voiceMode(env: Env): VoiceMode {
+  const raw = val(env, "PAWSPACE_VOICE_ENV").toLowerCase();
+  return raw === "live" ? "live" : raw === "uat" ? "uat" : "disabled";
+}
+
+/**
+ * The numbers a UAT deployment is allowed to dial. Comparison is on the last 10 digits so a list
+ * written as +91 98765 43210 matches a stored 09876543210 - and an empty or unparseable list means
+ * an empty allow-list, never "allow everything".
+ */
+export function voiceAllowlist(env: Env): string[] {
+  // Split on comma/semicolon/newline only. Whitespace is NOT a separator: a real Indian number is
+  // routinely written "+91 98765 43210", and splitting on spaces turned one entry into three fragments
+  // too short to survive the length filter - an allow-list that silently parsed to empty.
+  return val(env, "PAWSPACE_VOICE_UAT_ALLOWLIST")
+    .split(/[,;\n]+/)
+    .map(entry => entry.replace(/[^0-9]/g, ""))
+    .filter(entry => entry.length >= 8)
+    .map(entry => entry.slice(-10));
+}
+
+export function normalisedDialKey(phone: unknown): string {
+  const digits = String(phone ?? "").replace(/[^0-9]/g, "");
+  return digits.length >= 8 ? digits.slice(-10) : "";
+}
+
+export function isVoiceAllowlisted(env: Env, phone: unknown): boolean {
+  const key = normalisedDialKey(phone);
+  return Boolean(key) && voiceAllowlist(env).includes(key);
+}
+
+/** Outbound sales/pitch calling is a separate, explicit business approval. Default: not approved. */
+export function salesOutboundApproved(env: Env): boolean {
+  return isTrue(env, "PAWSPACE_VOICE_SALES_OUTBOUND_APPROVED");
+}
+
+/** Call recording is a separate consent/compliance decision. Default: not approved. */
+export function callRecordingApproved(env: Env): boolean {
+  return isTrue(env, "PAWSPACE_VOICE_RECORDING_APPROVED");
+}
+
+export function telephonyCredentialsConfigured(env: Env): boolean {
+  return VOICE_TELEPHONY_SECRET_NAMES.every(name => Boolean(val(env, name)));
+}
+
+export function resolveVoiceCallGate(env: Env): VoiceCallGate {
+  const mode = voiceMode(env);
+  if (mode === "disabled") return { ok: false, status: 503, reason: "Voice calling is disabled (set PAWSPACE_VOICE_ENV=\"uat\" in an approved UAT environment)", mode };
+  if (!isTrue(env, "PAWSPACE_VOICE_UAT_APPROVED")) return { ok: false, status: 503, reason: "Voice calling is not approved for this environment (set PAWSPACE_VOICE_UAT_APPROVED=\"true\")", mode };
+  if (mode === "live" && !isTrue(env, "PAWSPACE_VOICE_LIVE_APPROVED")) return { ok: false, status: 503, reason: "Live voice calling is not approved (set PAWSPACE_VOICE_LIVE_APPROVED=\"true\"). Complete controlled UAT first.", mode };
+  const missing = VOICE_TELEPHONY_SECRET_NAMES.filter(name => !val(env, name));
+  if (missing.length) return { ok: false, status: 503, reason: `Telephony provider is not configured (missing ${missing.join(", ")})`, mode };
+  const allowlist = voiceAllowlist(env);
+  // A UAT run with no allow-list is the exact accident this gate exists to prevent: an approved
+  // environment with real credentials and no bound on who it may dial.
+  if (mode === "uat" && !allowlist.length) return { ok: false, status: 503, reason: "UAT voice calling requires an explicit recipient allow-list (PAWSPACE_VOICE_UAT_ALLOWLIST)", mode };
+  return { ok: true, mode, allowlist, recordingApproved: callRecordingApproved(env), salesOutboundApproved: salesOutboundApproved(env) };
+}
+
+/**
+ * What an operator needs to see on the readiness surface. Reports which NAMED secrets are present and
+ * which are not; never a value, never the allow-list contents (those are real customer numbers).
+ */
+export function voiceCallReadiness(env: Env) {
+  const mode = voiceMode(env), gate = resolveVoiceCallGate(env);
+  return {
+    mode,
+    enabled: gate.ok,
+    blockedReason: gate.ok ? null : gate.reason,
+    uatApproved: isTrue(env, "PAWSPACE_VOICE_UAT_APPROVED"),
+    liveApproved: isTrue(env, "PAWSPACE_VOICE_LIVE_APPROVED"),
+    telephonyCredentialsConfigured: telephonyCredentialsConfigured(env),
+    missingSecretNames: VOICE_TELEPHONY_SECRET_NAMES.filter(name => !val(env, name)),
+    allowlistSize: voiceAllowlist(env).length,
+    recordingApproved: callRecordingApproved(env),
+    salesOutboundApproved: salesOutboundApproved(env),
+    // Stated on the surface itself so a green readiness panel is never mistaken for a completed call.
+    truth: { productionCallsExecuted: false, clientCannotEnableVoice: true, credentialPresenceIsNotProofOfACall: true },
+  };
+}

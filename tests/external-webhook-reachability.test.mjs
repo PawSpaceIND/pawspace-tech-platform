@@ -37,6 +37,51 @@ const routeFiles = fs.readdirSync(new URL("../app/api", import.meta.url), { with
   .map(entry => entry.name)
   .filter(name => fs.existsSync(new URL(`../app/api/${name}/route.ts`, import.meta.url)));
 
+/**
+ * The source a route's caller-authentication can live in: the route file plus every lib module it
+ * reaches through relative imports.
+ *
+ * Originally this looked at the route file alone, which assumed webhook verification is always written
+ * inline. /api/voice-provider-webhook verifies its callers through the telephony provider boundary
+ * (lib/voice-telephony-provider.ts, shared with the simulator and exercised by
+ * tests/voice-provider-webhook.test.mjs), so an inline-only scan reported it as unauthenticated - a
+ * false positive that would push crypto back into the route to satisfy the check.
+ *
+ * This is a widening of WHERE the guard looks, not of WHAT counts: the signals below are unchanged, and
+ * a route with no verification anywhere in its reachable source still fails. The sabotage case at the
+ * end of this file proves that.
+ */
+const libSource = new Map();
+function readLib(name) {
+  if (libSource.has(name)) return libSource.get(name);
+  let source = "";
+  try { source = read(`lib/${name}.ts`); } catch { source = ""; }
+  libSource.set(name, source);
+  return source;
+}
+function reachableSource(routeName) {
+  const start = read(`app/api/${routeName}/route.ts`);
+  const parts = [start];
+  const seen = new Set(), queue = [];
+  // Route files import as "../../../lib/x"; lib modules import their siblings as "./x". Both resolve
+  // to lib/x.ts, so the specifier is reduced to its basename.
+  const enqueue = (source) => {
+    for (const match of source.matchAll(/from\s*["'](\.[^"']*)["']/g)) {
+      const name = match[1].split("/").pop().replace(/\.ts$/, "");
+      if (name && !seen.has(name)) { seen.add(name); queue.push(name); }
+    }
+  };
+  enqueue(start);
+  while (queue.length) {
+    const name = queue.shift();
+    const source = readLib(name);
+    if (!source) continue;
+    parts.push(source);
+    enqueue(source);
+  }
+  return parts.join("\n");
+}
+
 // A route authenticates an EXTERNAL caller when it verifies a shared key or an HMAC signature
 // itself, rather than resolving a staff/customer session through authorize().
 function externalAuth(source) {
@@ -48,6 +93,9 @@ function externalAuth(source) {
 }
 
 test("every route that authenticates an external caller is reachable through the gateway", () => {
+  // Deliberately inline-only, unlike the exemption check below: a staff route can reach a shared
+  // verifier transitively without being a webhook, and demanding a gateway exemption for it would be
+  // the opposite mistake - publishing a staff endpoint to satisfy a guard.
   const unreachable = [];
   for (const name of routeFiles) {
     const source = read(`app/api/${name}/route.ts`);
@@ -100,9 +148,38 @@ test("no gateway-exempt route is left without any caller authentication", () => 
     if (knownPublicSurfaces.has(path)) continue;
     const name = path.replace("/api/", "");
     if (!fs.existsSync(new URL(`../app/api/${name}/route.ts`, import.meta.url))) continue;
-    const source = read(`app/api/${name}/route.ts`);
-    if (externalAuth(source).length) continue;
+    if (externalAuth(reachableSource(name)).length) continue;
     unguarded.push(path);
   }
   assert.deepEqual(unguarded, [], `gateway-exempt with no caller authentication at all: ${unguarded.join(", ")}`);
+});
+
+test("the telephony callback is reachable and fail-closed on its verification", () => {
+  assert.ok(exemptPaths.has("/api/voice-provider-webhook"), "a carrier has no session and must be able to deliver call events");
+  // Reachable is not open. The receiver refuses with 401 unless a shared-secret signature or Basic
+  // credential verifies, and it refuses outright when no secret is configured. Behaviour is executed in
+  // tests/voice-provider-webhook.test.mjs; this only asserts the wiring the gateway depends on.
+  const provider = read("lib/voice-telephony-provider.ts");
+  assert.match(provider, /EXOTEL_WEBHOOK_SECRET/);
+  assert.match(provider, /crypto\.subtle\.importKey/);
+  assert.match(provider, /function safeEqual/, "signatures are compared in constant time");
+  assert.match(provider, /Webhook secret is not configured/);
+  const route = read("app/api/voice-provider-webhook/route.ts");
+  assert.match(route, /recordVoiceProviderEvent/);
+  assert.doesNotMatch(route, /\bauthorize\(/, "the callback must not require a staff session");
+});
+
+test("following imports did not turn the exemption guard into a rubber stamp", () => {
+  // Sabotage: a route whose reachable source contains no verification of any kind must still be
+  // reported. Without this, widening WHERE the guard looks could silently widen WHAT it accepts.
+  assert.deepEqual(externalAuth("export async function POST(){return Response.json({ok:true})}"), []);
+  // A staff route reached through the same import-following must not acquire a webhook's credentials.
+  // /api/voice-outbound reaches lib/voice-telephony-provider transitively and IS gateway-mapped, so it
+  // is the sharpest case: it must not be on the exempt list.
+  assert.ok(!exemptPaths.has("/api/voice-outbound"), "a staff voice route must stay behind the gateway");
+  assert.ok(!exemptPaths.has("/api/ai-voice-uat"));
+  assert.ok(!exemptPaths.has("/api/voice-speech"));
+  // And the exemption list itself must not have grown a staff surface: every exempt path either
+  // authenticates an external caller or is on the known-public list asserted above.
+  assert.ok(exemptPaths.size > 20 && exemptPaths.size < 40, `exempt list is ${exemptPaths.size} paths - review it if this moved a lot`);
 });

@@ -56,7 +56,10 @@ async function buildSnapshot(db: Db, performSync = false) {
   const credentials = {
     wati: Boolean(runtime.WATI_API_TOKEN && runtime.WATI_TENANT_URL),
     sms: Boolean(runtime.SMS_API_KEY && runtime.SMS_SENDER_ID),
-    telephony: Boolean(runtime.EXOTEL_API_KEY && runtime.EXOTEL_API_TOKEN && runtime.EXOTEL_SID),
+    // The receiver needs the caller ID, the voice app and the callback secret too, not just the API
+    // triple - reporting "configured" without them said a line was ready that could not place a call
+    // or verify a single callback.
+    telephony: Boolean(runtime.EXOTEL_API_KEY && runtime.EXOTEL_API_TOKEN && runtime.EXOTEL_SID && runtime.EXOTEL_CALLER_ID && runtime.EXOTEL_VOICE_APP_ID && runtime.EXOTEL_WEBHOOK_SECRET),
     scheduler: Boolean(runtime.AUTOMATION_CRON_SECRET),
   };
   const controls = [
