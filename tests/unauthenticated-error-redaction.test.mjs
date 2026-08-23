@@ -92,31 +92,54 @@ test("a driver fault naming a different table is redacted just the same", async 
 
 // ---------------------------------------------------------------------------
 // The same class across the other unauthenticated GET surfaces.
+//
+// Every entry must reach the injected fault and answer 500, and that is asserted
+// rather than skipped. An earlier revision tolerated a non-failing response
+// ("if (response.status < 400) return"), which let two entries pass without ever
+// touching the failing dependency: host-profile was sent hostId when the route
+// reads providerId, so it answered 400 before opening the database, and
+// address-autocomplete has no database dependency at all. Both proved nothing. A
+// hard status assertion is what stops a parameter or handler-shape drift from
+// silently turning this coverage back into a no-op.
 // ---------------------------------------------------------------------------
 
 const UNAUTHENTICATED_GETS = [
   { name: "service-availability", path: "../app/api/service-availability/route.ts", url: "https://pawspace.example/api/service-availability" },
   { name: "training-trainers", path: "../app/api/training-trainers/route.ts", url: "https://pawspace.example/api/training-trainers" },
-  { name: "address-autocomplete", path: "../app/api/address-autocomplete/route.ts", url: "https://pawspace.example/api/address-autocomplete?q=indira" },
   { name: "provider-public-profile", path: "../app/api/provider-public-profile/route.ts", url: "https://pawspace.example/api/provider-public-profile?providerId=PROV-1" },
-  { name: "host-profile", path: "../app/api/host-profile/route.ts", url: "https://pawspace.example/api/host-profile?hostId=HOST-1" },
+  { name: "host-profile", path: "../app/api/host-profile/route.ts", url: "https://pawspace.example/api/host-profile?providerId=PROV-1" },
 ];
 
 for (const route of UNAUTHENTICATED_GETS) {
   test(`${route.name}: an internal fault is redacted for an anonymous caller`, async () => {
     useFailingDb();
     const handler = await import(route.path);
-    if (typeof handler.GET !== "function") return; // route exposes no GET; nothing to assert
+    assert.equal(typeof handler.GET, "function", `${route.name} must expose a GET handler for this case to assert anything`);
     const { result: response } = await withCapturedLog(() => handler.GET(new Request(route.url)));
-    // Some of these answer 200 with an empty/degraded payload rather than failing; only a failure
-    // response can leak, so assert on the ones that actually surfaced an error.
-    if (response.status < 400) return;
+    assert.equal(response.status, 500, `${route.name} never reached the failing database, so this case proves nothing`);
     const body = await bodyOf(response);
     for (const secret of SECRETS) {
       assert.doesNotMatch(body, secret, `${route.name} leaked ${secret} to an anonymous caller`);
     }
   });
 }
+
+// address-autocomplete opens no database: it calls the Places API and absorbs every provider fault into
+// a 200 payload, so a failing D1 stub can never reach its catch and asserting against one would be
+// theatre. The fault that does reach it is a failing runtime binding read - mapsCredentials() reads
+// PAWSPACE_MAPS_ENV outside searchAddressSuggestions' own try, so that throw propagates to the route.
+test("address-autocomplete: a runtime fault is redacted for an anonymous caller", async () => {
+  useFailingDb();
+  globalThis.__LEAK2_ENV__ = { get PAWSPACE_MAPS_ENV() { throw new Error(INTERNAL); } };
+  const route = await import("../app/api/address-autocomplete/route.ts");
+  const url = "https://pawspace.example/api/address-autocomplete?mode=search&query=indira";
+  const { result: response } = await withCapturedLog(() => route.GET(new Request(url)));
+  assert.equal(response.status, 500, "the injected fault must reach the route's own catch");
+  const body = await bodyOf(response);
+  for (const secret of SECRETS) {
+    assert.doesNotMatch(body, secret, `address-autocomplete leaked ${secret} to an anonymous caller`);
+  }
+});
 
 // ---------------------------------------------------------------------------
 // The fix must not swallow intentional, caller-safe errors, and must not change
