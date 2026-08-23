@@ -2,13 +2,14 @@ import{authError,database,requirePermission,resolveActor,securityAudit}from"../.
 import{mutateWorkQueueTask,sweepWorkQueue,workQueueSnapshot,workQueueTaskWithEvents,type WorkQueueAction}from"../../../lib/ops-work-queue";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
+async function workQueueExists(db:Awaited<ReturnType<typeof database>>){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ops_work_queue_tasks'").first<Record<string,unknown>>());}
+function emptyWorkQueueSnapshot(){return{generatedAt:Date.now(),metrics:{total:0,open:0,escalated:0,critical:0,resolvedToday:0},queues:{},commandCentre:{available:false},truth:{source:"canonical tables only",detectors:["provider_unassigned","refund_requested","payment_exception","low_rating_callback","relocation_enquiry","food_renewal_payment_overdue","lead_response_overdue"],backgroundSchedulerConfigured:false,productionReady:false}};}
 
 export async function GET(request:Request){try{
- const db=await database(),actor=await resolveActor(request);requirePermission(actor,"bookings.view");
- const url=new URL(request.url),taskId=String(url.searchParams.get("taskId")||"").trim();
+ const db=await database(),url=new URL(request.url),taskId=String(url.searchParams.get("taskId")||"").trim();
+ if(!await workQueueExists(db)){if(taskId)return json({error:"Work queue task not found"},404);return json({data:emptyWorkQueueSnapshot()});}
+ const actor=await resolveActor(request);requirePermission(actor,"bookings.view");
  if(taskId){const task=await workQueueTaskWithEvents(db,taskId);if(!task)return json({error:"Work queue task not found"},404);return json({data:task});}
- // Reads are cheap and detection is idempotent, so every ops screen load also refreshes the queue.
- await sweepWorkQueue(db,{actorId:actor.email});
  return json({data:await workQueueSnapshot(db)});
 }catch(error){return authError(error,"Unable to load the operations work queue");}}
 
