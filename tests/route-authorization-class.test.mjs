@@ -228,7 +228,12 @@ test("the sweep actually reaches authorization rather than failing earlier", asy
 // parse, so this harness cannot load them at all. That is a limitation of the runner, not a finding
 // about those routes - but it is enumerated rather than filtered by pattern, so a fourth route
 // dropping out of the sweep fails here instead of quietly shrinking the surface.
-const UNLOADABLE_UNDER_STRIP_ONLY = ["finance-control", "gst-accounting", "location-recovery"];
+// finance-control and gst-accounting used to sit here too. lib/gst-accounting.ts declared its
+// ConfigurationRequired field as a constructor parameter property, so every module reaching it was
+// unloadable and both routes sat outside this sweep. That field is now assigned explicitly — identical
+// at runtime — and both routes are swept like any other. location-recovery remains, for the same
+// parameter property in lib/universal-location-recovery.ts.
+const UNLOADABLE_UNDER_STRIP_ONLY = ["location-recovery"];
 
 // Route/method pairs that answer a non-401/403 4xx to an unauthorized caller: they do route-specific
 // work - parse a body, reject a missing parameter - BEFORE reaching their permission check. None of
