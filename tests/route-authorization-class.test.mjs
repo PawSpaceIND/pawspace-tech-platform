@@ -46,10 +46,23 @@ import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 //                            carries no task data, and the gateway refuses anonymous callers anyway.
 //                            Asserted below rather than "fixed".
 //
-// SCOPE OF THE CLAIM. This executes route handlers directly. It is not an end-to-end test and does
-// not exercise the worker gateway; tests/canonical-bookings-gateway-authorization.test.mjs covers
-// that layer. Every case here is real handler execution against a real SQLite-backed D1 shape - no
-// source-text assertion stands in for behaviour.
+// SCOPE OF THE CLAIM, stated so it is not read as more than it is. This executes route handlers
+// directly. It is not an end-to-end test and does not exercise the worker gateway;
+// tests/canonical-bookings-gateway-authorization.test.mjs covers that layer. Every case here is real
+// handler execution against a real SQLite-backed D1 shape - no source-text assertion stands in for
+// behaviour.
+//
+// Two limits are deliberate and bounded rather than hidden:
+//
+//   Request shape. The sweep sends ONE shape per method - no query string, empty JSON body - so a
+//   branch selected by a parameter is not swept by it. Those need their own case; the
+//   content-controls ?view=admin test below is the pattern to copy for a new one.
+//
+//   Discovery. Routes are found by matching requirePermission( / authorize(request in source, so a
+//   guard in a comment or an unreachable branch is enough to enrol a route in the sweep. Enrolment
+//   only ever ADDS a route to be probed - it cannot mark one as passing - and the floor assertion
+//   below catches wholesale collapse, but it does mean the route count is an upper bound on what is
+//   genuinely guarded, not a coverage claim.
 // ---------------------------------------------------------------------------
 
 installWorkersHooks("__RAC_DB__", "__RAC_ENV__");
@@ -222,6 +235,87 @@ test("the sweep actually reaches authorization rather than failing earlier", asy
 // parameter property in lib/universal-location-recovery.ts.
 const UNLOADABLE_UNDER_STRIP_ONLY = ["location-recovery"];
 
+// Route/method pairs that answer a non-401/403 4xx to an unauthorized caller: they do route-specific
+// work - parse a body, reject a missing parameter - BEFORE reaching their permission check. None of
+// them leaks data, and the worker gateway refuses these callers in production, so this is an ordering
+// backlog rather than a set of holes. It is pinned as an exact baseline so the number can only go
+// down: a NEW route that validates before authorizing fails here, and fixing one of these fails here
+// too until it is removed from the list.
+const VALIDATES_BEFORE_AUTHORIZING = [
+  "attendance-leave.POST",
+  "boarding-finance.GET",
+  "boarding-finance.POST",
+  "boarding-proof.GET",
+  "boarding-proof.POST",
+  "boarding-stays.POST",
+  "booking-operations.POST",
+  "coupon-governance.POST",
+  "food-finance.GET",
+  "food-finance.POST",
+  "food-fulfilment.POST",
+  "food-proof.GET",
+  "food-proof.POST",
+  "food-subscriptions.GET",
+  "food-subscriptions.POST",
+  "grooming-booking-change.POST",
+  "grooming-lifecycle.GET",
+  "grooming-lifecycle.POST",
+  "grooming-payment-sandbox.GET",
+  "grooming-payment-sandbox.POST",
+  "host-trust.GET",
+  "host-trust.POST",
+  "meet-and-greet.POST",
+  "platform-governance.POST",
+  "provider-assignment-recovery.POST",
+  "referral-governance.POST",
+  "relocation-enquiry.POST",
+  "revenue-opportunity-governance.POST",
+  "service-media.PATCH",
+  "service-media.POST",
+  "service-zone.GET",
+  "sitting-finance.GET",
+  "sitting-finance.POST",
+  "sitting-lifecycle.GET",
+  "sitting-lifecycle.POST",
+  "sitting-proof.GET",
+  "sitting-proof.POST",
+  "stay-balance.GET",
+  "stay-balance.POST",
+  "subscription-wallet.GET",
+  "subscription-wallet.POST",
+  "taxi-finance.GET",
+  "taxi-finance.POST",
+  "taxi-lifecycle.GET",
+  "taxi-lifecycle.POST",
+  "taxi-proof.GET",
+  "taxi-proof.POST",
+  "taxi-recovery.POST",
+  "training-customer-session-change.POST",
+  "training-programmes.GET",
+  "training-programmes.POST",
+  "training-provider-earnings.GET",
+  "training-session-media.GET",
+  "training-session-media.POST",
+  "training-sessions.GET",
+  "training-sessions.POST",
+  "walking-finance.GET",
+  "walking-finance.POST",
+  "walking-lifecycle.GET",
+  "walking-lifecycle.POST",
+  "walking-proof.GET",
+  "walking-proof.POST",
+  "walking-recovery.POST"
+];
+
+test("no new route validates before it authorizes", async () => {
+  const seen = [...new Set([...anonymousSweep.validatedFirst, ...lowPrivilegeSweep.validatedFirst]
+    .map((entry) => entry.split(" -> ")[0]))].sort();
+  const appeared = seen.filter((entry) => !VALIDATES_BEFORE_AUTHORIZING.includes(entry));
+  const fixed = VALIDATES_BEFORE_AUTHORIZING.filter((entry) => !seen.includes(entry));
+  assert.deepEqual(appeared, [], `these route/methods newly do work before authorizing: ${appeared.join(", ")}`);
+  assert.deepEqual(fixed, [], `these no longer validate before authorizing - remove them from VALIDATES_BEFORE_AUTHORIZING: ${fixed.join(", ")}`);
+});
+
 test("every loadable handler answers with a Response instead of throwing", async () => {
   const unexpected = anonymousSweep.problems.filter((problem) => {
     const route = problem.split(":")[0];
@@ -342,4 +436,21 @@ test("the development-preview superuser is host-gated, which is what makes this 
   assert.ok([401, 403].includes(real.status), "a real host must never receive the preview superuser");
   const preview = await route.GET(new Request("http://localhost/api/platform-governance"));
   assert.equal(preview.status, 200, "localhost keeps its documented preview bypass - which is exactly why every case above uses a real host");
+});
+
+test("a denied governance read performs no route-owned schema creation", async () => {
+  // The permission check used to run after this route's own ensureTables(), so a refused caller still
+  // triggered route-owned DDL. resolveActor() legitimately ensures the shared security tables - that
+  // is how the caller is identified at all - so this asserts on the governance tables the route owns.
+  const sqlite = new DatabaseSync(":memory:");
+  globalThis.__RAC_DB__ = makeD1(sqlite);
+  globalThis.__RAC_ENV__ = {};
+  const tables = () => sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map((row) => row.name);
+  const route = await import("../app/api/platform-governance/route.ts");
+  const response = await route.GET(new Request(`${HOST}/api/platform-governance`));
+  assert.ok([401, 403].includes(response.status), `the caller must be refused, got ${response.status}`);
+  const created = tables();
+  for (const owned of ["data_import_batches", "communication_attempts"]) {
+    assert.ok(!created.includes(owned), `a refused read created route-owned table ${owned}`);
+  }
 });
