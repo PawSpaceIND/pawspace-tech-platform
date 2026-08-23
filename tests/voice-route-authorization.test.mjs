@@ -170,8 +170,11 @@ test("a service provider cannot point the dialler at a customer, an admin can", 
     assert.equal(result.status, 403, `${role} answered ${result.status}`);
   }
   const admin = await call("voice-outbound", "POST", request, "admin");
-  assert.equal(admin.status, 201);
-  assert.equal(admin.body.data.state, "blocked_consent", "an authorised caller still has to satisfy the policy gate");
+  // 409, not 201: an authorised caller still has to satisfy the policy gate, and the HTTP status has to
+  // say the call did not happen rather than reporting a refusal as created.
+  assert.equal(admin.status, 409);
+  assert.equal(admin.body.data.state, "blocked_consent");
+  assert.equal(admin.body.data.dialled, false);
 });
 
 test("no request field can enable voice through the route", async () => {

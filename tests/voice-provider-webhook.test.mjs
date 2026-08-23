@@ -195,19 +195,70 @@ test("a body that is not a parseable event is refused 400, verified or not", asy
   }
 });
 
-test("an out-of-order event is recorded but not forced onto the state machine", async () => {
+test("a lone terminal callback completes the call by inferring the hop the carrier did not report", async () => {
   const { sqlite, db, env } = await fresh();
   const call = await dial(db, env);
-  // 'completed' overtaking 'connected': dialing -> completed is not a legal transition.
+  // This is the NORMAL carrier shape, not an edge case: Exotel's StatusCallback commonly fires once, at
+  // the end, with CallStatus=completed - so the ledger is still at `dialing` when it arrives. Refusing
+  // it left an answered-and-ended call stuck in `dialing` forever, because the event is then
+  // deduplicated and never reconsidered.
+  const body = eventBody(call.callId, { CallStatus: "completed", CallDuration: "42" });
+  const result = await gov.recordVoiceProviderEvent(db, env, { rawBody: body, headers: await signedHeaders(body) });
+  assert.equal(result.accepted, true);
+  assert.equal(result.applied, true);
+  assert.equal(result.inferred, "connected", "the missing hop is named, not silently skipped");
+  assert.equal(state(sqlite, call.callId), "completed");
+
+  // The graph stayed strict - the hop was applied, not bypassed - and the audit says which step was
+  // deduced rather than observed.
+  const trail = sqlite.prepare("SELECT to_state,reason,detail_json FROM voice_call_state_transitions WHERE call_id=? ORDER BY sequence").all(call.callId);
+  assert.deepEqual(trail.map(step => step.to_state), ["policy_check", "queued", "dialing", "connected", "completed"]);
+  const inferredStep = trail.find(step => step.to_state === "connected");
+  assert.equal(JSON.parse(inferredStep.detail_json).inferred, true);
+  assert.match(inferredStep.reason, /Inferred connected from provider event/);
+  assert.equal(JSON.parse(trail.at(-1).detail_json).inferred, undefined, "the observed step is not marked inferred");
+});
+
+test("a connected event overtaking the dial confirmation is bridged too", async () => {
+  const { sqlite, db, env } = await fresh();
+  const call = await dial(db, env);
+  await gov.transitionVoiceCall(db, { callId: call.callId, to: "ringing", reason: "provider", actor: "test" });
+  const body = eventBody(call.callId, { CallStatus: "completed", CallDuration: "10" });
+  const result = await gov.recordVoiceProviderEvent(db, env, { rawBody: body, headers: await signedHeaders(body) });
+  assert.equal(result.inferred, "connected");
+  assert.equal(state(sqlite, call.callId), "completed");
+});
+
+test("an event with no unambiguous path is still refused rather than forced", async () => {
+  const { sqlite, db, env } = await fresh();
+  const call = await dial(db, env);
+  await gov.transitionVoiceCall(db, { callId: call.callId, to: "no_answer", reason: "provider", actor: "test" });
+  await gov.transitionVoiceCall(db, { callId: call.callId, to: "ended", reason: "closed", actor: "test" });
+  // A terminal call is terminal: a late 'completed' must not rewrite the outcome, and there is no
+  // one-hop path that would make it legal.
   const body = eventBody(call.callId, { CallStatus: "completed", CallDuration: "42" });
   const result = await gov.recordVoiceProviderEvent(db, env, { rawBody: body, headers: await signedHeaders(body) });
   assert.equal(result.accepted, true, "the provider is not made to retry forever");
   assert.equal(result.applied, false);
-  assert.match(result.reason, /Illegal voice call transition dialing -> completed/);
-  assert.equal(state(sqlite, call.callId), "dialing", "the impossible history was refused");
-  const stored = events(sqlite);
-  assert.equal(stored.length, 1, "but the event is on the record for whoever investigates");
-  assert.equal(stored[0].applied, 0);
+  assert.match(result.reason, /Illegal voice call transition ended -> completed/);
+  assert.equal(state(sqlite, call.callId), "ended", "the outcome was not rewritten");
+  assert.equal(events(sqlite).find(row => row.event_kind === "completed").applied, 0, "but it is on the record");
+  // And a stuck/unapplied event is surfaced rather than left to be found by reading the table.
+  const readiness = await gov.voiceOutboundReadiness(db, env);
+  assert.equal(readiness.unappliedProviderEvents, 1);
+});
+
+test("the bridge only ever infers one unambiguous hop", () => {
+  // Asserted directly on the rule, so a future state added to the graph cannot quietly widen it.
+  assert.equal(gov.inferredBridgeState("dialing", "completed"), "connected");
+  assert.equal(gov.inferredBridgeState("ringing", "completed"), "connected");
+  assert.equal(gov.inferredBridgeState("queued", "connected"), "dialing");
+  assert.equal(gov.inferredBridgeState("connected", "completed"), null, "a legal transition needs no bridge");
+  assert.equal(gov.inferredBridgeState("ended", "completed"), null);
+  assert.equal(gov.inferredBridgeState("no_answer", "completed"), null);
+  assert.equal(gov.inferredBridgeState("blocked_consent", "connected"), null, "a refused call is never bridged into a dial");
+  assert.equal(gov.inferredBridgeState("dialing", "dialing"), null);
+  assert.equal(gov.inferredBridgeState("policy_check", "connected"), null, "the gate cannot be skipped by inference");
 });
 
 test("a DTMF event is recorded without moving the call", async () => {

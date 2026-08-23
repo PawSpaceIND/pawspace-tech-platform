@@ -7,17 +7,34 @@
  */
 import { DatabaseSync } from "node:sqlite";
 
+/**
+ * The D1 shape, plus `onSql(pattern, fn)`: a one-shot hook that runs immediately BEFORE the next
+ * statement whose SQL matches.
+ *
+ * This is how the check-then-act windows are tested without putting a test hook into production code.
+ * Registering on the pre-dial consent re-read, for instance, lets the test change the stored consent in
+ * exactly the gap between the policy snapshot and the provider contact - which is the race itself,
+ * rather than a stand-in for it.
+ */
 export function makeD1(sqlite) {
+  const hooks = [];
+  const fire = async (sql) => {
+    const index = hooks.findIndex(hook => sql.includes(hook.pattern));
+    if (index === -1) return;
+    const [hook] = hooks.splice(index, 1);
+    await hook.fn();
+  };
   const statement = (sql, args) => ({
     bind: (...bound) => statement(sql, bound),
-    first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-    run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes || 0) } }; },
-    all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
+    first: async () => { await fire(sql); const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
+    run: async () => { await fire(sql); const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes || 0) } }; },
+    all: async () => { await fire(sql); return { results: sqlite.prepare(sql).all(...args) }; },
   });
   return {
     prepare: (sql) => statement(sql, []),
     batch: async (items) => { const out = []; for (const item of items) out.push(await item.run()); return out; },
     exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
+    onSql: (pattern, fn) => { hooks.push({ pattern, fn }); },
   };
 }
 
@@ -28,6 +45,7 @@ export function uatVoiceEnv(extra = {}) {
     PAWSPACE_VOICE_UAT_APPROVED: "true",
     PAWSPACE_VOICE_UAT_ALLOWLIST: "+91 98765 43210",
     PAWSPACE_VOICE_TRANSPORT: "local_simulator_non_production",
+    PAWSPACE_VOICE_STATUS_CALLBACK_URL: "https://uat.pawspace.in/api/voice-provider-webhook",
     EXOTEL_API_KEY: "test-key",
     EXOTEL_API_TOKEN: "test-token",
     EXOTEL_SID: "test-sid",

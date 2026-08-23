@@ -457,3 +457,104 @@ test("a dry-run policy preview creates nothing and dials nothing", async () => {
   assert.equal(preview.checks.length, 10);
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM voice_call_orders").get().c, 0, "a preview writes no call");
 });
+
+// ---------------------------------------------------------------------------
+// Concurrency and last-look checks. Every case below covers a check-then-act window that a review of
+// this PR flagged: the gate read a record, then the caller dialled, with nothing holding the decision
+// still in between.
+// ---------------------------------------------------------------------------
+
+test("concurrent requests for the same recipient cannot exceed the frequency cap", async () => {
+  const { sqlite, db, env } = await fresh();
+  await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
+  // booking_confirmation allows 2 attempts in 24h. Five requests fired without awaiting each other all
+  // read the same advisory count, so only the atomic dial-slot claim can bound them.
+  const results = await Promise.all(Array.from({ length: 5 }, (_, index) =>
+    gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: `race-${index}` }))));
+  const dialled = results.filter(result => result.dialled);
+  assert.equal(dialled.length, 2, `exactly the cap was dialled, got ${dialled.length}`);
+  const refused = results.filter(result => !result.dialled);
+  assert.equal(refused.length, 3);
+  assert.ok(refused.every(result => result.state === "blocked_frequency_cap"), refused.map(r => r.state).join(","));
+  // Proved against the database, not the return values.
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM voice_call_orders WHERE dialed_at IS NOT NULL").get().c, 2);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM voice_call_dial_reservations WHERE released_at IS NULL").get().c, 2);
+});
+
+test("a dial the provider refused gives the recipient's allowance back", async () => {
+  const { sqlite, db, env } = await fresh();
+  await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
+  const failed = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "release-1", simulatedOutcome: "failed" }));
+  assert.equal(failed.state, "provider_unavailable");
+  assert.equal(sqlite.prepare("SELECT released_at FROM voice_call_dial_reservations WHERE call_id=?").get(failed.callId).released_at != null, true);
+  // The failed attempt never reached the recipient, so both real attempts are still available.
+  for (const key of ["release-2", "release-3"]) {
+    assert.equal((await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: key }))).dialled, true, key);
+  }
+  assert.equal((await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "release-4" }))).state, "blocked_frequency_cap");
+});
+
+test("concurrent requests with one idempotency key produce one call, not a raw SQL error", async () => {
+  const { sqlite, db, env } = await fresh();
+  await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
+  const input = callInput({ idempotencyKey: "one-key" });
+  const results = await Promise.all([
+    gov.requestOutboundVoiceCall(db, env, input),
+    gov.requestOutboundVoiceCall(db, env, input),
+    gov.requestOutboundVoiceCall(db, env, input),
+  ]);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM voice_call_orders").get().c, 1, "one call row");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM voice_call_orders WHERE dialed_at IS NOT NULL").get().c, 1, "one dial");
+  // The losers of the race get the documented duplicate result, not a UNIQUE constraint failure.
+  assert.equal(results.filter(result => result.duplicatePrevented).length, 2);
+  assert.equal(new Set(results.map(result => result.callId)).size, 1);
+});
+
+test("consent withdrawn between the gate and the dial is honoured, not ignored", async () => {
+  const { sqlite, db, env } = await fresh();
+  await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
+  // Withdraw consent in the exact gap the gate cannot see: after its snapshot, before the dial. The hook
+  // fires immediately before the pre-dial re-read, so without that re-read this call would go out.
+  db.onSql("SELECT granted,revoked_at FROM voice_call_consents", () => {
+    sqlite.prepare("UPDATE voice_call_consents SET granted=0,revoked_at=? WHERE phone_key=?").run(DAYTIME, ALLOWLISTED_PHONE);
+  });
+  const result = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "late-revoke" }));
+  assert.equal(result.dialled, false, "the withdrawal was seen before the provider was contacted");
+  assert.equal(result.state, "blocked_consent");
+  const row = order(sqlite, result.callId);
+  assert.equal(row.dialed_at, null);
+  assert.equal(row.provider_call_id, null);
+  // The gate itself had recorded consent as granted, which is what proves the refusal came from the
+  // last look rather than from the snapshot.
+  assert.equal(decisions(sqlite, result.callId).voice_consent, true);
+  const last = sqlite.prepare("SELECT detail_json,to_state FROM voice_call_state_transitions WHERE call_id=? ORDER BY sequence DESC LIMIT 1").get(result.callId);
+  assert.equal(last.to_state, "blocked_consent");
+  assert.equal(JSON.parse(last.detail_json).revalidatedBeforeDial, true);
+  // And no dial slot was consumed by a call that never went out.
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM voice_call_dial_reservations").get().c, 0);
+});
+
+test("an opt-out recorded between the gate and the dial is honoured", async () => {
+  const { sqlite, db, env } = await fresh();
+  await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
+  db.onSql("SELECT recorded_at FROM voice_call_opt_outs", () => {
+    sqlite.prepare("INSERT INTO voice_call_opt_outs (phone_key,source,reason,recorded_by,recorded_at) VALUES (?,?,?,?,?)")
+      .run(ALLOWLISTED_PHONE, "customer_sms", "stop calling", "ops@pawspace.in", DAYTIME);
+  });
+  const result = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "late-optout" }));
+  assert.equal(result.dialled, false);
+  assert.equal(result.state, "blocked_opt_out");
+  assert.equal(order(sqlite, result.callId).dialed_at, null);
+  assert.equal(decisions(sqlite, result.callId).opt_out_clear, true, "the gate's snapshot said clear; the last look did not");
+});
+
+test("voice refuses to dial without a https provider callback configured", async () => {
+  // Without one, a provider accepts the dial and we never learn the outcome - the call sits in dialing.
+  for (const callback of ["", "http://uat.pawspace.in/api/voice-provider-webhook", "not-a-url"]) {
+    const { sqlite, db, env } = await fresh({ PAWSPACE_VOICE_STATUS_CALLBACK_URL: callback });
+    await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
+    const result = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: `cb-${callback || "empty"}` }));
+    assertRefused(sqlite, result, "blocked_disabled", "voice_enabled");
+    assert.match(result.blockedDetail, /PAWSPACE_VOICE_STATUS_CALLBACK_URL/, callback);
+  }
+});

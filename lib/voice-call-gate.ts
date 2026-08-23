@@ -77,6 +77,18 @@ export function telephonyCredentialsConfigured(env: Env): boolean {
   return VOICE_TELEPHONY_SECRET_NAMES.every(name => Boolean(val(env, name)));
 }
 
+/**
+ * The https URL the provider posts call progress to. Part of the gate, not an optional extra: without
+ * it a provider accepts the dial and we never learn the outcome, so an answered-and-ended call sits in
+ * `dialing` forever. An http URL is refused too - call state would cross the network in the clear.
+ */
+export function statusCallbackUrl(env: Env): string | null {
+  const raw = val(env, "PAWSPACE_VOICE_STATUS_CALLBACK_URL");
+  if (!raw) return null;
+  try { return new URL(raw).protocol === "https:" ? raw : null; }
+  catch { return null; }
+}
+
 export function resolveVoiceCallGate(env: Env): VoiceCallGate {
   const mode = voiceMode(env);
   if (mode === "disabled") return { ok: false, status: 503, reason: "Voice calling is disabled (set PAWSPACE_VOICE_ENV=\"uat\" in an approved UAT environment)", mode };
@@ -84,6 +96,7 @@ export function resolveVoiceCallGate(env: Env): VoiceCallGate {
   if (mode === "live" && !isTrue(env, "PAWSPACE_VOICE_LIVE_APPROVED")) return { ok: false, status: 503, reason: "Live voice calling is not approved (set PAWSPACE_VOICE_LIVE_APPROVED=\"true\"). Complete controlled UAT first.", mode };
   const missing = VOICE_TELEPHONY_SECRET_NAMES.filter(name => !val(env, name));
   if (missing.length) return { ok: false, status: 503, reason: `Telephony provider is not configured (missing ${missing.join(", ")})`, mode };
+  if (!statusCallbackUrl(env)) return { ok: false, status: 503, reason: "A https provider status callback is not configured (PAWSPACE_VOICE_STATUS_CALLBACK_URL)", mode };
   const allowlist = voiceAllowlist(env);
   // A UAT run with no allow-list is the exact accident this gate exists to prevent: an approved
   // environment with real credentials and no bound on who it may dial.
@@ -104,6 +117,7 @@ export function voiceCallReadiness(env: Env) {
     uatApproved: isTrue(env, "PAWSPACE_VOICE_UAT_APPROVED"),
     liveApproved: isTrue(env, "PAWSPACE_VOICE_LIVE_APPROVED"),
     telephonyCredentialsConfigured: telephonyCredentialsConfigured(env),
+    statusCallbackConfigured: Boolean(statusCallbackUrl(env)),
     missingSecretNames: VOICE_TELEPHONY_SECRET_NAMES.filter(name => !val(env, name)),
     allowlistSize: voiceAllowlist(env).length,
     recordingApproved: callRecordingApproved(env),

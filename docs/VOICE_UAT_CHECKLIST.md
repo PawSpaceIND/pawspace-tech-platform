@@ -54,7 +54,7 @@ environment first. **Never commit a value to this repository.**
 | `PAWSPACE_VOICE_LIVE_APPROVED` | Only for `PAWSPACE_VOICE_ENV=live`. Do not set until controlled UAT is signed off. |
 | `PAWSPACE_VOICE_SALES_OUTBOUND_APPROVED` | Must be `true` before `lead_qualification` or `sales_pitch` calls are possible. **Leave unset until outbound sales calling is formally approved.** |
 | `PAWSPACE_VOICE_RECORDING_APPROVED` | Must be `true` before any recording reference is retained. **Leave unset until the recording consent policy is signed off.** |
-| `PAWSPACE_VOICE_STATUS_CALLBACK_URL` | Absolute https URL of `/api/voice-provider-webhook` on this deployment. |
+| `PAWSPACE_VOICE_STATUS_CALLBACK_URL` | Absolute **https** URL of `/api/voice-provider-webhook` on this deployment. **Required** — without it a provider would accept the dial and we would never learn the outcome, so the gate refuses. An `http` URL is refused too. |
 | `PAWSPACE_VOICE_TRANSPORT` | Set to `local_simulator_non_production` ONLY for engineering tests. Ignored when `PAWSPACE_VOICE_ENV=live`. |
 
 ### Telephony provider (Exotel — the provider already selected in `INT-VOICE-01`)
@@ -69,8 +69,8 @@ environment first. **Never commit a value to this repository.**
 | `EXOTEL_WEBHOOK_SECRET` | Shared secret for callback verification (see §3). |
 | `EXOTEL_SUBDOMAIN` | Optional. Defaults to `api.exotel.com`; set for a regional endpoint. |
 
-All six of the first group are required together. With any one missing the gate refuses and names the
-missing variable — it does not degrade to a silent no-op.
+All six of the first group are required together, as is the https status callback above. With any one
+missing the gate refuses and names the missing variable — it does not degrade to a silent no-op.
 
 ### Speech (choose ONE engine)
 
@@ -167,6 +167,20 @@ policy-decision trail, the state-transition trail and the curated provider event
 | 16 | Retry after no-answer | new call correlated by `retry_of` | the retry re-ran all 10 checks; bounded by the use case's `maxAttempts` |
 | 17 | Provider redelivers a callback | unchanged | one `voice_call_provider_events` row; no second transition |
 | 18 | Callback with a bad/absent signature | unchanged | 401; nothing recorded |
+
+Two provider behaviours to confirm explicitly during scenario 1, because the engineering depends on
+which one Exotel actually does:
+
+- **Does the StatusCallback fire only once, at the end?** If so, a lone `CallStatus=completed` arrives
+  while the ledger still says `dialing`. That is handled: the receiver applies the missing `connected`
+  hop first, marked `inferred: true` in the transition detail, then applies `completed`. Check the audit
+  trail shows `dialing → connected (inferred) → completed`.
+- **Does it also fire on progress events?** If `StatusCallbackEvents` includes in-progress callbacks,
+  the trail should show observed `ringing`/`connected` steps with no `inferred` flag.
+
+Also worth watching on the readiness surface after each run: `unappliedProviderEvents` should be 0 and
+`callsOpenOverAnHour` should be 0. A non-zero value means a callback could not be applied to any legal
+state — investigate before running more scenarios rather than assuming the call completed.
 
 Scenarios 2–5, 7–9 and 15–18 are already executed as automated tests against the simulator
 (`tests/voice-outbound-policy.test.mjs`, `tests/voice-provider-webhook.test.mjs`). Running them again

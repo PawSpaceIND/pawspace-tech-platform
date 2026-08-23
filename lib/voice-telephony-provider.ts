@@ -204,6 +204,12 @@ export function exotelTelephony(env: Env): TelephonyProvider {
     status: "connected",
     productionCapable: true,
     async createCall(intent) {
+      // Defence in depth behind the environment gate: without a reachable https callback the provider
+      // would accept the dial and we would never learn the outcome, leaving the call stuck in `dialing`.
+      let callback: URL;
+      try { callback = new URL(intent.statusCallbackUrl); }
+      catch { throw new TelephonyProviderUnavailable("A status callback URL is required before a call may be placed (PAWSPACE_VOICE_STATUS_CALLBACK_URL)"); }
+      if (callback.protocol !== "https:") throw new TelephonyProviderUnavailable("The provider status callback must be https");
       const body = new URLSearchParams({
         From: intent.toNumber,
         CallerId: callerId,

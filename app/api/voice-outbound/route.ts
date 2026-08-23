@@ -1,12 +1,29 @@
 import{authError,authorize,database,requirePermission,securityAudit}from"../../../lib/server-auth";
 import{attachVoiceTranscript,cancelVoiceCall,completeVoiceCall,evaluateVoiceCallPolicy,recordVoiceConsent,recordVoiceOptOut,recordVoiceOptOutDuringCall,recordVoiceSpeechFailure,requestOutboundVoiceCall,requestVoiceHumanHandoff,retryVoiceCall,setVoiceCallScript,transitionVoiceCall,voiceCallAudit,voiceCallLedger,voiceOutboundReadiness}from"../../../lib/voice-outbound-governance";
-import{resolveVoiceCallGate}from"../../../lib/voice-call-gate";
 
 type Body=Record<string,unknown>;
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 const text=(value:unknown)=>String(value??"").trim();
 async function runtime(){const{env}=await import("cloudflare:workers");return env as unknown as Record<string,unknown>;}
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin voice write blocked",{status:403});}
+
+/**
+ * HTTP status from what actually happened to the call, not from whether voice is switched on.
+ *
+ * This previously keyed off the environment gate alone, so a request that passed the gate and then had
+ * the provider refuse the dial still answered 201 - a client would record a call as initiated when the
+ * ledger says provider_unavailable. The state is the authority.
+ */
+function callStatusCode(result:{state?:string;dialled?:boolean;duplicatePrevented?:boolean}){
+  if(result.duplicatePrevented)return 200;
+  const state=text(result.state);
+  if(state==="blocked_disabled")return 503;
+  if(state==="blocked_permission")return 403;
+  if(state==="provider_unavailable")return 503;
+  if(state==="provider_error")return 502;
+  if(state.startsWith("blocked_"))return 409;
+  return result.dialled?201:409;
+}
 
 /**
  * Staff surface for automated outbound voice calling.
@@ -62,15 +79,14 @@ export async function POST(request:Request){
     }
 
     if(action==="request_call"){
-      const gate=resolveVoiceCallGate(env);
       const data=await requestOutboundVoiceCall(db,env,{idempotencyKey:text(body.idempotencyKey),useCase:text(body.useCase),phone:text(body.phone),cityId:text(body.cityId)||"blr",customerId:text(body.customerId)||null,leadId:text(body.leadId)||null,bookingId:text(body.bookingId)||null,campaignId:text(body.campaignId)||null,actorId:actor.email,actorPermissions:permissions,simulatedOutcome:null});
       await securityAudit(db,actor,"voice.call.request","voice_call",data.callId,data.state.startsWith("blocked_")?"denied":"completed",{state:data.state,useCase:data.useCase,productionCall:data.productionCall});
-      return json({data},gate.ok?201:503);
+      return json({data},callStatusCode(data));
     }
     if(action==="retry"){
       const data=await retryVoiceCall(db,env,{callId:text(body.callId),actorId:actor.email,actorPermissions:permissions,idempotencyKey:text(body.idempotencyKey)||undefined});
       await securityAudit(db,actor,"voice.call.retry","voice_call",data.callId,"completed",{retryOf:data.retryOf,state:data.state});
-      return json({data},201);
+      return json({data},callStatusCode(data));
     }
 
     const callId=text(body.callId);

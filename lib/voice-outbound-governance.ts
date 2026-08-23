@@ -23,8 +23,8 @@
 
 import { createUnifiedCase } from "./unified-case-center";
 import { ensureCommunicationTables, seedCommunicationPolicy, type CommunicationPurpose } from "./communication-engine";
-import { normalisedDialKey, resolveVoiceCallGate, salesOutboundApproved, callRecordingApproved, voiceCallReadiness, voiceMode } from "./voice-call-gate";
-import { assertVoiceCallTransition, isVoiceCallState, voiceFailureReasonClass, VOICE_RETRYABLE_STATES, type VoiceCallState } from "./voice-call-state";
+import { normalisedDialKey, resolveVoiceCallGate, salesOutboundApproved, callRecordingApproved, statusCallbackUrl, voiceCallReadiness, voiceMode } from "./voice-call-gate";
+import { assertVoiceCallTransition, canVoiceCallTransition, isVoiceCallState, voiceFailureReasonClass, VOICE_RETRYABLE_STATES, type VoiceCallState } from "./voice-call-state";
 import { selectTelephonyProvider, sha256Hex, telephonyProviderStatus, TelephonyProviderUnavailable, type TelephonyEventKind, type TelephonyProvider } from "./voice-telephony-provider";
 
 type Db = D1Database;
@@ -91,6 +91,11 @@ export async function ensureVoiceCallTables(db: Db) {
     db.prepare("CREATE TABLE IF NOT EXISTS voice_call_provider_events (id TEXT PRIMARY KEY,call_id TEXT,provider TEXT NOT NULL,provider_event_id TEXT NOT NULL,event_kind TEXT NOT NULL,provider_status TEXT,signature_mechanism TEXT,payload_sha256 TEXT NOT NULL,curated_json TEXT NOT NULL DEFAULT '{}',applied INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,UNIQUE(provider,provider_event_id))"),
     db.prepare("CREATE TABLE IF NOT EXISTS voice_call_consents (phone_key TEXT PRIMARY KEY,subject_type TEXT NOT NULL,subject_id TEXT,granted INTEGER NOT NULL,source TEXT NOT NULL,captured_by TEXT NOT NULL,captured_at INTEGER NOT NULL,revoked_at INTEGER)"),
     db.prepare("CREATE TABLE IF NOT EXISTS voice_call_opt_outs (phone_key TEXT PRIMARY KEY,source TEXT NOT NULL,reason TEXT,recorded_by TEXT NOT NULL,recorded_at INTEGER NOT NULL)"),
+    // The frequency cap's ENFORCEMENT point, separate from the ledger so it can be claimed atomically
+    // before the provider is contacted. The count in evaluateVoiceCallPolicy is the advisory read that
+    // produces a good audit message; this table is what actually bounds concurrent dials.
+    db.prepare("CREATE TABLE IF NOT EXISTS voice_call_dial_reservations (call_id TEXT PRIMARY KEY,phone_key TEXT NOT NULL,reserved_at INTEGER NOT NULL,released_at INTEGER)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_voice_dial_reservations_phone ON voice_call_dial_reservations(phone_key,released_at,reserved_at)"),
     db.prepare("CREATE TABLE IF NOT EXISTS voice_call_scripts (use_case TEXT PRIMARY KEY,opening_disclosure TEXT NOT NULL,body_json TEXT NOT NULL DEFAULT '[]',claims_approved INTEGER NOT NULL DEFAULT 0,active INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
   ]);
 }
@@ -291,7 +296,52 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
     quietHoursDecision: quiet ? "inside" : "outside",
     recordingAllowed: callRecordingApproved(env),
     scriptDisclosure: script && scriptOk ? text(script.opening_disclosure) : null,
+    // Handed to the atomic claim below so enforcement and the audit message agree on the numbers.
+    dailyCap, capWindowStart: now - 86_400_000,
   };
+}
+
+/**
+ * Claim one dial slot for this recipient, atomically.
+ *
+ * evaluateVoiceCallPolicy reads the attempt count and then the caller dials, which is a
+ * check-then-act: two concurrent requests for the same number could both read "1 of 2 used" and both
+ * dial. SQLite evaluates INSERT ... SELECT ... WHERE as one statement, so exactly one of them inserts
+ * and the loser sees changes = 0 and is refused.
+ *
+ * A reservation is released when the provider refuses the dial, because a call that never reached the
+ * recipient must not consume their allowance - the same rule the advisory count already applied by
+ * only counting rows with dialed_at set.
+ */
+async function claimDialSlot(db: Db, input: { callId: string; phoneKey: string; cap: number; windowStart: number; now: number }) {
+  const claim = await db.prepare(
+    "INSERT INTO voice_call_dial_reservations (call_id,phone_key,reserved_at,released_at) SELECT ?,?,?,NULL WHERE (SELECT COUNT(*) FROM voice_call_dial_reservations WHERE phone_key=? AND released_at IS NULL AND reserved_at>=?) < ?"
+  ).bind(input.callId, input.phoneKey, input.now, input.phoneKey, input.windowStart, Math.max(0, input.cap)).run();
+  return Number(claim.meta.changes) > 0;
+}
+
+async function releaseDialSlot(db: Db, callId: string, now: number) {
+  await db.prepare("UPDATE voice_call_dial_reservations SET released_at=? WHERE call_id=? AND released_at IS NULL").bind(now, callId).run();
+}
+
+/**
+ * Consent and opt-out, re-read immediately before the provider is contacted.
+ *
+ * The gate's decision is a snapshot; a customer can opt out in the gap between it and the dial. This
+ * does not make the sequence atomic - D1 has no cross-statement transaction here - but it shrinks the
+ * window from "the whole policy evaluation plus the queue transition" to "two indexed point reads", and
+ * it means a refusal recorded seconds earlier is honoured rather than ignored.
+ */
+async function consentStillHolds(db: Db, phoneKey: string, leadId: string) {
+  const consent = await db.prepare("SELECT granted,revoked_at FROM voice_call_consents WHERE phone_key=?").bind(phoneKey).first<Row>();
+  if (!consent || Number(consent.granted) !== 1 || consent.revoked_at != null) return { ok: false, state: "blocked_consent" as VoiceCallState, reason: "Voice consent was withdrawn before the dial" };
+  const optOut = await db.prepare("SELECT recorded_at FROM voice_call_opt_outs WHERE phone_key=?").bind(phoneKey).first<Row>();
+  if (optOut) return { ok: false, state: "blocked_opt_out" as VoiceCallState, reason: "Recipient opted out before the dial" };
+  if (leadId) {
+    const lead = await db.prepare("SELECT opt_out FROM lead_work_items WHERE id=?").bind(leadId).first<Row>().catch(() => null);
+    if (lead && Number(lead.opt_out) === 1) return { ok: false, state: "blocked_opt_out" as VoiceCallState, reason: "Lead was marked opt-out before the dial" };
+  }
+  return { ok: true as const, state: null, reason: null };
 }
 
 // --- state transitions ----------------------------------------------------------------------------
@@ -365,8 +415,18 @@ export async function requestOutboundVoiceCall(db: Db, env: Env, input: VoiceCal
   const policy = await evaluateVoiceCallPolicy(db, env, input);
   const useCase = policy.useCase;
   const id = uid("VCALL");
-  await db.prepare("INSERT INTO voice_call_orders (id,idempotency_key,direction,use_case,purpose,campaign_id,customer_id,lead_id,booking_id,city_id,phone_key,phone_last4,mode,provider,production_call,state,consent_decision,opt_out_decision,quiet_hours_decision,frequency_attempts_24h,recording_allowed,retry_of,retry_attempt,requested_by,requested_at,updated_at) VALUES (?,?,'outbound',?,?,?,?,?,?,?,?,?,?,?,?, 'requested',?,?,?,?,?,?,?,?,?,?)")
-    .bind(id, idempotencyKey, text(input.useCase), useCase?.purpose || "unknown", text(input.campaignId) || null, text(input.customerId) || null, text(input.leadId) || null, text(input.bookingId) || null, text(input.cityId) || "blr", phoneKey, phoneKey.slice(-4), policy.mode, policy.provider.provider, policy.provider.productionCapable ? 1 : 0, policy.consentDecision, policy.optOutDecision, policy.quietHoursDecision, policy.attempts24h, policy.recordingAllowed ? 1 : 0, text(input.retryOf) || null, Number(input.retryAttempt || 0), input.actorId, now, now).run();
+  try {
+    await db.prepare("INSERT INTO voice_call_orders (id,idempotency_key,direction,use_case,purpose,campaign_id,customer_id,lead_id,booking_id,city_id,phone_key,phone_last4,mode,provider,production_call,state,consent_decision,opt_out_decision,quiet_hours_decision,frequency_attempts_24h,recording_allowed,retry_of,retry_attempt,requested_by,requested_at,updated_at) VALUES (?,?,'outbound',?,?,?,?,?,?,?,?,?,?,?,?, 'requested',?,?,?,?,?,?,?,?,?,?)")
+      .bind(id, idempotencyKey, text(input.useCase), useCase?.purpose || "unknown", text(input.campaignId) || null, text(input.customerId) || null, text(input.leadId) || null, text(input.bookingId) || null, text(input.cityId) || "blr", phoneKey, phoneKey.slice(-4), policy.mode, policy.provider.provider, policy.provider.productionCapable ? 1 : 0, policy.consentDecision, policy.optOutDecision, policy.quietHoursDecision, policy.attempts24h, policy.recordingAllowed ? 1 : 0, text(input.retryOf) || null, Number(input.retryAttempt || 0), input.actorId, now, now).run();
+  } catch (error) {
+    // The prior-row read above and this insert are not one transaction, so two concurrent requests with
+    // the same key can both pass the read. The UNIQUE index on idempotency_key is what actually
+    // guarantees one call; translate losing that race into the documented duplicate result instead of a
+    // raw SQL error. Same pattern as lib/communication-engine.ts enqueueCommunication.
+    const raced = await db.prepare("SELECT * FROM voice_call_orders WHERE idempotency_key=?").bind(idempotencyKey).first<Row>();
+    if (raced) return { duplicatePrevented: true, ...summarise(raced) };
+    throw error;
+  }
   await recordPolicyDecisions(db, id, policy.checks, now);
   await applyTransition(db, { callId: id, to: "policy_check", reason: "Pre-dial policy evaluation", actor: input.actorId, detail: { checks: policy.checks.length }, asOf: now });
 
@@ -376,8 +436,30 @@ export async function requestOutboundVoiceCall(db: Db, env: Env, input: VoiceCal
     return { duplicatePrevented: false, dialled: false, blockedBy: policy.blockedBy, blockedDetail: policy.blockedDetail, policyChecks: policy.checks, ...summarise(row!) };
   }
 
+  // The last two checks are still part of the GATE, so they run while the call is in policy_check and
+  // land in the same terminal blocked_* states as every other refusal. Doing them after the queued
+  // transition would have needed blocked_* to be reachable from queued, which would destroy the
+  // property that makes the ledger trustworthy: a blocked call is proof the gate ran before any dial.
+  //
+  // 1. Consent and opt-out re-read. The gate's decision is a snapshot; a customer can withdraw in the
+  //    gap before the dial, and a refusal recorded seconds ago must win over a slightly older approval.
+  const still = await consentStillHolds(db, phoneKey, text(input.leadId));
+  if (!still.ok) {
+    await applyTransition(db, { callId: id, to: still.state!, reason: still.reason!, actor: input.actorId, detail: { revalidatedBeforeDial: true }, asOf: now });
+    const row = await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(id).first<Row>();
+    return { duplicatePrevented: false, dialled: false, blockedBy: still.state === "blocked_consent" ? "voice_consent" : "opt_out_clear", blockedDetail: still.reason, policyChecks: policy.checks, ...summarise(row!) };
+  }
+  // 2. The frequency cap, claimed atomically. The count the gate read is advisory - it produces a good
+  //    audit message - but this single statement is what actually bounds concurrent dials.
+  if (!(await claimDialSlot(db, { callId: id, phoneKey, cap: policy.dailyCap, windowStart: policy.capWindowStart, now }))) {
+    const reason = `Frequency cap for this recipient was reached by a concurrent request (limit ${policy.dailyCap} in 24h)`;
+    await applyTransition(db, { callId: id, to: "blocked_frequency_cap", reason, actor: input.actorId, detail: { concurrentClaim: true }, asOf: now });
+    const row = await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(id).first<Row>();
+    return { duplicatePrevented: false, dialled: false, blockedBy: "frequency_cap", blockedDetail: reason, policyChecks: policy.checks, ...summarise(row!) };
+  }
+
   await applyTransition(db, { callId: id, to: "queued", reason: "Policy passed; queued for dial", actor: input.actorId, asOf: now });
-  const callbackUrl = text(input.statusCallbackUrl) || text(env.PAWSPACE_VOICE_STATUS_CALLBACK_URL);
+  const callbackUrl = text(input.statusCallbackUrl) || statusCallbackUrl(env) || "";
   try {
     const handle = await policy.provider.createCall({
       callRef: id, toNumber: text(input.phone), statusCallbackUrl: callbackUrl,
@@ -387,6 +469,9 @@ export async function requestOutboundVoiceCall(db: Db, env: Env, input: VoiceCal
     await applyTransition(db, { callId: id, to: "dialing", reason: `Provider accepted the call (${handle.providerStatus})`, actor: input.actorId, detail: { providerStatus: handle.providerStatus, productionCall: handle.productionCall }, asOf: now });
   } catch (error) {
     const unavailable = error instanceof TelephonyProviderUnavailable;
+    // The recipient was never reached, so the slot goes back rather than silently consuming their
+    // allowance for the day.
+    await releaseDialSlot(db, id, now);
     await applyTransition(db, { callId: id, to: unavailable ? "provider_unavailable" : "provider_error", reason: String((error as Error).message).slice(0, 200), actor: input.actorId, asOf: now });
     const row = await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(id).first<Row>();
     return { duplicatePrevented: false, dialled: false, blockedBy: null, blockedDetail: String((error as Error).message).slice(0, 200), policyChecks: policy.checks, ...summarise(row!) };
@@ -491,6 +576,30 @@ export async function completeVoiceCall(db: Db, input: { callId: string; reason:
 
 // --- provider events ------------------------------------------------------------------------------
 
+/**
+ * The single intermediate state that makes an out-of-order provider event legal, if exactly one exists.
+ *
+ * This is not a convenience. A carrier's StatusCallback commonly fires ONCE, at the end of the call,
+ * with CallStatus=completed - so the most likely real sequence is a lone `completed` arriving while the
+ * ledger still says `dialing`. Refusing it left an answered-and-ended call stuck in `dialing` forever,
+ * because the event is then deduplicated and never reconsidered.
+ *
+ * The graph stays strict: rather than adding dialing -> completed as a shortcut, the missing hop is
+ * applied first and marked inferred, so the audit says what was observed and what was deduced. A
+ * carrier reports `completed` only for a call that was actually answered (an unanswered one is
+ * no-answer/busy/failed), so inferring `connected` states something true.
+ *
+ * Only ever ONE hop, only from this small set, and only when the choice is unambiguous - two candidate
+ * paths mean we do not know which happened, and the event stays unapplied.
+ */
+const INFERABLE_STATES: VoiceCallState[] = ["dialing", "ringing", "connected"];
+
+export function inferredBridgeState(from: VoiceCallState, to: VoiceCallState): VoiceCallState | null {
+  if (canVoiceCallTransition(from, to)) return null;
+  const candidates = INFERABLE_STATES.filter(mid => mid !== from && mid !== to && canVoiceCallTransition(from, mid) && canVoiceCallTransition(mid, to));
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
 const EVENT_STATES: Record<TelephonyEventKind, VoiceCallState | null> = {
   dialing: "dialing", ringing: "ringing", connected: "connected",
   dtmf: null, recording_available: null,
@@ -535,12 +644,18 @@ export async function recordVoiceProviderEvent(db: Db, env: Env, input: { rawBod
     return { accepted: true, status: 200, duplicate: false, applied: true, stateChanged: false, eventKind: event.kind, eventId: event.providerEventId };
   }
   try {
+    const current = text(call.state) as VoiceCallState;
+    const bridge = inferredBridgeState(current, target);
+    if (bridge) {
+      await applyTransition(db, { callId, to: bridge, reason: `Inferred ${bridge} from provider event ${event.kind}${event.providerStatus ? ` (${event.providerStatus})` : ""}`, actor: `provider:${provider.provider}`, detail: { ...curated, inferred: true }, asOf: now });
+    }
     const applied = await applyTransition(db, { callId, to: target, reason: `Provider event ${event.kind}${event.providerStatus ? ` (${event.providerStatus})` : ""}`, actor: `provider:${provider.provider}`, detail: curated, asOf: now });
     await db.prepare("UPDATE voice_call_provider_events SET applied=1 WHERE provider=? AND provider_event_id=?").bind(provider.provider, event.providerEventId).run();
-    return { accepted: true, status: 200, duplicate: false, applied: true, stateChanged: true, from: applied.from, to: applied.to, eventKind: event.kind, eventId: event.providerEventId };
+    return { accepted: true, status: 200, duplicate: false, applied: true, stateChanged: true, from: bridge ? current : applied.from, to: applied.to, inferred: bridge, eventKind: event.kind, eventId: event.providerEventId };
   } catch (error) {
-    // Out-of-order delivery is normal (a 'completed' can arrive before a 'connected'). The event stays
-    // recorded and unapplied instead of forcing an impossible transition.
+    // Genuinely unreachable from here - a terminal outcome the provider is trying to overwrite, or an
+    // ambiguous gap. The event stays recorded and unapplied rather than forcing an impossible history,
+    // and voiceOutboundReadiness surfaces the count so a stuck call is visible rather than silent.
     return { accepted: true, status: 200, duplicate: false, applied: false, stateChanged: false, reason: String((error as Error).message).slice(0, 200), eventKind: event.kind, eventId: event.providerEventId };
   }
 }
@@ -580,11 +695,17 @@ export async function voiceOutboundReadiness(db: Db, env: Env) {
   await seedVoiceCallScripts(db);
   const scripts = await db.prepare("SELECT use_case,active,claims_approved,version FROM voice_call_scripts ORDER BY use_case").all<Row>();
   const placed = await db.prepare("SELECT COUNT(*) n FROM voice_call_orders WHERE dialed_at IS NOT NULL AND production_call=1").first<Row>();
+  // A provider event that could not be applied means a call may be stuck mid-lifecycle. Surfaced rather
+  // than left to be discovered by reading the events table.
+  const unapplied = await db.prepare("SELECT COUNT(*) n FROM voice_call_provider_events WHERE applied=0").first<Row>();
+  const stuck = await db.prepare("SELECT COUNT(*) n FROM voice_call_orders WHERE state IN ('dialing','ringing','connected','speaking','listening','handoff_requested') AND requested_at<?").bind(Date.now() - 3_600_000).first<Row>();
   return {
     gate: voiceCallReadiness(env),
     transport: telephonyProviderStatus(env),
     useCases: VOICE_USE_CASES.map(useCase => ({ ...useCase, availableNow: !useCase.requiresSalesApproval || salesOutboundApproved(env) })),
     scripts: scripts.results.map(row => ({ useCase: text(row.use_case), active: Number(row.active) === 1, claimsApproved: Number(row.claims_approved) === 1, version: Number(row.version) })),
     productionCallsPlaced: Number(placed?.n || 0),
+    unappliedProviderEvents: Number(unapplied?.n || 0),
+    callsOpenOverAnHour: Number(stuck?.n || 0),
   };
 }
