@@ -152,7 +152,10 @@ test("a customer who still has not rebooked is reminded again at the next cadenc
   await reminders.generateGroomingRebookingReminders(db, { actorId: "system", asOf: NOW - 30 * DAY }); // day 15 → cycle 1
   await reminders.generateGroomingRebookingReminders(db, { actorId: "system", asOf: NOW - 15 * DAY }); // day 30 → cycle 2
   await reminders.generateGroomingRebookingReminders(db, { actorId: "system", asOf: NOW });            // day 45 → cycle 3
-  assert.deepEqual(messages(sqlite).map((m) => m.idempotency_key), [
+  // Sorted, not insertion-ordered: communication_messages.created_at is a wall-clock millisecond, so
+  // three rapid enqueues can share one and the ORDER BY falls through to a random UUID. The claim
+  // here is that all three cadence cycles produced a reminder, not the order the rows landed in.
+  assert.deepEqual(messages(sqlite).map((m) => m.idempotency_key).sort(), [
     "grooming_rebooking:CU-5:1", "grooming_rebooking:CU-5:2", "grooming_rebooking:CU-5:3",
   ], "day 15/30/45 are distinct cycles — dedup must not silence the whole lifecycle");
 });

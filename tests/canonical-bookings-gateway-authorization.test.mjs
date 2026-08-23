@@ -67,6 +67,11 @@ function freshDb() {
 /** Exactly the sequence worker/index.ts runs for /api/*. Pinned against the worker by the last test. */
 async function throughGateway(request) {
   const env = { DB: globalThis.__CB_GATEWAY_DB__, ...globalThis.__CB_GATEWAY_ENV__ };
+  const url = new URL(request.url);
+  if (request.method === "POST" && (url.pathname === "/api/uat-scheduling" || url.pathname === "/api/canonical-bookings")) {
+    const { cleanupExpiredReservationLeases } = await import("../lib/scheduling-reservation-leases.ts");
+    await cleanupExpiredReservationLeases(env.DB);
+  }
   const { authorizePlatformSessionRequest } = await import("../lib/session-api-gateway.ts");
   const { authorizeApiRequest } = await import("../lib/api-gateway.ts");
   const sessionAccess = await authorizePlatformSessionRequest(request, env.DB);
@@ -227,6 +232,43 @@ test("POST from a customer session booking ANOTHER customer's id is refused with
   assert.deepEqual(counts(sqlite), before, "a refused cross-customer write must touch no table");
 });
 
+test("an expired authentic session releases its server-owned reservation before gateway refusal", async () => {
+  const { sqlite, db } = freshDb();
+  sqlite.exec(`
+    CREATE TABLE scheduling_assignment_decisions (
+      group_id TEXT PRIMARY KEY,strategy TEXT NOT NULL,shortlist_json TEXT NOT NULL,
+      selected_provider_id TEXT,status TEXT NOT NULL,actor_id TEXT,reason TEXT,updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE scheduling_reservations (
+      id TEXT PRIMARY KEY,group_id TEXT NOT NULL,provider_id TEXT NOT NULL,service_code TEXT NOT NULL,
+      city_id TEXT NOT NULL,zone_id TEXT NOT NULL,customer_id TEXT NOT NULL,pet_ids_json TEXT NOT NULL,
+      scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,capacity_units INTEGER NOT NULL DEFAULT 1,
+      occurrence_number INTEGER NOT NULL DEFAULT 1,care_mode TEXT,status TEXT NOT NULL,
+      explanation_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL
+    );
+  `);
+  const { ensureSchedulingReservationLeaseGovernance } = await import("../lib/scheduling-reservation-leases.ts");
+  await ensureSchedulingReservationLeaseGovernance(db);
+  const cookie = await sessionCookie(db, "customer", CUSTOMER, "+919000000001");
+  const now = Date.now();
+  const session = sqlite.prepare("SELECT id FROM platform_identity_sessions WHERE subject_type='customer' AND subject_id=? ORDER BY issued_at DESC LIMIT 1").get(CUSTOMER);
+  sqlite.prepare("INSERT INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,actor_id,reason,updated_at) VALUES (?,'auto','{}',?,'assigned','system','Auto-assigned',?)").run(`SG-GW-${CUSTOMER}`, PROVIDER, now);
+  sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at,lease_expires_at,customer_session_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'assigned','{}',?,?,?)")
+    .run("RES-GW-EXPIRED", `SG-GW-${CUSTOMER}`, PROVIDER, "pet_sitting", "blr", "koramangala", CUSTOMER, '["gw-pet-1"]', START, END, 1, 1, null, now, now + 60_000, session.id);
+  sqlite.prepare("UPDATE platform_identity_sessions SET expires_at=? WHERE id=?").run(now - 1, session.id);
+
+  const result = await callEndpoint(post(bookingPayload(CUSTOMER), { cookie }));
+  assert.equal(result.reachedRoute, false, "the expired session is still refused by the production gateway order");
+  assert.equal(result.status, 401);
+  assert.equal(sqlite.prepare("SELECT status FROM scheduling_reservations WHERE id='RES-GW-EXPIRED'").get().status, "cancelled");
+  assert.equal(sqlite.prepare("SELECT status FROM scheduling_assignment_decisions WHERE group_id=?").get(`SG-GW-${CUSTOMER}`).status, "expired");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservation_lease_cleanup WHERE group_id=?").get(`SG-GW-${CUSTOMER}`).n, 1);
+
+  const replay = await callEndpoint(post(bookingPayload(CUSTOMER), { cookie }));
+  assert.equal(replay.status, 401);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservation_lease_cleanup WHERE group_id=?").get(`SG-GW-${CUSTOMER}`).n, 1, "gateway retries keep cleanup idempotent");
+});
+
 test("POST from a PROVIDER session is refused for a customer-scoped write", async () => {
   const { sqlite, db } = freshDb();
   const cookie = await sessionCookie(db, "provider", PROVIDER, "+919000000777");
@@ -279,6 +321,8 @@ test("worker/index.ts routes every /api/* request through this same authorizatio
 
   // The sequence this suite mirrors. If the worker is reordered or a gateway is dropped, this fails.
   assert.match(worker, /url\.pathname\.startsWith\("\/api\/"\)/, "the worker gates on the /api/ prefix");
+  assert.match(worker, /cleanupExpiredReservationLeases\(env\.DB\)/, "system-owned lease cleanup runs before request authorization");
+  assert.ok(worker.indexOf("cleanupExpiredReservationLeases(env.DB)") < worker.indexOf("authorizePlatformSessionRequest(request,env.DB)"), "an expired session cannot be refused before its server-owned lease is considered");
   assert.match(worker, /authorizePlatformSessionRequest\(request,\s*env\.DB\)/, "the session gateway runs first");
   assert.match(worker, /sessionAccess\s+instanceof\s+Response\s*\)\s*return\s+sessionAccess/, "a session refusal is returned as-is");
   assert.match(worker, /sessionAccess\s*\?\?\s*await\s+authorizeApiRequest\(request,\s*env\)/, "the staff gateway is the fallback, not a replacement");

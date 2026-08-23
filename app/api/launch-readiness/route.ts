@@ -1,3 +1,4 @@
+import{redactUnexpected}from"../../../lib/governed-http-error";
 import{integrationLaunchBlockers}from"../../../lib/integration-readiness";
 import{isPawSpaceServiceCode,listServiceControls,setServiceEnabled}from"../../../lib/service-control";
 type Status="not_started"|"in_progress"|"blocked"|"verified"|"not_applicable";
@@ -45,4 +46,4 @@ export async function POST(request:Request){try{const a=await actor(request);if(
   if(action==="create_exception"){const moduleName=String(body.module||"").trim(),title=String(body.title||"").trim(),detail=String(body.detail||"").trim(),severity=String(body.severity||"medium");if(!moduleName||!title||!detail||!["critical","high","medium","low"].includes(severity))return Response.json({error:"Module, title, detail and valid severity are required"},{status:400});const id=`EX-${now.toString().slice(-8)}`;await db.prepare("INSERT INTO operational_exceptions (id,module,severity,title,detail,booking_id,owner_role,status,created_by,created_at) VALUES (?,?,?,?,?,?,?,'open',?,?)").bind(id,moduleName,severity,title,detail,String(body.bookingId||"")||null,String(body.ownerRole||"Operations"),a.email,now).run();await audit(db,a,"exception",id,"created",{module:moduleName,severity,title});return Response.json({ok:true,id});}
   if(action==="resolve_exception"){const id=String(body.id||""),resolution=String(body.resolution||"").trim();if(!id||resolution.length<8)return Response.json({error:"A clear resolution is required"},{status:400});await db.prepare("UPDATE operational_exceptions SET status='resolved',resolution=?,resolved_by=?,resolved_at=? WHERE id=?").bind(resolution,a.email,now,id).run();await audit(db,a,"exception",id,"resolved",{resolution});return Response.json({ok:true});}
   return Response.json({error:"Unknown action"},{status:400});
-}catch(error){if(error instanceof Response)return error;return Response.json({error:error instanceof Error?error.message:"Unable to update launch readiness"},{status:500});}}
+}catch(error){if(error instanceof Response)return error;return Response.json({error:redactUnexpected(error,"Unable to update launch readiness")},{status:500});}}

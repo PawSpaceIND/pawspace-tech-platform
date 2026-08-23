@@ -1,3 +1,4 @@
+import{redactUnexpected}from"../../../lib/governed-http-error";
 import{listServiceControls}from"../../../lib/service-control";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
@@ -9,5 +10,5 @@ export async function GET(){
     // Customer-safe subset only: no internal disable reason, no audit metadata.
     const data=services.map(service=>({code:service.code,name:service.name,group:service.group,enabled:service.enabled}));
     return json({data});
-  }catch(error){return json({error:error instanceof Error?error.message:"Unable to load service availability"},500);}
+  }catch(error){return json({error:redactUnexpected(error,"Unable to load service availability")},500);}
 }
