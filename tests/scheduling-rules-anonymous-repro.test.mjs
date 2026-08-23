@@ -1,0 +1,7 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {spawn} from "node:child_process";
+import {rm} from "node:fs/promises";
+const port=8797,persistDir=`.scheduling-rules-anonymous-repro-${process.pid}`;
+async function ready(){for(let i=0;i<60;i++){try{if((await fetch(`http://127.0.0.1:${port}/health`)).ok)return;}catch{}await new Promise(resolve=>setTimeout(resolve,500));}throw new Error("anonymous repro worker did not start");}
+test("reproduces anonymous scheduling-rules persistence defect on real D1",{timeout:120000},async()=>{await rm(persistDir,{recursive:true,force:true});let logs="";const child=spawn(process.platform==="win32"?"npx.cmd":"npx",["wrangler","dev","--config","wrangler.scheduling-rules-anonymous-repro.jsonc","--persist-to",persistDir,"--port",String(port)],{stdio:["ignore","pipe","pipe"]});child.stdout.on("data",c=>{logs+=String(c)});child.stderr.on("data",c=>{logs+=String(c)});try{await ready();const response=await fetch(`http://127.0.0.1:${port}/run`);const result=await response.json();assert.equal(response.status,200,`${JSON.stringify(result)}\n${logs}`);assert.equal(result.ok,true);assert.deepEqual(result.reproduction,{get:200,post:201,postRows:2,patch:200,patchedName:"Anonymous modified",patchedPriority:999,delete:200,victimExistsAfterDelete:false});}finally{child.kill("SIGTERM");await new Promise(resolve=>{const timer=setTimeout(resolve,2000);child.once("exit",()=>{clearTimeout(timer);resolve()})});if(!child.killed)child.kill("SIGKILL");await rm(persistDir,{recursive:true,force:true});}});
