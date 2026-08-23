@@ -124,6 +124,38 @@ export async function redeemPoints(db: Db, input: { customerId: string; points: 
   return { bookingId: input.bookingId, pointsRedeemed: pointsUsed, discountApplied: discount, balance: await pawPointsBalance(db, input.customerId) };
 }
 
+/**
+ * A cancelled booking must not strand points that were already redeemed on it. Restoration is
+ * append-only and deterministic per booking, so approval retries repair partial cancellation work
+ * without ever double-crediting the customer.
+ */
+export async function restoreRedeemedPointsForCancelledBooking(db: Db, input: { customerId: string; bookingId: string; actorId: string }) {
+  await ensurePawPointsTables(db);
+  const redeemed = await db.prepare("SELECT customer_id,points FROM paw_points_ledger WHERE idempotency_key=?")
+    .bind(`redeem:booking:${input.bookingId}`).first<Row>();
+  if (!redeemed) return { bookingId: input.bookingId, pointsRestored: 0, alreadyRestored: false, notRequired: true, balance: await pawPointsBalance(db, input.customerId) };
+  if (String(redeemed.customer_id) !== input.customerId) throw new Error("Redeemed PawPoints belong to another customer");
+  const points = Math.max(0, -Math.round(Number(redeemed.points || 0)));
+  if (!points) return { bookingId: input.bookingId, pointsRestored: 0, alreadyRestored: false, notRequired: true, balance: await pawPointsBalance(db, input.customerId) };
+  const result = await post(db, {
+    customerId: input.customerId,
+    entryType: "cancellation_restore",
+    points,
+    reason: `Restored after cancelled booking ${input.bookingId}`,
+    sourceType: "booking_cancellation",
+    bookingId: input.bookingId,
+    idempotencyKey: `restore:cancelled-booking:${input.bookingId}`,
+    createdBy: input.actorId,
+  });
+  return {
+    bookingId: input.bookingId,
+    pointsRestored: result.duplicatePrevented ? 0 : result.points,
+    alreadyRestored: result.duplicatePrevented,
+    notRequired: false,
+    balance: await pawPointsBalance(db, input.customerId),
+  };
+}
+
 export async function pawPointsHistory(db: Db, customerId: string) {
   await ensurePawPointsTables(db);
   const rows = await db.prepare("SELECT entry_type,points,reason,booking_id,created_at FROM paw_points_ledger WHERE customer_id=? ORDER BY created_at DESC LIMIT 50").bind(customerId).all<Row>();
