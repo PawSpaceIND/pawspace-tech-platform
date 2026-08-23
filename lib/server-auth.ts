@@ -101,9 +101,15 @@ export async function securityAudit(db:Db,actor:AuthenticatedActor,action:string
     .bind(crypto.randomUUID(),actor.email,actor.roleCode,action,resourceType,resourceId,outcome,JSON.stringify(detail),Date.now()).run();
 }
 
-/** Preserve only factory-marked 4xx responses; redact every other thrown value, including Responses. */
+/** Preserve factory-marked 4xx responses exactly. For legacy unmarked 4xx control responses, preserve only the status and redact the body. */
 export function authError(error:unknown,fallback="Request failed"){
-  if(error instanceof Response&&isGovernedHttpError(error))return error;
+  if(error instanceof Response){
+    if(isGovernedHttpError(error))return error;
+    if(error.status>=400&&error.status<500){
+      console.error("[api] ungoverned client error redacted",error);
+      return Response.json({error:fallback},{status:error.status,headers:{"cache-control":"no-store"}});
+    }
+  }
   console.error("[api] unexpected error",error);
   return Response.json({error:fallback},{status:500,headers:{"cache-control":"no-store"}});
 }
