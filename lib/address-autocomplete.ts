@@ -11,6 +11,18 @@ async function mapsCredentials(){
   return{ok:true as const,key};
 }
 
+function validCoordinates(latitude:number,longitude:number){
+  return Number.isFinite(latitude)&&Number.isFinite(longitude)&&latitude>=-90&&latitude<=90&&longitude>=-180&&longitude<=180;
+}
+
+export function parseReverseGeocodeCoordinates(searchParams:URLSearchParams){
+  const latitudeParam=searchParams.get("latitude"),longitudeParam=searchParams.get("longitude");
+  if(!latitudeParam?.trim()||!longitudeParam?.trim())return null;
+  const latitude=Number(latitudeParam),longitude=Number(longitudeParam);
+  if(!Number.isFinite(latitude)||!Number.isFinite(longitude))return null;
+  return{latitude,longitude};
+}
+
 export async function searchAddressSuggestions(input:{query:string;sessionToken?:string}):Promise<AutocompleteResult>{
   const query=input.query.trim();
   if(query.length<3)return{status:"configured",suggestions:[]};
@@ -43,6 +55,7 @@ export async function resolvePlaceToAddress(input:{placeId:string;sessionToken?:
 }
 
 export async function reverseGeocode(input:{latitude:number;longitude:number}):Promise<ResolvedAddress>{
+  if(!validCoordinates(input.latitude,input.longitude))return{status:"provider_error",error:"Invalid coordinates"};
   const creds=await mapsCredentials();
   if(!creds.ok)return{status:"configuration_required",error:creds.error};
   try{

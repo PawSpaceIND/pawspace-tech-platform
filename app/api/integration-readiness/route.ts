@@ -2,7 +2,6 @@ import{authError,database,requirePermission,resolveActor,securityAudit}from"../.
 import{integrationLaunchBlockers,integrationReadinessAudit,listIntegrationReadiness,updateIntegrationReadiness}from"../../../lib/integration-readiness";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
-
 export async function GET(request:Request){
  try{
   const actor=await resolveActor(request);requirePermission(actor,"launch.view");const db=await database();

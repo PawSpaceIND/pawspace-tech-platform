@@ -1,5 +1,5 @@
 import{authError}from"../../../lib/server-auth";
-import{resolvePlaceToAddress,reverseGeocode,searchAddressSuggestions}from"../../../lib/address-autocomplete";
+import{parseReverseGeocodeCoordinates,resolvePlaceToAddress,reverseGeocode,searchAddressSuggestions}from"../../../lib/address-autocomplete";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 
@@ -18,9 +18,9 @@ export async function GET(request:Request){
       return json({data});
     }
     if(mode==="reverse"){
-      const latitude=Number(url.searchParams.get("latitude")),longitude=Number(url.searchParams.get("longitude"));
-      if(!Number.isFinite(latitude)||!Number.isFinite(longitude))return json({error:"Valid latitude and longitude are required"},400);
-      const data=await reverseGeocode({latitude,longitude});
+      const coordinates=parseReverseGeocodeCoordinates(url.searchParams);
+      if(!coordinates)return json({error:"Valid latitude and longitude are required"},400);
+      const data=await reverseGeocode(coordinates);
       return json({data});
     }
     return json({error:"Unsupported address lookup mode"},400);
