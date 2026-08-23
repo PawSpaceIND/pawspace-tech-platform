@@ -1,3 +1,5 @@
+import{authError}from"../../../lib/server-auth";
+import{governedJsonError}from"../../../lib/governed-http-error";
 // Public, unauthenticated lead-capture endpoint for the marketing site's contact form.
 // This intentionally does NOT reuse the staff-only /api/crm route directly - that route
 // requires "customers.manage" and exposes broader staff capability. This route is create-only.
@@ -24,7 +26,7 @@ const RATE_LIMIT=5;
 function clean(value:unknown,max:number){return String(value??"").replace(/[\u0000-\u001F\u007F]/g," ").replace(/\s+/g," ").trim().slice(0,max);}
 async function fingerprintFor(request:Request){
   const ip=clean(request.headers.get("cf-connecting-ip"),80);
-  if(!ip)throw new Response("Request origin could not be verified",{status:429});
+  if(!ip)throw governedJsonError({error:"Request origin could not be verified"},429);
   const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(ip));
   return Array.from(new Uint8Array(digest)).map(value=>value.toString(16).padStart(2,"0")).join("");
 }
@@ -33,7 +35,7 @@ async function enforceAbuseGate(db:D1Database,request:Request,now:number){
   await db.prepare("INSERT OR IGNORE INTO public_contact_rate_limits (fingerprint,window_started_at,attempts,updated_at) VALUES (?,?,0,?)").bind(fingerprint,now,now).run();
   await db.prepare("UPDATE public_contact_rate_limits SET attempts=CASE WHEN window_started_at<? THEN 1 ELSE attempts+1 END,window_started_at=CASE WHEN window_started_at<? THEN ? ELSE window_started_at END,updated_at=? WHERE fingerprint=?").bind(cutoff,cutoff,now,now,fingerprint).run();
   const state=await db.prepare("SELECT attempts FROM public_contact_rate_limits WHERE fingerprint=?").bind(fingerprint).first<{attempts:number}>();
-  if(!state||Number(state.attempts)>RATE_LIMIT)throw new Response("Too many contact requests. Please try again later.",{status:429});
+  if(!state||Number(state.attempts)>RATE_LIMIT)throw governedJsonError({error:"Too many contact requests. Please try again later."},429);
 }
 
 export async function POST(request:Request){
@@ -60,7 +62,6 @@ export async function POST(request:Request){
     ]);
     return json({ok:true,leadId},201);
   }catch(error){
-    if(error instanceof Response)return error;
-    return json({error:"Unable to submit your enquiry - please try again"},500);
+    return authError(error,"Unable to submit your enquiry - please try again");
   }
 }

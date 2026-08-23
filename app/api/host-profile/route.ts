@@ -1,7 +1,7 @@
+import{authError}from"../../../lib/server-auth";
 // Public, unauthenticated endpoint - a customer views a host/sitter's rich profile before booking,
 // pre-login. Demo/UAT profile data only (see lib/host-profiles.ts for why this is deliberately
 // separate from lib/provider-public-profile.ts).
-import{redactUnexpected}from"../../../lib/governed-http-error";
 import { getHostProfile, seedDemoHostProfiles } from "../../../lib/host-profiles";
 
 async function database() {
@@ -19,6 +19,6 @@ export async function GET(request: Request) {
     if (!profile) return Response.json({ error: "Profile not found" }, { status: 404 });
     return Response.json({ data: profile }, { headers: { "cache-control": "no-store" } });
   } catch (error) {
-    return Response.json({ error: redactUnexpected(error,"Unable to load host profile") }, { status: 500 });
+    return authError(error,"Unable to load host profile");
   }
 }
