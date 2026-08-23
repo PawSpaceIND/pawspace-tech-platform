@@ -355,3 +355,79 @@ test("the stuck-call counter measures inactivity, not call age, and honours an i
   // Two hours after its last transition: stuck.
   assert.equal((await gov.voiceOutboundReadiness(db, env, DAYTIME + 4 * 3600_000)).callsOpenOverAnHour, 1);
 });
+
+test("a null or scalar JSON body is a 400, not a 500", async () => {
+  await fresh();
+  const route = await import("../app/api/voice-outbound/route.ts");
+  // JSON.parse("null") returns null, so reading body.action off it threw a TypeError and the route
+  // answered 500 to what is really a malformed request.
+  for (const body of ["null", "1", "true", '"request_call"', "[]", "[1,2]", "not json at all", ""]) {
+    const response = await route.POST(new Request(`${HOST}/api/voice-outbound`, {
+      method: "POST", headers: { "content-type": "application/json", "oai-authenticated-user-email": "admin@pawspace.in" }, body,
+    }));
+    assert.ok(response.status < 500, `body ${JSON.stringify(body)} answered ${response.status}`);
+    assert.equal(response.status, 400, JSON.stringify(body));
+  }
+});
+
+test("a nonsense byte limit makes the audio guard refuse, not proceed", async () => {
+  const safe = await import("../lib/voice-safe-fetch.ts");
+  const big = `data:audio/mpeg;base64,${"A".repeat(4096)}`;
+  // Infinity/3 rounds to an infinite ceiling and any comparison against NaN is false, so both size
+  // bounds would have failed OPEN and handed an unbounded payload to atob().
+  for (const maxBytes of [Infinity, NaN, -1, Number.POSITIVE_INFINITY]) {
+    const error = await (async () => { try { safe.decodeInlineAudio(big, { maxBytes }); return null; } catch (thrown) { return thrown; } })();
+    assert.equal(error?.code, "invalid_limit", `maxBytes=${maxBytes}`);
+  }
+  // A sane limit still works, so this is a guard and not a lockout.
+  assert.equal(safe.decodeInlineAudio("data:audio/mpeg;base64,AAECAw==", { maxBytes: 1024 }).bytes.byteLength, 4);
+});
+
+test("a call stranded in ANY non-terminal state is surfaced as open", async () => {
+  const machine = await import("../lib/voice-call-state.ts");
+  const ctx = await fresh();
+  await gov.recordVoiceConsent(ctx.db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
+  const call = await gov.requestOutboundVoiceCall(ctx.db, ctx.env, { idempotencyKey: "open-1", useCase: "booking_confirmation", phone: ALLOWLISTED_PHONE, cityId: "blr", customerId: "CON-V1", leadId: "LEAD-V1", bookingId: "BKG-V1", actorId: "admin@pawspace.in", actorPermissions: ROLES.founder, asOf: DAYTIME });
+
+  // `queued` was missing from the enumerated list: a call whose execution stopped between the queued
+  // transition and provider contact holds an ACTIVE dial reservation, consuming the recipient's cap,
+  // while being invisible on the readiness surface.
+  for (const state of ["requested", "policy_check", "queued", "dialing", "connected", "handoff_requested", "no_answer"]) {
+    ctx.sqlite.prepare("UPDATE voice_call_orders SET state=?,updated_at=? WHERE id=?").run(state, DAYTIME, call.callId);
+    const readiness = await gov.voiceOutboundReadiness(ctx.db, ctx.env, DAYTIME + 2 * 3600_000);
+    assert.equal(readiness.callsOpenOverAnHour, 1, `${state} must count as open`);
+  }
+  // Terminal states never count, and the set is derived from the machine rather than enumerated here.
+  for (const state of machine.VOICE_TERMINAL_STATES) {
+    ctx.sqlite.prepare("UPDATE voice_call_orders SET state=?,updated_at=? WHERE id=?").run(state, DAYTIME, call.callId);
+    assert.equal((await gov.voiceOutboundReadiness(ctx.db, ctx.env, DAYTIME + 2 * 3600_000)).callsOpenOverAnHour, 0, `${state} is terminal`);
+  }
+});
+
+test("recording is refused at the provider boundary without the environment approval", async () => {
+  const telephony = await import("../lib/voice-telephony-provider.ts");
+  const { uatVoiceEnv } = await import("./helpers/voice-harness.mjs");
+  const env = uatVoiceEnv({ PAWSPACE_VOICE_TRANSPORT: "" });
+  const intent = { callRef: "VCALL-X", toNumber: "+919876543210", statusCallbackUrl: env.PAWSPACE_VOICE_STATUS_CALLBACK_URL, recordingAllowed: true };
+  // Recording is a consent decision. Sending Record=true on the caller's word alone would let a direct
+  // provider caller start carrier-side recording with the approval flag unset.
+  await assert.rejects(
+    () => telephony.exotelTelephony(env).createCall(intent),
+    /Call recording is not approved/,
+  );
+  // With the approval present the same intent gets as far as the network call (which then fails, since
+  // there is no Exotel to answer) - proving the refusal above came from the approval check.
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ Call: { Sid: "EX-1", Status: "queued" } });
+  try {
+    const approvedEnv = uatVoiceEnv({ PAWSPACE_VOICE_TRANSPORT: "", PAWSPACE_VOICE_RECORDING_APPROVED: "true" });
+    const handle = await telephony.exotelTelephony(approvedEnv).createCall({ ...intent, statusCallbackUrl: approvedEnv.PAWSPACE_VOICE_STATUS_CALLBACK_URL });
+    assert.equal(handle.providerCallId, "EX-1");
+  } finally { globalThis.fetch = original; }
+  // And a non-recording call is unaffected either way.
+  globalThis.fetch = async () => Response.json({ Call: { Sid: "EX-2", Status: "queued" } });
+  try {
+    const handle = await telephony.exotelTelephony(env).createCall({ ...intent, recordingAllowed: false });
+    assert.equal(handle.providerCallId, "EX-2");
+  } finally { globalThis.fetch = original; }
+});

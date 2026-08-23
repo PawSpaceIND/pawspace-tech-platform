@@ -247,6 +247,10 @@ async function readCapped(response: Response, maxBytes: number): Promise<Uint8Ar
 export function decodeInlineAudio(reference: string, options: { allowedMediaTypes?: string[]; maxBytes?: number } = {}) {
   const allowedMediaTypes = options.allowedMediaTypes || VOICE_AUDIO_MEDIA_TYPES;
   const maxBytes = options.maxBytes ?? DEFAULT_VOICE_MAX_BYTES;
+  // A non-finite or negative limit makes every size comparison below useless: Infinity/3 rounds to an
+  // infinite ceiling and any comparison against NaN is false, so both bounds would fail OPEN and hand an
+  // unbounded payload to atob(). A safety function given a nonsense limit must refuse, not proceed.
+  if (!Number.isFinite(maxBytes) || maxBytes < 0) throw new VoiceFetchRefused("invalid_limit", "Inline audio byte limit must be a finite, non-negative number");
   // Written without the /s flag: the tsconfig target predates dotAll, and [\s\S] is exactly what it
   // means anyway - base64 payloads are long and may contain newlines.
   const match = /^data:([^;,]*)(;base64)?,([\s\S]*)$/.exec(String(reference ?? ""));

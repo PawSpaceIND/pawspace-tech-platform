@@ -21,10 +21,11 @@
  *     The raw body is kept as a SHA-256 hash, never as content.
  */
 
+import { chunkedIn } from "./d1-chunked-in";
 import { createUnifiedCase } from "./unified-case-center";
 import { ensureCommunicationTables, seedCommunicationPolicy, type CommunicationPurpose } from "./communication-engine";
 import { canonicalDialNumber, normalisedDialKey, resolveVoiceCallGate, salesOutboundApproved, callRecordingApproved, statusCallbackUrl, voiceCallReadiness, voiceMode } from "./voice-call-gate";
-import { assertVoiceCallTransition, canVoiceCallTransition, isVoiceCallState, voiceFailureReasonClass, VOICE_RETRYABLE_STATES, type VoiceCallState } from "./voice-call-state";
+import { assertVoiceCallTransition, canVoiceCallTransition, isVoiceCallState, voiceFailureReasonClass, VOICE_CALL_STATES, VOICE_RETRYABLE_STATES, VOICE_TERMINAL_STATES, type VoiceCallState } from "./voice-call-state";
 import { selectTelephonyProvider, sha256Hex, telephonyProviderStatus, TelephonyProviderUnavailable, type TelephonyEventKind, type TelephonyProvider } from "./voice-telephony-provider";
 
 type Db = D1Database;
@@ -741,7 +742,22 @@ export async function voiceOutboundReadiness(db: Db, env: Env, asOf = Date.now()
   // Measured from updated_at, not requested_at: a long call that keeps transitioning is healthy, and a
   // call that stopped moving an hour ago is the thing worth surfacing. asOf is injectable so a test can
   // pin it like every other function here.
-  const stuck = await db.prepare("SELECT COUNT(*) n FROM voice_call_orders WHERE state IN ('dialing','ringing','connected','speaking','listening','handoff_requested') AND updated_at<?").bind(asOf - 3_600_000).first<Row>();
+  //
+  // The states are DERIVED as "everything the state machine does not consider terminal" rather than
+  // enumerated. The enumerated version omitted `queued` - a call whose execution stopped between the
+  // queued transition and provider contact holds an active dial reservation (consuming the recipient's
+  // cap) while being invisible here - and it would have drifted again the next time a state was added.
+  //
+  // Routed through chunkedIn to satisfy the platform-wide rule that no library hand-builds an IN list
+  // (tests/d1-in-clause-fanout.test.mjs). This particular list is a compile-time constant of ~27 state
+  // names so it can never approach D1's 100-parameter cap, but conforming costs nothing and leaves that
+  // guard intact rather than carving an exception into it.
+  const openStates = VOICE_CALL_STATES.filter(state => !VOICE_TERMINAL_STATES.includes(state));
+  const counts = await chunkedIn(openStates, async (chunk, placeholders) => {
+    const row = await db.prepare(`SELECT COUNT(*) n FROM voice_call_orders WHERE state IN (${placeholders}) AND updated_at<?`).bind(...chunk, asOf - 3_600_000).first<Row>();
+    return [Number(row?.n || 0)];
+  });
+  const stuck = { n: counts.reduce((total, value) => total + value, 0) };
   return {
     gate: voiceCallReadiness(env),
     transport: telephonyProviderStatus(env),

@@ -13,7 +13,14 @@ async function boundedBody(request:Request):Promise<Body>{
   try{raw=await readBoundedRequestText(request,MAX_REQUEST_BYTES);}
   catch(error){if(error instanceof VoiceFetchRefused)throw new Response("Request body is too large",{status:413});throw error;}
   if(!raw.trim())return {};
-  try{return JSON.parse(raw) as Body;}catch{return {};}
+  let parsed:unknown;
+  try{parsed=JSON.parse(raw);}catch{return {};}
+  // JSON.parse("null") returns null and JSON.parse("1") returns a number, so reading body.action off
+  // the result threw a TypeError and the route answered 500 to what is really a malformed request.
+  // Anything that is not a plain object is treated as an absent body, which the action dispatch below
+  // already answers with a 400.
+  if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))return {};
+  return parsed as Body;
 }
 async function runtime(){const{env}=await import("cloudflare:workers");return env as unknown as Record<string,unknown>;}
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin voice write blocked",{status:403});}
@@ -90,6 +97,13 @@ export async function POST(request:Request){
     }
 
     if(action==="request_call"){
+      // Caller-input validation belongs here. requestOutboundVoiceCall throws plain Errors for a missing
+      // idempotency key or an unreadable number, and authError maps a plain Error to 500 - so a malformed
+      // request was answered as a server fault. Each of these is a 400 with the field named.
+      for(const [field,value] of [["idempotencyKey",text(body.idempotencyKey)],["useCase",text(body.useCase)],["phone",text(body.phone)]] as const){
+        if(!value)return json({error:`${field} is required`},400);
+      }
+      if(!text(body.customerId)&&!text(body.leadId))return json({error:"customerId or leadId is required"},400);
       const data=await requestOutboundVoiceCall(db,env,{idempotencyKey:text(body.idempotencyKey),useCase:text(body.useCase),phone:text(body.phone),cityId:text(body.cityId)||"blr",customerId:text(body.customerId)||null,leadId:text(body.leadId)||null,bookingId:text(body.bookingId)||null,campaignId:text(body.campaignId)||null,actorId:actor.email,actorPermissions:permissions,simulatedOutcome:null});
       await securityAudit(db,actor,"voice.call.request","voice_call",data.callId,data.state.startsWith("blocked_")?"denied":"completed",{state:data.state,useCase:data.useCase,productionCall:data.productionCall});
       return json({data},callStatusCode(data));

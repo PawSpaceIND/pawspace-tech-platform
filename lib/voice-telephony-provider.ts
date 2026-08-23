@@ -256,6 +256,11 @@ export function exotelTelephony(env: Env): TelephonyProvider {
       const approved = statusCallbackUrl(env);
       if (!approved) throw new TelephonyProviderUnavailable("A https status callback URL is required before a call may be placed (PAWSPACE_VOICE_STATUS_CALLBACK_URL)");
       if (intent.statusCallbackUrl !== approved) throw new TelephonyProviderUnavailable("The status callback does not match the approved environment callback");
+      // Recording is a consent and compliance decision, so the environment approval is checked HERE and
+      // not only by the caller that set the flag. Sending Record=true on a caller's word alone would let
+      // a direct provider caller start carrier-side recording while
+      // PAWSPACE_VOICE_RECORDING_APPROVED is false.
+      if (intent.recordingAllowed && !callRecordingApproved(env)) throw new TelephonyProviderUnavailable("Call recording is not approved for this environment (PAWSPACE_VOICE_RECORDING_APPROVED)");
       const body = new URLSearchParams({
         From: intent.toNumber,
         CallerId: callerId,
