@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import * as nodeModule from "node:module";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
 // ---------------------------------------------------------------------------
 // enqueueCommunication contract — EXECUTABLE blast-radius cover.
@@ -21,31 +21,9 @@ import * as nodeModule from "node:module";
 // proves the race handler does not swallow a genuine error.
 // ---------------------------------------------------------------------------
 
-const WORKERS_SHIM = `export const env = new Proxy({}, { get: (_, key) => globalThis.__PAWSPACE_TEST_ENV?.[key] });`;
-const workersUrl = `data:text/javascript,${encodeURIComponent(WORKERS_SHIM)}`;
-if (typeof nodeModule.registerHooks === "function") {
-  nodeModule.registerHooks({
-    resolve(specifier, context, nextResolve) {
-      if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
-      try { return nextResolve(specifier, context); }
-      catch (error) {
-        if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
-        throw error;
-      }
-    },
-  });
-} else {
-  const hook = `const workersUrl=${JSON.stringify(workersUrl)};
-  export async function resolve(specifier, context, nextResolve) {
-    if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
-    try { return await nextResolve(specifier, context); }
-    catch (error) {
-      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(specifier + ".ts", context);
-      throw error;
-    }
-  }`;
-  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
-}
+// The shared helper carries both registration paths: module.registerHooks needs Node >=22.15 and
+// CI pins 22.13.0, where the inline form throws and takes the whole file down before any test runs.
+installWorkersHooks("__ENQUEUE_DB__");
 
 function makeD1(sqlite) {
   function statement(sql, args) {
@@ -69,7 +47,7 @@ const CANONICAL_CUSTOMERS = "CREATE TABLE IF NOT EXISTS canonical_customers (id 
 async function world({ withCustomers = true } = {}) {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
-  globalThis.__PAWSPACE_TEST_ENV = { DB: db };
+  globalThis.__ENQUEUE_DB__ = db;
   if (withCustomers) sqlite.exec(CANONICAL_CUSTOMERS);
   const comms = await import("../lib/communication-engine.ts");
   await comms.ensureCommunicationTables(db);

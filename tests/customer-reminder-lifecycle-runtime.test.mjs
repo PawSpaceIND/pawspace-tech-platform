@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import * as nodeModule from "node:module";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
 // ---------------------------------------------------------------------------
 // Reminders / lifecycle — EXECUTABLE closure.
@@ -26,31 +26,9 @@ import * as nodeModule from "node:module";
 //       documented duplicatePrevented result.
 // ---------------------------------------------------------------------------
 
-const WORKERS_SHIM = `export const env = new Proxy({}, { get: (_, key) => globalThis.__PAWSPACE_TEST_ENV?.[key] });`;
-const workersUrl = `data:text/javascript,${encodeURIComponent(WORKERS_SHIM)}`;
-if (typeof nodeModule.registerHooks === "function") {
-  nodeModule.registerHooks({
-    resolve(specifier, context, nextResolve) {
-      if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
-      try { return nextResolve(specifier, context); }
-      catch (error) {
-        if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
-        throw error;
-      }
-    },
-  });
-} else {
-  const hook = `const workersUrl=${JSON.stringify(workersUrl)};
-  export async function resolve(specifier, context, nextResolve) {
-    if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
-    try { return await nextResolve(specifier, context); }
-    catch (error) {
-      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(specifier + ".ts", context);
-      throw error;
-    }
-  }`;
-  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
-}
+// The shared helper carries both registration paths: module.registerHooks needs Node >=22.15 and
+// CI pins 22.13.0, where the inline form throws and takes the whole file down before any test runs.
+installWorkersHooks("__REMINDER_DB__");
 
 function makeD1(sqlite) {
   function statement(sql, args) {
@@ -81,7 +59,7 @@ let seq = 0;
 async function world({ withCustomers = true, withBookings = true, withSubscriptions = true } = {}) {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
-  globalThis.__PAWSPACE_TEST_ENV = { DB: db };
+  globalThis.__REMINDER_DB__ = db;
   if (withBookings) sqlite.exec(CANONICAL_BOOKINGS);
   if (withCustomers) sqlite.exec(CANONICAL_CUSTOMERS);
   if (withSubscriptions) sqlite.exec(SUBSCRIPTIONS);
