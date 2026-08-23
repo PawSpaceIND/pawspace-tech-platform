@@ -192,7 +192,7 @@ export default function PartnerMobileApp() {
         {error && <div className={styles.error}>{error}</div>}
 
         {tab === "home" && <>
-          <div className={styles.greeting}><div><small>PAWSPACE PARTNER MOBILE</small><h1>{providerName}</h1><p>{identity?.roleCode ? label(identity.roleCode) : "Identity-scoped UAT workspace"}</p></div><button aria-label="Refresh jobs" onClick={() => setRefreshKey((value) => value + 1)}>↻</button></div>
+          <div className={styles.greeting}><div><small>PAWSPACE PARTNER MOBILE</small><h1>{providerName}</h1><p>{identity?.roleCode ? label(identity.roleCode) : "Identity-scoped UAT workspace"}</p></div><button aria-label="Refresh jobs" disabled={!identity?.subjectId} title={!identity?.subjectId ? "Verified provider sign-in required to refresh jobs" : "Refresh jobs"} onClick={() => setRefreshKey((value) => value + 1)}>↻</button></div>
 
           <section className={styles.heroCard}>
             <div className={styles.heroTop}><span>NEXT ASSIGNMENT</span>{selected && <em>{label(selected.status)}</em>}</div>
@@ -225,7 +225,7 @@ export default function PartnerMobileApp() {
         </>}
 
         {tab === "jobs" && <>
-          <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>CANONICAL WORK ORDERS</small><h1>My jobs</h1></div><button onClick={() => setRefreshKey((value) => value + 1)}>↻</button></div>
+          <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>CANONICAL WORK ORDERS</small><h1>My jobs</h1></div><button disabled={!identity?.subjectId} title={!identity?.subjectId ? "Verified provider sign-in required to refresh jobs" : "Refresh jobs"} onClick={() => setRefreshKey((value) => value + 1)}>↻</button></div>
           {jobs.length === 0 && !error && <div className={styles.empty}>No canonical Grooming jobs assigned yet.</div>}
           <div className={styles.jobList}>{jobs.map((job) => <button key={job.bookingId} className={selected?.bookingId === job.bookingId ? styles.jobSelected : ""} onClick={() => setSelectedId(job.bookingId)}><div><small>{when(job.scheduledStart)}</small><strong>{job.packageName}</strong><span>{job.pets.map((pet) => pet.name).join(", ")} · {job.customer.name}</span></div><em>{label(job.status)}</em></button>)}</div>
           {selected && <section className={styles.detailCard}>
@@ -260,7 +260,7 @@ export default function PartnerMobileApp() {
         </>}
 
         {tab === "tracking" && <>
-          <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>ACTIVE JOB LOCATION</small><h1>GPS & ETA</h1></div><button onClick={() => setRefreshKey((value) => value + 1)}>↻</button></div>
+          <div className={styles.pageHead}><button onClick={() => setTab("home")}>‹</button><div><small>ACTIVE JOB LOCATION</small><h1>GPS & ETA</h1></div><button disabled={!identity?.subjectId} title={!identity?.subjectId ? "Verified provider sign-in required to refresh jobs" : "Refresh jobs"} onClick={() => setRefreshKey((value) => value + 1)}>↻</button></div>
           {activeJobs.length > 1 && <div className={styles.selector}>{activeJobs.map((job) => <button key={job.bookingId} className={selected?.bookingId === job.bookingId ? styles.selectorActive : ""} onClick={() => setSelectedId(job.bookingId)}>{job.pets[0]?.name || job.packageName}<small>{label(job.status)}</small></button>)}</div>}
           {!selected && <div className={styles.empty}>No assigned job is available for tracking.</div>}
           {selected && !canTrack && <section className={styles.notice}><b>GPS is not active yet</b><p>This booking is currently <strong>{label(travelState)}</strong>. Accept the job and start the journey before location sharing can begin.</p><button onClick={() => setTab("jobs")}>Open job</button></section>}
