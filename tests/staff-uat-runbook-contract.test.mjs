@@ -9,21 +9,31 @@ test("staff UAT runbook documents the canonical cross-role sequence, in order", 
   // Presence alone would let the runbook be reordered - a provider activated before Ops verification,
   // say - while every marker still appears and CI stays green. The stages are therefore required to
   // appear in this order, which is the claim the test name makes.
+  // All 18 numbered stages, in the runbook's own order. The list previously held 13 and silently
+  // skipped stages 2, 7, 8, 9 and 12, so those five could be reordered or dropped while this test
+  // stayed green - and stage 9 (service lifecycle and proof) sitting between replacement governance
+  // and exception recovery is exactly the kind of ordering the sequence exists to hold.
   const sequence = [
-    "Customer identity and booking",
-    "Provider self-service",
-    "Ops verification and interview",
-    "UAT provider activation",
-    "Assignment and provider work",
-    "Operations exception/recovery",
-    "Finance, GST and accounting",
-    "CRM and Revenue Mission",
-    "Unified case/escalation",
-    "AI engagement",
-    "Human handoff",
-    "Analytics/reporting",
-    "Hosted real-D1 60-booking swarm",
+    "Customer identity and booking",              //  1
+    "Provider onboarding configuration",          //  2
+    "Provider self-service",                      //  3
+    "Ops verification and interview",             //  4
+    "UAT provider activation",                    //  5
+    "Assignment and provider work",               //  6
+    "GPS / ETA / lateness recovery",              //  7
+    "Replacement and accountability governance",  //  8
+    "Service lifecycle and proof",                //  9
+    "Operations exception/recovery",              // 10
+    "Finance, GST and accounting",                // 11
+    "Partner settlement / reconciliation",        // 12
+    "CRM and Revenue Mission",                    // 13
+    "Unified case/escalation",                    // 14
+    "AI engagement",                              // 15
+    "Human handoff",                              // 16
+    "Analytics/reporting",                        // 17
+    "Hosted real-D1 60-booking swarm",            // 18
   ];
+  assert.equal(sequence.length, 18, "the runbook has 18 numbered stages; every one must be order-protected");
   let previous = -1, previousMarker = "start of document";
   for (const marker of sequence) {
     const at = doc.indexOf(marker);
