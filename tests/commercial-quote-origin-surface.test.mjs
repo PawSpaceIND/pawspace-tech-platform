@@ -201,7 +201,11 @@ for (const route of ROUTES) {
 
 test("food-commercial is identity-bound and requires an owned compatible pet", async () => {
   const { sqlite, mod } = await clean("food");
-  const anonymous = await call(mod, "food", { sku: "food-uat-cat-adult-1kg", quantity: 1, zoneId: "blr-east" }, {});
+  const publicBody = { sku: "food-uat-cat-adult-1kg", quantity: 1, zoneId: "blr-east" };
+  const foreign = await call(mod, "food", publicBody, { origin: "https://attacker.test" });
+  assert.equal(foreign.status, 403, "Food blocks a foreign Origin before authentication");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM food_commercial_quotes").get().n, 0);
+  const anonymous = await call(mod, "food", publicBody, {});
   assert.equal(anonymous.status, 400);
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM food_commercial_quotes").get().n, 0);
   sqlite.exec("CREATE TABLE canonical_pets (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,species TEXT NOT NULL)");
