@@ -28,8 +28,8 @@ export type WorkQueueAction="claim"|"acknowledge"|"start"|"resolve"|"dismiss"|"a
 
 const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
 const OPEN_STATUSES=["open","acknowledged","in_progress"];
-export const UNASSIGNED_GRACE_MS=30*60_000;      // work order awaiting acceptance for 30min -> task
-export const RENEWAL_OVERDUE_MS=24*3_600_000;    // food renewal unpaid 24h past due -> retention task
+export const UNASSIGNED_GRACE_MS=30*60_000;
+export const RENEWAL_OVERDUE_MS=24*3_600_000;
 
 export async function ensureWorkQueueTables(db:Db){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS ops_work_queue_tasks (id TEXT PRIMARY KEY,rule TEXT NOT NULL,queue TEXT NOT NULL,priority TEXT NOT NULL,title TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',booking_id TEXT,customer_id TEXT,provider_id TEXT,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,source_key TEXT NOT NULL UNIQUE,status TEXT NOT NULL DEFAULT 'open',owner TEXT,sla_minutes INTEGER NOT NULL,due_at INTEGER NOT NULL,escalated INTEGER NOT NULL DEFAULT 0,escalated_at INTEGER,resolution_note TEXT,resolved_by TEXT,resolved_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
@@ -50,7 +50,6 @@ async function openTask(db:Db,candidate:Candidate,now:number){
  return Number(inserted.meta?.changes||0)>0;
 }
 
-/** Detect exception conditions from the canonical tables and open one task per instance. */
 export async function sweepWorkQueue(db:Db,input:{actorId:string;now?:number}={actorId:"system:work-queue"}){
  await ensureWorkQueueTables(db);
  const now=input.now??Date.now(),created:Record<string,number>={};
@@ -85,7 +84,6 @@ export async function sweepWorkQueue(db:Db,input:{actorId:string;now?:number}={a
   for(const row of rows.results)await record({rule:"lead_response_overdue",queue:"crm_escalation",priority:"high",title:`Lead ${String(row.id)} (${String(row.service)}) has no first response past its due time`,customerId:String(row.customer_id),entityType:"lead_work_item",entityId:String(row.id),slaMinutes:120,detail:{leadOwner:row.owner,firstActionDueAt:Number(row.first_action_due_at)}});
  }
 
- // Escalation pass: any still-open task past its SLA due time is flagged exactly once.
  const overdue=await db.prepare("SELECT id,queue,rule FROM ops_work_queue_tasks WHERE status IN ('open','acknowledged','in_progress') AND escalated=0 AND due_at<? LIMIT 500").bind(now).all<Row>();
  let escalatedCount=0;
  for(const row of overdue.results){
@@ -96,7 +94,6 @@ export async function sweepWorkQueue(db:Db,input:{actorId:string;now?:number}={a
  return{created,totalCreated,escalated:escalatedCount,sweptAt:now,backgroundSchedulerConfigured:false};
 }
 
-/** Owner/status mutations with a full event trail. Terminal states are final; lost races are governed errors. */
 export async function mutateWorkQueueTask(db:Db,input:{taskId:string;action:WorkQueueAction;actorId:string;note?:string;owner?:string}){
  await ensureWorkQueueTables(db);
  if(!input.taskId||!input.action||!input.actorId)throw new Response("Task, action and actor are required",{status:400});
@@ -135,11 +132,11 @@ export async function mutateWorkQueueTask(db:Db,input:{taskId:string;action:Work
  throw new Response("Unsupported work queue action",{status:400});
 }
 
-/** One-screen TODAY block (Business Command Centre) + queues, from the same canonical tables. */
 export async function workQueueSnapshot(db:Db,input:{now?:number}={}){
- await ensureWorkQueueTables(db);
  const now=input.now??Date.now(),today=new Date(now).toISOString().slice(0,10);
- const tasks=await db.prepare("SELECT * FROM ops_work_queue_tasks ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 ELSE 2 END,due_at LIMIT 500").all<Row>();
+ const tasks=await tableExists(db,"ops_work_queue_tasks")
+  ?await db.prepare("SELECT * FROM ops_work_queue_tasks ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 ELSE 2 END,due_at LIMIT 500").all<Row>()
+  :{results:[] as Row[]};
  const open=tasks.results.filter(row=>OPEN_STATUSES.includes(String(row.status)));
  const queues:Record<string,{open:number;escalated:number;tasks:Row[]}>={};
  for(const row of tasks.results){const queue=String(row.queue);queues[queue]??={open:0,escalated:0,tasks:[]};queues[queue].tasks.push(row);if(OPEN_STATUSES.includes(String(row.status))){queues[queue].open++;if(Number(row.escalated)===1)queues[queue].escalated++;}}
@@ -147,9 +144,6 @@ export async function workQueueSnapshot(db:Db,input:{now?:number}={}){
  let commandCentre:Record<string,unknown>={available:false};
  if(await tableExists(db,"canonical_bookings")){
   const todays=await db.prepare("SELECT id,service_code,status,total_amount,scheduled_start FROM canonical_bookings WHERE substr(scheduled_start,1,10)=?").bind(today).all<Row>();
-  // Revenue recognition matches lib/pnl-reporting.ts and buildCompanyAnalytics: cancelled AND
-  // draft bookings carry a total_amount but are not recognized revenue. Excluding only cancelled
-  // made the founder's headline TODAY number disagree with the P&L for the same day.
   const recognized=(row:Row)=>!["cancelled","draft"].includes(String(row.status));
   const active=todays.results.filter(recognized);
   const byService:Record<string,{bookings:number;revenue:number;completed:number;cancelled:number}>={};
@@ -178,9 +172,11 @@ export async function workQueueSnapshot(db:Db,input:{now?:number}={}){
 }
 
 export async function workQueueTaskWithEvents(db:Db,taskId:string){
- await ensureWorkQueueTables(db);
+ if(!await tableExists(db,"ops_work_queue_tasks"))return null;
  const task=await db.prepare("SELECT * FROM ops_work_queue_tasks WHERE id=?").bind(taskId).first<Row>();
  if(!task)return null;
- const events=await db.prepare("SELECT event_type,actor_id,note,created_at FROM ops_work_queue_events WHERE task_id=? ORDER BY created_at DESC LIMIT 50").bind(taskId).all<Row>();
+ const events=await tableExists(db,"ops_work_queue_events")
+  ?await db.prepare("SELECT event_type,actor_id,note,created_at FROM ops_work_queue_events WHERE task_id=? ORDER BY created_at DESC LIMIT 50").bind(taskId).all<Row>()
+  :{results:[] as Row[]};
  return{task,events:events.results};
 }
