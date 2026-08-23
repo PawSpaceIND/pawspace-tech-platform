@@ -1,4 +1,4 @@
-import{redactUnexpected}from"../../../lib/governed-http-error";
+import{authError}from"../../../lib/server-auth";
 import{captureHaptikLead,captureHaptikCallback,fetchHaptikTimeSlots,requestHaptikBooking}from"../../../lib/haptik-integration-governance";
 import{recordBotCallDisposition}from"../../../lib/bot-call-disposition";
 
@@ -20,7 +20,11 @@ export async function POST(request:Request){
   try{
     const env=await runtime();assertHaptik(env,request);
     const db=await database();
-    const body=await request.json() as Record<string,unknown>;
+    // A malformed body is the caller's fault and must stay a permanent 400, or Haptik retries it
+    // forever. Every other failure is ours and must be a retryable 500 via the governed boundary.
+    let body:Record<string,unknown>;
+    try{body=await request.json() as Record<string,unknown>;}
+    catch{return json({error:"Malformed Haptik request body"},400);}
     const action=String(body.action||"").trim();
     const actorId="haptik_voice";
     if(action==="capture_lead")return json({data:await captureHaptikLead(db,{idempotencyKey:String(body.idempotencyKey||""),phone:String(body.phone||""),name:body.name as string,service:body.service as string,city:body.city as string,source:body.source as string,qualification:body.qualification as Record<string,unknown>,actorId})},201);
@@ -33,6 +37,6 @@ export async function POST(request:Request){
     return json({error:"Unsupported Haptik action. Use capture_lead | capture_callback | fetch_slots | request_booking | record_call_outcome"},400);
   }catch(error){
     if(error instanceof Response){const t=await error.text().catch(()=>"" );return json(t?JSON.parse(t):{error:"Haptik request rejected"},error.status);}
-    return json({error:redactUnexpected(error,"Unable to process Haptik request")},400);
+    return authError(error,"Unable to process Haptik request");
   }
 }

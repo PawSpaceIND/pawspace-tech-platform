@@ -1,8 +1,7 @@
-import{redactUnexpected}from"../../../lib/governed-http-error";
-import{database}from"../../../lib/server-auth";
+import{authError,database}from"../../../lib/server-auth";
 import{createFoodQuote,listFoodCatalogue,type FoodPaymentMode}from"../../../lib/food-governance";
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOriginWrite(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin Food quote blocked",{status:403})}
-async function failure(error:unknown){if(error instanceof Response){const message=await error.text().catch(()=>"");return json({error:message||"Food commercial request failed"},error.status||500)}return json({error:redactUnexpected(error,"Food commercial request failed")},500)}
+async function failure(error:unknown){if(error instanceof Response&&error.status>=400&&error.status<500){const message=await error.text().catch(()=>"");return json({error:message||"Food commercial request failed"},error.status);}return authError(error,"Food commercial request failed");}
 export async function GET(request:Request){try{const zoneId=new URL(request.url).searchParams.get("zoneId")||"blr-east",items=await listFoodCatalogue(await database(),zoneId);return json({data:{items,source:"canonical_food_uat_governance",inventoryMode:"uat_seed",productionInventoryVerified:false,deliveryFeePolicy:"configuration_required",liveMoney:false}})}catch(error){return failure(error)}}
 export async function POST(request:Request){try{sameOriginWrite(request);const body=await request.json() as {sku?:string;quantity?:number;zoneId?:string;paymentMode?:FoodPaymentMode;couponCode?:string};if(!body.sku)return json({error:"Food SKU is required"},400);const quote=await createFoodQuote(await database(),{sku:body.sku,quantity:Number(body.quantity||0),zoneId:body.zoneId||"blr-east",paymentMode:body.paymentMode||"sandbox_deferred",couponCode:body.couponCode});return json({data:quote},201)}catch(error){return failure(error)}}
