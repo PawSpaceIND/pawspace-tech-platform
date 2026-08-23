@@ -1,13 +1,31 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { reverseGeocode } from "../lib/address-autocomplete.ts";
+import { parseReverseGeocodeCoordinates, reverseGeocode } from "../lib/address-autocomplete.ts";
 
 const read = (p) => readFile(new URL(p, import.meta.url), "utf8");
 const readinessRoute = await read("../app/api/integration-readiness/route.ts");
+const addressRoute = await read("../app/api/address-autocomplete/route.ts");
 const registry = await read("../lib/integration-readiness.ts");
 const idfy = await read("../lib/idfy-verification-client.ts");
 const verification = await read("../lib/provider-verification-mandate.ts");
+
+test("reverse-geocode request parsing rejects missing and empty coordinates before numeric coercion", () => {
+  for (const query of [
+    "longitude=77.59",
+    "latitude=12.97",
+    "latitude=&longitude=77.59",
+    "latitude=12.97&longitude=",
+    "latitude=%20%20&longitude=77.59",
+    "latitude=12.97&longitude=%20%20",
+  ]) assert.equal(parseReverseGeocodeCoordinates(new URLSearchParams(query)), null);
+  assert.deepEqual(parseReverseGeocodeCoordinates(new URLSearchParams("latitude=12.97&longitude=77.59")), {
+    latitude: 12.97,
+    longitude: 77.59,
+  });
+  assert.match(addressRoute, /parseReverseGeocodeCoordinates\(url\.searchParams\)/);
+  assert.match(addressRoute, /if\(!coordinates\)return json\(\{error:"Valid latitude and longitude are required"\},400\)/);
+});
 
 // Lane 2 permanent regression gate: invalid public Maps input must return before the
 // cloudflare:workers credential import and before provider traffic.
