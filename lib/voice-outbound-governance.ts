@@ -23,7 +23,7 @@
 
 import { createUnifiedCase } from "./unified-case-center";
 import { ensureCommunicationTables, seedCommunicationPolicy, type CommunicationPurpose } from "./communication-engine";
-import { normalisedDialKey, resolveVoiceCallGate, salesOutboundApproved, callRecordingApproved, statusCallbackUrl, voiceCallReadiness, voiceMode } from "./voice-call-gate";
+import { canonicalDialNumber, normalisedDialKey, resolveVoiceCallGate, salesOutboundApproved, callRecordingApproved, statusCallbackUrl, voiceCallReadiness, voiceMode } from "./voice-call-gate";
 import { assertVoiceCallTransition, canVoiceCallTransition, isVoiceCallState, voiceFailureReasonClass, VOICE_RETRYABLE_STATES, type VoiceCallState } from "./voice-call-state";
 import { selectTelephonyProvider, sha256Hex, telephonyProviderStatus, TelephonyProviderUnavailable, type TelephonyEventKind, type TelephonyProvider } from "./voice-telephony-provider";
 
@@ -80,7 +80,7 @@ const RESTRICTED_SCRIPT_CLAIMS = ["free", "refund", "guarantee", "guaranteed", "
 export async function ensureVoiceCallTables(db: Db) {
   await ensureCommunicationTables(db);
   await db.batch([
-    db.prepare("CREATE TABLE IF NOT EXISTS voice_call_orders (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,direction TEXT NOT NULL,use_case TEXT NOT NULL,purpose TEXT NOT NULL,campaign_id TEXT,customer_id TEXT,lead_id TEXT,booking_id TEXT,city_id TEXT NOT NULL,phone_key TEXT NOT NULL,phone_last4 TEXT NOT NULL,mode TEXT NOT NULL,provider TEXT NOT NULL,production_call INTEGER NOT NULL DEFAULT 0,provider_call_id TEXT,ai_call_id TEXT,state TEXT NOT NULL,previous_state TEXT,failure_reason_class TEXT,failure_detail TEXT,consent_decision TEXT NOT NULL DEFAULT 'unknown',opt_out_decision TEXT NOT NULL DEFAULT 'unknown',quiet_hours_decision TEXT NOT NULL DEFAULT 'unknown',frequency_attempts_24h INTEGER NOT NULL DEFAULT 0,recording_allowed INTEGER NOT NULL DEFAULT 0,retry_of TEXT,retry_attempt INTEGER NOT NULL DEFAULT 0,handoff_case_id TEXT,transcript_ref TEXT,recording_ref TEXT,requested_by TEXT NOT NULL,requested_at INTEGER NOT NULL,dialed_at INTEGER,connected_at INTEGER,ended_at INTEGER,updated_at INTEGER NOT NULL)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS voice_call_orders (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,direction TEXT NOT NULL,use_case TEXT NOT NULL,purpose TEXT NOT NULL,campaign_id TEXT,customer_id TEXT,lead_id TEXT,booking_id TEXT,city_id TEXT NOT NULL,phone_key TEXT NOT NULL,phone_last4 TEXT NOT NULL,dial_number TEXT NOT NULL,mode TEXT NOT NULL,provider TEXT NOT NULL,production_call INTEGER NOT NULL DEFAULT 0,provider_call_id TEXT,ai_call_id TEXT,state TEXT NOT NULL,previous_state TEXT,failure_reason_class TEXT,failure_detail TEXT,consent_decision TEXT NOT NULL DEFAULT 'unknown',opt_out_decision TEXT NOT NULL DEFAULT 'unknown',quiet_hours_decision TEXT NOT NULL DEFAULT 'unknown',frequency_attempts_24h INTEGER NOT NULL DEFAULT 0,recording_allowed INTEGER NOT NULL DEFAULT 0,retry_of TEXT,retry_attempt INTEGER NOT NULL DEFAULT 0,handoff_case_id TEXT,transcript_ref TEXT,recording_ref TEXT,requested_by TEXT NOT NULL,requested_at INTEGER NOT NULL,dialed_at INTEGER,connected_at INTEGER,ended_at INTEGER,updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_voice_call_orders_phone ON voice_call_orders(phone_key,requested_at)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_voice_call_orders_state ON voice_call_orders(state,requested_at)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_voice_call_orders_retry ON voice_call_orders(retry_of)"),
@@ -408,6 +408,9 @@ export async function requestOutboundVoiceCall(db: Db, env: Env, input: VoiceCal
   if (!idempotencyKey) throw new Error("An idempotency key is required to place a voice call");
   const phoneKey = normalisedDialKey(input.phone);
   if (!phoneKey) throw new Error("A real recipient phone number is required");
+  // One canonical number, derived once, used for the dial and carried through every retry.
+  const dialNumber = canonicalDialNumber(env, input.phone);
+  if (!dialNumber) throw new Error("Recipient number could not be read as a dialable number");
   if (!text(input.customerId) && !text(input.leadId)) throw new Error("A voice call must name the customer or lead it is about");
   const prior = await db.prepare("SELECT * FROM voice_call_orders WHERE idempotency_key=?").bind(idempotencyKey).first<Row>();
   if (prior) return { duplicatePrevented: true, ...summarise(prior) };
@@ -416,8 +419,8 @@ export async function requestOutboundVoiceCall(db: Db, env: Env, input: VoiceCal
   const useCase = policy.useCase;
   const id = uid("VCALL");
   try {
-    await db.prepare("INSERT INTO voice_call_orders (id,idempotency_key,direction,use_case,purpose,campaign_id,customer_id,lead_id,booking_id,city_id,phone_key,phone_last4,mode,provider,production_call,state,consent_decision,opt_out_decision,quiet_hours_decision,frequency_attempts_24h,recording_allowed,retry_of,retry_attempt,requested_by,requested_at,updated_at) VALUES (?,?,'outbound',?,?,?,?,?,?,?,?,?,?,?,?, 'requested',?,?,?,?,?,?,?,?,?,?)")
-      .bind(id, idempotencyKey, text(input.useCase), useCase?.purpose || "unknown", text(input.campaignId) || null, text(input.customerId) || null, text(input.leadId) || null, text(input.bookingId) || null, text(input.cityId) || "blr", phoneKey, phoneKey.slice(-4), policy.mode, policy.provider.provider, policy.provider.productionCapable ? 1 : 0, policy.consentDecision, policy.optOutDecision, policy.quietHoursDecision, policy.attempts24h, policy.recordingAllowed ? 1 : 0, text(input.retryOf) || null, Number(input.retryAttempt || 0), input.actorId, now, now).run();
+    await db.prepare("INSERT INTO voice_call_orders (id,idempotency_key,direction,use_case,purpose,campaign_id,customer_id,lead_id,booking_id,city_id,phone_key,phone_last4,dial_number,mode,provider,production_call,state,consent_decision,opt_out_decision,quiet_hours_decision,frequency_attempts_24h,recording_allowed,retry_of,retry_attempt,requested_by,requested_at,updated_at) VALUES (?,?,'outbound',?,?,?,?,?,?,?,?,?,?,?,?,?, 'requested',?,?,?,?,?,?,?,?,?,?)")
+      .bind(id, idempotencyKey, text(input.useCase), useCase?.purpose || "unknown", text(input.campaignId) || null, text(input.customerId) || null, text(input.leadId) || null, text(input.bookingId) || null, text(input.cityId) || "blr", phoneKey, phoneKey.slice(-4), dialNumber, policy.mode, policy.provider.provider, policy.provider.productionCapable ? 1 : 0, policy.consentDecision, policy.optOutDecision, policy.quietHoursDecision, policy.attempts24h, policy.recordingAllowed ? 1 : 0, text(input.retryOf) || null, Number(input.retryAttempt || 0), input.actorId, now, now).run();
   } catch (error) {
     // The prior-row read above and this insert are not one transaction, so two concurrent requests with
     // the same key can both pass the read. The UNIQUE index on idempotency_key is what actually
@@ -462,7 +465,7 @@ export async function requestOutboundVoiceCall(db: Db, env: Env, input: VoiceCal
   const callbackUrl = text(input.statusCallbackUrl) || statusCallbackUrl(env) || "";
   try {
     const handle = await policy.provider.createCall({
-      callRef: id, toNumber: text(input.phone), statusCallbackUrl: callbackUrl,
+      callRef: id, toNumber: dialNumber, statusCallbackUrl: callbackUrl,
       recordingAllowed: policy.recordingAllowed, simulatedOutcome: input.simulatedOutcome ?? null,
     });
     await db.prepare("UPDATE voice_call_orders SET provider_call_id=?,production_call=?,updated_at=? WHERE id=?").bind(handle.providerCallId, handle.productionCall ? 1 : 0, now, id).run();
@@ -498,7 +501,9 @@ export async function retryVoiceCall(db: Db, env: Env, input: { callId: string; 
   if (useCase && attempt >= useCase.maxAttempts) throw new Error(`${useCase.code} allows ${useCase.maxAttempts} attempt(s); no retry remains`);
   return requestOutboundVoiceCall(db, env, {
     idempotencyKey: text(input.idempotencyKey) || `voice-retry:${root}:${attempt}`,
-    useCase: text(original.use_case), phone: text(original.phone_key), cityId: text(original.city_id),
+    // The stored canonical number, not the 10-digit audit key - a retry must dial exactly what the
+    // original dialled.
+    useCase: text(original.use_case), phone: text(original.dial_number) || text(original.phone_key), cityId: text(original.city_id),
     customerId: text(original.customer_id) || null, leadId: text(original.lead_id) || null, bookingId: text(original.booking_id) || null,
     campaignId: text(original.campaign_id) || null, actorId: input.actorId, actorPermissions: input.actorPermissions,
     retryOf: root, retryAttempt: attempt, asOf: input.asOf,
@@ -594,6 +599,9 @@ export async function completeVoiceCall(db: Db, input: { callId: string; reason:
  */
 const INFERABLE_STATES: VoiceCallState[] = ["dialing", "ringing", "connected"];
 
+/** Event kinds that can occur more than once in one call, so identity needs a payload discriminant. */
+const REPEATABLE_EVENT_KINDS = new Set<TelephonyEventKind>(["dtmf", "recording_available"]);
+
 export function inferredBridgeState(from: VoiceCallState, to: VoiceCallState): VoiceCallState | null {
   if (canVoiceCallTransition(from, to)) return null;
   const candidates = INFERABLE_STATES.filter(mid => mid !== from && mid !== to && canVoiceCallTransition(from, mid) && canVoiceCallTransition(mid, to));
@@ -624,14 +632,21 @@ export async function recordVoiceProviderEvent(db: Db, env: Env, input: { rawBod
   const now = input.asOf ?? Date.now();
   const digest = await sha256Hex(input.rawBody);
   const curated = { kind: event.kind, providerStatus: event.providerStatus, dtmfDigits: event.dtmfDigits, durationSeconds: event.durationSeconds, hasRecording: Boolean(event.recordingRef) };
+  // A carrier's event id for a status callback is the CALL id, which is constant for the whole call - so
+  // two DTMF presses on one call produced the identical identity and the second was silently dropped as
+  // a duplicate. For kinds that legitimately repeat, the body digest joins the identity: two genuinely
+  // different payloads are now distinct, while an exact redelivery still deduplicates (it is
+  // indistinguishable from a repeat by definition). Status events keep a stable identity so a
+  // redelivered 'completed' cannot advance the state machine twice.
+  const eventKey = REPEATABLE_EVENT_KINDS.has(event.kind) ? `${event.providerEventId}:${digest.slice(0, 16)}` : event.providerEventId;
   const insert = await db.prepare("INSERT OR IGNORE INTO voice_call_provider_events (id,call_id,provider,provider_event_id,event_kind,provider_status,signature_mechanism,payload_sha256,curated_json,applied,created_at) VALUES (?,?,?,?,?,?,?,?,?,0,?)")
-    .bind(uid("VPE"), event.callRef || null, provider.provider, event.providerEventId, event.kind, event.providerStatus, verification.mechanism, digest, JSON.stringify(curated), now).run();
-  if (!Number(insert.meta.changes)) return { accepted: true, status: 200, duplicate: true, applied: false, reason: "Provider event already processed", eventId: event.providerEventId };
+    .bind(uid("VPE"), event.callRef || null, provider.provider, eventKey, event.kind, event.providerStatus, verification.mechanism, digest, JSON.stringify(curated), now).run();
+  if (!Number(insert.meta.changes)) return { accepted: true, status: 200, duplicate: true, applied: false, reason: "Provider event already processed", eventId: eventKey };
 
   const callId = text(event.callRef);
-  if (!callId) return { accepted: true, status: 202, duplicate: false, applied: false, reason: "Event carries no call reference", eventId: event.providerEventId };
+  if (!callId) return { accepted: true, status: 202, duplicate: false, applied: false, reason: "Event carries no call reference", eventId: eventKey };
   const call = await db.prepare("SELECT id,state,recording_allowed FROM voice_call_orders WHERE id=?").bind(callId).first<Row>();
-  if (!call) return { accepted: true, status: 202, duplicate: false, applied: false, reason: "Event references an unknown call", eventId: event.providerEventId };
+  if (!call) return { accepted: true, status: 202, duplicate: false, applied: false, reason: "Event references an unknown call", eventId: eventKey };
 
   // A recording reference is only stored when recording was approved for this call. An unapproved
   // recording URL is discarded rather than quietly retained.
@@ -640,8 +655,8 @@ export async function recordVoiceProviderEvent(db: Db, env: Env, input: { rawBod
   }
   const target = EVENT_STATES[event.kind];
   if (!target) {
-    await db.prepare("UPDATE voice_call_provider_events SET applied=1 WHERE provider=? AND provider_event_id=?").bind(provider.provider, event.providerEventId).run();
-    return { accepted: true, status: 200, duplicate: false, applied: true, stateChanged: false, eventKind: event.kind, eventId: event.providerEventId };
+    await db.prepare("UPDATE voice_call_provider_events SET applied=1 WHERE provider=? AND provider_event_id=?").bind(provider.provider, eventKey).run();
+    return { accepted: true, status: 200, duplicate: false, applied: true, stateChanged: false, eventKind: event.kind, eventId: eventKey };
   }
   try {
     const current = text(call.state) as VoiceCallState;
@@ -650,13 +665,13 @@ export async function recordVoiceProviderEvent(db: Db, env: Env, input: { rawBod
       await applyTransition(db, { callId, to: bridge, reason: `Inferred ${bridge} from provider event ${event.kind}${event.providerStatus ? ` (${event.providerStatus})` : ""}`, actor: `provider:${provider.provider}`, detail: { ...curated, inferred: true }, asOf: now });
     }
     const applied = await applyTransition(db, { callId, to: target, reason: `Provider event ${event.kind}${event.providerStatus ? ` (${event.providerStatus})` : ""}`, actor: `provider:${provider.provider}`, detail: curated, asOf: now });
-    await db.prepare("UPDATE voice_call_provider_events SET applied=1 WHERE provider=? AND provider_event_id=?").bind(provider.provider, event.providerEventId).run();
-    return { accepted: true, status: 200, duplicate: false, applied: true, stateChanged: true, from: bridge ? current : applied.from, to: applied.to, inferred: bridge, eventKind: event.kind, eventId: event.providerEventId };
+    await db.prepare("UPDATE voice_call_provider_events SET applied=1 WHERE provider=? AND provider_event_id=?").bind(provider.provider, eventKey).run();
+    return { accepted: true, status: 200, duplicate: false, applied: true, stateChanged: true, from: bridge ? current : applied.from, to: applied.to, inferred: bridge, eventKind: event.kind, eventId: eventKey };
   } catch (error) {
     // Genuinely unreachable from here - a terminal outcome the provider is trying to overwrite, or an
     // ambiguous gap. The event stays recorded and unapplied rather than forcing an impossible history,
     // and voiceOutboundReadiness surfaces the count so a stuck call is visible rather than silent.
-    return { accepted: true, status: 200, duplicate: false, applied: false, stateChanged: false, reason: String((error as Error).message).slice(0, 200), eventKind: event.kind, eventId: event.providerEventId };
+    return { accepted: true, status: 200, duplicate: false, applied: false, stateChanged: false, reason: String((error as Error).message).slice(0, 200), eventKind: event.kind, eventId: eventKey };
   }
 }
 

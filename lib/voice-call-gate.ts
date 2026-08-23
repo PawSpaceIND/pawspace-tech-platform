@@ -53,6 +53,32 @@ export function voiceAllowlist(env: Env): string[] {
     .map(entry => entry.slice(-10));
 }
 
+/**
+ * The one number the provider is actually given, in E.164.
+ *
+ * The policy gate, the allow-list and the audit key all use the last 10 digits, but the dial used to
+ * forward whatever the caller typed - so "+91 98765 43210" and "09876543210" were checked as the same
+ * recipient and then dialled as two different strings, and a retry (which reads the stored 10-digit key)
+ * dialled a third. Exotel's documented format is E.164, so that is what gets stored and sent, once.
+ *
+ * Returns null when the input cannot be canonicalised, so the caller refuses rather than guessing.
+ */
+export function canonicalDialNumber(env: Env, phone: unknown): string | null {
+  const raw = String(phone ?? "").replace(/[\s()\-.]/g, "").trim();
+  if (!raw) return null;
+  const cc = (val(env, "PAWSPACE_VOICE_DIAL_COUNTRY_CODE") || "91").replace(/[^0-9]/g, "") || "91";
+  if (raw.startsWith("+")) {
+    const digits = raw.slice(1).replace(/[^0-9]/g, "");
+    return digits.length >= 8 && digits.length <= 15 && digits === raw.slice(1) ? `+${digits}` : null;
+  }
+  const digits = raw.replace(/[^0-9]/g, "");
+  if (digits !== raw) return null;
+  if (digits.length === 10) return `+${cc}${digits}`;
+  if (digits.length === 11 && digits.startsWith("0")) return `+${cc}${digits.slice(1)}`;
+  if (digits.length > 10 && digits.length <= 15 && digits.startsWith(cc)) return `+${digits}`;
+  return null;
+}
+
 export function normalisedDialKey(phone: unknown): string {
   const digits = String(phone ?? "").replace(/[^0-9]/g, "");
   return digits.length >= 8 ? digits.slice(-10) : "";

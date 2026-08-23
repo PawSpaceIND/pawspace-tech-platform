@@ -122,7 +122,7 @@ recording availability.
 Voice consent is proved from a stored record; the caller cannot assert it. For each allow-listed test
 recipient, before dialling:
 
-```
+```http
 POST /api/voice-outbound  { "action": "record_consent",
                             "phone": "<allow-listed number>",
                             "subjectType": "customer", "subjectId": "<customer id>",
@@ -131,7 +131,7 @@ POST /api/voice-outbound  { "action": "record_consent",
 
 Then confirm what the gate would decide, without creating or dialling anything:
 
-```
+```http
 POST /api/voice-outbound  { "action": "policy_preview", "useCase": "booking_confirmation",
                             "phone": "...", "cityId": "blr", "customerId": "...", "bookingId": "..." }
 ```

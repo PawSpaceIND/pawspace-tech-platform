@@ -29,19 +29,26 @@ const audioAllowedHosts = (env: Env) => val(env, "VOICE_AUDIO_ALLOWED_HOSTS").sp
 async function speechPost(stage: "stt" | "tts", url: string, key: string, payload: unknown, timeoutMs: number) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let response: Response;
   try {
-    response = await fetch(url, { method: "POST", signal: controller.signal, headers: { authorization: `Bearer ${key}`, "content-type": "application/json" }, body: JSON.stringify(payload) });
-  } catch (error) {
-    if (controller.signal.aborted) throw new VoiceSpeechError(stage, "timeout", `${stage.toUpperCase()} provider did not respond within ${timeoutMs}ms`);
-    throw asSpeechFailure(stage, error);
+    let response: Response;
+    let raw: string;
+    try {
+      response = await fetch(url, { method: "POST", signal: controller.signal, headers: { authorization: `Bearer ${key}`, "content-type": "application/json" }, body: JSON.stringify(payload) });
+      // The body is read INSIDE the deadline. Clearing the timer around the fetch alone left an
+      // already-inert controller for an unbounded response.text(), so a provider that sent headers and
+      // then stalled the stream held the request open exactly as if it had never answered - the failure
+      // this timeout exists to remove.
+      raw = await response.text();
+    } catch (error) {
+      if (controller.signal.aborted) throw new VoiceSpeechError(stage, "timeout", `${stage.toUpperCase()} provider did not respond within ${timeoutMs}ms`);
+      throw asSpeechFailure(stage, error);
+    }
+    if (!response.ok) throw new VoiceSpeechError(stage, "provider_failure", `${stage.toUpperCase()} provider request failed (${response.status})`);
+    let body: unknown;
+    try { body = JSON.parse(raw); } catch { throw new VoiceSpeechError(stage, "malformed_output", `${stage.toUpperCase()} provider returned a non-JSON body`); }
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw new VoiceSpeechError(stage, "malformed_output", `${stage.toUpperCase()} provider returned ${Array.isArray(body) ? "an array" : typeof body}, not a result object`);
+    return body as Record<string, unknown>;
   } finally { clearTimeout(timer); }
-  if (!response.ok) throw new VoiceSpeechError(stage, "provider_failure", `${stage.toUpperCase()} provider request failed (${response.status})`);
-  const raw = await response.text();
-  let body: unknown;
-  try { body = JSON.parse(raw); } catch { throw new VoiceSpeechError(stage, "malformed_output", `${stage.toUpperCase()} provider returned a non-JSON body`); }
-  if (!body || typeof body !== "object" || Array.isArray(body)) throw new VoiceSpeechError(stage, "malformed_output", `${stage.toUpperCase()} provider returned ${Array.isArray(body) ? "an array" : typeof body}, not a result object`);
-  return body as Record<string, unknown>;
 }
 
 export function sttConfigured(env: Env): boolean { return Boolean(val(env, "VOICE_STT_API_KEY") && val(env, "VOICE_STT_URL")); }

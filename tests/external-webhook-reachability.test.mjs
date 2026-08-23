@@ -47,9 +47,11 @@ const routeFiles = fs.readdirSync(new URL("../app/api", import.meta.url), { with
  * tests/voice-provider-webhook.test.mjs), so an inline-only scan reported it as unauthenticated - a
  * false positive that would push crypto back into the route to satisfy the check.
  *
- * This is a widening of WHERE the guard looks, not of WHAT counts: the signals below are unchanged, and
- * a route with no verification anywhere in its reachable source still fails. The sabotage case at the
- * end of this file proves that.
+ * This is a widening of WHERE the guard looks, not of WHAT counts. Holding that line needs the modules
+ * kept SEPARATE rather than concatenated: on a joined string, a WEBHOOK_SECRET reference in one module
+ * plus a crypto.subtle.sign call in an unrelated one satisfies the hmac signal even though nothing
+ * verifies a caller. Each module is therefore tested on its own, so a signal must be complete inside a
+ * single module. The sabotage cases at the end of this file prove both halves of that claim.
  */
 const libSource = new Map();
 function readLib(name) {
@@ -59,7 +61,7 @@ function readLib(name) {
   libSource.set(name, source);
   return source;
 }
-function reachableSource(routeName) {
+function reachableModules(routeName) {
   const start = read(`app/api/${routeName}/route.ts`);
   const parts = [start];
   const seen = new Set(), queue = [];
@@ -79,7 +81,7 @@ function reachableSource(routeName) {
     parts.push(source);
     enqueue(source);
   }
-  return parts.join("\n");
+  return parts;
 }
 
 // A route authenticates an EXTERNAL caller when it verifies a shared key or an HMAC signature
@@ -148,7 +150,7 @@ test("no gateway-exempt route is left without any caller authentication", () => 
     if (knownPublicSurfaces.has(path)) continue;
     const name = path.replace("/api/", "");
     if (!fs.existsSync(new URL(`../app/api/${name}/route.ts`, import.meta.url))) continue;
-    if (externalAuth(reachableSource(name)).length) continue;
+    if (reachableModules(name).some(source => externalAuth(source).length)) continue;
     unguarded.push(path);
   }
   assert.deepEqual(unguarded, [], `gateway-exempt with no caller authentication at all: ${unguarded.join(", ")}`);
@@ -170,9 +172,19 @@ test("the telephony callback is reachable and fail-closed on its verification", 
 });
 
 test("following imports did not turn the exemption guard into a rubber stamp", () => {
-  // Sabotage: a route whose reachable source contains no verification of any kind must still be
-  // reported. Without this, widening WHERE the guard looks could silently widen WHAT it accepts.
+  // Sabotage 1: a module with no verification of any kind must report no signal.
   assert.deepEqual(externalAuth("export async function POST(){return Response.json({ok:true})}"), []);
+  // Sabotage 2 - the one that matters for the widening. Two modules that each hold HALF of a signal must
+  // NOT satisfy it between them. Concatenating the reachable modules would pass this; testing each on its
+  // own does not, which is why reachableModules() returns the parts rather than one joined string.
+  const halfA = "const secret = env.EXOTEL_WEBHOOK_SECRET; export const x = secret;";
+  const halfB = "export async function sign(k){ return crypto.subtle.importKey('raw', k); }";
+  assert.deepEqual(externalAuth(halfA), [], "a secret reference alone is not verification");
+  assert.deepEqual(externalAuth(halfB), [], "a signing helper alone is not verification");
+  assert.ok(externalAuth([halfA, halfB].join("\n")).includes("hmac_signature"), "joined, the halves would have passed");
+  assert.ok(![halfA, halfB].some(source => externalAuth(source).length), "per-module, they do not");
+  // And a module that genuinely verifies still registers, so this is a bound and not a blanket refusal.
+  assert.ok(externalAuth(read("lib/voice-telephony-provider.ts")).includes("hmac_signature"));
   // A staff route reached through the same import-following must not acquire a webhook's credentials.
   // /api/voice-outbound reaches lib/voice-telephony-provider transitively and IS gateway-mapped, so it
   // is the sharpest case: it must not be on the exempt list.

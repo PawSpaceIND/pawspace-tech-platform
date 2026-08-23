@@ -249,3 +249,38 @@ test("a call audit is only readable by an identity authorised for voice", async 
   assert.equal(audit.call.callId, placed.callId);
   assert.equal(audit.policyDecisions.length, 10);
 });
+
+test("only a real boolean true counts as voice consent", async () => {
+  const { sqlite } = await fresh();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY, consent_json TEXT)");
+  // Boolean("false") is true, so a client sending consent:"false" used to satisfy the gate and produce a
+  // row stamped consent_status='verified'.
+  for (const consent of ["false", "no", "0", 0, 1, "true", "yes", [], {}, null, undefined]) {
+    const result = await call("ai-voice-uat", "POST", { action: "start", customerId: "CON-V1", direction: "outbound", transportProvider: "sandbox_simulator", consent }, "admin");
+    assert.equal(result.status, 403, `consent=${JSON.stringify(consent)} answered ${result.status}`);
+  }
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM ai_voice_calls").get().c, 0, "no call row was created by any of them");
+  const real = await call("ai-voice-uat", "POST", { action: "start", customerId: "CON-V1", direction: "outbound", transportProvider: "sandbox_simulator", consent: true }, "admin");
+  assert.equal(real.status, 201);
+});
+
+test("a stalled provider body is bounded by the same deadline as a silent provider", async () => {
+  // The timer used to be cleared around the fetch alone, leaving response.text() unbounded - so a
+  // provider that sent headers and then stalled the stream held the request open indefinitely.
+  const adapter = await import("../lib/voice-provider-adapter.ts");
+  const speech = await import("../lib/voice-speech-failures.ts");
+  const original = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => new Response(
+    new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('{"text":')); init.signal.addEventListener("abort", () => controller.error(Object.assign(new Error("aborted"), { name: "AbortError" }))); } }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+  try {
+    const stt = adapter.resolveVoiceStt({ VOICE_STT_API_KEY: "k", VOICE_STT_URL: "https://stt.pawspace.in/x", VOICE_SPEECH_TIMEOUT_MS: "1000" });
+    const started = Date.now();
+    await assert.rejects(
+      () => stt.transcribe({ audioRef: "data:audio/mpeg;base64,AAECAw==" }),
+      (error) => error instanceof speech.VoiceSpeechError && error.code === "timeout",
+    );
+    assert.ok(Date.now() - started < 5000, "the stalled body hit the deadline instead of hanging");
+  } finally { globalThis.fetch = original; }
+});

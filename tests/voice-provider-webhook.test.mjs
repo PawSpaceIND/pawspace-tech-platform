@@ -363,3 +363,48 @@ test("the signature verifier is not fooled by a length-matched wrong signature",
   const good = new Headers({ "x-pawspace-voice-timestamp": String(timestamp), "x-pawspace-voice-signature": real.toUpperCase() });
   assert.equal((await telephony.verifyVoiceWebhookSignature(SECRET, body, good)).verified, true, "case-insensitive hex is accepted");
 });
+
+test("the stale INT-VOICE-01 seed is advanced on an already-seeded database, but operator edits are not", async () => {
+  // Seeds insert with INSERT OR IGNORE, so correcting one only reaches fresh databases: an environment
+  // that already held INT-VOICE-01 would keep code_boundary_status='partial' and report stale telephony
+  // information on the readiness surface.
+  const registry = await import("../lib/integration-readiness.ts");
+  const untouched = await fresh();
+  await registry.ensureIntegrationReadinessTables(untouched.db);
+  untouched.sqlite.prepare("UPDATE integration_registry SET code_boundary_status='partial',notes='old stale note' WHERE integration_code='INT-VOICE-01'").run();
+  await registry.ensureIntegrationReadinessTables(untouched.db);
+  const advanced = untouched.sqlite.prepare("SELECT code_boundary_status,notes,readiness_state FROM integration_registry WHERE integration_code='INT-VOICE-01'").get();
+  assert.equal(advanced.code_boundary_status, "code_ready");
+  assert.match(advanced.notes, /No credentials in any environment/);
+  assert.equal(advanced.readiness_state, "sandbox_setup_required", "the operational state is NOT advanced - there are still no credentials");
+
+  // An operator edit through updateIntegrationReadiness stamps updated_by, and must survive.
+  const edited = await fresh();
+  await registry.ensureIntegrationReadinessTables(edited.db);
+  edited.sqlite.prepare("UPDATE integration_registry SET code_boundary_status='partial',notes='ops reviewed: do not change',updated_by='ops@pawspace.in' WHERE integration_code='INT-VOICE-01'").run();
+  await registry.ensureIntegrationReadinessTables(edited.db);
+  const kept = edited.sqlite.prepare("SELECT code_boundary_status,notes FROM integration_registry WHERE integration_code='INT-VOICE-01'").get();
+  assert.equal(kept.code_boundary_status, "partial", "an operator's assessment is not overwritten by a seed");
+  assert.equal(kept.notes, "ops reviewed: do not change");
+});
+
+test("the telephony credential list has exactly one definition", async () => {
+  // Held separately, one surface reported telephony as configured while the dial gate still refused.
+  const gate = await import("../lib/voice-call-gate.ts");
+  const { readFile } = await import("node:fs/promises");
+  assert.deepEqual([...gate.VOICE_TELEPHONY_SECRET_NAMES], ["EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_SID", "EXOTEL_CALLER_ID", "EXOTEL_VOICE_APP_ID", "EXOTEL_WEBHOOK_SECRET"]);
+  for (const path of ["app/api/system-integration/route.ts", "lib/integration-readiness.ts"]) {
+    const source = await readFile(new URL(`../${path}`, import.meta.url), "utf8");
+    assert.match(source, /VOICE_TELEPHONY_SECRET_NAMES/, `${path} derives the list`);
+    const inlineNames = (source.match(/EXOTEL_[A-Z_]+/g) || []).filter(name => name !== "EXOTEL_SUBDOMAIN");
+    assert.deepEqual(inlineNames, [], `${path} must not re-declare credential names: ${inlineNames.join(", ")}`);
+  }
+  // Both consumers agree with the gate, on the same env, for every partial configuration.
+  const registry = await import("../lib/integration-readiness.ts");
+  void registry;
+  const full = uatVoiceEnv();
+  assert.equal(gate.telephonyCredentialsConfigured(full), true);
+  for (const name of gate.VOICE_TELEPHONY_SECRET_NAMES) {
+    assert.equal(gate.telephonyCredentialsConfigured({ ...full, [name]: "" }), false, `missing ${name}`);
+  }
+});

@@ -558,3 +558,67 @@ test("voice refuses to dial without a https provider callback configured", async
     assert.match(result.blockedDetail, /PAWSPACE_VOICE_STATUS_CALLBACK_URL/, callback);
   }
 });
+
+test("one canonical E.164 number is stored, dialled and reused by every retry", async () => {
+  const gate = await import("../lib/voice-call-gate.ts");
+  // The policy key is the last 10 digits; the DIAL number is E.164. Before, every written form of the
+  // same number was checked as one recipient and then dialled as a different string.
+  for (const written of ["9876543210", "+91 98765 43210", "09876543210", "+919876543210", "919876543210", "(987) 654-3210"]) {
+    assert.equal(gate.canonicalDialNumber({}, written), "+919876543210", written);
+    assert.equal(gate.normalisedDialKey(written), ALLOWLISTED_PHONE, written);
+  }
+  // Unreadable input is refused rather than guessed at.
+  for (const bad of ["", "12345", "not-a-number", "+", "++919876543210", "98765x43210"]) {
+    assert.equal(gate.canonicalDialNumber({}, bad), null, JSON.stringify(bad));
+  }
+  assert.equal(gate.canonicalDialNumber({ PAWSPACE_VOICE_DIAL_COUNTRY_CODE: "44" }, "7700900123"), "+447700900123", "the country code is configuration, not a constant");
+
+  const { sqlite, db, env } = await fresh();
+  await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
+  const first = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "canon-1", phone: "+91 98765 43210" }));
+  assert.equal(first.dialled, true);
+  assert.equal(order(sqlite, first.callId).dial_number, "+919876543210");
+  assert.equal(order(sqlite, first.callId).phone_key, ALLOWLISTED_PHONE, "the audit key stays the 10-digit form");
+
+  // A retry must dial exactly what the original dialled, not the stored audit key.
+  await gov.transitionVoiceCall(db, { callId: first.callId, to: "no_answer", reason: "provider", actor: "test", asOf: DAYTIME });
+  const retry = await gov.retryVoiceCall(db, env, { callId: first.callId, actorId: "operator@pawspace.in", actorPermissions: FOUNDER_PERMISSIONS, asOf: DAYTIME });
+  assert.equal(retry.dialled, true);
+  assert.equal(order(sqlite, retry.callId).dial_number, "+919876543210");
+
+  await assert.rejects(() => gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "canon-bad", phone: "98765x43210" })), /dialable number/);
+});
+
+test("two DTMF presses on one call are both recorded, and a redelivery still is not", async () => {
+  const { sqlite, db, env } = await fresh();
+  await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
+  const call = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "dtmf-1" }));
+  await gov.transitionVoiceCall(db, { callId: call.callId, to: "connected", reason: "answered", actor: "test", asOf: DAYTIME });
+
+  const secret = env.EXOTEL_WEBHOOK_SECRET;
+  const sign = async (bodyText) => {
+    const timestamp = Date.now();
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${timestamp}.${bodyText}`));
+    const hex = Array.from(new Uint8Array(mac)).map(byte => byte.toString(16).padStart(2, "0")).join("");
+    return new Headers({ "x-pawspace-voice-timestamp": String(timestamp), "x-pawspace-voice-signature": hex });
+  };
+  const press = (digits) => new URLSearchParams({ CallSid: `EX-${call.callId}`, CustomField: call.callId, EventType: "dtmf", Digits: digits }).toString();
+
+  // A carrier's event id for a status callback is the CALL id, constant for the whole call - so both
+  // presses used to carry the identical identity and the second was dropped as a duplicate.
+  const one = press("1"), two = press("2");
+  assert.equal((await gov.recordVoiceProviderEvent(db, env, { rawBody: one, headers: await sign(one) })).duplicate, false);
+  assert.equal((await gov.recordVoiceProviderEvent(db, env, { rawBody: two, headers: await sign(two) })).duplicate, false);
+  const recorded = sqlite.prepare("SELECT curated_json FROM voice_call_provider_events WHERE event_kind='dtmf' ORDER BY created_at").all();
+  assert.deepEqual(recorded.map(row => JSON.parse(row.curated_json).dtmfDigits), ["1", "2"], "both presses are on the record");
+
+  // An exact redelivery is still a duplicate - it is indistinguishable from a repeat by definition.
+  assert.equal((await gov.recordVoiceProviderEvent(db, env, { rawBody: two, headers: await sign(two) })).duplicate, true);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM voice_call_provider_events WHERE event_kind='dtmf'").get().c, 2);
+  // And a redelivered STATUS event must stay deduplicated, or the state machine could advance twice.
+  const status = new URLSearchParams({ CallSid: `EX-${call.callId}`, CustomField: call.callId, CallStatus: "completed", CallDuration: "30" }).toString();
+  assert.equal((await gov.recordVoiceProviderEvent(db, env, { rawBody: status, headers: await sign(status) })).duplicate, false);
+  assert.equal((await gov.recordVoiceProviderEvent(db, env, { rawBody: status, headers: await sign(status) })).duplicate, true);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM voice_call_state_transitions WHERE call_id=? AND to_state='completed'").get(call.callId).c, 1);
+});

@@ -14,7 +14,13 @@ test("readiness stages keep code sandbox production and controlled-live proof se
 });
 
 test("credential discovery records presence only and never exposes secret values",()=>{
- for(const name of ["RAZORPAY_KEY_ID_SANDBOX","RAZORPAY_KEY_SECRET_SANDBOX","RAZORPAY_WEBHOOK_SECRET_SANDBOX","WATI_API_TOKEN","SMS_API_KEY","EXOTEL_API_TOKEN","GOOGLE_MAPS_SERVER_API_KEY_UAT","AUTOMATION_CRON_SECRET"])assert.match(registry,new RegExp(name));
+ // Detector names may be listed inline OR derived from the module that owns them. The telephony list
+ // is now shared with lib/voice-call-gate.ts, which is what keeps the readiness surface and the dial
+ // gate from disagreeing about whether a line is configured; asserting the literal in this file would
+ // have forced a duplicate copy back into the registry. What matters is unchanged: every detector name
+ // is discoverable, and no VALUE is.
+ const detectorSources=registry+read("lib/voice-call-gate.ts");
+ for(const name of ["RAZORPAY_KEY_ID_SANDBOX","RAZORPAY_KEY_SECRET_SANDBOX","RAZORPAY_WEBHOOK_SECRET_SANDBOX","WATI_API_TOKEN","SMS_API_KEY","EXOTEL_API_TOKEN","GOOGLE_MAPS_SERVER_API_KEY_UAT","AUTOMATION_CRON_SECRET"])assert.match(detectorSources,new RegExp(name));
  assert.match(registry,/secret_reference/);assert.match(registry,/Secret reference must be a reference only/);assert.match(registry,/env\|vault\|secret-manager\|platform/);
 });
 

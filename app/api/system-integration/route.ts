@@ -1,4 +1,5 @@
 import { authError, authorize, database, securityAudit } from "../../../lib/server-auth";
+import { VOICE_TELEPHONY_SECRET_NAMES } from "../../../lib/voice-call-gate";
 
 type Db = Awaited<ReturnType<typeof database>>;
 type Row = Record<string, unknown>;
@@ -56,10 +57,11 @@ async function buildSnapshot(db: Db, performSync = false) {
   const credentials = {
     wati: Boolean(runtime.WATI_API_TOKEN && runtime.WATI_TENANT_URL),
     sms: Boolean(runtime.SMS_API_KEY && runtime.SMS_SENDER_ID),
-    // The receiver needs the caller ID, the voice app and the callback secret too, not just the API
-    // triple - reporting "configured" without them said a line was ready that could not place a call
-    // or verify a single callback.
-    telephony: Boolean(runtime.EXOTEL_API_KEY && runtime.EXOTEL_API_TOKEN && runtime.EXOTEL_SID && runtime.EXOTEL_CALLER_ID && runtime.EXOTEL_VOICE_APP_ID && runtime.EXOTEL_WEBHOOK_SECRET),
+    // Derived from the same list the dial gate enforces (lib/voice-call-gate.ts). Held separately, this
+    // surface reported telephony as "configured" on three of the six variables the receiver actually
+    // needs - a line that could neither place a call nor verify a callback - and a future change to one
+    // list would silently disagree with the other.
+    telephony: VOICE_TELEPHONY_SECRET_NAMES.every(name => Boolean(runtime[name])),
     scheduler: Boolean(runtime.AUTOMATION_CRON_SECRET),
   };
   const controls = [

@@ -222,23 +222,28 @@ export function exotelTelephony(env: Env): TelephonyProvider {
       });
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), EXOTEL_TIMEOUT_MS);
-      let response: Response;
       try {
-        response = await fetch(`https://${subdomain}/v1/Accounts/${encodeURIComponent(sid)}/Calls/connect.json`, {
-          method: "POST", signal: controller.signal,
-          headers: { authorization: `Basic ${btoa(`${key}:${token}`)}`, "content-type": "application/x-www-form-urlencoded" },
-          body: body.toString(),
-        });
-      } catch (error) {
-        throw new TelephonyProviderUnavailable(controller.signal.aborted ? `Telephony provider did not respond within ${EXOTEL_TIMEOUT_MS}ms` : `Telephony provider request failed: ${String((error as Error)?.message || error).slice(0, 120)}`);
+        let response: Response;
+        let text: string;
+        try {
+          response = await fetch(`https://${subdomain}/v1/Accounts/${encodeURIComponent(sid)}/Calls/connect.json`, {
+            method: "POST", signal: controller.signal,
+            headers: { authorization: `Basic ${btoa(`${key}:${token}`)}`, "content-type": "application/x-www-form-urlencoded" },
+            body: body.toString(),
+          });
+          // Inside the deadline: a carrier that sends headers and then stalls the body is the same hang
+          // as one that never answers, and this is the request that decides whether a call goes out.
+          text = await response.text();
+        } catch (error) {
+          throw new TelephonyProviderUnavailable(controller.signal.aborted ? `Telephony provider did not respond within ${EXOTEL_TIMEOUT_MS}ms` : `Telephony provider request failed: ${String((error as Error)?.message || error).slice(0, 120)}`);
+        }
+        if (!response.ok) throw new TelephonyProviderUnavailable(`Telephony provider rejected the call request (${response.status})`);
+        let parsed: { Call?: { Sid?: string; Status?: string } } = {};
+        try { parsed = JSON.parse(text) as { Call?: { Sid?: string; Status?: string } }; } catch { throw new TelephonyProviderUnavailable("Telephony provider returned a malformed response"); }
+        const providerCallId = String(parsed.Call?.Sid || "").trim();
+        if (!providerCallId) throw new TelephonyProviderUnavailable("Telephony provider returned no call identifier");
+        return { accepted: true, providerCallId, providerStatus: String(parsed.Call?.Status || "queued"), productionCall: true };
       } finally { clearTimeout(timer); }
-      const text = await response.text();
-      if (!response.ok) throw new TelephonyProviderUnavailable(`Telephony provider rejected the call request (${response.status})`);
-      let parsed: { Call?: { Sid?: string; Status?: string } } = {};
-      try { parsed = JSON.parse(text) as { Call?: { Sid?: string; Status?: string } }; } catch { throw new TelephonyProviderUnavailable("Telephony provider returned a malformed response"); }
-      const providerCallId = String(parsed.Call?.Sid || "").trim();
-      if (!providerCallId) throw new TelephonyProviderUnavailable("Telephony provider returned no call identifier");
-      return { accepted: true, providerCallId, providerStatus: String(parsed.Call?.Status || "queued"), productionCall: true };
     },
     async verifyWebhook({ rawBody, headers }) { return verifyVoiceWebhookSignature(secret, rawBody, headers); },
     parseEvent(rawBody) { return normaliseTelephonyEvent(rawBody, "exotel"); },

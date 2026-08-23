@@ -1,3 +1,4 @@
+import { VOICE_TELEPHONY_SECRET_NAMES } from "./voice-call-gate";
 export type IntegrationReadinessState=
   |"not_started"|"code_ready"|"sandbox_setup_required"|"sandbox_ready_for_test"|"sandbox_verified"
   |"production_setup_required"|"production_ready_for_controlled_test"|"controlled_live_verified"|"blocked"|"not_applicable";
@@ -57,12 +58,30 @@ function detectedCredentialStatus(runtime:Record<string,unknown>,detector:unknow
   case"razorpay_sandbox":return configured(runtime,["RAZORPAY_KEY_ID_SANDBOX","RAZORPAY_KEY_SECRET_SANDBOX","RAZORPAY_WEBHOOK_SECRET_SANDBOX"])?"configured":"missing";
   case"wati":return configured(runtime,["WATI_API_TOKEN","WATI_TENANT_URL"])?"configured":"missing";
   case"sms":return configured(runtime,["SMS_API_KEY","SMS_SENDER_ID"])?"configured":"missing";
-  case"exotel":return configured(runtime,["EXOTEL_API_KEY","EXOTEL_API_TOKEN","EXOTEL_SID","EXOTEL_CALLER_ID","EXOTEL_VOICE_APP_ID","EXOTEL_WEBHOOK_SECRET"])?"configured":"missing";
+  case"exotel":return configured(runtime,[...VOICE_TELEPHONY_SECRET_NAMES])?"configured":"missing";
   case"maps_uat":return configured(runtime,["GOOGLE_MAPS_SERVER_API_KEY_UAT"])?"configured":"missing";
   case"scheduler":return configured(runtime,["AUTOMATION_CRON_SECRET"])?"configured":"missing";
   case"ai_provider":return configured(runtime,["PAWSPACE_AI_PROVIDER_API_KEY"])?"configured":"missing";
   default:return null;
  }
+}
+
+/**
+ * Seeds are inserted with INSERT OR IGNORE, so correcting a seed value only reaches fresh databases -
+ * any environment that already holds INT-VOICE-01 would keep code_boundary_status='partial' and the old
+ * notes, and the readiness surface would report stale telephony information exactly where the
+ * correction matters.
+ *
+ * Advanced only when the row is still exactly as the seed left it: never touched through
+ * updateIntegrationReadiness (which stamps its own updated_by) and still on the old status. An operator
+ * edit, or a row already correct, is left alone. readiness_state is deliberately NOT touched - the
+ * provider still has no credentials anywhere, so it stays sandbox_setup_required.
+ */
+async function advanceVoiceBoundarySeed(db:Db,now:number){
+ const seed=seeds.find(item=>item.code==="INT-VOICE-01");
+ if(!seed)return;
+ await db.prepare("UPDATE integration_registry SET code_boundary_status=?,notes=?,updated_at=? WHERE integration_code='INT-VOICE-01' AND updated_by='system_seed' AND code_boundary_status='partial'")
+  .bind(seed.codeBoundaryStatus,seed.notes,now).run();
 }
 
 export async function ensureIntegrationReadinessTables(db:Db){
@@ -72,6 +91,7 @@ export async function ensureIntegrationReadinessTables(db:Db){
   db.prepare("CREATE INDEX IF NOT EXISTS integration_readiness_events_code_idx ON integration_readiness_events(integration_code,created_at)"),
  ]);
  const now=Date.now();
+ await advanceVoiceBoundarySeed(db,now);
  for(const item of seeds)await db.prepare("INSERT OR IGNORE INTO integration_registry (integration_code,category,capability,provider,owner,backup_owner,priority,required,launch_gate_code,environment,code_boundary_status,credential_status,credential_detector,data_classification,readiness_state,notes,updated_by,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
   .bind(item.code,item.category,item.capability,item.provider,item.owner,item.backupOwner,item.priority,sqlBool(item.required),item.launchGateCode??null,item.environment,item.codeBoundaryStatus,item.credentialDetector?"unknown":"unknown",item.credentialDetector??null,item.dataClassification,item.readinessState,item.notes,"system_seed",now).run();
 }
