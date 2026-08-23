@@ -85,11 +85,13 @@ async function preferredChannel(db: Db, customerId: string): Promise<Communicati
   return "whatsapp";
 }
 
-async function logEvent(db: Db, customerId: string, reminderType: string, cycleKey: string, result: Awaited<ReturnType<typeof enqueueCommunication>>, detail: unknown) {
+async function logEvent(db: Db, customerId: string, reminderType: string, cycleKey: string, result: Awaited<ReturnType<typeof enqueueCommunication>>, detail: unknown, asOf: number) {
   if (result.duplicatePrevented) return;
   const messageId = "messageId" in result ? result.messageId : (result.message ? String((result.message as Row).id) : null);
+  // Stamped with the sweep clock, so a replayed or backfilled sweep produces the same audit row it
+  // would have produced when the cycle was actually due.
   await db.prepare("INSERT INTO reminder_governance_events (id,customer_id,reminder_type,cycle_key,message_id,duplicate_prevented,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?)")
-    .bind(crypto.randomUUID(), customerId, reminderType, cycleKey, messageId, result.duplicatePrevented ? 1 : 0, JSON.stringify(detail), Date.now()).run();
+    .bind(crypto.randomUUID(), customerId, reminderType, cycleKey, messageId, result.duplicatePrevented ? 1 : 0, JSON.stringify(detail), asOf).run();
 }
 
 /**
@@ -124,9 +126,9 @@ export async function generateGroomingRebookingReminders(db: Db, input: { actorI
     const result = await enqueueCommunication(db, {
       customerId, cityId: "blr", channel, purpose: "lifecycle", idempotencyKey: cycleKey,
       templateKey: "grooming_rebooking_reminder", payload: { daysSinceLastService: daysSince, cadenceDays: policy.groomingRebookingDays },
-      createdBy: input.actorId,
+      createdBy: input.actorId, scheduledAt: asOf,
     });
-    await logEvent(db, customerId, "grooming_rebooking", cycleKey, result, { daysSince, cycle });
+    await logEvent(db, customerId, "grooming_rebooking", cycleKey, result, { daysSince, cycle }, asOf);
     if (result.duplicatePrevented) continue;
     if (result.status === "suppressed") suppressed++; else queued++;
   }
@@ -166,9 +168,9 @@ export async function generateSubscriptionReminders(db: Db, input: { actorId: st
         const result = await enqueueCommunication(db, {
           customerId, cityId: "blr", channel, purpose: "lifecycle", idempotencyKey: cycleKey,
           templateKey: "subscription_unused_sessions_reminder", payload: { subscriptionId, sessionsConsumed: consumed, totalSessions: total, sessionsRemaining: total - consumed, daysInactive },
-          createdBy: input.actorId,
+          createdBy: input.actorId, scheduledAt: asOf,
         });
-        await logEvent(db, customerId, "subscription_sessions", cycleKey, result, { subscriptionId, consumed, total, daysInactive });
+        await logEvent(db, customerId, "subscription_sessions", cycleKey, result, { subscriptionId, consumed, total, daysInactive }, asOf);
         if (!result.duplicatePrevented) { if (result.status === "suppressed") suppressed++; else sessionReminders++; }
       }
     }
@@ -179,9 +181,9 @@ export async function generateSubscriptionReminders(db: Db, input: { actorId: st
       const result = await enqueueCommunication(db, {
         customerId, cityId: "blr", channel, purpose: "lifecycle", idempotencyKey: cycleKey,
         templateKey: "subscription_renewal_reminder", payload: { subscriptionId, daysToExpiry, sessionsRemaining: total - consumed },
-        createdBy: input.actorId,
+        createdBy: input.actorId, scheduledAt: asOf,
       });
-      await logEvent(db, customerId, "subscription_renewal", cycleKey, result, { subscriptionId, daysToExpiry });
+      await logEvent(db, customerId, "subscription_renewal", cycleKey, result, { subscriptionId, daysToExpiry }, asOf);
       if (!result.duplicatePrevented) { if (result.status === "suppressed") suppressed++; else renewalReminders++; }
     }
   }
