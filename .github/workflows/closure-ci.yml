@@ -32,8 +32,7 @@ jobs:
           node-version: '22.13.0'
           cache: npm
       - run: npm ci
-      - name: Build and capture tracked Web tests
-        id: web_tests
+      - name: Build and run tracked Web tests
         shell: bash
         run: |
           npm run build
@@ -44,22 +43,7 @@ jobs:
             fi
           done
           test "${#tracked_tests[@]}" -gt 0
-          export PATH="$PWD/node_modules/.bin:$PATH"
-          set +e
-          node --test --test-force-exit "${tracked_tests[@]}" 2>&1 | tee web-test-diagnostic.txt
-          status=${PIPESTATUS[0]}
-          set -e
-          echo "status=$status" >> "$GITHUB_OUTPUT"
-      - name: Upload Web test diagnostic
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-test-diagnostic
-          path: web-test-diagnostic.txt
-          if-no-files-found: warn
-      - name: Enforce Web test result
-        if: steps.web_tests.outputs.status != '0'
-        run: exit 1
+          node --experimental-strip-types --test "${tracked_tests[@]}"
 
   lint:
     name: Lint
