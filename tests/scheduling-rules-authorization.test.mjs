@@ -285,3 +285,65 @@ test("the view-only escalation case is exercised by service_provider", async () 
   const { viewOnly } = rolesByPermission(sqlite);
   assert.ok(viewOnly.includes("service_provider"), `expected service_provider among view-only roles, got ${JSON.stringify(viewOnly)}`);
 });
+
+// ---------------------------------------------------------------------------
+// Schema lifecycle. Nothing owned the scheduling_rules table: the only CREATE TABLE for it lives in
+// app/api/uat-scheduling/route.ts, so on a fresh database an authorized operator got a 500 from a
+// route that was otherwise working correctly - the read simply had no table to read. There is no
+// migrations/ directory; routes bootstrap their own schema, which is the convention followed here.
+//
+// The split matters: writes ensure the table, reads do not. d7-read-side-effects.test.mjs holds reads
+// to creating nothing at all on a cold database, so GET reports an empty rule set rather than
+// bootstrapping - keeping both contracts intact.
+// ---------------------------------------------------------------------------
+
+async function coldWorld() {
+  const sqlite = new DatabaseSync(":memory:");
+  const db = makeD1(sqlite);
+  globalThis.__SR_DB__ = db;
+  globalThis.__SR_ENV__ = {};
+  await serverAuth.ensureSecurityTables(db);          // identity only; no scheduling_rules table
+  return { sqlite, db };
+}
+const schedulingTables = (sqlite) => sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'scheduling%'").all().map((row) => row.name);
+
+test("an authorized read on a fresh database reports an empty rule set instead of failing", async () => {
+  const { sqlite } = await coldWorld();
+  const { manage } = rolesByPermission(sqlite);
+  const email = seedUser(sqlite, "ops.lead@pawspace.in", manage[0]);
+  const response = await route.GET(asStaff(email));
+  assert.equal(response.status, 200, `a fresh database must not produce a 500, got ${response.status}`);
+  assert.deepEqual((await response.json()).data, [], "a database with no rules yet reports no rules");
+});
+
+test("that read creates no table, so the D7 read-side contract still holds", async () => {
+  const { sqlite } = await coldWorld();
+  const { manage } = rolesByPermission(sqlite);
+  const email = seedUser(sqlite, "ops.lead@pawspace.in", manage[0]);
+  const before = schedulingTables(sqlite);
+  await route.GET(asStaff(email));
+  assert.deepEqual(schedulingTables(sqlite), before, "a read must not bootstrap the schema");
+  assert.equal(schedulingTables(sqlite).length, 0, "no scheduling table may exist after a cold read");
+});
+
+test("an authorized write on a fresh database bootstraps the table and persists the rule", async () => {
+  const { sqlite } = await coldWorld();
+  const { manage } = rolesByPermission(sqlite);
+  const email = seedUser(sqlite, "ops.lead@pawspace.in", manage[0]);
+  const response = await route.POST(asStaff(email, jsonInit("POST", {
+    name: "First rule on a fresh database",
+    conditions: [{ code: "min_rating", field: "rating", operator: "gte", value: 4 }],
+  })));
+  assert.equal(response.status, 201, `a write must bootstrap its own schema, got ${response.status}`);
+  assert.ok(schedulingTables(sqlite).includes("scheduling_rules"), "the write must have created the table");
+  const row = sqlite.prepare("SELECT name,created_by FROM scheduling_rules WHERE name=?").get("First rule on a fresh database");
+  assert.ok(row, "the rule must persist");
+  assert.equal(row.created_by, email, "attribution still comes from the verified actor");
+});
+
+test("an unauthorized write on a fresh database creates nothing", async () => {
+  const { sqlite } = await coldWorld();
+  const response = await route.POST(anonymous(jsonInit("POST", { name: "x", conditions: [{ code: "c", field: "rating", operator: "gte", value: 1 }] })));
+  assert.ok(refused(response), `an anonymous write must be refused, got ${response.status}`);
+  assert.equal(schedulingTables(sqlite).length, 0, "a refused write must not bootstrap the schema either");
+});
