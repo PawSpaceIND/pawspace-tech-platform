@@ -1,30 +1,42 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { parseReverseGeocodeCoordinates, reverseGeocode } from "../lib/address-autocomplete.ts";
+import { register } from "node:module";
+import { reverseGeocode } from "../lib/address-autocomplete.ts";
+
+register(new URL("./helpers/ts-extension-loader.mjs", import.meta.url));
+const { GET: addressAutocompleteGET } = await import("../app/api/address-autocomplete/route.ts");
 
 const read = (p) => readFile(new URL(p, import.meta.url), "utf8");
 const readinessRoute = await read("../app/api/integration-readiness/route.ts");
-const addressRoute = await read("../app/api/address-autocomplete/route.ts");
 const registry = await read("../lib/integration-readiness.ts");
 const idfy = await read("../lib/idfy-verification-client.ts");
 const verification = await read("../lib/provider-verification-mandate.ts");
 
-test("reverse-geocode request parsing rejects missing and empty coordinates before numeric coercion", () => {
-  for (const query of [
-    "longitude=77.59",
-    "latitude=12.97",
-    "latitude=&longitude=77.59",
-    "latitude=12.97&longitude=",
-    "latitude=%20%20&longitude=77.59",
-    "latitude=12.97&longitude=%20%20",
-  ]) assert.equal(parseReverseGeocodeCoordinates(new URLSearchParams(query)), null);
-  assert.deepEqual(parseReverseGeocodeCoordinates(new URLSearchParams("latitude=12.97&longitude=77.59")), {
-    latitude: 12.97,
-    longitude: 77.59,
-  });
-  assert.match(addressRoute, /parseReverseGeocodeCoordinates\(url\.searchParams\)/);
-  assert.match(addressRoute, /if\(!coordinates\)return json\(\{error:"Valid latitude and longitude are required"\},400\)/);
+test("reverse-geocode GET rejects missing and empty coordinates before provider traffic", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    throw new Error("Maps provider traffic must not be reached");
+  };
+  try {
+    for (const query of [
+      "longitude=77.59",
+      "latitude=12.97",
+      "latitude=&longitude=77.59",
+      "latitude=12.97&longitude=",
+      "latitude=%20%20&longitude=77.59",
+      "latitude=12.97&longitude=%20%20",
+    ]) {
+      const response = await addressAutocompleteGET(new Request(`https://pawspace.test/api/address-autocomplete?mode=reverse&${query}`));
+      assert.equal(response.status, 400);
+      assert.deepEqual(await response.json(), { error: "Valid latitude and longitude are required" });
+    }
+    assert.equal(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 // Lane 2 permanent regression gate: invalid public Maps input must return before the
