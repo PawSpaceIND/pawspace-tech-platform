@@ -32,7 +32,13 @@ jobs:
           node-version: '22.13.0'
           cache: npm
       - run: npm ci
-      - run: npm test
+      - name: Build and run tracked Web tests
+        shell: bash
+        run: |
+          npm run build
+          mapfile -t tracked_tests < <(git ls-files 'tests/*.test.mjs')
+          test "${#tracked_tests[@]}" -gt 0
+          node --test --test-force-exit "${tracked_tests[@]}"
 
   lint:
     name: Lint
@@ -151,7 +157,10 @@ jobs:
           trap 'cat /tmp/pricing-control-worker.log; kill "$worker_pid" 2>/dev/null || true' EXIT
           ready=0
           for i in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:8790/health >/dev/null; then ready=1; break; fi
+            if curl -fsS http://127.0.0.1:8790/health >/dev/null; then
+              ready=1
+              break
+            fi
             sleep 1
           done
           test "$ready" = 1
