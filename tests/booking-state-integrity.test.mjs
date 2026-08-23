@@ -1,8 +1,36 @@
 import assert from"node:assert/strict";
 import test from"node:test";
 import{readFile}from"node:fs/promises";
-import{trainingProgrammeRequestId}from"../lib/booking-state-integrity.ts";
-import{createCanonicalLifecycle}from"../lib/canonical-lifecycle-client.ts";
+import * as nodeModule from "node:module";
+
+// lib/canonical-lifecycle-client.ts imports "./api-fetch" without an extension, which node's ESM
+// resolver cannot resolve on its own. Every other suite in this repo installs the same .ts fallback.
+// Without it this file threw ERR_MODULE_NOT_FOUND at load, so NONE of the #197 assertions below ever
+// executed — the suite reported a single failing file rather than running. Static imports are hoisted
+// above top-level code, so the libraries have to be pulled in dynamically AFTER the hook is registered.
+if (typeof nodeModule.registerHooks === "function") {
+  nodeModule.registerHooks({
+    resolve(specifier, context, nextResolve) {
+      try { return nextResolve(specifier, context); }
+      catch (error) {
+        if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
+        throw error;
+      }
+    },
+  });
+} else {
+  const hook = `export async function resolve(specifier, context, nextResolve) {
+    try { return await nextResolve(specifier, context); }
+    catch (error) {
+      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(specifier + ".ts", context);
+      throw error;
+    }
+  }`;
+  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
+}
+
+const {trainingProgrammeRequestId} = await import("../lib/booking-state-integrity.ts");
+const {createCanonicalLifecycle} = await import("../lib/canonical-lifecycle-client.ts");
 const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
 
 const base={customerId:"CUS-A",petIds:["PET-B","PET-A"],packageCode:"training-8-basic",scheduledStart:"2026-09-01T09:30:00.000Z",frequency:"Tue & Sat"};

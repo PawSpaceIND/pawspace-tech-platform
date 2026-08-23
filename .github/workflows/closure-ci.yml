@@ -26,7 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Clean checkout workspace
-        run: git reset --hard HEAD && git clean -ffdx
+        run: git clean -ffdx
       - uses: actions/setup-node@v4
         with:
           node-version: '22.13.0'
