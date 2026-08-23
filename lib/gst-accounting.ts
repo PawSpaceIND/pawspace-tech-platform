@@ -1,7 +1,15 @@
 type Db=D1Database;
 type Row=Record<string,unknown>;
 export const GST_ACCOUNTING_PRODUCTION_READY=false;
-export class ConfigurationRequired extends Error{constructor(public key:string){super(`configuration_required:${key}`);}}
+// The field is assigned explicitly rather than declared as a constructor parameter property. Identical
+// at runtime, but a parameter property is the one piece of TypeScript that node's --experimental-strip-types
+// cannot erase, and it made every module reaching this file unimportable from the test runner. That is why
+// the finance suites all read their routes as TEXT instead of executing them; the GST, invoicing and
+// finance-control paths could not be driven end to end at all. This keeps them executable.
+export class ConfigurationRequired extends Error{
+ key:string;
+ constructor(key:string){super(`configuration_required:${key}`);this.key=key;}
+}
 const text=(v:unknown)=>String(v??"").trim();
 const num=(v:unknown)=>Number(v??0);
 const id=(p:string)=>`${p}_${crypto.randomUUID().slice(0,16)}`;
