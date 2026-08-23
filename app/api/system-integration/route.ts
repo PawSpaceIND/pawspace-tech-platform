@@ -61,7 +61,9 @@ async function buildSnapshot(db: Db, performSync = false) {
     // surface reported telephony as "configured" on three of the six variables the receiver actually
     // needs - a line that could neither place a call nor verify a callback - and a future change to one
     // list would silently disagree with the other.
-    telephony: VOICE_TELEPHONY_SECRET_NAMES.every(name => Boolean(runtime[name])),
+    // Trimmed, like the dial gate and lib/integration-readiness.ts: a whitespace-only secret reported
+    // as "configured" here while the gate refused it is the same disagreement in a subtler form.
+    telephony: VOICE_TELEPHONY_SECRET_NAMES.every(name => String(runtime[name] ?? "").trim().length > 0),
     scheduler: Boolean(runtime.AUTOMATION_CRON_SECRET),
   };
   const controls = [

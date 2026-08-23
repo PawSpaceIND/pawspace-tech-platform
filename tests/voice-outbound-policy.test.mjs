@@ -278,7 +278,7 @@ test("replaying a call request does not dial twice", async () => {
 test("a call must name the customer or lead it is about, and a real number", async () => {
   const { db, env } = await fresh();
   await assert.rejects(() => gov.requestOutboundVoiceCall(db, env, callInput({ customerId: null, leadId: null })), /must name the customer or lead/);
-  await assert.rejects(() => gov.requestOutboundVoiceCall(db, env, callInput({ phone: "123" })), /real recipient phone number/);
+  await assert.rejects(() => gov.requestOutboundVoiceCall(db, env, callInput({ phone: "123" })), /dialable number/);
   await assert.rejects(() => gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "" })), /idempotency key/);
 });
 
@@ -627,5 +627,86 @@ test("two DTMF presses on one call are both recorded, and a redelivery still is 
   const status = new URLSearchParams({ CallSid: `EX-${call.callId}`, CustomField: call.callId, CallStatus: "completed", CallDuration: "30" }).toString();
   assert.equal((await gov.recordVoiceProviderEvent(db, env, { rawBody: status, headers: await sign(status) })).duplicate, false);
   assert.equal((await gov.recordVoiceProviderEvent(db, env, { rawBody: status, headers: await sign(status) })).duplicate, true);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM voice_call_state_transitions WHERE call_id=? AND to_state='completed'").get(call.callId).c, 1);
+});
+
+test("a foreign number sharing the last ten digits cannot ride an approved recipient's checks", async () => {
+  const gate = await import("../lib/voice-call-gate.ts");
+  // The hole: every policy control keys on the last TEN digits, so these three are one recipient to the
+  // allow-list, the consent record, the opt-out list, the frequency cap and the audit trail - while the
+  // carrier would have dialled three different people in three different countries.
+  for (const foreign of ["+19876543210", "+449876543210", "+659876543210"]) {
+    assert.equal(gate.normalisedDialKey(foreign), ALLOWLISTED_PHONE, `${foreign} shares the policy key`);
+    assert.equal(gate.canonicalDialNumber({}, foreign), null, `${foreign} must be refused`);
+  }
+  assert.equal(gate.canonicalDialNumber({}, "+919876543210"), "+919876543210", "the configured country still works");
+  assert.equal(gate.canonicalDialNumber({ PAWSPACE_VOICE_DIAL_COUNTRY_CODE: "44" }, "+447700900123"), "+447700900123");
+  assert.equal(gate.canonicalDialNumber({ PAWSPACE_VOICE_DIAL_COUNTRY_CODE: "44" }, "+919876543210"), null, "and only that country");
+
+  // Executed end to end: an allow-listed, consented Indian number does not license a US dial.
+  const { sqlite, db, env } = await fresh();
+  await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
+  await assert.rejects(
+    () => gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "foreign-1", phone: "+19876543210" })),
+    /dialable number/,
+    "the foreign variant is refused before any policy check runs",
+  );
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM voice_call_orders").get().c, 0, "and no call row exists");
+
+  // The key stored on a permitted call is derived FROM the dialled number, so the two cannot diverge.
+  const ok = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "foreign-ok", phone: "+91 98765 43210" }));
+  const row = order(sqlite, ok.callId);
+  assert.equal(row.dial_number, "+919876543210");
+  assert.equal(row.phone_key, gate.normalisedDialKey(row.dial_number), "the policy key is the dialled number's key");
+});
+
+test("the weekly marketing cap is enforced atomically, not just read", async () => {
+  // The city policy's promotional_cap_7d is 1 for an unknown city (conservative default) and 3 for blr;
+  // the seeded blr policy allows 3 marketing calls in 7 days while lead_qualification allows 2 per day.
+  // Concurrency must not exceed EITHER window.
+  const { sqlite, db, env } = await fresh({ PAWSPACE_VOICE_SALES_OUTBOUND_APPROVED: "true" });
+  await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "lead", subjectId: "LEAD-V1", granted: true, source: "enquiry_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
+  const { seedCommunicationPolicy } = await import("../lib/communication-engine.ts");
+  await seedCommunicationPolicy(db);
+  const capped = sqlite.prepare("UPDATE communication_policies SET promotional_cap_7d=1 WHERE city_id='blr'").run();
+  assert.equal(Number(capped.changes), 1, "the weekly cap must actually be set to 1 for this to prove anything");
+
+  const results = await Promise.all(Array.from({ length: 4 }, (_, index) =>
+    gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: `weekly-${index}`, useCase: "lead_qualification", bookingId: null }))));
+  const dialled = results.filter(result => result.dialled);
+  assert.equal(dialled.length, 1, `the weekly marketing cap of 1 bound the fan-out, got ${dialled.length}`);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM voice_call_orders WHERE dialed_at IS NOT NULL").get().c, 1);
+  assert.ok(results.filter(r => !r.dialled).every(r => r.state === "blocked_frequency_cap"), results.map(r => r.state).join(","));
+  // A transactional call to the same number is not marketing, so the weekly marketing window does not
+  // bind it - the cap is per-purpose, not a blanket lock on the recipient.
+  const transactional = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "weekly-txn" }));
+  assert.equal(transactional.dialled, true);
+});
+
+test("different status callbacks on one call are all applied; only identical ones deduplicate", async () => {
+  // The composed event identity already carries the status, so ringing/connected/completed on one call
+  // are distinct. Asserted here because that is easy to misread from the carrier-id comment alone.
+  const { sqlite, db, env } = await fresh();
+  await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
+  const call = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "progress-1" }));
+  const secret = env.EXOTEL_WEBHOOK_SECRET;
+  const sign = async (bodyText) => {
+    const timestamp = Date.now();
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${timestamp}.${bodyText}`));
+    return new Headers({ "x-pawspace-voice-timestamp": String(timestamp), "x-pawspace-voice-signature": Array.from(new Uint8Array(mac)).map(b => b.toString(16).padStart(2, "0")).join("") });
+  };
+  // Same CallSid throughout - which is exactly the real carrier behaviour.
+  const status = (value) => new URLSearchParams({ CallSid: `EX-${call.callId}`, CustomField: call.callId, CallStatus: value }).toString();
+  for (const [value, expected] of [["ringing", "ringing"], ["in-progress", "connected"], ["completed", "completed"]]) {
+    const body = status(value);
+    const result = await gov.recordVoiceProviderEvent(db, env, { rawBody: body, headers: await sign(body) });
+    assert.equal(result.duplicate, false, `${value} must not be seen as a duplicate of an earlier status`);
+    assert.equal(result.applied, true, value);
+    assert.equal(sqlite.prepare("SELECT state FROM voice_call_orders WHERE id=?").get(call.callId).state, expected, value);
+  }
+  // But re-sending one of them is a redelivery and changes nothing.
+  const replay = status("completed");
+  assert.equal((await gov.recordVoiceProviderEvent(db, env, { rawBody: replay, headers: await sign(replay) })).duplicate, true);
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM voice_call_state_transitions WHERE call_id=? AND to_state='completed'").get(call.callId).c, 1);
 });

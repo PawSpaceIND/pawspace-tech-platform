@@ -493,3 +493,38 @@ test("an oversized or stalled provider response does not hang or exhaust the dia
     assert.ok(Date.now() - started < 20_000, "the stalled body hit the deadline");
   } finally { globalThis.fetch = original; }
 });
+
+test("the readiness migration survives the runtime credential sync", async () => {
+  // syncIntegrationCredentialPresence stamps updated_by='runtime_presence_check' whenever a credential's
+  // presence changes. Keying the migration on 'system_seed' alone meant any database where that had ever
+  // run kept the stale status forever - which is most of them, and defeats the migration entirely.
+  const registry = await import("../lib/integration-readiness.ts");
+  for (const writer of ["system_seed", "runtime_presence_check"]) {
+    const ctx = await fresh();
+    await registry.ensureIntegrationReadinessTables(ctx.db);
+    ctx.sqlite.prepare("UPDATE integration_registry SET code_boundary_status='partial',notes='stale',updated_by=? WHERE integration_code='INT-VOICE-01'").run(writer);
+    await registry.ensureIntegrationReadinessTables(ctx.db);
+    const row = ctx.sqlite.prepare("SELECT code_boundary_status,readiness_state FROM integration_registry WHERE integration_code='INT-VOICE-01'").get();
+    assert.equal(row.code_boundary_status, "code_ready", `a row last written by ${writer} must advance`);
+    assert.equal(row.readiness_state, "sandbox_setup_required", "but the operational state never advances");
+  }
+  // A human's edit still wins.
+  const edited = await fresh();
+  await registry.ensureIntegrationReadinessTables(edited.db);
+  edited.sqlite.prepare("UPDATE integration_registry SET code_boundary_status='partial',updated_by='karthik@pawspace.in' WHERE integration_code='INT-VOICE-01'").run();
+  await registry.ensureIntegrationReadinessTables(edited.db);
+  assert.equal(edited.sqlite.prepare("SELECT code_boundary_status FROM integration_registry WHERE integration_code='INT-VOICE-01'").get().code_boundary_status, "partial");
+});
+
+test("a whitespace-only credential is not reported as configured anywhere", async () => {
+  // The dial gate trims; a readiness surface that does not would report a configured line the gate
+  // refuses - the same disagreement the shared constant was meant to end, one layer down.
+  const gate = await import("../lib/voice-call-gate.ts");
+  const blank = uatVoiceEnv({ EXOTEL_API_TOKEN: "   " });
+  assert.equal(gate.telephonyCredentialsConfigured(blank), false);
+  assert.deepEqual(gate.voiceCallReadiness(blank).missingSecretNames, ["EXOTEL_API_TOKEN"]);
+  assert.equal(gate.resolveVoiceCallGate(blank).ok, false);
+  const { readFile } = await import("node:fs/promises");
+  const route = await readFile(new URL("../app/api/system-integration/route.ts", import.meta.url), "utf8");
+  assert.match(route, /String\(runtime\[name\] \?\? ""\)\.trim\(\)\.length > 0/, "the readiness surface trims too");
+});

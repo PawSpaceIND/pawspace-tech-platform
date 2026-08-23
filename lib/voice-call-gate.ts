@@ -69,7 +69,14 @@ export function canonicalDialNumber(env: Env, phone: unknown): string | null {
   const cc = (val(env, "PAWSPACE_VOICE_DIAL_COUNTRY_CODE") || "91").replace(/[^0-9]/g, "") || "91";
   if (raw.startsWith("+")) {
     const digits = raw.slice(1).replace(/[^0-9]/g, "");
-    return digits.length >= 8 && digits.length <= 15 && digits === raw.slice(1) ? `+${digits}` : null;
+    if (digits.length < 8 || digits.length > 15 || digits !== raw.slice(1)) return null;
+    // The country code must be the configured one. Every policy control - allow-list, consent, opt-out,
+    // frequency cap, audit - keys on the LAST TEN DIGITS, and +19876543210, +449876543210 and
+    // +919876543210 all share the key 9876543210. Accepting an arbitrary country code therefore let a
+    // caller satisfy checks recorded for an approved local number and have a completely different
+    // person dialled. Supporting genuine cross-country calling means keying those controls on the full
+    // E.164 number, which is a deliberate change, not a default.
+    return digits.startsWith(cc) ? `+${digits}` : null;
   }
   const digits = raw.replace(/[^0-9]/g, "");
   if (digits !== raw) return null;

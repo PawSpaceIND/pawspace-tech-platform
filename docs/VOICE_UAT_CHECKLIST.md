@@ -97,6 +97,7 @@ Shared:
 |---|---|
 | `VOICE_AUDIO_ALLOWED_HOSTS` | Comma-separated hostnames that may be fetched for audio. Everything else is refused; private, loopback, link-local and cloud-metadata destinations are refused regardless of this list. |
 | `VOICE_SPEECH_TIMEOUT_MS` | Optional. Default 12000; honoured between 1000 and 60000. |
+| `PAWSPACE_VOICE_DIAL_COUNTRY_CODE` | Optional. Defaults to `91`. Only numbers in this country code are dialable — every policy control (allow-list, consent, opt-out, frequency cap, audit) keys on the last ten digits, so accepting other country codes would let a foreign number ride an approved local number's checks and have a different person dialled. Cross-country calling requires keying those controls on the full E.164 number first. |
 
 ## 3. Callback verification — what to configure at the provider
 

@@ -72,15 +72,20 @@ function detectedCredentialStatus(runtime:Record<string,unknown>,detector:unknow
  * notes, and the readiness surface would report stale telephony information exactly where the
  * correction matters.
  *
- * Advanced only when the row is still exactly as the seed left it: never touched through
- * updateIntegrationReadiness (which stamps its own updated_by) and still on the old status. An operator
- * edit, or a row already correct, is left alone. readiness_state is deliberately NOT touched - the
- * provider still has no credentials anywhere, so it stays sandbox_setup_required.
+ * Advanced only when the row has never been touched by a HUMAN: still on the old status, and last
+ * written by one of this module's own automated writers. 'runtime_presence_check' has to be in that set -
+ * syncIntegrationCredentialPresence stamps it whenever a credential's presence changes, so any database
+ * where that has ever run would otherwise fail the predicate and keep the stale status forever, defeating
+ * the migration entirely. An operator edit through updateIntegrationReadiness stamps the actor's own id
+ * and is left alone.
+ *
+ * readiness_state is deliberately NOT touched - the provider still has no credentials anywhere, so it
+ * stays sandbox_setup_required.
  */
 async function advanceVoiceBoundarySeed(db:Db,now:number){
  const seed=seeds.find(item=>item.code==="INT-VOICE-01");
  if(!seed)return;
- await db.prepare("UPDATE integration_registry SET code_boundary_status=?,notes=?,updated_at=? WHERE integration_code='INT-VOICE-01' AND updated_by='system_seed' AND code_boundary_status='partial'")
+ await db.prepare("UPDATE integration_registry SET code_boundary_status=?,notes=?,updated_at=? WHERE integration_code='INT-VOICE-01' AND updated_by IN ('system_seed','runtime_presence_check') AND code_boundary_status='partial'")
   .bind(seed.codeBoundaryStatus,seed.notes,now).run();
 }
 

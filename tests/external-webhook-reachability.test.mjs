@@ -89,7 +89,13 @@ function reachableModules(routeName) {
 function externalAuth(source) {
   const signals = [];
   if (/env\.[A-Z_]*API_KEY|runtime\.[A-Z_]*API_KEY|[A-Z_]+_API_KEY\s*\|\|/.test(source) && /request\.headers\.get\(/.test(source)) signals.push("shared_key_header");
-  if (/WEBHOOK_SECRET/.test(source) && /crypto\.subtle\.(sign|importKey)/.test(source)) signals.push("hmac_signature");
+  // An hmac signal needs EVIDENCE OF VERIFICATION, not merely the ingredients. A module that reads a
+  // webhook secret and imports a key but never reads a signature header or compares a MAC is not
+  // authenticating anything - it might only be signing outbound requests. All four parts, in one module.
+  if (/WEBHOOK_SECRET/.test(source)
+    && /crypto\.subtle\.(sign|importKey)/.test(source)
+    && /headers\.get\(/.test(source)
+    && /safeEqual|timingSafeEqual|constantTimeEqual/.test(source)) signals.push("hmac_signature");
   if (/x-razorpay-signature|x-pawspace-signature|x-haptik-key/i.test(source)) signals.push("provider_signature_header");
   return signals;
 }
@@ -177,12 +183,29 @@ test("following imports did not turn the exemption guard into a rubber stamp", (
   // Sabotage 2 - the one that matters for the widening. Two modules that each hold HALF of a signal must
   // NOT satisfy it between them. Concatenating the reachable modules would pass this; testing each on its
   // own does not, which is why reachableModules() returns the parts rather than one joined string.
-  const halfA = "const secret = env.EXOTEL_WEBHOOK_SECRET; export const x = secret;";
+  const halfA = "const secret = env.EXOTEL_WEBHOOK_SECRET; export const x = secret; const h = request.headers.get('x-sig'); function safeEqual(a,b){return a===b}";
   const halfB = "export async function sign(k){ return crypto.subtle.importKey('raw', k); }";
-  assert.deepEqual(externalAuth(halfA), [], "a secret reference alone is not verification");
+  assert.deepEqual(externalAuth(halfA), [], "a secret plus a header read, with no signing, is not verification");
   assert.deepEqual(externalAuth(halfB), [], "a signing helper alone is not verification");
   assert.ok(externalAuth([halfA, halfB].join("\n")).includes("hmac_signature"), "joined, the halves would have passed");
   assert.ok(![halfA, halfB].some(source => externalAuth(source).length), "per-module, they do not");
+  // Sabotage 3: ONE module holding the secret and doing real key work, but never reading a signature
+  // header and never comparing a MAC. It is signing, not verifying, and must not count as caller
+  // authentication - the previous two-part signal accepted exactly this shape.
+  const signsOnly = `const secret = env.EXOTEL_WEBHOOK_SECRET;
+    export async function signOutbound(body){
+      const key = await crypto.subtle.importKey('raw', secret, {name:'HMAC'}, false, ['sign']);
+      return crypto.subtle.sign('HMAC', key, body);
+    }`;
+  assert.deepEqual(externalAuth(signsOnly), [], "signing outbound requests is not verifying inbound ones");
+  const noComparison = `const secret = env.EXOTEL_WEBHOOK_SECRET;
+    export async function check(request, body){
+      const presented = request.headers.get('x-pawspace-voice-signature');
+      const key = await crypto.subtle.importKey('raw', secret, {name:'HMAC'}, false, ['sign']);
+      const expected = await crypto.subtle.sign('HMAC', key, body);
+      return { presented, expected };
+    }`;
+  assert.deepEqual(externalAuth(noComparison), [], "computing a MAC without comparing it verifies nothing");
   // And a module that genuinely verifies still registers, so this is a bound and not a blanket refusal.
   assert.ok(externalAuth(read("lib/voice-telephony-provider.ts")).includes("hmac_signature"));
   // A staff route reached through the same import-following must not acquire a webhook's credentials.

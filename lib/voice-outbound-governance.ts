@@ -94,7 +94,7 @@ export async function ensureVoiceCallTables(db: Db) {
     // The frequency cap's ENFORCEMENT point, separate from the ledger so it can be claimed atomically
     // before the provider is contacted. The count in evaluateVoiceCallPolicy is the advisory read that
     // produces a good audit message; this table is what actually bounds concurrent dials.
-    db.prepare("CREATE TABLE IF NOT EXISTS voice_call_dial_reservations (call_id TEXT PRIMARY KEY,phone_key TEXT NOT NULL,reserved_at INTEGER NOT NULL,released_at INTEGER)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS voice_call_dial_reservations (call_id TEXT PRIMARY KEY,phone_key TEXT NOT NULL,purpose TEXT NOT NULL DEFAULT 'unknown',reserved_at INTEGER NOT NULL,released_at INTEGER)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_voice_dial_reservations_phone ON voice_call_dial_reservations(phone_key,released_at,reserved_at)"),
     db.prepare("CREATE TABLE IF NOT EXISTS voice_call_scripts (use_case TEXT PRIMARY KEY,opening_disclosure TEXT NOT NULL,body_json TEXT NOT NULL DEFAULT '[]',claims_approved INTEGER NOT NULL DEFAULT 0,active INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
   ]);
@@ -297,6 +297,8 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
     scriptDisclosure: script && scriptOk ? text(script.opening_disclosure) : null,
     // Handed to the atomic claim below so enforcement and the audit message agree on the numbers.
     dailyCap, capWindowStart: now - 86_400_000,
+    marketingCap: useCase?.purpose === "marketing" ? policy.promotionalCap7d : null,
+    marketingWindowStart: now - 7 * 86_400_000,
   };
 }
 
@@ -312,10 +314,19 @@ export async function evaluateVoiceCallPolicy(db: Db, env: Env, input: VoiceCall
  * recipient must not consume their allowance - the same rule the advisory count already applied by
  * only counting rows with dialed_at set.
  */
-async function claimDialSlot(db: Db, input: { callId: string; phoneKey: string; cap: number; windowStart: number; now: number }) {
+async function claimDialSlot(db: Db, input: { callId: string; phoneKey: string; purpose: string; cap: number; windowStart: number; now: number; marketingCap: number | null; marketingWindowStart: number }) {
+  // BOTH windows in one statement. The weekly marketing limit was an advisory read like the daily one
+  // used to be, so with a daily cap of 2 and a weekly marketing cap of 1, two concurrent marketing
+  // requests could each pass the read and both dial.
   const claim = await db.prepare(
-    "INSERT INTO voice_call_dial_reservations (call_id,phone_key,reserved_at,released_at) SELECT ?,?,?,NULL WHERE (SELECT COUNT(*) FROM voice_call_dial_reservations WHERE phone_key=? AND released_at IS NULL AND reserved_at>=?) < ?"
-  ).bind(input.callId, input.phoneKey, input.now, input.phoneKey, input.windowStart, Math.max(0, input.cap)).run();
+    "INSERT INTO voice_call_dial_reservations (call_id,phone_key,purpose,reserved_at,released_at) SELECT ?,?,?,?,NULL" +
+    " WHERE (SELECT COUNT(*) FROM voice_call_dial_reservations WHERE phone_key=? AND released_at IS NULL AND reserved_at>=?) < ?" +
+    " AND (? IS NULL OR (SELECT COUNT(*) FROM voice_call_dial_reservations WHERE phone_key=? AND purpose='marketing' AND released_at IS NULL AND reserved_at>=?) < ?)"
+  ).bind(
+    input.callId, input.phoneKey, input.purpose, input.now,
+    input.phoneKey, input.windowStart, Math.max(0, input.cap),
+    input.marketingCap, input.phoneKey, input.marketingWindowStart, Math.max(0, input.marketingCap ?? 0),
+  ).run();
   return Number(claim.meta.changes) > 0;
 }
 
@@ -405,11 +416,13 @@ export async function requestOutboundVoiceCall(db: Db, env: Env, input: VoiceCal
   const now = input.asOf ?? Date.now();
   const idempotencyKey = text(input.idempotencyKey);
   if (!idempotencyKey) throw new Error("An idempotency key is required to place a voice call");
-  const phoneKey = normalisedDialKey(input.phone);
-  if (!phoneKey) throw new Error("A real recipient phone number is required");
-  // One canonical number, derived once, used for the dial and carried through every retry.
+  // One canonical number, derived once, used for the dial and carried through every retry - and the
+  // policy key is derived FROM it, not from the raw input. Deriving them separately is how the number
+  // that passed the checks and the number handed to the carrier could drift apart.
   const dialNumber = canonicalDialNumber(env, input.phone);
   if (!dialNumber) throw new Error("Recipient number could not be read as a dialable number");
+  const phoneKey = normalisedDialKey(dialNumber);
+  if (!phoneKey) throw new Error("A real recipient phone number is required");
   if (!text(input.customerId) && !text(input.leadId)) throw new Error("A voice call must name the customer or lead it is about");
   const prior = await db.prepare("SELECT * FROM voice_call_orders WHERE idempotency_key=?").bind(idempotencyKey).first<Row>();
   if (prior) return { duplicatePrevented: true, ...summarise(prior) };
@@ -453,7 +466,7 @@ export async function requestOutboundVoiceCall(db: Db, env: Env, input: VoiceCal
   }
   // 2. The frequency cap, claimed atomically. The count the gate read is advisory - it produces a good
   //    audit message - but this single statement is what actually bounds concurrent dials.
-  if (!(await claimDialSlot(db, { callId: id, phoneKey, cap: policy.dailyCap, windowStart: policy.capWindowStart, now }))) {
+  if (!(await claimDialSlot(db, { callId: id, phoneKey, purpose: useCase?.purpose || "unknown", cap: policy.dailyCap, windowStart: policy.capWindowStart, now, marketingCap: policy.marketingCap, marketingWindowStart: policy.marketingWindowStart }))) {
     const reason = `Frequency cap for this recipient was reached by a concurrent request (limit ${policy.dailyCap} in 24h)`;
     await applyTransition(db, { callId: id, to: "blocked_frequency_cap", reason, actor: input.actorId, detail: { concurrentClaim: true }, asOf: now });
     const row = await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(id).first<Row>();
@@ -634,12 +647,16 @@ export async function recordVoiceProviderEvent(db: Db, env: Env, input: { rawBod
   const now = input.asOf ?? Date.now();
   const digest = await sha256Hex(input.rawBody);
   const curated = { kind: event.kind, providerStatus: event.providerStatus, dtmfDigits: event.dtmfDigits, durationSeconds: event.durationSeconds, hasRecording: Boolean(event.recordingRef) };
-  // A carrier's event id for a status callback is the CALL id, which is constant for the whole call - so
-  // two DTMF presses on one call produced the identical identity and the second was silently dropped as
-  // a duplicate. For kinds that legitimately repeat, the body digest joins the identity: two genuinely
-  // different payloads are now distinct, while an exact redelivery still deduplicates (it is
-  // indistinguishable from a repeat by definition). Status events keep a stable identity so a
-  // redelivered 'completed' cannot advance the state machine twice.
+  // event.providerEventId is composed by normaliseTelephonyEvent as
+  // `${provider}:${carrierId}:${eventType || status}`. The CARRIER's own id is the call id, constant for
+  // the whole call, but the status is already part of the composed identity - so ringing, connected and
+  // completed on one call are distinct, while a redelivered 'completed' is not (which is what stops it
+  // advancing the state machine twice).
+  //
+  // What the status does NOT distinguish is two events of the same kind: two DTMF presses both compose
+  // to `...:dtmf` and the second was dropped as a duplicate. For kinds that legitimately repeat, the
+  // body digest joins the identity - two different payloads become distinct, and an exact redelivery
+  // still deduplicates, which is correct because it is indistinguishable from a repeat by definition.
   const eventKey = REPEATABLE_EVENT_KINDS.has(event.kind) ? `${event.providerEventId}:${digest.slice(0, 16)}` : event.providerEventId;
   const insert = await db.prepare("INSERT OR IGNORE INTO voice_call_provider_events (id,call_id,provider,provider_event_id,event_kind,provider_status,signature_mechanism,payload_sha256,curated_json,applied,created_at) VALUES (?,?,?,?,?,?,?,?,?,0,?)")
     .bind(uid("VPE"), event.callRef || null, provider.provider, eventKey, event.kind, event.providerStatus, verification.mechanism, digest, JSON.stringify(curated), now).run();
