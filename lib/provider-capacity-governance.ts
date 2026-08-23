@@ -83,16 +83,39 @@ export async function recordProviderPerformance(db:Db,input:{providerId:string;g
  * window (closed only by explicitly going available again, not auto-expiring) - matching how a real
  * "I'm offline" toggle should behave: it stays off until the provider turns it back on themselves.
  */
-export async function setProviderAvailability(db:Db,input:{providerId:string;available:boolean;reason:string;actorId:string}){
+/**
+ * Going UNAVAILABLE is always the provider's own call. Coming BACK is not.
+ *
+ * Unavailability is two different things wearing one row: a provider taking a day off, and the platform
+ * restricting a provider it does not currently trust — a rejected KYC check, a suspension, an
+ * accountability case. Clearing every active window on request treated those as the same thing, so a
+ * provider suspended by staff could lift the suspension by asking to be available again. Ownership was
+ * enforced and authority was not: the record is theirs, the restriction is not.
+ *
+ * A window may therefore only be cleared by the actor who imposed it, unless the caller is acting as
+ * staff over providers. `actorIsStaff` defaults to FALSE so a caller that has not established authority
+ * gets the restrictive branch rather than the permissive one.
+ */
+export async function setProviderAvailability(db:Db,input:{providerId:string;available:boolean;reason:string;actorId:string;actorIsStaff?:boolean}){
   await ensureProviderCapacityTables(db);
   if(!input.providerId.trim())throw new Error("Provider is required");
   if(input.reason.trim().length<3)throw new Error("A real reason is required");
   const now=Date.now();
   if(input.available){
     const nowIso=new Date(now).toISOString();
-    const result=await db.prepare("UPDATE provider_unavailability SET ends_at=?,status='cleared',updated_at=? WHERE provider_id=? AND status='active' AND starts_at<=? AND ends_at>?")
-      .bind(nowIso,now,input.providerId,nowIso,nowIso).run();
-    return{providerId:input.providerId,available:true,windowsCleared:Number(result.meta?.changes||0)};
+    const staff=input.actorIsStaff===true;
+    const sql="UPDATE provider_unavailability SET ends_at=?,status='cleared',updated_at=? WHERE provider_id=? AND status='active' AND starts_at<=? AND ends_at>?"+(staff?"":" AND created_by=?");
+    const args=[nowIso,now,input.providerId,nowIso,nowIso];
+    if(!staff)args.push(input.actorId);
+    const result=await db.prepare(sql).bind(...args).run();
+    const cleared=Number(result.meta?.changes||0);
+    // Anything still standing was imposed by somebody else and stays standing. Reported rather than
+    // thrown: asking to be available when nothing blocks you is not an error, and the caller needs to
+    // know it did not take effect.
+    const blocking=await db.prepare("SELECT COUNT(*) n FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<=? AND ends_at>?")
+      .bind(input.providerId,nowIso,nowIso).first<Row>();
+    const restricted=Number(blocking?.n||0);
+    return{providerId:input.providerId,available:restricted===0,windowsCleared:cleared,restrictionsRemaining:restricted};
   }
   const startsAt=new Date(now).toISOString(),endsAt=new Date(now+10*365*86400000).toISOString();
   const id=`PUNAVAIL-${crypto.randomUUID().slice(0,12).toUpperCase()}`;

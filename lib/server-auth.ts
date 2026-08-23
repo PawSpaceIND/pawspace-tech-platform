@@ -87,8 +87,19 @@ export async function requireCustomerOwnership(db:Db,actor:AuthenticatedActor,cu
   return actor;
 }
 
+/**
+ * Whether this actor is acting as STAFF over providers, rather than as a provider acting on itself.
+ *
+ * This is the exact predicate requireProviderOwnership already used to let an operator through, lifted
+ * out so callers can tell the two cases apart. Ownership alone does not imply authority: a provider
+ * owns its own record and must still not be able to lift a restriction that staff placed on it.
+ */
+export function actorManagesProviders(actor:AuthenticatedActor){
+  return Boolean(actor.developmentPreview)||hasPermission(actor.permissions,"providers.manage")||hasPermission(actor.permissions,"grooming.manage")||hasPermission(actor.permissions,"bookings.manage");
+}
+
 export async function requireProviderOwnership(db:Db,actor:AuthenticatedActor,providerId:string){
-  if(actor.developmentPreview||hasPermission(actor.permissions,"providers.manage")||hasPermission(actor.permissions,"grooming.manage")||hasPermission(actor.permissions,"bookings.manage"))return actor;
+  if(actorManagesProviders(actor))return actor;
   const binding=await findIdentityBinding(db,{identitySource:actor.identitySource,principalType:actor.principalType,principalKey:actor.principalKey,subjectType:"provider"});
   if(binding){if(String(binding.subject_id)!==providerId)throw authFailure("Provider ownership denied",403);return actor;}
   const legacy=await db.prepare("SELECT provider_id,status FROM provider_identity_links WHERE email=?").bind(actor.email).first<Record<string,unknown>>();

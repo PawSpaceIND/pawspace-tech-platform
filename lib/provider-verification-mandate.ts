@@ -65,11 +65,24 @@ export async function ensureVerificationMandateTables(db: Db) {
   ]);
 }
 
+/**
+ * Seed the default mandate for any category that has NEVER been configured.
+ *
+ * Per-category, and deliberately not per-row. `INSERT OR IGNORE` per row looks idempotent and is not:
+ * it restores rows a human removed. Because requiredVerifications() seeds on every read, an operator who
+ * narrowed a category's mandate saw it silently widen back to the defaults on the next read — the
+ * control surface reported a change that the enforcement path then discarded. A category that already
+ * carries any row is a category somebody has decided about, and defaults must not overwrite a decision.
+ */
 export async function seedDefaultMandates(db: Db) {
   await ensureVerificationMandateTables(db);
   const now = Date.now();
-  for (const [category, types] of Object.entries(DEFAULT_MANDATES)) for (const t of types)
-    await db.prepare("INSERT OR IGNORE INTO provider_category_verification_mandates (category,verification_type,required,updated_by,updated_at) VALUES (?,?,1,'system_seed',?)").bind(category, t, now).run();
+  for (const [category, types] of Object.entries(DEFAULT_MANDATES)) {
+    const existing = await db.prepare("SELECT COUNT(*) n FROM provider_category_verification_mandates WHERE category=?").bind(category).first<Row>().catch(() => null);
+    if (Number(existing?.n || 0) > 0) continue;
+    for (const t of types)
+      await db.prepare("INSERT OR IGNORE INTO provider_category_verification_mandates (category,verification_type,required,updated_by,updated_at) VALUES (?,?,1,'system_seed',?)").bind(category, t, now).run();
+  }
 }
 
 /** Set the mandated verification types for a category (replaces the set). */
@@ -77,7 +90,12 @@ export async function setCategoryMandate(db: Db, input: { category: string; veri
   await ensureVerificationMandateTables(db);
   const category = text(input.category);
   if (!PROVIDER_CATEGORIES.includes(category)) throw new Error(`Unknown category (use one of: ${PROVIDER_CATEGORIES.join(", ")})`);
-  const types = (input.verificationTypes || []).map(text).filter(t => typeByCode(t));
+  const requested = (input.verificationTypes || []).map(text).filter(Boolean);
+  // An unrecognised type is refused by name rather than dropped. Silently discarding it told an operator
+  // their mandate had been applied while the check they asked for was never required of anybody.
+  const unknown = requested.filter(t => !typeByCode(t));
+  if (unknown.length) throw new Error(`Unknown verification type(s): ${unknown.join(", ")}`);
+  const types = requested;
   if (!types.length) throw new Error("At least one valid verification type is required");
   const now = Date.now();
   await db.prepare("DELETE FROM provider_category_verification_mandates WHERE category=?").bind(category).run();
