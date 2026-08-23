@@ -43,6 +43,7 @@ jobs:
             fi
           done
           test "${#tracked_tests[@]}" -gt 0
+          export PATH="$PWD/node_modules/.bin:$PATH"
           node --test --test-force-exit "${tracked_tests[@]}"
 
   lint:
