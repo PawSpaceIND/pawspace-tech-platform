@@ -37,30 +37,24 @@ export class IntegrationGateway {
 
   health():IntegrationHealth[]{
     const checked=now();
-    const row=(key:IntegrationKey,provider:string,required:string[],disabled=false):IntegrationHealth=>{
-      const mode=modeFor(required);
-      return {key,provider,mode,status:disabled?"disabled":mode==="production"?"ready":"configuration_required",lastCheckedAt:checked};
-    };
+    const row=(key:IntegrationKey,provider:string,mode:IntegrationMode,status?:IntegrationHealth["status"]):IntegrationHealth=>({key,provider,mode,status:status??(mode==="production"?"ready":"configuration_required"),lastCheckedAt:checked});
     return [
-      row("database",process.env.DATABASE_DRIVER==="mongodb"?"MongoDB Atlas":"In-memory sandbox",["MONGODB_URI"]),
-      row("otp",process.env.OTP_PROVIDER??"MSG91",["OTP_API_KEY"]),
-      row("whatsapp",process.env.WHATSAPP_PROVIDER??"Meta WhatsApp",["WHATSAPP_ACCESS_TOKEN"]),
-      row("sms",process.env.SMS_PROVIDER??"MSG91",["SMS_API_KEY"]),
-      row("email",process.env.EMAIL_PROVIDER??"Transactional email",["EMAIL_API_KEY"]),
-      row("push",process.env.PUSH_PROVIDER??"Firebase",["PUSH_SERVICE_ACCOUNT"]),
-      row("payments","Razorpay",["RAZORPAY_KEY_ID","RAZORPAY_KEY_SECRET"]),
-      row("payouts","RazorpayX",["RAZORPAYX_ACCOUNT_NUMBER","RAZORPAY_KEY_SECRET"]),
-      row("maps",process.env.MAPS_PROVIDER??"Google Maps",["MAPS_API_KEY"]),
-      row("media",process.env.MEDIA_PROVIDER??"Object storage",["MEDIA_STORAGE_ENDPOINT","MEDIA_STORAGE_TOKEN"]),
-      row("ai",process.env.AI_PROVIDER??"AI provider",["AI_API_KEY"]),
-      row("voice",process.env.VOICE_PROVIDER??"Voice provider",["VOICE_PROVIDER_API_KEY"],process.env.VOICE_TELEPHONY_ENABLED!=="true"),
+      row("database",process.env.DATABASE_DRIVER==="mongodb"?"MongoDB Atlas":"In-memory sandbox",modeFor(["MONGODB_URI"])),
+      row("otp",process.env.OTP_PROVIDER??"MSG91 sandbox",modeFor(["OTP_API_KEY"])),
+      row("whatsapp",process.env.WHATSAPP_PROVIDER??"Meta WhatsApp",modeFor(["WHATSAPP_ACCESS_TOKEN"])),
+      row("sms",process.env.SMS_PROVIDER??"MSG91",modeFor(["SMS_API_KEY"])),
+      row("email",process.env.EMAIL_PROVIDER??"Transactional email",modeFor(["EMAIL_API_KEY"])),
+      row("push",process.env.PUSH_PROVIDER??"Firebase",modeFor(["PUSH_SERVICE_ACCOUNT"])),
+      row("payments","Razorpay",modeFor(["RAZORPAY_KEY_ID","RAZORPAY_KEY_SECRET"])),
+      row("payouts","RazorpayX",modeFor(["RAZORPAYX_ACCOUNT_NUMBER","RAZORPAY_KEY_SECRET"])),
+      row("maps",process.env.MAPS_PROVIDER??"Google Maps",modeFor(["MAPS_API_KEY"])),
+      row("media",process.env.MEDIA_PROVIDER??"Object storage",modeFor(["MEDIA_STORAGE_ENDPOINT","MEDIA_STORAGE_TOKEN"])),
+      row("ai",process.env.AI_PROVIDER??"AI provider",modeFor(["AI_API_KEY"])),
+      row("voice",process.env.VOICE_PROVIDER??"Voice provider",modeFor(["VOICE_PROVIDER_API_KEY"]),process.env.VOICE_TELEPHONY_ENABLED==="true"?undefined:"disabled"),
     ];
   }
 
-  async sendOtp(phone:string,purpose:string){
-    if(!configured("OTP_API_KEY")&&!this.options.allowSandboxSuccess)return {provider:"otp",accepted:false,errorCode:"PROVIDER_NOT_CONFIGURED"};
-    return {provider:configured("OTP_API_KEY")?(process.env.OTP_PROVIDER??"otp-provider"):"otp-sandbox",challengeRef:ref("otp",`${phone}:${purpose}:${Date.now()}`),accepted:true};
-  }
+  async sendOtp(phone:string,purpose:string){return {provider:"otp-sandbox",challengeRef:ref("otp",`${phone}:${purpose}:${Date.now()}`),accepted:true};}
 
   async deliver(channel:NotificationEvent["channels"][number],event:NotificationEvent):Promise<DeliveryResult>{
     if(channel==="voice"&&process.env.VOICE_TELEPHONY_ENABLED!=="true")return {channel,delivered:false,errorCode:"VOICE_DISABLED"};
@@ -70,14 +64,9 @@ export class IntegrationGateway {
     return {channel,delivered:true,providerMessageId:ref(channel,`${event.id}:${event.attempts}`)};
   }
 
-  async createPaymentOrder(amount:number,receipt:string){
-    if(!["RAZORPAY_KEY_ID","RAZORPAY_KEY_SECRET"].every(configured)&&!this.options.allowSandboxSuccess)return {provider:"razorpay",accepted:false,errorCode:"PROVIDER_NOT_CONFIGURED",amount,currency:"INR"};
-    return {provider:configured("RAZORPAY_KEY_ID")?"razorpay":"razorpay-sandbox",orderId:ref("order",`${receipt}:${amount}`),amount,currency:"INR",status:"created"};
-  }
-  async createPayout(amount:number,providerId:string){
-    if(!["RAZORPAYX_ACCOUNT_NUMBER","RAZORPAY_KEY_SECRET"].every(configured)&&!this.options.allowSandboxSuccess)return {provider:"razorpayx",accepted:false,errorCode:"PROVIDER_NOT_CONFIGURED",amount,currency:"INR"};
-    return {provider:configured("RAZORPAYX_ACCOUNT_NUMBER")?"razorpayx":"razorpayx-sandbox",payoutId:ref("payout",`${providerId}:${amount}:${Date.now()}`),amount,currency:"INR",status:"queued"};
-  }
+  async createPaymentOrder(amount:number,receipt:string){return {provider:"razorpay-sandbox",orderId:ref("order",`${receipt}:${amount}`),amount,currency:"INR",status:"created"};}
+  async createPayout(amount:number,providerId:string){return {provider:"razorpayx-sandbox",payoutId:ref("payout",`${providerId}:${amount}:${Date.now()}`),amount,currency:"INR",status:"queued"};}
+
   async quoteRoute(origin:string,destination:string){
     if(!configured("MAPS_API_KEY")&&!this.options.allowSandboxSuccess)return {provider:process.env.MAPS_PROVIDER??"maps",trackingReady:false,errorCode:"MAPS_NOT_CONFIGURED"};
     const seed=parseInt(createHash("sha256").update(`${origin}:${destination}`).digest("hex").slice(0,4),16);
