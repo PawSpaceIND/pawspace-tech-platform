@@ -70,7 +70,11 @@ function makeD1(sqlite) {
 }
 
 const ORIGIN = "https://app.pawspace.test";
-const at = (ms) => new Date(Date.now() + ms).toISOString();
+// One anchor for the whole file. These windows must have EXACT durations — walking-30 rejects anything
+// that is not precisely 30 minutes — and calling Date.now() once per field let a millisecond tick land
+// between scheduledStart and scheduledEnd, which made the walking cases fail roughly one run in three.
+const BASE = Date.now();
+const at = (ms) => new Date(BASE + ms).toISOString();
 const DAY = 86400000, HOUR = 3600000;
 
 /** Each route, a payload that produces a real quote, and the table the quote lands in. */
@@ -235,4 +239,54 @@ test("the pricing catalogue an origin-less caller seeds is identical to a first-
   const firstParty = await rowsFor({ origin: ORIGIN });
   assert.ok(anonymous.length > 0, "the seed is non-empty, so this comparison means something");
   assert.deepEqual(anonymous, firstParty, "the seeded catalogue does not vary with the caller");
+});
+
+// --- the repository's actual origin convention ------------------------------------------------------
+
+test("missing Origin is accepted here because that is the repository-wide convention, not a local lapse", async () => {
+  // Established from precedent before touching anything: 75 route files in app/api carry their OWN copy
+  // of this guard, and every one of them uses the same `origin && origin !== ...` shape — present-and-
+  // wrong is refused, absent is allowed. There is no shared helper in lib/ to adopt instead.
+  //
+  // The policy is documented rather than accidental: SOURCE_EXPORT_README.md and
+  // docs/closure-audit-2026-08-04.md both list CSRF strategy among the items that "require production
+  // review", and ARCHITECTURE_AWS_MONGODB_INTEGRATION.md names "same-origin write guards" as the control
+  // that exists today. So denying missing Origin on six of seventy-five routes would diverge from a
+  // uniform convention AND pre-empt a platform-wide decision that is explicitly still open.
+  //
+  // This test therefore pins the CURRENT policy deliberately. If the platform later decides missing
+  // Origin must be refused, this is the assertion that should be changed on purpose, in one place,
+  // rather than the behaviour drifting silently on some routes and not others.
+  const fs = await import("node:fs");
+  const helpers = ROUTES.map((route) => {
+    const source = fs.readFileSync(new URL(`../app/api/${route.name}-commercial/route.ts`, import.meta.url), "utf8");
+    const match = source.match(/function sameOriginWrite\(request:Request\)\{[\s\S]*?\n?\}/);
+    assert.ok(match, `${route.name} defines its own sameOriginWrite copy`);
+    // The CONDITION is the security-relevant half. How each copy throws is not: sitting raises a
+    // governedJsonError where the others construct a Response, and both produce 403 — proven
+    // behaviourally for all six by the foreign-Origin tests above. Comparing whole bodies would fail on
+    // that cosmetic difference while telling us nothing about the policy.
+    const condition = match[0].match(/if\((origin[^)]*\)[^)]*\))/);
+    assert.ok(condition, `${route.name} guards on the origin header`);
+    return condition[1];
+  });
+  assert.equal(new Set(helpers).size, 1,
+    "all six copies must test the SAME condition — divergence in the policy is the real hazard here");
+  assert.match(helpers[0], /^origin&&origin!==new URL\(request\.url\)\.origin\)$/,
+    "the guard refuses a wrong Origin and tolerates an absent one, matching the other 69 routes");
+});
+
+test("a denial is a denial: nothing at all is persisted when the guard refuses", async () => {
+  // The property that makes the missing-Origin tolerance survivable is that a REFUSED request is inert.
+  // Asserted across every table in the schema, per route, so a route that wrote first and threw second
+  // could not hide behind its 403.
+  for (const route of ROUTES) {
+    const { sqlite, mod } = await clean(route.name);
+    const before = snapshot(sqlite);
+    const response = await call(mod, route.name, route.body(), { origin: "https://attacker.test" });
+    assert.equal(response.status, 403);
+    assert.deepEqual(changedTables(before, snapshot(sqlite)), [],
+      `${route.name}: a 403 must leave every table byte-for-byte as it was`);
+    assert.equal(sqlite.prepare(`SELECT COUNT(*) n FROM "${route.quoteTable}"`).get().n, 0);
+  }
 });
