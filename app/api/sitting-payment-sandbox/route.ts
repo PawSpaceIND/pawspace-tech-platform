@@ -1,9 +1,10 @@
+import{redactUnexpected}from"../../../lib/governed-http-error";
 import{database}from"../../../lib/server-auth";
 import{captureSittingQuoteSandbox}from"../../../lib/sitting-payment-governance";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOriginWrite(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin Sitting sandbox payment blocked",{status:403});}
-async function failure(error:unknown){if(error instanceof Response){const message=await error.text().catch(()=>"");return json({error:message||"Sitting sandbox payment failed"},error.status||500);}return json({error:error instanceof Error?error.message:"Sitting sandbox payment failed"},500);}
+async function failure(error:unknown){if(error instanceof Response){const message=await error.text().catch(()=>"");return json({error:message||"Sitting sandbox payment failed"},error.status||500);}return json({error:redactUnexpected(error,"Sitting sandbox payment failed")},500);}
 
 export async function POST(request:Request){try{
  sameOriginWrite(request);const paymentKey=String(request.headers.get("x-payment-capture-key")||"").trim();if(!paymentKey)return json({error:"MISSING_CAPTURE_KEY"},400);

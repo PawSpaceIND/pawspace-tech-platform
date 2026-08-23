@@ -26,3 +26,15 @@ export function markGovernedHttpError(response:Response){
 export function isGovernedHttpError(response:Response){
   return response.status>=400&&response.status<500&&governedHttpErrors.has(response);
 }
+
+/**
+ * Caller-safe body text for an UNEXPECTED failure on a route that resolves no actor and therefore
+ * cannot use authError(). The original is logged server-side only; the caller receives nothing but
+ * the fixed fallback, so a driver or SQL fault can never disclose table, column or constraint names
+ * to an anonymous request. Intentional thrown Responses are unaffected - each route keeps handling
+ * those exactly as before, since their bodies are hand-written and already caller-safe.
+ */
+export function redactUnexpected(error:unknown,fallback:string){
+  console.error("[api] unexpected error on an unauthenticated route",error);
+  return fallback;
+}

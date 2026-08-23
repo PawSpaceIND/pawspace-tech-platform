@@ -1,3 +1,4 @@
+import{redactUnexpected}from"../../../lib/governed-http-error";
 import{resolvePlaceToAddress,reverseGeocode,searchAddressSuggestions}from"../../../lib/address-autocomplete";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
@@ -23,5 +24,5 @@ export async function GET(request:Request){
       return json({data});
     }
     return json({error:"Unsupported address lookup mode"},400);
-  }catch(error){return json({error:error instanceof Error?error.message:"Unable to process address lookup"},500);}
+  }catch(error){return json({error:redactUnexpected(error,"Unable to process address lookup")},500);}
 }

@@ -1,3 +1,4 @@
+import{redactUnexpected}from"../../../lib/governed-http-error";
 import{captureHaptikLead,captureHaptikCallback,fetchHaptikTimeSlots,requestHaptikBooking}from"../../../lib/haptik-integration-governance";
 import{recordBotCallDisposition}from"../../../lib/bot-call-disposition";
 
@@ -32,6 +33,6 @@ export async function POST(request:Request){
     return json({error:"Unsupported Haptik action. Use capture_lead | capture_callback | fetch_slots | request_booking | record_call_outcome"},400);
   }catch(error){
     if(error instanceof Response){const t=await error.text().catch(()=>"" );return json(t?JSON.parse(t):{error:"Haptik request rejected"},error.status);}
-    return json({error:error instanceof Error?error.message:"Unable to process Haptik request"},400);
+    return json({error:redactUnexpected(error,"Unable to process Haptik request")},400);
   }
 }
