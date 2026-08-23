@@ -178,7 +178,7 @@ test("suppressed outreach and report delivery cannot silently mutate commercial 
 });
 
 test("test harness itself has no live payment messaging or production side effects",()=>{
-  const own=read("tests/prelaunch-booking-swarm.test.mjs");
+  const own=read("tests/prelaunch-booking-swarm-contract.test.mjs");
   const forbidden=["razorpay"+".com","api"+".twilio","graph"+".facebook"];
   assert.ok(!own.includes("fetch(\"https://"));
   for(const pattern of forbidden)assert.ok(!own.includes(pattern),`live provider reference found: ${pattern}`);
