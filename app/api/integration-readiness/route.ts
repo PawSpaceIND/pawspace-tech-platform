@@ -2,6 +2,20 @@ import{authError,database,requirePermission,resolveActor,securityAudit}from"../.
 import{integrationLaunchBlockers,integrationReadinessAudit,listIntegrationReadiness,updateIntegrationReadiness}from"../../../lib/integration-readiness";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
+const configured=(runtime:Record<string,unknown>,names:string[])=>names.every(name=>String(runtime[name]??"").trim().length>0);
+
+function providerKycHealth(runtime:Record<string,unknown>){
+ const credentialStatus=configured(runtime,["IDFY_API_KEY","IDFY_ACCOUNT_ID","IDFY_URL"])?"configured":"not_configured";
+ return{
+  integrationCode:"INT-KYC-01",capability:"Provider KYC / identity verification",provider:"IDfy",
+  configurationStatus:credentialStatus,liveMode:"disabled_until_controlled_uat",providerRequestBoundary:"code_ready",
+  callbackBoundary:"not_implemented",callbackVerificationStatus:"not_tested",controlledUatStatus:"not_verified",
+  operationallyReady:false,
+  notes:credentialStatus==="configured"
+   ?"Credentials are present only; callback correlation/replay and controlled provider evidence are still required before KYC can be reported live-ready."
+   :"IDfy credentials are not configured; automatable provider checks remain pending and must never be reported verified.",
+ };
+}
 
 export async function GET(request:Request){
  try{
@@ -9,7 +23,7 @@ export async function GET(request:Request){
   const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;
   const url=new URL(request.url),integrationCode=String(url.searchParams.get("integrationCode")||"").trim();
   const[data,blockers,audit]=await Promise.all([listIntegrationReadiness(db,runtime),integrationLaunchBlockers(db),integrationReadinessAudit(db,integrationCode||undefined)]);
-  return json({data,blockers,audit,productionReady:false});
+  return json({data,blockers,audit,externalBoundaries:{providerKyc:providerKycHealth(runtime)},productionReady:false});
  }catch(error){return authError(error,"Unable to load integration readiness");}
 }
 
