@@ -1,5 +1,5 @@
 import{ensurePricingControlRuntime}from"../lib/pricing-control-runtime";
-import{createTrainingQuote,governTrainingBooking}from"../lib/training-commercial-governance";
+import{captureTrainingQuoteSandbox,createTrainingQuote,governTrainingBooking}from"../lib/training-commercial-governance";
 import{createLiveBoardingQuote,createLiveSittingQuote}from"../lib/live-commercial-quotes";
 import{governBoardingBooking}from"../lib/boarding-governance";
 import{governSittingBooking}from"../lib/sitting-governance";
@@ -26,6 +26,7 @@ async function run(db:D1Database){
  ]);
 
  const training=await createTrainingQuote(db,{packageCode:"training-8-basic",petCount:1,scheduledStart,paymentMode:"prepaid"});eq(training.totalAmount,13000,"Training live");
+ await captureTrainingQuoteSandbox(db,{quoteId:training.quoteId,amount:training.amountDueNow,paymentKey:"pricing-control-d1-training"});
  await governTrainingBooking(db,{quoteId:training.quoteId,packageCode:training.packageCode,packageName:training.packageName,petCount:1,scheduledStart,submittedTotal:13000,submittedAmountDueNow:13000,paymentMode:"prepaid",paymentStatus:"captured",reservationCount:8});
  const boarding=await createLiveBoardingQuote(db,{packageCode:"boarding-24h",petCount:2,scheduledStart,scheduledEnd,paymentMode:"prepaid"});eq(boarding.totalAmount,1600,"Boarding live");
  await governBoardingBooking(db,{quoteId:boarding.quoteId,packageCode:boarding.packageCode,packageName:boarding.packageName,petCount:2,scheduledStart,scheduledEnd,submittedTotal:1600,submittedAmountDueNow:1600,paymentMode:"prepaid",paymentStatus:"captured",reservationCount:1,providerId:"host_sana",cityId:"blr",zoneId:"blr-east",species:["dog","cat"],vaccinationStatuses:["verified","verified"]});
