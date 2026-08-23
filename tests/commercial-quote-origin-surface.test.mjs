@@ -214,7 +214,7 @@ test("food-commercial is identity-bound and requires an owned compatible pet", a
   const accepted = await request(body);
   assert.equal(accepted.status, 201, await accepted.text().catch(() => ""));
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM food_commercial_quotes").get().n, 1);
-  assert.deepEqual(sqlite.prepare("SELECT pet_id,customer_id,pet_type FROM food_quote_pets").get(), { pet_id: "pet-food-cat", customer_id: "customer-food", pet_type: "cat" });
+  assert.deepEqual({ ...sqlite.prepare("SELECT pet_id,customer_id,pet_type FROM food_quote_pets").get() }, { pet_id: "pet-food-cat", customer_id: "customer-food", pet_type: "cat" });
 });
 
 // --- coupons: the one lever that could have consumed a limited resource ----------------------------
