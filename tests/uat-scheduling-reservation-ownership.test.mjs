@@ -18,7 +18,7 @@ test('reserve enforces customer ownership before reservation work and preserves 
   const ensureIndex = post.indexOf('await ensureSchedulingTables(db);', ownershipIndex);
   const reservationReadIndex = post.indexOf('SELECT * FROM scheduling_assignment_decisions', ownershipIndex);
   const rosterIndex = post.indexOf('await seedUatRoster(input,db);', ownershipIndex);
-  const insertIndex = post.indexOf('await insertReservations(db,input.clientRequestId,input,decision);', ownershipIndex);
+  const insertIndex = post.indexOf('await insertReservations(db,input.clientRequestId,input,decision,lease);', ownershipIndex);
 
   assert.ok(resolveIndex > 0, 'reserve must resolve an authenticated actor');
   assert.ok(ownershipIndex > resolveIndex, 'ownership must be checked after authentication');

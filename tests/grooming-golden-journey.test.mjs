@@ -111,7 +111,9 @@ test("session expiry between coupon quote and booking fails closed without busin
   const rejected = await routeCall("../../app/api/canonical-bookings/route.ts", "POST", "/api/canonical-bookings", { idempotencyKey: groupId, scheduleGroupId: groupId, customer: { id: customerId, name: "Expired Customer", primaryPhone: "+919900000404" }, pets: [{ sourceId: "PET-EXPIRED", name: "Rio", species: "dog" }], cityId: "blr", zoneId: "blr-east", serviceCode: "grooming", packageCode: "dog-basic", packageName: "Bath & Basic", scheduledStart: start, scheduledEnd: end, provider: scheduled.body.data.provider, totalAmount: quote.finalAmount, amountDueNow: quote.finalAmount, payment: { method: "upi", mode: "prepaid", status: "created", detail: "expired" }, pricing: { discount: quote.discount, couponCode: "UATCARE100", couponQuoteId: quote.quoteId } }, cookie, "https://uat.pawspace.in");
   assert.equal(rejected.status, 401);
   for (const table of ["canonical_bookings", "booking_payments", "provider_work_orders", "coupon_redemptions"]) assert.equal(ctx.sqlite.prepare(`SELECT COUNT(*) c FROM ${table}`).get().c, 0, `${table} must remain empty`);
-  assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) c FROM scheduling_reservations WHERE group_id=? AND status!='cancelled'").get(groupId).c, 1, "the pre-auth reservation remains explicitly visible for expiry cleanup instead of becoming a hidden booking orphan");
+  assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) c FROM scheduling_reservations WHERE group_id=? AND status!='cancelled'").get(groupId).c, 0, "the expired pre-auth reservation releases capacity before booking authorization fails");
+  assert.equal(ctx.sqlite.prepare("SELECT status FROM scheduling_assignment_decisions WHERE group_id=?").get(groupId).status, "expired");
+  assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) c FROM scheduling_reservation_lease_cleanup WHERE group_id=?").get(groupId).c, 1, "lease cleanup is durably idempotent");
 });
 
 test("captured booking cancellation releases work and capacity and refund simulation is idempotent", async (t) => {
