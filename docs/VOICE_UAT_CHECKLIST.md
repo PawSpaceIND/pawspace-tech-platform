@@ -149,7 +149,7 @@ policy-decision trail, the state-transition trail and the curated provider event
 
 | # | Scenario | Expected terminal state | Expected evidence |
 |---|---|---|---|
-| 1 | Successful call to an allow-listed, consented recipient | `ended` via `connected` → `completed` | all 10 policy checks passed; `dialed_at` and `connected_at` set |
+| 1 | Successful call to an allow-listed, consented recipient | `completed` from the carrier callback; `ended` only after the explicit `complete` action | all 10 policy checks passed; `dialed_at` and `connected_at` set |
 | 2 | Consent absent | `blocked_consent` | `voice_consent` failed; `dialed_at` NULL; no provider event |
 | 3 | Recipient previously opted out | `blocked_opt_out` (or `blocked_consent` — an opt-out revokes consent) | `opt_out_clear` failed; `dialed_at` NULL |
 | 4 | Dial attempted inside quiet hours | `blocked_quiet_hours` | `quiet_hours` failed with the local hour and the window |
@@ -167,6 +167,10 @@ policy-decision trail, the state-transition trail and the curated provider event
 | 16 | Retry after no-answer | new call correlated by `retry_of` | the retry re-ran all 10 checks; bounded by the use case's `maxAttempts` |
 | 17 | Provider redelivers a callback | unchanged | one `voice_call_provider_events` row; no second transition |
 | 18 | Callback with a bad/absent signature | unchanged | 401; nothing recorded |
+
+A note on the terminal state in scenario 1: a carrier callback can take the call as far as `completed`.
+Reaching `ended` is a separate, deliberate step — `POST /api/voice-outbound {"action":"complete"}` — so
+that closing a call out is an act with an actor on it rather than something a provider does to us.
 
 Two provider behaviours to confirm explicitly during scenario 1, because the engineering depends on
 which one Exotel actually does:

@@ -149,6 +149,11 @@ export function voiceCallReadiness(env: Env) {
     recordingApproved: callRecordingApproved(env),
     salesOutboundApproved: salesOutboundApproved(env),
     // Stated on the surface itself so a green readiness panel is never mistaken for a completed call.
-    truth: { productionCallsExecuted: false, clientCannotEnableVoice: true, credentialPresenceIsNotProofOfACall: true },
+    //
+    // This object knows only the environment, so it deliberately does NOT claim anything about whether a
+    // call has been placed - it previously hardcoded productionCallsExecuted:false, which would have kept
+    // saying "false" after the first real call. The ledger-backed voiceOutboundReadiness() reports the
+    // actual count from voice_call_orders.
+    truth: { clientCannotEnableVoice: true, credentialPresenceIsNotProofOfACall: true },
   };
 }

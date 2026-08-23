@@ -1,7 +1,9 @@
 import{authError,database}from"../../../lib/server-auth";
 import{recordVoiceProviderEvent}from"../../../lib/voice-outbound-governance";
+import{readBoundedRequestText,VoiceFetchRefused}from"../../../lib/voice-safe-fetch";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
+const MAX_CALLBACK_BYTES=65_536;
 
 /**
  * Telephony provider callbacks (call progress, DTMF, completion, recording availability).
@@ -20,8 +22,12 @@ export async function POST(request:Request){
   try{
     const{env}=await import("cloudflare:workers");
     const runtime=env as unknown as Record<string,unknown>;
-    const raw=await request.text();
-    if(raw.length>65_536)return json({error:"Provider callback payload is too large"},413);
+    // Bounded while streaming, before the body is buffered and before verification. This endpoint is
+    // gateway-allowlisted (a carrier has no session), so an oversized body is reachable with no
+    // credential at all - the limit has to bite before the allocation, not after it.
+    let raw:string;
+    try{raw=await readBoundedRequestText(request,MAX_CALLBACK_BYTES);}
+    catch(error){if(error instanceof VoiceFetchRefused)return json({error:"Provider callback payload is too large"},413);throw error;}
     const db=await database();
     const result=await recordVoiceProviderEvent(db,runtime,{rawBody:raw,headers:request.headers});
     if(!result.accepted)return json({error:result.reason},result.status);

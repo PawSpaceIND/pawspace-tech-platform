@@ -254,13 +254,55 @@ export function decodeInlineAudio(reference: string, options: { allowedMediaType
   const mediaType = (match[1] || "").trim().toLowerCase();
   if (!mediaTypeAllowed(mediaType, allowedMediaTypes)) throw new VoiceFetchRefused("invalid_media_type", `Unsupported inline media type: ${mediaType || "unset"}`);
   if (!match[2]) throw new VoiceFetchRefused("invalid_media_type", "Inline audio must be base64 encoded");
+  // Bound the ENCODED length first. atob() on an unbounded attacker-supplied payload allocates the whole
+  // decoded string before any size check could run, so the check has to happen before the decode. Base64
+  // is 4 characters per 3 bytes, so the encoded ceiling is derived from maxBytes rather than guessed.
+  const encodedCeiling = Math.ceil(maxBytes / 3) * 4 + 4;
+  if (match[3].length > encodedCeiling) throw new VoiceFetchRefused("too_large", `Inline audio is over the ${maxBytes} byte limit`);
   let binary: string;
   try { binary = atob(match[3]); }
   catch { throw new VoiceFetchRefused("invalid_payload", "Inline audio is not valid base64"); }
+  // Retained after the decode too: padding and decoder behaviour make the encoded bound an upper
+  // estimate rather than an exact one.
   if (binary.length > maxBytes) throw new VoiceFetchRefused("too_large", `Inline audio is over the ${maxBytes} byte limit`);
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
   return { mediaType, bytes };
+}
+
+/**
+ * Read a request body with a hard cap on RECEIVED BYTES, refusing before the allocation rather than
+ * after it.
+ *
+ * request.text() consumes the whole body first, so a length check on the result happens after the
+ * memory is already committed - and String.length counts UTF-16 code units, not bytes, so a multibyte
+ * payload measures smaller than it is. The telephony callback is a gateway-allowlisted public endpoint,
+ * so this is reachable without any credential.
+ */
+export async function readBoundedRequestText(request: Request, maxBytes: number): Promise<string> {
+  const declared = Number(request.headers.get("content-length") || 0);
+  if (Number.isFinite(declared) && declared > maxBytes) throw new VoiceFetchRefused("too_large", `Request body declares ${declared} bytes, over the ${maxBytes} limit`);
+  const reader = request.body?.getReader();
+  if (!reader) {
+    const text = await request.text();
+    if (new TextEncoder().encode(text).byteLength > maxBytes) throw new VoiceFetchRefused("too_large", `Request body is over the ${maxBytes} byte limit`);
+    return text;
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    // Refused mid-stream: content-length is a claim, and a chunked body carries none at all.
+    if (total > maxBytes) { await reader.cancel().catch(() => {}); throw new VoiceFetchRefused("too_large", `Request body is over the ${maxBytes} byte limit`); }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.byteLength; }
+  return new TextDecoder().decode(out);
 }
 
 /** True for a data: reference, so callers can route to decodeInlineAudio without re-parsing. */

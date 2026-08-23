@@ -16,7 +16,7 @@
  * are never returned from here, so no caller can persist one by accident.
  */
 
-import { callRecordingApproved, telephonyCredentialsConfigured, voiceMode, VOICE_TELEPHONY_SECRET_NAMES } from "./voice-call-gate";
+import { callRecordingApproved, statusCallbackUrl, telephonyCredentialsConfigured, voiceMode, VOICE_TELEPHONY_SECRET_NAMES } from "./voice-call-gate";
 
 type Env = Record<string, unknown>;
 const val = (env: Env, key: string) => String(env?.[key] ?? "").trim();
@@ -137,13 +137,25 @@ export async function verifyVoiceWebhookSignature(secret: string, rawBody: strin
 
 // --- normalisation ---------------------------------------------------------------------------------
 
-/** Exotel's CallStatus / event vocabulary mapped onto ours. Anything unrecognised is a failure. */
+/**
+ * Exotel's CallStatus / event vocabulary mapped onto ours. Anything unrecognised is a failure.
+ *
+ * NEGATIVE tokens are matched first, and that ordering is the whole correctness of this function.
+ * Substring matching on the positive words is a trap: "disconnected" and "not_connected" both contain
+ * "connected", and "not_answered" contains "answered" - so a terminal or failed callback was classified
+ * as `connected` and moved the call into an ACTIVE lifecycle state. A failed call reported as answered
+ * is worse than an unclassified one, so anything negative resolves before anything positive.
+ */
 function mapProviderStatus(status: string, event: string): TelephonyEventKind {
   const value = `${event} ${status}`.toLowerCase();
   if (value.includes("dtmf") || value.includes("digits")) return "dtmf";
   if (value.includes("recording")) return "recording_available";
-  if (value.includes("no-answer") || value.includes("no_answer") || value.includes("noanswer")) return "no_answer";
+  if (/(^|[^a-z])(no[-_ ]?answer|noanswer|not[-_ ]?answered|unanswered)/.test(value)) return "no_answer";
   if (value.includes("busy")) return "busy";
+  // Negatives before positives. Ordered here so a new negative token cannot be shadowed by a positive
+  // substring it happens to contain.
+  if (/(dis|not[-_ ]?|un|non[-_ ]?)(connect|answer)/.test(value)) return "failed";
+  if (value.includes("failed") || value.includes("failure") || value.includes("cancel") || value.includes("reject") || value.includes("declin")) return "failed";
   if (value.includes("completed") || value.includes("complete")) return "completed";
   if (value.includes("in-progress") || value.includes("in_progress") || value.includes("connected") || value.includes("answered")) return "connected";
   if (value.includes("ringing") || value.includes("alerting")) return "ringing";
@@ -188,6 +200,31 @@ export function normaliseTelephonyEvent(rawBody: string, provider: string): Tele
 // --- Exotel ---------------------------------------------------------------------------------------
 
 const EXOTEL_TIMEOUT_MS = 12_000;
+const MAX_PROVIDER_RESPONSE_BYTES = 64 * 1024;
+
+/** Read a provider response with a hard byte cap, so a runaway body cannot exhaust the isolate. */
+async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const text = await response.text();
+    if (new TextEncoder().encode(text).byteLength > maxBytes) throw new TelephonyProviderUnavailable("Telephony provider response exceeded the size limit");
+    return text;
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) { await reader.cancel().catch(() => {}); throw new TelephonyProviderUnavailable("Telephony provider response exceeded the size limit"); }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.byteLength; }
+  return new TextDecoder().decode(out);
+}
 
 /**
  * Exotel Connect API adapter. Reachable only when every secret in VOICE_TELEPHONY_SECRET_NAMES is
@@ -199,17 +236,26 @@ export function exotelTelephony(env: Env): TelephonyProvider {
   const callerId = val(env, "EXOTEL_CALLER_ID"), appId = val(env, "EXOTEL_VOICE_APP_ID");
   const secret = val(env, "EXOTEL_WEBHOOK_SECRET");
   const subdomain = val(env, "EXOTEL_SUBDOMAIN") || "api.exotel.com";
+  // Reporting "connected" without checking is how a half-configured provider gets to look ready. The
+  // selector already refuses to hand this adapter out unless every secret is present, but a direct
+  // caller must not be able to reach fetch() with an incomplete configuration either.
+  const missing = VOICE_TELEPHONY_SECRET_NAMES.filter(name => !val(env, name));
+  if (missing.length) return disconnectedTelephony;
   return {
     provider: "exotel",
     status: "connected",
     productionCapable: true,
     async createCall(intent) {
-      // Defence in depth behind the environment gate: without a reachable https callback the provider
-      // would accept the dial and we would never learn the outcome, leaving the call stuck in `dialing`.
-      let callback: URL;
-      try { callback = new URL(intent.statusCallbackUrl); }
-      catch { throw new TelephonyProviderUnavailable("A status callback URL is required before a call may be placed (PAWSPACE_VOICE_STATUS_CALLBACK_URL)"); }
-      if (callback.protocol !== "https:") throw new TelephonyProviderUnavailable("The provider status callback must be https");
+      // Defence in depth behind the environment gate. Two things are checked, not one:
+      //   - a reachable https callback exists at all, because without it the carrier accepts the dial and
+      //     we never learn the outcome, leaving the call stuck in `dialing`;
+      //   - it is EXACTLY the approved environment value. The governance layer no longer accepts a
+      //     per-call override, and this makes that structural: a callback destination reaching here from
+      //     anywhere but PAWSPACE_VOICE_STATUS_CALLBACK_URL is refused, so no future caller can quietly
+      //     redirect call progress and recording references somewhere else.
+      const approved = statusCallbackUrl(env);
+      if (!approved) throw new TelephonyProviderUnavailable("A https status callback URL is required before a call may be placed (PAWSPACE_VOICE_STATUS_CALLBACK_URL)");
+      if (intent.statusCallbackUrl !== approved) throw new TelephonyProviderUnavailable("The status callback does not match the approved environment callback");
       const body = new URLSearchParams({
         From: intent.toNumber,
         CallerId: callerId,
@@ -233,7 +279,9 @@ export function exotelTelephony(env: Env): TelephonyProvider {
           });
           // Inside the deadline: a carrier that sends headers and then stalls the body is the same hang
           // as one that never answers, and this is the request that decides whether a call goes out.
-          text = await response.text();
+          // Also bounded in size - a provider handing back an unbounded body is not a reason to
+          // exhaust this isolate.
+          text = await readBoundedText(response, MAX_PROVIDER_RESPONSE_BYTES);
         } catch (error) {
           throw new TelephonyProviderUnavailable(controller.signal.aborted ? `Telephony provider did not respond within ${EXOTEL_TIMEOUT_MS}ms` : `Telephony provider request failed: ${String((error as Error)?.message || error).slice(0, 120)}`);
         }

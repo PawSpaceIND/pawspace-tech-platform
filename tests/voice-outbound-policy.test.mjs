@@ -423,7 +423,9 @@ test("the readiness surface reports zero production calls and leaks no secret", 
   const readiness = await gov.voiceOutboundReadiness(db, env);
   assert.equal(readiness.productionCallsPlaced, 0);
   assert.equal(readiness.gate.enabled, true);
-  assert.equal(readiness.gate.truth.productionCallsExecuted, false);
+  // The env-only gate object must NOT claim anything about calls placed - it cannot know, and hardcoding
+  // false would have kept saying false after the first real call. The ledger-backed count is authoritative.
+  assert.equal("productionCallsExecuted" in readiness.gate.truth, false);
   assert.equal(readiness.gate.truth.clientCannotEnableVoice, true);
   assert.equal(readiness.transport.productionCapable, false, "the simulator is never reported as production-capable");
   assert.equal(readiness.transport.truth.verifiedAgainstLiveProvider, false);
@@ -512,11 +514,15 @@ test("concurrent requests with one idempotency key produce one call, not a raw S
 
 test("consent withdrawn between the gate and the dial is honoured, not ignored", async () => {
   const { sqlite, db, env } = await fresh();
-  await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
+  // Keyed on what recordVoiceConsent actually stored, not on the input format. They coincide today, so
+  // the hook fired - but if callInput's phone were ever written as "+91 98765 43210" the mutation would
+  // silently miss and this test would pass while proving nothing.
+  const { phoneKey } = await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
   // Withdraw consent in the exact gap the gate cannot see: after its snapshot, before the dial. The hook
   // fires immediately before the pre-dial re-read, so without that re-read this call would go out.
   db.onSql("SELECT granted,revoked_at FROM voice_call_consents", () => {
-    sqlite.prepare("UPDATE voice_call_consents SET granted=0,revoked_at=? WHERE phone_key=?").run(DAYTIME, ALLOWLISTED_PHONE);
+    const changed = sqlite.prepare("UPDATE voice_call_consents SET granted=0,revoked_at=? WHERE phone_key=?").run(DAYTIME, phoneKey);
+    assert.equal(Number(changed.changes), 1, "the hook must actually hit the stored consent row");
   });
   const result = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "late-revoke" }));
   assert.equal(result.dialled, false, "the withdrawal was seen before the provider was contacted");
@@ -536,10 +542,11 @@ test("consent withdrawn between the gate and the dial is honoured, not ignored",
 
 test("an opt-out recorded between the gate and the dial is honoured", async () => {
   const { sqlite, db, env } = await fresh();
-  await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
+  const { phoneKey } = await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
   db.onSql("SELECT recorded_at FROM voice_call_opt_outs", () => {
-    sqlite.prepare("INSERT INTO voice_call_opt_outs (phone_key,source,reason,recorded_by,recorded_at) VALUES (?,?,?,?,?)")
-      .run(ALLOWLISTED_PHONE, "customer_sms", "stop calling", "ops@pawspace.in", DAYTIME);
+    const inserted = sqlite.prepare("INSERT INTO voice_call_opt_outs (phone_key,source,reason,recorded_by,recorded_at) VALUES (?,?,?,?,?)")
+      .run(phoneKey, "customer_sms", "stop calling", "ops@pawspace.in", DAYTIME);
+    assert.equal(Number(inserted.changes), 1, "the hook must actually record an opt-out on the stored key");
   });
   const result = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "late-optout" }));
   assert.equal(result.dialled, false);

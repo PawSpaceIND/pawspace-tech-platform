@@ -189,7 +189,6 @@ export type VoiceCallRequest = {
   actorId: string;
   actorPermissions: string[];
   simulatedOutcome?: TelephonyEventKind | null;
-  statusCallbackUrl?: string | null;
   retryOf?: string | null;
   retryAttempt?: number;
   asOf?: number;
@@ -462,7 +461,10 @@ export async function requestOutboundVoiceCall(db: Db, env: Env, input: VoiceCal
   }
 
   await applyTransition(db, { callId: id, to: "queued", reason: "Policy passed; queued for dial", actor: input.actorId, asOf: now });
-  const callbackUrl = text(input.statusCallbackUrl) || statusCallbackUrl(env) || "";
+  // The callback destination comes from the ENVIRONMENT only. A per-call override let a caller point
+  // the carrier at any https endpoint of their choosing - which would receive call progress and
+  // recording references while this ledger received nothing.
+  const callbackUrl = statusCallbackUrl(env) || "";
   try {
     const handle = await policy.provider.createCall({
       callRef: id, toNumber: dialNumber, statusCallbackUrl: callbackUrl,
@@ -661,6 +663,12 @@ export async function recordVoiceProviderEvent(db: Db, env: Env, input: { rawBod
   try {
     const current = text(call.state) as VoiceCallState;
     const bridge = inferredBridgeState(current, target);
+    // Residual, stated rather than hidden: the bridge and the target are two conditional UPDATEs, so a
+    // writer that moves the row between them leaves the bridge committed and the target refused. Both
+    // are guarded on the state they expect, so nothing impossible is recorded - but the call can sit in
+    // the inferred state, which voiceOutboundReadiness surfaces through unappliedProviderEvents and
+    // callsOpenOverAnHour. It is not made atomic here: D1 has no cross-statement transaction on this
+    // path, and in practice one call has a single writer (a carrier serialises its own callbacks).
     if (bridge) {
       await applyTransition(db, { callId, to: bridge, reason: `Inferred ${bridge} from provider event ${event.kind}${event.providerStatus ? ` (${event.providerStatus})` : ""}`, actor: `provider:${provider.provider}`, detail: { ...curated, inferred: true }, asOf: now });
     }
@@ -706,14 +714,17 @@ export async function voiceCallLedger(db: Db, input: { limit?: number; state?: s
 }
 
 /** Operator-facing readiness. Reports configuration and approval state; never a secret, never a number. */
-export async function voiceOutboundReadiness(db: Db, env: Env) {
+export async function voiceOutboundReadiness(db: Db, env: Env, asOf = Date.now()) {
   await seedVoiceCallScripts(db);
   const scripts = await db.prepare("SELECT use_case,active,claims_approved,version FROM voice_call_scripts ORDER BY use_case").all<Row>();
   const placed = await db.prepare("SELECT COUNT(*) n FROM voice_call_orders WHERE dialed_at IS NOT NULL AND production_call=1").first<Row>();
   // A provider event that could not be applied means a call may be stuck mid-lifecycle. Surfaced rather
   // than left to be discovered by reading the events table.
   const unapplied = await db.prepare("SELECT COUNT(*) n FROM voice_call_provider_events WHERE applied=0").first<Row>();
-  const stuck = await db.prepare("SELECT COUNT(*) n FROM voice_call_orders WHERE state IN ('dialing','ringing','connected','speaking','listening','handoff_requested') AND requested_at<?").bind(Date.now() - 3_600_000).first<Row>();
+  // Measured from updated_at, not requested_at: a long call that keeps transitioning is healthy, and a
+  // call that stopped moving an hour ago is the thing worth surfacing. asOf is injectable so a test can
+  // pin it like every other function here.
+  const stuck = await db.prepare("SELECT COUNT(*) n FROM voice_call_orders WHERE state IN ('dialing','ringing','connected','speaking','listening','handoff_requested') AND updated_at<?").bind(asOf - 3_600_000).first<Row>();
   return {
     gate: voiceCallReadiness(env),
     transport: telephonyProviderStatus(env),

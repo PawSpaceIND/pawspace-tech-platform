@@ -284,3 +284,74 @@ test("a stalled provider body is bounded by the same deadline as a silent provid
     assert.ok(Date.now() - started < 5000, "the stalled body hit the deadline instead of hanging");
   } finally { globalThis.fetch = original; }
 });
+
+test("an oversized request body is refused before it is buffered", async () => {
+  await fresh();
+  const webhook = await import("../app/api/voice-provider-webhook/route.ts");
+  const outbound = await import("../app/api/voice-outbound/route.ts");
+
+  // Declared oversized: refused on the content-length claim.
+  const declared = await webhook.POST(new Request(`${HOST}/api/voice-provider-webhook`, { method: "POST", body: "x".repeat(70_000) }));
+  assert.equal(declared.status, 413);
+
+  // Chunked with NO content-length, and larger than the cap. request.text() would have buffered the
+  // whole thing before any check could run.
+  const chunked = () => new ReadableStream({
+    start(controller) {
+      for (let index = 0; index < 40; index++) controller.enqueue(new TextEncoder().encode("y".repeat(4096)));
+      controller.close();
+    },
+  });
+  const streamed = await webhook.POST(new Request(`${HOST}/api/voice-provider-webhook`, { method: "POST", body: chunked(), duplex: "half" }));
+  assert.equal(streamed.status, 413, "a chunked oversized body is refused too");
+
+  // Multibyte: String.length counts UTF-16 units, so 40k multibyte characters measure under a 65,536
+  // "length" check while being well over 65,536 BYTES.
+  const multibyte = "\u{1F415}".repeat(20_000);
+  assert.ok(multibyte.length < 65_536, "the old length check would have passed this");
+  assert.ok(new TextEncoder().encode(multibyte).byteLength > 65_536, "but it is over the byte limit");
+  const wide = await webhook.POST(new Request(`${HOST}/api/voice-provider-webhook`, { method: "POST", body: multibyte }));
+  assert.equal(wide.status, 413);
+
+  // The staff route carries the same bound.
+  const staff = await outbound.POST(new Request(`${HOST}/api/voice-outbound`, {
+    method: "POST", headers: { "content-type": "application/json", "oai-authenticated-user-email": "admin@pawspace.in" },
+    body: JSON.stringify({ action: "request_call", pad: "z".repeat(70_000) }),
+  }));
+  assert.equal(staff.status, 413, "a staff credential is not a licence to send any size");
+
+  // And a normal-sized body still works.
+  const ok = await outbound.POST(new Request(`${HOST}/api/voice-outbound`, {
+    method: "POST", headers: { "content-type": "application/json", "oai-authenticated-user-email": "admin@pawspace.in" },
+    body: JSON.stringify({ action: "policy_preview", useCase: "booking_confirmation", phone: ALLOWLISTED_PHONE, cityId: "blr", customerId: "CON-V1" }),
+  }));
+  assert.equal(ok.status, 200);
+});
+
+test("inline audio is bounded before it is decoded, not after", async () => {
+  const safe = await import("../lib/voice-safe-fetch.ts");
+  // atob() on an unbounded payload allocates the whole decoded string before any size check could run,
+  // so the bound has to be applied to the ENCODED length first.
+  const huge = `data:audio/mpeg;base64,${"A".repeat(400_000)}`;
+  const error = await (async () => { try { safe.decodeInlineAudio(huge, { maxBytes: 1024 }); return null; } catch (thrown) { return thrown; } })();
+  assert.equal(error?.code, "too_large");
+  // A payload inside the bound still decodes, so this is a limit and not a refusal of inline audio.
+  assert.equal(safe.decodeInlineAudio("data:audio/mpeg;base64,AAECAw==", { maxBytes: 1024 }).bytes.byteLength, 4);
+  // The post-decode check is retained for padding/decoder correctness: encoded length is an upper bound.
+  const nearEdge = `data:audio/mpeg;base64,${"A".repeat(8)}`;
+  assert.equal(safe.decodeInlineAudio(nearEdge, { maxBytes: 6 }).bytes.byteLength, 6);
+  const overEdge = await (async () => { try { safe.decodeInlineAudio(`data:audio/mpeg;base64,${"A".repeat(12)}`, { maxBytes: 6 }); return null; } catch (thrown) { return thrown; } })();
+  assert.equal(overEdge?.code, "too_large");
+});
+
+test("the stuck-call counter measures inactivity, not call age, and honours an injected clock", async () => {
+  const { db, env } = await fresh();
+  await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
+  const call = await gov.requestOutboundVoiceCall(db, env, { idempotencyKey: "stuck-1", useCase: "booking_confirmation", phone: ALLOWLISTED_PHONE, cityId: "blr", customerId: "CON-V1", leadId: "LEAD-V1", bookingId: "BKG-V1", actorId: "admin@pawspace.in", actorPermissions: ROLES.founder, asOf: DAYTIME });
+  assert.equal(call.dialled, true);
+  // Two hours after the request, but the call transitioned one minute ago: healthy, not stuck.
+  await gov.transitionVoiceCall(db, { callId: call.callId, to: "connected", reason: "answered", actor: "test", asOf: DAYTIME + 2 * 3600_000 });
+  assert.equal((await gov.voiceOutboundReadiness(db, env, DAYTIME + 2 * 3600_000 + 60_000)).callsOpenOverAnHour, 0, "a long, progressing call is not stuck");
+  // Two hours after its last transition: stuck.
+  assert.equal((await gov.voiceOutboundReadiness(db, env, DAYTIME + 4 * 3600_000)).callsOpenOverAnHour, 1);
+});

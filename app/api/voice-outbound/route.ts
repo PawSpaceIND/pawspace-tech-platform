@@ -1,9 +1,20 @@
 import{authError,authorize,database,requirePermission,securityAudit}from"../../../lib/server-auth";
+import{readBoundedRequestText,VoiceFetchRefused}from"../../../lib/voice-safe-fetch";
 import{attachVoiceTranscript,cancelVoiceCall,completeVoiceCall,evaluateVoiceCallPolicy,recordVoiceConsent,recordVoiceOptOut,recordVoiceOptOutDuringCall,recordVoiceSpeechFailure,requestOutboundVoiceCall,requestVoiceHumanHandoff,retryVoiceCall,setVoiceCallScript,transitionVoiceCall,voiceCallAudit,voiceCallLedger,voiceOutboundReadiness}from"../../../lib/voice-outbound-governance";
 
 type Body=Record<string,unknown>;
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 const text=(value:unknown)=>String(value??"").trim();
+const MAX_REQUEST_BYTES=65_536;
+
+/** Same byte bound as the callback receiver: a staff credential is not a licence to send any size. */
+async function boundedBody(request:Request):Promise<Body>{
+  let raw:string;
+  try{raw=await readBoundedRequestText(request,MAX_REQUEST_BYTES);}
+  catch(error){if(error instanceof VoiceFetchRefused)throw new Response("Request body is too large",{status:413});throw error;}
+  if(!raw.trim())return {};
+  try{return JSON.parse(raw) as Body;}catch{return {};}
+}
 async function runtime(){const{env}=await import("cloudflare:workers");return env as unknown as Record<string,unknown>;}
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin voice write blocked",{status:403});}
 
@@ -52,7 +63,7 @@ export async function POST(request:Request){
   try{
     sameOrigin(request);
     const actor=await authorize(request,"customers.manage");requirePermission(actor,"communications.call");
-    const body=await request.json().catch(()=>({}))as Body,action=text(body.action)||"request_call";
+    const body=await boundedBody(request),action=text(body.action)||"request_call";
     const db=await database(),env=await runtime();
     const permissions=actor.permissions as string[];
 
@@ -85,7 +96,7 @@ export async function POST(request:Request){
     }
     if(action==="retry"){
       const data=await retryVoiceCall(db,env,{callId:text(body.callId),actorId:actor.email,actorPermissions:permissions,idempotencyKey:text(body.idempotencyKey)||undefined});
-      await securityAudit(db,actor,"voice.call.retry","voice_call",data.callId,"completed",{retryOf:data.retryOf,state:data.state});
+      await securityAudit(db,actor,"voice.call.retry","voice_call",data.callId,data.state.startsWith("blocked_")?"denied":"completed",{retryOf:data.retryOf,state:data.state});
       return json({data},callStatusCode(data));
     }
 

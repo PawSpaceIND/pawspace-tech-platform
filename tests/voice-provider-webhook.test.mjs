@@ -408,3 +408,88 @@ test("the telephony credential list has exactly one definition", async () => {
     assert.equal(gate.telephonyCredentialsConfigured({ ...full, [name]: "" }), false, `missing ${name}`);
   }
 });
+
+test("a negative provider status is never classified as connected", async () => {
+  // Substring matching on the positive words is the trap: "disconnected" and "not_connected" both
+  // contain "connected", and "not_answered" contains "answered" - so a terminal or failed callback was
+  // classified as `connected` and moved the call into an ACTIVE lifecycle state.
+  for (const [status, expected] of [
+    ["disconnected", "provider_error"], ["not_connected", "provider_error"], ["Disconnected", "provider_error"],
+    ["not_answered", "no_answer"], ["not-answered", "no_answer"], ["unanswered", "no_answer"], ["no-answer", "no_answer"],
+    ["failed", "provider_error"], ["canceled", "provider_error"], ["rejected", "provider_error"], ["declined", "provider_error"],
+    ["busy", "busy"],
+    // Genuinely positive statuses must still work - this is a bound, not a blanket refusal.
+    ["in-progress", "connected"], ["answered", "connected"], ["connected", "connected"],
+  ]) {
+    // A fresh database per case: the frequency cap legitimately refuses a third dial to one number, and
+    // that would otherwise mask what this test is about.
+    const { sqlite, db, env } = await fresh();
+    const call = await dial(db, env, `neg-${status}`);
+    assert.equal(call.dialled, true, status);
+    const body = eventBody(call.callId, { CallStatus: status });
+    const result = await gov.recordVoiceProviderEvent(db, env, { rawBody: body, headers: await signedHeaders(body) });
+    assert.equal(result.accepted, true, status);
+    assert.equal(state(sqlite, call.callId), expected, `${status} must map to ${expected}, got ${state(sqlite, call.callId)}`);
+  }
+});
+
+test("the Exotel adapter refuses to exist on an incomplete configuration", async () => {
+  // Reporting "connected" without checking is how a half-configured provider comes to look ready. The
+  // selector already guards this, but a direct caller must not reach fetch() either.
+  const gate = await import("../lib/voice-call-gate.ts");
+  const full = uatVoiceEnv({ PAWSPACE_VOICE_TRANSPORT: "" });
+  assert.equal(telephony.exotelTelephony(full).status, "connected");
+  for (const name of gate.VOICE_TELEPHONY_SECRET_NAMES) {
+    const partial = telephony.exotelTelephony({ ...full, [name]: "" });
+    assert.equal(partial.status, "not_connected", `missing ${name} must not report connected`);
+    assert.equal(partial.productionCapable, false, `missing ${name} must not report production-capable`);
+    await assert.rejects(() => partial.createCall({ callRef: "x", toNumber: "+919876543210", statusCallbackUrl: "https://uat.pawspace.in/api/voice-provider-webhook", recordingAllowed: false }), /not connected/);
+  }
+});
+
+test("a caller cannot redirect the carrier's callbacks to an endpoint of their choosing", async () => {
+  // The carrier posts call progress and recording references to this URL. A per-call override let a
+  // caller point it anywhere https while this ledger received nothing.
+  const { db, env } = await fresh();
+  await gov.requestOutboundVoiceCall(db, { ...env, PAWSPACE_VOICE_TRANSPORT: telephony.LOCAL_SIMULATOR_PROVIDER }, {
+    idempotencyKey: "cb-override", useCase: "booking_confirmation", phone: ALLOWLISTED_PHONE, cityId: "blr",
+    customerId: "CON-V1", leadId: "LEAD-V1", bookingId: "BKG-V1",
+    actorId: "operator@pawspace.in", actorPermissions: FOUNDER_PERMISSIONS, asOf: DAYTIME,
+    // Every shape a caller might use to smuggle a destination in.
+    statusCallbackUrl: "https://exfil.example/collect", callbackUrl: "https://exfil.example/collect",
+    PAWSPACE_VOICE_STATUS_CALLBACK_URL: "https://exfil.example/collect",
+  });
+  // The request type no longer carries a callback field at all, so the env value is the only source.
+  const source = await import("node:fs/promises").then(fs => fs.readFile(new URL("../lib/voice-outbound-governance.ts", import.meta.url), "utf8"));
+  assert.doesNotMatch(source, /input\.statusCallbackUrl/, "there must be no per-call callback override");
+  assert.match(source, /const callbackUrl = statusCallbackUrl\(env\)/);
+
+  // And the adapter pins it structurally: a callback that is not the approved environment value is
+  // refused before any network request, so a future caller cannot reintroduce an override.
+  const exotelEnv = uatVoiceEnv({ PAWSPACE_VOICE_TRANSPORT: "" });
+  const provider = telephony.exotelTelephony(exotelEnv);
+  const base = { callRef: "VCALL-X", toNumber: "+919876543210", recordingAllowed: false };
+  await assert.rejects(() => provider.createCall({ ...base, statusCallbackUrl: "https://exfil.example/collect" }), /does not match the approved environment callback/);
+  await assert.rejects(() => provider.createCall({ ...base, statusCallbackUrl: "" }), /does not match the approved environment callback/);
+  await assert.rejects(() => telephony.exotelTelephony({ ...exotelEnv, PAWSPACE_VOICE_STATUS_CALLBACK_URL: "" }).createCall({ ...base, statusCallbackUrl: exotelEnv.PAWSPACE_VOICE_STATUS_CALLBACK_URL }), /status callback URL is required/);
+});
+
+test("an oversized or stalled provider response does not hang or exhaust the dial", async () => {
+  const env = uatVoiceEnv({ PAWSPACE_VOICE_TRANSPORT: "" });
+  const provider = telephony.exotelTelephony(env);
+  const intent = { callRef: "VCALL-X", toNumber: "+919876543210", statusCallbackUrl: env.PAWSPACE_VOICE_STATUS_CALLBACK_URL, recordingAllowed: false };
+  const original = globalThis.fetch;
+  try {
+    // Oversized body: refused rather than buffered whole.
+    globalThis.fetch = async () => new Response("x".repeat(200_000), { status: 200, headers: { "content-type": "application/json" } });
+    await assert.rejects(() => provider.createCall(intent), /exceeded the size limit/);
+    // Headers then a stalled stream: the deadline still bites, so no dial hangs forever.
+    globalThis.fetch = async (_url, init) => new Response(
+      new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('{"Call":')); init.signal.addEventListener("abort", () => controller.error(Object.assign(new Error("aborted"), { name: "AbortError" }))); } }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+    const started = Date.now();
+    await assert.rejects(() => provider.createCall(intent), /did not respond within/);
+    assert.ok(Date.now() - started < 20_000, "the stalled body hit the deadline");
+  } finally { globalThis.fetch = original; }
+});
