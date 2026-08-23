@@ -1,5 +1,5 @@
 export type FoodSubscriptionChannel="whatsapp"|"sms"|"email"|"push";
-export type FoodSubscriptionSnapshot={subscription:Record<string,unknown>;renewals:Array<Record<string,unknown>>;invoices:Array<Record<string,unknown>>;events:Array<Record<string,unknown>>;truth:Record<string,unknown>};
+export type FoodSubscriptionSnapshot={subscription:Record<string,unknown>;renewals:Array<Record<string,unknown>>;invoices:Array<Record<string,unknown>>;events:Array<Record<string,unknown>>;truth:Record<string,unknown>;petIds:string[]};
 async function request(body:Record<string,unknown>){const response=await fetch("/api/food-subscriptions",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)}),data=await response.json() as {data?:Record<string,unknown>;error?:string};if(!response.ok||!data.data)throw new Error(data.error||"Unable to update Food subscription");return data.data;}
 export async function createFoodSubscription(input:{sourceOrderId:string;renewalIntervalDays:number;communicationChannel?:FoodSubscriptionChannel}){return request({action:"create",...input})}
 export async function updateFoodSubscription(input:{subscriptionId:string;action:"pause"|"resume"|"cancel";reason:string}){return request(input)}
