@@ -29,14 +29,14 @@ async function deniedMutations(db:D1Database,headers:Record<string,string>,label
  const patch=await patchRule(req("PATCH",{id:"rule_existing",name:`${label} patch`,priority:999},headers));await expectDenied(patch,`${label} PATCH`);await assertBaseline(db,before,beforeCount,`${label} PATCH`);
  const del=await deleteRule(req("DELETE",undefined,headers,"?id=rule_existing"));await expectDenied(del,`${label} DELETE`);await assertBaseline(db,before,beforeCount,`${label} DELETE`);
 }
-async function publicRead(headers:Record<string,string>,label:string){const response=await getRules(req("GET",undefined,headers));if(response.status!==200)throw new Error(`${label} GET changed from public/read behavior: ${response.status}`);const body=await response.json() as {data?:Array<{id?:string}>};if(!body.data?.some(rule=>rule.id==="rule_existing"))throw new Error(`${label} GET did not return the existing rule`);}
+async function publicRead(label:string){const response=await getRules();if(response.status!==200)throw new Error(`${label} GET changed from public/read behavior: ${response.status}`);const body=await response.json() as {data?:Array<{id?:string}>};if(!body.data?.some(rule=>rule.id==="rule_existing"))throw new Error(`${label} GET did not return the existing rule`);}
 async function run(db:D1Database){
  const sessions=await setup(db);const before=await row(db,"rule_existing");const beforeCount=await count(db);
- await publicRead({},"anonymous");await deniedMutations(db,{},"anonymous",before,beforeCount);
- const providerHeaders={cookie:sessions.providerCookie};await publicRead(providerHeaders,"provider");await deniedMutations(db,providerHeaders,"provider",before,beforeCount);
- const customerHeaders={cookie:sessions.customerCookie};await publicRead(customerHeaders,"customer");await deniedMutations(db,customerHeaders,"customer",before,beforeCount);
+ await publicRead("anonymous");await deniedMutations(db,{},"anonymous",before,beforeCount);
+ const providerHeaders={cookie:sessions.providerCookie};await publicRead("provider");await deniedMutations(db,providerHeaders,"provider",before,beforeCount);
+ const customerHeaders={cookie:sessions.customerCookie};await publicRead("customer");await deniedMutations(db,customerHeaders,"customer",before,beforeCount);
  const managerHeaders={"oai-authenticated-user-email":"manager@pawspace.test","oai-authenticated-user-full-name":"Scheduling%20Manager","oai-authenticated-user-full-name-encoding":"percent-encoded-utf-8"};
- await publicRead(managerHeaders,"manager");
+ await publicRead("manager");
  const managerPost=await postRule(req("POST",{name:"Manager insert",conditions:[{}]},managerHeaders));if(managerPost.status!==201)throw new Error(`manager POST failed: ${managerPost.status}`);const created=await managerPost.json() as {data?:{id?:string}};const createdId=String(created.data?.id||"");if(!createdId||!await row(db,createdId))throw new Error("manager POST did not persist");
  const managerPatch=await patchRule(req("PATCH",{id:createdId,name:"Manager patched",priority:7},managerHeaders));if(managerPatch.status!==200)throw new Error(`manager PATCH failed: ${managerPatch.status}`);const patched=await row(db,createdId);if(patched?.name!=="Manager patched"||Number(patched.priority)!==7)throw new Error("manager PATCH did not persist expected values");
  const managerDelete=await deleteRule(req("DELETE",undefined,managerHeaders,`?id=${createdId}`));if(managerDelete.status!==200)throw new Error(`manager DELETE failed: ${managerDelete.status}`);if(await row(db,createdId))throw new Error("manager DELETE did not remove rule");
