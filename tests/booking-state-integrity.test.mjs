@@ -2,6 +2,7 @@ import assert from"node:assert/strict";
 import test from"node:test";
 import{readFile}from"node:fs/promises";
 import{trainingProgrammeRequestId}from"../lib/booking-state-integrity.ts";
+import{createCanonicalLifecycle}from"../lib/canonical-lifecycle-client.ts";
 const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
 
 const base={customerId:"CUS-A",petIds:["PET-B","PET-A"],packageCode:"training-8-basic",scheduledStart:"2026-09-01T09:30:00.000Z",frequency:"Tue & Sat"};
@@ -18,11 +19,24 @@ test("mobile Training checkout uses the displayed quote and dynamic pet identity
  const flow=await read("app/mobile-app/training-flow.tsx");
  assert.doesNotMatch(flow,/training-TST101/);
  assert.match(flow,/trainingProgrammeRequestId/);
- assert.match(flow,/const quote=checkoutQuote/);
  const confirm=flow.slice(flow.indexOf("confirm = async"),flow.indexOf("if (confirmed)"));
+ assert.match(confirm,/\bquote=checkoutQuote\b/);
  assert.doesNotMatch(confirm,/quote=await quoteTraining/,'confirm must not replace the displayed checkout quote with an unseen re-quote');
  assert.doesNotMatch(flow,/Bruno&apos;s training options/);
  assert.match(flow,/primaryPet\?\.name/);
+});
+
+test("Training programme confirmation attests sandbox payment before canonical booking while Meet & Greet stays pending",async()=>{
+ const originalFetch=globalThis.fetch,calls=[];
+ globalThis.fetch=async(url,init={})=>{calls.push({url:String(url),init});if(String(url)==="/api/training-payment-sandbox")return Response.json({data:{quoteId:"TQ-1",status:"captured",amount:6000,currency:"INR",environment:"sandbox",reference:"TRN-UAT-PAY-1",duplicatePrevented:false,liveMoney:false,synthetic:true}},{status:201});return Response.json({data:{bookingId:"B-1",customerId:"CUS-A",petIds:["PET-A"],scheduleGroupId:"G-1",workOrderId:"WO-1",paymentId:"PAY-1",status:"confirmed",duplicatePrevented:false}},{status:201});};
+ try{
+  const common={idempotencyKey:"training-key",scheduleGroupId:"G-1",customer:{id:"CUS-A",name:"A",primaryPhone:"9999999999"},pets:[{sourceId:"PET-A",name:"Dog",species:"dog"}],cityId:"blr",zoneId:"blr-east",serviceCode:"dog_training",packageName:"P",scheduledStart:"2026-09-01T09:30:00.000Z",scheduledEnd:"2026-09-01T10:30:00.000Z",provider:{id:"P-1",name:"Trainer",model:"commission"},totalAmount:12000,amountDueNow:6000,payment:{method:"payment_link",mode:"split",status:"created",detail:"Awaiting verified payment"},pricing:{discount:0,trainingQuoteId:"TQ-1"}};
+  await createCanonicalLifecycle({...common,packageCode:"training-8-basic"});
+  assert.equal(calls.length,2);assert.equal(calls[0].url,"/api/training-payment-sandbox");assert.equal(JSON.parse(String(calls[0].init.body)).amount,6000);assert.equal(calls[1].url,"/api/canonical-bookings");const programmePayload=JSON.parse(String(calls[1].init.body));assert.equal(programmePayload.payment.status,"captured");assert.match(programmePayload.payment.detail,/TRN-UAT-PAY-1/);
+  calls.length=0;
+  await createCanonicalLifecycle({...common,packageCode:"trainer-meet-greet",amountDueNow:500,totalAmount:500,payment:{method:"payment_link",mode:"prepaid",status:"created",detail:"Awaiting verified payment"}});
+  assert.equal(calls.length,1);assert.equal(calls[0].url,"/api/canonical-bookings");assert.equal(JSON.parse(String(calls[0].init.body)).payment.status,"created");
+ }finally{globalThis.fetch=originalFetch;}
 });
 
 test("Meet & Greet is standalone and cannot be partially created by programme confirm",async()=>{
@@ -41,6 +55,10 @@ test("Boarding sends persisted vaccination truth and freezes the confirmed amoun
  assert.doesNotMatch(flow,/vaccinationStatus:"verified"/,'customer flow must never manufacture verified vaccination');
  assert.match(flow,/confirmedTotal/);
  assert.match(flow,/total=\{confirmedTotal\?\?total\}/);
+ const scheduling=await read("app/api/uat-scheduling/route.ts");
+ assert.match(scheduling,/SELECT customer_id,vaccination_status FROM canonical_pets WHERE id=\?/,'Boarding reservation must read authoritative canonical pet status');
+ assert.match(scheduling,/String\(pet\.customer_id\)!==input\.customerId/,'Boarding reservation must reject foreign pets before capacity is held');
+ assert.match(scheduling,/String\(pet\.vaccination_status\)!=="verified"/,'Boarding reservation must reject unverified pets before capacity is held');
  const governance=await read("lib/boarding-governance.ts");
  assert.match(governance,/vaccinationStatuses\.some\(status=>status!=="verified"\)/,'server boundary must still reject unverified Boarding pets');
 });
