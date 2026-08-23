@@ -64,7 +64,7 @@ Use UAT provider credentials only. Do not enable autonomous governed actions.
 
 ## Provider KYC / IDfy
 
-Credential presence requires all of `IDFY_API_KEY`, `IDFY_ACCOUNT_ID`, and `IDFY_URL`; it is configuration evidence only. Current integration health deliberately reports callback handling as not implemented/not tested and operational readiness false.
+Credential presence requires all of `IDFY_API_KEY`, `IDFY_ACCOUNT_ID`, and `IDFY_URL`; it is configuration evidence only. The canonical readiness register keeps IDfy as a required P0 launch blocker with a partial code boundary and production setup still required.
 
 Before operational score can reach 9/10:
 
@@ -78,4 +78,4 @@ Before operational score can reach 9/10:
 8. Assignment/activation continues to require every mandated verification to be verified.
 9. Capture callback signature/authentication, request/reference ID, DB transition, replay evidence, and audit record.
 
-Until the callback boundary exists and the above controlled callback proof is captured, KYC must remain `operationallyReady: false`.
+Until the callback boundary exists and the above controlled callback proof is captured, KYC must remain below `controlled_live_verified` and continue blocking launch approval.
