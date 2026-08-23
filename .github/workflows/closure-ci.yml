@@ -36,7 +36,12 @@ jobs:
         shell: bash
         run: |
           npm run build
-          mapfile -t tracked_tests < <(git ls-files 'tests/*.test.mjs' | awk -F/ 'NF == 2')
+          tracked_tests=()
+          for test_file in tests/*.test.mjs; do
+            if git ls-files --error-unmatch -- "$test_file" >/dev/null 2>&1; then
+              tracked_tests+=("$test_file")
+            fi
+          done
           test "${#tracked_tests[@]}" -gt 0
           node --test --test-force-exit "${tracked_tests[@]}"
 
