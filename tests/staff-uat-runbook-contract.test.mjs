@@ -4,7 +4,7 @@ import fs from "node:fs";
 
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("unified staff UAT execution pack preserves canonical cross-role sequence", () => {
+test("staff UAT runbook documents the canonical cross-role sequence", () => {
   const doc = read("docs/END_TO_END_STAFF_UAT_EXECUTION.md");
   for (const marker of [
     "Customer identity and booking",
@@ -23,7 +23,7 @@ test("unified staff UAT execution pack preserves canonical cross-role sequence",
   ]) assert.match(doc, new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
-test("unified staff UAT execution pack keeps production and provider boundaries fail closed", () => {
+test("staff UAT runbook documents production and provider boundaries as fail closed", () => {
   const doc = read("docs/END_TO_END_STAFF_UAT_EXECUTION.md");
   assert.match(doc, /PRODUCTION READY = FALSE/);
   assert.match(doc, /uat_ready/);
