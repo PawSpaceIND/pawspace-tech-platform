@@ -179,7 +179,12 @@ test("expired reservation cleanup restores real scheduler capacity", async (t) =
 
 test("cleanup never releases capacity behind an existing canonical booking", async (t) => {
   const ctx = await setupJourney(); t.after(ctx.close);
-  const config = { customerId: "CUST-LEASE-CONFIRMED", customerName: "Confirmed Lease", phone: "+919900000909", petSourceId: "PET-LEASE-CONFIRMED", petName: "Miso", cityId: "blr", zoneId: "blr-east", pincode: "560038", latitude: 12.9716, longitude: 77.5946, preferredProviderId: "groom_arun", groupId: "GROOM-LEASE-CONFIRMED", start: new Date(Date.now() + 8 * 86_400_000).toISOString(), stopAfterCapture: true };
+  // Pin the hour, exactly as the two tests above already do. Taking now + 8 days without normalising the
+  // time of day inherits the clock the suite happens to run at, so once the wall clock passed the end of
+  // the grooming roster this booked an out-of-roster slot and failed with NO_SCHEDULE_AVAILABLE — a real
+  // flake that reddened CI for every lane from mid-evening IST onward, and passed again the next morning.
+  const startDate = new Date(Date.now() + 8 * 86_400_000); startDate.setUTCHours(5, 30, 0, 0);
+  const config = { customerId: "CUST-LEASE-CONFIRMED", customerName: "Confirmed Lease", phone: "+919900000909", petSourceId: "PET-LEASE-CONFIRMED", petName: "Miso", cityId: "blr", zoneId: "blr-east", pincode: "560038", latitude: 12.9716, longitude: 77.5946, preferredProviderId: "groom_arun", groupId: "GROOM-LEASE-CONFIRMED", start: startDate.toISOString(), stopAfterCapture: true };
   const result = await runCompletedJourney(ctx, config);
   assert.equal(result.booked.status, 201, JSON.stringify(result.booked.body));
   const governance = await leaseGovernance();
