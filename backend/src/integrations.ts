@@ -43,16 +43,16 @@ export class IntegrationGateway {
     const voice=voiceSafetyState();
     return [
       row("database",databaseReady?"MongoDB Atlas":"In-memory sandbox",databaseReady?"production":"sandbox",databaseReady?"ready":"configuration_required"),
-      row("otp",process.env.OTP_PROVIDER??"OTP sandbox adapter","sandbox","configuration_required"),
-      row("whatsapp",process.env.WHATSAPP_PROVIDER??"Meta WhatsApp",modeFor(["WHATSAPP_ACCESS_TOKEN"])),
-      row("sms",process.env.SMS_PROVIDER??"MSG91",modeFor(["SMS_API_KEY"])),
-      row("email",process.env.EMAIL_PROVIDER??"Transactional email",modeFor(["EMAIL_API_KEY"])),
-      row("push",process.env.PUSH_PROVIDER??"Firebase",modeFor(["PUSH_SERVICE_ACCOUNT"])),
+      row("otp",process.env.OTP_PROVIDER??"OTP adapter not connected","sandbox","configuration_required"),
+      row("whatsapp",process.env.WHATSAPP_PROVIDER??"WhatsApp adapter not connected","sandbox","configuration_required"),
+      row("sms",process.env.SMS_PROVIDER??"SMS adapter not connected","sandbox","configuration_required"),
+      row("email",process.env.EMAIL_PROVIDER??"Email adapter not connected","sandbox","configuration_required"),
+      row("push",process.env.PUSH_PROVIDER??"Push adapter not connected","sandbox","configuration_required"),
       row("payments","Razorpay",modeFor(["RAZORPAY_KEY_ID","RAZORPAY_KEY_SECRET"])),
       row("payouts","RazorpayX",modeFor(["RAZORPAYX_ACCOUNT_NUMBER","RAZORPAY_KEY_SECRET"])),
-      row("maps",process.env.MAPS_PROVIDER??"Google Maps",modeFor(["MAPS_API_KEY"])),
-      row("media",process.env.MEDIA_PROVIDER??"Object storage",modeFor(["MEDIA_STORAGE_ENDPOINT","MEDIA_STORAGE_TOKEN"])),
-      row("ai",process.env.AI_PROVIDER??"AI provider",modeFor(["AI_API_KEY"])),
+      row("maps",process.env.MAPS_PROVIDER??"Maps adapter not connected","sandbox","configuration_required"),
+      row("media",process.env.MEDIA_PROVIDER??"Object storage adapter not connected","sandbox","configuration_required"),
+      row("ai",process.env.AI_PROVIDER??"AI adapter not connected","sandbox","configuration_required"),
       row("voice",process.env.VOICE_PROVIDER??"Voice provider","sandbox",voice.enabled?(voice.canDial?"ready":"configuration_required"):"disabled"),
     ];
   }
@@ -62,19 +62,23 @@ export class IntegrationGateway {
   async deliver(channel:NotificationEvent["channels"][number],event:NotificationEvent):Promise<DeliveryResult>{
     if(channel==="voice"){const voice=voiceSafetyState();if(!voice.canDial)return {channel,delivered:false,errorCode:voice.reason};}
     if(this.options.failChannels?.has(channel))return {channel,delivered:false,errorCode:"SANDBOX_PROVIDER_UNAVAILABLE"};
+    if(this.options.allowSandboxSuccess)return {channel,delivered:true,providerMessageId:ref(channel,`${event.id}:${event.attempts}`)};
     const ready=requiredForChannel[channel].every(configured);
-    if(!ready&&!this.options.allowSandboxSuccess)return {channel,delivered:false,errorCode:"PROVIDER_NOT_CONFIGURED"};
-    return {channel,delivered:true,providerMessageId:ref(channel,`${event.id}:${event.attempts}`)};
+    if(!ready)return {channel,delivered:false,errorCode:"PROVIDER_NOT_CONFIGURED"};
+    return {channel,delivered:false,errorCode:"PROVIDER_ADAPTER_NOT_CONNECTED"};
   }
 
   async createPaymentOrder(amount:number,receipt:string){return {provider:"razorpay-sandbox",orderId:ref("order",`${receipt}:${amount}`),amount,currency:"INR",status:"created"};}
   async createPayout(amount:number,providerId:string){return {provider:"razorpayx-sandbox",payoutId:ref("payout",`${providerId}:${amount}:${Date.now()}`),amount,currency:"INR",status:"queued"};}
 
   async quoteRoute(origin:string,destination:string){
-    if(!configured("MAPS_API_KEY")&&!this.options.allowSandboxSuccess)throw Object.assign(new Error("MAPS_NOT_CONFIGURED"),{statusCode:503,code:"MAPS_NOT_CONFIGURED"});
+    if(!this.options.allowSandboxSuccess){
+      const code=configured("MAPS_API_KEY")?"MAPS_ADAPTER_NOT_CONNECTED":"MAPS_NOT_CONFIGURED";
+      throw Object.assign(new Error(code),{statusCode:503,code});
+    }
     const seed=parseInt(createHash("sha256").update(`${origin}:${destination}`).digest("hex").slice(0,4),16);
     const distanceKm=Number((3+(seed%220)/10).toFixed(1));
-    return {provider:configured("MAPS_API_KEY")?(process.env.MAPS_PROVIDER??"maps-provider"):"maps-sandbox",routeId:ref("route",`${origin}:${destination}`),distanceKm,durationMinutes:Math.round(distanceKm*3.2+18),trackingReady:true};
+    return {provider:"maps-sandbox",routeId:ref("route",`${origin}:${destination}`),distanceKm,durationMinutes:Math.round(distanceKm*3.2+18),trackingReady:true};
   }
 }
 
