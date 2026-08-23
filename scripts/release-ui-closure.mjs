@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { chromium } from "playwright";
+import { CONTROL_RESULT, classifyControl, isControlFailure } from "./release-ui-control-classifier.mjs";
 
 const arg = (name, fallback = "") => {
   const found = process.argv.find((item) => item.startsWith(`--${name}=`));
@@ -126,66 +127,308 @@ function linkWiringResult(target, route) {
   }
 }
 
+// A Cloudflare error page is served by the edge, not by PawSpace. Its links and buttons are not
+// PawSpace controls and must never enter control coverage, so they are detected structurally and
+// by the edge's own error copy rather than by any word the product might legitimately use.
+const CF_ERROR_SELECTOR = "#cf-error-details,.cf-error-details,#cf-wrapper,.cf-error-overview,#cf-espblock,.cf-error-footer,#challenge-error-title,#challenge-running";
+const CF_ERROR_TEXT = /(worker threw exception|error\s+10\d\d\b|cloudflare ray id|performance\s*&(?:amp;)?\s*security by cloudflare|attention required!\s*\|\s*cloudflare)/i;
+const ROUTE_LOAD_ATTEMPTS = 3; // one initial load plus a maximum of two retries
+
+// A serviceable PawSpace document carries markers emitted by the root layout. Their absence means
+// whatever answered is not the application, however healthy the status line looked.
+async function assessRouteDocument(page, cfTextSource) {
+  return page.evaluate(({ selector, textSource }) => {
+    const pattern = new RegExp(textSource, "i");
+    const text = (document.body?.innerText || "").slice(0, 4000);
+    return {
+      cloudflareError: Boolean(document.querySelector(selector)) || pattern.test(text),
+      pawspaceDocument: Boolean(
+        document.body?.classList.contains("antialiased")
+        || document.querySelector('meta[name="codex-preview"]')
+        || document.querySelector('link[rel="icon"][href="/favicon.svg"]'),
+      ),
+      sample: text.replace(/\s+/g, " ").trim().slice(0, 160),
+    };
+  }, { selector: CF_ERROR_SELECTOR, textSource: cfTextSource }).catch(() => ({ cloudflareError: false, pawspaceDocument: false, sample: "" }));
+}
+
+// Load a route for probing, retrying a bounded number of times when the edge answers with a 5xx or
+// a Cloudflare error page instead of the application. Never snapshot controls from a page that is
+// not a PawSpace document; if PawSpace still will not load, say so explicitly.
+async function loadRouteForProbe(page, route) {
+  let outcome = { ok: false, attempts: 0, status: 0, reason: "route was never loaded" };
+  for (let attempt = 1; attempt <= ROUTE_LOAD_ATTEMPTS; attempt += 1) {
+    let status = 0, navigationFailure = "";
+    try {
+      const response = await gotoSettled(page, `${BASE}${route}`);
+      status = response?.status() || 0;
+    } catch (error) { navigationFailure = String(error.message).split("\n")[0].slice(0, 200); }
+    const assessed = await assessRouteDocument(page, CF_ERROR_TEXT.source);
+    if (!navigationFailure && status && status < 500 && !assessed.cloudflareError && assessed.pawspaceDocument) {
+      return { ok: true, attempts: attempt, status, retried: attempt > 1 };
+    }
+    const reason = navigationFailure ? `navigation failed: ${navigationFailure}`
+      : assessed.cloudflareError ? `Cloudflare edge error page instead of PawSpace (HTTP ${status || "?"}): ${assessed.sample}`
+        : status >= 500 ? `PawSpace returned HTTP ${status}`
+          : !assessed.pawspaceDocument ? `response was not a PawSpace document (HTTP ${status || "?"}): ${assessed.sample}`
+            : `HTTP ${status}`;
+    outcome = { ok: false, attempts: attempt, status, reason };
+    if (attempt < ROUTE_LOAD_ATTEMPTS) await sleep(400 * attempt);
+  }
+  return outcome;
+}
+
+// Resolve the control the probe intends to click. The descriptor snapshot is taken once per route,
+// but every control probe reloads the route first, and a route whose client data settles after the
+// snapshot can render a different button set. Re-resolving by tag+text keeps the verdict attached
+// to the control it names, instead of reporting a control that was never clicked.
+async function resolveControlIndex(page, want, preferredIndex = -1) {
+  return page.evaluate(({ want: wanted, preferredIndex: preferred }) => {
+    const norm = (el) => (el.textContent || el.getAttribute("aria-label") || el.getAttribute("title") || "").replace(/\s+/g, " ").trim().slice(0, 100);
+    const all = [...document.querySelectorAll("button,a[href]")];
+    const at = preferred >= 0 ? all[preferred] : null;
+    if (at && at.tagName.toLowerCase() === wanted.tag && norm(at) === wanted.text) return preferred;
+    return all.findIndex((el) => el.tagName.toLowerCase() === wanted.tag && norm(el) === wanted.text);
+  }, { want, preferredIndex }).catch(() => -1);
+}
+
+// Arm the per-click observers. This runs immediately before each click so a displaced-state
+// re-probe measures only the target control's own effect, never the displacing interaction's.
+async function armProbe(page, index) {
+  await page.evaluate((targetIndex) => {
+    const target = document.querySelectorAll("button,a[href]")[targetIndex];
+    window.__pawspaceProbeForm = target && "form" in target ? target.form : null;
+    window.__pawspaceInvalid = [];
+    window.__pawspaceInvalidListener = (event) => {
+      const field = event.target;
+      window.__pawspaceInvalid.push({
+        field: String(field.name || field.id || field.tagName || "").toLowerCase().slice(0, 60),
+        sameForm: Boolean(window.__pawspaceProbeForm && field.form === window.__pawspaceProbeForm),
+      });
+    };
+    document.addEventListener("invalid", window.__pawspaceInvalidListener, true);
+    window.__pawspaceUiMutationCount = 0;
+    const observer = new MutationObserver((records) => { window.__pawspaceUiMutationCount += records.length; });
+    observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
+    window.__pawspaceUiMutationObserver = observer;
+  }, index).catch(() => {});
+}
+
+async function readProbe(page) {
+  return page.evaluate(() => {
+    const domMutations = Number(window.__pawspaceUiMutationCount || 0);
+    window.__pawspaceUiMutationObserver?.disconnect();
+    if (window.__pawspaceInvalidListener) document.removeEventListener("invalid", window.__pawspaceInvalidListener, true);
+    const invalid = (window.__pawspaceInvalid || []).filter((item) => item.sameForm);
+    return { domMutations, hadForm: Boolean(window.__pawspaceProbeForm), invalidFields: [...new Set(invalid.map((item) => item.field))].slice(0, 5) };
+  }).catch(() => ({ domMutations: 0, hadForm: false, invalidFields: [] }));
+}
+
+// Every interaction the probe performs runs inside this guard, so mutating requests are aborted
+// before execution during displacement exactly as they are during the primary click.
+async function withMutationBlocking(page, action) {
+  const seen = { mutationAttempt: null, requestSeen: null, dialogSeen: null };
+  const onDialog = async (dialog) => { seen.dialogSeen = dialog.type(); await dialog.dismiss().catch(() => {}); };
+  const onRequest = (request) => { if (request.url().includes("/api/")) seen.requestSeen = `${request.method()} ${new URL(request.url()).pathname}`; };
+  const routeHandler = async (routeHandle) => {
+    const method = routeHandle.request().method();
+    if (MUTATING_METHODS.has(method)) { seen.mutationAttempt = `${method} ${new URL(routeHandle.request().url()).pathname}`; await routeHandle.abort("blockedbyclient"); }
+    else await routeHandle.continue();
+  };
+  page.on("dialog", onDialog); page.on("request", onRequest); await page.route("**/api/**", routeHandler);
+  try { return { seen, result: await action() }; }
+  finally { await page.unroute("**/api/**", routeHandler); page.off("dialog", onDialog); page.off("request", onRequest); }
+}
+
+async function clickAndObserve(page, index) {
+  const evidence = { mutationAttempt: null, requestSeen: null, dialogSeen: null, navigationSeen: null, changed: false, domMutations: 0, validationBlocked: null, error: null };
+  const locator = page.locator("button,a[href]").nth(index);
+  const beforeUrl = page.url();
+  const beforeText = await page.locator("body").innerText().catch(() => "");
+  const { seen } = await withMutationBlocking(page, async () => {
+    await armProbe(page, index);
+    try {
+      await locator.click({ timeout: 3500 });
+      await sleep(300);
+      evidence.navigationSeen = page.url() !== beforeUrl ? page.url() : null;
+      const afterText = await page.locator("body").innerText().catch(() => "");
+      const state = await readProbe(page);
+      evidence.domMutations = state.domMutations;
+      evidence.changed = afterText !== beforeText || state.domMutations > 0;
+      evidence.validationBlocked = state.invalidFields.length ? { form: true, fields: state.invalidFields } : null;
+    } catch (error) {
+      evidence.error = String(error.message).split("\n")[0].slice(0, 220);
+      await readProbe(page);
+    }
+  });
+  return { ...evidence, ...seen };
+}
+
+const observable = (evidence) => Boolean(evidence.navigationSeen || evidence.mutationAttempt || evidence.requestSeen || evidence.dialogSeen || evidence.changed);
+
+// Displacement candidates are the other interactive things in the control's own group: sibling
+// buttons, and sibling fields for a control whose state is driven by a select or an input rather
+// than by another button (a Clear/reset control has no sibling button to click).
+async function displacementCandidates(page, index) {
+  return page.evaluate((targetIndex) => {
+    const all = [...document.querySelectorAll("button,a[href]")];
+    const target = all[targetIndex];
+    if (!target) return [];
+    const visible = (el) => Boolean(el.getClientRects().length) && getComputedStyle(el).visibility !== "hidden" && getComputedStyle(el).display !== "none";
+    const norm = (el) => (el.textContent || el.getAttribute("aria-label") || el.getAttribute("title") || "").replace(/\s+/g, " ").trim().slice(0, 100);
+    const usable = (el) => !el.disabled && el.getAttribute("aria-disabled") !== "true" && !el.readOnly && visible(el);
+    const found = [];
+    let scope = target.parentElement;
+    for (let depth = 0; depth < 3 && scope; depth += 1) {
+      for (const el of scope.querySelectorAll("button")) {
+        if (el === target || !usable(el)) continue;
+        const text = norm(el);
+        if (text && !found.some((item) => item.kind === "button" && item.text === text)) found.push({ kind: "button", tag: "button", text });
+      }
+      for (const el of scope.querySelectorAll("select")) {
+        if (!usable(el) || el.options.length < 2) continue;
+        const alternative = [...el.options].find((option) => option.value !== el.value);
+        if (!alternative) continue;
+        const ref = el.name || el.id || norm(el);
+        if (!found.some((item) => item.kind === "select" && item.ref === ref)) found.push({ kind: "select", tag: "select", ref, value: alternative.value, text: `select ${ref || "field"}` });
+      }
+      for (const el of scope.querySelectorAll("input")) {
+        const type = (el.getAttribute("type") || "text").toLowerCase();
+        if (!["text", "search", "date", "number", "email", "tel"].includes(type) || !usable(el)) continue;
+        const ref = el.name || el.id || String(el.placeholder || "");
+        const value = type === "date" ? "2026-01-01" : type === "number" ? "1" : type === "email" ? "probe@pawspace.in" : type === "tel" ? "9000000000" : "probe";
+        if (value === el.value) continue;
+        if (!found.some((item) => item.kind === "input" && item.ref === ref)) found.push({ kind: "input", tag: "input", ref, type, value, text: `input ${ref || type}` });
+      }
+      if (found.length) break;
+      scope = scope.parentElement;
+    }
+    return found.slice(0, 6);
+  }, index).catch(() => []);
+}
+
+// Set a sibling field the way a person would, using the native value setter so React's own value
+// tracker sees the change. This moves state; it never asserts anything about the target control,
+// which still has to commit its own change afterwards.
+async function displaceField(page, candidate) {
+  return page.evaluate(({ kind, ref, value }) => {
+    const matches = (el) => (el.name || el.id || String(el.placeholder || "")) === ref;
+    const element = [...document.querySelectorAll(kind)].find(matches);
+    if (!element) return false;
+    const prototype = kind === "select" ? window.HTMLSelectElement.prototype : window.HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+    if (!setter) return false;
+    setter.call(element, value);
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }, { kind: candidate.kind === "select" ? "select" : "input", ref: candidate.ref, value: candidate.value, type: candidate.type }).catch(() => false);
+}
+
+async function displacedStateProbe(page, route, target) {
+  const load = await loadRouteForProbe(page, route);
+  if (!load.ok) return { attempted: false, changed: false, sibling: null, evidence: null };
+  const anchor = await resolveControlIndex(page, { tag: target.tag, text: target.text }, target.index);
+  if (anchor < 0) return { attempted: false, changed: false, sibling: null, evidence: null };
+  const candidates = (await displacementCandidates(page, anchor))
+    .filter((item) => item.kind !== "button" || (item.text && !DESTRUCTIVE_TEXT.test(item.text)))
+    .slice(0, 3);
+  for (const candidate of candidates) {
+    const reload = await loadRouteForProbe(page, route);
+    if (!reload.ok) continue;
+    let displacedOk = false;
+    if (candidate.kind === "button") {
+      const siblingIndex = await resolveControlIndex(page, { tag: "button", text: candidate.text });
+      if (siblingIndex < 0) continue;
+      const displaced = await clickAndObserve(page, siblingIndex);
+      displacedOk = !displaced.error;
+    } else {
+      const { result } = await withMutationBlocking(page, () => displaceField(page, candidate));
+      displacedOk = Boolean(result);
+      if (displacedOk) await sleep(250);
+    }
+    if (!displacedOk) continue;
+    // The displacing interaction can itself re-render the group, so re-resolve before the retry.
+    const targetIndex = await resolveControlIndex(page, { tag: target.tag, text: target.text });
+    if (targetIndex < 0) continue;
+    const retry = await clickAndObserve(page, targetIndex);
+    if (observable(retry)) {
+      return { attempted: true, changed: true, sibling: candidate.text, kind: candidate.kind, evidence: retry.requestSeen || retry.navigationSeen || `dom mutations ${retry.domMutations}` };
+    }
+  }
+  return { attempted: candidates.length > 0, changed: false, sibling: candidates[0]?.text || null, kind: candidates[0]?.kind || null, evidence: null };
+}
+
 async function probeControls(page, route) {
   await page.setViewportSize({ width: 1280, height: 900 });
-  await gotoSettled(page, `${BASE}${route}`);
-  const descriptors = await page.locator("button,a[href]").evaluateAll((els) => els.map((el, index) => ({
+  // An unmet identity precondition is recorded as route context only. It is never a verdict: a
+  // background 401 must not exempt an unrelated control that is genuinely wired to nothing.
+  const identityRefusals = [];
+  const onIdentityResponse = (response) => {
+    if (response.url().includes("/api/identity-session") && [401, 403].includes(response.status())) {
+      identityRefusals.push(`HTTP ${response.status()} ${new URL(response.url()).pathname}`);
+    }
+  };
+  page.on("response", onIdentityResponse);
+  const load = await loadRouteForProbe(page, route);
+  page.off("response", onIdentityResponse);
+  const identityRefused = identityRefusals.length ? identityRefusals[0] : null;
+
+  // PawSpace never became serviceable here, so there is nothing legitimate to probe. Fail loudly
+  // rather than reporting an empty, apparently-clean route.
+  if (!load.ok) {
+    return {
+      routeUnavailable: true, identityRefused, loadAttempts: load.attempts, loadReason: load.reason,
+      controls: [{
+        index: -1, tag: "route", text: route, destructive: false,
+        result: CONTROL_RESULT.routeUnavailable,
+        error: `${load.reason} (after ${load.attempts} load attempt${load.attempts === 1 ? "" : "s"})`,
+      }],
+    };
+  }
+
+  const descriptors = await page.locator("button,a[href]").evaluateAll((els, selector) => els.map((el, index) => ({
     index,
+    // Controls belonging to a Cloudflare edge error page are not PawSpace controls.
+    cloudflareChrome: Boolean(el.closest(selector)),
     tag: el.tagName.toLowerCase(),
     text: (el.textContent || el.getAttribute("aria-label") || el.getAttribute("title") || "").replace(/\s+/g, " ").trim().slice(0, 100),
     href: el.tagName === "A" ? el.getAttribute("href") : null,
     disabled: Boolean(el.disabled || el.getAttribute("aria-disabled") === "true"),
     hidden: !(el.getClientRects().length && getComputedStyle(el).visibility !== "hidden" && getComputedStyle(el).display !== "none"),
-  }))).catch(() => []);
-  const targets = descriptors.filter((d) => !d.disabled && !d.hidden).slice(0, MAX_CONTROLS_PER_ROUTE);
+  })), CF_ERROR_SELECTOR).catch(() => []);
+  const excludedCloudflareControls = descriptors.filter((d) => d.cloudflareChrome).length;
+  const targets = descriptors
+    .filter((d) => !d.disabled && !d.hidden && !d.cloudflareChrome)
+    .slice(0, MAX_CONTROLS_PER_ROUTE)
+    .map((d) => { const descriptor = { ...d }; delete descriptor.cloudflareChrome; return descriptor; });
+
   const results = [];
-
   for (const target of targets) {
-    const linkResult = linkWiringResult(target, route);
-    if (linkResult) { results.push({ ...target, destructive: false, mutationAttempt: null, requestSeen: null, dialogSeen: null, changed: false, ...linkResult }); continue; }
+    const descriptor = target;
+    const linkResult = linkWiringResult(descriptor, route);
+    if (linkResult) { results.push({ ...descriptor, destructive: false, mutationAttempt: null, requestSeen: null, dialogSeen: null, changed: false, ...linkResult }); continue; }
 
-    await gotoSettled(page, `${BASE}${route}`).catch(() => {});
-    const locator = page.locator("button,a[href]").nth(target.index);
-    if (!await locator.isVisible().catch(() => false)) { results.push({ ...target, result: "skipped_not_visible" }); continue; }
+    const reload = await loadRouteForProbe(page, route);
+    if (!reload.ok) {
+      results.push({ ...descriptor, result: CONTROL_RESULT.routeUnavailable, error: `${reload.reason} (after ${reload.attempts} load attempts)` });
+      continue;
+    }
+    const index = await resolveControlIndex(page, { tag: descriptor.tag, text: descriptor.text }, descriptor.index);
+    if (index < 0) { results.push({ ...descriptor, indexDrift: true, result: CONTROL_RESULT.indexDrift, error: "control could not be re-resolved on reload" }); continue; }
+    const locator = page.locator("button,a[href]").nth(index);
+    if (!await locator.isVisible().catch(() => false)) { results.push({ ...descriptor, result: "skipped_not_visible" }); continue; }
 
-    const text = target.text || `${target.tag}#${target.index}`;
-    const destructive = DESTRUCTIVE_TEXT.test(text);
-    let mutationAttempt = null, requestSeen = null, dialogSeen = null, navigationSeen = null, changed = false, error = null, domMutations = 0;
-    const beforeUrl = page.url();
-    const beforeText = await page.locator("body").innerText().catch(() => "");
-    await page.evaluate(() => {
-      window.__pawspaceUiMutationCount = 0;
-      const observer = new MutationObserver((records) => { window.__pawspaceUiMutationCount += records.length; });
-      observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
-      window.__pawspaceUiMutationObserver = observer;
-    }).catch(() => {});
-    const onDialog = async (dialog) => { dialogSeen = dialog.type(); await dialog.dismiss().catch(() => {}); };
-    const onRequest = (request) => { if (request.url().includes("/api/")) requestSeen = `${request.method()} ${new URL(request.url()).pathname}`; };
-    const routeHandler = async (routeHandle) => {
-      const method = routeHandle.request().method();
-      if (MUTATING_METHODS.has(method)) { mutationAttempt = `${method} ${new URL(routeHandle.request().url()).pathname}`; await routeHandle.abort("blockedbyclient"); }
-      else await routeHandle.continue();
-    };
-    page.on("dialog", onDialog); page.on("request", onRequest); await page.route("**/api/**", routeHandler);
-    try {
-      await locator.click({ timeout: 3500 });
-      await sleep(300);
-      navigationSeen = page.url() !== beforeUrl ? page.url() : null;
-      const afterText = await page.locator("body").innerText().catch(() => "");
-      domMutations = await page.evaluate(() => {
-        const count = Number(window.__pawspaceUiMutationCount || 0);
-        window.__pawspaceUiMutationObserver?.disconnect();
-        return count;
-      }).catch(() => 0);
-      changed = afterText !== beforeText || domMutations > 0;
-    } catch (e) { error = String(e.message).split("\n")[0].slice(0, 220); }
-    await page.unroute("**/api/**", routeHandler); page.off("dialog", onDialog); page.off("request", onRequest);
-
-    const evidence = Boolean(navigationSeen || mutationAttempt || requestSeen || dialogSeen || changed);
-    const result = destructive && mutationAttempt ? "wired_mutation_blocked" : evidence ? "wired" : error ? "click_error" : "no_observable_effect";
-    results.push({ ...target, destructive, result, mutationAttempt, requestSeen, dialogSeen, navigationSeen, changed, domMutations, error });
+    const destructive = DESTRUCTIVE_TEXT.test(descriptor.text || `${descriptor.tag}#${descriptor.index}`);
+    const evidence = await clickAndObserve(page, index);
+    // Only a control that produced nothing at all earns a second, harder pass. A destructive
+    // control is never clicked twice.
+    const needsDisplacement = !observable(evidence) && !evidence.validationBlocked && !evidence.error && !destructive;
+    const displacement = needsDisplacement ? await displacedStateProbe(page, route, descriptor) : null;
+    const result = classifyControl({ ...evidence, destructive, displacement });
+    results.push({ ...descriptor, destructive, result, ...evidence, displacement });
   }
-  return results;
+  return { routeUnavailable: false, identityRefused, excludedCloudflareControls, loadAttempts: load.attempts, controls: results };
 }
 
 async function main() {
@@ -199,13 +442,22 @@ async function main() {
       visualChecks: visual.length + roleCoverage.length,
       visualFailures: [...visual, ...roleCoverage].filter((r) => r.failures.length).length,
       controlsProbed: controls.reduce((n, r) => n + r.controls.length, 0),
-      controlFailures: controls.flatMap((r) => r.controls).filter((c) => c.result === "click_error" || c.result === "no_observable_effect").length,
+      controlFailures: controls.flatMap((r) => r.controls).filter((c) => isControlFailure(c.result)).length,
+      // Every non-plain wiring verdict is counted here so a growing exemption surface is visible in
+      // the summary rather than only inside the evidence artifact.
+      controlsIdempotentProven: controls.flatMap((r) => r.controls).filter((c) => c.result === CONTROL_RESULT.wiredIdempotent).length,
+      controlsValidationBlocked: controls.flatMap((r) => r.controls).filter((c) => c.result === CONTROL_RESULT.wiredValidationBlocked).length,
+      controlsRouteUnavailable: controls.flatMap((r) => r.controls).filter((c) => c.result === CONTROL_RESULT.routeUnavailable).length,
+      routesRetriedForLoad: controls.filter((r) => (r.loadAttempts || 1) > 1).map((r) => `${r.actor} ${r.route} (${r.loadAttempts} attempts)`),
+      cloudflareControlsExcluded: controls.reduce((n, r) => n + (r.excludedCloudflareControls || 0), 0),
+      // Informational only. An unmet identity precondition never exempts a control from the gate.
+      identityRefusedRoutes: controls.filter((r) => r.identityRefused).map((r) => `${r.actor} ${r.route} (${r.identityRefused})`),
       roles: ["guest_customer", ...STAFF_ROLES.map((r) => r.role)],
       mutationsExecuted: 0,
       phase: controls.length ? "controls" : "visual",
     },
     visualFailures: [...visual, ...roleCoverage].filter((r) => r.failures.length),
-    controlFailures: controls.flatMap((r) => r.controls.map((c) => ({ actor: r.actor, route: r.route, ...c }))).filter((c) => c.result === "click_error" || c.result === "no_observable_effect"),
+    controlFailures: controls.flatMap((r) => r.controls.map((c) => ({ actor: r.actor, route: r.route, ...c }))).filter((c) => isControlFailure(c.result)),
     roleCoverage,
     controls,
   });
@@ -251,7 +503,7 @@ async function main() {
       const page = await context.newPage();
       const actorRoutes = actor.role === "founder" ? routes.filter((r) => r.startsWith("/team") || r.startsWith("/control") || r.startsWith("/partner")) : ["/team", "/control", "/partner", "/partner/jobs"].filter((r) => routes.includes(r));
       for (const route of actorRoutes) {
-        controls.push({ actor: actor.role, route, controls: await probeControls(page, route) });
+        controls.push({ actor: actor.role, route, ...(await probeControls(page, route)) });
         writeReport(baseReport());
       }
       await context.close();
@@ -265,7 +517,7 @@ async function main() {
       process.exitCode = 1;
       return;
     }
-    console.log("UI closure passed: no broken images/overflow/clipped controls and every probed enabled control produced observable wiring evidence. Mutating requests were blocked before execution.");
+    console.log(`UI closure passed: no broken images/overflow/clipped controls and every probed enabled control produced observable wiring evidence (${report.summary.controlsIdempotentProven} proven only after state displacement, ${report.summary.controlsValidationBlocked} proven by constraint validation). ${report.summary.cloudflareControlsExcluded} Cloudflare edge-error controls were excluded from PawSpace coverage. Mutating requests were blocked before execution.`);
   } finally {
     await browser.close();
   }

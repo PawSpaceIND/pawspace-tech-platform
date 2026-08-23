@@ -5,6 +5,7 @@ import fs from "node:fs";
 const script = fs.readFileSync(new URL("../scripts/release-ui-closure.mjs", import.meta.url), "utf8");
 const workflow = fs.readFileSync(new URL("../.github/workflows/release-ui-closure.yml", import.meta.url), "utf8");
 const stagingLogin = fs.readFileSync(new URL("../app/api/staging-login/route.ts", import.meta.url), "utf8");
+const classifier = fs.readFileSync(new URL("../scripts/release-ui-control-classifier.mjs", import.meta.url), "utf8");
 
 test("release UI closure covers representative roles and responsive viewports", () => {
   for (const marker of ["founder@pawspace.in", "anjali.finance33@tkpetcare.in", "jyoti.manager39@tkpetcare.in", "asha.groomer1@tkpetcare.in", "anita.associate17@tkpetcare.in"]) {
@@ -23,7 +24,10 @@ test("release UI closure blocks mutations while probing controls", () => {
   assert.match(script, /MUTATING_METHODS = new Set\(\["POST", "PUT", "PATCH", "DELETE"\]\)/);
   assert.match(script, /routeHandle\.abort\("blockedbyclient"\)/);
   assert.match(script, /mutationsExecuted: 0/);
-  assert.match(script, /wired_mutation_blocked/);
+  // The wiring verdicts now live in the classifier module the harness imports, so assert them
+  // where they are defined rather than where they are consumed.
+  assert.match(script, /classifyControl/);
+  assert.match(classifier, /wired_mutation_blocked/);
 });
 
 test("release UI closure checks visual failures instead of screenshot-only evidence", () => {
