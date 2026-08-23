@@ -53,6 +53,12 @@ async function denyAndAudit(db:D1Database,current:Awaited<ReturnType<typeof reso
 
 export async function GET(request:Request){
   try{await ensureTables(); const current=await resolveActor(request);
+  // dashboard.view is what the gateway already declares for this path (lib/api-gateway.ts). The
+  // handler enforced nothing, so any identity resolveActor accepted - including a customer or
+  // provider platform session - could read the whole role catalogue, the permission vocabulary and
+  // recent import batches. The user list was already gated on users.manage; the security model
+  // describing who can do what was not.
+  requirePermission(current,"dashboard.view");
   const db=await database();
   const roles=await db.prepare("SELECT code,name,description,permissions_json,system_role FROM role_definitions ORDER BY CASE code WHEN 'founder' THEN 0 WHEN 'superuser' THEN 1 WHEN 'admin' THEN 2 ELSE 3 END,name").all();
   const users=hasPermission(current.permissions,"users.manage")?(await db.prepare("SELECT id,email,name,role_code,status,updated_at FROM app_users ORDER BY CASE role_code WHEN 'founder' THEN 0 ELSE 1 END,name").all()).results:[];
