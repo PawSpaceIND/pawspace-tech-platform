@@ -7,7 +7,8 @@ export async function enqueueNotification(repository:PlatformRepository,input:Om
   return repository.enqueueNotification(event);
 }
 
-export async function processNotification(repository:PlatformRepository,id:string,deliveredChannels:NotificationEvent["channels"]){
+export async function processNotification(repository:PlatformRepository,id:string,deliveredChannels:NotificationEvent["channels"],options:{verifiedDelivery?:boolean}={}){
+  if(deliveredChannels.length&&!options.verifiedDelivery)throw Object.assign(new Error("Delivered channels require verified provider evidence"),{statusCode:409,code:"DELIVERY_EVIDENCE_REQUIRED"});
   const pending=(await repository.listNotifications()).find(x=>x.id===id);
   if(!pending)return null;
   const prior=Array.isArray(pending.payload.deliveredChannels)?pending.payload.deliveredChannels.filter((x):x is NotificationEvent["channels"][number]=>typeof x==="string"&&pending.channels.includes(x as NotificationEvent["channels"][number])):[];
