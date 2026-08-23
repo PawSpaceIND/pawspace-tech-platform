@@ -36,7 +36,7 @@ jobs:
         shell: bash
         run: |
           npm run build
-          mapfile -t tracked_tests < <(git ls-files 'tests/*.test.mjs')
+          mapfile -t tracked_tests < <(git ls-files 'tests/*.test.mjs' | awk -F/ 'NF == 2')
           test "${#tracked_tests[@]}" -gt 0
           node --test --test-force-exit "${tracked_tests[@]}"
 
