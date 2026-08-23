@@ -5,6 +5,7 @@ import { auditApiResponse, authorizeApiRequest } from "../lib/api-gateway";
 import {authorizePlatformSessionRequest} from "../lib/session-api-gateway";
 import {blockDisabledServiceRequest} from "../lib/service-control";
 import {runBackgroundScheduler} from "../lib/background-scheduler";
+import {cleanupExpiredReservationLeases} from "../lib/scheduling-reservation-leases";
 
 interface Env {
   ASSETS: Fetcher;
@@ -44,6 +45,7 @@ const worker = {
 
     if (url.pathname.startsWith("/api/")) {
       if(url.pathname==="/api/identity-session")return secureApiResponse(await handler.fetch(request,env,ctx));
+      if(request.method==="POST"&&(url.pathname==="/api/uat-scheduling"||url.pathname==="/api/canonical-bookings"))await cleanupExpiredReservationLeases(env.DB);
       const sessionAccess=await authorizePlatformSessionRequest(request,env.DB);
       if(sessionAccess instanceof Response)return sessionAccess;
       const access=sessionAccess??await authorizeApiRequest(request, env);
@@ -69,7 +71,7 @@ const worker = {
     return handler.fetch(request, env, ctx);
   },
   async scheduled(controller:ScheduledControllerLike,env:Env,ctx:ExecutionContext){
-    ctx.waitUntil(runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}).then(result=>{if(result.errors&&Array.isArray(result.errors)&&result.errors.length)throw new Error(`Background scheduler partial failure: ${result.errors.join(" | ")}`);}));
+    ctx.waitUntil((async()=>{const [cleanup,scheduler]=await Promise.allSettled([cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron})]);const errors:string[]=[];if(cleanup.status==="rejected")errors.push(`reservation cleanup: ${cleanup.reason instanceof Error?cleanup.reason.message:String(cleanup.reason)}`);if(scheduler.status==="rejected")errors.push(`background scheduler: ${scheduler.reason instanceof Error?scheduler.reason.message:String(scheduler.reason)}`);else if(Array.isArray(scheduler.value.errors)&&scheduler.value.errors.length)errors.push(...scheduler.value.errors);if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);})());
   },
 };
 
