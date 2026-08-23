@@ -2,14 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
 import {rm} from "node:fs/promises";
+import {createServer} from "node:net";
 
-const port=8796;
 const persistDir=`.scheduling-rules-authorization-${process.pid}`;
-async function waitForHealth(){for(let i=0;i<60;i+=1){try{const response=await fetch(`http://127.0.0.1:${port}/health`);if(response.ok)return;}catch{}await new Promise(resolve=>setTimeout(resolve,500));}throw new Error("scheduling rules authorization worker did not become ready");}
+async function freePort(){return new Promise((resolve,reject)=>{const server=createServer();server.once("error",reject);server.listen(0,"127.0.0.1",()=>{const address=server.address();if(!address||typeof address==="string"){server.close();reject(new Error("unable to allocate local port"));return;}const port=address.port;server.close(error=>error?reject(error):resolve(port));});});}
+async function waitForHealth(port,child){for(let i=0;i<60;i+=1){if(child.exitCode!==null)throw new Error(`scheduling rules authorization worker exited before health: ${child.exitCode}`);try{const response=await fetch(`http://127.0.0.1:${port}/health`);if(response.ok)return;}catch{}await new Promise(resolve=>setTimeout(resolve,500));}throw new Error("scheduling rules authorization worker did not become ready");}
+async function stopWorker(child){if(child.exitCode!==null)return;let exited=false;const exitPromise=new Promise(resolve=>child.once("exit",()=>{exited=true;resolve();}));child.kill("SIGTERM");await Promise.race([exitPromise,new Promise(resolve=>setTimeout(resolve,2000))]);if(!exited&&child.exitCode===null){child.kill("SIGKILL");await exitPromise;}}
 
 test("scheduling rules enforce read/manage permissions and preserve D1 on denied mutations",{timeout:120000},async()=>{
- await rm(persistDir,{recursive:true,force:true});let logs="";
+ await rm(persistDir,{recursive:true,force:true});const port=await freePort();let logs="";
  const child=spawn(process.platform==="win32"?"npx.cmd":"npx",["wrangler","dev","--config","wrangler.scheduling-rules-authorization.jsonc","--persist-to",persistDir,"--port",String(port)],{stdio:["ignore","pipe","pipe"]});
  child.stdout.on("data",chunk=>{logs+=String(chunk);});child.stderr.on("data",chunk=>{logs+=String(chunk);});
- try{await waitForHealth();const response=await fetch(`http://127.0.0.1:${port}/run`);const result=await response.json();assert.equal(response.status,200,`authorization worker failed: ${JSON.stringify(result)}\n${logs}`);assert.equal(result.ok,true,JSON.stringify(result));assert.deepEqual(result.permissions,{read:"scheduling.view",write:"scheduling.manage"});assert.equal(result.anonymousPersistenceUnchanged,true);assert.equal(result.providerReadAllowed,true);assert.equal(result.providerWritesDeniedAndUnchanged,true);assert.equal(result.customerReadDenied,true);assert.equal(result.customerWritesDeniedAndUnchanged,true);assert.equal(result.managerAllMethodsAllowed,true);}finally{child.kill("SIGTERM");await new Promise(resolve=>{const timer=setTimeout(resolve,2000);child.once("exit",()=>{clearTimeout(timer);resolve();});});if(!child.killed)child.kill("SIGKILL");await rm(persistDir,{recursive:true,force:true});}
+ try{await waitForHealth(port,child);const response=await fetch(`http://127.0.0.1:${port}/run`);const result=await response.json();assert.equal(response.status,200,`authorization worker failed: ${JSON.stringify(result)}\n${logs}`);assert.equal(result.ok,true,JSON.stringify(result));assert.deepEqual(result.permissions,{read:"scheduling.view",write:"scheduling.manage"});assert.equal(result.anonymousPersistenceUnchanged,true);assert.equal(result.providerReadAllowed,true);assert.equal(result.providerWritesDeniedAndUnchanged,true);assert.equal(result.customerReadDenied,true);assert.equal(result.customerWritesDeniedAndUnchanged,true);assert.equal(result.managerAllMethodsAllowed,true);}finally{await stopWorker(child);await rm(persistDir,{recursive:true,force:true});}
 });
