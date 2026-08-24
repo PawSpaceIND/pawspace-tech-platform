@@ -154,7 +154,7 @@ function collectSignals(file, repoRoot, seen = new Set()) {
   try { source = fs.readFileSync(path.join(repoRoot, key), "utf8"); } catch { return signals; }
   const code = codeOnly(source);
 
-  for (const module of executedSourceModules(source)) signals.modules.add(module);
+  for (const reached of executedSourceModules(source)) signals.modules.add(reached);
   if (/from\s*["']node:sqlite["']/.test(code) || /require\(\s*["']node:sqlite["']\s*\)/.test(code)) signals.sqlite = true;
 
   // A deployed origin or provider host supplied by the environment - the only way a suite here can
@@ -167,14 +167,14 @@ function collectSignals(file, repoRoot, seen = new Set()) {
     const entry = wranglerEntry(config, repoRoot);
     if (entry) {
       const nested = collectSignals(entry, repoRoot, seen);
-      for (const module of nested.modules) signals.modules.add(module);
+      for (const reached of nested.modules) signals.modules.add(reached);
       signals.sqlite = signals.sqlite || nested.sqlite;
     }
   }
 
   for (const local of localTestModules(source, key)) {
     const nested = collectSignals(local, repoRoot, seen);
-    for (const module of nested.modules) signals.modules.add(module);
+    for (const reached of nested.modules) signals.modules.add(reached);
     signals.sqlite = signals.sqlite || nested.sqlite;
     signals.localWorker = signals.localWorker || nested.localWorker;
     signals.hosted = signals.hosted || nested.hosted;
@@ -196,7 +196,7 @@ function attributeModule(modules, file) {
   // A suite that sweeps `app/api/${name}/route.ts` belongs to no single area. Falling through to the
   // mode below attributed the platform-wide redaction and seed sweeps to "ai", purely because `lib/ai-*`
   // is the largest family of files they happen to touch.
-  if (modules.some(module => module.startsWith("app/api/*"))) return "multi-route";
+  if (modules.some(entry => entry.startsWith("app/api/*"))) return "multi-route";
   const counts = new Map();
   for (const bucket of buckets) counts.set(bucket, (counts.get(bucket) ?? 0) + 1);
   const [top, hits] = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
@@ -208,7 +208,7 @@ function attributeModule(modules, file) {
 export function classifyTestFile(file, repoRoot = ".") {
   const signals = collectSignals(file, repoRoot);
   const modules = [...signals.modules].sort();
-  const routesExecuted = modules.filter(module => /^app\/api\/.*route\.ts$/.test(module) || module.startsWith("app/api/*"));
+  const routesExecuted = modules.filter(path_ => /^app\/api\/.*route\.ts$/.test(path_) || path_.startsWith("app/api/*"));
 
   let evidenceClass = "source_contract";
   if (signals.hosted) evidenceClass = "hosted_provider";

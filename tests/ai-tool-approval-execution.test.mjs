@@ -25,7 +25,7 @@ async function world() {
   seedCustomer(sqlite, "CUS-1", "Asha", "9876500001");
   sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,package_code,package_name,status,scheduled_start,scheduled_end,channel,total_amount,currency,created_at,updated_at) VALUES ('BKG-1','CUS-1','grooming','GRM-BASIC','Basic groom','confirmed','2026-09-01T10:00:00Z','2026-09-01T11:00:00Z','chat',899,'INR',?,?)").run(NOW, NOW);
   sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,package_code,package_name,status,scheduled_start,scheduled_end,channel,total_amount,currency,created_at,updated_at) VALUES ('BKG-OTHER','CUS-2','grooming','GRM-BASIC','Basic groom','confirmed','2026-09-02T10:00:00Z','2026-09-02T11:00:00Z','chat',899,'INR',?,?)").run(NOW, NOW);
-  sqlite.prepare("INSERT INTO communication_threads (id,customer_id,booking_id,lead_id,ticket_id,status,assigned_to,sla_due_at,created_at,updated_at) VALUES ('THREAD-1','CUS-1',NULL,NULL,NULL,'open','ai',NULL,?,?)").run(NOW, NOW).changes;
+  sqlite.prepare("INSERT INTO communication_threads (id,customer_id,booking_id,lead_id,ticket_id,status,assigned_to,sla_due_at,created_at,updated_at) VALUES ('THREAD-1','CUS-1',NULL,NULL,NULL,'open','ai',NULL,?,?)").run(NOW, NOW);
   return { sqlite, db };
 }
 const rows = (sqlite, sql) => sqlite.prepare(sql).all();
