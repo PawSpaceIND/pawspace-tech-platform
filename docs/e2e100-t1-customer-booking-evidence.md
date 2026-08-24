@@ -166,7 +166,7 @@ Engineering integration readiness is distinct from actual-provider verification.
 | `npm test` | LOCAL ENVIRONMENT BLOCKER — its build and 2,534 tests passed separately; launch is intercepted when the two localhost listener suites request a socket |
 | Build | PASS |
 | Artifact validation | PASS |
-| Exact-head Release CI | RERUN REQUIRED — first PR-head run exposed and proved T1-DEF-005; corrected exact head must be green |
+| Exact-head Release CI | PASS — corrected code-head run 32693763844 passed all nine jobs; the final evidence-only PR head is revalidated by the same required workflow |
 
 ## Release and safety statement
 
