@@ -112,6 +112,7 @@ jobs:
           echo "Rollback target recorded."
 
       - name: Deploy to staging
+        id: deploy
         # Deploy from the repo ROOT: the @cloudflare/vite-plugin build writes a redirect at
         # .wrangler/deploy/config.json pointing wrangler to dist/server/wrangler.json. Running from
         # dist/server instead makes wrangler find BOTH that redirect and the local wrangler.json and
@@ -122,7 +123,15 @@ jobs:
         # --message is what makes the DEPLOYED version attributable to a sha: `wrangler versions list`
         # exposes it, and certification requires an exact match. Without it, "which build is live?" has
         # no answer that does not rely on trusting this log.
-        run: npx wrangler deploy --message "staging ${{ github.event.inputs.expected_sha }}"
+        run: |
+          set -euo pipefail
+          npx wrangler deploy --message "staging ${{ github.event.inputs.expected_sha }}" 2>&1 | tee deployment.txt
+          URL="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' deployment.txt | tail -n 1 || true)"
+          if [ -z "$URL" ]; then
+            echo "The successful deploy did not report its workers.dev URL; refusing to certify a guessed origin." >&2
+            exit 1
+          fi
+          echo "staging_url=$URL" >> "$GITHUB_OUTPUT"
       # Read-only and deliberately before secret installation or employee seeding. It resolves the
       # one active version, requires it to serve 100% of traffic, and checks that version's actual D1
       # binding and sandbox vars. No command below may write staging data until this has passed.
@@ -163,23 +172,6 @@ jobs:
         # the staging id that the preceding isolation check already verified against the live Worker.
         run: npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --file=scripts/employee-seed.sql
 
-      - name: Resolve the deployed staging URL
-        id: url
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -euo pipefail
-          # A guessed https://<worker>.workers.dev omits the account subdomain and does not resolve, so
-          # the URL is taken from what wrangler itself reports for the deployed worker.
-          npx wrangler deployments status --name pawspace-staging > deployment.txt 2>&1 || true
-          URL="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' deployment.txt | tail -n 1 || true)"
-          if [ -z "$URL" ]; then
-            echo "Could not resolve the deployed staging URL from wrangler output." >&2
-            exit 1
-          fi
-          echo "staging_url=$URL" >> "$GITHUB_OUTPUT"
-
       # Certification. Proves the eight facts a human UAT round depends on against the DEPLOYED origin
       # and the DEPLOYED configuration: isolation, the exact deployed sha, sandbox mode with no live
       # flag, no credential in the serialized config, the seeded staff identities, that each one can
@@ -191,7 +183,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
-          STAGING_URL: ${{ steps.url.outputs.staging_url }}
+          STAGING_URL: ${{ steps.deploy.outputs.staging_url }}
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
           PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
           PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
@@ -213,7 +205,7 @@ jobs:
 
       - name: Where to test
         env:
-          STAGING_URL: ${{ steps.url.outputs.staging_url }}
+          STAGING_URL: ${{ steps.deploy.outputs.staging_url }}
           EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
         run: |
           echo "Certified staging deploy of $EXPECTED_SHA at $STAGING_URL"
