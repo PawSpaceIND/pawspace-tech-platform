@@ -71,7 +71,7 @@ The Build/Proof scores are candidate scores. Hosted scores and the final 9+ deci
 
 ## Local candidate verification
 
-- Lane 1 executable pack: **582 tests passed, 0 failed**.
+- Lane 1 executable pack on the current PR base: **587 tests passed, 0 failed**.
 - Typecheck: passed.
 - Lint: 0 errors; 18 pre-existing warnings outside this change.
 - Production build: passed.
