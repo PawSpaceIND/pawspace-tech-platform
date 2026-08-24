@@ -66,7 +66,7 @@ Result: **102/102 passed** — all 100 E2E100 business cases plus the T3 and T4 
 | Build | PASS |
 | Artifact validation | PASS |
 | Local `npm test` aggregate | MANAGED-ENVIRONMENT BLOCKER — command launch was intercepted before test execution because the workspace does not permit the listener/provider-capable aggregate command |
-| Exact-head Release CI | RERUN REQUIRED — run `32700988399` exposed E2E100-CONV-001; corrected PR head must pass all jobs |
+| Exact-head Release CI | PASS — corrected code-head run `32701505234` passed all 11 jobs; the final evidence-only PR head is revalidated by the same required workflow |
 
 ## External and policy boundaries
 
