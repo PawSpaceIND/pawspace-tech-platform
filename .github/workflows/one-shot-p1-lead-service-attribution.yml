@@ -1,0 +1,224 @@
+name: One-shot P1 lead service attribution
+
+on:
+  push:
+    branches:
+      - testfix/master-zero-gap-20260824
+    paths:
+      - .github/workflows/one-shot-p1-lead-service-attribution.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-p1-lead-service-attribution
+  cancel-in-progress: false
+
+jobs:
+  apply-and-prove:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: testfix/master-zero-gap-20260824
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Bind booking attribution to the matching service and explicit booking link
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path=Path('lib/lead-conversion-attribution.ts')
+          source=path.read_text()
+
+          def function_segment(text,name):
+              start=text.find(f'export async function {name}')
+              if start<0: raise SystemExit(f'{name} not found')
+              positions=[p for p in [text.find('export async function ',start+1),text.find('export function ',start+1)] if p>=0]
+              end=min(positions) if positions else len(text)
+              return start,end,text[start:end]
+
+          start,end,seg=function_segment(source,'attributeBookingToOpenLead')
+          if 'SELECT service_code FROM canonical_bookings' in seg:
+              raise SystemExit('service-bound attribution already exists unexpectedly')
+          brace=seg.find('{')
+          if brace<0: raise SystemExit('attribute function brace not found')
+          insert='const booking=await db.prepare("SELECT service_code FROM canonical_bookings WHERE id=? AND customer_id=?").bind(input.bookingId,input.customerId).first<Record<string,unknown>>();if(!booking)return{leadId:null,converted:false};'
+          seg=seg[:brace+1]+insert+seg[brace+1:]
+          matches=list(re.finditer(r'db\.prepare\("(SELECT [^"]* FROM lead_work_items WHERE [^"]*ORDER BY assigned_at DESC LIMIT 1)"\)\.bind\(([^)]*)\)',seg))
+          if len(matches)!=1: raise SystemExit(f'attribute lead query match count {len(matches)}')
+          m=matches[0]
+          query=m.group(1).replace(' ORDER BY assigned_at DESC LIMIT 1',' AND service=? ORDER BY assigned_at DESC LIMIT 1')
+          binds=m.group(2)+',String(booking.service_code)'
+          seg=seg[:m.start()]+f'db.prepare("{query}").bind({binds})'+seg[m.end():]
+          source=source[:start]+seg+source[end:]
+
+          start,end,seg=function_segment(source,'convertLeadOnPaymentCaptured')
+          matches=list(re.finditer(r'db\.prepare\("(SELECT [^"]* FROM lead_work_items WHERE [^"]*LIMIT 1)"\)\.bind\(([^)]*)\)',seg))
+          if len(matches)!=1: raise SystemExit(f'payment conversion lead query match count {len(matches)}')
+          m=matches[0]
+          select_prefix=m.group(1).split(' FROM lead_work_items',1)[0]
+          query=select_prefix+" FROM lead_work_items WHERE customer_id=? AND status='active' AND initiated_booking_id=? ORDER BY assigned_at DESC LIMIT 1"
+          seg=seg[:m.start()]+f'db.prepare("{query}").bind(input.customerId,input.bookingId)'+seg[m.end():]
+          source=source[:start]+seg+source[end:]
+          path.write_text(source)
+          PY
+          cat > tests/lead-conversion-service-attribution.test.mjs <<'TEST'
+          import test from "node:test";
+          import assert from "node:assert/strict";
+          import { DatabaseSync } from "node:sqlite";
+          import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+          installWorkersHooks("__LEAD_ATTR_DB__", "__LEAD_ATTR_ENV__");
+
+          function makeD1(sqlite) {
+            const statement = (sql, args) => ({
+              bind: (...bound) => statement(sql, bound),
+              first: async () => sqlite.prepare(sql).get(...args) ?? null,
+              run: async () => {
+                const info = sqlite.prepare(sql).run(...args);
+                return { success: true, meta: { changes: Number(info.changes) } };
+              },
+              all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
+            });
+            return {
+              prepare: (sql) => statement(sql, []),
+              batch: async (items) => {
+                const out = [];
+                for (const item of items) out.push(await item.run());
+                return out;
+              },
+              exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
+            };
+          }
+
+          function world() {
+            const sqlite = new DatabaseSync(":memory:");
+            const db = makeD1(sqlite);
+            globalThis.__LEAD_ATTR_DB__ = db;
+            globalThis.__LEAD_ATTR_ENV__ = {};
+            sqlite.exec(`
+              CREATE TABLE lead_work_items (
+                id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, source TEXT NOT NULL,
+                service TEXT NOT NULL, owner TEXT NOT NULL, manager TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active', stage TEXT NOT NULL DEFAULT 'day_1',
+                work_day INTEGER NOT NULL DEFAULT 1, assigned_at INTEGER NOT NULL,
+                first_action_due_at INTEGER NOT NULL, manager_alert_at INTEGER NOT NULL,
+                first_action_at INTEGER, call_attempts INTEGER NOT NULL DEFAULT 0,
+                whatsapp_attempts INTEGER NOT NULL DEFAULT 0, last_outcome TEXT,
+                next_action_at INTEGER, recycle_at INTEGER, recycle_cycle INTEGER NOT NULL DEFAULT 0,
+                opt_out INTEGER NOT NULL DEFAULT 0, initiated_booking_id TEXT,
+                converted_booking_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+              );
+              CREATE TABLE canonical_bookings (
+                id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, service_code TEXT NOT NULL
+              );
+              CREATE TABLE booking_payments (
+                id TEXT PRIMARY KEY, booking_id TEXT NOT NULL UNIQUE, customer_id TEXT NOT NULL,
+                amount REAL NOT NULL, amount_due_now REAL NOT NULL, currency TEXT NOT NULL DEFAULT 'INR',
+                method TEXT NOT NULL, mode TEXT NOT NULL, status TEXT NOT NULL, gateway TEXT NOT NULL DEFAULT 'uat_sandbox',
+                idempotency_key TEXT NOT NULL UNIQUE, detail_json TEXT NOT NULL DEFAULT '{}',
+                created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+              );
+            `);
+            return { sqlite, db };
+          }
+
+          function seedLead(sqlite, { id, service, owner, assignedAt }) {
+            sqlite.prepare(`INSERT INTO lead_work_items
+              (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,created_at,updated_at)
+              VALUES (?, 'CUS-ATTR', 'website', ?, ?, 'sales-manager@pawspace.in', 'active', 'day_1', 1, ?, ?, ?, ?, ?)`)
+              .run(id, service, owner, assignedAt, assignedAt + 60_000, assignedAt + 120_000, assignedAt, assignedAt);
+          }
+
+          function seedBooking(sqlite, id, service) {
+            sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code) VALUES (?,'CUS-ATTR',?)").run(id, service);
+          }
+
+          function seedCapturedPayment(sqlite, bookingId) {
+            const now = Date.now();
+            sqlite.prepare(`INSERT INTO booking_payments
+              (id,booking_id,customer_id,amount,amount_due_now,method,mode,status,idempotency_key,created_at,updated_at)
+              VALUES (?,?, 'CUS-ATTR',1000,1000,'card','prepaid','captured',?,?,?)`)
+              .run(`PAY-${bookingId}`, bookingId, `PAYKEY-${bookingId}`, now, now);
+          }
+
+          test("booking attribution selects the open lead for the booking service, not the newest unrelated lead", async () => {
+            const { sqlite, db } = world();
+            const now = Date.now();
+            seedLead(sqlite, { id: "LEAD-BOARD", service: "boarding", owner: "neha@pawspace.in", assignedAt: now - 86_400_000 });
+            seedLead(sqlite, { id: "LEAD-GROOM", service: "grooming", owner: "rahul@pawspace.in", assignedAt: now - 3_600_000 });
+            seedBooking(sqlite, "BK-BOARD", "boarding");
+            const { attributeBookingToOpenLead } = await import("../lib/lead-conversion-attribution.ts");
+            const result = await attributeBookingToOpenLead(db, { customerId: "CUS-ATTR", bookingId: "BK-BOARD" });
+            assert.equal(result.leadId, "LEAD-BOARD");
+            assert.equal(result.converted, true);
+            assert.deepEqual(sqlite.prepare("SELECT id,status,initiated_booking_id,converted_booking_id FROM lead_work_items ORDER BY id").all(), [
+              { id: "LEAD-BOARD", status: "active", initiated_booking_id: "BK-BOARD", converted_booking_id: null },
+              { id: "LEAD-GROOM", status: "active", initiated_booking_id: null, converted_booking_id: null },
+            ]);
+          });
+
+          test("a booking with no matching-service lead is left for explicit attribution", async () => {
+            const { sqlite, db } = world();
+            const now = Date.now();
+            seedLead(sqlite, { id: "LEAD-BOARD", service: "boarding", owner: "neha@pawspace.in", assignedAt: now - 86_400_000 });
+            seedLead(sqlite, { id: "LEAD-GROOM", service: "grooming", owner: "rahul@pawspace.in", assignedAt: now - 3_600_000 });
+            seedBooking(sqlite, "BK-FOOD", "food");
+            const { attributeBookingToOpenLead } = await import("../lib/lead-conversion-attribution.ts");
+            const result = await attributeBookingToOpenLead(db, { customerId: "CUS-ATTR", bookingId: "BK-FOOD" });
+            assert.equal(result.leadId, null);
+            assert.equal(result.converted, false);
+            assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM lead_work_items WHERE initiated_booking_id IS NOT NULL OR converted_booking_id IS NOT NULL OR status!='active'").get().count, 0);
+          });
+
+          test("payment capture converts only the lead explicitly linked to that booking and never falls back", async () => {
+            const { sqlite, db } = world();
+            const now = Date.now();
+            seedLead(sqlite, { id: "LEAD-BOARD", service: "boarding", owner: "neha@pawspace.in", assignedAt: now - 86_400_000 });
+            seedLead(sqlite, { id: "LEAD-GROOM", service: "grooming", owner: "rahul@pawspace.in", assignedAt: now - 3_600_000 });
+            seedBooking(sqlite, "BK-BOARD", "boarding");
+            seedBooking(sqlite, "BK-FOOD", "food");
+            seedCapturedPayment(sqlite, "BK-BOARD");
+            seedCapturedPayment(sqlite, "BK-FOOD");
+            const { attributeBookingToOpenLead, convertLeadOnPaymentCaptured } = await import("../lib/lead-conversion-attribution.ts");
+            await attributeBookingToOpenLead(db, { customerId: "CUS-ATTR", bookingId: "BK-BOARD" });
+            const converted = await convertLeadOnPaymentCaptured(db, { customerId: "CUS-ATTR", bookingId: "BK-BOARD" });
+            assert.equal(converted.leadId, "LEAD-BOARD");
+            const unmatched = await convertLeadOnPaymentCaptured(db, { customerId: "CUS-ATTR", bookingId: "BK-FOOD" });
+            assert.equal(unmatched.leadId, null);
+            assert.deepEqual(sqlite.prepare("SELECT id,status,converted_booking_id FROM lead_work_items ORDER BY id").all(), [
+              { id: "LEAD-BOARD", status: "converted", converted_booking_id: "BK-BOARD" },
+              { id: "LEAD-GROOM", status: "active", converted_booking_id: null },
+            ]);
+          });
+          TEST
+          git diff --check
+      - name: Run focused and adjacent lead/revenue regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          tests=(tests/lead-conversion-service-attribution.test.mjs)
+          while IFS= read -r file; do
+            case "$file" in tests/lead-conversion-service-attribution.test.mjs) ;; *) tests+=("$file") ;; esac
+          done < <(git ls-files 'tests/*lead*conversion*.test.mjs' 'tests/*sales*productivity*.test.mjs' 'tests/*revenue*mission*.test.mjs')
+          node --experimental-strip-types --test "${tests[@]}"
+      - run: npm run typecheck
+      - name: Commit the P1 correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/one-shot-p1-lead-service-attribution.yml
+          git add lib/lead-conversion-attribution.ts tests/lead-conversion-service-attribution.test.mjs
+          git config user.name "PawSpace zero-gap fixer"
+          git config user.email "actions@pawspace.in"
+          git commit -m "fix(leads): bind conversions to booking service"
+          git push origin HEAD:testfix/master-zero-gap-20260824
