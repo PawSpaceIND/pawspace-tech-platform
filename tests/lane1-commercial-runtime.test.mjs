@@ -265,3 +265,24 @@ test("subscription wallet rejects non-finite and fractional numeric mutations be
   assert.equal(sqlite.prepare("SELECT sessions_reserved FROM customer_grooming_subscriptions WHERE id='SUB-NUM'").get().sessions_reserved, 0);
   assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM subscription_wallet_events").get().count, 0);
 });
+
+test("subscription wallet idempotency binds pause duration and action reasons", async () => {
+  const { sqlite, db } = stack();
+  const wallet = await import("../lib/subscription-wallet.ts");
+  await wallet.ensureSubscriptionWalletTables(db);
+  seedSubscription(sqlite, { id: "SUB-PAUSE", customerId: "CUS-A", expiresAt: Date.now() + 30 * 86_400_000 });
+  const pause = { subscriptionId: "SUB-PAUSE", action: "pause", pauseDays: 3, reason: "Family travel", idempotencyKey: "pause-bound", actorId: "customer:CUS-A" };
+  assert.equal((await wallet.mutateSubscriptionWallet(db, pause)).duplicatePrevented, false);
+  assert.equal((await wallet.mutateSubscriptionWallet(db, pause)).duplicatePrevented, true);
+  await assert.rejects(() => wallet.mutateSubscriptionWallet(db, { ...pause, pauseDays: 4 }), /different mutation/i);
+  await assert.rejects(() => wallet.mutateSubscriptionWallet(db, { ...pause, reason: "Different trip" }), /different mutation/i);
+
+  seedSubscription(sqlite, { id: "SUB-RELEASE", customerId: "CUS-A", expiresAt: Date.now() + 30 * 86_400_000 });
+  booking(sqlite, { id: "BK-RELEASE-REASON", customerId: "CUS-A" });
+  await wallet.mutateSubscriptionWallet(db, { subscriptionId: "SUB-RELEASE", action: "reserve", bookingId: "BK-RELEASE-REASON", credits: 1, idempotencyKey: "release-reserve", actorId: "customer:CUS-A" });
+  const release = { subscriptionId: "SUB-RELEASE", action: "release", bookingId: "BK-RELEASE-REASON", reason: "Customer cancelled", idempotencyKey: "release-bound", actorId: "ops@pawspace.in" };
+  assert.equal((await wallet.mutateSubscriptionWallet(db, release)).duplicatePrevented, false);
+  assert.equal((await wallet.mutateSubscriptionWallet(db, release)).duplicatePrevented, true);
+  await assert.rejects(() => wallet.mutateSubscriptionWallet(db, { ...release, reason: "Provider cancelled" }), /different mutation/i);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM subscription_wallet_events WHERE idempotency_key IN ('pause-bound','release-bound')").get().count, 2);
+});

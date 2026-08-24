@@ -56,7 +56,12 @@ export default function BoardingPage(){
     setPackages(commercial.value.packages);
     setHosts(commercial.value.hosts);
     setHostId(current=>commercial.value.hosts.some(item=>item.providerId===current)?current:commercial.value.hosts[0]?.providerId||"");
-   }else setError(commercial.reason instanceof Error?commercial.reason.message:"Unable to load canonical Boarding availability");
+   }else{
+    setPackages([]);
+    setHosts([]);
+    setHostId("");
+    setError(commercial.reason instanceof Error?commercial.reason.message:"Unable to load canonical Boarding availability");
+   }
    if(nextQuote.status==="fulfilled")setQuote(nextQuote.value);
    else setError(current=>current|| (nextQuote.reason instanceof Error?nextQuote.reason.message:"Unable to refresh the canonical Boarding quote"));
   })
