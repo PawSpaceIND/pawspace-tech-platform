@@ -1,7 +1,9 @@
 # Lane 2 — booking, provider, Maps/GPS, media and KYC: closure evidence
 
 Branch `closure/9plus-lane2-core-integrations`, cut from `main` at
-`a95ed7adbbf513ed78e4b88b22afa38ce3b5c940`.
+`a95ed7adbbf513ed78e4b88b22afa38ce3b5c940` and synced to
+`85ac0c6e275a93d1690428c59aac0b214cdcddf4` (PR #303, grooming commercial truth — a different lane, no
+file overlap, merged cleanly).
 
 **No production deployment. No Cloudflare resource created or modified. No live IDfy connection. No
 provider identity minted to make a test pass. No secret value or D1 identifier printed, retrieved or
@@ -211,7 +213,7 @@ submission path and the callback path cannot be played off against each other.
 
 ## 2. Executable evidence
 
-`tests/lane2-core-integration-boundaries.test.mjs` — **44 tests, all executing real modules** against
+`tests/lane2-core-integration-boundaries.test.mjs` — **45 tests, all executing real modules** against
 `node:sqlite` through the repository's D1 shim.
 
 | Group | Tests | What is executed |
@@ -221,6 +223,7 @@ submission path and the callback path cannot be played off against each other.
 | Maps adapter | 5 | missing key · sandbox lock · malformed coordinates (0 provider calls) · 4xx, 5xx, empty routes, unparseable body, network failure · timeout |
 | Media proof | 8 | accepted registered media · fabricated `uat://` refused · UAT flag path · wrong booking · wrong provider · unscanned/quarantined/revoked/synthetic · purpose reuse · non-PawSpace and traversal-shaped references · missing asset · caller-side mandate for an absent ref |
 | IDfy callback | 13 | approved · rejected · ambiguous→review · four forgery attempts · not-connected · stale and future signature · unknown reference · IDfy-off correlation · replay · manual/automated separation both directions · malformed body ordering · missing ids |
+| Location authorization | 1 | the exported action→permission map, and `requirePermission` ordered before any table creation |
 | Assignment gating | 4 | partial mandate · full mandate then revocation · host mandate unsatisfiable by automation alone · empty mandate never reads as satisfied |
 
 ### Sabotage — every fix has a test that dies without it
