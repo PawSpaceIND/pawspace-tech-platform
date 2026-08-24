@@ -93,3 +93,16 @@ binding points to the D1 id already checked against the live staging Worker by t
 A permanent regression rejects raw-ID execution in both paths. Focused staging/release gate result:
 **168/168 passed**. A new exact-head staging deployment and certification are required after this
 hotfix is merged; only then may the idempotent customer and demo seed workflow run.
+
+### E2E100-DEPLOY-002 — deployment status output did not contain the hosted origin
+
+After PR #312 merged, exact-SHA staging run `32705240467` proved the D1 fix in the controlled
+environment: deployment, isolation, encrypted secret installation and `employee-seed.sql` all passed.
+The run then failed closed before hosted certification because `wrangler deployments status` did not
+emit a `workers.dev` URL. No customer/demo seed was started and UAT remained closed.
+
+Correction: capture the authoritative account-qualified `workers.dev` URL directly from the successful
+`wrangler deploy` output in the same pipefail-protected step and pass that step output to certification.
+The workflow refuses to guess an origin if Wrangler does not report one. A permanent regression requires
+deploy-output capture and forbids URL resolution through `deployments status`. Focused staging/release
+gate result: **168/168 passed**.
