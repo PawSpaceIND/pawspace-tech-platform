@@ -76,9 +76,11 @@ test("Grooming subscription commercial rules are city-configurable with audited 
   assert.match(governance,/renewal_window_days INTEGER NOT NULL/);
   assert.match(governance,/effective_from TEXT NOT NULL/);
   assert.match(governance,/grooming_subscription_plan_audit/);
-  for(const [code,price,sessions,validity] of [["sub-3-dog",3597,3,4],["sub-6",6594,6,8],["sub-12",11988,12,15],["sub-trim",4197,3,4]]){
+  for(const [code,price,sessions,validity] of [["sub-3-dog",3597,3,4],["sub-6",6594,6,6],["sub-12",11988,12,12],["sub-trim",4197,3,4]]){
     assert.match(governance,new RegExp(`planCode:\\"${code}\\"[\\s\\S]{0,180}price:${price}[\\s\\S]{0,80}sessions:${sessions}[\\s\\S]{0,80}validityValue:${validity}`));
   }
+  assert.match(governance,/6 sessions · Semiannual/);
+  assert.match(governance,/12 sessions · Annual/);
   assert.match(governance,/resolveGroomingSubscriptionPlan/);
   assert.match(governance,/ORDER BY CASE WHEN zone_id=\? THEN 0 ELSE 1 END,version DESC/);
   assert.match(governance,/reserveSessions=petCount\*\(item\.creditsPerPet\?\?1\)/);
