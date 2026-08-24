@@ -4,6 +4,11 @@ import { setupJourney, runCompletedJourney, routeCall, sessionCookie } from "./h
 
 const future = (hour) => new Date(Date.UTC(2026, 10, 26, hour, 30)).toISOString();
 
+function countIfTableExists(sqlite, table) {
+  const exists = sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
+  return exists ? Number(sqlite.prepare(`SELECT COUNT(*) c FROM ${table}`).get().c) : 0;
+}
+
 function assertCompleted(result, expected) {
   assert.equal(result.coverage.assignment.zoneId, expected.zoneId);
   assert.equal(result.scheduled.status, 200, JSON.stringify(result.scheduled.body));
@@ -110,7 +115,9 @@ test("session expiry between coupon quote and booking fails closed without busin
   ctx.sqlite.prepare("UPDATE platform_identity_sessions SET expires_at=? WHERE subject_id=?").run(Date.now() - 1, customerId);
   const rejected = await routeCall("../../app/api/canonical-bookings/route.ts", "POST", "/api/canonical-bookings", { idempotencyKey: groupId, scheduleGroupId: groupId, customer: { id: customerId, name: "Expired Customer", primaryPhone: "+919900000404" }, pets: [{ sourceId: "PET-EXPIRED", name: "Rio", species: "dog" }], cityId: "blr", zoneId: "blr-east", serviceCode: "grooming", packageCode: "dog-basic", packageName: "Bath & Basic", scheduledStart: start, scheduledEnd: end, provider: scheduled.body.data.provider, totalAmount: quote.finalAmount, amountDueNow: quote.finalAmount, payment: { method: "upi", mode: "prepaid", status: "created", detail: "expired" }, pricing: { discount: quote.discount, couponCode: "UATCARE100", couponQuoteId: quote.quoteId } }, cookie, "https://uat.pawspace.in");
   assert.equal(rejected.status, 401);
-  for (const table of ["canonical_bookings", "booking_payments", "provider_work_orders", "coupon_redemptions"]) assert.equal(ctx.sqlite.prepare(`SELECT COUNT(*) c FROM ${table}`).get().c, 0, `${table} must remain empty`);
+  for (const table of ["canonical_bookings", "booking_payments", "provider_work_orders", "coupon_redemptions"]) {
+    assert.equal(countIfTableExists(ctx.sqlite, table), 0, `${table} must remain absent or empty`);
+  }
   assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) c FROM scheduling_reservations WHERE group_id=? AND status!='cancelled'").get(groupId).c, 0, "the expired pre-auth reservation releases capacity before booking authorization fails");
   assert.equal(ctx.sqlite.prepare("SELECT status FROM scheduling_assignment_decisions WHERE group_id=?").get(groupId).status, "expired");
   assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) c FROM scheduling_reservation_lease_cleanup WHERE group_id=?").get(groupId).c, 1, "lease cleanup is durably idempotent");

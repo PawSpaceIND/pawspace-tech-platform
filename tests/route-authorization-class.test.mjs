@@ -240,6 +240,15 @@ test("the sweep actually reaches authorization rather than failing earlier", asy
 // module - from authorization coverage.
 const UNLOADABLE_UNDER_STRIP_ONLY = [];
 
+// The low-privilege probe role is the customer role. It legitimately holds scheduling.book, so an
+// empty canonical-bookings POST is authorized first and then rejected as an invalid payload. That is
+// the opposite of validation-before-authorization: the anonymous sweep must still show 401/403, while
+// the authorized customer probe may show 400. Keep these explicit so adding a route-local guard does
+// not turn a correct customer path into a false ordering defect.
+const AUTHORIZED_PROBE_VALIDATION = new Map([
+  ["canonical-bookings.POST", "customer probe holds scheduling.book; empty body is validated only after authorization"],
+]);
+
 // Route/method pairs that answer a non-401/403 4xx to an unauthorized caller: they do route-specific
 // work - parse a body, reject a missing parameter - BEFORE reaching their permission check. None of
 // them leaks data, and the worker gateway refuses these callers in production, so this is an ordering
@@ -313,12 +322,21 @@ const VALIDATES_BEFORE_AUTHORIZING = [
 ];
 
 test("no new route validates before it authorizes", async () => {
-  const seen = [...new Set([...anonymousSweep.validatedFirst, ...lowPrivilegeSweep.validatedFirst]
+  const lowPrivilegeUnauthorized = lowPrivilegeSweep.validatedFirst
+    .filter((entry) => !AUTHORIZED_PROBE_VALIDATION.has(entry.split(" -> ")[0]));
+  const seen = [...new Set([...anonymousSweep.validatedFirst, ...lowPrivilegeUnauthorized]
     .map((entry) => entry.split(" -> ")[0]))].sort();
   const appeared = seen.filter((entry) => !VALIDATES_BEFORE_AUTHORIZING.includes(entry));
   const fixed = VALIDATES_BEFORE_AUTHORIZING.filter((entry) => !seen.includes(entry));
   assert.deepEqual(appeared, [], `these route/methods newly do work before authorizing: ${appeared.join(", ")}`);
   assert.deepEqual(fixed, [], `these no longer validate before authorizing - remove them from VALIDATES_BEFORE_AUTHORIZING: ${fixed.join(", ")}`);
+});
+
+test("canonical-bookings authorizes before validating while preserving the customer booking path", async () => {
+  assert.ok(anonymousSweep.refused.includes("canonical-bookings.POST"),
+    "an anonymous canonical booking must reach a 401/403 before body validation");
+  assert.ok(lowPrivilegeSweep.validatedFirst.some((entry) => entry.startsWith("canonical-bookings.POST -> 400")),
+    "the customer probe legitimately passes scheduling.book and only then receives payload validation");
 });
 
 test("every loadable handler answers with a Response instead of throwing", async () => {

@@ -8,7 +8,7 @@ import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 // /api/canonical-bookings is authorized by the WORKER, not by route-local code. These tests prove that
 // layer actually protects it, under the policy that is authoritative for this release:
 //
-//   GET  /api/canonical-bookings -> bookings.view
+//   GET  /api/canonical-bookings -> bookings.manage (platform-wide list)
 //   POST /api/canonical-bookings -> scheduling.book AND canonical customer ownership
 //
 // They drive the REAL gateway modules in the REAL order worker/index.ts composes them:
@@ -57,10 +57,11 @@ function freshDb() {
   globalThis.__CB_GATEWAY_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox" };
 
   sqlite.exec("CREATE TABLE IF NOT EXISTS app_users (id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,name TEXT NOT NULL,role_code TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',created_at INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT 0)");
-  // manager holds bookings.view AND scheduling.book; finance holds neither. Both are real seeded roles,
+  // manager holds bookings.manage; finance and service_provider do not. These are real seeded roles,
   // so a refusal is a genuine policy outcome rather than an unprovisioned-account accident.
   sqlite.prepare("INSERT OR REPLACE INTO app_users (id,email,name,role_code,status) VALUES (?,?,?,?,?)").run("u-mgr", "ops.manager@pawspace.in", "Ops manager", "manager", "active");
   sqlite.prepare("INSERT OR REPLACE INTO app_users (id,email,name,role_code,status) VALUES (?,?,?,?,?)").run("u-fin", "finance@pawspace.in", "Finance", "finance", "active");
+  sqlite.prepare("INSERT OR REPLACE INTO app_users (id,email,name,role_code,status) VALUES (?,?,?,?,?)").run("u-prv", "provider.list@pawspace.in", "Provider", "service_provider", "active");
   return { sqlite, db };
 }
 
@@ -149,13 +150,13 @@ function seedBooking(sqlite) {
   sqlite.prepare("INSERT OR REPLACE INTO booking_payments (id,booking_id) VALUES (?,?)").run("PAY-GW-1", "BK-GW-LEAK-1");
 }
 
-// --- GET: bookings.view -----------------------------------------------------------------------
+// --- GET: platform-wide list requires bookings.manage ------------------------------------------
 
-test("GET with bookings.view is permitted and keeps its existing success behaviour", async () => {
+test("GET with bookings.manage is permitted and keeps its existing success behaviour", async () => {
   const { sqlite } = freshDb();
   seedBooking(sqlite);
   const result = await callEndpoint(get({ "oai-authenticated-user-email": "ops.manager@pawspace.in" }));
-  assert.equal(result.reachedRoute, true, `a manager holding bookings.view must pass the gateway: ${JSON.stringify(result.body)}`);
+  assert.equal(result.reachedRoute, true, `a manager holding bookings.manage must pass the gateway: ${JSON.stringify(result.body)}`);
   assert.equal(result.status, 200, `and the route must still answer: ${JSON.stringify(result.body)}`);
   assert.ok(Array.isArray(result.body?.bookings), "the existing success shape is preserved: { bookings: [...] }");
   // The mirror image of the leak test: what a refused caller cannot see, an authorized one still gets.
@@ -163,15 +164,29 @@ test("GET with bookings.view is permitted and keeps its existing success behavio
   assert.equal(result.body.bookings[0].id, "BK-GW-LEAK-1");
 });
 
-test("GET without bookings.view is refused, and the refusal leaks no booking, customer or provider data", async () => {
+test("GET without bookings.manage is refused, and the refusal leaks no booking, customer or provider data", async () => {
   const { sqlite } = freshDb();
   seedBooking(sqlite);
   const result = await callEndpoint(get({ "oai-authenticated-user-email": "finance@pawspace.in" }));
 
-  assert.equal(result.reachedRoute, false, "finance does not hold bookings.view and must never reach the handler");
+  assert.equal(result.reachedRoute, false, "finance does not hold bookings.manage and must never reach the handler");
   assert.equal(result.status, 403, `the established refusal for a known identity lacking the permission: ${JSON.stringify(result.body)}`);
   assert.equal(result.body.error, "Permission denied");
 
+  const serialized = JSON.stringify(result.body);
+  for (const secret of ["BK-GW-LEAK-1", "Leaky Customer Name", "Leaky Provider Name", PROVIDER, CUSTOMER, "PAY-GW-1"]) {
+    assert.ok(!serialized.includes(secret), `the refusal must not disclose ${secret}`);
+  }
+});
+
+
+test("service_provider cannot use bookings.view to read the platform-wide canonical booking list", async () => {
+  const { sqlite } = freshDb();
+  seedBooking(sqlite);
+  const result = await callEndpoint(get({ "oai-authenticated-user-email": "provider.list@pawspace.in" }));
+
+  assert.equal(result.reachedRoute, false, "assigned-job access must not open the platform-wide booking list");
+  assert.equal(result.status, 403, `service_provider must be refused: ${JSON.stringify(result.body)}`);
   const serialized = JSON.stringify(result.body);
   for (const secret of ["BK-GW-LEAK-1", "Leaky Customer Name", "Leaky Provider Name", PROVIDER, CUSTOMER, "PAY-GW-1"]) {
     assert.ok(!serialized.includes(secret), `the refusal must not disclose ${secret}`);
@@ -300,18 +315,19 @@ test("client-supplied identity and role headers cannot manufacture authorization
   }
 });
 
-test("the gateway is load-bearing: the handler itself does not authorize, which is why the composition below is pinned", async () => {
+test("the route independently enforces the platform-wide booking-list permission", async () => {
   const { sqlite } = freshDb();
   seedBooking(sqlite);
 
-  // By deliberate design for this release the route carries NO route-local authorization: the Worker is
-  // the authoritative layer. Reaching the handler directly therefore succeeds, which is exactly what
-  // makes the previous refusals meaningful (they are the gateway's work, not the handler's) and why the
-  // next test pins the worker's composition. If route-local authorization is ever added, this flips and
-  // should be updated deliberately rather than silently.
+  // The Worker remains the first boundary, but a dispatch/configuration mistake must not expose this
+  // platform-wide data set. Route-local authorization is deliberate defense in depth.
   const route = await import("../app/api/canonical-bookings/route.ts");
   const direct = await route.GET(get({ "oai-authenticated-user-email": "finance@pawspace.in" }));
-  assert.equal(direct.status, 200, "the handler answers whoever reaches it — the gateway is what refuses");
+  assert.equal(direct.status, 403, "the handler itself refuses an identity without bookings.manage");
+  assert.equal(direct.headers.get("cache-control"), "no-store");
+  const body = await direct.json();
+  assert.equal(body.error, "Permission denied");
+  assert.ok(!JSON.stringify(body).includes("BK-GW-LEAK-1"));
 });
 
 // --- the mirror cannot drift from the worker ---------------------------------------------------
