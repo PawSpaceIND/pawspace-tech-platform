@@ -255,8 +255,12 @@ test("subscription expiry, customer mismatch and idempotency key collisions fail
 });
 
 test("subscription wallet rejects non-finite and fractional numeric mutations before persistence", async () => {
-  const { sqlite, db } = stack();
+  const pristine = stack();
   const wallet = await import("../lib/subscription-wallet.ts");
+  await assert.rejects(() => wallet.mutateSubscriptionWallet(pristine.db, { subscriptionId: "SUB-NUM", action: "reserve", bookingId: "BK-NUM", credits: Number.NaN, idempotencyKey: "nan-pristine", actorId: "customer:CUS-A" }), /positive integer/i);
+  assert.equal(pristine.sqlite.prepare("SELECT COUNT(*) count FROM sqlite_master WHERE type='table' AND name LIKE 'subscription_%'").get().count, 0, "invalid input must not run subscription schema DDL");
+
+  const { sqlite, db } = stack();
   await wallet.ensureSubscriptionWalletTables(db);
   seedSubscription(sqlite, { id: "SUB-NUM", customerId: "CUS-A", expiresAt: Date.now() + 86_400_000 });
   booking(sqlite, { id: "BK-NUM", customerId: "CUS-A" });
@@ -285,4 +289,20 @@ test("subscription wallet idempotency binds pause duration and action reasons", 
   assert.equal((await wallet.mutateSubscriptionWallet(db, release)).duplicatePrevented, true);
   await assert.rejects(() => wallet.mutateSubscriptionWallet(db, { ...release, reason: "Provider cancelled" }), /different mutation/i);
   assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM subscription_wallet_events WHERE idempotency_key IN ('pause-bound','release-bound')").get().count, 2);
+});
+
+test("subscription pause entitlement and its idempotency event are one atomic mutation", async () => {
+  const { sqlite, db } = stack();
+  const wallet = await import("../lib/subscription-wallet.ts");
+  await wallet.ensureSubscriptionWalletTables(db);
+  seedSubscription(sqlite, { id: "SUB-PAUSE-RACE", customerId: "CUS-A", expiresAt: Date.now() + 30 * 86_400_000 });
+  const base = { subscriptionId: "SUB-PAUSE-RACE", action: "pause", pauseDays: 3, reason: "Family travel", actorId: "customer:CUS-A" };
+  const raced = await Promise.allSettled([
+    wallet.mutateSubscriptionWallet(db, { ...base, idempotencyKey: "pause-race-a" }),
+    wallet.mutateSubscriptionWallet(db, { ...base, idempotencyKey: "pause-race-b" }),
+  ]);
+  assert.equal(raced.filter(result => result.status === "fulfilled").length, 1);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM subscription_pause_periods WHERE subscription_id='SUB-PAUSE-RACE'").get().count, 1);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM subscription_wallet_events WHERE subscription_id='SUB-PAUSE-RACE' AND event_type='paused'").get().count, 1);
+  assert.equal(sqlite.prepare("SELECT status FROM customer_grooming_subscriptions WHERE id='SUB-PAUSE-RACE'").get().status, "paused");
 });
