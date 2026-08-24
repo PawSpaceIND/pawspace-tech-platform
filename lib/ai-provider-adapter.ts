@@ -34,7 +34,7 @@
 import { ProviderResponseTooLarge, readBoundedText } from "./provider-response-bounds";
 
 /** The model this adapter requests when the environment does not name one. */
-export const DEFAULT_AI_MODEL_REF = "claude-opus-5";
+export const DEFAULT_AI_MODEL_REF = "claude-sonnet-4-6";
 export const AI_PROVIDER_REF = "anthropic";
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";

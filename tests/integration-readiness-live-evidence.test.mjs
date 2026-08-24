@@ -27,7 +27,11 @@ function makeD1(sqlite) {
   });
   return {
     prepare: (sql) => statement(sql, []),
-    batch: async (items) => { const out = []; for (const item of items) out.push(await item.run()); return out; },
+    batch: async (items) => {
+      sqlite.exec("BEGIN");
+      try { const out = []; for (const item of items) out.push(await item.run()); sqlite.exec("COMMIT"); return out; }
+      catch (error) { sqlite.exec("ROLLBACK"); throw error; }
+    },
     exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
   };
 }
@@ -45,7 +49,7 @@ const GOOD_EVIDENCE = {
   expectedResult: "call state completed",
   actualResult: "call state completed",
   evidenceKind: "provider_webhook_receipt",
-  durableReference: "ledger:VC-000123",
+  durableReference: "ledger:voice_call_orders:VC-000123",
   recordedBy: "ops@pawspace.in",
 };
 
@@ -54,6 +58,10 @@ async function fresh() {
   sqlite.exec("PRAGMA journal_mode=MEMORY;");
   const db = makeD1(sqlite);
   await registry.ensureIntegrationReadinessTables(db);
+  sqlite.exec("CREATE TABLE voice_call_orders (id TEXT PRIMARY KEY)");
+  sqlite.prepare("INSERT INTO voice_call_orders (id) VALUES (?), (?)").run("VC-000123", "VC-1");
+  sqlite.prepare("INSERT INTO security_audit_events (id,actor_email,actor_role,action,resource_type,resource_id,outcome,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
+    .run("AUD-1", "ops@pawspace.in", "ops", "voice.callback", "voice_call", "VC-1", "completed", "{}", OBSERVED);
   return { sqlite, db };
 }
 const row = (sqlite, code) => sqlite.prepare("SELECT * FROM integration_registry WHERE integration_code=?").get(code);
@@ -64,6 +72,7 @@ const row = (sqlite, code) => sqlite.prepare("SELECT * FROM integration_registry
 test("a credential appearing in the environment moves credential_status and nothing else", async () => {
   const { sqlite, db } = await fresh();
   const before = row(sqlite, "INT-VOICE-01");
+  const beforeByCode = new Map(["INT-VOICE-01", "INT-AI-01"].map(code => [code, row(sqlite, code)]));
   assert.equal(before.credential_status, "unknown");
 
   await registry.syncIntegrationCredentialPresence(db, {
@@ -75,7 +84,7 @@ test("a credential appearing in the environment moves credential_status and noth
   for (const code of ["INT-VOICE-01", "INT-AI-01"]) {
     const after = row(sqlite, code);
     assert.equal(after.credential_status, "configured", `${code} credential presence not recorded`);
-    assert.equal(after.readiness_state, row(sqlite, code).readiness_state);
+    assert.equal(after.readiness_state, beforeByCode.get(code).readiness_state);
     assert.notEqual(after.readiness_state, "controlled_live_verified", `${code} became live because a key exists`);
     assert.equal(after.controlled_live_verified_at, null);
     assert.equal(after.last_verified_at, null, "a key is not a verification");
@@ -107,7 +116,7 @@ test("a complete, matched observation is recorded and reported back", async () =
   const stored = await registry.integrationLiveEvidence(db, "INT-VOICE-01");
   assert.equal(stored.length, 1);
   assert.equal(stored[0].providerReference, GOOD_EVIDENCE.providerReference);
-  assert.equal(stored[0].durableReference, "ledger:VC-000123");
+  assert.equal(stored[0].durableReference, "ledger:voice_call_orders:VC-000123");
 });
 
 test("every incomplete or unfalsifiable observation is refused, with the missing part named", async () => {
@@ -138,17 +147,11 @@ test("every incomplete or unfalsifiable observation is refused, with the missing
   assert.deepEqual(await registry.integrationLiveEvidence(db, "INT-VOICE-01"), [], "a refused observation must leave no row");
 });
 
-test("an evidence kind must be pointed at by a reference that could resolve to it", async () => {
-  // Shape alone let any kind carry any scheme, so a provider dashboard record could be "evidenced" by
-  // a platform ledger pointer that cannot possibly resolve to it. This is a consistency check, not an
-  // existence check - see the note below on what the registry deliberately does not claim.
+test("an evidence kind must be pointed at by a compatible locally resolvable row", async () => {
   const { db } = await fresh();
   const mismatches = [
-    ["provider_dashboard_record", "audit:AUD-1"],
-    ["provider_dashboard_record", "d1:voice_call_orders:VC-1"],
-    ["platform_audit_row", "provider:CA123456"],
-    ["platform_ledger_row", "r2:bucket/key.json"],
-    ["provider_api_response", "kv:some-key"],
+    ["platform_audit_row", "ledger:voice_call_orders:VC-1"],
+    ["platform_ledger_row", "audit:AUD-1"],
   ];
   for (const [evidenceKind, durableReference] of mismatches) {
     await assert.rejects(
@@ -156,23 +159,19 @@ test("an evidence kind must be pointed at by a reference that could resolve to i
       /cannot be evidenced by a/, `${evidenceKind} accepted ${durableReference}`);
   }
   // And the matching combinations are accepted.
-  for (const [evidenceKind, durableReference] of [["platform_audit_row", "audit:AUD-1"], ["platform_ledger_row", "ledger:VC-1"], ["provider_api_response", "provider:CA1234567890"]]) {
+  for (const [evidenceKind, durableReference] of [["platform_audit_row", "audit:AUD-1"], ["platform_ledger_row", "ledger:voice_call_orders:VC-1"], ["provider_api_response", "ledger:voice_call_orders:VC-1"]]) {
     const recorded = await registry.recordIntegrationLiveEvidence(db, { ...GOOD_EVIDENCE, evidenceKind, durableReference, scenario: `accepts ${evidenceKind}` }, OBSERVED + 1_000);
     assert.equal(recorded.matched, true);
   }
 });
 
-test("the registry validates that a reference COULD resolve, and does not claim the target exists", async () => {
-  // Stated as a test so the boundary is recorded rather than assumed: a well-formed reference of the
-  // right kind is accepted even though nothing here dereferences it. Verifying an R2 object or a
-  // third-party dashboard record is not possible from this module, and a check that appeared to do so
-  // would be the same overclaiming the registry exists to prevent. The reference is what a human or a
-  // later tool follows; the registry's job is to make sure one was recorded, in a resolvable form, and
-  // that it matches the kind of artefact claimed.
+test("a well-shaped reference to a row that does not exist is refused", async () => {
   const { db } = await fresh();
-  const recorded = await registry.recordIntegrationLiveEvidence(db, { ...GOOD_EVIDENCE, durableReference: "ledger:VC-does-not-exist-yet" }, OBSERVED + 1_000);
-  assert.equal(recorded.matched, true);
-  assert.equal(recorded.durableReference, "ledger:VC-does-not-exist-yet");
+  await assert.rejects(
+    registry.recordIntegrationLiveEvidence(db, { ...GOOD_EVIDENCE, durableReference: "ledger:voice_call_orders:VC-does-not-exist-yet" }, OBSERVED + 1_000),
+    /could not be resolved/,
+  );
+  assert.deepEqual(await registry.integrationLiveEvidence(db, "INT-VOICE-01"), []);
 });
 
 test("an observation for an integration that is not in the registry is refused", async () => {
@@ -284,6 +283,38 @@ test("a rejected sandbox_verified attempt writes nothing either", async () => {
   }), /Sandbox verification requires an evidence reference/);
   assert.equal(row(sqlite, "INT-COMMS-01").readiness_state, before.readiness_state);
   assert.equal(row(sqlite, "INT-COMMS-01").notes, before.notes);
+});
+
+test("the registry row and both audit trails commit atomically", async () => {
+  const { sqlite, db } = await fresh();
+  const before = row(sqlite, "INT-COMMS-01");
+  const originalPrepare = db.prepare;
+  db.prepare = sql => {
+    const statement = originalPrepare(sql);
+    if (!String(sql).startsWith("INSERT INTO security_audit_events")) return statement;
+    return { bind: () => ({ run: async () => { throw new Error("injected security audit failure"); } }) };
+  };
+
+  await assert.rejects(registry.updateIntegrationReadiness(db, {
+    integrationCode: "INT-COMMS-01", reason: "Atomic readiness update failure injection",
+    changes: { notes: "must roll back" }, actorId: "ops@pawspace.in", actorRole: "operations",
+  }), /injected security audit failure/);
+
+  assert.equal(row(sqlite, "INT-COMMS-01").notes, before.notes, "the registry update committed without its audit");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM integration_readiness_events WHERE integration_code='INT-COMMS-01'").get().n, 0);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM security_audit_events WHERE action='integration.readiness.update'").get().n, 0);
+});
+
+test("an accepted readiness update writes the registry event and security audit together", async () => {
+  const { sqlite, db } = await fresh();
+  await registry.updateIntegrationReadiness(db, {
+    integrationCode: "INT-COMMS-01", reason: "Record an ordinary governed readiness note",
+    changes: { notes: "reviewed by operations" }, actorId: "ops@pawspace.in", actorRole: "operations",
+  });
+  assert.equal(row(sqlite, "INT-COMMS-01").notes, "reviewed by operations");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM integration_readiness_events WHERE integration_code='INT-COMMS-01'").get().n, 1);
+  const audit = sqlite.prepare("SELECT actor_email,actor_role,outcome FROM security_audit_events WHERE action='integration.readiness.update'").get();
+  assert.deepEqual({ ...audit }, { actor_email: "ops@pawspace.in", actor_role: "operations", outcome: "completed" });
 });
 
 // ---------------------------------------------------------------------------

@@ -27,6 +27,7 @@
  */
 
 import { sanitizeEvidenceDetail } from "./release-preview-gate.mjs";
+import { pathToFileURL } from "node:url";
 
 export const STAGING_WORKER_NAME = "pawspace-staging";
 export const STAGING_D1_NAME = "pawspace-staging";
@@ -81,6 +82,29 @@ export class StagingIsolationRefused extends Error {
 
 const val = (record, name) => String(record?.[name] ?? "").trim();
 
+/** A certification target must be one unambiguous version serving all traffic. */
+export function activeVersionId(status) {
+  const versions = Array.isArray(status?.versions) ? status.versions : [];
+  if (versions.length !== 1) throw new StagingIsolationRefused(`Refusing to certify: the active deployment has ${versions.length} versions; staging certification requires exactly one`);
+  const active = versions[0] ?? {};
+  const percentage = Number(active.percentage);
+  const id = String(active.version_id ?? "").trim();
+  if (!id || percentage !== 100) throw new StagingIsolationRefused(`Refusing to certify: the active deployment is not one version at 100% traffic`);
+  return id;
+}
+
+/** Normalize the live version resource returned by `wrangler versions view --json`. */
+export function deployedConfigFromVersion(version) {
+  const bindings = Array.isArray(version?.resources?.bindings) ? version.resources.bindings : [];
+  const d1_databases = bindings.filter(binding => binding?.type === "d1").map(binding => ({
+    binding: String(binding.name ?? ""), database_id: String(binding.id ?? binding.database_id ?? ""),
+  }));
+  const vars = Object.fromEntries(bindings.filter(binding => binding?.type === "plain_text").map(binding => [String(binding.name ?? ""), String(binding.text ?? binding.value ?? "")]));
+  return { d1_databases, vars };
+}
+
+export function versionMessage(version) { return String(version?.annotations?.["workers/message"] ?? "").trim(); }
+
 /**
  * Isolation, checked before anything else and thrown rather than recorded.
  *
@@ -97,7 +121,7 @@ export function assertStagingIsolation({ workerName, deployedConfig, env }) {
   if (bindings.length !== 1) problems.push(`the deployed config declares ${bindings.length} D1 bindings; staging must declare exactly one`);
   const binding = bindings[0] ?? {};
   if (val(binding, "binding") !== "DB") problems.push(`the D1 binding is "${val(binding, "binding")}", not DB`);
-  if (val(binding, "database_name") !== STAGING_D1_NAME) problems.push(`the bound database is "${val(binding, "database_name")}", not ${STAGING_D1_NAME}`);
+  if (val(binding, "database_name") && val(binding, "database_name") !== STAGING_D1_NAME) problems.push(`the bound database is "${val(binding, "database_name")}", not ${STAGING_D1_NAME}`);
   const boundId = val(binding, "database_id");
   if (!boundId) problems.push("the D1 binding carries no database id");
   if (val(env, "STAGING_D1_ID") && boundId && boundId !== val(env, "STAGING_D1_ID")) problems.push("the bound database id is not the configured staging database id");
@@ -105,6 +129,20 @@ export function assertStagingIsolation({ workerName, deployedConfig, env }) {
 
   if (problems.length) throw new StagingIsolationRefused(`Refusing to certify: ${problems.join("; ")}`);
   return { workerName, databaseName: STAGING_D1_NAME };
+}
+
+/** Read-only preflight used before the workflow installs secrets or writes the employee seed. */
+export async function runStagingIsolationPreflight({ deployedConfig, liveVersionMessage, env }) {
+  const config = await deployedConfig();
+  assertStagingIsolation({ workerName: val(env, "WORKER_NAME"), deployedConfig: config, env });
+  const expectedSha = val(env, "EXPECTED_SHA");
+  if (!EXACT_SHA.test(expectedSha)) throw new StagingIsolationRefused("Refusing to certify: EXPECTED_SHA is not an exact commit sha");
+  if (String(await liveVersionMessage()).trim() !== `staging ${expectedSha}`) throw new StagingIsolationRefused("Refusing to certify: the active version does not match EXPECTED_SHA");
+  const vars = config && typeof config.vars === "object" ? config.vars : {};
+  for (const [name, expected] of Object.entries(REQUIRED_STAGING_VARS)) if (val(vars, name) !== expected) throw new StagingIsolationRefused(`Refusing to certify: ${name} is not ${expected}`);
+  if (Object.entries(FORBIDDEN_ON_STAGING).some(([name, forbidden]) => forbidden.includes(val(vars, name).toLowerCase()))) throw new StagingIsolationRefused("Refusing to certify: a production/live approval flag is active");
+  if (STAGING_SECRET_NAMES.some(name => val(vars, name))) throw new StagingIsolationRefused("Refusing to certify: a UAT credential is serialized in deployed vars");
+  return { ok: true, worker: val(env, "WORKER_NAME"), sha: expectedSha, databaseIdVerified: true };
 }
 
 /**
@@ -264,7 +302,9 @@ export async function runStagingCertification({ http, d1, deployedConfig, liveVe
 export function stagingEvidenceArtifact(report, sensitiveValues = []) {
   const serialized = JSON.stringify(report, null, 2);
   for (const sensitive of sensitiveValues) {
-    if (sensitive && String(sensitive).length >= 8 && serialized.includes(String(sensitive))) {
+    const raw = String(sensitive ?? "");
+    const escaped = JSON.stringify(raw).slice(1, -1);
+    if (raw.length >= 8 && (serialized.includes(raw) || (escaped !== raw && serialized.includes(escaped)))) {
       throw new Error("Refusing to write the staging evidence artifact: it contains a sensitive value");
     }
   }
@@ -272,12 +312,14 @@ export function stagingEvidenceArtifact(report, sensitiveValues = []) {
 }
 
 // ── CLI: wire the real adapters. Only reached when this file is executed, never when imported. ──
-const isMain = process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href;
+export function isMainModule(argvPath, moduleUrl) { return Boolean(argvPath) && moduleUrl === pathToFileURL(argvPath).href; }
+const isMain = isMainModule(process.argv[1], import.meta.url);
 if (isMain) {
   const { execFileSync } = await import("node:child_process");
   const { writeFileSync } = await import("node:fs");
 
-  const required = ["EXPECTED_SHA", "STAGING_URL", "STAGING_D1_ID", "PAWSPACE_UAT_ACCESS_CODE"];
+  const isolationOnly = process.argv.includes("--isolation-only");
+  const required = isolationOnly ? ["EXPECTED_SHA", "STAGING_D1_ID"] : ["EXPECTED_SHA", "STAGING_URL", "STAGING_D1_ID", "PAWSPACE_UAT_ACCESS_CODE"];
   const missing = required.filter(name => !String(process.env[name] || "").trim());
   if (missing.length) {
     console.error(`staging certification: required environment is not configured (${missing.join(", ")}).`);
@@ -292,13 +334,14 @@ if (isMain) {
     PRODUCTION_WORKER_NAME: String(process.env.PRODUCTION_WORKER_NAME || "").trim(),
     ACCESS_CODE: String(process.env.PAWSPACE_UAT_ACCESS_CODE).trim(),
   };
-  const wrangler = args => execFileSync("npx", ["wrangler", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 32 * 1024 * 1024 });
+  const wrangler = args => execFileSync("npx", ["wrangler", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 32 * 1024 * 1024, timeout: 60_000, killSignal: "SIGKILL" });
 
   const http = async (method, path, { headers = {}, body } = {}) => {
     const response = await fetch(`${BASE}${path}`, {
       method,
       headers: { "content-type": "application/json", ...headers },
       ...(body === undefined ? {} : { body: typeof body === "string" ? body : JSON.stringify(body) }),
+      signal: AbortSignal.timeout(15_000),
     });
     let parsed;
     try { parsed = await response.json(); } catch { parsed = undefined; }
@@ -314,24 +357,25 @@ if (isMain) {
     return first?.results ?? [];
   };
 
-  // The configuration the RUNNING Worker was deployed with, not the one on disk. The point of the
-  // check is that the artifact that actually shipped is isolated and in sandbox mode.
-  const deployedConfig = async () => JSON.parse(wrangler(["deployments", "status", "--name", env.WORKER_NAME, "--json"]))?.config
-    ?? JSON.parse((await import("node:fs")).readFileSync("dist/server/wrangler.json", "utf8"));
-
-  /**
-   * The deploy message of the version currently serving traffic. `deployments status --json` describes
-   * the ACTIVE deployment; `versions list` describes everything ever deployed, which is why the gate no
-   * longer looks there.
-   */
-  const liveVersionMessage = async () => {
+  let activeVersion;
+  const readActiveVersion = async () => {
+    if (activeVersion) return activeVersion;
     const status = JSON.parse(wrangler(["deployments", "status", "--json", "--name", env.WORKER_NAME]));
-    const active = Array.isArray(status?.versions) ? status.versions : [];
-    const fromVersions = active.map(entry => String(entry?.version?.message ?? entry?.message ?? "").trim()).filter(Boolean);
-    return fromVersions[0] ?? String(status?.message ?? status?.annotations?.["workers/message"] ?? "").trim();
+    const versionId = activeVersionId(status);
+    const viewed = JSON.parse(wrangler(["versions", "view", versionId, "--name", env.WORKER_NAME, "--json"]));
+    if (String(viewed?.id ?? "") !== versionId) throw new StagingIsolationRefused("Refusing to certify: Wrangler returned a different version than the active deployment");
+    activeVersion = viewed;
+    return viewed;
   };
+  const deployedConfig = async () => deployedConfigFromVersion(await readActiveVersion());
+  const liveVersionMessage = async () => versionMessage(await readActiveVersion());
 
   const rollbackReference = async () => String(process.env.ROLLBACK_REFERENCE || "").trim();
+
+  if (isolationOnly) {
+    try { console.log(JSON.stringify(await runStagingIsolationPreflight({ deployedConfig, liveVersionMessage, env }))); process.exit(0); }
+    catch (error) { console.error(error?.message ?? String(error)); process.exit(1); }
+  }
 
   let report;
   try {

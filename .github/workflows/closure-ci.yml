@@ -40,7 +40,7 @@ jobs:
       - name: Build and run tracked Web tests
         shell: bash
         run: |
-          set -uo pipefail
+          set -euo pipefail
           npm run build
           tracked_tests=()
           for test_file in tests/*.test.mjs; do
@@ -50,7 +50,10 @@ jobs:
           done
           test "${#tracked_tests[@]}" -gt 0
           status=0
-          node --experimental-strip-types --test "${tracked_tests[@]}" 2>&1 | tee web-tests.tap || status=$?
+          set +e
+          node --experimental-strip-types --test "${tracked_tests[@]}" 2>&1 | tee web-tests.tap
+          status=${PIPESTATUS[0]}
+          set -e
           if [ "$status" -ne 0 ]; then
             echo ""
             echo "================ FAILING TESTS ================"
@@ -252,7 +255,10 @@ jobs:
       # aggregate number on trust. tests/evidence-class-audit.test.mjs enforces the floors; this job
       # exists to make the inventory readable on every run.
       - name: Classify every suite by what it executes
-        run: node scripts/evidence-class-audit.mjs | tee evidence-class-audit.md
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/evidence-class-audit.mjs | tee evidence-class-audit.md
       - uses: actions/upload-artifact@v4
         if: always()
         with:

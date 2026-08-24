@@ -35,26 +35,17 @@
  *   execution than a node:sqlite shim, not less, and no import of `node:sqlite` appears anywhere in
  *   the suite that drives it.
  *
- * WHAT THIS AUDIT CANNOT TELL YOU, stated plainly because the whole point of it is to stop the
- * repository claiming more than it has:
- *
- *   This is STATIC analysis. It reads what a suite imports and spawns; it does not run anything, so it
- *   cannot know whether an imported function was ever called, whether a route handler was ever invoked,
- *   or whether a booted Worker was ever sent a request. A file that imports `lib/refunds.ts` and
- *   `node:sqlite` and then asserts `1 === 1` classifies as real_execution here and proves nothing.
- *
- *   So the classes are an UPPER BOUND on evidence strength, not a measurement of it. They answer "what
- *   is the strongest thing this suite could possibly be proving?" - which is the useful question when
- *   the alternative is a bare count of 300 files, and which is genuinely decisive in the direction that
- *   matters: a source_contract suite cannot be proving behaviour no matter what it asserts. Reading a
- *   suite is still the only way to know it asserts something worth asserting.
- *
- *   Detecting actual invocation would need coverage instrumentation over a real run (c8/V8 coverage per
- *   suite), which is a different and much heavier tool. It is not pretended to here.
+ * This remains static analysis: it cannot prove an assertion is meaningful or a branch was reached.
+ * It is deliberately conservative about the facts it does report, however. A product import counts
+ * only when the imported binding is called, constructed, dereferenced or wired into a Worker handler;
+ * `wrangler.dev.jsonc` counts only when an actual `wrangler dev` call and a local HTTP request both
+ * appear. An inert import, a config filename, or import-like text in a fixture therefore stays a source
+ * contract. Runtime coverage is still required to establish which internal branches executed.
  */
 
 import fs from "node:fs";
 import path from "node:path";
+import ts from "typescript";
 
 export const EVIDENCE_CLASSES = ["real_execution", "imported_unit", "hosted_provider", "source_contract"];
 
@@ -104,17 +95,116 @@ function moduleBucket(name) {
   return MODULE_ALIASES.get(token) ?? token;
 }
 
-/** Strips comments and string bodies so a path named only inside a comment is never read as an import. */
-function codeOnly(source) {
-  return source
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/(^|[^:\\])\/\/[^\n]*/g, "$1 ");
+function literalText(node) {
+  if (ts.isStringLiteralLike(node)) return node.text;
+  if (ts.isTemplateExpression(node)) {
+    let value = node.head.text;
+    for (const span of node.templateSpans) value += `\${${span.expression.getText()}}${span.literal.text}`;
+    return value;
+  }
+  return null;
 }
 
-function specifiers(code) {
-  const found = [];
-  for (const match of code.matchAll(/(?:from\s*|import\s*\(\s*|require\s*\(\s*)["'`]([^"'`]+)["'`]?/g)) found.push(match[1]);
+function bindingNames(name, found = []) {
+  if (ts.isIdentifier(name)) found.push(name.text);
+  else for (const element of name.elements) bindingNames(element.name, found);
   return found;
+}
+
+function bindingIsExecuted(identifier) {
+  const parent = identifier.parent;
+  if (!parent) return false;
+  if ((ts.isCallExpression(parent) || ts.isNewExpression(parent) || ts.isTaggedTemplateExpression(parent)) && parent.expression === identifier) return true;
+  if ((ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) && parent.expression === identifier) return true;
+  if (ts.isShorthandPropertyAssignment(parent)) return true;
+  if (ts.isPropertyAssignment(parent) && parent.initializer === identifier) return true;
+  return false;
+}
+
+/** Parses real import syntax and reports only imports whose bindings are subsequently exercised. */
+function moduleReferences(source) {
+  const file = ts.createSourceFile("evidence.mts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const references = [];
+  const bindings = new Map();
+
+  function remember(specifier, names, declarationEnd, factoryKey = null) {
+    const reference = { specifier, executed: false, factoryKey };
+    references.push(reference);
+    for (const name of names) {
+      const list = bindings.get(name) ?? [];
+      list.push({ reference, declarationEnd });
+      bindings.set(name, list);
+    }
+    return reference;
+  }
+
+  function collect(node) {
+    if (ts.isImportDeclaration(node)) {
+      const specifier = literalText(node.moduleSpecifier);
+      if (specifier) {
+        const names = [];
+        const clause = node.importClause;
+        if (clause?.name) names.push(clause.name.text);
+        if (clause?.namedBindings && ts.isNamespaceImport(clause.namedBindings)) names.push(clause.namedBindings.name.text);
+        if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+          for (const element of clause.namedBindings.elements) names.push(element.name.text);
+        }
+        remember(specifier, names, node.end);
+      }
+    } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      const specifier = node.arguments[0] && literalText(node.arguments[0]);
+      if (specifier) {
+        let cursor = node.parent;
+        if (ts.isAwaitExpression(cursor)) cursor = cursor.parent;
+        while (ts.isParenthesizedExpression(cursor)) cursor = cursor.parent;
+        if (ts.isVariableDeclaration(cursor)) remember(specifier, bindingNames(cursor.name), cursor.end);
+        else {
+          let factoryKey = null;
+          for (let owner = node.parent; owner; owner = owner.parent) {
+            if (ts.isArrowFunction(owner) || ts.isFunctionExpression(owner)) {
+              if (ts.isPropertyAssignment(owner.parent)) {
+                const object = owner.parent.parent;
+                const declaration = object && ts.isObjectLiteralExpression(object) && ts.isVariableDeclaration(object.parent) ? object.parent : null;
+                if (declaration && ts.isIdentifier(declaration.name)) factoryKey = `${declaration.name.text}.${owner.parent.name.getText(file)}`;
+              } else if (ts.isVariableDeclaration(owner.parent) && ts.isIdentifier(owner.parent.name)) factoryKey = owner.parent.name.text;
+              break;
+            }
+            if (ts.isFunctionDeclaration(owner)) { factoryKey = owner.name?.text ?? null; break; }
+          }
+          const reference = remember(specifier, [], node.end, factoryKey);
+          reference.executed = Boolean(cursor && (
+            ((ts.isPropertyAccessExpression(cursor) || ts.isElementAccessExpression(cursor))
+              && (cursor.expression.kind === ts.SyntaxKind.AwaitExpression || ts.isParenthesizedExpression(cursor.expression)))
+            || ts.isCallExpression(cursor)
+          ));
+        }
+      }
+    } else if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "require") {
+      const specifier = node.arguments[0] && literalText(node.arguments[0]);
+      if (specifier) {
+        const declaration = node.parent && ts.isVariableDeclaration(node.parent) ? node.parent : null;
+        const reference = remember(specifier, declaration ? bindingNames(declaration.name) : [], declaration?.end ?? node.end);
+        if (!declaration && bindingIsExecuted(node)) reference.executed = true;
+      }
+    }
+    ts.forEachChild(node, collect);
+  }
+  collect(file);
+
+  function mark(node) {
+    if (ts.isCallExpression(node)) {
+      const called = node.expression.getText(file).replace(/\s+/g, "");
+      for (const reference of references) if (reference.factoryKey === called) reference.executed = true;
+    }
+    if (ts.isIdentifier(node)) {
+      for (const binding of bindings.get(node.text) ?? []) {
+        if (node.pos >= binding.declarationEnd && bindingIsExecuted(node)) binding.reference.executed = true;
+      }
+    }
+    ts.forEachChild(node, mark);
+  }
+  mark(file);
+  return references;
 }
 
 /**
@@ -124,7 +214,8 @@ function specifiers(code) {
  */
 export function executedSourceModules(source) {
   const found = new Set();
-  for (const raw of specifiers(codeOnly(source))) {
+  for (const { specifier: raw, executed } of moduleReferences(source)) {
+    if (!executed) continue;
     const specifier = raw.replace(/\$\{[^}]*\}/g, "*");
     const normalised = specifier.replace(/^(\.\.?\/)+/, "");
     if (!new RegExp(`^(${ROOTS_ALT})/`).test(normalised)) continue;
@@ -137,7 +228,8 @@ export function executedSourceModules(source) {
 function localTestModules(source, fromFile) {
   const dir = path.dirname(fromFile);
   const found = new Set();
-  for (const raw of specifiers(codeOnly(source))) {
+  for (const { specifier: raw, executed } of moduleReferences(source)) {
+    if (!executed) continue;
     if (!raw.startsWith(".")) continue;
     if (!/\.(mjs|ts|js)$/.test(raw)) continue;
     const resolved = path.normalize(path.join(dir, raw.replace(/\$\{[^}]*\}/g, "*")));
@@ -147,9 +239,29 @@ function localTestModules(source, fromFile) {
   return [...found];
 }
 
-/** `wrangler dev --config wrangler.x.jsonc` boots a real Worker over a real D1 binding. */
-function wranglerConfigs(source) {
-  return [...codeOnly(source).matchAll(/["'`](wrangler\.[A-Za-z0-9._-]+\.jsonc)["'`]/g)].map(match => match[1]);
+/** A Worker signal needs both a real `wrangler dev` process and traffic to its local origin. */
+function workerProcessSignals(source) {
+  const file = ts.createSourceFile("worker-test.mts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const configs = new Set();
+  let localRequest = false;
+  function visit(node) {
+    if (ts.isCallExpression(node)) {
+      const call = node.getText(file);
+      if (/\bfetch\s*\(/.test(call) && /https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?/.test(call)) localRequest = true;
+      const literals = [];
+      for (const argument of node.arguments) {
+        function strings(child) { const value = literalText(child); if (value != null) literals.push(value); else ts.forEachChild(child, strings); }
+        strings(argument);
+      }
+      if (/\b(?:spawn|spawnSync|execFile|execFileSync|exec|execSync)\s*\(/.test(call)
+          && literals.includes("wrangler") && literals.includes("dev")) {
+        for (const value of literals) if (/^wrangler\.[A-Za-z0-9._-]+\.jsonc$/.test(value)) configs.add(value);
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(file);
+  return { configs, localRequest };
 }
 
 function wranglerEntry(configPath, repoRoot) {
@@ -163,38 +275,41 @@ function wranglerEntry(configPath, repoRoot) {
 /** Collects every signal reachable from `file`, following test-local modules and worker entries. */
 function collectSignals(file, repoRoot, seen = new Set()) {
   const key = path.normalize(file);
-  const signals = { modules: new Set(), sqlite: false, localWorker: false, hosted: false };
+  const signals = { modules: new Set(), sqlite: false, localWorker: false, hosted: false, workerConfigs: new Set(), localRequest: false };
   if (seen.has(key)) return signals;
   seen.add(key);
 
   let source;
   try { source = fs.readFileSync(path.join(repoRoot, key), "utf8"); } catch { return signals; }
-  const code = codeOnly(source);
-
   for (const reached of executedSourceModules(source)) signals.modules.add(reached);
-  if (/from\s*["']node:sqlite["']/.test(code) || /require\(\s*["']node:sqlite["']\s*\)/.test(code)) signals.sqlite = true;
+  if (moduleReferences(source).some(reference => reference.executed && reference.specifier === "node:sqlite")) signals.sqlite = true;
 
   // A deployed origin or provider host supplied by the environment - the only way a suite here can
   // reach something it did not itself construct. A literal https:// inside a test is an assertion
   // fixture, not traffic, so it deliberately does not count.
-  if (/process\.env\.(PAWSPACE_HOSTED_[A-Z_0-9]+|PAWSPACE_PROVIDER_[A-Z_0-9]+)/.test(code)) signals.hosted = true;
+  if (/fetch\s*\([^)]*process\.env\.(PAWSPACE_HOSTED_[A-Z_0-9]+|PAWSPACE_PROVIDER_[A-Z_0-9]+)/s.test(source)) signals.hosted = true;
 
-  for (const config of wranglerConfigs(source)) {
-    signals.localWorker = true;
-    const entry = wranglerEntry(config, repoRoot);
-    if (entry) {
-      const nested = collectSignals(entry, repoRoot, seen);
-      for (const reached of nested.modules) signals.modules.add(reached);
-      signals.sqlite = signals.sqlite || nested.sqlite;
-    }
-  }
+  const worker = workerProcessSignals(source);
+  for (const config of worker.configs) signals.workerConfigs.add(config);
+  signals.localRequest = worker.localRequest;
 
   for (const local of localTestModules(source, key)) {
     const nested = collectSignals(local, repoRoot, seen);
     for (const reached of nested.modules) signals.modules.add(reached);
     signals.sqlite = signals.sqlite || nested.sqlite;
-    signals.localWorker = signals.localWorker || nested.localWorker;
+    for (const config of nested.workerConfigs) signals.workerConfigs.add(config);
+    signals.localRequest = signals.localRequest || nested.localRequest;
     signals.hosted = signals.hosted || nested.hosted;
+  }
+  signals.localWorker = signals.workerConfigs.size > 0 && signals.localRequest;
+  if (signals.localWorker) {
+    for (const config of signals.workerConfigs) {
+      const entry = wranglerEntry(config, repoRoot);
+      if (!entry) continue;
+      const nested = collectSignals(entry, repoRoot, seen);
+      for (const reached of nested.modules) signals.modules.add(reached);
+      signals.sqlite = signals.sqlite || nested.sqlite;
+    }
   }
   return signals;
 }

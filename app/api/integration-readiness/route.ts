@@ -2,6 +2,7 @@ import{authError,database,requirePermission,resolveActor,securityAudit}from"../.
 import{integrationLaunchBlockers,integrationLiveEvidence,integrationReadinessAudit,listIntegrationReadiness,openIntegrationEvidenceRequests,recordIntegrationLiveEvidence,requestIntegrationEvidence,updateIntegrationReadiness,type IntegrationEvidenceKind}from"../../../lib/integration-readiness";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
+function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin integration readiness write blocked",{status:403});}
 export async function GET(request:Request){
  try{
   const actor=await resolveActor(request);requirePermission(actor,"launch.view");const db=await database();
@@ -25,6 +26,7 @@ export async function GET(request:Request){
  */
 export async function POST(request:Request){
  try{
+  sameOrigin(request);
   // launch.view is checked before anything is parsed or opened: both actions need at least it, and an
   // anonymous caller must be refused rather than told which action names are valid. The stricter
   // launch.manage check for recording evidence follows once the action is known.
@@ -55,11 +57,12 @@ export async function POST(request:Request){
    return json({data},201);
   }
   return json({error:"Unsupported integration readiness action"},400);
- }catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);return authError(error,"Unable to record integration evidence");}
+ }catch(error){return authError(error,"Unable to record integration evidence");}
 }
 
 export async function PATCH(request:Request){
  try{
+  sameOrigin(request);
   const actor=await resolveActor(request);requirePermission(actor,"launch.manage");const db=await database();
   let patched:unknown;
   try{patched=await request.json();}catch{return json({error:"Request body must be valid JSON"},400);}
@@ -68,8 +71,7 @@ export async function PATCH(request:Request){
   const changes=typeof body.changes==="object"&&body.changes?body.changes as Record<string,unknown>:{};
   if(changes.readinessState==="sandbox_verified"&&!String(changes.evidenceReference||"").trim())return json({error:"Sandbox verification must include an evidence reference in the same governed change"},400);
   if(changes.readinessState==="controlled_live_verified"&&(!String(changes.evidenceReference||"").trim()||!String(changes.approvalReference||"").trim()))return json({error:"Controlled-live verification must include both evidence and approval references in the same governed change"},400);
-  const data=await updateIntegrationReadiness(db,{integrationCode,changes,reason,actorId:actor.email});
-  await securityAudit(db,actor,"integration.readiness.update","integration",integrationCode,"completed",{reason,changedFields:Object.keys(changes),readinessState:data.readinessState,productionReady:false});
+  const data=await updateIntegrationReadiness(db,{integrationCode,changes,reason,actorId:actor.email,actorRole:actor.roleCode});
   return json({data,productionReady:false});
  }catch(error){return authError(error,"Unable to update integration readiness");}
 }

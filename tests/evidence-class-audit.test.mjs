@@ -54,9 +54,7 @@ test("a database with nothing imported is still only source_contract", () => {
 });
 
 test("route handler execution is counted, including sweeps built from a template literal", () => {
-  // The fixtures call the handler they import. The classifier cannot SEE that - it is static, and the
-  // limitation is documented on the audit itself - but a fixture that only imported a module while the
-  // assertion below claims route execution would be modelling something this repository should not do.
+  // The fixtures call the handler they import; an inert import is covered separately below.
   const root = sandbox({
     "tests/a.test.mjs": `import { DatabaseSync } from "node:sqlite";\nconst { POST } = await import("../app/api/voice-outbound/route.ts");\nawait POST(new Request("http://x/api/voice-outbound", { method: "POST" }));\n`,
     "tests/b.test.mjs": "import { DatabaseSync } from \"node:sqlite\";\nfor (const n of names) { const m = await import(`../app/api/${n}/route.ts`); await m.GET(new Request(`http://x/api/${n}`)); }\n",
@@ -68,7 +66,7 @@ test("route handler execution is counted, including sweeps built from a template
 
 test("signals reached only through a test helper still count", () => {
   const files = {
-    "tests/helpers/journey.mjs": `import { DatabaseSync } from "node:sqlite";\nexport async function routeCall() { return (await import("../../app/api/uat-scheduling/route.ts")).POST; }\n`,
+    "tests/helpers/journey.mjs": `import { DatabaseSync } from "node:sqlite";\nexport async function routeCall() { const db = new DatabaseSync(":memory:"); db.exec("create table proof(x)"); return (await import("../../app/api/uat-scheduling/route.ts")).POST; }\n`,
     "tests/a.test.mjs": `import { routeCall } from "./helpers/journey.mjs";\nawait routeCall();\n`,
   };
   const root = sandbox(files);
@@ -98,19 +96,14 @@ test("booting a real Worker over a real D1 binding is real_execution even with n
   assert.equal(classifyTestFile("tests/a.test.mjs", inert).evidenceClass, "source_contract");
 });
 
-test("the classification is an upper bound on evidence strength, not a measurement of it", () => {
-  // Recorded as an executable statement of the audit's own boundary. A suite that imports a real module
-  // and a real database and then asserts nothing of substance still classifies as real_execution,
-  // because static analysis cannot see whether anything was invoked. The class answers "what is the
-  // strongest thing this suite could be proving?" - decisive in the direction that matters (a
-  // source_contract suite cannot be proving behaviour) and no more than that in the other.
+test("an inert product import is not promoted to executable evidence", () => {
   const hollow = sandbox({
     "tests/a.test.mjs": `import { DatabaseSync } from "node:sqlite";\nimport * as refunds from "../lib/refunds.ts";\nassert.ok(true);\n`,
   });
   const row = classifyTestFile("tests/a.test.mjs", hollow);
-  assert.equal(row.evidenceClass, "real_execution",
-    "the classifier does not and cannot know that nothing was called - see the limitation documented on scripts/evidence-class-audit.mjs");
-  assert.equal(row.database, true);
+  assert.equal(row.evidenceClass, "source_contract");
+  assert.equal(row.modulesExecuted, 0);
+  assert.equal(row.database, false, "an unused node:sqlite import does not prove persistence execution");
 });
 
 test("only an environment-supplied hosted or provider origin counts as hosted_provider", () => {
@@ -126,6 +119,23 @@ test("a path named only in a comment is not read as an import", () => {
   const root = sandbox({ "tests/a.test.mjs": `// see ../lib/refunds.ts for the gate\n/* await import("../lib/pricing.ts") */\nassert.ok(true);\n` });
   assert.deepEqual(executedSourceModules(fs.readFileSync(path.join(root, "tests/a.test.mjs"), "utf8")), []);
   assert.equal(classifyTestFile("tests/a.test.mjs", root).evidenceClass, "source_contract");
+});
+
+test("import-like text inside a string is not executable evidence", () => {
+  const root = sandbox({ "tests/a.test.mjs": `const fixture = 'import { refund } from "../lib/refunds.ts"';\nassert.ok(fixture);\n` });
+  assert.deepEqual(executedSourceModules(fs.readFileSync(path.join(root, "tests/a.test.mjs"), "utf8")), []);
+  assert.equal(classifyTestFile("tests/a.test.mjs", root).evidenceClass, "source_contract");
+});
+
+test("a Wrangler config name without both dev launch and HTTP traffic is not Worker execution", () => {
+  const files = {
+    "wrangler.demo.jsonc": `{ "main": "tests/demo-worker.ts", "d1_databases": [{ "binding": "DB" }] }`,
+    "tests/demo-worker.ts": `import { POST } from "../app/api/canonical-bookings/route.ts";\nexport default { fetch: POST };\n`,
+    "tests/a.test.mjs": `const config = "wrangler.demo.jsonc";\nassert.ok(config);\n`,
+  };
+  assert.equal(classifyTestFile("tests/a.test.mjs", sandbox(files)).evidenceClass, "source_contract");
+  const launchOnly = sandbox({ ...files, "tests/a.test.mjs": `spawn("npx", ["wrangler", "dev", "--config", "wrangler.demo.jsonc"]);\n` });
+  assert.equal(classifyTestFile("tests/a.test.mjs", launchOnly).evidenceClass, "source_contract");
 });
 
 test("a name promising execution while only reading source is reported, and this repository has none", () => {

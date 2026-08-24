@@ -216,7 +216,7 @@ export default function VoiceOperatorPage() {
               <option value="">All states</option>
               {states.map(state => <option key={state} value={state}>{state}</option>)}
             </select>
-            <Button variant="ghost" onClick={() => void load()}>Refresh</Button>
+            <Button variant="ghost" onClick={() => void run("refresh", load)} disabled={Boolean(busy)}>Refresh</Button>
           </div>
         }
       >

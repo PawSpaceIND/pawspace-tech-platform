@@ -13,20 +13,27 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { installAiHooks, freshAiDb, seedCustomer, customerActor, staffActor, inboundMessage } from "./helpers/ai-harness.mjs";
+import { DatabaseSync } from "node:sqlite";
+import { installAiHooks, freshAiDb, seedCustomer, customerActor, staffActor, inboundMessage, applyOwnedDdl } from "./helpers/ai-harness.mjs";
 
 installAiHooks();
 
 const orchestrator = await import("../lib/ai-conversation-orchestrator.ts");
 const rollout = await import("../lib/ai-audience-rollout.ts");
 
+test("the AI harness surfaces malformed table DDL and ignores only an index whose table is absent", () => {
+  const sqlite = new DatabaseSync(":memory:");
+  assert.throws(() => applyOwnedDdl(sqlite, "synthetic-owner.ts", `.prepare("CREATE TABLE broken (")`), /DDL failed to apply/);
+  assert.doesNotThrow(() => applyOwnedDdl(sqlite, "synthetic-owner.ts", `.prepare("CREATE INDEX missing_idx ON missing_table(id)")`));
+});
+
 /** A provider whose behaviour is chosen per case. `calls` proves whether the model was reached at all. */
-function provider(behaviour, { status = "connected", name = "stub_model", modelRef = "stub-v1" } = {}) {
+function provider(behaviour, { status = "connected", name = "stub_model", modelRef = "stub-v1", deadlineMs } = {}) {
   const calls = [];
   return {
     calls,
     provider: {
-      status, provider: name, modelRef,
+      status, provider: name, modelRef, deadlineMs,
       async generate(input) { calls.push(input); return behaviour(input); },
     },
   };
@@ -90,20 +97,10 @@ test("each distinct provider failure produces a handoff, not a silent or empty r
   }
 });
 
-test("a provider that rejects after a delay still reaches a human rather than surfacing as an exception", async () => {
-  // Named for what it proves. It was called "a provider that hangs is bounded by the caller", which it
-  // did NOT show: the stub settles after five milliseconds, so the case would pass unchanged even if
-  // the orchestrator awaited a provider that never settled at all.
-  //
-  // The residual is real and is stated rather than hidden: `orchestrateAiTurn` has no deadline of its
-  // own. It awaits whatever provider it is handed, so a never-settling provider WOULD hang it. The
-  // deadline lives one layer down in lib/ai-provider-adapter.ts, where it is proved against both a
-  // provider that never answers and one that answers with headers then stalls the body
-  // (tests/ai-provider-adapter-execution.test.mjs). Any future provider implementation handed to the
-  // orchestrator has to bound itself the same way; the test below pins the orchestrator's half only.
+test("a provider that never settles is bounded by the orchestrator and reaches a human", async () => {
   const { sqlite, db } = await world();
-  const stub = provider(async () => { await new Promise(resolve => setTimeout(resolve, 5)); throw Object.assign(new Error("timeout"), { name: "TimeoutError" }); });
-  const result = await turn(sqlite, db, { text: "what is the price of grooming", stub, key: "delayed-rejection" });
+  const stub = provider(() => new Promise(() => {}), { deadlineMs: 5 });
+  const result = await turn(sqlite, db, { text: "what is the price of grooming", stub, key: "never-settles" });
   assert.equal(result.turn.outcome, "handoff");
   assert.equal(result.turn.handoffReason, "provider_error");
   assert.equal(handoffs(sqlite).length, 1);
@@ -129,6 +126,41 @@ test("a replayed turn returns the stored turn and does not call the model or que
   assert.equal(stub.calls.length, callsAfterFirst, "the model must not be charged twice for the same turn");
   assert.equal(handoffs(sqlite).length, 1, "a replay must not queue a second human handoff");
   assert.equal(turns(sqlite).length, 1);
+});
+
+test("concurrent deliveries reserve the key before any context, provider or handoff side effect", async () => {
+  const { sqlite, db } = await world();
+  let release;
+  let observedStart;
+  const started = new Promise(resolve => { observedStart = resolve; });
+  const stub = provider(async () => {
+    observedStart();
+    await new Promise(resolve => { release = resolve; });
+    return { text: "A basic groom starts at Rs 899.", provider: "stub_model", modelRef: "stub-v1", latencyMs: 1, confidence: 0.92 };
+  });
+  const actor = customerActor(sqlite, "CUS-1");
+  const messageId = await inboundMessage(sqlite, db, { threadId: "THREAD-1", customerId: "CUS-1", text: "what is the price of grooming", channel: "chat", idempotencyKey: "concurrent" });
+  const input = { actor, threadId: "THREAD-1", customerId: "CUS-1", inputMessageId: messageId, idempotencyKey: "concurrent", channel: "chat", provider: stub.provider };
+
+  const firstPromise = orchestrator.orchestrateAiTurn(db, input);
+  await started;
+  const concurrent = await orchestrator.orchestrateAiTurn(db, input);
+  assert.equal(concurrent.duplicatePrevented, true);
+  assert.equal(concurrent.pending, true, "the losing delivery is told the reserved turn is still processing");
+  assert.equal(stub.calls.length, 1, "only the reservation owner reaches the provider");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM ai_context_snapshots").get().n, 1);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM ai_suggestions").get().n, 0, "the losing delivery wrote no suggestion");
+
+  release();
+  const first = await firstPromise;
+  assert.equal(first.duplicatePrevented, false);
+  const replay = await orchestrator.orchestrateAiTurn(db, input);
+  assert.equal(replay.duplicatePrevented, true);
+  assert.equal(replay.pending, undefined);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM ai_conversation_turns").get().n, 1);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM ai_context_snapshots").get().n, 1);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM ai_suggestions").get().n, 1);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs").get().n, 0);
 });
 
 // ---------------------------------------------------------------------------

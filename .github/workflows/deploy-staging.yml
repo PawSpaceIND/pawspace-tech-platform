@@ -123,6 +123,19 @@ jobs:
         # exposes it, and certification requires an exact match. Without it, "which build is live?" has
         # no answer that does not rely on trusting this log.
         run: npx wrangler deploy --message "staging ${{ github.event.inputs.expected_sha }}"
+      # Read-only and deliberately before secret installation or employee seeding. It resolves the
+      # one active version, requires it to serve 100% of traffic, and checks that version's actual D1
+      # binding and sandbox vars. No command below may write staging data until this has passed.
+      - name: Certify deployed isolation before any D1 write
+        timeout-minutes: 3
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
+        run: node tests/e2e/staging-certification.mjs --isolation-only
       - name: Install UAT credentials as Cloudflare Worker secrets
         # The three UAT credentials are NEVER serialized into wrangler.json (that would put plaintext
         # credentials into the generated deploy artifact and the dashboard `vars`). They are installed
@@ -172,6 +185,7 @@ jobs:
       # really sign in, that the smoke routes answer for a session and refuse without one, and that a
       # rollback reference exists. A required check that could not be run fails.
       - name: Certify the staging deploy
+        timeout-minutes: 10
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

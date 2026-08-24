@@ -40,8 +40,8 @@ const read = (path) => fs.readFileSync(new URL(`../../${path}`, import.meta.url)
  * Pulls DDL out of the module that owns it rather than restating it here, so the harness cannot drift
  * from production schema the way a hand-copied CREATE TABLE does.
  */
-export function applyOwnedDdl(sqlite, path) {
-  const source = read(path);
+export function applyOwnedDdl(sqlite, path, sourceOverride) {
+  const source = sourceOverride ?? read(path);
   for (const match of source.matchAll(/\.prepare\(\s*(["'`])([\s\S]*?)\1/g)) {
     const statement = match[2];
     if (!/^\s*CREATE (TABLE|INDEX|UNIQUE INDEX)/i.test(statement)) continue;

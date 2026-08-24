@@ -14,8 +14,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   runStagingCertification, assertStagingIsolation, stagingEvidenceArtifact, StagingIsolationRefused,
-  STAGING_SECRET_NAMES, SMOKE_ROUTES, REQUIRED_STAFF_IDENTITIES,
+  STAGING_SECRET_NAMES, SMOKE_ROUTES, REQUIRED_STAFF_IDENTITIES, activeVersionId,
+  deployedConfigFromVersion, versionMessage, runStagingIsolationPreflight, isMainModule,
 } from "./e2e/staging-certification.mjs";
+import { pathToFileURL } from "node:url";
 
 const SHA = "a95ed7adbbf513ed78e4b88b22afa38ce3b5c940";
 const ACCESS_CODE = "a-32-character-uat-access-code!!";
@@ -99,6 +101,30 @@ test("an unreadable deployed configuration is a refusal, not an assumption of is
   const state = world({ deployedConfig: async () => { throw new Error("wrangler could not read the deployment"); } });
   await assert.rejects(runStagingCertification(state), StagingIsolationRefused);
   assert.deepEqual(state.calls.d1, []);
+});
+
+test("mixed or partial active deployments are refused before a version can be certified", () => {
+  assert.equal(activeVersionId({ versions: [{ version_id: "v1", percentage: 100 }] }), "v1");
+  for (const status of [
+    { versions: [{ version_id: "v1", percentage: 50 }, { version_id: "v2", percentage: 50 }] },
+    { versions: [{ version_id: "v1", percentage: 99 }] },
+    { versions: [] },
+  ]) assert.throws(() => activeVersionId(status), StagingIsolationRefused);
+});
+
+test("the deployed config and SHA come from the same active version resource", async () => {
+  const version = {
+    id: "v1", annotations: { "workers/message": `staging ${SHA}` },
+    resources: { bindings: [
+      { type: "d1", name: "DB", id: STAGING_D1_ID },
+      { type: "plain_text", name: "PAWSPACE_PAYMENT_ENV", text: "sandbox" },
+      { type: "plain_text", name: "PAWSPACE_UAT_LOGIN", text: "on" },
+    ] },
+  };
+  const config = deployedConfigFromVersion(version);
+  assert.equal(config.d1_databases[0].database_id, STAGING_D1_ID);
+  assert.equal(versionMessage(version), `staging ${SHA}`);
+  await assert.doesNotReject(runStagingIsolationPreflight({ deployedConfig: async () => config, liveVersionMessage: async () => versionMessage(version), env: goodEnv() }));
 });
 
 // ---------------------------------------------------------------------------
@@ -346,6 +372,18 @@ test("a report that somehow carries a sensitive value is refused rather than scr
   assert.throws(() => stagingEvidenceArtifact(report, [ACCESS_CODE]), /contains a sensitive value/);
 });
 
+test("a JSON-escaped sensitive value is refused too", async () => {
+  const secret = 'uat-secret-with-"quote"-and-\\slash';
+  const report = { ok: false, detail: secret };
+  assert.throws(() => stagingEvidenceArtifact(report, [secret]), /contains a sensitive value/);
+});
+
+test("CLI entrypoint detection handles paths containing hash, question mark and percent", () => {
+  for (const path of ["/tmp/staging#gate.mjs", "/tmp/staging?gate.mjs", "/tmp/staging%gate.mjs"]) {
+    assert.equal(isMainModule(path, pathToFileURL(path).href), true);
+  }
+});
+
 test("a failure detail mentioning the database id is redacted before it reaches the artifact", async () => {
   const report = await runStagingCertification(world({
     rollbackReference: async () => { throw new Error(`no deployment history for ${STAGING_D1_ID}`); },
@@ -374,6 +412,17 @@ test("the staging workflow deploys an exact sha, records a rollback target and r
   assert.match(workflow, /node tests\/e2e\/staging-certification\.mjs/, "the deploy must run certification");
   assert.match(workflow, /upload-artifact/, "the sanitized evidence must be uploaded");
   assert.match(workflow, /employee-seed\.sql/, "the staff directory must be loaded, or no advertised identity can sign in");
+
+  const preflight = workflow.indexOf("Certify deployed isolation before any D1 write");
+  const seed = workflow.indexOf("Load the staff directory into the staging D1");
+  assert.ok(preflight >= 0 && preflight < seed, "live isolation must be certified before the employee seed writes D1");
+  assert.match(workflow.slice(preflight, seed), /--isolation-only/, "the pre-seed check must run the read-only isolation mode");
+  assert.match(workflow.slice(workflow.indexOf("Certify the staging deploy")), /timeout-minutes: 10/, "hosted certification must have a job timeout");
+
+  const gate = fs.readFileSync(new URL("./e2e/staging-certification.mjs", import.meta.url), "utf8");
+  assert.match(gate, /timeout: 60_000/, "Wrangler subprocesses must be bounded");
+  assert.match(gate, /AbortSignal\.timeout\(15_000\)/, "hosted requests must be bounded");
+  assert.doesNotMatch(gate, /readFileSync\("dist\/server\/wrangler\.json"/, "certification must never fall back to the local build config");
 
   // The rollback capture is allowed to fail (a first deploy has no predecessor), but the certification
   // step is not - a gate that cannot fail the job is decoration.

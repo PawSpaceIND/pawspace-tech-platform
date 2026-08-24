@@ -31,7 +31,9 @@ test("controlled-live verification requires production evidence approval and ope
 });
 
 test("integration readiness API is launch-governed and audited",()=>{
- assert.match(api,/requirePermission\(actor,"launch\.view"\)/);assert.match(api,/requirePermission\(actor,"launch\.manage"\)/);assert.match(api,/integration\.readiness\.update/);
+ assert.match(api,/requirePermission\(actor,"launch\.view"\)/);assert.match(api,/requirePermission\(actor,"launch\.manage"\)/);assert.match(registry,/integration\.readiness\.update/);
+ assert.match(api,/sameOrigin\(request\)/);assert.match(api,/Cross-origin integration readiness write blocked/);assert.doesNotMatch(api,/error\.text\(\)/);
+ assert.match(registry,/db\.batch\(\[/);assert.match(registry,/INSERT INTO security_audit_events/);
  assert.match(gateway,/\/api\/integration-readiness/);assert.match(gateway,/"launch\.view":"launch\.manage"/);
 });
 

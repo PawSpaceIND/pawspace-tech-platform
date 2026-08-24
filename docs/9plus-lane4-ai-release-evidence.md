@@ -14,10 +14,10 @@ its imports and never from its name:
 
 | evidence class | what it can catch | suites | share |
 | --- | --- | --- | --- |
-| `real_execution` | behaviour, persistence, negative paths. The only class that can prove a gate refuses something | 123 | 40% |
-| `imported_unit` | pure logic and refusal decisions; cannot prove anything was written or read back | 24 | 8% |
+| `real_execution` | behaviour, persistence, negative paths. The only class that can prove a gate refuses something | 124 | 40% |
+| `imported_unit` | pure logic and refusal decisions; cannot prove anything was written or read back | 22 | 7% |
 | `hosted_provider` | that an integration is live | **0** | 0% |
-| `source_contract` | that a named symbol still exists in a file | 160 | 52% |
+| `source_contract` | that a named symbol still exists in a file | 161 | 52% |
 
 Run it: `node scripts/evidence-class-audit.mjs`. Add `--json` for the per-suite rows.
 
@@ -35,14 +35,13 @@ strongest suites in the repository as the weakest:
   shim, not less, and no `node:sqlite` import appears in the suite that drives it.
 
 **What this audit cannot tell you**, stated because the point of it is to stop the repository claiming
-more than it has: it is STATIC analysis. It reads what a suite imports and spawns; it does not run
-anything, so it cannot know whether an imported function was ever called or a booted Worker ever
-received a request. A file that imports `lib/refunds.ts` and `node:sqlite` and then asserts `1 === 1`
-classifies as `real_execution` and proves nothing. The classes are therefore an **upper bound** on
-evidence strength — decisive in the direction that matters (a `source_contract` suite cannot be proving
-behaviour, whatever it asserts) and no more than that in the other. Measuring actual invocation would
-need per-suite coverage instrumentation over a real run; that is a different, much heavier tool and is
-not pretended to here. The boundary is itself pinned by a test.
+more than it has: it is STATIC analysis and cannot prove an assertion is meaningful or an internal
+branch was reached. It is now conservative about the facts it does report. A product import counts only
+when its binding is called, constructed, dereferenced or wired into a Worker handler. A Worker counts
+only when the suite both launches `wrangler dev` and sends a local HTTP request. An unused import, a
+config filename, or import-like fixture text stays `source_contract`. Per-suite runtime coverage remains
+the stronger way to establish internal branch execution; this inventory establishes the evidence class,
+not the quality of every assertion inside it. Those boundaries are pinned by sabotage tests.
 
 `tests/evidence-class-audit.test.mjs` proves each class positively and by sabotage (remove the feature,
 the classification must drop), and enforces two floors that cannot regress:
@@ -75,11 +74,11 @@ and is a cross-lane finding for Lanes 1–3, not a Lane 4 change.
 
 | module | suites | real_execution | imported_unit | hosted_provider | source_contract | route handlers executed |
 | --- | --- | --- | --- | --- | --- | --- |
-| cross-area | 33 | 32 | 1 | 0 | 0 | 44 |
+| cross-area | 32 | 31 | 1 | 0 | 0 | 28 |
 | ai | 20 | 6 | 1 | 0 | 13 | 2 |
 | provider | 18 | 6 | 0 | 0 | 12 | 2 |
 | release | 12 | 1 | 3 | 0 | 8 | 1 |
-| voice | 10 | 5 | 4 | 0 | 1 | 3 |
+| voice | 10 | 5 | 3 | 0 | 2 | 3 |
 | readiness | 2 | 1 | 0 | 0 | 1 | 0 |
 
 Release CI now publishes this inventory as an artifact on every run (`evidence-inventory` job), so a
@@ -271,7 +270,7 @@ controlled live, and a failed attempt rolls the state back rather than leaving i
 
 ### Evidence requests from Lanes 1–3
 
-`integration_evidence_requests` lets another closure lane record what it needs proven **before anyone has
+`integration_evidence_requests` lets another closure lane record what it needs to prove **before anyone has
 credentials**. A request is idempotent per code + lane + scenario (re-running a lane's closure script
 does not reset the queue or double-count a blocker) and closes only when a matched observation for that
 scenario exists. `POST /api/integration-readiness {action:"request_evidence"}` files one at

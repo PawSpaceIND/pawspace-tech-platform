@@ -169,9 +169,12 @@ test("the console page routes its dial through this module and sends no field th
 
   // The environment decides whether calling is possible. If the page could send any of these, a
   // modified client would be able to switch voice on from the browser.
-  for (const name of ["PAWSPACE_VOICE_ENV", "PAWSPACE_VOICE_UAT_APPROVED", "PAWSPACE_VOICE_LIVE_APPROVED", "PAWSPACE_VOICE_ALLOW", "EXOTEL_"]) {
+  for (const name of ["PAWSPACE_VOICE_ENV", "PAWSPACE_VOICE_UAT_APPROVED", "PAWSPACE_VOICE_LIVE_APPROVED", "PAWSPACE_VOICE_ALLOW"]) {
     assert.ok(!page.includes(`${name}:`), `the page appears to send ${name} - no client field may reach the environment gate`);
   }
+  assert.doesNotMatch(page, /\bEXOTEL_[A-Z0-9_]*\s*:/, "the page must not send any Exotel environment field");
+  assert.match(page, /run\("refresh",\s*load\)/, "refresh failures must reach the operator-visible error state");
+  assert.doesNotMatch(page, /onClick=\{\(\) => void load\(\)\}/, "refresh must not drop a rejected load promise");
   assert.doesNotMatch(page, /action:\s*"set_script"/, "script approval is a settings.manage action and does not belong on the dial console");
   // The full recipient number lives only in the form. Nothing renders it back out of a server payload.
   assert.doesNotMatch(page, /row\.phone\b/, "the ledger exposes phoneLast4 only");
