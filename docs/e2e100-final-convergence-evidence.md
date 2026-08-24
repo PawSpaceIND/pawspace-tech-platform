@@ -106,3 +106,32 @@ Correction: capture the authoritative account-qualified `workers.dev` URL direct
 The workflow refuses to guess an origin if Wrangler does not report one. A permanent regression requires
 deploy-output capture and forbids URL resolution through `deployments status`. Focused staging/release
 gate result: **168/168 passed**.
+
+### E2E100-DEPLOY-003 — post-deploy secret updates replaced the attributed version
+
+Exact-SHA staging run `32706638921` proved the URL handoff, isolated Worker/D1 binding, sandbox
+posture, encrypted UAT secret installation and idempotent employee seed. Hosted certification then
+failed closed because the active version's deployment message was empty. The deploy itself had carried
+the expected `staging 9818da38806ce1e335db1fe2f1262f5a090175c4` message, but each subsequent
+`wrangler secret put` creates and immediately deploys a new Worker version. The certification was
+therefore correctly inspecting a newer, unattributed version rather than the version just built.
+
+Classification: confirmed deployment-workflow code defect. The correction uploads the three UAT
+credentials as encrypted bindings in the same `wrangler deploy --secrets-file` operation as the code
+and exact-SHA message. The temporary owner-readable JSON file is created from masked Actions secrets,
+never logged or uploaded, and removed by an EXIT trap. Cloudflare documents that secrets omitted from
+the file remain preserved. A permanent regression forbids a later `wrangler secret put` and requires
+the secrets file on the attributed deployment command.
+
+### E2E100-DEPLOY-004 — hosted staff probe used a non-existent role column
+
+The same run loaded `employee-seed.sql` successfully, but all three post-seed staff probes failed to
+execute. The first incorrect read was the certification query joining and selecting
+`role_definitions.role_code`; the canonical table is keyed by `role_definitions.code`. This was a
+certification defect, not missing staff data.
+
+Classification: confirmed certification code defect. The query now joins `r.code=u.role_code` and
+aliases `r.code AS role_code`. Its permanent behavioural regression executes the production query
+against an in-memory database with the canonical `app_users` and `role_definitions` schemas. Focused
+staging/auth result: **59/59 passed**. Full staging/release gate result: **169/169 passed**. The
+customer/demo seed remains intentionally paused until a new exact-head staging run fully certifies.

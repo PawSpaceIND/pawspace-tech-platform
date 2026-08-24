@@ -162,26 +162,38 @@ test("real execution: no credential appears in the deploy output", () => {
 });
 
 test("the workflow supplies all three from GitHub secrets", () => {
+  const deployStep = workflow.slice(workflow.indexOf("- name: Deploy to staging"), workflow.indexOf("- name: Certify deployed isolation"));
   for (const name of ["PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"]) {
     assert.match(workflow, new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`), `${name} must come from secrets.${name}`);
+    assert.match(deployStep, new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`), `${name} must be in scope for the one attributed deploy`);
     assert.doesNotMatch(workflow, new RegExp(`${name}:\\s*\\$\\{\\{\\s*vars\\.${name}`), `${name} must not come from a repository VARIABLE, which is not secret`);
   }
 });
 
 test("the workflow installs all three as Cloudflare Worker SECRETS, not plain vars", () => {
-  // The runtime credentials must reach the Worker through `wrangler secret put` (encrypted secret
-  // bindings), never through the serialized wrangler.json. Deploy remains from the repo ROOT.
-  assert.match(workflow, /wrangler\s+secret\s+put/, "the workflow must install the credentials as Worker secrets");
+  // The runtime credentials reach the Worker through Wrangler's encrypted secrets file, never through
+  // the serialized wrangler.json. This must be the SAME deploy that carries the exact-SHA message:
+  // `wrangler secret put` creates and deploys a newer version and would erase that attribution.
+  assert.match(workflow, /wrangler\s+deploy[^\n]*--secrets-file\s+"\$SECRETS_FILE"/, "the deploy must upload encrypted Worker secrets with the code");
+  assert.doesNotMatch(workflow, /wrangler\s+secret\s+put/, "the workflow must not create a later unattributed Worker version");
   for (const name of ["PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"]) {
     assert.match(workflow, new RegExp(name), `${name} must be provisioned by the deploy workflow`);
   }
-  assert.match(workflow, /--name\s+pawspace-staging/, "secrets are put onto the pawspace-staging worker");
-  // The value is piped over stdin, never passed as a shell argument that could land in a process
-  // listing or a build log.
-  assert.match(workflow, /printf\s+'%s'\s+"\$\{!name\}"\s*\|\s*npx\s+wrangler\s+secret\s+put/, "secret values must be piped over stdin, not echoed");
+  assert.match(workflow, /writeFileSync\(process\.env\.SECRETS_FILE, JSON\.stringify\(values\), \{ mode: 0o600 \}\)/,
+    "the temporary secrets file must be owner-readable only and populated without echoing values");
+  assert.match(workflow, /trap 'rm -f "\$SECRETS_FILE"' EXIT/, "the temporary secrets file must always be removed");
   // Root deploy is preserved; the obsolete dist/server deploy must not reappear.
   assert.match(workflow, /npx wrangler deploy/, "the workflow must deploy through Wrangler");
   assert.doesNotMatch(workflow, /cd dist\/server && npx wrangler deploy/, "the obsolete dist/server deploy path must not return");
+});
+
+test("the documented terminal deploy stops before Wrangler when setup or validation fails", () => {
+  const guide = read("docs/STAGING_DEPLOY.md");
+  const terminal = guide.slice(guide.indexOf("### Path B — from a terminal"), guide.indexOf("## Optional integrations"));
+  assert.match(terminal, /```bash\s+set -euo pipefail\s+npm run install:ci/,
+    "the terminal block must enable fail-fast mode before its first command");
+  assert.match(terminal, /node scripts\/stage-config\.mjs[\s\S]*npx wrangler deploy/,
+    "configuration validation must run before deployment");
 });
 
 // ---------------------------------------------------------------------------

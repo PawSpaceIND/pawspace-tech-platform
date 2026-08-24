@@ -62,6 +62,12 @@ export const REQUIRED_STAFF_IDENTITIES = [
   { email: "manager@pawspace.in", role: "manager" },
 ];
 
+/** Build the read-only staff probe against the canonical role_definitions(code) schema. */
+export function staffIdentityQuery(email) {
+  const escaped = String(email).replaceAll("'", "''");
+  return `SELECT u.email, u.status, r.code AS role_code FROM app_users u LEFT JOIN role_definitions r ON r.code=u.role_code WHERE u.email='${escaped}'`;
+}
+
 /**
  * The smoke pack. Each route must answer for a real staff session AND refuse an anonymous caller: a
  * route that answers 200 to everyone is worse than one that is down. Reads only - certification must
@@ -227,7 +233,7 @@ export async function runStagingCertification({ http, d1, deployedConfig, liveVe
   for (const identity of REQUIRED_STAFF_IDENTITIES) {
     let seeded = false;
     try {
-      const rows = await d1(`SELECT u.email, u.status, r.role_code FROM app_users u LEFT JOIN role_definitions r ON r.role_code=u.role_code WHERE u.email='${identity.email}'`);
+      const rows = await d1(staffIdentityQuery(identity.email));
       const row = rows?.[0];
       seeded = Boolean(row && String(row.status) === "active" && String(row.role_code || "") === identity.role);
       check(`seed: ${identity.role} is an active staff record with a role definition`, seeded,
