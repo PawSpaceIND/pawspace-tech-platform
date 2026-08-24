@@ -1,3 +1,4 @@
+// Runtime regression: broad Customer 360 contact is manager-only; provider contact remains booking-scoped.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
