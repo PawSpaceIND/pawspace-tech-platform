@@ -13,7 +13,9 @@ test("Razorpay adapter is environment-aware and fails closed", () => {
   assert.match(client, /if \(!keyId \|\| !keySecret\) return \{ connected: false/);
   assert.match(client, /RAZORPAY_KEY_ID_SANDBOX/);
   assert.match(client, /env\?\.RAZORPAY_KEY_ID\b/);
-  assert.match(client, /https:\/\/api\.razorpay\.com\/v1\/orders/);
+  assert.match(client, /const RAZORPAY_API = "https:\/\/api\.razorpay\.com"/);
+  assert.match(client, /providerRequest\(env, environment, "\/v1\/orders"/);
+  assert.match(client, /AbortController/);
 });
 
 test("Verify-first: prepaid online bookings cannot self-capture in LIVE mode (sandbox unchanged)", () => {

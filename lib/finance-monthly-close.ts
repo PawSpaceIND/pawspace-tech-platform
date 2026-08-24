@@ -22,6 +22,7 @@ export async function ensureMonthlyCloseTables(db:Db){
  await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS finance_monthly_closes (period TEXT PRIMARY KEY,status TEXT NOT NULL DEFAULT 'open',snapshot_json TEXT NOT NULL DEFAULT '{}',closed_by TEXT,closed_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS finance_close_events (id TEXT PRIMARY KEY,period TEXT NOT NULL,event_type TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),
+  db.prepare("CREATE TABLE IF NOT EXISTS finance_close_periods (period_code text PRIMARY KEY NOT NULL,status text DEFAULT 'open' NOT NULL,checklist_json text NOT NULL,locked_at integer,locked_by text,updated_at integer NOT NULL)"),
  ]);
  closeTablesEnsured.add(db);
 }
@@ -60,7 +61,7 @@ export async function monthlyCloseView(db:Db,input:{period:string;actorId:string
  // GST: output tax from issued invoices in the month; input tax only where the vendor review
  // approved eligibility (never claim unreviewed input credit).
  const output=await safeFirst(db,"SELECT COALESCE(SUM(tax_total),0) tax,COUNT(*) count FROM finance_invoices WHERE issue_date>=? AND issue_date<? AND status!='cancelled'",[startDate,endDate]);
- const input_=await safeFirst(db,"SELECT COALESCE(SUM(r.eligible_tax_amount),0) tax FROM finance_vendor_tax_reviews r JOIN finance_bills b ON b.id=r.bill_id WHERE r.review_status='approved' AND b.bill_date>=? AND b.bill_date<?",[startDate,endDate]);
+ const input_=await safeFirst(db,"SELECT COALESCE(SUM(r.eligible_tax_amount),0) tax FROM finance_vendor_tax_reviews r JOIN finance_bills b ON b.id=r.bill_id WHERE r.review_status='eligible' AND b.bill_date>=? AND b.bill_date<?",[startDate,endDate]);
  const gst={outputTax:round2(Number(output?.tax||0)),eligibleInputTax:round2(Number(input_?.tax||0)),netPayable:0,invoiceCount:Number(output?.count||0)};
  gst.netPayable=round2(Math.max(0,gst.outputTax-gst.eligibleInputTax));
 
@@ -106,7 +107,11 @@ export async function closeMonth(db:Db,input:{period:string;actorId:string;asOf?
  const result=await db.prepare("UPDATE finance_monthly_closes SET status='closed',closed_by=?,closed_at=?,snapshot_json=?,updated_at=? WHERE period=? AND status!='closed'")
   .bind(input.actorId,now,JSON.stringify({...view,status:"closed",closedBy:input.actorId,closedAt:now}),now,input.period).run();
  if(!Number(result.meta.changes))throw new Response(`${input.period} is already closed and locked`,{status:409});
- await db.prepare("INSERT INTO finance_close_events (id,period,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?)")
-  .bind(`FCE-${crypto.randomUUID().slice(0,10).toUpperCase()}`,input.period,"closed",input.actorId,JSON.stringify({revenue:view.revenue.total,gstNetPayable:view.gst.netPayable,tds:view.tds.total}),now).run();
+ await db.batch([
+  db.prepare("INSERT INTO finance_close_periods (period_code,status,checklist_json,locked_at,locked_by,updated_at) VALUES (?,'locked',?,?,?,?) ON CONFLICT(period_code) DO UPDATE SET status='locked',checklist_json=excluded.checklist_json,locked_at=excluded.locked_at,locked_by=excluded.locked_by,updated_at=excluded.updated_at")
+   .bind(input.period,JSON.stringify(view.checklist),now,input.actorId,now),
+  db.prepare("INSERT INTO finance_close_events (id,period,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?)")
+   .bind(`FCE-${crypto.randomUUID().slice(0,10).toUpperCase()}`,input.period,"closed",input.actorId,JSON.stringify({revenue:view.revenue.total,gstNetPayable:view.gst.netPayable,tds:view.tds.total}),now),
+ ]);
  return{period:input.period,status:"closed" as const,closedBy:input.actorId,closedAt:now};
 }
