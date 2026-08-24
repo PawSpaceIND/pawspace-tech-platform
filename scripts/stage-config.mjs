@@ -79,7 +79,7 @@ cfg.d1_databases = [{ binding: "DB", database_name: "pawspace-staging", database
 // validated above (fail-closed) but are DELIBERATELY NOT written here: wrangler.json is a generated
 // deploy artifact, and anything under `vars` becomes a plaintext Worker variable readable in the
 // dashboard, in the file, and in any build log that echoes it. The credentials are installed into the
-// Worker runtime as Cloudflare Worker SECRETS (`wrangler secret put`) by the deploy step instead.
+// Worker runtime as Cloudflare Worker SECRETS (`wrangler deploy --secrets-file`) by the deploy step.
 cfg.vars = {
   ...(cfg.vars || {}),
   PAWSPACE_PAYMENT_ENV: "sandbox",
@@ -93,4 +93,4 @@ writeFileSync(path, JSON.stringify(cfg));
 // Report only what is safe to read in a build log. The access code used to be printed here, which put
 // it in every CI log for anyone with repository read access.
 console.log(`Staging config written → name=pawspace-staging, DB=${d1Id}, PAWSPACE_PAYMENT_ENV=sandbox, UAT_LOGIN=on`);
-console.log("UAT credentials were validated from the environment, are NOT written to wrangler.json, and are installed separately as Cloudflare Worker secrets — nothing secret is logged.");
+console.log("UAT credentials were validated from the environment, are NOT written to wrangler.json, and are uploaded as Cloudflare Worker secrets — nothing secret is logged.");

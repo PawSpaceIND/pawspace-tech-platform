@@ -12,10 +12,11 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import {
   runStagingCertification, assertStagingIsolation, stagingEvidenceArtifact, StagingIsolationRefused,
   STAGING_SECRET_NAMES, SMOKE_ROUTES, REQUIRED_STAFF_IDENTITIES, activeVersionId,
-  deployedConfigFromVersion, versionMessage, runStagingIsolationPreflight, isMainModule,
+  deployedConfigFromVersion, versionMessage, runStagingIsolationPreflight, staffIdentityQuery, isMainModule,
 } from "./e2e/staging-certification.mjs";
 import { pathToFileURL } from "node:url";
 
@@ -64,6 +65,19 @@ function world(over = {}) {
   return { ...base, ...over };
 }
 const failed = (report, fragment) => report.checks.filter(check => !check.ok && check.name.includes(fragment));
+
+test("the hosted staff verification query executes against the canonical role schema", () => {
+  const sqlite = new DatabaseSync(":memory:");
+  sqlite.exec("CREATE TABLE app_users (email TEXT PRIMARY KEY, status TEXT NOT NULL, role_code TEXT NOT NULL)");
+  sqlite.exec("CREATE TABLE role_definitions (code TEXT PRIMARY KEY, permissions_json TEXT NOT NULL)");
+  sqlite.prepare("INSERT INTO app_users VALUES (?,?,?)").run("founder@pawspace.in", "active", "founder");
+  sqlite.prepare("INSERT INTO role_definitions VALUES (?,?)").run("founder", "[\"*\"]");
+
+  assert.deepEqual(
+    { ...sqlite.prepare(staffIdentityQuery("founder@pawspace.in")).get() },
+    { email: "founder@pawspace.in", status: "active", role_code: "founder" },
+  );
+});
 
 // ---------------------------------------------------------------------------
 // Isolation refuses rather than reports
@@ -408,6 +422,10 @@ test("the staging workflow deploys an exact sha, records a rollback target and r
   assert.match(workflow, /git status --porcelain/, "a dirty tree must not be deployed");
   assert.match(workflow, /wrangler deploy --message "staging \$\{\{ github\.event\.inputs\.expected_sha \}\}"/,
     "the deploy message is what makes the deployed version attributable to a sha, and certification matches it exactly");
+  assert.match(workflow, /wrangler deploy[^\n]*--secrets-file "\$SECRETS_FILE"/,
+    "code and UAT secrets must be uploaded in one attributed Worker version");
+  assert.doesNotMatch(workflow, /wrangler secret put/,
+    "secret put creates and deploys a newer unattributed version after the exact-sha deployment");
   assert.match(workflow, /id: deploy[\s\S]*wrangler deploy[\s\S]*tee deployment\.txt/,
     "the authoritative workers.dev URL must be captured from the successful deploy output");
   assert.match(workflow, /STAGING_URL: \$\{\{ steps\.deploy\.outputs\.staging_url \}\}/,

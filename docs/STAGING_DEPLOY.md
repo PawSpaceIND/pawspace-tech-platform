@@ -6,7 +6,7 @@ its own Worker (`pawspace-staging`), its own D1, sandbox posture. A **free** Clo
 
 How this app deploys: `npm run build` (vinext) emits **`dist/server/wrangler.json`** (main `index.js`,
 assets `../client`, D1 binding `DB`, 5-min cron). We patch that generated config for staging, then
-`wrangler deploy` from `dist/server`. `scripts/stage-config.mjs` does the patch.
+`wrangler deploy` from the repository root. `scripts/stage-config.mjs` does the patch.
 
 > You run this with **your** Cloudflare account. Secrets go in `wrangler secret put` or GitHub Actions
 > secrets — **never pasted into chat**.
@@ -32,9 +32,9 @@ Add in GitHub → Settings → Secrets and variables → Actions:
 - **Variable:** `STAGING_D1_ID` = the id from step 3
 
 Then: **Actions → "Deploy staging" → Run workflow →** type `staging` → Run.
-It builds, patches the config (non-secret settings only), deploys, and then installs the three UAT
-credentials into the Worker as encrypted **secrets** (`wrangler secret put`) — they are never written
-into `wrangler.json` and never printed. The run log prints your URL:
+It builds, patches the config (non-secret settings only), and uploads code plus the three UAT
+credentials in one attributed Worker version using `wrangler deploy --secrets-file`. They remain
+encrypted **secrets**, are never written into `wrangler.json`, and are never printed. The run log prints your URL:
 `https://pawspace-staging.<your-subdomain>.workers.dev`
 
 ### Path B — from a terminal
@@ -49,12 +49,16 @@ export PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT=…        # openssl rand -hex 32
 npm run build
 node scripts/stage-config.mjs            # validates the 3 UAT credentials (fail-closed) and patches
                                          # dist/server/wrangler.json — NON-SECRET settings only
-npx wrangler deploy                      # from the repo ROOT (the build writes a deploy redirect;
-                                         # deploying from dist/server makes wrangler refuse)
-# Install the three UAT credentials as Worker SECRETS (never plain vars, never echoed):
-for name in PAWSPACE_UAT_ACCESS_CODE PAWSPACE_UAT_SIGNING_KEY PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT; do
-  printf '%s' "${!name}" | npx wrangler secret put "$name" --name pawspace-staging
-done
+SECRETS_DIR="$(mktemp -d)"
+SECRETS_FILE="$SECRETS_DIR/secrets.json"
+export SECRETS_FILE
+trap 'rm -rf "$SECRETS_DIR"' EXIT
+node --input-type=module -e '
+  import { writeFileSync } from "node:fs";
+  const names = ["PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"];
+  writeFileSync(process.env.SECRETS_FILE, JSON.stringify(Object.fromEntries(names.map(name => [name, process.env[name]]))), { mode: 0o600 });
+'
+npx wrangler deploy --secrets-file "$SECRETS_FILE" # from the repo ROOT; secrets are encrypted bindings
 ```
 
 ---
@@ -68,7 +72,7 @@ PAWSPACE_AI_PROVIDER_API_KEY            (then set AI rollout to staff_only at /t
 
 The staging UAT sign-in needs three credentials, supplied as GitHub Actions **secrets**.
 `scripts/stage-config.mjs` validates them (fail-closed) but never writes them into `wrangler.json`; the
-deploy installs them into the Worker runtime as encrypted **secrets** (`wrangler secret put`). There are
+deploy uploads them with the code as encrypted **secrets** (`wrangler deploy --secrets-file`). There are
 no defaults: the deploy fails closed without them, refuses a value below its minimum length, and refuses
 the three values that were once committed to this repository (they are public now, so re-supplying one
 would restore the defect). Generate each fresh:
