@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: one-shot-canonical-pr
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   apply-fix:
@@ -53,7 +53,7 @@ jobs:
           set -euo pipefail
           git show 9412d1eb3c676a897bd638885f887472cc61487f:.github/workflows/master-zero-gap-audit.yml > .github/workflows/master-zero-gap-audit.yml
           git rm .github/workflows/one-shot-canonical-booking-guard.yml .github/workflows/one-shot-canonical-pr.yml
-          git add lib/api-gateway.ts app/api/canonical-bookings/route.ts tests/canonical-bookings-gateway-authorization.test.mjs tests/route-authorization-class.test.mjs .github/workflows/master-zero-gap-audit.yml
+          git add lib/api-gateway.ts app/api/canonical-bookings/route.ts tests/canonical-bookings-gateway-authorization.test.mjs tests/route-authorization-class.test.mjs tests/grooming-golden-journey.test.mjs .github/workflows/master-zero-gap-audit.yml
           git config user.name "PawSpace zero-gap fixer"
           git config user.email "actions@pawspace.in"
           git commit -m "fix: restrict platform-wide canonical booking access"
