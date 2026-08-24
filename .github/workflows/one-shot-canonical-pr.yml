@@ -25,15 +25,18 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - name: Apply reviewed patch
+      - name: Apply reviewed patches
         shell: bash
         run: |
           set -euo pipefail
           sed -n "/cat > \/tmp\/canonical-booking-guard.patch <<'PATCH'/,/^          PATCH$/p" .github/workflows/one-shot-canonical-booking-guard.yml \
             | sed '1d;$d;s/^          //' > /tmp/canonical-booking-guard.patch
           test -s /tmp/canonical-booking-guard.patch
+          test -s scripts/canonical-booking-guard-followup.patch
           git apply --check /tmp/canonical-booking-guard.patch
           git apply /tmp/canonical-booking-guard.patch
+          git apply --check scripts/canonical-booking-guard-followup.patch
+          git apply scripts/canonical-booking-guard-followup.patch
           git diff --check
       - name: Install and verify
         shell: bash
@@ -52,7 +55,7 @@ jobs:
         run: |
           set -euo pipefail
           git show 9412d1eb3c676a897bd638885f887472cc61487f:.github/workflows/master-zero-gap-audit.yml > .github/workflows/master-zero-gap-audit.yml
-          git rm .github/workflows/one-shot-canonical-booking-guard.yml .github/workflows/one-shot-canonical-pr.yml
+          git rm .github/workflows/one-shot-canonical-booking-guard.yml .github/workflows/one-shot-canonical-pr.yml scripts/canonical-booking-guard-followup.patch
           git add lib/api-gateway.ts app/api/canonical-bookings/route.ts tests/canonical-bookings-gateway-authorization.test.mjs tests/route-authorization-class.test.mjs tests/grooming-golden-journey.test.mjs .github/workflows/master-zero-gap-audit.yml
           git config user.name "PawSpace zero-gap fixer"
           git config user.email "actions@pawspace.in"
