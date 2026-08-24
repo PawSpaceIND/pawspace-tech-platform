@@ -3,6 +3,7 @@ import { requestPartnerOtp, verifyPartnerOtp } from "../../../lib/partner-otp";
 import { upsertIdentityBinding } from "../../../lib/identity-binding";
 import { issuePlatformSession, platformSessionCookie } from "../../../lib/platform-session";
 import { verifyIdentityAssertion } from "../../../lib/verified-identity-assertion";
+import { uatLoginEnabled } from "../../../lib/uat-staging-auth";
 
 const json = (value: unknown, status = 200, headers?: HeadersInit) => Response.json(value, { status, headers });
 function sameOriginWrite(request: Request) {
@@ -17,15 +18,20 @@ function failure(error: unknown) {
 export async function POST(request: Request) {
   try {
     sameOriginWrite(request);
-    const db = await database();
     const body = (await request.json()) as { action?: string; phone?: string; challengeId?: string; code?: string; name?: string; cityId?: string };
     if (body.action === "request") {
       if (!body.phone) return json({ error: "Phone number is required" }, 400);
+      const { env } = await import("cloudflare:workers");
+      if (!uatLoginEnabled(env as unknown as Record<string, unknown>)) {
+        return json({ error: "OTP delivery is not configured for this environment" }, 503, { "cache-control": "no-store" });
+      }
+      const db = await database();
       const result = await requestPartnerOtp(db, { phone: body.phone });
-      return json({ data: result });
+      return json({ data: result }, 200, { "cache-control": "no-store" });
     }
     if (body.action === "verify") {
       if (!body.challengeId || !body.code) return json({ error: "Challenge and code are required" }, 400);
+      const db = await database();
       const { assertion, providerId, providerName, phone } = await verifyPartnerOtp(db, { challengeId: body.challengeId, code: body.code, name: body.name, cityId: body.cityId });
       const verified = await verifyIdentityAssertion(db, assertion);
       const binding = await upsertIdentityBinding(db, {
