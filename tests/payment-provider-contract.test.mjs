@@ -54,7 +54,7 @@ test("external Razorpay contract: accepted order and payment-link responses pres
   try {
     const env = environment(server.url);
     const order = await client.createPaymentOrder(env, { bookingId: "BK-CONTRACT", paymentId: "PAY-ORDER-ACCEPT", amount: 1149, currency: "INR" });
-    const link = await client.createSandboxPaymentLink(env, { bookingId: "BK-CONTRACT", paymentId: "PAY-LINK-ACCEPT", customerId: "CUS-CONTRACT", amount: 1149, currency: "INR" });
+    const link = await client.createSandboxPaymentLink(env, { bookingId: "BK-CONTRACT", paymentId: "PAY-LINK-ACCEPT", referenceId: "PAY-LINK-ACCEPT", customerId: "CUS-CONTRACT", amount: 1149, currency: "INR", expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
     assert.equal(order.connected, true, JSON.stringify(order));
     assert.equal(link.connected, true, JSON.stringify(link));
     assert.match(String(order.order.id), /^order_contract_test_/);
@@ -97,7 +97,7 @@ test("external Razorpay contract: invalid provider responses are rejected", asyn
   const server = await contractServer();
   try {
     const order = await client.createPaymentOrder(environment(server.url), { bookingId: "BK-CONTRACT", paymentId: "PAY-INVALID", amount: 500, currency: "INR" });
-    const link = await client.createSandboxPaymentLink(environment(server.url), { bookingId: "BK-CONTRACT", paymentId: "LINK-INVALID", customerId: "CUS-CONTRACT", amount: 500, currency: "INR" });
+    const link = await client.createSandboxPaymentLink(environment(server.url), { bookingId: "BK-CONTRACT", paymentId: "LINK-INVALID", referenceId: "LINK-INVALID", customerId: "CUS-CONTRACT", amount: 500, currency: "INR", expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
     assert.equal(order.connected, false);
     assert.match(order.reason, /did not return an order id/i);
     assert.equal(link.connected, false);

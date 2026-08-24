@@ -26,6 +26,16 @@ The preserved demo seed SQL and generator were not overwritten or weakened.
 - Both public callback boundaries remain explicitly allow-listed in the API gateway: provider verification and communications-provider callbacks.
 - T3 case 073 referenced a pre-convergence filename. The same named Gate 7 behavioral contract now lives in `tests/ai-evaluation-security-source-contract.test.mjs`; the matrix path was corrected without changing product behavior or weakening the assertion.
 
+## Convergence defects fixed
+
+### E2E100-CONV-001 — payment contract test escaped to the real provider hostname
+
+Classification: confirmed convergence code defect. The first exact-head Web run (`32700988399`) proved that T4's external contract tests were present but its guarded transport had been lost during conflict resolution. Five contract cases consequently reached `api.razorpay.com` and failed with HTTP 401 instead of reaching their loopback server. No successful provider action or money movement occurred.
+
+Correction: restore the bounded provider request layer while retaining the newer canonical payment-link behavior. A custom endpoint is now accepted only when all three conditions hold: sandbox environment, explicit contract-test flag and a loopback HTTP(S) hostname. Requests have a bounded timeout, redirect refusal and a 65,536-byte response ceiling. The permanent provider suite proves accepted order/link responses; HTTP 400/401/429/500/503; timeout; network failure; invalid responses; and refusal of non-contract/live overrides.
+
+Focused retest: **19/19 passed** across provider contract, verify-first and post-service payment-link suites. Full E2E100 retest: **102/102 passed**.
+
 ## Combined execution result
 
 Command:
@@ -56,7 +66,7 @@ Result: **102/102 passed** — all 100 E2E100 business cases plus the T3 and T4 
 | Build | PASS |
 | Artifact validation | PASS |
 | Local `npm test` aggregate | MANAGED-ENVIRONMENT BLOCKER — command launch was intercepted before test execution because the workspace does not permit the listener/provider-capable aggregate command |
-| Exact-head Release CI | PENDING final convergence PR; this is the authoritative Web plus real Wrangler/D1 listener gate |
+| Exact-head Release CI | RERUN REQUIRED — run `32700988399` exposed E2E100-CONV-001; corrected PR head must pass all jobs |
 
 ## External and policy boundaries
 
