@@ -408,6 +408,12 @@ test("the staging workflow deploys an exact sha, records a rollback target and r
   assert.match(workflow, /git status --porcelain/, "a dirty tree must not be deployed");
   assert.match(workflow, /wrangler deploy --message "staging \$\{\{ github\.event\.inputs\.expected_sha \}\}"/,
     "the deploy message is what makes the deployed version attributable to a sha, and certification matches it exactly");
+  assert.match(workflow, /id: deploy[\s\S]*wrangler deploy[\s\S]*tee deployment\.txt/,
+    "the authoritative workers.dev URL must be captured from the successful deploy output");
+  assert.match(workflow, /STAGING_URL: \$\{\{ steps\.deploy\.outputs\.staging_url \}\}/,
+    "hosted certification must receive the URL captured by the deploy step");
+  assert.doesNotMatch(workflow, /wrangler deployments status --name pawspace-staging/,
+    "deployment status does not report the workers.dev URL and must not be used to resolve it");
   assert.match(workflow, /deployments list --name pawspace-staging/, "a rollback reference must be captured before the deploy");
   assert.match(workflow, /node tests\/e2e\/staging-certification\.mjs/, "the deploy must run certification");
   assert.match(workflow, /upload-artifact/, "the sanitized evidence must be uploaded");
