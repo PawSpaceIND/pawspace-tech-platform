@@ -954,3 +954,173 @@ test("a non-abort body parse failure still degrades quietly", async () => {
     assert.doesNotMatch(result.error, /did not respond within/);
   } finally { globalThis.fetch = original; }
 });
+
+// =====================================================================================================
+// PR #305 FINAL TWO FINDINGS - malformed metric types, and the monotonic rule under concurrency
+// =====================================================================================================
+
+test("REVIEW: malformed metric TYPES are refused before any numeric coercion", async () => {
+  // Number() is not a validator. Number(null), Number(""), Number(false) and Number([]) are all 0, so a
+  // route carrying "distanceMeters": null passed a finite/non-negative check and was reported configured
+  // with a distance of zero the provider never sent. seconds() stringifies, so ["90s"] coerced too.
+  // Measured before the fix: all five below returned status "configured".
+  world({ GOOGLE_MAPS_SERVER_API_KEY_UAT: "uat-key-placeholder" });
+  const { computeGoogleRoute } = await import("../lib/grooming-maps.ts");
+  const original = globalThis.fetch;
+  try {
+    for (const route of [
+      { distanceMeters: null, duration: "90s" },
+      { distanceMeters: "", duration: "90s" },
+      { distanceMeters: false, duration: "90s" },
+      { distanceMeters: [], duration: "90s" },
+      { distanceMeters: {}, duration: "90s" },
+      { distanceMeters: "1250", duration: "90s" },
+      { distanceMeters: 1250, duration: ["90s"] },
+      { distanceMeters: 1250, duration: 90 },
+      { distanceMeters: 1250, duration: null },
+    ]) {
+      globalThis.fetch = async () => new Response(JSON.stringify({ routes: [route] }), { status: 200 });
+      const result = await computeGoogleRoute({ lat: 12.97, lng: 77.59 }, "1 Example Road, Bengaluru");
+      assert.equal(result.status, "route_unavailable", JSON.stringify(route));
+      assert.equal(result.distanceMeters, undefined, `${JSON.stringify(route)} must not report a fabricated distance`);
+      assert.equal(result.durationSeconds, undefined, JSON.stringify(route));
+    }
+  } finally { globalThis.fetch = original; }
+});
+
+test("a genuine zero distance is still a route, and a complete response still passes", async () => {
+  // Non-vacuity on both sides of the type check: 0 is a legitimate numeric distance (arrival at the
+  // door), and a well-formed response must still come through with both measures intact.
+  world({ GOOGLE_MAPS_SERVER_API_KEY_UAT: "uat-key-placeholder" });
+  const { computeGoogleRoute } = await import("../lib/grooming-maps.ts");
+  const original = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response(JSON.stringify({ routes: [{ distanceMeters: 0, duration: "0s" }] }), { status: 200 });
+    const zero = await computeGoogleRoute({ lat: 12.97, lng: 77.59 }, "1 Example Road, Bengaluru");
+    assert.equal(zero.status, "configured", "a real numeric zero is not malformed");
+    assert.equal(zero.distanceMeters, 0);
+    assert.equal(zero.durationSeconds, 0);
+
+    globalThis.fetch = async () => new Response(JSON.stringify({ routes: [{ distanceMeters: 1250, duration: "90s", polyline: { encodedPolyline: "abc" } }] }), { status: 200 });
+    const full = await computeGoogleRoute({ lat: 12.97, lng: 77.59 }, "1 Example Road, Bengaluru");
+    assert.equal(full.status, "configured");
+    assert.equal(full.distanceMeters, 1250);
+    assert.equal(full.durationSeconds, 90);
+    assert.equal(full.polyline, "abc");
+  } finally { globalThis.fetch = original; }
+});
+
+/**
+ * A kyc world whose correlation SELECT can be paused, so two deliveries can be interleaved at a chosen
+ * point deterministically. No timers, no racing - the barrier is released explicitly by the test.
+ */
+async function interleavedKycWorld(initialStatus) {
+  const sqlite = new DatabaseSync(":memory:");
+  const base = makeD1(sqlite);
+  let armed = true, release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const db = {
+    ...base,
+    prepare(sql) {
+      const statement = base.prepare(sql);
+      if (!sql.includes("FROM provider_verifications WHERE provider_ref=?")) return statement;
+      const wrap = (inner) => ({
+        ...inner,
+        bind: (...bound) => wrap(statement.bind(...bound)),
+        first: async () => { const value = await inner.first(); if (armed) { armed = false; await gate; } return value; },
+      });
+      return wrap(statement);
+    },
+  };
+  globalThis.__PAWSPACE_TEST_ENV = { DB: db, IDFY_WEBHOOK_SECRET: WEBHOOK_SECRET };
+  const boundary = await import("../lib/idfy-callback-boundary.ts");
+  const mandate = await import("../lib/provider-verification-mandate.ts");
+  await mandate.ensureVerificationMandateTables(db);
+  await boundary.ensureIdfyCallbackTables(db);
+  for (const [id, type, ref] of [["PVER-1", "aadhaar", "IDFY-REQ-1"], ["PVER-2", "pan", "IDFY-REQ-2"]])
+    sqlite.prepare("INSERT INTO provider_verifications (id,application_id,category,verification_type,status,automated,provider_ref,detail_json,updated_by,created_at,updated_at) VALUES (?,'APP-1','groomer',?,?,1,?,'{}','ops',?,?)")
+      .run(id, type, initialStatus, ref, BASE, BASE);
+  const post = async (payload) => {
+    const rawBody = JSON.stringify(payload), stamp = String(Date.now());
+    const headers = new Headers();
+    headers.set(boundary.IDFY_SIGNATURE_HEADER, await boundary.idfyHmacHex(WEBHOOK_SECRET, `${stamp}.${rawBody}`));
+    headers.set(boundary.IDFY_TIMESTAMP_HEADER, stamp);
+    return boundary.applyIdfyCallback(db, globalThis.__PAWSPACE_TEST_ENV, { rawBody, headers });
+  };
+  const statusOf = (id = "PVER-1") => sqlite.prepare("SELECT status FROM provider_verifications WHERE id=?").get(id).status;
+  return { sqlite, db, mandate, post, statusOf, release: () => release() };
+}
+
+test("REVIEW: a stale nonterminal delivery cannot overwrite a verified one committed while it was in flight", async () => {
+  // Deterministic interleaving, not a timing hope. Delivery A (in_progress) is paused immediately after
+  // its correlation read; delivery B (verified) runs to completion; A then resumes and writes.
+  //
+  // Measured before the fix, from a `pending` start: A wrote manual_review over B's verified and
+  // canTakeAssignments went true -> false. The rule now lives in the UPDATE's WHERE clause, so there is
+  // no window between deciding and writing at all.
+  const world = await interleavedKycWorld("pending");
+  const a = world.post({ event_id: "RACE-A", request_id: "IDFY-REQ-1", status: "in_progress" });
+  await new Promise((resolve) => setImmediate(resolve));           // let A reach the barrier
+  const b = await world.post({ event_id: "RACE-B", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } });
+  assert.equal(b.outcome, "verified");
+  assert.equal(world.statusOf(), "verified", "B commits while A is paused");
+
+  world.release();
+  const resumed = await a;
+  assert.equal(world.statusOf(), "verified", "the stale nonterminal delivery must not overwrite the decision");
+  assert.equal(resumed.accepted, true, "A is still accepted so IDfy stops retrying it");
+  assert.equal(resumed.outcome, "verified", "A must report the state that actually stands, not the one it computed from a stale read");
+
+  // The declined event is still recorded, exactly once, and does not contradict storage.
+  const recorded = world.sqlite.prepare("SELECT outcome,accepted,rejection_reason FROM provider_verification_callbacks WHERE provider_event_id='RACE-A'").get();
+  assert.equal(recorded.accepted, 1);
+  assert.equal(recorded.outcome, "verified", "the evidence row must not claim an outcome the database never held");
+  assert.equal(recorded.rejection_reason, "nonterminal_manual_review_ignored_after_verified");
+  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM provider_verification_callbacks").get().n, 2, "two deliveries, two rows - no duplicate settlement");
+
+  await world.post({ event_id: "RACE-C", request_id: "IDFY-REQ-2", status: "completed", result: { verification_status: "verified" } });
+  assert.equal((await world.mandate.verificationMandateStatus(world.db, { applicationId: "APP-1", category: "groomer" })).canTakeAssignments, true,
+    "eligibility must survive the interleaving");
+});
+
+test("the same interleaving from a manual_review start is also consistent", async () => {
+  // The variant the review described. It never wrote - A computed the status it had already read - but
+  // it still REPORTED manual_review while storage said verified. The returned outcome, the evidence row
+  // and the database must agree.
+  const world = await interleavedKycWorld("manual_review");
+  const a = world.post({ event_id: "RACE2-A", request_id: "IDFY-REQ-1", status: "in_progress" });
+  await new Promise((resolve) => setImmediate(resolve));
+  await world.post({ event_id: "RACE2-B", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } });
+  world.release();
+  const resumed = await a;
+  assert.equal(world.statusOf(), "verified");
+  assert.equal(resumed.outcome, "verified", "the caller must never be told something the database does not say");
+  assert.equal(world.sqlite.prepare("SELECT outcome FROM provider_verification_callbacks WHERE provider_event_id='RACE2-A'").get().outcome, "verified");
+});
+
+test("a terminal delivery still wins the same interleaving", async () => {
+  // The rule must not become "first writer wins". A decision arriving late still lands.
+  const world = await interleavedKycWorld("pending");
+  const a = world.post({ event_id: "RACE3-A", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } });
+  await new Promise((resolve) => setImmediate(resolve));
+  await world.post({ event_id: "RACE3-B", request_id: "IDFY-REQ-1", status: "in_progress" });
+  world.release();
+  assert.equal((await a).outcome, "verified");
+  assert.equal(world.statusOf(), "verified", "the decision must land even though it resumed last");
+});
+
+test("the four sequential transition rules still hold after the atomic rewrite", async () => {
+  // Guards against the WHERE clause quietly becoming stricter than the rule it replaced.
+  const { submit, post, statusOf } = await kycWorld();
+  submit({ status: "pending" });
+  await post({ event_id: "TR-1", request_id: "IDFY-REQ-1", status: "in_progress" });
+  assert.equal(statusOf().status, "manual_review", "nonterminal -> nonterminal applies");
+  await post({ event_id: "TR-2", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } });
+  assert.equal(statusOf().status, "verified", "nonterminal -> terminal applies");
+  await post({ event_id: "TR-3", request_id: "IDFY-REQ-1", status: "in_progress" });
+  assert.equal(statusOf().status, "verified", "terminal -> nonterminal is ignored");
+  await post({ event_id: "TR-4", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "not_verified" } });
+  assert.equal(statusOf().status, "failed", "verified -> failed applies");
+  await post({ event_id: "TR-5", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } });
+  assert.equal(statusOf().status, "verified", "failed -> verified applies");
+});

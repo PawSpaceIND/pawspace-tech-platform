@@ -213,7 +213,7 @@ submission path and the callback path cannot be played off against each other.
 
 ## 2. Executable evidence
 
-`tests/lane2-core-integration-boundaries.test.mjs` — **64 tests, all executing real modules** against
+`tests/lane2-core-integration-boundaries.test.mjs` — **70 tests, all executing real modules** against
 `node:sqlite` through the repository's D1 shim.
 
 Counts below are enumerated from the file, not from memory. An earlier revision of this table claimed 45
@@ -229,8 +229,8 @@ test was added to make the total agree.
 | IDfy callback | 13 | approved · rejected · ambiguous→review · four forgery attempts · not-connected · stale and future signature · unknown reference · IDfy-off correlation · replay · manual/automated separation both directions · malformed body ordering · missing ids |
 | Assignment gating | 4 | partial mandate · full mandate then revocation · host mandate unsatisfiable by automation alone · empty mandate never reads as satisfied |
 | Location authorization | 1 | the exported action→permission map, and `requirePermission` ordered before any table creation |
-| **PR #305 review remediation** | **19** | the eight findings below, each executed against the defect before it was fixed |
-| **Total** | **64** | |
+| **PR #305 review remediation** | **25** | the ten findings below (two review rounds), each executed against the defect before it was fixed |
+| **Total** | **70** | |
 
 ---
 
@@ -302,6 +302,54 @@ malformed body into an exception.
 | F5 negative accuracy accepted again | 1 |
 | F6 incomplete route accepted as `configured` | 2 |
 | F7 `AbortError` swallowed from `response.json()` | 1 |
+
+### Second review round — two further findings, both validated by execution first
+
+| # | Finding | Measured **before** the fix |
+|---|---|---|
+| 9 | Maps coerced malformed metric **types** | `Number()` is not a validator: `Number(null)`, `Number("")`, `Number(false)` and `Number([])` are all `0`, so `{"distanceMeters": null, "duration": "90s"}` was reported **`configured`** carrying a distance of zero the provider never sent. `seconds()` stringifies, so `["90s"]` coerced to a valid duration the same way |
+| 10 | The monotonic rule was not concurrency-safe | read → decide → write left a window. Deterministic interleaving from a `pending` start: A (`in_progress`) reads, B (`verified`) commits, A resumes and writes `manual_review` over it — **`canTakeAssignments` true → false**, exactly what the rule exists to prevent |
+
+**9.** Type first, then range. Each metric must already *be* the type it claims before any range check
+means anything. A genuine numeric **zero** is still a route — arrival at the door — and a complete
+response still carries both measures through, so the check is pinned on both sides.
+
+**10.** Fixed with **one atomic conditional UPDATE**, not a re-read-and-retry: the rule now lives in the
+`WHERE` clause, so there is no window between deciding and writing at all. A terminal outcome may
+overwrite anything; a non-decision may only overwrite a row that has not been decided. **The rule is
+unchanged and no new status was introduced** — it simply moved to where it is enforced atomically
+instead of being computed from a read that can go stale. The effective stored status is then read back
+and used consistently for the evidence record, the supersession reason and the returned outcome, so a
+caller can never be told something the database does not say.
+
+A note on the reviewer's stated sequence: the exact interleaving described (A reading `manual_review`)
+never *wrote*, because `applied === current` meant no UPDATE was issued. It still reported
+`manual_review` while storage said `verified`. The same race **does** clobber from a `pending` start —
+the state `runProviderVerification` leaves when IDfy is not connected — and that is the case pinned
+here. Both variants are now covered.
+
+| Sabotage | Red |
+|---|---|
+| `Number()` coercion returns | 1 |
+| only the distance type check removed | 1 |
+| only the duration type check removed | 1 |
+| `WHERE` guard neutralised (condition always true) | 15 |
+| effective status not read back (returns `outcome`) | 4 |
+| nonterminal allowed to overwrite terminal | 15 |
+
+An existing gate caught the first shape of this fix. `tests/d1-in-clause-fanout` forbids assembling an
+`IN` list inside `lib/`, because a list built at runtime can outgrow D1's bound-parameter cap, and the
+atomic UPDATE's first draft generated `status NOT IN (?,?)` from the constant. That is a fixed
+two-element vocabulary and could not have grown — the gate's own comment allows exactly that case — but
+adding a name to an exemption list is a worse answer than not needing one. The guard is now an
+equivalent AND-chain of inequalities (`status` is `NOT NULL`, so the two forms mean the same thing),
+which needs no exemption and stays correct if the constant ever changes. **The gate was not modified.**
+
+Concurrency is proven by **controlled interleaving with an explicit barrier** — no timers and no racing:
+the correlation read is paused, the competing delivery is run to completion, and the paused delivery is
+then released. Three interleavings are covered (nonterminal-then-terminal, the reviewer's
+`manual_review` variant, and terminal-resuming-last), plus the four sequential transition rules, so the
+`WHERE` clause cannot quietly become stricter than the rule it replaced.
 
 **No gate was weakened and no review finding was dismissed.** `lib/integration-readiness.ts` remains
 untouched, the provider-availability cross-lane blocker remains documented only, and no provider adapter

@@ -136,7 +136,6 @@ export async function applyIdfyCallback(db: Db, env: Env, input: { rawBody: stri
   }
 
   const outcome = mapStatus(body);
-  const current = text(row.status);
   // MONOTONIC. IDfy delivery is asynchronous and unordered, so a callback that merely reports progress
   // can arrive AFTER the one carrying the decision. Applying it unconditionally rewrote a `verified`
   // row back to `manual_review`, and because assignment eligibility requires every mandated check to be
@@ -145,11 +144,30 @@ export async function applyIdfyCallback(db: Db, env: Env, input: { rawBody: stri
   // Only the two decided states are terminal, and both are the provider's own judgement: verified may
   // still become failed (a later revocation) and failed may still become verified (a correction). What
   // may never happen is a NON-decision overwriting a decision. No new status is introduced.
-  const applied = TERMINAL_VERIFICATION_STATUSES.includes(current) && !TERMINAL_VERIFICATION_STATUSES.includes(outcome) ? current : outcome;
-  if (applied !== current)
-    await db.prepare("UPDATE provider_verifications SET status=?,detail_json=?,updated_by='idfy_callback',updated_at=? WHERE id=?")
-      .bind(applied, JSON.stringify({ via: "idfy_callback", providerRef, eventId }), Date.now(), text(row.id)).run();
+  // ONE atomic conditional UPDATE. The rule lives in the WHERE clause, so there is no window between
+  // deciding and writing for a concurrent delivery to slip through: IDfy delivers callbacks in parallel,
+  // and read-decide-write let a stale nonterminal delivery commit over a `verified` that landed while it
+  // was in flight - measured, from a `pending` start, as canTakeAssignments going true -> false.
+  //
+  // A terminal outcome may overwrite anything (verified -> failed is a revocation, failed -> verified a
+  // correction; both are the provider's own judgement and both were already approved). A NON-decision
+  // may only overwrite a row that has not been decided. Same rule as before, expressed where it is
+  // enforced atomically rather than in a variable computed from a stale read. No new status.
+  // An AND-chain of inequalities rather than a NOT IN list, deliberately. tests/d1-in-clause-fanout
+  // forbids assembling an IN list in lib/ because a list built at runtime can outgrow D1's bound
+  // parameter cap. This one is a two-element compile-time constant and could not, but the equivalent
+  // chain (status is NOT NULL, so the two forms mean the same thing) needs no exemption at all, and
+  // stays correct if the constant ever changes.
+  const notDecided = TERMINAL_VERIFICATION_STATUSES.map(() => "status<>?").join(" AND ");
+  const outcomeIsTerminal = TERMINAL_VERIFICATION_STATUSES.includes(outcome) ? 1 : 0;
+  await db.prepare(`UPDATE provider_verifications SET status=?,detail_json=?,updated_by='idfy_callback',updated_at=? WHERE id=? AND (?=1 OR (${notDecided})) AND status!=?`)
+    .bind(outcome, JSON.stringify({ via: "idfy_callback", providerRef, eventId }), Date.now(), text(row.id), outcomeIsTerminal, ...TERMINAL_VERIFICATION_STATUSES, outcome).run();
+
+  // What actually stands, read back rather than assumed - `row.status` is now known to be stale. This
+  // one value is used for the evidence record, the supersession reason and the returned outcome, so a
+  // caller can never be told something the database does not say.
+  const effective = text((await db.prepare("SELECT status FROM provider_verifications WHERE id=?").bind(text(row.id)).first<Row>())?.status) || outcome;
   // Recorded either way - a superseded callback is evidence that it arrived and was declined.
-  await record(applied, true, applied === outcome ? null : `nonterminal_${outcome}_ignored_after_${current}`, applicationId, verificationType);
-  return { accepted: true, status: 200, applicationId, verificationType, outcome: applied, duplicate: false };
+  await record(effective, true, effective === outcome ? null : `nonterminal_${outcome}_ignored_after_${effective}`, applicationId, verificationType);
+  return { accepted: true, status: 200, applicationId, verificationType, outcome: effective, duplicate: false };
 }

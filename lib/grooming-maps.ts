@@ -45,7 +45,14 @@ export async function computeGoogleRoute(origin:ProviderPoint,destinationAddress
   // duration at all, and a non-numeric distanceMeters stored as NULL - incomplete evidence written into
   // route_eta_snapshots as though the provider had answered. Both measures must be present and sane
   // before this counts as a route.
-  const distanceMeters=Number(route.distanceMeters),durationSeconds=seconds(route.duration);
+  // TYPE FIRST, THEN RANGE. Number() is not a validator: Number(null), Number(""), Number(false) and
+  // Number([]) are all 0, so a route carrying `"distanceMeters": null` passed a finite/non-negative
+  // check and was reported as configured with a distance of zero the provider never sent. `seconds()`
+  // stringifies its argument, so ["90s"] coerced to a valid duration the same way. Each metric must
+  // already be the type it claims to be before any range check means anything.
+  const rawDistance=route.distanceMeters,rawDuration=route.duration;
+  const distanceMeters=typeof rawDistance==="number"&&Number.isFinite(rawDistance)?rawDistance:Number.NaN;
+  const durationSeconds=typeof rawDuration==="string"?seconds(rawDuration):undefined;
   if(!Number.isFinite(distanceMeters)||distanceMeters<0||!Number.isFinite(durationSeconds as number)||(durationSeconds as number)<0)
     return{status:"route_unavailable",error:"Routes API returned a route without a usable distance and duration"};
   return{status:"configured",provider:"google_routes",distanceMeters,durationSeconds,polyline:route.polyline?.encodedPolyline};}
