@@ -18,7 +18,7 @@ import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
 installWorkersHooks("__READINESS_DB__");
 
-function makeD1(sqlite) {
+function makeD1(sqlite, onPrepare = () => {}) {
   const statement = (sql, args) => ({
     bind: (...bound) => statement(sql, bound),
     first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
@@ -26,7 +26,7 @@ function makeD1(sqlite) {
     all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
   });
   return {
-    prepare: (sql) => statement(sql, []),
+    prepare: (sql) => { onPrepare(sql); return statement(sql, []); },
     batch: async (items) => {
       sqlite.exec("BEGIN");
       try { const out = []; for (const item of items) out.push(await item.run()); sqlite.exec("COMMIT"); return out; }
@@ -65,6 +65,23 @@ async function fresh() {
   return { sqlite, db };
 }
 const row = (sqlite, code) => sqlite.prepare("SELECT * FROM integration_registry WHERE integration_code=?").get(code);
+
+test("one readiness snapshot performs the registry bootstrap exactly once", async () => {
+  const sqlite = new DatabaseSync(":memory:");
+  let registryBootstrapCount = 0;
+  const db = makeD1(sqlite, sql => {
+    if (sql.startsWith("CREATE TABLE IF NOT EXISTS integration_registry")) registryBootstrapCount += 1;
+  });
+
+  const snapshot = await registry.readIntegrationReadinessSnapshot(db, {});
+
+  assert.equal(registryBootstrapCount, 1, "one hosted read must not repeat the remote D1 table/seed bootstrap");
+  assert.ok(snapshot.data.items.length > 0);
+  assert.ok(Array.isArray(snapshot.blockers));
+  assert.ok(Array.isArray(snapshot.audit));
+  assert.ok(Array.isArray(snapshot.evidenceRequests));
+  assert.deepEqual(snapshot.liveEvidence, []);
+});
 
 // ---------------------------------------------------------------------------
 // Credential presence is configuration only

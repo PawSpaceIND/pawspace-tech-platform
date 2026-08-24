@@ -1,5 +1,5 @@
 import{authError,database,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
-import{integrationLaunchBlockers,integrationLiveEvidence,integrationReadinessAudit,listIntegrationReadiness,openIntegrationEvidenceRequests,recordIntegrationLiveEvidence,requestIntegrationEvidence,updateIntegrationReadiness,type IntegrationEvidenceKind}from"../../../lib/integration-readiness";
+import{readIntegrationReadinessSnapshot,recordIntegrationLiveEvidence,requestIntegrationEvidence,updateIntegrationReadiness,type IntegrationEvidenceKind}from"../../../lib/integration-readiness";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin integration readiness write blocked",{status:403});}
@@ -8,7 +8,7 @@ export async function GET(request:Request){
   const actor=await resolveActor(request);requirePermission(actor,"launch.view");const db=await database();
   const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;
   const url=new URL(request.url),integrationCode=String(url.searchParams.get("integrationCode")||"").trim();
-  const[data,blockers,audit,evidenceRequests,liveEvidence]=await Promise.all([listIntegrationReadiness(db,runtime),integrationLaunchBlockers(db),integrationReadinessAudit(db,integrationCode||undefined),openIntegrationEvidenceRequests(db),integrationCode?integrationLiveEvidence(db,integrationCode):Promise.resolve([])]);
+  const{data,blockers,audit,evidenceRequests,liveEvidence}=await readIntegrationReadinessSnapshot(db,runtime,integrationCode||undefined);
   return json({data,blockers,audit,evidenceRequests,liveEvidence,productionReady:false});
  }catch(error){return authError(error,"Unable to load integration readiness");}
 }

@@ -135,3 +135,35 @@ aliases `r.code AS role_code`. Its permanent behavioural regression executes the
 against an in-memory database with the canonical `app_users` and `role_definitions` schemas. Focused
 staging/auth result: **59/59 passed**. Full staging/release gate result: **169/169 passed**. The
 customer/demo seed remains intentionally paused until a new exact-head staging run fully certifies.
+
+### E2E100-DEPLOY-005 — hosted certification identities, route inventory and D1 bootstrap drift
+
+Exact-main staging run `32708846267` deployed merge SHA
+`2ab210a999f2926b8441b043c9ebc88255d4b623` to the isolated staging Worker. Exact checkout, build,
+staging configuration, rollback capture, deployment, D1-isolation preflight and the staff-directory seed
+all passed. Hosted certification then failed closed at **11/16**; evidence artifact
+`staging-certification-2ab210a999f2926b8441b043c9ebc88255d4b623` was retained by job
+`97375762296`. The customer/demo seed was not started and human UAT remained closed.
+
+Three confirmed code defects were separated from account/provider blockers:
+
+1. Certification probed `admin@pawspace.in` and `manager@pawspace.in`, but neither identity is advertised
+   by the staging login or present in the canonical employee seed. The gate now certifies all five
+   advertised, active identities and their actual roles: founder, Finance, manager, service provider and
+   associate. A regression requires every certification identity to exist in both the login surface and
+   active `app_users` seed rows.
+2. The smoke pack requested `/api/platform-overview`, for which no route module exists. It now requests
+   the deployed, permission-governed `/api/team-overview`; a regression resolves every smoke pathname to
+   an actual `app/api/**/route.ts` module.
+3. One `/api/integration-readiness` GET ran the same D1 schema/seed bootstrap through multiple helpers in
+   parallel and exceeded the hosted request's 15-second bound. A single snapshot operation now performs
+   the bootstrap and credential-presence sync once, then fans out read-only queries with an explicit
+   tables-ready contract. Its behavioural regression counts the canonical registry bootstrap and requires
+   exactly one execution per snapshot.
+
+Post-fix verification on 2026-08-24: focused certification/readiness/auth **76/76 passed**; combined
+E2E100 plus staging/release suites **277/277 passed**, including all **102/102** E2E100 tests. Typecheck,
+lint (**0 errors; 18 pre-existing warnings**), build and artifact validation passed. The local `npm test`
+aggregate completed its build but the managed workspace terminated the provider/listener-capable test
+phase before results; exact-head Release CI remains the required authoritative aggregate gate. No
+production deployment, live payment, provider delivery, or customer/demo seed is claimed.

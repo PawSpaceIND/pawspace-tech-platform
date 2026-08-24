@@ -9,6 +9,7 @@ export type CodeBoundaryStatus="not_started"|"partial"|"code_ready";
 
 type Row=Record<string,unknown>;
 type Db=D1Database;
+type IntegrationReadOptions={tablesReady?:boolean};
 
 type Seed={
   code:string;capability:string;provider:string;category:string;owner:string;backupOwner:string;priority:"P0"|"P1"|"P2";required:boolean;
@@ -142,8 +143,12 @@ export async function ensureIntegrationReadinessTables(db:Db){
   .bind(item.code,item.category,item.capability,item.provider,item.owner,item.backupOwner,item.priority,sqlBool(item.required),item.launchGateCode??null,item.environment,item.codeBoundaryStatus,item.credentialDetector?"unknown":"unknown",item.credentialDetector??null,item.dataClassification,item.readinessState,item.notes,"system_seed",now).run();
 }
 
-export async function syncIntegrationCredentialPresence(db:Db,runtime:Record<string,unknown>){
- await ensureIntegrationReadinessTables(db);const rows=await db.prepare("SELECT integration_code,credential_detector,credential_status FROM integration_registry WHERE credential_detector IS NOT NULL").all<Row>(),now=Date.now();
+async function ensureIntegrationReadinessForRead(db:Db,options?:IntegrationReadOptions){
+ if(!options?.tablesReady)await ensureIntegrationReadinessTables(db);
+}
+
+export async function syncIntegrationCredentialPresence(db:Db,runtime:Record<string,unknown>,options?:IntegrationReadOptions){
+ await ensureIntegrationReadinessForRead(db,options);const rows=await db.prepare("SELECT integration_code,credential_detector,credential_status FROM integration_registry WHERE credential_detector IS NOT NULL").all<Row>(),now=Date.now();
  for(const row of rows.results){const next=detectedCredentialStatus(runtime,row.credential_detector);if(!next||next===String(row.credential_status))continue;await db.prepare("UPDATE integration_registry SET credential_status=?,secret_reference=COALESCE(secret_reference,?),updated_by='runtime_presence_check',updated_at=? WHERE integration_code=?").bind(next,`env:${String(row.credential_detector)}`,now,row.integration_code).run();}
 }
 
@@ -156,8 +161,8 @@ function publicRow(row:Row){return{
  readinessState:string(row.readiness_state),evidenceReference:row.evidence_reference?string(row.evidence_reference):null,blockerReason:row.blocker_reason?string(row.blocker_reason):null,approvalReference:row.approval_reference?string(row.approval_reference):null,lastVerifiedAt:row.last_verified_at==null?null:Number(row.last_verified_at),controlledLiveVerifiedAt:row.controlled_live_verified_at==null?null:Number(row.controlled_live_verified_at),controlledLiveVerifiedBy:row.controlled_live_verified_by?string(row.controlled_live_verified_by):null,notes:string(row.notes),updatedBy:string(row.updated_by),updatedAt:Number(row.updated_at||0),
 };}
 
-export async function listIntegrationReadiness(db:Db,runtime?:Record<string,unknown>){
- await ensureIntegrationReadinessTables(db);if(runtime)await syncIntegrationCredentialPresence(db,runtime);const rows=await db.prepare("SELECT * FROM integration_registry ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END,category,integration_code").all<Row>();const items=rows.results.map(publicRow),p0=items.filter(item=>item.priority==="P0"&&item.required),controlled=items.filter(item=>item.readinessState==="controlled_live_verified");return{items,summary:{total:items.length,required:items.filter(item=>item.required).length,p0Required:p0.length,p0ControlledLive:p0.filter(item=>item.readinessState==="controlled_live_verified").length,controlledLiveVerified:controlled.length,productionReady:p0.length>0&&p0.every(item=>item.readinessState==="controlled_live_verified")},productionReady:false as const};
+export async function listIntegrationReadiness(db:Db,runtime?:Record<string,unknown>,options?:IntegrationReadOptions){
+ await ensureIntegrationReadinessForRead(db,options);if(runtime)await syncIntegrationCredentialPresence(db,runtime,{tablesReady:true});const rows=await db.prepare("SELECT * FROM integration_registry ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END,category,integration_code").all<Row>();const items=rows.results.map(publicRow),p0=items.filter(item=>item.priority==="P0"&&item.required),controlled=items.filter(item=>item.readinessState==="controlled_live_verified");return{items,summary:{total:items.length,required:items.filter(item=>item.required).length,p0Required:p0.length,p0ControlledLive:p0.filter(item=>item.readinessState==="controlled_live_verified").length,controlledLiveVerified:controlled.length,productionReady:p0.length>0&&p0.every(item=>item.readinessState==="controlled_live_verified")},productionReady:false as const};
 }
 
 const evidenceColumns=new Set(["auth_verification_status","webhook_verification_status","idempotency_status","replay_status","retry_status","dead_letter_status","timeout_status","rate_limit_status","reconciliation_status","monitoring_status","audit_logging_status","kill_switch_status"]);
@@ -279,8 +284,8 @@ export async function recordIntegrationLiveEvidence(db:Db,input:IntegrationLiveE
  return{id,integrationCode:input.integrationCode,scenario,matched,commitSha,observedAt:input.observedAt,evidenceKind:input.evidenceKind,durableReference};
 }
 
-export async function integrationLiveEvidence(db:Db,integrationCode:string){
- await ensureIntegrationReadinessTables(db);
+export async function integrationLiveEvidence(db:Db,integrationCode:string,options?:IntegrationReadOptions){
+ await ensureIntegrationReadinessForRead(db,options);
  const rows=await db.prepare("SELECT id,scenario,provider_reference,commit_sha,observed_at,expected_result,actual_result,matched,evidence_kind,durable_reference,recorded_by,recorded_at FROM integration_live_evidence WHERE integration_code=? ORDER BY observed_at DESC").bind(integrationCode).all<Row>();
  return rows.results.map(row=>({id:string(row.id),scenario:string(row.scenario),providerReference:string(row.provider_reference),commitSha:string(row.commit_sha),observedAt:Number(row.observed_at),expectedResult:string(row.expected_result),actualResult:string(row.actual_result),matched:Number(row.matched)===1,evidenceKind:string(row.evidence_kind),durableReference:string(row.durable_reference),recordedBy:string(row.recorded_by),recordedAt:Number(row.recorded_at)}));
 }
@@ -301,8 +306,8 @@ export async function requestIntegrationEvidence(db:Db,input:{integrationCode:st
  return{id:string(row?.id||id),integrationCode:input.integrationCode,lane,scenario,satisfied:Boolean(row?.satisfied_by)};
 }
 
-export async function openIntegrationEvidenceRequests(db:Db){
- await ensureIntegrationReadinessTables(db);
+export async function openIntegrationEvidenceRequests(db:Db,options?:IntegrationReadOptions){
+ await ensureIntegrationReadinessForRead(db,options);
  const rows=await db.prepare("SELECT r.id,r.integration_code,r.lane,r.scenario,r.requirement,r.requested_by,r.requested_at,g.readiness_state FROM integration_evidence_requests r JOIN integration_registry g ON g.integration_code=r.integration_code WHERE r.satisfied_by IS NULL ORDER BY r.integration_code,r.lane,r.scenario").all<Row>();
  return rows.results.map(row=>({id:string(row.id),integrationCode:string(row.integration_code),lane:string(row.lane),scenario:string(row.scenario),requirement:string(row.requirement),requestedBy:string(row.requested_by),requestedAt:Number(row.requested_at),readinessState:string(row.readiness_state)}));
 }
@@ -343,8 +348,21 @@ export async function updateIntegrationReadiness(db:Db,input:{integrationCode:st
  return after;
 }
 
-export async function integrationLaunchBlockers(db:Db){
- await ensureIntegrationReadinessTables(db);const rows=await db.prepare("SELECT integration_code,capability,owner,launch_gate_code,readiness_state,blocker_reason FROM integration_registry WHERE required=1 AND priority='P0' AND readiness_state!='controlled_live_verified' ORDER BY integration_code").all<Row>();return rows.results.map(row=>({integrationCode:string(row.integration_code),capability:string(row.capability),owner:string(row.owner),launchGateCode:row.launch_gate_code?string(row.launch_gate_code):null,readinessState:string(row.readiness_state),blockerReason:row.blocker_reason?string(row.blocker_reason):"Controlled-live verification is required"}));
+export async function integrationLaunchBlockers(db:Db,options?:IntegrationReadOptions){
+ await ensureIntegrationReadinessForRead(db,options);const rows=await db.prepare("SELECT integration_code,capability,owner,launch_gate_code,readiness_state,blocker_reason FROM integration_registry WHERE required=1 AND priority='P0' AND readiness_state!='controlled_live_verified' ORDER BY integration_code").all<Row>();return rows.results.map(row=>({integrationCode:string(row.integration_code),capability:string(row.capability),owner:string(row.owner),launchGateCode:row.launch_gate_code?string(row.launch_gate_code):null,readinessState:string(row.readiness_state),blockerReason:row.blocker_reason?string(row.blocker_reason):"Controlled-live verification is required"}));
 }
 
-export async function integrationReadinessAudit(db:Db,integrationCode?:string){await ensureIntegrationReadinessTables(db);const query=integrationCode?db.prepare("SELECT * FROM integration_readiness_events WHERE integration_code=? ORDER BY created_at DESC LIMIT 100").bind(integrationCode):db.prepare("SELECT * FROM integration_readiness_events ORDER BY created_at DESC LIMIT 100");const rows=await query.all<Row>();return rows.results;}
+export async function integrationReadinessAudit(db:Db,integrationCode?:string,options?:IntegrationReadOptions){await ensureIntegrationReadinessForRead(db,options);const query=integrationCode?db.prepare("SELECT * FROM integration_readiness_events WHERE integration_code=? ORDER BY created_at DESC LIMIT 100").bind(integrationCode):db.prepare("SELECT * FROM integration_readiness_events ORDER BY created_at DESC LIMIT 100");const rows=await query.all<Row>();return rows.results;}
+
+/** One hosted control-plane read performs the D1 schema/seed bootstrap once, then fans out read-only queries. */
+export async function readIntegrationReadinessSnapshot(db:Db,runtime:Record<string,unknown>,integrationCode?:string){
+ await ensureIntegrationReadinessTables(db);
+ const tablesReady={tablesReady:true};
+ await syncIntegrationCredentialPresence(db,runtime,tablesReady);
+ const[data,blockers,audit,evidenceRequests,liveEvidence]=await Promise.all([
+  listIntegrationReadiness(db,undefined,tablesReady),integrationLaunchBlockers(db,tablesReady),
+  integrationReadinessAudit(db,integrationCode,tablesReady),openIntegrationEvidenceRequests(db,tablesReady),
+  integrationCode?integrationLiveEvidence(db,integrationCode,tablesReady):Promise.resolve([]),
+ ]);
+ return{data,blockers,audit,evidenceRequests,liveEvidence};
+}
