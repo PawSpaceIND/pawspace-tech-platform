@@ -58,8 +58,10 @@ export const REQUIRED_STAGING_VARS = { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE
  */
 export const REQUIRED_STAFF_IDENTITIES = [
   { email: "founder@pawspace.in", role: "founder" },
-  { email: "admin@pawspace.in", role: "admin" },
-  { email: "manager@pawspace.in", role: "manager" },
+  { email: "anjali.finance33@tkpetcare.in", role: "finance" },
+  { email: "jyoti.manager39@tkpetcare.in", role: "manager" },
+  { email: "asha.groomer1@tkpetcare.in", role: "service_provider" },
+  { email: "anita.associate17@tkpetcare.in", role: "associate" },
 ];
 
 /** Build the read-only staff probe against the canonical role_definitions(code) schema. */
@@ -74,7 +76,7 @@ export function staffIdentityQuery(email) {
  * not create business records in a database testers are about to use.
  */
 export const SMOKE_ROUTES = [
-  "/api/platform-overview",
+  "/api/team-overview",
   "/api/integration-readiness",
   "/api/voice-outbound",
   "/api/ai-business-configuration?mode=status",

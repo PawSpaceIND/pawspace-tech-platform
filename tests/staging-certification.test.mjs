@@ -246,7 +246,7 @@ test("a UAT credential serialized into the deployed configuration fails certific
 // ---------------------------------------------------------------------------
 test("an unseeded staff identity fails, and its sign-in check is not silently skipped", async () => {
   const state = world();
-  state.seeded.delete("manager@pawspace.in");
+  state.seeded.delete("jyoti.manager39@tkpetcare.in");
   const report = await runStagingCertification(state);
   assert.equal(report.ok, false);
   assert.equal(failed(report, "seed: manager").length, 1);
@@ -255,10 +255,10 @@ test("an unseeded staff identity fails, and its sign-in check is not silently sk
 
 test("a staff row whose role has no definition fails, because UAT sign-in refuses it", async () => {
   const state = world();
-  state.seeded.set("admin@pawspace.in", { email: "admin@pawspace.in", status: "active", role_code: "" });
+  state.seeded.set("anjali.finance33@tkpetcare.in", { email: "anjali.finance33@tkpetcare.in", status: "active", role_code: "" });
   const report = await runStagingCertification(state);
   assert.equal(report.ok, false);
-  assert.equal(failed(report, "seed: admin").length, 1);
+  assert.equal(failed(report, "seed: finance").length, 1);
 });
 
 test("an inactive staff row fails, because UAT sign-in refuses any email that is not active", async () => {
@@ -460,6 +460,24 @@ test("the staging workflow deploys an exact sha, records a rollback target and r
   // step is not - a gate that cannot fail the job is decoration.
   const certifyStep = workflow.slice(workflow.indexOf("Certify the staging deploy"));
   assert.doesNotMatch(certifyStep.slice(0, 400), /continue-on-error/, "certification must be able to fail the job");
+});
+
+test("hosted certification uses the advertised seeded identities and routes that exist", async () => {
+  const fs = await import("node:fs");
+  const login = fs.readFileSync(new URL("../app/staging-login/page.tsx", import.meta.url), "utf8");
+  const employeeSeed = fs.readFileSync(new URL("../scripts/employee-seed.sql", import.meta.url), "utf8");
+
+  for (const identity of REQUIRED_STAFF_IDENTITIES) {
+    assert.match(login, new RegExp(identity.email.replaceAll(".", "\\.")), `${identity.email} is not advertised by the staging login`);
+    assert.match(employeeSeed, new RegExp(`'${identity.email.replaceAll(".", "\\.")}'[^\\n]*'${identity.role}'[^\\n]*'active'`),
+      `${identity.email} is not an active ${identity.role} app_users seed row`);
+  }
+
+  for (const route of SMOKE_ROUTES) {
+    const pathname = new URL(route, "https://staging.invalid").pathname;
+    assert.equal(fs.existsSync(new URL(`../app${pathname}/route.ts`, import.meta.url)), true,
+      `${pathname} has no deployed route module`);
+  }
 });
 
 test("nothing in the staging pipeline addresses production", async () => {
