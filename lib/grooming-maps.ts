@@ -14,9 +14,50 @@ export function mapsNavigationUrl(destinationAddress:string,origin?:ProviderPoin
 
 function seconds(value:unknown){const match=String(value||"").match(/^([0-9.]+)s$/);return match?Math.round(Number(match[1])):undefined;}
 
+/** Same ceiling the outbound media fetch uses (DEFAULT_VOICE_TIMEOUT_MS). */
+export const MAPS_REQUEST_TIMEOUT_MS=10_000;
+
+/**
+ * A point this adapter is willing to send to the map provider. The GPS ingestion route validates its
+ * own input, but validation that lives only in ONE caller is not a property of the adapter: any other
+ * caller - and there is already a second, the location-recovery ETA action reading stored coordinates -
+ * would hand NaN or an out-of-range pair straight to Google. NaN also serialises to `null` in the
+ * request body, so the provider sees a malformed request rather than a refusal we made deliberately.
+ */
+export function validRoutePoint(point:ProviderPoint|null|undefined):boolean{
+  return Boolean(point)&&Number.isFinite(point!.lat)&&point!.lat>=-90&&point!.lat<=90&&Number.isFinite(point!.lng)&&point!.lng>=-180&&point!.lng<=180;
+}
+
 export async function computeGoogleRoute(origin:ProviderPoint,destinationAddress:string):Promise<RouteResult>{
   const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;const mode=String(runtime.PAWSPACE_MAPS_ENV||"sandbox").toLowerCase();if(mode!=="sandbox")return{status:"configuration_required",error:"Maps UAT adapter is locked to sandbox"};const key=String(runtime.GOOGLE_MAPS_SERVER_API_KEY_UAT||"").trim();if(!key)return{status:"configuration_required",error:"GOOGLE_MAPS_SERVER_API_KEY_UAT is not configured"};
-  try{const response=await fetch("https://routes.googleapis.com/directions/v2:computeRoutes",{method:"POST",headers:{"content-type":"application/json","X-Goog-Api-Key":key,"X-Goog-FieldMask":"routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline"},body:JSON.stringify({origin:{location:{latLng:{latitude:origin.lat,longitude:origin.lng}}},destination:{address:destinationAddress},travelMode:"DRIVE",routingPreference:"TRAFFIC_AWARE",languageCode:"en-IN",units:"METRIC"})});const body=await response.json() as {routes?:Array<{duration?:string;distanceMeters?:number;polyline?:{encodedPolyline?:string}}> ;error?:{message?:string}};if(!response.ok||!body.routes?.length)return{status:"route_unavailable",error:body.error?.message||`Routes API returned ${response.status}`};const route=body.routes[0];return{status:"configured",provider:"google_routes",distanceMeters:Number(route.distanceMeters||0),durationSeconds:seconds(route.duration),polyline:route.polyline?.encodedPolyline};}catch(error){return{status:"route_unavailable",error:error instanceof Error?error.message:"Unable to call Routes API"};}
+  // Refuse before spending a provider call, and before a malformed coordinate can reach a third party.
+  if(!validRoutePoint(origin))return{status:"route_unavailable",error:"Origin coordinates are missing or out of range"};
+  if(!String(destinationAddress||"").trim())return{status:"route_unavailable",error:"Destination address is required"};
+  // A provider that accepts the connection and then never answers must not hold a booking request open.
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),MAPS_REQUEST_TIMEOUT_MS);
+  try{const response=await fetch("https://routes.googleapis.com/directions/v2:computeRoutes",{method:"POST",signal:controller.signal,headers:{"content-type":"application/json","X-Goog-Api-Key":key,"X-Goog-FieldMask":"routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline"},body:JSON.stringify({origin:{location:{latLng:{latitude:origin.lat,longitude:origin.lng}}},destination:{address:destinationAddress},travelMode:"DRIVE",routingPreference:"TRAFFIC_AWARE",languageCode:"en-IN",units:"METRIC"})});// The abort can fire AFTER the headers arrive, while the body is still streaming. Swallowing it here
+  // reported "Routes API returned 200" for a request that had in fact timed out, so the caller could not
+  // tell a slow provider from an empty answer. Non-abort parse failures still degrade quietly.
+  const body=await response.json().catch((error)=>{if(controller.signal.aborted||(error as Error)?.name==="AbortError")throw error;return{};}) as {routes?:Array<{duration?:string;distanceMeters?:number;polyline?:{encodedPolyline?:string}}> ;error?:{message?:string}};
+  if(!response.ok||!body.routes?.length)return{status:"route_unavailable",error:body.error?.message||`Routes API returned ${response.status}`};
+  const route=body.routes[0];
+  // A 200 is not a route. `{"routes":[{}]}` produced status "configured" carrying distance 0 and NO
+  // duration at all, and a non-numeric distanceMeters stored as NULL - incomplete evidence written into
+  // route_eta_snapshots as though the provider had answered. Both measures must be present and sane
+  // before this counts as a route.
+  // TYPE FIRST, THEN RANGE. Number() is not a validator: Number(null), Number(""), Number(false) and
+  // Number([]) are all 0, so a route carrying `"distanceMeters": null` passed a finite/non-negative
+  // check and was reported as configured with a distance of zero the provider never sent. `seconds()`
+  // stringifies its argument, so ["90s"] coerced to a valid duration the same way. Each metric must
+  // already be the type it claims to be before any range check means anything.
+  const rawDistance=route.distanceMeters,rawDuration=route.duration;
+  const distanceMeters=typeof rawDistance==="number"&&Number.isFinite(rawDistance)?rawDistance:Number.NaN;
+  const durationSeconds=typeof rawDuration==="string"?seconds(rawDuration):undefined;
+  if(!Number.isFinite(distanceMeters)||distanceMeters<0||!Number.isFinite(durationSeconds as number)||(durationSeconds as number)<0)
+    return{status:"route_unavailable",error:"Routes API returned a route without a usable distance and duration"};
+  return{status:"configured",provider:"google_routes",distanceMeters,durationSeconds,polyline:route.polyline?.encodedPolyline};}
+  catch(error){const aborted=controller.signal.aborted||(error as Error)?.name==="AbortError";return{status:"route_unavailable",error:aborted?`Routes API did not respond within ${MAPS_REQUEST_TIMEOUT_MS}ms`:(error instanceof Error?error.message:"Unable to call Routes API")};}
+  finally{clearTimeout(timer);}
 }
 
 export async function saveRouteSnapshot(db:Db,input:{bookingId:string;providerId:string;origin:ProviderPoint;destinationAddress:string;route:RouteResult}){await ensureGroomingMapTables(db);const now=Date.now();await db.prepare("INSERT INTO grooming_route_snapshots (id,booking_id,provider_id,origin_latitude,origin_longitude,destination_address,distance_meters,duration_seconds,route_status,provider,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)").bind(`ROUTE-${crypto.randomUUID().slice(0,12).toUpperCase()}`,input.bookingId,input.providerId,input.origin.lat,input.origin.lng,input.destinationAddress,input.route.distanceMeters??null,input.route.durationSeconds??null,input.route.status,input.route.provider||"google_routes",JSON.stringify({error:input.route.error||null,polyline:input.route.polyline||null}),now).run();}
