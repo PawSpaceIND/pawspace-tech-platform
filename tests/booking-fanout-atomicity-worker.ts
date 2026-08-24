@@ -15,7 +15,7 @@ async function run(db:D1Database){
     db.prepare("CREATE TABLE IF NOT EXISTS scheduling_assignment_decisions (group_id TEXT PRIMARY KEY,selected_provider_id TEXT,status TEXT NOT NULL,shortlist_json TEXT NOT NULL DEFAULT '[]')"),
     db.prepare("CREATE TABLE IF NOT EXISTS scheduling_reservations (id TEXT PRIMARY KEY,group_id TEXT NOT NULL,provider_id TEXT NOT NULL,customer_id TEXT NOT NULL,service_code TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,occurrence_number INTEGER NOT NULL,status TEXT NOT NULL)"),
   ]);
-  await bookingGet();
+  await bookingGet(new Request(`${url}/api/canonical-bookings`));
   await db.prepare("DROP TRIGGER IF EXISTS atomicity_fail_work_order").run();
   await db.batch([
     db.prepare("DELETE FROM scheduling_reservations WHERE group_id=?").bind(groupId),
