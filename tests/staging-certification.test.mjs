@@ -412,6 +412,10 @@ test("the staging workflow deploys an exact sha, records a rollback target and r
   assert.match(workflow, /node tests\/e2e\/staging-certification\.mjs/, "the deploy must run certification");
   assert.match(workflow, /upload-artifact/, "the sanitized evidence must be uploaded");
   assert.match(workflow, /employee-seed\.sql/, "the staff directory must be loaded, or no advertised identity can sign in");
+  assert.match(workflow, /wrangler d1 execute DB --config dist\/server\/wrangler\.json --remote --file=scripts\/employee-seed\.sql/,
+    "the seed must resolve the isolation-verified DB binding from the generated staging config");
+  assert.doesNotMatch(workflow, /wrangler d1 execute "\$STAGING_D1_ID"/,
+    "wrangler d1 execute does not resolve a raw database identifier as its positional database");
 
   const preflight = workflow.indexOf("Certify deployed isolation before any D1 write");
   const seed = workflow.indexOf("Load the staff directory into the staging D1");
@@ -423,6 +427,10 @@ test("the staging workflow deploys an exact sha, records a rollback target and r
   assert.match(gate, /timeout: 60_000/, "Wrangler subprocesses must be bounded");
   assert.match(gate, /AbortSignal\.timeout\(15_000\)/, "hosted requests must be bounded");
   assert.doesNotMatch(gate, /readFileSync\("dist\/server\/wrangler\.json"/, "certification must never fall back to the local build config");
+  assert.match(gate, /"d1", "execute", "DB", "--config", "dist\/server\/wrangler\.json"/,
+    "certification reads must resolve the isolation-verified DB binding from the generated staging config");
+  assert.doesNotMatch(gate, /"d1", "execute", env\.STAGING_D1_ID/,
+    "certification must not pass a raw database identifier to wrangler d1 execute");
 
   // The rollback capture is allowed to fail (a first deploy has no predecessor), but the certification
   // step is not - a gate that cannot fail the job is decoration.
