@@ -20,7 +20,7 @@ export function idfyConfigured(env: Env): boolean {
 
 /** Map an IDfy task status to our tri-state. IDfy typically returns completed/in_progress/failed with a
  * sub-result; anything not clearly a pass/fail routes to human manual review (never a silent approve). */
-function mapStatus(body: Record<string, unknown>): "verified" | "manual_review" | "failed" {
+export function mapStatus(body: Record<string, unknown>): "verified" | "manual_review" | "failed" {
   const status = String(body.status ?? "").toLowerCase();
   const result = String((body.result as Record<string, unknown> | undefined)?.verification_status ?? body.verification_status ?? "").toLowerCase();
   if (status === "failed" || result === "not_verified" || result === "no_match") return "failed";
