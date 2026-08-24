@@ -150,7 +150,7 @@ test("AI rollout staff_only: staff get the model, customers still get a human", 
 
   seedCustomer(sqlite, "CUS-B", "Bhavna", "9876500002");
   const staffMessage = await inboundMessage(sqlite, db, { threadId: "THREAD-B", customerId: "CUS-B", text: "What is the grooming price?", idempotencyKey: "ai-staff-1" });
-  const staffStub = connectedProvider("Grooming starts at Rs.1349 for a dog bath.");
+  const staffStub = connectedProvider("Grooming starts at Rs.1349 for a dog bath.", { groundingRefs: ["catalogue:grooming:active"] });
   const staffTurn = await orchestrateAiTurn(db, { actor: staffActor, threadId: "THREAD-B", customerId: "CUS-B", inputMessageId: staffMessage, idempotencyKey: "ai-staff-1", channel: "chat", provider: staffStub.provider });
   assert.equal(staffTurn.turn.outcome, "draft_review_required", "staff preview gets a real model draft");
   assert.equal(staffStub.calls.length, 1);
@@ -458,6 +458,36 @@ test("injection attempts are blocked and money tools stay approval-gated", async
       if (tool.mode === "approval_gated") assert.equal(tool.confirmationRequired, true);
     }
   }
+});
+
+test("connected model output is refused when price or money claims are ungrounded", async () => {
+  const { sqlite, db } = fresh();
+  const rollout = await import("../lib/ai-audience-rollout.ts");
+  await rollout.setAiRolloutStage(db, { stage: "staff_only", reason: "T3 output-safety regression", actorEmail: "founder@pawspace.in" });
+  const { orchestrateAiTurn } = await import("../lib/ai-conversation-orchestrator.ts");
+
+  seedCustomer(sqlite, "CUS-PRICE", "Price Safety", "9876500091");
+  const priceMessage = await inboundMessage(sqlite, db, { threadId: "THREAD-PRICE", customerId: "CUS-PRICE", text: "What is the grooming price?", idempotencyKey: "price-input" });
+  const inventedPrice = connectedProvider("The grooming price is INR 999.");
+  const blockedPrice = await orchestrateAiTurn(db, { actor: staffActor, threadId: "THREAD-PRICE", customerId: "CUS-PRICE", inputMessageId: priceMessage, idempotencyKey: "price-turn", channel: "chat", provider: inventedPrice.provider });
+  assert.equal(blockedPrice.turn.outcome, "handoff");
+  assert.equal(blockedPrice.turn.policyDecision, "blocked_high_impact");
+  assert.equal(blockedPrice.turn.handoffReason, "policy_risk");
+  assert.doesNotMatch(blockedPrice.turn.output, /999/, "the invented amount is never surfaced");
+
+  seedCustomer(sqlite, "CUS-GROUNDED", "Grounded Price", "9876500092");
+  const groundedMessage = await inboundMessage(sqlite, db, { threadId: "THREAD-GROUNDED", customerId: "CUS-GROUNDED", text: "What is the grooming price?", idempotencyKey: "grounded-input" });
+  const grounded = connectedProvider("The active catalogue price is INR 1,149.", { groundingRefs: ["catalogue:grooming:routine:active"] });
+  const allowed = await orchestrateAiTurn(db, { actor: staffActor, threadId: "THREAD-GROUNDED", customerId: "CUS-GROUNDED", inputMessageId: groundedMessage, idempotencyKey: "grounded-turn", channel: "chat", provider: grounded.provider });
+  assert.equal(allowed.turn.outcome, "draft_review_required");
+  assert.match(allowed.turn.output, /1,149/);
+
+  seedCustomer(sqlite, "CUS-MONEY", "Money Safety", "9876500093");
+  const moneyMessage = await inboundMessage(sqlite, db, { threadId: "THREAD-MONEY", customerId: "CUS-MONEY", text: "What services do you offer?", idempotencyKey: "money-input" });
+  const inventedMoney = connectedProvider("Your refund completed and account balance is INR 5,000.", { groundingRefs: ["catalogue:services:active"] });
+  const blockedMoney = await orchestrateAiTurn(db, { actor: staffActor, threadId: "THREAD-MONEY", customerId: "CUS-MONEY", inputMessageId: moneyMessage, idempotencyKey: "money-turn", channel: "chat", provider: inventedMoney.provider });
+  assert.equal(blockedMoney.turn.outcome, "handoff");
+  assert.doesNotMatch(blockedMoney.turn.output, /refund completed|5,000/i);
 });
 
 // ---------------------------------------------------------------------------
