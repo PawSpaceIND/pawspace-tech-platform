@@ -40,7 +40,7 @@ function makeD1(sqlite) {
   }
   return {
     prepare: (sql) => statement(sql, []),
-    batch: async (items) => { const out = []; for (const item of items) out.push(await item.run()); return out; },
+    batch: async (items) => { const out = []; sqlite.exec("BEGIN"); try { for (const item of items) out.push(await item.run()); sqlite.exec("COMMIT"); return out; } catch (error) { sqlite.exec("ROLLBACK"); throw error; } },
   };
 }
 
@@ -60,23 +60,26 @@ function freshPartnerDb() {
 }
 
 test("customer and partner OTP request routes fail closed outside explicit UAT", async () => {
-  globalThis.__PAWSPACE_TEST_ENV = {
-    PAWSPACE_UAT_LOGIN: "off",
-    PAWSPACE_UAT_SIGNING_KEY: SIGNING_KEY,
-  };
+  globalThis.__PAWSPACE_TEST_ENV = { PAWSPACE_UAT_LOGIN: "off", PAWSPACE_UAT_SIGNING_KEY: SIGNING_KEY };
   const customer = await import("../app/api/customer-otp/route.ts");
   const partner = await import("../app/api/partner-otp/route.ts");
   for (const [name, route] of [["customer", customer], ["partner", partner]]) {
-    const response = await route.POST(new Request(`https://app.pawspace.in/api/${name}-otp`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ action: "request", phone: "9876543210" }),
-    }));
+    const response = await route.POST(new Request(`https://app.pawspace.in/api/${name}-otp`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "request", phone: "9876543210" }) }));
     assert.equal(response.status, 503, `${name} OTP request must refuse without the UAT gate`);
     const body = await response.json();
     assert.match(String(body.error), /not configured/i);
-    assert.equal(Object.hasOwn(body, "sandboxCode"), false);
     assert.equal(JSON.stringify(body).includes("sandboxCode"), false);
+  }
+});
+
+test("customer and partner OTP verification routes fail closed after UAT is disabled", async () => {
+  globalThis.__PAWSPACE_TEST_ENV = { PAWSPACE_UAT_LOGIN: "off", PAWSPACE_UAT_SIGNING_KEY: SIGNING_KEY };
+  const customer = await import("../app/api/customer-otp/route.ts");
+  const partner = await import("../app/api/partner-otp/route.ts");
+  for (const [name, route] of [["customer", customer], ["partner", partner]]) {
+    const response = await route.POST(new Request(`https://app.pawspace.in/api/${name}-otp`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "verify", challengeId: "stale-uat-challenge", code: "123456" }) }));
+    assert.equal(response.status, 503, `${name} OTP verification must refuse after the UAT gate is disabled`);
+    assert.equal(response.headers.get("set-cookie"), null);
   }
 });
 
@@ -111,9 +114,7 @@ test("partner OTP wrong-attempt counter is capped at five", async () => {
   const { requestPartnerOtp, verifyPartnerOtp } = await import("../lib/partner-otp.ts");
   const { sqlite, db } = freshPartnerDb();
   const challenge = await requestPartnerOtp(db, { phone: "9876543213" });
-  for (let i = 0; i < 5; i += 1) {
-    await assert.rejects(() => verifyPartnerOtp(db, { challengeId: challenge.challengeId, code: "000000" }), /Incorrect OTP/);
-  }
+  for (let i = 0; i < 5; i += 1) await assert.rejects(() => verifyPartnerOtp(db, { challengeId: challenge.challengeId, code: "000000" }), /Incorrect OTP/);
   await assert.rejects(() => verifyPartnerOtp(db, { challengeId: challenge.challengeId, code: challenge.sandboxCode }), /Too many incorrect attempts/);
   assert.equal(sqlite.prepare("SELECT attempts FROM partner_otp_challenges WHERE id=?").get(challenge.challengeId).attempts, 5);
 });
