@@ -66,18 +66,22 @@ export async function createSandboxPaymentLink(env: RazorEnv, input: { bookingId
   if (!keyId || !keySecret) return { connected: false, environment, reason: "Razorpay sandbox API credentials are not configured - payment link was not created" };
   if (!(input.amount > 0)) return { connected: false, environment, reason: "A positive payable amount is required to create a payment link" };
   try {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const expireBy = nowSeconds + 24 * 60 * 60;
     const response = await fetch("https://api.razorpay.com/v1/payment_links", {
       method: "POST",
       headers: { authorization: `Basic ${btoa(`${keyId}:${keySecret}`)}`, "content-type": "application/json" },
       body: JSON.stringify({
         amount: Math.round(input.amount * 100), currency: input.currency, accept_partial: false,
+        expire_by: expireBy,
         reference_id: input.paymentId.slice(0, 40), description: `PawSpace booking ${input.bookingId}`,
         notes: { booking_id: input.bookingId, payment_id: input.paymentId, customer_id: input.customerId, pawspace_environment: "sandbox" },
       }),
     });
     const body = await response.json().catch(() => ({})) as Record<string, unknown>;
     if (!response.ok) return { connected: false, environment, reason: `Razorpay sandbox payment-link create failed (${response.status}): ${String((body.error as Record<string, unknown> | undefined)?.description || "request failed")}` };
-    if (!String(body.id || "").startsWith("plink_") || !String(body.short_url || "").startsWith("https://")) return { connected: false, environment, reason: "Razorpay did not return a collectable payment link" };
+    const providerExpiry = Number(body.expire_by);
+    if (!String(body.id || "").startsWith("plink_") || !String(body.short_url || "").startsWith("https://") || !Number.isFinite(providerExpiry) || providerExpiry <= nowSeconds) return { connected: false, environment, reason: "Razorpay did not return a collectable payment link with a valid expiry" };
     return { connected: true, environment, paymentLink: body };
   } catch (error) {
     return { connected: false, environment, reason: `Razorpay sandbox payment-link request failed: ${error instanceof Error ? error.message : String(error)}` };
