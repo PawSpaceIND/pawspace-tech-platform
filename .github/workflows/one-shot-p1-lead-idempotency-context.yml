@@ -1,0 +1,159 @@
+name: One-shot P1 lead idempotency context
+
+on:
+  push:
+    branches:
+      - testfix/master-zero-gap-20260824
+    paths:
+      - .github/workflows/one-shot-p1-lead-idempotency-context.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-p1-lead-idempotency-context
+  cancel-in-progress: false
+
+jobs:
+  apply-and-prove:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: testfix/master-zero-gap-20260824
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Bind replay keys to assignment, clock and action context
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > lib/idempotency-context.ts <<'TS'
+          export function requireIdempotencyContext(
+            replay: Record<string, unknown>,
+            expected: Record<string, unknown>,
+            scope: string,
+          ) {
+            for (const [field, value] of Object.entries(expected)) {
+              if (String(replay[field] ?? "") !== String(value ?? "")) {
+                throw Response.json(
+                  { error: `Idempotency key was already used for a different ${scope}` },
+                  { status: 409, headers: { "cache-control": "no-store" } },
+                );
+              }
+            }
+          }
+          TS
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def add_import(path, statement):
+              text=path.read_text()
+              if statement in text: raise SystemExit(f'import already exists in {path}')
+              matches=list(re.finditer(r'^import .*?;\s*$',text,re.M))
+              pos=matches[-1].end() if matches else 0
+              path.write_text(text[:pos]+'\n'+statement+text[pos:])
+
+          def patch_replay(path, function_name, expected_expr, scope):
+              text=path.read_text()
+              start=text.find(f'export async function {function_name}')
+              if start<0: raise SystemExit(f'{function_name} not found in {path}')
+              candidates=[p for p in [text.find('export async function ',start+1),text.find('export function ',start+1)] if p>=0]
+              end=min(candidates) if candidates else len(text)
+              seg=text[start:end]
+              replay_matches=list(re.finditer(r'const\s+(\w+)\s*=\s*await\s+db\.prepare\("[^"]*idempotency_key[^"]*"\).*?;',seg,re.S))
+              if not replay_matches: raise SystemExit(f'idempotency replay query not found in {function_name}')
+              patched=False
+              for replay_match in replay_matches:
+                  var=replay_match.group(1)
+                  tail=seg[replay_match.end():]
+                  if_match=re.search(rf'if\(\s*{re.escape(var)}\s*\)return\s+(.+?);',tail,re.S)
+                  if not if_match: continue
+                  full_start=replay_match.end()+if_match.start()
+                  full_end=replay_match.end()+if_match.end()
+                  returned=if_match.group(1)
+                  replacement=f'if({var}){{requireIdempotencyContext({var},{expected_expr},"{scope}");return {returned};}}'
+                  seg=seg[:full_start]+replacement+seg[full_end:]
+                  patched=True
+                  break
+              if not patched: raise SystemExit(f'replay return not found in {function_name}')
+              path.write_text(text[:start]+seg+text[end:])
+
+          assignment=Path('lib/lead-assignment-governance.ts')
+          add_import(assignment,'import { requireIdempotencyContext } from "./idempotency-context";')
+          patch_replay(assignment,'assignLead','{lead_id:input.leadId}','lead assignment')
+
+          sla=Path('lib/lead-sla-governance.ts')
+          add_import(sla,'import { requireIdempotencyContext } from "./idempotency-context";')
+          patch_replay(sla,'startLeadSlaClock','{lead_id:input.leadId,clock_type:input.clockType}','lead SLA clock')
+          patch_replay(sla,'recordLeadSlaAction','{lead_id:input.leadId}','lead SLA action')
+          PY
+          cat > tests/lead-idempotency-context.test.mjs <<'TEST'
+          import test from "node:test";
+          import assert from "node:assert/strict";
+          import { requireIdempotencyContext } from "../lib/idempotency-context.ts";
+
+          test("the same idempotency key may replay only the same lead context", () => {
+            assert.doesNotThrow(() => requireIdempotencyContext(
+              { lead_id: "LEAD-A", clock_type: "first_response" },
+              { lead_id: "LEAD-A", clock_type: "first_response" },
+              "lead SLA clock",
+            ));
+          });
+
+          test("reusing a key for another lead is a no-store 409 conflict", async () => {
+            let refusal;
+            try {
+              requireIdempotencyContext({ lead_id: "LEAD-A" }, { lead_id: "LEAD-B" }, "lead assignment");
+            } catch (error) {
+              refusal = error;
+            }
+            assert.ok(refusal instanceof Response);
+            assert.equal(refusal.status, 409);
+            assert.equal(refusal.headers.get("cache-control"), "no-store");
+            assert.deepEqual(await refusal.json(), {
+              error: "Idempotency key was already used for a different lead assignment",
+            });
+          });
+
+          test("reusing a key for another SLA clock type is also a conflict", async () => {
+            let refusal;
+            try {
+              requireIdempotencyContext(
+                { lead_id: "LEAD-A", clock_type: "first_response" },
+                { lead_id: "LEAD-A", clock_type: "follow_up" },
+                "lead SLA clock",
+              );
+            } catch (error) {
+              refusal = error;
+            }
+            assert.ok(refusal instanceof Response);
+            assert.equal(refusal.status, 409);
+          });
+          TEST
+          git diff --check
+      - name: Run assignment, SLA and idempotency regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          tests=(tests/lead-idempotency-context.test.mjs)
+          while IFS= read -r file; do
+            case "$file" in tests/lead-idempotency-context.test.mjs) ;; *) tests+=("$file") ;; esac
+          done < <(git ls-files 'tests/*lead*assignment*.test.mjs' 'tests/*lead*sla*.test.mjs' 'tests/*idempotency*.test.mjs')
+          node --experimental-strip-types --test "${tests[@]}"
+      - run: npm run typecheck
+      - name: Commit the P1 correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/one-shot-p1-lead-idempotency-context.yml
+          git add lib/idempotency-context.ts lib/lead-assignment-governance.ts lib/lead-sla-governance.ts tests/lead-idempotency-context.test.mjs
+          git config user.name "PawSpace zero-gap fixer"
+          git config user.email "actions@pawspace.in"
+          git commit -m "fix(leads): bind idempotency to mutation context"
+          git push origin HEAD:testfix/master-zero-gap-20260824
