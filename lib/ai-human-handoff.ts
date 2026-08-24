@@ -6,7 +6,7 @@ export type AiHandoffReason="customer_requested_human"|"low_confidence"|"provide
 export type AiHandoffAction="take_over"|"resume_ai";
 
 const text=(value:unknown)=>String(value??"").trim();
-function isStaff(actor:AuthenticatedActor){return actor.permissions.includes("*")||actor.permissions.includes("communications.message")||actor.permissions.includes("customers.manage");}
+function isStaff(actor:AuthenticatedActor){return actor.permissions.includes("*")||actor.permissions.includes("communications.manage")||actor.permissions.includes("customers.manage");}
 function queueFor(reason:AiHandoffReason){if(reason==="refund_payment_dispute")return{queue:"finance-cx",slaMinutes:10};if(reason==="safety")return{queue:"cx-safety",slaMinutes:5};if(reason==="urgent_funeral_memorial")return{queue:"cx-sensitive-care",slaMinutes:5};if(reason==="sensitive_relocation")return{queue:"cx-relocation",slaMinutes:15};if(reason==="complaint")return{queue:"cx-service-recovery",slaMinutes:10};return{queue:"cx-ai-handoff",slaMinutes:15};}
 
 export async function ensureAiHumanHandoff(db:D1Database){await ensureConversationGovernance(db);await db.batch([

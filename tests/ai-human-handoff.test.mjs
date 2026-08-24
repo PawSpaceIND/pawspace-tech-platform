@@ -35,7 +35,7 @@ test("AI Gate 4 staff takeover pauses AI and governed resume is explicit",()=>{
 });
 
 test("AI Gate 4 handoff is permission governed and audited",()=>{
- assert.match(route,/authorize\(request,"communications.message"\)/);
+ assert.match(route,/authorize\(request,"communications.manage"\)/);
  assert.match(route,/Cross-origin AI handoff write blocked/);
  assert.match(route,/ai\.handoff\.takeover/);
  assert.match(route,/ai\.handoff\.resume/);

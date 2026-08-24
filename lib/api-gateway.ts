@@ -36,8 +36,11 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/funeral-manual-order")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/platform-governance"){if(method==="GET")return "dashboard.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="save_role"?"roles.manage":"users.manage";}
   if(url.pathname==="/api/identity-bindings")return "users.manage";
-  if(url.pathname==="/api/communications"){if(method==="GET")return "communications.message";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"enqueue");if(action==="adapter_readiness"||action==="policy_update")return "settings.manage";if(action==="preference")return "customers.manage";return "communications.message";}
-  if(url.pathname==="/api/conversations")return "communications.message";
+  // communications.message is deliberately narrow: it lets providers report/contact through routes
+  // that enforce booking/provider ownership. The system-wide ledger, queue, dispatch and assignment
+  // surfaces require communications.manage so a service provider cannot read or mutate another customer.
+  if(url.pathname==="/api/communications"){if(method==="GET")return "communications.manage";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"enqueue");if(action==="adapter_readiness"||action==="policy_update")return "settings.manage";if(action==="preference")return "customers.manage";return "communications.manage";}
+  if(url.pathname==="/api/conversations"||url.pathname==="/api/ai-human-handoff")return "communications.manage";
   // The web-chat surface deliberately has two security modes. Public knowledge/lead capture is
   // anonymous and is constrained inside the route (public-only knowledge, no customer/tool access,
   // same-origin writes). Authenticated mode is customer self-service and then enforces the exact
