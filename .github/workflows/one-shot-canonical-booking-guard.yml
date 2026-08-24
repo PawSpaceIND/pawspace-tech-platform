@@ -1,0 +1,248 @@
+name: One-shot canonical booking guard
+
+on:
+  push:
+    branches:
+      - testfix/master-zero-gap-20260824
+    paths:
+      - .github/workflows/one-shot-canonical-booking-guard.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-canonical-booking-guard
+  cancel-in-progress: false
+
+jobs:
+  apply-fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: testfix/master-zero-gap-20260824
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Apply the reviewed canonical booking boundary patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/canonical-booking-guard.patch <<'PATCH'
+          --- a/lib/api-gateway.ts
+          +++ b/lib/api-gateway.ts
+          @@ -143,7 +143,7 @@
+             if(url.pathname==="/api/city-governance")return method==="GET"?"launch.view":"launch.manage";
+             if(url.pathname==="/api/integration-readiness")return method==="GET"?"launch.view":"launch.manage";
+             if(url.pathname==="/api/uat-scheduling"){if(method==="GET")return "scheduling.manage";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action&&body.action!=="reserve"?"scheduling.manage":"scheduling.book";}
+          -  if(url.pathname==="/api/canonical-bookings")return method==="GET"?"bookings.view":"scheduling.book";
+          +  if(url.pathname==="/api/canonical-bookings")return method==="GET"?"bookings.manage":"scheduling.book";
+             if(url.pathname==="/api/referral-governance"){if(method==="GET")return "pricing.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");if(action==="save_programme")return "pricing.manage";if(["qualify","review"].includes(action))return "bookings.manage";if(action==="reverse_reward")return "finance.manage";return "scheduling.book";}
+             if(url.pathname==="/api/training-programmes")return "scheduling.book";
+             if(url.pathname==="/api/training-session-media")return "bookings.view";
+          --- a/app/api/canonical-bookings/route.ts
+          +++ b/app/api/canonical-bookings/route.ts
+          @@ -1,6 +1,6 @@
+           import {subscriptionExpiry} from "../../../lib/grooming-governance";
+           import {governGroomingBookingWithLiveMultiPet} from "../../../lib/live-grooming-governance";
+          -import {requireCustomerOwnership,resolveActor} from "../../../lib/server-auth";
+          +import {authError,requireCustomerOwnership,requirePermission,resolveActor} from "../../../lib/server-auth";
+           import {hasPermission} from "../../../lib/platform-security";
+           import {policySnapshot,policyVersion,resolveGroomingPolicy} from "../../../lib/grooming-policy-governance";
+           import {consumeTrainingQuote,governTrainingBooking,trainingQuoteLinkStatement} from "../../../lib/training-commercial-governance";
+          @@ -24,7 +24,7 @@
+           
+           type SubscriptionPlan={planCode:string;sessions:number;validityValue:number;validityUnit:"days"|"months";reserveSessions:number;servicePackageCode:string;cityId:string;zoneId?:string|null;familyWallet:boolean;pauseDays:number;graceDays:number;renewalWindowDays:number;benefits:unknown[];terms:Record<string,unknown>};
+           const services=new Set(["grooming","dog_training","boarding","pet_sitting"]);
+          -const json=(value:unknown,status=200)=>Response.json(value,{status});
+          +const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
+           async function database(){const {env}=await import("cloudflare:workers");return env.DB;}
+           async function paymentEnv(){const {env}=await import("cloudflare:workers");return String((env as unknown as Record<string,unknown>).PAWSPACE_PAYMENT_ENV||"sandbox").toLowerCase();}
+           // Verify-first (LIVE only): an ONLINE booking payment may NOT self-declare "captured"; it is recorded
+          @@ -164,9 +164,9 @@
+           function validate(input:LifecycleInput){if(!input.idempotencyKey||!input.scheduleGroupId||!input.customer?.id||!input.customer?.name||!input.customer?.primaryPhone)return "Customer and request identity are required";if(!Array.isArray(input.pets)||input.pets.length<1)return "At least one pet is required";if(!services.has(input.serviceCode)||!input.packageCode||!input.scheduledStart||!input.scheduledEnd)return "Complete service and schedule details are required";if(!input.provider?.id||!input.provider?.name||!Number.isFinite(input.totalAmount)||input.totalAmount<0||!Number.isFinite(input.amountDueNow)||input.amountDueNow<0)return "Provider and valid payment amounts are required";return null;}
+           async function readBundle(db:Awaited<ReturnType<typeof database>>,booking:Record<string,unknown>,duplicatePrevented:boolean){const [workOrder,payment]=await Promise.all([db.prepare("SELECT * FROM provider_work_orders WHERE booking_id=?").bind(booking.id).first<Record<string,unknown>>(),db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(booking.id).first<Record<string,unknown>>()]);return {bookingId:String(booking.id),customerId:String(booking.customer_id),petIds:JSON.parse(String(booking.pet_ids_json)),scheduleGroupId:String(booking.schedule_group_id),workOrderId:String(workOrder?.id||""),paymentId:String(payment?.id||""),status:String(booking.status),duplicatePrevented};}
+           
+          -export async function GET(){try{const db=await database();await ensureTables(db);const rows=await db.prepare("SELECT b.*,c.name customer_name,w.id work_order_id,w.provider_name,w.provider_model,w.status work_order_status,w.occurrence_count,p.id payment_id,p.status payment_status,p.amount_due_now,p.gateway FROM canonical_bookings b JOIN canonical_customers c ON c.id=b.customer_id JOIN provider_work_orders w ON w.booking_id=b.id JOIN booking_payments p ON p.booking_id=b.id ORDER BY b.created_at DESC LIMIT 100").all<Record<string,unknown>>();const bookings=[];for(const row of rows.results){const [pets,events]=await Promise.all([db.prepare("SELECT id,name,species,breed,vaccination_status FROM canonical_pets WHERE customer_id=? AND id IN (SELECT value FROM json_each(?)) ORDER BY name").bind(row.customer_id,row.pet_ids_json).all(),db.prepare("SELECT * FROM booking_lifecycle_events WHERE booking_id=? ORDER BY occurred_at ASC").bind(row.id).all()]);bookings.push({...row,pets:pets.results,events:events.results});}return json({bookings});}catch(error){return json({error:error instanceof Error?error.message:"Unable to load lifecycle records"},500);}}
+          +export async function GET(request:Request){try{const actor=await resolveActor(request);requirePermission(actor,"bookings.manage");const db=await database();await ensureTables(db);const rows=await db.prepare("SELECT b.*,c.name customer_name,w.id work_order_id,w.provider_name,w.provider_model,w.status work_order_status,w.occurrence_count,p.id payment_id,p.status payment_status,p.amount_due_now,p.gateway FROM canonical_bookings b JOIN canonical_customers c ON c.id=b.customer_id JOIN provider_work_orders w ON w.booking_id=b.id JOIN booking_payments p ON p.booking_id=b.id ORDER BY b.created_at DESC LIMIT 100").all<Record<string,unknown>>();const bookings=[];for(const row of rows.results){const [pets,events]=await Promise.all([db.prepare("SELECT id,name,species,breed,vaccination_status FROM canonical_pets WHERE customer_id=? AND id IN (SELECT value FROM json_each(?)) ORDER BY name").bind(row.customer_id,row.pet_ids_json).all(),db.prepare("SELECT * FROM booking_lifecycle_events WHERE booking_id=? ORDER BY occurred_at ASC").bind(row.id).all()]);bookings.push({...row,pets:pets.results,events:events.results});}return json({bookings});}catch(error){return authError(error,"Unable to load lifecycle records");}}
+           
+          -export async function POST(request:Request){try{const input=await request.json() as LifecycleInput;const problem=validate(input);if(problem)return json({error:problem},400);const db=await database();await ensureTables(db);await ensureSchedulingReservationLeaseGovernance(db);await cleanupExpiredReservationLeases(db);const actor=await resolveActor(request);await requireCustomerOwnership(db,actor,input.customer.id);const replayInput={customerId:input.customer.id,serviceCode:input.serviceCode,idempotencyKey:input.idempotencyKey,scheduleGroupId:input.scheduleGroupId};const prior=await findCustomerReplay(db,replayInput);if(prior)return json({data:await readBundle(db,prior,true)});if(await hasForeignReplayConflict(db,replayInput))return json({error:BOOKING_REPLAY_CONFLICT},409);if(await hasReplayConflict(db,replayInput))return json({error:BOOKING_WRITE_CONFLICT},409);
+          +export async function POST(request:Request){try{const actor=await resolveActor(request);requirePermission(actor,"scheduling.book");const input=await request.json() as LifecycleInput;const problem=validate(input);if(problem)return json({error:problem},400);const db=await database();await ensureTables(db);await ensureSchedulingReservationLeaseGovernance(db);await cleanupExpiredReservationLeases(db);await requireCustomerOwnership(db,actor,input.customer.id);const replayInput={customerId:input.customer.id,serviceCode:input.serviceCode,idempotencyKey:input.idempotencyKey,scheduleGroupId:input.scheduleGroupId};const prior=await findCustomerReplay(db,replayInput);if(prior)return json({data:await readBundle(db,prior,true)});if(await hasForeignReplayConflict(db,replayInput))return json({error:BOOKING_REPLAY_CONFLICT},409);if(await hasReplayConflict(db,replayInput))return json({error:BOOKING_WRITE_CONFLICT},409);
+             // Identity rules apply to NEW bookings only, and are checked here — after the replay path above, so
+             // history stays replayable, and before governance, quote/referral consumption, reservation reads and
+             // every write, so a bad new payload costs nothing.
+          --- a/tests/canonical-bookings-gateway-authorization.test.mjs
+          +++ b/tests/canonical-bookings-gateway-authorization.test.mjs
+          @@ -8,7 +8,7 @@
+           // /api/canonical-bookings is authorized by the WORKER, not by route-local code. These tests prove that
+           // layer actually protects it, under the policy that is authoritative for this release:
+           //
+          -//   GET  /api/canonical-bookings -> bookings.view
+          +//   GET  /api/canonical-bookings -> bookings.manage (platform-wide list)
+           //   POST /api/canonical-bookings -> scheduling.book AND canonical customer ownership
+           //
+           // They drive the REAL gateway modules in the REAL order worker/index.ts composes them:
+          @@ -57,10 +57,11 @@
+             globalThis.__CB_GATEWAY_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox" };
+           
+             sqlite.exec("CREATE TABLE IF NOT EXISTS app_users (id TEXT PRIMARY KEY,email TEXT NOT NULL UNIQUE,name TEXT NOT NULL,role_code TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',created_at INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT 0)");
+          -  // manager holds bookings.view AND scheduling.book; finance holds neither. Both are real seeded roles,
+          +  // manager holds bookings.manage; finance and service_provider do not. These are real seeded roles,
+             // so a refusal is a genuine policy outcome rather than an unprovisioned-account accident.
+             sqlite.prepare("INSERT OR REPLACE INTO app_users (id,email,name,role_code,status) VALUES (?,?,?,?,?)").run("u-mgr", "ops.manager@pawspace.in", "Ops manager", "manager", "active");
+             sqlite.prepare("INSERT OR REPLACE INTO app_users (id,email,name,role_code,status) VALUES (?,?,?,?,?)").run("u-fin", "finance@pawspace.in", "Finance", "finance", "active");
+          +  sqlite.prepare("INSERT OR REPLACE INTO app_users (id,email,name,role_code,status) VALUES (?,?,?,?,?)").run("u-prv", "provider.list@pawspace.in", "Provider", "service_provider", "active");
+             return { sqlite, db };
+           }
+           
+          @@ -149,13 +150,13 @@
+             sqlite.prepare("INSERT OR REPLACE INTO booking_payments (id,booking_id) VALUES (?,?)").run("PAY-GW-1", "BK-GW-LEAK-1");
+           }
+           
+          -// --- GET: bookings.view -----------------------------------------------------------------------
+          +// --- GET: platform-wide list requires bookings.manage ------------------------------------------
+           
+          -test("GET with bookings.view is permitted and keeps its existing success behaviour", async () => {
+          +test("GET with bookings.manage is permitted and keeps its existing success behaviour", async () => {
+             const { sqlite } = freshDb();
+             seedBooking(sqlite);
+             const result = await callEndpoint(get({ "oai-authenticated-user-email": "ops.manager@pawspace.in" }));
+          -  assert.equal(result.reachedRoute, true, `a manager holding bookings.view must pass the gateway: ${JSON.stringify(result.body)}`);
+          +  assert.equal(result.reachedRoute, true, `a manager holding bookings.manage must pass the gateway: ${JSON.stringify(result.body)}`);
+             assert.equal(result.status, 200, `and the route must still answer: ${JSON.stringify(result.body)}`);
+             assert.ok(Array.isArray(result.body?.bookings), "the existing success shape is preserved: { bookings: [...] }");
+             // The mirror image of the leak test: what a refused caller cannot see, an authorized one still gets.
+          @@ -163,12 +164,12 @@
+             assert.equal(result.body.bookings[0].id, "BK-GW-LEAK-1");
+           });
+           
+          -test("GET without bookings.view is refused, and the refusal leaks no booking, customer or provider data", async () => {
+          +test("GET without bookings.manage is refused, and the refusal leaks no booking, customer or provider data", async () => {
+             const { sqlite } = freshDb();
+             seedBooking(sqlite);
+             const result = await callEndpoint(get({ "oai-authenticated-user-email": "finance@pawspace.in" }));
+           
+          -  assert.equal(result.reachedRoute, false, "finance does not hold bookings.view and must never reach the handler");
+          +  assert.equal(result.reachedRoute, false, "finance does not hold bookings.manage and must never reach the handler");
+             assert.equal(result.status, 403, `the established refusal for a known identity lacking the permission: ${JSON.stringify(result.body)}`);
+             assert.equal(result.body.error, "Permission denied");
+           
+          @@ -178,6 +179,20 @@
+             }
+           });
+           
+          +
+          +test("service_provider cannot use bookings.view to read the platform-wide canonical booking list", async () => {
+          +  const { sqlite } = freshDb();
+          +  seedBooking(sqlite);
+          +  const result = await callEndpoint(get({ "oai-authenticated-user-email": "provider.list@pawspace.in" }));
+          +
+          +  assert.equal(result.reachedRoute, false, "assigned-job access must not open the platform-wide booking list");
+          +  assert.equal(result.status, 403, `service_provider must be refused: ${JSON.stringify(result.body)}`);
+          +  const serialized = JSON.stringify(result.body);
+          +  for (const secret of ["BK-GW-LEAK-1", "Leaky Customer Name", "Leaky Provider Name", PROVIDER, CUSTOMER, "PAY-GW-1"]) {
+          +    assert.ok(!serialized.includes(secret), `the refusal must not disclose ${secret}`);
+          +  }
+          +});
+          +
+           test("GET with no identity at all is refused before the handler", async () => {
+             freshDb();
+             const result = await callEndpoint(get());
+          @@ -300,18 +315,19 @@
+             }
+           });
+           
+          -test("the gateway is load-bearing: the handler itself does not authorize, which is why the composition below is pinned", async () => {
+          +test("the route independently enforces the platform-wide booking-list permission", async () => {
+             const { sqlite } = freshDb();
+             seedBooking(sqlite);
+           
+          -  // By deliberate design for this release the route carries NO route-local authorization: the Worker is
+          -  // the authoritative layer. Reaching the handler directly therefore succeeds, which is exactly what
+          -  // makes the previous refusals meaningful (they are the gateway's work, not the handler's) and why the
+          -  // next test pins the worker's composition. If route-local authorization is ever added, this flips and
+          -  // should be updated deliberately rather than silently.
+          +  // The Worker remains the first boundary, but a dispatch/configuration mistake must not expose this
+          +  // platform-wide data set. Route-local authorization is deliberate defense in depth.
+             const route = await import("../app/api/canonical-bookings/route.ts");
+             const direct = await route.GET(get({ "oai-authenticated-user-email": "finance@pawspace.in" }));
+          -  assert.equal(direct.status, 200, "the handler answers whoever reaches it — the gateway is what refuses");
+          +  assert.equal(direct.status, 403, "the handler itself refuses an identity without bookings.manage");
+          +  assert.equal(direct.headers.get("cache-control"), "no-store");
+          +  const body = await direct.json();
+          +  assert.equal(body.error, "Permission denied");
+          +  assert.ok(!JSON.stringify(body).includes("BK-GW-LEAK-1"));
+           });
+           
+           // --- the mirror cannot drift from the worker ---------------------------------------------------
+          --- a/tests/route-authorization-class.test.mjs
+          +++ b/tests/route-authorization-class.test.mjs
+          @@ -240,6 +240,15 @@
+           // module - from authorization coverage.
+           const UNLOADABLE_UNDER_STRIP_ONLY = [];
+           
+          +// The low-privilege probe role is the customer role. It legitimately holds scheduling.book, so an
+          +// empty canonical-bookings POST is authorized first and then rejected as an invalid payload. That is
+          +// the opposite of validation-before-authorization: the anonymous sweep must still show 401/403, while
+          +// the authorized customer probe may show 400. Keep these explicit so adding a route-local guard does
+          +// not turn a correct customer path into a false ordering defect.
+          +const AUTHORIZED_PROBE_VALIDATION = new Map([
+          +  ["canonical-bookings.POST", "customer probe holds scheduling.book; empty body is validated only after authorization"],
+          +]);
+          +
+           // Route/method pairs that answer a non-401/403 4xx to an unauthorized caller: they do route-specific
+           // work - parse a body, reject a missing parameter - BEFORE reaching their permission check. None of
+           // them leaks data, and the worker gateway refuses these callers in production, so this is an ordering
+          @@ -313,7 +322,9 @@
+           ];
+           
+           test("no new route validates before it authorizes", async () => {
+          -  const seen = [...new Set([...anonymousSweep.validatedFirst, ...lowPrivilegeSweep.validatedFirst]
+          +  const lowPrivilegeUnauthorized = lowPrivilegeSweep.validatedFirst
+          +    .filter((entry) => !AUTHORIZED_PROBE_VALIDATION.has(entry.split(" -> ")[0]));
+          +  const seen = [...new Set([...anonymousSweep.validatedFirst, ...lowPrivilegeUnauthorized]
+               .map((entry) => entry.split(" -> ")[0]))].sort();
+             const appeared = seen.filter((entry) => !VALIDATES_BEFORE_AUTHORIZING.includes(entry));
+             const fixed = VALIDATES_BEFORE_AUTHORIZING.filter((entry) => !seen.includes(entry));
+          @@ -321,6 +332,13 @@
+             assert.deepEqual(fixed, [], `these no longer validate before authorizing - remove them from VALIDATES_BEFORE_AUTHORIZING: ${fixed.join(", ")}`);
+           });
+           
+          +test("canonical-bookings authorizes before validating while preserving the customer booking path", async () => {
+          +  assert.ok(anonymousSweep.refused.includes("canonical-bookings.POST"),
+          +    "an anonymous canonical booking must reach a 401/403 before body validation");
+          +  assert.ok(lowPrivilegeSweep.validatedFirst.some((entry) => entry.startsWith("canonical-bookings.POST -> 400")),
+          +    "the customer probe legitimately passes scheduling.book and only then receives payload validation");
+          +});
+          +
+           test("every loadable handler answers with a Response instead of throwing", async () => {
+             const unexpected = anonymousSweep.problems.filter((problem) => {
+               const route = problem.split(":")[0];
+          PATCH
+          git apply --check /tmp/canonical-booking-guard.patch
+          git apply /tmp/canonical-booking-guard.patch
+          git diff --check
+      - name: Install exact dependencies
+        run: npm ci
+      - name: Run focused and adjacent authorization regressions
+        run: >-
+          node --experimental-strip-types --test
+          tests/canonical-bookings-gateway-authorization.test.mjs
+          tests/route-authorization-class.test.mjs
+          tests/partner-job-feed.test.mjs
+          tests/provider-workspace.test.mjs
+          tests/grooming-golden-journey.test.mjs
+          tests/ptja-identity-spine.test.mjs
+      - name: Commit the fix and remove this one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/one-shot-canonical-booking-guard.yml
+          git add lib/api-gateway.ts app/api/canonical-bookings/route.ts tests/canonical-bookings-gateway-authorization.test.mjs tests/route-authorization-class.test.mjs
+          git config user.name "PawSpace zero-gap fixer"
+          git config user.email "actions@pawspace.in"
+          git commit -m "fix: restrict platform-wide canonical booking access"
+          git push origin HEAD:testfix/master-zero-gap-20260824
