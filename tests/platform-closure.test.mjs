@@ -19,7 +19,13 @@ test('Marketing starts draft and requires approval plus governed audience snapsh
 
 test('Company analytics is canonical and marks unavailable metrics explicitly',async()=>{const[g,a,p]=await Promise.all([read('lib/company-analytics.ts'),read('app/api/company-analytics/route.ts'),read('app/team/analytics/page.tsx')]);for(const token of ['canonical_bookings','booking_payments','customer_experience_tickets','provider_capacity_profiles'])assert.ok(g.includes(token),token);assert.match(g,/contributionMarginStatus:"configuration_required"/);assert.match(g,/marketingSpend:"not_connected"/);assert.match(a,/staticOperationalCounters:false/);assert.match(p,/No static operational counters/);});
 
-test('AI remains review-only and blocks sensitive autonomous actions',async()=>{const[g,a,p]=await Promise.all([read('lib/ai-governance.ts'),read('app/api/ai-intelligence/route.ts'),read('app/team/ai/page.tsx')]);for(const token of ['refund','price_change','payment','payout','outbound_contact','customer_merge','provider_assignment','campaign_activation'])assert.ok(g.includes(token),token);assert.match(g,/review_required/);assert.match(g,/minimum_necessary/);assert.match(a,/providerStatus:"not_connected"/);assert.match(a,/autonomousExecution:false/);assert.match(p,/Autonomous execution/);});
+test('AI remains review-only and blocks sensitive autonomous actions',async()=>{const[g,a,p]=await Promise.all([read('lib/ai-governance.ts'),read('app/api/ai-intelligence/route.ts'),read('app/team/ai/page.tsx')]);for(const token of ['refund','price_change','payment','payout','outbound_contact','customer_merge','provider_assignment','campaign_activation'])assert.ok(g.includes(token),token);assert.match(g,/review_required/);assert.match(g,/minimum_necessary/);/* This used to pin the literal `providerStatus:"not_connected"`, which is how the route came to keep
+   reporting a disconnected provider after one was configured: the assertion protected the constant
+   rather than the property. The property is that the status is DERIVED and that configuration is never
+   presented as verification. */
+ assert.match(a,/aiProviderConnection\(\)/);
+ assert.doesNotMatch(a,/providerStatus:"not_connected"/);
+ assert.match(a,/providerVerified:connection\.verified/);assert.match(a,/autonomousExecution:false/);assert.match(p,/Autonomous execution/);});
 
 test('Team Sales reads canonical Customer 360 and governed revenue intelligence',async()=>{const p=await read('app/team/sales/page.tsx');assert.match(p,/\/api\/customer-360/);assert.match(p,/\/api\/revenue-intelligence/);assert.match(p,/Canonical Customer 360 & Revenue worklist/);});
 
