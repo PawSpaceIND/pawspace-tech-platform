@@ -59,7 +59,9 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/ai-voice-uat"||url.pathname==="/api/voice-speech")return "communications.call";
   if(url.pathname==="/api/voice-providers")return "settings.manage";
   if(url.pathname==="/api/bot-call-outcomes"){if(method==="GET")return "customers.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"record")==="reconcile"?"customers.manage":"communications.call";}
-  if(url.pathname==="/api/customer-contact"){const body=method==="POST"?await request.clone().json().catch(()=>({})) as Record<string,unknown>:{};return String(body.channel||"call")==="message"?"communications.message":"communications.call";}
+  // Customer 360 contact can target any imported customer, so it is a system-wide administrative action.
+  // Booking-scoped provider communication remains on routes that enforce assignment and ownership.
+  if(url.pathname==="/api/customer-contact")return "communications.manage";
   if(url.pathname==="/api/subscription-customers")return method==="GET"?"customers.view":"data.import";
   if(url.pathname==="/api/subscription-wallet"){if(method==="GET")return url.searchParams.get("customerId")?"customers.view":"scheduling.book";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["reserve","pause","resume"].includes(String(body.action))?"scheduling.book":"bookings.manage";}
   if(url.pathname==="/api/crm")return method==="GET"?"customers.view":"customers.manage";
