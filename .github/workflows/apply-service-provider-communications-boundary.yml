@@ -1,0 +1,101 @@
+name: Apply proven service-provider communications boundary
+
+on:
+  push:
+    branches:
+      - testfix/master-zero-gap-20260824
+    paths:
+      - scripts/apply-service-provider-communications-boundary.mjs
+      - .github/workflows/apply-service-provider-communications-boundary.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-prove:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - name: Verify all target files still match the failing-before head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code 7bffbdd4137983c688ec40e2879832396b922e5c -- \
+            lib/platform-security.ts \
+            lib/api-gateway.ts \
+            app/api/communications/route.ts \
+            app/api/conversations/route.ts \
+            app/api/ai-human-handoff/route.ts \
+            lib/ai-human-handoff.ts \
+            lib/ai-conversation-orchestrator.ts \
+            lib/ai-tool-registry.ts \
+            tests/ai-human-handoff.test.mjs
+      - run: npm ci
+      - name: Apply the exact reviewed replacements
+        run: node scripts/apply-service-provider-communications-boundary.mjs
+      - name: Reject unexpected changed paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=$(cat <<'EOF' | sort
+          app/api/ai-human-handoff/route.ts
+          app/api/communications/route.ts
+          app/api/conversations/route.ts
+          lib/ai-conversation-orchestrator.ts
+          lib/ai-human-handoff.ts
+          lib/ai-tool-registry.ts
+          lib/api-gateway.ts
+          lib/platform-security.ts
+          tests/ai-human-handoff.test.mjs
+          EOF
+          )
+          actual=$(git diff --name-only | sort)
+          printf '%s\n' "$actual"
+          test "$actual" = "$expected"
+          git diff --check
+      - name: Prove provider denial, CX continuity and adjacent gateway behavior
+        run: >-
+          node --experimental-strip-types --test
+          tests/service-provider-communications-boundary.test.mjs
+          tests/ai-human-handoff.test.mjs
+          tests/ai-channels-hardening.test.mjs
+          tests/communications-platform.test.mjs
+          tests/route-authorization-class.test.mjs
+          tests/ai-web-chat-worker-gateway.test.mjs
+          tests/training-payment-sandbox-gateway-authorization.test.mjs
+          tests/uat-provider-switch-worker-gateway.test.mjs
+      - name: Prove the alternate module-loader path
+        env:
+          PAWSPACE_FORCE_LOADER_HOOK: '1'
+        run: >-
+          node --experimental-strip-types --test
+          tests/service-provider-communications-boundary.test.mjs
+          tests/ai-web-chat-worker-gateway.test.mjs
+          tests/training-payment-sandbox-gateway-authorization.test.mjs
+          tests/uat-provider-switch-worker-gateway.test.mjs
+      - name: Typecheck the complete application
+        run: npm run typecheck
+      - name: Publish only the proven remediation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "pawspace-zero-gap-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            lib/platform-security.ts \
+            lib/api-gateway.ts \
+            app/api/communications/route.ts \
+            app/api/conversations/route.ts \
+            app/api/ai-human-handoff/route.ts \
+            lib/ai-human-handoff.ts \
+            lib/ai-conversation-orchestrator.ts \
+            lib/ai-tool-registry.ts \
+            tests/ai-human-handoff.test.mjs
+          git commit -m "fix: separate provider messaging from communications administration"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
