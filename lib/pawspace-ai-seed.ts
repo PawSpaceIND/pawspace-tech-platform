@@ -10,6 +10,7 @@
  */
 
 import { createAiBusinessDraft, transitionAiBusinessConfig } from "./ai-business-configuration";
+import { AI_PROVIDER_REF, DEFAULT_AI_MODEL_REF } from "./ai-provider-adapter";
 
 type Db = D1Database;
 type EntityType = "profile" | "intent" | "knowledge" | "prompt";
@@ -55,7 +56,7 @@ Rules you must always follow:
 /** Seed + activate the starter PawSpace assistant grounding (profile + prompt + knowledge + intents). */
 export async function seedPawspaceAiAssistant(db: Db, input: { maker: string; checker: string }) {
   const { maker, checker } = input;
-  const profile = await activate(db, "profile", { profileKey: "pawspace_default", brandVoice: "Warm, trustworthy, concise - a caring pet-care concierge.", supportedLanguages: ["en", "hi", "ta"], greetingText: "Hi! I'm the PawSpace assistant. How can I help you and your pet today?", fallbackText: "I'm not fully sure about that - let me connect you to a PawSpace team member.", modelRef: "claude-sonnet-4-6", providerRef: "anthropic" }, maker, checker);
+  const profile = await activate(db, "profile", { profileKey: "pawspace_default", brandVoice: "Warm, trustworthy, concise - a caring pet-care concierge.", supportedLanguages: ["en", "hi", "ta"], greetingText: "Hi! I'm the PawSpace assistant. How can I help you and your pet today?", fallbackText: "I'm not fully sure about that - let me connect you to a PawSpace team member.", modelRef: DEFAULT_AI_MODEL_REF, providerRef: AI_PROVIDER_REF }, maker, checker);
   const prompt = await activate(db, "prompt", { policyKey: "pawspace_system", systemPrompt: SYSTEM_PROMPT, policy: { groundedOnly: true, neverQuotePriceFromMemory: true, forbiddenAutonomousActions: ["refund", "payment", "price_change", "provider_assignment", "campaign_activation"], handoffTopics: ["complaint", "refund_dispute", "payment_dispute", "safety", "medical_emergency"] } }, maker, checker);
   const knowledge = [];
   for (const k of KNOWLEDGE) knowledge.push(await activate(db, "knowledge", { sourceKey: k.sourceKey, title: k.title, contentText: k.contentText, sourceType: "policy", visibilityScope: ["public"] }, maker, checker));

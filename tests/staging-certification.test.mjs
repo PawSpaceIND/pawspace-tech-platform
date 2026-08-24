@@ -38,7 +38,7 @@ function world(over = {}) {
     env: goodEnv(),
     log: () => {},
     deployedConfig: async () => goodConfig(),
-    deployedVersionMessages: async () => ["staging 0000000000000000000000000000000000000000", `staging ${SHA}`],
+    liveVersionMessage: async () => `staging ${SHA}`,
     rollbackReference: async () => "version 0f1e2d3c",
     d1: async (sql) => {
       calls.d1.push(sql);
@@ -127,21 +127,40 @@ test("a branch name or short sha is not an identified build", async () => {
 
 test("a deploy whose live version was published for a different sha fails", async () => {
   const other = "b".repeat(40);
-  const report = await runStagingCertification(world({ deployedVersionMessages: async () => [`staging ${other}`] }));
+  const report = await runStagingCertification(world({ liveVersionMessage: async () => `staging ${other}` }));
   assert.equal(report.ok, false);
   assert.equal(failed(report, "published for exactly this sha").length, 1);
 });
 
 test("a version message that merely contains the sha does not satisfy the exact match", async () => {
-  const report = await runStagingCertification(world({ deployedVersionMessages: async () => [`redeploy of staging ${SHA} (retry)`] }));
+  const report = await runStagingCertification(world({ liveVersionMessage: async () => `redeploy of staging ${SHA} (retry)` }));
   assert.equal(report.ok, false);
   assert.equal(failed(report, "published for exactly this sha").length, 1);
 });
 
-test("versions that cannot be listed FAIL rather than being skipped", async () => {
-  const report = await runStagingCertification(world({ deployedVersionMessages: async () => { throw new Error("api unavailable"); } }));
+test("the requested sha existing SOMEWHERE in deployment history does not certify it", async () => {
+  // The gate used to search the whole `versions list` output, so a version deployed for this sha and
+  // then superseded still satisfied it - certifying a build that is no longer serving requests. Only
+  // the ACTIVE version's message counts.
+  const superseded = "c".repeat(40);
+  const report = await runStagingCertification(world({ liveVersionMessage: async () => `staging ${superseded}` }));
   assert.equal(report.ok, false);
-  assert.ok(report.unavailable.includes("the DEPLOYED version was published for exactly this sha"));
+  const failure = failed(report, "published for exactly this sha")[0];
+  assert.match(failure.detail, /deployment drift/);
+});
+
+test("an empty live version message is a failure, not a pass", async () => {
+  for (const live of [async () => "", async () => "   ", async () => null]) {
+    const report = await runStagingCertification(world({ liveVersionMessage: live }));
+    assert.equal(report.ok, false);
+    assert.equal(failed(report, "published for exactly this sha").length, 1);
+  }
+});
+
+test("a live version that cannot be read FAILS rather than being skipped", async () => {
+  const report = await runStagingCertification(world({ liveVersionMessage: async () => { throw new Error("api unavailable"); } }));
+  assert.equal(report.ok, false);
+  assert.ok(report.unavailable.includes("the LIVE version was published for exactly this sha"));
 });
 
 // ---------------------------------------------------------------------------

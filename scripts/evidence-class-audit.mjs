@@ -34,6 +34,23 @@
  *   Release-CI D1 jobs boot an actual Worker against an actual D1 binding over HTTP; that is more
  *   execution than a node:sqlite shim, not less, and no import of `node:sqlite` appears anywhere in
  *   the suite that drives it.
+ *
+ * WHAT THIS AUDIT CANNOT TELL YOU, stated plainly because the whole point of it is to stop the
+ * repository claiming more than it has:
+ *
+ *   This is STATIC analysis. It reads what a suite imports and spawns; it does not run anything, so it
+ *   cannot know whether an imported function was ever called, whether a route handler was ever invoked,
+ *   or whether a booted Worker was ever sent a request. A file that imports `lib/refunds.ts` and
+ *   `node:sqlite` and then asserts `1 === 1` classifies as real_execution here and proves nothing.
+ *
+ *   So the classes are an UPPER BOUND on evidence strength, not a measurement of it. They answer "what
+ *   is the strongest thing this suite could possibly be proving?" - which is the useful question when
+ *   the alternative is a bare count of 300 files, and which is genuinely decisive in the direction that
+ *   matters: a source_contract suite cannot be proving behaviour no matter what it asserts. Reading a
+ *   suite is still the only way to know it asserts something worth asserting.
+ *
+ *   Detecting actual invocation would need coverage instrumentation over a real run (c8/V8 coverage per
+ *   suite), which is a different and much heavier tool. It is not pretended to here.
  */
 
 import fs from "node:fs";

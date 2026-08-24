@@ -43,8 +43,18 @@ const read = (path) => fs.readFileSync(new URL(`../../${path}`, import.meta.url)
 export function applyOwnedDdl(sqlite, path) {
   const source = read(path);
   for (const match of source.matchAll(/\.prepare\(\s*(["'`])([\s\S]*?)\1/g)) {
-    if (/^\s*CREATE (TABLE|INDEX|UNIQUE INDEX)/i.test(match[2])) {
-      try { sqlite.exec(match[2]); } catch { /* an index on a table this harness does not need */ }
+    const statement = match[2];
+    if (!/^\s*CREATE (TABLE|INDEX|UNIQUE INDEX)/i.test(statement)) continue;
+    const isIndex = /^\s*CREATE (UNIQUE )?INDEX/i.test(statement);
+    try {
+      sqlite.exec(statement);
+    } catch (error) {
+      // An index on a table this harness does not create is the ONE ignorable case. A CREATE TABLE
+      // that fails means the extracted DDL no longer parses - schema drift - and swallowing it left
+      // the suite running against an incomplete database, reporting either misleading AI behaviour or a
+      // failure at some unrelated later statement. It fails here, naming the file and the statement.
+      if (isIndex && /no such table/i.test(String(error?.message))) continue;
+      throw new Error(`${path}: DDL failed to apply (${String(error?.message).slice(0, 160)})\n  ${statement.slice(0, 200)}`);
     }
   }
 }

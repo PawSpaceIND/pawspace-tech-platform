@@ -1,6 +1,6 @@
 # Lane 4 — AI, voice, readiness, CI: closure evidence
 
-Branch `closure/9plus-lane4-ai-release`, from `main` at `a95ed7adbbf513ed78e4b88b22afa38ce3b5c940`.
+Branch `closure/9plus-lane4-ai-release`, cut from `main` at `a95ed7adbbf513ed78e4b88b22afa38ce3b5c940` and synced with `main` at `85ac0c6e275a93d1690428c59aac0b214cdcddf4`.
 
 Every number below is produced by something in this branch that a reader can re-run. Where a claim
 cannot be made because nothing external is connected, this document says so rather than rounding it up.
@@ -17,7 +17,7 @@ its imports and never from its name:
 | `real_execution` | behaviour, persistence, negative paths. The only class that can prove a gate refuses something | 123 | 40% |
 | `imported_unit` | pure logic and refusal decisions; cannot prove anything was written or read back | 24 | 8% |
 | `hosted_provider` | that an integration is live | **0** | 0% |
-| `source_contract` | that a named symbol still exists in a file | 159 | 52% |
+| `source_contract` | that a named symbol still exists in a file | 160 | 52% |
 
 Run it: `node scripts/evidence-class-audit.mjs`. Add `--json` for the per-suite rows.
 
@@ -33,6 +33,16 @@ strongest suites in the repository as the weakest:
 - A `wrangler dev` spawn counts as real execution and its worker entry is followed. The Release-CI D1
   jobs boot an actual Worker over an actual D1 binding; that is more execution than a `node:sqlite`
   shim, not less, and no `node:sqlite` import appears in the suite that drives it.
+
+**What this audit cannot tell you**, stated because the point of it is to stop the repository claiming
+more than it has: it is STATIC analysis. It reads what a suite imports and spawns; it does not run
+anything, so it cannot know whether an imported function was ever called or a booted Worker ever
+received a request. A file that imports `lib/refunds.ts` and `node:sqlite` and then asserts `1 === 1`
+classifies as `real_execution` and proves nothing. The classes are therefore an **upper bound** on
+evidence strength — decisive in the direction that matters (a `source_contract` suite cannot be proving
+behaviour, whatever it asserts) and no more than that in the other. Measuring actual invocation would
+need per-suite coverage instrumentation over a real run; that is a different, much heavier tool and is
+not pretended to here. The boundary is itself pinned by a test.
 
 `tests/evidence-class-audit.test.mjs` proves each class positively and by sabotage (remove the feature,
 the classification must drop), and enforces two floors that cannot regress:
@@ -53,11 +63,12 @@ Six AI suites named for gates they proved by grep now say what they are:
 | `ai-web-chat-gate6` | `ai-web-chat-source-contract` |
 | `ai-whatsapp-uat-gate5` | `ai-whatsapp-uat-source-contract` |
 
-**39 suites remain that claim a verdict in their name and prove it by grep** — `walking-gate3`,
+**40 suites remain that claim a verdict in their name and prove it by grep** — `walking-gate3`,
 `taxi-closure`, `boarding-gate1` and the rest. `walking-gate3` greps `lib/walking-*.ts` and passes
 whether or not a walking booking can be created. They are owned by other closure lanes, so they are
-**frozen rather than renamed across a lane boundary**: the audit's guard allows that list to get
-shorter and never longer, and refuses any new one in Lane 4 scope. The full list is in the audit output
+**frozen rather than renamed across a lane boundary**: the guard freezes the exact SET (a count-only
+guard would let a new overclaiming suite appear whenever an old one was renamed away in the same
+change), and refuses any new one in Lane 4 scope. The full list is in the audit output
 and is a cross-lane finding for Lanes 1–3, not a Lane 4 change.
 
 ### Per-module counts (top of the table; full table in the CI artifact)
@@ -236,7 +247,12 @@ apart. An observation carries the five things that make a claim checkable later:
 | `commit_sha` | not exactly 40 hex characters, or all zeros. "Verified on main" does not identify a build |
 | `observed_at` | absent, implausibly early, or in the future |
 | `expected_result` / `actual_result` | either absent or a placeholder. `matched` is **derived**, never asserted |
-| `durable_reference` | prose. Must be `d1:` / `audit:` / `ledger:` / `r2:` / `kv:` / `artifact:` / `provider:` — an artefact nobody can fetch again is not durable evidence |
+| `durable_reference` | prose, or a scheme that could not resolve to the declared `evidence_kind` (a `platform_audit_row` pointed at `provider:…`, a `provider_dashboard_record` at `ledger:…`). Must be `d1:` / `audit:` / `ledger:` / `r2:` / `kv:` / `artifact:` / `provider:` — an artefact nobody can fetch again is not durable evidence |
+
+The registry validates that a reference **could** resolve and that it matches the kind of artefact
+claimed. It does **not** dereference it: verifying an R2 object or a third-party dashboard record is not
+possible from this module, and a check that appeared to do so would be the same overclaiming the
+registry exists to prevent. That boundary is pinned by a test rather than left implicit.
 
 A mismatch is still **recorded** — it is a real observation and the trail should keep it — but a row with
 `matched = 0` can never support verification.

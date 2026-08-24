@@ -138,6 +138,43 @@ test("every incomplete or unfalsifiable observation is refused, with the missing
   assert.deepEqual(await registry.integrationLiveEvidence(db, "INT-VOICE-01"), [], "a refused observation must leave no row");
 });
 
+test("an evidence kind must be pointed at by a reference that could resolve to it", async () => {
+  // Shape alone let any kind carry any scheme, so a provider dashboard record could be "evidenced" by
+  // a platform ledger pointer that cannot possibly resolve to it. This is a consistency check, not an
+  // existence check - see the note below on what the registry deliberately does not claim.
+  const { db } = await fresh();
+  const mismatches = [
+    ["provider_dashboard_record", "audit:AUD-1"],
+    ["provider_dashboard_record", "d1:voice_call_orders:VC-1"],
+    ["platform_audit_row", "provider:CA123456"],
+    ["platform_ledger_row", "r2:bucket/key.json"],
+    ["provider_api_response", "kv:some-key"],
+  ];
+  for (const [evidenceKind, durableReference] of mismatches) {
+    await assert.rejects(
+      registry.recordIntegrationLiveEvidence(db, { ...GOOD_EVIDENCE, evidenceKind, durableReference }, OBSERVED + 1_000),
+      /cannot be evidenced by a/, `${evidenceKind} accepted ${durableReference}`);
+  }
+  // And the matching combinations are accepted.
+  for (const [evidenceKind, durableReference] of [["platform_audit_row", "audit:AUD-1"], ["platform_ledger_row", "ledger:VC-1"], ["provider_api_response", "provider:CA1234567890"]]) {
+    const recorded = await registry.recordIntegrationLiveEvidence(db, { ...GOOD_EVIDENCE, evidenceKind, durableReference, scenario: `accepts ${evidenceKind}` }, OBSERVED + 1_000);
+    assert.equal(recorded.matched, true);
+  }
+});
+
+test("the registry validates that a reference COULD resolve, and does not claim the target exists", async () => {
+  // Stated as a test so the boundary is recorded rather than assumed: a well-formed reference of the
+  // right kind is accepted even though nothing here dereferences it. Verifying an R2 object or a
+  // third-party dashboard record is not possible from this module, and a check that appeared to do so
+  // would be the same overclaiming the registry exists to prevent. The reference is what a human or a
+  // later tool follows; the registry's job is to make sure one was recorded, in a resolvable form, and
+  // that it matches the kind of artefact claimed.
+  const { db } = await fresh();
+  const recorded = await registry.recordIntegrationLiveEvidence(db, { ...GOOD_EVIDENCE, durableReference: "ledger:VC-does-not-exist-yet" }, OBSERVED + 1_000);
+  assert.equal(recorded.matched, true);
+  assert.equal(recorded.durableReference, "ledger:VC-does-not-exist-yet");
+});
+
 test("an observation for an integration that is not in the registry is refused", async () => {
   const { db } = await fresh();
   await assert.rejects(registry.recordIntegrationLiveEvidence(db, { ...GOOD_EVIDENCE, integrationCode: "INT-MADE-UP" }, OBSERVED + 1_000), /Integration not found/);
@@ -209,11 +246,44 @@ test("with a matched observation and a reference that names it, controlled live 
   assert.ok(events.includes("readiness_updated"));
 });
 
-test("a failed controlled-live attempt rolls the state back rather than leaving it half-granted", async () => {
+test("a rejected controlled-live attempt writes NOTHING - not the state, not the other columns, not an event", async () => {
+  // The gate used to write first and roll back only readiness_state and the two verification stamps.
+  // A rejected attempt that also set environment='production' and every evidence column left all of
+  // those persisted, with no readiness_updated event describing them - so an operator saw a row that
+  // had silently moved most of the way to "live" as the result of a call that reported failure.
   const { sqlite, db } = await fresh();
-  const stateBefore = row(sqlite, "INT-COMMS-01").readiness_state;
-  await assert.rejects(registry.updateIntegrationReadiness(db, { integrationCode: "INT-COMMS-01", reason: "Claiming controlled live with nothing", changes: { readinessState: "controlled_live_verified" }, actorId: "ops@pawspace.in" }), /blocked until/);
-  assert.equal(row(sqlite, "INT-COMMS-01").readiness_state, stateBefore);
+  const before = row(sqlite, "INT-COMMS-01");
+  const eventsBefore = sqlite.prepare("SELECT COUNT(*) n FROM integration_readiness_events").get().n;
+
+  await assert.rejects(registry.updateIntegrationReadiness(db, {
+    integrationCode: "INT-COMMS-01", reason: "Claiming controlled live with everything but the evidence",
+    changes: {
+      readinessState: "controlled_live_verified", environment: "production", codeBoundaryStatus: "code_ready",
+      credentialStatus: "configured", approvalReference: "APPROVAL-999", evidenceReference: "trust me",
+      authVerificationStatus: "verified", webhookVerificationStatus: "verified", auditLoggingStatus: "verified",
+      notes: "should not survive",
+    },
+    actorId: "ops@pawspace.in",
+  }), /blocked until/);
+
+  const after = row(sqlite, "INT-COMMS-01");
+  for (const column of ["readiness_state", "environment", "code_boundary_status", "credential_status", "approval_reference", "evidence_reference", "auth_verification_status", "webhook_verification_status", "audit_logging_status", "notes", "updated_by", "updated_at"]) {
+    assert.deepEqual(after[column], before[column], `${column} was changed by a rejected update`);
+  }
+  assert.equal(after.controlled_live_verified_at, null);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM integration_readiness_events").get().n, eventsBefore,
+    "a rejected update must not leave an audit event either");
+});
+
+test("a rejected sandbox_verified attempt writes nothing either", async () => {
+  const { sqlite, db } = await fresh();
+  const before = row(sqlite, "INT-COMMS-01");
+  await assert.rejects(registry.updateIntegrationReadiness(db, {
+    integrationCode: "INT-COMMS-01", reason: "Sandbox verified with no evidence reference",
+    changes: { readinessState: "sandbox_verified", notes: "should not survive" }, actorId: "ops@pawspace.in",
+  }), /Sandbox verification requires an evidence reference/);
+  assert.equal(row(sqlite, "INT-COMMS-01").readiness_state, before.readiness_state);
+  assert.equal(row(sqlite, "INT-COMMS-01").notes, before.notes);
 });
 
 // ---------------------------------------------------------------------------

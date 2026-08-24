@@ -112,10 +112,10 @@ export function assertStagingIsolation({ workerName, deployedConfig, env }) {
  * @param {(method: string, path: string, options?: object) => Promise<{status: number, headers: any, body?: any}>} adapters.http against the DEPLOYED origin
  * @param {(sql: string) => Promise<Array<Record<string, unknown>>>} adapters.d1 against the staging database
  * @param {() => Promise<object>} adapters.deployedConfig the configuration the running Worker was deployed with
- * @param {() => Promise<string[]>} adapters.deployedVersionMessages `wrangler versions list` deploy messages
+ * @param {() => Promise<string>} adapters.liveVersionMessage the deploy message of the CURRENTLY ACTIVE version
  * @param {() => Promise<string>} adapters.rollbackReference the version that was live BEFORE this deploy
  */
-export async function runStagingCertification({ http, d1, deployedConfig, deployedVersionMessages, rollbackReference, env, log = console.log }) {
+export async function runStagingCertification({ http, d1, deployedConfig, liveVersionMessage, rollbackReference, env, log = console.log }) {
   const report = { worker: STAGING_WORKER_NAME, sha: val(env, "EXPECTED_SHA"), checks: [], counts: {} };
   let failures = 0;
   const safe = (value) => sanitizeEvidenceDetail(value, [val(env, "ACCESS_CODE"), val(env, "STAGING_D1_ID"), val(env, "PRODUCTION_D1_ID")]);
@@ -153,13 +153,16 @@ export async function runStagingCertification({ http, d1, deployedConfig, deploy
   } else {
     check("the requested build is an exact commit sha", true, expectedSha);
     try {
-      const messages = await deployedVersionMessages();
+      // The ACTIVE version's message, not any message in the deployment history. Searching the whole
+      // history let an older version satisfy this check after a later or concurrent deploy had already
+      // replaced it - certifying a build that is no longer the one answering requests, which is the
+      // precise failure this check exists to catch.
+      const live = String(await liveVersionMessage() ?? "").trim();
       const wanted = `staging ${expectedSha}`;
-      const matched = Array.isArray(messages) && messages.includes(wanted);
-      check("the DEPLOYED version was published for exactly this sha", matched,
-        matched ? wanted : `no deployed version message equals "${wanted}" - deployment drift`);
+      check("the LIVE version was published for exactly this sha", live === wanted,
+        live === wanted ? wanted : `the live version's message is ${live ? `"${live}"` : "empty"}, not "${wanted}" - deployment drift`);
     } catch (error) {
-      unavailable("the DEPLOYED version was published for exactly this sha", `the deployed versions could not be listed (${error?.message})`);
+      unavailable("the LIVE version was published for exactly this sha", `the live version could not be read (${error?.message})`);
     }
   }
 
@@ -316,23 +319,23 @@ if (isMain) {
   const deployedConfig = async () => JSON.parse(wrangler(["deployments", "status", "--name", env.WORKER_NAME, "--json"]))?.config
     ?? JSON.parse((await import("node:fs")).readFileSync("dist/server/wrangler.json", "utf8"));
 
-  const deployedVersionMessages = async () => {
-    const parsed = JSON.parse(wrangler(["versions", "list", "--json", "--name", env.WORKER_NAME]));
-    const messages = [];
-    const collect = value => {
-      if (typeof value === "string") messages.push(value);
-      else if (Array.isArray(value)) value.forEach(collect);
-      else if (value && typeof value === "object") Object.values(value).forEach(collect);
-    };
-    collect(parsed);
-    return messages;
+  /**
+   * The deploy message of the version currently serving traffic. `deployments status --json` describes
+   * the ACTIVE deployment; `versions list` describes everything ever deployed, which is why the gate no
+   * longer looks there.
+   */
+  const liveVersionMessage = async () => {
+    const status = JSON.parse(wrangler(["deployments", "status", "--json", "--name", env.WORKER_NAME]));
+    const active = Array.isArray(status?.versions) ? status.versions : [];
+    const fromVersions = active.map(entry => String(entry?.version?.message ?? entry?.message ?? "").trim()).filter(Boolean);
+    return fromVersions[0] ?? String(status?.message ?? status?.annotations?.["workers/message"] ?? "").trim();
   };
 
   const rollbackReference = async () => String(process.env.ROLLBACK_REFERENCE || "").trim();
 
   let report;
   try {
-    report = await runStagingCertification({ http, d1, deployedConfig, deployedVersionMessages, rollbackReference, env });
+    report = await runStagingCertification({ http, d1, deployedConfig, liveVersionMessage, rollbackReference, env });
   } catch (error) {
     console.error(error instanceof StagingIsolationRefused ? error.message : `staging certification failed to start: ${error?.message}`);
     process.exit(1);

@@ -30,7 +30,13 @@ export async function POST(request:Request){
   // launch.manage check for recording evidence follows once the action is known.
   const actor=await resolveActor(request);requirePermission(actor,"launch.view");
   const db=await database();
-  const body=await request.json() as Record<string,unknown>,action=String(body.action||"").trim();
+  // request.json() REJECTS on truncated input, and JSON.parse("null") returns null - both of which
+  // then hit authError as an ordinary exception and answered 500 to what is really a malformed request.
+  // Anything that is not a plain object is an absent body, which the action dispatch answers with 400.
+  let parsed:unknown;
+  try{parsed=await request.json();}catch{return json({error:"Request body must be valid JSON"},400);}
+  if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))return json({error:"Request body must be a JSON object"},400);
+  const body=parsed as Record<string,unknown>,action=String(body.action||"").trim();
   if(action==="request_evidence"){
    const data=await requestIntegrationEvidence(db,{integrationCode:String(body.integrationCode||"").trim(),lane:String(body.lane||"").trim(),scenario:String(body.scenario||"").trim(),requirement:String(body.requirement||"").trim(),requestedBy:actor.email});
    await securityAudit(db,actor,"integration.evidence.request","integration",data.integrationCode,"completed",{lane:data.lane,scenario:data.scenario});
@@ -55,7 +61,10 @@ export async function POST(request:Request){
 export async function PATCH(request:Request){
  try{
   const actor=await resolveActor(request);requirePermission(actor,"launch.manage");const db=await database();
-  const body=await request.json() as Record<string,unknown>,integrationCode=String(body.integrationCode||"").trim(),reason=String(body.reason||"").trim();
+  let patched:unknown;
+  try{patched=await request.json();}catch{return json({error:"Request body must be valid JSON"},400);}
+  if(!patched||typeof patched!=="object"||Array.isArray(patched))return json({error:"Request body must be a JSON object"},400);
+  const body=patched as Record<string,unknown>,integrationCode=String(body.integrationCode||"").trim(),reason=String(body.reason||"").trim();
   const changes=typeof body.changes==="object"&&body.changes?body.changes as Record<string,unknown>:{};
   if(changes.readinessState==="sandbox_verified"&&!String(changes.evidenceReference||"").trim())return json({error:"Sandbox verification must include an evidence reference in the same governed change"},400);
   if(changes.readinessState==="controlled_live_verified"&&(!String(changes.evidenceReference||"").trim()||!String(changes.approvalReference||"").trim()))return json({error:"Controlled-live verification must include both evidence and approval references in the same governed change"},400);

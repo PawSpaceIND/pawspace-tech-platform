@@ -171,6 +171,25 @@ export const integrationEvidenceKinds:IntegrationEvidenceKind[]=["provider_api_r
 const PLACEHOLDER=/^(todo|tbd|t\.b\.d\.?|n\/?a|none|null|nil|pending|unknown|xxx+|test|placeholder|-+|\?+)$/i;
 /** Resolvable pointer forms. Prose is refused: an artefact nobody can fetch again is not durable. */
 const DURABLE_REFERENCE=/^(d1|audit|ledger|r2|kv|artifact|provider):[A-Za-z0-9_./:#-]{3,}$/;
+
+/**
+ * Which pointer schemes each evidence kind may use.
+ *
+ * The shape check alone let any kind carry any scheme, so a `provider_dashboard_record` could point at
+ * `ledger:something` and a `platform_audit_row` at `provider:whatever` - a reference that cannot
+ * possibly resolve to the thing the row claims to be. This does NOT prove the target exists: this
+ * module cannot dereference an R2 object or a third-party dashboard, and pretending otherwise would be
+ * the same overclaiming the registry exists to prevent. What it does enforce is that the pointer is of
+ * a kind that COULD resolve to the declared artefact, so a mismatch is caught at recording time
+ * instead of at the moment someone tries to follow the reference.
+ */
+const REFERENCE_SCHEMES_FOR_KIND:Record<string,string[]>={
+ provider_api_response:["provider","artifact","ledger"],
+ provider_webhook_receipt:["provider","ledger","d1","audit"],
+ provider_dashboard_record:["provider","artifact"],
+ platform_audit_row:["audit","d1"],
+ platform_ledger_row:["ledger","d1"],
+};
 const EXACT_SHA=/^[0-9a-f]{40}$/;
 const EARLIEST_PLAUSIBLE_OBSERVATION=Date.UTC(2025,0,1);
 
@@ -211,6 +230,9 @@ export async function recordIntegrationLiveEvidence(db:Db,input:IntegrationLiveE
  if(actual.length<4||PLACEHOLDER.test(actual))throw new Error("Evidence requires the actual result");
  if(!integrationEvidenceKinds.includes(input.evidenceKind))throw new Error("Invalid evidence kind");
  if(!DURABLE_REFERENCE.test(durableReference))throw new Error("Evidence requires a durable reference (d1:/audit:/ledger:/r2:/kv:/artifact:/provider:), never prose");
+ const scheme=durableReference.split(":")[0];
+ const allowedSchemes=REFERENCE_SCHEMES_FOR_KIND[input.evidenceKind]??[];
+ if(!allowedSchemes.includes(scheme))throw new Error(`A ${input.evidenceKind} cannot be evidenced by a ${scheme}: reference (expected ${allowedSchemes.join(":/ ")}:)`);
  if(!recordedBy)throw new Error("Evidence requires the person who recorded it");
 
  const matched=expected.toLowerCase()===actual.toLowerCase();
@@ -256,13 +278,29 @@ export async function updateIntegrationReadiness(db:Db,input:{integrationCode:st
  await ensureIntegrationReadinessTables(db);if(!input.integrationCode||input.reason.trim().length<8)throw new Error("Integration code and a clear change reason are required");const before=await db.prepare("SELECT * FROM integration_registry WHERE integration_code=?").bind(input.integrationCode).first<Row>();if(!before)throw new Error("Integration not found");const entries=Object.entries(input.changes).filter(([key])=>editableColumns.has(key));if(!entries.length)throw new Error("No supported integration readiness changes supplied");
  for(const[key,value]of entries){const column=editableColumns.get(key)!;if(column==="environment"&&!integrationEnvironments.includes(String(value) as IntegrationEnvironment))throw new Error("Invalid integration environment");if(column==="code_boundary_status"&&!integrationCodeBoundaryStates.includes(String(value) as CodeBoundaryStatus))throw new Error("Invalid code boundary status");if(column==="credential_status"&&!integrationCredentialStates.includes(String(value) as CredentialStatus))throw new Error("Invalid credential status");if(column==="readiness_state"&&!integrationReadinessStates.includes(String(value) as IntegrationReadinessState))throw new Error("Invalid readiness state");if(evidenceColumns.has(column)&&!allowedEvidence(value))throw new Error(`Invalid ${key}`);if(column==="secret_reference"&&value!=null&&!/^(env|vault|secret-manager|platform):[A-Za-z0-9_./:+-]+$/.test(String(value)))throw new Error("Secret reference must be a reference only (env:/vault:/secret-manager:/platform:), never a secret value");}
  const nextState=entries.find(([key])=>key==="readinessState")?.[1];if(nextState==="blocked"&&!string(input.changes.blockerReason).trim())throw new Error("Blocked readiness requires a blocker reason");
- const now=Date.now(),set=entries.map(([key])=>`${editableColumns.get(key)}=?`).join(",");await db.prepare(`UPDATE integration_registry SET ${set},updated_by=?,updated_at=? WHERE integration_code=?`).bind(...entries.map(([,value])=>value===""?null:value),input.actorId,now,input.integrationCode).run();let after=await db.prepare("SELECT * FROM integration_registry WHERE integration_code=?").bind(input.integrationCode).first<Row>();if(!after)throw new Error("Integration update failed");
+ const now=Date.now();
+ // The controlled-live gate is evaluated on the PROSPECTIVE row - `before` with this call's changes
+ // applied in memory - and refuses BEFORE anything is written.
+ //
+ // It used to write first and then roll back only readiness_state and the two verification timestamps.
+ // A rejected attempt that also set environment='production' and a dozen evidence columns left every
+ // one of those persisted, with no readiness_updated event describing them, because the throw happened
+ // before the audit insert. An operator then saw a row that had silently moved most of the way to
+ // "live" as the result of a call that reported failure. Nothing is written unless the whole change is
+ // going to be accepted.
+ const prospective:Row={...before};
+ for(const[key,value]of entries)prospective[editableColumns.get(key)!]=value===""?null:value;
+ if(String(prospective.readiness_state)==="controlled_live_verified"){
+  const missing=completeForControlledLive(prospective);const gap=await liveEvidenceGap(db,prospective);if(gap)missing.push(gap);
+  if(missing.length)throw new Error(`Controlled-live verification is blocked until: ${missing.join(", ")}`);
+ }else if(String(prospective.readiness_state)==="sandbox_verified"&&!string(prospective.evidence_reference).trim()){
+  throw new Error("Sandbox verification requires an evidence reference");
+ }
+ const set=entries.map(([key])=>`${editableColumns.get(key)}=?`).join(",");await db.prepare(`UPDATE integration_registry SET ${set},updated_by=?,updated_at=? WHERE integration_code=?`).bind(...entries.map(([,value])=>value===""?null:value),input.actorId,now,input.integrationCode).run();let after=await db.prepare("SELECT * FROM integration_registry WHERE integration_code=?").bind(input.integrationCode).first<Row>();if(!after)throw new Error("Integration update failed");
  if(String(after.readiness_state)==="controlled_live_verified"){
-  const missing=completeForControlledLive(after);const gap=await liveEvidenceGap(db,after);if(gap)missing.push(gap);
-  if(missing.length){await db.prepare("UPDATE integration_registry SET readiness_state=?,controlled_live_verified_at=NULL,controlled_live_verified_by=NULL WHERE integration_code=?").bind(String(before.readiness_state),input.integrationCode).run();throw new Error(`Controlled-live verification is blocked until: ${missing.join(", ")}`);}
   await db.prepare("UPDATE integration_registry SET controlled_live_verified_at=?,controlled_live_verified_by=?,last_verified_at=? WHERE integration_code=?").bind(now,input.actorId,now,input.integrationCode).run();after=await db.prepare("SELECT * FROM integration_registry WHERE integration_code=?").bind(input.integrationCode).first<Row>();
  }else if(String(after.readiness_state)==="sandbox_verified"){
-  if(!string(after.evidence_reference).trim())throw new Error("Sandbox verification requires an evidence reference");await db.prepare("UPDATE integration_registry SET last_verified_at=? WHERE integration_code=?").bind(now,input.integrationCode).run();after=await db.prepare("SELECT * FROM integration_registry WHERE integration_code=?").bind(input.integrationCode).first<Row>();
+  await db.prepare("UPDATE integration_registry SET last_verified_at=? WHERE integration_code=?").bind(now,input.integrationCode).run();after=await db.prepare("SELECT * FROM integration_registry WHERE integration_code=?").bind(input.integrationCode).first<Row>();
  }
  await db.prepare("INSERT INTO integration_readiness_events (id,integration_code,event_type,before_json,after_json,actor_id,reason,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.integrationCode,"readiness_updated",JSON.stringify(publicRow(before)),JSON.stringify(publicRow(after!)),input.actorId,input.reason.trim(),now).run();return publicRow(after!);
 }

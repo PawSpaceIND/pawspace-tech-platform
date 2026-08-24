@@ -90,14 +90,20 @@ test("each distinct provider failure produces a handoff, not a silent or empty r
   }
 });
 
-test("a provider that hangs is bounded by the caller, and the customer still gets a human", async () => {
-  // The orchestrator awaits `provider.generate`. A provider adapter with no deadline makes this await
-  // unbounded, which is why the deadline lives in the adapter and is proved in
-  // tests/ai-provider-adapter-execution.test.mjs. Here the equivalent failure - a provider that
-  // rejects after its own deadline - must still reach a human rather than surfacing as an exception.
+test("a provider that rejects after a delay still reaches a human rather than surfacing as an exception", async () => {
+  // Named for what it proves. It was called "a provider that hangs is bounded by the caller", which it
+  // did NOT show: the stub settles after five milliseconds, so the case would pass unchanged even if
+  // the orchestrator awaited a provider that never settled at all.
+  //
+  // The residual is real and is stated rather than hidden: `orchestrateAiTurn` has no deadline of its
+  // own. It awaits whatever provider it is handed, so a never-settling provider WOULD hang it. The
+  // deadline lives one layer down in lib/ai-provider-adapter.ts, where it is proved against both a
+  // provider that never answers and one that answers with headers then stalls the body
+  // (tests/ai-provider-adapter-execution.test.mjs). Any future provider implementation handed to the
+  // orchestrator has to bound itself the same way; the test below pins the orchestrator's half only.
   const { sqlite, db } = await world();
   const stub = provider(async () => { await new Promise(resolve => setTimeout(resolve, 5)); throw Object.assign(new Error("timeout"), { name: "TimeoutError" }); });
-  const result = await turn(sqlite, db, { text: "what is the price of grooming", stub, key: "hang" });
+  const result = await turn(sqlite, db, { text: "what is the price of grooming", stub, key: "delayed-rejection" });
   assert.equal(result.turn.outcome, "handoff");
   assert.equal(result.turn.handoffReason, "provider_error");
   assert.equal(handoffs(sqlite).length, 1);
@@ -182,6 +188,47 @@ test("a healthy provider on an in-scope question does answer, and the turn recor
   const stored = turns(sqlite)[0];
   assert.equal(stored.provider, "stub_model");
   assert.equal(stored.output_text, "A basic groom starts at Rs 899.");
+});
+
+test("a degraded provider is reported as degraded, not as connected", async () => {
+  // The snapshot used to derive connectivity from the provider NAME. A degraded provider still calls
+  // itself "anthropic", so the screen an operator opens to find out WHY turns are being handed off
+  // reported the provider as connected - the one state that most needs to be visible, hidden.
+  const { sqlite, db } = await world();
+  const stub = provider(() => ({ text: "", provider: "anthropic", modelRef: "m-1", latencyMs: 5, unsupported: true }), { status: "degraded", name: "anthropic", modelRef: "m-1" });
+  const result = await turn(sqlite, db, { text: "what is the price of grooming", stub, key: "degraded" });
+  assert.equal(result.turn.outcome, "handoff");
+
+  const snapshot = await orchestrator.aiConversationSnapshot(db, { actor: staffActor, threadId: "THREAD-1", customerId: "CUS-1" });
+  assert.equal(snapshot.providerRef, "anthropic", "the provider that served the thread is named");
+  assert.equal(snapshot.providerStatus, "degraded");
+  assert.equal(snapshot.providerConnected, false, "a degraded provider is not a connected one");
+});
+
+test("a connected provider is reported as connected, and an absent one as not_connected", async () => {
+  const healthy = await world();
+  await turn(healthy.sqlite, healthy.db, { text: "what is the price of grooming", stub: answered("ok"), key: "healthy-snapshot" });
+  const connected = await orchestrator.aiConversationSnapshot(healthy.db, { actor: staffActor, threadId: "THREAD-1", customerId: "CUS-1" });
+  assert.equal(connected.providerStatus, "connected");
+  assert.equal(connected.providerConnected, true);
+
+  const cold = await world();
+  await turn(cold.sqlite, cold.db, { text: "what is the price of grooming", stub: { provider: orchestrator.notConnectedAiProvider, calls: [] }, key: "cold-snapshot" });
+  const absent = await orchestrator.aiConversationSnapshot(cold.db, { actor: staffActor, threadId: "THREAD-1", customerId: "CUS-1" });
+  assert.equal(absent.providerStatus, "not_connected");
+  assert.equal(absent.providerConnected, false);
+});
+
+test("a database whose session table predates provider_status gains the column instead of breaking", async () => {
+  // CREATE TABLE IF NOT EXISTS does nothing for a table that already exists, which is how a newly added
+  // column silently never arrives in an environment that has been running for a while.
+  const { sqlite, db } = freshAiDb();
+  sqlite.exec("CREATE TABLE ai_conversation_sessions (id TEXT PRIMARY KEY,thread_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'ai_active',provider TEXT NOT NULL DEFAULT 'not_connected',model_ref TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  await orchestrator.ensureAiConversationOrchestrator(db);
+  const columns = sqlite.prepare("PRAGMA table_info(ai_conversation_sessions)").all().map(column => column.name);
+  assert.ok(columns.includes("provider_status"), `provider_status was not added: ${columns.join(", ")}`);
+  // And running it twice is not an error.
+  await orchestrator.ensureAiConversationOrchestrator(db);
 });
 
 test("the prompt context handed to the provider is scoped to the one customer in the thread", async () => {

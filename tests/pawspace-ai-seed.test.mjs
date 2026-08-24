@@ -22,9 +22,14 @@ test("AI grounding seed: governed lifecycle, real PawSpace knowledge, price-free
   // guardrails baked into the system prompt
   assert.match(seed, /cannot issue refunds, capture payments, change prices, assign providers or start campaigns/);
   assert.match(seed, /hand off complaints, refund\/payment disputes, safety and any pet medical emergency/i);
-  // multilingual + pinned model
+  // multilingual + a model named in ONE place
   assert.match(seed, /supportedLanguages: \["en", "hi", "ta"\]/);
-  assert.match(seed, /modelRef: "claude-sonnet-4-6"/);
+  // This used to pin the literal "claude-sonnet-4-6" here while lib/ai-provider-adapter.ts held its own
+  // independent default - so the assistant profile a staff screen shows and the model the adapter
+  // actually requests could disagree with nothing failing. The seed now takes both from the adapter.
+  assert.match(seed, /modelRef: DEFAULT_AI_MODEL_REF/);
+  assert.match(seed, /providerRef: AI_PROVIDER_REF/);
+  assert.doesNotMatch(seed, /modelRef: "/, "the seed must not name a model of its own");
   // Control route is staff-gated
   assert.match(route, /requirePermission\(actor,"settings\.manage"\)/);
 });
