@@ -1,0 +1,99 @@
+name: Master zero-gap audit workspace
+
+on:
+  push:
+    branches:
+      - testfix/master-zero-gap-20260824
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: master-zero-gap-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-and-inventory:
+    name: Exact-head source and inventory
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Record exact head
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'HEAD_SHA=%s\n' "$(git rev-parse HEAD)" | tee exact-head.env
+          git status --short --branch
+          git diff --check
+      - name: Build tracked-source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          git archive --format=tar.gz --output=repository-source.tar.gz HEAD
+          test -s repository-source.tar.gz
+          sha256sum repository-source.tar.gz | tee repository-source.sha256
+      - name: Generate repository and test-evidence inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          count_files() { find "$1" -type f "$@" 2>/dev/null | wc -l | tr -d ' '; }
+          tracked=$(git ls-files | wc -l | tr -d ' ')
+          routes=$(find app/api -type f -name 'route.ts' 2>/dev/null | wc -l | tr -d ' ')
+          libs=$(find lib -type f -name '*.ts' 2>/dev/null | wc -l | tr -d ' ')
+          tests=$(find tests -type f -name '*.test.mjs' 2>/dev/null | wc -l | tr -d ' ')
+          backend_tests=$(find backend -type f \( -name '*.test.ts' -o -name '*.test.js' -o -name '*.spec.ts' -o -name '*.spec.js' \) 2>/dev/null | wc -l | tr -d ' ')
+          workflows=$(find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null | wc -l | tr -d ' ')
+          migrations=$(find drizzle db -type f \( -name '*.sql' -o -name '*.ts' \) 2>/dev/null | wc -l | tr -d ' ')
+          skipped=$(grep -RInE --include='*.test.mjs' --include='*.test.ts' --include='*.spec.ts' '(test|it|describe)\.(skip|todo|only)|\bskip\s*:' tests backend 2>/dev/null | wc -l | tr -d ' ')
+          todos=$(grep -RInE --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.next --exclude-dir=.git '\b(TODO|FIXME|HACK|XXX)\b' app lib worker backend scripts tests 2>/dev/null | wc -l | tr -d ' ')
+          {
+            echo '# Exact-head repository inventory'
+            echo
+            echo "- SHA: \`$(git rev-parse HEAD)\`"
+            echo "- Tracked files: $tracked"
+            echo "- API route modules: $routes"
+            echo "- Library TypeScript modules: $libs"
+            echo "- Web test suites: $tests"
+            echo "- Backend test/spec files: $backend_tests"
+            echo "- Workflow files: $workflows"
+            echo "- Migration/schema files: $migrations"
+            echo "- Explicit skip/todo/only test markers: $skipped"
+            echo "- TODO/FIXME/HACK/XXX findings: $todos"
+            echo
+            echo '## Explicit test-control markers'
+            grep -RInE --include='*.test.mjs' --include='*.test.ts' --include='*.spec.ts' '(test|it|describe)\.(skip|todo|only)|\bskip\s*:' tests backend 2>/dev/null || true
+            echo
+            echo '## TODO/FIXME/HACK/XXX findings'
+            grep -RInE --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.next --exclude-dir=.git '\b(TODO|FIXME|HACK|XXX)\b' app lib worker backend scripts tests 2>/dev/null || true
+            echo
+            echo '## API route inventory'
+            find app/api -type f -name 'route.ts' 2>/dev/null | sort
+            echo
+            echo '## Workflow inventory'
+            find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null | sort
+          } > master-zero-gap-inventory.md
+          cat master-zero-gap-inventory.md
+      - name: Generate evidence-class audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/evidence-class-audit.mjs | tee evidence-class-audit.md
+      - name: Upload exact-head audit workspace
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: master-zero-gap-audit-${{ github.sha }}
+          path: |
+            repository-source.tar.gz
+            repository-source.sha256
+            exact-head.env
+            master-zero-gap-inventory.md
+            evidence-class-audit.md
+          if-no-files-found: error
+          retention-days: 30
