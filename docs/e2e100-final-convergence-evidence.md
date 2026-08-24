@@ -75,4 +75,21 @@ Result: **102/102 passed** — all 100 E2E100 business cases plus the T3 and T4 
 - Sitting hourly/daycare and city-restricted Operations identity behavior remain explicit catalogue/policy blockers documented by their owning lanes; no commercial or access policy was invented.
 - Engineering integration readiness remains separate from real-provider, real-device and deployed-environment verification.
 
-No merge or production deployment was performed by this convergence task.
+At convergence completion, no merge or deployment had been performed. PR #311 was subsequently
+authorized and merged as `6f21f24c76e49aae7828786910054581bb6727e9`. Production remains untouched.
+
+## Controlled UAT staging deployment follow-up
+
+Staging workflow run `32702926154` checked out the exact merge SHA, built it, deployed worker
+`pawspace-staging`, verified the dedicated staging D1 binding and sandbox configuration, and installed
+the UAT Worker secrets. It then failed before certification while loading `employee-seed.sql`:
+Wrangler was given the D1 UUID as the positional database even though `d1 execute` resolves a database
+name or configured binding. The customer/demo seed was therefore not started and human UAT was not
+declared ready.
+
+Classification: confirmed deployment-workflow code defect (`E2E100-DEPLOY-001`). The correction uses
+binding `DB` from `dist/server/wrangler.json` for both staff seeding and certification reads. That
+binding points to the D1 id already checked against the live staging Worker by the isolation preflight.
+A permanent regression rejects raw-ID execution in both paths. Focused staging/release gate result:
+**168/168 passed**. A new exact-head staging deployment and certification are required after this
+hotfix is merged; only then may the idempotent customer and demo seed workflow run.
