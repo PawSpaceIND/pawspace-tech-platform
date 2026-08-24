@@ -346,16 +346,12 @@ test("LIFECYCLE — an unavailable provider is not offered by matching, and retu
   assert.ok(before.some((p) => p.id === seeded.id), "precondition: the provider is matchable");
 
   await capacity.setProviderAvailability(db, { providerId: seeded.id, available: false, reason: "staff hold", actorId: OPS });
-  // Evaluated one second after the restriction was written. loadGovernedProviders selects windows with a
-  // STRICT `starts_at < now` while setProviderAvailability stamps `starts_at = now`, so a suspension is
-  // invisible to matching for the millisecond it is created in. That boundary lives in the shared
-  // scheduling/matching path and is recorded as CROSS-LANE-BLOCKER rather than changed here; this
-  // assertion deliberately does not depend on it.
-  const during = await capacity.loadGovernedProviders(db, seeded.city_id, zone, service, new Date(Date.now() + 1000));
-  assert.ok(!during.some((p) => p.id === seeded.id), "an unavailable provider must leave the matching pool");
+  const writtenAt = sqlite.prepare("SELECT starts_at FROM provider_unavailability WHERE provider_id=? AND status='active'").get(seeded.id).starts_at;
+  const during = await capacity.loadGovernedProviders(db, seeded.city_id, zone, service, new Date(writtenAt));
+  assert.ok(!during.some((p) => p.id === seeded.id), "the provider must leave matching at the exact instant the toggle is persisted, without advancing the test clock");
 
   await capacity.setProviderAvailability(db, { providerId: seeded.id, available: true, reason: "hold lifted", actorId: OPS, actorIsStaff: true });
-  const after = await capacity.loadGovernedProviders(db, seeded.city_id, zone, service, new Date(Date.now() + 1000));
+  const after = await capacity.loadGovernedProviders(db, seeded.city_id, zone, service);
   assert.ok(after.some((p) => p.id === seeded.id), "and must return when the restriction is genuinely lifted");
 });
 

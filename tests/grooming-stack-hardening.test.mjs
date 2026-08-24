@@ -134,20 +134,14 @@ test("real execution: subscription credits reserve, consume once, pause and resu
   assert.ok(row.sessions_reserved >= 0 && row.sessions_consumed + row.sessions_reserved <= row.total_sessions, "wallet arithmetic never goes negative or over total");
 });
 
-test("regression: the reserve guard takes credits atomically before any usage row exists", () => {
-  const { sqlite } = groomingDb();
-  seedSubscription(sqlite, { id: "SUB-R", total: 1 });
-  // The lib's own guarded decrement, executed twice against capacity 1: second write must not match.
-  const guarded = findStatement(walletLib, "sessions_reserved=sessions_reserved+?");
-  const first = sqlite.prepare(guarded).run(1, NOW, "SUB-R", 1);
-  const second = sqlite.prepare(guarded).run(1, NOW, "SUB-R", 1);
-  assert.equal(Number(first.changes), 1);
-  assert.equal(Number(second.changes), 0, "the SQL guard refuses over-reservation at write time");
-  // And the lib only writes the usage row after checking the guard's changes.
+test("regression: reserve claims idempotency, credits and usage in one guarded batch", () => {
   const reserveBlock = walletLib.slice(walletLib.indexOf('input.action==="reserve"'), walletLib.indexOf('input.action==="consume"'));
-  const guardIndex = reserveBlock.indexOf("meta?.changes");
-  const insertIndex = reserveBlock.indexOf("INSERT INTO booking_subscription_usage");
-  assert.ok(guardIndex > -1 && insertIndex > guardIndex, "usage INSERT happens only after the guarded decrement is confirmed");
+  const eventIndex = reserveBlock.indexOf("INSERT INTO subscription_wallet_events");
+  const guardIndex = reserveBlock.indexOf("UPDATE customer_grooming_subscriptions SET sessions_reserved=sessions_reserved+?");
+  const usageIndex = reserveBlock.indexOf("INSERT INTO booking_subscription_usage");
+  assert.match(reserveBlock, /const results=await db\.batch/);
+  assert.ok(eventIndex > -1 && guardIndex > eventIndex && usageIndex > guardIndex, "the idempotency claim, credit move and usage write share one ordered transaction");
+  assert.match(reserveBlock, /results\[0\].*results\[1\].*results\[2\]/s, "every statement must report exactly one persisted mutation");
 });
 
 // ---------------------------------------------------------------------------

@@ -187,6 +187,20 @@ test("real execution: order derives everything from the server quote, reserves i
   assert.deepEqual(inventory(DOG_SKU), { available_units: 30, reserved_units: 2 });
 });
 
+test("real execution: a Food idempotency key is bound to its quote and delivery context", async () => {
+  freshDb();
+  const { quote: firstQuote } = await quoteVia(DOG_SKU, 1);
+  const created = await orderVia(firstQuote, "food-context-key");
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const { quote: otherQuote } = await quoteVia(CAT_SKU, 1);
+  const collision = await orderVia(otherQuote, "food-context-key");
+  assert.equal(collision.status, 409);
+  assert.equal(collision.body.error, "Unable to create canonical Food order");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM food_orders").get().count, 1);
+  assert.deepEqual(inventory(CAT_SKU), { available_units: 30, reserved_units: 0 });
+  assert.equal(sqlite.prepare("SELECT status FROM food_commercial_quotes WHERE id=?").get(otherQuote.quoteId).status, "open");
+});
+
 test("REGRESSION lib/food-governance.ts: a single-use quote can no longer produce two orders under a concurrent double-submit", async () => {
   freshDb();
   const db = globalThis.__FOOD_DB__;

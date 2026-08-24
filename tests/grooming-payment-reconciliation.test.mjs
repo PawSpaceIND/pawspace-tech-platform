@@ -4,8 +4,8 @@ import{readFile}from"node:fs/promises";
 const source=path=>readFile(new URL("../"+path,import.meta.url),"utf8");
 
 test("Grooming payment integration is sandbox-locked signed idempotent and reconciled",async()=>{
-  const[engine,webhook,sandbox,client,finance,financeUi,gateway,gate]=await Promise.all([
-    source("lib/grooming-payment-reconciliation.ts"),source("app/api/razorpay-webhook/route.ts"),source("app/api/grooming-payment-sandbox/route.ts"),source("lib/razorpay-sandbox-client.ts"),source("app/api/grooming-finance/route.ts"),source("app/team/finance/page.tsx"),source("lib/api-gateway.ts"),source("lib/payment-webhook-gate.ts"),
+  const[engine,webhook,sandbox,client,finance,financeUi,gateway,gate,orderClient]=await Promise.all([
+    source("lib/grooming-payment-reconciliation.ts"),source("app/api/razorpay-webhook/route.ts"),source("app/api/grooming-payment-sandbox/route.ts"),source("lib/razorpay-sandbox-client.ts"),source("app/api/grooming-finance/route.ts"),source("app/team/finance/page.tsx"),source("lib/api-gateway.ts"),source("lib/payment-webhook-gate.ts"),source("lib/razorpay-client.ts"),
   ]);
   for(const table of ["payment_gateway_links","payment_gateway_events","payment_reconciliation_records","payment_reconciliation_exceptions"])assert.match(engine,new RegExp(table));
   assert.match(engine,/UNIQUE\(provider,event_id\)/);
@@ -36,6 +36,11 @@ test("Grooming payment integration is sandbox-locked signed idempotent and recon
   assert.match(client,/X-Refund-Idempotency/);
   assert.match(client,/RAZORPAY_KEY_ID_SANDBOX/);
   assert.match(client,/RAZORPAY_KEY_SECRET_SANDBOX/);
+  assert.match(orderClient,/\/v1\/payment_links/);
+  assert.match(orderClient,/accept_partial: false/);
+  assert.match(engine,/createSandboxPaymentLink/);
+  assert.match(engine,/collectable:expiresAt>now/);
+  assert.match(engine,/collectable:!settled&&!expired/);
   assert.match(finance,/payment_reconciliation_records/);
   assert.match(finance,/payment_reconciliation_exceptions/);
   assert.match(finance,/open_reconciliation_exceptions/);

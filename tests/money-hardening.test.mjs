@@ -364,6 +364,21 @@ test("REGRESSION lib/coupon-governance.ts: two concurrent consumes of different 
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM coupon_quotes WHERE status='open'").get().n, 1);
 });
 
+test("REGRESSION coupon idempotency: one key with different contexts leaves exactly one complete mutation", async () => {
+  freshDb(); baseTables(); seedBooking({ id: "B1", total: 1500 }); seedBooking({ id: "B2", total: 1500 });
+  const db = globalThis.__MONEY_DB__;
+  const input = { code: "UATCARE100", customerId: "cus_m1", serviceCode: "grooming", cityId: "blr", channel: "customer_app", packageCode: "pkg", orderValue: 1500, paymentMode: "full", isSubscription: false };
+  const q1 = await quoteCoupon(db, input, {}), q2 = await quoteCoupon(db, input, {});
+  const race = await Promise.allSettled([
+    consumeCouponQuote(db, { quoteId: q1.quoteId, bookingId: "B1", customerId: "cus_m1", idempotencyKey: "coupon-shared-key" }),
+    consumeCouponQuote(db, { quoteId: q2.quoteId, bookingId: "B2", customerId: "cus_m1", idempotencyKey: "coupon-shared-key" }),
+  ]);
+  assert.equal(race.filter(result => result.status === "fulfilled").length, 1);
+  assert.match(String(race.find(result => result.status === "rejected").reason), /different redemption/i);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM coupon_redemptions WHERE idempotency_key='coupon-shared-key'").get().n, 1);
+  assert.deepEqual(sqlite.prepare("SELECT status,COUNT(*) n FROM coupon_quotes GROUP BY status ORDER BY status").all().map(row => ({ ...row })), [{ status: "consumed", n: 1 }, { status: "open", n: 1 }]);
+});
+
 // ---- 5. Referral: qualify -> reward -> reserve -> reverse with exact amounts --------------------
 
 test("real execution: referral chain pays the configured reward exactly and reverses it exactly once", async () => {
@@ -453,6 +468,22 @@ test("REGRESSION lib/subscription-wallet.ts: a raced double release cannot hand 
   assert.equal(race.filter(r => r.status === "fulfilled").length, 1);
   const counters = { ...sqlite.prepare("SELECT sessions_reserved,sessions_consumed FROM customer_grooming_subscriptions WHERE id='SUB1'").get() };
   assert.deepEqual(counters, { sessions_reserved: 2, sessions_consumed: 0 }, "B2's reservation must survive: only B1's 2 credits were released, once");
+});
+
+test("REGRESSION subscription idempotency: one reserve key cannot mutate two bookings", async () => {
+  freshDb(); baseTables(); seedBooking({ id: "B1", total: 1200 }); seedBooking({ id: "B2", total: 1200 });
+  const db = globalThis.__MONEY_DB__;
+  const { ensureSubscriptionWalletTables } = await import("../lib/subscription-wallet.ts");
+  await ensureSubscriptionWalletTables(db); seedSubscription({});
+  const race = await Promise.allSettled([
+    mutateSubscriptionWallet(db, { subscriptionId: "SUB1", action: "reserve", bookingId: "B1", credits: 1, idempotencyKey: "reserve-shared-key", actorId: "cus" }),
+    mutateSubscriptionWallet(db, { subscriptionId: "SUB1", action: "reserve", bookingId: "B2", credits: 1, idempotencyKey: "reserve-shared-key", actorId: "cus" }),
+  ]);
+  assert.equal(race.filter(result => result.status === "fulfilled").length, 1);
+  assert.match(String(race.find(result => result.status === "rejected").reason), /different mutation/i);
+  assert.equal(sqlite.prepare("SELECT sessions_reserved FROM customer_grooming_subscriptions WHERE id='SUB1'").get().sessions_reserved, 1);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM booking_subscription_usage").get().n, 1);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM subscription_wallet_events WHERE idempotency_key='reserve-shared-key'").get().n, 1);
 });
 
 // ---- 7. Stay balance -> payment truth (task 2) + route governance ------------------------------
