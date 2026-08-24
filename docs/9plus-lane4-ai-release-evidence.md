@@ -1,6 +1,8 @@
 # Lane 4 — AI, voice, readiness, CI: closure evidence
 
-Branch `closure/9plus-lane4-ai-release`, cut from `main` at `a95ed7adbbf513ed78e4b88b22afa38ce3b5c940` and synced with `main` at `85ac0c6e275a93d1690428c59aac0b214cdcddf4`.
+Branch `closure/9plus-lane4-ai-release` preserves its pre-convergence head
+`95ebffa9ba078adb34b4c9946d33273b0f59a67e` and was synced exactly once after Lane 3 merged, from
+`main` at `5377743765dbfed0bd28ff101550bbe8127e0040`.
 
 Every number below is produced by something in this branch that a reader can re-run. Where a claim
 cannot be made because nothing external is connected, this document says so rather than rounding it up.
@@ -12,12 +14,21 @@ cannot be made because nothing external is connected, this document says so rath
 `scripts/evidence-class-audit.mjs` classifies every suite by what it actually **executes**, derived from
 its imports and never from its name:
 
+The corrected inventory for Lane 4's preserved pre-sync head
+`95ebffa9ba078adb34b4c9946d33273b0f59a67e` is:
+
 | evidence class | what it can catch | suites | share |
 | --- | --- | --- | --- |
-| `real_execution` | behaviour, persistence, negative paths. The only class that can prove a gate refuses something | 124 | 40% |
+| `real_execution` | behaviour, persistence, negative paths. The only class that can prove a gate refuses something | 126 | 41% |
 | `imported_unit` | pure logic and refusal decisions; cannot prove anything was written or read back | 22 | 7% |
 | `hosted_provider` | that an integration is live | **0** | 0% |
 | `source_contract` | that a named symbol still exists in a file | 161 | 52% |
+| **total** | all classified suites in the Release-CI inventory | **309** | **100%** |
+
+The mandatory Lane 1/3 sync adds three real-execution suites. Re-running the same audit on this
+post-convergence head therefore reports **312 total: 129 `real_execution`, 22 `imported_unit`, 0
+`hosted_provider`, and 161 `source_contract`**. The delta is entirely merged engineering evidence; it
+does not create hosted/provider proof.
 
 Run it: `node scripts/evidence-class-audit.mjs`. Add `--json` for the per-suite rows.
 
@@ -74,7 +85,7 @@ and is a cross-lane finding for Lanes 1–3, not a Lane 4 change.
 
 | module | suites | real_execution | imported_unit | hosted_provider | source_contract | route handlers executed |
 | --- | --- | --- | --- | --- | --- | --- |
-| cross-area | 32 | 31 | 1 | 0 | 0 | 28 |
+| cross-area | 36 | 35 | 1 | 0 | 0 | 31 |
 | ai | 20 | 6 | 1 | 0 | 13 | 2 |
 | provider | 18 | 6 | 0 | 0 | 12 | 2 |
 | release | 12 | 1 | 3 | 0 | 8 | 1 |
@@ -280,9 +291,8 @@ does not reset the queue or double-count a blocker) and closes only when a match
 scenario exists. `POST /api/integration-readiness {action:"request_evidence"}` files one at
 `launch.view`; asking for proof changes no readiness state.
 
-**No lane has filed a request.** `list_pull_requests(state=open)` on
-`PawSpaceIND/pawspace-tech-platform` returns `[]` — no Lane 1, 2 or 3 PR is open, so there are no
-evidence requests to integrate yet. The mechanism is in place and the queue is empty.
+**No lane has filed an external-provider evidence request.** The mechanism is in place and the queue is
+empty; merging the engineering lanes does not manufacture provider evidence.
 
 ### Current readiness table (unchanged by this branch, and that is the point)
 
@@ -359,14 +369,13 @@ tracked `tests/*.test.mjs`.
 
 ## 6. Convergence status
 
-**Lanes 1–3 have not opened their pull requests.** `list_pull_requests(state=open)` returns `[]`. No
-head SHAs are available, so the cross-lane blocker review, the shared-file ownership check and the merge
-sequencing cannot be performed yet.
+Engineering convergence through Lane 3 is complete in the required order:
 
-Recommended order once the three PR URLs and head SHAs are supplied: **Lane 2 → Lane 1 → Lane 3 →
-Lane 4**, each remaining branch syncing once from `main` after the preceding merges. Then one exact-`main`
-Release CI run, one isolated release preview, the hosted post-deploy / real-D1 / integration gates, and
-the final module matrix.
+- Lane 2, PR #305, is merged.
+- Lane 1, PR #304, merged at `722f9f26251a2e16e4907dfff42701b92cd9b251` after exact-head Release CI and zero unresolved review threads.
+- Lane 3, PR #302, merged at `5377743765dbfed0bd28ff101550bbe8127e0040` after exact-head Release CI and zero unresolved review threads.
+- PR #307 remains a mixed-scope hold and was not merged wholesale.
+- Lane 4 synced that exact main once. Its exact-head Release CI, review convergence and merge remain the next steps, followed by one exact-main Release CI, one isolated release preview, and the hosted post-deploy / real-D1 / integration gates.
 
 **Business human UAT is not authorised, and no production deployment is proposed**, for reasons that are
 independent of the other lanes:
