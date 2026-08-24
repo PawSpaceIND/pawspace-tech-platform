@@ -1,0 +1,139 @@
+name: One-shot P1 SLA late action
+
+on:
+  push:
+    branches:
+      - testfix/master-zero-gap-20260824
+    paths:
+      - .github/workflows/one-shot-p1-sla-late-action.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-p1-sla-late-action
+  cancel-in-progress: false
+
+jobs:
+  apply-and-prove:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: testfix/master-zero-gap-20260824
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Preserve durable SLA breaches after late actions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path=Path('lib/lead-sla-governance.ts')
+          source=path.read_text()
+          helper='''\nexport function classifyLeadSlaAction(clock:{due_at:unknown;breached_at?:unknown},actionAt:number){\n const late=(clock.breached_at!==null&&clock.breached_at!==undefined)||actionAt>Number(clock.due_at);\n return{clockStatus:late?"breached" as const:"met" as const,leadStatus:late?"sla_breached" as const:"active" as const,metAt:late?null:actionAt};\n}\n'''
+          if 'classifyLeadSlaAction' in source: raise SystemExit('classification helper already exists unexpectedly')
+          positions=[p for p in [source.find('export type '),source.find('export interface '),source.find('export async function '),source.find('export function ')] if p>=0]
+          if not positions: raise SystemExit('no export insertion point')
+          pos=min(positions)
+          source=source[:pos]+helper+source[pos:]
+
+          start=source.find('export async function recordLeadSlaAction')
+          if start<0: raise SystemExit('recordLeadSlaAction not found')
+          positions=[p for p in [source.find('export async function ',start+1),source.find('export function ',start+1)] if p>=0]
+          end=min(positions) if positions else len(source)
+          seg=source[start:end]
+          clock_match=re.search(r'const\s+clock\s*=.*?;',seg,re.S)
+          now_match=re.search(r'const\s+now\s*=.*?;',seg,re.S)
+          if not clock_match or not now_match: raise SystemExit('clock/now bindings not found')
+          insertion=max(clock_match.end(),now_match.end())
+          seg=seg[:insertion]+'const actionState=classifyLeadSlaAction(clock,now);'+seg[insertion:]
+
+          clock_sql=list(re.finditer(r'db\.prepare\("([^"]*lead_sla_clocks[^"]*status=\'met\'[^"]*)"\)',seg))
+          if len(clock_sql)!=1: raise SystemExit(f'clock status SQL count {len(clock_sql)}')
+          m=clock_sql[0]
+          sql=m.group(1).replace("status='met'","status='${actionState.clockStatus}'")
+          seg=seg[:m.start()]+f'db.prepare(`{sql}`)'+seg[m.end():]
+          stmt_start=m.start()
+          bind_match=re.search(r'\.bind\(([^)]*)\)',seg[stmt_start:])
+          if not bind_match: raise SystemExit('clock update bind not found')
+          parts=[p.strip() for p in bind_match.group(1).split(',')]
+          if not parts: raise SystemExit('clock update bind empty')
+          parts[0]='actionState.metAt'
+          abs_start=stmt_start+bind_match.start(1)
+          abs_end=stmt_start+bind_match.end(1)
+          seg=seg[:abs_start]+','.join(parts)+seg[abs_end:]
+
+          lead_sql=list(re.finditer(r'db\.prepare\("([^"]*lead_work_items[^"]*status=\'active\'[^"]*)"\)',seg))
+          if len(lead_sql)!=1: raise SystemExit(f'lead active SQL count {len(lead_sql)}')
+          m=lead_sql[0]
+          sql=m.group(1).replace("status='active'","status='${actionState.leadStatus}'")
+          seg=seg[:m.start()]+f'db.prepare(`{sql}`)'+seg[m.end():]
+          seg=seg.replace('status:"met"','status:actionState.clockStatus').replace("status:'met'",'status:actionState.clockStatus')
+          source=source[:start]+seg+source[end:]
+          path.write_text(source)
+
+          productivity=Path('lib/sales-productivity-governance.ts')
+          p=productivity.read_text()
+          old="SUM(CASE WHEN c.status='met' THEN 1 ELSE 0 END)"
+          new="SUM(CASE WHEN c.status='met' AND c.breached_at IS NULL THEN 1 ELSE 0 END)"
+          if p.count(old)!=1: raise SystemExit('productivity met counter changed or ambiguous')
+          productivity.write_text(p.replace(old,new,1))
+          PY
+          cat > tests/lead-sla-late-action-classification.test.mjs <<'TEST'
+          import test from "node:test";
+          import assert from "node:assert/strict";
+          import { classifyLeadSlaAction } from "../lib/lead-sla-governance.ts";
+
+          test("an on-time SLA action is met and reactivates the lead", () => {
+            assert.deepEqual(classifyLeadSlaAction({ due_at: 1_000, breached_at: null }, 1_000), {
+              clockStatus: "met",
+              leadStatus: "active",
+              metAt: 1_000,
+            });
+          });
+
+          test("a late SLA action remains breached and cannot be counted as met", () => {
+            assert.deepEqual(classifyLeadSlaAction({ due_at: 1_000, breached_at: 1_001 }, 2_000), {
+              clockStatus: "breached",
+              leadStatus: "sla_breached",
+              metAt: null,
+            });
+          });
+
+          test("a durable breach cannot be erased even if an action timestamp is backdated", () => {
+            assert.deepEqual(classifyLeadSlaAction({ due_at: 1_000, breached_at: 1_100 }, 900), {
+              clockStatus: "breached",
+              leadStatus: "sla_breached",
+              metAt: null,
+            });
+          });
+          TEST
+          git diff --check
+      - name: Run lead SLA, productivity and mission regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          tests=(tests/lead-sla-late-action-classification.test.mjs)
+          while IFS= read -r file; do
+            case "$file" in tests/lead-sla-late-action-classification.test.mjs) ;; *) tests+=("$file") ;; esac
+          done < <(git ls-files 'tests/*lead*sla*.test.mjs' 'tests/*sales*productivity*.test.mjs' 'tests/*revenue*mission*.test.mjs')
+          node --experimental-strip-types --test "${tests[@]}"
+      - run: npm run typecheck
+      - name: Commit the P1 correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/one-shot-p1-sla-late-action.yml
+          git add lib/lead-sla-governance.ts lib/sales-productivity-governance.ts tests/lead-sla-late-action-classification.test.mjs
+          git config user.name "PawSpace zero-gap fixer"
+          git config user.email "actions@pawspace.in"
+          git commit -m "fix(leads): preserve breached SLA clocks"
+          git push origin HEAD:testfix/master-zero-gap-20260824
