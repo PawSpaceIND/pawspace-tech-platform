@@ -14,6 +14,7 @@
  * "proof still pending" reminders. Sandbox/UAT - no live money, media stored by reference only.
  */
 import{resolveEngagementForWorker,featuresFor}from"./workforce-classification";
+import{ensureProviderCapacityTables}from"./provider-capacity-governance";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -39,7 +40,7 @@ export async function ensureProviderWorkspaceTables(db:Db){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS customer_job_updates (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,booking_id TEXT NOT NULL,update_type TEXT NOT NULL,message TEXT NOT NULL,object_id TEXT,created_at INTEGER NOT NULL)"),
 ]);}
 
-function jsonList(value:unknown){try{const parsed=JSON.parse(text(value));return Array.isArray(parsed)?parsed.map(text):[];}catch{return[];}}
+function jsonList(value:unknown){try{const parsed=JSON.parse(text(value));return Array.isArray(parsed)?parsed.map(text):[];}catch{return new Array<string>();}}
 
 /**
  * The workspace offer is a canonical assignment boundary, not a notification shortcut.  Re-check
@@ -47,18 +48,19 @@ function jsonList(value:unknown){try{const parsed=JSON.parse(text(value));return
  * inactive/out-of-scope provider or bypass capacity after the scheduler has made its choice.
  */
 async function assertOfferEligibility(db:Db,providerId:string,bookingId:string){
+ await ensureProviderCapacityTables(db);
  const booking=await db.prepare("SELECT id,provider_id,service_code,city_id,zone_id,scheduled_start,scheduled_end,status FROM canonical_bookings WHERE id=?").bind(bookingId).first<Row>();
  if(!booking)throw new Error("Booking not found");
  if(["cancelled","completed"].includes(text(booking.status)))throw new Error("Completed or cancelled booking cannot be offered");
  const assigned=text(booking.provider_id);
  if(assigned&&assigned!=="unassigned"&&assigned!==providerId)throw new Error("Booking is already assigned to another provider");
- const profile=await db.prepare("SELECT city_id,services_json,zones_json,live,status,capacity FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>().catch(()=>null);
+ const profile=await db.prepare("SELECT city_id,services_json,zones_json,live,status,capacity FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();
  if(!profile||num(profile.live)!==1||text(profile.status)!=="active")throw new Error("Provider is not active in the governed roster");
  if(text(profile.city_id)!==text(booking.city_id))throw new Error("Provider is not eligible for this booking city");
  if(!jsonList(profile.services_json).includes(text(booking.service_code)))throw new Error("Provider is not eligible for this booking service");
  if(!jsonList(profile.zones_json).includes(text(booking.zone_id)))throw new Error("Provider is not eligible for this booking zone");
  const unavailable=await db.prepare("SELECT id FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<? AND ends_at>? LIMIT 1")
-  .bind(providerId,text(booking.scheduled_end),text(booking.scheduled_start)).first<Row>().catch(()=>null);
+  .bind(providerId,text(booking.scheduled_end),text(booking.scheduled_start)).first<Row>();
  if(unavailable)throw new Error("Provider is unavailable for this booking window");
  const overlapping=await db.prepare("SELECT COUNT(*) n FROM canonical_bookings WHERE provider_id=? AND id!=? AND status NOT IN ('cancelled','completed','draft','failed') AND scheduled_start<? AND scheduled_end>?")
   .bind(providerId,bookingId,text(booking.scheduled_end),text(booking.scheduled_start)).first<Row>();

@@ -65,6 +65,8 @@ The first run of `tests/provider-operations-integrity.test.mjs` was **0/4**. The
 
 Additional positive regressions prove a declined offer remains recoverable; a second eligible provider can accept the same booking; a configured entitlement of INR 1,000 creates one exact `sandbox`/`approval_required` payout instruction; replay is idempotent; and no live money or `paid` status is created.
 
+The first exact-head Release CI run passed 8/9 jobs and found two compatibility failures in the aggregate Web job (2611/2613 passed): the new fail-closed JSON-list parser matched the repository's guard for unrecorded swallowed database reads, and the demo test still called its now-expired immutable offer “live.” The parser now has no swallowed-read shape and capacity tables are initialized explicitly. The demo SQL/generator remain byte-for-byte unchanged; its test now proves the stale row is preserved in D1 but excluded from live assignments. Both failed tests and the T2 integrity pack pass after the correction.
+
 ## Mandatory logic checks
 
 - Provider own-record/work-order security is executed through provider identity and grooming journey routes; another provider cannot list, read or mutate the job.

@@ -319,7 +319,7 @@ test("seeded DB: growth and ops intelligence produce real advisory output", asyn
 });
 
 test("seeded DB: partner workspace resolves a linked provider with real earnings", async () => {
-  seededDb();
+  const sqlite = seededDb();
   const response = await providerWorkspaceRoute.GET(new Request("http://localhost/api/provider-workspace"));
   const { data } = await body(response);
   // The preview/founder identity is not provider-linked, so this proves the graceful path;
@@ -328,7 +328,12 @@ test("seeded DB: partner workspace resolves a linked provider with real earnings
   const { providerWorkspace } = await import("../lib/provider-workspace.ts");
   const workspace = await providerWorkspace(globalThis.__PAWSPACE_TEST_ENV.DB, { providerId: "groom_arun" });
   assert.ok(workspace.bookings.past.length + workspace.bookings.upcoming.length >= 2, "the groomer has real jobs");
-  assert.ok(workspace.liveAssignments.length >= 1, "a live assignment is waiting to be accepted");
+  // The immutable demo offer has a real expiry. Once wall-clock time passes it, preserving the seed
+  // must not turn that stale row into a live assignment merely to keep the demo tile populated.
+  const staleOffer = sqlite.prepare("SELECT status,expires_at FROM provider_job_offers WHERE id='UATD-OFFER-1'").get();
+  assert.equal(staleOffer.status, "offered", "the existing demo seed row is preserved");
+  assert.ok(Number(staleOffer.expires_at) <= Date.now(), "the preserved offer is now past its stored expiry");
+  assert.equal(workspace.liveAssignments.length, 0, "an expired demo offer is not represented as live");
   assert.ok(workspace.earnings.netPayout > 0, "computed payouts back the earnings tile");
 });
 
