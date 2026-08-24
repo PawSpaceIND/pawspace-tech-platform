@@ -1,0 +1,34 @@
+{
+  "base_sha": "53101a1f701cf1d1bd402a3dfb575831e5611f70",
+  "frozen_at": "wave-0",
+  "surfaces": {
+    "api_routes": 204,
+    "lib_modules": 309,
+    "test_suites": 322,
+    "team_pages": 65,
+    "customer_pages": 67
+  },
+  "evidence_baseline": {
+    "real_execution": 134,
+    "imported_unit": 22,
+    "hosted_provider": 0,
+    "source_contract": 165,
+    "total": 321,
+    "verdict_claiming_source_contract": 40
+  },
+  "known_external_blockers": [
+    "maps_uat",
+    "idfy",
+    "media_object_store",
+    "malware_scanner",
+    "payments_sandbox",
+    "communications",
+    "ai_provider",
+    "telephony",
+    "stt",
+    "tts",
+    "android_device",
+    "ios_device"
+  ],
+  "rules_digest": "execute-not-grep; reproduce-before-fix; sabotage-every-fix; non-vacuity-counter-test; probe-absent-values; check-gate-polarity; never-invent-business-rule; never-manufacture-provider-success; never-weaken-a-gate"
+}
