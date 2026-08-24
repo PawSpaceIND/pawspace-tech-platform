@@ -8,7 +8,7 @@ function emptyWorkQueueSnapshot(){return{generatedAt:Date.now(),metrics:{total:0
 export async function GET(request:Request){try{
  const db=await database(),url=new URL(request.url),taskId=String(url.searchParams.get("taskId")||"").trim();
  if(!await workQueueExists(db)){if(taskId)return json({error:"Work queue task not found"},404);return json({data:emptyWorkQueueSnapshot()});}
- const actor=await resolveActor(request);requirePermission(actor,"bookings.view");
+ const actor=await resolveActor(request);requirePermission(actor,"bookings.manage");
  if(taskId){const task=await workQueueTaskWithEvents(db,taskId);if(!task)return json({error:"Work queue task not found"},404);return json({data:task});}
  return json({data:await workQueueSnapshot(db)});
 }catch(error){return authError(error,"Unable to load the operations work queue");}}
