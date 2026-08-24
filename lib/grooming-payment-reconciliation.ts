@@ -2,6 +2,7 @@ import{convertLeadOnPaymentCaptured}from"./lead-conversion-attribution";
 import{cancelRecoveryEntitlements}from"./payment-recovery-governance";
 import{activateSubscriptionOnCapture,failSubscriptionOnPaymentFailure}from"./subscription-payment-activation";
 import{tryQualifyLinkedReferral}from"./referral-booking-governance";
+import{createSandboxPaymentLink}from"./razorpay-client";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -20,9 +21,9 @@ export async function ensurePaymentReconciliationTables(db:Db){await db.batch([
  * Creates the provider-shareable UAT request used for pay-after-service. This is deliberately not a
  * capture operation: only a signature-verified gateway event may move booking_payments to captured.
  */
-export async function createPostServicePaymentRequest(db:Db,input:{bookingId:string;providerId:string;actorId:string}){
+export async function createPostServicePaymentRequest(db:Db,env:Record<string,unknown>,input:{bookingId:string;providerId:string;actorId:string}){
  await ensurePaymentReconciliationTables(db);
- const row=await db.prepare("SELECT b.status booking_status,b.provider_id,p.id payment_id,p.amount,p.currency,p.status payment_status,p.mode FROM canonical_bookings b JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=?").bind(input.bookingId).first<Row>();
+ const row=await db.prepare("SELECT b.status booking_status,b.provider_id,b.customer_id,p.id payment_id,p.amount,p.currency,p.status payment_status,p.mode FROM canonical_bookings b JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=?").bind(input.bookingId).first<Row>();
  if(!row)throw new Error("Canonical booking payment was not found");
  if(String(row.provider_id)!==input.providerId)throw new Error("This booking is not assigned to this provider");
  if(String(row.booking_status)!=="completed")throw new Error("Post-service payment can be requested only after service completion");
@@ -30,15 +31,15 @@ export async function createPostServicePaymentRequest(db:Db,input:{bookingId:str
  if(String(row.mode)!=="pay_after_service")throw new Error("This booking is not configured for pay after service");
  const existing=await db.prepare("SELECT * FROM post_service_payment_requests WHERE booking_id=?").bind(input.bookingId).first<Row>();
  if(existing)return paymentRequestView(existing,String(row.payment_status));
- const now=Date.now(),id=`PSPR-${crypto.randomUUID().slice(0,12).toUpperCase()}`,token=crypto.randomUUID().replaceAll("-","");
- const path=`/grooming/payment-request?token=${encodeURIComponent(token)}`;
- const qrPayload=path;
+ const link=await createSandboxPaymentLink(env,{bookingId:input.bookingId,paymentId:String(row.payment_id),customerId:String(row.customer_id),amount:Number(row.amount||0),currency:String(row.currency||"INR")});
+ if(!link.connected)throw new Error(link.reason);
+ const now=Date.now(),id=String(link.paymentLink.id),path=String(link.paymentLink.short_url),qrPayload=path;
  await db.prepare("INSERT INTO post_service_payment_requests (id,booking_id,payment_id,provider_id,amount,currency,status,payment_path,qr_payload,expires_at,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,'awaiting_payment',?,?,?,?,?,?)")
   .bind(id,input.bookingId,row.payment_id,input.providerId,Number(row.amount||0),String(row.currency||"INR"),path,qrPayload,now+24*60*60*1000,input.actorId,now,now).run();
- return{id,bookingId:input.bookingId,amount:Number(row.amount||0),currency:String(row.currency||"INR"),status:"awaiting_payment",paymentStatus:String(row.payment_status),paymentPath:path,qrPayload,expiresAt:now+24*60*60*1000,sandboxOnly:true,liveCapture:false};
+ return{id,bookingId:input.bookingId,amount:Number(row.amount||0),currency:String(row.currency||"INR"),status:"awaiting_payment",paymentStatus:String(row.payment_status),paymentPath:path,qrPayload,providerReference:id,collectable:true,expiresAt:now+24*60*60*1000,sandboxOnly:true,liveCapture:false};
 }
 
-function paymentRequestView(row:Row,paymentStatus:string){return{id:String(row.id),bookingId:String(row.booking_id),amount:Number(row.amount||0),currency:String(row.currency||"INR"),status:["captured","refunded","partially_refunded"].includes(paymentStatus)?paymentStatus:String(row.status),paymentStatus,paymentPath:String(row.payment_path),qrPayload:String(row.qr_payload),expiresAt:Number(row.expires_at),sandboxOnly:true,liveCapture:false};}
+function paymentRequestView(row:Row,paymentStatus:string){const paymentPath=String(row.payment_path);return{id:String(row.id),bookingId:String(row.booking_id),amount:Number(row.amount||0),currency:String(row.currency||"INR"),status:["captured","refunded","partially_refunded"].includes(paymentStatus)?paymentStatus:String(row.status),paymentStatus,paymentPath,qrPayload:String(row.qr_payload),providerReference:String(row.id),collectable:paymentPath.startsWith("https://"),expiresAt:Number(row.expires_at),sandboxOnly:true,liveCapture:false};}
 
 export async function getPostServicePaymentRequest(db:Db,input:{bookingId:string;providerId:string}){
  await ensurePaymentReconciliationTables(db);const row=await db.prepare("SELECT r.*,p.status payment_status FROM post_service_payment_requests r JOIN booking_payments p ON p.id=r.payment_id WHERE r.booking_id=? AND r.provider_id=?").bind(input.bookingId,input.providerId).first<Row>();return row?paymentRequestView(row,String(row.payment_status)):null;
