@@ -207,6 +207,6 @@ test("stay-flow offers the governed 50/50 option for overnight stays longer than
   const flow = read("app/mobile-app/stay-flow.tsx");
   assert.match(flow, /const splitEligible = careWindow === "24 hours" && nights > 4;/);
   assert.match(flow, /paymentMode:splitEligible&&splitPayment\?"split_50_50":"prepaid"/);
-  assert.match(flow, /createSittingQuote\(\{packageCode,petCount:selectedPets\.length,scheduledStart:scheduledStart\.toISOString\(\),scheduledEnd:scheduledEnd\.toISOString\(\),paymentMode\}\)/);
+  assert.match(flow, /createSittingQuote\(\{packageCode,petCount:selectedPets\.length,cityId:serviceLocation\.assignment\.cityId,zoneId:serviceLocation\.assignment\.zoneId,scheduledStart:scheduledStart\.toISOString\(\),scheduledEnd:scheduledEnd\.toISOString\(\),paymentMode\}\)/);
   assert.doesNotMatch(flow, /"split"[^_]/, "legacy ungoverned 'split' mode must be gone from the flow");
 });

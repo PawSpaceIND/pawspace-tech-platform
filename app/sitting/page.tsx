@@ -20,6 +20,7 @@ const uatPets:Array<{sourceId:string;name:string;species:"dog"|"cat";breed:strin
  {sourceId:"TST-PET-PEPPER",name:"Pepper",species:"dog",breed:"Indie",vaccinationStatus:"verified"},
  {sourceId:"TST-PET-MILO",name:"Milo",species:"cat",breed:"Domestic Shorthair",vaccinationStatus:"verified"},
 ];
+const dateOffset=(days:number)=>new Date(Date.now()+days*86_400_000).toISOString().slice(0,10);
 
 export default function SittingPage(){
  const[mode,setMode]=useState<"visit"|"overnight">("overnight");
@@ -27,8 +28,8 @@ export default function SittingPage(){
  const[chosen,setChosen]=useState(sitters[0]);
  const[stage,setStage]=useState<"book"|"details"|"confirmed"|"live">("book");
  const[meet,setMeet]=useState(true);
- const[startDate,setStartDate]=useState("2026-08-24");
- const[endDate,setEndDate]=useState("2026-08-27");
+ const[startDate,setStartDate]=useState(()=>dateOffset(5));
+ const[endDate,setEndDate]=useState(()=>dateOffset(8));
  const[packages,setPackages]=useState<SittingPackage[]>([]);
  const[quote,setQuote]=useState<SittingQuote|null>(null);
  const[quoteError,setQuoteError]=useState("");
@@ -54,7 +55,7 @@ export default function SittingPage(){
   queueMicrotask(()=>{if(cancelled)return;setQuoteLoading(true);setQuoteError("");setQuote(null);setBookingError("");});
   Promise.all([
    loadSittingCatalogue({scheduledStart}),
-   createSittingQuote({packageCode,petCount,scheduledStart,scheduledEnd,paymentMode:"prepaid"}),
+   createSittingQuote({packageCode,petCount,cityId:"blr",zoneId:"blr-east",scheduledStart,scheduledEnd,paymentMode:"prepaid"}),
   ]).then(([catalogue,nextQuote])=>{if(cancelled)return;setPackages(catalogue.packages);setQuote(nextQuote);})
    .catch(error=>{if(cancelled)return;setQuoteError(error instanceof Error?error.message:"Unable to refresh canonical Sitting quote");})
    .finally(()=>{if(!cancelled)setQuoteLoading(false);});

@@ -17,6 +17,7 @@ const couponFailures=[
   {message:"Coupon campaign not found",status:404},
   {message:"Coupon total redemption limit reached",status:409},
   {message:"Customer coupon limit reached",status:409},
+  {message:"Coupon idempotency key was already used for a different redemption",status:409},
   {message:"Coupon code and name are required",status:400},
   {message:"Coupon eligibility scope is required",status:400},
   {message:"Coupon discount and limits must be positive",status:400},

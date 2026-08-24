@@ -49,7 +49,7 @@ export default function BoardingPage(){
   queueMicrotask(()=>{if(!active)return;setLoading(true);setQuote(null);setError("")});
   void Promise.all([
    loadBoardingCommercial({cityId:"blr",zoneId:"blr-east",scheduledStart:window.start,scheduledEnd:window.end,petCount,species:["dog"]}),
-   quoteBoarding({packageCode,petCount,scheduledStart:window.start,scheduledEnd:window.end,paymentMode:"prepaid"}),
+   quoteBoarding({packageCode,petCount,cityId:"blr",zoneId:"blr-east",scheduledStart:window.start,scheduledEnd:window.end,paymentMode:"prepaid"}),
   ]).then(([commercial,nextQuote])=>{
    if(!active)return;
    setPackages(commercial.packages);
