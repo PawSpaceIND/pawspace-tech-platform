@@ -14,6 +14,7 @@ const couponFailures=[
   {message:"Coupon quote is no longer open",status:409},
   {message:"Coupon quote has expired",status:409},
   {message:"Canonical booking does not belong to this customer",status:403},
+  {message:"Canonical booking does not match the coupon quote context",status:409},
   {message:"Coupon campaign not found",status:404},
   {message:"Coupon total redemption limit reached",status:409},
   {message:"Customer coupon limit reached",status:409},

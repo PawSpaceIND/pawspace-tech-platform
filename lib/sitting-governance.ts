@@ -10,6 +10,13 @@ const packages=[
  {code:"sitting-overnight",name:"Overnight Pet Sitting",mode:"overnight",basePrice:799,extraPetPrice:399,maxPets:4},
 ] as const;
 
+async function ensureQuoteColumn(db:D1Database,column:string,definition:string){
+ const columns=await db.prepare("PRAGMA table_info(sitting_commercial_quotes)").all<Row>();
+ if(columns.results.some(row=>String(row.name)===column))return;
+ try{await db.prepare(`ALTER TABLE sitting_commercial_quotes ADD COLUMN ${column} ${definition}`).run();}
+ catch(error){const after=await db.prepare("PRAGMA table_info(sitting_commercial_quotes)").all<Row>();if(!after.results.some(row=>String(row.name)===column))throw error;}
+}
+
 export async function ensureSittingGovernanceTables(db:D1Database){
  const now=Date.now();
  await db.batch([
@@ -18,9 +25,8 @@ export async function ensureSittingGovernanceTables(db:D1Database){
   db.prepare("CREATE INDEX IF NOT EXISTS idx_sitting_quote_expiry ON sitting_commercial_quotes(status,expires_at)"),
   db.prepare("CREATE TABLE IF NOT EXISTS sitting_booking_quote_links (quote_id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,created_at INTEGER NOT NULL)"),
  ]);
- const quoteColumns=await db.prepare("PRAGMA table_info(sitting_commercial_quotes)").all<Row>();
- if(!quoteColumns.results.some(row=>String(row.name)==="city_id"))await db.prepare("ALTER TABLE sitting_commercial_quotes ADD COLUMN city_id TEXT NOT NULL DEFAULT 'blr'").run();
- if(!quoteColumns.results.some(row=>String(row.name)==="zone_id"))await db.prepare("ALTER TABLE sitting_commercial_quotes ADD COLUMN zone_id TEXT NOT NULL DEFAULT 'blr-east'").run();
+ await ensureQuoteColumn(db,"city_id","TEXT NOT NULL DEFAULT 'blr'");
+ await ensureQuoteColumn(db,"zone_id","TEXT NOT NULL DEFAULT 'blr-east'");
  for(const item of packages)await db.prepare("INSERT OR IGNORE INTO sitting_commercial_packages (package_code,name,mode,base_price_per_pet,extra_pet_price,currency,max_pets,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,'INR',?,1,1,'2026-08-01',NULL,'founder_seed',?)").bind(item.code,item.name,item.mode,item.basePrice,item.extraPetPrice,item.maxPets,now).run();
 }
 

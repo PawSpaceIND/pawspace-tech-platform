@@ -120,6 +120,23 @@ test("coupon expiry, unsupported city and cross-payload idempotency reuse fail c
   assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM coupon_redemptions").get().count, 1);
 });
 
+test("coupon consumption binds service, city, package and amount to the canonical booking", async () => {
+  const { sqlite, db } = stack();
+  const coupons = await import("../lib/coupon-governance.ts");
+  booking(sqlite, { id: "BK-WRONG-CONTEXT", customerId: "CUS-A", service: "grooming", city: "blr", packageCode: "grooming-basic" });
+  const quote = await coupons.quoteCoupon(db, {
+    code: "UATCARE100", customerId: "CUS-A", serviceCode: "boarding", cityId: "blr",
+    channel: "customer_app", packageCode: "boarding-24h", orderValue: 1200,
+    paymentMode: "full", isSubscription: false,
+  });
+  await assert.rejects(
+    coupons.consumeCouponQuote(db, { quoteId: quote.quoteId, bookingId: "BK-WRONG-CONTEXT", customerId: "CUS-A", idempotencyKey: "wrong-context" }),
+    /does not match the coupon quote context/i,
+  );
+  assert.equal(sqlite.prepare("SELECT status FROM coupon_quotes WHERE id=?").get(quote.quoteId).status, "open");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM coupon_redemptions").get().count, 0);
+});
+
 test("referral claim qualifies from the first completed paid booking in governed Chennai", async () => {
   const { sqlite, db } = stack();
   const referrals = await import("../lib/referral-governance.ts");
@@ -235,4 +252,16 @@ test("subscription expiry, customer mismatch and idempotency key collisions fail
     /expired/i,
   );
   assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM subscription_wallet_events").get().count, 1);
+});
+
+test("subscription wallet rejects non-finite and fractional numeric mutations before persistence", async () => {
+  const { sqlite, db } = stack();
+  const wallet = await import("../lib/subscription-wallet.ts");
+  await wallet.ensureSubscriptionWalletTables(db);
+  seedSubscription(sqlite, { id: "SUB-NUM", customerId: "CUS-A", expiresAt: Date.now() + 86_400_000 });
+  booking(sqlite, { id: "BK-NUM", customerId: "CUS-A" });
+  await assert.rejects(() => wallet.mutateSubscriptionWallet(db, { subscriptionId: "SUB-NUM", action: "reserve", bookingId: "BK-NUM", credits: Number.NaN, idempotencyKey: "nan", actorId: "customer:CUS-A" }), /positive integer/i);
+  await assert.rejects(() => wallet.mutateSubscriptionWallet(db, { subscriptionId: "SUB-NUM", action: "pause", pauseDays: 1.5, reason: "travel", idempotencyKey: "fraction", actorId: "customer:CUS-A" }), /positive integer/i);
+  assert.equal(sqlite.prepare("SELECT sessions_reserved FROM customer_grooming_subscriptions WHERE id='SUB-NUM'").get().sessions_reserved, 0);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM subscription_wallet_events").get().count, 0);
 });

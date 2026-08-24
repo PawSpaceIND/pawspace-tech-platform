@@ -20,7 +20,7 @@ const uatPets:Array<{sourceId:string;name:string;species:"dog"|"cat";breed:strin
  {sourceId:"TST-PET-PEPPER",name:"Pepper",species:"dog",breed:"Indie",vaccinationStatus:"verified"},
  {sourceId:"TST-PET-MILO",name:"Milo",species:"cat",breed:"Domestic Shorthair",vaccinationStatus:"verified"},
 ];
-const dateOffset=(days:number)=>new Date(Date.now()+days*86_400_000).toISOString().slice(0,10);
+const dateOffset=(days:number)=>new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date(Date.now()+days*86_400_000));
 
 export default function SittingPage(){
  const[mode,setMode]=useState<"visit"|"overnight">("overnight");
