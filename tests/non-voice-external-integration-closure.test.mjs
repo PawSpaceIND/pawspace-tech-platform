@@ -74,8 +74,18 @@ test("provider KYC is governed through the canonical integration readiness contr
   assert.match(registry, /code:"INT-KYC-01"/);
   assert.match(registry, /capability:"Provider KYC \/ identity verification"/);
   assert.match(registry, /priority:"P0",required:true/);
-  assert.match(registry, /codeBoundaryStatus:"partial",readinessState:"production_setup_required",credentialDetector:"idfy"/);
-  for (const key of ["IDFY_API_KEY", "IDFY_ACCOUNT_ID", "IDFY_URL"]) assert.match(registry, new RegExp(key));
+  // NOT pinned to codeBoundaryStatus:"partial" any more. That literal broke when PR #305 implemented and
+  // executed the IDfy callback boundary and the code boundary legitimately became "code_ready" - the
+  // assertion was protecting a spelling rather than the property it exists for. The property is that KYC
+  // readiness is OPERATIONAL and cannot be moved by writing code: readiness_state stays
+  // production_setup_required until an IDfy account is actually reached. That is what is asserted here,
+  // and tests/lane2-readiness-handoff.test.mjs proves it by execution rather than by reading the source.
+  assert.match(registry, /readinessState:"production_setup_required",credentialDetector:"idfy"/);
+  assert.doesNotMatch(registry, /code:"INT-KYC-01"[^}]*readinessState:"(sandbox_verified|controlled_live_verified)"/,
+    "KYC must never be seeded as verified");
+  // IDFY_WEBHOOK_SECRET joins the three submission credentials: IDfy is asynchronous, so without the
+  // callback secret every delivery is refused 503 and a check can only ever reach manual_review.
+  for (const key of ["IDFY_API_KEY", "IDFY_ACCOUNT_ID", "IDFY_URL", "IDFY_WEBHOOK_SECRET"]) assert.match(registry, new RegExp(key));
   assert.match(registry, /case"idfy":return configured/);
   assert.match(readinessRoute, /listIntegrationReadiness\(db,runtime\)/);
   assert.match(readinessRoute, /integrationLaunchBlockers\(db\)/);
