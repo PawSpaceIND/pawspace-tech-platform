@@ -646,3 +646,311 @@ test("every location-recovery action is bound to a permission before any work ha
   assert.ok(post.indexOf("requirePermission") < post.indexOf("ensureUniversalLocationTables"),
     "authorization must be resolved before any table is created");
 });
+
+// =====================================================================================================
+// PR #305 REVIEW REMEDIATION - each finding validated by execution before it was fixed
+// =====================================================================================================
+
+// --- callback body is bounded by BYTES, while streaming ------------------------------------------------
+
+async function callbackRoute() {
+  globalThis.__PAWSPACE_TEST_ENV = { DB: { prepare: () => ({ bind: () => ({ first: async () => null, run: async () => ({}), all: async () => ({ results: [] }) }) }), batch: async () => [] } };
+  return (await import("../app/api/provider-verification-callback/route.ts")).POST;
+}
+const CALLBACK_LIMIT = 65_536;
+const callbackRequest = (body, init = {}) => new Request("https://pawspace.test/api/provider-verification-callback", { method: "POST", body, ...init });
+
+test("REVIEW: a chunked body with no content-length is cut off mid-stream, not buffered whole", async () => {
+  // The first version checked content-length and then called request.text(). A chunked body carries no
+  // content-length at all, so 40 MiB was buffered in full before the limit was consulted, and the stream
+  // was never cancelled. Measured: 40 MiB delivered, cancelled=false, then 413.
+  const POST = await callbackRoute();
+  const megabyte = new Uint8Array(1024 * 1024).fill(65);
+  let delivered = 0, cancelled = false;
+  const body = new ReadableStream({
+    pull(controller) { if (delivered >= 40) { controller.close(); return; } delivered += 1; controller.enqueue(megabyte); },
+    cancel() { cancelled = true; },
+  });
+  const response = await POST(callbackRequest(body, { duplex: "half" }));
+  assert.equal(response.status, 413);
+  assert.ok(cancelled, "the request stream must be cancelled once the limit is crossed");
+  assert.ok(delivered <= 2, `reading must stop at the limit, not drain the sender; ${delivered} MiB were accepted`);
+});
+
+test("REVIEW: the limit counts received bytes, not UTF-16 code units", async () => {
+  // 40,000 multibyte characters measure 40,000 by String#length and 80,000 as bytes. The old check read
+  // raw.length, so this body passed a limit it exceeded by 22%.
+  const POST = await callbackRoute();
+  const padding = "é".repeat(40_000);
+  assert.ok(padding.length < CALLBACK_LIMIT, "under the limit when counted wrongly");
+  assert.ok(new TextEncoder().encode(padding).byteLength > CALLBACK_LIMIT, "over the limit when counted correctly");
+  assert.equal((await POST(callbackRequest(JSON.stringify({ padding })))).status, 413);
+});
+
+test("a multibyte body that genuinely fits is still accepted", async () => {
+  // Non-vacuity: the byte-counting fix must not refuse every non-ASCII payload.
+  const POST = await callbackRoute();
+  const response = await POST(callbackRequest(JSON.stringify({ event_id: "E", request_id: "R", note: "é".repeat(100) })));
+  assert.notEqual(response.status, 413, "a small multibyte body must survive the byte limit");
+});
+
+test("an oversized body is refused before the signature is even considered", async () => {
+  const POST = await callbackRoute();
+  const response = await POST(callbackRequest("x".repeat(CALLBACK_LIMIT + 1)));
+  assert.equal(response.status, 413);
+  assert.match((await response.json()).error, /too large/i);
+});
+
+// --- IDfy state transitions are monotonic --------------------------------------------------------------
+
+test("REVIEW: a late nonterminal callback cannot revoke an already verified provider", async () => {
+  // IDfy delivery is asynchronous and unordered, so a progress callback can land after the decision.
+  // Measured before the fix: canTakeAssignments went true -> false when an `in_progress` callback
+  // rewrote a `verified` row to `manual_review`.
+  const { db, mandate, submit, post, statusOf } = await kycWorld();
+  submit();
+  submit({ id: "PVER-2", verification_type: "pan", provider_ref: "IDFY-REQ-2" });
+  await post({ event_id: "MT-1", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } });
+  await post({ event_id: "MT-2", request_id: "IDFY-REQ-2", status: "completed", result: { verification_status: "verified" } });
+  assert.equal((await mandate.verificationMandateStatus(db, { applicationId: "APP-1", category: "groomer" })).canTakeAssignments, true);
+
+  const late = await post({ event_id: "MT-3", request_id: "IDFY-REQ-1", status: "in_progress" });
+  assert.equal(late.accepted, true, "a superseded callback is still accepted so the provider stops retrying");
+  assert.equal(late.outcome, "verified", "the reported outcome is the state that stands, not the one ignored");
+  assert.equal(statusOf().status, "verified");
+  assert.equal((await mandate.verificationMandateStatus(db, { applicationId: "APP-1", category: "groomer" })).canTakeAssignments, true,
+    "eligibility must survive an out-of-order progress callback");
+});
+
+test("a superseded callback is recorded, with a reason naming what was ignored", async () => {
+  const { sqlite, submit, post } = await kycWorld();
+  submit();
+  await post({ event_id: "MT-4", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } });
+  await post({ event_id: "MT-5", request_id: "IDFY-REQ-1", status: "in_progress" });
+  const row = sqlite.prepare("SELECT outcome,accepted,rejection_reason FROM provider_verification_callbacks WHERE provider_event_id='MT-5'").get();
+  assert.equal(row.outcome, "verified");
+  assert.equal(row.rejection_reason, "nonterminal_manual_review_ignored_after_verified");
+});
+
+test("terminal-to-terminal transitions still apply in both directions", async () => {
+  // The rule blocks a non-decision overwriting a decision. It must NOT freeze the record: a later
+  // revocation and a later correction are both the provider's own judgement.
+  const { submit, post, statusOf } = await kycWorld();
+  submit();
+  await post({ event_id: "MT-6", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } });
+  await post({ event_id: "MT-7", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "not_verified" } });
+  assert.equal(statusOf().status, "failed", "a later revocation must still land");
+  await post({ event_id: "MT-8", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } });
+  assert.equal(statusOf().status, "verified", "a later correction must still land");
+});
+
+test("a nonterminal callback still applies to a record that has not been decided", async () => {
+  const { submit, post, statusOf } = await kycWorld();
+  submit({ status: "pending" });
+  await post({ event_id: "MT-9", request_id: "IDFY-REQ-1", status: "in_progress" });
+  assert.equal(statusOf().status, "manual_review", "progress must still be recorded before a decision exists");
+});
+
+// --- a refused callback must not poison its event id ---------------------------------------------------
+
+test("REVIEW: refusal then a valid retry settles once, and the next duplicate changes nothing", async () => {
+  // Measured before the fix: the 404 wrote the event id into the dedup table, so the retry matched the
+  // replay check and was answered {accepted:true, status:200, outcome:"unmatched"} - the provider stopped
+  // retrying, the response claimed success, and the verification stayed manual_review forever.
+  const { sqlite, submit, post, statusOf } = await kycWorld();
+  const payload = { event_id: "RT-1", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } };
+
+  const refused = await post(payload);
+  assert.equal(refused.accepted, false);
+  assert.equal(refused.status, 404, "nothing to correlate to yet");
+
+  submit();                                   // the submission becomes readable
+  const retry = await post(payload);
+  assert.equal(retry.accepted, true, "the retry must be able to succeed");
+  assert.equal(retry.duplicate, false, "a refusal is not a delivery, so the retry is not a duplicate");
+  assert.equal(retry.outcome, "verified");
+  assert.equal(statusOf().status, "verified");
+
+  sqlite.prepare("UPDATE provider_verifications SET status='failed' WHERE id='PVER-1'").run();
+  const duplicate = await post(payload);
+  assert.equal(duplicate.accepted, true);
+  assert.equal(duplicate.status, 200);
+  assert.equal(duplicate.duplicate, true, "now it really is a redelivery");
+  assert.equal(statusOf().status, "failed", "the duplicate must not re-apply the outcome");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM provider_verification_callbacks WHERE provider_event_id='RT-1'").get().n, 1,
+    "one row per event id - the accepted delivery replaces the refusal rather than sitting beside it");
+  const row = sqlite.prepare("SELECT outcome,accepted FROM provider_verification_callbacks WHERE provider_event_id='RT-1'").get();
+  assert.equal(row.accepted, 1, "the surviving row must describe the delivery that took effect");
+  assert.equal(row.outcome, "verified");
+});
+
+test("REVIEW: a database read failure surfaces as an error, never as an unmatched 404", async () => {
+  // .catch(() => null) mapped a transient D1 failure onto the same answer as "no such reference", so a
+  // provider would be told there is nothing to deliver to and would stop retrying.
+  const { db, boundary, submit, post } = await kycWorld();
+  submit();
+  const realPrepare = db.prepare;
+  db.prepare = (sql) => sql.includes("FROM provider_verifications")
+    ? { bind: () => ({ first: async () => { throw new Error("D1_ERROR: network"); } }) }
+    : realPrepare(sql);
+  try {
+    const raw = JSON.stringify({ event_id: "DB-1", request_id: "IDFY-REQ-1", status: "completed" });
+    const stamp = String(Date.now());
+    const headers = new Headers();
+    headers.set(boundary.IDFY_SIGNATURE_HEADER, await boundary.idfyHmacHex(WEBHOOK_SECRET, `${stamp}.${raw}`));
+    headers.set(boundary.IDFY_TIMESTAMP_HEADER, stamp);
+    await assert.rejects(() => boundary.applyIdfyCallback(db, globalThis.__PAWSPACE_TEST_ENV, { rawBody: raw, headers }), /D1_ERROR/);
+  } finally { db.prepare = realPrepare; }
+  await post({ event_id: "DB-2", request_id: "IDFY-REQ-UNKNOWN", status: "completed" }).then((r) =>
+    assert.equal(r.status, 404, "a genuinely unknown reference is still a 404"));
+});
+
+// --- the signature covers the timestamp exactly as received --------------------------------------------
+
+test("REVIEW: a non-canonical timestamp header verifies, because the signature covers it verbatim", async () => {
+  // `${stampMs}` re-serialised Number(stamp). "1700000000000.0", "+1700000000000" and a leading zero all
+  // pass Number.isFinite and then serialise differently, so a correctly signed callback 401'd and the
+  // verification never settled. The old tests could not see it: they signed the same normalised integer
+  // string they posted.
+  for (const stamp of [`${Date.now()}.0`, `+${Date.now()}`, `0${Date.now()}`]) {
+    const { submit, post, statusOf } = await kycWorld();
+    submit();
+    assert.notEqual(String(Number(stamp)), stamp, `${stamp} must actually be non-canonical for this case to mean anything`);
+    const result = await post({ event_id: `TS-${stamp}`, request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } }, { stamp });
+    assert.equal(result.accepted, true, `a callback signed over the header "${stamp}" must verify`);
+    assert.equal(statusOf().status, "verified");
+  }
+});
+
+test("a signature computed over the NORMALISED timestamp is rejected", async () => {
+  // The other direction, so the test above cannot pass by the boundary simply ignoring the timestamp.
+  const { boundary, submit, statusOf, db } = await kycWorld();
+  submit();
+  const stamp = `${Date.now()}.0`;
+  const raw = JSON.stringify({ event_id: "TS-N", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } });
+  const headers = new Headers();
+  headers.set(boundary.IDFY_SIGNATURE_HEADER, await boundary.idfyHmacHex(WEBHOOK_SECRET, `${Number(stamp)}.${raw}`));
+  headers.set(boundary.IDFY_TIMESTAMP_HEADER, stamp);
+  const result = await boundary.applyIdfyCallback(db, globalThis.__PAWSPACE_TEST_ENV, { rawBody: raw, headers });
+  assert.equal(result.accepted, false);
+  assert.equal(result.status, 401);
+  assert.equal(statusOf().status, "manual_review");
+});
+
+// --- negative GPS accuracy fails closed ----------------------------------------------------------------
+
+test("REVIEW: a negative accuracy is malformed, not excellent, and cannot drive an ETA", async () => {
+  // Number.isFinite(-1) is true and -1 > allowed is false, so accuracyMeters:-1 stored an ACCEPTED point
+  // that drove a configured, customer-facing ETA. Same fail-open class as NaN, reached by another value.
+  const { sqlite, db, location, point } = await gpsWorld();
+  for (const accuracyMeters of [-1, -0.0001, -99999]) {
+    const result = await point({ accuracyMeters });
+    assert.equal(result.trustState, "low_accuracy", `accuracyMeters ${accuracyMeters} must fail the policy`);
+    const row = sqlite.prepare("SELECT accuracy_meters,rejection_reason FROM universal_provider_location_events WHERE id=?").get(result.id);
+    assert.ok(Number(row.accuracy_meters) > ALLOWED_ACCURACY_M, "the stored value must be the fail-closed sentinel, not the negative input");
+    assert.equal(row.rejection_reason, "accuracy_reported_as_negative");
+    await assert.rejects(
+      () => location.recordEtaSnapshot(db, { bookingId: "BKG-1", providerId: "PRV-1", originEventId: result.id, destination: { address: "x" }, distanceMeters: 100, durationSeconds: 60, providerStatus: "configured" }),
+      /untrusted_location_cannot_drive_eta/);
+  }
+});
+
+test("zero accuracy is not swept up with the negative values", async () => {
+  // Non-vacuity for the `>= 0` boundary: 0 is an unusual but legitimate reading, not a malformed one.
+  const { point } = await gpsWorld();
+  assert.equal((await point({ accuracyMeters: 0 })).trustState, "accepted");
+});
+
+// --- Maps must not treat an incomplete 200 as a route --------------------------------------------------
+
+test("REVIEW: a 200 without a usable distance and duration is not a route", async () => {
+  // `{"routes":[{}]}` returned status "configured" carrying distance 0 and NO duration, and a
+  // non-numeric distance stored as NULL - incomplete evidence written as though the provider answered.
+  world({ GOOGLE_MAPS_SERVER_API_KEY_UAT: "uat-key-placeholder" });
+  const { computeGoogleRoute } = await import("../lib/grooming-maps.ts");
+  const original = globalThis.fetch;
+  try {
+    for (const body of [
+      { routes: [{}] },
+      { routes: [{ distanceMeters: 1250 }] },
+      { routes: [{ duration: "90s" }] },
+      { routes: [{ distanceMeters: -5, duration: "90s" }] },
+      { routes: [{ distanceMeters: 1250, duration: "-3s" }] },
+      { routes: [{ distanceMeters: "abc", duration: "xyz" }] },
+    ]) {
+      globalThis.fetch = async () => new Response(JSON.stringify(body), { status: 200 });
+      const result = await computeGoogleRoute({ lat: 12.97, lng: 77.59 }, "1 Example Road, Bengaluru");
+      assert.equal(result.status, "route_unavailable", JSON.stringify(body));
+      assert.equal(result.durationSeconds, undefined, "no duration may be reported for a refused route");
+    }
+  } finally { globalThis.fetch = original; }
+});
+
+test("a complete route is still accepted, with both measures carried through", async () => {
+  world({ GOOGLE_MAPS_SERVER_API_KEY_UAT: "uat-key-placeholder" });
+  const { computeGoogleRoute } = await import("../lib/grooming-maps.ts");
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ routes: [{ distanceMeters: 1250, duration: "90s", polyline: { encodedPolyline: "abc" } }] }), { status: 200 });
+  try {
+    const result = await computeGoogleRoute({ lat: 12.97, lng: 77.59 }, "1 Example Road, Bengaluru");
+    assert.equal(result.status, "configured");
+    assert.equal(result.distanceMeters, 1250);
+    assert.equal(result.durationSeconds, 90);
+  } finally { globalThis.fetch = original; }
+});
+
+test("an incomplete provider answer cannot become a configured ETA snapshot", async () => {
+  // The consequence: recordEtaSnapshot only refuses on UNTRUSTED origin evidence, so a "configured"
+  // status with no duration would have been persisted with a null predicted arrival.
+  const { sqlite, location, db, point } = await gpsWorld();
+  const good = await point();
+  world({ GOOGLE_MAPS_SERVER_API_KEY_UAT: "uat-key-placeholder" });
+  globalThis.__PAWSPACE_TEST_ENV.DB = db;
+  const { computeGoogleRoute } = await import("../lib/grooming-maps.ts");
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ routes: [{}] }), { status: 200 });
+  let route;
+  try { route = await computeGoogleRoute({ lat: 12.97, lng: 77.59 }, "1 Example Road, Bengaluru"); }
+  finally { globalThis.fetch = original; }
+  const snapshot = await location.recordEtaSnapshot(db, { bookingId: "BKG-1", providerId: "PRV-1", originEventId: good.id, destination: { address: "x" }, distanceMeters: route.distanceMeters, durationSeconds: route.durationSeconds, providerStatus: route.status });
+  const row = sqlite.prepare("SELECT provider_status,predicted_arrival_at FROM route_eta_snapshots WHERE id=?").get(snapshot.id);
+  assert.equal(row.provider_status, "route_unavailable", "an incomplete answer must be stored as unavailable, not configured");
+  assert.equal(row.predicted_arrival_at, null);
+});
+
+test("REVIEW: a provider that sends headers then stalls the body reports the timeout", async () => {
+  // The abort fires after the headers arrive. `response.json().catch(() => ({}))` swallowed the
+  // AbortError, so a request that had genuinely timed out reported "Routes API returned 200".
+  world({ GOOGLE_MAPS_SERVER_API_KEY_UAT: "uat-key-placeholder" });
+  const { computeGoogleRoute } = await import("../lib/grooming-maps.ts");
+  const original = globalThis.fetch;
+  globalThis.fetch = async (_url, options) => {
+    const signal = options?.signal;
+    assert.ok(signal, "the adapter must pass an abort signal or a stalled body could never be abandoned");
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"routes":['));
+        signal.addEventListener("abort", () => controller.error(Object.assign(new Error("aborted"), { name: "AbortError" })), { once: true });
+      },
+    });
+    return new Response(stream, { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const result = await computeGoogleRoute({ lat: 12.97, lng: 77.59 }, "1 Example Road, Bengaluru");
+    assert.equal(result.status, "route_unavailable");
+    assert.match(result.error, /did not respond within/, "a stalled body must report the timeout, not the status line");
+  } finally { globalThis.fetch = original; }
+});
+
+test("a non-abort body parse failure still degrades quietly", async () => {
+  // The abort re-throw must not turn every malformed body into a thrown error.
+  world({ GOOGLE_MAPS_SERVER_API_KEY_UAT: "uat-key-placeholder" });
+  const { computeGoogleRoute } = await import("../lib/grooming-maps.ts");
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response("<html>not json</html>", { status: 200 });
+  try {
+    const result = await computeGoogleRoute({ lat: 12.97, lng: 77.59 }, "1 Example Road, Bengaluru");
+    assert.equal(result.status, "route_unavailable");
+    assert.doesNotMatch(result.error, /did not respond within/);
+  } finally { globalThis.fetch = original; }
+});

@@ -41,6 +41,9 @@ export const IDFY_TIMESTAMP_HEADER = "x-idfy-timestamp";
 /** Same window the telephony callback uses. A signature older than this is refused even if it verifies. */
 export const IDFY_SIGNATURE_FRESHNESS_MS = 300_000;
 
+/** The two states that represent a decision. Anything else is work still in progress. */
+export const TERMINAL_VERIFICATION_STATUSES = ["verified", "failed"];
+
 const text = (value: unknown) => String(value ?? "").trim();
 const hex = (bytes: ArrayBuffer) => Array.from(new Uint8Array(bytes)).map(b => b.toString(16).padStart(2, "0")).join("");
 function safeEqual(a: string, b: string) { if (a.length !== b.length) return false; let out = 0; for (let i = 0; i < a.length; i++) out |= a.charCodeAt(i) ^ b.charCodeAt(i); return out === 0; }
@@ -81,7 +84,11 @@ export async function applyIdfyCallback(db: Db, env: Env, input: { rawBody: stri
   // Absolute difference, so a timestamp in the FUTURE is as unacceptable as one in the past. Comparing
   // only `now - stamp` would let a far-future timestamp keep one captured body replayable forever.
   if (Math.abs(Date.now() - stampMs) > IDFY_SIGNATURE_FRESHNESS_MS) return { accepted: false, status: 401, reason: "Signature timestamp is outside the freshness window" };
-  const expected = await idfyHmacHex(secret, `${stampMs}.${input.rawBody}`);
+  // The provider signs the exact header value it sent. `${stampMs}` re-serialises Number(stamp), so any
+  // non-canonical numeric form the provider might send - "1700000000000.0", "+1700000000000", a leading
+  // zero, exponent notation - all pass Number.isFinite and then serialise differently, breaking a
+  // legitimate signature and 401-ing a callback that would never settle. stampMs is for freshness only.
+  const expected = await idfyHmacHex(secret, `${stamp}.${input.rawBody}`);
   if (!safeEqual(expected, signature)) return { accepted: false, status: 401, reason: "Signature verification failed" };
 
   // Only now is the body worth parsing.
@@ -98,18 +105,29 @@ export async function applyIdfyCallback(db: Db, env: Env, input: { rawBody: stri
 
   // Replay check BEFORE any mutation. A redelivery is normal - providers retry on any non-2xx - so it
   // answers 200 (stop retrying) and changes nothing.
-  const seen = await db.prepare("SELECT application_id,verification_type,outcome FROM provider_verification_callbacks WHERE provider_event_id=?").bind(eventId).first<Row>();
+  // ONLY an accepted record is terminal. Keying this on the event id alone meant a REFUSED delivery
+  // poisoned that id: the 404 recorded the event, IDfy retried once the row was readable, and the retry
+  // matched here and was answered `{accepted:true, status:200, outcome:"unmatched"}` - so the provider
+  // stopped retrying, the response claimed success, and the verification stayed manual_review forever.
+  const seen = await db.prepare("SELECT application_id,verification_type,outcome FROM provider_verification_callbacks WHERE provider_event_id=? AND accepted=1").bind(eventId).first<Row>();
   if (seen) return { accepted: true, status: 200, applicationId: text(seen.application_id), verificationType: text(seen.verification_type), outcome: text(seen.outcome), duplicate: true };
 
   const record = async (outcome: string, accepted: boolean, reason: string | null, appId: string, vType: string) => {
-    await db.prepare("INSERT OR IGNORE INTO provider_verification_callbacks (id,provider_event_id,provider_ref,application_id,verification_type,outcome,accepted,rejection_reason,payload_sha256,received_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+    // provider_event_id is UNIQUE, so INSERT OR IGNORE alone would leave the earlier REFUSED row in
+    // place and the accepted=1 replay check above would never match - the retry would settle the
+    // verification but every later duplicate would correlate and settle it again. Upserting keeps the
+    // one row per event id and makes it describe the delivery that actually took effect.
+    await db.prepare("INSERT INTO provider_verification_callbacks (id,provider_event_id,provider_ref,application_id,verification_type,outcome,accepted,rejection_reason,payload_sha256,received_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(provider_event_id) DO UPDATE SET provider_ref=excluded.provider_ref,application_id=excluded.application_id,verification_type=excluded.verification_type,outcome=excluded.outcome,accepted=excluded.accepted,rejection_reason=excluded.rejection_reason,payload_sha256=excluded.payload_sha256,received_at=excluded.received_at")
       .bind(`IDFYCB-${crypto.randomUUID().slice(0, 12).toUpperCase()}`, eventId, providerRef, appId || null, vType || null, outcome, accepted ? 1 : 0, reason, payloadHash, Date.now()).run();
   };
 
   // Correlation. The row must exist, must be one WE submitted (automated=1 with a provider_ref set by
   // the submission), and its provider_ref must be the one the callback names. An unknown or mismatched
   // reference is refused and recorded - a rejected callback is evidence too, so it is never dropped.
-  const row = await db.prepare("SELECT id,application_id,verification_type,status,automated,provider_ref FROM provider_verifications WHERE provider_ref=?").bind(providerRef).first<Row>().catch(() => null);
+  // No .catch here. Swallowing a read failure into `null` answered a transient D1 error with the same
+  // 404 as a genuinely unknown reference; the error must surface so the route answers 5xx and the
+  // provider retries.
+  const row = await db.prepare("SELECT id,application_id,verification_type,status,automated,provider_ref FROM provider_verifications WHERE provider_ref=?").bind(providerRef).first<Row>();
   if (!row) { await record("unmatched", false, "no_verification_for_provider_reference", "", ""); return { accepted: false, status: 404, reason: "No submitted verification matches this provider reference" }; }
   const applicationId = text(row.application_id), verificationType = text(row.verification_type);
   if (Number(row.automated || 0) !== 1) {
@@ -118,8 +136,20 @@ export async function applyIdfyCallback(db: Db, env: Env, input: { rawBody: stri
   }
 
   const outcome = mapStatus(body);
-  await db.prepare("UPDATE provider_verifications SET status=?,detail_json=?,updated_by='idfy_callback',updated_at=? WHERE id=?")
-    .bind(outcome, JSON.stringify({ via: "idfy_callback", providerRef, eventId }), Date.now(), text(row.id)).run();
-  await record(outcome, true, null, applicationId, verificationType);
-  return { accepted: true, status: 200, applicationId, verificationType, outcome, duplicate: false };
+  const current = text(row.status);
+  // MONOTONIC. IDfy delivery is asynchronous and unordered, so a callback that merely reports progress
+  // can arrive AFTER the one carrying the decision. Applying it unconditionally rewrote a `verified`
+  // row back to `manual_review`, and because assignment eligibility requires every mandated check to be
+  // `verified`, that silently revoked a provider who had already passed.
+  //
+  // Only the two decided states are terminal, and both are the provider's own judgement: verified may
+  // still become failed (a later revocation) and failed may still become verified (a correction). What
+  // may never happen is a NON-decision overwriting a decision. No new status is introduced.
+  const applied = TERMINAL_VERIFICATION_STATUSES.includes(current) && !TERMINAL_VERIFICATION_STATUSES.includes(outcome) ? current : outcome;
+  if (applied !== current)
+    await db.prepare("UPDATE provider_verifications SET status=?,detail_json=?,updated_by='idfy_callback',updated_at=? WHERE id=?")
+      .bind(applied, JSON.stringify({ via: "idfy_callback", providerRef, eventId }), Date.now(), text(row.id)).run();
+  // Recorded either way - a superseded callback is evidence that it arrived and was declined.
+  await record(applied, true, applied === outcome ? null : `nonterminal_${outcome}_ignored_after_${current}`, applicationId, verificationType);
+  return { accepted: true, status: 200, applicationId, verificationType, outcome: applied, duplicate: false };
 }

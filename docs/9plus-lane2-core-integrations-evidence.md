@@ -213,18 +213,99 @@ submission path and the callback path cannot be played off against each other.
 
 ## 2. Executable evidence
 
-`tests/lane2-core-integration-boundaries.test.mjs` — **45 tests, all executing real modules** against
+`tests/lane2-core-integration-boundaries.test.mjs` — **64 tests, all executing real modules** against
 `node:sqlite` through the repository's D1 shim.
+
+Counts below are enumerated from the file, not from memory. An earlier revision of this table claimed 45
+against rows summing to 43; review caught the arithmetic and the enumeration showed the table was the
+wrong half — the GPS group held 13 tests, not the 1 + 11 written here, and the media group 9, not 8. No
+test was added to make the total agree.
 
 | Group | Tests | What is executed |
 |---|---|---|
-| Module executability | 1 | the import that previously threw; the replacement class behaves like the parameter property |
-| GPS trust | 11 | accepted / stale / low-accuracy / future-capture / in-window skew both directions / omitted accuracy / out-of-range and non-finite coordinates / cross-provider session write / kill switch / untrusted-cannot-drive-ETA / forecast-never-guarantee |
+| GPS evidence trust | 13 | the import that previously threw · accepted / stale / low-accuracy · future capture · in-window skew both directions · omitted accuracy · out-of-range and non-finite coordinates · cross-provider session write · kill switch · untrusted-cannot-drive-ETA · forecast-never-guarantee |
 | Maps adapter | 5 | missing key · sandbox lock · malformed coordinates (0 provider calls) · 4xx, 5xx, empty routes, unparseable body, network failure · timeout |
-| Media proof | 8 | accepted registered media · fabricated `uat://` refused · UAT flag path · wrong booking · wrong provider · unscanned/quarantined/revoked/synthetic · purpose reuse · non-PawSpace and traversal-shaped references · missing asset · caller-side mandate for an absent ref |
+| Service media proof | 9 | accepted registered media · fabricated `uat://` refused · UAT flag path · wrong booking · wrong provider · unscanned/quarantined/revoked/synthetic · purpose reuse · non-PawSpace and traversal-shaped references · missing asset · caller-side mandate for an absent ref |
 | IDfy callback | 13 | approved · rejected · ambiguous→review · four forgery attempts · not-connected · stale and future signature · unknown reference · IDfy-off correlation · replay · manual/automated separation both directions · malformed body ordering · missing ids |
-| Location authorization | 1 | the exported action→permission map, and `requirePermission` ordered before any table creation |
 | Assignment gating | 4 | partial mandate · full mandate then revocation · host mandate unsatisfiable by automation alone · empty mandate never reads as satisfied |
+| Location authorization | 1 | the exported action→permission map, and `requirePermission` ordered before any table creation |
+| **PR #305 review remediation** | **19** | the eight findings below, each executed against the defect before it was fixed |
+| **Total** | **64** | |
+
+---
+
+## 2a. PR #305 review remediation — eight findings, all validated by execution first
+
+Nine review threads carried eight distinct findings (negative accuracy was reported twice). **Every one
+was reproduced by running the code before anything was changed.** None was accepted on description alone
+and none was dismissed without counter-evidence.
+
+| # | Finding | Measured before the fix |
+|---|---|---|
+| 1 | Callback body not bounded while streaming | a chunked body with no content-length delivered **40 MiB in full**, stream never cancelled, *then* 413. And `raw.length` counts UTF-16 units, so 40,000 multibyte characters — **80,000 bytes** — measured 40,000 and passed a 65,536 limit |
+| 2 | Nonterminal callback regressed a terminal outcome | a late `in_progress` on a `verified` row wrote `manual_review`; `canTakeAssignments` went **true → false**, revoking a provider who had already passed |
+| 3 | A refused callback poisoned its event id | 404, then the retry that should have succeeded returned `{accepted:true, status:200, outcome:"unmatched", duplicate:true}` — the provider stops retrying, the response claims success, and the record stays `manual_review` **forever** |
+| 3b | A D1 read failure became an unmatched 404 | `.catch(() => null)` mapped an infrastructure error onto "no such reference" |
+| 4 | Signature computed over a re-serialised timestamp | `"…0"`, `"+…"` and a leading zero all pass `Number.isFinite` and then serialise differently — a correctly signed callback 401s and never settles |
+| 5/9 | Negative accuracy treated as excellent accuracy | `accuracyMeters: -1` stored **`accepted`** and **drove a configured, customer-facing ETA** |
+| 6 | An incomplete 200 stored as a route | `{"routes":[{}]}` → `configured` with distance 0 and **no duration**; `"abc"` → `configured` with distance **NULL** |
+| 7 | Timeout swallowed on a stalled body | the request waited the full 10 s and then reported **`"Routes API returned 200"`** |
+
+### How each was fixed
+
+**1.** Reuses `readBoundedRequestText` from `lib/voice-safe-fetch.ts` — already used by the telephony
+callback for the same reason. It counts received **bytes** as they arrive and cancels the stream the
+moment the limit is crossed. After: 2 MiB read, `cancelled = true`, 413; the multibyte body 413s. A small
+multibyte body is still accepted, so the fix is not "refuse anything non-ASCII".
+
+**2.** `TERMINAL_VERIFICATION_STATUSES = ["verified","failed"]` — the two states that represent a
+**decision**, both of them existing statuses. A non-decision may never overwrite a decision. Terminal →
+terminal still applies in **both** directions: a later revocation and a later correction are the
+provider's own judgement, and freezing them would be a different bug. That over-application is itself a
+sabotage case. **No new outcome was invented.**
+
+**3.** Two changes that only work together, exactly as review noted. The replay short-circuit keys on
+`accepted = 1`, *and* `record()` upserts on `provider_event_id` — because that column is `UNIQUE`,
+`INSERT OR IGNORE` would have left the earlier refused row in place and the accepted check would never
+match. Proven end to end: refusal 404 → valid retry settles **once** (`duplicate: false`) → the next
+delivery is 200 `duplicate: true` **with no further mutation**, and exactly **one** row survives for that
+event id, describing the delivery that took effect. **3b:** the `.catch` is gone, so a read failure
+throws and the route answers 5xx; a genuinely unknown reference is still 404.
+
+**4.** The HMAC covers `` `${stamp}.${rawBody}` `` — the header **verbatim**. `stampMs` remains, for
+freshness only. Tested in both directions: a non-canonical header verifies, and a signature computed over
+the normalised form is rejected — so the first test cannot pass by the boundary ignoring the timestamp.
+
+**5/9.** `Number.isFinite(reported) && reported >= 0`. A negative radius is malformed, not excellent.
+Reason `accuracy_reported_as_negative`, and the point cannot drive an ETA. **Zero is still accepted** —
+unusual but legitimate — so the boundary is pinned on both sides.
+
+**6.** Both measures must be finite and non-negative before a response counts as a route. A complete
+route still carries distance and duration through unchanged, and an incomplete answer is now persisted as
+`route_unavailable` with a null predicted arrival rather than as `configured`.
+
+**7.** `response.json()` re-throws an `AbortError` so the surrounding handler keeps the timeout message.
+Non-abort parse failures still degrade quietly — asserted separately, so the re-throw cannot turn every
+malformed body into an exception.
+
+### Remediation sabotage
+
+| Sabotage | Red |
+|---|---|
+| F1 back to `request.text()` after a length check | 2 |
+| F2 monotonic rule removed | 2 |
+| F2 rule **over-applied** (freezes terminal states) | 1 |
+| F3a replay keyed on event id alone again | 1 |
+| F3b `record()` back to `INSERT OR IGNORE` | 1 |
+| F3c D1 read failure swallowed to `null` again | 1 |
+| F4 timestamp normalised before signing | 2 |
+| F5 negative accuracy accepted again | 1 |
+| F6 incomplete route accepted as `configured` | 2 |
+| F7 `AbortError` swallowed from `response.json()` | 1 |
+
+**No gate was weakened and no review finding was dismissed.** `lib/integration-readiness.ts` remains
+untouched, the provider-availability cross-lane blocker remains documented only, and no provider adapter
+or external-provider success was invented.
 
 ### Sabotage — every fix has a test that dies without it
 

@@ -35,7 +35,20 @@ export async function computeGoogleRoute(origin:ProviderPoint,destinationAddress
   if(!String(destinationAddress||"").trim())return{status:"route_unavailable",error:"Destination address is required"};
   // A provider that accepts the connection and then never answers must not hold a booking request open.
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),MAPS_REQUEST_TIMEOUT_MS);
-  try{const response=await fetch("https://routes.googleapis.com/directions/v2:computeRoutes",{method:"POST",signal:controller.signal,headers:{"content-type":"application/json","X-Goog-Api-Key":key,"X-Goog-FieldMask":"routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline"},body:JSON.stringify({origin:{location:{latLng:{latitude:origin.lat,longitude:origin.lng}}},destination:{address:destinationAddress},travelMode:"DRIVE",routingPreference:"TRAFFIC_AWARE",languageCode:"en-IN",units:"METRIC"})});const body=await response.json().catch(()=>({})) as {routes?:Array<{duration?:string;distanceMeters?:number;polyline?:{encodedPolyline?:string}}> ;error?:{message?:string}};if(!response.ok||!body.routes?.length)return{status:"route_unavailable",error:body.error?.message||`Routes API returned ${response.status}`};const route=body.routes[0];return{status:"configured",provider:"google_routes",distanceMeters:Number(route.distanceMeters||0),durationSeconds:seconds(route.duration),polyline:route.polyline?.encodedPolyline};}
+  try{const response=await fetch("https://routes.googleapis.com/directions/v2:computeRoutes",{method:"POST",signal:controller.signal,headers:{"content-type":"application/json","X-Goog-Api-Key":key,"X-Goog-FieldMask":"routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline"},body:JSON.stringify({origin:{location:{latLng:{latitude:origin.lat,longitude:origin.lng}}},destination:{address:destinationAddress},travelMode:"DRIVE",routingPreference:"TRAFFIC_AWARE",languageCode:"en-IN",units:"METRIC"})});// The abort can fire AFTER the headers arrive, while the body is still streaming. Swallowing it here
+  // reported "Routes API returned 200" for a request that had in fact timed out, so the caller could not
+  // tell a slow provider from an empty answer. Non-abort parse failures still degrade quietly.
+  const body=await response.json().catch((error)=>{if(controller.signal.aborted||(error as Error)?.name==="AbortError")throw error;return{};}) as {routes?:Array<{duration?:string;distanceMeters?:number;polyline?:{encodedPolyline?:string}}> ;error?:{message?:string}};
+  if(!response.ok||!body.routes?.length)return{status:"route_unavailable",error:body.error?.message||`Routes API returned ${response.status}`};
+  const route=body.routes[0];
+  // A 200 is not a route. `{"routes":[{}]}` produced status "configured" carrying distance 0 and NO
+  // duration at all, and a non-numeric distanceMeters stored as NULL - incomplete evidence written into
+  // route_eta_snapshots as though the provider had answered. Both measures must be present and sane
+  // before this counts as a route.
+  const distanceMeters=Number(route.distanceMeters),durationSeconds=seconds(route.duration);
+  if(!Number.isFinite(distanceMeters)||distanceMeters<0||!Number.isFinite(durationSeconds as number)||(durationSeconds as number)<0)
+    return{status:"route_unavailable",error:"Routes API returned a route without a usable distance and duration"};
+  return{status:"configured",provider:"google_routes",distanceMeters,durationSeconds,polyline:route.polyline?.encodedPolyline};}
   catch(error){const aborted=controller.signal.aborted||(error as Error)?.name==="AbortError";return{status:"route_unavailable",error:aborted?`Routes API did not respond within ${MAPS_REQUEST_TIMEOUT_MS}ms`:(error instanceof Error?error.message:"Unable to call Routes API")};}
   finally{clearTimeout(timer);}
 }
