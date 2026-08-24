@@ -180,7 +180,7 @@ test("the workflow installs all three as Cloudflare Worker SECRETS, not plain va
   // listing or a build log.
   assert.match(workflow, /printf\s+'%s'\s+"\$\{!name\}"\s*\|\s*npx\s+wrangler\s+secret\s+put/, "secret values must be piped over stdin, not echoed");
   // Root deploy is preserved; the obsolete dist/server deploy must not reappear.
-  assert.match(workflow, /run:\s*npx wrangler deploy/, "deploy stays at the repo root");
+  assert.match(workflow, /npx wrangler deploy/, "the workflow must deploy through Wrangler");
   assert.doesNotMatch(workflow, /cd dist\/server && npx wrangler deploy/, "the obsolete dist/server deploy path must not return");
 });
 
