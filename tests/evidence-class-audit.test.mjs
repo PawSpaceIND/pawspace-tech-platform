@@ -37,6 +37,18 @@ test("a suite that only reads source text classifies as source_contract", () => 
   assert.equal(row.database, false);
 });
 
+test("hosted-provider text inside a string is not classified as hosted traffic", () => {
+  const root = sandbox({
+    "tests/a.test.mjs": `const src = 'fetch(process.env.PAWSPACE_HOSTED_BASE_URL)';\nassert.ok(src);\n`,
+  });
+  assert.equal(classifyTestFile("tests/a.test.mjs", root).evidenceClass, "source_contract");
+
+  const executing = sandbox({
+    "tests/a.test.mjs": `await fetch(process.env.PAWSPACE_HOSTED_BASE_URL + "/health");\n`,
+  });
+  assert.equal(classifyTestFile("tests/a.test.mjs", executing).evidenceClass, "hosted_provider");
+});
+
 test("importing the real module without a database is imported_unit, and adding one makes it real_execution", () => {
   const unit = sandbox({ "tests/a.test.mjs": `const m = await import("../lib/refunds.ts");\nm.decide();\n` });
   assert.equal(classifyTestFile("tests/a.test.mjs", unit).evidenceClass, "imported_unit");

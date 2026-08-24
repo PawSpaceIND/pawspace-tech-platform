@@ -74,8 +74,8 @@ test("provider KYC is governed through the canonical integration readiness contr
   assert.match(registry, /code:"INT-KYC-01"/);
   assert.match(registry, /capability:"Provider KYC \/ identity verification"/);
   assert.match(registry, /priority:"P0",required:true/);
-  assert.match(registry, /codeBoundaryStatus:"partial",readinessState:"production_setup_required",credentialDetector:"idfy"/);
-  for (const key of ["IDFY_API_KEY", "IDFY_ACCOUNT_ID", "IDFY_URL"]) assert.match(registry, new RegExp(key));
+  assert.match(registry, /codeBoundaryStatus:"code_ready",readinessState:"production_setup_required",credentialDetector:"idfy"/);
+  for (const key of ["IDFY_API_KEY", "IDFY_ACCOUNT_ID", "IDFY_URL", "IDFY_WEBHOOK_SECRET"]) assert.match(registry, new RegExp(key));
   assert.match(registry, /case"idfy":return configured/);
   assert.match(readinessRoute, /listIntegrationReadiness\(db,runtime\)/);
   assert.match(readinessRoute, /integrationLaunchBlockers\(db\)/);

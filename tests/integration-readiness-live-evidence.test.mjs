@@ -105,6 +105,24 @@ test("removing a credential is reported too, and still does not touch readiness"
   assert.equal(row(sqlite, "INT-AI-01").readiness_state, "production_setup_required");
 });
 
+test("IDfy is code-ready after Lane 2 but stays setup-required until the callback secret is present", async () => {
+  const { sqlite, db } = await fresh();
+  const outboundOnly = { IDFY_API_KEY: "key", IDFY_ACCOUNT_ID: "account", IDFY_URL: "https://idfy.invalid" };
+  await registry.syncIntegrationCredentialPresence(db, outboundOnly);
+  assert.equal(row(sqlite, "INT-KYC-01").credential_status, "missing", "outbound credentials cannot configure an unsigned callback");
+
+  await registry.syncIntegrationCredentialPresence(db, { ...outboundOnly, IDFY_WEBHOOK_SECRET: "secret" });
+  const configured = row(sqlite, "INT-KYC-01");
+  assert.equal(configured.code_boundary_status, "code_ready");
+  assert.equal(configured.credential_status, "configured");
+  assert.equal(configured.readiness_state, "production_setup_required", "configuration is not provider verification");
+  assert.equal(configured.controlled_live_verified_at, null);
+
+  sqlite.prepare("UPDATE integration_registry SET code_boundary_status='partial',updated_by='system_seed' WHERE integration_code='INT-KYC-01'").run();
+  await registry.ensureIntegrationReadinessTables(db);
+  assert.equal(row(sqlite, "INT-KYC-01").code_boundary_status, "code_ready", "an untouched pre-callback registry row must advance");
+});
+
 // ---------------------------------------------------------------------------
 // What counts as evidence
 // ---------------------------------------------------------------------------

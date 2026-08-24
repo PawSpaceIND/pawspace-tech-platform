@@ -163,6 +163,25 @@ test("concurrent deliveries reserve the key before any context, provider or hand
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs").get().n, 0);
 });
 
+test("a failed reservation is retryable instead of permanently locking the canonical message", async () => {
+  const { sqlite, db } = await world();
+  const stub = answered("A basic groom starts at Rs 899.");
+  const messageId = await inboundMessage(sqlite, db, { threadId: "THREAD-1", customerId: "CUS-1", text: "what is the price of grooming", channel: "chat", idempotencyKey: "retry-failed-owner" });
+  const input = { actor: staffActor, threadId: "THREAD-1", customerId: "CUS-1", inputMessageId: messageId, idempotencyKey: "retry-failed-owner", channel: "chat", provider: stub.provider };
+
+  sqlite.prepare("DELETE FROM canonical_pets WHERE customer_id=?").run("CUS-1");
+  sqlite.prepare("DELETE FROM canonical_customers WHERE id=?").run("CUS-1");
+  await assert.rejects(orchestrator.orchestrateAiTurn(db, input), /Canonical customer context not found/);
+  assert.equal(sqlite.prepare("SELECT status FROM ai_turn_reservations WHERE idempotency_key=?").get("retry-failed-owner").status, "retryable");
+
+  seedCustomer(sqlite, "CUS-1", "Asha", "9876500001");
+  const retried = await orchestrator.orchestrateAiTurn(db, input);
+  assert.equal(retried.duplicatePrevented, false);
+  assert.equal(stub.calls.length, 1, "only the successful owner reaches the provider");
+  assert.equal(sqlite.prepare("SELECT status FROM ai_turn_reservations WHERE idempotency_key=?").get("retry-failed-owner").status, "completed");
+  assert.equal(turns(sqlite).length, 1);
+});
+
 // ---------------------------------------------------------------------------
 // Policy risk and explicit requests always beat a working provider
 // ---------------------------------------------------------------------------
