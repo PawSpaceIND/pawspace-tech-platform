@@ -10,7 +10,7 @@ const client = await import("../lib/razorpay-client.ts");
 const originalFetch = globalThis.fetch;
 test.afterEach(() => { globalThis.fetch = originalFetch; });
 
-const input = { bookingId: "BK-900", paymentId: "PAY-900", customerId: "CUS-900", amount: 1149, currency: "INR", expiresAt: Date.now() + 24 * 60 * 60 * 1000 };
+const input = { bookingId: "BK-900", paymentId: "PAY-900", referenceId: "PAY-900-attempt-1", customerId: "CUS-900", amount: 1149, currency: "INR", expiresAt: Date.now() + 24 * 60 * 60 * 1000 };
 const env = { PAWSPACE_PAYMENT_ENV: "sandbox", RAZORPAY_KEY_ID_SANDBOX: "rzp_test_lane3", RAZORPAY_KEY_SECRET_SANDBOX: "sandbox-secret" };
 
 test("post-service collection refuses missing credentials and every live environment", async () => {
@@ -31,6 +31,7 @@ test("post-service collection creates a bound, non-partial Razorpay sandbox link
   assert.equal(request.body.amount, 114900);
   assert.equal(request.body.accept_partial, false);
   assert.equal(request.body.expire_by, Math.floor(input.expiresAt / 1000));
+  assert.equal(request.body.reference_id, input.referenceId);
   assert.deepEqual(request.body.notes, { booking_id: "BK-900", payment_id: "PAY-900", customer_id: "CUS-900", pawspace_environment: "sandbox" });
   assert.match(request.init.headers.authorization, /^Basic /);
 });
@@ -72,10 +73,15 @@ test("payment-link expiry, webhook mapping and refund-required payment ID stay c
   const db = makeD1(sqlite), reconciliation = await import("../lib/grooming-payment-reconciliation.ts");
   const expectedExpirySeconds = Math.floor((Date.now() + 24 * 60 * 60 * 1000) / 1000);
   let providerExpirySeconds = 0, linkAttempt = 0;
+  const references = new Set();
   globalThis.fetch = async (_url, init) => {
     const body = JSON.parse(String(init.body));
     providerExpirySeconds = body.expire_by;
     assert.ok(Math.abs(providerExpirySeconds - expectedExpirySeconds) <= 1);
+    assert.ok(body.reference_id.length <= 40);
+    if (references.has(body.reference_id)) return new Response(JSON.stringify({ error: { description: "reference_id already exists" } }), { status: 400, headers: { "content-type": "application/json" } });
+    references.add(body.reference_id);
+    assert.equal(body.notes.payment_id, "PAY-LINK");
     linkAttempt += 1;
     const suffix = linkAttempt === 1 ? "map" : "replacement";
     return new Response(JSON.stringify({ id: `plink_lane3_${suffix}`, short_url: `https://rzp.io/i/lane3${suffix}`, status: "created", expire_by: providerExpirySeconds }), { status: 200, headers: { "content-type": "application/json" } });
@@ -93,6 +99,7 @@ test("payment-link expiry, webhook mapping and refund-required payment ID stay c
   assert.equal(expired.collectable, false);
   const replacement = await reconciliation.createPostServicePaymentRequest(db, env, { bookingId: "BK-LINK", providerId: "PROVIDER-1", actorId: "provider@pawspace.test" });
   assert.equal(replacement.providerReference, "plink_lane3_replacement");
+  assert.equal(references.size, 2, "replacement must use a distinct attempt-specific reference_id");
   assert.equal(replacement.collectable, true);
   assert.equal(sqlite.prepare("SELECT id FROM post_service_payment_requests WHERE booking_id='BK-LINK'").get().id, "plink_lane3_replacement");
   assert.equal(sqlite.prepare("SELECT gateway_payment_link_id FROM payment_gateway_links WHERE booking_id='BK-LINK'").get().gateway_payment_link_id, "plink_lane3_replacement");

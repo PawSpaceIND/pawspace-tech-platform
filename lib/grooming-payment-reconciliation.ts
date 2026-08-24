@@ -39,7 +39,8 @@ export async function createPostServicePaymentRequest(db:Db,env:Record<string,un
  const existing=await db.prepare("SELECT * FROM post_service_payment_requests WHERE booking_id=?").bind(input.bookingId).first<Row>();
  if(existing&&Number(existing.expires_at)>Date.now()){const now=Date.now();await db.batch(postServiceMappingStatements(db,{id:String(existing.id),bookingId:input.bookingId,paymentId:String(row.payment_id),amount:Number(row.amount||0),currency:String(row.currency||"INR"),now}));return paymentRequestView(existing,String(row.payment_status),now);}
  const requestedExpiresAt=Date.now()+24*60*60*1000;
- const link=await createSandboxPaymentLink(env,{bookingId:input.bookingId,paymentId:String(row.payment_id),customerId:String(row.customer_id),amount:Number(row.amount||0),currency:String(row.currency||"INR"),expiresAt:requestedExpiresAt});
+ const paymentId=String(row.payment_id),referenceId=`${paymentId.slice(0,23)}-${crypto.randomUUID().replaceAll("-","").slice(0,16)}`;
+ const link=await createSandboxPaymentLink(env,{bookingId:input.bookingId,paymentId,referenceId,customerId:String(row.customer_id),amount:Number(row.amount||0),currency:String(row.currency||"INR"),expiresAt:requestedExpiresAt});
  if(!link.connected)throw new Error(link.reason);
  const now=Date.now(),id=String(link.paymentLink.id),path=String(link.paymentLink.short_url),qrPayload=path,providerExpireBy=Number(link.paymentLink.expire_by),expiresAt=Number.isFinite(providerExpireBy)&&providerExpireBy>0?providerExpireBy*1000:requestedExpiresAt,amount=Number(row.amount||0),currency=String(row.currency||"INR");
  const requestStatement=existing
