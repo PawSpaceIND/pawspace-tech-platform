@@ -4,7 +4,7 @@ import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
-installWorkersHooks("__POST_SERVICE_LINK_DB__");
+installWorkersHooks("__POST_SERVICE_LINK_DB__", "__POST_SERVICE_LINK_ENV__");
 
 const client = await import("../lib/razorpay-client.ts");
 const originalFetch = globalThis.fetch;
@@ -64,12 +64,14 @@ test("payment-link expiry, webhook mapping and refund-required payment ID stay c
   `);
   const db = makeD1(sqlite), reconciliation = await import("../lib/grooming-payment-reconciliation.ts");
   const expectedExpirySeconds = Math.floor((Date.now() + 24 * 60 * 60 * 1000) / 1000);
-  let providerExpirySeconds = 0;
+  let providerExpirySeconds = 0, linkAttempt = 0;
   globalThis.fetch = async (_url, init) => {
     const body = JSON.parse(String(init.body));
     providerExpirySeconds = body.expire_by;
     assert.ok(Math.abs(providerExpirySeconds - expectedExpirySeconds) <= 1);
-    return new Response(JSON.stringify({ id: "plink_lane3_map", short_url: "https://rzp.io/i/lane3map", status: "created", expire_by: providerExpirySeconds }), { status: 200, headers: { "content-type": "application/json" } });
+    linkAttempt += 1;
+    const suffix = linkAttempt === 1 ? "map" : "replacement";
+    return new Response(JSON.stringify({ id: `plink_lane3_${suffix}`, short_url: `https://rzp.io/i/lane3${suffix}`, status: "created", expire_by: providerExpirySeconds }), { status: 200, headers: { "content-type": "application/json" } });
   };
   const created = await reconciliation.createPostServicePaymentRequest(db, env, { bookingId: "BK-LINK", providerId: "PROVIDER-1", actorId: "provider@pawspace.test" });
   assert.equal(created.expiresAt, providerExpirySeconds * 1000);
@@ -82,10 +84,19 @@ test("payment-link expiry, webhook mapping and refund-required payment ID stay c
   const expired = await reconciliation.getPostServicePaymentRequest(db, { bookingId: "BK-LINK", providerId: "PROVIDER-1" });
   assert.equal(expired.status, "expired");
   assert.equal(expired.collectable, false);
-  sqlite.prepare("UPDATE post_service_payment_requests SET expires_at=? WHERE booking_id='BK-LINK'").run(providerExpirySeconds * 1000);
+  const replacement = await reconciliation.createPostServicePaymentRequest(db, env, { bookingId: "BK-LINK", providerId: "PROVIDER-1", actorId: "provider@pawspace.test" });
+  assert.equal(replacement.providerReference, "plink_lane3_replacement");
+  assert.equal(replacement.collectable, true);
+  assert.equal(sqlite.prepare("SELECT id FROM post_service_payment_requests WHERE booking_id='BK-LINK'").get().id, "plink_lane3_replacement");
+  assert.equal(sqlite.prepare("SELECT gateway_payment_link_id FROM payment_gateway_links WHERE booking_id='BK-LINK'").get().gateway_payment_link_id, "plink_lane3_replacement");
 
-  const capture = await reconciliation.processGatewayEvent(db, { provider: "razorpay", environment: "sandbox", eventId: "evt_link_capture", eventType: "payment.captured", gatewayPaymentLinkId: "plink_lane3_map", gatewayPaymentId: "pay_lane3_map", amountSubunits: 114900, currency: "INR", signatureVerified: true, payloadHash: "verified-link-capture" });
-  assert.equal(capture.status, "processed");
+  globalThis.__POST_SERVICE_LINK_DB__ = db;
+  globalThis.__POST_SERVICE_LINK_ENV__ = { RAZORPAY_WEBHOOK_SECRET_SANDBOX: "lane3-webhook-secret" };
+  const webhook = await import("../app/api/razorpay-webhook/route.ts");
+  const payload = { event: "payment_link.paid", created_at: Math.floor(Date.now() / 1000), payload: { payment_link: { entity: { id: "plink_lane3_replacement", status: "paid", amount: 114900, amount_paid: 114900, notes: {} } }, payment: { entity: { id: "pay_lane3_map", amount: 114900, currency: "INR" } }, order: { entity: {} } } };
+  const raw = JSON.stringify(payload), key = await crypto.subtle.importKey("raw", new TextEncoder().encode("lane3-webhook-secret"), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]), signature = Array.from(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(raw)))).map(value => value.toString(16).padStart(2, "0")).join("");
+  const webhookResponse = await webhook.POST(new Request("http://localhost/api/razorpay-webhook", { method: "POST", headers: { "content-type": "application/json", "x-razorpay-event-id": "evt_link_capture", "x-razorpay-signature": signature }, body: raw }));
+  assert.equal(webhookResponse.status, 200, await webhookResponse.text());
   assert.equal(sqlite.prepare("SELECT status FROM booking_payments WHERE id='PAY-LINK'").get().status, "captured");
   assert.equal(sqlite.prepare("SELECT gateway_payment_id FROM payment_gateway_links WHERE booking_id='BK-LINK'").get().gateway_payment_id, "pay_lane3_map", "the refund endpoint's required gateway payment ID is now reachable from a payment-link capture");
   const paid = await reconciliation.getPostServicePaymentRequest(db, { bookingId: "BK-LINK", providerId: "PROVIDER-1" });

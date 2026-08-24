@@ -20,8 +20,8 @@ export async function ensurePaymentReconciliationTables(db:Db){await db.batch([
 async function ensurePaymentLinkColumn(db:Db){const columns=await db.prepare("PRAGMA table_info(payment_gateway_links)").all<Row>();if(columns.results.some(row=>String(row.name)==="gateway_payment_link_id"))return;try{await db.prepare("ALTER TABLE payment_gateway_links ADD COLUMN gateway_payment_link_id TEXT").run();await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_gateway_links_payment_link ON payment_gateway_links(gateway_payment_link_id)").run();}catch(error){const refreshed=await db.prepare("PRAGMA table_info(payment_gateway_links)").all<Row>();if(!refreshed.results.some(row=>String(row.name)==="gateway_payment_link_id"))throw error;}}
 
 function postServiceMappingStatements(db:Db,input:{id:string;bookingId:string;paymentId:string;amount:number;currency:string;now:number}){return[
- db.prepare("INSERT INTO payment_gateway_links (id,booking_id,payment_id,provider,environment,gateway_payment_link_id,status,created_at,updated_at) VALUES (?,?,?,?,?,?,'active',?,?) ON CONFLICT(booking_id) DO UPDATE SET gateway_payment_link_id=excluded.gateway_payment_link_id,provider=excluded.provider,environment=excluded.environment,status='active',updated_at=excluded.updated_at").bind(`PAYLINK-${crypto.randomUUID().slice(0,10).toUpperCase()}`,input.bookingId,input.paymentId,"razorpay","sandbox",input.id,input.now,input.now),
- db.prepare("INSERT INTO payment_reconciliation_records (payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,last_event_id,updated_at) VALUES (?,?,?,?,?,0,0,?,'payment_link_created','pending',0,NULL,?) ON CONFLICT(payment_id) DO UPDATE SET gateway=excluded.gateway,environment=excluded.environment,expected_amount=excluded.expected_amount,currency=excluded.currency,gateway_status=CASE WHEN payment_reconciliation_records.gateway_status IN ('captured','refunded','partially_refunded') THEN payment_reconciliation_records.gateway_status ELSE 'payment_link_created' END,updated_at=excluded.updated_at").bind(input.paymentId,input.bookingId,"razorpay","sandbox",input.amount,input.currency,input.now),
+ db.prepare("INSERT INTO payment_gateway_links (id,booking_id,payment_id,provider,environment,gateway_payment_link_id,status,created_at,updated_at) SELECT ?,?,?,?, ?,?,'active',?,? WHERE EXISTS (SELECT 1 FROM post_service_payment_requests WHERE id=? AND booking_id=?) ON CONFLICT(booking_id) DO UPDATE SET gateway_payment_link_id=excluded.gateway_payment_link_id,provider=excluded.provider,environment=excluded.environment,status='active',updated_at=excluded.updated_at").bind(`PAYLINK-${crypto.randomUUID().slice(0,10).toUpperCase()}`,input.bookingId,input.paymentId,"razorpay","sandbox",input.id,input.now,input.now,input.id,input.bookingId),
+ db.prepare("INSERT INTO payment_reconciliation_records (payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,last_event_id,updated_at) SELECT ?,?,?,?,?,0,0,?,'payment_link_created','pending',0,NULL,? WHERE EXISTS (SELECT 1 FROM post_service_payment_requests WHERE id=? AND booking_id=?) ON CONFLICT(payment_id) DO UPDATE SET gateway=excluded.gateway,environment=excluded.environment,expected_amount=excluded.expected_amount,currency=excluded.currency,gateway_status=CASE WHEN payment_reconciliation_records.gateway_status IN ('captured','refunded','partially_refunded') THEN payment_reconciliation_records.gateway_status ELSE 'payment_link_created' END,updated_at=excluded.updated_at").bind(input.paymentId,input.bookingId,"razorpay","sandbox",input.amount,input.currency,input.now,input.id,input.bookingId),
 ];}
 
 /**
@@ -37,13 +37,16 @@ export async function createPostServicePaymentRequest(db:Db,env:Record<string,un
  if(["captured","refunded","partially_refunded"].includes(String(row.payment_status)))throw new Error("This booking is already paid or refunded");
  if(String(row.mode)!=="pay_after_service")throw new Error("This booking is not configured for pay after service");
  const existing=await db.prepare("SELECT * FROM post_service_payment_requests WHERE booking_id=?").bind(input.bookingId).first<Row>();
- if(existing){const now=Date.now();await db.batch(postServiceMappingStatements(db,{id:String(existing.id),bookingId:input.bookingId,paymentId:String(row.payment_id),amount:Number(row.amount||0),currency:String(row.currency||"INR"),now}));return paymentRequestView(existing,String(row.payment_status),now);}
+ if(existing&&Number(existing.expires_at)>Date.now()){const now=Date.now();await db.batch(postServiceMappingStatements(db,{id:String(existing.id),bookingId:input.bookingId,paymentId:String(row.payment_id),amount:Number(row.amount||0),currency:String(row.currency||"INR"),now}));return paymentRequestView(existing,String(row.payment_status),now);}
  const requestedExpiresAt=Date.now()+24*60*60*1000;
  const link=await createSandboxPaymentLink(env,{bookingId:input.bookingId,paymentId:String(row.payment_id),customerId:String(row.customer_id),amount:Number(row.amount||0),currency:String(row.currency||"INR"),expiresAt:requestedExpiresAt});
  if(!link.connected)throw new Error(link.reason);
  const now=Date.now(),id=String(link.paymentLink.id),path=String(link.paymentLink.short_url),qrPayload=path,providerExpireBy=Number(link.paymentLink.expire_by),expiresAt=Number.isFinite(providerExpireBy)&&providerExpireBy>0?providerExpireBy*1000:requestedExpiresAt,amount=Number(row.amount||0),currency=String(row.currency||"INR");
- await db.batch([db.prepare("INSERT INTO post_service_payment_requests (id,booking_id,payment_id,provider_id,amount,currency,status,payment_path,qr_payload,expires_at,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,'awaiting_payment',?,?,?,?,?,?)")
-  .bind(id,input.bookingId,row.payment_id,input.providerId,amount,currency,path,qrPayload,expiresAt,input.actorId,now,now),...postServiceMappingStatements(db,{id,bookingId:input.bookingId,paymentId:String(row.payment_id),amount,currency,now})]);
+ const requestStatement=existing
+  ?db.prepare("UPDATE post_service_payment_requests SET id=?,payment_id=?,provider_id=?,amount=?,currency=?,status='awaiting_payment',payment_path=?,qr_payload=?,expires_at=?,created_by=?,created_at=?,updated_at=? WHERE booking_id=? AND expires_at<=?").bind(id,row.payment_id,input.providerId,amount,currency,path,qrPayload,expiresAt,input.actorId,now,now,input.bookingId,now)
+  :db.prepare("INSERT INTO post_service_payment_requests (id,booking_id,payment_id,provider_id,amount,currency,status,payment_path,qr_payload,expires_at,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,'awaiting_payment',?,?,?,?,?,?)").bind(id,input.bookingId,row.payment_id,input.providerId,amount,currency,path,qrPayload,expiresAt,input.actorId,now,now);
+ const results=await db.batch([requestStatement,...postServiceMappingStatements(db,{id,bookingId:input.bookingId,paymentId:String(row.payment_id),amount,currency,now})]);
+ if(Number(results[0]?.meta?.changes||0)!==1){const winner=await db.prepare("SELECT * FROM post_service_payment_requests WHERE booking_id=?").bind(input.bookingId).first<Row>();if(winner)return paymentRequestView(winner,String(row.payment_status));throw new Error("Post-service payment request was not persisted");}
  return{id,bookingId:input.bookingId,amount,currency,status:"awaiting_payment",paymentStatus:String(row.payment_status),paymentPath:path,qrPayload,providerReference:id,collectable:expiresAt>now,expiresAt,sandboxOnly:true,liveCapture:false};
 }
 
@@ -87,7 +90,7 @@ function captureRefs(event:GatewayEvent){
  * `exceptRowId` excludes the event currently being processed.
  */
 async function collectedCaptures(db:Db,paymentId:string,exceptRowId:string){
- const rows=await db.prepare("SELECT gateway_payment_id,gateway_order_id,event_id FROM payment_gateway_events WHERE payment_id=? AND event_type IN ('payment.captured','order.paid') AND processing_status='processed' AND id<>?")
+ const rows=await db.prepare("SELECT gateway_payment_id,gateway_order_id,event_id FROM payment_gateway_events WHERE payment_id=? AND event_type IN ('payment.captured','order.paid','payment_link.paid') AND processing_status='processed' AND id<>?")
    .bind(paymentId,exceptRowId).all<Row>().catch(()=>({results:[] as Row[]}));
  return rows.results.map(row=>({
   refs:[row.gateway_payment_id,row.gateway_order_id].map(value=>String(value||"")).filter(Boolean),
@@ -149,7 +152,7 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
     // untouched, and no money is recounted.
     const repairBookingId=String(existing.booking_id||event.bookingId||"").trim();
     if(repairBookingId){
-      if(["payment.captured","order.paid"].includes(String(existing.event_type)))await activateSubscriptionOnCapture(db,{bookingId:repairBookingId,eventId:event.eventId}).catch(()=>null);
+      if(["payment.captured","order.paid","payment_link.paid"].includes(String(existing.event_type)))await activateSubscriptionOnCapture(db,{bookingId:repairBookingId,eventId:event.eventId}).catch(()=>null);
       else if(String(existing.event_type)==="payment.failed")await failSubscriptionOnPaymentFailure(db,{bookingId:repairBookingId,eventId:event.eventId}).catch(()=>null);
     }
     return{duplicate:true,status:String(existing.processing_status)};
@@ -173,7 +176,7 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
   if(event.eventType==="payment.authorized"){
     if(settled){await finish("processed","Out-of-order authorization ignored after settled state");return{duplicate:false,status:"processed",ignored:true,reason:"out_of_order_authorized"};}
     await upsert("authorized","pending",capturedCurrent,refundedCurrent,0);
-  }else if(event.eventType==="payment.captured"||event.eventType==="order.paid"){
+  }else if(event.eventType==="payment.captured"||event.eventType==="order.paid"||event.eventType==="payment_link.paid"){
     // Financial idempotency is per CAPTURE, not per event. A second notification for money already
     // collected must change nothing at all: not the collected total, not the schedule, and it must not
     // be measured against an expectation it was never opened for. Deciding this BEFORE the variance
