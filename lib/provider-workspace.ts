@@ -14,6 +14,7 @@
  * "proof still pending" reminders. Sandbox/UAT - no live money, media stored by reference only.
  */
 import{resolveEngagementForWorker,featuresFor}from"./workforce-classification";
+import{ensureProviderCapacityTables}from"./provider-capacity-governance";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -38,6 +39,34 @@ export async function ensureProviderWorkspaceTables(db:Db){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS provider_job_proofs (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,proof_type TEXT NOT NULL,object_id TEXT,note TEXT,distance_km REAL,created_at INTEGER NOT NULL,UNIQUE(booking_id,proof_type))"),
  db.prepare("CREATE TABLE IF NOT EXISTS customer_job_updates (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,booking_id TEXT NOT NULL,update_type TEXT NOT NULL,message TEXT NOT NULL,object_id TEXT,created_at INTEGER NOT NULL)"),
 ]);}
+
+function jsonList(value:unknown){try{const parsed=JSON.parse(text(value));return Array.isArray(parsed)?parsed.map(text):[];}catch{return new Array<string>();}}
+
+/**
+ * The workspace offer is a canonical assignment boundary, not a notification shortcut.  Re-check
+ * the governed roster and the booking window here so callers cannot manufacture an offer for an
+ * inactive/out-of-scope provider or bypass capacity after the scheduler has made its choice.
+ */
+async function assertOfferEligibility(db:Db,providerId:string,bookingId:string){
+ await ensureProviderCapacityTables(db);
+ const booking=await db.prepare("SELECT id,provider_id,service_code,city_id,zone_id,scheduled_start,scheduled_end,status FROM canonical_bookings WHERE id=?").bind(bookingId).first<Row>();
+ if(!booking)throw new Error("Booking not found");
+ if(["cancelled","completed"].includes(text(booking.status)))throw new Error("Completed or cancelled booking cannot be offered");
+ const assigned=text(booking.provider_id);
+ if(assigned&&assigned!=="unassigned"&&assigned!==providerId)throw new Error("Booking is already assigned to another provider");
+ const profile=await db.prepare("SELECT city_id,services_json,zones_json,live,status,capacity FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();
+ if(!profile||num(profile.live)!==1||text(profile.status)!=="active")throw new Error("Provider is not active in the governed roster");
+ if(text(profile.city_id)!==text(booking.city_id))throw new Error("Provider is not eligible for this booking city");
+ if(!jsonList(profile.services_json).includes(text(booking.service_code)))throw new Error("Provider is not eligible for this booking service");
+ if(!jsonList(profile.zones_json).includes(text(booking.zone_id)))throw new Error("Provider is not eligible for this booking zone");
+ const unavailable=await db.prepare("SELECT id FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<? AND ends_at>? LIMIT 1")
+  .bind(providerId,text(booking.scheduled_end),text(booking.scheduled_start)).first<Row>();
+ if(unavailable)throw new Error("Provider is unavailable for this booking window");
+ const overlapping=await db.prepare("SELECT COUNT(*) n FROM canonical_bookings WHERE provider_id=? AND id!=? AND status NOT IN ('cancelled','completed','draft','failed') AND scheduled_start<? AND scheduled_end>?")
+  .bind(providerId,bookingId,text(booking.scheduled_end),text(booking.scheduled_start)).first<Row>();
+ if(num(overlapping?.n)>=Math.max(1,num(profile.capacity)))throw new Error("Provider capacity is exhausted for this booking window");
+ return booking;
+}
 
 /** Resolve the provider bound to this identity (legacy provider_identity_links). Own-record only. */
 export async function resolveProviderForActor(db:Db,email:string):Promise<string|null>{
@@ -79,10 +108,15 @@ export async function submitJobProof(db:Db,input:{providerId:string;bookingId:st
 /** Offer a job to a provider (live assignment). */
 export async function offerJobToProvider(db:Db,input:{providerId:string;bookingId:string;expiresAt?:number|null}){
  await ensureProviderWorkspaceTables(db);
+ await assertOfferEligibility(db,text(input.providerId),text(input.bookingId));
  const now=Date.now();
- await db.prepare("INSERT INTO provider_job_offers (id,provider_id,booking_id,status,offered_at,expires_at) VALUES (?,?,?,'offered',?,?) ON CONFLICT(provider_id,booking_id) DO NOTHING")
+ const inserted=await db.prepare("INSERT INTO provider_job_offers (id,provider_id,booking_id,status,offered_at,expires_at) VALUES (?,?,?,'offered',?,?) ON CONFLICT(provider_id,booking_id) DO NOTHING")
   .bind(uid("OFR"),input.providerId,input.bookingId,now,input.expiresAt??null).run();
- return{providerId:input.providerId,bookingId:input.bookingId,status:"offered"};
+ if(num(inserted.meta?.changes)===0){
+  const prior=await db.prepare("SELECT status FROM provider_job_offers WHERE provider_id=? AND booking_id=?").bind(input.providerId,input.bookingId).first<Row>();
+  if(text(prior?.status)!=="offered")throw new Error("Provider has already responded to this job offer");
+ }
+ return{providerId:input.providerId,bookingId:input.bookingId,status:"offered",duplicatePrevented:num(inserted.meta?.changes)===0};
 }
 
 /** Provider accepts or declines a live assignment. First accept wins; a decline frees it. */
@@ -91,13 +125,23 @@ export async function respondToJobOffer(db:Db,input:{providerId:string;bookingId
  const offer=await db.prepare("SELECT * FROM provider_job_offers WHERE provider_id=? AND booking_id=? AND status='offered'").bind(input.providerId,input.bookingId).first<Row>();
  if(!offer)throw new Error("No open offer for this job");
  const now=Date.now();
+ if(offer.expires_at!=null&&num(offer.expires_at)<=now){
+  await db.prepare("UPDATE provider_job_offers SET status='expired',responded_at=? WHERE provider_id=? AND booking_id=? AND status='offered'").bind(now,input.providerId,input.bookingId).run();
+  throw new Error("This job offer has expired");
+ }
  if(input.accept){
   const already=await db.prepare("SELECT id FROM provider_job_offers WHERE booking_id=? AND status='accepted'").bind(input.bookingId).first<Row>();
   if(already)throw new Error("This job has already been accepted by another provider");
-  await db.batch([
-   db.prepare("UPDATE provider_job_offers SET status='accepted',responded_at=? WHERE provider_id=? AND booking_id=? AND status='offered'").bind(now,input.providerId,input.bookingId),
-   db.prepare("UPDATE canonical_bookings SET provider_id=?,updated_at=? WHERE id=? AND (provider_id IS NULL OR provider_id='' OR provider_id='unassigned')").bind(input.providerId,now,input.bookingId),
+  const booking=await db.prepare("SELECT provider_id FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>();
+  if(!booking)throw new Error("Booking not found");
+  const assigned=text(booking.provider_id);
+  if(assigned&&assigned!=="unassigned"&&assigned!==text(input.providerId))throw new Error("Booking is already assigned to another provider");
+  await assertOfferEligibility(db,text(input.providerId),text(input.bookingId));
+  const results=await db.batch([
+   db.prepare("UPDATE provider_job_offers SET status='accepted',responded_at=? WHERE provider_id=? AND booking_id=? AND status='offered' AND (expires_at IS NULL OR expires_at>?) AND NOT EXISTS (SELECT 1 FROM provider_job_offers winner WHERE winner.booking_id=? AND winner.status='accepted') AND EXISTS (SELECT 1 FROM canonical_bookings b WHERE b.id=? AND (b.provider_id IS NULL OR b.provider_id='' OR b.provider_id='unassigned'))").bind(now,input.providerId,input.bookingId,now,input.bookingId,input.bookingId),
+   db.prepare("UPDATE canonical_bookings SET provider_id=?,updated_at=? WHERE id=? AND (provider_id IS NULL OR provider_id='' OR provider_id='unassigned') AND EXISTS (SELECT 1 FROM provider_job_offers o WHERE o.booking_id=? AND o.provider_id=? AND o.status='accepted')").bind(input.providerId,now,input.bookingId,input.bookingId,input.providerId),
   ]);
+  if(num(results[0]?.meta?.changes)!==1||num(results[1]?.meta?.changes)!==1)throw new Error("This job has already been accepted or assigned");
   return{bookingId:input.bookingId,status:"accepted"};
  }
  await db.prepare("UPDATE provider_job_offers SET status='declined',responded_at=? WHERE provider_id=? AND booking_id=? AND status='offered'").bind(now,input.providerId,input.bookingId).run();
@@ -125,7 +169,7 @@ export async function providerWorkspace(db:Db,input:{providerId:string}){
  const features=featuresFor(engagement);
  const[bookings,offers,earnings,settlements,incentives,link]=await Promise.all([
   bookingsForProvider(db,providerId),
-  db.prepare("SELECT o.booking_id,o.offered_at,o.expires_at,o.status,b.service_code,b.package_name,b.scheduled_start,b.total_amount FROM provider_job_offers o JOIN canonical_bookings b ON b.id=o.booking_id WHERE o.provider_id=? AND o.status='offered' ORDER BY o.offered_at DESC LIMIT 50").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]})),
+  db.prepare("SELECT o.booking_id,o.offered_at,o.expires_at,o.status,b.service_code,b.package_name,b.scheduled_start,b.total_amount FROM provider_job_offers o JOIN canonical_bookings b ON b.id=o.booking_id WHERE o.provider_id=? AND o.status='offered' AND (o.expires_at IS NULL OR o.expires_at>?) ORDER BY o.offered_at DESC LIMIT 50").bind(providerId,Date.now()).all<Row>().catch(()=>({results:[] as Row[]})),
   db.prepare("SELECT COALESCE(SUM(provider_net_payout),0) net,COUNT(*) orders,COALESCE(SUM(order_value),0) gross FROM provider_payout_computations WHERE provider_id=?").bind(providerId).first<Row>().catch(()=>null),
   db.prepare("SELECT booking_id,gross_booking_amount,payout_amount,status,eligible_after,rule_version,reason,updated_at FROM provider_settlement_readiness WHERE provider_id=? ORDER BY updated_at DESC LIMIT 100").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]})),
   db.prepare("SELECT month_start,status,result_json,finalized_at FROM groomer_incentive_results WHERE head_groomer_id=? ORDER BY month_start DESC LIMIT 12").bind(providerId).all<Row>().catch(()=>({results:[] as Row[]})),

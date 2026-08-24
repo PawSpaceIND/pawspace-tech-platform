@@ -15,9 +15,10 @@ test("GST API routes filing-sensitive actions through closeout guards",async()=>
 });
 
 test("repeated invoice lines use line identity in tax event keys",async()=>{
- const source=await read("lib/finance-filing-closeout.ts");
- assert.match(source,/line_key/);
- assert.match(source,/\$\{eventKey\}:\$\{text\(line\.line_key\)\|\|text\(line\.id\)\}:\$\{text\(component\.code\)\}/);
+ const[source,wrapper]=await Promise.all([read("lib/gst-accounting.ts"),read("lib/finance-filing-closeout.ts")]);
+ assert.match(source,/lineKey:text\(line\.lineKey\)/);
+ assert.match(source,/\$\{eventKey\}:\$\{text\(s\.lineKey\)\}:\$\{c\.code\}/);
+ assert.doesNotMatch(wrapper,/DELETE FROM finance_tax_ledger/);
 });
 
 test("ITC calculations are legal-entity scoped",async()=>{

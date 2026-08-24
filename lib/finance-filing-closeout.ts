@@ -37,24 +37,10 @@ async function audit(db:Db,actor:string,entityId:string,action:string,after:unkn
     .bind(id("ga_audit"),"accounting_export",entityId,action,JSON.stringify(after),actor,reason,now()).run();
 }
 
-/** Repairs the invoice tax ledger using invoice-line identity so repeated service-code lines cannot collapse. */
+/** The canonical invoice path owns immutable line-identity tax rows; this wrapper only adds entity-scope readiness. */
 export async function issueInvoiceSafe(db:Db,input:Row,actor:string){
   await ensureFinanceEntityScope(db);
-  const invoice=await issueInvoiceBase(db,input,actor) as Row|null;
-  if(!invoice)return invoice;
-  const invoiceId=text(invoice.id),eventKey=text(invoice.source_event_key),entityId=text(invoice.entity_id),registrationId=text(invoice.registration_id),period=text(invoice.issue_date).slice(0,7);
-  const lines=await db.prepare("SELECT id,line_key,service_code,taxable_amount,tax_snapshot_json FROM finance_invoice_lines WHERE invoice_id=? ORDER BY rowid").bind(invoiceId).all<Row>();
-  const statements=[db.prepare("DELETE FROM finance_tax_ledger WHERE ledger_type='output' AND source_type='invoice' AND source_id=?").bind(invoiceId)];
-  for(const line of lines.results){
-    const snapshot=JSON.parse(text(line.tax_snapshot_json)||"{}") as {components?:Array<{code?:string;rate?:number}>};
-    for(const component of snapshot.components??[]){
-      const amount=num(line.taxable_amount)*(num(component.rate)/100);
-      statements.push(db.prepare("INSERT INTO finance_tax_ledger (id,entity_id,registration_id,period_code,component,ledger_type,source_type,source_id,amount,source_event_key,created_at) VALUES (?,?,?,?,?,'output','invoice',?,?,?,?)")
-        .bind(id("tax"),entityId,registrationId,period,text(component.code),invoiceId,amount,`${eventKey}:${text(line.line_key)||text(line.id)}:${text(component.code)}`,now()));
-    }
-  }
-  await db.batch(statements);
-  return invoice;
+  return issueInvoiceBase(db,input,actor);
 }
 
 /** Recomputes monthly ITC using only bills belonging to the selected legal entity. */

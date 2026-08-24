@@ -389,7 +389,10 @@ test("PROVIDER APP — NEGATIVE: a provider cannot accept a job offered to anoth
   const b = await signUpProvider(db, { phone: "9000000031", name: "Provider B" });
   const bookingId = "BK-OWNED-BY-A";
 
-  await workspace.offerJobToProvider(db, { providerId: a.providerId, bookingId });
+  // Insert the persisted offer directly: this case tests that provider B cannot answer provider A's
+  // offer. Offer creation itself now has separate behavioural coverage for booking/roster eligibility.
+  sqlite.prepare("INSERT INTO provider_job_offers (id,provider_id,booking_id,status,offered_at) VALUES (?,?,?,?,?)")
+    .run("OFR-OWNED-BY-A", a.providerId, bookingId, "offered", Date.now());
   const offers = sqlite.prepare("SELECT provider_id,status FROM provider_job_offers WHERE booking_id=?").all(bookingId);
   assert.equal(offers.length, 1);
   assert.equal(offers[0].provider_id, a.providerId);
