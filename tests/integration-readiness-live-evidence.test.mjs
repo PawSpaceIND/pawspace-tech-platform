@@ -24,12 +24,13 @@ function makeD1(sqlite, onPrepare = () => {}) {
     first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
     run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes || 0) } }; },
     all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
+    batchResult: async () => /^SELECT\b/i.test(sql.trim()) ? { results: sqlite.prepare(sql).all(...args) } : statement(sql, args).run(),
   });
   return {
     prepare: (sql) => { onPrepare(sql); return statement(sql, []); },
     batch: async (items) => {
       sqlite.exec("BEGIN");
-      try { const out = []; for (const item of items) out.push(await item.run()); sqlite.exec("COMMIT"); return out; }
+      try { const out = []; for (const item of items) out.push(await (typeof item.batchResult === "function" ? item.batchResult() : item.run())); sqlite.exec("COMMIT"); return out; }
       catch (error) { sqlite.exec("ROLLBACK"); throw error; }
     },
     exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
@@ -81,6 +82,9 @@ test("one readiness snapshot performs the registry bootstrap exactly once", asyn
   assert.ok(Array.isArray(snapshot.audit));
   assert.ok(Array.isArray(snapshot.evidenceRequests));
   assert.deepEqual(snapshot.liveEvidence, []);
+  assert.deepEqual(snapshot.blockers.map(item => item.integrationCode), snapshot.data.items
+    .filter(item => item.required && item.priority === "P0" && item.readinessState !== "controlled_live_verified")
+    .map(item => item.integrationCode), "blockers and registry rows must come from the same transactional result");
 });
 
 // ---------------------------------------------------------------------------

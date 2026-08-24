@@ -157,9 +157,10 @@ Three confirmed code defects were separated from account/provider blockers:
    an actual `app/api/**/route.ts` module.
 3. One `/api/integration-readiness` GET ran the same D1 schema/seed bootstrap through multiple helpers in
    parallel and exceeded the hosted request's 15-second bound. A single snapshot operation now performs
-   the bootstrap and credential-presence sync once, then fans out read-only queries with an explicit
-   tables-ready contract. Its behavioural regression counts the canonical registry bootstrap and requires
-   exactly one execution per snapshot.
+   the bootstrap and credential-presence sync once, then executes the related reads as one atomic D1
+   batch. Its behavioural regression counts the canonical registry bootstrap, requires exactly one
+   execution per snapshot and derives blockers from the same registry result. This also resolves the
+   review finding that independent concurrent reads could expose a mixed-state response.
 
 Post-fix verification on 2026-08-24: focused certification/readiness/auth **76/76 passed**; combined
 E2E100 plus staging/release suites **277/277 passed**, including all **102/102** E2E100 tests. Typecheck,

@@ -161,8 +161,12 @@ function publicRow(row:Row){return{
  readinessState:string(row.readiness_state),evidenceReference:row.evidence_reference?string(row.evidence_reference):null,blockerReason:row.blocker_reason?string(row.blocker_reason):null,approvalReference:row.approval_reference?string(row.approval_reference):null,lastVerifiedAt:row.last_verified_at==null?null:Number(row.last_verified_at),controlledLiveVerifiedAt:row.controlled_live_verified_at==null?null:Number(row.controlled_live_verified_at),controlledLiveVerifiedBy:row.controlled_live_verified_by?string(row.controlled_live_verified_by):null,notes:string(row.notes),updatedBy:string(row.updated_by),updatedAt:Number(row.updated_at||0),
 };}
 
+const readinessListSql="SELECT * FROM integration_registry ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END,category,integration_code";
+function readinessListFromRows(rows:Row[]){const items=rows.map(publicRow),p0=items.filter(item=>item.priority==="P0"&&item.required),controlled=items.filter(item=>item.readinessState==="controlled_live_verified");return{items,summary:{total:items.length,required:items.filter(item=>item.required).length,p0Required:p0.length,p0ControlledLive:p0.filter(item=>item.readinessState==="controlled_live_verified").length,controlledLiveVerified:controlled.length,productionReady:p0.length>0&&p0.every(item=>item.readinessState==="controlled_live_verified")},productionReady:false as const};}
+function readinessBlockersFromItems(items:ReturnType<typeof publicRow>[]){return items.filter(item=>item.required&&item.priority==="P0"&&item.readinessState!=="controlled_live_verified").map(item=>({integrationCode:item.integrationCode,capability:item.capability,owner:item.owner,launchGateCode:item.launchGateCode,readinessState:item.readinessState,blockerReason:item.blockerReason||"Controlled-live verification is required"}));}
+
 export async function listIntegrationReadiness(db:Db,runtime?:Record<string,unknown>,options?:IntegrationReadOptions){
- await ensureIntegrationReadinessForRead(db,options);if(runtime)await syncIntegrationCredentialPresence(db,runtime,{tablesReady:true});const rows=await db.prepare("SELECT * FROM integration_registry ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 ELSE 2 END,category,integration_code").all<Row>();const items=rows.results.map(publicRow),p0=items.filter(item=>item.priority==="P0"&&item.required),controlled=items.filter(item=>item.readinessState==="controlled_live_verified");return{items,summary:{total:items.length,required:items.filter(item=>item.required).length,p0Required:p0.length,p0ControlledLive:p0.filter(item=>item.readinessState==="controlled_live_verified").length,controlledLiveVerified:controlled.length,productionReady:p0.length>0&&p0.every(item=>item.readinessState==="controlled_live_verified")},productionReady:false as const};
+ await ensureIntegrationReadinessForRead(db,options);if(runtime)await syncIntegrationCredentialPresence(db,runtime,{tablesReady:true});const rows=await db.prepare(readinessListSql).all<Row>();return readinessListFromRows(rows.results);
 }
 
 const evidenceColumns=new Set(["auth_verification_status","webhook_verification_status","idempotency_status","replay_status","retry_status","dead_letter_status","timeout_status","rate_limit_status","reconciliation_status","monitoring_status","audit_logging_status","kill_switch_status"]);
@@ -284,10 +288,12 @@ export async function recordIntegrationLiveEvidence(db:Db,input:IntegrationLiveE
  return{id,integrationCode:input.integrationCode,scenario,matched,commitSha,observedAt:input.observedAt,evidenceKind:input.evidenceKind,durableReference};
 }
 
+const liveEvidenceSql="SELECT id,scenario,provider_reference,commit_sha,observed_at,expected_result,actual_result,matched,evidence_kind,durable_reference,recorded_by,recorded_at FROM integration_live_evidence WHERE integration_code=? ORDER BY observed_at DESC";
+function liveEvidenceFromRows(rows:Row[]){return rows.map(row=>({id:string(row.id),scenario:string(row.scenario),providerReference:string(row.provider_reference),commitSha:string(row.commit_sha),observedAt:Number(row.observed_at),expectedResult:string(row.expected_result),actualResult:string(row.actual_result),matched:Number(row.matched)===1,evidenceKind:string(row.evidence_kind),durableReference:string(row.durable_reference),recordedBy:string(row.recorded_by),recordedAt:Number(row.recorded_at)}));}
 export async function integrationLiveEvidence(db:Db,integrationCode:string,options?:IntegrationReadOptions){
  await ensureIntegrationReadinessForRead(db,options);
- const rows=await db.prepare("SELECT id,scenario,provider_reference,commit_sha,observed_at,expected_result,actual_result,matched,evidence_kind,durable_reference,recorded_by,recorded_at FROM integration_live_evidence WHERE integration_code=? ORDER BY observed_at DESC").bind(integrationCode).all<Row>();
- return rows.results.map(row=>({id:string(row.id),scenario:string(row.scenario),providerReference:string(row.provider_reference),commitSha:string(row.commit_sha),observedAt:Number(row.observed_at),expectedResult:string(row.expected_result),actualResult:string(row.actual_result),matched:Number(row.matched)===1,evidenceKind:string(row.evidence_kind),durableReference:string(row.durable_reference),recordedBy:string(row.recorded_by),recordedAt:Number(row.recorded_at)}));
+ const rows=await db.prepare(liveEvidenceSql).bind(integrationCode).all<Row>();
+ return liveEvidenceFromRows(rows.results);
 }
 
 /** A closure lane's request for proof it cannot produce itself. Idempotent per code+lane+scenario. */
@@ -306,10 +312,12 @@ export async function requestIntegrationEvidence(db:Db,input:{integrationCode:st
  return{id:string(row?.id||id),integrationCode:input.integrationCode,lane,scenario,satisfied:Boolean(row?.satisfied_by)};
 }
 
+const openEvidenceRequestsSql="SELECT r.id,r.integration_code,r.lane,r.scenario,r.requirement,r.requested_by,r.requested_at,g.readiness_state FROM integration_evidence_requests r JOIN integration_registry g ON g.integration_code=r.integration_code WHERE r.satisfied_by IS NULL ORDER BY r.integration_code,r.lane,r.scenario";
+function evidenceRequestsFromRows(rows:Row[]){return rows.map(row=>({id:string(row.id),integrationCode:string(row.integration_code),lane:string(row.lane),scenario:string(row.scenario),requirement:string(row.requirement),requestedBy:string(row.requested_by),requestedAt:Number(row.requested_at),readinessState:string(row.readiness_state)}));}
 export async function openIntegrationEvidenceRequests(db:Db,options?:IntegrationReadOptions){
  await ensureIntegrationReadinessForRead(db,options);
- const rows=await db.prepare("SELECT r.id,r.integration_code,r.lane,r.scenario,r.requirement,r.requested_by,r.requested_at,g.readiness_state FROM integration_evidence_requests r JOIN integration_registry g ON g.integration_code=r.integration_code WHERE r.satisfied_by IS NULL ORDER BY r.integration_code,r.lane,r.scenario").all<Row>();
- return rows.results.map(row=>({id:string(row.id),integrationCode:string(row.integration_code),lane:string(row.lane),scenario:string(row.scenario),requirement:string(row.requirement),requestedBy:string(row.requested_by),requestedAt:Number(row.requested_at),readinessState:string(row.readiness_state)}));
+ const rows=await db.prepare(openEvidenceRequestsSql).all<Row>();
+ return evidenceRequestsFromRows(rows.results);
 }
 
 export async function updateIntegrationReadiness(db:Db,input:{integrationCode:string;changes:Record<string,unknown>;reason:string;actorId:string;actorRole?:string}){
@@ -354,15 +362,16 @@ export async function integrationLaunchBlockers(db:Db,options?:IntegrationReadOp
 
 export async function integrationReadinessAudit(db:Db,integrationCode?:string,options?:IntegrationReadOptions){await ensureIntegrationReadinessForRead(db,options);const query=integrationCode?db.prepare("SELECT * FROM integration_readiness_events WHERE integration_code=? ORDER BY created_at DESC LIMIT 100").bind(integrationCode):db.prepare("SELECT * FROM integration_readiness_events ORDER BY created_at DESC LIMIT 100");const rows=await query.all<Row>();return rows.results;}
 
-/** One hosted control-plane read performs the D1 schema/seed bootstrap once, then fans out read-only queries. */
+/** One hosted control-plane read bootstraps once, then reads one transactionally consistent D1 snapshot. */
 export async function readIntegrationReadinessSnapshot(db:Db,runtime:Record<string,unknown>,integrationCode?:string){
  await ensureIntegrationReadinessTables(db);
  const tablesReady={tablesReady:true};
  await syncIntegrationCredentialPresence(db,runtime,tablesReady);
- const[data,blockers,audit,evidenceRequests,liveEvidence]=await Promise.all([
-  listIntegrationReadiness(db,undefined,tablesReady),integrationLaunchBlockers(db,tablesReady),
-  integrationReadinessAudit(db,integrationCode,tablesReady),openIntegrationEvidenceRequests(db,tablesReady),
-  integrationCode?integrationLiveEvidence(db,integrationCode,tablesReady):Promise.resolve([]),
- ]);
+ const auditStatement=integrationCode?db.prepare("SELECT * FROM integration_readiness_events WHERE integration_code=? ORDER BY created_at DESC LIMIT 100").bind(integrationCode):db.prepare("SELECT * FROM integration_readiness_events ORDER BY created_at DESC LIMIT 100");
+ const statements=[db.prepare(readinessListSql),auditStatement,db.prepare(openEvidenceRequestsSql)];
+ if(integrationCode)statements.push(db.prepare(liveEvidenceSql).bind(integrationCode));
+ const rows=await db.batch<Row>(statements);
+ const data=readinessListFromRows(rows[0]?.results??[]),blockers=readinessBlockersFromItems(data.items);
+ const audit=rows[1]?.results??[],evidenceRequests=evidenceRequestsFromRows(rows[2]?.results??[]),liveEvidence=integrationCode?liveEvidenceFromRows(rows[3]?.results??[]):[];
  return{data,blockers,audit,evidenceRequests,liveEvidence};
 }

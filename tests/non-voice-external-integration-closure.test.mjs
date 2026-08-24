@@ -88,7 +88,7 @@ test("provider KYC is governed through the canonical integration readiness contr
   for (const key of ["IDFY_API_KEY", "IDFY_ACCOUNT_ID", "IDFY_URL", "IDFY_WEBHOOK_SECRET"]) assert.match(registry, new RegExp(key));
   assert.match(registry, /case"idfy":return configured/);
   assert.match(readinessRoute, /readIntegrationReadinessSnapshot\(db,runtime/);
-  assert.match(registry, /integrationLaunchBlockers\(db,tablesReady\)/);
+  assert.match(registry, /readinessBlockersFromItems\(data\.items\)/);
   assert.match(readinessRoute, /updateIntegrationReadiness\(db,/);
   assert.doesNotMatch(readinessRoute, /externalBoundaries|providerKycHealth/);
 });
