@@ -32,9 +32,15 @@ jobs:
           node-version: '22.13.0'
           cache: npm
       - run: npm ci
+      # The TAP stream for ~2,600 tests is far larger than the Actions log API will hand back, and
+      # `not ok` for a failure in the first half of the run is therefore unreachable: a red run said
+      # "# fail 1" and nothing that could be retrieved said WHICH one. The stream is now captured and,
+      # on failure, only the failing blocks are re-printed at the end of the step - where they are both
+      # readable and fetchable - before the job exits non-zero.
       - name: Build and run tracked Web tests
         shell: bash
         run: |
+          set -uo pipefail
           npm run build
           tracked_tests=()
           for test_file in tests/*.test.mjs; do
@@ -43,7 +49,24 @@ jobs:
             fi
           done
           test "${#tracked_tests[@]}" -gt 0
-          node --experimental-strip-types --test "${tracked_tests[@]}"
+          status=0
+          node --experimental-strip-types --test "${tracked_tests[@]}" 2>&1 | tee web-tests.tap || status=$?
+          if [ "$status" -ne 0 ]; then
+            echo ""
+            echo "================ FAILING TESTS ================"
+            # Each failing test's TAP block runs from its `not ok` line to the closing `...`.
+            awk '/^not ok /{show=1} show{print} show&&/^  \.\.\.$/{show=0; print ""}' web-tests.tap
+            echo "==============================================="
+            grep -E '^# (tests|pass|fail) ' web-tests.tap || true
+          fi
+          exit "$status"
+      - name: Upload the TAP stream
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-tests-tap
+          path: web-tests.tap
+          if-no-files-found: warn
 
   lint:
     name: Lint
