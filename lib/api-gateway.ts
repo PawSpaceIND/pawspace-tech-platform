@@ -77,7 +77,8 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/revenue-leadership-reporting")return method==="GET"?"reports.view":"customers.manage";
   if(url.pathname==="/api/prelaunch-booking-swarm")return method==="GET"?"launch.view":"launch.manage";
   if(url.pathname==="/api/crm-automation"){if(method==="GET")return "customers.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="save_policy"?"settings.manage":"customers.manage";}
-  if(url.pathname==="/api/unified-cases")return method==="GET"?"bookings.view":"bookings.manage";
+  // The Unified Case Center is a platform-wide internal directory, not an assigned-booking view.
+  if(url.pathname==="/api/unified-cases")return "bookings.manage";
   // Sweeping raises alerts platform-wide and stays a manager action. Acknowledge/resolve only needs
   // identity here: authority over an individual alert belongs to the team that owns it and is decided
   // per alert in lib/staff-alert-authority.ts. Gating them on customers.manage locked Finance out of

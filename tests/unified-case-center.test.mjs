@@ -9,6 +9,6 @@ test("native refund lead-SLA and payment-reconciliation exceptions converge into
 
 test("case escalation runner is idempotent and does not claim automatic external alerts",()=>{const src=read("lib/unified-case-center.ts");assert.ok(src.includes("first-response-breach:${id}"));assert.ok(src.includes("manager-escalation:${id}"));assert.ok(src.includes("resolution-breach:${id}"));assert.ok(src.includes("automaticExternalNotification:false"));});
 
-test("case API enforces read/manage permissions and audits mutations",()=>{const src=read("app/api/unified-cases/route.ts");assert.ok(src.includes('authorize(request,"bookings.view")'));assert.ok(src.includes('authorize(request,"bookings.manage")'));assert.ok(src.includes("securityAudit"));assert.ok(src.includes("productionReady:false"));});
+test("case API restricts directory reads and mutations to managers and audits mutations",()=>{const src=read("app/api/unified-cases/route.ts");assert.equal(src.match(/authorize\(request,"bookings\.manage"\)/g)?.length,2);assert.ok(src.includes("securityAudit"));assert.ok(src.includes("productionReady:false"));});
 
 test("staff Case Center exposes sync escalation ownership and lifecycle controls",()=>{const src=read("app/team/cases/page.tsx");for(const token of["CASE & ESCALATION CENTER","Sync refunds / SLA / reconciliation","Run escalations","Mark responded","In progress","Waiting","Resolve","Close","Reopen","Production ready: NO"])assert.ok(src.includes(token),token);});

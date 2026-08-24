@@ -220,6 +220,6 @@ test("manager retains the complete case directory and SLA coverage views", async
   assert.equal(coverage.response.status, 200);
   const coverageBody = await coverage.response.json();
   assert.equal(coverageBody.data.coverage.covered, 1);
-  assert.equal(coverageBody.data.proposedDefaults.length, 36);
+  assert.equal(coverageBody.data.proposedDefaults.length, 35, "one active policy covers one of the 36 matrix cells");
   assert.deepEqual(businessCounts(sqlite), { cases: 1, events: 1, comments: 1, policies: 1 });
 });

@@ -5,7 +5,7 @@ import{caseSlaCoverageGaps,defaultCaseSlaMatrix,seedDefaultCasePolicies}from"../
 type Row=Record<string,unknown>;
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 
-export async function GET(request:Request){try{await authorize(request,"bookings.view");const db=await database(),url=new URL(request.url);
+export async function GET(request:Request){try{await authorize(request,"bookings.manage");const db=await database(),url=new URL(request.url);
  if(url.searchParams.get("scope")==="sla_coverage")return json({data:{coverage:await caseSlaCoverageGaps(db),proposedDefaults:defaultCaseSlaMatrix()}});
  return json({directory:await unifiedCaseDirectory(db),slaCoverage:await caseSlaCoverageGaps(db),productionReady:false});}catch(error){return authError(error,"Unable to load Unified Case Center");}}
 
