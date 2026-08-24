@@ -348,10 +348,10 @@ if (isMain) {
     return { status: response.status, headers: response.headers, body: parsed };
   };
 
-  // Addressed by ID, never by name: name resolution is exactly how a statement lands on the wrong
-  // database, and this gate's first claim is that it did not.
+  // `d1 execute` resolves a database by name or binding, not by raw UUID. The generated config binds
+  // DB to the id that the isolation preflight already verified against the single live version.
   const d1 = async sql => {
-    const raw = wrangler(["d1", "execute", env.STAGING_D1_ID, "--remote", "--json", "--command", sql]);
+    const raw = wrangler(["d1", "execute", "DB", "--config", "dist/server/wrangler.json", "--remote", "--json", "--command", sql]);
     const parsed = JSON.parse(raw);
     const first = Array.isArray(parsed) ? parsed[0] : parsed;
     return first?.results ?? [];
