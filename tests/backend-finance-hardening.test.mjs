@@ -14,7 +14,18 @@ function makeD1(sqlite) {
   });
   return {
     prepare: (sql) => statement(sql, []),
-    batch: async (list) => { const out = []; for (const item of list) out.push(await item.run()); return out; },
+    batch: async (list) => {
+      const out = [];
+      sqlite.exec("BEGIN");
+      try {
+        for (const item of list) out.push(await item.run());
+        sqlite.exec("COMMIT");
+        return out;
+      } catch (error) {
+        sqlite.exec("ROLLBACK");
+        throw error;
+      }
+    },
     exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
   };
 }
@@ -29,28 +40,32 @@ function freshDb() {
   globalThis.__BACKFIN_DB__ = makeD1(sqlite);
   globalThis.__BACKFIN_ENV__ = {};
   sqlite.exec("CREATE TABLE IF NOT EXISTS app_users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, role_code TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0)");
-  for (const [id, email] of [["maker", MAKER], ["checker-a", CHECKER_A], ["checker-b", CHECKER_B]]) {
-    sqlite.prepare("INSERT INTO app_users (id,email,name,role_code,status) VALUES (?,?,?,?,?)").run(id, email, id, "finance", "active");
-  }
+  for (const [id, email] of [["maker", MAKER], ["checker-a", CHECKER_A], ["checker-b", CHECKER_B]]) sqlite.prepare("INSERT INTO app_users (id,email,name,role_code,status) VALUES (?,?,?,?,?)").run(id, email, id, "finance", "active");
   return sqlite;
 }
 
 const route = await import("../app/api/finance-control/route.ts");
-const as = (email, method, body) => new Request(URL, {
-  method,
-  headers: { "oai-authenticated-user-email": email, "content-type": "application/json" },
-  body: body === undefined ? undefined : JSON.stringify(body),
-});
+const as = (email, method, body) => new Request(URL, { method, headers: { "oai-authenticated-user-email": email, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
 
 async function createExpense(email = MAKER) {
   const response = await route.POST(as(email, "POST", { entity: "expense", expenseDate: "2026-08-10", merchant: "Backend Audit Co", category: "Travel & fuel", amount: 5000, gstAmount: 762 }));
   return { status: response.status, body: await response.json() };
 }
-
 async function approve(email, id, reason = "independent finance approval") {
   const response = await route.PATCH(as(email, "PATCH", { entity: "expense", id, action: "approve", reason }));
   return { status: response.status, body: await response.json() };
 }
+
+test("D1 shim rolls back an entire failing batch", async () => {
+  const sqlite = new DatabaseSync(":memory:");
+  const db = makeD1(sqlite);
+  sqlite.exec("CREATE TABLE atomic_probe (id TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  await assert.rejects(() => db.batch([
+    db.prepare("INSERT INTO atomic_probe VALUES ('a','first')"),
+    db.prepare("INSERT INTO atomic_probe VALUES ('a','duplicate')"),
+  ]));
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM atomic_probe").get().c, 0);
+});
 
 test("non-UAT finance access never inserts synthetic fixtures", async () => {
   const sqlite = freshDb();
@@ -59,6 +74,14 @@ test("non-UAT finance access never inserts synthetic fixtures", async () => {
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM finance_vendors WHERE id IN ('ven_fuel','ven_food','ven_software')").get().c, 0);
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM finance_expenses WHERE id IN ('exp_1001','exp_1002')").get().c, 0);
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM finance_bills WHERE id='bill_2001'").get().c, 0);
+});
+
+test("finance creation rejects malformed numeric values with 400", async () => {
+  freshDb();
+  const expense = await route.POST(as(MAKER, "POST", { entity: "expense", expenseDate: "2026-08-10", merchant: "Bad Number", category: "Travel", amount: "not-a-number" }));
+  assert.equal(expense.status, 400);
+  const bill = await route.POST(as(MAKER, "POST", { entity: "bill", vendorId: "ven-x", billNumber: "BAD-1", billDate: "2026-08-10", totalAmount: 1000, gstAmount: "NaN" }));
+  assert.equal(bill.status, 400);
 });
 
 test("authenticated creator is persisted and cannot approve their own expense", async () => {
@@ -95,18 +118,26 @@ test("replaying approval never writes a second journal pair", async () => {
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM finance_journal_entries WHERE source_id=?").get(expenseId).c, 2);
 });
 
-test("two concurrent independent approvers produce only one journal claim and one journal pair", async () => {
+test("two concurrent independent approvers preserve one claim and one journal pair", async () => {
   const sqlite = freshDb();
   const created = await createExpense();
   const expenseId = created.body.data.id;
-  const results = await Promise.all([
-    approve(CHECKER_A, expenseId, "checker A concurrent approval"),
-    approve(CHECKER_B, expenseId, "checker B concurrent approval"),
-  ]);
+  const results = await Promise.all([approve(CHECKER_A, expenseId, "checker A concurrent approval"), approve(CHECKER_B, expenseId, "checker B concurrent approval")]);
   assert.ok(results.some((r) => r.status === 200), JSON.stringify(results));
   assert.ok(results.every((r) => r.status === 200 || r.status === 409), JSON.stringify(results));
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM finance_journal_entries WHERE source_id=?").get(expenseId).c, 2);
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM finance_journal_posting_claims WHERE source_type='expense' AND source_id=?").get(expenseId).c, 1);
+});
+
+test("locked period cannot receive approval journal entries", async () => {
+  const sqlite = freshDb();
+  const created = await createExpense();
+  const expenseId = created.body.data.id;
+  sqlite.prepare("INSERT INTO finance_close_periods (period_code,status,checklist_json,updated_at) VALUES ('2026-08','locked','[]',0)").run();
+  const blocked = await approve(CHECKER_A, expenseId, "period already locked");
+  assert.equal(blocked.status, 409);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM finance_journal_entries WHERE source_id=?").get(expenseId).c, 0);
+  assert.notEqual(sqlite.prepare("SELECT status FROM finance_expenses WHERE id=?").get(expenseId).status, "approved");
 });
 
 test("pay cannot bypass approval and random actions no longer silently mutate status", async () => {
