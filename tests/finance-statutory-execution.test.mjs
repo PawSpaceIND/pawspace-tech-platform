@@ -380,3 +380,33 @@ test("export generation and acknowledgement are attributable in the audit trail"
   assert.equal(byAction.get("generated"), MAKER, "the audit trail names who generated it");
   assert.equal(byAction.get("acknowledged"), CHECKER, "and who acknowledged it");
 });
+
+test("invoice replay preserves immutable tax-ledger row identity and repeated service lines", async () => {
+  const { sqlite } = await world();
+  const now = Date.now();
+  sqlite.prepare("INSERT INTO finance_entities (id,legal_name,country_code,status,approved_by,approved_at,created_at,updated_at) VALUES (?,?,?,'active',?,?,?,?)")
+    .run(ENTITY, "PawSpace Test Entity", "IN", CHECKER, now, now, now);
+  sqlite.prepare("INSERT INTO tax_registrations (id,entity_id,jurisdiction,registration_type,registration_reference,status,effective_from,approved_by,approved_at,created_at,updated_at) VALUES (?,?,?,?,?,'active',?,?,?,?,?)")
+    .run(REGISTRATION, ENTITY, "test", "test_registration", "TEST-REG", "2026-04-01", CHECKER, now, now, now);
+  sqlite.prepare("INSERT INTO tax_policy_versions (id,entity_id,version,status,effective_from,policy_json,approval_reference,approved_by,approved_at,created_at,updated_at) VALUES ('policy_test',?,1,'active','2026-04-01','{}','TEST-POLICY',?,?,?,?)")
+    .run(ENTITY, CHECKER, now, now, now);
+  sqlite.prepare("INSERT INTO tax_classifications (id,policy_id,service_code,classification_code,tax_component_json,place_of_supply_rule,input_tax_rule,created_at) VALUES ('class_test','policy_test','grooming','TEST-CLASS','[{\"code\":\"test_tax\",\"rate\":10}]','configured_test_rule','configured_test_rule',?)")
+    .run(now);
+  sqlite.prepare("INSERT INTO finance_document_series (id,entity_id,document_type,prefix,next_number,padding,policy_id,status,updated_at) VALUES ('series_invoice',?,'invoice','TEST-INV-',1,4,'policy_test','active',?)")
+    .run(ENTITY, now);
+
+  const request = { action: "issue_invoice", entityId: ENTITY, customerId: "customer_test", sourceType: "booking", sourceId: "booking_test", sourceEventKey: "invoice-event-test", issueDate: "2026-07-15", currency: "INR", reason: "T4 immutable invoice issue", lines: [
+    { lineKey: "line-a", description: "Configured test line A", serviceCode: "grooming", taxableAmount: 1000 },
+    { lineKey: "line-b", description: "Configured test line B", serviceCode: "grooming", taxableAmount: 500 },
+  ] };
+  const first = await post(MAKER, request);
+  assert.equal(first.status, 200, JSON.stringify(await first.clone().json()));
+  const before = sqlite.prepare("SELECT id,source_event_key,amount,created_at FROM finance_tax_ledger WHERE source_type='invoice' ORDER BY source_event_key").all();
+  assert.equal(before.length, 2, "two repeated service lines retain separate configured tax truth");
+
+  const replay = await post(MAKER, request);
+  assert.equal(replay.status, 200, JSON.stringify(await replay.clone().json()));
+  const after = sqlite.prepare("SELECT id,source_event_key,amount,created_at FROM finance_tax_ledger WHERE source_type='invoice' ORDER BY source_event_key").all();
+  assert.deepEqual(after, before, "idempotent invoice replay must not delete and recreate posted tax history");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM finance_invoices WHERE source_event_key='invoice-event-test'").get().n, 1);
+});

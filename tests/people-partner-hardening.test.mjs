@@ -119,9 +119,9 @@ async function peopleStack() {
     sqlite.prepare("INSERT INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,?,1,4.5,90,1,0,10,3,'active',1,'2026-08-01',NULL,'test',?)")
       .run(id, "tstcity", id, model, JSON.stringify(["grooming"]), JSON.stringify(["tst-zone"]), NOW);
 
-  const seedBooking = (bookingId, { providerId, serviceCode = "grooming", amount, customerId = "CUS-P1", start = new Date(NOW - 2 * DAY).toISOString() }) => {
+  const seedBooking = (bookingId, { providerId, serviceCode = "grooming", amount, customerId = "CUS-P1", start = new Date(NOW - 2 * DAY).toISOString(), status = "completed" }) => {
     sqlite.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(bookingId, `idem-${bookingId}`, customerId, "[]", "[]", "tstcity", "tst-zone", serviceCode, "pkg", "Package", `GRP-${bookingId}`, providerId, start, new Date(new Date(start).getTime() + 3_600_000).toISOString(), "completed", "customer_app", amount, "INR", "{}", "test", NOW, NOW);
+      .run(bookingId, `idem-${bookingId}`, customerId, "[]", "[]", "tstcity", "tst-zone", serviceCode, "pkg", "Package", `GRP-${bookingId}`, providerId, start, new Date(new Date(start).getTime() + 3_600_000).toISOString(), status, "customer_app", amount, "INR", "{}", "test", NOW, NOW);
   };
 
   return { sqlite, db, seedEmployee, seedProviderProfile, seedBooking };
@@ -418,7 +418,7 @@ test("provider workspace: proof is own-bookings-only and job offers are first-ac
   assert.equal(stack.sqlite.prepare("SELECT COUNT(*) c FROM customer_job_updates WHERE booking_id='BK-J1'").get().c, 1);
   await assert.rejects(workspaceLib.submitJobProof(db, { providerId: "prov_a", bookingId: "BK-J1", proofType: "walk_route" }), /not expected for grooming/);
 
-  stack.seedBooking("BK-J2", { providerId: "unassigned", amount: 900 });
+  stack.seedBooking("BK-J2", { providerId: "unassigned", amount: 900, status: "scheduled" });
   await workspaceLib.offerJobToProvider(db, { providerId: "prov_a", bookingId: "BK-J2" });
   await workspaceLib.offerJobToProvider(db, { providerId: "prov_b", bookingId: "BK-J2" });
   const accepted = await workspaceLib.respondToJobOffer(db, { providerId: "prov_a", bookingId: "BK-J2", accept: true });

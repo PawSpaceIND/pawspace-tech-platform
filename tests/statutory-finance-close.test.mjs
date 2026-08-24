@@ -229,7 +229,7 @@ test("monthly close aggregates real revenue/GST/TDS, blocks without board approv
   const { recordBoardApproval } = await import("../lib/statutory-compliance.ts");
   const { db, sqlite } = closeDb();
   // Real August activity: two bookings (one cancelled - excluded), one food order,
-  // GST output 1800 across two invoices, eligible input 300 (one approved review, one pending).
+  // GST output 1800 across two invoices, eligible input 300 (one canonical eligible review, one pending).
   sqlite.prepare("INSERT INTO canonical_bookings VALUES ('BK-1','c1','2026-08-10T04:00:00.000Z','confirmed',4500)").run();
   sqlite.prepare("INSERT INTO canonical_bookings VALUES ('BK-2','c1','2026-08-12T04:00:00.000Z','cancelled',999)").run();
   sqlite.prepare("INSERT INTO food_orders VALUES ('FO-1','c1','confirmed',799,?)").run(monthMs(2026, 8));
@@ -237,7 +237,7 @@ test("monthly close aggregates real revenue/GST/TDS, blocks without board approv
   sqlite.prepare("INSERT INTO finance_invoices VALUES ('INV-2','2026-08-15','issued',600)").run();
   sqlite.prepare("INSERT INTO finance_bills VALUES ('BILL-1','2026-08-05')").run();
   sqlite.prepare("INSERT INTO finance_bills VALUES ('BILL-2','2026-08-06')").run();
-  sqlite.prepare("INSERT INTO finance_vendor_tax_reviews VALUES ('REV-1','BILL-1','approved',300)").run();
+  sqlite.prepare("INSERT INTO finance_vendor_tax_reviews VALUES ('REV-1','BILL-1','eligible',300)").run();
   sqlite.prepare("INSERT INTO finance_vendor_tax_reviews VALUES ('REV-2','BILL-2','review_required',500)").run();
 
   const view = await monthlyCloseView(db, { period: "2026-08", actorId: "finance@test" });
@@ -256,6 +256,9 @@ test("monthly close aggregates real revenue/GST/TDS, blocks without board approv
 
   const closed = await closeMonth(db, { period: "2026-08", actorId: "finance@test" });
   assert.equal(closed.status, "closed");
+  const canonicalLock = sqlite.prepare("SELECT status,locked_by FROM finance_close_periods WHERE period_code='2026-08'").get();
+  assert.equal(canonicalLock.status, "locked", "monthly close must lock the canonical period used by GST, payroll and export mutations");
+  assert.equal(canonicalLock.locked_by, "finance@test");
   await assert.rejects(() => closeMonth(db, { period: "2026-08", actorId: "finance@test" }), (error) => error instanceof Response && error.status === 409, "locked month cannot re-close");
 
   // The locked snapshot survives new data: a late booking must NOT change the closed numbers.

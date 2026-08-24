@@ -7,6 +7,11 @@ type Row=Record<string,unknown>;
 const text=(v:unknown)=>String(v??"").trim();
 const normalizePhone=(value:string)=>value.replace(/\D/g,"").slice(-10);
 const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
+async function canonicalOtpCustomerId(phone:string){
+ const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(`pawspace:customer-otp:${phone}`));
+ const suffix=Array.from(new Uint8Array(digest)).slice(0,12).map(byte=>byte.toString(16).padStart(2,"0")).join("").toUpperCase();
+ return `CUS-OTP-${suffix}`;
+}
 
 /**
  * The real "send OTP, verify code, issue signed assertion" flow that was missing - the codebase
@@ -48,10 +53,15 @@ export async function verifyCustomerOtp(db:Db,input:{challengeId:string;code:str
  const phone=text(row.phone);
  let customer=await db.prepare("SELECT id,name,primary_phone,city_id FROM canonical_customers WHERE primary_phone=? OR secondary_phone=?").bind(phone,phone).first<Row>();
  if(!customer){
-   const id=uid("CUS"),now=Date.now();
-   await db.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,NULL,NULL,'customer_app_otp','{}',?,?)")
+   // Two separately-issued OTP challenges for one phone can be verified concurrently. A random ID
+   // allowed both requests to create customer truth after both observed the initial lookup as empty.
+   // The phone-derived hash avoids embedding the plaintext phone in the ID and makes the primary-key
+   // insert the atomic identity claim.
+   const id=await canonicalOtpCustomerId(phone),now=Date.now();
+   await db.prepare("INSERT OR IGNORE INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,NULL,NULL,'customer_app_otp','{}',?,?)")
      .bind(id,input.cityId||"blr",text(input.name)||"PawSpace Customer",phone,now,now).run();
-   customer={id,name:text(input.name)||"PawSpace Customer",primary_phone:phone,city_id:input.cityId||"blr"};
+   customer=await db.prepare("SELECT id,name,primary_phone,city_id FROM canonical_customers WHERE id=?").bind(id).first<Row>();
+   if(!customer||text(customer.primary_phone)!==phone)throw new Error("Canonical customer identity conflict - human review required");
  }
  const now=Date.now(),nonce=uid("NONCE"),payload:AssertionPayload={
    v:1,identitySource:"customer_otp",principalType:"identity_subject",principalKey:phone,
