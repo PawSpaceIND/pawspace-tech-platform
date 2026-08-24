@@ -54,6 +54,13 @@ function makeD1(sqlite) {
   return { prepare: sql => statement(sql), batch: async statements => { sqlite.exec("BEGIN"); try { const results = []; for (const statement of statements) results.push(await statement.run()); sqlite.exec("COMMIT"); return results; } catch (error) { sqlite.exec("ROLLBACK"); throw error; } } };
 }
 
+test("legacy payment-link mappings cannot bypass canonical provider-reference uniqueness", async () => {
+  const sqlite = new DatabaseSync(":memory:");
+  sqlite.exec("CREATE TABLE payment_gateway_links (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,payment_id TEXT NOT NULL UNIQUE,provider TEXT NOT NULL,environment TEXT NOT NULL,gateway_order_id TEXT,gateway_payment_link_id TEXT,gateway_payment_id TEXT,status TEXT NOT NULL DEFAULT 'active',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL); INSERT INTO payment_gateway_links VALUES ('L1','B1','P1','razorpay','sandbox',NULL,'plink_duplicate',NULL,'active',0,0); INSERT INTO payment_gateway_links VALUES ('L2','B2','P2','razorpay','sandbox',NULL,'plink_duplicate',NULL,'active',0,0);");
+  const reconciliation = await import("../lib/grooming-payment-reconciliation.ts");
+  await assert.rejects(() => reconciliation.ensurePaymentReconciliationTables(makeD1(sqlite)), /UNIQUE/i, "duplicate legacy provider references must surface instead of leaving ambiguous webhook resolution");
+});
+
 test("payment-link expiry, webhook mapping and refund-required payment ID stay canonical", async () => {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec(`
