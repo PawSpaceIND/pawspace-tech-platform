@@ -187,6 +187,15 @@ test("the workflow installs all three as Cloudflare Worker SECRETS, not plain va
   assert.doesNotMatch(workflow, /cd dist\/server && npx wrangler deploy/, "the obsolete dist/server deploy path must not return");
 });
 
+test("the documented terminal deploy stops before Wrangler when setup or validation fails", () => {
+  const guide = read("docs/STAGING_DEPLOY.md");
+  const terminal = guide.slice(guide.indexOf("### Path B — from a terminal"), guide.indexOf("## Optional integrations"));
+  assert.match(terminal, /```bash\s+set -euo pipefail\s+npm run install:ci/,
+    "the terminal block must enable fail-fast mode before its first command");
+  assert.match(terminal, /node scripts\/stage-config\.mjs[\s\S]*npx wrangler deploy/,
+    "configuration validation must run before deployment");
+});
+
 // ---------------------------------------------------------------------------
 // 4. An arbitrary email must never receive founder / ["*"].
 // ---------------------------------------------------------------------------

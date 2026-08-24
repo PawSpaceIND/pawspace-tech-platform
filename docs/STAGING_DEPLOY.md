@@ -39,6 +39,7 @@ encrypted **secrets**, are never written into `wrangler.json`, and are never pri
 
 ### Path B — from a terminal
 ```bash
+set -euo pipefail
 npm run install:ci
 export CLOUDFLARE_API_TOKEN=…                          # from step 2 (do not commit)
 export CLOUDFLARE_ACCOUNT_ID=…                         # from step 1
