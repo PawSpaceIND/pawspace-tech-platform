@@ -2,14 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
-import * as nodeModule from "node:module";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
-if (typeof nodeModule.registerHooks === "function") nodeModule.registerHooks({
-  resolve(specifier, context, nextResolve) {
-    try { return nextResolve(specifier, context); }
-    catch (error) { if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context); throw error; }
-  },
-});
+installWorkersHooks("__POST_SERVICE_DB__", "__POST_SERVICE_ENV__");
 
 const client = await import("../lib/razorpay-client.ts");
 const originalFetch = globalThis.fetch;
