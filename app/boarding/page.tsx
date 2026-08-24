@@ -47,16 +47,24 @@ export default function BoardingPage(){
  useEffect(()=>{
   let active=true;
   queueMicrotask(()=>{if(!active)return;setLoading(true);setQuote(null);setError("")});
-  void Promise.all([
+  void Promise.allSettled([
    loadBoardingCommercial({cityId:"blr",zoneId:"blr-east",scheduledStart:window.start,scheduledEnd:window.end,petCount,species:["dog"]}),
-   quoteBoarding({packageCode,petCount,scheduledStart:window.start,scheduledEnd:window.end,paymentMode:"prepaid"}),
+   quoteBoarding({packageCode,petCount,cityId:"blr",zoneId:"blr-east",scheduledStart:window.start,scheduledEnd:window.end,paymentMode:"prepaid"}),
   ]).then(([commercial,nextQuote])=>{
    if(!active)return;
-   setPackages(commercial.packages);
-   setHosts(commercial.hosts);
-   setHostId(current=>commercial.hosts.some(item=>item.providerId===current)?current:commercial.hosts[0]?.providerId||"");
-   setQuote(nextQuote);
-  }).catch(problem=>{if(active)setError(problem instanceof Error?problem.message:"Unable to load canonical Boarding availability")})
+   if(commercial.status==="fulfilled"){
+    setPackages(commercial.value.packages);
+    setHosts(commercial.value.hosts);
+    setHostId(current=>commercial.value.hosts.some(item=>item.providerId===current)?current:commercial.value.hosts[0]?.providerId||"");
+   }else{
+    setPackages([]);
+    setHosts([]);
+    setHostId("");
+    setError(commercial.reason instanceof Error?commercial.reason.message:"Unable to load canonical Boarding availability");
+   }
+   if(nextQuote.status==="fulfilled")setQuote(nextQuote.value);
+   else setError(current=>current|| (nextQuote.reason instanceof Error?nextQuote.reason.message:"Unable to refresh the canonical Boarding quote"));
+  })
    .finally(()=>{if(active)setLoading(false)});
   return()=>{active=false};
  },[packageCode,petCount,window.start,window.end]);

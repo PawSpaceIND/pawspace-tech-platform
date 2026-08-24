@@ -231,9 +231,14 @@ test("the sweep actually reaches authorization rather than failing earlier", asy
 // finance-control and gst-accounting used to sit here too. lib/gst-accounting.ts declared its
 // ConfigurationRequired field as a constructor parameter property, so every module reaching it was
 // unloadable and both routes sat outside this sweep. That field is now assigned explicitly — identical
-// at runtime — and both routes are swept like any other. location-recovery remains, for the same
-// parameter property in lib/universal-location-recovery.ts.
-const UNLOADABLE_UNDER_STRIP_ONLY = ["location-recovery"];
+// at runtime — and both routes are swept like any other.
+//
+// location-recovery was the last entry, for the same parameter property in
+// lib/universal-location-recovery.ts. That field is now assigned explicitly too, so the list is EMPTY
+// and every route in the repository is swept. Keep it that way: an empty baseline means the next
+// parameter property to appear fails here immediately rather than silently removing a route - and its
+// module - from authorization coverage.
+const UNLOADABLE_UNDER_STRIP_ONLY = [];
 
 // Route/method pairs that answer a non-401/403 4xx to an unauthorized caller: they do route-specific
 // work - parse a body, reject a missing parameter - BEFORE reaching their permission check. None of
