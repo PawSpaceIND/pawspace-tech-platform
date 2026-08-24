@@ -81,7 +81,7 @@ test("outputSafety blocks fabricated high-impact claims, cross-customer leaks, a
   assert.equal(ungroundedPrice.safe, false);
   assert.ok(ungroundedPrice.failures.includes("ungrounded_business_claim"));
 
-  const groundedPrice = outputSafety({ text: "The price for this policy is fixed", groundingRefs: ["catalogue-v3"] });
+  const groundedPrice = outputSafety({ text: "The price for this policy is fixed", groundingRefs: ["catalogue-v3"], groundingVerified: true });
   assert.ok(!groundedPrice.failures.includes("ungrounded_business_claim"));
 
   const safe = outputSafety({ text: "You can book grooming for Bruno tomorrow at 11am" });

@@ -152,7 +152,7 @@ suite until it has a gate.
 
 ### Human handoff
 
-**`tests/ai-orchestrator-handoff-execution.test.mjs` — 10 executed cases** driving the real
+**`tests/ai-orchestrator-handoff-execution.test.mjs` — 17 executed cases** driving the real
 orchestrator over real SQLite, asserting on the `ai_handoffs` and `ai_conversation_turns` rows that
 exist afterwards. "The provider failed" is not one path: a thrown error, an empty answer, whitespace,
 an unsupported answer and a low-confidence answer are five branches, and a customer who gets silence
@@ -160,7 +160,11 @@ from any of them has been dropped. Also proved: a refund conversation never reac
 explicit request for a human wins over a healthy provider; a prompt-injection attempt is not forwarded;
 the rollout gate is fail-closed on a cold database; the model's context contains one customer's data and
 not another's; and — so the negatives are not passing for the wrong reason — a healthy provider on an
-in-scope question **does** answer.
+in-scope question **does** answer. A provider also cannot bless its own money claim by returning an
+arbitrary grounding string: price/policy output is accepted only when every cited ID or immutable hash
+resolves to an active, in-window, public knowledge row. Invented and retired references hand off, while
+an active governed row permits the draft. Provider-supplied approval text is ignored; high-impact output
+still requires the server-side human-approval path.
 
 One behavioural change: handoff-reason precedence now puts the structural blockers (rollout off, no
 provider) above `low_confidence`. Every branch hands off either way, but recording `low_confidence`
@@ -403,110 +407,3 @@ PAWSPACE_FORCE_LOADER_HOOK=1 node --experimental-strip-types --test "${suites[@]
 # the whole tracked suite
 npm test
 ```
-
----
-
-## Lane 2 → Lane 4 readiness handoff
-
-PR #305 closed Lane 2's **engineering** scope and merged to `main` at
-`0b6695c8a2c311b1ba9e5fad468198b5f688545c`. It left six **operational** prerequisites that no amount of
-code can satisfy. This section records where each now lives in the canonical registry, and what running
-the registry — rather than reading it — showed.
-
-`tests/lane2-readiness-handoff.test.mjs` — **15 executed tests**.
-
-### Where each prerequisite lives
-
-| Lane 2 prerequisite | Canonical row | State | Already represented? |
-|---|---|---|---|
-| Google Routes credentials/configuration | `INT-MAPS-01` | `production_setup_required` | yes — unchanged |
-| IDfy UAT / provider access | `INT-KYC-01` | `production_setup_required` | yes — facts refreshed, see below |
-| Private object-storage configuration | `INT-MEDIA-01` | `production_setup_required` | yes — unchanged |
-| Malware-scanning capability/provider | `INT-MEDIA-02` | `production_setup_required` | yes — unchanged |
-| **Android physical-device validation** | `INT-DEVICE-01` | `not_started` | **NO — added** |
-| **iOS physical-device validation** | `INT-DEVICE-02` | `not_started` | **NO — added** |
-
-Four of the six were already represented correctly and were **not duplicated**. Two genuine gaps were
-found by execution.
-
-### Gap 1 — the IDfy detector could not see the callback secret
-
-`credentialDetector: "idfy"` checked `IDFY_API_KEY`, `IDFY_ACCOUNT_ID` and `IDFY_URL`. Measured against
-the real registry:
-
-```
-nothing set                     -> credentialStatus = missing
-submission creds only           -> credentialStatus = configured   <-- wrong
-webhook secret ONLY             -> credentialStatus = missing
-submission creds, NO secret     -> credentialStatus = configured   <-- wrong
-```
-
-IDfy verification is **asynchronous**. The submission credentials enqueue a task; the outcome arrives on
-a signed callback, and `lib/idfy-callback-boundary.ts` refuses every delivery with **503** when
-`IDFY_WEBHOOK_SECRET` is absent. So the registry was reporting a connected channel whose *answering half
-was switched off* — a check could only ever reach `manual_review`. The same "absent treated as
-satisfied" class Lane 2 kept finding, this time in the control plane itself.
-
-`IDFY_WEBHOOK_SECRET` now belongs to the detector. Each of the four credentials is individually
-load-bearing, proven by omitting each in turn, and a full set still reads `configured` so the detector
-can still say yes.
-
-### Gap 2 — physical-device certification had no representation at all
-
-Zero rows. The one device-adjacent row, `INT-GPS-01`, answers *"can this location event be trusted once
-it arrives"* — not *"has the journey that produces it ever run on hardware"*. Permission grant/denial,
-foreground/background transition and retry-without-duplicate-state are operating-system behaviours no
-server-side suite can observe; PR #305 proved the server halves and said so.
-
-`INT-DEVICE-01` / `INT-DEVICE-02` are `not_started` (not `production_setup_required`, which would imply
-the sandbox rung had been climbed) with `environment: "none"` and `codeBoundaryStatus: "partial"` — the
-code exists and is proven server-side; the blocker is hardware, not engineering.
-
-### Engineering readiness and operational readiness are kept apart
-
-`INT-KYC-01`'s `codeBoundaryStatus` moved `partial` → `code_ready`, because Lane 2 implemented and
-executed the callback boundary. Its `readinessState` **stays `production_setup_required`**, because no
-IDfy account has ever been reached. Neither fact is permitted to move the other, and a test asserts
-both directions.
-
-A pre-existing source-regex assertion in `tests/non-voice-external-integration-closure.test.mjs` pinned
-the literal `codeBoundaryStatus:"partial"` and went red on that change. It was **not weakened** — it was
-re-pointed at the property it exists for (KYC readiness is operational and cannot be moved by writing
-code), which is the same correction this branch's audit section describes for other suites.
-
-### Nothing can be reported ready without the real dependency
-
-Executed for all six rows: an attempt to set `controlled_live_verified` with prose as evidence is
-refused, the row is unchanged afterwards, and no verification timestamp is written. Credential presence
-moves `credential_status` and nothing else — not `readiness_state`, not `last_verified_at`. A fully
-credentialed IDfy is still not a verified one.
-
-`summary.p0ControlledLive` is **0** and no row anywhere in the registry claims controlled-live
-verification.
-
-### Sabotage
-
-| Sabotage | Red |
-|---|---|
-| webhook secret dropped from the detector | 2 |
-| detector loosened to any-one-credential | 2 |
-| Android device row removed | 7 |
-| iOS device row removed | 6 |
-| device rows overstated as `production_setup_required` | 1 |
-| `INT-KYC-01` readiness upgraded along with its code boundary | 7 |
-| controlled-live evidence gate removed | 1 |
-
-### Cross-lane blocker — reported, not adopted
-
-`lib/provider-capacity-governance.ts` reads unavailability with `starts_at < at` (**strict**) while
-`setProviderAvailability` stamps `starts_at = now` and clears with `starts_at <= now` (**inclusive**).
-The two disagree on the boundary case, and the disagreement is **fail-open**: a provider marked
-unavailable at time *T* is not seen as blocked by a read at exactly *T*. It sits in
-`selectCapacitySafeReplacement`'s path. Real exposure is narrow — ISO millisecond precision — but the
-direction is wrong.
-
-**Ownership is unsettled and this branch does not take it.** Lane 1's PR #304 lists it under
-CROSS-LANE-BLOCKERS assigned to Lane 2; Lane 2's evidence document records it as *"left documented
-only, per standing instruction — not touched here."* It is therefore **open and unowned**, in shared
-scheduling/capacity core that belongs to neither Lane 2 nor Lane 4. Recorded here so convergence
-carries it rather than losing it.

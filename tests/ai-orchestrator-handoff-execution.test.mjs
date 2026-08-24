@@ -136,7 +136,7 @@ test("concurrent deliveries reserve the key before any context, provider or hand
   const stub = provider(async () => {
     observedStart();
     await new Promise(resolve => { release = resolve; });
-    return { text: "A basic groom starts at Rs 899.", provider: "stub_model", modelRef: "stub-v1", latencyMs: 1, confidence: 0.92 };
+    return { text: "Grooming appointments are available.", provider: "stub_model", modelRef: "stub-v1", latencyMs: 1, confidence: 0.92 };
   });
   const actor = customerActor(sqlite, "CUS-1");
   const messageId = await inboundMessage(sqlite, db, { threadId: "THREAD-1", customerId: "CUS-1", text: "what is the price of grooming", channel: "chat", idempotencyKey: "concurrent" });
@@ -165,7 +165,7 @@ test("concurrent deliveries reserve the key before any context, provider or hand
 
 test("a failed reservation is retryable instead of permanently locking the canonical message", async () => {
   const { sqlite, db } = await world();
-  const stub = answered("A basic groom starts at Rs 899.");
+  const stub = answered("Grooming appointments are available.");
   const messageId = await inboundMessage(sqlite, db, { threadId: "THREAD-1", customerId: "CUS-1", text: "what is the price of grooming", channel: "chat", idempotencyKey: "retry-failed-owner" });
   const input = { actor: staffActor, threadId: "THREAD-1", customerId: "CUS-1", inputMessageId: messageId, idempotencyKey: "retry-failed-owner", channel: "chat", provider: stub.provider };
 
@@ -229,16 +229,45 @@ test("the rollout gate is fail-closed: a cold database hands every customer to a
 // ---------------------------------------------------------------------------
 test("a healthy provider on an in-scope question does answer, and the turn records the model", async () => {
   const { sqlite, db } = await world();
-  const stub = answered("A basic groom starts at Rs 899.");
+  const stub = answered("Grooming appointments are available.");
   const result = await turn(sqlite, db, { text: "what is the price of grooming", stub, key: "happy" });
 
   assert.equal(result.turn.outcome, "draft_review_required");
-  assert.equal(result.turn.output, "A basic groom starts at Rs 899.");
+  assert.equal(result.turn.output, "Grooming appointments are available.");
   assert.equal(stub.calls.length, 1, "the model was actually reached - the negatives above are not passing because nothing works");
   assert.equal(handoffs(sqlite).length, 0);
   const stored = turns(sqlite)[0];
   assert.equal(stored.provider, "stub_model");
-  assert.equal(stored.output_text, "A basic groom starts at Rs 899.");
+  assert.equal(stored.output_text, "Grooming appointments are available.");
+});
+
+test("provider money output needs a real active public knowledge row, not a self-declared reference", async () => {
+  const blockedWorld = await world();
+  const invented = answered("A basic groom costs INR 899.", { groundingRefs: ["catalogue:invented"] });
+  const blocked = await turn(blockedWorld.sqlite, blockedWorld.db, { text: "what is the price of grooming", stub: invented, key: "invented-grounding" });
+  assert.equal(blocked.turn.outcome, "handoff");
+  assert.equal(blocked.turn.handoffReason, "policy_risk");
+  assert.doesNotMatch(blocked.turn.output, /899/);
+
+  const groundedWorld = await world();
+  groundedWorld.sqlite.exec("CREATE TABLE IF NOT EXISTS ai_knowledge_source_versions (id TEXT PRIMARY KEY,source_key TEXT NOT NULL,version INTEGER NOT NULL,status TEXT NOT NULL,title TEXT NOT NULL,source_type TEXT NOT NULL,content_text TEXT NOT NULL,visibility_scope_json TEXT NOT NULL,effective_from INTEGER,effective_to INTEGER,immutable_hash TEXT NOT NULL,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  groundedWorld.sqlite.prepare("INSERT INTO ai_knowledge_source_versions (id,source_key,version,status,title,source_type,content_text,visibility_scope_json,effective_from,effective_to,immutable_hash,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run("AIKNOW-PRICE", "catalogue:grooming", 1, "active", "Grooming catalogue", "catalogue", "A basic groom costs INR 899.", '["public"]', Date.now() - 1_000, Date.now() + 60_000, "a".repeat(64), "ops@pawspace.in", Date.now(), Date.now());
+  const cited = answered("A basic groom costs INR 899.", { groundingRefs: ["AIKNOW-PRICE"] });
+  const allowed = await turn(groundedWorld.sqlite, groundedWorld.db, { text: "what is the price of grooming", stub: cited, key: "verified-grounding" });
+  assert.equal(allowed.turn.outcome, "draft_review_required");
+  assert.match(allowed.turn.output, /899/);
+
+  groundedWorld.sqlite.prepare("UPDATE ai_knowledge_source_versions SET status='retired' WHERE id=?").run("AIKNOW-PRICE");
+  const stale = answered("A basic groom costs INR 899.", { groundingRefs: ["AIKNOW-PRICE"] });
+  const staleResult = await turn(groundedWorld.sqlite, groundedWorld.db, { text: "what is the price of grooming", stub: stale, key: "retired-grounding" });
+  assert.equal(staleResult.turn.outcome, "handoff");
+
+  const approvalWorld = await world();
+  const forgedApproval = answered("I changed the booking for you.", { highImpactAction: true, approvalReference: "provider-invented" });
+  const approvalResult = await turn(approvalWorld.sqlite, approvalWorld.db, { text: "what services do you offer", stub: forgedApproval, key: "provider-forged-approval" });
+  assert.equal(approvalResult.turn.outcome, "handoff", "a provider cannot manufacture the human approval that governs high-impact work");
+  assert.equal(approvalResult.turn.policyDecision, "blocked_high_impact");
 });
 
 test("a degraded provider is reported as degraded, not as connected", async () => {
