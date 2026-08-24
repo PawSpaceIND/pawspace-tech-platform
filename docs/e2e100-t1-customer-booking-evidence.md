@@ -127,6 +127,10 @@ Classification: confirmed code defect found while inspecting PR #302.
 
 The screen loaded payment truth only on selected-booking/manual refresh. It now refreshes only while the request is pending, stops on terminal payment state, and removes the checkout when the server reports settled/expired truth. No client transition marks money captured.
 
+### T1-DEF-005 — Node 24 TAP output produced a false-negative T1 matrix
+
+Classification: confirmed test-harness defect found by exact-head Release CI. The 25 child suites all executed and passed, but Node 24 renders the aggregate as `# pass N` while Node 22 renders `ℹ pass N`; the matrix accepted only the latter and reported all 25 objectives failed. The permanent harness regression accepts both standards-compliant renderings while still requiring a non-zero pass aggregate, so a fully skipped name pattern cannot pass an objective.
+
 ## Negative and money-truth outcomes
 
 - Cross-customer booking/payment/address/pet access: refused.
@@ -162,8 +166,8 @@ Engineering integration readiness is distinct from actual-provider verification.
 | `npm test` | LOCAL ENVIRONMENT BLOCKER — its build and 2,534 tests passed separately; launch is intercepted when the two localhost listener suites request a socket |
 | Build | PASS |
 | Artifact validation | PASS |
-| Exact-head Release CI | PENDING PR push |
+| Exact-head Release CI | RERUN REQUIRED — first PR-head run exposed and proved T1-DEF-005; corrected exact head must be green |
 
 ## Release and safety statement
 
-Exactly one T1 pull request will be opened from `testfix/e2e100-t1-customer-booking`. This work does not merge PR #302, merge T1, deploy any environment, move live money, contact a live provider or modify the preserved demo seed.
+Exactly one T1 pull request, #310, is open from `testfix/e2e100-t1-customer-booking`. This work does not merge PR #302, merge T1, deploy any environment, move live money, contact a live provider or modify the preserved demo seed.

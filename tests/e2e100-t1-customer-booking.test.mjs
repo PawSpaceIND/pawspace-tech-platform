@@ -121,7 +121,10 @@ function runBehaviour({ file, pattern }) {
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
   assert.equal(result.error, undefined, `${file} could not execute: ${result.error?.message ?? "unknown error"}`);
   assert.equal(result.status, 0, `${file} failed for /${pattern}/\n${output.slice(-8_000)}`);
-  assert.match(output, /ℹ pass [1-9]\d*/, `${file} pattern /${pattern}/ did not execute any matching behaviour`);
+  // Node 22 renders the TAP aggregate as `ℹ pass N`; Node 24 emits `# pass N`.
+  // Require a non-zero aggregate under either valid renderer so a fully skipped
+  // name pattern can never make an objective appear exercised.
+  assert.match(output, /(?:^|\n)(?:ℹ|#) pass [1-9]\d*(?:\r?\n|$)/m, `${file} pattern /${pattern}/ did not execute any matching behaviour`);
 }
 
 for (const [id, objective, jobs] of cases) {
