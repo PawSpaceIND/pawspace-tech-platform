@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: master-zero-gap-audit-${{ github.ref }}
@@ -20,15 +21,21 @@ jobs:
   source-and-inventory:
     name: Exact-head source and inventory
     runs-on: ubuntu-latest
+    env:
+      EXACT_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Record exact head
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - name: Record and verify exact head
         shell: bash
         run: |
           set -euo pipefail
-          printf 'HEAD_SHA=%s\n' "$(git rev-parse HEAD)" | tee exact-head.env
+          actual_sha=$(git rev-parse HEAD)
+          printf 'HEAD_SHA=%s\n' "$actual_sha" | tee exact-head.env
+          test "$actual_sha" = "$EXACT_HEAD_SHA"
           git status --short --branch
           git diff --check
       - name: Build tracked-source archive
@@ -42,7 +49,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          count_files() { find "$1" -type f "$@" 2>/dev/null | wc -l | tr -d ' '; }
           tracked=$(git ls-files | wc -l | tr -d ' ')
           routes=$(find app/api -type f -name 'route.ts' 2>/dev/null | wc -l | tr -d ' ')
           libs=$(find lib -type f -name '*.ts' 2>/dev/null | wc -l | tr -d ' ')
@@ -50,8 +56,8 @@ jobs:
           backend_tests=$(find backend -type f \( -name '*.test.ts' -o -name '*.test.js' -o -name '*.spec.ts' -o -name '*.spec.js' \) 2>/dev/null | wc -l | tr -d ' ')
           workflows=$(find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null | wc -l | tr -d ' ')
           migrations=$(find drizzle db -type f \( -name '*.sql' -o -name '*.ts' \) 2>/dev/null | wc -l | tr -d ' ')
-          skipped=$(grep -RInE --include='*.test.mjs' --include='*.test.ts' --include='*.spec.ts' '(test|it|describe)\.(skip|todo|only)|\bskip\s*:' tests backend 2>/dev/null | wc -l | tr -d ' ')
-          todos=$(grep -RInE --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.next --exclude-dir=.git '\b(TODO|FIXME|HACK|XXX)\b' app lib worker backend scripts tests 2>/dev/null | wc -l | tr -d ' ')
+          skipped=$({ grep -RInE --include='*.test.mjs' --include='*.test.ts' --include='*.spec.ts' '(test|it|describe)\.(skip|todo|only)|\bskip\s*:' tests backend 2>/dev/null || true; } | wc -l | tr -d ' ')
+          todos=$({ grep -RInE --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.next --exclude-dir=.git '\b(TODO|FIXME|HACK|XXX)\b' app lib worker backend scripts tests 2>/dev/null || true; } | wc -l | tr -d ' ')
           {
             echo '# Exact-head repository inventory'
             echo
@@ -79,21 +85,100 @@ jobs:
             find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null | sort
           } > master-zero-gap-inventory.md
           cat master-zero-gap-inventory.md
+      - name: Generate remote branch convergence inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*'
+          now_epoch=$(date +%s)
+          total=0
+          contained=0
+          current_unmerged=0
+          divergent_unmerged=0
+          stale_30d=0
+          printf 'branch\tsha\tlast_commit_at\tage_days\tbehind_main\tahead_main\tcontained_in_main\tclassification\tsubject\n' > branch-inventory.tsv
+          : > branch-inventory-rows.md
+          while IFS=$'\t' read -r ref sha committed_at subject; do
+            branch=${ref#origin/}
+            if [ "$branch" = "main" ] || [ "$branch" = "HEAD" ]; then
+              continue
+            fi
+            read -r behind ahead < <(git rev-list --left-right --count "origin/main...$ref")
+            commit_epoch=$(git show -s --format=%ct "$ref")
+            age_days=$(( (now_epoch - commit_epoch) / 86400 ))
+            if git merge-base --is-ancestor "$ref" origin/main; then
+              in_main=yes
+              classification=contained_in_main
+              contained=$((contained + 1))
+            elif [ "$behind" -eq 0 ] && [ "$ahead" -gt 0 ]; then
+              in_main=no
+              classification=current_unmerged
+              current_unmerged=$((current_unmerged + 1))
+            else
+              in_main=no
+              classification=divergent_unmerged
+              divergent_unmerged=$((divergent_unmerged + 1))
+            fi
+            if [ "$age_days" -ge 30 ]; then
+              stale_30d=$((stale_30d + 1))
+            fi
+            subject=${subject//$'\t'/ }
+            subject=${subject//$'\n'/ }
+            subject_md=${subject//|/ }
+            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$branch" "$sha" "$committed_at" "$age_days" "$behind" "$ahead" "$in_main" "$classification" "$subject" >> branch-inventory.tsv
+            printf '| `%s` | `%s` | %s | %s | %s | %s | %s | %s |\n' "$branch" "${sha:0:12}" "$age_days" "$behind" "$ahead" "$in_main" "$classification" "$subject_md" >> branch-inventory-rows.md
+            total=$((total + 1))
+          done < <(git for-each-ref --sort=-committerdate --format='%(refname:short)%09%(objectname)%09%(committerdate:iso8601-strict)%09%(subject)' refs/remotes/origin)
+          {
+            echo '# Remote branch convergence inventory'
+            echo
+            echo "- Exact audit SHA: \`$(git rev-parse HEAD)\`"
+            echo "- Remote branches excluding main/HEAD: $total"
+            echo "- Fully contained in main: $contained"
+            echo "- Current unmerged (ahead, not behind): $current_unmerged"
+            echo "- Divergent unmerged (ahead and behind): $divergent_unmerged"
+            echo "- Last commit at least 30 days old: $stale_30d"
+            echo
+            echo '| branch | SHA | age days | behind main | ahead main | contained | classification | subject |'
+            echo '| --- | --- | ---: | ---: | ---: | --- | --- | --- |'
+            cat branch-inventory-rows.md
+          } > branch-inventory.md
+          rm branch-inventory-rows.md
+          cat branch-inventory.md
+      - name: Record open pull requests
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh pr list --repo "$GITHUB_REPOSITORY" --state open --limit 100 --json number,title,headRefName,baseRefName,isDraft,updatedAt,url > open-pull-requests.json
+          jq -r '(["# Open pull requests", "", ("Count: " + (length|tostring)), "", "| PR | draft | head | base | updated | title |", "| ---: | --- | --- | --- | --- | --- |"] + map("| #\(.number) | \(.isDraft) | `\(.headRefName)` | `\(.baseRefName)` | \(.updatedAt) | \(.title | gsub("\\|"; " ")) |"))[]' open-pull-requests.json > open-pull-requests.md
+          cat open-pull-requests.md
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - name: Install exact locked dependencies
+        run: npm ci
       - name: Generate evidence-class audit
         shell: bash
         run: |
           set -euo pipefail
           node scripts/evidence-class-audit.mjs | tee evidence-class-audit.md
+          node scripts/evidence-class-audit.mjs --json > evidence-class-audit.json
       - name: Upload exact-head audit workspace
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: master-zero-gap-audit-${{ github.sha }}
+          name: master-zero-gap-audit-${{ env.EXACT_HEAD_SHA }}
           path: |
             repository-source.tar.gz
             repository-source.sha256
             exact-head.env
             master-zero-gap-inventory.md
+            branch-inventory.md
+            branch-inventory.tsv
+            open-pull-requests.json
+            open-pull-requests.md
             evidence-class-audit.md
+            evidence-class-audit.json
           if-no-files-found: error
           retention-days: 30
