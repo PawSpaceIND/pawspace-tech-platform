@@ -12,7 +12,7 @@ export type AiToolMode="read"|"mutation"|"approval_gated";
 export type AiToolCode=
  |"service_catalogue.read"|"customer_bookings.read"|"booking_status.read"|"provider_status.read"|"subscription_wallet.read"|"case_status.read"|"approved_knowledge.read"
  |"quote.request"|"booking.request"|"booking_reschedule.request"|"booking_cancel.request"|"case.create"|"staff_handoff.create"
- |"refund.issue"|"payment.capture"|"payout.release"|"price.override"|"provider.assign"|"campaign.activate";
+ |"refund.issue"|"payment.capture"|"payout.release"|"price.override"|"provider.assign"|"campaign.activate"|"communication.send"|"customer.merge";
 export type AiToolDefinition={code:AiToolCode;mode:AiToolMode;canonicalService:string;intents:AiToolIntent[];channels:AiToolChannel[];confirmationRequired:boolean;idempotencyRequired:boolean;staffPermissions:string[];description:string};
 
 const channels:AiToolChannel[]=["whatsapp","chat","voice"];
@@ -37,7 +37,30 @@ const registry:AiToolDefinition[]=[
  {code:"price.override",mode:"approval_gated",canonicalService:"deterministic-approval",intents:["service_info","booking_create"],channels,confirmationRequired:true,idempotencyRequired:true,staffPermissions:[],description:"Approval-gated; AI cannot override governed prices."},
  {code:"provider.assign",mode:"approval_gated",canonicalService:"deterministic-approval",intents:["booking_create","booking_change"],channels,confirmationRequired:true,idempotencyRequired:true,staffPermissions:[],description:"Approval-gated; AI cannot assign providers."},
  {code:"campaign.activate",mode:"approval_gated",canonicalService:"deterministic-approval",intents:["coupon"],channels,confirmationRequired:true,idempotencyRequired:true,staffPermissions:[],description:"Approval-gated; AI cannot activate campaigns."},
+ // ai-governance has always blocked `outbound_contact` and `customer_merge` as autonomous actions, but
+ // neither had a tool code here. The blocklist stops the AI naming the action; without a registered
+ // approval_gated entry there was nothing to REFUSE when a caller asked for the capability by tool
+ // code, and nothing on the snapshot telling a reviewer these two need a human. Every entry in
+ // forbiddenAutonomousActions must map to a tool code, which HIGH_IMPACT_TOOL_FOR_ACTION now pins.
+ {code:"communication.send",mode:"approval_gated",canonicalService:"deterministic-approval",intents:["support","booking_change","refund_review","human_handoff"],channels,confirmationRequired:true,idempotencyRequired:true,staffPermissions:[],description:"Approval-gated; AI cannot send an outbound customer communication."},
+ {code:"customer.merge",mode:"approval_gated",canonicalService:"deterministic-approval",intents:["support"],channels,confirmationRequired:true,idempotencyRequired:true,staffPermissions:[],description:"Approval-gated; AI cannot merge customer identities."},
 ];
+
+/**
+ * Every autonomous action ai-governance forbids, and the approval-gated tool code that refuses it.
+ * Exported so the mapping is one fact in one place: a new forbidden action with no tool code, or a
+ * tool code that stops being approval_gated, is a hole in the same wall.
+ */
+export const HIGH_IMPACT_TOOL_FOR_ACTION:Record<string,AiToolCode>={
+ refund:"refund.issue",
+ price_change:"price.override",
+ payment:"payment.capture",
+ payout:"payout.release",
+ outbound_contact:"communication.send",
+ customer_merge:"customer.merge",
+ provider_assignment:"provider.assign",
+ campaign_activation:"campaign.activate",
+};
 
 const forbiddenAuthoritativeFields=new Set(["price","total","totalAmount","amountDueNow","provider","providerId","provider_id","walletBalance","balance","refundAmount","paymentStatus","payoutAmount","discountAmount"]);
 const text=(v:unknown)=>String(v??"").trim();

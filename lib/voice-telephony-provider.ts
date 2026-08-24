@@ -17,6 +17,7 @@
  */
 
 import { callRecordingApproved, statusCallbackUrl, telephonyCredentialsConfigured, voiceMode, VOICE_TELEPHONY_SECRET_NAMES } from "./voice-call-gate";
+import { ProviderResponseTooLarge, readBoundedText as readBoundedResponseText } from "./provider-response-bounds";
 
 type Env = Record<string, unknown>;
 const val = (env: Env, key: string) => String(env?.[key] ?? "").trim();
@@ -202,28 +203,18 @@ export function normaliseTelephonyEvent(rawBody: string, provider: string): Tele
 const EXOTEL_TIMEOUT_MS = 12_000;
 const MAX_PROVIDER_RESPONSE_BYTES = 64 * 1024;
 
-/** Read a provider response with a hard byte cap, so a runaway body cannot exhaust the isolate. */
+/**
+ * Read a provider response with a hard byte cap, so a runaway body cannot exhaust the isolate. The
+ * loop itself lives in provider-response-bounds so the AI adapter cannot grow a second copy of it
+ * that drifts; only the telephony-specific failure type is added here.
+ */
 async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
-  const reader = response.body?.getReader();
-  if (!reader) {
-    const text = await response.text();
-    if (new TextEncoder().encode(text).byteLength > maxBytes) throw new TelephonyProviderUnavailable("Telephony provider response exceeded the size limit");
-    return text;
+  try {
+    return await readBoundedResponseText(response, maxBytes);
+  } catch (error) {
+    if (error instanceof ProviderResponseTooLarge) throw new TelephonyProviderUnavailable("Telephony provider response exceeded the size limit");
+    throw error;
   }
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (!value) continue;
-    total += value.byteLength;
-    if (total > maxBytes) { await reader.cancel().catch(() => {}); throw new TelephonyProviderUnavailable("Telephony provider response exceeded the size limit"); }
-    chunks.push(value);
-  }
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) { out.set(chunk, offset); offset += chunk.byteLength; }
-  return new TextDecoder().decode(out);
 }
 
 /**

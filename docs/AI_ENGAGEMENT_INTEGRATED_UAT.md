@@ -78,7 +78,7 @@ The integrated UAT step is closed only when:
 
 - the cumulative exact-head pull-request CI is green;
 - all existing Gate 1–9 regression contracts remain green;
-- the integrated contract test in `tests/ai-integrated-uat-closure.test.mjs` is green;
+- the integrated contract test in `tests/ai-integrated-uat-source-contract.test.mjs` is green;
 - production boundaries remain fail-closed/disconnected.
 
 ## Explicitly outside this closure

@@ -150,11 +150,11 @@ test("AI rollout staff_only: staff get the model, customers still get a human", 
 
   seedCustomer(sqlite, "CUS-B", "Bhavna", "9876500002");
   const staffMessage = await inboundMessage(sqlite, db, { threadId: "THREAD-B", customerId: "CUS-B", text: "What is the grooming price?", idempotencyKey: "ai-staff-1" });
-  const staffStub = connectedProvider("Grooming starts at Rs.1349 for a dog bath.");
+  const staffStub = connectedProvider("Grooming appointments are available for dog baths.");
   const staffTurn = await orchestrateAiTurn(db, { actor: staffActor, threadId: "THREAD-B", customerId: "CUS-B", inputMessageId: staffMessage, idempotencyKey: "ai-staff-1", channel: "chat", provider: staffStub.provider });
   assert.equal(staffTurn.turn.outcome, "draft_review_required", "staff preview gets a real model draft");
   assert.equal(staffStub.calls.length, 1);
-  assert.equal(staffTurn.turn.output, "Grooming starts at Rs.1349 for a dog bath.");
+  assert.equal(staffTurn.turn.output, "Grooming appointments are available for dog baths.");
 
   seedCustomer(sqlite, "CUS-C", "Chetan", "9876500003");
   const custMessage = await inboundMessage(sqlite, db, { threadId: "THREAD-C", customerId: "CUS-C", text: "What is the grooming price?", idempotencyKey: "ai-cust-1" });
