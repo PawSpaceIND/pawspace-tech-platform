@@ -179,6 +179,43 @@ test("createSittingQuote with split_50_50 halves amountDueNow; sandbox capture v
   await assert.rejects(() => captureSittingQuoteSandbox(db, { quoteId: quote.quoteId, amount: quote.totalAmount + 1, paymentKey: "stay-split-payment-test" }), (error) => error instanceof Response && error.status === 409);
 });
 
+test("live pricing preserves the governed 50/50 deposit for Boarding and Sitting", async () => {
+  const sqlite = new DatabaseSync(":memory:");
+  const db = makeD1(sqlite);
+  const { ensurePricingControlRuntime } = await import("../lib/pricing-control-runtime.ts");
+  const { createLiveBoardingQuote, createLiveSittingQuote } = await import("../lib/live-commercial-quotes.ts");
+  await ensurePricingControlRuntime(db);
+  sqlite.prepare("UPDATE service_packages SET active=1,base_price=800 WHERE package_code='boarding-24h'").run();
+  sqlite.prepare("UPDATE service_packages SET active=1,base_price=900 WHERE package_code='sitting-overnight'").run();
+  sqlite.prepare("UPDATE service_packages SET active=1,base_price=300 WHERE package_code='sitting-overnight__extra_pet'").run();
+  const boardingStart = new Date(Date.now() + 7 * 86400000), boardingEnd = new Date(boardingStart.getTime() + 2 * 86400000);
+  const boarding = await createLiveBoardingQuote(db, { packageCode: "boarding-24h", petCount: 2, scheduledStart: boardingStart.toISOString(), scheduledEnd: boardingEnd.toISOString(), paymentMode: "split_50_50" });
+  assert.equal(boarding.totalAmount, 800 * 2 * 2);
+  assert.equal(boarding.amountDueNow, boarding.totalAmount / 2);
+  assert.equal(sqlite.prepare("SELECT amount_due_now FROM boarding_commercial_quotes WHERE id=?").get(boarding.quoteId).amount_due_now, boarding.totalAmount / 2);
+  const sittingStart = new Date(Date.now() + 8 * 86400000), sittingEnd = new Date(sittingStart.getTime() + 2 * 86400000);
+  const sitting = await createLiveSittingQuote(db, { packageCode: "sitting-overnight", petCount: 2, scheduledStart: sittingStart.toISOString(), scheduledEnd: sittingEnd.toISOString(), paymentMode: "split_50_50" });
+  assert.equal(sitting.totalAmount, (900 + 300) * 2);
+  assert.equal(sitting.amountDueNow, sitting.totalAmount / 2);
+  assert.equal(sqlite.prepare("SELECT amount_due_now FROM sitting_commercial_quotes WHERE id=?").get(sitting.quoteId).amount_due_now, sitting.totalAmount / 2);
+});
+
+test("concurrent quote-table upgrades recheck schema after a duplicate-column race", async () => {
+  const boardingSqlite = new DatabaseSync(":memory:"), boardingDb = makeD1(boardingSqlite);
+  const boarding = await import("../lib/boarding-governance.ts");
+  await boarding.ensureBoardingGovernanceTables(boardingDb);
+  boardingSqlite.exec("ALTER TABLE boarding_commercial_quotes DROP COLUMN city_id; ALTER TABLE boarding_commercial_quotes DROP COLUMN zone_id;");
+  await Promise.all([boarding.ensureBoardingGovernanceTables(boardingDb), boarding.ensureBoardingGovernanceTables(boardingDb)]);
+  assert.deepEqual(boardingSqlite.prepare("PRAGMA table_info(boarding_commercial_quotes)").all().filter(row => ["city_id", "zone_id"].includes(row.name)).map(row => row.name).sort(), ["city_id", "zone_id"]);
+
+  const sittingSqlite = new DatabaseSync(":memory:"), sittingDb = makeD1(sittingSqlite);
+  const sitting = await import("../lib/sitting-governance.ts");
+  await sitting.ensureSittingGovernanceTables(sittingDb);
+  sittingSqlite.exec("ALTER TABLE sitting_commercial_quotes DROP COLUMN city_id; ALTER TABLE sitting_commercial_quotes DROP COLUMN zone_id;");
+  await Promise.all([sitting.ensureSittingGovernanceTables(sittingDb), sitting.ensureSittingGovernanceTables(sittingDb)]);
+  assert.deepEqual(sittingSqlite.prepare("PRAGMA table_info(sitting_commercial_quotes)").all().filter(row => ["city_id", "zone_id"].includes(row.name)).map(row => row.name).sort(), ["city_id", "zone_id"]);
+});
+
 // --- Contracts ---------------------------------------------------------------------------------
 
 test("gateway maps /api/stay-balance to scheduling.book (customer role reaches it; ownership enforced in-route)", () => {
@@ -207,6 +244,6 @@ test("stay-flow offers the governed 50/50 option for overnight stays longer than
   const flow = read("app/mobile-app/stay-flow.tsx");
   assert.match(flow, /const splitEligible = careWindow === "24 hours" && nights > 4;/);
   assert.match(flow, /paymentMode:splitEligible&&splitPayment\?"split_50_50":"prepaid"/);
-  assert.match(flow, /createSittingQuote\(\{packageCode,petCount:selectedPets\.length,scheduledStart:scheduledStart\.toISOString\(\),scheduledEnd:scheduledEnd\.toISOString\(\),paymentMode\}\)/);
+  assert.match(flow, /createSittingQuote\(\{packageCode,petCount:selectedPets\.length,cityId:serviceLocation\.assignment\.cityId,zoneId:serviceLocation\.assignment\.zoneId,scheduledStart:scheduledStart\.toISOString\(\),scheduledEnd:scheduledEnd\.toISOString\(\),paymentMode\}\)/);
   assert.doesNotMatch(flow, /"split"[^_]/, "legacy ungoverned 'split' mode must be gone from the flow");
 });

@@ -31,4 +31,4 @@ export async function POST(request:Request){try{const body=await request.json() 
     requirePermission(actor,"finance.manage");const rewardId=String(body.rewardId||""),reason=String(body.reason||"");const result=await reverseReferralReward(db,{rewardId,reason,actorId:actor.email});await securityAudit(db,actor,"referral.reverse_reward","referral_reward",rewardId,"completed",{reason,testOnly:true});return json({data:result,testOnly:true,liveMoney:false});
   }
   return json({error:"Unsupported referral action"},400);
-}catch(error){return authError(error,"Unable to update referral governance");}}
+}catch(error){if(error instanceof Error&&error.message==="Referral reward idempotency key was already used for a different reservation")return json({error:error.message},409);return authError(error,"Unable to update referral governance");}}
