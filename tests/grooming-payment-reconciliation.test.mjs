@@ -39,7 +39,8 @@ test("Grooming payment integration is sandbox-locked signed idempotent and recon
   assert.match(orderClient,/\/v1\/payment_links/);
   assert.match(orderClient,/accept_partial: false/);
   assert.match(engine,/createSandboxPaymentLink/);
-  assert.match(engine,/collectable:true/);
+  assert.match(engine,/collectable:expiresAt>now/);
+  assert.match(engine,/collectable:!settled&&!expired/);
   assert.match(finance,/payment_reconciliation_records/);
   assert.match(finance,/payment_reconciliation_exceptions/);
   assert.match(finance,/open_reconciliation_exceptions/);

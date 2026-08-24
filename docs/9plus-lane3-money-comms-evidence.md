@@ -74,7 +74,7 @@ case remained `connected:false` and produced no collectable truth.
 
 No synthetic value in automated tests is listed as an actual provider reference.
 
-## Required controlled UAT follow-up
+## Required UAT follow-up controls
 
 1. Add Razorpay **test-mode** key ID, key secret and distinct sandbox webhook secret to the isolated UAT
    environment; never copy live credentials or enable the live-capture approval flag.

@@ -60,17 +60,19 @@ export async function createPaymentOrder(env: RazorEnv, input: { bookingId: stri
  * Open a collectable post-service checkout. This boundary is deliberately sandbox-only: a provider
  * QR must never become an accidental production charge merely because live keys exist elsewhere.
  */
-export async function createSandboxPaymentLink(env: RazorEnv, input: { bookingId: string; paymentId: string; customerId: string; amount: number; currency: string }): Promise<PaymentLinkResult> {
+export async function createSandboxPaymentLink(env: RazorEnv, input: { bookingId: string; paymentId: string; customerId: string; amount: number; currency: string; expiresAt: number }): Promise<PaymentLinkResult> {
   const { environment, keyId, keySecret } = credentials(env);
   if (environment !== "sandbox") return { connected: false, environment, reason: "Post-service payment links are locked to Razorpay sandbox" };
   if (!keyId || !keySecret) return { connected: false, environment, reason: "Razorpay sandbox API credentials are not configured - payment link was not created" };
   if (!(input.amount > 0)) return { connected: false, environment, reason: "A positive payable amount is required to create a payment link" };
+  if (!Number.isFinite(input.expiresAt) || input.expiresAt <= Date.now()) return { connected: false, environment, reason: "A future payment-link expiry is required" };
   try {
     const response = await fetch("https://api.razorpay.com/v1/payment_links", {
       method: "POST",
       headers: { authorization: `Basic ${btoa(`${keyId}:${keySecret}`)}`, "content-type": "application/json" },
       body: JSON.stringify({
         amount: Math.round(input.amount * 100), currency: input.currency, accept_partial: false,
+        expire_by: Math.floor(input.expiresAt / 1000),
         reference_id: input.paymentId.slice(0, 40), description: `PawSpace booking ${input.bookingId}`,
         notes: { booking_id: input.bookingId, payment_id: input.paymentId, customer_id: input.customerId, pawspace_environment: "sandbox" },
       }),
