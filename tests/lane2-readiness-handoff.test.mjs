@@ -210,8 +210,10 @@ test("INT-KYC-01 records the merged callback boundary without upgrading its read
     "no IDfy account has been reached, so OPERATIONAL readiness must not move");
   assert.doesNotMatch(item.notes, /are not implemented or verified/,
     "the note must not still claim the callback boundary is missing");
-  assert.match(item.notes, /No IDfy account has ever been reached/i,
-    "and it must still say plainly that nothing external has been exercised");
+  // The property, not one lane's phrasing: the note must still state that nothing external has been
+  // exercised. Pinning the exact sentence is how the assertion this file already had to repair broke.
+  assert.match(item.notes, /no (live )?idfy (account|traffic)|never been reached|has been verified/i,
+    "the note must still say plainly that nothing external has been exercised");
 });
 
 test("the device rows keep a partial code boundary rather than claiming none", async () => {

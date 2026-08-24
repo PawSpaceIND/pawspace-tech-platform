@@ -264,6 +264,37 @@ function workerProcessSignals(source) {
   return { configs, localRequest };
 }
 
+/** A hosted signal is a real fetch argument dependency, not matching prose in a fixture/comment. */
+function hostedProviderSignal(source) {
+  const file = ts.createSourceFile("hosted-test.mts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  let hosted = false;
+  function environmentName(node) {
+    if (!ts.isPropertyAccessExpression(node)) return null;
+    const env = node.expression;
+    if (!ts.isPropertyAccessExpression(env) || env.name.text !== "env") return null;
+    return ts.isIdentifier(env.expression) && env.expression.text === "process" ? node.name.text : null;
+  }
+  function containsHostedEnvironment(node) {
+    const name = environmentName(node);
+    if (name && /^PAWSPACE_(HOSTED|PROVIDER)_[A-Z_0-9]+$/.test(name)) return true;
+    let found = false;
+    ts.forEachChild(node, child => { if (!found && containsHostedEnvironment(child)) found = true; });
+    return found;
+  }
+  function visit(node) {
+    if (hosted) return;
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      const isFetch = (ts.isIdentifier(callee) && callee.text === "fetch")
+        || (ts.isPropertyAccessExpression(callee) && callee.name.text === "fetch");
+      if (isFetch && node.arguments.some(containsHostedEnvironment)) { hosted = true; return; }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(file);
+  return hosted;
+}
+
 function wranglerEntry(configPath, repoRoot) {
   try {
     const raw = fs.readFileSync(path.join(repoRoot, configPath), "utf8").replace(/^\s*\/\/[^\n]*$/gm, "");
@@ -287,7 +318,7 @@ function collectSignals(file, repoRoot, seen = new Set()) {
   // A deployed origin or provider host supplied by the environment - the only way a suite here can
   // reach something it did not itself construct. A literal https:// inside a test is an assertion
   // fixture, not traffic, so it deliberately does not count.
-  if (/fetch\s*\([^)]*process\.env\.(PAWSPACE_HOSTED_[A-Z_0-9]+|PAWSPACE_PROVIDER_[A-Z_0-9]+)/s.test(source)) signals.hosted = true;
+  signals.hosted = hostedProviderSignal(source);
 
   const worker = workerProcessSignals(source);
   for (const config of worker.configs) signals.workerConfigs.add(config);
