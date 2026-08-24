@@ -229,27 +229,31 @@ test was added to make the total agree.
 | IDfy callback | 13 | approved · rejected · ambiguous→review · four forgery attempts · not-connected · stale and future signature · unknown reference · IDfy-off correlation · replay · manual/automated separation both directions · malformed body ordering · missing ids |
 | Assignment gating | 4 | partial mandate · full mandate then revocation · host mandate unsatisfiable by automation alone · empty mandate never reads as satisfied |
 | Location authorization | 1 | the exported action→permission map, and `requirePermission` ordered before any table creation |
-| **PR #305 review remediation** | **25** | the ten findings below (two review rounds), each executed against the defect before it was fixed |
+| **PR #305 review remediation** | **25** | findings F1-F10 below (two review rounds), each executed against the defect before it was fixed |
 | **Total** | **70** | |
 
 ---
 
 ## 2a. PR #305 review remediation — eight findings, all validated by execution first
 
-Nine review threads carried eight distinct findings (negative accuracy was reported twice). **Every one
+Nine review threads carried eight distinct findings, F1-F8 (negative accuracy was reported on two
+separate threads, so F5 answers both). Findings carry their own **F** identifiers throughout this
+document; the "Review thread(s)" column counts how many threads raised each one, so a finding number is
+never confused with a thread count. **Every one
 was reproduced by running the code before anything was changed.** None was accepted on description alone
 and none was dismissed without counter-evidence.
 
-| # | Finding | Measured before the fix |
-|---|---|---|
-| 1 | Callback body not bounded while streaming | a chunked body with no content-length delivered **40 MiB in full**, stream never cancelled, *then* 413. And `raw.length` counts UTF-16 units, so 40,000 multibyte characters — **80,000 bytes** — measured 40,000 and passed a 65,536 limit |
-| 2 | Nonterminal callback regressed a terminal outcome | a late `in_progress` on a `verified` row wrote `manual_review`; `canTakeAssignments` went **true → false**, revoking a provider who had already passed |
-| 3 | A refused callback poisoned its event id | 404, then the retry that should have succeeded returned `{accepted:true, status:200, outcome:"unmatched", duplicate:true}` — the provider stops retrying, the response claims success, and the record stays `manual_review` **forever** |
-| 3b | A D1 read failure became an unmatched 404 | `.catch(() => null)` mapped an infrastructure error onto "no such reference" |
-| 4 | Signature computed over a re-serialised timestamp | `"…0"`, `"+…"` and a leading zero all pass `Number.isFinite` and then serialise differently — a correctly signed callback 401s and never settles |
-| 5/9 | Negative accuracy treated as excellent accuracy | `accuracyMeters: -1` stored **`accepted`** and **drove a configured, customer-facing ETA** |
-| 6 | An incomplete 200 stored as a route | `{"routes":[{}]}` → `configured` with distance 0 and **no duration**; `"abc"` → `configured` with distance **NULL** |
-| 7 | Timeout swallowed on a stalled body | the request waited the full 10 s and then reported **`"Routes API returned 200"`** |
+| Finding | Review thread(s) | Issue | Measured before the fix |
+|---|---|---|---|
+| **F1** | 1 | Callback body not bounded while streaming | a chunked body with no content-length delivered **40 MiB in full**, stream never cancelled, *then* 413. And `raw.length` counts UTF-16 units, so 40,000 multibyte characters — **80,000 bytes** — measured 40,000 and passed a 65,536 limit |
+| **F2** | 1 | Nonterminal callback regressed a terminal outcome | a late `in_progress` on a `verified` row wrote `manual_review`; `canTakeAssignments` went **true → false**, revoking a provider who had already passed |
+| **F3** | 1 | A refused callback poisoned its event id | 404, then the retry that should have succeeded returned `{accepted:true, status:200, outcome:"unmatched", duplicate:true}` — the provider stops retrying, the response claims success, and the record stays `manual_review` **forever** |
+| **F3b** | (same thread) | A D1 read failure became an unmatched 404 | `.catch(() => null)` mapped an infrastructure error onto "no such reference" |
+| **F4** | 1 | Signature computed over a re-serialised timestamp | `"…0"`, `"+…"` and a leading zero all pass `Number.isFinite` and then serialise differently — a correctly signed callback 401s and never settles |
+| **F5** | **2 (duplicate reports)** | Negative accuracy treated as excellent accuracy | `accuracyMeters: -1` stored **`accepted`** and **drove a configured, customer-facing ETA** |
+| **F6** | 1 | An incomplete 200 stored as a route | `{"routes":[{}]}` → `configured` with distance 0 and **no duration**; `"abc"` → `configured` with distance **NULL** |
+| **F7** | 1 | Timeout swallowed on a stalled body | the request waited the full 10 s and then reported **`"Routes API returned 200"`** |
+| **F8** | 1 | The evidence table did not add up | it claimed **45** against rows summing to **43** — and enumeration showed the table was the wrong half: the GPS group held **13**, not `1 + 11`, and media **9**, not 8 |
 
 ### How each was fixed
 
@@ -303,18 +307,18 @@ malformed body into an exception.
 | F6 incomplete route accepted as `configured` | 2 |
 | F7 `AbortError` swallowed from `response.json()` | 1 |
 
-### Second review round — two further findings, both validated by execution first
+### Second review round — F9 and F10, both validated by execution first
 
-| # | Finding | Measured **before** the fix |
-|---|---|---|
-| 9 | Maps coerced malformed metric **types** | `Number()` is not a validator: `Number(null)`, `Number("")`, `Number(false)` and `Number([])` are all `0`, so `{"distanceMeters": null, "duration": "90s"}` was reported **`configured`** carrying a distance of zero the provider never sent. `seconds()` stringifies, so `["90s"]` coerced to a valid duration the same way |
-| 10 | The monotonic rule was not concurrency-safe | read → decide → write left a window. Deterministic interleaving from a `pending` start: A (`in_progress`) reads, B (`verified`) commits, A resumes and writes `manual_review` over it — **`canTakeAssignments` true → false**, exactly what the rule exists to prevent |
+| Finding | Review thread | Issue | Measured **before** the fix |
+|---|---|---|---|
+| **F9** | `bkoDM` | Maps coerced malformed metric **types** | `Number()` is not a validator: `Number(null)`, `Number("")`, `Number(false)` and `Number([])` are all `0`, so `{"distanceMeters": null, "duration": "90s"}` was reported **`configured`** carrying a distance of zero the provider never sent. `seconds()` stringifies, so `["90s"]` coerced to a valid duration the same way |
+| **F10** | `bkoDO` | The monotonic rule was not concurrency-safe | read → decide → write left a window. Deterministic interleaving from a `pending` start: A (`in_progress`) reads, B (`verified`) commits, A resumes and writes `manual_review` over it — **`canTakeAssignments` true → false**, exactly what the rule exists to prevent |
 
-**9.** Type first, then range. Each metric must already *be* the type it claims before any range check
+**F9.** Type first, then range. Each metric must already *be* the type it claims before any range check
 means anything. A genuine numeric **zero** is still a route — arrival at the door — and a complete
 response still carries both measures through, so the check is pinned on both sides.
 
-**10.** Fixed with **one atomic conditional UPDATE**, not a re-read-and-retry: the rule now lives in the
+**F10.** Fixed with **one atomic conditional UPDATE**, not a re-read-and-retry: the rule now lives in the
 `WHERE` clause, so there is no window between deciding and writing at all. A terminal outcome may
 overwrite anything; a non-decision may only overwrite a row that has not been decided. **The rule is
 unchanged and no new status was introduced** — it simply moved to where it is enforced atomically
