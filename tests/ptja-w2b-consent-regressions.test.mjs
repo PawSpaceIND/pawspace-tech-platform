@@ -177,3 +177,103 @@ test("W2B-C08: a customer who has opted in on both stores is still reachable", a
   assert.equal(decision.allowed, true,
     `a customer who has opted in on both stores stays reachable: ${JSON.stringify(decision)}`);
 });
+
+// =====================================================================================================
+// PTJA-W2B-C03 — a frequency cap of 0 disables the cap entirely
+//
+// automationDecision guards the whole frequency-cap block on the TRUTHINESS of max_contacts:
+//   if(policy.max_contacts && policy.window_hours){ ...cap... }
+// so the stored value 0 is indistinguishable from NULL / "not configured" and the block never runs. The
+// write side accepts 0 deliberately - save_policy validates only that the value is finite and not
+// negative - so the STRICTEST setting the API offers produces UNLIMITED dispatches.
+//
+// MEASURED: policy marketing:whatsapp saved with maxContacts 0, then five queue calls - all five
+// returned 201 {"queued":true,"reason":"allowed"}. The control with maxContacts 2 capped at two.
+//
+// Absence and zero are now distinguished: a configured 0 means zero contacts allowed.
+// =====================================================================================================
+
+async function automationWorld(maxContacts) {
+  const { sqlite, db } = world();
+  const automation = await import("../lib/crm-automation-governance.ts");
+  await automation.ensureCrmAutomationGovernance(db);
+  await db.prepare("CREATE TABLE IF NOT EXISTS customer_contact_preferences (customer_id TEXT PRIMARY KEY,marketing_consent INTEGER DEFAULT 0,service_consent INTEGER DEFAULT 1,whatsapp_consent INTEGER DEFAULT 0,sms_consent INTEGER DEFAULT 0,email_consent INTEGER DEFAULT 0,source TEXT,updated_by TEXT,updated_at INTEGER)").run();
+  await db.prepare("INSERT INTO customer_contact_preferences (customer_id,marketing_consent,service_consent,whatsapp_consent,sms_consent,email_consent,source,updated_by,updated_at) VALUES ('CUST-M',1,1,1,1,1,'staff','ops',?)").bind(Date.now()).run();
+  await db.prepare("INSERT OR REPLACE INTO crm_automation_policy (policy_key,enabled,quiet_start_hour,quiet_end_hour,max_contacts,window_hours,max_attempts,retry_minutes,updated_by,updated_at) VALUES ('marketing:whatsapp',1,NULL,NULL,?,24,3,5,'ops',?)")
+    .bind(maxContacts, Date.now()).run();
+  const decide = () => automation.automationDecision(db, { customerId: "CUST-M", journeyCode: "winback", channel: "whatsapp", purpose: "marketing" });
+  return { sqlite, db, automation, decide };
+}
+
+test("W2B-C03: a configured frequency cap of 0 allows nothing", async () => {
+  const { decide } = await automationWorld(0);
+  const decision = await decide();
+  assert.equal(decision.allowed, false,
+    `the strictest cap the API accepts must not mean "no cap": ${JSON.stringify(decision)}`);
+});
+
+test("W2B-C03: an unset cap still means unlimited, and a real cap still counts", async () => {
+  // Non-vacuity in both directions: NULL must keep meaning "not configured", and an ordinary cap must
+  // still admit dispatches up to its limit.
+  const unset = await automationWorld(null);
+  assert.equal((await unset.decide()).allowed, true, "an unconfigured cap does not block");
+
+  const capped = await automationWorld(2);
+  assert.equal((await capped.decide()).allowed, true, "a cap of 2 admits the first dispatch");
+});
+
+// =====================================================================================================
+// PTJA-W2B-C06 — a caller-supplied future asOf fabricates SLA breaches and sends premature notices
+//
+// The only check on asOf was finiteness. The value flows into runStaffAlertSweep as
+// `input.asOf ?? Date.now()` and from there into every `due_at<=?` predicate, so a future timestamp
+// makes the entire open case backlog look overdue at once.
+//
+// MEASURED: a case created seconds earlier, with first_response_due_at now+90min and nothing overdue.
+// POST /api/staff-alerts {"action":"sweep","asOf":9999999999999} returned created=3 and
+// customerNotifications {"attempted":2,"enqueued":2} - real "your case is overdue" messages enqueued to
+// a real customer. The control with asOf=Date.now() returned created=0, attempted=0. And because the
+// communication idempotency key omits the sweep clock, the GENUINE later notice is then permanently
+// duplicatePrevented - the customer gets the wrong message now and never gets the right one.
+//
+// A sweep answers "what is overdue as of now". It cannot legitimately be asked about the future, so a
+// future asOf is refused. Sweeping a PAST moment is untouched - that is a legitimate backfill.
+// =====================================================================================================
+
+test("W2B-C06: a future sweep clock sends no customer notices", async () => {
+  const { db } = world();
+  const alerts = await import("../lib/staff-alert-center.ts");
+  await alerts.ensureStaffAlertTables(db);
+  const now = Date.now();
+  const cases = await import("../lib/unified-case-center.ts");
+  await cases.ensureUnifiedCaseTables(db);
+  await db.prepare("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)").run();
+  await db.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,created_at,updated_at) VALUES ('CUST-1','blr','Meera','+919845012345',?,?)").bind(now, now).run();
+  // a case with 90 minutes still to run - nothing is overdue
+  await db.prepare("INSERT INTO unified_cases (id,idempotency_key,case_type,severity,status,title,description,customer_id,booking_id,source_type,source_id,owner_team,first_response_due_at,manager_escalation_due_at,resolution_due_at,created_by,updated_by,created_at,updated_at) VALUES ('CASE-1','idem-1','customer_complaint','medium','open','Groomer was late','Late by an hour','CUST-1','BKG-1','manual','src-1','customer_support',?,?,?,'ops','ops',?,?)")
+    .bind(now + 90 * 60_000, now + 180 * 60_000, now + 1080 * 60_000, now, now).run();
+
+  const future = await alerts.runStaffAlertSweep(db, { actorId: "ops", asOf: 9999999999999 });
+  assert.equal(Number(future.customerNotifications?.enqueued || 0), 0,
+    `a sweep evaluating the future must send no customer notice: ${JSON.stringify(future.customerNotifications)}`);
+  assert.equal(Number(future.customerNotifications?.attempted || 0), 0, "and must not even attempt one");
+});
+
+test("W2B-C06: a genuinely overdue case at the real clock still notifies", async () => {
+  // Non-vacuity. Silencing every notice would satisfy the case above and remove the feature.
+  const { db } = world();
+  const alerts = await import("../lib/staff-alert-center.ts");
+  await alerts.ensureStaffAlertTables(db);
+  const now = Date.now();
+  const cases = await import("../lib/unified-case-center.ts");
+  await cases.ensureUnifiedCaseTables(db);
+  await db.prepare("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)").run();
+  await db.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,created_at,updated_at) VALUES ('CUST-1','blr','Meera','+919845012345',?,?)").bind(now, now).run();
+  // genuinely overdue, at the real clock
+  await db.prepare("INSERT INTO unified_cases (id,idempotency_key,case_type,severity,status,title,description,customer_id,booking_id,source_type,source_id,owner_team,first_response_due_at,manager_escalation_due_at,resolution_due_at,created_by,updated_by,created_at,updated_at) VALUES ('CASE-2','idem-2','customer_complaint','medium','open','Groomer was late','Late by an hour','CUST-1','BKG-1','manual','src-2','customer_support',?,?,?,'ops','ops',?,?)")
+    .bind(now - 90 * 60_000, now - 30 * 60_000, now + 600 * 60_000, now - 200 * 60_000, now).run();
+
+  const real = await alerts.runStaffAlertSweep(db, { actorId: "ops" });
+  assert.ok(Number(real.customerNotifications?.attempted || 0) > 0,
+    `a genuinely overdue case at the real clock still notifies: ${JSON.stringify(real.customerNotifications)}`);
+});

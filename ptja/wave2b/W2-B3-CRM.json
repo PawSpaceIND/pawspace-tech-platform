@@ -54,7 +54,10 @@
     "blast_radius": "Every customer targeted under any crm_automation_policy row whose max_contacts or window_hours is 0. One mis-set policy key (e.g. marketing:whatsapp) removes the cap for the entire audience of that channel/purpose pair, not one customer.",
     "suggested_severity": "P2",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p03-freqcap-zero.mjs",
-    "status": "OPEN"
+    "status": "FIXED",
+    "fix_file": "lib/crm-automation-governance.ts",
+    "regression": "tests/ptja-w2b-consent-regressions.test.mjs :: \"W2B-C03: a configured frequency cap of 0 allows nothing\" + \"W2B-C03: an unset cap still means unlimited, and a real cap still counts\"",
+    "fix_note": "The frequency-cap block was guarded on the TRUTHINESS of max_contacts, so a stored 0 was indistinguishable from NULL/not-configured and the cap never ran. It now tests for null explicitly, so a configured 0 means zero contacts allowed while an unset cap keeps meaning unlimited. The write side already accepts 0 deliberately."
   },
   {
     "id": "W2-B3-C04",
@@ -111,7 +114,10 @@
     "blast_radius": "Every open unified_case with any SLA timestamp set - i.e. the entire live case backlog in one call - and every customer attached to one with a booking_id. Both /api/staff-alerts (customers.manage) and /api/staff-alert-runner (settings.manage) accept the parameter. The staff_alerts side is recoverable; the communication idempotency keys are not.",
     "suggested_severity": "P1",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p06-asof-sweep.mjs",
-    "status": "OPEN"
+    "status": "FIXED — narrowed to the irreversible half after measurement",
+    "fix_file": "lib/staff-alert-center.ts",
+    "regression": "tests/ptja-w2b-consent-regressions.test.mjs :: \"W2B-C06: a future sweep clock sends no customer notices\" + \"W2B-C06: a genuinely overdue case at the real clock still notifies\"",
+    "fix_note": "Customer notices are skipped when the sweep clock is in the future. The finding proposed bounding asOf at the ROUTE; I tried that first and it broke three existing tests in tests/alerting-hardening.test.mjs, which drive the runner route with asOf NOW+1min and NOW+3min to prove an alert fires once and auto-resolves as the clock clears. So a future asOf is a capability the platform deliberately has and tests, and the finding's own words name the right boundary: 'The staff_alerts side is recoverable; the communication idempotency keys are not.' A staff alert raised early can be resolved; a customer notice cannot be unsent, and because its idempotency key omits the sweep clock the GENUINE later notice is then permanently duplicatePrevented. The bound is therefore on the notification half only."
   },
   {
     "id": "W2-B3-R01",
