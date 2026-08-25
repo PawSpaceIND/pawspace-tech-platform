@@ -5,9 +5,10 @@ import{uatLoginEnabled}from"../../../lib/uat-staging-auth";
 // separate from lib/provider-public-profile.ts).
 import { getHostProfile, seedDemoHostProfiles } from "../../../lib/host-profiles";
 
-async function runtime() {
+type HostProfileEnv={DB:D1Database;PAWSPACE_UAT_LOGIN?:unknown;PAWSPACE_UAT_SIGNING_KEY?:unknown};
+async function runtime():Promise<HostProfileEnv> {
   const { env } = await import("cloudflare:workers");
-  return env as unknown as Record<string, unknown> & {DB:D1Database};
+  return env as unknown as HostProfileEnv;
 }
 
 export async function GET(request: Request) {
