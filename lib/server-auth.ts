@@ -1,7 +1,7 @@
 import { defaultRoles, hasPermission, parsePermissions, type Permission } from "./platform-security";
 import {ensureIdentityBindingTables,findIdentityBinding,type IdentitySource,type PrincipalType} from "./identity-binding";
 import {resolvePlatformSession} from "./platform-session";
-import {resolveUatStaffActor,signInRequiredResponse,uatLoginEnabled} from "./uat-staging-auth";
+import {resolveUatStaffActor,signInRequiredResponse} from "./uat-staging-auth";
 import {governedJsonError,isGovernedHttpError,markGovernedHttpError} from "./governed-http-error";
 
 type Db = Awaited<ReturnType<typeof database>>;
@@ -76,17 +76,7 @@ export function requirePermission(actor:AuthenticatedActor,permission:Permission
   return actor;
 }
 
-export async function authorize(request:Request,permission:Permission){
-  const actor=requirePermission(await resolveActor(request),permission);
-  // The Layer-2 booking swarm writes a large synthetic dataset. Its confirmation token is an
-  // operator guard, not an environment boundary, so never return authority for that route unless
-  // both isolated UAT sign-in and sandbox payments are active.
-  if(new URL(request.url).pathname==="/api/prelaunch-booking-swarm"){
-    const {env}=await import("cloudflare:workers"),uatEnv=env as unknown as Record<string,unknown>;
-    if(!uatLoginEnabled(uatEnv)||String(uatEnv.PAWSPACE_PAYMENT_ENV||"")!=="sandbox")throw authFailure("Prelaunch swarm is available only in the isolated UAT sandbox",403);
-  }
-  return actor;
-}
+export async function authorize(request:Request,permission:Permission){return requirePermission(await resolveActor(request),permission);}
 
 export async function requireCustomerOwnership(db:Db,actor:AuthenticatedActor,customerId:string){
   if(actor.developmentPreview||hasPermission(actor.permissions,"customers.manage")||hasPermission(actor.permissions,"bookings.manage"))return actor;
