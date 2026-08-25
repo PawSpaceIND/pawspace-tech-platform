@@ -1,7 +1,7 @@
 import type { Booking, Pet, PlatformRepository, Provider, ProviderAvailability } from "../../../backend/src/domain";
 import { schedule, type CustomScheduleRule, type ScheduleDecision, type ScheduleRequest, type SchedulingService } from "../../../backend/src/scheduling";
 import {createAssignmentOffer,getGovernedProvider,loadGovernedProviders,seedProviderCapacityDefaults} from "../../../lib/provider-capacity-governance";
-import {authError,requireCustomerOwnership,resolveActor,securityAudit,type AuthenticatedActor} from "../../../lib/server-auth";
+import {authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit,type AuthenticatedActor} from "../../../lib/server-auth";
 import {cleanupExpiredReservationLeases,ensureSchedulingReservationLeaseGovernance,reservationLeaseForRequest,SCHEDULING_RESERVATION_LEASE_MS} from "../../../lib/scheduling-reservation-leases";
 
 
@@ -58,7 +58,26 @@ async function operateAssignment(db:Awaited<ReturnType<typeof database>>,input:R
   await securityAudit(db,actor,`scheduling.${input.action}`,"scheduling_group",groupId,"completed",{fromProviderId:previousProviderId,toProviderId:decision.provider.id,reason:input.reason??null});
   return json({data:{groupId,status:"assigned",provider:decision.provider,previousProviderId,offer,shortlist:decision.shortlist,explanation:decision.explanation}});}
 
-export async function POST(request:Request){try{const db=await database();const input=await request.json() as RequestBody;if(input.action&&input.action!=="reserve"){await seedProviderCapacityDefaults(db);await ensureSchedulingTables(db);const actor=await resolveActor(request);return operateAssignment(db,input,actor);}if(!input.clientRequestId||!input.customerId||!input.petIds?.length||!input.serviceCode||!input.scheduledStart||!input.scheduledEnd)return json({error:"Missing scheduling fields"},400);const actor=await resolveActor(request);await requireCustomerOwnership(db,actor,input.customerId);await seedProviderCapacityDefaults(db);await ensureSchedulingTables(db);await cleanupExpiredReservationLeases(db);const lease=await reservationLeaseForRequest(db,request,input.customerId);
+export async function POST(request:Request){try{const db=await database();const input=await request.json() as RequestBody;
+  // Identity BEFORE field validation, so an unauthenticated caller is answered 401 rather than being
+  // told which fields it got wrong. tests/route-authorization-class.test.mjs enforces this ordering for
+  // every guarded route, and adding the gate below brought this one into that set.
+  const actor=await resolveActor(request);
+  if(input.action&&input.action!=="reserve"){
+  // The SECOND gate. lib/api-gateway.ts already maps this path to scheduling.manage for any action other
+  // than reserve, and the worker sends every /api/ request through it - executed, a customer session is
+  // refused 403 there. But this handler had no authorization of its own, while the reserve branch three
+  // lines down calls requireCustomerOwnership, so anything reaching the handler without the gateway
+  // (an internal server-side call, a future route composition) could cancel, reassign or manually
+  // override ANY scheduling group by id. Same permission the gateway declares, named here on purpose -
+  // the convention this repository already follows in app/api/location-recovery/route.ts. [PTJA-P1-F36]
+  requirePermission(actor,"scheduling.manage");await seedProviderCapacityDefaults(db);await ensureSchedulingTables(db);return operateAssignment(db,input,actor);}// Reserve is the customer's own path. Identity, then ownership, then the payload - in that order, so
+  // an unauthorized caller is never answered "Missing scheduling fields" instead of being refused. For a
+  // customer-owned write, an absent customerId is an ownership failure and not a shape failure:
+  // requireCustomerOwnership refuses it, which is why it runs before the field check rather than after.
+  // scheduling.book is the permission the gateway already declares for reserve, named here on purpose.
+  requirePermission(actor,"scheduling.book");await requireCustomerOwnership(db,actor,input.customerId);
+  if(!input.clientRequestId||!input.customerId||!input.petIds?.length||!input.serviceCode||!input.scheduledStart||!input.scheduledEnd)return json({error:"Missing scheduling fields"},400);await seedProviderCapacityDefaults(db);await ensureSchedulingTables(db);await cleanupExpiredReservationLeases(db);const lease=await reservationLeaseForRequest(db,request,input.customerId);
   // Host selection is a pure request-shape check needing no data access, so it answers first and keeps
   // its own error contract. The boarding pet authority gate moved below it still runs before ANY capacity
   // is reserved, which is what issue #197 item 4 requires.
@@ -66,7 +85,13 @@ export async function POST(request:Request){try{const db=await database();const 
   if(!AUTO_ASSIGN_SERVICES.has(input.serviceCode)&&!input.preferredProviderId&&(input.assignmentStrategy??"auto")!=="admin_choice")return json({error:"host_selection_required",message:"Boarding and pet sitting are host-selected — choose a host before confirming. Auto-assignment is disabled for these services."},409);
   if(input.serviceCode==="boarding"){if(!await tableExists(db,"canonical_pets"))return json({error:"Boarding requires canonical pet records before capacity can be reserved"},409);for(const petId of input.petIds){const pet=await db.prepare("SELECT customer_id,vaccination_status FROM canonical_pets WHERE id=?").bind(petId).first<Record<string,unknown>>();if(!pet||String(pet.customer_id)!==input.customerId)return json({error:"Boarding pet ownership could not be verified before reservation"},403);if(String(pet.vaccination_status)!=="verified")return json({error:"Boarding requires verified vaccination for every selected pet"},409);}}const prior=await db.prepare("SELECT * FROM scheduling_assignment_decisions WHERE group_id=?").bind(input.clientRequestId).first<Record<string,unknown>>();if(prior){const provider=prior.selected_provider_id?await getGovernedProvider(db,String(prior.selected_provider_id)):null;return json({data:{groupId:input.clientRequestId,status:prior.status,provider,duplicatePrevented:true}});}await seedUatRoster(input,db);const rules=await activeRules(db,input);const requestInput:ScheduleRequest={cityId:cityIdFor(input),zoneId:input.zoneId,serviceCode:input.serviceCode,petIds:input.petIds,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,occurrences:input.occurrences,cadenceDays:input.cadenceDays,weekdays:input.weekdays,careMode:input.careMode,preferredProviderId:input.preferredProviderId,customRules:rules};const decision=await schedule(repository(db),requestInput);if(!decision.provider)return json({error:"NO_SCHEDULE_AVAILABLE",evaluations:decision.evaluations},409);const strategy=input.assignmentStrategy??"auto";if(strategy==="admin_choice"){await saveDecision(db,input.clientRequestId,strategy,input,decision,"awaiting_admin");return json({data:{groupId:input.clientRequestId,status:"awaiting_admin",shortlist:decision.shortlist,explanation:decision.explanation}});}try{await insertReservations(db,input.clientRequestId,input,decision,lease);}catch(error){if(error instanceof SlotConflictError){const winner=await db.prepare("SELECT * FROM scheduling_assignment_decisions WHERE group_id=?").bind(input.clientRequestId).first<Record<string,unknown>>();if(winner&&winner.selected_provider_id)return json({data:{groupId:input.clientRequestId,status:String(winner.status),provider:await getGovernedProvider(db,String(winner.selected_provider_id)),duplicatePrevented:true}});return json({error:"SLOT_TAKEN",message:"Another reservation took this provider/slot a moment ago — pick a different time or retry for the next eligible provider"},409);}throw error;}await saveDecision(db,input.clientRequestId,strategy,input,decision,"assigned",decision.provider.id,"system","Auto-assigned by ranked rules");const offer=decision.provider.model==="commission"?await createAssignmentOffer(db,{groupId:input.clientRequestId,providerId:decision.provider.id}):null;return json({data:{groupId:input.clientRequestId,status:"assigned",provider:decision.provider,mode:decision.mode,offer,occurrences:decision.occurrences,shortlist:decision.shortlist,explanation:decision.explanation,evaluations:decision.evaluations}});}catch(error){return authError(error,"Scheduling failed");}}
 
-export async function GET(request:Request){try{const db=await database();const url=new URL(request.url);const date=String(url.searchParams.get("date")||"").trim()||new Date(Date.now()+330*60_000).toISOString().slice(0,10);if(!/^\d{4}-\d{2}-\d{2}$/.test(date))return json({error:"A valid IST date (YYYY-MM-DD) is required"},400);
+export async function GET(request:Request){try{
+  // The day board lists every reservation in a day - group, provider, service, zone and the CUSTOMER ID
+  // of each one. lib/api-gateway.ts already maps this path to scheduling.manage for GET, and the worker
+  // sends every /api/ request through it, but this handler had no identity check of its own and
+  // answered 200 to an anonymous caller. Second gate, same permission the gateway declares. [PTJA-P1-F36]
+  requirePermission(await resolveActor(request),"scheduling.manage");
+  const db=await database();const url=new URL(request.url);const date=String(url.searchParams.get("date")||"").trim()||new Date(Date.now()+330*60_000).toISOString().slice(0,10);if(!/^\d{4}-\d{2}-\d{2}$/.test(date))return json({error:"A valid IST date (YYYY-MM-DD) is required"},400);
   const dayStart=new Date(`${date}T00:00:00+05:30`).toISOString(),dayEnd=new Date(new Date(dayStart).getTime()+86_400_000).toISOString();
   if(!await tableExists(db,"scheduling_reservations"))return json({data:{date,dayStartUtc:dayStart,dayEndUtc:dayEnd,providers:[],total:0}});
   const hasProfiles=await tableExists(db,"provider_capacity_profiles"),hasDecisions=await tableExists(db,"scheduling_assignment_decisions");
