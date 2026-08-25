@@ -474,6 +474,92 @@ test("P1-F50: a provider with no onboarding application is left alone", async ()
 });
 
 // ---------------------------------------------------------------------------
+// PTJA-P1-F52 — two concurrent activations of ONE application mint TWO provider identities
+//
+// activateProviderUat generated `PROV-${crypto.randomUUID()}` whenever application.provider_id was
+// empty, inserted a provider_capacity_profiles row under it, and only wrote provider_id back afterwards.
+// Two calls interleaved in that window therefore both fulfilled: two capacity profiles, two activation
+// runs, and the application bound to whichever wrote last. Serialised activation was always safe; only
+// the concurrent window duplicated.
+//
+// The orphan is the dangerous half, because every governance control in this system is keyed on the
+// APPLICATION, not the provider: provider_verifications has no provider_id column at all. Executed,
+// revoking house_verification de-listed the BOUND provider and left the ORPHAN live and matchable, and
+// PTJA-P0-05's verifiedMatchingScope() is no mitigation - it keys on applicationId too, so the orphan
+// received the full verified scope.
+//
+// The correction is to make the provider identity a claim rather than a guess: one conditional UPDATE
+// decides who owns the application, and both callers then converge on that provider id, so the capacity
+// upsert writes one row. No new identity scheme and no new status.
+// ---------------------------------------------------------------------------
+test("P1-F52: two concurrent activations of one application mint ONE provider identity", async () => {
+  const { sqlite, db } = fresh();
+  const { applicationId, activation } = await readyApplication(db, sqlite, { verticalKey: "boarding" });
+  await completeInterviewAndProfile(db, sqlite, applicationId, activation, { services: ["boarding"] });
+  const mandate = await import("../lib/provider-verification-mandate.ts");
+  for (const type of ["aadhaar", "pan"]) {
+    await mandate.runProviderVerification(db, {}, { applicationId, category: "host", verificationType: type, actorId: OPS });
+    sqlite.prepare("UPDATE provider_verifications SET status='verified' WHERE application_id=? AND verification_type=?").run(applicationId, type);
+  }
+  for (const type of ["house_verification", "pet_proofing_photo"]) {
+    await mandate.recordManualVerification(db, { applicationId, verificationType: type, status: "verified", note: "Agent visited the home and confirmed", actorId: OPS });
+  }
+
+  const [first, second] = await Promise.all([
+    activation.activateProviderUat(db, { applicationId, actorEmail: OPS }),
+    activation.activateProviderUat(db, { applicationId, actorEmail: OPS }),
+  ]);
+  assert.equal(first.providerId, second.providerId, "both callers must be told the same provider identity");
+
+  const profiles = sqlite.prepare("SELECT id FROM provider_capacity_profiles WHERE id LIKE 'PROV-%'").all();
+  assert.equal(profiles.length, 1, `exactly one capacity profile, found ${profiles.map((p) => p.id).join(", ")}`);
+  assert.equal(profiles[0].id, first.providerId, "and it is the identity the application is bound to");
+  assert.equal(String(sqlite.prepare("SELECT provider_id FROM provider_onboarding_applications WHERE id=?").get(applicationId).provider_id), first.providerId);
+});
+
+test("P1-F52: there is no orphan left live and matchable behind the bound provider", async () => {
+  // The consequence that made this worth fixing: governance is keyed on the application, so an orphan
+  // capacity profile is unreachable by every control - revoking a mandated check de-listed the bound
+  // provider and left the orphan assignable.
+  const { sqlite, db } = fresh();
+  const { applicationId, activation } = await readyApplication(db, sqlite, { verticalKey: "boarding" });
+  await completeInterviewAndProfile(db, sqlite, applicationId, activation, { services: ["boarding"] });
+  const mandate = await import("../lib/provider-verification-mandate.ts");
+  for (const type of ["aadhaar", "pan"]) {
+    await mandate.runProviderVerification(db, {}, { applicationId, category: "host", verificationType: type, actorId: OPS });
+    sqlite.prepare("UPDATE provider_verifications SET status='verified' WHERE application_id=? AND verification_type=?").run(applicationId, type);
+  }
+  for (const type of ["house_verification", "pet_proofing_photo"]) {
+    await mandate.recordManualVerification(db, { applicationId, verificationType: type, status: "verified", note: "Agent visited", actorId: OPS });
+  }
+  const results = await Promise.all([
+    activation.activateProviderUat(db, { applicationId, actorEmail: OPS }),
+    activation.activateProviderUat(db, { applicationId, actorEmail: OPS }),
+  ]);
+  for (const result of results) await activation.addProviderToServiceMap(db, { providerId: result.providerId, zoneIds: ["blr-east"], actorEmail: OPS });
+
+  const capacity = await import("../lib/provider-capacity-governance.ts");
+  const before = (await capacity.loadGovernedProviders(db, "blr", "blr-east", "boarding")).map((p) => p.id).filter((id) => id.startsWith("PROV-"));
+  assert.equal(before.length, 1, "one provider in the pool, not two");
+
+  await mandate.recordManualVerification(db, { applicationId, verificationType: "house_verification", status: "failed", note: "Re-inspection failed", actorId: OPS });
+  const after = (await capacity.loadGovernedProviders(db, "blr", "blr-east", "boarding")).map((p) => p.id).filter((id) => id.startsWith("PROV-"));
+  assert.deepEqual(after, [], "and revoking the mandate removes every identity this application has");
+});
+
+test("P1-F52: repeated SERIAL activation is still idempotent - the fix is not a lock-out", async () => {
+  // Non-vacuity. Refusing a second activation outright would satisfy the cases above and would break
+  // the ordinary retry an operator makes after a transient failure.
+  const { sqlite, db } = fresh();
+  const { applicationId, activation } = await readyApplication(db, sqlite, { verticalKey: "dog_walking" });
+  await completeInterviewAndProfile(db, sqlite, applicationId, activation, { services: ["dog_walking"] });
+  const first = await activation.activateProviderUat(db, { applicationId, actorEmail: OPS });
+  const second = await activation.activateProviderUat(db, { applicationId, actorEmail: OPS });
+  assert.equal(second.providerId, first.providerId, "a retry returns the identity already minted");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM provider_capacity_profiles WHERE id LIKE 'PROV-%'").get().n, 1);
+});
+
+// ---------------------------------------------------------------------------
 // 4. Post-activation edits: sensitive changes drop the provider off the map.
 // ---------------------------------------------------------------------------
 test("changing service areas after activation takes the provider off the live map for re-review", async () => {

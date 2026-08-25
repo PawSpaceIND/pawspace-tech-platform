@@ -103,7 +103,31 @@ async function verifiedMatchingScope(db:D1Database,applicationId:string,services
  return allowed;
 }
 
-export async function activateProviderUat(db:D1Database,input:{applicationId:string;actorEmail:string}){const application=await app(db,input.applicationId),evaluation=await evaluateProviderActivation(db,{applicationId:input.applicationId});if(!evaluation.eligible)throw new Error(`Activation checklist is blocked: ${evaluation.checks.filter(c=>!c.passed).map(c=>c.code).join(", ")}`);const profileRow=await db.prepare("SELECT * FROM provider_onboarding_profiles WHERE application_id=?").bind(input.applicationId).first<Row>();if(!profileRow)throw new Error("Completed provider profile not found");const profile=profileSnapshot(profileRow)!;const providerId=text(application.provider_id)||`PROV-${crypto.randomUUID().slice(0,12).toUpperCase()}`,city=text(application.city_code).toLowerCase(),details=profile.businessDetails,model=["full_time","commission"].includes(text(details.providerModel))?text(details.providerModel):"commission",now=Date.now();
+
+/**
+ * Decide, once, which provider identity an application owns.
+ *
+ * This used to be `text(application.provider_id)||\`PROV-${crypto.randomUUID()}\`` computed from a read
+ * taken earlier in the function, with provider_id written back only afterwards - so two activations
+ * interleaved in that window both minted an identity, both inserted a provider_capacity_profiles row,
+ * and the application bound to whichever wrote last. The loser became an ORPHAN, and every governance
+ * control in this system is keyed on the APPLICATION rather than the provider - provider_verifications
+ * has no provider_id column at all - so revoking a mandated check de-listed the bound provider and left
+ * the orphan live and assignable, with the full verified matching scope.
+ *
+ * One conditional UPDATE decides it: whoever claims an unset provider_id wins, and everyone else reads
+ * the winner's id back and converges on it, so the capacity upsert below writes one row. A serial retry
+ * still returns the identity already minted. No new identity scheme, no new status. [PTJA-P1-F52]
+ */
+async function claimProviderIdentity(db:D1Database,applicationId:string,existing:string){
+ if(existing)return existing;
+ const candidate=`PROV-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
+ await db.prepare("UPDATE provider_onboarding_applications SET provider_id=?,updated_at=? WHERE id=? AND (provider_id IS NULL OR provider_id='')").bind(candidate,Date.now(),applicationId).run();
+ const bound=await db.prepare("SELECT provider_id FROM provider_onboarding_applications WHERE id=?").bind(applicationId).first<Row>();
+ return text(bound?.provider_id)||candidate;
+}
+
+export async function activateProviderUat(db:D1Database,input:{applicationId:string;actorEmail:string}){const application=await app(db,input.applicationId),evaluation=await evaluateProviderActivation(db,{applicationId:input.applicationId});if(!evaluation.eligible)throw new Error(`Activation checklist is blocked: ${evaluation.checks.filter(c=>!c.passed).map(c=>c.code).join(", ")}`);const profileRow=await db.prepare("SELECT * FROM provider_onboarding_profiles WHERE application_id=?").bind(input.applicationId).first<Row>();if(!profileRow)throw new Error("Completed provider profile not found");const profile=profileSnapshot(profileRow)!;const providerId=await claimProviderIdentity(db,input.applicationId,text(application.provider_id)),city=text(application.city_code).toLowerCase(),details=profile.businessDetails,model=["full_time","commission"].includes(text(details.providerModel))?text(details.providerModel):"commission",now=Date.now();
 // Real zone IDs follow a "<city>-<zone>" convention everywhere matching actually reads from
 // (lib/provider-capacity-governance.ts, boarding/scheduling zone lookups) - e.g. "blr-east", the
 // only zone this platform has modeled anywhere so far. Writing the bare city code here (what this
