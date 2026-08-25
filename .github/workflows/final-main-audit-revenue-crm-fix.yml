@@ -5,40 +5,43 @@ on:
     branches:
       - testfix/final-main-independent-audit-20260825
 
+permissions:
+  contents: write
+
 jobs:
   patch:
-    if: github.event.head_commit.message != 'fix: make Revenue CRM GET observational only'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Apply exact guarded transformation
+      - name: Apply exact Revenue CRM transformation
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
-          p=Path('app/api/revenue-crm/route.ts')
-          s=p.read_text()
-          old='await seedUat(db);await runLeadReopening(db,"system_reopen");await runSla(db,"system_sla");await enforceOps(db,"system_ops");await generateCommandReports(db,"system_7pm");await runLeadCallbackSweep(db,{actorId:"system_callback_sweep"});const canSeeAllCallbacks='
-          new='const canSeeAllCallbacks='
-          if s.count(old)!=1:
-              raise SystemExit(f'expected exactly one mutating GET sequence, found {s.count(old)}')
-          s=s.replace(old,new,1)
-          marker='const body=await request.json() as Row,action=String(body.action||""),now=Date.now();\n'
-          addition='''const body=await request.json() as Row,action=String(body.action||""),now=Date.now();\n  if(action==="seed_uat"){const{env}=await import("cloudflare:workers");const runtime=env as unknown as{PAWSPACE_UAT_LOGIN?:unknown;PAWSPACE_UAT_SIGNING_KEY?:unknown};if(String(runtime.PAWSPACE_UAT_LOGIN||"")!=="on"||String(runtime.PAWSPACE_UAT_SIGNING_KEY||"").length<32)return Response.json({error:"UAT seed is unavailable"},{status:404});await seedUat(db);return Response.json({ok:true,seeded:true,uatOnly:true})}\n'''
-          if s.count(marker)!=1:
-              raise SystemExit(f'expected exactly one POST marker, found {s.count(marker)}')
-          s=s.replace(marker,addition,1)
+          p = Path("app/api/revenue-crm/route.ts")
+          s = p.read_text()
+          old = 'await seedUat(db);await runLeadReopening(db,"system_reopen");await runSla(db,"system_sla");await enforceOps(db,"system_ops");await generateCommandReports(db,"system_7pm");await runLeadCallbackSweep(db,{actorId:"system_callback_sweep"});const canSeeAllCallbacks='
+          if old not in s:
+              print("Revenue CRM GET is already observational; no source edit required")
+              Path(".revenue-crm-noop").write_text("1")
+              raise SystemExit(0)
+          s = s.replace(old, 'const canSeeAllCallbacks=', 1)
+          marker = 'const body=await request.json() as Row,action=String(body.action||""),now=Date.now();\n'
+          if s.count(marker) != 1:
+              raise SystemExit("Revenue CRM POST marker was not unique")
+          seed_action = 'const body=await request.json() as Row,action=String(body.action||""),now=Date.now();\n  if(action==="seed_uat"){const{env}=await import("cloudflare:workers");const runtime=env as unknown as{PAWSPACE_UAT_LOGIN?:unknown;PAWSPACE_UAT_SIGNING_KEY?:unknown};if(String(runtime.PAWSPACE_UAT_LOGIN||"")!=="on"||String(runtime.PAWSPACE_UAT_SIGNING_KEY||"").length<32)return Response.json({error:"UAT seed is unavailable"},{status:404});await seedUat(db);return Response.json({ok:true,seeded:true,uatOnly:true})}\n'
+          s = s.replace(marker, seed_action, 1)
           p.write_text(s)
           PY
           git diff --check
-          git diff -- app/api/revenue-crm/route.ts
-      - name: Commit exact Revenue CRM fix
+      - name: Commit source change when present
         shell: bash
         run: |
+          if [ -f .revenue-crm-noop ]; then exit 0; fi
           git config user.name PawSpaceIND
           git config user.email karthik@pawspace.in
           git add app/api/revenue-crm/route.ts
-          git commit -m 'fix: make Revenue CRM GET observational only'
+          git commit -m "fix: make Revenue CRM GET observational only"
           git push origin HEAD:testfix/final-main-independent-audit-20260825
