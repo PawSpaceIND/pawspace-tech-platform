@@ -1061,3 +1061,76 @@ test("W2-PAY-01: a PARTIAL refund still works, and the remainder is still refund
   refundCase("RC-C", 1, "approved");
   assert.equal((await initiate()).status, 409, "but not one rupee more");
 });
+
+// =====================================================================================================
+// PTJA-W2-PAY-03 (ledger W2-07-PAY-005) — money collected on ONE customer's order settles a DIFFERENT customer's booking
+//
+// resolvePayment resolves the booking from event.bookingId - which comes from the gateway payload's
+// `notes.booking_id` - BEFORE it ever consults payment_gateway_links, and never checks that the gateway
+// ORDER the money was actually collected against belongs to the booking it is about to settle.
+//
+// MEASURED: order_A was opened for BK-A (customer CUS-1, Rs 8,000). A correctly signed payment.captured
+// event carrying order_id "order_A" and notes.booking_id "BK-B" - a booking belonging to CUS-2 with no
+// gateway order of its own - returned 200 {"status":"processed","bookingId":"BK-B"}. The receiver itself
+// reports it settled the wrong customer's booking. CUS-1 paid; CUS-2's booking is marked paid.
+//
+// The bound is what makes it dangerous rather than theoretical: redirecting a Rs 8,000 payment to a
+// Rs 20,000 booking IS refused as capture_amount_mismatch, so the hijack works between EQUAL-priced
+// bookings - which for a standard-price package is most of them.
+//
+// The correction uses a record the platform already keeps. payment_gateway_links maps a gateway order to
+// the booking it was opened for; when the event names an order, that link is authoritative over a note
+// in the payload. Nothing new is decided about matching - a payload's claim simply stops outranking the
+// platform's own record.
+// =====================================================================================================
+
+test("W2-PAY-03: a payment cannot settle a booking its gateway order was not opened for", async () => {
+  const { sqlite, db } = world();
+  const recon = await import("../lib/grooming-payment-reconciliation.ts");
+  await recon.ensurePaymentReconciliationTables(db);
+  const now = Date.now();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,amount_due_now REAL NOT NULL DEFAULT 0,currency TEXT NOT NULL DEFAULT 'INR',method TEXT NOT NULL DEFAULT 'upi',mode TEXT NOT NULL DEFAULT 'prepaid',status TEXT NOT NULL,gateway TEXT NOT NULL DEFAULT 'razorpay_sandbox',idempotency_key TEXT NOT NULL UNIQUE,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  const booking = (id, customer, amount) => sqlite.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,status,idempotency_key,created_at,updated_at) VALUES (?,?,?,?,'created',?,?,?)")
+    .run(`PAY-${id}`, id, customer, amount, `k-${id}`, now, now);
+  booking("BK-A", "CUS-1", 8000);
+  booking("BK-B", "CUS-2", 8000);
+  // order_A belongs to BK-A. BK-B has no gateway order of its own.
+  await recon.linkSandboxGatewayOrder(db, { bookingId: "BK-A", gatewayOrderId: "order_A", actorId: "ops" });
+
+  const hijack = await recon.processGatewayEvent(db, {
+    provider: "razorpay", eventId: "evt_hijack", environment: "sandbox", payloadHash: "sha-evt_hijack", eventType: "payment.captured", signatureVerified: true,
+    bookingId: "BK-B", gatewayOrderId: "order_A", gatewayPaymentId: "pay_1", amountSubunits: 800000, currency: "INR",
+  });
+  assert.notEqual(String(hijack.status), "processed", `a payment on BK-A's order must not settle BK-B: ${JSON.stringify(hijack)}`);
+  assert.equal(String(sqlite.prepare("SELECT status FROM booking_payments WHERE booking_id='BK-B'").get().status), "created",
+    "the other customer's booking is untouched");
+});
+
+test("W2-PAY-03: the booking the order WAS opened for still settles normally", async () => {
+  // Non-vacuity. Refusing whenever an order id is present would break every real capture.
+  const { sqlite, db } = world();
+  const recon = await import("../lib/grooming-payment-reconciliation.ts");
+  await recon.ensurePaymentReconciliationTables(db);
+  const now = Date.now();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,amount_due_now REAL NOT NULL DEFAULT 0,currency TEXT NOT NULL DEFAULT 'INR',method TEXT NOT NULL DEFAULT 'upi',mode TEXT NOT NULL DEFAULT 'prepaid',status TEXT NOT NULL,gateway TEXT NOT NULL DEFAULT 'razorpay_sandbox',idempotency_key TEXT NOT NULL UNIQUE,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,status,idempotency_key,created_at,updated_at) VALUES ('PAY-BK-A','BK-A','CUS-1',8000,'created','k-a',?,?)").run(now, now);
+  await recon.linkSandboxGatewayOrder(db, { bookingId: "BK-A", gatewayOrderId: "order_A", actorId: "ops" });
+
+  const honest = await recon.processGatewayEvent(db, {
+    provider: "razorpay", eventId: "evt_ok", environment: "sandbox", payloadHash: "sha-evt_ok", eventType: "payment.captured", signatureVerified: true,
+    bookingId: "BK-A", gatewayOrderId: "order_A", gatewayPaymentId: "pay_1", amountSubunits: 800000, currency: "INR",
+  });
+  assert.equal(String(honest.status), "processed", `the rightful booking must still settle: ${JSON.stringify(honest)}`);
+
+  // And an event carrying no order id at all is unaffected - that path never had a link to check.
+  const { sqlite: s2, db: db2 } = world();
+  const recon2 = await import("../lib/grooming-payment-reconciliation.ts");
+  await recon2.ensurePaymentReconciliationTables(db2);
+  s2.exec("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,amount_due_now REAL NOT NULL DEFAULT 0,currency TEXT NOT NULL DEFAULT 'INR',method TEXT NOT NULL DEFAULT 'upi',mode TEXT NOT NULL DEFAULT 'prepaid',status TEXT NOT NULL,gateway TEXT NOT NULL DEFAULT 'razorpay_sandbox',idempotency_key TEXT NOT NULL UNIQUE,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  s2.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,status,idempotency_key,created_at,updated_at) VALUES ('PAY-BK-C','BK-C','CUS-3',8000,'created','k-c',?,?)").run(now, now);
+  const noOrder = await recon2.processGatewayEvent(db2, {
+    provider: "razorpay", eventId: "evt_noorder", environment: "sandbox", payloadHash: "sha-evt_noorder", eventType: "payment.captured", signatureVerified: true,
+    bookingId: "BK-C", gatewayPaymentId: "pay_2", amountSubunits: 800000, currency: "INR",
+  });
+  assert.equal(String(noOrder.status), "processed", `an event with no order id is unaffected: ${JSON.stringify(noOrder)}`);
+});
