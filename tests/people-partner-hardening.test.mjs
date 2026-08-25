@@ -97,7 +97,7 @@ const istDate = (ms) => new Date(ms + 19_800_000).toISOString().slice(0, 10);
 async function peopleStack() {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
-  globalThis.__PAWSPACE_TEST_ENV = { DB: db, PAWSPACE_UAT_LOGIN: "on", PAWSPACE_UAT_SIGNING_KEY: "people-partner-hardening-uat-signing-key-2026" };
+  globalThis.__PAWSPACE_TEST_ENV = { DB: db, PAWSPACE_UAT_LOGIN: "on", PAWSPACE_UAT_SIGNING_KEY: "people-partner-hardening-uat-signing-key-2026", PAWSPACE_PAYMENT_ENV: "sandbox" };
   for (const sql of canonicalDDL) sqlite.exec(sql);
   await serverAuth.ensureSecurityTables(db);
   await peopleFoundation.ensurePeopleTables(db);
