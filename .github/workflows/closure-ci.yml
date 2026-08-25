@@ -1,56 +1,325 @@
 name: Release CI
 
 on:
+  push:
+    branches:
+      - main
+      - grooming-integration-closure
+      - agent/food-gates1-5
+      - agent/platform-stack-recertification
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  final-revenue-reconciliation-patch:
-    name: Apply final Revenue CRM reconciliation correction
-    if: github.event.pull_request.head.ref == 'testfix/final-main-independent-audit-20260825'
+  web-tests:
+    name: Web tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Clean checkout workspace
+        run: git clean -ffdx
+      - uses: actions/setup-node@v4
         with:
-          fetch-depth: 0
-          ref: testfix/final-main-independent-audit-20260825
-      - name: Patch stale synthetic-owner expectation and restore CI
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      # The TAP stream for ~2,600 tests is far larger than the Actions log API will hand back, and
+      # `not ok` for a failure in the first half of the run is therefore unreachable: a red run said
+      # "# fail 1" and nothing that could be retrieved said WHICH one. The stream is now captured and,
+      # on failure, only the failing blocks are re-printed at the end of the step - where they are both
+      # readable and fetchable - before the job exits non-zero.
+      - name: Build and run tracked Web tests
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('tests/revenue-stack-hardening.test.mjs')
-          text = p.read_text()
-          replacements = [
-            (
-              '  // First GET creates the CRM engine tables and seeds leads (owners exist, zero conversions yet).\n',
-              '  // First GET initializes/reads the CRM engine only; synthetic owners must not be seeded.\n',
-            ),
-            (
-              '  // Owners with no conversions report honest zeros, not fabricated 19-25k figures.\n  const sanjay = leaderboard.find((row) => row.employee_name === "Sanjay");\n  assert.equal(sanjay.eligible_revenue, 0);',
-              '  // Owners absent from real CRM work must not be fabricated into the leaderboard.\n  assert.equal(leaderboard.some((row) => row.employee_name === "Sanjay"), false, "GET must not seed a synthetic owner row");',
-            ),
-          ]
-          for old, new in replacements:
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f'expected one match, found {count}: {old!r}')
-              text = text.replace(old, new, 1)
-          p.write_text(text)
-          PY
-          git checkout c1a48154ef2ff430ab215301a32f842dc059f50d -- .github/workflows/closure-ci.yml
-          git config user.name "PawSpace CI Closure"
-          git config user.email "ci-closure@pawspace.in"
-          git add -A
-          git diff --cached --check
-          git commit -m "test: remove stale synthetic Revenue CRM owner expectation"
-          git push origin HEAD:testfix/final-main-independent-audit-20260825
+          npm run build
+          tracked_tests=()
+          for test_file in tests/*.test.mjs; do
+            if git ls-files --error-unmatch -- "$test_file" >/dev/null 2>&1; then
+              tracked_tests+=("$test_file")
+            fi
+          done
+          test "${#tracked_tests[@]}" -gt 0
+          status=0
+          set +e
+          node --experimental-strip-types --test "${tracked_tests[@]}" 2>&1 | tee web-tests.tap
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo ""
+            echo "================ FAILING TESTS ================"
+            # Each failing test's TAP block runs from its `not ok` line to the closing `...`.
+            awk '/^not ok /{show=1} show{print} show&&/^  \.\.\.$/{show=0; print ""}' web-tests.tap
+            echo "==============================================="
+            grep -E '^# (tests|pass|fail) ' web-tests.tap || true
+          fi
+          exit "$status"
+      - name: Upload the TAP stream
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-tests-tap
+          path: web-tests.tap
+          if-no-files-found: warn
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
+  artifact:
+    name: Artifact validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run validate:artifact
+
+  runtime-d1:
+    name: Runtime D1 regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Execute production flow against isolated local D1
+        shell: bash
+        run: |
+          rm -rf .runtime-d1
+          npx wrangler dev --config wrangler.runtime-d1.jsonc --persist-to .runtime-d1 --port 8788 > /tmp/runtime-d1-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'cat /tmp/runtime-d1-worker.log; kill "$worker_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8788/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = 1
+          status=$(curl -sS -o /tmp/runtime-d1-result.json -w '%{http_code}' http://127.0.0.1:8788/run)
+          cat /tmp/runtime-d1-result.json
+          test "$status" = 200
+          node -e "const fs=require('fs');const r=JSON.parse(fs.readFileSync('/tmp/runtime-d1-result.json','utf8'));if(!r.ok)throw new Error(r.error||'Runtime D1 regression failed');const expected={canonicalPets:2,accountMutations:3};for(const [k,v] of Object.entries(r.assertions||{})){const want=expected[k]??1;if(v!==want)throw new Error(k+' cardinality was '+v+', expected '+want)}"
+
+  scheduler-d1:
+    name: Background scheduler D1
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Fire real scheduled handler against isolated local D1
+        shell: bash
+        run: |
+          rm -rf .scheduler-d1
+          npx wrangler dev --config wrangler.background-scheduler.jsonc --persist-to .scheduler-d1 --port 8789 --test-scheduled > /tmp/scheduler-d1-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'cat /tmp/scheduler-d1-worker.log; kill "$worker_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8789/health >/dev/null; then ready=1; break; fi
+            sleep 1
+          done
+          test "$ready" = 1
+          curl -fsS http://127.0.0.1:8789/seed
+          curl -fsS 'http://127.0.0.1:8789/cdn-cgi/handler/scheduled?cron=%2A%2F5+%2A+%2A+%2A+%2A&time=1786458600000&format=json'
+          curl -fsS 'http://127.0.0.1:8789/cdn-cgi/handler/scheduled?cron=%2A%2F5+%2A+%2A+%2A+%2A&time=1786458600000&format=json'
+          curl -fsS http://127.0.0.1:8789/assert > /tmp/scheduler-state.json
+          cat /tmp/scheduler-state.json
+          node -e "const s=require('/tmp/scheduler-state.json');if(s.cold?.status!=='active'||Number(s.cold?.recycle_cycle)!==1)throw Error('cold lead did not reopen');if(s.sla?.status!=='sla_breached')throw Error('SLA did not escalate');if(Number(s.ops?.escalation_level)!==1)throw Error('ops did not escalate');if(s.callback?.status!=='missed')throw Error('callback did not sweep');if(Number(s.reports?.count)!==3)throw Error('command reports were not generated');if(Number(s.runs?.count)!==1||Number(s.runs?.attempts)!==1||s.runs?.status!=='completed')throw Error('scheduled replay was not idempotent')"
+
+  pricing-control-d1:
+    name: Pricing Control D1 regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Prove Pricing Control changes real canonical quotes
+        shell: bash
+        run: |
+          rm -rf .pricing-control-d1
+          npx wrangler dev --config wrangler.pricing-control.jsonc --persist-to .pricing-control-d1 --port 8790 > /tmp/pricing-control-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'cat /tmp/pricing-control-worker.log; kill "$worker_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8790/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = 1
+          status=$(curl -sS -o /tmp/pricing-control-result.json -w '%{http_code}' http://127.0.0.1:8790/run)
+          cat /tmp/pricing-control-result.json
+          test "$status" = 200
+          node -e "const fs=require('fs');const r=JSON.parse(fs.readFileSync('/tmp/pricing-control-result.json','utf8'));if(!r.ok)throw new Error(r.error||'Pricing Control regression failed');const e={training:13000,boarding:1600,sitting:1350,grooming:3600,activeCanonicalRows:5};for(const [k,v] of Object.entries(e)){if(r.assertions?.[k]!==v)throw new Error(k+' expected '+v+' got '+r.assertions?.[k]);}if(!r.oldGroomingRejected)throw new Error('old Grooming multi-pet amount was accepted');"
+
+  production-readiness-d1:
+    name: Production readiness truth D1
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: No code may hardcode productionReady:true - it must always be a computed claim
+        shell: bash
+        run: |
+          if grep -rnoE "productionReady\s*:\s*true" lib/*.ts app/api/*/route.ts 2>/dev/null; then
+            echo "A hardcoded productionReady:true literal was found - this must always be a computed expression, never a bare literal, so it can never silently claim readiness a dependency does not actually have."
+            exit 1
+          fi
+          echo "No hardcoded productionReady:true literal found."
+      - name: Verify the Production Readiness registry's own safety enforcement cannot be bypassed
+        shell: bash
+        run: |
+          rm -rf .production-readiness-d1
+          npx wrangler dev --config wrangler.production-readiness.jsonc --persist-to .production-readiness-d1 --port 8791 > /tmp/production-readiness-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'cat /tmp/production-readiness-worker.log; kill "$worker_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8791/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = 1
+          status=$(curl -sS -o /tmp/production-readiness-result.json -w '%{http_code}' http://127.0.0.1:8791/run)
+          cat /tmp/production-readiness-result.json
+          test "$status" = 200
+          node -e "const fs=require('fs');const r=JSON.parse(fs.readFileSync('/tmp/production-readiness-result.json','utf8'));if(!r.ok)throw new Error(r.error||'Production readiness regression failed');const a=r.assertions||{};if(a.razorpayCredentialStatus!=='missing')throw new Error('expected missing credential status, got '+a.razorpayCredentialStatus);if(a.registryProductionReady!==false)throw new Error('registry must honestly report productionReady=false');if(!a.bypassBlocked)throw new Error('controlled_live_verified bypass was not blocked');if(!a.secretLeakBlocked)throw new Error('secret value leak into secret_reference was not blocked');if(!a.razorpayIsLaunchBlocker)throw new Error('Razorpay must appear as a real launch blocker');"
+
+  evidence-inventory:
+    name: Evidence class inventory
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      # The suite count is not a proof score. This publishes what each of the ~300 suites actually
+      # EXECUTES - a real database and route, an imported unit, a hosted provider, or source text - so a
+      # reviewer reading a closure claim can see which kind of evidence is behind it without taking the
+      # aggregate number on trust. tests/evidence-class-audit.test.mjs enforces the floors; this job
+      # exists to make the inventory readable on every run.
+      - name: Classify every suite by what it executes
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/evidence-class-audit.mjs | tee evidence-class-audit.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evidence-class-audit
+          path: evidence-class-audit.md
+          if-no-files-found: warn
+
+  harness-hook-paths:
+    name: Test harness hook paths
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # tests/helpers/module-hooks.mjs has two implementations of the same resolver: module.registerHooks
+      # on Node >= 22.15, and an out-of-thread loader hook below it. Every other job pins 22.13.0, so the
+      # registerHooks branch was never exercised anywhere in CI - which is exactly how the loader-hook
+      # branch came to be MISSING from several suites and to take the whole file down on the pinned
+      # version. This job runs the hook-dependent suites on a Node that has registerHooks, then forces
+      # the fallback on the same runner, so neither branch can rot unnoticed.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Collect the suites that install the shared workers hooks
+        id: collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t suites < <(grep -l "helpers/module-hooks.mjs" tests/*.test.mjs | sort)
+          test "${#suites[@]}" -gt 0
+          printf '%s\n' "${suites[@]}" > harness-suites.txt
+          echo "count=${#suites[@]}" >> "$GITHUB_OUTPUT"
+      - name: registerHooks path (Node >= 22.15)
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e "const m=require('node:module');if(typeof m.registerHooks!=='function'){console.error('this runner has no registerHooks - the job cannot prove that branch');process.exit(1)}"
+          mapfile -t suites < harness-suites.txt
+          node --experimental-strip-types --test "${suites[@]}"
+      - name: Loader-hook fallback path (what the pinned CI Node uses)
+        shell: bash
+        env:
+          PAWSPACE_FORCE_LOADER_HOOK: '1'
+        run: |
+          set -euo pipefail
+          mapfile -t suites < harness-suites.txt
+          node --experimental-strip-types --test "${suites[@]}"
+
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test

@@ -162,7 +162,7 @@ test("reconciliation: mission booked === P&L revenue for the same seeded canonic
 test("reconciliation: revenue-crm team revenue === mission net collected — the fabricated leaderboard array is gone", async () => {
   freshDb(); seedCanonical();
   const missionId = await activeMissionWithBackfill();
-  // First GET creates the CRM engine tables and seeds leads (owners exist, zero conversions yet).
+  // First GET initializes/reads the CRM engine only; synthetic owners must not be seeded.
   const first = await call(crmEngineRoute.GET, "GET");
   assert.equal(first.status, 200, JSON.stringify(first.body).slice(0, 300));
   // Attribute the two real bookings to owners through the real conversion column.
@@ -188,9 +188,8 @@ test("reconciliation: revenue-crm team revenue === mission net collected — the
   assert.equal(neha.eligible_revenue, 800, "1000 captured - 200 refunded");
   assert.equal(neha.refunds, 200);
   for (const row of leaderboard) assert.equal(row.incentive_amount, 0);
-  // Owners with no conversions report honest zeros, not fabricated 19-25k figures.
-  const sanjay = leaderboard.find((row) => row.employee_name === "Sanjay");
-  assert.equal(sanjay.eligible_revenue, 0);
+  // Owners absent from real CRM work must not be fabricated into the leaderboard.
+  assert.equal(leaderboard.some((row) => row.employee_name === "Sanjay"), false, "GET must not seed a synthetic owner row");
 });
 
 // ---- 3. Command center + leadership reporting -------------------------------------------------
