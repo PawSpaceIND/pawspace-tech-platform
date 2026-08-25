@@ -226,3 +226,118 @@ test("P1-F51: an UNDECIDED check can still be queued for review - the fix is not
   await mandate.recordManualVerification(db, { applicationId: "APP-F51", verificationType: "house_verification", status: "verified", note: "Remediated and re-inspected", actorId: "inspector@pawspace.test" });
   assert.equal(rowFor("house_verification").status, "verified", "a human may still revise a human decision");
 });
+
+// =====================================================================================================
+// PTJA-P1-F29 / F35 — a provider's configured capacity numbers are not what the scheduler uses
+//
+// Two halves of one defect: nothing between the operator's keystroke and the scheduler treats these
+// columns as numbers.
+//
+// F29 (severity confirmed, TITLE CORRECTED). rowToProvider built every numeric field with a JavaScript
+// ||-fallback - Number(row.max_daily_jobs||6), Number(row.capacity||1),
+// Number(row.travel_buffer_minutes||30) - so 0, the one value an operator uses to stand a provider
+// DOWN, is falsy and was silently replaced by the hardcoded default. Measured: a driver PATCHed to
+// max_daily_jobs 0 (accepted 200, stored as integer 0, audited) was handed SIX jobs by the scheduler,
+// which then refused the seventh with "Daily job limit 6 reached" - quoting a number the row does not
+// contain. The frozen title said a limit of 4 yields more than 4; that half is REFUTED by execution: 4
+// reads back as 4 and yields exactly four. The defect is specific to 0 and to any falsy value.
+//
+// F35 (confirmed). The capacity-control PATCH validated numbers only with Number(value)<0, which NaN
+// does not trip, so capacity:'four' was written as TEXT and read back as NaN. NaN comparisons are false,
+// so the host stayed eligible and was selected, then the atomic guard bound NaN, matched zero rows, and
+// the customer was told "Another reservation took this provider/slot a moment ago" - twice,
+// deterministically, with no competing reservation in the table. One typo removed a boarding host from
+// the platform behind a message that invited a retry.
+//
+// The correction is that a capacity column is a number: rejected at the write if it is not one, and read
+// as one - present-but-zero included - if it is. No default changes and no limit is invented.
+// =====================================================================================================
+
+const CAPACITY_NUMERIC_FIELDS = ["capacity", "travel_buffer_minutes", "max_daily_jobs", "acceptance_timeout_minutes"];
+
+async function capacityWorld() {
+  const { sqlite, db } = world();
+  const { ensureSecurityTables } = await import("../lib/server-auth.ts");
+  const capacity = await import("../lib/provider-capacity-governance.ts");
+  await ensureSecurityTables(db);
+  await capacity.seedProviderCapacityDefaults(db);
+  const now = Date.now();
+  await db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('USR-PTJA-CAP','ops-capacity@pawspace.test','Ops capacity','founder','active',?,?)").bind(now, now).run();
+  const staff = {
+    "oai-authenticated-user-email": "ops-capacity@pawspace.test",
+    "oai-authenticated-user-full-name": "Ops%20capacity",
+    "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8",
+  };
+  const patch = async (providerId, changes) => {
+    const route = await import("../app/api/provider-capacity-control/route.ts");
+    const response = await route.PATCH(new Request("https://uat.pawspace.in/api/provider-capacity-control", {
+      method: "PATCH", headers: { "content-type": "application/json", ...staff },
+      body: JSON.stringify({ providerId, changes, reason: "PTJA capacity regression" }),
+    }));
+    let parsed = null; try { parsed = await response.clone().json(); } catch { /* non-JSON */ }
+    return { status: response.status, body: parsed };
+  };
+  return { sqlite, db, capacity, patch };
+}
+
+test("P1-F29: standing a provider down to zero means zero, not the default", async () => {
+  // Measured before the fix: max_daily_jobs 0 stored, read back as 6, and six jobs assigned.
+  const { db, capacity, patch } = await capacityWorld();
+  assert.equal((await patch("taxi_rahul", { max_daily_jobs: 0 })).status, 200);
+  const provider = await capacity.getGovernedProvider(db, "taxi_rahul");
+  assert.equal(provider.maxDailyJobs, 0, "a stand-down of 0 must not read back as 6");
+});
+
+test("P1-F29: zero capacity and zero travel buffer are equally respected", async () => {
+  const { db, capacity, patch } = await capacityWorld();
+  assert.equal((await patch("taxi_imran", { capacity: 0, travel_buffer_minutes: 0, max_daily_jobs: 0 })).status, 200);
+  const provider = await capacity.getGovernedProvider(db, "taxi_imran");
+  assert.equal(provider.capacity, 0, "a host with zero units has zero, not one");
+  assert.equal(provider.travelBufferMinutes, 0, "an explicit zero buffer is a decision, not an absence");
+  assert.equal(provider.maxDailyJobs, 0);
+});
+
+test("P1-F29: a configured non-zero limit is unchanged, and an unusable value still defaults", async () => {
+  // Non-vacuity in both directions. The frozen title claimed 4 was broken; executed, it never was, and
+  // the fix must not disturb it. And a column that is genuinely absent must still fall back.
+  const { sqlite, db, capacity, patch } = await capacityWorld();
+  assert.equal((await patch("taxi_rahul", { max_daily_jobs: 4 })).status, 200);
+  assert.equal((await capacity.getGovernedProvider(db, "taxi_rahul")).maxDailyJobs, 4, "a configured 4 is 4");
+
+  // The "absent" branch cannot arise in this table at all, which is worth recording rather than
+  // simulating: every capacity column is NOT NULL, so there is no way to store an absence. The default
+  // survives in the reader for callers that build a Provider from somewhere else, and for a legacy row
+  // holding a non-number - reading THAT as 0 would silently make a live provider unbookable instead of
+  // merely mis-limited, which is the failure F35 describes from the other direction.
+  assert.throws(
+    () => sqlite.prepare("UPDATE provider_capacity_profiles SET capacity=NULL WHERE id='taxi_meera'").run(),
+    /NOT NULL constraint failed/,
+    "a capacity column cannot be absent",
+  );
+  sqlite.prepare("UPDATE provider_capacity_profiles SET max_daily_jobs='not a number' WHERE id='taxi_meera'").run();
+  assert.equal((await capacity.getGovernedProvider(db, "taxi_meera")).maxDailyJobs, 6, "a legacy non-number still reads as the documented default");
+});
+
+test("P1-F35: a capacity column that is not a number is refused at the write", async () => {
+  // Measured before the fix: 200, 'four' stored as TEXT, read back NaN, and the host became permanently
+  // unbookable behind a false SLOT_TAKEN.
+  const { sqlite, db, capacity, patch } = await capacityWorld();
+  for (const field of CAPACITY_NUMERIC_FIELDS) {
+    const result = await patch("host_maya_rohan", { [field]: "four" });
+    assert.equal(result.status, 400, `${field}: a non-numeric value must be refused, got ${result.status} ${JSON.stringify(result.body)}`);
+    assert.match(String(result.body.error), /number/i);
+  }
+  const row = sqlite.prepare("SELECT capacity,typeof(capacity) t FROM provider_capacity_profiles WHERE id='host_maya_rohan'").get();
+  assert.equal(row.t, "integer", "the stored column is still a number");
+  assert.ok(Number.isFinite((await capacity.getGovernedProvider(db, "host_maya_rohan")).capacity), "and it still reads back as one");
+});
+
+test("P1-F35: legitimate numeric edits still go through - the fix is not a blanket refusal", async () => {
+  const { db, capacity, patch } = await capacityWorld();
+  assert.equal((await patch("host_maya_rohan", { capacity: 6, travel_buffer_minutes: 15, max_daily_jobs: 9 })).status, 200);
+  const provider = await capacity.getGovernedProvider(db, "host_maya_rohan");
+  assert.equal(provider.capacity, 6);
+  assert.equal(provider.travelBufferMinutes, 15);
+  assert.equal(provider.maxDailyJobs, 9);
+  assert.equal((await patch("host_maya_rohan", { capacity: -1 })).status, 400, "and the existing negative check still holds");
+});
