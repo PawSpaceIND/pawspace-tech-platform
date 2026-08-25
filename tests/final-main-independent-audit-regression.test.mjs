@@ -140,7 +140,7 @@ test("governed pricing writes and quotes require explicit city and zone without 
   const controlPost = control.match(/export async function POST\([^]*$/)?.[0] || "";
   assert.match(controlPost, /cityId\?:string;zoneId\?:string/,
     "pricing rule creation must accept explicit city and zone");
-  assert.match(controlPost, /!body\.cityId\|\|!body\.zoneId/,
+  assert.match(controlPost, /!cityId\|\|!zoneId/,
     "pricing rule creation must reject a missing city or zone");
 
   const quote = await read("app/api/pricing-quote/route.ts");
