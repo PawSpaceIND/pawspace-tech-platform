@@ -4,7 +4,7 @@ import{createFoodPurchaseOrder,foodSupplyChainSnapshot,receiveFoodPurchaseOrder,
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 
 export async function GET(request:Request){try{
- const db=await database(),actor=await resolveActor(request);requirePermission(actor,"bookings.view");
+ const db=await database(),actor=await resolveActor(request);requirePermission(actor,"bookings.manage");
  const asOfDate=String(new URL(request.url).searchParams.get("asOfDate")||"").trim()||undefined;
  return json({data:await foodSupplyChainSnapshot(db,{asOfDate})});
 }catch(error){return authError(error,"Unable to load the Food supply chain");}}
