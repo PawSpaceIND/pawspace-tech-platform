@@ -11,7 +11,11 @@
     "repeatable": "Yes - executed twice, identical Rs.6000-on-a-Rs.5000-booking result both runs.",
     "canonical_failure": "redeemWalletForBooking and redeemPoints each compute their cap independently against canonical_bookings.total_amount and neither writes the booking down, so the two credit instruments applied to the same booking sum to Rs.6,000 of discount on a Rs.5,000 order - 120% of order value - and lib/unit-economics.ts then books all Rs.6,000 as real discount against a Rs.5,000 GMV line.",
     "blast_radius": "Every customer holding both instruments, self-service, no staff involvement, one HTTP call each. PawPoints' MAX_REDEEM_FRACTION=0.2 margin cap is measured on the gross total, so it survives intact even after the wallet has already covered 100% of the booking. With a governed coupon in the mix the coupon has already reduced canonical_bookings.total_amount, so wallet+points then re-apply against the NET figure and the combined giveaway exceeds the order value by even more. lib/unit-economics.ts sums coupon_redemptions.discount_amount + paw_points_ledger*0.5 + pawspace_wallet_ledger.applied_value into `discounts` against a GMV taken from total_amount, so contribution goes negative and no report flags the over-application. Rs.1,000 lost per Rs.5,000 booking in this exact probe; scales with wallet balance because the 10% WALLET_BONUS_RATE also inflates appliedValue above the credit actually held.",
-    "suggested_severity": "P0"
+    "suggested_severity": "P0",
+    "status": "FIXED",
+    "fix_file": "lib/booking-credit-application.ts (new); lib/pawspace-wallet-governance.ts; lib/paw-points-governance.ts",
+    "regression": "tests/money-hardening.test.mjs :: \"REGRESSION lib/pawspace-wallet-governance.ts + lib/paw-points-governance.ts: wallet and points together cannot exceed the order value\" + \"REGRESSION: the same ceiling holds when points are redeemed first\" + \"REGRESSION: each instrument alone still works, and the margin cap is unchanged\"",
+    "fix_note": "Each redemption now caps against what is still PAYABLE on the booking rather than against the gross total, via a new lib/booking-credit-application.ts that reads what every instrument has already applied (pawspace_wallet_ledger.applied_value plus paw_points_ledger converted at the shared REDEEM_RUPEE_PER_POINT). PawPoints' MAX_REDEEM_FRACTION margin cap is unchanged and still measured on the gross total; the tighter of the two now binds. Order does not decide the outcome - the defect was symmetric and both directions are covered. No incentive policy is invented: each instrument alone behaves exactly as before, including the wallet's 10% bonus and the 20% points cap."
   },
   {
     "id": "W2-09-M02",
@@ -25,7 +29,8 @@
     "repeatable": "Yes - executed twice, sessions_consumed=2 and available=8 on both runs.",
     "canonical_failure": "In app/api/grooming-lifecycle/route.ts the guarded usage flip (UPDATE booking_subscription_usage ... WHERE status='reserved') and the UNGUARDED counter move (UPDATE customer_grooming_subscriptions SET sessions_reserved=MAX(0,sessions_reserved-?),sessions_consumed=sessions_consumed+? WHERE id=?) sit in the same db.batch, so a caller that loses the flip race still runs the counter update and consumes a second session that was never delivered.",
     "blast_radius": "This is the exact defect already fixed inside lib/subscription-wallet.ts - its consume branch carries the comment 'Previously both statements sat in one batch, so a lost race still ran the unconditional counter update and double-counted the consumption' and now runs the flip first and checks meta.changes. The identical pattern was left in app/api/grooming-lifecycle/route.ts, which is the path every real grooming completion actually takes. The route's other completion writes are all INSERT OR IGNORE / idempotent, so a double-tap, a provider-app retry or a duplicated request is otherwise harmless - this is the one write that is not. Consequence per race: the customer silently loses one prepaid grooming session (on a 10-session plan priced around Rs.12,000 that is roughly Rs.1,200 of entitlement destroyed), and the subscription reaches 'exhausted' one session early. The in-line comment in the route asserting 'Double-consumption stays impossible via the usage row's status=reserved guard above' is false for the second statement, which that guard does not cover.",
-    "suggested_severity": "P1"
+    "suggested_severity": "P1",
+    "status": "OPEN"
   },
   {
     "id": "W2-09-M03",
@@ -39,7 +44,8 @@
     "repeatable": "Yes - executed twice, 2 rewards / Rs.1,000 both runs.",
     "canonical_failure": "qualifyReferralClaim reads the referrer's month-to-date reward count with a plain SELECT COUNT(*) and then inserts the new referral_rewards row in an UNGUARDED db.batch, so two qualifications that interleave at that await both see count 0 < limit 1 and both issue a reward.",
     "blast_radius": "Directly doubles (or N-times, with N concurrent qualifications) the referrer reward liability that perReferrerMonthlyLimit exists to cap. In this probe Rs.1,000 was released against a Rs.500 configured monthly ceiling. The per-claim guards that DO exist (referral_rewards.claim_id UNIQUE, source_booking_id UNIQUE) stop the same claim being rewarded twice but say nothing about the cross-claim monthly cap, which is the only thing standing between a referrer and unbounded reward farming: sign up N friends, have their first bookings completed in the same window, collect N rewards in a month capped at 1. The comparable coupon ceiling in lib/coupon-governance.ts is enforced correctly, by putting the count inside the INSERT's subquery so a NOT NULL abort rolls the batch back - referral rewards were not given the same treatment. It is worse than a staff-only race because app/api/grooming-lifecycle fires qualification automatically on service completion, so ordinary provider traffic triggers it.",
-    "suggested_severity": "P1"
+    "suggested_severity": "P1",
+    "status": "OPEN"
   },
   {
     "id": "W2-09-M04",
@@ -53,6 +59,7 @@
     "repeatable": "Yes - executed twice, Rs.500 accepted both runs.",
     "canonical_failure": "prepareReferralBooking validates only the CLAIM row (status, fraud_state, customer, service/city, first-booking, identity collision) and reads friendDiscount out of the claim's frozen policy_snapshot_json - it never re-reads referral_programmes, so a paused programme, an elapsed validity window and a changed or zeroed friend discount are all invisible at redemption time.",
     "blast_radius": "Expiry and programme shutdown are enforced only at CLAIM time (claimReferral checks status, requireActiveConfiguration and the validity window) and in the listing surfaces - not at the moment money is given away. Every claim ever created stays redeemable forever at its original discount: pausing a programme, letting it expire, or cutting the friend discount does not stop outstanding claims, and marketing has no way to stop the bleed short of individually rejecting each claim through reviewReferralClaim. There is also no claim-level expiry column at all - referral_claims has no valid_until - so a claim made today is still worth its original rupees years later. This is the 'absent treated as satisfied' class: the absent programme re-check reads as an approved programme. The rupee consequence is the full snapshot friendDiscount per stale claim (Rs.500 here), unbounded in the number of stale claims.",
-    "suggested_severity": "P1"
+    "suggested_severity": "P1",
+    "status": "OPEN"
   }
 ]
