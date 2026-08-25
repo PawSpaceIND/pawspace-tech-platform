@@ -81,3 +81,13 @@ test("public host-profile GET cannot seed demo data outside the explicit UAT gat
   assert.doesNotMatch(source, /const db = await database\(\);\s*await seedDemoHostProfiles\(db\)/,
     "public GET must not unconditionally seed demo profiles");
 });
+
+test("Revenue CRM GET remains observational and mutation sweeps stay behind explicit writes", async () => {
+  const source = await read("app/api/revenue-crm/route.ts");
+  const get = source.match(/export async function GET\([^]*?(?=export async function POST)/)?.[0] || "";
+  for (const mutator of ["seedUat", "runLeadReopening", "runSla", "enforceOps", "generateCommandReports", "runLeadCallbackSweep"]) {
+    assert.doesNotMatch(get, new RegExp(`await\\s+${mutator}\\(`), `GET must not run ${mutator}`);
+  }
+  assert.match(source, /action===["']seed_uat["']/,
+    "synthetic Revenue CRM data must require an explicit UAT-only write action");
+});
