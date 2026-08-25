@@ -48,19 +48,24 @@ export async function verifyPartnerOtp(db:Db,input:{challengeId:string;code:stri
     await db.prepare("UPDATE partner_otp_challenges SET attempts=attempts+1 WHERE id=? AND attempts<5 AND consumed=0").bind(input.challengeId).run();
     throw new Error("Incorrect OTP code");
   }
+
+  const phone=text(row.phone);
+  let provider=await db.prepare("SELECT id,name,phone,city_id FROM canonical_providers WHERE phone=?").bind(phone).first<Row>();
+  const requestedCityId=text(input.cityId);
+  // Existing providers keep their canonical city. A new provider identity must name its city rather
+  // than silently becoming Bengaluru, which corrupts later assignment, availability and pricing scope.
+  if(!provider&&!requestedCityId)throw new Error("City is required for a new provider");
   // A read-side consumed check is not enough: two correct verifications can both observe consumed=0.
   // Claim the challenge atomically so only one request can mint an assertion from one OTP.
   const claim=await db.prepare("UPDATE partner_otp_challenges SET consumed=1 WHERE id=? AND consumed=0").bind(input.challengeId).run();
   if(!Number(claim.meta.changes))throw new Error("This OTP has already been used");
 
-  const phone=text(row.phone);
-  let provider=await db.prepare("SELECT id,name,phone,city_id FROM canonical_providers WHERE phone=?").bind(phone).first<Row>();
   if(!provider){
     // Separate valid challenges for the same phone may be verified concurrently. Use a stable,
     // phone-derived opaque id and INSERT OR IGNORE so both requests converge on one provider row.
     const providerId=await canonicalOtpProviderId(phone),now=Date.now();
     await db.prepare("INSERT OR IGNORE INTO canonical_providers (id,city_id,name,phone,email,source,created_at,updated_at) VALUES (?,?,?,?,NULL,'partner_app_otp',?,?)")
-      .bind(providerId,input.cityId||"blr",text(input.name)||"PawSpace Caregiver",phone,now,now).run();
+      .bind(providerId,requestedCityId,text(input.name)||"PawSpace Caregiver",phone,now,now).run();
     provider=await db.prepare("SELECT id,name,phone,city_id FROM canonical_providers WHERE phone=?").bind(phone).first<Row>();
     if(!provider||text(provider.phone)!==phone)throw new Error("Canonical provider identity conflict - human review required");
   }
