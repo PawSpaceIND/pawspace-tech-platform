@@ -8,8 +8,6 @@ const routeSource = fs.readFileSync("app/api/host-profile/route.ts", "utf8");
 const gatewaySource = fs.readFileSync("lib/api-gateway.ts", "utf8");
 const cardSource = fs.readFileSync("app/mobile-app/host-profile-card.tsx", "utf8");
 
-// --- Static contract tests (regex against source text) -------------------------------------
-
 test("host-profiles module exports the required contract functions", () => {
   assert.match(libSource, /export async function ensureHostProfileTables\(/);
   assert.match(libSource, /export async function upsertHostProfile\(/);
@@ -39,8 +37,8 @@ test("the profile field contract matches the spec (verified badges, stats, revie
   assert.match(libSource, /yearsExp:\s*number/);
 });
 
-test("the API route seeds demo profiles then reads by providerId, and is public (no staff auth)", () => {
-  assert.match(routeSource, /seedDemoHostProfiles\(/);
+test("the public API route is read-only: it reads by providerId without seeding demo profiles", () => {
+  assert.doesNotMatch(routeSource, /seedDemoHostProfiles\(/);
   assert.match(routeSource, /getHostProfile\(/);
   assert.match(routeSource, /searchParams\.get\("providerId"\)/);
   assert.doesNotMatch(routeSource, /authorize\(/);
@@ -55,7 +53,7 @@ test("the profile card is a standalone client component that never touches stay-
   assert.match(cardSource, /^"use client";/m);
   assert.match(cardSource, /export default function HostProfileCard\(/);
   assert.doesNotMatch(cardSource, /stay-flow/);
-  assert.doesNotMatch(cardSource, /from ["']\.\.\/\.\.\/lib\/host-profiles["']/); // fetches via HTTP, does not import the server lib directly
+  assert.doesNotMatch(cardSource, /from ["']\.\.\/\.\.\/lib\/host-profiles["']/);
 });
 
 test("the card fetches the public route and renders photo/badges/rating/reviews/stats, using placeholders not real images", () => {
@@ -66,33 +64,18 @@ test("the card fetches the public route and renders photo/badges/rating/reviews/
   assert.match(cardSource, /reviews\.map/);
 });
 
-// --- Real-execution proof: seed + getHostProfile against a real in-memory SQLite database ---
-// A minimal D1Database shim over node:sqlite (node's built-in real SQLite engine, not a mock of
-// D1's behaviour) - proves the actual exported functions from lib/host-profiles.ts genuinely
-// create the table, seed real rows, and read back a full, well-formed profile. Same spirit as
-// this repo's "real execution, not just static regex" verification convention (see HANDOFF.md).
 function makeD1(sqlite) {
   function statement(sql, args) {
     return {
       bind: (...boundArgs) => statement(sql, boundArgs),
-      first: async () => {
-        const row = sqlite.prepare(sql).get(...args);
-        return row === undefined ? null : row;
-      },
-      run: async () => {
-        sqlite.prepare(sql).run(...args);
-        return { success: true };
-      },
+      first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
+      run: async () => { sqlite.prepare(sql).run(...args); return { success: true }; },
       all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
     };
   }
   return {
     prepare: (sql) => statement(sql, []),
-    batch: async (statements) => {
-      const results = [];
-      for (const stmt of statements) results.push(await stmt.run());
-      return results;
-    },
+    batch: async (statements) => { const results = []; for (const stmt of statements) results.push(await stmt.run()); return results; },
   };
 }
 
@@ -100,17 +83,13 @@ test("real execution: seedDemoHostProfiles + getHostProfile returns a full profi
   const { ensureHostProfileTables, seedDemoHostProfiles, getHostProfile, upsertHostProfile } = await import("../lib/host-profiles.ts");
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
-
   await ensureHostProfileTables(db);
   const tableExists = sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='host_profiles'").get();
   assert.ok(tableExists, "host_profiles table must genuinely be created");
-
   await seedDemoHostProfiles(db);
-  // idempotent - calling twice must not throw or duplicate rows
   await seedDemoHostProfiles(db);
   const count = sqlite.prepare("SELECT COUNT(*) c FROM host_profiles").get();
   assert.equal(count.c, 6, "exactly the 6 seeded host/sitter profiles must exist after seeding twice");
-
   const profile = await getHostProfile(db, "host_sana");
   assert.ok(profile, "getHostProfile must return a profile for a seeded provider id");
   assert.equal(profile.providerId, "host_sana");
@@ -135,28 +114,14 @@ test("real execution: seedDemoHostProfiles + getHostProfile returns a full profi
   assert.ok(Array.isArray(profile.servicesOffered) && profile.servicesOffered.length > 0);
   assert.ok(Array.isArray(profile.housePhotoRefs));
   assert.equal(typeof profile.photoRef, "string");
-
   const sitter = await getHostProfile(db, "sit_neha");
   assert.ok(sitter && sitter.role === "Sitter", "sit_neha must be seeded with role Sitter");
-
   assert.equal(await getHostProfile(db, "no_such_provider"), null, "an unseeded provider id must return null, not fabricate a profile");
-
-  // upsertHostProfile round-trip proof, independent of the demo seed data
   const written = await upsertHostProfile(db, {
-    providerId: "host_test_roundtrip",
-    displayName: "Test Roundtrip",
-    role: "Host",
-    photoRef: "avatar:test",
-    housePhotoRefs: ["house:test:1"],
-    verified: { kyc: true, backgroundCheck: false, homeVerified: true },
-    rating: 4.5,
-    locationLabel: "Test City",
-    yearsExperience: 1,
-    about: "Test about text.",
-    specializations: ["Test specialization"],
-    servicesOffered: ["Boarding"],
-    reviews: [{ author: "Test Author", city: "Test City", stars: 5, text: "Great." }],
-    stats: { happyPets: 1, onTimePct: 100, happyParents: 1, yearsExp: 1 },
+    providerId: "host_test_roundtrip", displayName: "Test Roundtrip", role: "Host", photoRef: "avatar:test", housePhotoRefs: ["house:test:1"],
+    verified: { kyc: true, backgroundCheck: false, homeVerified: true }, rating: 4.5, locationLabel: "Test City", yearsExperience: 1,
+    about: "Test about text.", specializations: ["Test specialization"], servicesOffered: ["Boarding"],
+    reviews: [{ author: "Test Author", city: "Test City", stars: 5, text: "Great." }], stats: { happyPets: 1, onTimePct: 100, happyParents: 1, yearsExp: 1 },
   });
   assert.equal(written.providerId, "host_test_roundtrip");
   const reread = await getHostProfile(db, "host_test_roundtrip");
