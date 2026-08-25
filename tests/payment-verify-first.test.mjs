@@ -32,7 +32,12 @@ test("Verify-first: prepaid online bookings cannot self-capture in LIVE mode (sa
   // Nor on whether the purchase happens to be a subscription: that carve-out was PAY-002 defect 1.
   assert.doesNotMatch(bookingRoute, /!isSubscription/, "no payment class may be exempt from LIVE verification");
   assert.match(bookingRoute, /return payment\.status/); // sandbox/UAT keeps the submitted status
-  assert.match(bookingRoute, /PAWSPACE_PAYMENT_ENV/);
+  // The environment decision moved into lib/payment-environment.ts (W2-07-PAY-003): an ABSENT
+  // PAWSPACE_PAYMENT_ENV used to resolve to "sandbox" and exempt the booking from verification, so the
+  // route now asks for an EXPLICIT sandbox declaration. Pinned on the call, and exercised behaviourally
+  // in tests/ptja-p1-regressions.test.mjs ("W2-PAY-07").
+  assert.match(bookingRoute, /sandboxCapabilitiesUnlocked\(env/, "the environment is still read from the Worker env, via the shared resolver");
+  assert.doesNotMatch(bookingRoute, /PAWSPACE_PAYMENT_ENV\s*\|\|\s*"sandbox"/, "an absent variable must not resolve to sandbox and unlock the verify-first exemption");
   // the payment insert now records the gated status, not the raw client value
   assert.match(bookingRoute, /paymentStatusPersisted=sittingCapture\?\.status\?\?paymentStatusRecorded/);
   assert.match(bookingRoute, /input\.payment\.method,paymentModePersisted,paymentStatusPersisted,/);

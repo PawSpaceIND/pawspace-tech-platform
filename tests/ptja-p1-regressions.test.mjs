@@ -975,7 +975,7 @@ test("P1-F33: a currently-active suspension still blocks, and an ENDED one does 
 // =====================================================================================================
 
 async function refundWorld() {
-  const { sqlite, db } = world({ RAZORPAY_KEY_ID_SANDBOX: "rzp_test_probe", RAZORPAY_KEY_SECRET_SANDBOX: "probe_secret" });
+  const { sqlite, db } = world({ PAWSPACE_PAYMENT_ENV: "sandbox", RAZORPAY_KEY_ID_SANDBOX: "rzp_test_probe", RAZORPAY_KEY_SECRET_SANDBOX: "probe_secret" });
   const { ensureSecurityTables } = await import("../lib/server-auth.ts");
   await ensureSecurityTables(db);
   const now = Date.now();
@@ -1363,4 +1363,101 @@ test("W2-PAY-06: an event names its own case even when a newer one exists, and a
     `a redelivery of the same gateway refund is recognised, not booked again: ${JSON.stringify(redelivery)}`);
   assert.equal(String(sqlite.prepare("SELECT status FROM booking_refund_cases WHERE id='RC-2'").get().status), "approved",
     "and the newer case is not consumed by it");
+});
+
+// =====================================================================================================
+// PTJA-W2-PAY-07 (ledger W2-07-PAY-003) — an ABSENT PAWSPACE_PAYMENT_ENV unlocked the staff gateway-
+// event simulators and the verify-first exemption
+//
+// Four call sites read String(env.PAWSPACE_PAYMENT_ENV || "sandbox"), so a deployment that simply never
+// set the variable resolved to sandbox and unlocked sandbox-only CAPABILITIES:
+//   app/api/grooming-payment-sandbox, app/api/training-payment-sandbox, app/api/sitting-payment-sandbox
+//     - staff simulators that hand processGatewayEvent signatureVerified:true for any booking at any
+//       caller-supplied amount, with zero gateway contact
+//   app/api/canonical-bookings  - liveMode=false, so a client-asserted {status:"captured"} is recorded
+//       as collected money instead of being demoted to awaiting verification
+//
+// MEASURED: with RAZORPAY_KEY_ID_SANDBOX/SECRET present and NO PAWSPACE_PAYMENT_ENV key at all, a
+// finance actor's POST {action:"simulate_event",eventType:"payment.captured",amount:8000} returned 201
+// with result {"status":"processed"}; booking_payments went status='captured' and
+// payment_reconciliation_records recorded captured_amount 8000, reconciliation_status 'matched', on zero
+// outbound fetch calls. That also makes provider_settlement_readiness eligible, so PawSpace would pay
+// the provider's settlement out of its own funds for a service nobody paid for.
+//
+// The credential default is NOT changed: docs/payments-staging-setup.md documents unsetting the variable
+// as the deliberate fail-closed rollback, and lib/razorpay-client.ts and lib/payment-webhook-gate.ts
+// keep resolving an unset variable to sandbox, so unsetting still takes live money off. What changes is
+// only that an absent variable no longer UNLOCKS a capability. Every documented deployment already sets
+// PAWSPACE_PAYMENT_ENV=sandbox explicitly, so the only behaviour that moves is the undeclared one.
+// =====================================================================================================
+
+async function paymentEnvWorld(env) {
+  const { sqlite, db } = world(env);
+  const { ensureSecurityTables } = await import("../lib/server-auth.ts");
+  await ensureSecurityTables(db);
+  const now = Date.now();
+  await db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('USR-W2-ENV','finance.mgr@pawspace.test','Finance manager','finance','active',?,?)").bind(now, now).run();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,amount_due_now REAL NOT NULL DEFAULT 0,currency TEXT NOT NULL DEFAULT 'INR',method TEXT NOT NULL DEFAULT 'upi',mode TEXT NOT NULL DEFAULT 'prepaid',status TEXT NOT NULL,gateway TEXT NOT NULL DEFAULT 'razorpay_sandbox',idempotency_key TEXT NOT NULL UNIQUE,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,status,idempotency_key,created_at,updated_at) VALUES ('PAY-BK-1','BK-1','CUS-1',8000,'awaiting_payment','k-bk1',?,?)").run(now, now);
+  const staff = {
+    "oai-authenticated-user-email": "finance.mgr@pawspace.test",
+    "oai-authenticated-user-full-name": "Finance%20manager",
+    "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8",
+  };
+  return { sqlite, db, staff };
+}
+
+const SANDBOX_KEYS = { RAZORPAY_KEY_ID_SANDBOX: "rzp_test_probe", RAZORPAY_KEY_SECRET_SANDBOX: "probe_secret" };
+
+// Each simulator, with the smallest call that reaches its environment gate. Grooming's event simulator
+// needs a linked order first, so both of its gated steps are exercised; training and sitting take a
+// quote and an amount directly.
+const SIMULATOR_CALLS = [
+  ["../app/api/grooming-payment-sandbox/route.ts", "/api/grooming-payment-sandbox",
+    [{ action: "link_order", bookingId: "BK-1", gatewayOrderId: "order_STAFF" },
+     { action: "simulate_event", bookingId: "BK-1", eventType: "payment.captured", amount: 8000 }]],
+  ["../app/api/training-payment-sandbox/route.ts", "/api/training-payment-sandbox",
+    [{ quoteId: "Q-1", amount: 8000 }], { "x-payment-capture-key": "probe-capture-key" }],
+  ["../app/api/sitting-payment-sandbox/route.ts", "/api/sitting-payment-sandbox",
+    [{ quoteId: "Q-1", amount: 8000 }], { "x-payment-capture-key": "probe-capture-key" }],
+];
+
+test("W2-PAY-07: an UNSET PAWSPACE_PAYMENT_ENV does not unlock the staff gateway-event simulators", async () => {
+  for (const [modulePath, path, calls, extra = {}] of SIMULATOR_CALLS) {
+    const { staff, sqlite } = await paymentEnvWorld({ ...SANDBOX_KEYS });
+    for (const body of calls) {
+      const result = await post(modulePath, path, body, { ...staff, ...extra });
+      assert.equal(result.status, 403,
+        `${path} ${JSON.stringify(body).slice(0, 60)} must be refused on an undeclared payment environment: ${JSON.stringify(result)}`);
+    }
+    assert.equal(String(sqlite.prepare("SELECT status FROM booking_payments WHERE booking_id='BK-1'").get().status), "awaiting_payment",
+      `${path} must not record money that was never received`);
+  }
+});
+
+test("W2-PAY-07: an EXPLICIT sandbox declaration still unlocks the simulators", async () => {
+  // Non-vacuity: this is the whole point of the sandbox, and staging/UAT declare it explicitly.
+  for (const [modulePath, path, calls, extra = {}] of SIMULATOR_CALLS) {
+    const { staff } = await paymentEnvWorld({ PAWSPACE_PAYMENT_ENV: "sandbox", ...SANDBOX_KEYS });
+    for (const body of calls) {
+      const result = await post(modulePath, path, body, { ...staff, ...extra });
+      assert.notEqual(result.status, 403,
+        `${path} ${JSON.stringify(body).slice(0, 60)} must still be allowed when sandbox is declared: ${JSON.stringify(result)}`);
+    }
+  }
+});
+
+test("W2-PAY-07: the credential default documented as the rollback is unchanged", async () => {
+  // docs/payments-staging-setup.md: "unset PAWSPACE_PAYMENT_ENV (-> defaults to sandbox)" is the
+  // deliberate fail-closed rollback for LIVE money. Unsetting must still take live off, so the
+  // credential and webhook-secret selection keeps resolving an absent variable to sandbox.
+  const client = await import("../lib/razorpay-client.ts");
+  const gate = await import("../lib/payment-webhook-gate.ts");
+  const environment = await import("../lib/payment-environment.ts");
+  assert.equal(client.paymentEnvironment({}), "sandbox", "an unset variable still selects sandbox credentials");
+  assert.equal(client.paymentEnvironment({ PAWSPACE_PAYMENT_ENV: "live" }), "live", "and an explicit live declaration is honoured");
+  assert.equal(gate.paymentMode({}), "sandbox", "an unset variable still selects the sandbox webhook secret");
+  assert.equal(environment.sandboxCapabilitiesUnlocked({}), false, "but it unlocks no sandbox-only capability");
+  assert.equal(environment.sandboxCapabilitiesUnlocked({ PAWSPACE_PAYMENT_ENV: "  SANDBOX " }), true, "an explicit declaration does, however it is cased or spaced");
+  assert.equal(environment.sandboxCapabilitiesUnlocked({ PAWSPACE_PAYMENT_ENV: "" }), false, "and an empty declaration is not a declaration");
 });

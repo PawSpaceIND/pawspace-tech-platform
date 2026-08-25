@@ -1,4 +1,5 @@
 import {subscriptionExpiry} from "../../../lib/grooming-governance";
+import{sandboxCapabilitiesUnlocked}from"../../../lib/payment-environment";
 import {governGroomingBookingWithLiveMultiPet} from "../../../lib/live-grooming-governance";
 import {authError,requireCustomerOwnership,requirePermission,resolveActor} from "../../../lib/server-auth";
 import {hasPermission} from "../../../lib/platform-security";
@@ -28,7 +29,11 @@ type SubscriptionPlan={planCode:string;sessions:number;validityValue:number;vali
 const services=new Set(["grooming","dog_training","boarding","pet_sitting"]);
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 async function database(){const {env}=await import("cloudflare:workers");return env.DB;}
-async function paymentEnv(){const {env}=await import("cloudflare:workers");return String((env as unknown as Record<string,unknown>).PAWSPACE_PAYMENT_ENV||"sandbox").toLowerCase();}
+// Live UNLESS sandbox is explicitly declared. The verify-first exemption - recording a client-asserted
+// {status:"captured"} as collected money - is a sandbox CAPABILITY, and an absent variable is not a
+// declaration. Credential and webhook-secret selection keep their documented "unset -> sandbox" default
+// (lib/razorpay-client.ts, lib/payment-webhook-gate.ts), so unsetting still takes live money off.
+async function liveModePayments(){const {env}=await import("cloudflare:workers");return !sandboxCapabilitiesUnlocked(env as unknown as Record<string,unknown>);}
 // Verify-first (LIVE only): an ONLINE booking payment may NOT self-declare "captured"; it is recorded
 // "created" and only a signature-verified Razorpay webhook may mark it captured. Sandbox/UAT unchanged.
 //
@@ -192,7 +197,7 @@ export async function POST(request:Request){try{const db=await database();await 
   // captured. A customer-app caller never holds it, so its captured is demoted whatever method it sends,
   // and no unknown/blank method can slip through — the method is not what decides.
   const offlineAuthorized=OFFLINE_METHODS.has(input.payment.method)&&hasPermission(actor.permissions,"payments.manage");
-  const liveMode=(await paymentEnv())!=="sandbox",paymentStatusRecorded=recordedPaymentStatus(liveMode,input.payment,offlineAuthorized);
+  const liveMode=await liveModePayments(),paymentStatusRecorded=recordedPaymentStatus(liveMode,input.payment,offlineAuthorized);
   const commercialPolicy=input.serviceCode==="grooming"?await resolveGroomingPolicy(db,input.cityId,input.zoneId):null;
   if(commercialPolicy?.enforcementMode==="enforce"&&input.pets.length>commercialPolicy.multiPetMax)return json({error:`This city policy supports up to ${commercialPolicy.multiPetMax} pets per Grooming booking`,policyVersion:policyVersion(commercialPolicy)},409);
   if(input.serviceCode==="grooming"){

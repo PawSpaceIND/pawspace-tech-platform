@@ -54,7 +54,11 @@
     "blast_radius": "Any deployment where PAWSPACE_PAYMENT_ENV is not explicitly set — the fail-closed default the module documents is fail-OPEN for this route. Same fallback appears in lib/razorpay-client.ts paymentEnvironment (String(env?.PAWSPACE_PAYMENT_ENV || \"sandbox\")) and lib/payment-webhook-gate.ts paymentMode, so an unset variable also silently selects the sandbox webhook secret and stamps every live event environment=\"sandbox\".",
     "suggested_severity": "P0",
     "evidence_path": "scratchpad/p/p2-routes.mjs, scratchpad/p/p3-refund-money-out.mjs",
-    "status": "OPEN"
+    "status": "FIXED",
+    "fix_file": "lib/payment-environment.ts (new); app/api/grooming-payment-sandbox/route.ts; app/api/training-payment-sandbox/route.ts; app/api/sitting-payment-sandbox/route.ts; app/api/canonical-bookings/route.ts",
+    "regression": "tests/ptja-p1-regressions.test.mjs :: \"W2-PAY-07: an UNSET PAWSPACE_PAYMENT_ENV does not unlock the staff gateway-event simulators\" + \"W2-PAY-07: an EXPLICIT sandbox declaration still unlocks the simulators\" + \"W2-PAY-07: the credential default documented as the rollback is unchanged\"",
+    "fix_note": "Sandbox-only CAPABILITIES (the three staff gateway-event simulators, and the canonical-bookings verify-first exemption) now require an EXPLICIT PAWSPACE_PAYMENT_ENV=sandbox; an absent or empty variable is not a declaration and unlocks nothing. The CREDENTIAL default is deliberately unchanged: docs/payments-staging-setup.md documents unsetting the variable as the fail-closed rollback for live money, and lib/razorpay-client.ts paymentEnvironment and lib/payment-webhook-gate.ts paymentMode still resolve an unset variable to sandbox - so unsetting still takes live money off. No documented deployment changes behaviour: staging setup, release evidence and human-test readiness all already set the variable explicitly.",
+    "collateral": "Three pre-existing source_contract assertions pinned the literal string PAWSPACE_PAYMENT_ENV inside app/api/canonical-bookings/route.ts (payment-verify-first, live-payment-integrity, verified-capture-entitlement). The decision moved into a named module, so those pins were re-pointed at sandboxCapabilitiesUnlocked(env and STRENGTHENED with a doesNotMatch on the PAWSPACE_PAYMENT_ENV||\"sandbox\" fallback they previously allowed. No behavioural assertion was relaxed."
   },
   {
     "id": "W2-07-PAY-004",
