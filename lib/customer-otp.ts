@@ -56,16 +56,18 @@ export async function verifyCustomerOtp(db:Db,input:{challengeId:string;code:str
    // Two separately-issued OTP challenges for one phone can be verified concurrently. A random ID
    // allowed both requests to create customer truth after both observed the initial lookup as empty.
    // The phone-derived hash avoids embedding the plaintext phone in the ID and makes the primary-key
-   // insert the atomic identity claim.
+   // insert the atomic identity claim. canonical_customers.city_id is historically NOT NULL, so an
+   // identity without captured geography is stored explicitly as unassigned rather than fabricated BLR.
    const id=await canonicalOtpCustomerId(phone),now=Date.now();
    await db.prepare("INSERT OR IGNORE INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,NULL,NULL,'customer_app_otp','{}',?,?)")
-     .bind(id,text(input.cityId)||null,text(input.name)||"PawSpace Customer",phone,now,now).run();
+     .bind(id,text(input.cityId)||"unassigned",text(input.name)||"PawSpace Customer",phone,now,now).run();
    customer=await db.prepare("SELECT id,name,primary_phone,city_id FROM canonical_customers WHERE id=?").bind(id).first<Row>();
    if(!customer||text(customer.primary_phone)!==phone)throw new Error("Canonical customer identity conflict - human review required");
  }
+ const customerCityId=text(customer.city_id);
  const now=Date.now(),nonce=uid("NONCE"),payload:AssertionPayload={
    v:1,identitySource:"customer_otp",principalType:"identity_subject",principalKey:phone,
-   subjectType:"customer",subjectId:text(customer.id),cityId:text(customer.city_id)||null,
+   subjectType:"customer",subjectId:text(customer.id),cityId:customerCityId==="unassigned"?null:customerCityId||null,
    issuedAt:now,expiresAt:now+120000,nonce,
  };
  // bind the app install to this identified customer (funnel: installed -> identified). Best-effort.
