@@ -34,28 +34,22 @@ jobs:
               text = p.read_text()
               count = text.count(old)
               if count != 1:
-                  raise SystemExit(f"{path}: expected exactly one occurrence, found {count}: {old[:140]!r}")
+                  raise SystemExit(f"{path}: expected exactly one occurrence, found {count}: {old[:160]!r}")
               p.write_text(text.replace(old, new, 1))
               print(f"patched {path}")
 
-          pair_old = r'assert.match(api,/requirePermission\(actor,\"bookings\.view\"\)/);assert.match(api,/requirePermission\(actor,\"bookings\.manage\"\)/);'
-          pair_new = r'assert.match(api,/requirePermission\(actor,\"bookings\.manage\"\)/);assert.doesNotMatch(api,/requirePermission\(actor,\"bookings\.view\"\)/);'
-          for path in [
-              'tests/boarding-gate5.test.mjs',
-              'tests/food-gate5.test.mjs',
-              'tests/sitting-gate5.test.mjs',
-              'tests/taxi-gate5.test.mjs',
-              'tests/walking-gate5.test.mjs',
-          ]:
+          pair_old = 'assert.match(api,/requirePermission\\(actor,\"bookings\\.view\"\\)/);assert.match(api,/requirePermission\\(actor,\"bookings\\.manage\"\\)/);'
+          pair_new = 'assert.match(api,/requirePermission\\(actor,\"bookings\\.manage\"\\)/);assert.doesNotMatch(api,/requirePermission\\(actor,\"bookings\\.view\"\\)/);'
+          for path in ['tests/boarding-gate5.test.mjs','tests/food-gate5.test.mjs','tests/sitting-gate5.test.mjs','tests/taxi-gate5.test.mjs','tests/walking-gate5.test.mjs']:
               replace_once(path, pair_old, pair_new)
 
-          replace_once('tests/boarding-gate5.test.mjs', r'assert.match(gateway,/method===\"GET\"\?\"bookings\.view\":\"bookings\.manage\"/);', r'assert.match(gateway,/boarding-ops\"\)return \"bookings\.manage\"/);')
-          replace_once('tests/sitting-gate5.test.mjs', r'assert.match(gateway,/method===\"GET\"\?\"bookings\.view\":\"bookings\.manage\"/);', r'assert.match(gateway,/sitting-ops\"\)return \"bookings\.manage\"/);')
-          replace_once('tests/food-hardening.test.mjs', r'assert.match(gateway, /food-ops\"\)return method===\"GET\"\?\"bookings\.view\":\"bookings\.manage\"/);', r'assert.match(gateway, /food-ops\"\)return \"bookings\.manage\"/);')
-          replace_once('tests/food-supply-chain.test.mjs', r'assert.match(gateway, /food-supply-chain\"\)return method===\"GET\"\?\"bookings\.view\":\"bookings\.manage\"/);', r'assert.match(gateway, /food-supply-chain\"\)return \"bookings\.manage\"/);')
-          replace_once('tests/training-hardening.test.mjs', r'assert.match(gateway, /training-ops\"\)return \"bookings\.view\"/);', r'assert.match(gateway, /training-ops\"\)return \"bookings\.manage\"/);')
-          replace_once('tests/staff-alert-center.test.mjs', r'assert.match(gateway,/method===\"GET\"\?\"bookings\.view\":\"bookings\.manage\"/);', r'assert.match(gateway,/url\.pathname===\"\/api\/unified-cases\"\)return \"bookings\.manage\"/);')
-          replace_once('tests/walking-taxi-ops-hardening.test.mjs', r'assert.match(source, /requirePermission\(actor,\"bookings\.view\"\)/, `${path} reads require bookings.view`);', r'assert.doesNotMatch(source, /requirePermission\(actor,\"bookings\.view\"\)/, `${path} system-wide reads must not use bookings.view`);')
+          replace_once('tests/boarding-gate5.test.mjs', 'method===\"GET\"\\?\"bookings\\.view\":\"bookings\\.manage\"', 'boarding-ops\"\\)return \"bookings\\.manage\"')
+          replace_once('tests/sitting-gate5.test.mjs', 'method===\"GET\"\\?\"bookings\\.view\":\"bookings\\.manage\"', 'sitting-ops\"\\)return \"bookings\\.manage\"')
+          replace_once('tests/food-hardening.test.mjs', 'food-ops\"\\)return method===\"GET\"\\?\"bookings\\.view\":\"bookings\\.manage\"', 'food-ops\"\\)return \"bookings\\.manage\"')
+          replace_once('tests/food-supply-chain.test.mjs', 'food-supply-chain\"\\)return method===\"GET\"\\?\"bookings\\.view\":\"bookings\\.manage\"', 'food-supply-chain\"\\)return \"bookings\\.manage\"')
+          replace_once('tests/training-hardening.test.mjs', 'training-ops\"\\)return \"bookings\\.view\"', 'training-ops\"\\)return \"bookings\\.manage\"')
+          replace_once('tests/staff-alert-center.test.mjs', 'assert.match(gateway,/method===\"GET\"\\?\"bookings\\.view\":\"bookings\\.manage\"/);', 'assert.match(gateway,/url\\.pathname===\"\\/api\\/unified-cases\"\\)return \"bookings\\.manage\"/);')
+          replace_once('tests/walking-taxi-ops-hardening.test.mjs', 'assert.match(source, /requirePermission\\(actor,\"bookings\\.view\"\\)/, `${path} reads require bookings.view`);', 'assert.doesNotMatch(source, /requirePermission\\(actor,\"bookings\\.view\"\\)/, `${path} system-wide reads must not use bookings.view`);')
 
           replace_once('tests/commercial-quote-origin-surface.test.mjs', 'body: () => ({ packageCode: "boarding-4h", petCount: 1, scheduledStart: at(20 * DAY), scheduledEnd: at(20 * DAY + 3 * HOUR), paymentMode: "prepaid" })', 'body: () => ({ packageCode: "boarding-4h", petCount: 1, scheduledStart: at(20 * DAY), scheduledEnd: at(20 * DAY + 3 * HOUR), paymentMode: "prepaid", cityId: "blr", zoneId: "blr-east" })')
           replace_once('tests/commercial-quote-origin-surface.test.mjs', 'body: () => ({ packageCode: "sitting-visit-60", petCount: 1, scheduledStart: at(20 * DAY), scheduledEnd: at(20 * DAY + HOUR), paymentMode: "prepaid" })', 'body: () => ({ packageCode: "sitting-visit-60", petCount: 1, scheduledStart: at(20 * DAY), scheduledEnd: at(20 * DAY + HOUR), paymentMode: "prepaid", cityId: "blr", zoneId: "blr-east" })')
