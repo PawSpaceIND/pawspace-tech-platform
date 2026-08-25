@@ -84,22 +84,80 @@ test("live quote location scope rejects a city-zone mismatch before persistence"
   );
 });
 
-test("public host-profile GET cannot seed demo data outside the explicit UAT gate", async () => {
-  const source = await read("app/api/host-profile/route.ts");
-  assert.match(source, /uatLoginEnabled\(env\).*seedDemoHostProfiles\(db\)/s,
-    "demo profile seeding must stay behind the UAT environment gate");
-  assert.doesNotMatch(source, /const db = await database\(\);\s*await seedDemoHostProfiles\(db\)/,
-    "public GET must not unconditionally seed demo profiles");
+test("public Host Profile and Training Ops reads cannot seed synthetic records", async () => {
+  const host = await read("app/api/host-profile/route.ts");
+  const hostGet = host.match(/export async function GET\([^]*?(?=export async function|$)/)?.[0] || "";
+  assert.doesNotMatch(hostGet, /seedDemoHostProfiles\(/,
+    "Host Profile GET must be strictly observational");
+
+  const training = await read("app/api/training-ops/route.ts");
+  const trainingGet = training.match(/export async function GET\([^]*?(?=export async function|$)/)?.[0] || "";
+  assert.doesNotMatch(trainingGet, /seedProviderCapacityDefaults\(/,
+    "Training Ops GET must not create synthetic provider capacity");
+  assert.match(trainingGet, /ensureProviderCapacityTables\(/,
+    "Training Ops GET may ensure schema but must not seed synthetic providers");
 });
 
-test("Revenue CRM GET remains observational, does not seed synthetic owners, and mutation sweeps stay behind explicit writes", async () => {
-  const source = await read("app/api/revenue-crm/route.ts");
-  const get = source.match(/export async function GET\([^]*?(?=export async function POST)/)?.[0] || "";
+test("synthetic UAT mutation surfaces require both isolated UAT and sandbox payments", async () => {
+  const swarm = await read("app/api/prelaunch-booking-swarm/route.ts");
+  const swarmPost = swarm.match(/export async function POST\([^]*$/)?.[0] || "";
+  assert.match(swarmPost, /uatLoginEnabled\(runtime\)/,
+    "prelaunch swarm must require the explicit UAT login gate");
+  assert.match(swarmPost, /PAWSPACE_PAYMENT_ENV[^]*?sandbox/,
+    "prelaunch swarm must require sandbox payments");
+
+  const crm = await read("app/api/revenue-crm/route.ts");
+  const crmGet = crm.match(/export async function GET\([^]*?(?=export async function POST)/)?.[0] || "";
   for (const mutator of ["seedUat", "runLeadReopening", "runSla", "enforceOps", "generateCommandReports", "runLeadCallbackSweep"]) {
-    assert.doesNotMatch(get, new RegExp(`await\\s+${mutator}\\(`), `GET must not run ${mutator}`);
+    assert.doesNotMatch(crmGet, new RegExp(`await\\s+${mutator}\\(`), `GET must not run ${mutator}`);
   }
-  assert.match(source, /action===["']seed_uat["']/,
-    "synthetic Revenue CRM data must require an explicit UAT-only write action");
-  assert.match(source, /action===["']refresh_leaderboard["']/,
-    "leaderboard recomputation must require an explicit staff write action");
+  assert.match(crm, /action===["']seed_uat["'][^]*?PAWSPACE_UAT_LOGIN[^]*?PAWSPACE_UAT_SIGNING_KEY[^]*?PAWSPACE_PAYMENT_ENV[^]*?["']sandbox["']/,
+    "Revenue CRM seed_uat must require UAT login, signing key and sandbox payments");
+  assert.match(crm, /action===["']refresh_leaderboard["']/,
+    "leaderboard recomputation must remain an explicit staff write action");
+});
+
+test("locationless identities and catalogue reads never silently become Bengaluru", async () => {
+  for (const path of ["lib/customer-otp.ts", "lib/partner-otp.ts"]) {
+    const source = await read(path);
+    assert.doesNotMatch(source, /input\.cityId\s*(?:\|\||\?\?)\s*["']blr["']/,
+      `${path} must preserve an absent city as null/blank rather than BLR`);
+  }
+
+  const boarding = await read("app/api/boarding-commercial/route.ts");
+  assert.doesNotMatch(boarding, /searchParams\.get\(["']cityId["']\)\s*\|\|\s*["']blr["']/,
+    "Boarding catalogue GET must not default a missing city to BLR");
+  assert.doesNotMatch(boarding, /searchParams\.get\(["']zoneId["']\)\s*\|\|\s*["']blr-east["']/,
+    "Boarding catalogue GET must not default a missing zone to BLR East");
+  assert.match(boarding, /availabilityMode:["']location_required["']/,
+    "locationless Boarding catalogue reads must be explicitly marked location_required");
+});
+
+test("governed pricing writes and quotes require explicit city and zone without schema fallback", async () => {
+  const control = await read("app/api/pricing-control/route.ts");
+  assert.doesNotMatch(control, /city_id text DEFAULT ['"]blr['"] NOT NULL/,
+    "new pricing rule schema must not silently assign BLR");
+  const controlPost = control.match(/export async function POST\([^]*$/)?.[0] || "";
+  assert.match(controlPost, /cityId\?:string;zoneId\?:string/,
+    "pricing rule creation must accept explicit city and zone");
+  assert.match(controlPost, /!body\.cityId\|\|!body\.zoneId/,
+    "pricing rule creation must reject a missing city or zone");
+
+  const quote = await read("app/api/pricing-quote/route.ts");
+  assert.match(quote, /!cityId\|\|!zoneId/,
+    "pricing quote must reject a missing city or zone");
+  assert.doesNotMatch(quote, /cityId:body\.cityId\s*(?:\?\?|\|\|)\s*["']blr["']/,
+    "pricing quote must never synthesize BLR for a missing city");
+});
+
+test("Haptik slots and Grooming tax policy reject missing geography", async () => {
+  const haptik = await read("app/api/haptik/route.ts");
+  assert.match(haptik, /action===["']fetch_slots["'][^]*?!cityId\|\|!zoneId[^]*?status[^]*?400/,
+    "Haptik fetch_slots must require explicit city and zone");
+
+  const grooming = await read("app/api/grooming-finance/route.ts");
+  assert.match(grooming, /action===["']save_tax_policy["'][^]*?!cityId[^]*?status:400/,
+    "Grooming tax policy writes must require an explicit city");
+  assert.doesNotMatch(grooming, /cityId:String\(body\.cityId\|\|["']blr["']\)/,
+    "Grooming tax policy must not silently fall back to BLR");
 });
