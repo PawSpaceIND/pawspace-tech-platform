@@ -30,6 +30,10 @@ export const VERIFICATION_TYPES: VerificationType[] = [
 const typeByCode = (c: string) => VERIFICATION_TYPES.find(t => t.code === c) || null;
 export const PROVIDER_CATEGORIES = ["groomer", "pet_sitter", "trainer", "host"];
 
+/** The two outcomes that are a DECISION about a check. Kept identical to TERMINAL_VERIFICATION_STATUSES
+ *  in lib/idfy-callback-boundary.ts, which enforces the same rule on the callback path. */
+const TERMINAL_VERIFICATION_OUTCOMES = ["verified", "failed"];
+
 /**
  * Which mandate category an onboarding application's vertical belongs to. The onboarding application
  * carries a service vertical_key ("grooming"), while mandates are defined per provider category
@@ -163,6 +167,25 @@ export async function runProviderVerification(db: Db, env: Env, input: { applica
     if (!idfyConfigured(env)) { status = "pending"; detail = { reason: "IDfy not connected - check queued until verification is switched on" }; }
     else { const r = await verifyWithIdfy(env, { checkType: type.code, referenceId: `${applicationId}:${type.code}`, payload: input.payload || {} }); automated = 1; if (r.connected) { status = r.status; providerRef = r.reference; detail = { via: "idfy" }; } else { status = "pending"; detail = { reason: r.reason }; } }
   } else { status = "manual_review"; detail = { reason: "Manual/agent verification required (photo or physical check)" }; }
+  // A NON-DECISION MAY NOT OVERWRITE A DECISION.
+  //
+  // The upsert below sets status and detail_json unconditionally, so re-running this path over a check a
+  // human had already resolved replaced 'failed' with 'manual_review' and replaced the inspector's note
+  // with the generic "Manual/agent verification required" string. There is no verification history table
+  // and the security-audit detail never carries the note, so a failed physical inspection - and the
+  // reason for it - was gone from the database entirely, leaving an innocuous "awaiting review" for the
+  // next agent to resolve in good faith.
+  //
+  // This is lib/idfy-callback-boundary.ts's own rule, applied to its sibling path: a terminal outcome may
+  // overwrite anything (failed -> verified is a correction, verified -> failed a revocation, and both are
+  // somebody's judgement), but a non-terminal one may only write over a check nobody has decided yet.
+  // Nothing here decides what a failure means or how long it stands. [PTJA-P1-F51]
+  if (!TERMINAL_VERIFICATION_OUTCOMES.includes(status)) {
+    const decided = await db.prepare("SELECT status,automated,provider_ref FROM provider_verifications WHERE application_id=? AND verification_type=?").bind(applicationId, type.code).first<Row>().catch(() => null);
+    const standing = text(decided?.status);
+    if (TERMINAL_VERIFICATION_OUTCOMES.includes(standing))
+      return { applicationId, verificationType: type.code, status: standing, automated: Number(decided?.automated) === 1, providerRef: decided?.provider_ref ? text(decided.provider_ref) : null };
+  }
   const id = uid("PVER");
   await db.prepare("INSERT INTO provider_verifications (id,application_id,category,verification_type,status,automated,provider_ref,detail_json,updated_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(application_id,verification_type) DO UPDATE SET status=excluded.status,automated=excluded.automated,provider_ref=COALESCE(excluded.provider_ref,provider_verifications.provider_ref),detail_json=excluded.detail_json,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
     .bind(id, applicationId, category, type.code, status, automated, providerRef, JSON.stringify(detail), input.actorId, now, now).run();

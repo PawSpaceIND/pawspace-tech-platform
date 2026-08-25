@@ -158,3 +158,71 @@ test("P1-F36: the customer's own reserve path is untouched", async () => {
   }, { cookie });
   assert.notEqual(result.status, 403, `a customer reserving for themselves must not be refused: ${JSON.stringify(result.body)}`);
 });
+
+// =====================================================================================================
+// PTJA-P1-F51 — the automated 'run' path overwrites a human's recorded verification FAILURE
+//
+// Reproduced by execution through the real POST /api/provider-verification with a real non-preview admin
+// identity. runProviderVerification's ON CONFLICT(application_id,verification_type) DO UPDATE sets
+// status and detail_json unconditionally, so re-running the automated path over a NON-automatable type
+// that a human had already resolved replaced 'failed' with 'manual_review' and replaced the inspector's
+// note with the generic "Manual/agent verification required (photo or physical check)".
+//
+// Measured: record_manual house_verification -> failed with the note "Unsafe balcony; dog escaped during
+// the visit. REJECT." -> 201. Then action 'run' for the same application and type -> 201 with
+// {"status":"manual_review"}, no warning and no conflict. There is no verification history table, and
+// the security-audit detail for record_manual carries only {verificationType,status}, never the note, so
+// the recorded failure and the reason for it are gone from the database entirely.
+//
+// It does not by itself create eligibility - 'manual_review' is not 'verified', so the mandate still
+// blocks activation. The damage is evidence destruction: a failed physical inspection becomes an
+// innocuous "awaiting review", and the next agent can record 'verified' in good faith.
+//
+// The rule applied is the platform's own, from lib/idfy-callback-boundary.ts: a NON-decision may not
+// overwrite a decision. Nothing here decides what a failure means or how long it stands.
+// =====================================================================================================
+
+async function verificationWorld() {
+  const { sqlite, db } = world();
+  const mandate = await import("../lib/provider-verification-mandate.ts");
+  await mandate.ensureVerificationMandateTables(db);
+  const rowFor = (type) => sqlite.prepare("SELECT status,detail_json,updated_by FROM provider_verifications WHERE application_id='APP-F51' AND verification_type=?").get(type);
+  return { sqlite, db, mandate, rowFor };
+}
+
+test("P1-F51: an automated re-run cannot erase a human's recorded FAILURE or the inspector's note", async () => {
+  const { db, mandate, rowFor } = await verificationWorld();
+  await mandate.recordManualVerification(db, { applicationId: "APP-F51", verificationType: "house_verification", status: "failed", note: "Unsafe balcony; dog escaped during the visit. REJECT.", actorId: "inspector@pawspace.test" });
+  assert.equal(rowFor("house_verification").status, "failed");
+
+  const rerun = await mandate.runProviderVerification(db, {}, { applicationId: "APP-F51", category: "host", verificationType: "house_verification", actorId: "ops@pawspace.test" });
+  assert.equal(rerun.status, "failed", "the run must report the decision that stands, not the one it wanted to write");
+
+  const row = rowFor("house_verification");
+  assert.equal(row.status, "failed", "a human decision is not overwritten by a re-run");
+  assert.match(String(row.detail_json), /dog escaped during the visit/, "and the inspector's note survives");
+});
+
+test("P1-F51: a human's recorded PASS is equally protected", async () => {
+  const { db, mandate, rowFor } = await verificationWorld();
+  await mandate.recordManualVerification(db, { applicationId: "APP-F51", verificationType: "pet_proofing_photo", status: "verified", note: "Photos reviewed, home is pet-proofed", actorId: "inspector@pawspace.test" });
+  await mandate.runProviderVerification(db, {}, { applicationId: "APP-F51", category: "host", verificationType: "pet_proofing_photo", actorId: "ops@pawspace.test" });
+  const row = rowFor("pet_proofing_photo");
+  assert.equal(row.status, "verified");
+  assert.match(String(row.detail_json), /Photos reviewed/);
+});
+
+test("P1-F51: an UNDECIDED check can still be queued for review - the fix is not a freeze", async () => {
+  // Non-vacuity. Refusing every re-run would break the ordinary submit path, where 'run' is exactly how
+  // a manual check is put in front of an agent in the first place.
+  const { db, mandate, rowFor } = await verificationWorld();
+  const first = await mandate.runProviderVerification(db, {}, { applicationId: "APP-F51", category: "host", verificationType: "house_verification", actorId: "ops@pawspace.test" });
+  assert.equal(first.status, "manual_review", "an undecided physical check is queued for a human");
+  assert.equal(rowFor("house_verification").status, "manual_review");
+
+  // And a human can still change their own mind afterwards - recordManualVerification is unaffected.
+  await mandate.recordManualVerification(db, { applicationId: "APP-F51", verificationType: "house_verification", status: "failed", note: "Rejected on the second visit", actorId: "inspector@pawspace.test" });
+  assert.equal(rowFor("house_verification").status, "failed");
+  await mandate.recordManualVerification(db, { applicationId: "APP-F51", verificationType: "house_verification", status: "verified", note: "Remediated and re-inspected", actorId: "inspector@pawspace.test" });
+  assert.equal(rowFor("house_verification").status, "verified", "a human may still revise a human decision");
+});
