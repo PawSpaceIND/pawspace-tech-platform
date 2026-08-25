@@ -397,3 +397,69 @@ test("P0-03: the consequence - an enforcing policy actually withholds the late-c
   const early = evaluateBookingChange(policy, { action: "cancel", scheduledStart: new Date(now + 5 * 86_400_000).toISOString(), status: "confirmed", bookingAmount: 1899, now });
   assert.equal(early.refundPercent, 100, "and a cancellation outside the cutoff still refunds in full");
 });
+
+// =====================================================================================================
+// PTJA-P0-04 — a REJECTED set_mandate destroys the category's verification mandate
+//
+// CONFIRMED independently by both verifiers, same canonical failure. setCategoryMandate ran an
+// unconditional DELETE and then a loop of separate un-batched INSERTs. A request that failed partway -
+// a duplicate entry hitting PRIMARY KEY(category,verification_type) - returned 500 "Unable to update
+// verification" while the category was left holding only the rows inserted before the failure.
+//
+// It does not heal. seedDefaultMandates() deliberately skips any category that still has at least one
+// row ("a category that already carries any row is a category somebody has decided about"), so the
+// deleted requirements are never restored on any later read. Both verifiers measured the consequence:
+// a host missing house_verification and pet_proofing_photo flipped from canTakeAssignments=false to
+// true, because the checks it was failing had stopped being required of anybody.
+//
+// The correction is atomicity, and only atomicity: the DELETE and the INSERTs become one db.batch, so a
+// rejected mandate change leaves the mandate exactly as it was. Which types are valid, whether a
+// duplicate is an error, and what the defaults are, are all unchanged - the request still fails.
+// =====================================================================================================
+
+async function mandateWorld() {
+  const { sqlite, db } = world();
+  const mandate = await import("../lib/provider-verification-mandate.ts");
+  await mandate.seedDefaultMandates(db);
+  const hostTypes = () => sqlite.prepare("SELECT verification_type FROM provider_category_verification_mandates WHERE category='host' ORDER BY verification_type").all().map((r) => r.verification_type);
+  return { sqlite, db, mandate, hostTypes };
+}
+
+test("P0-04: a set_mandate that is REJECTED leaves the existing mandate untouched", async () => {
+  // Measured before the fix: the host mandate was left holding ["aadhaar"] alone - pan,
+  // house_verification and pet_proofing_photo were gone, permanently.
+  const { db, mandate, hostTypes } = await mandateWorld();
+  const before = hostTypes();
+  assert.deepEqual(before, ["aadhaar", "house_verification", "pan", "pet_proofing_photo"], "the seeded host mandate is the baseline");
+
+  await assert.rejects(
+    () => mandate.setCategoryMandate(db, { category: "host", verificationTypes: ["aadhaar", "aadhaar", "pan"], actorId: "ops@pawspace.test" }),
+    /UNIQUE constraint failed/,
+    "a duplicate entry is still an error",
+  );
+  assert.deepEqual(hostTypes(), before, "a rejected mandate change must not remove a single requirement");
+
+  // And it must still be the mandate the ENFORCEMENT path reads, not just a table the test looked at.
+  assert.deepEqual((await mandate.requiredVerifications(db, "host")).sort(), before, "the enforcement path still requires all four");
+});
+
+test("P0-04: every other rejection path is equally non-destructive", async () => {
+  const { db, mandate, hostTypes } = await mandateWorld();
+  const before = hostTypes();
+  for (const [label, types] of [
+    ["an unknown verification type", ["aadhaar", "fingerprint_scan"]],
+    ["an empty list", []],
+  ]) {
+    await assert.rejects(() => mandate.setCategoryMandate(db, { category: "host", verificationTypes: types, actorId: "ops@pawspace.test" }), undefined, `${label} is still refused`);
+    assert.deepEqual(hostTypes(), before, `${label} must leave the mandate intact`);
+  }
+});
+
+test("P0-04: an ACCEPTED set_mandate still replaces the set - the fix is not a freeze", async () => {
+  // Non-vacuity. Atomicity that never commits would satisfy both cases above.
+  const { db, mandate, hostTypes } = await mandateWorld();
+  const result = await mandate.setCategoryMandate(db, { category: "host", verificationTypes: ["aadhaar", "house_verification"], actorId: "ops@pawspace.test" });
+  assert.deepEqual(result.verificationTypes, ["aadhaar", "house_verification"]);
+  assert.deepEqual(hostTypes(), ["aadhaar", "house_verification"], "the narrowed mandate is stored, and pan/pet_proofing_photo are gone because the operator removed them");
+  assert.deepEqual((await mandate.requiredVerifications(db, "host")).sort(), ["aadhaar", "house_verification"], "and the enforcement path reads the operator's decision, not the defaults");
+});

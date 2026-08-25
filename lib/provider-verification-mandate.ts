@@ -98,8 +98,16 @@ export async function setCategoryMandate(db: Db, input: { category: string; veri
   const types = requested;
   if (!types.length) throw new Error("At least one valid verification type is required");
   const now = Date.now();
-  await db.prepare("DELETE FROM provider_category_verification_mandates WHERE category=?").bind(category).run();
-  for (const t of types) await db.prepare("INSERT INTO provider_category_verification_mandates (category,verification_type,required,updated_by,updated_at) VALUES (?,?,1,?,?)").bind(category, t, input.actorId, now).run();
+  // ONE batch. The DELETE and the INSERTs used to be separate un-batched statements, so a request that
+  // failed partway through the loop - a duplicate entry hitting PRIMARY KEY(category,verification_type)
+  // - answered 500 while the category was left holding only the rows inserted before the failure. It
+  // never healed: seedDefaultMandates skips any category that still has a row, by design, so the deleted
+  // requirements were gone for good and providers stopped being asked for checks nobody had removed on
+  // purpose. A rejected mandate change must leave the mandate exactly as it was. [PTJA-P0-04]
+  await db.batch([
+    db.prepare("DELETE FROM provider_category_verification_mandates WHERE category=?").bind(category),
+    ...types.map(t => db.prepare("INSERT INTO provider_category_verification_mandates (category,verification_type,required,updated_by,updated_at) VALUES (?,?,1,?,?)").bind(category, t, input.actorId, now)),
+  ]);
   return { category, verificationTypes: types };
 }
 
