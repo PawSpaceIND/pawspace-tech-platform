@@ -234,10 +234,15 @@ test("booking creation persists the split schedule atomically for boarding and s
   const canonical = read("app/api/canonical-bookings/route.ts");
   assert.match(canonical, /boardingCommercial\.paymentMode==="split_50_50"/);
   assert.match(canonical, /serviceCode:"boarding"/);
-  assert.match(canonical, /input\.serviceCode==="pet_sitting"&&input\.payment\.mode==="split_50_50"/);
+  // The Sitting split schedule used to be built here too, from the amounts the CLIENT submitted -
+  // canonical-bookings had no Sitting quote to build it from. Sitting is now refused on that route
+  // (PTJA-P0-02), so the only Sitting split schedule is the governed one below, derived from the
+  // server quote. Both halves of the original claim still hold; the ungoverned half is gone.
+  assert.doesNotMatch(canonical, /serviceCode:"pet_sitting"/, "canonical-bookings must not build a Sitting split schedule");
   const sitting = read("app/api/sitting-bookings/route.ts");
   assert.match(sitting, /governed\.paymentMode==="split_50_50"/);
   assert.match(sitting, /staySplitScheduleStatement/);
+  assert.match(sitting, /serviceCode:"pet_sitting"/);
 });
 
 test("stay-flow offers the governed 50/50 option for overnight stays longer than 4 nights, both modes", () => {

@@ -402,10 +402,10 @@ export async function POST(request:Request){try{const input=await request.json()
   if(trainingCommercial)statements.push(trainingQuoteLinkStatement(db,trainingCommercial.quoteId,bookingId));
   if(boardingCommercial)statements.push(boardingQuoteLinkStatement(db,boardingCommercial.quoteId,bookingId),boardingStayStatement(db,{bookingId,customerId:input.customer.id,providerId:input.provider.id,cityId:input.cityId,zoneId:input.zoneId,packageCode:boardingCommercial.packageCode,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,stayUnits:boardingCommercial.stayUnits,petCount:boardingCommercial.petCount}));
   if(boardingCommercial&&boardingCommercial.paymentMode==="split_50_50"){await ensureStayPaymentTables(db);const plan=splitPaymentPlan({totalAmount:boardingCommercial.totalAmount,scheduledStart:input.scheduledStart});statements.push(staySplitScheduleStatement(db,{bookingId,serviceCode:"boarding",customerId:input.customer.id,totalAmount:boardingCommercial.totalAmount,paidNowAmount:boardingCommercial.amountDueNow,balanceAmount:plan.balance,balanceDueAt:plan.balanceDueAt}));}
-  // Pet Sitting on this path is client-priced (no server quote yet); record the split schedule from
-  // the submitted amounts so the balance is tracked and collectable, requiring a real outstanding
-  // balance and a stay that starts more than 24h out (splitPaymentPlan enforces the lead time).
-  if(input.serviceCode==="pet_sitting"&&input.payment.mode==="split_50_50"){if(!(input.totalAmount>input.amountDueNow))return json({error:"Split payment requires an outstanding balance below the total"},409);await ensureStayPaymentTables(db);const plan=splitPaymentPlan({totalAmount:input.totalAmount,scheduledStart:input.scheduledStart});statements.push(staySplitScheduleStatement(db,{bookingId,serviceCode:"pet_sitting",customerId:input.customer.id,totalAmount:input.totalAmount,paidNowAmount:input.amountDueNow,balanceAmount:Math.round((input.totalAmount-input.amountDueNow)*100)/100,balanceDueAt:plan.balanceDueAt}));}
+  // The Pet Sitting 50/50 split schedule used to be built here from the SUBMITTED amounts, because
+  // "Pet Sitting on this path is client-priced (no server quote yet)". It is unreachable now that
+  // pet_sitting is refused above, and the governed equivalent - built from the server quote - lives in
+  // app/api/sitting-bookings/route.ts. [PTJA-P0-02]
   if(referralCommercial)statements.push(referralBookingLinkStatement(db,{preparation:referralCommercial,bookingId,now}),referralClaimBoundStatement(db,{claimId:referralCommercial.claimId,now}));
   if(couponCommercial)statements.push(couponCommercial.redemptionStatement,couponCommercial.claimStatement);
   if(subscriptionId&&governed.subscriptionPlan){const expiresAt=subscriptionExpiry(now,governed.subscriptionPlan.validityValue,governed.subscriptionPlan.validityUnit);

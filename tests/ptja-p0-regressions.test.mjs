@@ -318,3 +318,82 @@ test("P0-02: a pet_sitting booking that already exists still replays through /ap
   assert.equal(replay.body.data.duplicatePrevented, true);
   assert.equal(replay.body.data.bookingId, booked.body.data.bookingId);
 });
+
+// =====================================================================================================
+// PTJA-P0-03 — a Grooming commercial policy created with an unrecognised enforcement mode silently
+// becomes "observe", which waives every cancellation and reschedule rule the operator just configured
+//
+// CONFIRMED independently by both verifiers, same canonical failure. PATCH /api/grooming-commercial-policy
+// already rejects anything but observe|enforce with 400. POST stored String(body.enforcementMode||
+// "observe") verbatim, and rowToPolicy() then coerces anything that is not exactly "enforce" to
+// "observe". evaluateBookingChange's observe branch forces allowed=true, refundPercent=100, feeAmount=0.
+//
+// Measured by both verifiers end to end: a policy created with "Enforce" was accepted 201 with
+// enforcement_mode stored as "Enforce"; a customer cancellation deep inside the configured 1440-minute
+// cutoff then returned refundPercent 100 and a full Rs 1899 refund against a policy whose
+// refund_percent_after_cutoff was 0. Same for "enforced" and "strict"; the correctly-spelled control
+// behaved correctly, so the route was not simply broken.
+//
+// The correction is PATCH's own validation, applied on the create path. No allow-list is invented here -
+// both lists already exist in this file and are the operator-facing contract.
+// =====================================================================================================
+
+async function policyWorld() {
+  const { sqlite, db } = world();
+  const { ensureSecurityTables } = await import("../lib/server-auth.ts");
+  await ensureSecurityTables(db);
+  const now = Date.now();
+  await db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('USR-PTJA-P03','policy-admin@pawspace.test','Policy operator','founder','active',?,?)").bind(now, now).run();
+  const staff = {
+    "oai-authenticated-user-email": "policy-admin@pawspace.test",
+    "oai-authenticated-user-full-name": "Policy%20operator",
+    "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8",
+  };
+  const create = (enforcementMode, policyCode) => call("../app/api/grooming-commercial-policy/route.ts", "POST", "/api/grooming-commercial-policy", {
+    cityId: "blr", zoneId: "koramangala", policyCode, enforcementMode,
+    cancellationCutoffMinutes: 1440, refundPercentBeforeCutoff: 100, refundPercentAfterCutoff: 0,
+    noShowRefundPercent: 0, effectiveFrom: "2026-08-01", reason: "PTJA P0-03 executable regression",
+  }, "", staff);
+  return { sqlite, db, staff, create };
+}
+
+test("P0-03: a policy cannot be CREATED with an enforcement mode the platform does not recognise", async () => {
+  // Measured before the fix: 201 for every one of these, with the value stored verbatim.
+  const { sqlite, create } = await policyWorld();
+  for (const typo of ["Enforce", "ENFORCE", "enforced", "strict", "on"]) {
+    const result = await create(typo, `ptja-p03-${typo}`);
+    assert.equal(result.status, 400, `"${typo}" must be refused, got ${result.status} ${JSON.stringify(result.body)}`);
+    assert.match(String(result.body.error), /observe or enforce/i);
+  }
+  const stored = sqlite.prepare("SELECT COUNT(*) n FROM grooming_commercial_policies WHERE enforcement_mode NOT IN ('observe','enforce')").get();
+  assert.equal(Number(stored.n), 0, "no policy row may hold an enforcement mode outside the allow-list");
+});
+
+test("P0-03: both recognised modes are still accepted - the fix is not a blanket refusal", async () => {
+  const { sqlite, create } = await policyWorld();
+  for (const mode of ["observe", "enforce"]) {
+    const result = await create(mode, `ptja-p03-ok-${mode}`);
+    assert.equal(result.status, 201, `"${mode}" must still be accepted: ${JSON.stringify(result.body)}`);
+    assert.equal(String(result.body.data.enforcement_mode), mode);
+  }
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM grooming_commercial_policies WHERE policy_code LIKE 'ptja-p03-ok-%'").get().n), 2);
+});
+
+test("P0-03: the consequence - an enforcing policy actually withholds the late-cancellation refund", async () => {
+  // This is the money the defect gave away. Run through the real resolver and the real evaluator: a
+  // policy created as "enforce" resolves as enforce and applies refund_percent_after_cutoff (0) to a
+  // cancellation inside the cutoff. Under the defect the same create stored "Enforce", resolved as
+  // observe, and this evaluation returned refundPercent 100.
+  const { db, create } = await policyWorld();
+  assert.equal((await create("enforce", "ptja-p03-consequence")).status, 201);
+  const { resolveGroomingPolicy, evaluateBookingChange } = await import("../lib/grooming-policy-governance.ts");
+  const policy = await resolveGroomingPolicy(db, "blr", "koramangala");
+  assert.equal(policy.enforcementMode, "enforce", "the created policy resolves as enforcing");
+
+  const now = Date.UTC(2026, 10, 26, 4, 0, 0);
+  const late = evaluateBookingChange(policy, { action: "cancel", scheduledStart: new Date(now + 60 * 60_000).toISOString(), status: "confirmed", bookingAmount: 1899, now });
+  assert.equal(late.refundPercent, 0, "a cancellation one hour before a stay, inside a 24-hour cutoff, refunds the configured 0%");
+
+  const early = evaluateBookingChange(policy, { action: "cancel", scheduledStart: new Date(now + 5 * 86_400_000).toISOString(), status: "confirmed", bookingAmount: 1899, now });
+  assert.equal(early.refundPercent, 100, "and a cancellation outside the cutoff still refunds in full");
+});
