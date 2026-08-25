@@ -1,0 +1,163 @@
+name: PR320 final closure patch
+
+on:
+  push:
+    branches:
+      - testfix/final-main-independent-audit-20260825
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'chore: batch PR320 closure test corrections'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: testfix/final-main-independent-audit-20260825
+      - name: Apply proven closure corrections as one commit
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected exactly one occurrence, found {count}: {old[:120]!r}")
+              p.write_text(text.replace(old, new, 1))
+              print(f"patched {path}")
+
+          # Global Ops routes deliberately require bookings.manage for system-wide reads.
+          pair_old = r'assert.match(api,/requirePermission\(actor,\"bookings\.view\"\)/);assert.match(api,/requirePermission\(actor,\"bookings\.manage\"\)/);'
+          pair_new = r'assert.match(api,/requirePermission\(actor,\"bookings\.manage\"\)/);assert.doesNotMatch(api,/requirePermission\(actor,\"bookings\.view\"\)/);'
+          for path in [
+              'tests/boarding-gate5.test.mjs',
+              'tests/food-gate5.test.mjs',
+              'tests/sitting-gate5.test.mjs',
+              'tests/taxi-gate5.test.mjs',
+              'tests/walking-gate5.test.mjs',
+          ]:
+              replace_once(path, pair_old, pair_new)
+
+          replace_once(
+              'tests/boarding-gate5.test.mjs',
+              r'assert.match(gateway,/method===\"GET\"\?\"bookings\.view\":\"bookings\.manage\"/);',
+              r'assert.match(gateway,/boarding-ops\"\)return \"bookings\.manage\"/);',
+          )
+          replace_once(
+              'tests/sitting-gate5.test.mjs',
+              r'assert.match(gateway,/method===\"GET\"\?\"bookings\.view\":\"bookings\.manage\"/);',
+              r'assert.match(gateway,/sitting-ops\"\)return \"bookings\.manage\"/);',
+          )
+          replace_once(
+              'tests/food-hardening.test.mjs',
+              r'assert.match(gateway, /food-ops\"\)return method===\"GET\"\?\"bookings\.view\":\"bookings\.manage\"/);',
+              r'assert.match(gateway, /food-ops\"\)return \"bookings\.manage\"/);',
+          )
+          replace_once(
+              'tests/food-supply-chain.test.mjs',
+              r'assert.match(gateway, /food-supply-chain\"\)return method===\"GET\"\?\"bookings\.view\":\"bookings\.manage\"/);',
+              r'assert.match(gateway, /food-supply-chain\"\)return \"bookings\.manage\"/);',
+          )
+          replace_once(
+              'tests/training-hardening.test.mjs',
+              r'assert.match(gateway, /training-ops\"\)return \"bookings\.view\"/);',
+              r'assert.match(gateway, /training-ops\"\)return \"bookings\.manage\"/);',
+          )
+          replace_once(
+              'tests/staff-alert-center.test.mjs',
+              r'assert.match(gateway,/method===\"GET\"\?\"bookings\.view\":\"bookings\.manage\"/);',
+              r'assert.match(gateway,/url\.pathname===\"\/api\/unified-cases\"\)return \"bookings\.manage\"/);',
+          )
+          replace_once(
+              'tests/walking-taxi-ops-hardening.test.mjs',
+              r'assert.match(source, /requirePermission\(actor,\"bookings\.view\"\)/, `${path} reads require bookings.view`);',
+              r'assert.doesNotMatch(source, /requirePermission\(actor,\"bookings\.view\"\)/, `${path} system-wide reads must not use bookings.view`);',
+          )
+
+          # Boarding/Sitting live quotes now fail closed unless city + zone are explicit.
+          replace_once(
+              'tests/commercial-quote-origin-surface.test.mjs',
+              'body: () => ({ packageCode: "boarding-4h", petCount: 1, scheduledStart: at(20 * DAY), scheduledEnd: at(20 * DAY + 3 * HOUR), paymentMode: "prepaid" })',
+              'body: () => ({ packageCode: "boarding-4h", petCount: 1, scheduledStart: at(20 * DAY), scheduledEnd: at(20 * DAY + 3 * HOUR), paymentMode: "prepaid", cityId: "blr", zoneId: "blr-east" })',
+          )
+          replace_once(
+              'tests/commercial-quote-origin-surface.test.mjs',
+              'body: () => ({ packageCode: "sitting-visit-60", petCount: 1, scheduledStart: at(20 * DAY), scheduledEnd: at(20 * DAY + HOUR), paymentMode: "prepaid" })',
+              'body: () => ({ packageCode: "sitting-visit-60", petCount: 1, scheduledStart: at(20 * DAY), scheduledEnd: at(20 * DAY + HOUR), paymentMode: "prepaid", cityId: "blr", zoneId: "blr-east" })',
+          )
+          replace_once(
+              'tests/stay-split-payments.test.mjs',
+              'const boarding = await createLiveBoardingQuote(db, { packageCode: "boarding-24h", petCount: 2, scheduledStart: boardingStart.toISOString(), scheduledEnd: boardingEnd.toISOString(), paymentMode: "split_50_50" });',
+              'const boarding = await createLiveBoardingQuote(db, { packageCode: "boarding-24h", petCount: 2, scheduledStart: boardingStart.toISOString(), scheduledEnd: boardingEnd.toISOString(), paymentMode: "split_50_50", cityId: "blr", zoneId: "blr-east" });',
+          )
+          replace_once(
+              'tests/stay-split-payments.test.mjs',
+              'const sitting = await createLiveSittingQuote(db, { packageCode: "sitting-overnight", petCount: 2, scheduledStart: sittingStart.toISOString(), scheduledEnd: sittingEnd.toISOString(), paymentMode: "split_50_50" });',
+              'const sitting = await createLiveSittingQuote(db, { packageCode: "sitting-overnight", petCount: 2, scheduledStart: sittingStart.toISOString(), scheduledEnd: sittingEnd.toISOString(), paymentMode: "split_50_50", cityId: "blr", zoneId: "blr-east" });',
+          )
+          replace_once(
+              'tests/unauthenticated-error-fault-path-proof.test.mjs',
+              'init = jsonInit(method, { packageCode: "BOARD-24H", petCount: 1, scheduledStart: FUTURE_START, scheduledEnd: FUTURE_END, paymentMode: "sandbox_deferred" });',
+              'init = jsonInit(method, { packageCode: "BOARD-24H", petCount: 1, scheduledStart: FUTURE_START, scheduledEnd: FUTURE_END, paymentMode: "sandbox_deferred", cityId: "blr", zoneId: "blr-east" });',
+          )
+          replace_once(
+              'tests/unauthenticated-error-fault-path-proof.test.mjs',
+              'init = jsonInit(method, { packageCode: "SIT-4H", petCount: 1, scheduledStart: FUTURE_START, scheduledEnd: FUTURE_END, paymentMode: "sandbox_deferred" });',
+              'init = jsonInit(method, { packageCode: "SIT-4H", petCount: 1, scheduledStart: FUTURE_START, scheduledEnd: FUTURE_END, paymentMode: "sandbox_deferred", cityId: "blr", zoneId: "blr-east" });',
+          )
+
+          # The new audit regression must install the same extensionless TypeScript resolver as real-execution suites.
+          replace_once(
+              'tests/final-main-independent-audit-regression.test.mjs',
+              'import { readFile } from "node:fs/promises";\n',
+              'import { readFile } from "node:fs/promises";\nimport { installWorkersHooks } from "./helpers/module-hooks.mjs";\n\ninstallWorkersHooks("__FINAL_MAIN_AUDIT_DB__");\n',
+          )
+
+          # GET remains observational; recomputation is an explicit staff write action.
+          replace_once(
+              'app/api/revenue-crm/route.ts',
+              '  if(action==="generate_daily_100")return Response.json({ok:true,...await generateDaily100(db,actor.email)});',
+              '  if(action==="refresh_leaderboard"){await refreshLeaderboard(db);return Response.json({ok:true,refreshed:true})}\n  if(action==="generate_daily_100")return Response.json({ok:true,...await generateDaily100(db,actor.email)});',
+          )
+          replace_once(
+              'tests/revenue-stack-hardening.test.mjs',
+              '  // Second GET refreshes the still-provisional leaderboard rows from canonical truth.\n  const second = await call(crmEngineRoute.GET, "GET");',
+              '  // Refresh is an explicit staff write; GET stays observational.\n  const refreshed = await call(crmEngineRoute.POST, "POST", { action: "refresh_leaderboard" });\n  assert.equal(refreshed.status, 200, JSON.stringify(refreshed.body));\n  const second = await call(crmEngineRoute.GET, "GET");',
+          )
+          replace_once(
+              'tests/people-partner-hardening.test.mjs',
+              '  globalThis.__PAWSPACE_TEST_ENV = { DB: db };',
+              '  globalThis.__PAWSPACE_TEST_ENV = { DB: db, PAWSPACE_UAT_LOGIN: "on", PAWSPACE_UAT_SIGNING_KEY: "people-partner-hardening-uat-signing-key-2026" };',
+          )
+          replace_once(
+              'tests/people-partner-hardening.test.mjs',
+              '  // First real GET bootstraps the CRM tables, seeds UAT leads and writes provisional leaderboard rows.\n  const first = await revenueCrmRoute.GET(new Request("http://localhost/api/revenue-crm"));\n  assert.equal(first.status, 200);',
+              '  // UAT seed is an explicit write; GET remains observational.\n  const seeded = await revenueCrmRoute.POST(new Request("http://localhost/api/revenue-crm", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "seed_uat" }) }));\n  assert.equal(seeded.status, 200);\n  const first = await revenueCrmRoute.GET(new Request("http://localhost/api/revenue-crm"));\n  assert.equal(first.status, 200);',
+          )
+          replace_once(
+              'tests/people-partner-hardening.test.mjs',
+              '  const second = await revenueCrmRoute.GET(new Request("http://localhost/api/revenue-crm"));\n  assert.equal(second.status, 200);',
+              '  const refreshed = await revenueCrmRoute.POST(new Request("http://localhost/api/revenue-crm", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "refresh_leaderboard" }) }));\n  assert.equal(refreshed.status, 200);\n  const second = await revenueCrmRoute.GET(new Request("http://localhost/api/revenue-crm"));\n  assert.equal(second.status, 200);',
+          )
+
+          # Pin the explicit refresh alongside the existing read-only GET regression.
+          replace_once(
+              'tests/final-main-independent-audit-regression.test.mjs',
+              '  assert.match(source, /action===["\']seed_uat["\']/,' + '\n' + '    "synthetic Revenue CRM data must require an explicit UAT-only write action");',
+              '  assert.match(source, /action===["\']seed_uat["\']/,' + '\n' + '    "synthetic Revenue CRM data must require an explicit UAT-only write action");' + '\n' + '  assert.match(source, /action===["\']refresh_leaderboard["\']/,' + '\n' + '    "leaderboard recomputation must require an explicit staff write action");',
+          )
+          PY
+
+          rm .github/workflows/pr320-final-closure-patch.yml
+          git config user.name "PawSpace CI Closure"
+          git config user.email "ci-closure@pawspace.in"
+          git add -A
+          git diff --cached --check
+          git commit -m "test: align final-main closure fixtures and explicit CRM refresh"
+          git push origin HEAD:testfix/final-main-independent-audit-20260825
