@@ -51,8 +51,21 @@ export async function identifyInstall(db: Db, input: { installId: string; custom
   const at = input.at ?? Date.now();
   // record the install too (a first-open may not have been separately ingested)
   await db.prepare("INSERT OR IGNORE INTO app_installs (install_id,first_open_at,created_at) VALUES (?,?,?)").bind(installId, at, at).run();
-  await db.prepare("INSERT INTO install_identity_links (install_id,customer_id,identified_at) VALUES (?,?,?) ON CONFLICT(install_id) DO UPDATE SET customer_id=excluded.customer_id").bind(installId, customerId, at).run();
-  return { installId, customerId };
+  // An install is claimed ONCE. This used to be ON CONFLICT DO UPDATE SET customer_id=excluded.customer_id
+  // with no check that the install was unclaimed and no check that the caller owned the prior claim -
+  // and it is reached from the fully public, unauthenticated /api/customer-otp verify action with a
+  // caller-supplied installId. Anyone who knew or guessed another customer's install id could point it
+  // at their own record: the victim's paid-acquisition source and campaign were re-attributed to the
+  // attacker, the victim silently dropped out of the App-Inbound sales sweep (the attacker got their
+  // 10-minute-SLA lead instead), and because identified_at was left alone the takeover left no trace.
+  //
+  // DO NOTHING on conflict, rather than refusing: the caller has proved their own phone and is entitled
+  // to their own session, they simply do not inherit somebody else's install. Refusing the verify would
+  // be a stricter rule than the platform states anywhere and would lock out a genuine second user of a
+  // reset or resold device.
+  await db.prepare("INSERT INTO install_identity_links (install_id,customer_id,identified_at) VALUES (?,?,?) ON CONFLICT(install_id) DO NOTHING").bind(installId, customerId, at).run();
+  const link = await db.prepare("SELECT customer_id FROM install_identity_links WHERE install_id=?").bind(installId).first<Record<string, unknown>>();
+  return { installId, customerId: String(link?.customer_id ?? customerId) };
 }
 
 /** Create an App-Inbound Sales lead (10-minute first-call SLA), once per customer. */
