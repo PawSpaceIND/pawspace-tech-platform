@@ -14,13 +14,20 @@ const OPS_ROUTES = [
   "app/api/training-ops/route.ts",
   "app/api/food-supply-chain/route.ts",
 ];
+const OPS_PATHS = ["walking-ops","taxi-ops","food-ops","sitting-ops","boarding-ops","training-ops","food-supply-chain"];
 
-test("system-wide Ops GETs require bookings.manage, not provider-held bookings.view", async () => {
+test("system-wide Ops GETs require bookings.manage at gateway and handler", async () => {
   const security = await import("../lib/platform-security.ts");
   const provider = security.defaultRoles.find((role) => role.code === "service_provider");
   assert.ok(provider, "service_provider role must exist");
   assert.ok(provider.permissions.includes("bookings.view"), "probe precondition: provider holds bookings.view");
   assert.ok(!provider.permissions.includes("bookings.manage"), "probe precondition: provider must not hold bookings.manage");
+
+  const gateway = await read("lib/api-gateway.ts");
+  for (const path of OPS_PATHS) {
+    assert.match(gateway, new RegExp(`pathname===\\"/api/${path}\\"\\)return \\"bookings\\.manage\\"`),
+      `${path} must stay behind bookings.manage at the central API gateway`);
+  }
 
   for (const path of OPS_ROUTES) {
     const source = await read(path);
