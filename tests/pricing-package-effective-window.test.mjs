@@ -66,7 +66,7 @@ test("future Pricing Control package rows cannot override an earlier customer qu
   });
   assert.deepEqual(beforeWindow, { price: 1349, source: "fallback_default" });
 
-  const refused = await quoteRoute({ packageCode: "dog-bath", scheduledStart: "2026-08-31T05:00:00.000Z", cityId: "blr" });
+  const refused = await quoteRoute({ packageCode: "dog-bath", scheduledStart: "2026-08-31T05:00:00.000Z", cityId: "blr", zoneId: "blr-east" });
   assert.equal(refused.status, 404, await refused.text());
 
   const insideWindow = await resolveLivePrice(db, {
@@ -77,7 +77,7 @@ test("future Pricing Control package rows cannot override an earlier customer qu
   });
   assert.deepEqual(insideWindow, { price: 9999, source: "pricing_control" });
 
-  const accepted = await quoteRoute({ packageCode: "dog-bath", scheduledStart: "2027-01-02T05:00:00.000Z", cityId: "blr" });
+  const accepted = await quoteRoute({ packageCode: "dog-bath", scheduledStart: "2027-01-02T05:00:00.000Z", cityId: "blr", zoneId: "blr-east" });
   const acceptedText = await accepted.text();
   assert.equal(accepted.status, 200, acceptedText);
   const body = JSON.parse(acceptedText);
@@ -97,7 +97,7 @@ test("expired Pricing Control package rows cannot override a later customer quot
   });
   assert.deepEqual(afterWindow, { price: 1349, source: "fallback_default" });
 
-  const refused = await quoteRoute({ packageCode: "dog-bath", scheduledStart: "2026-08-31T05:00:00.000Z", cityId: "blr" });
+  const refused = await quoteRoute({ packageCode: "dog-bath", scheduledStart: "2026-08-31T05:00:00.000Z", cityId: "blr", zoneId: "blr-east" });
   assert.equal(refused.status, 404, await refused.text());
 
   const insideWindow = await resolveLivePrice(db, {
@@ -108,7 +108,7 @@ test("expired Pricing Control package rows cannot override a later customer quot
   });
   assert.deepEqual(insideWindow, { price: 499, source: "pricing_control" });
 
-  const accepted = await quoteRoute({ packageCode: "dog-bath", scheduledStart: "2026-01-15T05:00:00.000Z", cityId: "blr" });
+  const accepted = await quoteRoute({ packageCode: "dog-bath", scheduledStart: "2026-01-15T05:00:00.000Z", cityId: "blr", zoneId: "blr-east" });
   const acceptedText = await accepted.text();
   assert.equal(accepted.status, 200, acceptedText);
   const body = JSON.parse(acceptedText);
