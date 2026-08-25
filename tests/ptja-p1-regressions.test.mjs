@@ -341,3 +341,99 @@ test("P1-F35: legitimate numeric edits still go through - the fix is not a blank
   assert.equal(provider.maxDailyJobs, 9);
   assert.equal((await patch("host_maya_rohan", { capacity: -1 })).status, 400, "and the existing negative check still holds");
 });
+
+// =====================================================================================================
+// PTJA-P1-F23 — a lifecycle idempotency key is not bound to the entity or the action it acted on
+//
+// Every lifecycle module records booking_id (or stay_id / session_id) and action alongside the key, and
+// then never reads them back: the lookup was "SELECT result_json FROM <table> WHERE idempotency_key=?"
+// and it ran BEFORE the entity was loaded. So a second caller reusing a key - a DIFFERENT provider,
+// acting on a DIFFERENT customer's booking - was answered HTTP 200, had its mutation silently discarded,
+// and received the FIRST caller's bookingId, status and providerId in the response body.
+//
+// Measured through the real POST /api/walking-lifecycle with two real provider sessions:
+//   WALKER-P1 accept BKG-A1 key IDEM-SHARED -> 200 {bookingId:BKG-A1,status:assigned,providerId:P1}
+//   WALKER-P2 accept BKG-B2 key IDEM-SHARED -> 200 {bookingId:BKG-A1,...,duplicatePrevented:true}
+//                                              BKG-B2 was never accepted; P2 got A1's identifiers.
+//   WALKER-P1 DECLINE BKG-A1, same key       -> 200 with the accept result; no recovery case, no ops
+//                                              escalation, no customer notification, and the security
+//                                              audit recorded it as completed.
+//
+// Two failures in one: cross-tenant identifier disclosure, and a silently lost lifecycle transition -
+// a walker's decline swallowed with a 200 so nobody is told the walk has no walker.
+//
+// A key identifies ONE mutation of ONE entity. Reused for a different entity or a different action it is
+// a conflict, not a duplicate, and is refused rather than answered with somebody else's record. The
+// columns needed to tell the difference were already being written.
+// =====================================================================================================
+
+async function walkingWorld() {
+  const { sqlite, db } = world();
+  const lifecycle = await import("../lib/walking-lifecycle.ts");
+  const capacity = await import("../lib/provider-capacity-governance.ts");
+  const stays = await import("../lib/boarding-stay-lifecycle.ts");
+  await lifecycle.ensureWalkingLifecycleTables(db);
+  // provider_assignment_offers and booking_customer_notifications belong to other modules; created
+  // through their own ensures so this world uses the real schemas rather than a test-local guess.
+  await capacity.ensureProviderCapacityTables(db);
+  await stays.ensureBoardingStayLifecycleTables(db).catch(() => {});
+  // The lifecycle module owns its own tables; the canonical booking and work order it reads belong to
+  // the booking routes, so they are created here with the same shape those routes declare.
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,pet_ids_json TEXT NOT NULL,source_pet_ids_json TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,service_code TEXT NOT NULL,package_code TEXT NOT NULL,package_name TEXT NOT NULL,schedule_group_id TEXT NOT NULL UNIQUE,provider_id TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'confirmed',channel TEXT NOT NULL DEFAULT 'customer_app',total_amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',pricing_json TEXT NOT NULL DEFAULT '{}',created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS provider_work_orders (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,schedule_group_id TEXT NOT NULL,provider_id TEXT NOT NULL,provider_name TEXT NOT NULL,provider_model TEXT NOT NULL,service_code TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,occurrence_count INTEGER NOT NULL DEFAULT 1,status TEXT NOT NULL DEFAULT 'assigned',assignment_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,amount_due_now REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',method TEXT NOT NULL,mode TEXT NOT NULL,status TEXT NOT NULL,gateway TEXT NOT NULL DEFAULT 'uat_sandbox',idempotency_key TEXT NOT NULL UNIQUE,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_lifecycle_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,event_type TEXT NOT NULL,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',occurred_at INTEGER NOT NULL)");
+  const now = Date.now();
+  const seed = (bookingId, customerId, providerId, groupId) => {
+    sqlite.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,'[]','[]','blr','blr-east','dog_walking','walk-30','Walk',?,?,?,?,'confirmed','customer_app',499,'INR','{}','seed',?,?)")
+      .run(bookingId, `seed:${bookingId}`, customerId, groupId, providerId, "2026-11-26T04:30:00.000Z", "2026-11-26T05:00:00.000Z", now, now);
+    sqlite.prepare("INSERT INTO provider_work_orders (id,booking_id,schedule_group_id,provider_id,provider_name,provider_model,service_code,scheduled_start,scheduled_end,occurrence_count,status,assignment_json,created_at,updated_at) VALUES (?,?,?,?,?,'commission','dog_walking',?,?,1,'assigned','{}',?,?)")
+      .run(`WO-${bookingId}`, bookingId, groupId, providerId, `Walker ${providerId}`, "2026-11-26T04:30:00.000Z", "2026-11-26T05:00:00.000Z", now, now);
+  };
+  return { sqlite, db, lifecycle, seed };
+}
+
+test("P1-F23: a key reused on a DIFFERENT booking is refused, not answered with the first booking's record", async () => {
+  const { sqlite, db, lifecycle, seed } = await walkingWorld();
+  seed("BKG-A1", "CUST-A", "WALKER-P1", "GRP-A1");
+  seed("BKG-B2", "CUST-B", "WALKER-P2", "GRP-B2");
+
+  const first = await lifecycle.mutateWalkingBooking(db, { bookingId: "BKG-A1", action: "accept", actorId: "WALKER-P1", idempotencyKey: "IDEM-SHARED" });
+  assert.equal(first.bookingId, "BKG-A1");
+
+  await assert.rejects(
+    () => lifecycle.mutateWalkingBooking(db, { bookingId: "BKG-B2", action: "accept", actorId: "WALKER-P2", idempotencyKey: "IDEM-SHARED" }),
+    (error) => error instanceof Response && error.status === 409,
+    "a key that belongs to another booking must be refused, never answered with that booking's record",
+  );
+  assert.equal(String(sqlite.prepare("SELECT status FROM canonical_bookings WHERE id='BKG-B2'").get().status), "confirmed",
+    "and B2 is unchanged - the caller is told, rather than silently losing its mutation");
+});
+
+test("P1-F23: a key reused for a DIFFERENT action on the same booking is refused", async () => {
+  // The lost-transition half. A walker's decline used to be swallowed with the accept result, so no
+  // recovery case opened and nobody learned the walk had no walker.
+  const { sqlite, db, lifecycle, seed } = await walkingWorld();
+  seed("BKG-A1", "CUST-A", "WALKER-P1", "GRP-A1");
+  await lifecycle.mutateWalkingBooking(db, { bookingId: "BKG-A1", action: "accept", actorId: "WALKER-P1", idempotencyKey: "IDEM-SHARED" });
+  await assert.rejects(
+    () => lifecycle.mutateWalkingBooking(db, { bookingId: "BKG-A1", action: "decline", actorId: "WALKER-P1", idempotencyKey: "IDEM-SHARED", reason: "walker is ill and cannot attend" }),
+    (error) => error instanceof Response && error.status === 409,
+    "a decline must not be answered with the accept it is trying to reverse",
+  );
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM walking_recovery_cases").get().n), 0, "the refused decline opens no case");
+});
+
+test("P1-F23: a genuine replay - same key, same booking, same action - is still a duplicate", async () => {
+  // Non-vacuity. Refusing every second use of a key would break retry handling, which is the entire
+  // reason the key exists.
+  const { sqlite, db, lifecycle, seed } = await walkingWorld();
+  seed("BKG-A1", "CUST-A", "WALKER-P1", "GRP-A1");
+  const first = await lifecycle.mutateWalkingBooking(db, { bookingId: "BKG-A1", action: "accept", actorId: "WALKER-P1", idempotencyKey: "IDEM-SAME" });
+  sqlite.prepare("UPDATE canonical_bookings SET status='confirmed' WHERE id='BKG-A1'").run();
+  const replay = await lifecycle.mutateWalkingBooking(db, { bookingId: "BKG-A1", action: "accept", actorId: "WALKER-P1", idempotencyKey: "IDEM-SAME" });
+  assert.equal(replay.duplicatePrevented, true);
+  assert.equal(replay.bookingId, first.bookingId);
+  assert.equal(String(sqlite.prepare("SELECT status FROM canonical_bookings WHERE id='BKG-A1'").get().status), "confirmed",
+    "a true replay re-applies nothing");
+});
