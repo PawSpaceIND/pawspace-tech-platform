@@ -13,7 +13,8 @@
     "money_consequence": "No direct rupee movement, but training completion is the gating fact for provider readiness (providerTrainingReadiness -> trainingReady) which staff use to clear providers for paid work; certification bought with a leaked answer key is an untrained provider taking paid grooming/handling jobs and the liability that follows.",
     "blast_radius": "Every published and draft LMS/SOP module on the platform, exposed to every onboarded provider (and every associate-role staff member, who also holds bookings.view). One GET returns the answer key for all modules at once (LIMIT 200), plus the fleet-wide provider compliance roster (provider ids, names, trainingReady) in the same payload.",
     "suggested_severity": "P1",
-    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p_lms.mjs"
+    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p_lms.mjs",
+    "status": "OPEN"
   },
   {
     "id": "W2-B1-P02",
@@ -29,7 +30,8 @@
     "money_consequence": "Direct overpayment of sales incentive. A single cancelled Rs 20,000 booking is exactly the grooming_outbound daily tier-1 target, so it pays Rs 1,000 earned on nothing. Monthly tiers are step functions (Rs 250k -> Rs 4,500; Rs 500k -> Rs 8,500), so cancelled value can be what carries an employee over a tier line and doubles the payout.",
     "blast_radius": "Every sales employee with a base vertical configured, every day and every month. Attribution is one-way by design (attributeBookingToSalesEmployee refuses reattribution and there is no de-attribution path), so a booking cancelled after attribution keeps crediting the employee permanently.",
     "suggested_severity": "P1",
-    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p_sales2.mjs"
+    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p_sales2.mjs",
+    "status": "OPEN"
   },
   {
     "id": "W2-B1-P03",
@@ -45,7 +47,8 @@
     "money_consequence": "An entire calendar day of attributed revenue disappears from the incentive window in the 7 months that have a 31st. Because monthly sales incentive is tiered, the observed effect is a step: Rs 8,500 becomes Rs 4,500 - a 47% underpayment - on identical data. The same line governs the trainer revenue incentive (20% of order value above Rs 140,000) and the productivity fact run that feeds the leaderboard.",
     "blast_radius": "Every sales employee and every trainer, every 31-day month, wherever the runtime timezone is ahead of UTC. CONDITION STATED EXPLICITLY: under TZ=UTC (the Cloudflare Workers default) the line is a no-op; it bites on any Node/host runtime configured to IST, which is what the grooming engine's own remediation comment cites as the reason it was changed.",
     "suggested_severity": "P2",
-    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p_sales.mjs"
+    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p_sales.mjs",
+    "status": "OPEN"
   },
   {
     "id": "W2-B1-P04",
@@ -61,7 +64,8 @@
     "money_consequence": "Rs 1,500 head + Rs 750 helper paid on a month that earned nothing payable, plus the far larger downstream effect: eligibleForRanking=true admits this groomer into rankGroomersForMonth, whose winner table pays up to Rs 5,000 head + Rs 3,000 helper (team) or Rs 8,000 (single) for rank 1 - and admitting a phantom entrant also demotes every genuine groomer by one rank. monthTotal also drives achievementTierBonus, worth up to Rs 10,000 head + Rs 5,500 helper at the Rs 190,000 crossing.",
     "blast_radius": "Every head groomer and helper, every month. Upgrade rows are never reconciled against booking outcome, so any upsell recorded before a cancellation, and any upsell recorded against the provider on a booking in another service line entirely, permanently inflates the grooming incentive base.",
     "suggested_severity": "P1",
-    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p_groom.mjs"
+    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p_groom.mjs",
+    "status": "OPEN"
   },
   {
     "id": "W2-B1-P05",
@@ -77,6 +81,10 @@
     "money_consequence": "The payable figure on an approved partner settlement can move by any amount, in either direction, after approval - here Rs 5,000 becomes Rs 50,000 - and the record continues to assert that fin.ops@pawspace.test approved it at a fixed timestamp. Whoever executes the payout from the statement pays an amount no human approved; whoever executes it from the payout instruction pays the old amount and the ledger no longer reconciles. Neither divergence emits a partner_settlement_event.",
     "blast_radius": "Every partner settlement statement for every provider and every period, every time anyone loads the partner finance page - the refresh runs across the whole period, not just the statement being viewed. Any change to training_session_earnings (a rate correction, a held session releasing, a clawback) silently rewrites already-approved months.",
     "suggested_severity": "P0",
-    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p_settle.mjs"
+    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p_settle.mjs",
+    "status": "FIXED",
+    "fix_file": "lib/partner-settlement-governance.ts",
+    "regression": "tests/ptja-w2b-partner-settlement.test.mjs :: \"W2B-P05: a read cannot rewrite an approved settlement's payable amount\" + \"W2B-P05: an unapproved settlement still refreshes from the earnings\"",
+    "fix_note": "An approved, paid or settled statement is frozen against refreshPartnerSettlementStatements, which the READ path invokes unconditionally. This is the guard the sibling read-model lib/training-finance.ts already has. An OPEN statement still follows the earnings, which is what the refresh is for."
   }
 ]

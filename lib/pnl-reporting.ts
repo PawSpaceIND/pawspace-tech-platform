@@ -76,6 +76,29 @@ export async function generatePnlReport(db:D1,input:{fromMonth:string;toMonth:st
   });
   const revenueTotal=revenueLines.reduce((sum,line)=>sum+line.total,0);
   for(const line of revenueLines)line.businessContributionPct=revenueTotal>0?Math.round((line.total/revenueTotal)*1000)/10:0;
+  // Refunds are contra-revenue and this report never read them, so a month whose only transaction was
+  // refunded in full still published the gross as both turnover and profit. Revenue here is the gross
+  // booking amount with nothing ever deducted, and the expense side only matches 6xxx accounts, so even
+  // a posted contra-revenue journal could not have appeared - and the refund path posts no journal at
+  // all. The platform has already DECIDED refunds are contra-revenue: lib/finance-accounts.ts defines
+  // "4900-Refunds and Cancellations" as exactly that. This reads them, in the same states
+  // lib/unit-economics.ts counts, so the two surfaces agree on what "refunded" means. 'requested' and
+  // 'rejected' are excluded: no money has moved.
+  //
+  // Bucketed by the month the refund was RECORDED, never the month of the original booking. Attributing
+  // it backwards would retroactively change a month Finance may have closed and locked - the divergence
+  // W2-08-F03 exists to surface - and the platform's own remedy for a post-close correction is to post
+  // it in the next open period.
+  const refundsByMonth=emptyMonthly(months);
+  const refundRows=await db.prepare("SELECT amount,updated_at,created_at FROM booking_refund_cases WHERE status IN ('processing','processed','completed')").all<Row>().catch(()=>null);
+  for(const row of refundRows?.results??[]){
+    const at=Number(row.updated_at??row.created_at??0);
+    if(!Number.isFinite(at)||at<=0)continue;
+    const month=new Date(at).toISOString().slice(0,7);
+    if(month in refundsByMonth)refundsByMonth[month]-=Number(row.amount||0);
+  }
+  const refundLine:PnlLine={code:"4900-Refunds and Cancellations",category:"Sales Accounts",subCategory:"Refunds and Cancellations",serviceCode:null,trackedByPlatform:true,monthly:refundsByMonth,total:sumMonthly(refundsByMonth),businessContributionPct:null};
+  revenueLines.push(refundLine);
   const revenueSubtotal=emptyMonthly(months);for(const line of revenueLines)sumInto(revenueSubtotal,line.monthly);
 
   // --- Indirect income: no platform source exists yet for any of these lines (Amazon Discount, Balance
