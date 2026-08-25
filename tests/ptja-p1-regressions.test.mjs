@@ -1281,3 +1281,86 @@ test("W2-PAY-05: a replayed event id cannot act on a booking the recorded event 
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM booking_lifecycle_events WHERE event_type='subscription_activated'").get().n, 0,
     "and no entitlement may be granted with no audit row linking the event to the booking");
 });
+
+// =====================================================================================================
+// PTJA-W2-PAY-06 (ledger W2-07-PAY-004) — the refund webhook attributes EVERY gateway refund to the
+// newest refund case, stranding the real ones
+//
+// The refund branch resolved its case with
+//   SELECT * FROM booking_refund_cases WHERE booking_id=? ORDER BY created_at DESC LIMIT 1
+// - the newest case on the booking, regardless of which gateway refund the event was actually about.
+// The module already knows better two lines later, where `sameGatewayRefund` compares
+// refund.gateway_reference to event.gatewayRefundId; it simply was not used to FIND the case.
+//
+// MEASURED: BK-1, Rs 8,000 captured, three refund cases RC-1/RC-2/RC-3. Three signature-verified
+// refund.processed events with three distinct gateway refund ids (rfnd_A, rfnd_B, rfnd_C) all returned
+// {status:'processed'}. RC-3 was rewritten three times, ending with gateway_reference='rfnd_C'; RC-1 and
+// RC-2 stayed 'requested' forever even though their money had moved at the gateway. The ops work queue
+// reads status='requested', so it showed two open refunds that were already paid, inviting a fourth and
+// fifth payout.
+//
+// The correction uses the identity the module already relies on: when an event names a gateway refund,
+// the case carrying that reference is authoritative; otherwise the newest case NOT already claimed by a
+// different gateway refund takes it. Ordering and the orphan_gateway_refund fallback are unchanged - the
+// only thing removed is a case that already belongs to another gateway refund being silently reused.
+//
+// Deliberately NOT changed: refunded_amount still accumulates past captured_amount and still raises
+// refund_overage rather than refusing. By the time refund.processed arrives the money has already left
+// at the gateway; a receiver that declined to record it would make the ledger lie in the other
+// direction. The CONTROL belongs at initiation, which is W2-07-PAY-001 above.
+// =====================================================================================================
+
+async function gatewayRefundWorld() {
+  const { sqlite, db } = world();
+  const recon = await import("../lib/grooming-payment-reconciliation.ts");
+  await recon.ensurePaymentReconciliationTables(db);
+  const now = Date.now();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,amount_due_now REAL NOT NULL DEFAULT 0,currency TEXT NOT NULL DEFAULT 'INR',method TEXT NOT NULL DEFAULT 'upi',mode TEXT NOT NULL DEFAULT 'prepaid',status TEXT NOT NULL,gateway TEXT NOT NULL DEFAULT 'razorpay_sandbox',idempotency_key TEXT NOT NULL UNIQUE,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'requested',requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,status,idempotency_key,created_at,updated_at) VALUES ('PAY-BK-1','BK-1','CUS-1',8000,'captured','k-bk1',?,?)").run(now, now);
+  const refundCase = (id, amount, offset) => sqlite.prepare("INSERT INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,approved_by,created_at,updated_at) VALUES (?,'BK-1','PAY-BK-1',?,'probe','approved','ops@pawspace.test','finance.mgr@pawspace.test',?,?)")
+    .run(id, amount, now + offset, now + offset);
+  const processed = (eventId, gatewayRefundId, amountSubunits) => recon.processGatewayEvent(db, {
+    provider: "razorpay", environment: "sandbox", eventId, payloadHash: `sha-${eventId}`,
+    eventType: "refund.processed", signatureVerified: true, bookingId: "BK-1",
+    gatewayPaymentId: "pay_REAL1", gatewayRefundId, amountSubunits, currency: "INR",
+  });
+  const cases = () => sqlite.prepare("SELECT id,status,gateway_reference FROM booking_refund_cases ORDER BY id").all();
+  return { sqlite, db, refundCase, processed, cases };
+}
+
+test("W2-PAY-06: each gateway refund settles its OWN refund case, and none is left stranded", async () => {
+  const { refundCase, processed, cases } = await gatewayRefundWorld();
+  refundCase("RC-1", 8000, 0);
+  refundCase("RC-2", 8000, 1000);
+  refundCase("RC-3", 8000, 2000);
+
+  await processed("evt_rf_1", "rfnd_A", 800000);
+  await processed("evt_rf_2", "rfnd_B", 800000);
+  await processed("evt_rf_3", "rfnd_C", 800000);
+
+  const rows = cases();
+  assert.deepEqual(rows.map((row) => String(row.status)), ["processed", "processed", "processed"],
+    `three gateway refunds must settle three cases, not rewrite one: ${JSON.stringify(rows)}`);
+  assert.deepEqual([...new Set(rows.map((row) => String(row.gateway_reference)))].sort(), ["rfnd_A", "rfnd_B", "rfnd_C"],
+    `each case must carry its own gateway refund id: ${JSON.stringify(rows)}`);
+});
+
+test("W2-PAY-06: an event names its own case even when a newer one exists, and a redelivery claims nothing", async () => {
+  // Non-vacuity in both directions: a single ordinary refund still processes, an event whose gateway
+  // refund id is already bound to an OLDER case settles that case rather than the newest one, and a
+  // redelivery of the same gateway refund id does not consume a second case.
+  const { refundCase, processed, cases, sqlite } = await gatewayRefundWorld();
+  refundCase("RC-1", 8000, 0);
+
+  const single = await processed("evt_solo", "rfnd_A", 800000);
+  assert.equal(String(single.status), "processed", `an ordinary single refund still processes: ${JSON.stringify(single)}`);
+  assert.equal(String(cases()[0].gateway_reference), "rfnd_A", "and claims the case");
+
+  refundCase("RC-2", 8000, 5000); // a newer, unrelated case opened afterwards
+  const redelivery = await processed("evt_solo_retry", "rfnd_A", 800000);
+  assert.equal(String(redelivery.reason || ""), "refund_already_processed",
+    `a redelivery of the same gateway refund is recognised, not booked again: ${JSON.stringify(redelivery)}`);
+  assert.equal(String(sqlite.prepare("SELECT status FROM booking_refund_cases WHERE id='RC-2'").get().status), "approved",
+    "and the newer case is not consumed by it");
+});

@@ -272,7 +272,16 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
     // the next failure event) rather than swallowed
     await failSubscriptionOnPaymentFailure(db,{bookingId,eventId:event.eventId,at:now}).catch(async(error)=>{await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"subscription_failure_recording_failed",severity:"critical",detail:{stage:"failure",message:error instanceof Error?error.message:String(error)}}).catch(()=>null);});
   }else if(["refund.created","refund.processed","refund.failed"].includes(event.eventType)){
-    const refund=await db.prepare("SELECT * FROM booking_refund_cases WHERE booking_id=? ORDER BY created_at DESC LIMIT 1").bind(bookingId).first<Row>();if(!refund){await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"orphan_gateway_refund",detail:{gatewayRefundId:event.gatewayRefundId,amount}});await finish("exception","No internal refund case");return{duplicate:false,status:"exception",reason:"orphan_gateway_refund"};}
+    // A gateway refund settles the case it BELONGS to. This used to take the newest case on the booking
+    // regardless of which gateway refund the event was about, so three real refunds rewrote one case
+    // three times and left the other two 'requested' forever - money gone at the gateway, the ops queue
+    // still showing them open and inviting a fourth payout. The identity used here is the one the module
+    // already relies on two lines below in `sameGatewayRefund`: the case carrying this gateway refund id
+    // is authoritative, and only when no case carries it yet (an event's first contact) does the newest
+    // case take it - now excluding any case already claimed by a DIFFERENT gateway refund. Ordering and
+    // the orphan_gateway_refund fallback are otherwise unchanged.
+    const claimed=event.gatewayRefundId?await db.prepare("SELECT * FROM booking_refund_cases WHERE booking_id=? AND gateway_reference=?").bind(bookingId,event.gatewayRefundId).first<Row>().catch(()=>null):null;
+    const refund=claimed??await db.prepare("SELECT * FROM booking_refund_cases WHERE booking_id=? AND (gateway_reference IS NULL OR gateway_reference='') ORDER BY created_at DESC LIMIT 1").bind(bookingId).first<Row>();if(!refund){await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"orphan_gateway_refund",detail:{gatewayRefundId:event.gatewayRefundId,amount}});await finish("exception","No internal refund case");return{duplicate:false,status:"exception",reason:"orphan_gateway_refund"};}
     const expectedRefund=Number(refund.amount||0),sameGatewayRefund=Boolean(event.gatewayRefundId&&String(refund.gateway_reference||"")===event.gatewayRefundId),alreadyProcessed=String(refund.status)==="processed"&&sameGatewayRefund;
     if(event.eventType==="refund.processed"&&alreadyProcessed){await finish("processed","Duplicate logical refund ignored");return{duplicate:false,status:"processed",ignored:true,reason:"refund_already_processed"};}
     if(event.eventType!=="refund.failed"&&Math.abs(amount-expectedRefund)>0.009){await addException(db,{bookingId,paymentId,eventId:event.eventId,type:"refund_amount_mismatch",detail:{expected:expectedRefund,received:amount}});await finish("exception","Refund amount mismatch");return{duplicate:false,status:"exception",reason:"refund_amount_mismatch"};}

@@ -71,7 +71,10 @@
     "blast_radius": "Any booking with more than one refund case, which W2-07-PAY-001 shows any admin can create at will. Also silently strands genuine refund cases: RC-1 and RC-2 stayed 'requested' forever even though their money was refunded at the gateway, so the ops work queue (lib/ops-work-queue.ts, status='requested' -> finance) shows two open refunds that were already paid, inviting a fourth and fifth payout.",
     "suggested_severity": "P0",
     "evidence_path": "scratchpad/p/p1-refund-ceiling.mjs",
-    "status": "OPEN"
+    "status": "FIXED",
+    "fix_file": "lib/grooming-payment-reconciliation.ts",
+    "regression": "tests/ptja-p1-regressions.test.mjs :: \"W2-PAY-06: each gateway refund settles its OWN refund case, and none is left stranded\" + \"W2-PAY-06: an event names its own case even when a newer one exists, and a redelivery claims nothing\"",
+    "fix_note": "A gateway refund now settles the case it belongs to: the case carrying that gateway refund id is authoritative, and only on an event's first contact does the newest case take it - excluding any case already claimed by a DIFFERENT gateway refund. Ordering and the orphan_gateway_refund fallback are unchanged. DELIBERATELY NOT CHANGED: refunded_amount still accumulates past captured_amount and still raises refund_overage rather than refusing. By the time refund.processed arrives the money has already left at the gateway, so a receiver that declined to record it would make the ledger lie in the other direction; the control belongs at initiation and is W2-07-PAY-001."
   },
   {
     "id": "W2-07-PAY-005",
