@@ -37,8 +37,9 @@ test("live commercial quotes never infer Bengaluru when geography is absent",asy
   assert.match(quotes,/location\s*\?\s*await resolveLivePrice/);
   assert.doesNotMatch(quotes,/cityId:\s*input\.cityId\s*\?\?\s*["']blr["']/);
   assert.doesNotMatch(quotes,/zoneId:\s*input\.zoneId\s*\?\?\s*["']blr-east["']/);
-  assert.match(resolver,/export async function resolveLiveBasePrice/);
-  assert.doesNotMatch(resolver,/calculatePrice\([\s\S]*resolveLiveBasePrice/);
+  const baseFn=resolver.slice(resolver.indexOf("export async function resolveLiveBasePrice"));
+  assert.match(baseFn,/SELECT base_price FROM service_packages/);
+  assert.doesNotMatch(baseFn,/calculatePrice\(/);
 });
 
 test("prelaunch booking swarm is blocked outside the isolated UAT sandbox",async()=>{
