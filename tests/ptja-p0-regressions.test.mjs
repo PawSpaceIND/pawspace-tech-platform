@@ -463,3 +463,99 @@ test("P0-04: an ACCEPTED set_mandate still replaces the set - the fix is not a f
   assert.deepEqual(hostTypes(), ["aadhaar", "house_verification"], "the narrowed mandate is stored, and pan/pet_proofing_photo are gone because the operator removed them");
   assert.deepEqual((await mandate.requiredVerifications(db, "host")).sort(), ["aadhaar", "house_verification"], "and the enforcement path reads the operator's decision, not the defaults");
 });
+
+// =====================================================================================================
+// PTJA-P0-06 — the customer-facing "KYC Verified" badge is a seed constant, not a verification record
+//
+// CONFIRMED independently by both verifiers. boarding_host_profiles.kyc_status (and home_verified) is
+// written by exactly one statement in the codebase - the hardcoded host seed in lib/boarding-governance.ts,
+// which sets kyc:'verified' as a literal - and computeHostStats reported that column verbatim, with no
+// reference to provider_verifications or the host verification mandate. Both verifiers read
+// GET /api/host-trust?hostProviderId=host_maya_rohan ANONYMOUSLY (that route has no authorize/resolveActor
+// on GET) and received {"kycVerified":true,"homeVerified":true} and the badges ["verified-home",
+// "kyc-verified",...] for a provider with zero verification records of any kind.
+//
+// This fix makes the BADGE tell the truth: a claim of identity/background verification requires the
+// platform's own evidence - the host category mandate satisfied for that provider's onboarding
+// application - and "Verified Home" requires the mandated house_verification specifically. Both are
+// existing, named, mandated checks; nothing about what KYC means is decided here.
+//
+// It deliberately does NOT touch bookability: assertHostEligible, boarding-host-discovery,
+// boarding-stay-lifecycle and boarding-finance-governance all read the column directly, and changing
+// what those accept is a product and operations decision about the seeded UAT hosts, not an engineering
+// one. The second half the verifiers measured - that a real host who clears the entire host mandate has
+// no boarding_host_profiles row at all, because no code path ever creates one, and is therefore refused
+// by governBoardingBooking - is unbuilt feature work (it needs area, species, capacity, one-family and
+// medication answers that onboarding does not collect). It is reported as a launch blocker, not invented
+// here.
+// =====================================================================================================
+
+async function hostTrustWorld() {
+  const { sqlite, db } = world();
+  const boarding = await import("../lib/boarding-governance.ts");
+  const capacity = await import("../lib/provider-capacity-governance.ts");
+  const mandate = await import("../lib/provider-verification-mandate.ts");
+  await capacity.seedProviderCapacityDefaults(db);
+  await boarding.ensureBoardingGovernanceTables(db);
+  await mandate.seedDefaultMandates(db);
+  await db.prepare("CREATE TABLE IF NOT EXISTS provider_onboarding_applications (id TEXT PRIMARY KEY,provider_id TEXT,vertical_key TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'interview',created_at INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT 0)").run();
+  const { computeHostStats, computeHostBadges } = await import("../lib/host-badges.ts");
+  const badgeIds = async (providerId) => (computeHostBadges(await computeHostStats(db, providerId))).map((badge) => badge.id);
+  return { sqlite, db, mandate, computeHostStats, badgeIds };
+}
+
+test("P0-06: a host with no verification record whatsoever does not wear a KYC badge", async () => {
+  // Measured before the fix: GET /api/host-trust?hostProviderId=host_maya_rohan, anonymous, returned
+  // {"kycVerified":true,"homeVerified":true} and badges including "kyc-verified" and "verified-home",
+  // on the strength of a seed literal alone.
+  const { sqlite, db, computeHostStats, badgeIds } = await hostTrustWorld();
+  const seeded = sqlite.prepare("SELECT kyc_status,home_verified FROM boarding_host_profiles WHERE provider_id='host_maya_rohan'").get();
+  assert.equal(String(seeded.kyc_status), "verified", "the seed row still says verified - this fix does not rewrite the seed");
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM provider_verifications").get().n), 0, "and there is no verification record anywhere");
+
+  const stats = await computeHostStats(db, "host_maya_rohan");
+  assert.equal(stats.kycVerified, false, "a KYC claim with no verification record behind it is not verified");
+  assert.equal(stats.homeVerified, false, "nor is a home-verification claim with no house_verification behind it");
+  const badges = await badgeIds("host_maya_rohan");
+  assert.ok(!badges.includes("kyc-verified"), `customers must not be shown a KYC badge: ${badges.join(", ")}`);
+  assert.ok(!badges.includes("verified-home"), `nor a verified-home badge: ${badges.join(", ")}`);
+});
+
+test("P0-06: a host whose mandate really is satisfied DOES wear the badge - the fix is not a blanket denial", async () => {
+  // Non-vacuity: returning false unconditionally would satisfy the case above.
+  const { sqlite, db, mandate, computeHostStats, badgeIds } = await hostTrustWorld();
+  await db.prepare("INSERT INTO provider_onboarding_applications (id,provider_id,vertical_key,status) VALUES ('APP-REAL-HOST','host_maya_rohan','boarding','activated_uat')").run();
+  for (const type of ["aadhaar", "pan"]) {
+    await mandate.runProviderVerification(db, {}, { applicationId: "APP-REAL-HOST", category: "host", verificationType: type, actorId: "ops@pawspace.test" });
+    sqlite.prepare("UPDATE provider_verifications SET status='verified' WHERE application_id=? AND verification_type=?").run("APP-REAL-HOST", type);
+  }
+  for (const type of ["house_verification", "pet_proofing_photo"]) {
+    await mandate.recordManualVerification(db, { applicationId: "APP-REAL-HOST", verificationType: type, status: "verified", note: "Agent visited the home and confirmed", actorId: "ops@pawspace.test" });
+  }
+  assert.equal((await mandate.verificationMandateStatus(db, { applicationId: "APP-REAL-HOST", category: "host" })).allVerified, true);
+
+  const stats = await computeHostStats(db, "host_maya_rohan");
+  assert.equal(stats.kycVerified, true, "a satisfied host mandate is exactly what the badge claims");
+  assert.equal(stats.homeVerified, true, "and house_verification is what Verified Home claims");
+  const badges = await badgeIds("host_maya_rohan");
+  assert.ok(badges.includes("kyc-verified"));
+  assert.ok(badges.includes("verified-home"));
+});
+
+test("P0-06: evidence alone is not enough either - the host profile must still say so", async () => {
+  // The column is the operator's record and the mandate is the evidence. The badge needs both, so
+  // neither a stale seed literal nor a mandate satisfied for some other purpose can produce it alone.
+  const { sqlite, db, mandate, computeHostStats } = await hostTrustWorld();
+  sqlite.prepare("UPDATE boarding_host_profiles SET kyc_status='pending',home_verified=0 WHERE provider_id='host_sana'").run();
+  await db.prepare("INSERT INTO provider_onboarding_applications (id,provider_id,vertical_key,status) VALUES ('APP-SANA','host_sana','boarding','activated_uat')").run();
+  for (const type of ["aadhaar", "pan"]) {
+    await mandate.runProviderVerification(db, {}, { applicationId: "APP-SANA", category: "host", verificationType: type, actorId: "ops@pawspace.test" });
+    sqlite.prepare("UPDATE provider_verifications SET status='verified' WHERE application_id=? AND verification_type=?").run("APP-SANA", type);
+  }
+  for (const type of ["house_verification", "pet_proofing_photo"]) {
+    await mandate.recordManualVerification(db, { applicationId: "APP-SANA", verificationType: type, status: "verified", note: "Agent visited", actorId: "ops@pawspace.test" });
+  }
+  const stats = await computeHostStats(db, "host_sana");
+  assert.equal(stats.kycVerified, false, "the operator's own host record still says pending");
+  assert.equal(stats.homeVerified, false);
+});
