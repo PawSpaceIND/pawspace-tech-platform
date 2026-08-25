@@ -14,7 +14,10 @@
     "blast_radius": "Every crm_contacts row, capped at 100 per call and unbounded across calls; every actor holding customers.view without customers.view_full_phone (associate today, plus manager which also lacks view_full_phone). Both the staff CRM screen and any script driving /api/crm.",
     "suggested_severity": "P1",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p01-crm-mask.mjs",
-    "status": "OPEN"
+    "status": "FIXED (phone/name); email exposure OPEN pending a product decision",
+    "fix_file": "app/api/crm/route.ts",
+    "regression": "tests/ptja-w2b-exposure-regressions.test.mjs :: \"W2B-C01: the CRM contact list masks phones for an actor without customers.view_full_phone\" + \"W2B-C01: an actor with customers.view_full_phone still sees the CRM numbers\"",
+    "fix_note": "Masked at the route, applying the convention app/api/subscription-customers/route.ts already carries: reveal = hasPermission(actor.permissions,'customers.view_full_phone'), then maskPhone/maskName. PARTIAL BY DESIGN: email is NOT masked - the platform defines only maskPhone and maskName - and whether an associate should see a customer's email at all is a product decision left open, the same call as for Customer 360. Both primary and secondary phone are masked."
   },
   {
     "id": "W2-B3-C02",
@@ -159,7 +162,10 @@
     "blast_radius": "Every communication_threads row with a matching canonical_customers row - i.e. every customer who has ever been messaged - at up to 200 per call, plus every message payload on any thread whose id the caller can name. Affects the associate role today; the same hardcoded \"staff\" scope would admit any future role granted communications.manage.",
     "suggested_severity": "P1",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p09-conversations-phone.mjs",
-    "status": "OPEN"
+    "status": "FIXED (phone/name); internalNote visibility OPEN pending a product decision",
+    "fix_file": "app/api/conversations/route.ts",
+    "regression": "tests/ptja-w2b-exposure-regressions.test.mjs :: \"W2B-C07: the conversation thread list masks the customer phone\"",
+    "fix_note": "Masked at the route, applying the convention app/api/subscription-customers/route.ts already carries: reveal = hasPermission(actor.permissions,'customers.view_full_phone'), then maskPhone/maskName. PARTIAL BY DESIGN: email is NOT masked - the platform defines only maskPhone and maskName - and whether an associate should see a customer's email at all is a product decision left open, the same call as for Customer 360. Applied to BOTH branches - the thread list and the single-thread view, whose message payload also carried customerPhone. The payload's internalNote (measured content: 'Customer threatened to go to consumer court; do not escalate to founder') is deliberately left alone: who may read a staff-authored internal note is a product decision, not a masking rule."
   },
   {
     "id": "W2-B3-C08",

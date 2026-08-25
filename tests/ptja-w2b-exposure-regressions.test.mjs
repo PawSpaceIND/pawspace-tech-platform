@@ -203,3 +203,64 @@ test("W2B-R06: a staff identity that holds launch.view still reads it", async ()
   const founder = await launchReadiness(headers);
   assert.equal(founder.status, 200, `the launch console must still work: ${JSON.stringify(founder).slice(0, 300)}`);
 });
+
+// =====================================================================================================
+// PTJA-W2B-C01 / C07 — two more staff surfaces serving unmasked customer contact data
+//
+// The same convention gap as Customer 360, on two more routes. app/api/subscription-customers/route.ts
+// carries the platform's rule - reveal = hasPermission(actor.permissions,"customers.view_full_phone"),
+// then maskPhone/maskName - and neither of these applied it.
+//
+// MEASURED, role=associate (holds customers.view and communications.manage, NOT
+// customers.view_full_phone):
+//   GET /api/crm           -> {"primary_phone":"+919845012345","secondary_phone":"+919845099999", ...}
+//   GET /api/conversations -> threads[{"primary_phone":"+919845012345"}]
+//
+// Both now mask name and phone for an actor without customers.view_full_phone, at the route, exactly as
+// the sibling does.
+//
+// Scope recorded rather than widened, the same as for Customer 360: email is NOT masked - the platform
+// defines only maskPhone and maskName - and the conversations payload's `internalNote`, which carried
+// "Customer threatened to go to consumer court", is left alone because who may read a staff-authored
+// internal note is a product decision, not a masking rule. Both are carried in the ledger.
+// =====================================================================================================
+
+test("W2B-C01: the CRM contact list masks phones for an actor without customers.view_full_phone", async () => {
+  const { sqlite, db, headers } = await staffWorld("associate@pawspace.test", "associate");
+  const crm = await import("../app/api/crm/route.ts");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS crm_contacts (id TEXT PRIMARY KEY,name TEXT,primary_phone TEXT,secondary_phone TEXT,email TEXT,area TEXT,pet_names TEXT,pet_summary TEXT,stage TEXT,owner TEXT,source TEXT,lifetime_value REAL,next_action TEXT,opportunity TEXT,created_at INTEGER,updated_at INTEGER)");
+  sqlite.prepare("INSERT INTO crm_contacts (id,name,primary_phone,secondary_phone,email,area,stage,owner,source,created_at,updated_at) VALUES ('CU-VICTIM','Meera Shah','+919845012345','+919845099999','meera.shah@example.com','Indiranagar','New lead','Neha','Website',?,?)").run(Date.now(), Date.now());
+
+  const response = await crm.GET(new Request("https://uat.pawspace.in/api/crm", { headers }));
+  assert.equal(response.status, 200, "an associate may still open the CRM list");
+  const payload = await response.text();
+  assert.doesNotMatch(payload, /\+?919845012345/, `the raw primary phone must not be served: ${payload.slice(0, 300)}`);
+  assert.doesNotMatch(payload, /\+?919845099999/, "nor the secondary");
+  assert.match(payload, /•/, "they are masked, not removed");
+});
+
+test("W2B-C01: an actor with customers.view_full_phone still sees the CRM numbers", async () => {
+  // Non-vacuity.
+  const { sqlite, db, headers } = await staffWorld("ops.admin2@pawspace.test", "admin");
+  const crm = await import("../app/api/crm/route.ts");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS crm_contacts (id TEXT PRIMARY KEY,name TEXT,primary_phone TEXT,secondary_phone TEXT,email TEXT,area TEXT,pet_names TEXT,pet_summary TEXT,stage TEXT,owner TEXT,source TEXT,lifetime_value REAL,next_action TEXT,opportunity TEXT,created_at INTEGER,updated_at INTEGER)");
+  sqlite.prepare("INSERT INTO crm_contacts (id,name,primary_phone,secondary_phone,email,area,stage,owner,source,created_at,updated_at) VALUES ('CU-VICTIM','Meera Shah','+919845012345','+919845099999','meera.shah@example.com','Indiranagar','New lead','Neha','Website',?,?)").run(Date.now(), Date.now());
+
+  const response = await crm.GET(new Request("https://uat.pawspace.in/api/crm", { headers }));
+  assert.match(await response.text(), /\+?919845012345/, "an admin still sees the real number");
+});
+
+test("W2B-C07: the conversation thread list masks the customer phone", async () => {
+  const { sqlite, db, headers } = await staffWorld("associate2@pawspace.test", "associate");
+  const conversations = await import("../lib/conversation-governance.ts");
+  await conversations.ensureConversationGovernance(db);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,created_at,updated_at) VALUES ('CUST-V','blr','Meera Victim','+919845012345',?,?)").run(Date.now(), Date.now());
+  sqlite.prepare("INSERT INTO communication_threads (id,customer_id,status,assigned_to,created_at,updated_at) VALUES ('THREAD-V','CUST-V','open',NULL,?,?)").run(Date.now(), Date.now());
+
+  const route = await import("../app/api/conversations/route.ts");
+  const response = await route.GET(new Request("https://uat.pawspace.in/api/conversations", { headers }));
+  assert.equal(response.status, 200, "an associate may still open the inbox");
+  const payload = await response.text();
+  assert.doesNotMatch(payload, /\+?919845012345/, `the raw phone must not be served: ${payload.slice(0, 300)}`);
+});

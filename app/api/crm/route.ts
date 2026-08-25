@@ -1,4 +1,5 @@
-import { authError, authorize, database, securityAudit } from "../../../lib/server-auth";
+import { authError, authorize, database, resolveActor, securityAudit } from "../../../lib/server-auth";
+import{hasPermission,maskName,maskPhone}from"../../../lib/platform-security";
 
 async function getDatabase(){
   const { env } = await import("cloudflare:workers");
@@ -16,8 +17,16 @@ async function ensureTables(){
   ]);
 }
 
+/*
+ * Customer contact data is masked for an actor without customers.view_full_phone, the convention
+ * app/api/subscription-customers/route.ts already applies (PTJA W2-B3-C01 / C07). The same associate
+ * identity saw "+91 ••••••3210" there and the raw number here.
+ *
+ * Email is deliberately NOT masked - the platform defines only maskPhone and maskName - and that
+ * exposure is carried in the audit ledger for product confirmation rather than closed on my own reading.
+ */
 export async function GET(request:Request){try{
-  await authorize(request,"customers.view"); await ensureTables();
+  const crmActor=await authorize(request,"customers.view"); await ensureTables();
   const db=await getDatabase();
   const result=await db.prepare("SELECT * FROM crm_contacts ORDER BY updated_at DESC LIMIT 100").all<Record<string,unknown>>();
   // Lifetime value must be the SAME number Customer 360 shows for the same person. crm_contacts
@@ -57,7 +66,9 @@ export async function GET(request:Request){try{
       contact.lifetime_value_basis=!known?"unavailable":booked>0?"recognized_bookings":"no_recognized_bookings";
     }
   }
-  return Response.json({contacts});
+  const revealCrm=hasPermission(crmActor.permissions,"customers.view_full_phone");
+  const served=revealCrm?contacts:contacts.map(row=>({...row,name:maskName(String((row as Record<string,unknown>).name||"")),primary_phone:maskPhone(String((row as Record<string,unknown>).primary_phone||"")),secondary_phone:(row as Record<string,unknown>).secondary_phone?maskPhone(String((row as Record<string,unknown>).secondary_phone)):null}));
+  return Response.json({contacts:served});
 }catch(error){return authError(error,"Unable to load CRM");}}
 
 export async function POST(request:Request){
