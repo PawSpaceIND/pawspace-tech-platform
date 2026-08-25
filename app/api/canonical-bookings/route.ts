@@ -225,6 +225,14 @@ export async function POST(request:Request){try{const input=await request.json()
     }
   }
   const assignment=await db.prepare("SELECT selected_provider_id,status,shortlist_json FROM scheduling_assignment_decisions WHERE group_id=?").bind(input.scheduleGroupId).first<Record<string,unknown>>();if(!assignment||assignment.status!=="assigned")return json({error:"Scheduling must be assigned before booking confirmation"},409);if(String(assignment.selected_provider_id)!==input.provider.id)return json({error:"The provider does not match the scheduling decision"},409);const reservations=await db.prepare("SELECT id,provider_id,customer_id,service_code,city_id,zone_id,scheduled_start,scheduled_end,occurrence_number,status FROM scheduling_reservations WHERE group_id=? AND status!='cancelled' ORDER BY occurrence_number").bind(input.scheduleGroupId).all<Record<string,unknown>>();if(!schedulingGroupBelongsToCustomer(reservations.results,input.customer.id))return json({error:SCHEDULING_GROUP_OWNERSHIP_CONFLICT},409);if(!reservations.results.length||reservations.results.some(row=>String(row.provider_id)!==input.provider.id))return json({error:"A valid provider reservation is required"},409);if(reservations.results.some(row=>String(row.service_code)!==input.serviceCode))return json({error:"The booking service does not match the scheduling reservation"},409);
+  // The booking window must be the window that is actually held. dog_training and boarding each check
+  // this below against their own first reservation; nothing checked it for anything else, so a booking
+  // could be confirmed and PAID for a day on which no capacity was reserved - measured at 1899 captured
+  // for a 27 Nov booking against a 20 Nov reservation. Same check those two verticals already carry,
+  // applied to every service. [PTJA-P1-F28]
+  const heldWindow=reservations.results[0];
+  if(heldWindow&&(new Date(String(heldWindow.scheduled_start)).getTime()!==new Date(input.scheduledStart).getTime()||new Date(String(heldWindow.scheduled_end)).getTime()!==new Date(input.scheduledEnd).getTime()))
+    return json({error:"The booking window does not match the scheduling reservation"},409);
   // City/zone integrity invariant: the provider equality above is not enough. The booking persists the
   // CLIENT-supplied cityId/zoneId, but the reservation it confirms was made for a specific city and zone.
   // Trust the reservation, never the client: a Bengaluru reservation must never be confirmable into a

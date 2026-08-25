@@ -544,3 +544,94 @@ test("P1-F3: a lead replaying its own key is still a duplicate", async () => {
   assert.equal(replay.duplicatePrevented, true);
   assert.equal(String(replay.assignment.lead_id), "LEAD-A");
 });
+
+// =====================================================================================================
+// PTJA-P1-F28 — a second reserve under the same clientRequestId is answered "assigned" for a date that
+// was never reserved, and the booking built on it is confirmed and PAID
+//
+// Measured end to end with one real non-preview customer session:
+//   reserve 2026-11-20 04:00-06:00, clientRequestId GRP -> 200 {status:"assigned", provider groom_arun}
+//   reserve 2026-11-27 04:00-06:00, SAME clientRequestId -> 200 {status:"assigned", provider groom_arun}
+//   scheduling_reservations for GRP                      -> ONE row, still 2026-11-20
+//   POST /api/canonical-bookings scheduledStart 11-27    -> 201 confirmed
+//   canonical_bookings.scheduled_start                   -> 2026-11-27
+//   booking_payments                                     -> 1899 captured
+//
+// So the customer holds a confirmed, paid booking for a day on which no capacity is held, against a
+// provider whose slot is reserved a week earlier. It cannot be delivered, and nothing anywhere reports
+// a problem.
+//
+// Two gaps, one invariant. The reserve replay path returned the stored decision without ever comparing
+// the window it was asked about - the same unbound-key shape as PTJA-P1-F23/F16/F3, so it gets the same
+// answer: a key reused for a DIFFERENT request is a conflict, not a duplicate. And canonical-bookings
+// checked the booking window against the reservation for dog_training and for boarding but not for
+// anything else, so the mismatch had a second door. Both are closed with the checks those two verticals
+// already carry.
+// =====================================================================================================
+
+const F28_DAY = (day, hour) => new Date(Date.UTC(2026, 10, day, hour, 0, 0)).toISOString();
+
+async function reserveWorld() {
+  const { sqlite, db } = await schedulingWorld();
+  const customerId = "CUST-F28";
+  const cookie = await customerCookie(db, customerId);
+  const reserve = (group, startDay, extra = {}) => post("../app/api/uat-scheduling/route.ts", "/api/uat-scheduling", {
+    clientRequestId: group, customerId, petIds: ["PET-F28"], serviceCode: "grooming",
+    cityId: "blr", zoneId: "blr-east", scheduledStart: F28_DAY(startDay, 4), scheduledEnd: F28_DAY(startDay, 6), ...extra,
+  }, { cookie });
+  const book = (group, startDay, provider) => post("../app/api/canonical-bookings/route.ts", "/api/canonical-bookings", {
+    idempotencyKey: `f28:${group}:${startDay}`, scheduleGroupId: group,
+    customer: { id: customerId, name: "F28 customer", primaryPhone: "+919800000028" },
+    pets: [{ sourceId: "PET-F28", name: "Rex", species: "dog", vaccinationStatus: "verified" }],
+    cityId: "blr", zoneId: "blr-east", serviceCode: "grooming", packageCode: "dog-basic", packageName: "Bath & Basic",
+    scheduledStart: F28_DAY(startDay, 4), scheduledEnd: F28_DAY(startDay, 6),
+    provider: { id: String(provider.id), name: String(provider.name), model: String(provider.model) },
+    totalAmount: 1899, amountDueNow: 1899,
+    payment: { method: "upi", mode: "prepaid", status: "captured", detail: "f28" }, pricing: { discount: 0 },
+  }, { cookie });
+  return { sqlite, db, cookie, customerId, reserve, book };
+}
+
+test("P1-F28: reusing a scheduling group for a DIFFERENT date is refused, not answered 'assigned'", async () => {
+  const { sqlite, reserve } = await reserveWorld();
+  const first = await reserve("GRP-F28", 20);
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  assert.equal(first.body.data.status, "assigned");
+
+  const second = await reserve("GRP-F28", 27);
+  assert.equal(second.status, 409, `a different window under the same group must not be answered assigned: ${second.status} ${JSON.stringify(second.body)}`);
+
+  const rows = sqlite.prepare("SELECT scheduled_start FROM scheduling_reservations WHERE group_id='GRP-F28'").all();
+  assert.deepEqual(rows.map((r) => String(r.scheduled_start)), [F28_DAY(20, 4)], "the real reservation is untouched");
+});
+
+test("P1-F28: a booking window that does not match the reservation is refused, and nothing is charged", async () => {
+  // The second door. Even reaching canonical-bookings with a mismatched window - which the reserve
+  // refusal above now prevents, but an internal caller or a stale client could still do - must not
+  // produce a confirmed, paid booking for a day nobody holds.
+  const { sqlite, reserve, book } = await reserveWorld();
+  const first = await reserve("GRP-F28B", 20);
+  const provider = first.body.data.provider;
+
+  const mismatched = await book("GRP-F28B", 27, provider);
+  assert.equal(mismatched.status, 409, `a 27 Nov booking on a 20 Nov reservation must be refused: ${mismatched.status} ${JSON.stringify(mismatched.body)}`);
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings").get().n), 0, "no booking is created");
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM booking_payments").get().n), 0, "and nothing is charged");
+});
+
+test("P1-F28: the matching booking still confirms, and a true replay is still a duplicate", async () => {
+  // Non-vacuity in both directions: refusing every window would block all booking, and refusing every
+  // repeat reserve would break the retry the group id exists for.
+  const { sqlite, reserve, book } = await reserveWorld();
+  const first = await reserve("GRP-F28C", 20);
+  const provider = first.body.data.provider;
+
+  const replay = await reserve("GRP-F28C", 20);
+  assert.equal(replay.status, 200, "the same group asked about the same window is still a replay");
+  assert.equal(replay.body.data.duplicatePrevented, true);
+
+  const booked = await book("GRP-F28C", 20, provider);
+  assert.equal(booked.status, 201, `the matching booking must still confirm: ${JSON.stringify(booked.body)}`);
+  const row = sqlite.prepare("SELECT scheduled_start FROM canonical_bookings WHERE schedule_group_id='GRP-F28C'").get();
+  assert.equal(String(row.scheduled_start), F28_DAY(20, 4), "and it is booked for the day that is actually reserved");
+});
