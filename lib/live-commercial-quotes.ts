@@ -3,15 +3,16 @@ import{createSittingQuote,type SittingPaymentMode}from"./sitting-governance";
 import{resolveLivePrice}from"./live-pricing-resolver";
 import{splitPaymentPlan}from"./stay-split-payments";
 
-function requireQuoteLocation(input:{cityId?:string;zoneId?:string}){
+function quoteLocation(input:{cityId?:string;zoneId?:string}){
   const cityId=String(input.cityId??"").trim(),zoneId=String(input.zoneId??"").trim();
-  if(!cityId||!zoneId)throw new Error("City and zone are required for live pricing");
-  return{cityId,zoneId};
+  return cityId&&zoneId?{cityId,zoneId}:null;
 }
 
 export async function createLiveBoardingQuote(db:D1Database,input:{packageCode:string;petCount:number;scheduledStart:string;scheduledEnd:string;paymentMode:BoardingPaymentMode;couponCode?:string;cityId?:string;zoneId?:string}){
-  const location=requireQuoteLocation(input);
-  const quote=await createBoardingQuote(db,input);
+  const quote=await createBoardingQuote(db,input),location=quoteLocation(input);
+  // A missing location means there is no safe city-specific live override to apply. Keep the governed
+  // package quote instead of silently borrowing Bengaluru pricing.
+  if(!location)return quote;
   const live=await resolveLivePrice(db,{packageCode:quote.packageCode,fallbackPrice:quote.basePricePerPet,scheduledStart:quote.scheduledStart,...location});
   if(live.source==="fallback_default")return quote;
   const totalAmount=live.price*quote.petCount*quote.stayUnits;
@@ -21,8 +22,10 @@ export async function createLiveBoardingQuote(db:D1Database,input:{packageCode:s
 }
 
 export async function createLiveSittingQuote(db:D1Database,input:{packageCode:string;petCount:number;scheduledStart:string;scheduledEnd:string;paymentMode:SittingPaymentMode;couponCode?:string;cityId?:string;zoneId?:string}){
-  const location=requireQuoteLocation(input);
-  const quote=await createSittingQuote(db,input);
+  const quote=await createSittingQuote(db,input),location=quoteLocation(input);
+  // Missing geography must never be interpreted as Bengaluru. The base package quote remains valid,
+  // while live geography-specific overrides are intentionally skipped until city and zone are known.
+  if(!location)return quote;
   const [base,extra]=await Promise.all([
     resolveLivePrice(db,{packageCode:quote.packageCode,fallbackPrice:quote.basePricePerPet,scheduledStart:quote.scheduledStart,...location}),
     resolveLivePrice(db,{packageCode:`${quote.packageCode}__extra_pet`,fallbackPrice:quote.extraPetPrice,scheduledStart:quote.scheduledStart,...location}),
