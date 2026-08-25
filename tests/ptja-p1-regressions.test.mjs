@@ -635,3 +635,67 @@ test("P1-F28: the matching booking still confirms, and a true replay is still a 
   const row = sqlite.prepare("SELECT scheduled_start FROM canonical_bookings WHERE schedule_group_id='GRP-F28C'").get();
   assert.equal(String(row.scheduled_start), F28_DAY(20, 4), "and it is booked for the day that is actually reserved");
 });
+
+// =====================================================================================================
+// PTJA-P1-F31 — recovery offers the FAILING provider as its own "capacity safe replacement"
+//
+// selectCapacitySafeReplacement skips a candidate only when `p.id===input.excludeProviderId`. The
+// booking row it has already loaded carries provider_id - the provider that just failed - but the
+// exclusion was driven entirely by what the caller passed. With excludeProviderId absent, undefined or
+// blank, `p.id===undefined` is never true, so the provider being recovered FROM is a candidate for
+// recovering TO, and it is returned with checks {service:true, zone:true, availability:true,
+// collisionFree:true, capacity:true} - a full clean bill of health for the provider that just declined
+// or no-showed.
+//
+// The correction invents nothing: the booking's own provider_id is authoritative about who is being
+// replaced, so it is always excluded, whatever the caller passed. A replacement that is the same
+// provider is not a replacement.
+// =====================================================================================================
+
+async function recoveryWorld() {
+  const { sqlite, db } = world();
+  const capacity = await import("../lib/provider-capacity-governance.ts");
+  await capacity.seedProviderCapacityDefaults(db);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS scheduling_availability (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,date TEXT NOT NULL,windows_json TEXT NOT NULL,source TEXT NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS scheduling_reservations (id TEXT PRIMARY KEY,group_id TEXT NOT NULL,provider_id TEXT NOT NULL,service_code TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,customer_id TEXT NOT NULL,pet_ids_json TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,capacity_units INTEGER NOT NULL DEFAULT 1,occurrence_number INTEGER NOT NULL DEFAULT 1,care_mode TEXT,status TEXT NOT NULL,explanation_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,pet_ids_json TEXT NOT NULL,source_pet_ids_json TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,service_code TEXT NOT NULL,package_code TEXT NOT NULL,package_name TEXT NOT NULL,schedule_group_id TEXT NOT NULL UNIQUE,provider_id TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'confirmed',channel TEXT NOT NULL DEFAULT 'customer_app',total_amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',pricing_json TEXT NOT NULL DEFAULT '{}',created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  const START = "2026-11-20T04:00:00.000Z", END = "2026-11-20T06:00:00.000Z", now = Date.now();
+  // Every live grooming provider in the zone is available for the window, so the ONLY thing that can
+  // keep the failing provider out of the result is the exclusion under test.
+  for (const providerId of ["groom_arun", "groom_kiran", "groom_sanjay"]) {
+    sqlite.prepare("INSERT OR REPLACE INTO scheduling_availability (id,provider_id,city_id,zone_id,date,windows_json,source,updated_at) VALUES (?,?,?,?,?,?,'operations',?)")
+      .run(`av-${providerId}`, providerId, "blr", "blr-east", "2026-11-20", JSON.stringify(["09:00-19:00"]), now);
+  }
+  sqlite.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,total_amount,created_by,created_at,updated_at) VALUES ('BK-F31','f31','CUST-F31','[]','[]','blr','blr-east','grooming','dog-basic','Bath','GRP-F31','groom_arun',?,?,1899,'seed',?,?)")
+    .run(START, END, now, now);
+  const recovery = await import("../lib/universal-replacement-recovery.ts");
+  return { sqlite, db, recovery };
+}
+
+test("P1-F31: recovery never offers the failing provider as its own replacement", async () => {
+  // Measured before the fix: with excludeProviderId absent, groom_arun - the provider being recovered
+  // FROM - was returned with every check true.
+  const { db, recovery } = await recoveryWorld();
+  for (const [label, input] of [
+    ["absent", { bookingId: "BK-F31" }],
+    ["undefined", { bookingId: "BK-F31", excludeProviderId: undefined }],
+    ["blank", { bookingId: "BK-F31", excludeProviderId: "" }],
+  ]) {
+    const result = await recovery.selectCapacitySafeReplacement(db, input);
+    assert.ok(result, `${label}: a real alternative exists, so recovery must find one`);
+    assert.notEqual(result.provider.id, "groom_arun", `${label}: the failing provider must never be its own replacement`);
+  }
+});
+
+test("P1-F31: an explicit exclusion still works, and a real replacement is still returned", async () => {
+  // Non-vacuity. Returning null always would satisfy the case above and would break recovery entirely.
+  const { db, recovery } = await recoveryWorld();
+  const chosen = await recovery.selectCapacitySafeReplacement(db, { bookingId: "BK-F31", excludeProviderId: "groom_arun" });
+  assert.ok(chosen, "recovery still finds a capacity-safe replacement");
+  assert.ok(["groom_kiran", "groom_sanjay"].includes(chosen.provider.id), `unexpected replacement ${chosen.provider.id}`);
+  assert.equal(chosen.checks.capacity, true);
+
+  const narrowed = await recovery.selectCapacitySafeReplacement(db, { bookingId: "BK-F31", excludeProviderId: "groom_kiran" });
+  assert.ok(narrowed && narrowed.provider.id !== "groom_kiran" && narrowed.provider.id !== "groom_arun",
+    "the caller's own exclusion is still honoured on top of the booking's provider");
+});
