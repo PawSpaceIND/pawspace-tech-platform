@@ -15,6 +15,19 @@ export async function resolveLivePrice(db:Db,input:{packageCode:string;fallbackP
   await ensurePricingControlRuntime(db);
   const row=await db.prepare("SELECT * FROM service_packages WHERE package_code=? AND active=1").bind(input.packageCode).first<Row>();
   if(!row)return{price:input.fallbackPrice,source:"fallback_default"};
+  // A package is only a price INSIDE its own effective window. `active=1` says an operator has switched
+  // the row on; effective_from/effective_to say WHEN it applies, and the Pricing Control panel exposes
+  // both as a first-class "Effective from" control. Without this test a price scheduled for 2027 was
+  // quoted - and in the grooming booking path ENFORCED, with the true catalogue price rejected 409 -
+  // for a stay today, and a price retired in 2025 was quoted forever.
+  //
+  // The comparison is deliberately the SAME one lib/pricing-engine.ts activeOn() already applies to
+  // dynamic_pricing_rules: date-only, inclusive at both ends, judged against the BOOKING date rather
+  // than today. Only the package row was exempt from it. Out of window falls back exactly as an absent
+  // or inactive row does, so no caller learns a new failure mode.
+  const bookingDay=String(input.scheduledStart).slice(0,10);
+  const from=String(row.effective_from||"").slice(0,10),to=row.effective_to?String(row.effective_to).slice(0,10):null;
+  if((from&&bookingDay<from)||(to&&bookingDay>to))return{price:input.fallbackPrice,source:"fallback_default"};
   const pkg:PricingPackage={
     id:String(row.id),serviceCode:String(row.service_code),packageCode:String(row.package_code),name:String(row.name),description:String(row.description),
     basePrice:Number(row.base_price),slotMinutes:Number(row.slot_minutes),blockingMinutes:Number(row.blocking_minutes),taxInclusive:Boolean(row.tax_inclusive),
