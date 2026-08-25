@@ -43,10 +43,10 @@ export async function POST(request:Request){try{
   const actor=await authorize(request,"finance.manage");
   const db=await database();await ensureTables(db);
   const action=String(body.action||""),reason=String(body.reason||"");
-  let data:unknown;
-  if(action==="save_tax_policy")data=await saveGroomingTaxPolicy(db,{cityId:String(body.cityId||"blr"),taxMode:String(body.taxMode||"") as"inclusive"|"exclusive",taxRate:Number(body.taxRate),effectiveFrom:String(body.effectiveFrom||new Date().toISOString().slice(0,10)),reason,actorId:actor.email});
-  else if(action==="issue_invoice")data=await issueGroomingInvoice(db,{bookingId:String(body.bookingId||""),reason,actorId:actor.email});
+  let data:unknown,resourceId="";
+  if(action==="save_tax_policy"){const cityId=String(body.cityId||"").trim();if(!cityId)return Response.json({error:"City is required for a Grooming tax policy"},{status:400});data=await saveGroomingTaxPolicy(db,{cityId,taxMode:String(body.taxMode||"") as"inclusive"|"exclusive",taxRate:Number(body.taxRate),effectiveFrom:String(body.effectiveFrom||new Date().toISOString().slice(0,10)),reason,actorId:actor.email});resourceId=cityId;}
+  else if(action==="issue_invoice"){resourceId=String(body.bookingId||"").trim();data=await issueGroomingInvoice(db,{bookingId:resourceId,reason,actorId:actor.email});}
   else return Response.json({error:"Unsupported Grooming finance action"},{status:400});
-  await securityAudit(db,actor,`grooming.finance.${action}`,"grooming_finance",String(body.bookingId||body.cityId||"blr"),"completed",{liveMoney:false,executionMode:"sandbox_not_connected"});
+  await securityAudit(db,actor,`grooming.finance.${action}`,"grooming_finance",resourceId,"completed",{liveMoney:false,executionMode:"sandbox_not_connected"});
   return Response.json({data});
 }catch(error){return authError(error,"Unable to update Grooming finance ledger");}}
