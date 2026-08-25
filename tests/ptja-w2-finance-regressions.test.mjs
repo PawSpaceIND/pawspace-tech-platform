@@ -306,3 +306,53 @@ test("W2-FIN-04: an invoice outside the month, or cancelled, does not count", as
   assert.equal(result.gst.outputTax, 500, `only July's live invoices count: ${JSON.stringify(result.gst)}`);
   assert.equal(result.gst.invoiceCount, 1, "and only that one is counted");
 });
+
+// =====================================================================================================
+// PTJA-W2-FIN-05 (ledger W2-08-F02, the operational half) — CORRECTION to the finding
+//
+// The finding recorded cases A-D as "a late refund and a backdated invoice posted into 2026-07 after
+// closeMonth locked it". Re-measured rather than assumed: nothing was backdated. issueSittingInvoice
+// takes {bookingId, reason, actorId} and stamps issued_at = Date.now(); mutateSittingFinance's input
+// type carries no accounting date at all (requestedStart/requestedEnd are SERVICE dates), and the
+// refund ledger row is created at now. Those records therefore land in the period they actually
+// happened in, which is the correct treatment for an operational event that follows a close - and, since
+// W2-08-F04, the invoice's tax now reaches that open month's GST output rather than the locked one's.
+//
+// What DID post into the locked month was the manual journal, case E, because postJournal takes an
+// explicit entryDate that can be backdated. That is closed in W2-FIN-02 above.
+//
+// So this half needs no policy decision after all: the exposure was the backdatable accounting entry,
+// not the operational write. This case pins the property that made it safe, so a later change that adds
+// a caller-supplied date to either path is caught rather than assumed harmless.
+// =====================================================================================================
+
+test("W2-FIN-05: operational finance records cannot be dated into a closed month", async () => {
+  const sitting = await import("../lib/sitting-finance-governance.ts");
+  const invoice = await import("../lib/sitting-invoice.ts");
+  const accounts = await import("../lib/finance-accounts.ts");
+
+  // Neither entry point accepts an accounting date, so neither can name a locked period.
+  assert.equal(sitting.mutateSittingFinance.length >= 2, true, "mutateSittingFinance takes (db, input)");
+  const invoiceSource = (await import("node:fs")).readFileSync("lib/sitting-invoice.ts", "utf8");
+  assert.match(invoiceSource, /export async function issueSittingInvoice\(db:D1Database,input:\{bookingId:string;reason:string;actorId:string\}\)/,
+    "issueSittingInvoice takes no date - it stamps issued_at from the clock");
+  assert.doesNotMatch(invoiceSource, /input\.issuedAt|input\.issueDate|input\.periodCode/,
+    "and no caller may supply one");
+  const financeSource = (await import("node:fs")).readFileSync("lib/sitting-finance-governance.ts", "utf8");
+  assert.doesNotMatch(financeSource, /input\.entryDate|input\.periodCode|input\.refundDate/,
+    "nor may a cancellation or refund name an accounting date");
+
+  // The backdatable path - the one that really did post into a locked month - is gated. Executed, not
+  // pinned: this is the assertion that would fail if W2-FIN-02's gate were removed.
+  const { sqlite, db } = world();
+  await accounts.ensureFinanceJournalTable(db);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS finance_close_periods (period_code text PRIMARY KEY NOT NULL,status text DEFAULT 'open' NOT NULL,checklist_json text NOT NULL,locked_at integer,locked_by text,updated_at integer NOT NULL)");
+  sqlite.prepare("INSERT INTO finance_close_periods (period_code,status,checklist_json,locked_at,locked_by,updated_at) VALUES ('2026-07','locked','{}',?,'founder@pawspace.in',?)").run(Date.now(), Date.now());
+  const backdated = await accounts.postJournal(db, {
+    groupKey: "BACKDATED-1", entryDate: "2026-07-31", periodCode: "2026-07", sourceType: "manual", sourceId: "X",
+    narration: "an operational correction, backdated into the locked month",
+    lines: [{ accountCode: "6100-Other Expenses (1)", debit: 1000 }, { accountCode: "1010-Bank", credit: 1000 }],
+  }).then(() => ({ ok: true }), (error) => ({ ok: false, message: String(error?.message ?? error) }));
+  assert.equal(backdated.ok, false, `the backdatable path stays closed: ${JSON.stringify(backdated)}`);
+  assert.match(backdated.message, /period_locked/, "for the period-lock reason");
+});
