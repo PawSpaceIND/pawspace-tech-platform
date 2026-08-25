@@ -31,7 +31,10 @@
     "blast_radius": "Every sales employee with a base vertical configured, every day and every month. Attribution is one-way by design (attributeBookingToSalesEmployee refuses reattribution and there is no de-attribution path), so a booking cancelled after attribution keeps crediting the employee permanently.",
     "suggested_severity": "P1",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p_sales2.mjs",
-    "status": "OPEN"
+    "status": "FIXED",
+    "fix_file": "lib/sales-incentive-engine.ts",
+    "regression": "tests/ptja-w2b-incentive-regressions.test.mjs :: \"W2B-P02: a cancelled booking pays no sales incentive\" + \"W2B-P02: a live booking still pays exactly as before\"",
+    "fix_note": "Both attributed-value sums now exclude cancelled and draft bookings. DELIBERATELY NOT narrowed to status='completed' the way the sibling engines are: when a SALE is earned - at confirmation or at delivery - is a commercial decision, and requiring completion could withhold incentive legitimately due today. A cancelled booking is not a sale under any reading, which is the part that needed no decision."
   },
   {
     "id": "W2-B1-P03",
@@ -65,7 +68,10 @@
     "blast_radius": "Every head groomer and helper, every month. Upgrade rows are never reconciled against booking outcome, so any upsell recorded before a cancellation, and any upsell recorded against the provider on a booking in another service line entirely, permanently inflates the grooming incentive base.",
     "suggested_severity": "P1",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p_groom.mjs",
-    "status": "OPEN"
+    "status": "FIXED",
+    "fix_file": "lib/grooming-incentive-engine.ts",
+    "regression": "tests/ptja-w2b-incentive-regressions.test.mjs :: \"W2B-P04: upgrades on cancelled or non-grooming bookings do not count\" + \"W2B-P04: an upgrade on a completed grooming booking still counts\"",
+    "fix_note": "The upgrade subquery now carries service_code='grooming' AND status='completed' - the exact predicate dailyOrdersForGroomer() a few lines above already applies. Nothing new is decided."
   },
   {
     "id": "W2-B1-P05",
