@@ -23,6 +23,19 @@ export async function POST(request:Request){try{
     if(!runtime.RAZORPAY_KEY_ID_SANDBOX||!runtime.RAZORPAY_KEY_SECRET_SANDBOX)return json({error:"configuration_required",detail:"Add Razorpay test-mode credentials before initiating a sandbox refund"},503);
     const link=await db.prepare("SELECT gateway_order_id,gateway_payment_id FROM payment_gateway_links WHERE booking_id=?").bind(input.bookingId).first<Record<string,unknown>>();if(!link?.gateway_payment_id)return json({error:"A captured Razorpay sandbox payment ID is required before refund"},409);
     const refund=await db.prepare("SELECT * FROM booking_refund_cases WHERE booking_id=? ORDER BY created_at DESC LIMIT 1").bind(input.bookingId).first<Record<string,unknown>>();if(!refund)return json({error:"Create and approve an internal refund case before gateway refund"},409);if(String(refund.status)==="processed")return json({data:{bookingId:input.bookingId,refundCaseId:String(refund.id),gatewayRefundId:refund.gateway_reference,status:"processed",duplicatePrevented:true}});
+    // MONEY DOES NOT MOVE FOR A CASE NOBODY APPROVED. The error text three lines up has always claimed
+    // this - "Create and approve an internal refund case" - but the only status ever refused was
+    // 'processed', so a 'requested', 'rejected' or 'cancelled' case reached the gateway. [W2-PAY-02]
+    if(String(refund.status)!=="approved")return json({error:"This refund case is not approved; approve it before a gateway refund",code:"refund_not_approved",refundCaseStatus:String(refund.status)},409);
+    // A BOOKING CANNOT REFUND MORE THAN IT COLLECTED. Nothing compared the running refund total to the
+    // captured amount, so N internal cases produced N full-value gateway refunds against one capture -
+    // measured at Rs 24,000 of refund instructions against Rs 8,000 collected, each carrying a different
+    // X-Refund-Idempotency header so the gateway's own idempotency could not collapse them. Every
+    // service line shares this table and this endpoint. [W2-PAY-01]
+    const captured=Number(payment.amount||0);
+    const priorRow=await db.prepare("SELECT COALESCE(SUM(amount),0) total FROM booking_refund_cases WHERE booking_id=? AND id!=? AND status IN ('approved','processing','processed','completed')").bind(input.bookingId,refund.id).first<Record<string,unknown>>();
+    const prior=Number(priorRow?.total||0),requested=Number(refund.amount||0);
+    if(prior+requested>captured)return json({error:"Refunds for this booking would exceed the amount captured",code:"refund_exceeds_capture",captured,alreadyRefunded:prior,requested},409);
     const result=await createSandboxRefund(runtime,{bookingId:input.bookingId,paymentId:String(payment.id),gatewayPaymentId:String(link.gateway_payment_id),refundCaseId:String(refund.id),amount:Number(refund.amount||0)});const gatewayRefundId=String(result.id),now=Date.now();await db.prepare("UPDATE booking_refund_cases SET status='processing',gateway_reference=?,updated_at=? WHERE id=?").bind(gatewayRefundId,now,refund.id).run();await db.prepare("UPDATE payment_reconciliation_records SET gateway_status='refund_requested',reconciliation_status='pending_refund',updated_at=? WHERE payment_id=?").bind(now,payment.id).run();await securityAudit(db,actor,"grooming.payment_sandbox.initiate_refund","booking",input.bookingId,"completed",{refundCaseId:refund.id,gatewayRefundId,amount:refund.amount});return json({data:{bookingId:input.bookingId,refundCaseId:String(refund.id),gatewayRefundId,status:String(result.status||"processing"),environment:"sandbox"}},201);
   }
 

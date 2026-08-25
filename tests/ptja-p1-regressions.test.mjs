@@ -948,3 +948,116 @@ test("P1-F33: a currently-active suspension still blocks, and an ENDED one does 
   assert.equal(clear.restrictionsRemaining, 0, "an ENDED suspension is not standing and must not be counted");
   assert.equal(clear.available, true);
 });
+
+// =====================================================================================================
+// PTJA-W2-PAY-01 / W2-PAY-02 — refunds have no ceiling, and money leaves for an UNAPPROVED case
+//
+// Wave 2's first sweep of Payments, a domain never audited before. Two defects in one handler.
+//
+// initiate_refund takes the NEWEST refund case for a booking - "ORDER BY created_at DESC LIMIT 1" - and
+// the only thing it refuses is a case already marked 'processed'. It never checks that the case was
+// APPROVED, though its own error text says "Create and approve an internal refund case before gateway
+// refund". And nothing anywhere compares the running refund total to what was captured.
+//
+// MEASURED against one booking with Rs 8,000 captured: file three refund cases, initiate each one.
+// All six calls succeeded. Three DISTINCT outbound gateway refunds of Rs 8,000 each, every one carrying
+// a different X-Refund-Idempotency header - so the gateway's own idempotency cannot collapse them.
+// Rs 24,000 of refund instructions against Rs 8,000 collected, by ordinary staff following the ordinary
+// workflow. It also corrupts reporting: lib/unit-economics.ts counts only status='processed', so three
+// real Rs 8,000 refunds report as Rs 0.
+//
+// Every service line shares this table and this endpoint - grooming, sitting, training, taxi, walking,
+// boarding and food.
+//
+// The correction states the invariant the money path was missing: a booking cannot refund more than it
+// collected, and money does not move for a case nobody approved. Neither is a new business rule - the
+// handler's own error text already claimed the second one.
+// =====================================================================================================
+
+async function refundWorld() {
+  const { sqlite, db } = world({ RAZORPAY_KEY_ID_SANDBOX: "rzp_test_probe", RAZORPAY_KEY_SECRET_SANDBOX: "probe_secret" });
+  const { ensureSecurityTables } = await import("../lib/server-auth.ts");
+  await ensureSecurityTables(db);
+  const now = Date.now();
+  await db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('USR-W2-FIN','finance.mgr@pawspace.test','Finance manager','finance','active',?,?)").bind(now, now).run();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,amount_due_now REAL NOT NULL DEFAULT 0,currency TEXT NOT NULL DEFAULT 'INR',method TEXT NOT NULL DEFAULT 'upi',mode TEXT NOT NULL DEFAULT 'prepaid',status TEXT NOT NULL,gateway TEXT NOT NULL DEFAULT 'razorpay_sandbox',idempotency_key TEXT NOT NULL UNIQUE,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'requested',requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS payment_gateway_links (booking_id TEXT PRIMARY KEY,gateway_order_id TEXT,gateway_payment_id TEXT,updated_at INTEGER NOT NULL DEFAULT 0)");
+  sqlite.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,status,idempotency_key,created_at,updated_at) VALUES ('PAY-BK1','BK-1','CUST-1',8000,'captured','k-bk1',?,?)").run(now, now);
+  sqlite.prepare("INSERT INTO payment_gateway_links (booking_id,gateway_order_id,gateway_payment_id,updated_at) VALUES ('BK-1','order_1','pay_REAL1',?)").run(now);
+  const refundCase = (id, amount, status) => sqlite.prepare("INSERT INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,approved_by,created_at,updated_at) VALUES (?,?,'PAY-BK1',?,'probe',?,'ops@pawspace.test',?,?,?)")
+    .run(id, "BK-1", amount, status, status === "approved" ? "finance.mgr@pawspace.test" : null, Date.now(), Date.now());
+  const staff = {
+    "oai-authenticated-user-email": "finance.mgr@pawspace.test",
+    "oai-authenticated-user-full-name": "Finance%20manager",
+    "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8",
+  };
+  // The gateway boundary is stubbed, deliberately and narrowly. createSandboxRefund makes a REAL
+  // outbound call to api.razorpay.com, which this audit must never do - and the subject here is the
+  // guard in front of that call, not the gateway. Each stubbed call is counted, so the test can assert
+  // how many refund instructions WOULD have left the building.
+  let gatewayCalls = 0;
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes("razorpay")) {
+      gatewayCalls += 1;
+      return new Response(JSON.stringify({ id: `rfnd_${gatewayCalls}`, status: "processed", amount: 0 }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return realFetch(url, init);
+  };
+  const restore = () => { globalThis.fetch = realFetch; };
+  const initiate = () => post("../app/api/grooming-payment-sandbox/route.ts", "/api/grooming-payment-sandbox", { action: "initiate_refund", bookingId: "BK-1" }, staff);
+  // Money that actually LEFT, not money merely approved. A case refused at the gateway boundary stays
+  // 'approved' in the table - whether a refused case should be re-stated is a workflow decision this fix
+  // does not make - so counting 'approved' here would measure intent rather than movement.
+  const totalRefunded = () => Number(sqlite.prepare("SELECT COALESCE(SUM(amount),0) t FROM booking_refund_cases WHERE booking_id='BK-1' AND status IN ('processing','processed','completed')").get().t);
+  return { sqlite, db, refundCase, initiate, totalRefunded, restore, gatewayCallCount: () => gatewayCalls };
+}
+
+test("W2-PAY-01: a booking cannot refund more than it collected", async () => {
+  // Measured before the fix: three approved cases, three gateway refunds, Rs 24,000 against Rs 8,000.
+  const { refundCase, initiate, totalRefunded, restore, gatewayCallCount } = await refundWorld();
+  refundCase("RC-1", 8000, "approved");
+  const first = await initiate();
+  assert.ok(first.status < 400, `the first full refund is legitimate: ${first.status} ${JSON.stringify(first.body)}`);
+
+  refundCase("RC-2", 8000, "approved");
+  const second = await initiate();
+  assert.equal(second.status, 409, `a second full refund exceeds the Rs 8,000 captured and must be refused: ${second.status} ${JSON.stringify(second.body)}`);
+  assert.ok(totalRefunded() <= 8000, `refunds must never exceed capture, got ${totalRefunded()}`);
+  assert.equal(gatewayCallCount(), 1, "exactly one refund instruction reaches the gateway, not two");
+  restore();
+});
+
+test("W2-PAY-02: money does not move for a refund case nobody approved", async () => {
+  // The handler's own error text already claimed this: "Create and approve an internal refund case
+  // before gateway refund". It only ever checked for 'processed'.
+  // Each case gets its OWN world: world() rebinds the shared DB global, so nesting one inside another
+  // silently points the outer handles at the inner database.
+  for (const status of ["requested", "rejected", "cancelled"]) {
+    const w = await refundWorld();
+    w.refundCase(`RC-${status}`, 8000, status);
+    const result = await w.initiate();
+    assert.equal(result.status, 409, `a '${status}' case must not reach the gateway: ${result.status} ${JSON.stringify(result.body)}`);
+    assert.equal(w.gatewayCallCount(), 0, `and nothing reaches the gateway for a '${status}' case`);
+    w.restore();
+  }
+  const approved = await refundWorld();
+  approved.refundCase("RC-OK", 8000, "approved");
+  assert.ok((await approved.initiate()).status < 400, "an approved case still goes through - the fix is not a blanket refusal");
+  approved.restore();
+});
+
+test("W2-PAY-01: a PARTIAL refund still works, and the remainder is still refundable", async () => {
+  // Non-vacuity. A ceiling that refused everything after the first case would satisfy both cases above
+  // and would break legitimate partial refunds.
+  const { refundCase, initiate, totalRefunded } = await refundWorld();
+  refundCase("RC-A", 3000, "approved");
+  assert.ok((await initiate()).status < 400, "a Rs 3,000 partial refund is fine");
+  refundCase("RC-B", 5000, "approved");
+  assert.ok((await initiate()).status < 400, "and the remaining Rs 5,000 is still refundable");
+  assert.equal(totalRefunded(), 8000, "which lands exactly on the captured amount");
+
+  refundCase("RC-C", 1, "approved");
+  assert.equal((await initiate()).status, 409, "but not one rupee more");
+});
