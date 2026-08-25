@@ -1134,3 +1134,106 @@ test("W2-PAY-03: the booking the order WAS opened for still settles normally", a
   });
   assert.equal(String(noOrder.status), "processed", `an event with no order id is unaffected: ${JSON.stringify(noOrder)}`);
 });
+
+// =====================================================================================================
+// PTJA-W2-PAY-04 (ledger W2-07-PAY-006) — replaying a REFUSED gateway event grants the entitlement it
+// was refused for: a Rs 1 payment activates a Rs 24,000 ten-session subscription
+//
+// processGatewayEvent's duplicate branch exists for a good reason: an exact-eventId redelivery is the
+// gateway's own retry, and it must be able to COMPLETE a subscription transition that a transient
+// dependent-write failure rolled back on the first pass, rather than stranding a genuinely paid
+// entitlement at pending_payment forever. But it ran that repair for ANY already-recorded event of a
+// capture type, without ever looking at whether the first pass had actually succeeded.
+//
+// MEASURED, through the real POST /api/razorpay-webhook with a real HMAC signature: one signed body
+// paying Rs 1 (amount 100 subunits) against a Rs 24,000 subscription booking. Delivery 1 was correctly
+// REFUSED - {"duplicate":false,"status":"exception","reason":"capture_amount_mismatch"}. The byte-
+// identical retry, same x-razorpay-event-id, answered {"duplicate":true,"status":"exception"} - it
+// reports the OLD refusal while performing a new, money-granting write: the subscription went
+// status='active' with all 10 sessions reserved, booking_subscription_usage went 'reserved', and the
+// lifecycle event stamped verified:true. booking_payments stayed 'awaiting_payment', so finance sees an
+// unpaid booking while the credits are live and immediately redeemable.
+//
+// The symmetrical branch is the same defect facing the other way: replaying a refused payment.failed
+// event calls failSubscriptionOnPaymentFailure and can close a genuinely paid entitlement. There is no
+// replay window anywhere in the receiver - payload.created_at is never compared to now - so a signed
+// body stays replayable forever and the exposure does not expire.
+//
+// The correction decides nothing new about payments. The repair path is for a capture the system already
+// accepted; an event it REFUSED is not a transition waiting to be completed. Repair now runs only for a
+// recorded event whose processing_status is 'processed'. This fails closed in both directions: a refused
+// event repairs nothing, and a genuinely processed capture whose dependent write failed still completes.
+// =====================================================================================================
+
+async function subscriptionWebhookWorld() {
+  const SECRET = "whsec_ptja_p1_regression_only";
+  const { sqlite, db } = world({ RAZORPAY_WEBHOOK_SECRET_SANDBOX: SECRET });
+  const now = Date.now();
+  sqlite.exec(`
+CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY,idempotency_key TEXT,customer_id TEXT,pet_ids_json TEXT,city_id TEXT,zone_id TEXT,service_code TEXT,package_code TEXT,package_name TEXT,schedule_group_id TEXT,provider_id TEXT,scheduled_start TEXT,scheduled_end TEXT,status TEXT,channel TEXT,total_amount REAL,currency TEXT,pricing_json TEXT,created_by TEXT,created_at INTEGER,updated_at INTEGER);
+CREATE TABLE booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT,amount REAL NOT NULL,amount_due_now REAL NOT NULL,currency TEXT,method TEXT,mode TEXT,status TEXT NOT NULL,gateway TEXT,idempotency_key TEXT,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER,updated_at INTEGER);
+CREATE TABLE stay_payment_schedules (booking_id TEXT PRIMARY KEY,service_code TEXT,customer_id TEXT,total_amount REAL,paid_now_amount REAL,balance_amount REAL,balance_due_at INTEGER,status TEXT,paid_at INTEGER,payment_ref TEXT,created_at INTEGER,updated_at INTEGER);
+CREATE TABLE customer_grooming_subscriptions (id TEXT PRIMARY KEY,customer_id TEXT,source_booking_id TEXT,plan_code TEXT,total_sessions INTEGER,sessions_reserved INTEGER DEFAULT 0,sessions_used INTEGER DEFAULT 0,status TEXT,created_at INTEGER,updated_at INTEGER);
+CREATE TABLE booking_subscription_usage (booking_id TEXT,plan_code TEXT,sessions_reserved INTEGER DEFAULT 0,status TEXT,updated_at INTEGER);
+CREATE TABLE grooming_subscription_purchase_snapshots (subscription_id TEXT PRIMARY KEY,config_json TEXT);
+CREATE TABLE booking_lifecycle_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,event_type TEXT NOT NULL,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',occurred_at INTEGER NOT NULL);
+`);
+  const { ensureSecurityTables } = await import("../lib/server-auth.ts");
+  await ensureSecurityTables(db);
+  sqlite.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES ('BK-SUB','idem-sub','CUS-9','[]','blr','blr-east','grooming','GROOM10','Ten session plan','SG-1','PRV-1','2026-08-01T09:00:00.000Z','2026-08-01T11:00:00.000Z','confirmed','customer_app',24000,'INR','{}','seed',?,?)").run(now, now);
+  sqlite.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,amount_due_now,currency,method,mode,status,gateway,idempotency_key,detail_json,created_at,updated_at) VALUES ('PAY-BK-SUB','BK-SUB','CUS-9',24000,24000,'INR','upi','prepaid','awaiting_payment','razorpay','pidem-sub','{}',?,?)").run(now, now);
+  sqlite.prepare("INSERT INTO customer_grooming_subscriptions VALUES ('SUB-1','CUS-9','BK-SUB','GROOM10',10,0,0,'pending_payment',?,?)").run(now, now);
+  sqlite.prepare("INSERT INTO booking_subscription_usage VALUES ('BK-SUB','SUB-1',0,'pending_payment',?)").run(now);
+  sqlite.prepare("INSERT INTO grooming_subscription_purchase_snapshots VALUES ('SUB-1','{\"reserveSessions\":10}')").run();
+
+  const route = await import("../app/api/razorpay-webhook/route.ts");
+  const hex = (bytes) => [...new Uint8Array(bytes)].map((x) => x.toString(16).padStart(2, "0")).join("");
+  const deliver = async (payload, eventId) => {
+    const raw = JSON.stringify(payload);
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const signature = hex(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(raw)));
+    const response = await route.POST(new Request("https://uat.pawspace.in/api/razorpay-webhook", {
+      method: "POST", headers: { "x-razorpay-signature": signature, "x-razorpay-event-id": eventId }, body: raw,
+    }));
+    return { status: response.status, body: await response.json().catch(() => null) };
+  };
+  const capture = (amountSubunits) => ({
+    event: "payment.captured", created_at: Math.floor(now / 1000),
+    payload: { payment: { entity: { id: "pay_real", order_id: "order_real", amount: amountSubunits, currency: "INR", notes: { booking_id: "BK-SUB" } } } },
+  });
+  const subscription = () => sqlite.prepare("SELECT status,sessions_reserved FROM customer_grooming_subscriptions WHERE id='SUB-1'").get();
+  return { sqlite, db, deliver, capture, subscription };
+}
+
+test("W2-PAY-04: replaying a REFUSED capture does not grant the entitlement it was refused for", async () => {
+  const { deliver, capture, subscription, sqlite } = await subscriptionWebhookWorld();
+
+  const first = await deliver(capture(100), "evt_rz_1"); // Rs 1 against a Rs 24,000 subscription
+  assert.equal(String(first.body?.status), "exception", `the Rs 1 capture must be refused: ${JSON.stringify(first)}`);
+  assert.equal(String(subscription().status), "pending_payment", "and must not activate anything");
+
+  const retry = await deliver(capture(100), "evt_rz_1"); // byte-identical gateway redelivery
+  assert.equal(String(subscription().status), "pending_payment",
+    `a redelivery of a REFUSED event must not activate the subscription: ${JSON.stringify(retry)}`);
+  assert.equal(Number(subscription().sessions_reserved), 0, "no sessions may be reserved on a refused capture");
+  assert.equal(String(sqlite.prepare("SELECT status FROM booking_subscription_usage WHERE booking_id='BK-SUB'").get().status), "pending_payment",
+    "and the usage row stays unusable");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM booking_lifecycle_events WHERE event_type='subscription_activated'").get().n, 0,
+    "no activation may be stamped verified for money that was never accepted");
+});
+
+test("W2-PAY-04: a redelivery of a genuinely PROCESSED capture still completes the entitlement", async () => {
+  // Non-vacuity, and the reason the repair path exists at all. Refusing every redelivery would strand a
+  // genuinely paid subscription at pending_payment forever.
+  const { deliver, capture, subscription } = await subscriptionWebhookWorld();
+
+  const first = await deliver(capture(2400000), "evt_rz_ok"); // the full Rs 24,000
+  assert.equal(String(first.body?.status), "processed", `the correct capture must be accepted: ${JSON.stringify(first)}`);
+  assert.equal(String(subscription().status), "active", "and activates the entitlement");
+  assert.equal(Number(subscription().sessions_reserved), 10, "reserving the plan's sessions");
+
+  const retry = await deliver(capture(2400000), "evt_rz_ok");
+  assert.equal(String(retry.body?.duplicate), "true", `the retry is recognised as a duplicate: ${JSON.stringify(retry)}`);
+  assert.equal(String(subscription().status), "active", "the entitlement stays active");
+  assert.equal(Number(subscription().sessions_reserved), 10, "and the sessions are not reserved twice");
+});

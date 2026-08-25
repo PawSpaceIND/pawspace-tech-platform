@@ -108,7 +108,10 @@
     "blast_radius": "Every subscription purchase booking sitting in pending_payment. The symmetrical branch is the same: replaying a refused payment.failed event calls failSubscriptionOnPaymentFailure and can close a genuinely paid entitlement. Because there is no replay window, the exposure does not expire.",
     "suggested_severity": "P0",
     "evidence_path": "scratchpad/p/p7-redelivery.mjs",
-    "status": "OPEN"
+    "status": "FIXED",
+    "fix_file": "lib/grooming-payment-reconciliation.ts",
+    "regression": "tests/ptja-p1-regressions.test.mjs :: \"W2-PAY-04: replaying a REFUSED capture does not grant the entitlement it was refused for\" + \"W2-PAY-04: a redelivery of a genuinely PROCESSED capture still completes the entitlement\"",
+    "fix_note": "The duplicate-event repair path now runs only for a recorded event whose processing_status is 'processed'. Repair exists to complete a transition a transient dependent-write failure rolled back after an ACCEPTED capture; an event the system refused is not a transition waiting to be completed. Fails closed in both directions - a refused capture grants nothing, and a replayed refused payment.failed can no longer close a genuinely paid entitlement. The regression drives the real POST /api/razorpay-webhook with a real HMAC signature; its companion proves a genuinely processed capture's redelivery still completes and does not reserve sessions twice."
   },
   {
     "id": "W2-07-PAY-007",

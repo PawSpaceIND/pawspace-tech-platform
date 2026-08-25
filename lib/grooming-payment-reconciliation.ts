@@ -169,7 +169,15 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
     // usage / lifecycle tables, so this repairs a pending transition, no-ops a completed one, and never
     // re-enters the capture path: captured_amount, settlement and gateway-reference idempotency are
     // untouched, and no money is recounted.
-    const repairBookingId=String(existing.booking_id||event.bookingId||"").trim();
+    // ...but only for a capture the system ACCEPTED. Repair completes a transition a transient
+    // dependent-write failure rolled back; an event that was REFUSED is not a transition waiting to be
+    // completed. Without this check a signed Rs 1 capture, correctly refused as capture_amount_mismatch
+    // on delivery 1, activated a Rs 24,000 ten-session subscription on the gateway's own byte-identical
+    // retry - answering with the old refusal while performing a new, money-granting write. The receiver
+    // enforces no replay window, so that exposure never expired. This fails closed both ways: a refused
+    // event repairs nothing, and the failure branch can no longer close a genuinely paid entitlement on
+    // a replayed payment.failed the system had already rejected.
+    const repairBookingId=String(existing.processing_status)==="processed"?String(existing.booking_id||event.bookingId||"").trim():"";
     if(repairBookingId){
       if(["payment.captured","order.paid","payment_link.paid"].includes(String(existing.event_type)))await activateSubscriptionOnCapture(db,{bookingId:repairBookingId,eventId:event.eventId}).catch(()=>null);
       else if(String(existing.event_type)==="payment.failed")await failSubscriptionOnPaymentFailure(db,{bookingId:repairBookingId,eventId:event.eventId}).catch(()=>null);
