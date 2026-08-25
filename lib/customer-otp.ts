@@ -46,12 +46,16 @@ export async function verifyCustomerOtp(db:Db,input:{challengeId:string;code:str
    await db.prepare("UPDATE customer_otp_challenges SET attempts=attempts+1 WHERE id=? AND attempts<5").bind(input.challengeId).run();
    throw new Error("Incorrect OTP code");
  }
+ const phone=text(row.phone);
+ let customer=await db.prepare("SELECT id,name,primary_phone,city_id FROM canonical_customers WHERE primary_phone=? OR secondary_phone=?").bind(phone,phone).first<Row>();
+ const requestedCityId=text(input.cityId);
+ // Existing customers keep their canonical city. A new identity must provide location explicitly;
+ // silently assigning Bengaluru makes identity, availability and later price decisions geographically false.
+ if(!customer&&!requestedCityId)throw new Error("City is required for a new customer");
  // Atomic consume: without the consumed=0 guard two concurrent verifies of the same challenge
  // both passed the read-side check and each minted a signed assertion from one OTP.
  const claim=await db.prepare("UPDATE customer_otp_challenges SET consumed=1 WHERE id=? AND consumed=0").bind(input.challengeId).run();
  if(!Number(claim.meta.changes))throw new Error("This OTP has already been used");
- const phone=text(row.phone);
- let customer=await db.prepare("SELECT id,name,primary_phone,city_id FROM canonical_customers WHERE primary_phone=? OR secondary_phone=?").bind(phone,phone).first<Row>();
  if(!customer){
    // Two separately-issued OTP challenges for one phone can be verified concurrently. A random ID
    // allowed both requests to create customer truth after both observed the initial lookup as empty.
@@ -59,7 +63,7 @@ export async function verifyCustomerOtp(db:Db,input:{challengeId:string;code:str
    // insert the atomic identity claim.
    const id=await canonicalOtpCustomerId(phone),now=Date.now();
    await db.prepare("INSERT OR IGNORE INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,NULL,NULL,'customer_app_otp','{}',?,?)")
-     .bind(id,input.cityId||"blr",text(input.name)||"PawSpace Customer",phone,now,now).run();
+     .bind(id,requestedCityId,text(input.name)||"PawSpace Customer",phone,now,now).run();
    customer=await db.prepare("SELECT id,name,primary_phone,city_id FROM canonical_customers WHERE id=?").bind(id).first<Row>();
    if(!customer||text(customer.primary_phone)!==phone)throw new Error("Canonical customer identity conflict - human review required");
  }
