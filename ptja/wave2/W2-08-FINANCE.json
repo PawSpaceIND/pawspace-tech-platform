@@ -18,7 +18,11 @@
     ],
     "blast_radius": "Every Boarding and Pet Sitting booking. Any staff member who can raise a cancellation request plus any one finance approver can move an unbounded multiple of the collected amount out of the company per booking (3 requests = 300%). The refund rows are marked sandbox_pending/sandbox_recorded today, so the loss is realised the moment the refund executor is wired to a live gateway; the ledger, the reconciliation row and the finance UI already report the inflated figure as approved.",
     "suggested_severity": "P0",
-    "status": "OPEN"
+    "status": "FIXED",
+    "fix_file": "lib/sitting-finance-governance.ts; lib/boarding-finance-governance.ts",
+    "regression": "tests/refund-cap-collected-funds.test.mjs :: \"<service>: two cancellation requests cannot approve two full refunds\" + \"<service>: a partial refund and its remainder still work, but not a rupee past collected\" (both run against Boarding AND Pet Sitting)",
+    "fix_note": "The refund ceiling now belongs to the BOOKING rather than to a single approval: an approval is capped at collectedForBooking() minus the refunds already on this booking's ledger (any status except failed/cancelled). Refund policy is unchanged and a partial refund followed by its remainder still works. The per-request atomic claim already in these modules is a different control - it stops two approvers racing on ONE request, and it worked correctly here, since these were two separate requests each claimed exactly once.",
+    "collateral": "The regressions live in the existing tests/refund-cap-collected-funds.test.mjs, which fixed WHICH ceiling an approval uses (collected money, not the booking total) but applied it one approval at a time. Its assertRefused helper approves with a default idempotency key, so the new cases deliberately seed under a different key - an idempotent replay would have returned the first approval's success and hidden the defect."
   },
   {
     "id": "W2-08-F02",
