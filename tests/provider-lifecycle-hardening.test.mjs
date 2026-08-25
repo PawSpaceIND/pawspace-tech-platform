@@ -94,7 +94,7 @@ async function readyApplication(db, sqlite, options = {}) {
   return { applicationId, policyId, verticalKey, activation };
 }
 
-async function completeInterviewAndProfile(db, sqlite, applicationId, activation) {
+async function completeInterviewAndProfile(db, sqlite, applicationId, activation, options = {}) {
   const interviewId = `POINT-${applicationId}`;
   sqlite.prepare("INSERT INTO provider_onboarding_interviews (id,application_id,start_at,end_at,duration_minutes,ops_email,status,notes,created_by,created_at,updated_at) VALUES (?,?,?,?,15,?,'completed',?,?,?,?)")
     .run(interviewId, applicationId, new Date(NOW).toISOString(), new Date(NOW + 900000).toISOString(), OPS, "Interviewed the partner about handling nervous dogs at length.", OPS, NOW, NOW);
@@ -103,7 +103,7 @@ async function completeInterviewAndProfile(db, sqlite, applicationId, activation
   await activation.acceptProviderSla(db, { agreementId: sla.id, acceptedBy: "partner@example.test", actorEmail: OPS });
   await activation.saveProviderProfile(db, {
     applicationId,
-    payload: { displayName: "Meera's Home Boarding", businessName: "Meera Pet Care", bio: "Home boarding with a fenced garden.", services: ["boarding"], serviceAreas: ["blr-east"], languages: ["en", "kn"] },
+    payload: { displayName: "Meera's Home Boarding", businessName: "Meera Pet Care", bio: "Home boarding with a fenced garden.", services: options.services ?? ["boarding"], serviceAreas: ["blr-east"], languages: ["en", "kn"] },
     actorEmail: OPS,
   });
   await activation.addProviderProfileMedia(db, { applicationId, mediaType: "provider_photo", fileRef: "r2://provider/photo-1.jpg", actorEmail: OPS });
@@ -219,8 +219,12 @@ test("activation is blocked by each individual gate: verification, approval, SLA
 // ---------------------------------------------------------------------------
 test("an activated provider is invisible to matching until a human adds them to the service map", async () => {
   const { sqlite, db } = fresh();
+  // dog_walking is the mandate-free vehicle this test wants (no category mandate is defined for it), so
+  // the profile declares dog_walking too. It used to declare "boarding" while onboarding as dog_walking,
+  // which is the shape PTJA-P0-05 closed: a declared service whose category mandate was never satisfied
+  // is no longer part of the provider's matching scope.
   const { applicationId, activation } = await readyApplication(db, sqlite, { verticalKey: "dog_walking" });
-  await completeInterviewAndProfile(db, sqlite, applicationId, activation);
+  await completeInterviewAndProfile(db, sqlite, applicationId, activation, { services: ["dog_walking"] });
   const activated = await activation.activateProviderUat(db, { applicationId, actorEmail: OPS });
   assert.equal(activated.marketplaceLive, false);
   assert.equal(activated.orderEligible, false);
@@ -229,7 +233,7 @@ test("an activated provider is invisible to matching until a human adds them to 
   assert.equal(profile.status, "uat_ready");
 
   const capacity = await import("../lib/provider-capacity-governance.ts");
-  const beforeLive = await capacity.loadGovernedProviders(db, "blr", "blr-east", "boarding");
+  const beforeLive = await capacity.loadGovernedProviders(db, "blr", "blr-east", "dog_walking");
   assert.ok(!beforeLive.some((p) => p.id === activated.providerId), "the scheduler cannot see a non-live provider");
 
   await assert.rejects(() => activation.addProviderToServiceMap(db, { providerId: activated.providerId, zoneIds: [], actorEmail: OPS }), /at least one real zone/i);
@@ -242,12 +246,12 @@ test("an activated provider is invisible to matching until a human adds them to 
   assert.equal(afterLive.status, "active");
   assert.deepEqual(JSON.parse(afterLive.zones_json), ["blr-east", "blr-central"]);
 
-  // The provider's real services drive matching: they onboarded for boarding.
-  const matched = await capacity.loadGovernedProviders(db, "blr", "blr-east", "boarding");
+  // The provider's real services drive matching: they onboarded for dog walking.
+  const matched = await capacity.loadGovernedProviders(db, "blr", "blr-east", "dog_walking");
   assert.ok(matched.some((p) => p.id === activated.providerId), "once live and zoned, the scheduler can match them");
   const wrongService = await capacity.loadGovernedProviders(db, "blr", "blr-east", "grooming");
   assert.ok(!wrongService.some((p) => p.id === activated.providerId), "they are not offered for a service they never onboarded for");
-  const wrongZone = await capacity.loadGovernedProviders(db, "blr", "blr-west", "boarding");
+  const wrongZone = await capacity.loadGovernedProviders(db, "blr", "blr-west", "dog_walking");
   assert.ok(!wrongZone.some((p) => p.id === activated.providerId), "they are not offered outside their real zones");
 });
 
@@ -274,13 +278,118 @@ test("boarding discovery only ever returns live, active, verified hosts", async 
   assert.deepEqual(mine, ["PROV-LIVE"], "the activated-but-not-live and the suspended host are both undiscoverable");
 });
 
+
+// ---------------------------------------------------------------------------
+// PTJA-P0-05 — the provider's SELF-DECLARED services list became their matching scope
+//
+// CONFIRMED independently by both verifiers, same canonical failure. activateProviderUat wrote
+// provider_capacity_profiles.services_json straight from profile.services - the unvalidated list the
+// applicant saved through save_profile - while evaluateProviderActivation consulted the verification
+// mandate for exactly ONE category, the one derived from the application's vertical_key. Because
+// loadGovernedProviders filters purely on services_json.includes(serviceCode), a grooming applicant who
+// listed boarding, pet sitting and dog training in their own profile became matchable and assignable for
+// all three with the host, sitter and trainer mandates never satisfied by anybody.
+//
+// Both verifiers measured it end to end: activation checklist
+// {"code":"category_verification_mandate","passed":true,"detail":{"category":"groomer",...}} - only
+// groomer is ever consulted - and then loadGovernedProviders returned the new provider for all four
+// services, with BETA taking it one step further and reserving a pet_sitting slot with them.
+//
+// The correction consults the mandate the platform already defines per declared service, using the
+// existing VERIFICATION_CATEGORY_BY_VERTICAL map and the existing verificationMandateStatus. No new
+// category, mandate or service catalogue is invented: a declared service whose category mandate is not
+// satisfied for THIS application is simply not part of the matching scope this activation grants.
+// ---------------------------------------------------------------------------
+test("P0-05: a self-declared service whose category mandate is unsatisfied is not part of the matching scope", async () => {
+  const { sqlite, db } = fresh();
+  const { applicationId, activation } = await readyApplication(db, sqlite, { verticalKey: "grooming" });
+  await completeInterviewAndProfile(db, sqlite, applicationId, activation, {
+    services: ["grooming", "boarding", "pet_sitting", "dog_training"],
+  });
+  const mandate = await import("../lib/provider-verification-mandate.ts");
+  // Only the GROOMER mandate is cleared - which is all this application was ever evaluated against.
+  for (const type of ["aadhaar", "pan"]) {
+    await mandate.runProviderVerification(db, {}, { applicationId, category: "groomer", verificationType: type, actorId: OPS });
+    sqlite.prepare("UPDATE provider_verifications SET status='verified' WHERE application_id=? AND verification_type=?").run(applicationId, type);
+  }
+  for (const category of ["host", "pet_sitter", "trainer"]) {
+    const status = await mandate.verificationMandateStatus(db, { applicationId, category });
+    assert.equal(status.allVerified, false, `${category} is deliberately left unsatisfied`);
+  }
+
+  const activated = await activation.activateProviderUat(db, { applicationId, actorEmail: OPS });
+  const stored = JSON.parse(sqlite.prepare("SELECT services_json FROM provider_capacity_profiles WHERE id=?").get(activated.providerId).services_json);
+  assert.deepEqual(stored, ["grooming"], "only the service this activation actually verified is in the matching scope");
+
+  await activation.addProviderToServiceMap(db, { providerId: activated.providerId, zoneIds: ["blr-east"], actorEmail: OPS });
+  const capacity = await import("../lib/provider-capacity-governance.ts");
+  const matches = async (serviceCode) => (await capacity.loadGovernedProviders(db, "blr", "blr-east", serviceCode)).some((p) => p.id === activated.providerId);
+  assert.equal(await matches("grooming"), true, "they are matchable for the vertical they cleared");
+  for (const serviceCode of ["boarding", "pet_sitting", "dog_training"]) {
+    assert.equal(await matches(serviceCode), false, `a self-declared ${serviceCode} claim must not make them matchable`);
+  }
+});
+
+test("P0-05: a provider who HAS cleared a category is matchable for it - the fix is not a blanket strip", async () => {
+  // Non-vacuity. Writing an empty services_json would satisfy every assertion above.
+  const { sqlite, db } = fresh();
+  const { applicationId, activation } = await readyApplication(db, sqlite, { verticalKey: "boarding" });
+  await completeInterviewAndProfile(db, sqlite, applicationId, activation, { services: ["boarding"] });
+  const mandate = await import("../lib/provider-verification-mandate.ts");
+  for (const type of ["aadhaar", "pan"]) {
+    await mandate.runProviderVerification(db, {}, { applicationId, category: "host", verificationType: type, actorId: OPS });
+    sqlite.prepare("UPDATE provider_verifications SET status='verified' WHERE application_id=? AND verification_type=?").run(applicationId, type);
+  }
+  for (const type of ["house_verification", "pet_proofing_photo"]) {
+    await mandate.recordManualVerification(db, { applicationId, verificationType: type, status: "verified", note: "Agent visited the home and confirmed", actorId: OPS });
+  }
+  const activated = await activation.activateProviderUat(db, { applicationId, actorEmail: OPS });
+  assert.deepEqual(JSON.parse(sqlite.prepare("SELECT services_json FROM provider_capacity_profiles WHERE id=?").get(activated.providerId).services_json), ["boarding"]);
+  await activation.addProviderToServiceMap(db, { providerId: activated.providerId, zoneIds: ["blr-east"], actorEmail: OPS });
+  const capacity = await import("../lib/provider-capacity-governance.ts");
+  assert.ok((await capacity.loadGovernedProviders(db, "blr", "blr-east", "boarding")).some((p) => p.id === activated.providerId), "a fully verified host is matchable for boarding");
+});
+
+test("P0-05: a post-activation edit cannot re-add an unverified service to the matching scope", async () => {
+  // Same write, same rule. updateActivatedProviderProfile also copies profile.services into
+  // services_json; it drops the provider to uat_review, but addProviderToServiceMap re-lives them
+  // without re-reading the mandate, so the claim would come back the moment staff re-map them.
+  const { sqlite, db } = fresh();
+  const { applicationId, activation } = await readyApplication(db, sqlite, { verticalKey: "boarding" });
+  await completeInterviewAndProfile(db, sqlite, applicationId, activation, { services: ["boarding"] });
+  const mandate = await import("../lib/provider-verification-mandate.ts");
+  for (const type of ["aadhaar", "pan"]) {
+    await mandate.runProviderVerification(db, {}, { applicationId, category: "host", verificationType: type, actorId: OPS });
+    sqlite.prepare("UPDATE provider_verifications SET status='verified' WHERE application_id=? AND verification_type=?").run(applicationId, type);
+  }
+  for (const type of ["house_verification", "pet_proofing_photo"]) {
+    await mandate.recordManualVerification(db, { applicationId, verificationType: type, status: "verified", note: "Agent visited the home and confirmed", actorId: OPS });
+  }
+  const activated = await activation.activateProviderUat(db, { applicationId, actorEmail: OPS });
+
+  // dog_training maps to the trainer mandate, which additionally requires police_verification - a check
+  // this host has never had done. (Adding "grooming" here would NOT be refused, and should not be: the
+  // groomer mandate is aadhaar + pan, both of which this host really has cleared. The rule is the
+  // platform's own mandate, not a guess about which vertical resembles which.)
+  await activation.updateActivatedProviderProfile(db, { applicationId, changes: { services: ["boarding", "dog_training"] }, reason: "Partner says they also train dogs", actorEmail: OPS });
+  const stored = JSON.parse(sqlite.prepare("SELECT services_json FROM provider_capacity_profiles WHERE id=?").get(activated.providerId).services_json);
+  assert.deepEqual(stored, ["boarding"], "the unverified dog_training claim never reaches the matching scope");
+  // A services edit is review-sensitive, so the provider is off the live map until staff re-map them -
+  // and addProviderToServiceMap refuses while the review is open. That control still holds; the point
+  // here is that the claim is not sitting in services_json waiting for the re-map.
+  const row = sqlite.prepare("SELECT live,status FROM provider_capacity_profiles WHERE id=?").get(activated.providerId);
+  assert.equal(row.live, 0);
+  assert.equal(row.status, "uat_review");
+  await assert.rejects(() => activation.addProviderToServiceMap(db, { providerId: activated.providerId, zoneIds: ["blr-east"], actorEmail: OPS }), /not ready to go live/);
+});
+
 // ---------------------------------------------------------------------------
 // 4. Post-activation edits: sensitive changes drop the provider off the map.
 // ---------------------------------------------------------------------------
 test("changing service areas after activation takes the provider off the live map for re-review", async () => {
   const { sqlite, db } = fresh();
   const { applicationId, activation } = await readyApplication(db, sqlite, { verticalKey: "dog_walking" });
-  await completeInterviewAndProfile(db, sqlite, applicationId, activation);
+  await completeInterviewAndProfile(db, sqlite, applicationId, activation, { services: ["dog_walking"] });
   const activated = await activation.activateProviderUat(db, { applicationId, actorEmail: OPS });
   await activation.addProviderToServiceMap(db, { providerId: activated.providerId, zoneIds: ["blr-east"], actorEmail: OPS });
 
