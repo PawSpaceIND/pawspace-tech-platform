@@ -34,7 +34,7 @@ test("Revenue CRM GET is read-only and synthetic initialization is explicit UAT-
   const source=await read("app/api/revenue-crm/route.ts");
   const getSource=source.slice(source.indexOf("export async function GET"),source.indexOf("export async function POST"));
   for(const mutation of ["seedUat(","runLeadReopening(","runSla(","enforceOps(","generateCommandReports(","runLeadCallbackSweep("]){
-    assert.doesNotMatch(getSource,new RegExp(mutation.replace(/[()]/g,"\\$&")),`GET must not invoke ${mutation}`);
+    assert.equal(getSource.includes(mutation),false,`GET must not invoke ${mutation}`);
   }
   assert.match(source,/action==="initialize_uat"/);
   assert.match(source,/requireUatSandbox\(\)/);
@@ -67,6 +67,16 @@ test("new pricing, Haptik and Grooming finance inputs require explicit geography
   assert.match(haptik,/City and zone are required to fetch serviceable Haptik slots/);
   assert.match(groomingFinance,/City is required for a Grooming tax policy/);
   assert.match(boarding,/availabilityMode:!hasLocation\?"location_required"/);
+});
+
+test("OTP identity creation never silently assigns Bengaluru",async()=>{
+  const customer=await read("lib/customer-otp.ts");
+  const partner=await read("lib/partner-otp.ts");
+  assert.doesNotMatch(customer,/input\.cityId\|\|"blr"/);
+  assert.match(customer,/text\(input\.cityId\)\|\|"unassigned"/);
+  assert.match(customer,/cityId:text\(customer\.city_id\)&&text\(customer\.city_id\)!=="unassigned"\?text\(customer\.city_id\):null/);
+  assert.doesNotMatch(partner,/input\.cityId\|\|"blr"/);
+  assert.match(partner,/text\(input\.cityId\)\|\|null/);
 });
 
 test("prelaunch booking swarm is blocked outside the isolated UAT sandbox",async()=>{
