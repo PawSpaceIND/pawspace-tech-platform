@@ -59,7 +59,7 @@ export async function verifyCustomerOtp(db:Db,input:{challengeId:string;code:str
    // insert the atomic identity claim.
    const id=await canonicalOtpCustomerId(phone),now=Date.now();
    await db.prepare("INSERT OR IGNORE INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,NULL,NULL,'customer_app_otp','{}',?,?)")
-     .bind(id,input.cityId||"blr",text(input.name)||"PawSpace Customer",phone,now,now).run();
+     .bind(id,text(input.cityId)||null,text(input.name)||"PawSpace Customer",phone,now,now).run();
    customer=await db.prepare("SELECT id,name,primary_phone,city_id FROM canonical_customers WHERE id=?").bind(id).first<Row>();
    if(!customer||text(customer.primary_phone)!==phone)throw new Error("Canonical customer identity conflict - human review required");
  }
