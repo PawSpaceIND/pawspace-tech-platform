@@ -40,7 +40,21 @@ export async function ensureLeadWorkItemsTable(db:Db){
  */
 export async function attributeBookingToOpenLead(db:Db,input:{customerId:string;bookingId:string}):Promise<{leadId:string;converted:boolean}|null>{
   await ensureLeadWorkItemsTable(db);
-  const openLead=await db.prepare(
+  // WHICH lead converted. This used to be "the customer's newest open lead" with no reference to what was
+  // booked, so a customer with an older Grooming enquiry and a newer Boarding enquiry who booked GROOMING
+  // had the conversion written onto the Boarding lead: the rep who worked the grooming enquiry lost the
+  // credit, the boarding lead was closed as converted by a booking unrelated to it, and the lead that
+  // actually converted stayed open and kept chasing a customer who had already bought.
+  //
+  // Both rows already carry the answer - lead_work_items.service and canonical_bookings.service_code - so
+  // the lead for the service that was actually booked is preferred, newest first within that service.
+  // When NO open lead matches, the newest-open-lead behaviour is unchanged: crediting nobody would be a
+  // product decision about what an unmatched conversion means. [PTJA-P1-F1]
+  const booked=await db.prepare("SELECT service_code FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>().catch(()=>null);
+  const bookedService=String(booked?.service_code||"").trim().toLowerCase();
+  const openLead=(bookedService?await db.prepare(
+    "SELECT id FROM lead_work_items WHERE customer_id=? AND converted_booking_id IS NULL AND status NOT IN ('closed','converted') AND lower(trim(service))=? ORDER BY assigned_at DESC LIMIT 1"
+  ).bind(input.customerId,bookedService).first<Row>().catch(()=>null):null)??await db.prepare(
     "SELECT id FROM lead_work_items WHERE customer_id=? AND converted_booking_id IS NULL AND status NOT IN ('closed','converted') ORDER BY assigned_at DESC LIMIT 1"
   ).bind(input.customerId).first<Row>();
   if(!openLead)return null;

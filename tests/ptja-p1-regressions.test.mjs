@@ -699,3 +699,76 @@ test("P1-F31: an explicit exclusion still works, and a real replacement is still
   assert.ok(narrowed && narrowed.provider.id !== "groom_kiran" && narrowed.provider.id !== "groom_arun",
     "the caller's own exclusion is still honoured on top of the booking's provider");
 });
+
+// =====================================================================================================
+// PTJA-P1-F1 — a booking is credited to the NEWEST open lead regardless of service
+//
+// attributeBookingToOpenLead selects "... WHERE customer_id=? AND converted_booking_id IS NULL AND
+// status NOT IN ('closed','converted') ORDER BY assigned_at DESC LIMIT 1" and never looks at what was
+// booked. A customer with an older Grooming enquiry and a newer Boarding enquiry who then books
+// GROOMING has the conversion written onto the Boarding lead: the rep who worked the grooming enquiry
+// loses the credit, the boarding lead is closed as converted by a booking that has nothing to do with
+// it, and the lead that actually converted stays open and keeps chasing a customer who has already
+// bought.
+//
+// The correction uses data both rows already carry - lead_work_items.service and
+// canonical_bookings.service_code - to prefer the lead for the service that was actually booked. When
+// no open lead matches the service, the existing newest-open-lead behaviour is unchanged: crediting
+// nobody would be a product decision, not an engineering one.
+// =====================================================================================================
+
+async function attributionWorld() {
+  const { sqlite, db } = world();
+  const attribution = await import("../lib/lead-conversion-attribution.ts");
+  await attribution.ensureLeadWorkItemsTable(db);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,service_code TEXT NOT NULL,scheduled_start TEXT,status TEXT NOT NULL DEFAULT 'confirmed',created_at INTEGER NOT NULL DEFAULT 0)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,status TEXT NOT NULL,amount REAL NOT NULL DEFAULT 0)");
+  const now = Date.now();
+  const lead = (id, service, assignedAt, owner) => sqlite.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,assigned_at,first_action_due_at,manager_alert_at,created_at,updated_at) VALUES (?,'CUST-F1','App Inbound',?,?,'Manager',?,?,?,?,?)")
+    .run(id, service, owner, assignedAt, assignedAt + 600_000, assignedAt + 1_200_000, assignedAt, assignedAt);
+  const booking = (id, serviceCode, captured = true) => {
+    sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,created_at) VALUES (?,'CUST-F1',?,?)").run(id, serviceCode, now);
+    if (captured) sqlite.prepare("INSERT INTO booking_payments (id,booking_id,status,amount) VALUES (?,?,'captured',1899)").run(`PAY-${id}`, id);
+  };
+  const leadRow = (id) => sqlite.prepare("SELECT status,converted_booking_id,owner FROM lead_work_items WHERE id=?").get(id);
+  return { sqlite, db, attribution, lead, booking, leadRow, now };
+}
+
+test("P1-F1: a booking is credited to the lead for the service that was actually booked", async () => {
+  // Measured before the fix: the newest lead - Boarding - was credited with a Grooming booking.
+  const { db, attribution, lead, booking, leadRow, now } = await attributionWorld();
+  lead("LEAD-GROOM", "grooming", now - 5 * 86_400_000, "rep.grooming@pawspace.test");
+  lead("LEAD-BOARD", "boarding", now - 1 * 86_400_000, "rep.boarding@pawspace.test");
+  booking("BK-GROOM", "grooming");
+
+  const result = await attribution.attributeBookingToOpenLead(db, { customerId: "CUST-F1", bookingId: "BK-GROOM" });
+  assert.equal(result?.leadId, "LEAD-GROOM", "the grooming enquiry is what converted");
+  assert.equal(String(leadRow("LEAD-GROOM").status), "converted");
+  assert.equal(String(leadRow("LEAD-GROOM").converted_booking_id), "BK-GROOM");
+  assert.equal(String(leadRow("LEAD-BOARD").status), "active", "the boarding enquiry is untouched and still open");
+  assert.equal(leadRow("LEAD-BOARD").converted_booking_id, null);
+});
+
+test("P1-F1: with no service match the existing newest-open-lead behaviour is unchanged", async () => {
+  // Non-vacuity, and a deliberate limit: crediting NOBODY when no lead matches would be a product
+  // decision. A customer who enquired about boarding and bought grooming still converts their open lead.
+  const { db, attribution, lead, booking, leadRow, now } = await attributionWorld();
+  lead("LEAD-OLD", "boarding", now - 5 * 86_400_000, "rep.a@pawspace.test");
+  lead("LEAD-NEW", "dog_training", now - 1 * 86_400_000, "rep.b@pawspace.test");
+  booking("BK-GROOM", "grooming");
+  const result = await attribution.attributeBookingToOpenLead(db, { customerId: "CUST-F1", bookingId: "BK-GROOM" });
+  assert.equal(result?.leadId, "LEAD-NEW", "the newest open lead still takes it when nothing matches");
+  assert.equal(String(leadRow("LEAD-NEW").status), "converted");
+});
+
+test("P1-F1: among several leads for the SAME service the newest still wins", async () => {
+  const { db, attribution, lead, booking, leadRow, now } = await attributionWorld();
+  lead("LEAD-G1", "grooming", now - 9 * 86_400_000, "rep.a@pawspace.test");
+  lead("LEAD-G2", "grooming", now - 2 * 86_400_000, "rep.b@pawspace.test");
+  lead("LEAD-BOARD", "boarding", now - 1 * 86_400_000, "rep.c@pawspace.test");
+  booking("BK-GROOM", "grooming");
+  const result = await attribution.attributeBookingToOpenLead(db, { customerId: "CUST-F1", bookingId: "BK-GROOM" });
+  assert.equal(result?.leadId, "LEAD-G2", "recency still decides within the matching service");
+  assert.equal(String(leadRow("LEAD-G1").status), "active");
+  assert.equal(String(leadRow("LEAD-BOARD").status), "active");
+});
