@@ -139,7 +139,7 @@ test("P1-F36: the route itself now refuses a customer these actions - the second
 
 test("P1-F36: a staff actor holding scheduling.manage is not refused by the new gate", async () => {
   // Non-vacuity. Refusing everyone would satisfy the case above and would break Ops entirely.
-  const { db } = await schedulingWorld();
+  await schedulingWorld();
   for (const action of PRIVILEGED_ACTIONS) {
     const result = await post("../app/api/uat-scheduling/route.ts", "/api/uat-scheduling",
       { action, groupId: "GRP-DOES-NOT-EXIST", providerId: "groom_arun", reason: "ops probe" }, STAFF_HEADERS);
