@@ -34,7 +34,10 @@
     "blast_radius": "Every food order, for every holder of bookings.manage (founder, superuser, admin, manager). It is the whole Food proof chain - package proof, delivery proof and quality-incident evidence - because all three run through the same proofAsset() clean/ready check that this self-approval satisfies.",
     "suggested_severity": "P1",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p02-food-self-approved-proof.mjs and /tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p02b-walking-control.mjs",
-    "status": "OPEN"
+    "status": "FIXED",
+    "fix_file": "lib/food-proof-governance.ts",
+    "regression": "tests/ptja-w2b-service-media.test.mjs :: \"W2B-M02: the actor who submitted food proof cannot scan-approve it\" + \"W2B-M02: a second actor can still scan-approve it\"",
+    "fix_note": "food-proof now carries the line all four sibling proof libraries already had: the actor who submitted the media cannot scan-approve it (403). Verified directly that walking, boarding, sitting and taxi each have it and food was the only one without."
   },
   {
     "id": "W2-B4-M03",
@@ -88,11 +91,12 @@
     "blast_radius": "Every booking that has a provider_work_orders row - the route's only precondition - for every holder of bookings.manage (founder, superuser, admin, manager). Both proof purposes (before_service and after_service) and every service that uses provider_work_orders. Note the same actor also passes the POST step's requireProviderOwnership, because actorManagesProviders() in lib/server-auth.ts line 98 returns true on bookings.manage, so no provider relationship is needed either.",
     "suggested_severity": "P1",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p05-service-media-self-approve.mjs and /tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p02b-walking-control.mjs",
-    "status": "PARTIALLY FIXED — public-URL proof closed; upload-grant parity carried forward",
+    "status": "FIXED",
     "fix_file": "app/api/service-media/route.ts",
-    "regression": "tests/ptja-w2b-service-media.test.mjs :: \"W2B-M04: a public URL cannot become a service-proof storage reference\" + \"W2B-M04: an opaque storage object id is still accepted\"",
-    "fix_note": "confirm_upload now applies the sibling libraries' exact rule - objectId.includes(\"://\") || !/^[A-Za-z0-9._\\/-]{8,256}$/ -> 400 'Storage confirmation must use an opaque object ID, not a public URL'. The proof anyone opens can no longer be a URL the writer controls.",
-    "carried_forward": "NOT closed: this route issues no upload grant at all (its POST returns storage:{mode:'not_connected'}), where lib/walking-proof-governance.ts and lib/food-proof-governance.ts mint an HMAC'd single-use token and verify it on confirmation. Building that flow is a design decision about how this route obtains storage, not a missing check, so it is recorded with those two libraries named as the reference implementation. Also carried: the same actor can create an asset and record its clean scan - checked, and the sibling libs do NOT enforce actor separation either, so that is a platform-wide maker/checker question rather than a defect unique to this route."
+    "regression": "tests/ptja-w2b-service-media.test.mjs :: \"W2B-M04: a public URL cannot become a service-proof storage reference\" + \"W2B-M04: an opaque storage object id is still accepted\" + \"W2B-M04: the actor who created a service-media asset cannot scan-approve it either\"",
+    "fix_note": "Two of the three omissions are closed. (1) confirm_upload applies the sibling libraries' exact rule - a reference containing '://' or outside the opaque-object charset is refused 400. (2) record_scan now refuses the actor who created the asset, the same maker/checker line all four sibling proof libraries carry.",
+    "carried_forward": "STILL not closed: this route issues no upload grant (its POST returns storage:{mode:'not_connected'}), where the sibling libraries mint an HMAC'd single-use token and verify it on confirmation. That remains a design decision about how this route obtains storage, not a missing check.",
+    "correction": "CORRECTS MY OWN EARLIER NOTE on this finding. When first closing it I grepped a sibling's record_media_scan branch, read truncated output, and concluded the siblings did not enforce actor separation either - and used that to justify leaving the self-approval half open as a 'platform-wide maker/checker question'. That was wrong: all four siblings enforce it, verified by direct grep across walking, boarding, sitting and taxi. The separation is now applied here too."
   },
   {
     "id": "W2-B4-M05",
