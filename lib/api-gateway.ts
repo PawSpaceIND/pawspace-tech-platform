@@ -106,7 +106,11 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/coupon-governance"){if(method==="GET")return "pricing.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");if(action==="quote")return "scheduling.book";if(action==="save_campaign")return "pricing.manage";if(action==="consume")return "bookings.manage";return "dashboard.view";}
   if(url.pathname==="/api/grooming-subscription-plans")return method==="GET"?"pricing.view":"pricing.manage";
   if(url.pathname==="/api/grooming-commercial-policy")return method==="GET"?"pricing.view":"pricing.manage";
-  if(url.pathname==="/api/provider-capacity-control")return method==="GET"?"scheduling.view":"scheduling.manage";
+  // The capacity CONTROL console, read and write alike (PTJA W2-17-F01). Mapping the GET to
+  // scheduling.view admitted every service_provider session - the role holds that permission - to the
+  // whole city's provider roster, quality scores, complaint notes, recovery cases and change audit.
+  // Nothing in app/** calls this GET, so there is no provider-facing consumer to preserve.
+  if(url.pathname==="/api/provider-capacity-control")return "scheduling.manage";
   if(url.pathname==="/api/provider-assignment-recovery"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["accept","decline"].includes(String(body.action))?"bookings.view":"bookings.manage";}
   if(url.pathname==="/api/assisted-orders")return "scheduling.book";
   if(url.pathname==="/api/walking-bookings")return "scheduling.book";

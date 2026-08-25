@@ -11,7 +11,16 @@ async function ensureSchedulingTables(db:D1Database){await db.batch([
 ]);}
 function parse<T>(value:unknown,fallback:T):T{try{return JSON.parse(String(value??"")) as T;}catch{return fallback;}}
 
-export async function GET(request:Request){try{await authorize(request,"scheduling.view");const db=await database();await seedProviderCapacityDefaults(db);await ensureSchedulingTables(db);const url=new URL(request.url),cityId=(url.searchParams.get("cityId")||"blr").trim(),service=(url.searchParams.get("service")||"").trim();const profiles=await db.prepare("SELECT * FROM provider_capacity_profiles WHERE city_id=? ORDER BY name").bind(cityId).all<Row>();const filtered=service?profiles.results.filter(row=>parse<string[]>(row.services_json,[]).includes(service)):profiles.results;const [availability,unavailability,recovery,performance,audit]=await Promise.all([
+/*
+ * Cross-tenant read (PTJA W2-17-F01). This GET authorised on the bare permission `scheduling.view`,
+ * which every service_provider session holds, and then returned the whole city's provider roster with
+ * no ownership filter: competitors' rating, quality_score, capacity and live status, plus
+ * provider_performance_events whose detail_json carries free-text complaint notes and customer
+ * identifiers, the recovery cases, and the change audit with the operator email and reason for every
+ * stand-down. The PATCH beside it already required scheduling.manage; only the read was lower. The
+ * gateway mapping was raised to match, so both gates refuse.
+ */
+export async function GET(request:Request){try{await authorize(request,"scheduling.manage");const db=await database();await seedProviderCapacityDefaults(db);await ensureSchedulingTables(db);const url=new URL(request.url),cityId=(url.searchParams.get("cityId")||"blr").trim(),service=(url.searchParams.get("service")||"").trim();const profiles=await db.prepare("SELECT * FROM provider_capacity_profiles WHERE city_id=? ORDER BY name").bind(cityId).all<Row>();const filtered=service?profiles.results.filter(row=>parse<string[]>(row.services_json,[]).includes(service)):profiles.results;const [availability,unavailability,recovery,performance,audit]=await Promise.all([
   db.prepare("SELECT * FROM scheduling_availability WHERE city_id=? ORDER BY date DESC,provider_id LIMIT 200").bind(cityId).all<Row>(),
   db.prepare("SELECT u.* FROM provider_unavailability u JOIN provider_capacity_profiles p ON p.id=u.provider_id WHERE p.city_id=? ORDER BY u.starts_at DESC LIMIT 200").bind(cityId).all<Row>(),
   db.prepare("SELECT * FROM provider_recovery_cases ORDER BY opened_at DESC LIMIT 50").all<Row>(),
