@@ -60,7 +60,7 @@ export async function verifyPartnerOtp(db:Db,input:{challengeId:string;code:stri
     // phone-derived opaque id and INSERT OR IGNORE so both requests converge on one provider row.
     const providerId=await canonicalOtpProviderId(phone),now=Date.now();
     await db.prepare("INSERT OR IGNORE INTO canonical_providers (id,city_id,name,phone,email,source,created_at,updated_at) VALUES (?,?,?,?,NULL,'partner_app_otp',?,?)")
-      .bind(providerId,input.cityId||"blr",text(input.name)||"PawSpace Caregiver",phone,now,now).run();
+      .bind(providerId,text(input.cityId)||null,text(input.name)||"PawSpace Caregiver",phone,now,now).run();
     provider=await db.prepare("SELECT id,name,phone,city_id FROM canonical_providers WHERE phone=?").bind(phone).first<Row>();
     if(!provider||text(provider.phone)!==phone)throw new Error("Canonical provider identity conflict - human review required");
   }
