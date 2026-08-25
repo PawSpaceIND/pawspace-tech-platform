@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+installWorkersHooks("__FINAL_MAIN_AUDIT_DB__");
 
 const root = new URL("../", import.meta.url);
 const read = (path) => readFile(new URL(path, root), "utf8");

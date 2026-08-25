@@ -88,7 +88,7 @@ async function fixtureFor(label, route, method) {
 
   switch (label) {
     case "boarding-commercial.POST":
-      init = jsonInit(method, { packageCode: "BOARD-24H", petCount: 1, scheduledStart: FUTURE_START, scheduledEnd: FUTURE_END, paymentMode: "sandbox_deferred" });
+      init = jsonInit(method, { packageCode: "BOARD-24H", petCount: 1, scheduledStart: FUTURE_START, scheduledEnd: FUTURE_END, paymentMode: "sandbox_deferred", cityId: "blr", zoneId: "blr-east" });
       break;
     case "food-commercial.POST":
       init = jsonInit(method, { sku: "FOOD-TEST", quantity: 1, zoneId: "blr-east", paymentMode: "sandbox_deferred", customerId: "CUS-LEAK3", petIds: ["PET-LEAK3"] });
@@ -141,7 +141,7 @@ async function fixtureFor(label, route, method) {
       init = { method };
       break;
     case "sitting-commercial.POST":
-      init = jsonInit(method, { packageCode: "SIT-4H", petCount: 1, scheduledStart: FUTURE_START, scheduledEnd: FUTURE_END, paymentMode: "sandbox_deferred" });
+      init = jsonInit(method, { packageCode: "SIT-4H", petCount: 1, scheduledStart: FUTURE_START, scheduledEnd: FUTURE_END, paymentMode: "sandbox_deferred", cityId: "blr", zoneId: "blr-east" });
       break;
     case "sitting-payment-sandbox.POST":
       env = { PAWSPACE_PAYMENT_ENV: "sandbox" };

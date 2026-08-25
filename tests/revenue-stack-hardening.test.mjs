@@ -169,7 +169,9 @@ test("reconciliation: revenue-crm team revenue === mission net collected — the
   const now = Date.now();
   sqlite.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,call_attempts,whatsapp_attempts,converted_booking_id,recycle_cycle,opt_out,created_at,updated_at) VALUES ('LEAD-C1','cus_1','Website','Grooming','Neha','Sales Manager','qualified','day_1',1,?,?,?,0,0,'B1',0,0,?,?)").run(now, now, now, now, now);
   sqlite.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,call_attempts,whatsapp_attempts,converted_booking_id,recycle_cycle,opt_out,created_at,updated_at) VALUES ('LEAD-C2','cus_2','Website','Boarding','Priya','Sales Manager','qualified','day_1',1,?,?,?,0,0,'B2',0,0,?,?)").run(now, now, now, now, now);
-  // Second GET refreshes the still-provisional leaderboard rows from canonical truth.
+  // Refresh is an explicit staff write; GET stays observational.
+  const refreshed = await call(crmEngineRoute.POST, "POST", { action: "refresh_leaderboard" });
+  assert.equal(refreshed.status, 200, JSON.stringify(refreshed.body));
   const second = await call(crmEngineRoute.GET, "GET");
   assert.equal(second.status, 200);
   const stats = second.body.stats, leaderboard = second.body.leaderboard;

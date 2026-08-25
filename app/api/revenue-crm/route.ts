@@ -124,6 +124,7 @@ export async function GET(request:Request){try{const actor=await authorize(reque
 
 export async function POST(request:Request){try{const actor=await authorize(request,"customers.manage"),db=await database();await ensureTables(db);const body=await request.json() as Row,action=String(body.action||""),now=Date.now();
   if(action==="seed_uat"){const{env}=await import("cloudflare:workers");const runtime=env as unknown as{PAWSPACE_UAT_LOGIN?:unknown;PAWSPACE_UAT_SIGNING_KEY?:unknown};if(String(runtime.PAWSPACE_UAT_LOGIN||"")!=="on"||String(runtime.PAWSPACE_UAT_SIGNING_KEY||"").length<32)return Response.json({error:"UAT seed is unavailable"},{status:404});await seedUat(db);return Response.json({ok:true,seeded:true,uatOnly:true})}
+  if(action==="refresh_leaderboard"){await refreshLeaderboard(db);return Response.json({ok:true,refreshed:true})}
   if(action==="generate_daily_100")return Response.json({ok:true,...await generateDaily100(db,actor.email)});
   if(action==="set_daily_target"){const targetAmount=Number(body.targetAmount||0);try{const result=await setDailyRevenueTarget(db,{date:String(body.date||dayKey()),targetAmount,actorId:actor.email});await audit(db,actor.email,"daily_revenue_target",result.date,"target_set",{targetAmount});return Response.json({ok:true,...result})}catch(error){return Response.json({error:error instanceof Error?error.message:"Unable to set target"},{status:400})}}
   if(action==="run_sla")return Response.json({ok:true,alerted:await runSla(db,actor.email)});
