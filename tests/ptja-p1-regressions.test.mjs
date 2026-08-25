@@ -835,3 +835,60 @@ test("P1-F2: a clock that breached is never counted as met, and the buckets neve
   assert.equal(met, 1, "and only the clock that actually met its deadline is counted as met");
   assert.ok(met + breached <= total, `a clock must be counted once: met ${met} + breached ${breached} > total ${total}`);
 });
+
+// =====================================================================================================
+// PTJA-P1-F40 — two concurrent city-coverage saves both claim the same version
+//
+// saveCityLaunchConfig computes `const version = before ? before.version+1 : 1` in JavaScript from a read
+// taken earlier in the function, then writes `version=excluded.version`. Two operators saving the same
+// city concurrently both read version N and both write N+1, so two DIFFERENT states carry the same
+// version number and the audit trail cannot distinguish them or order them.
+//
+// PARTIAL FIX, and the limit is stated rather than hidden. The version bump moves into SQL, so
+// concurrent saves get distinct, monotonic versions and the audit's version means something. The LOST
+// UPDATE itself - operator A's coverage silently replaced by operator B's, with no one told - is not
+// fixed here: refusing a save whose base version has moved requires the caller to send the version it
+// read, which is an API contract change and a product decision about what the operator sees on conflict.
+// That half is reported, not invented.
+// =====================================================================================================
+
+test("P1-F40: concurrent city saves get distinct monotonic versions", async () => {
+  const { sqlite, db } = world();
+  const city = await import("../lib/city-governance.ts");
+  await city.seedDefaultCityLaunchConfigs(db);
+  const existing = sqlite.prepare("SELECT id,city_code,city,state,status,centre,radius_km,pincodes,gst_included,services_json,version FROM city_launch_configs WHERE city_code='blr'").get();
+  assert.ok(existing, "the seeded city is the baseline");
+  const baseVersion = Number(existing.version);
+
+  const save = (pincodes) => city.saveCityLaunchConfig(db, {
+    id: String(existing.id), cityCode: String(existing.city_code), city: String(existing.city), state: String(existing.state),
+    status: String(existing.status), centre: String(existing.centre), radiusKm: Number(existing.radius_km),
+    pincodes, gstIncluded: Number(existing.gst_included) === 1, services: JSON.parse(String(existing.services_json)),
+  }, "ops@pawspace.test");
+
+  const [a, b] = await Promise.all([save("560001,560002"), save("560003,560004")]);
+  assert.notEqual(a.version, b.version, `two concurrent saves must not both claim version ${a.version}`);
+  assert.deepEqual([a.version, b.version].sort((x, y) => x - y), [baseVersion + 1, baseVersion + 2],
+    "the versions are consecutive and monotonic from the version they started at");
+  assert.equal(Number(sqlite.prepare("SELECT version FROM city_launch_configs WHERE id=?").get(String(existing.id)).version), baseVersion + 2,
+    "and the stored row carries the later of the two");
+});
+
+test("P1-F40: a serial save still increments by exactly one", async () => {
+  // Non-vacuity. A version that jumped arbitrarily would satisfy the case above.
+  const { sqlite, db } = world();
+  const city = await import("../lib/city-governance.ts");
+  await city.seedDefaultCityLaunchConfigs(db);
+  const existing = sqlite.prepare("SELECT id,city_code,city,state,status,centre,radius_km,pincodes,gst_included,services_json,version FROM city_launch_configs WHERE city_code='blr'").get();
+  const base = Number(existing.version);
+  const input = (pincodes) => ({
+    id: String(existing.id), cityCode: String(existing.city_code), city: String(existing.city), state: String(existing.state),
+    status: String(existing.status), centre: String(existing.centre), radiusKm: Number(existing.radius_km),
+    pincodes, gstIncluded: Number(existing.gst_included) === 1, services: JSON.parse(String(existing.services_json)),
+  });
+  const first = await city.saveCityLaunchConfig(db, input("560001"), "ops@pawspace.test");
+  assert.equal(first.version, base + 1);
+  const second = await city.saveCityLaunchConfig(db, input("560002"), "ops@pawspace.test");
+  assert.equal(second.version, base + 2);
+  assert.equal(String(sqlite.prepare("SELECT pincodes FROM city_launch_configs WHERE id=?").get(String(existing.id)).pincodes), "560002");
+});
