@@ -34,7 +34,8 @@ test("Verify-first: prepaid online bookings cannot self-capture in LIVE mode (sa
   assert.match(bookingRoute, /return payment\.status/); // sandbox/UAT keeps the submitted status
   assert.match(bookingRoute, /PAWSPACE_PAYMENT_ENV/);
   // the payment insert now records the gated status, not the raw client value
-  assert.match(bookingRoute, /input\.payment\.mode,paymentStatusRecorded,/);
+  assert.match(bookingRoute, /paymentStatusPersisted=sittingCapture\?\.status\?\?paymentStatusRecorded/);
+  assert.match(bookingRoute, /input\.payment\.method,paymentModePersisted,paymentStatusPersisted,/);
   // customer order intent never self-captures; stays awaiting_payment
   assert.match(intent, /status: "awaiting_payment"/);
   assert.match(intent, /if \(!created\.connected\) return \{ connected: false/);

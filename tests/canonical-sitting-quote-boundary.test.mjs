@@ -230,7 +230,7 @@ test("canonical Pet Sitting refuses invented packages and caller-controlled amou
   assert.equal(result.response.status, 409, JSON.stringify(result.data));
   assert.match(result.data.error, /sandbox capture|package|amount.*server quote/i);
   assert.deepEqual(bookingState(sqlite), ZERO_BOOKING_STATE);
-  assert.deepEqual(quoteState(sqlite, quote.quoteId), { status: "open", used_at: null, used_booking_id: null });
+  assert.deepEqual({ ...quoteState(sqlite, quote.quoteId) }, { status: "open", used_at: null, used_booking_id: null });
   assert.equal(count(sqlite, "sitting_quote_payment_attestations", "quote_id=?", [quote.quoteId]), 1, "the server capture remains available for a corrected request");
 });
 

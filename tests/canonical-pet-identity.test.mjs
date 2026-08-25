@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createCapturedCanonicalSittingQuote } from "./helpers/canonical-sitting-commercial.mjs";
 
 // ---------------------------------------------------------------------------
 // A booking used to mint its own canonical_pets row keyed by the pet NAME, so a pet the customer had
@@ -63,26 +64,35 @@ function seedScheduling(sqlite, groupId) {
 }
 
 /** The body is built as a STRING, because some of the shapes under test are the point of the test. */
-function bookingBody({ key, group, pets }) {
+function bookingBody({ key, group, pets, sittingQuote }) {
   return JSON.stringify({
     idempotencyKey: key, scheduleGroupId: group,
     customer: { id: CUSTOMER, name: "Identity tester", primaryPhone: "+919000000001" },
     pets,
     cityId: "blr", zoneId: "koramangala",
-    serviceCode: "pet_sitting", packageCode: "home-visit", packageName: "Pet Sitting",
+    serviceCode: "pet_sitting", packageCode: sittingQuote.packageCode, packageName: sittingQuote.packageName,
     scheduledStart: START, scheduledEnd: END,
     provider: { id: PROVIDER, name: "Sitter One", model: "full_time" },
-    totalAmount: 1349, amountDueNow: 1349,
-    payment: { method: "upi", mode: "prepaid", status: "captured", detail: "customer app" },
-    pricing: { discount: 0 },
+    totalAmount: sittingQuote.totalAmount, amountDueNow: sittingQuote.amountDueNow,
+    payment: { method: "upi", mode: sittingQuote.paymentMode, status: "captured", detail: "customer app" },
+    pricing: { discount: 0, sittingQuoteId: sittingQuote.quoteId },
   });
 }
 
 async function book(sqlite, { key, group, pets, schedule = true }) {
   if (schedule) seedScheduling(sqlite, group);
+  const { quote: sittingQuote } = await createCapturedCanonicalSittingQuote(globalThis.__PET_IDENTITY_DB__, {
+    scheduledStart: START,
+    scheduledEnd: END,
+    cityId: "blr",
+    zoneId: "koramangala",
+    petCount: Math.max(1, Array.isArray(pets) ? pets.length : 1),
+    paymentMode: "prepaid",
+    paymentKey: `pet-identity:${key}:${group}`,
+  });
   const { POST } = await import("../app/api/canonical-bookings/route.ts");
   const response = await POST(new Request("http://localhost/api/canonical-bookings", {
-    method: "POST", headers: { "content-type": "application/json" }, body: bookingBody({ key, group, pets }),
+    method: "POST", headers: { "content-type": "application/json" }, body: bookingBody({ key, group, pets, sittingQuote }),
   }));
   let body = null;
   try { body = JSON.parse(await response.clone().text()); } catch { /* non-JSON body */ }
