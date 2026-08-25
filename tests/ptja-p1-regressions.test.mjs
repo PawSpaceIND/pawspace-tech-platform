@@ -772,3 +772,66 @@ test("P1-F1: among several leads for the SAME service the newest still wins", as
   assert.equal(String(leadRow("LEAD-G1").status), "active");
   assert.equal(String(leadRow("LEAD-BOARD").status), "active");
 });
+
+// =====================================================================================================
+// PTJA-P1-F2 — a breached SLA clock is counted as BOTH met and breached in the productivity report
+//
+// recordLeadSlaAction closes a clock with "UPDATE lead_sla_clocks SET status='met',met_at=? ... WHERE id=?
+// AND status IN ('running','breached','paused')" - so a late first response flips a BREACHED clock to
+// 'met' while breached_at stays set. lib/sales-productivity-governance.ts then aggregates:
+//
+//   SUM(CASE WHEN c.status='met' THEN 1 ELSE 0 END)          met
+//   SUM(CASE WHEN c.breached_at IS NOT NULL THEN 1 ELSE 0 END) breached
+//
+// One clock satisfies both, so met + breached exceeds total: the report contradicts itself, and a rep who
+// missed the SLA and answered late is credited with having met it.
+//
+// This fixes the COUNT, not the state machine. breached_at is the record that the deadline passed, so a
+// clock carrying it did not meet its SLA whatever its later status. What a late answer should mean
+// operationally - whether it stops auto-reassignment, whether it belongs in some third bucket - is a
+// product decision and is deliberately not made here; the clock's status is untouched.
+// =====================================================================================================
+
+test("P1-F2: a clock that breached is never counted as met, and the buckets never exceed the total", async () => {
+  const { sqlite, db } = world();
+  const productivity = await import("../lib/sales-productivity-governance.ts");
+  const sla = await import("../lib/lead-sla-governance.ts");
+  await productivity.ensureSalesProductivityTables(db);
+  await sla.ensureLeadSlaTables(db);
+  const { ensureSecurityTables } = await import("../lib/server-auth.ts");
+  await ensureSecurityTables(db);
+  const leads = await import("../lib/lead-assignment-governance.ts");
+  await leads.ensureLeadAssignmentTables(db);
+
+  const now = Date.now(), periodStart = now - 86_400_000, periodEnd = now + 86_400_000, EMAIL = "rep.f2@pawspace.test";
+  await db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('USR-F2',?,'Rep F2','sales','active',?,?)").bind(EMAIL, now, now).run();
+  const membershipColumns = sqlite.prepare("PRAGMA table_info(lead_assignment_memberships)").all().map((c) => c.name);
+  const membershipValues = { employee_email: EMAIL, team_code: "team-f2", service_codes_json: "[]", city_ids_json: "[]", language_codes_json: "[]", active: 1, workload_cap_override: null, updated_by: "ops", created_by: "ops", updated_at: now, created_at: now };
+  const useCols = membershipColumns.filter((c) => c in membershipValues);
+  sqlite.prepare(`INSERT INTO lead_assignment_memberships (${useCols.join(",")}) VALUES (${useCols.map(() => "?").join(",")})`).run(...useCols.map((c) => membershipValues[c]));
+  const assignment = (id, leadId) => sqlite.prepare("INSERT INTO lead_assignments (id,idempotency_key,lead_id,employee_email,team_code,policy_id,policy_version,assignment_reason,status,assigned_at,detail_json,created_by,created_at) VALUES (?,?,?,?,?,'POL-F2',1,'new_lead','current',?,'{}','ops',?)")
+    .run(id, `k-${id}`, leadId, EMAIL, "team-f2", now, now);
+  // Clock A: breached, then answered late - the shape under test. Clock B: cleanly met.
+  const clock = (id, leadId, assignmentId, status, breachedAt, metAt) => sqlite.prepare("INSERT INTO lead_sla_clocks (id,idempotency_key,lead_id,assignment_id,policy_id,policy_version,clock_type,cycle,status,started_at,due_at,manager_escalation_due_at,reassignment_due_at,met_at,breached_at,detail_json,created_by,created_at,updated_at) VALUES (?,?,?,?,'SLAPOL-F2',1,'first_response',1,?,?,?,?,?,?,?,'{}','ops',?,?)")
+    .run(id, `ck-${id}`, leadId, assignmentId, status, now, now, now, now, metAt, breachedAt, now, now);
+  assignment("LAS-F2-A", "LEAD-F2-A"); assignment("LAS-F2-B", "LEAD-F2-B");
+  clock("CLK-A", "LEAD-F2-A", "LAS-F2-A", "met", now, now);   // breached, then a late action flipped it
+  clock("CLK-B", "LEAD-F2-B", "LAS-F2-B", "met", null, now);  // met on time
+
+  const policy = await productivity.saveSalesProductivityPolicy(db, {
+    name: "F2 productivity policy", teamCode: "team-f2", timezone: "Asia/Kolkata",
+    meaningfulActionTypes: ["call"], qualifiedOutcomes: ["interested"], revenueBasis: "net_collected",
+    requireCanonicalLeadBookingLink: false, effectiveFrom: periodStart - 1000, effectiveUntil: null,
+    reason: "PTJA F2 executable regression", actorId: "ops@pawspace.test",
+  });
+  await productivity.activateSalesProductivityPolicy(db, { policyId: policy.id, approvalReference: "PTJA-F2", reason: "Activate for the regression", actorId: "ops@pawspace.test" });
+  const run = await productivity.generateSalesProductivityFacts(db, { periodStart, periodEnd, idempotencyKey: "f2-run", actorId: "ops@pawspace.test" });
+  const fact = run.facts.find((f) => String(f.employeeEmail ?? f.employee_email) === EMAIL);
+  assert.ok(fact, `the rep must appear in the run: ${JSON.stringify(run.facts)}`);
+
+  const total = Number(fact.firstResponseClocks ?? fact.first_response_clocks), met = Number(fact.firstResponseMet ?? fact.first_response_met), breached = Number(fact.firstResponseBreached ?? fact.first_response_breached);
+  assert.equal(total, 2, "two first-response clocks in the period");
+  assert.equal(breached, 1, "the breached clock is still reported as breached");
+  assert.equal(met, 1, "and only the clock that actually met its deadline is counted as met");
+  assert.ok(met + breached <= total, `a clock must be counted once: met ${met} + breached ${breached} > total ${total}`);
+});
