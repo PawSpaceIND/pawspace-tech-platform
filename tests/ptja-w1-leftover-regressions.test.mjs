@@ -202,3 +202,77 @@ for (const vertical of RECOVERY_VERTICALS) {
       "and enters reassignment exactly as before");
   });
 }
+
+// =====================================================================================================
+// PTJA-W1L-03 (Wave 1 F34) — a reservation dated in the PAST is scheduled, confirmed and paid
+//
+// Neither the reserve path nor the roster evaluation compares scheduledStart to now. The only bound is
+// the service's roster window (09:00-19:00 IST for grooming), so any past date inside that window is
+// accepted.
+//
+// MEASURED at wall clock 2026-08-25T05:23Z: a customer session reserved 2026-08-23T04:30Z-06:30Z - two
+// days earlier - and got 200 {status:'assigned', provider:{id:'groom_arun'}}. The booking then
+// confirmed 201 and a sandbox capture processed Rs 1,899. Not one of the five calls mentioned the date.
+// A past-dated slot can never be delivered, so the row is guaranteed to become a refund, a dispute or a
+// false no-show against the provider, while silently consuming that provider's overlap guard and daily
+// count for a day that is already over.
+//
+// The rule applied is the platform's OWN: lib/sitting-finance-governance.ts validFutureWindow already
+// refuses a care window whose start is `<= Date.now()` with a 400. Nothing new is decided - the same
+// rule is applied where a customer first reserves a slot.
+// =====================================================================================================
+
+async function reserveWorld() {
+  const { sqlite, db } = world({ PAWSPACE_PAYMENT_ENV: "sandbox" });
+  const { ensureSecurityTables } = await import("../lib/server-auth.ts");
+  await ensureSecurityTables(db);
+  const { upsertIdentityBinding } = await import("../lib/identity-binding.ts");
+  const { issuePlatformSession, PLATFORM_SESSION_COOKIE } = await import("../lib/platform-session.ts");
+  const binding = await upsertIdentityBinding(db, {
+    identitySource: "customer_otp", principalType: "identity_subject", principalKey: "customer:CUST-F34",
+    subjectType: "customer", subjectId: "CUST-F34", verificationState: "verified",
+    actorId: "ptja-w1l", reason: "PTJA Wave 1 leftover regression",
+  });
+  const issued = await issuePlatformSession(db, {
+    bindingId: String(binding.id), identitySource: "customer_otp", principalType: "identity_subject",
+    principalKey: String(binding.principal_key), subjectType: "customer", subjectId: "CUST-F34",
+  });
+  const cookie = `${PLATFORM_SESSION_COOKIE}=${encodeURIComponent(issued.token)}`;
+  const reserve = async (clientRequestId, scheduledStart, scheduledEnd) => {
+    const route = await import("../app/api/uat-scheduling/route.ts");
+    const response = await route.POST(new Request("https://uat.pawspace.in/api/uat-scheduling", {
+      method: "POST", headers: { "content-type": "application/json", cookie },
+      body: JSON.stringify({
+        clientRequestId, customerId: "CUST-F34", petIds: ["PET-F34"], serviceCode: "grooming",
+        cityId: "blr", zoneId: "blr-east", scheduledStart, scheduledEnd,
+      }),
+    }));
+    return { status: response.status, body: await response.json().catch(() => null) };
+  };
+  return { sqlite, db, reserve };
+}
+
+/** A window on a given day at 10:00-12:00 IST, which is inside the grooming roster window. */
+function istWindow(dayOffset) {
+  const day = new Date(Date.now() + dayOffset * 86400000);
+  const start = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 4, 30, 0));
+  return [start.toISOString(), new Date(start.getTime() + 2 * 3600000).toISOString()];
+}
+
+test("W1L-03: a slot in the past cannot be reserved", async () => {
+  const { reserve } = await reserveWorld();
+  const [start, end] = istWindow(-2);
+
+  const past = await reserve("GRP-F34-PAST", start, end);
+  assert.notEqual(past.status, 200,
+    `a slot two days in the past must not be reserved: ${JSON.stringify(past).slice(0, 300)}`);
+});
+
+test("W1L-03: a future slot still reserves normally", async () => {
+  // Non-vacuity. Refusing every reserve would satisfy the case above and stop all booking.
+  const { reserve } = await reserveWorld();
+  const [start, end] = istWindow(3);
+
+  const future = await reserve("GRP-F34-FUTURE", start, end);
+  assert.equal(future.status, 200, `a future slot must still reserve: ${JSON.stringify(future).slice(0, 300)}`);
+});

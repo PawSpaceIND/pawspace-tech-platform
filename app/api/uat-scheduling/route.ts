@@ -77,7 +77,16 @@ export async function POST(request:Request){try{const db=await database();const 
   // requireCustomerOwnership refuses it, which is why it runs before the field check rather than after.
   // scheduling.book is the permission the gateway already declares for reserve, named here on purpose.
   requirePermission(actor,"scheduling.book");await requireCustomerOwnership(db,actor,input.customerId);
-  if(!input.clientRequestId||!input.customerId||!input.petIds?.length||!input.serviceCode||!input.scheduledStart||!input.scheduledEnd)return json({error:"Missing scheduling fields"},400);await seedProviderCapacityDefaults(db);await ensureSchedulingTables(db);await cleanupExpiredReservationLeases(db);const lease=await reservationLeaseForRequest(db,request,input.customerId);
+  if(!input.clientRequestId||!input.customerId||!input.petIds?.length||!input.serviceCode||!input.scheduledStart||!input.scheduledEnd)return json({error:"Missing scheduling fields"},400);
+  // A slot that has already started can never be delivered, so reserving one only manufactures a future
+  // refund, dispute or false no-show against the provider - while silently consuming that provider's
+  // overlap guard and daily count for a day that is already over. Nothing here bounded the date except
+  // the service's roster window, so ANY past date inside 09:00-19:00 IST was accepted, assigned, and
+  // confirmed. This is the platform's own rule, already written in lib/sitting-finance-governance.ts
+  // validFutureWindow: a window whose start is not in the future is a 400.
+  const reserveStart=new Date(input.scheduledStart).getTime(),reserveEnd=new Date(input.scheduledEnd).getTime();
+  if(!Number.isFinite(reserveStart)||!Number.isFinite(reserveEnd)||reserveEnd<=reserveStart)return json({error:"A valid scheduling window is required"},400);
+  if(reserveStart<=Date.now())return json({error:"A scheduling window must start in the future; this slot has already passed"},400);await seedProviderCapacityDefaults(db);await ensureSchedulingTables(db);await cleanupExpiredReservationLeases(db);const lease=await reservationLeaseForRequest(db,request,input.customerId);
   // Host selection is a pure request-shape check needing no data access, so it answers first and keeps
   // its own error contract. The boarding pet authority gate moved below it still runs before ANY capacity
   // is reserved, which is what issue #197 item 4 requires.
