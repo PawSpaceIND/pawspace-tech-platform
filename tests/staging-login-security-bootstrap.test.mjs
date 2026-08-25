@@ -74,10 +74,10 @@ test("UAT sign-in bootstraps the audit table before a permission denial", async 
   );
 
   assert.ok(refusal instanceof Response, "the permission denial must return a response instead of throwing");
-  assert.equal(refusal.status, 403, "a known UAT identity without bookings.view is forbidden, not a 500");
+  assert.equal(refusal.status, 403, "a known UAT identity without bookings.manage is forbidden, not a 500");
   assert.equal((await refusal.clone().json()).error, "Permission denied");
 
   const audit = sqlite.prepare("SELECT outcome,detail_json FROM security_audit_events").get();
   assert.equal(audit.outcome, "denied");
-  assert.match(String(audit.detail_json), /bookings\.view/);
+  assert.match(String(audit.detail_json), /bookings\.manage/);
 });

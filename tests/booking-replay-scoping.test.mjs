@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createCapturedCanonicalSittingQuote } from "./helpers/canonical-sitting-commercial.mjs";
 
 installWorkersHooks("__REPLAY_DB__", "__REPLAY_ENV__");
 
@@ -90,6 +91,26 @@ function body(route, customerId, key, group) {
 }
 
 async function post(route, cookie, payload) {
+  if (route === "canonical" && payload.serviceCode === "pet_sitting" && !payload.pricing?.sittingQuoteId) {
+    const { quote } = await createCapturedCanonicalSittingQuote(globalThis.__REPLAY_DB__, {
+      scheduledStart: payload.scheduledStart,
+      scheduledEnd: payload.scheduledEnd,
+      cityId: payload.cityId,
+      zoneId: payload.zoneId,
+      petCount: payload.pets.length,
+      paymentMode: "prepaid",
+      paymentKey: `replay:${payload.idempotencyKey}:${payload.scheduleGroupId}`,
+    });
+    payload = {
+      ...payload,
+      packageCode: quote.packageCode,
+      packageName: quote.packageName,
+      totalAmount: quote.totalAmount,
+      amountDueNow: quote.amountDueNow,
+      payment: { ...payload.payment, mode: quote.paymentMode, status: "captured" },
+      pricing: { ...payload.pricing, sittingQuoteId: quote.quoteId },
+    };
+  }
   const handler = await import(`../app/api/${route}-bookings/route.ts`);
   const response = await handler.POST(new Request(`https://uat.pawspace.in/api/${route}-bookings`, {
     method: "POST", headers: { "content-type": "application/json", cookie }, body: JSON.stringify(payload),

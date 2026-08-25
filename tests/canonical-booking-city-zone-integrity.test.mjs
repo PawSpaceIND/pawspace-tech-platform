@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { createCapturedCanonicalSittingQuote } from "./helpers/canonical-sitting-commercial.mjs";
 
 // ---------------------------------------------------------------------------
 // A canonical booking persists the CLIENT-supplied cityId/zoneId, but the reservation it confirms was
@@ -64,18 +65,18 @@ function seedScheduling(sqlite, groupId, serviceCode = "pet_sitting") {
  * Built as an object then stringified, so a test can omit cityId/zoneId entirely or send a malformed
  * type — the shapes are part of what is under test.
  */
-function bookingBody({ key, group, city = RESERVED_CITY, zone = RESERVED_ZONE, serviceCode = "pet_sitting", omitCity = false, omitZone = false }) {
+function bookingBody({ key, group, city = RESERVED_CITY, zone = RESERVED_ZONE, serviceCode = "pet_sitting", omitCity = false, omitZone = false, sittingQuote = null }) {
   const body = {
     idempotencyKey: key, scheduleGroupId: group,
     customer: { id: CUSTOMER, name: "City zone tester", primaryPhone: "+919000000001" },
     pets: [{ sourceId: "cz-pet-1", name: "Rex", species: "dog" }],
     cityId: city, zoneId: zone,
-    serviceCode, packageCode: "home-visit", packageName: "Pet Sitting",
+    serviceCode, packageCode: sittingQuote?.packageCode ?? "home-visit", packageName: sittingQuote?.packageName ?? "Pet Sitting",
     scheduledStart: START, scheduledEnd: END,
     provider: { id: PROVIDER, name: "Sitter One", model: "full_time" },
-    totalAmount: 1349, amountDueNow: 1349,
-    payment: { method: "upi", mode: "prepaid", status: "captured", detail: "customer app" },
-    pricing: { discount: 0 },
+    totalAmount: sittingQuote?.totalAmount ?? 1349, amountDueNow: sittingQuote?.amountDueNow ?? 1349,
+    payment: { method: "upi", mode: sittingQuote?.paymentMode ?? "prepaid", status: "captured", detail: "customer app" },
+    pricing: { discount: 0, sittingQuoteId: sittingQuote?.quoteId },
   };
   if (omitCity) delete body.cityId;
   if (omitZone) delete body.zoneId;
@@ -84,9 +85,23 @@ function bookingBody({ key, group, city = RESERVED_CITY, zone = RESERVED_ZONE, s
 
 async function book(sqlite, options) {
   if (options.schedule !== false) seedScheduling(sqlite, options.group, options.serviceCode);
+  let sittingQuote = null;
+  if ((options.serviceCode ?? "pet_sitting") === "pet_sitting") {
+    const cityId = typeof options.city === "string" ? options.city : RESERVED_CITY;
+    const zoneId = typeof options.zone === "string" ? options.zone : RESERVED_ZONE;
+    ({ quote: sittingQuote } = await createCapturedCanonicalSittingQuote(globalThis.__CITY_ZONE_DB__, {
+      scheduledStart: START,
+      scheduledEnd: END,
+      cityId,
+      zoneId,
+      petCount: 1,
+      paymentMode: "prepaid",
+      paymentKey: `city-zone:${options.key}:${options.group}`,
+    }));
+  }
   const { POST } = await import("../app/api/canonical-bookings/route.ts");
   const response = await POST(new Request("http://localhost/api/canonical-bookings", {
-    method: "POST", headers: { "content-type": "application/json" }, body: bookingBody(options),
+    method: "POST", headers: { "content-type": "application/json" }, body: bookingBody({ ...options, sittingQuote }),
   }));
   let body = null;
   try { body = JSON.parse(await response.clone().text()); } catch { /* non-JSON body */ }
@@ -196,7 +211,7 @@ test("ordering invariant: a stored booking still replays even when the replay pa
  * `match` is the status each flow already returned for a consistent payload — unchanged by this rule.
  * Grooming, Training and Boarding stop earlier at their OWN commercial governance (no policy/quote is
  * seeded by this harness), which is exactly why the matching column proves the rule is not what stops
- * them. Only pet_sitting reaches 201 here.
+ * them. Pet Sitting reaches 201 because this harness now creates the governed quote and capture its canonical path requires.
  *
  * `guardedByCityZone` records which flows actually reach this invariant. Grooming does not: it resolves
  * its commercial policy from cityId/zoneId BEFORE the reservation is read, so an unserviced city is

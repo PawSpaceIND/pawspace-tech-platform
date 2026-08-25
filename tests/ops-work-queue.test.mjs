@@ -265,7 +265,7 @@ test("real execution: POST actions work through the route and per-task events ar
 
 test("contract: gateway permission line, DB access rule, and the team surface exist", () => {
   const gateway = fs.readFileSync(new URL("../lib/api-gateway.ts", import.meta.url), "utf8");
-  assert.match(gateway, /ops-work-queue"\)return method==="GET"\?"bookings\.view":"bookings\.manage"/);
+  assert.match(gateway, /ops-work-queue"\)return "bookings\.manage"/);
   const source = fs.readFileSync(new URL("../app/api/ops-work-queue/route.ts", import.meta.url), "utf8");
   assert.doesNotMatch(source, /globalThis/, "the route must get the DB via cloudflare:workers env, never globalThis");
   const page = fs.readFileSync(new URL("../app/team/operations/work-queue/page.tsx", import.meta.url), "utf8");

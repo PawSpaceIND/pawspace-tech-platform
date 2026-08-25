@@ -234,7 +234,8 @@ test("booking creation persists the split schedule atomically for boarding and s
   const canonical = read("app/api/canonical-bookings/route.ts");
   assert.match(canonical, /boardingCommercial\.paymentMode==="split_50_50"/);
   assert.match(canonical, /serviceCode:"boarding"/);
-  assert.match(canonical, /input\.serviceCode==="pet_sitting"&&input\.payment\.mode==="split_50_50"/);
+  assert.match(canonical, /sittingCommercial&&sittingCommercial\.paymentMode==="split_50_50"/);
+  assert.match(canonical, /totalAmount:sittingCommercial\.totalAmount,paidNowAmount:sittingCommercial\.amountDueNow/);
   const sitting = read("app/api/sitting-bookings/route.ts");
   assert.match(sitting, /governed\.paymentMode==="split_50_50"/);
   assert.match(sitting, /staySplitScheduleStatement/);

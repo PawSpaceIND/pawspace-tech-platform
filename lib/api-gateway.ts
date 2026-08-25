@@ -26,15 +26,31 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/control-tower")return "audit.view";
   if(url.pathname==="/api/stay-balance")return "scheduling.book";
   if(url.pathname==="/api/partner-job-feed")return "bookings.view";
-  if(url.pathname==="/api/uat-provider-switch")return "bookings.view";
+  // This is the pre-session UAT login boundary. The route is production-dead unless the UAT gate is enabled,
+  // and its POST authenticates with the governed access code before minting the provider session. Requiring
+  // bookings.view here made the first session impossible and hid both the invalid-code and production-dead paths.
+  if(url.pathname==="/api/uat-provider-switch")return null;
   if(url.pathname==="/api/provider-lms"){if(method==="GET")return "bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="complete_module"?"bookings.view":"settings.manage";}
   if(url.pathname==="/api/me"||url.pathname==="/api/leaderboard"||url.pathname==="/api/provider-workspace")return "self_service.view";
   if(url.pathname==="/api/provider-commercial-terms")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/funeral-manual-order")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/platform-governance"){if(method==="GET")return "dashboard.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="save_role"?"roles.manage":"users.manage";}
   if(url.pathname==="/api/identity-bindings")return "users.manage";
-  if(url.pathname==="/api/communications"){if(method==="GET")return "communications.message";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"enqueue");if(action==="adapter_readiness"||action==="policy_update")return "settings.manage";if(action==="preference")return "customers.manage";return "communications.message";}
-  if(url.pathname==="/api/conversations")return "communications.message";
+  // communications.message is deliberately narrow: it lets providers report/contact through routes
+  // that enforce booking/provider ownership. The system-wide ledger, queue, dispatch and assignment
+  // surfaces require communications.manage so a service provider cannot read or mutate another customer.
+  if(url.pathname==="/api/communications"){if(method==="GET")return "communications.manage";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"enqueue");if(action==="adapter_readiness"||action==="policy_update")return "settings.manage";if(action==="preference")return "customers.manage";return "communications.manage";}
+  if(url.pathname==="/api/conversations"||url.pathname==="/api/ai-human-handoff")return "communications.manage";
+  // The web-chat surface deliberately has two security modes. Public knowledge/lead capture is
+  // anonymous and is constrained inside the route (public-only knowledge, no customer/tool access,
+  // same-origin writes). Authenticated mode is customer self-service and then enforces the exact
+  // customer binding in runAuthenticatedAiWebChat(). Falling through to dashboard.view blocked both
+  // intended audiences and let an unrelated staff permission define who could converse.
+  if(url.pathname==="/api/ai-web-chat"){
+    if(method==="GET")return null;
+    const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;
+    return String(body.mode||"public")==="authenticated"?"scheduling.book":null;
+  }
   // Voice. The fail-closed fallback at the end of this function would have mapped these to
   // dashboard.view, which auditor and finance hold - so a read-only compliance identity could start an
   // AI voice call. Mapped explicitly: conversing needs communications.call, and launching an automated
@@ -43,7 +59,9 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/ai-voice-uat"||url.pathname==="/api/voice-speech")return "communications.call";
   if(url.pathname==="/api/voice-providers")return "settings.manage";
   if(url.pathname==="/api/bot-call-outcomes"){if(method==="GET")return "customers.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"record")==="reconcile"?"customers.manage":"communications.call";}
-  if(url.pathname==="/api/customer-contact"){const body=method==="POST"?await request.clone().json().catch(()=>({})) as Record<string,unknown>:{};return String(body.channel||"call")==="message"?"communications.message":"communications.call";}
+  // Customer 360 contact can target any imported customer, so it is a system-wide administrative action.
+  // Booking-scoped provider communication remains on routes that enforce assignment and ownership.
+  if(url.pathname==="/api/customer-contact")return "communications.manage";
   if(url.pathname==="/api/subscription-customers")return method==="GET"?"customers.view":"data.import";
   if(url.pathname==="/api/subscription-wallet"){if(method==="GET")return url.searchParams.get("customerId")?"customers.view":"scheduling.book";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["reserve","pause","resume"].includes(String(body.action))?"scheduling.book":"bookings.manage";}
   if(url.pathname==="/api/crm")return method==="GET"?"customers.view":"customers.manage";
@@ -59,7 +77,8 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/revenue-leadership-reporting")return method==="GET"?"reports.view":"customers.manage";
   if(url.pathname==="/api/prelaunch-booking-swarm")return method==="GET"?"launch.view":"launch.manage";
   if(url.pathname==="/api/crm-automation"){if(method==="GET")return "customers.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="save_policy"?"settings.manage":"customers.manage";}
-  if(url.pathname==="/api/unified-cases")return method==="GET"?"bookings.view":"bookings.manage";
+  // The Unified Case Center is a platform-wide internal directory, not an assigned-booking view.
+  if(url.pathname==="/api/unified-cases")return "bookings.manage";
   // Sweeping raises alerts platform-wide and stays a manager action. Acknowledge/resolve only needs
   // identity here: authority over an individual alert belongs to the team that owns it and is decided
   // per alert in lib/staff-alert-authority.ts. Gating them on customers.manage locked Finance out of
@@ -74,6 +93,9 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/unit-economics")return "reports.view";
   if(url.pathname==="/api/ai-intelligence")return method==="GET"?"reports.view":"customers.manage";
   if(url.pathname==="/api/training-finance")return method==="GET"?"finance.view":"finance.manage";
+  // Training sandbox capture is a customer checkout action. dashboard.view rejected the customer while
+  // admitting dashboard-only staff such as Finance; scheduling.book matches the canonical booking boundary.
+  if(url.pathname==="/api/training-payment-sandbox")return "scheduling.book";
   if(url.pathname==="/api/training-cancellation"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action)==="request"?"scheduling.book":"finance.manage";}
   if(url.pathname==="/api/training-customer-session-change")return "scheduling.book";
   if(url.pathname==="/api/training-ops")return "bookings.view";
@@ -122,7 +144,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/city-governance")return method==="GET"?"launch.view":"launch.manage";
   if(url.pathname==="/api/integration-readiness")return method==="GET"?"launch.view":"launch.manage";
   if(url.pathname==="/api/uat-scheduling"){if(method==="GET")return "scheduling.manage";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action&&body.action!=="reserve"?"scheduling.manage":"scheduling.book";}
-  if(url.pathname==="/api/canonical-bookings")return method==="GET"?"bookings.view":"scheduling.book";
+  if(url.pathname==="/api/canonical-bookings")return method==="GET"?"bookings.manage":"scheduling.book";
   if(url.pathname==="/api/referral-governance"){if(method==="GET")return "pricing.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");if(action==="save_programme")return "pricing.manage";if(["qualify","review"].includes(action))return "bookings.manage";if(action==="reverse_reward")return "finance.manage";return "scheduling.book";}
   if(url.pathname==="/api/training-programmes")return "scheduling.book";
   if(url.pathname==="/api/training-session-media")return "bookings.view";
@@ -130,8 +152,8 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/grooming-service-location")return "scheduling.book";
   if(url.pathname==="/api/address-autocomplete")return "scheduling.book";
   if(url.pathname==="/api/grooming-route")return "bookings.view";
-  if(url.pathname==="/api/booking-command-center")return method==="GET"?"bookings.view":"bookings.manage";
-  if(url.pathname==="/api/ops-work-queue")return method==="GET"?"bookings.view":"bookings.manage";
+  if(url.pathname==="/api/booking-command-center")return "bookings.manage";
+  if(url.pathname==="/api/ops-work-queue")return "bookings.manage";
   if(url.pathname==="/api/partner-grooming-jobs")return "bookings.view";
   if(url.pathname==="/api/service-media")return "bookings.view";
   if(url.pathname==="/api/grooming-booking-change")return "scheduling.book";
