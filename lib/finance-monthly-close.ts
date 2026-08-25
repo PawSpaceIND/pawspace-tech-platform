@@ -62,7 +62,16 @@ export async function monthlyCloseView(db:Db,input:{period:string;actorId:string
  // approved eligibility (never claim unreviewed input credit).
  const output=await safeFirst(db,"SELECT COALESCE(SUM(tax_total),0) tax,COUNT(*) count FROM finance_invoices WHERE issue_date>=? AND issue_date<? AND status!='cancelled'",[startDate,endDate]);
  const input_=await safeFirst(db,"SELECT COALESCE(SUM(r.eligible_tax_amount),0) tax FROM finance_vendor_tax_reviews r JOIN finance_bills b ON b.id=r.bill_id WHERE r.review_status='eligible' AND b.bill_date>=? AND b.bill_date<?",[startDate,endDate]);
- const gst={outputTax:round2(Number(output?.tax||0)),eligibleInputTax:round2(Number(input_?.tax||0)),netPayable:0,invoiceCount:Number(output?.count||0)};
+ // Output tax has TWO sources and the close only ever read one. finance_invoices is written solely by
+ // the B2B module (lib/gst-accounting.ts); all five service invoice modules - sitting, boarding,
+ // walking, taxi, grooming - write their tax into booking_invoices.tax_amount. Reading only the first
+ // made GST output structurally zero for the entire service business, and safeFirst turned the empty
+ // source into 0 rather than an error, so the month closed and locked with GSTR-3B net payable
+ // published as 0 under a GREEN gst_computed check. The two tables are disjoint - a B2B invoice is
+ // never a booking invoice - so their tax sums and nothing is counted twice. No tax rule is decided
+ // here: each invoice's own tax_amount, computed by the module that issued it, is simply included.
+ const serviceOutput=await safeFirst(db,"SELECT COALESCE(SUM(tax_amount),0) tax,COUNT(*) count FROM booking_invoices WHERE issued_at>=? AND issued_at<? AND status!='cancelled'",[startMs,endMs]);
+ const gst={outputTax:round2(Number(output?.tax||0)+Number(serviceOutput?.tax||0)),eligibleInputTax:round2(Number(input_?.tax||0)),netPayable:0,invoiceCount:Number(output?.count||0)+Number(serviceOutput?.count||0)};
  gst.netPayable=round2(Math.max(0,gst.outputTax-gst.eligibleInputTax));
 
  // TDS: recompute from source data (idempotent), then check the deposit.

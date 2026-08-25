@@ -227,3 +227,82 @@ test("W2-FIN-02: an open period still posts, and a correction still lands in the
   const untouched = await post("OK-2", "2026-09-09", "2026-09", 1200);
   assert.equal(untouched.ok, true, `a period that was never closed is unaffected: ${JSON.stringify(untouched)}`);
 });
+
+// =====================================================================================================
+// PTJA-W2-FIN-04 (ledger W2-08-F04) — GST output tax at monthly close is STRUCTURALLY zero
+//
+// monthlyCloseView computes output GST from `SELECT SUM(tax_total) FROM finance_invoices`, which only
+// the separate B2B module lib/gst-accounting.ts ever writes. All five service invoice modules -
+// sitting, boarding, walking, taxi and grooming - write their tax into booking_invoices.tax_amount.
+// The two never meet, and safeFirst turns the empty/missing source into 0 rather than an error, so an
+// absent source read as a satisfied 'gst_computed' check.
+//
+// MEASURED: two service invoices carrying 1525.42 + 762.71 = Rs 2,288.13 of output tax in 2026-07.
+// monthlyCloseView reported gst {"outputTax":0,"eligibleInputTax":0,"netPayable":0,"invoiceCount":0}
+// and a green checklist item {"key":"gst_computed","ok":true,"value":0}. closeMonth then locked the
+// month with GSTR-3B net payable published as 0 and that zero frozen into the snapshot.
+//
+// The correction adds the source that was missing. The two tables are disjoint - B2B invoices in
+// finance_invoices, service invoices in booking_invoices - so their output tax sums, and nothing is
+// double counted. No tax rule is invented: each invoice's own tax_amount, computed by the module that
+// issued it, is simply included in the total the close publishes.
+// =====================================================================================================
+
+async function closeWorld() {
+  const { sqlite, db } = world();
+  const close = await import("../lib/finance-monthly-close.ts");
+  sqlite.exec(`
+CREATE TABLE IF NOT EXISTS booking_invoices (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,invoice_number TEXT NOT NULL UNIQUE,status TEXT NOT NULL DEFAULT 'draft',currency TEXT NOT NULL DEFAULT 'INR',gross_amount REAL NOT NULL,tax_amount REAL NOT NULL DEFAULT 0,net_amount REAL NOT NULL,issued_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS finance_invoices (id TEXT PRIMARY KEY,invoice_number TEXT,issue_date TEXT,status TEXT,tax_total REAL DEFAULT 0);
+`);
+  // 2026-07 in the close's own window: it shifts by IST, so a mid-month timestamp is unambiguous.
+  const july = Date.UTC(2026, 6, 15);
+  const serviceInvoice = (id, number, tax, at = july, status = "issued_uat") =>
+    sqlite.prepare("INSERT INTO booking_invoices (id,booking_id,customer_id,invoice_number,status,gross_amount,tax_amount,net_amount,issued_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+      .run(id, `BK-${id}`, "CUS-1", number, status, tax * 6, tax, tax * 6, at, at, at);
+  const b2bInvoice = (id, number, tax, date = "2026-07-15") =>
+    sqlite.prepare("INSERT INTO finance_invoices (id,invoice_number,issue_date,status,tax_total) VALUES (?,?,?,'issued',?)").run(id, number, date, tax);
+  const view = () => close.monthlyCloseView(db, { period: "2026-07" });
+  return { sqlite, db, close, serviceInvoice, b2bInvoice, view };
+}
+
+test("W2-FIN-04: service invoice tax reaches the monthly close's GST output", async () => {
+  const { serviceInvoice, view } = await closeWorld();
+  serviceInvoice("A", "SIT-BLR-26-27-000001", 1525.42);
+  serviceInvoice("B", "SIT-BLR-26-27-000002", 762.71);
+
+  const result = await view();
+  assert.equal(result.gst.outputTax, 2288.13,
+    `the month's service invoices carry Rs 2,288.13 of output tax: ${JSON.stringify(result.gst)}`);
+  assert.equal(result.gst.invoiceCount, 2, "and both invoices are counted");
+  assert.equal(result.gst.netPayable, 2288.13, "so GSTR-3B net payable is not zero");
+  const item = result.checklist.find((entry) => entry.key === "gst_computed");
+  assert.equal(item.value, 2288.13, `the checklist must publish the same figure: ${JSON.stringify(item)}`);
+});
+
+test("W2-FIN-04: B2B and service invoices sum, and neither is double counted", async () => {
+  // Non-vacuity in both directions: the pre-existing finance_invoices source must keep working, the two
+  // sources are disjoint, and a month with nothing in it is still legitimately zero.
+  const { serviceInvoice, b2bInvoice, view } = await closeWorld();
+  b2bInvoice("F1", "B2B-0001", 1000);
+  serviceInvoice("A", "SIT-BLR-26-27-000001", 250);
+
+  const result = await view();
+  assert.equal(result.gst.outputTax, 1250, `both sources contribute exactly once: ${JSON.stringify(result.gst)}`);
+  assert.equal(result.gst.invoiceCount, 2, "and each invoice is counted once");
+
+  const empty = await closeWorld();
+  const emptyResult = await empty.view();
+  assert.equal(emptyResult.gst.outputTax, 0, "a month with no invoices is still zero");
+});
+
+test("W2-FIN-04: an invoice outside the month, or cancelled, does not count", async () => {
+  const { serviceInvoice, view } = await closeWorld();
+  serviceInvoice("A", "SIT-BLR-26-27-000001", 500);
+  serviceInvoice("C", "SIT-BLR-26-27-000003", 900, Date.UTC(2026, 7, 15));           // August
+  serviceInvoice("D", "SIT-BLR-26-27-000004", 700, Date.UTC(2026, 6, 20), "cancelled");
+
+  const result = await view();
+  assert.equal(result.gst.outputTax, 500, `only July's live invoices count: ${JSON.stringify(result.gst)}`);
+  assert.equal(result.gst.invoiceCount, 1, "and only that one is counted");
+});

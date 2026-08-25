@@ -87,7 +87,11 @@
     ],
     "blast_radius": "Every monthly close publishes GST output tax and GSTR-3B net payable as 0 for the entire service business. The board approves and locks the month on that number, and lib/gst-accounting.ts's statutory package for the same period is built from finance_tax_ledger, which the service invoice path also never writes.",
     "suggested_severity": "P0",
-    "status": "OPEN"
+    "status": "FIXED",
+    "fix_file": "lib/finance-monthly-close.ts",
+    "regression": "tests/ptja-w2-finance-regressions.test.mjs :: \"W2-FIN-04: service invoice tax reaches the monthly close's GST output\" + \"W2-FIN-04: B2B and service invoices sum, and neither is double counted\" + \"W2-FIN-04: an invoice outside the month, or cancelled, does not count\"",
+    "fix_note": "The close now reads BOTH output-tax sources: finance_invoices (written only by the B2B module lib/gst-accounting.ts) and booking_invoices.tax_amount (written by all five service invoice modules - sitting, boarding, walking, taxi, grooming). The two tables are disjoint, so their tax sums and nothing is double counted; period and cancellation filters match the existing source's. No tax rule is invented - each invoice's own tax_amount, computed by the module that issued it, is simply included in the total the close publishes.",
+    "residual_risk": "lib/gst-accounting.ts's statutory package for the same period is built from finance_tax_ledger, which the service invoice path also never writes. That is a separate surface from the monthly close fixed here and was not re-measured; it is carried forward in the deferred backlog."
   },
   {
     "id": "W2-08-F05",
