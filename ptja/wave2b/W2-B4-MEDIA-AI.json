@@ -146,7 +146,10 @@
     "blast_radius": "Every outbound campaign (new_lead_followup, reactivation, subscription_pitch) and every contact in its audience, up to the 5000 clamp per request, for any holder of marketing.manage (founder, superuser, admin). Consent/opt-out filtering and the 7-day frequency cap are NOT bypassed by force - only the quiet-hours bar is.",
     "suggested_severity": "P2",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p09-haptik-quiet-hours.mjs",
-    "status": "OPEN"
+    "status": "PARTIALLY FIXED — override now audited; its scope is a compliance decision",
+    "fix_file": "app/api/haptik-outbound/route.ts",
+    "fix_note": "The security audit record now carries quietHoursOverride, so a campaign dialled through the 21:00-09:00 IST bar is no longer indistinguishable in the trail from one dialled at noon.",
+    "carried_forward": "NOT changed: that a caller-supplied boolean can lift the quiet-hours bar for a BULK run at all. The code's own refusal describes force as an override 'for an urgent callback' - singular - while the same call proceeds over an audience of up to the 5000 clamp. Choosing what force may legitimately cover (one contact? a named recipient? a capped batch?) is a marketing/compliance decision, and picking a bound would be inventing policy. RECOMMENDED for the owner: bound force to a single named recipient, or to a small explicit cap, and keep the audit field. Note also that consent/opt-out filtering and the 7-day frequency cap are NOT bypassed by force - only the quiet-hours bar is."
   },
   {
     "id": "W2-B4-M07",
@@ -163,7 +166,10 @@
     "blast_radius": "Any canonical customer, by id, on any signed inbound event - so the whole customer base is reachable by whoever holds the webhook secret (the messaging vendor, anyone who obtains the secret from it, or any misconfigured route to it). The phone field, the one datum that could contradict the claim, is silently discarded rather than being made to agree.",
     "suggested_severity": "P2",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p10-whatsapp-identity-binding.mjs",
-    "status": "OPEN"
+    "status": "FIXED",
+    "fix_file": "lib/whatsapp-uat-adapter.ts",
+    "regression": "tests/ptja-w2b-crm-media-authz.test.mjs :: \"W2B-M07: a claimed customerId that contradicts the sending phone is refused\" + \"W2B-M07: an agreeing claim, and a phone-only message, both still resolve\"",
+    "fix_note": "A claimed customerId must now AGREE with the phone the message came from; a contradiction opens the same whatsapp_uat_identity_reviews row the strict path already uses and refuses 409, rather than the claim silently winning. The phone is the one datum the sender demonstrably controls at the transport level and it was being dropped. A claim with no phone beside it, and a phone with no claim, both behave exactly as before."
   },
   {
     "id": "W2-B4-M-R03",

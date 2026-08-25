@@ -26,7 +26,14 @@ export async function POST(request:Request){
     const campaign=String(body.campaign||"").trim();
     if(!campaign)return json({error:"A campaign is required (new_lead_followup | reactivation | subscription_pitch)"},400);
     const data=await triggerOutboundCampaign(db,env,{campaign,limit:body.limit,actorId:actor.email||"marketing",force:Boolean(body.force)});
-    await securityAudit(db,actor,"haptik_outbound.trigger","haptik_outbound",campaign,data.connected?"completed":"blocked",{campaign,dialled:data.dialled,skipped:data.skipped,failed:data.failed,audience:data.audience,reason:data.reason});
+    // `force` removes the 21:00-09:00 IST quiet-hours bar, and the audit record did not say it had been
+    // used - so a campaign dialled in the middle of the night was indistinguishable in the trail from
+    // one dialled at noon. It is recorded now. NOT changed here: that a caller-supplied boolean can
+    // lift the bar for a bulk run at all. The code's own refusal calls it an override "for an urgent
+    // callback", singular, while the same call proceeds over an audience of up to the 5000 clamp -
+    // but choosing what force may legitimately cover is a marketing/compliance decision, not one to
+    // invent here. It is carried in the audit ledger with this wording as the evidence.
+    await securityAudit(db,actor,"haptik_outbound.trigger","haptik_outbound",campaign,data.connected?"completed":"blocked",{campaign,dialled:data.dialled,skipped:data.skipped,failed:data.failed,audience:data.audience,reason:data.reason,quietHoursOverride:Boolean(body.force)});
     return json({data},data.connected?201:200);
   }catch(error){return authError(error,"Unable to trigger outbound campaign");}
 }

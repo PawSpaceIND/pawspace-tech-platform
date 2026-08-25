@@ -215,3 +215,63 @@ test("W2B-C10: a caller with no determinable origin is refused, and the first fe
   }));
   assert.equal(noOrigin.status, 429, "a caller with no determinable origin is refused, not waved through");
 });
+
+// =====================================================================================================
+// PTJA-W2B-M07 — the WhatsApp webhook trusts a caller-supplied customerId over the contradicting phone
+//
+// resolveWhatsAppUatCustomer short-circuits on the claimed id:
+//   if(input.customerId) return {customerId: await canonicalCustomer(db, ...), identitySource:"canonical_customer_id"}
+// canonicalCustomer only checks the id EXISTS. input.providerIdentity - the phone the message actually
+// came from - is never compared with it and is then dropped. The STRICT path is the very next three
+// lines: resolve by phone, require exactly one canonical match, otherwise open a
+// whatsapp_uat_identity_reviews row and refuse 409.
+//
+// MEASURED: a correctly signed inbound event carrying customerId CUST-VICTIM-A and phone
+// +919800000999 - which is a DIFFERENT customer's primary phone - returned 201 with
+// identitySource:"canonical_customer_id", filed the message on the victim's canonical thread, opened
+// that customer's 24-hour outbound session window, and escalated "Please confirm the refund to my new
+// account" to a human as a refund dispute on the victim's thread.
+//
+// The phone is the one datum the sender demonstrably controls at the transport level. When both are
+// present they must AGREE; a contradiction goes to the same governed review the strict path already
+// uses, rather than the claim silently winning.
+// =====================================================================================================
+
+test("W2B-M07: a claimed customerId that contradicts the sending phone is refused", async () => {
+  const { sqlite, db, now } = await baseWorld();
+  const adapter = await import("../lib/whatsapp-uat-adapter.ts");
+  await adapter.ensureWhatsAppUatTables(db);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,created_at,updated_at) VALUES ('CUST-VICTIM-A','blr','Victim','+919800000001',?,?)").run(now, now);
+  sqlite.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,created_at,updated_at) VALUES ('CUST-ATTACKER-Z','blr','Attacker','+919800000999',?,?)").run(now, now);
+
+  const attempt = await adapter.resolveWhatsAppUatCustomer(db, {
+    provider: "sandbox_simulator", customerId: "CUST-VICTIM-A", providerIdentity: "+919800000999",
+  }).then((value) => ({ ok: true, value }), async (error) => ({
+    ok: false, status: error instanceof Response ? error.status : 0,
+    message: error instanceof Response ? await error.clone().text() : String(error?.message ?? error),
+  }));
+  assert.equal(attempt.ok, false,
+    `a claimed id contradicted by the sending phone must not resolve: ${JSON.stringify(attempt)}`);
+});
+
+test("W2B-M07: an agreeing claim, and a phone-only message, both still resolve", async () => {
+  // Non-vacuity in both directions: the claim path must keep working when it agrees with the phone, and
+  // the strict phone-only path must be untouched.
+  const { sqlite, db, now } = await baseWorld();
+  const adapter = await import("../lib/whatsapp-uat-adapter.ts");
+  await adapter.ensureWhatsAppUatTables(db);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,created_at,updated_at) VALUES ('CUST-VICTIM-A','blr','Victim','+919800000001',?,?)").run(now, now);
+
+  const agreeing = await adapter.resolveWhatsAppUatCustomer(db, {
+    provider: "sandbox_simulator", customerId: "CUST-VICTIM-A", providerIdentity: "+919800000001",
+  });
+  assert.equal(String(agreeing.customerId), "CUST-VICTIM-A", "an agreeing claim still resolves");
+
+  const phoneOnly = await adapter.resolveWhatsAppUatCustomer(db, {
+    provider: "sandbox_simulator", providerIdentity: "+919800000001",
+  });
+  assert.equal(String(phoneOnly.customerId), "CUST-VICTIM-A", "and so does a phone-only message");
+  assert.equal(String(phoneOnly.identitySource), "verified_phone_match", "through the strict path, unchanged");
+});

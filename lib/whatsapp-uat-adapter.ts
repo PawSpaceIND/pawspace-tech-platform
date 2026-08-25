@@ -27,7 +27,32 @@ async function canonicalCustomer(db:D1Database,customerId:string){const customer
 
 export async function resolveWhatsAppUatCustomer(db:D1Database,input:{provider:WhatsAppUatProvider;customerId?:string|null;providerIdentity?:string|null;detail?:Record<string,unknown>}){
  await ensureWhatsAppUatTables(db);
- if(input.customerId)return{customerId:await canonicalCustomer(db,text(input.customerId)),identitySource:"canonical_customer_id"as const};
+ // A claimed customerId must AGREE with the phone the message actually came from. This used to
+ // short-circuit on the claim alone - canonicalCustomer only checks the id exists - and then dropped
+ // input.providerIdentity entirely, so a correctly signed inbound event naming one customer's id and a
+ // DIFFERENT customer's phone filed the message on the named customer's canonical thread, stamped it
+ // identitySource:"canonical_customer_id", opened that customer's 24-hour outbound window, and
+ // escalated "Please confirm the refund to my new account" to a human as a refund dispute on the wrong
+ // thread. The phone is the one datum the sender demonstrably controls at the transport level, and it
+ // was the only thing that could have contradicted the claim.
+ //
+ // A contradiction goes to the SAME governed review the strict path below already uses, rather than the
+ // claim silently winning. A claim with no phone beside it, and a phone with no claim, both behave
+ // exactly as before.
+ if(input.customerId){
+  const claimed=await canonicalCustomer(db,text(input.customerId));
+  const sending=phone(input.providerIdentity);
+  if(sending){
+   const claimedRow=await db.prepare("SELECT primary_phone FROM canonical_customers WHERE id=?").bind(claimed).first<Row>();
+   if(phone(claimedRow?.primary_phone)!==sending){
+    const reviewId=`WAID-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
+    await db.prepare("INSERT INTO whatsapp_uat_identity_reviews (id,provider,provider_identity,status,candidate_customer_ids_json,detail_json,created_at) VALUES (?,?,?,'unresolved',?,?,?)")
+      .bind(reviewId,input.provider,sending,JSON.stringify([claimed]),JSON.stringify({reason:"claimed_customer_id_contradicts_sending_phone",claimedCustomerId:claimed,...(input.detail||{})}),Date.now()).run();
+    throw new Response("WhatsApp identity requires governed customer resolution",{status:409});
+   }
+  }
+  return{customerId:claimed,identitySource:"canonical_customer_id"as const};
+ }
  const identity=phone(input.providerIdentity);if(!identity)throw new Error("Canonical customerId or provider phone identity is required");
  const rows=await db.prepare("SELECT id,primary_phone FROM canonical_customers").all<Row>(),matches=rows.results.filter(row=>phone(row.primary_phone)===identity).map(row=>text(row.id));
  if(matches.length===1)return{customerId:matches[0],identitySource:"verified_phone_match"as const};
