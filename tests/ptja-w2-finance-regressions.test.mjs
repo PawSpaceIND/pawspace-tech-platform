@@ -356,3 +356,68 @@ test("W2-FIN-05: operational finance records cannot be dated into a closed month
   assert.equal(backdated.ok, false, `the backdatable path stays closed: ${JSON.stringify(backdated)}`);
   assert.match(backdated.message, /period_locked/, "for the period-lock reason");
 });
+
+// =====================================================================================================
+// PTJA-W2-FIN-06 (ledger W2-08-F03) — the closed month's published snapshot and the live P&L for the
+// same month disagree, with no reconciliation and no warning
+//
+// monthlyCloseView returns the FROZEN snapshot for a closed period while generatePnlReport recomputes
+// the same month live from canonical_bookings. Any post-close change to a booking therefore makes the
+// two published figures for one locked month differ permanently, and neither surface said which was
+// authoritative.
+//
+// MEASURED: after 2026-07 was closed and locked and a late cancellation removed a Rs 10,000 booking,
+// monthlyCloseView reported revenue {bookings:15000, bookingCount:2} with checklist item
+// revenue_reconciled ok:true value 15000, while generatePnlReport for the same month reported
+// totalTurnoverAmount 5000 and dataSource 'platform_live'. Anyone comparing the board-approved close
+// pack against the P&L saw two different revenue numbers and could not tell which one to believe.
+//
+// The correction makes the disagreement VISIBLE and answers the authority question with the platform's
+// own declaration: closeMonth freezes a snapshot and refuses a second close with "post corrections in
+// the next open period", so the snapshot IS the board-approved figure for a locked month. The P&L now
+// carries, for every closed month in range, the snapshot figure, the live figure and the difference,
+// and says so in dataSource.
+//
+// Deliberately NOT changed: the live numbers themselves. Whether a cancellation recorded in August
+// should retroactively remove revenue from a locked July - the underlying recognition question - is a
+// finance policy matter, and silently overwriting one of the two figures would hide exactly the
+// disagreement this is meant to expose. Both are now published side by side and labelled.
+// =====================================================================================================
+
+test("W2-FIN-06: the P&L publishes the frozen close figure alongside its own for a locked month", async () => {
+  const { sqlite, db } = world();
+  const pnl = await import("../lib/pnl-reporting.ts");
+  const close = await import("../lib/finance-monthly-close.ts");
+  await close.ensureFinanceCloseTables?.(db);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS finance_monthly_closes (period TEXT PRIMARY KEY,status TEXT NOT NULL DEFAULT 'open',snapshot_json TEXT NOT NULL DEFAULT '{}',closed_by TEXT,closed_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,service_code TEXT,status TEXT,total_amount REAL,scheduled_start TEXT,created_at INTEGER,updated_at INTEGER)");
+  const now = Date.now();
+  // The month closed with Rs 15,000 of revenue on the books...
+  sqlite.prepare("INSERT INTO finance_monthly_closes (period,status,snapshot_json,closed_by,closed_at,created_at,updated_at) VALUES ('2026-07','closed',?,'founder@pawspace.in',?,?,?)")
+    .run(JSON.stringify({ revenue: { bookings: 15000, bookingCount: 2, foodOrders: 0, foodOrderCount: 0, total: 15000 } }), now, now, now);
+  // ...and one of those bookings was cancelled after the lock, so the live recomputation now sees 5,000.
+  sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,status,total_amount,scheduled_start,created_at,updated_at) VALUES ('BK-A','CUS-1','grooming','cancelled',10000,'2026-07-10T09:00:00.000Z',?,?)").run(now, now);
+  sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,status,total_amount,scheduled_start,created_at,updated_at) VALUES ('BK-B','CUS-2','grooming','completed',5000,'2026-07-12T09:00:00.000Z',?,?)").run(now, now);
+
+  const report = await pnl.generatePnlReport(db, { fromMonth: "2026-07", toMonth: "2026-07" });
+  const locked = (report.closedPeriods || []).find((entry) => entry.month === "2026-07");
+  assert.ok(locked, `a locked month must be declared in the report: ${JSON.stringify(report.closedPeriods)}`);
+  assert.equal(locked.snapshotTurnoverAmount, 15000, "carrying the board-approved figure the month closed on");
+  assert.equal(locked.liveTurnoverAmount, report.totalTurnoverAmount, "alongside what the live recomputation now sees");
+  assert.notEqual(locked.divergenceAmount, 0, "and stating that the two disagree rather than leaving it to be discovered");
+  assert.equal(report.dataSource, "platform_live_with_closed_periods",
+    "the report says which kind of figure it is publishing");
+});
+
+test("W2-FIN-06: a range with no closed month is unchanged", async () => {
+  // Non-vacuity: the ordinary report must not grow a warning it has no reason to carry.
+  const { sqlite, db } = world();
+  const pnl = await import("../lib/pnl-reporting.ts");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,service_code TEXT,status TEXT,total_amount REAL,scheduled_start TEXT,created_at INTEGER,updated_at INTEGER)");
+  const now = Date.now();
+  sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,status,total_amount,scheduled_start,created_at,updated_at) VALUES ('BK-C','CUS-3','grooming','completed',5000,'2026-09-12T09:00:00.000Z',?,?)").run(now, now);
+
+  const report = await pnl.generatePnlReport(db, { fromMonth: "2026-09", toMonth: "2026-09" });
+  assert.deepEqual(report.closedPeriods, [], "no closed period, nothing to declare");
+  assert.equal(report.dataSource, "platform_live", "and the ordinary data source is unchanged");
+});

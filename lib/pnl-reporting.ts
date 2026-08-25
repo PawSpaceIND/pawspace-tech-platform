@@ -11,7 +11,19 @@ type Row=Record<string,unknown>;
 
 export interface PnlLine{code:string;category:string;subCategory:string;serviceCode:string|null;trackedByPlatform:boolean;monthly:Record<string,number>;total:number;businessContributionPct:number|null}
 export interface PnlSection{title:string;lines:PnlLine[];subtotal:Record<string,number>;subtotalAmount:number}
-export interface PnlReport{months:string[];revenue:PnlSection;indirectIncome:PnlSection;totalTurnover:Record<string,number>;totalTurnoverAmount:number;expenses:PnlSection;totalExpenses:Record<string,number>;totalExpensesAmount:number;nettProfit:Record<string,number>;nettProfitAmount:number;generatedAt:number;dataSource:"platform_live";note:string}
+/**
+ * A month that Finance has CLOSED, reported beside the live recomputation for the same month.
+ *
+ * monthlyCloseView serves the frozen snapshot for a closed period while this report recomputes the same
+ * month live from canonical_bookings, so any post-close change to a booking makes the two published
+ * figures for one locked month differ permanently - and neither surface used to say which was
+ * authoritative. closeMonth freezes the snapshot and refuses a second close with "post corrections in
+ * the next open period", so for a locked month the snapshot IS the board-approved figure. Both are
+ * published here, with the difference stated, rather than one silently winning.
+ */
+export interface PnlClosedPeriod{month:string;status:string;closedAt:number|null;snapshotTurnoverAmount:number|null;liveTurnoverAmount:number;divergenceAmount:number}
+
+export interface PnlReport{months:string[];revenue:PnlSection;indirectIncome:PnlSection;totalTurnover:Record<string,number>;totalTurnoverAmount:number;expenses:PnlSection;totalExpenses:Record<string,number>;totalExpensesAmount:number;nettProfit:Record<string,number>;nettProfitAmount:number;generatedAt:number;dataSource:"platform_live"|"platform_live_with_closed_periods";closedPeriods:PnlClosedPeriod[];note:string}
 
 function monthKey(value:string|number):string{const date=new Date(value);return`${date.getUTCFullYear()}-${String(date.getUTCMonth()+1).padStart(2,"0")}`;}
 function monthRange(fromMonth:string,toMonth:string):string[]{
@@ -95,6 +107,27 @@ export async function generatePnlReport(db:D1,input:{fromMonth:string;toMonth:st
   const nettProfit=emptyMonthly(months);for(const month of months)nettProfit[month]=(totalTurnover[month]||0)-(expenseSubtotal[month]||0);
   const nettProfitAmount=totalTurnoverAmount-totalExpensesAmount;
 
+  // Closed months, reported beside this report's own recomputation of the same month. A missing
+  // finance_monthly_closes table means no month has ever been closed, which is genuinely nothing to
+  // declare - it cannot mask a close, because closing one would have created the table.
+  const closedPeriods:PnlClosedPeriod[]=[];
+  // Range-scanned rather than an IN list: `months` grows with the requested range, so an IN list here
+  // would break past D1's 100-bound-parameter cap on a long report. Period codes are YYYY-MM, so they
+  // compare lexicographically in calendar order.
+  const closes=months.length?await db.prepare("SELECT period,status,snapshot_json,closed_at FROM finance_monthly_closes WHERE period>=? AND period<=?").bind(months[0],months[months.length-1]).all<Record<string,unknown>>().catch(()=>null):null;
+  for(const row of closes?.results??[]){
+    if(!["closed","locked"].includes(String(row.status||"")))continue;
+    const month=String(row.period);
+    let snapshotTurnover:number|null=null;
+    try{
+      const snapshot=JSON.parse(String(row.snapshot_json||"{}")) as {revenue?:{total?:unknown};totalTurnoverAmount?:unknown};
+      const total=Number(snapshot?.revenue?.total??snapshot?.totalTurnoverAmount??NaN);
+      if(Number.isFinite(total))snapshotTurnover=total;
+    }catch{/* a malformed snapshot must not take the whole report down */}
+    const live=Number(totalTurnover[month]||0);
+    closedPeriods.push({month,status:String(row.status),closedAt:row.closed_at==null?null:Number(row.closed_at),snapshotTurnoverAmount:snapshotTurnover,liveTurnoverAmount:live,divergenceAmount:snapshotTurnover==null?0:Math.round((live-snapshotTurnover)*100)/100});
+  }
+
   return{
     months,
     revenue:{title:"Sales Accounts",lines:revenueLines,subtotal:revenueSubtotal,subtotalAmount:revenueTotal},
@@ -104,7 +137,8 @@ export async function generatePnlReport(db:D1,input:{fromMonth:string;toMonth:st
     totalExpenses:expenseSubtotal,totalExpensesAmount,
     nettProfit,nettProfitAmount,
     generatedAt:Date.now(),
-    dataSource:"platform_live",
+    dataSource:closedPeriods.length?"platform_live_with_closed_periods":"platform_live",
+    closedPeriods,
     note:"Computed from real canonical_bookings and finance_journal_entries in this environment. Lines marked trackedByPlatform:false (B2B events, Experience Centre, non-Bengaluru cities, Rapido) have no platform data source yet and will read zero until either a historical import or a new booking flow exists for them.",
   };
 }

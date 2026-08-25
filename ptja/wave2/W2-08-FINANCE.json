@@ -67,7 +67,11 @@
     ],
     "blast_radius": "Any consumer comparing the board-approved close pack against the P&L for the same month sees two different revenue numbers and cannot tell which is authoritative. Partial refunds are invisible on both surfaces: a booking refunded in part keeps its full total_amount in the P&L and its full total in the close snapshot.",
     "suggested_severity": "P1",
-    "status": "OPEN"
+    "status": "FIXED",
+    "fix_file": "lib/pnl-reporting.ts",
+    "regression": "tests/ptja-w2-finance-regressions.test.mjs :: \"W2-FIN-06: the P&L publishes the frozen close figure alongside its own for a locked month\" + \"W2-FIN-06: a range with no closed month is unchanged\"",
+    "fix_note": "generatePnlReport now carries a closedPeriods array: for every closed or locked month in range it publishes the frozen snapshot's turnover, its own live recomputation, and the difference between them, and dataSource becomes platform_live_with_closed_periods so a consumer can see which kind of figure it is reading. The authority question is answered by the platform's own declaration: closeMonth freezes the snapshot and refuses a second close with 'post corrections in the next open period', so for a locked month the snapshot is the board-approved figure. A report with no closed month in range is unchanged.",
+    "deliberately_not_changed": "The live numbers themselves. Whether a cancellation recorded in August should retroactively remove revenue from a locked July - the underlying revenue-recognition question - is a finance policy matter, and silently overwriting either figure would hide exactly the disagreement this exposes. Both are published side by side and labelled. Also unchanged: partial refunds remain invisible on both surfaces (a partly refunded booking keeps its full total_amount in each), which is recorded here and carried forward rather than resolved."
   },
   {
     "id": "W2-08-F04",
