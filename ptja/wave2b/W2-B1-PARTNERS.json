@@ -14,7 +14,10 @@
     "blast_radius": "Every published and draft LMS/SOP module on the platform, exposed to every onboarded provider (and every associate-role staff member, who also holds bookings.view). One GET returns the answer key for all modules at once (LIMIT 200), plus the fleet-wide provider compliance roster (provider ids, names, trainingReady) in the same payload.",
     "suggested_severity": "P1",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p_lms.mjs",
-    "status": "OPEN"
+    "status": "FIXED",
+    "fix_file": "lib/provider-lms.ts",
+    "regression": "tests/ptja-w2b-exposure-regressions.test.mjs :: \"W2B-P01: the LMS overview does not carry the answer key\"",
+    "fix_note": "lmsOverview spread SELECT * and so re-emitted the raw quiz_json column - every question's answerIndex - even though the very next expression reduces the quiz to a COUNT. quiz_json and content_json are now dropped from the projection; quizQuestions and sections, their intended summaries, are unchanged, as is the compliance roster."
   },
   {
     "id": "W2-B1-P02",

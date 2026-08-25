@@ -145,7 +145,14 @@ export async function lmsOverview(db:Db){
  const moduleStats=[];
  for(const row of modules.results){
   const stats=await db.prepare("SELECT COUNT(DISTINCT CASE WHEN passed=1 AND module_version=? THEN provider_id END) passed_current,COUNT(*) attempts FROM lms_completion_attempts WHERE module_id=?").bind(Number(row.version),row.id).first<Row>();
-  moduleStats.push({...row,sections:parse<string[]>(row.content_json,[]),quizQuestions:parse<LmsQuizQuestion[]>(row.quiz_json,[]).length,providersPassedCurrentVersion:Number(stats?.passed_current||0),totalAttempts:Number(stats?.attempts||0)});
+  // `row` is SELECT *, so this spread used to re-emit the raw quiz_json column - every question's
+    // answerIndex - even though the very next expression deliberately reduces the quiz to a COUNT. A
+    // provider session reading this overview got the answer key for every published and draft module at
+    // once, and replaying those indices through complete_module passed every mandatory module at 100%.
+    // The column the projection already meant to summarise is dropped; content_json is dropped with it
+    // for the same reason - `sections` is its summary.
+    const{quiz_json:_quizKey,content_json:_content,...moduleRow}=row as Record<string,unknown>;
+    moduleStats.push({...moduleRow,sections:parse<string[]>(row.content_json,[]),quizQuestions:parse<LmsQuizQuestion[]>(row.quiz_json,[]).length,providersPassedCurrentVersion:Number(stats?.passed_current||0),totalAttempts:Number(stats?.attempts||0)});
  }
  const providers:Array<{providerId:string;name:string;trainingReady:boolean;requiredComplete:number;requiredTotal:number}>=[];
  if(await tableExists(db,"provider_capacity_profiles")){

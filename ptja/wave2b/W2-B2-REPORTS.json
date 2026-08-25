@@ -14,7 +14,10 @@
     "blast_radius": "Every associate identity, every customer record on the platform (unscoped list when customerId is omitted). Reached through GET /api/customer-360 and, via the same buildCustomer360 call, GET /api/customer-business-view (customers.view).",
     "suggested_severity": "P1",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p01-mask.mjs",
-    "status": "OPEN"
+    "status": "FIXED (phone/name); email and address exposure OPEN pending a product decision",
+    "fix_file": "app/api/customer-360/route.ts",
+    "regression": "tests/ptja-w2b-exposure-regressions.test.mjs :: \"W2B-R01: Customer 360 masks the phone for an actor without customers.view_full_phone\" + \"W2B-R01: an actor who holds customers.view_full_phone still sees it\"",
+    "fix_note": "The route now applies the convention app/api/subscription-customers/route.ts already uses: mask name and phone unless the actor holds customers.view_full_phone. Masked in the ROUTE, not in buildCustomer360, because that builder is also called by the AI conversation orchestrator, marketing and promotion governance, which need real contact details to reach a customer. PARTIAL BY DESIGN: email and home address are NOT masked - the platform defines only maskPhone and maskName, and an associate arranging a home service legitimately needs the address. Whether an associate should see the email and doorstep address at all is a product decision and is left open rather than decided here."
   },
   {
     "id": "W2-B2-R02",
