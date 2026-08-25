@@ -54,6 +54,21 @@ export async function postJournal(db: Db, input: { groupKey: string; entryDate: 
   const totalDebit = round2(lines.reduce((s, l) => s + (Number(l.debit) || 0), 0));
   const totalCredit = round2(lines.reduce((s, l) => s + (Number(l.credit) || 0), 0));
   if (Math.abs(totalDebit - totalCredit) > 0.01) throw new Error(`Journal is not balanced: debit ${totalDebit} != credit ${totalCredit}`);
+  // A closed month is closed to the books as well. closeMonth writes finance_close_periods.status
+  // ='locked', but nothing on the posting side ever read that row, so a manual journal dated into a
+  // locked month posted cleanly and left the lock showing no sign it had been written into - which made
+  // every figure published from a closed period provisional. The remedy is the one closeMonth's own
+  // refusal already prescribes: post corrections in the next open period.
+  //
+  // The period is the month the entry is DATED in, not a label travelling alongside it; otherwise the
+  // lock is walked round by renaming the period, exactly as the payroll lock was. All four callers
+  // already derive periodCode from their own entryDate, so this binds an invariant they already keep.
+  const datedPeriod = periodOf(String(input.entryDate));
+  if (datedPeriod !== input.periodCode) throw new Error(`period_mismatch: this journal is dated ${datedPeriod}; it cannot be posted as ${input.periodCode}`);
+  // A missing finance_close_periods table means no period has ever been closed, so there is nothing to
+  // violate - but a row that says 'locked' is decisive.
+  const period = await db.prepare("SELECT status FROM finance_close_periods WHERE period_code=?").bind(datedPeriod).first<Row>().catch(() => null);
+  if (String(period?.status ?? "") === "locked") throw new Error(`period_locked: ${datedPeriod} is closed and locked; post corrections in the next open period`);
   const journalGroup = `JRN-${input.groupKey}`;
   // every group always writes its first line as `${journalGroup}-1`, so an exact hit means already posted
   const existing = await db.prepare("SELECT id FROM finance_journal_entries WHERE id=?").bind(`${journalGroup}-1`).first<Row>();

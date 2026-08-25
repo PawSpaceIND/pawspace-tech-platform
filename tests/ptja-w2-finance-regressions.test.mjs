@@ -150,3 +150,80 @@ test("W2-FIN-01: the sandbox statutory export cannot be labelled with a period t
   assert.equal(attempt.ok, false,
     `a statutory export must not be labelled with a period the payroll run is not dated in: ${JSON.stringify(attempt)}`);
 });
+
+// =====================================================================================================
+// PTJA-W2-FIN-02 (ledger W2-08-F02, the journal half) — a closed and locked period still accepts manual
+// journal postings
+//
+// closeMonth writes finance_close_periods.status='locked', but the only code that ever READ that row
+// was closeMonth itself (plus gst-accounting and people-finance-integration, which govern other
+// modules' tables). lib/finance-accounts.ts postJournal - the chokepoint every accounting entry in the
+// platform goes through - never looked at it.
+//
+// MEASURED: after closeMonth('2026-07') returned {"status":"closed"} and left the period 'locked',
+//   postJournal({groupKey:'LATE-1',entryDate:'2026-07-15',periodCode:'2026-07',narration:'late posting
+//     into a locked period',lines:[6100 debit 50000, 1010 credit 50000]})
+// returned {"journalGroup":"JRN-LATE-1","posted":true,"lines":2}. Both rows carry period_code
+// '2026-07' and posted=1. finance_close_periods stayed 'locked' with nothing recording that it had been
+// written into. The only thing the lock actually blocked was a SECOND closeMonth.
+//
+// This makes every figure published from a closed month provisional: GST returns, board-approved
+// management accounts and the P&L for any locked period can all be contradicted afterwards, silently.
+//
+// The correction is the one closeMonth's own refusal already prescribes - "post corrections in the next
+// open period". A journal dated into a locked month is refused; nothing is redirected or reinterpreted.
+// All four existing callers already derive periodCode from their own entryDate, so the accompanying
+// consistency check binds an invariant they already satisfy rather than changing any of them.
+// =====================================================================================================
+
+async function journalWorld() {
+  const { sqlite, db } = world();
+  const accounts = await import("../lib/finance-accounts.ts");
+  await accounts.ensureFinanceJournalTable(db);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS finance_close_periods (period_code text PRIMARY KEY NOT NULL,status text DEFAULT 'open' NOT NULL,checklist_json text NOT NULL,locked_at integer,locked_by text,updated_at integer NOT NULL)");
+  const lock = (period) => sqlite.prepare("INSERT INTO finance_close_periods (period_code,status,checklist_json,locked_at,locked_by,updated_at) VALUES (?,'locked','{}',?,'founder@pawspace.in',?)").run(period, Date.now(), Date.now());
+  const post = (groupKey, entryDate, periodCode, amount = 50000) => accounts.postJournal(db, {
+    groupKey, entryDate, periodCode, sourceType: "manual", sourceId: "X",
+    narration: "late posting into a locked period",
+    lines: [{ accountCode: "6100-Other Expenses (1)", debit: amount }, { accountCode: "1010-Bank", credit: amount }],
+  }).then((value) => ({ ok: true, value }), (error) => ({ ok: false, message: error instanceof Error ? error.message : String(error) }));
+  const rows = () => sqlite.prepare("SELECT id,entry_date,period_code,debit,credit FROM finance_journal_entries ORDER BY id").all();
+  return { sqlite, db, lock, post, rows };
+}
+
+test("W2-FIN-02: a locked period accepts no journal posting", async () => {
+  const { lock, post, rows } = await journalWorld();
+  lock("2026-07");
+
+  const late = await post("LATE-1", "2026-07-15", "2026-07");
+  assert.equal(late.ok, false, `a journal dated into a locked month must be refused: ${JSON.stringify(late)}`);
+  assert.equal(rows().length, 0, "and no line may be written");
+});
+
+test("W2-FIN-02: a journal cannot be labelled with a period it is not dated in", async () => {
+  // Otherwise the lock is trivially walked round, exactly as W2-08-F05 walked round the payroll lock.
+  const { lock, post, rows } = await journalWorld();
+  lock("2026-07");
+
+  const relabelled = await post("LATE-2", "2026-07-15", "2026-08");
+  assert.equal(relabelled.ok, false, `a July-dated journal must not post as August: ${JSON.stringify(relabelled)}`);
+  assert.equal(rows().length, 0, "and nothing is written");
+});
+
+test("W2-FIN-02: an open period still posts, and a correction still lands in the next open month", async () => {
+  // Non-vacuity, and the remedy closeMonth's own refusal prescribes: "post corrections in the next open
+  // period". Refusing everything would satisfy the two cases above and stop the books.
+  const { lock, post, rows } = await journalWorld();
+  lock("2026-07");
+
+  const openMonth = await post("OK-1", "2026-08-02", "2026-08", 50000);
+  assert.equal(openMonth.ok, true, `an open period still posts: ${JSON.stringify(openMonth)}`);
+  assert.equal(openMonth.value.posted, true, "the journal is written");
+  const written = rows();
+  assert.equal(written.length, 2, "both lines land");
+  assert.ok(written.every((row) => String(row.period_code) === "2026-08"), `in the open period: ${JSON.stringify(written)}`);
+
+  // and a period nobody has closed at all is unaffected
+  const untouched = await post("OK-2", "2026-09-09", "2026-09", 1200);
+  assert.equal(untouched.ok, true, `a period that was never closed is unaffected: ${JSON.stringify(untouched)}`);
+});
