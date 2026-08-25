@@ -129,14 +129,14 @@ test("real execution: a rule created and published through the control API SQL c
   await db.prepare(createSql).bind("price_rule_test1", "Weekend morning uplift", "grooming", null, "blr", "blr-east", "weekend", "[0,6]", "09:00", "11:00", "2026-08-01", "2026-12-31", "percent", 15, "stackable", 50, "ops@pawspace.test", Date.now()).run();
 
   const saturdayMorning = "2026-08-15T04:30:00.000Z"; // Saturday 10:00 IST
-  const draft = await resolveLivePrice(db, { packageCode: "dog-bath", fallbackPrice: 1000, scheduledStart: saturdayMorning, cityId: "blr" });
+  const draft = await resolveLivePrice(db, { packageCode: "dog-bath", fallbackPrice: 1000, scheduledStart: saturdayMorning, cityId: "blr", zoneId: "blr-east" });
   assert.equal(draft.price, 1000, "a draft rule must not change customer prices");
 
   await db.prepare(patchSql.replace("${table}", "dynamic_pricing_rules").replace("${set}", "status=?")).bind("published", "ops@pawspace.test", Date.now(), "price_rule_test1").run();
-  const published = await resolveLivePrice(db, { packageCode: "dog-bath", fallbackPrice: 1000, scheduledStart: saturdayMorning, cityId: "blr" });
+  const published = await resolveLivePrice(db, { packageCode: "dog-bath", fallbackPrice: 1000, scheduledStart: saturdayMorning, cityId: "blr", zoneId: "blr-east" });
   assert.equal(published.price, 1150, "published +15% weekend rule applies to a Saturday-morning quote");
 
-  const wednesday = await resolveLivePrice(db, { packageCode: "dog-bath", fallbackPrice: 1000, scheduledStart: "2026-08-19T05:00:00.000Z", cityId: "blr" });
+  const wednesday = await resolveLivePrice(db, { packageCode: "dog-bath", fallbackPrice: 1000, scheduledStart: "2026-08-19T05:00:00.000Z", cityId: "blr", zoneId: "blr-east" });
   assert.equal(wednesday.price, 1000, "the rule does not leak onto non-matching days");
 });
 
@@ -150,7 +150,7 @@ test("regression: weekend day matching uses IST like the time band, not the serv
   await db.prepare(findStatement(pricingRoute, "INSERT INTO dynamic_pricing_rules")).bind("price_rule_ist", "Weekend all-day", "grooming", null, "blr", "blr-east", "weekend", "[0,6]", null, null, "2026-08-01", "2026-12-31", "percent", 10, "stackable", 50, "ops@pawspace.test", Date.now()).run();
   await db.prepare(patchSql.replace("${table}", "dynamic_pricing_rules").replace("${set}", "status=?")).bind("published", "ops@pawspace.test", Date.now(), "price_rule_ist").run();
   // Saturday 02:00 IST = Friday 20:30 UTC — a UTC getDay() would miss the weekend rule.
-  const istSaturdayEarly = await resolveLivePrice(db, { packageCode: "dog-bath", fallbackPrice: 1000, scheduledStart: "2026-08-14T20:30:00.000Z", cityId: "blr" });
+  const istSaturdayEarly = await resolveLivePrice(db, { packageCode: "dog-bath", fallbackPrice: 1000, scheduledStart: "2026-08-14T20:30:00.000Z", cityId: "blr", zoneId: "blr-east" });
   assert.equal(istSaturdayEarly.price, 1100, "IST Saturday early morning matches the weekend rule");
 });
 
