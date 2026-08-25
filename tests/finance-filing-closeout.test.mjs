@@ -38,16 +38,13 @@ test("accounting export contains only posted journals for the requested entity",
  assert.match(source,/WHERE entity_id=\? AND period_code=\? AND posted=1/);
 });
 
-test("finance mutations use authenticated actors and precheck locked periods",async()=>{
+test("finance mutations use authenticated actors and atomically exclude locked periods",async()=>{
  const route=await read("app/api/finance-control/route.ts");
  assert.match(route,/resolveActor\(request\)/);
  assert.match(route,/requirePermission\(actor,"finance\.manage"\)/);
  assert.doesNotMatch(route,/actorRole/);
  assert.doesNotMatch(route,/locked_by.*finance_uat/);
- const expenseLock=route.indexOf('status==="approved"&&await periodLocked(db,String(row.expense_date))');
- const expenseUpdate=route.indexOf('UPDATE finance_expenses SET status=');
- const billLock=route.indexOf('status==="approved"&&await periodLocked(db,String(row.bill_date))');
- const billUpdate=route.indexOf('UPDATE finance_bills SET status=');
- assert.ok(expenseLock>=0&&expenseLock<expenseUpdate,"expense approval must check the lock before status mutation");
- assert.ok(billLock>=0&&billLock<billUpdate,"bill approval must check the lock before status mutation");
+ assert.match(route,/const eligible=`[^`]*NOT EXISTS \(SELECT 1 FROM finance_close_periods WHERE period_code=\? AND status='locked'\)`/s);
+ assert.match(route,/INSERT INTO finance_journal_posting_claims[\s\S]*WHERE \$\{eligible\}/);
+ assert.match(route,/UPDATE \$\{input\.table\} SET status='approved'[\s\S]*claim_token=\?/);
 });
