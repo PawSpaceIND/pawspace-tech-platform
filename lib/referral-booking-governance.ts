@@ -62,6 +62,20 @@ export async function prepareReferralBooking(db:Db,input:{
   if(referrerPhone&&friendPhone&&referrerPhone===friendPhone){await db.prepare("UPDATE referral_claims SET status='held',fraud_state='hold',review_reason='Referrer and referred customer share the same booking phone',updated_at=? WHERE id=?").bind(Date.now(),input.claimId).run();throw new Error("Referral claim requires identity review");}
   if(referrerEmail&&friendEmail&&referrerEmail===friendEmail){await db.prepare("UPDATE referral_claims SET status='held',fraud_state='hold',review_reason='Referrer and referred customer share the same booking email',updated_at=? WHERE id=?").bind(Date.now(),input.claimId).run();throw new Error("Referral claim requires identity review");}
 
+  // The PROGRAMME is re-read at redemption, not just at claim time. Expiry and shutdown used to be
+  // enforced only when a claim was created and in the listing surfaces - never at the moment money is
+  // given away - so a claim stayed redeemable forever: a paused programme, expired by 300 days and with
+  // its friend discount set to 0, still handed out its original Rs 500. There is no claim-level expiry
+  // column either, so marketing had no way to stop the bleed short of rejecting each claim by hand.
+  //
+  // Deliberately NOT changed: which AMOUNT applies. The frozen snapshot still sets the discount for a
+  // LIVE programme - that is what the snapshot is for, and re-pricing an outstanding claim is a
+  // marketing decision. Pausing exists to stop the bleed; that is all this restores.
+  const programme=await db.prepare("SELECT status,valid_from,valid_until FROM referral_programmes WHERE id=?").bind(claim.programme_id).first<Row>();
+  if(!programme)throw new Error("Referral programme is unavailable");
+  if(String(programme.status)!=="active")throw new Error("Referral programme is paused; outstanding claims cannot be redeemed while it is not active");
+  const redeemAt=Date.now();
+  if(Number(programme.valid_from)>redeemAt||Number(programme.valid_until)<redeemAt)throw new Error("Referral programme validity window has elapsed; this claim can no longer be redeemed");
   const snapshot=readSnapshot(claim.policy_snapshot_json),configuredDiscount=Number(snapshot.friendDiscount);
   if(!Number.isFinite(configuredDiscount)||configuredDiscount<0)throw new Error("Referral friend discount is configuration_required");
   const discountAmount=Math.max(0,Math.min(configuredDiscount,input.baseAmount));

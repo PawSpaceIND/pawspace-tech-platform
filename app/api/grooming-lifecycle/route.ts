@@ -78,18 +78,29 @@ export async function POST(request:Request){try{const input=await request.json()
       db.prepare("INSERT OR IGNORE INTO provider_settlement_readiness (booking_id,provider_id,provider_model,gross_booking_amount,payout_amount,status,eligible_after,rule_version,reason,created_at,updated_at) VALUES (?,?,?,?,NULL,?,?,NULL,?,?,?)").bind(input.bookingId,work.provider_id,work.provider_model,Number(booking.total_amount),String(work.provider_model)==="commission"?"rule_pending":"not_applicable",eligibleAfter,String(work.provider_model)==="commission"?"Provider payout percentage/travel/incentive/penalty rule must be approved before payout instruction":"Full-time provider does not use per-job commission payout in this UAT rule",now,now),
       db.prepare("INSERT OR IGNORE INTO repeat_booking_tasks (id,booking_id,customer_id,service_code,eligible_at,status,created_at,updated_at) VALUES (?,?,?,?,?,'open',?,?)").bind(crypto.randomUUID(),input.bookingId,booking.customer_id,"grooming",now+21*86_400_000,now,now),
     ];
-    if(usage&&sessionsToConsume>0){statements.push(
-      db.prepare("UPDATE booking_subscription_usage SET sessions_consumed=sessions_reserved,status='consumed',updated_at=? WHERE booking_id=? AND status='reserved'").bind(now,input.bookingId),
-      // No status filter: a subscription paused or in expiry-grace AFTER the reservation must still
-      // settle its reserved credits at completion, or sessions_reserved leaks forever (wallet drift).
-      // Double-consumption stays impossible via the usage row's status='reserved' guard above; the
-      // exhausted CASE only promotes active subscriptions.
-      db.prepare("UPDATE customer_grooming_subscriptions SET sessions_reserved=MAX(0,sessions_reserved-?),sessions_consumed=sessions_consumed+?,status=CASE WHEN status='active' AND sessions_consumed+?>=total_sessions THEN 'exhausted' ELSE status END,updated_at=? WHERE id=?").bind(sessionsToConsume,sessionsToConsume,sessionsToConsume,now,usage.plan_code)
-    );}
+    // The guarded flip runs FIRST and ALONE, and only the caller whose UPDATE actually changed a row
+    // moves the subscription counter. Both statements used to sit in this same batch, and the comment
+    // here claimed "double-consumption stays impossible via the usage row's status='reserved' guard" -
+    // which is exactly the reasoning a shared batch defeats: a caller that LOST the flip race still ran
+    // the unconditional counter update, so two concurrent completions of one booking consumed two
+    // sessions for one delivered service while both responses reported a single consumption. Every
+    // other write in this completion is INSERT OR IGNORE; this was the one that was not idempotent.
+    // lib/subscription-wallet.ts already carries this same correction for the same reason.
+    let consumedNow=0;
+    if(usage&&sessionsToConsume>0){
+      const claimed=await db.prepare("UPDATE booking_subscription_usage SET sessions_consumed=sessions_reserved,status='consumed',updated_at=? WHERE booking_id=? AND status='reserved'").bind(now,input.bookingId).run();
+      if(Number(claimed?.meta?.changes||0)===1){
+        consumedNow=sessionsToConsume;
+        // No status filter on the subscription: one paused or in expiry-grace AFTER the reservation must
+        // still settle its reserved credits, or sessions_reserved leaks forever (wallet drift). The
+        // exhausted CASE only promotes active subscriptions.
+        statements.push(db.prepare("UPDATE customer_grooming_subscriptions SET sessions_reserved=MAX(0,sessions_reserved-?),sessions_consumed=sessions_consumed+?,status=CASE WHEN status='active' AND sessions_consumed+?>=total_sessions THEN 'exhausted' ELSE status END,updated_at=? WHERE id=?").bind(sessionsToConsume,sessionsToConsume,sessionsToConsume,now,usage.plan_code));
+      }
+    }
     await db.batch(statements);
     const referral=await referralQualification(db,input.bookingId,actor);
-    await event(db,input.bookingId,"service_completed",actor,{providerId:work.provider_id,invoiceNumber,paymentStatus:String(payment?.status||"unknown"),subscriptionSessionsConsumed:sessionsToConsume,repeatEligibleAt:now+21*86_400_000,taxRuleStatus:"configuration_required",payoutReadiness:String(work.provider_model)==="commission"?"rule_pending":"not_applicable",referral},now);
-    await securityAudit(db,actorIdentity,"grooming.complete","booking",input.bookingId,"completed",{providerId:work.provider_id,invoiceNumber,sessionsToConsume,referral});
+    await event(db,input.bookingId,"service_completed",actor,{providerId:work.provider_id,invoiceNumber,paymentStatus:String(payment?.status||"unknown"),subscriptionSessionsConsumed:consumedNow,repeatEligibleAt:now+21*86_400_000,taxRuleStatus:"configuration_required",payoutReadiness:String(work.provider_model)==="commission"?"rule_pending":"not_applicable",referral},now);
+    await securityAudit(db,actorIdentity,"grooming.complete","booking",input.bookingId,"completed",{providerId:work.provider_id,invoiceNumber,sessionsToConsume:consumedNow,referral});
     return json({data:await bundle(db,input.bookingId),referral});
   }
 
