@@ -1,33 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import * as nodeModule from "node:module";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
-const WORKERS_SHIM = `export const env = new Proxy({}, { get: (_, key) => globalThis.__PAWSPACE_TEST_ENV?.[key] });`;
-const workersUrl = `data:text/javascript,${encodeURIComponent(WORKERS_SHIM)}`;
-if (typeof nodeModule.registerHooks === "function") {
-  nodeModule.registerHooks({
-    resolve(specifier, context, nextResolve) {
-      if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
-      try { return nextResolve(specifier, context); }
-      catch (error) {
-        if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
-        throw error;
-      }
-    },
-  });
-} else {
-  const hook = `const workersUrl=${JSON.stringify(workersUrl)};
-  export async function resolve(specifier, context, nextResolve) {
-    if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
-    try { return await nextResolve(specifier, context); }
-    catch (error) {
-      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(specifier + ".ts", context);
-      throw error;
-    }
-  }`;
-  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
-}
+installWorkersHooks("__PAWSPACE_TEST_DB__", "__PAWSPACE_TEST_ENV");
 
 function makeD1(sqlite) {
   function statement(sql, args) {
@@ -38,9 +14,26 @@ function makeD1(sqlite) {
       all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
     };
   }
+  let batchTail = Promise.resolve();
   return {
     prepare: (sql) => statement(sql, []),
-    batch: async (items) => { const out = []; sqlite.exec("BEGIN"); try { for (const item of items) out.push(await item.run()); sqlite.exec("COMMIT"); return out; } catch (error) { sqlite.exec("ROLLBACK"); throw error; } },
+    batch: (items) => {
+      const run = async () => {
+        const out = [];
+        sqlite.exec("BEGIN");
+        try {
+          for (const item of items) out.push(await item.run());
+          sqlite.exec("COMMIT");
+          return out;
+        } catch (error) {
+          sqlite.exec("ROLLBACK");
+          throw error;
+        }
+      };
+      const result = batchTail.then(run, run);
+      batchTail = result.then(() => undefined, () => undefined);
+      return result;
+    },
   };
 }
 
@@ -50,6 +43,7 @@ const ASSERTION_SECRET = "uat-assertion-secret-0123456789abcdef0123456789abcdef"
 function freshPartnerDb() {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
+  globalThis.__PAWSPACE_TEST_DB__ = db;
   globalThis.__PAWSPACE_TEST_ENV = {
     DB: db,
     PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ASSERTION_SECRET,
