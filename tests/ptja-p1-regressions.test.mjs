@@ -892,3 +892,59 @@ test("P1-F40: a serial save still increments by exactly one", async () => {
   assert.equal(second.version, base + 2);
   assert.equal(String(sqlite.prepare("SELECT pincodes FROM city_launch_configs WHERE id=?").get(String(existing.id)).pincodes), "560002");
 });
+
+// =====================================================================================================
+// PTJA-P1-F33 — a provider is told "available, 0 restrictions remaining" while a future-dated staff
+// suspension is still standing
+//
+// setProviderAvailability counts what still blocks the provider with
+//   WHERE provider_id=? AND status='active' AND starts_at<=? AND ends_at>?   bound (now, now)
+// so it counts only a suspension spanning THIS INSTANT. A staff-imposed suspension for next week has
+// starts_at > now and is not counted, so the provider clears their own availability, is told
+// {available:true, restrictionsRemaining:0}, and finds out on the day that Ops had them suspended.
+//
+// The function's own comment states the intent it fails: "Anything still standing was imposed by
+// somebody else and stays standing. Reported rather than thrown ... the caller needs to know it did not
+// take effect." A future-dated suspension is still standing. Counting everything that has not yet ENDED
+// is that intent, expressed correctly.
+//
+// `available` is deliberately unchanged - it means nothing blocks you RIGHT NOW, which is what matching
+// reads. Only the count of what still stands is corrected, so available:true alongside
+// restrictionsRemaining:1 is the honest answer: you are free today, and a restriction is still on you.
+// =====================================================================================================
+
+test("P1-F33: a future-dated suspension is still standing and is reported as such", async () => {
+  const { sqlite, db } = world();
+  const capacity = await import("../lib/provider-capacity-governance.ts");
+  await capacity.seedProviderCapacityDefaults(db);
+  const now = Date.now();
+  const suspension = (id, startsInMs, endsInMs) => sqlite.prepare("INSERT INTO provider_unavailability (id,provider_id,starts_at,ends_at,reason,status,created_by,created_at,updated_at) VALUES (?,?,?,?,?,'active','ops@pawspace.test',?,?)")
+    .run(id, "groom_arun", new Date(now + startsInMs).toISOString(), new Date(now + endsInMs).toISOString(), "Ops suspension", now, now);
+
+  // Imposed by staff for next week - it has not started, and it has certainly not ended.
+  suspension("UNAV-FUTURE", 7 * 86_400_000, 9 * 86_400_000);
+  const result = await capacity.setProviderAvailability(db, { providerId: "groom_arun", available: true, reason: "I am free, clear my calendar", actorId: "groom_arun", actorIsStaff: false });
+  assert.equal(result.restrictionsRemaining, 1, "a suspension that has not ended is still standing and must be counted");
+  assert.equal(result.available, true, "and the provider really is free today - `available` is about now, and matching reads it");
+});
+
+test("P1-F33: a currently-active suspension still blocks, and an ENDED one does not", async () => {
+  // Non-vacuity in both directions: counting everything would report expired suspensions forever, and
+  // counting nothing would satisfy the case above.
+  const { sqlite, db } = world();
+  const capacity = await import("../lib/provider-capacity-governance.ts");
+  await capacity.seedProviderCapacityDefaults(db);
+  const now = Date.now();
+  const suspension = (id, provider, startsInMs, endsInMs) => sqlite.prepare("INSERT INTO provider_unavailability (id,provider_id,starts_at,ends_at,reason,status,created_by,created_at,updated_at) VALUES (?,?,?,?,?,'active','ops@pawspace.test',?,?)")
+    .run(id, provider, new Date(now + startsInMs).toISOString(), new Date(now + endsInMs).toISOString(), "Ops suspension", now, now);
+
+  suspension("UNAV-NOW", "groom_arun", -3_600_000, 3_600_000);
+  const blocked = await capacity.setProviderAvailability(db, { providerId: "groom_arun", available: true, reason: "clear me now please", actorId: "groom_arun", actorIsStaff: false });
+  assert.equal(blocked.available, false, "a suspension spanning now still blocks");
+  assert.equal(blocked.restrictionsRemaining, 1);
+
+  suspension("UNAV-PAST", "groom_kiran", -9 * 86_400_000, -7 * 86_400_000);
+  const clear = await capacity.setProviderAvailability(db, { providerId: "groom_kiran", available: true, reason: "last week is over", actorId: "groom_kiran", actorIsStaff: false });
+  assert.equal(clear.restrictionsRemaining, 0, "an ENDED suspension is not standing and must not be counted");
+  assert.equal(clear.available, true);
+});

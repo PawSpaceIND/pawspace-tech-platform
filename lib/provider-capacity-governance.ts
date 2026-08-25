@@ -127,10 +127,22 @@ export async function setProviderAvailability(db:Db,input:{providerId:string;ava
     // Anything still standing was imposed by somebody else and stays standing. Reported rather than
     // thrown: asking to be available when nothing blocks you is not an error, and the caller needs to
     // know it did not take effect.
-    const blocking=await db.prepare("SELECT COUNT(*) n FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<=? AND ends_at>?")
+    // STILL STANDING means not yet ended, not merely in force this second. Counting only suspensions
+    // spanning the current instant (starts_at<=now AND ends_at>now) hid every FUTURE-dated one, so a
+    // provider with an Ops suspension imposed for next week cleared their calendar and was answered
+    // {available:true, restrictionsRemaining:0} - then found out on the day. That contradicts this
+    // block's own intent, stated above: anything still standing was imposed by somebody else, and the
+    // caller needs to know it did not take effect. [PTJA-P1-F33]
+    //
+    // `available` is unchanged and still means nothing blocks you RIGHT NOW - that is what matching
+    // reads. So available:true alongside restrictionsRemaining:1 is the honest answer: free today, and a
+    // restriction is still on you.
+    const blockingNow=await db.prepare("SELECT COUNT(*) n FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<=? AND ends_at>?")
       .bind(input.providerId,nowIso,nowIso).first<Row>();
-    const restricted=Number(blocking?.n||0);
-    return{providerId:input.providerId,available:restricted===0,windowsCleared:cleared,restrictionsRemaining:restricted};
+    const standing=await db.prepare("SELECT COUNT(*) n FROM provider_unavailability WHERE provider_id=? AND status='active' AND ends_at>?")
+      .bind(input.providerId,nowIso).first<Row>();
+    const restricted=Number(blockingNow?.n||0);
+    return{providerId:input.providerId,available:restricted===0,windowsCleared:cleared,restrictionsRemaining:Number(standing?.n||0)};
   }
   const startsAt=new Date(now).toISOString(),endsAt=new Date(now+10*365*86400000).toISOString();
   const id=`PUNAVAIL-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
