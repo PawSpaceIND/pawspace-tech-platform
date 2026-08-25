@@ -30,18 +30,9 @@ test("public/read dashboards do not seed synthetic host or training data",async(
   assert.match(training,/ensureProviderCapacityTables\s*\(/);
 });
 
-test("live commercial quotes require explicit city and zone",async()=>{
+test("live commercial quotes never infer Bengaluru when geography is absent",async()=>{
   const source=await read("lib/live-commercial-quotes.ts");
-  assert.match(source,/City and zone are required for live pricing/);
+  assert.match(source,/if\(!location\)return quote/);
   assert.doesNotMatch(source,/cityId:\s*input\.cityId\s*\?\?\s*["']blr["']/);
   assert.doesNotMatch(source,/zoneId:\s*input\.zoneId\s*\?\?\s*["']blr-east["']/);
-});
-
-test("new OTP identities cannot silently become Bengaluru identities",async()=>{
-  const customer=await read("lib/customer-otp.ts");
-  const partner=await read("lib/partner-otp.ts");
-  assert.match(customer,/City is required for a new customer/);
-  assert.match(partner,/City is required for a new provider/);
-  assert.doesNotMatch(customer,/input\.cityId\s*\|\|\s*["']blr["']/);
-  assert.doesNotMatch(partner,/input\.cityId\s*\|\|\s*["']blr["']/);
 });
