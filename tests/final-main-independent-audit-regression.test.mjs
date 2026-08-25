@@ -121,15 +121,23 @@ test("locationless identities and catalogue reads never silently become Bengalur
   for (const path of ["lib/customer-otp.ts", "lib/partner-otp.ts"]) {
     const source = await read(path);
     assert.doesNotMatch(source, /input\.cityId\s*(?:\|\||\?\?)\s*["']blr["']/,
-      `${path} must preserve an absent city as null/blank rather than BLR`);
+      `${path} must never default a missing identity location to BLR`);
   }
+
+  const customerOtp = await read("lib/customer-otp.ts");
+  assert.match(customerOtp, /text\(input\.cityId\)\|\|["']unassigned["']/,
+    "the NOT NULL customer schema must represent absent geography explicitly, not as a real city");
+  assert.match(customerOtp, /customerCityId===["']unassigned["']\?null/,
+    "the explicit unassigned storage sentinel must leave the signed identity assertion locationless");
 
   const boarding = await read("app/api/boarding-commercial/route.ts");
   assert.doesNotMatch(boarding, /searchParams\.get\(["']cityId["']\)\s*\|\|\s*["']blr["']/,
     "Boarding catalogue GET must not default a missing city to BLR");
   assert.doesNotMatch(boarding, /searchParams\.get\(["']zoneId["']\)\s*\|\|\s*["']blr-east["']/,
     "Boarding catalogue GET must not default a missing zone to BLR East");
-  assert.match(boarding, /availabilityMode:["']location_required["']/,
+  assert.match(boarding, /hasLocation=Boolean\(cityId&&zoneId\)/,
+    "Boarding catalogue must distinguish requests that have explicit geography");
+  assert.match(boarding, /availabilityMode:hasLocation\?\(windowAware\?["']uat_canonical["']:["']catalogue_only["']\):["']location_required["']/,
     "locationless Boarding catalogue reads must be explicitly marked location_required");
 });
 
@@ -152,8 +160,11 @@ test("governed pricing writes and quotes require explicit city and zone without 
 
 test("Haptik slots and Grooming tax policy reject missing geography", async () => {
   const haptik = await read("app/api/haptik/route.ts");
-  assert.match(haptik, /action===["']fetch_slots["'][^]*?!cityId\|\|!zoneId[^]*?status[^]*?400/,
+  const slotBranch = haptik.match(/if\(action===["']fetch_slots["']\)[^]*?(?=if\(action===|return json\(\{error:["']Unsupported Haptik action)/)?.[0] || "";
+  assert.match(slotBranch, /!cityId\|\|!zoneId/,
     "Haptik fetch_slots must require explicit city and zone");
+  assert.match(slotBranch, /json\([^]*?,400\)/,
+    "Haptik fetch_slots must return a governed 400 when geography is missing");
 
   const grooming = await read("app/api/grooming-finance/route.ts");
   assert.match(grooming, /action===["']save_tax_policy["'][^]*?!cityId[^]*?status:400/,
