@@ -33,3 +33,16 @@ export async function resolveLivePrice(db:Db,input:{packageCode:string;fallbackP
   const quote=calculatePrice({pkg,rules,scheduledStart:input.scheduledStart,cityId:input.cityId,zoneId:input.zoneId,quantity:input.quantity});
   return{price:quote.finalPrice,source:"pricing_control"};
 }
+
+/**
+ * Applies only the globally activated canonical package price. This deliberately does not read or
+ * evaluate geography-scoped dynamic pricing rules, so a quote with no city/zone can still honour an
+ * explicitly activated package price without silently being treated as Bengaluru (or any other city).
+ */
+export async function resolveLiveBasePrice(db:Db,input:{packageCode:string;fallbackPrice:number;scheduledStart:string}):Promise<{price:number;source:"pricing_control"|"fallback_default"}>{
+  await ensurePricingControlRuntime(db);
+  const scheduledDate=input.scheduledStart.slice(0,10);
+  const row=await db.prepare("SELECT base_price FROM service_packages WHERE package_code=? AND active=1 AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)").bind(input.packageCode,scheduledDate,scheduledDate).first<Row>();
+  if(!row)return{price:input.fallbackPrice,source:"fallback_default"};
+  return{price:Number(row.base_price),source:"pricing_control"};
+}
