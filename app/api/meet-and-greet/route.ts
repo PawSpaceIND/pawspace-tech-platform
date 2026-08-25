@@ -1,5 +1,6 @@
 import { authError, authorize, database, securityAudit } from "../../../lib/server-auth";
 import { resolvePlatformSession } from "../../../lib/platform-session";
+import { withinPublicRateLimit } from "../../../lib/public-abuse-gate";
 import {
   createMeetGreetRequest,
   listMeetGreetEvents,
@@ -54,6 +55,15 @@ export async function POST(request: Request) {
       }
       customerId = String(session.subjectId);
     } else {
+      // An anonymous caller gets a brand-new synthetic identity per request, and the module's only
+      // volume control - one open request per (customer, host) - is keyed to that identity, so it could
+      // never fire: ten identical anonymous POSTs from one IP all returned 201 and a named host's queue
+      // held ten requests. A per-origin gate is what bounds an endpoint that mints its own callers.
+      // Reuses the gate app/api/public-contact/route.ts already carries, on its own table so the two
+      // endpoints do not consume each other's budget, and failing closed when the origin is unknown.
+      if (!(await withinPublicRateLimit(db, request, { table: "meet_greet_rate_limits", now: Date.now() }))) {
+        return json({ error: "Too many meet & greet requests. Please try again later." }, 429);
+      }
       customerId = `MGENQ-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
     }
 

@@ -153,3 +153,65 @@ test("W2B-M03: a provider session cannot opt out a lead through the bot-call pat
   assert.notEqual(response.status, 201,
     `nor may the handler record it: ${response.status} ${(await response.clone().text()).slice(0, 250)}`);
 });
+
+// =====================================================================================================
+// PTJA-W2B-C10 — unauthenticated meet & greet has no volume control
+//
+// The anonymous branch mints a brand-new synthetic customer id per call
+// (`MGENQ-${crypto.randomUUID()...}`), and createMeetGreetRequest's only volume control is keyed to
+// that identity - one open request per (customer, host) - so a fresh id per call meant the cap could
+// never fire.
+//
+// MEASURED: ten identical anonymous POSTs from one IP against a named host, all ten 201, and the staff
+// directory then showed ten requests queued against that host. Any live boarding host or pet-sitting
+// provider is individually targetable by id.
+//
+// Gated with the per-origin abuse gate app/api/public-contact/route.ts already carries - the one an
+// audit probe independently confirmed is exact at its limit and fails closed with no IP - on its own
+// table so the two public endpoints do not consume each other's budget.
+// =====================================================================================================
+
+test("W2B-C10: anonymous meet & greet requests from one origin are bounded", async () => {
+  const { sqlite, db, now } = await baseWorld();
+  const mg = await import("../lib/meet-and-greet.ts");
+  await mg.ensureMeetGreetTables?.(db);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS provider_capacity_profiles (id TEXT PRIMARY KEY,name TEXT,city_id TEXT,services_json TEXT,zones_json TEXT,status TEXT,live INTEGER DEFAULT 1,capacity INTEGER DEFAULT 5,updated_at INTEGER)");
+  sqlite.prepare("INSERT INTO provider_capacity_profiles (id,name,city_id,services_json,zones_json,status,live,updated_at) VALUES ('PRV-HOST-1','Host One','blr','[\"pet_sitting\"]','[\"blr-east\"]','active',1,?)").run(now);
+
+  const route = await import("../app/api/meet-and-greet/route.ts");
+  const attempt = (index) => route.POST(new Request("https://uat.pawspace.in/api/meet-and-greet", {
+    method: "POST",
+    headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.9" },
+    body: JSON.stringify({ format: "phone", hostProviderId: "PRV-HOST-1", preferredAt: now + 7 * 86400000 + index * 60000, notes: `probe ${index}` }),
+  }));
+
+  const statuses = [];
+  for (let index = 0; index < 10; index += 1) statuses.push((await attempt(index)).status);
+  assert.ok(statuses.includes(429),
+    `ten anonymous requests from one origin must not all be accepted: ${JSON.stringify(statuses)}`);
+});
+
+test("W2B-C10: a caller with no determinable origin is refused, and the first few still work", async () => {
+  // Non-vacuity in both directions: the endpoint must still serve genuine anonymous enquiries, and an
+  // unattributable caller is exactly who a volume control exists for.
+  const { sqlite, db, now } = await baseWorld();
+  const mg = await import("../lib/meet-and-greet.ts");
+  await mg.ensureMeetGreetTables?.(db);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS provider_capacity_profiles (id TEXT PRIMARY KEY,name TEXT,city_id TEXT,services_json TEXT,zones_json TEXT,status TEXT,live INTEGER DEFAULT 1,capacity INTEGER DEFAULT 5,updated_at INTEGER)");
+  sqlite.prepare("INSERT INTO provider_capacity_profiles (id,name,city_id,services_json,zones_json,status,live,updated_at) VALUES ('PRV-HOST-1','Host One','blr','[\"pet_sitting\"]','[\"blr-east\"]','active',1,?)").run(now);
+  const route = await import("../app/api/meet-and-greet/route.ts");
+
+  const first = await route.POST(new Request("https://uat.pawspace.in/api/meet-and-greet", {
+    method: "POST",
+    headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.10" },
+    body: JSON.stringify({ format: "phone", hostProviderId: "PRV-HOST-1", preferredAt: now + 7 * 86400000, notes: "a genuine enquiry" }),
+  }));
+  assert.notEqual(first.status, 429, `a genuine first enquiry is not rate limited: ${(await first.clone().text()).slice(0, 200)}`);
+
+  const noOrigin = await route.POST(new Request("https://uat.pawspace.in/api/meet-and-greet", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ format: "phone", hostProviderId: "PRV-HOST-1", preferredAt: now + 7 * 86400000, notes: "no origin" }),
+  }));
+  assert.equal(noOrigin.status, 429, "a caller with no determinable origin is refused, not waved through");
+});

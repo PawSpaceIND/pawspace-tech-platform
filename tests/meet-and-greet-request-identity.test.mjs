@@ -114,11 +114,19 @@ const futureSlot = () => {
   return at.getTime();
 };
 
+// Every request carries a caller IP, as Cloudflare always does in production. The anonymous branch is
+// now bounded per origin (PTJA W2-B3-C10: ten identical anonymous POSTs from one IP all returned 201
+// and queued ten requests against a named host), and that gate fails closed when the origin cannot be
+// established. Each case below uses its OWN ip so the shared per-origin budget cannot make one case
+// depend on another's traffic. What these tests assert - that an enquiry stays public, needs no session
+// and no access code - is unchanged.
+let callerIp = 0;
 const post = async (body, cookie) => {
   const { POST } = await import("../app/api/meet-and-greet/route.ts");
+  callerIp += 1;
   return POST(new Request(`${ORIGIN}/api/meet-and-greet`, {
     method: "POST",
-    headers: { "content-type": "application/json", origin: ORIGIN, ...(cookie ? { cookie } : {}) },
+    headers: { "content-type": "application/json", origin: ORIGIN, "cf-connecting-ip": `198.51.100.${callerIp % 250}`, ...(cookie ? { cookie } : {}) },
     body: JSON.stringify(body),
   }));
 };

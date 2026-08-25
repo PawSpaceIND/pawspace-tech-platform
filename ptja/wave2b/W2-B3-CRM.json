@@ -225,7 +225,10 @@
     "blast_radius": "Any provider id that passes hostEligible (present in boarding_host_profiles, or a provider_capacity_profiles row whose services_json mentions pet_sitting) - i.e. every live boarding host and pet-sitting provider, individually targetable by name. Unbounded volume from a single IP; the only limits observed were the format/time validations, which the attacker satisfies trivially.",
     "suggested_severity": "P2",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p13-mg-anon-flood.mjs",
-    "status": "OPEN"
+    "status": "FIXED",
+    "fix_file": "lib/public-abuse-gate.ts (new); app/api/meet-and-greet/route.ts",
+    "regression": "tests/ptja-w2b-crm-media-authz.test.mjs :: \"W2B-C10: anonymous meet & greet requests from one origin are bounded\" + \"W2B-C10: a caller with no determinable origin is refused, and the first few still work\"",
+    "fix_note": "The anonymous branch is bounded per origin using the gate app/api/public-contact/route.ts already carried - the one this sweep's own R03 independently confirmed is exact at its limit and fails closed with no IP. It was extracted into lib/public-abuse-gate.ts rather than copied, so the two endpoints cannot drift, and meet-and-greet uses its own table so neither consumes the other's budget. COLLATERAL, stated: tests/meet-and-greet-request-identity.test.mjs built its requests with no cf-connecting-ip, which the gate refuses. Each case now sends its own caller IP - as Cloudflare always does in production, and distinct per case so the shared per-origin budget cannot couple them. What those tests assert, that an enquiry stays public and needs no session or access code, is unchanged."
   },
   {
     "id": "W2-B3-R03",
