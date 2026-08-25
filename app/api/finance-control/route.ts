@@ -49,9 +49,10 @@ async function approveWithJournal(db:Db,input:ApprovalInput){
  const eligible=`EXISTS (SELECT 1 FROM ${input.table} WHERE id=? AND status NOT IN ('approved','paid','rejected') AND (created_by IS NULL OR created_by<>?)) AND NOT EXISTS (SELECT 1 FROM finance_close_periods WHERE period_code=? AND status='locked')`;
  const claim=db.prepare(`INSERT INTO finance_journal_posting_claims (source_type,source_id,claim_token,created_at) SELECT ?,?,?,? WHERE ${eligible}`).bind(input.sourceType,input.sourceId,claimToken,createdAt,input.sourceId,input.actor,period);
  const journal=(suffix:number,account:string,debit:number,credit:number)=>db.prepare("INSERT INTO finance_journal_entries (id,entity_id,entry_date,source_type,source_id,account_code,cost_centre,vertical,debit,credit,narration,period_code,posted,created_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,? FROM finance_journal_posting_claims WHERE source_type=? AND source_id=? AND claim_token=?").bind(`${group}_${suffix}`,input.entityId,input.date,input.sourceType,input.sourceId,account,input.costCentre,input.vertical,debit,credit,input.narration,period,1,createdAt,input.sourceType,input.sourceId,claimToken);
+ const debits=journal(1,input.debitAccount,input.amount,0),credits=journal(2,input.creditAccount,0,input.amount);
  const transition=db.prepare(`UPDATE ${input.table} SET status='approved',updated_at=? WHERE id=? AND status NOT IN ('approved','paid','rejected') AND EXISTS (SELECT 1 FROM finance_journal_posting_claims WHERE source_type=? AND source_id=? AND claim_token=?)`).bind(input.changedAt,input.sourceId,input.sourceType,input.sourceId,claimToken);
  let results;
- try{results=await db.batch([claim,journal(1,input.debitAccount,input.amount,0),journal(2,input.creditAccount,0,input.amount),transition]);}
+ try{results=await db.batch([claim,debits,credits,transition]);}
  catch(error){const message=error instanceof Error?error.message:String(error);if(/finance_journal_posting_claims|UNIQUE constraint failed.*source_type.*source_id/i.test(message))throw new Error("journal_already_posted");throw error;}
  if(!Number(results[0]?.meta?.changes)||!Number(results[3]?.meta?.changes)){
   const current=await db.prepare(`SELECT status,created_by,${input.dateColumn} transaction_date FROM ${input.table} WHERE id=?`).bind(input.sourceId).first<Row>();
