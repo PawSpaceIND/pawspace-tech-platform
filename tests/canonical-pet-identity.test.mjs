@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { VEHICLE_SERVICE_CODE, governedVehicleQuote } from "./helpers/governed-canonical-vehicle.mjs";
 
 // ---------------------------------------------------------------------------
 // A booking used to mint its own canonical_pets row keyed by the pet NAME, so a pet the customer had
@@ -59,30 +60,32 @@ function seedScheduling(sqlite, groupId) {
   sqlite.prepare("INSERT OR REPLACE INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,actor_id,reason,updated_at) VALUES (?,?,?,?,?,?,?,?)")
     .run(groupId, "balanced", "[]", PROVIDER, "assigned", "test", "seeded", 1);
   sqlite.prepare("INSERT OR REPLACE INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-    .run(`RES-${groupId}`, groupId, PROVIDER, "pet_sitting", "blr", "koramangala", CUSTOMER, "[]", START, END, 1, 1, null, "reserved", "{}", 1);
+    .run(`RES-${groupId}`, groupId, PROVIDER, VEHICLE_SERVICE_CODE, "blr", "koramangala", CUSTOMER, "[]", START, END, 1, 1, null, "reserved", "{}", 1);
 }
 
 /** The body is built as a STRING, because some of the shapes under test are the point of the test. */
-function bookingBody({ key, group, pets }) {
+function bookingBody({ key, group, pets, quote }) {
   return JSON.stringify({
     idempotencyKey: key, scheduleGroupId: group,
     customer: { id: CUSTOMER, name: "Identity tester", primaryPhone: "+919000000001" },
     pets,
     cityId: "blr", zoneId: "koramangala",
-    serviceCode: "pet_sitting", packageCode: "home-visit", packageName: "Pet Sitting",
+    serviceCode: VEHICLE_SERVICE_CODE, packageCode: quote.packageCode, packageName: quote.packageName,
     scheduledStart: START, scheduledEnd: END,
-    provider: { id: PROVIDER, name: "Sitter One", model: "full_time" },
-    totalAmount: 1349, amountDueNow: 1349,
+    provider: { id: PROVIDER, name: "Trainer One", model: "full_time" },
+    totalAmount: quote.totalAmount, amountDueNow: quote.amountDueNow,
     payment: { method: "upi", mode: "prepaid", status: "captured", detail: "customer app" },
-    pricing: { discount: 0 },
+    pricing: { discount: quote.discount, trainingQuoteId: quote.quoteId },
   });
 }
 
 async function book(sqlite, { key, group, pets, schedule = true }) {
   if (schedule) seedScheduling(sqlite, group);
+  // A fresh server quote per attempt: the amounts below are the server's, never the test's.
+  const quote = await governedVehicleQuote(globalThis.__PET_IDENTITY_DB__, { scheduledStart: START, petCount: Array.isArray(pets) ? pets.length : 1 });
   const { POST } = await import("../app/api/canonical-bookings/route.ts");
   const response = await POST(new Request("http://localhost/api/canonical-bookings", {
-    method: "POST", headers: { "content-type": "application/json" }, body: bookingBody({ key, group, pets }),
+    method: "POST", headers: { "content-type": "application/json" }, body: bookingBody({ key, group, pets, quote }),
   }));
   let body = null;
   try { body = JSON.parse(await response.clone().text()); } catch { /* non-JSON body */ }
@@ -181,8 +184,8 @@ test("a booking created before these rules existed still replays, malformed sour
   // are checked AFTER the idempotency lookup precisely so that history stays replayable: a payload
   // that would be refused today must still return the booking it originally created.
   sqlite.prepare(`INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at)
-    VALUES ('BK-HIST','hist-num',?,'["PET-HIST"]','[7]','blr','koramangala','pet_sitting','home-visit','Pet Sitting','SG-HIST',?,?,?,'confirmed','customer_app',1349,'INR','{}',?,1,1)`)
-    .run(CUSTOMER, PROVIDER, START, END, CUSTOMER);
+    VALUES ('BK-HIST','hist-num',?,'["PET-HIST"]','[7]','blr','koramangala',?,'trainer-meet-greet','Trainer Meet & Greet','SG-HIST',?,?,?,'confirmed','customer_app',1349,'INR','{}',?,1,1)`)
+    .run(CUSTOMER, VEHICLE_SERVICE_CODE, PROVIDER, START, END, CUSTOMER);
   sqlite.prepare("INSERT INTO canonical_pets (id,customer_id,name,species,breed,vaccination_status,source_pet_id,created_at,updated_at) VALUES ('PET-HIST',?,'Seven','dog','Beagle','verified','7.0',1,1)").run(CUSTOMER);
   const before = counts(sqlite);
 

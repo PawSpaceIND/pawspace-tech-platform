@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { VEHICLE_SERVICE_CODE, governedVehicleQuote } from "./helpers/governed-canonical-vehicle.mjs";
 
 // ---------------------------------------------------------------------------
 // A canonical booking persists the CLIENT-supplied cityId/zoneId, but the reservation it confirms was
@@ -52,7 +53,7 @@ function freshDb() {
 }
 
 /** Seed the assignment + reservation the booking POST requires, always for the RESERVED city/zone. */
-function seedScheduling(sqlite, groupId, serviceCode = "pet_sitting") {
+function seedScheduling(sqlite, groupId, serviceCode = VEHICLE_SERVICE_CODE) {
   for (const ddl of SCHEDULING_DDL) sqlite.exec(ddl);
   sqlite.prepare("INSERT OR REPLACE INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,actor_id,reason,updated_at) VALUES (?,?,?,?,?,?,?,?)")
     .run(groupId, "balanced", "[]", PROVIDER, "assigned", "test", "seeded", 1);
@@ -64,29 +65,36 @@ function seedScheduling(sqlite, groupId, serviceCode = "pet_sitting") {
  * Built as an object then stringified, so a test can omit cityId/zoneId entirely or send a malformed
  * type — the shapes are part of what is under test.
  */
-function bookingBody({ key, group, city = RESERVED_CITY, zone = RESERVED_ZONE, serviceCode = "pet_sitting", omitCity = false, omitZone = false }) {
+function bookingBody({ key, group, city = RESERVED_CITY, zone = RESERVED_ZONE, serviceCode = VEHICLE_SERVICE_CODE, omitCity = false, omitZone = false, quote = null }) {
   const body = {
     idempotencyKey: key, scheduleGroupId: group,
     customer: { id: CUSTOMER, name: "City zone tester", primaryPhone: "+919000000001" },
     pets: [{ sourceId: "cz-pet-1", name: "Rex", species: "dog" }],
     cityId: city, zoneId: zone,
-    serviceCode, packageCode: "home-visit", packageName: "Pet Sitting",
+    serviceCode, packageCode: quote?.packageCode ?? "home-visit", packageName: quote?.packageName ?? "Pet Sitting",
     scheduledStart: START, scheduledEnd: END,
-    provider: { id: PROVIDER, name: "Sitter One", model: "full_time" },
-    totalAmount: 1349, amountDueNow: 1349,
+    provider: { id: PROVIDER, name: "Assigned provider", model: "full_time" },
+    totalAmount: quote?.totalAmount ?? 1349, amountDueNow: quote?.amountDueNow ?? 1349,
     payment: { method: "upi", mode: "prepaid", status: "captured", detail: "customer app" },
-    pricing: { discount: 0 },
+    pricing: quote ? { discount: quote.discount, trainingQuoteId: quote.quoteId } : { discount: 0 },
   };
   if (omitCity) delete body.cityId;
   if (omitZone) delete body.zoneId;
   return JSON.stringify(body);
 }
 
+/**
+ * `governed:false` probes a service exactly as a client would with no server quote - that is what the
+ * per-service expectation table below measures. Everything else uses the governed vehicle, so the flow
+ * under test is one that WOULD reach 201 and is stopped only by the invariant being asserted.
+ */
 async function book(sqlite, options) {
   if (options.schedule !== false) seedScheduling(sqlite, options.group, options.serviceCode);
+  const governed = options.governed !== false && (options.serviceCode ?? VEHICLE_SERVICE_CODE) === VEHICLE_SERVICE_CODE;
+  const quote = governed ? await governedVehicleQuote(globalThis.__CITY_ZONE_DB__, { scheduledStart: START, petCount: 1 }) : null;
   const { POST } = await import("../app/api/canonical-bookings/route.ts");
   const response = await POST(new Request("http://localhost/api/canonical-bookings", {
-    method: "POST", headers: { "content-type": "application/json" }, body: bookingBody(options),
+    method: "POST", headers: { "content-type": "application/json" }, body: bookingBody({ ...options, quote }),
   }));
   let body = null;
   try { body = JSON.parse(await response.clone().text()); } catch { /* non-JSON body */ }
@@ -191,49 +199,55 @@ test("ordering invariant: a stored booking still replays even when the replay pa
 });
 
 /**
- * Per-service expectations, measured on the pre-change handler and pinned here.
+ * Per-service expectations.
  *
- * `match` is the status each flow already returned for a consistent payload — unchanged by this rule.
- * Grooming, Training and Boarding stop earlier at their OWN commercial governance (no policy/quote is
- * seeded by this harness), which is exactly why the matching column proves the rule is not what stops
- * them. Only pet_sitting reaches 201 here.
+ * `match` is the status each flow returns for a CONSISTENT payload - unchanged by this rule. Every
+ * ungoverned probe stops at its OWN commercial governance (no policy or server quote is seeded for it),
+ * which is exactly why the matching column proves the city/zone rule is not what stops it. pet_sitting
+ * used to be the exception that reached 201 here, because it had no commercial governance on this route
+ * at all - that was PTJA-P0-02, and it is now refused toward the governed Sitting route. The flow that
+ * reaches 201 is the governed vehicle, which is a stronger probe: it is a booking that would otherwise
+ * succeed.
  *
  * `guardedByCityZone` records which flows actually reach this invariant. Grooming does not: it resolves
  * its commercial policy from cityId/zoneId BEFORE the reservation is read, so an unserviced city is
  * refused there first. That refusal is pre-existing and returns 500 for a missing policy — a known
- * main-line defect this change neither causes nor fixes, tracked separately.
+ * main-line defect this change neither causes nor fixes, tracked separately. pet_sitting no longer does
+ * either: its refusal is now the first thing this route says about that service.
  */
 const SERVICE_EXPECTATIONS = [
-  { serviceCode: "grooming", match: 409, guardedByCityZone: false },
-  { serviceCode: "dog_training", match: 409, guardedByCityZone: true },
-  { serviceCode: "boarding", match: 409, guardedByCityZone: true },
-  { serviceCode: "pet_sitting", match: 201, guardedByCityZone: true },
+  { label: "grooming", serviceCode: "grooming", governed: false, match: 409, guardedByCityZone: false },
+  { label: "dog_training (no server quote)", serviceCode: "dog_training", governed: false, match: 409, guardedByCityZone: true },
+  { label: "boarding", serviceCode: "boarding", governed: false, match: 409, guardedByCityZone: true },
+  { label: "pet_sitting", serviceCode: "pet_sitting", governed: false, match: 409, guardedByCityZone: false },
+  { label: "governed vehicle", serviceCode: VEHICLE_SERVICE_CODE, governed: true, match: 201, guardedByCityZone: true },
 ];
 
-test("Grooming, Training, Boarding and Sitting keep their existing behaviour when city/zone match", async () => {
-  for (const { serviceCode, match } of SERVICE_EXPECTATIONS) {
+test("every service keeps its own behaviour when city/zone match", async () => {
+  for (const { label, serviceCode, governed, match } of SERVICE_EXPECTATIONS) {
     const sqlite = freshDb();
-    const result = await book(sqlite, { key: `cz-ok-${serviceCode}`, group: `SG-CZ-OK-${serviceCode}`, serviceCode });
-    assert.equal(result.status, match, `${serviceCode}: a consistent booking must keep its existing status: ${JSON.stringify(result.body)}`);
-    assert.notEqual(result.body?.error, MISMATCH_MESSAGE, `${serviceCode}: a consistent booking is never refused by the city/zone rule`);
+    const result = await book(sqlite, { key: `cz-ok-${label}`, group: `SG-CZ-OK-${serviceCode}-${governed}`, serviceCode, governed });
+    assert.equal(result.status, match, `${label}: a consistent booking must keep its existing status: ${JSON.stringify(result.body)}`);
+    assert.notEqual(result.body?.error, MISMATCH_MESSAGE, `${label}: a consistent booking is never refused by the city/zone rule`);
   }
 });
 
 test("a mismatched city/zone is refused with zero writes in every service flow", async () => {
-  for (const { serviceCode, guardedByCityZone } of SERVICE_EXPECTATIONS) {
+  for (const { label, serviceCode, governed, guardedByCityZone } of SERVICE_EXPECTATIONS) {
     const sqlite = freshDb();
     await warmSchema(sqlite);
-    const result = await book(sqlite, { key: `cz-bad-${serviceCode}`, group: `SG-CZ-BAD-${serviceCode}`, serviceCode, city: "maa", zone: "maa-central" });
+    const result = await book(sqlite, { key: `cz-bad-${label}`, group: `SG-CZ-BAD-${serviceCode}-${governed}`, serviceCode, governed, city: "maa", zone: "maa-central" });
 
-    assert.ok(result.status >= 400, `${serviceCode}: a mismatch must never be accepted (got ${result.status})`);
-    assert.deepEqual(counts(sqlite), ZERO, `${serviceCode}: a refused mismatch must write nothing`);
+    assert.ok(result.status >= 400, `${label}: a mismatch must never be accepted (got ${result.status})`);
+    assert.deepEqual(counts(sqlite), ZERO, `${label}: a refused mismatch must write nothing`);
     if (guardedByCityZone) {
-      // Without this invariant pet_sitting returned 201 and PERSISTED a Chennai-labelled booking over a
-      // Bengaluru reservation; Training and Boarding passed the reservation check unchallenged.
-      assert.equal(result.status, 409, `${serviceCode}: refused by the city/zone rule: ${JSON.stringify(result.body)}`);
-      assert.equal(result.body.error, MISMATCH_MESSAGE, `${serviceCode}: refused for city/zone specifically`);
+      // Without this invariant a fully governed booking returned 201 and PERSISTED a Chennai-labelled
+      // booking over a Bengaluru reservation; Training and Boarding passed the reservation check
+      // unchallenged.
+      assert.equal(result.status, 409, `${label}: refused by the city/zone rule: ${JSON.stringify(result.body)}`);
+      assert.equal(result.body.error, MISMATCH_MESSAGE, `${label}: refused for city/zone specifically`);
     } else {
-      assert.notEqual(result.status, 201, `${serviceCode}: must not be accepted`);
+      assert.notEqual(result.status, 201, `${label}: must not be accepted`);
     }
   }
 });

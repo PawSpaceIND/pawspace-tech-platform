@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { VEHICLE_SERVICE_CODE, governedVehicleQuote } from "./helpers/governed-canonical-vehicle.mjs";
 
 installWorkersHooks("__REPLAY_DB__", "__REPLAY_ENV__");
 
@@ -73,7 +74,7 @@ async function customerCookie(db, customerId, phone) {
   return `${PLATFORM_SESSION_COOKIE}=${encodeURIComponent(issued.token)}`;
 }
 
-function body(route, customerId, key, group) {
+function body(route, customerId, key, group, extra = {}) {
   const common = {
     idempotencyKey: key, scheduleGroupId: group,
     customer: { id: customerId, name: "Authenticated customer", primaryPhone: "+919000000001" },
@@ -85,7 +86,9 @@ function body(route, customerId, key, group) {
   };
   if (route === "walking") return { ...common, walkingQuoteId: "WQ-1", packageCode: "walking-30", packageName: "Walk", walkCount: 1, weekdays: [] };
   if (route === "taxi") return { ...common, taxiQuoteId: "TQ-1", routeCode: "taxi-city", originLabel: "Home", destinationLabel: "Clinic" };
-  if (route === "canonical") return { ...common, serviceCode: "pet_sitting", packageCode: "home-visit", packageName: "Sitting", payment: { ...common.payment, status: "created" }, pricing: { discount: 0 } };
+  // The governed vehicle for this route: Sitting is refused here (PTJA-P0-02) and every other service
+  // needs a server quote. `extra` carries that quote for the tests that need to reach the write boundary.
+  if (route === "canonical") return { ...common, serviceCode: VEHICLE_SERVICE_CODE, packageCode: "package", packageName: "Package", payment: { ...common.payment, status: "created" }, pricing: { discount: 0 }, ...extra };
   return { ...common, sittingQuoteId: "SQ-1", packageCode: "home-visit", packageName: "Sitting" };
 }
 
@@ -99,7 +102,7 @@ async function post(route, cookie, payload) {
 
 function seedBooking(sqlite, route) {
   const bookingId = `BK-${route.toUpperCase()}-OWNER`, key = `KEY-${route.toUpperCase()}`, group = `GROUP-${route.toUpperCase()}`;
-  const service = route === "walking" ? "dog_walking" : route === "taxi" ? "pet_taxi" : "pet_sitting";
+  const service = route === "walking" ? "dog_walking" : route === "taxi" ? "pet_taxi" : route === "canonical" ? VEHICLE_SERVICE_CODE : "pet_sitting";
   sqlite.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
     .run(bookingId, key, OWNER, "[]", "[]", "blr", "blr-central", service, "package", "Package", group, PROVIDER, START, END, "confirmed", "customer_app", 500, "INR", "{}", "customer:test", 1, 1);
   sqlite.prepare("INSERT INTO provider_work_orders (id,booking_id,schedule_group_id,provider_id,provider_name,provider_model,service_code,scheduled_start,scheduled_end,occurrence_count,status,assignment_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,1,'assigned','{}',1,1)")
@@ -208,12 +211,14 @@ test("canonical write-boundary: a concurrent same-customer winner is returned as
   const group = "GROUP-CANONICAL";
   sqlite.prepare("INSERT INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,actor_id,reason,updated_at) VALUES (?,'governed','[]',?,'assigned','test','test',1)").run(group, PROVIDER);
   sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,1,1,NULL,'assigned','{}',1)")
-    .run("RES-CANONICAL-RACE", group, PROVIDER, "pet_sitting", "blr", "blr-central", OWNER, "[]", START, END);
+    .run("RES-CANONICAL-RACE", group, PROVIDER, VEHICLE_SERVICE_CODE, "blr", "blr-central", OWNER, "[]", START, END);
   controller.beforeBookingWrite = () => {
     seedBooking(sqlite, "canonical");
     throw new Error("UNIQUE constraint failed: canonical_bookings.idempotency_key");
   };
-  const result = await post("canonical", cookie, body("canonical", OWNER, "KEY-CANONICAL", group));
+  const quote = await governedVehicleQuote(db, { scheduledStart: START, petCount: 1 });
+  const vehicle = { packageCode: quote.packageCode, packageName: quote.packageName, totalAmount: quote.totalAmount, amountDueNow: quote.amountDueNow, payment: { method: "upi", mode: "prepaid", status: "created", detail: "sandbox" }, pricing: { discount: quote.discount, trainingQuoteId: quote.quoteId } };
+  const result = await post("canonical", cookie, body("canonical", OWNER, "KEY-CANONICAL", group, vehicle));
   assert.equal(result.status, 200);
   assert.equal(result.body.data.bookingId, "BK-CANONICAL-OWNER");
   assert.equal(result.body.data.duplicatePrevented, true);
@@ -226,9 +231,11 @@ test("canonical write-boundary: a non-unique constraint defect is not disguised 
   const group = "GROUP-CANONICAL-DEFECT";
   sqlite.prepare("INSERT INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,actor_id,reason,updated_at) VALUES (?,'governed','[]',?,'assigned','test','test',1)").run(group, PROVIDER);
   sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,1,1,NULL,'assigned','{}',1)")
-    .run("RES-CANONICAL-DEFECT", group, PROVIDER, "pet_sitting", "blr", "blr-central", OWNER, "[]", START, END);
+    .run("RES-CANONICAL-DEFECT", group, PROVIDER, VEHICLE_SERVICE_CODE, "blr", "blr-central", OWNER, "[]", START, END);
   controller.beforeBookingWrite = () => { throw new Error("NOT NULL constraint failed: canonical_bookings.city_id"); };
-  const result = await post("canonical", cookie, body("canonical", OWNER, "KEY-CANONICAL-DEFECT", group));
+  const quote = await governedVehicleQuote(db, { scheduledStart: START, petCount: 1 });
+  const vehicle = { packageCode: quote.packageCode, packageName: quote.packageName, totalAmount: quote.totalAmount, amountDueNow: quote.amountDueNow, payment: { method: "upi", mode: "prepaid", status: "created", detail: "sandbox" }, pricing: { discount: quote.discount, trainingQuoteId: quote.quoteId } };
+  const result = await post("canonical", cookie, body("canonical", OWNER, "KEY-CANONICAL-DEFECT", group, vehicle));
   assert.equal(result.status, 500);
   assert.match(result.body.error, /NOT NULL constraint failed/);
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings").get().n, 0);

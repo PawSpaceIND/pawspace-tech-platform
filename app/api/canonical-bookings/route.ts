@@ -171,6 +171,20 @@ export async function POST(request:Request){try{const input=await request.json()
   // history stays replayable, and before governance, quote/referral consumption, reservation reads and
   // every write, so a bad new payload costs nothing.
   const identityProblem=petIdentityProblem(input.pets);if(identityProblem)return json({error:identityProblem},400);
+  // Pet Sitting has no commercial governance ON THIS ROUTE, and never had: `governed` below is seeded
+  // from the client payload and is only overwritten for grooming, dog_training and boarding. A
+  // pet_sitting payload therefore persisted the caller's own packageCode, packageName, totalAmount and
+  // amountDueNow verbatim - the client priced its own booking.
+  //
+  // The governed Sitting path already exists in full and is the one every real caller uses
+  // (app/sitting/page.tsx and app/mobile-app/stay-flow.tsx via createCanonicalSittingBooking, plus the
+  // Layer 2 swarm): /api/sitting-bookings requires a server sittingQuoteId, requires a sandbox capture
+  // bound to that quote, and re-derives price, window, pet count, city/zone and payment mode from the
+  // quote row through governSittingBooking before linking and consuming it. Duplicating that here would
+  // mean a second Sitting booking path to keep in step; refusing costs nothing, because nothing legitimate
+  // arrives here. Refused before any reservation read, quote consumption or write - and AFTER the replay
+  // path above, so any historic pet_sitting row stays replayable.
+  if(input.serviceCode==="pet_sitting")return json({error:"A Pet Sitting booking must be confirmed through the governed Sitting route with a server Sitting quote"},409);
   const groomingAddOnPrices:Record<string,number>={"Tick & flea treatment":499,"Full-body oil massage":299};
   const submittedAddOns=(input.pricing.addOns??[]).map(value=>String(value));
   if(input.serviceCode!=="grooming"&&submittedAddOns.length)return json({error:"Add-ons are only supported for Grooming bookings"},409);
