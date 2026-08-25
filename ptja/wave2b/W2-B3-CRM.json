@@ -31,7 +31,10 @@
     "blast_radius": "Any customer whose communication_preferences row is touched by a staff preference write that does not restate every consent flag - including a channel-only change, a marketing-only change, or a service-updates-only change. One call per customer; a bulk preference tool would erase consent for a whole segment. It also silently destroys the consent record itself, so the prior decision cannot be recovered from this table afterwards.",
     "suggested_severity": "P1",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p02-consent-wipe.mjs",
-    "status": "OPEN"
+    "status": "FIXED",
+    "fix_file": "lib/communication-engine.ts",
+    "regression": "tests/ptja-w2b-consent-regressions.test.mjs :: \"W2B-C02: a channel-only preference write preserves the recorded opt-out\" + \"W2B-C02: an explicit consent change still applies, in both directions\"",
+    "fix_note": "The preference upsert now COALESCEs each consent column against its recorded value, so a field the caller never mentioned keeps what it had. The route deliberately distinguishes 'set to false' from 'not mentioned' by passing null, and the upsert was throwing that distinction away. An explicit change still applies in both directions."
   },
   {
     "id": "W2-B3-C03",
@@ -173,7 +176,10 @@
     "blast_radius": "Every customer whose consent decision was captured on one surface and whose outbound goes through the other. Both directions are live: /api/crm-automation, lib/haptik-outbound-governance.ts and lib/whatsapp-uat-adapter.ts see only customer_contact_preferences; /api/communications, the customer-reminder sweep, the lifecycle-reminder engine and the staff-alert case notifications all see only communication_preferences. Any campaign run through the CRM automation engine ignores every opt-out ever recorded on the communications preference API.",
     "suggested_severity": "P1",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p10-split-consent.mjs",
-    "status": "OPEN"
+    "status": "FIXED",
+    "fix_file": "lib/crm-automation-governance.ts",
+    "regression": "tests/ptja-w2b-consent-regressions.test.mjs :: \"W2B-C08: an opt-out recorded on the communications API blocks CRM automation too\" + \"W2B-C08: a customer who has opted in on both stores is still reachable\"",
+    "fix_note": "automationDecision now also consults communication_preferences: an opt-out recorded in EITHER store blocks. Neither table was made the winner, because picking one would silently discard the other's decisions; silence in a store is not an opt-out, so an opted-in customer stays reachable. This fails closed. NOTE the two stores still exist and are still written by different surfaces - unifying them is a data-model decision that is carried forward, not taken here."
   },
   {
     "id": "W2-B3-C09",
