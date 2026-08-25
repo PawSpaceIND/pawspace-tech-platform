@@ -208,7 +208,11 @@
     "blast_radius": "Every customer matched by the grooming-rebooking, subscription-unused-session and subscription-renewal sweeps - the whole eligible base each run - regardless of the state of the rule table. Both entry points are affected: POST /api/lifecycle-reminders run_now and POST /api/customer-reminders run_sweep_now call the same sweep, and the background scheduler runs it too.",
     "suggested_severity": "P2",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p11-lifecycle-rule-noop.mjs",
-    "status": "OPEN"
+    "status": "FIXED — grooming exactly; subscription pair at rule-set granularity",
+    "fix_file": "lib/customer-reminder-governance.ts",
+    "regression": "tests/ptja-w2b-consent-regressions.test.mjs :: \"W2B-C09: a deactivated grooming rebooking rule stops the sweep generating it\" + \"W2B-C09: an active rule still generates\"",
+    "fix_note": "runCustomerReminderSweep now consults lifecycle_reminder_rules before running each generator. The gate sits in the sweep rather than the engine because three entry points reach it - /api/lifecycle-reminders run_now, /api/customer-reminders run_sweep_now and the background scheduler - and only the first goes through the engine. The mapping is the platform's own: rule-grooming-rebook names the grooming generator, rule-subscription-unused / rule-subscription-renewal name the subscription one. A missing rule row means the cadence was never governed, which is not the same as paused, so it still runs.",
+    "carried_forward": "The subscription generator serves TWO rules and is skipped only when BOTH are inactive; deactivating one of that pair alone still runs it. Per-rule granularity there means teaching the generator which rule each reminder belongs to, which is a larger change than this correction and is recorded rather than half-done silently."
   },
   {
     "id": "W2-B3-C10",

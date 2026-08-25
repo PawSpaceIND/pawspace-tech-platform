@@ -277,3 +277,55 @@ test("W2B-C06: a genuinely overdue case at the real clock still notifies", async
   assert.ok(Number(real.customerNotifications?.attempted || 0) > 0,
     `a genuinely overdue case at the real clock still notifies: ${JSON.stringify(real.customerNotifications)}`);
 });
+
+// =====================================================================================================
+// PTJA-W2B-C09 — deactivating a lifecycle reminder rule does nothing
+//
+// runLifecycleReminderEngine calls runCustomerReminderSweep and then reads the rule table, but never
+// passes a rule, a filter or an active flag into it. generateGroomingRebookingReminders and
+// generateSubscriptionReminders never read lifecycle_reminder_rules at all.
+//
+// MEASURED: save_rule with active:false returned 200 with active:0, the directory read back active=0 -
+// and the very next run_now queued and delivered that exact reminder. Both entry points are affected,
+// POST /api/lifecycle-reminders run_now and POST /api/customer-reminders run_sweep_now call the same
+// sweep, and so does the background scheduler.
+//
+// The gate is therefore placed in runCustomerReminderSweep itself, so every entry point honours it. The
+// mapping is the platform's own: rule-grooming-rebook names the grooming rebooking generator, and
+// rule-subscription-unused / rule-subscription-renewal name the subscription one.
+//
+// LIMIT, stated: the subscription generator serves TWO rules, so it is skipped only when BOTH are
+// inactive. Deactivating one of the two alone still runs the generator - giving that pair per-rule
+// granularity means teaching the generator itself which rule each reminder belongs to, which is a
+// larger change than this correction. Recorded in the ledger rather than half-done silently.
+// =====================================================================================================
+
+async function reminderWorld() {
+  const { sqlite, db } = world();
+  const engine = await import("../lib/lifecycle-reminder-engine.ts");
+  await engine.ensureLifecycleReminderDefaults(db);
+  return { sqlite, db, engine };
+}
+
+test("W2B-C09: a deactivated grooming rebooking rule stops the sweep generating it", async () => {
+  const { db, sqlite } = await reminderWorld();
+  const reminders = await import("../lib/customer-reminder-governance.ts");
+  sqlite.prepare("UPDATE lifecycle_reminder_rules SET active=0 WHERE id='rule-grooming-rebook'").run();
+
+  const run = await reminders.runCustomerReminderSweep(db, { actorId: "ops" });
+  // A distinct signal: the result already carries `skipped` for other reasons, so asserting on that
+  // would have passed whatever the rule said.
+  assert.equal(run.grooming?.skippedInactiveRule, true,
+    `a deactivated rule must not generate: ${JSON.stringify(run.grooming)}`);
+});
+
+test("W2B-C09: an active rule still generates", async () => {
+  // Non-vacuity. Skipping unconditionally would satisfy the case above and silence every reminder.
+  const { db, sqlite } = await reminderWorld();
+  const reminders = await import("../lib/customer-reminder-governance.ts");
+  sqlite.prepare("UPDATE lifecycle_reminder_rules SET active=1 WHERE id='rule-grooming-rebook'").run();
+
+  const run = await reminders.runCustomerReminderSweep(db, { actorId: "ops" });
+  assert.notEqual(run.grooming?.skippedInactiveRule, true,
+    `an active rule must still run: ${JSON.stringify(run.grooming)}`);
+});
