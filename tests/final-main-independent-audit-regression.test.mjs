@@ -100,4 +100,6 @@ test("Revenue CRM GET remains observational and mutation sweeps stay behind expl
   }
   assert.match(source, /action===["']seed_uat["']/,
     "synthetic Revenue CRM data must require an explicit UAT-only write action");
+  assert.match(source, /action===["']refresh_leaderboard["']/,
+    "leaderboard recomputation must require an explicit staff write action");
 });
