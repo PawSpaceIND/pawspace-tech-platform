@@ -184,6 +184,14 @@ export async function applyIdfyCallback(db: Db, env: Env, input: { rawBody: stri
   // one value is used for the evidence record, the supersession reason and the returned outcome, so a
   // caller can never be told something the database does not say.
   const effective = text((await db.prepare("SELECT status FROM provider_verifications WHERE id=?").bind(text(row.id)).first<Row>())?.status) || outcome;
+  // A callback can REVOKE a mandated check, and the assignment pool has to hear about it. The matching
+  // engine reads provider_capacity_profiles and never provider_verifications, so without this a provider
+  // whose check IDfy just failed kept being offered work - the same defect as the manual revocation path,
+  // through the door IDfy actually uses. De-lists only when the mandate is genuinely unsatisfied, and
+  // never re-lists anybody. [PTJA-P1-F50]
+  const { syncProviderPoolEligibility } = await import("./provider-verification-mandate");
+  await syncProviderPoolEligibility(db, applicationId);
+
   // Recorded either way - a superseded callback is evidence that it arrived and was declined.
   await record(effective, true, effective === outcome ? null : `nonterminal_${outcome}_ignored_after_${effective}`, applicationId, verificationType);
   return { accepted: true, status: 200, applicationId, verificationType, outcome: effective, duplicate: false };

@@ -119,6 +119,39 @@ export async function requiredVerifications(db: Db, category: string): Promise<s
 
 /** Run one mandated check. Automatable types go through IDfy (fail-closed → stays 'pending'); manual
  * types are marked 'manual_review' awaiting an agent's recorded outcome. Idempotent per (application,type). */
+
+/**
+ * Keep the assignment pool honest about verification.
+ *
+ * A verification write used to end at the provider_verifications row. lib/provider-capacity-governance.ts
+ * loadGovernedProviders - the single pool feeder for scheduling, trainer lookup and the capacity-safe
+ * replacement engine - selects on city/live/status/zones/services and never reads provider_verifications,
+ * so revoking a mandated check left the staff checklist saying "not eligible" while the matching engine
+ * kept offering that provider work, including as the automatic replacement on a live booking. Nothing in
+ * lib/ or app/ de-listed a provider on revocation. [PTJA-P1-F50]
+ *
+ * The de-listing is the platform's own: the same live=0 drop a review-sensitive profile edit already
+ * performs, back to 'uat_ready' - activated, not on the map - which is the state addProviderToServiceMap
+ * accepts, so staff can re-map a remediated provider. ('uat_review' would be a dead end: nothing clears
+ * it.) Nothing here decides a revocation is permanent, and nothing re-lists anybody automatically.
+ *
+ * A provider with no onboarding application, or whose vertical has no category mandate defined, is left
+ * alone - there is no mandate to be out of compliance with, and the seeded UAT roster lives there.
+ */
+export async function syncProviderPoolEligibility(db: Db, applicationId: string) {
+  const id = text(applicationId);
+  if (!id) return { providerId: null, delisted: false };
+  const application = await db.prepare("SELECT provider_id,vertical_key FROM provider_onboarding_applications WHERE id=?").bind(id).first<Row>().catch(() => null);
+  const providerId = text(application?.provider_id);
+  if (!providerId) return { providerId: null, delisted: false };
+  const category = verificationCategoryForVertical(text(application?.vertical_key));
+  if (!category) return { providerId, delisted: false };
+  const status = await verificationMandateStatus(db, { applicationId: id, category }).catch(() => null);
+  if (!status || status.allVerified) return { providerId, delisted: false };
+  const result = await db.prepare("UPDATE provider_capacity_profiles SET live=0,status='uat_ready',version=version+1,updated_at=? WHERE id=? AND (live=1 OR status='active')").bind(Date.now(), providerId).run().catch(() => null);
+  return { providerId, delisted: Number(result?.meta?.changes || 0) > 0 };
+}
+
 export async function runProviderVerification(db: Db, env: Env, input: { applicationId: string; category: string; verificationType: string; payload?: Record<string, unknown>; actorId: string }) {
   await ensureVerificationMandateTables(db);
   const type = typeByCode(text(input.verificationType));
@@ -133,6 +166,7 @@ export async function runProviderVerification(db: Db, env: Env, input: { applica
   const id = uid("PVER");
   await db.prepare("INSERT INTO provider_verifications (id,application_id,category,verification_type,status,automated,provider_ref,detail_json,updated_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(application_id,verification_type) DO UPDATE SET status=excluded.status,automated=excluded.automated,provider_ref=COALESCE(excluded.provider_ref,provider_verifications.provider_ref),detail_json=excluded.detail_json,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
     .bind(id, applicationId, category, type.code, status, automated, providerRef, JSON.stringify(detail), input.actorId, now, now).run();
+  await syncProviderPoolEligibility(db, applicationId);
   return { applicationId, verificationType: type.code, status, automated: Boolean(automated), providerRef };
 }
 
@@ -145,6 +179,7 @@ export async function recordManualVerification(db: Db, input: { applicationId: s
   const now = Date.now();
   await db.prepare("INSERT INTO provider_verifications (id,application_id,category,verification_type,status,automated,detail_json,updated_by,created_at,updated_at) VALUES (?,?, '',?,?,0,?,?,?,?) ON CONFLICT(application_id,verification_type) DO UPDATE SET status=excluded.status,detail_json=excluded.detail_json,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
     .bind(uid("PVER"), text(input.applicationId), type.code, input.status, JSON.stringify({ manual: true, note: text(input.note) || null }), input.actorId, now, now).run();
+  await syncProviderPoolEligibility(db, text(input.applicationId));
   return { applicationId: text(input.applicationId), verificationType: type.code, status: input.status };
 }
 

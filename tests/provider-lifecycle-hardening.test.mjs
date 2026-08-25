@@ -384,6 +384,96 @@ test("P0-05: a post-activation edit cannot re-add an unverified service to the m
 });
 
 // ---------------------------------------------------------------------------
+// PTJA-P1-F50 — revoking a mandated check leaves the provider in the assignment pool
+//
+// Reproduced by execution against the post-P0 tree. recordManualVerification writes only the
+// provider_verifications row; it has no path to provider_capacity_profiles. loadGovernedProviders
+// selects purely on city / live / status / effective dates / services_json / zones_json and never
+// consults provider_verifications. So after a mandated house_verification is revoked to 'failed',
+// evaluateProviderActivation reports eligible:false with pending ['house_verification'] while the
+// matching engine keeps returning the provider - and nothing anywhere in lib/ or app/ sets
+// provider_capacity_profiles.live=0 or writes an unavailability row in response to a revocation.
+//
+// loadGovernedProviders is the single pool feeder for uat-scheduling, training-trainers and the
+// capacity-safe replacement engine, so a host whose home inspection just failed keeps receiving
+// assignment offers and can be auto-selected as the replacement for a live booking.
+//
+// The correction reuses the platform's own de-listing mechanism rather than inventing one: the same
+// live=0 drop that a review-sensitive profile edit already performs, returning the provider to
+// 'uat_ready', which is exactly the state addProviderToServiceMap expects for a provider who is
+// activated but not on the map. Nothing decides that a revoked check is permanent; staff can re-map
+// them once the mandate is satisfied again.
+// ---------------------------------------------------------------------------
+async function liveVerifiedHost(sqlite, db) {
+  const { applicationId, activation } = await readyApplication(db, sqlite, { verticalKey: "boarding" });
+  await completeInterviewAndProfile(db, sqlite, applicationId, activation, { services: ["boarding"] });
+  const mandate = await import("../lib/provider-verification-mandate.ts");
+  for (const type of ["aadhaar", "pan"]) {
+    await mandate.runProviderVerification(db, {}, { applicationId, category: "host", verificationType: type, actorId: OPS });
+    sqlite.prepare("UPDATE provider_verifications SET status='verified' WHERE application_id=? AND verification_type=?").run(applicationId, type);
+  }
+  for (const type of ["house_verification", "pet_proofing_photo"]) {
+    await mandate.recordManualVerification(db, { applicationId, verificationType: type, status: "verified", note: "Agent visited the home and confirmed", actorId: OPS });
+  }
+  const activated = await activation.activateProviderUat(db, { applicationId, actorEmail: OPS });
+  await activation.addProviderToServiceMap(db, { providerId: activated.providerId, zoneIds: ["blr-east"], actorEmail: OPS });
+  const capacity = await import("../lib/provider-capacity-governance.ts");
+  const inPool = async () => (await capacity.loadGovernedProviders(db, "blr", "blr-east", "boarding")).some((p) => p.id === activated.providerId);
+  return { applicationId, activation, mandate, activated, inPool };
+}
+
+test("P1-F50: revoking a mandated check takes the provider out of the assignment pool", async () => {
+  const { sqlite, db } = fresh();
+  const { applicationId, activation, mandate, activated, inPool } = await liveVerifiedHost(sqlite, db);
+  assert.equal(await inPool(), true, "the fully verified host starts in the pool");
+
+  await mandate.recordManualVerification(db, { applicationId, verificationType: "house_verification", status: "failed", note: "Re-inspection failed: unsafe balcony, dog escaped during the visit", actorId: OPS });
+
+  // The staff view already said this - the pool has to agree with it.
+  const evaluated = await activation.evaluateProviderActivation(db, { applicationId });
+  assert.equal(evaluated.eligible, false, "the staff checklist reports the provider as not eligible");
+  assert.equal(await inPool(), false, "and the matching engine must stop offering them work");
+
+  const row = sqlite.prepare("SELECT live,status FROM provider_capacity_profiles WHERE id=?").get(activated.providerId);
+  assert.equal(row.live, 0, "the provider is off the live map");
+  assert.equal(row.status, "uat_ready", "returned to activated-but-not-mapped, which is a state staff can act on");
+});
+
+test("P1-F50: a provider whose mandate is still satisfied is not de-listed by an unrelated write", async () => {
+  // Non-vacuity. De-listing on every verification write would satisfy the case above and would take
+  // every live provider off the map the moment anyone touched a check.
+  const { sqlite, db } = fresh();
+  const { applicationId, mandate, inPool } = await liveVerifiedHost(sqlite, db);
+  await mandate.recordManualVerification(db, { applicationId, verificationType: "house_verification", status: "verified", note: "Annual re-inspection passed", actorId: OPS });
+  assert.equal(await inPool(), true, "a re-confirmation must not knock a good provider off the map");
+});
+
+test("P1-F50: re-listing is available once the mandate is satisfied again", async () => {
+  // The de-listing must not be a dead end: 'uat_review' is, because addProviderToServiceMap refuses it
+  // and nothing clears it. 'uat_ready' is the state that has a way back.
+  const { sqlite, db } = fresh();
+  const { applicationId, activation, mandate, activated, inPool } = await liveVerifiedHost(sqlite, db);
+  await mandate.recordManualVerification(db, { applicationId, verificationType: "house_verification", status: "failed", note: "Unsafe balcony", actorId: OPS });
+  assert.equal(await inPool(), false);
+
+  await mandate.recordManualVerification(db, { applicationId, verificationType: "house_verification", status: "verified", note: "Balcony netted and re-inspected", actorId: OPS });
+  await activation.addProviderToServiceMap(db, { providerId: activated.providerId, zoneIds: ["blr-east"], actorEmail: OPS });
+  assert.equal(await inPool(), true, "a remediated provider can be put back on the map by staff");
+});
+
+test("P1-F50: a provider with no onboarding application is left alone", async () => {
+  // The seeded UAT roster has no applications and no verification records. Whether those fixtures
+  // should be in the pool at all is an operations decision about the seed data, not this fix's call.
+  const { sqlite, db } = fresh();
+  const { applicationId, mandate } = await liveVerifiedHost(sqlite, db);
+  const capacity = await import("../lib/provider-capacity-governance.ts");
+  const seededBefore = (await capacity.loadGovernedProviders(db, "blr", "blr-east", "boarding")).map((p) => p.id).filter((id) => !id.startsWith("PROV-"));
+  await mandate.recordManualVerification(db, { applicationId, verificationType: "house_verification", status: "failed", note: "Unsafe balcony", actorId: OPS });
+  const seededAfter = (await capacity.loadGovernedProviders(db, "blr", "blr-east", "boarding")).map((p) => p.id).filter((id) => !id.startsWith("PROV-"));
+  assert.deepEqual(seededAfter, seededBefore, "one application's revocation must not touch anybody else");
+});
+
+// ---------------------------------------------------------------------------
 // 4. Post-activation edits: sensitive changes drop the provider off the map.
 // ---------------------------------------------------------------------------
 test("changing service areas after activation takes the provider off the live map for re-review", async () => {
