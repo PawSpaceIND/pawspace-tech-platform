@@ -98,7 +98,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/training-payment-sandbox")return "scheduling.book";
   if(url.pathname==="/api/training-cancellation"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action)==="request"?"scheduling.book":"finance.manage";}
   if(url.pathname==="/api/training-customer-session-change")return "scheduling.book";
-  if(url.pathname==="/api/training-ops")return "bookings.view";
+  if(url.pathname==="/api/training-ops")return "bookings.manage";
   if(url.pathname==="/api/training-provider-earnings")return "bookings.view";
   if(url.pathname==="/api/training-reconciliation")return "reports.view";
   if(url.pathname==="/api/marketing-control")return method==="GET"?"marketing.view":"marketing.manage";
@@ -113,32 +113,32 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/walking-lifecycle"){if(method==="GET")return url.searchParams.get("scope")==="customer"?"scheduling.book":"bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");return action==="no_show"?"bookings.manage":"bookings.view";}
   if(url.pathname==="/api/walking-finance"){if(method==="GET")return "finance.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");return action==="request_cancel"?"scheduling.book":"finance.manage";}
   if(url.pathname==="/api/walking-proof"){if(method==="GET")return url.searchParams.get("scope")==="customer"?"scheduling.book":"bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");if(action==="acknowledge_incident")return "scheduling.book";if(["sandbox_finalize_media","record_media_scan","revoke_media","resolve_incident"].includes(action))return "bookings.manage";return "bookings.view";}
-  if(url.pathname==="/api/walking-ops")return method==="GET"?"bookings.view":"bookings.manage";
+  if(url.pathname==="/api/walking-ops")return "bookings.manage";
   if(url.pathname==="/api/walking-recovery")return "bookings.view";
   if(url.pathname==="/api/taxi-bookings")return "scheduling.book";
   if(url.pathname==="/api/taxi-lifecycle"){if(method==="GET")return url.searchParams.get("scope")==="customer"?"scheduling.book":"bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action)==="no_show"?"bookings.manage":"bookings.view";}
   if(url.pathname==="/api/taxi-finance"){if(method==="GET")return "finance.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action)==="request_cancel"?"scheduling.book":"finance.manage";}
   if(url.pathname==="/api/taxi-proof"){if(method==="GET")return url.searchParams.get("scope")==="customer"?"scheduling.book":"bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");if(action==="acknowledge_incident")return "scheduling.book";if(["sandbox_finalize_media","record_media_scan","revoke_media","resolve_incident"].includes(action))return "bookings.manage";return "bookings.view";}
-  if(url.pathname==="/api/taxi-ops")return method==="GET"?"bookings.view":"bookings.manage";
+  if(url.pathname==="/api/taxi-ops")return "bookings.manage";
   if(url.pathname==="/api/taxi-recovery")return "bookings.view";
   if(url.pathname==="/api/food-orders")return "scheduling.book";
   if(url.pathname==="/api/food-subscriptions"){if(method==="GET")return "scheduling.book";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");return ["process_due","record_payment"].includes(action)?"finance.manage":"scheduling.book";}
   if(url.pathname==="/api/food-fulfilment"){if(method==="GET")return url.searchParams.get("scope")==="customer"?"scheduling.book":"bookings.view";return "bookings.manage";}
   if(url.pathname==="/api/food-finance"){if(method==="GET")return "finance.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action)==="request_cancel"?"scheduling.book":"finance.manage";}
   if(url.pathname==="/api/food-proof"){if(method==="GET")return url.searchParams.get("scope")==="customer"?"scheduling.book":"bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");return action==="acknowledge_incident"?"scheduling.book":"bookings.manage";}
-  if(url.pathname==="/api/food-ops")return method==="GET"?"bookings.view":"bookings.manage";
-  if(url.pathname==="/api/food-supply-chain")return method==="GET"?"bookings.view":"bookings.manage";
+  if(url.pathname==="/api/food-ops")return "bookings.manage";
+  if(url.pathname==="/api/food-supply-chain")return "bookings.manage";
   if(url.pathname==="/api/relocation"){if(method==="GET")return url.searchParams.get("scope")==="customer"?"scheduling.book":"bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"create");if(["create","register_document","accept_quote","request_refund","open_support"].includes(action))return "scheduling.book";if(["record_payment","resolve_refund"].includes(action))return "finance.manage";return "bookings.manage";}
   if(url.pathname==="/api/funeral-memorial"){if(method==="GET"){if(url.searchParams.get("config")==="1")return "pricing.view";if(url.searchParams.get("report")==="summary")return "reports.view";return url.searchParams.get("scope")==="customer"?"scheduling.book":"bookings.view";}const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"create");if(action==="save_service_config")return "pricing.manage";if(["create","register_customer_media","schedule_ash_collection","request_refund","open_support"].includes(action))return "scheduling.book";if(["set_service_amount","record_payment","resolve_refund"].includes(action))return "finance.manage";return "bookings.manage";}
   if(url.pathname==="/api/sitting-payment-sandbox"||url.pathname==="/api/sitting-bookings")return "scheduling.book";
   if(url.pathname==="/api/sitting-lifecycle"){if(method==="GET")return url.searchParams.get("scope")==="customer"?"scheduling.book":"bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");if(action==="submit_care_plan")return "scheduling.book";if(action==="no_show")return "bookings.manage";return "bookings.view";}
   if(url.pathname==="/api/sitting-finance"){if(method==="GET")return "finance.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");return ["request_cancel","request_date_change"].includes(action)?"scheduling.book":"finance.manage";}
   if(url.pathname==="/api/sitting-proof"){if(method==="GET")return url.searchParams.get("scope")==="customer"?"scheduling.book":"bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");if(action==="acknowledge_incident")return "scheduling.book";if(["sandbox_finalize_media","record_media_scan","revoke_media","resolve_incident"].includes(action))return "bookings.manage";return "bookings.view";}
-  if(url.pathname==="/api/sitting-ops")return method==="GET"?"bookings.view":"bookings.manage";
+  if(url.pathname==="/api/sitting-ops")return "bookings.manage";
   if(url.pathname==="/api/boarding-stays"){if(method==="GET")return url.searchParams.get("scope")==="customer"?"scheduling.book":"bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");if(["submit_care_plan","request_extension"].includes(action))return "scheduling.book";if(action==="no_show")return "bookings.manage";return "bookings.view";}
   if(url.pathname==="/api/boarding-finance"){if(method==="GET")return "finance.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");return ["request_cancel","request_date_change"].includes(action)?"scheduling.book":"finance.manage";}
   if(url.pathname==="/api/boarding-proof"){if(method==="GET")return url.searchParams.get("scope")==="customer"?"scheduling.book":"bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");if(action==="acknowledge_incident")return "scheduling.book";if(["sandbox_finalize_media","record_media_scan","revoke_media","resolve_incident"].includes(action))return "bookings.manage";return "bookings.view";}
-  if(url.pathname==="/api/boarding-ops")return method==="GET"?"bookings.view":"bookings.manage";
+  if(url.pathname==="/api/boarding-ops")return "bookings.manage";
   if(url.pathname==="/api/scheduling-rules")return method==="GET"?"scheduling.view":"scheduling.manage";
   if(url.pathname==="/api/launch-readiness")return method==="GET"?"launch.view":"launch.manage";
   if(url.pathname==="/api/city-governance")return method==="GET"?"launch.view":"launch.manage";
