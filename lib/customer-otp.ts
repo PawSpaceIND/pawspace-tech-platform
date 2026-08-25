@@ -56,16 +56,18 @@ export async function verifyCustomerOtp(db:Db,input:{challengeId:string;code:str
    // Two separately-issued OTP challenges for one phone can be verified concurrently. A random ID
    // allowed both requests to create customer truth after both observed the initial lookup as empty.
    // The phone-derived hash avoids embedding the plaintext phone in the ID and makes the primary-key
-   // insert the atomic identity claim.
-   const id=await canonicalOtpCustomerId(phone),now=Date.now();
+   // insert the atomic identity claim. canonical_customers.city_id is historically NOT NULL, so an
+   // identity created before location capture uses the explicit neutral sentinel "unassigned" rather
+   // than silently becoming Bengaluru. Location-specific flows must replace it with a real city.
+   const id=await canonicalOtpCustomerId(phone),now=Date.now(),cityId=text(input.cityId)||"unassigned";
    await db.prepare("INSERT OR IGNORE INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,NULL,NULL,'customer_app_otp','{}',?,?)")
-     .bind(id,input.cityId||"blr",text(input.name)||"PawSpace Customer",phone,now,now).run();
+     .bind(id,cityId,text(input.name)||"PawSpace Customer",phone,now,now).run();
    customer=await db.prepare("SELECT id,name,primary_phone,city_id FROM canonical_customers WHERE id=?").bind(id).first<Row>();
    if(!customer||text(customer.primary_phone)!==phone)throw new Error("Canonical customer identity conflict - human review required");
  }
  const now=Date.now(),nonce=uid("NONCE"),payload:AssertionPayload={
    v:1,identitySource:"customer_otp",principalType:"identity_subject",principalKey:phone,
-   subjectType:"customer",subjectId:text(customer.id),cityId:text(customer.city_id)||null,
+   subjectType:"customer",subjectId:text(customer.id),cityId:text(customer.city_id)&&text(customer.city_id)!=="unassigned"?text(customer.city_id):null,
    issuedAt:now,expiresAt:now+120000,nonce,
  };
  // bind the app install to this identified customer (funnel: installed -> identified). Best-effort.
