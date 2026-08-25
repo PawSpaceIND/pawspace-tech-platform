@@ -71,13 +71,10 @@ jobs:
           replace_once('tests/people-partner-hardening.test.mjs', '  globalThis.__PAWSPACE_TEST_ENV = { DB: db };', '  globalThis.__PAWSPACE_TEST_ENV = { DB: db, PAWSPACE_UAT_LOGIN: "on", PAWSPACE_UAT_SIGNING_KEY: "people-partner-hardening-uat-signing-key-2026" };')
           replace_once('tests/people-partner-hardening.test.mjs', '  // First real GET bootstraps the CRM tables, seeds UAT leads and writes provisional leaderboard rows.\n  const first = await revenueCrmRoute.GET(new Request("http://localhost/api/revenue-crm"));\n  assert.equal(first.status, 200);', '  // UAT seed is an explicit write; GET remains observational.\n  const seeded = await revenueCrmRoute.POST(new Request("http://localhost/api/revenue-crm", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "seed_uat" }) }));\n  assert.equal(seeded.status, 200);\n  const first = await revenueCrmRoute.GET(new Request("http://localhost/api/revenue-crm"));\n  assert.equal(first.status, 200);')
           replace_once('tests/people-partner-hardening.test.mjs', '  const second = await revenueCrmRoute.GET(new Request("http://localhost/api/revenue-crm"));\n  assert.equal(second.status, 200);', '  const refreshed = await revenueCrmRoute.POST(new Request("http://localhost/api/revenue-crm", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "refresh_leaderboard" }) }));\n  assert.equal(refreshed.status, 200);\n  const second = await revenueCrmRoute.GET(new Request("http://localhost/api/revenue-crm"));\n  assert.equal(second.status, 200);')
-          replace_once('tests/final-main-independent-audit-regression.test.mjs', '  assert.match(source, /action===["\' ]seed_uat["\' ]/.source.replaceAll(" ", ""),\n    "synthetic Revenue CRM data must require an explicit UAT-only write action");' if False else '___NEVER___', '___NEVER___')
           PY
 
-          # Restore both workflows so the resulting head contains no diagnostic/patch workflow changes.
           git checkout c1a48154ef2ff430ab215301a32f842dc059f50d -- .github/workflows/closure-ci.yml
           rm -f .github/workflows/pr320-final-closure-patch.yml
-
           git config user.name "PawSpace CI Closure"
           git config user.email "ci-closure@pawspace.in"
           git add -A
