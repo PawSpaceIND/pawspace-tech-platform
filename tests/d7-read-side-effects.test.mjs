@@ -39,14 +39,27 @@ const workQueue=await import("../app/api/ops-work-queue/route.ts");
 
 async function json(response){return {status:response.status,body:await response.json()};}
 
-test("D7 runtime: scheduling GET on a cold DB returns an empty board without creating or seeding tables", async()=>{
+// The authorization substrate is the one thing a guarded route unavoidably provisions: resolveActor
+// (lib/server-auth.ts) calls ensureSecurityTables before it can decide anything, so EVERY guarded route
+// creates these tables on a cold database. This GET used to create nothing only because it was not
+// guarded at all - it answered 200 to an anonymous caller with the whole day board, every reservation's
+// group, provider, service, zone and CUSTOMER ID (PTJA-P1-F36). It is guarded now.
+//
+// So the invariant this test protects is stated as what it always meant: a READ must not create or seed
+// DOMAIN tables. Anything outside the identity substrate below still fails here, and the two explicit
+// checks that no scheduling_* table and no provider_capacity_profiles appear are unchanged.
+const IDENTITY_SUBSTRATE=["app_users","customer_identity_links","identity_binding_audit","identity_bindings","provider_identity_links","role_definitions","security_audit_events"];
+
+test("D7 runtime: scheduling GET on a cold DB returns an empty board without creating or seeding domain tables", async()=>{
   freshDb();
   const before=tableNames();
   const result=await json(await scheduling.GET(new Request("http://localhost/api/uat-scheduling?date=2026-09-01")));
   assert.equal(result.status,200,JSON.stringify(result.body));
   assert.deepEqual(result.body.data.providers,[]);
   assert.equal(result.body.data.total,0);
-  assert.deepEqual(tableNames(),before,"GET must not CREATE scheduling/provider/security tables on a cold DB");
+  const created=tableNames().filter(name=>!before.includes(name));
+  const domain=created.filter(name=>!IDENTITY_SUBSTRATE.includes(name));
+  assert.deepEqual(domain,[],`GET must not CREATE scheduling/provider domain tables on a cold DB: ${domain.join(", ")}`);
   assert.equal(tableNames().some(name=>name.startsWith("scheduling_")),false);
   assert.equal(tableNames().includes("provider_capacity_profiles"),false);
 });

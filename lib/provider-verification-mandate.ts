@@ -30,6 +30,10 @@ export const VERIFICATION_TYPES: VerificationType[] = [
 const typeByCode = (c: string) => VERIFICATION_TYPES.find(t => t.code === c) || null;
 export const PROVIDER_CATEGORIES = ["groomer", "pet_sitter", "trainer", "host"];
 
+/** The two outcomes that are a DECISION about a check. Kept identical to TERMINAL_VERIFICATION_STATUSES
+ *  in lib/idfy-callback-boundary.ts, which enforces the same rule on the callback path. */
+const TERMINAL_VERIFICATION_OUTCOMES = ["verified", "failed"];
+
 /**
  * Which mandate category an onboarding application's vertical belongs to. The onboarding application
  * carries a service vertical_key ("grooming"), while mandates are defined per provider category
@@ -98,8 +102,16 @@ export async function setCategoryMandate(db: Db, input: { category: string; veri
   const types = requested;
   if (!types.length) throw new Error("At least one valid verification type is required");
   const now = Date.now();
-  await db.prepare("DELETE FROM provider_category_verification_mandates WHERE category=?").bind(category).run();
-  for (const t of types) await db.prepare("INSERT INTO provider_category_verification_mandates (category,verification_type,required,updated_by,updated_at) VALUES (?,?,1,?,?)").bind(category, t, input.actorId, now).run();
+  // ONE batch. The DELETE and the INSERTs used to be separate un-batched statements, so a request that
+  // failed partway through the loop - a duplicate entry hitting PRIMARY KEY(category,verification_type)
+  // - answered 500 while the category was left holding only the rows inserted before the failure. It
+  // never healed: seedDefaultMandates skips any category that still has a row, by design, so the deleted
+  // requirements were gone for good and providers stopped being asked for checks nobody had removed on
+  // purpose. A rejected mandate change must leave the mandate exactly as it was. [PTJA-P0-04]
+  await db.batch([
+    db.prepare("DELETE FROM provider_category_verification_mandates WHERE category=?").bind(category),
+    ...types.map(t => db.prepare("INSERT INTO provider_category_verification_mandates (category,verification_type,required,updated_by,updated_at) VALUES (?,?,1,?,?)").bind(category, t, input.actorId, now)),
+  ]);
   return { category, verificationTypes: types };
 }
 
@@ -111,6 +123,39 @@ export async function requiredVerifications(db: Db, category: string): Promise<s
 
 /** Run one mandated check. Automatable types go through IDfy (fail-closed → stays 'pending'); manual
  * types are marked 'manual_review' awaiting an agent's recorded outcome. Idempotent per (application,type). */
+
+/**
+ * Keep the assignment pool honest about verification.
+ *
+ * A verification write used to end at the provider_verifications row. lib/provider-capacity-governance.ts
+ * loadGovernedProviders - the single pool feeder for scheduling, trainer lookup and the capacity-safe
+ * replacement engine - selects on city/live/status/zones/services and never reads provider_verifications,
+ * so revoking a mandated check left the staff checklist saying "not eligible" while the matching engine
+ * kept offering that provider work, including as the automatic replacement on a live booking. Nothing in
+ * lib/ or app/ de-listed a provider on revocation. [PTJA-P1-F50]
+ *
+ * The de-listing is the platform's own: the same live=0 drop a review-sensitive profile edit already
+ * performs, back to 'uat_ready' - activated, not on the map - which is the state addProviderToServiceMap
+ * accepts, so staff can re-map a remediated provider. ('uat_review' would be a dead end: nothing clears
+ * it.) Nothing here decides a revocation is permanent, and nothing re-lists anybody automatically.
+ *
+ * A provider with no onboarding application, or whose vertical has no category mandate defined, is left
+ * alone - there is no mandate to be out of compliance with, and the seeded UAT roster lives there.
+ */
+export async function syncProviderPoolEligibility(db: Db, applicationId: string) {
+  const id = text(applicationId);
+  if (!id) return { providerId: null, delisted: false };
+  const application = await db.prepare("SELECT provider_id,vertical_key FROM provider_onboarding_applications WHERE id=?").bind(id).first<Row>().catch(() => null);
+  const providerId = text(application?.provider_id);
+  if (!providerId) return { providerId: null, delisted: false };
+  const category = verificationCategoryForVertical(text(application?.vertical_key));
+  if (!category) return { providerId, delisted: false };
+  const status = await verificationMandateStatus(db, { applicationId: id, category }).catch(() => null);
+  if (!status || status.allVerified) return { providerId, delisted: false };
+  const result = await db.prepare("UPDATE provider_capacity_profiles SET live=0,status='uat_ready',version=version+1,updated_at=? WHERE id=? AND (live=1 OR status='active')").bind(Date.now(), providerId).run().catch(() => null);
+  return { providerId, delisted: Number(result?.meta?.changes || 0) > 0 };
+}
+
 export async function runProviderVerification(db: Db, env: Env, input: { applicationId: string; category: string; verificationType: string; payload?: Record<string, unknown>; actorId: string }) {
   await ensureVerificationMandateTables(db);
   const type = typeByCode(text(input.verificationType));
@@ -122,9 +167,29 @@ export async function runProviderVerification(db: Db, env: Env, input: { applica
     if (!idfyConfigured(env)) { status = "pending"; detail = { reason: "IDfy not connected - check queued until verification is switched on" }; }
     else { const r = await verifyWithIdfy(env, { checkType: type.code, referenceId: `${applicationId}:${type.code}`, payload: input.payload || {} }); automated = 1; if (r.connected) { status = r.status; providerRef = r.reference; detail = { via: "idfy" }; } else { status = "pending"; detail = { reason: r.reason }; } }
   } else { status = "manual_review"; detail = { reason: "Manual/agent verification required (photo or physical check)" }; }
+  // A NON-DECISION MAY NOT OVERWRITE A DECISION.
+  //
+  // The upsert below sets status and detail_json unconditionally, so re-running this path over a check a
+  // human had already resolved replaced 'failed' with 'manual_review' and replaced the inspector's note
+  // with the generic "Manual/agent verification required" string. There is no verification history table
+  // and the security-audit detail never carries the note, so a failed physical inspection - and the
+  // reason for it - was gone from the database entirely, leaving an innocuous "awaiting review" for the
+  // next agent to resolve in good faith.
+  //
+  // This is lib/idfy-callback-boundary.ts's own rule, applied to its sibling path: a terminal outcome may
+  // overwrite anything (failed -> verified is a correction, verified -> failed a revocation, and both are
+  // somebody's judgement), but a non-terminal one may only write over a check nobody has decided yet.
+  // Nothing here decides what a failure means or how long it stands. [PTJA-P1-F51]
+  if (!TERMINAL_VERIFICATION_OUTCOMES.includes(status)) {
+    const decided = await db.prepare("SELECT status,automated,provider_ref FROM provider_verifications WHERE application_id=? AND verification_type=?").bind(applicationId, type.code).first<Row>().catch(() => null);
+    const standing = text(decided?.status);
+    if (TERMINAL_VERIFICATION_OUTCOMES.includes(standing))
+      return { applicationId, verificationType: type.code, status: standing, automated: Number(decided?.automated) === 1, providerRef: decided?.provider_ref ? text(decided.provider_ref) : null };
+  }
   const id = uid("PVER");
   await db.prepare("INSERT INTO provider_verifications (id,application_id,category,verification_type,status,automated,provider_ref,detail_json,updated_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(application_id,verification_type) DO UPDATE SET status=excluded.status,automated=excluded.automated,provider_ref=COALESCE(excluded.provider_ref,provider_verifications.provider_ref),detail_json=excluded.detail_json,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
     .bind(id, applicationId, category, type.code, status, automated, providerRef, JSON.stringify(detail), input.actorId, now, now).run();
+  await syncProviderPoolEligibility(db, applicationId);
   return { applicationId, verificationType: type.code, status, automated: Boolean(automated), providerRef };
 }
 
@@ -137,6 +202,7 @@ export async function recordManualVerification(db: Db, input: { applicationId: s
   const now = Date.now();
   await db.prepare("INSERT INTO provider_verifications (id,application_id,category,verification_type,status,automated,detail_json,updated_by,created_at,updated_at) VALUES (?,?, '',?,?,0,?,?,?,?) ON CONFLICT(application_id,verification_type) DO UPDATE SET status=excluded.status,detail_json=excluded.detail_json,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
     .bind(uid("PVER"), text(input.applicationId), type.code, input.status, JSON.stringify({ manual: true, note: text(input.note) || null }), input.actorId, now, now).run();
+  await syncProviderPoolEligibility(db, text(input.applicationId));
   return { applicationId: text(input.applicationId), verificationType: type.code, status: input.status };
 }
 

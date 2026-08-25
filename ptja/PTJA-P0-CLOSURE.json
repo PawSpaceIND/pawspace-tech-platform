@@ -1,0 +1,81 @@
+{
+  "frozen_findings": 55,
+  "p0_batch": 7,
+  "verification_rule": "CONFIRMED only where two independent blind verifiers reproduced the same canonical failure. All 7 met that bar before any production line was changed.",
+  "base": "main 53101a1f",
+  "branch": "ptja/master-audit",
+  "closures": [
+    {
+      "id": "PTJA-P0-01",
+      "title": "A package price is charged outside its own effective window",
+      "disposition": "FIXED",
+      "commit": "e6e9a8b",
+      "production_change": "lib/live-pricing-resolver.ts - resolveLivePrice now judges effective_from/effective_to against the BOOKING date, reusing activeOn() semantics already applied to dynamic_pricing_rules.",
+      "measured_before": "A 2027-only price (5555) quoted and enforced for a 2026 stay; a price retired 2025-06-30 still charged in 2026. The grooming booking path enforced it: true price 1899 -> 409, not-yet-effective 4999 -> 201.",
+      "regression": "tests/ptja-p0-regressions.test.mjs, 6 cases including two non-vacuity controls",
+      "invention": "none - the window test already existed for pricing rules; only the package row was exempt"
+    },
+    {
+      "id": "PTJA-P0-02",
+      "title": "A Pet Sitting booking on /api/canonical-bookings is priced entirely by the client",
+      "disposition": "FIXED",
+      "commit": "ff53fd5",
+      "production_change": "app/api/canonical-bookings/route.ts refuses serviceCode pet_sitting toward the governed Sitting route, after the replay lookup and before any read or write. The unreachable client-priced split-payment branch is removed.",
+      "measured_before": "A real customer session posted a pet_sitting booking with an invented total and received 201; canonical_bookings.total_amount and booking_payments.amount held the client's number for a stay whose only governed price is Rs 399.",
+      "regression": "tests/ptja-p0-regressions.test.mjs - refusal with zero writes and untouched quote, governed route still books at 399, scoping control, replayability control",
+      "invention": "none - the governed path (/api/sitting-bookings, governSittingBooking) already existed and is what every real caller uses",
+      "test_debt_paid": "three suites used pet_sitting as their vehicle for a cheap 201 precisely because it was ungoverned; re-pointed at tests/helpers/governed-canonical-vehicle.mjs, a real server Training quote"
+    },
+    {
+      "id": "PTJA-P0-03",
+      "title": "A Grooming policy created with an unrecognised enforcement mode silently becomes observe",
+      "disposition": "FIXED",
+      "commit": "f721df8",
+      "production_change": "app/api/grooming-commercial-policy/route.ts - PATCH's own validation extracted to policyFieldProblem() and applied to the values POST binds.",
+      "measured_before": "enforcementMode 'Enforce' accepted 201 and stored verbatim; a customer cancelling 59 minutes before the appointment, inside a 1440-minute cutoff on a policy configured for 0% after cutoff, received refundPercent 100 and a full Rs 1899 refund.",
+      "regression": "tests/ptja-p0-regressions.test.mjs - five unrecognised modes refused, both recognised modes still accepted, and the refund consequence executed through the real resolver and evaluator",
+      "invention": "none - the allow-lists and bounds are PATCH's own"
+    },
+    {
+      "id": "PTJA-P0-04",
+      "title": "A rejected set_mandate destroys the category's verification mandate",
+      "disposition": "FIXED",
+      "commit": "19df8e7",
+      "production_change": "lib/provider-verification-mandate.ts - setCategoryMandate's DELETE and INSERTs are one db.batch.",
+      "measured_before": "set_mandate host ['aadhaar','aadhaar','pan'] -> 500, and the host mandate left holding 'aadhaar' alone. It never healed: seedDefaultMandates skips any category that still carries a row. A host missing house_verification and pet_proofing_photo flipped from canTakeAssignments=false to true.",
+      "regression": "tests/ptja-p0-regressions.test.mjs - rejected duplicate leaves all four requirements, read back through the enforcement path; other rejection paths equally non-destructive; accepted set_mandate still replaces the set",
+      "invention": "none - atomicity only; the request still fails"
+    },
+    {
+      "id": "PTJA-P0-05",
+      "title": "A provider's self-declared services list becomes their matching scope",
+      "disposition": "FIXED",
+      "commit": "a479e09",
+      "production_change": "lib/provider-onboarding-human-activation.ts - verifiedMatchingScope() keeps a declared service only if the category mandate the platform already defines for it is satisfied for that application. Applied at both writes of services_json.",
+      "measured_before": "A grooming application with only aadhaar and pan verified activated with the checklist consulting groomer alone, and loadGovernedProviders then returned the provider for grooming, boarding, pet_sitting and dog_training alike. One verifier reserved a real pet_sitting slot with them.",
+      "regression": "tests/provider-lifecycle-hardening.test.mjs - matchable for grooming alone, verified per service through loadGovernedProviders; non-vacuity control that a fully verified host is still matchable; post-activation edit cannot re-add an unverified claim",
+      "invention": "none - VERIFICATION_CATEGORY_BY_VERTICAL and verificationMandateStatus are the platform's own"
+    },
+    {
+      "id": "PTJA-P0-06",
+      "title": "A boarding host's customer-facing KYC badge is a seed constant",
+      "disposition": "PARTIALLY FIXED - the false claim is closed, the unbuilt half is reported",
+      "commit": "1b9b698",
+      "production_change": "lib/host-badges.ts - the KYC and Verified Home badges now need BOTH the operator's host record AND the platform's evidence: the host mandate satisfied for that provider's onboarding application, and the mandated house_verification specifically.",
+      "measured_before": "GET /api/host-trust?hostProviderId=host_maya_rohan, ANONYMOUS, returned {\"kycVerified\":true,\"homeVerified\":true} with badges kyc-verified and verified-home for a provider with zero verification records.",
+      "not_fixed": "Host eligibility for BOOKING still reads the seed columns (assertHostEligible, boarding-host-discovery, boarding-stay-lifecycle, boarding-finance-governance). Changing that would make the seeded UAT hosts unbookable - an operations decision about the fixtures, not an engineering one.",
+      "reported_as_blocker": "No code path in lib/ or app/ ever inserts into boarding_host_profiles other than the hardcoded seed, so a real host who clears the whole mandate is refused by governBoardingBooking. Building that path needs area, species, guest capacity, one-family and medication answers onboarding does not collect.",
+      "invention": "none - and deliberately no KYC policy decided"
+    },
+    {
+      "id": "PTJA-P0-07",
+      "title": "An IDfy event id replayed with a different outcome is answered as a duplicate",
+      "disposition": "FIXED",
+      "commit": "6981401",
+      "production_change": "lib/idfy-callback-boundary.ts - the replay check compares the stored payload_sha256. Same id, same payload is a duplicate (200). Same id, different payload is refused 409 and recorded under a derived id so the accepted delivery is preserved.",
+      "measured_before": "call 1 verified -> 200 verified; call 2, same event id, correctly signed, saying not_verified -> 200 outcome VERIFIED duplicate:true, provider_verifications unchanged. Control: the identical revocation under a NEW event id IS applied, so only the event-id key blocked it. The caller is anonymous - the only credential is the shared webhook secret.",
+      "regression": "tests/lane2-core-integration-boundaries.test.mjs - contradiction refused with both rows readable, genuine redelivery still answered 200 duplicate, and the verifiers' own new-event-id revocation control",
+      "invention": "none - no live IDfy connection; absent secret still means 503 with nothing accepted"
+    }
+  ]
+}

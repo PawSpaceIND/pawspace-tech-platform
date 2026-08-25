@@ -109,8 +109,25 @@ export async function applyIdfyCallback(db: Db, env: Env, input: { rawBody: stri
   // poisoned that id: the 404 recorded the event, IDfy retried once the row was readable, and the retry
   // matched here and was answered `{accepted:true, status:200, outcome:"unmatched"}` - so the provider
   // stopped retrying, the response claimed success, and the verification stayed manual_review forever.
-  const seen = await db.prepare("SELECT application_id,verification_type,outcome FROM provider_verification_callbacks WHERE provider_event_id=? AND accepted=1").bind(eventId).first<Row>();
-  if (seen) return { accepted: true, status: 200, applicationId: text(seen.application_id), verificationType: text(seen.verification_type), outcome: text(seen.outcome), duplicate: true };
+  //
+  // A duplicate is the SAME event carrying the SAME content. Matching on the event id alone meant a
+  // second correctly-signed, fresh delivery bearing that id and the OPPOSITE outcome was answered
+  // 200 {ok:true, outcome:"verified", duplicate:true} - a revocation answered success, reporting the
+  // outcome it had just contradicted, with provider_verifications untouched. The payload hash is
+  // already computed and already stored; it decides which of the two this is. [PTJA-P0-07]
+  //
+  // A same-id-different-payload delivery is NOT applied as a new outcome either: a real revocation
+  // carries its own event id (and is applied - the monotonicity rule permits verified -> failed), so an
+  // id contradicting itself is the provider disagreeing with its own record. It is refused 409, and
+  // recorded under a derived id so the accepted delivery that actually took effect is preserved beside
+  // it rather than overwritten.
+  const seen = await db.prepare("SELECT application_id,verification_type,outcome,payload_sha256 FROM provider_verification_callbacks WHERE provider_event_id=? AND accepted=1").bind(eventId).first<Row>();
+  if (seen && text(seen.payload_sha256) === payloadHash) return { accepted: true, status: 200, applicationId: text(seen.application_id), verificationType: text(seen.verification_type), outcome: text(seen.outcome), duplicate: true };
+  if (seen) {
+    await db.prepare("INSERT OR IGNORE INTO provider_verification_callbacks (id,provider_event_id,provider_ref,application_id,verification_type,outcome,accepted,rejection_reason,payload_sha256,received_at) VALUES (?,?,?,?,?,?,0,?,?,?)")
+      .bind(`IDFYCB-${crypto.randomUUID().slice(0, 12).toUpperCase()}`, `${eventId}#conflict:${payloadHash.slice(0, 16)}`, providerRef, text(seen.application_id) || null, text(seen.verification_type) || null, "conflicting_payload", "event_id_replayed_with_a_different_payload", payloadHash, Date.now()).run();
+    return { accepted: false, status: 409, reason: "This event id was already settled with a different payload; a new outcome must carry its own event id" };
+  }
 
   const record = async (outcome: string, accepted: boolean, reason: string | null, appId: string, vType: string) => {
     // provider_event_id is UNIQUE, so INSERT OR IGNORE alone would leave the earlier REFUSED row in
@@ -167,6 +184,14 @@ export async function applyIdfyCallback(db: Db, env: Env, input: { rawBody: stri
   // one value is used for the evidence record, the supersession reason and the returned outcome, so a
   // caller can never be told something the database does not say.
   const effective = text((await db.prepare("SELECT status FROM provider_verifications WHERE id=?").bind(text(row.id)).first<Row>())?.status) || outcome;
+  // A callback can REVOKE a mandated check, and the assignment pool has to hear about it. The matching
+  // engine reads provider_capacity_profiles and never provider_verifications, so without this a provider
+  // whose check IDfy just failed kept being offered work - the same defect as the manual revocation path,
+  // through the door IDfy actually uses. De-lists only when the mandate is genuinely unsatisfied, and
+  // never re-lists anybody. [PTJA-P1-F50]
+  const { syncProviderPoolEligibility } = await import("./provider-verification-mandate");
+  await syncProviderPoolEligibility(db, applicationId);
+
   // Recorded either way - a superseded callback is evidence that it arrived and was declined.
   await record(effective, true, effective === outcome ? null : `nonterminal_${outcome}_ignored_after_${effective}`, applicationId, verificationType);
   return { accepted: true, status: 200, applicationId, verificationType, outcome: effective, duplicate: false };

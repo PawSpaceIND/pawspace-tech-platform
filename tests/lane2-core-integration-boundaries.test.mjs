@@ -536,6 +536,109 @@ test("a replayed callback changes nothing and still answers 200", async () => {
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM provider_verification_callbacks WHERE provider_event_id='EVT-R'").get().n, 1);
 });
 
+test("PTJA-P0-07: a redelivery of the same event id carrying a DIFFERENT outcome is not a duplicate", async () => {
+  // CONFIRMED independently by both verifiers. The replay check matched on provider_event_id alone and
+  // never compared the payload, so a second correctly-signed, fresh-timestamped callback bearing the
+  // same event id and the OPPOSITE outcome was answered 200 {ok:true, outcome:"verified", duplicate:true}
+  // - a revocation answered success, reporting the old outcome, with provider_verifications unchanged.
+  //
+  // Both verifiers ran the same control: the identical revocation under a NEW event id IS applied, so
+  // the code already intends to accept verified -> failed. Only the event-id key blocked it. A real
+  // revocation from IDfy carries its own event id; the same id with different content is the provider
+  // contradicting itself, and it must be visible, not answered "accepted".
+  const { sqlite, submit, post, statusOf } = await kycWorld();
+  submit();
+  const settled = await post({ event_id: "EVT-CONFLICT", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } });
+  assert.equal(settled.accepted, true);
+  assert.equal(statusOf().status, "verified");
+
+  const contradiction = await post({ event_id: "EVT-CONFLICT", request_id: "IDFY-REQ-1", status: "failed", result: { verification_status: "not_verified" }, note: "revoked after document review" });
+  assert.equal(contradiction.accepted, false, "a callback that says not_verified must never be answered accepted/verified");
+  assert.equal(contradiction.status, 409);
+  assert.match(String(contradiction.reason), /different payload|contradict/i);
+
+  // The delivery that actually took effect is still the record, and the contradiction is recorded too.
+  const accepted = sqlite.prepare("SELECT outcome,accepted FROM provider_verification_callbacks WHERE provider_event_id='EVT-CONFLICT'").get();
+  assert.equal(String(accepted.outcome), "verified");
+  assert.equal(Number(accepted.accepted), 1, "the accepted delivery is not overwritten by the contradiction");
+  const conflicts = sqlite.prepare("SELECT provider_event_id,outcome,accepted,rejection_reason FROM provider_verification_callbacks WHERE provider_event_id LIKE 'EVT-CONFLICT#%'").all();
+  assert.equal(conflicts.length, 1, "the contradicting delivery is recorded rather than swallowed");
+  assert.equal(Number(conflicts[0].accepted), 0);
+  assert.equal(statusOf().status, "verified", "and nothing is silently re-applied either way");
+});
+
+test("PTJA-P0-07: a genuine redelivery - same event id, same payload - is still a duplicate answered 200", async () => {
+  // Non-vacuity. Refusing every second delivery of an event id would break retry handling entirely:
+  // providers retry on any non-2xx, and a 409 would make them retry forever.
+  const { sqlite, submit, post, statusOf } = await kycWorld();
+  submit();
+  const payload = { event_id: "EVT-SAME", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } };
+  assert.equal((await post(payload)).duplicate, false);
+  sqlite.prepare("UPDATE provider_verifications SET status='failed' WHERE id='PVER-1'").run();
+  const again = await post(payload);
+  assert.equal(again.accepted, true);
+  assert.equal(again.status, 200);
+  assert.equal(again.duplicate, true);
+  assert.equal(statusOf().status, "failed", "a true duplicate still re-applies nothing");
+});
+
+test("PTJA-P0-07: the same revocation under its own event id is still applied", async () => {
+  // The control both verifiers ran. This is what a real revocation looks like, and it must keep working
+  // - the fix must not turn the monotonicity rule's permitted verified -> failed into a refusal.
+  const { submit, post, statusOf } = await kycWorld();
+  submit();
+  await post({ event_id: "EVT-1ST", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } });
+  assert.equal(statusOf().status, "verified");
+  const revocation = await post({ event_id: "EVT-2ND", request_id: "IDFY-REQ-1", status: "failed", result: { verification_status: "not_verified" } });
+  assert.equal(revocation.accepted, true);
+  assert.equal(revocation.outcome, "failed");
+  assert.equal(statusOf().status, "failed", "a revocation with its own event id settles the check");
+});
+
+test("PTJA-P1-F50: a callback that revokes a mandated check takes the provider off the live map", async () => {
+  // The same de-listing rule as the manual revocation path, through the door IDfy actually uses. A
+  // provider whose mandated check the provider itself revokes must stop being offered work; the
+  // matching engine reads provider_capacity_profiles, which a verification write never touched.
+  const { sqlite, db, submit, post } = await kycWorld();
+  submit();
+  const capacity = await import("../lib/provider-capacity-governance.ts");
+  await capacity.ensureProviderCapacityTables(db);
+  await db.prepare("CREATE TABLE IF NOT EXISTS provider_onboarding_applications (id TEXT PRIMARY KEY,provider_id TEXT,vertical_key TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'activated_uat',created_at INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT 0)").run();
+  await db.prepare("INSERT INTO provider_onboarding_applications (id,provider_id,vertical_key) VALUES ('APP-1','PROV-F50','grooming')").run();
+  sqlite.prepare("INSERT INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('PROV-F50','blr','Revocable groomer','commission',?,?,1,4.5,90,2,30,4,3,'active',1,'2026-01-01',NULL,'ops',?)")
+    .run(JSON.stringify(["grooming"]), JSON.stringify(["blr-east"]), BASE);
+  // The groomer mandate is aadhaar + pan; both verified, so the provider starts compliant and live.
+  sqlite.prepare("UPDATE provider_verifications SET status='verified' WHERE id='PVER-1'").run();
+  sqlite.prepare("INSERT INTO provider_verifications (id,application_id,category,verification_type,status,automated,provider_ref,detail_json,updated_by,created_at,updated_at) VALUES ('PVER-PAN','APP-1','groomer','pan','verified',1,'IDFY-REQ-PAN','{}','ops',?,?)").run(BASE, BASE);
+  const inPool = async () => (await capacity.loadGovernedProviders(db, "blr", "blr-east", "grooming")).some((p) => p.id === "PROV-F50");
+  assert.equal(await inPool(), true, "a compliant provider starts in the pool");
+
+  const revoked = await post({ event_id: "EVT-REVOKE", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "not_verified" } });
+  assert.equal(revoked.accepted, true);
+  assert.equal(revoked.outcome, "failed", "the callback revokes the check");
+  assert.equal(await inPool(), false, "and the matching engine must stop offering them work");
+  const row = sqlite.prepare("SELECT live,status FROM provider_capacity_profiles WHERE id='PROV-F50'").get();
+  assert.equal(row.live, 0);
+  assert.equal(row.status, "uat_ready");
+});
+
+test("PTJA-P1-F50: a callback that CONFIRMS a check leaves the provider live", async () => {
+  // Non-vacuity: de-listing on every callback would take a good provider off the map on their own
+  // verification success.
+  const { sqlite, db, submit, post } = await kycWorld();
+  submit();
+  const capacity = await import("../lib/provider-capacity-governance.ts");
+  await capacity.ensureProviderCapacityTables(db);
+  await db.prepare("CREATE TABLE IF NOT EXISTS provider_onboarding_applications (id TEXT PRIMARY KEY,provider_id TEXT,vertical_key TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'activated_uat',created_at INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT 0)").run();
+  await db.prepare("INSERT INTO provider_onboarding_applications (id,provider_id,vertical_key) VALUES ('APP-1','PROV-F50-OK','grooming')").run();
+  sqlite.prepare("INSERT INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('PROV-F50-OK','blr','Compliant groomer','commission',?,?,1,4.5,90,2,30,4,3,'active',1,'2026-01-01',NULL,'ops',?)")
+    .run(JSON.stringify(["grooming"]), JSON.stringify(["blr-east"]), BASE);
+  sqlite.prepare("INSERT INTO provider_verifications (id,application_id,category,verification_type,status,automated,provider_ref,detail_json,updated_by,created_at,updated_at) VALUES ('PVER-PAN','APP-1','groomer','pan','verified',1,'IDFY-REQ-PAN','{}','ops',?,?)").run(BASE, BASE);
+  const confirmed = await post({ event_id: "EVT-CONFIRM", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } });
+  assert.equal(confirmed.outcome, "verified");
+  assert.ok((await capacity.loadGovernedProviders(db, "blr", "blr-east", "grooming")).some((p) => p.id === "PROV-F50-OK"), "a confirmation must not knock a good provider off the map");
+});
+
 test("manual and automated verification authority stay separate", async () => {
   // A police / house / pet-proofing outcome is a human's recorded judgement. A provider callback must
   // not be able to write one, or the two channels collapse into a single forgeable one.
