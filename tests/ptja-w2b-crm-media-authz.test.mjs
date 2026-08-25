@@ -1,0 +1,155 @@
+/**
+ * PawSpace Total Journey Audit, Wave 2 Batch B — two more branches written for "staff" that a
+ * service_provider session walks straight through, because they are gated on a permission that role
+ * holds by default.
+ *
+ * This is the fifth and sixth instance of the same class in this audit. bookings.view,
+ * scheduling.view and communications.call are ALL default service_provider permissions
+ * (lib/platform-security.ts), so none of them means "staff".
+ */
+import test from "node:test";
+import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+installWorkersHooks("__PTJA_CMA_DB__", "__PTJA_CMA_ENV__");
+
+function makeD1(sqlite) {
+  const statement = (sql, args = []) => ({
+    bind: (...bound) => statement(sql, bound),
+    first: async () => sqlite.prepare(sql).get(...args) ?? null,
+    run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes || 0) } }; },
+    all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
+  });
+  let depth = 0;
+  return {
+    prepare: (sql) => statement(sql),
+    batch: async (items) => {
+      const outer = depth === 0;
+      if (outer) sqlite.exec("BEGIN IMMEDIATE");
+      depth += 1;
+      try { const out = []; for (const item of items) out.push(await item.run()); if (outer) sqlite.exec("COMMIT"); return out; }
+      catch (error) { if (outer) sqlite.exec("ROLLBACK"); throw error; }
+      finally { depth -= 1; }
+    },
+    exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
+  };
+}
+
+const STAFF = {
+  "content-type": "application/json",
+  "oai-authenticated-user-email": "ops.admin@pawspace.test",
+  "oai-authenticated-user-full-name": "Ops%20admin",
+  "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8",
+};
+
+async function baseWorld() {
+  const sqlite = new DatabaseSync(":memory:");
+  const db = makeD1(sqlite);
+  globalThis.__PTJA_CMA_DB__ = db;
+  globalThis.__PTJA_CMA_ENV__ = {};
+  const { ensureSecurityTables } = await import("../lib/server-auth.ts");
+  await ensureSecurityTables(db);
+  const now = Date.now();
+  await db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('USR-ADMIN','ops.admin@pawspace.test','Ops admin','admin','active',?,?)").bind(now, now).run();
+  const { upsertIdentityBinding } = await import("../lib/identity-binding.ts");
+  const { issuePlatformSession, PLATFORM_SESSION_COOKIE } = await import("../lib/platform-session.ts");
+  const binding = await upsertIdentityBinding(db, {
+    identitySource: "partner_otp", principalType: "identity_subject", principalKey: "provider:PRV-ATTACKER-B",
+    subjectType: "provider", subjectId: "PRV-ATTACKER-B", verificationState: "verified",
+    actorId: "ptja-w2b", reason: "PTJA Wave 2B authorization regression",
+  });
+  const issued = await issuePlatformSession(db, {
+    bindingId: String(binding.id), identitySource: "partner_otp", principalType: "identity_subject",
+    principalKey: String(binding.principal_key), subjectType: "provider", subjectId: "PRV-ATTACKER-B",
+  });
+  return { sqlite, db, now, providerCookie: `${PLATFORM_SESSION_COOKIE}=${encodeURIComponent(issued.token)}` };
+}
+
+// =====================================================================================================
+// PTJA-W2B-M01 — any onboarded provider reads every customer's Food proof snapshot
+//
+// The non-customer branch of GET /api/food-proof asks for bookings.view and nothing else, and
+// bookings.view is a default service_provider permission - so the branch written for staff admits every
+// onboarded provider. The four sibling proof routes (walking, sitting, taxi, boarding) each bind the
+// caller to the record with requireProviderOwnership; food-proof has no provider binding at all, and
+// food orders carry no provider column to bind to.
+//
+// MEASURED: gateway ALLOW on bookings.view for role service_provider, handler 200, returning the order,
+// its customer id, and quality incidents whose free text carried the customer's name, street address
+// and phone number verbatim.
+//
+// Gated on customers.view, the capability the platform already defines for reading customer records -
+// held by founder, superuser, admin, manager and associate, and NOT by service_provider. Same
+// correction as the funeral-memorial and relocation routes earlier in this audit.
+// =====================================================================================================
+
+test("W2B-M01: a provider session cannot read another customer's food proof", async () => {
+  const { sqlite, db, providerCookie, now } = await baseWorld();
+  const food = await import("../lib/food-fulfilment-governance.ts");
+  await food.ensureFoodFulfilmentTables(db);
+  sqlite.prepare("INSERT INTO food_orders (id,idempotency_key,customer_id,city_id,zone_id,status,commercial_status,inventory_mode,delivery_status,total_amount,currency,created_by,created_at,updated_at) VALUES ('FOOD-VICTIM-1','idem-v1','CUST-VICTIM-A','blr','blr-east','confirmed','uat_only','uat_seed','delivered',1497,'INR','CUST-VICTIM-A',?,?)").run(now, now);
+  // the proof read joins lines and the inventory reservation, so an order without them is invisible
+  sqlite.prepare("INSERT INTO food_order_lines (id,order_id,sku,item_name,item_version,quantity,unit_price,line_total,currency) VALUES ('FL-1','FOOD-VICTIM-1','food-uat-cat-adult-1kg','Adult Cat Food 1kg',1,3,499,1497,'INR')").run();
+  sqlite.prepare("INSERT INTO food_inventory_reservations (id,order_id,sku,zone_id,quantity,status,inventory_mode,created_at,updated_at) VALUES ('FR-1','FOOD-VICTIM-1','food-uat-cat-adult-1kg','blr-east',3,'reserved','uat_seed',?,?)").run(now, now);
+
+  const route = await import("../app/api/food-proof/route.ts");
+  const response = await route.GET(new Request("https://uat.pawspace.in/api/food-proof?orderId=FOOD-VICTIM-1", { headers: { cookie: providerCookie } }));
+  assert.notEqual(response.status, 200,
+    `a provider with no relationship to the order must not read its proof: ${response.status} ${(await response.clone().text()).slice(0, 250)}`);
+});
+
+test("W2B-M01: staff still read the food proof", async () => {
+  // Non-vacuity. Closing the branch entirely would satisfy the case above and break the ops workflow.
+  const { sqlite, db, now } = await baseWorld();
+  const food = await import("../lib/food-fulfilment-governance.ts");
+  await food.ensureFoodFulfilmentTables(db);
+  sqlite.prepare("INSERT INTO food_orders (id,idempotency_key,customer_id,city_id,zone_id,status,commercial_status,inventory_mode,delivery_status,total_amount,currency,created_by,created_at,updated_at) VALUES ('FOOD-VICTIM-1','idem-v1','CUST-VICTIM-A','blr','blr-east','confirmed','uat_only','uat_seed','delivered',1497,'INR','CUST-VICTIM-A',?,?)").run(now, now);
+  // the proof read joins lines and the inventory reservation, so an order without them is invisible
+  sqlite.prepare("INSERT INTO food_order_lines (id,order_id,sku,item_name,item_version,quantity,unit_price,line_total,currency) VALUES ('FL-1','FOOD-VICTIM-1','food-uat-cat-adult-1kg','Adult Cat Food 1kg',1,3,499,1497,'INR')").run();
+  sqlite.prepare("INSERT INTO food_inventory_reservations (id,order_id,sku,zone_id,quantity,status,inventory_mode,created_at,updated_at) VALUES ('FR-1','FOOD-VICTIM-1','food-uat-cat-adult-1kg','blr-east',3,'reserved','uat_seed',?,?)").run(now, now);
+
+  const route = await import("../app/api/food-proof/route.ts");
+  const response = await route.GET(new Request("https://uat.pawspace.in/api/food-proof?orderId=FOOD-VICTIM-1", { headers: STAFF }));
+  assert.equal(response.status, 200, `staff must still read it: ${(await response.clone().text()).slice(0, 250)}`);
+});
+
+// =====================================================================================================
+// PTJA-W2B-M03 — a provider session opts out and closes any CRM lead through the bot-call path
+//
+// POST /api/bot-call-outcomes action=record is gated on communications.call at BOTH gates, and
+// communications.call is a default service_provider permission. The equivalent HUMAN action - logging an
+// Opt-out attempt through /api/revenue-crm - requires customers.manage and refuses the same session at
+// the gateway with a 403.
+//
+// MEASURED: gateway ALLOW, handler 201 {"leadId":"LEAD-VICTIM-1","contactId":"CUST-VICTIM-A",
+// "primaryTag":"do_not_call","crmOutcome":"Opt-out","contacted":true,"optedOut":true} - a permanent
+// do-not-call and a closed lead written by a provider with no relationship to either. The identical
+// intent through the human path was refused 403.
+//
+// The bot path now requires customers.manage, exactly what the human path it writes the same rows
+// through already requires. Nothing new is decided: the two paths simply stop disagreeing.
+// =====================================================================================================
+
+test("W2B-M03: a provider session cannot opt out a lead through the bot-call path", async () => {
+  const { db, providerCookie } = await baseWorld();
+  const { authorizeApiRequest } = await import("../lib/api-gateway.ts");
+  const body = JSON.stringify({
+    action: "record", idempotencyKey: "bot-run1", leadId: "LEAD-VICTIM-1", phone: "+919800000001",
+    channel: "voice", botProvider: "pawspace_voice_bot", callRef: "CALL-1", primaryTag: "do_not_call",
+    notes: "Marked do-not-call by an unrelated provider",
+  });
+  const request = () => new Request("https://uat.pawspace.in/api/bot-call-outcomes", {
+    method: "POST", headers: { "content-type": "application/json", cookie: providerCookie }, body,
+  });
+
+  const gateway = await authorizeApiRequest(request(), { DB: db });
+  assert.ok(gateway instanceof Response,
+    `the gateway must refuse a provider session on this write, got an allow: ${JSON.stringify(gateway).slice(0, 250)}`);
+  assert.equal(gateway.status, 403, "with a 403");
+
+  const route = await import("../app/api/bot-call-outcomes/route.ts");
+  const response = await route.POST(request());
+  assert.notEqual(response.status, 201,
+    `nor may the handler record it: ${response.status} ${(await response.clone().text()).slice(0, 250)}`);
+});

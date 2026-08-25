@@ -58,7 +58,12 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/voice-outbound")return "customers.manage";
   if(url.pathname==="/api/ai-voice-uat"||url.pathname==="/api/voice-speech")return "communications.call";
   if(url.pathname==="/api/voice-providers")return "settings.manage";
-  if(url.pathname==="/api/bot-call-outcomes"){if(method==="GET")return "customers.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"record")==="reconcile"?"customers.manage":"communications.call";}
+  if(url.pathname==="/api/bot-call-outcomes"){if(method==="GET")return "customers.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;// PTJA W2-B4-M03: a `record` writes a permanent do-not-call and closes the lead - the same rows the
+    // HUMAN path writes through /api/revenue-crm, which requires customers.manage. This asked only for
+    // communications.call, a default service_provider permission, so a provider with no relationship to
+    // the lead could opt out any customer by lead id while the identical intent through the human path
+    // was refused 403. The two paths now agree.
+    return "customers.manage";}
   // Customer 360 contact can target any imported customer, so it is a system-wide administrative action.
   // Booking-scoped provider communication remains on routes that enforce assignment and ownership.
   if(url.pathname==="/api/customer-contact")return "communications.manage";

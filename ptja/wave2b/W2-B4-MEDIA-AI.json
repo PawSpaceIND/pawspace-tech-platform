@@ -14,7 +14,10 @@
     "blast_radius": "Every food order in the platform, one orderId at a time, to any of the platform's onboarded service providers. Order ids are guessable/enumerable and are echoed back by other surfaces. Both gates allow, so there is no compensating control.",
     "suggested_severity": "P1",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p01-food-proof-read.mjs",
-    "status": "OPEN"
+    "status": "FIXED",
+    "fix_file": "app/api/food-proof/route.ts",
+    "regression": "tests/ptja-w2b-crm-media-authz.test.mjs :: \"W2B-M01: a provider session cannot read another customer's food proof\" + \"W2B-M01: staff still read the food proof\"",
+    "fix_note": "The non-customer branch is gated on customers.view instead of bookings.view. The four sibling proof routes bind the caller with requireProviderOwnership, but food orders carry no provider column to bind to, so the gate is the capability the platform already defines for reading customer records - held by founder/superuser/admin/manager/associate and not by service_provider. Same correction as the funeral-memorial and relocation routes."
   },
   {
     "id": "W2-B4-M02",
@@ -48,7 +51,10 @@
     "blast_radius": "Every lead in the CRM, by id, for every onboarded service provider and every associate (associate also holds communications.call). Both gates allow. Lead ids are the customer-facing work-item ids that appear across CRM surfaces.",
     "suggested_severity": "P1",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p03-bot-call-outcomes.mjs and /tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p03b-control-humanpath.mjs",
-    "status": "OPEN"
+    "status": "FIXED",
+    "fix_file": "lib/api-gateway.ts; app/api/bot-call-outcomes/route.ts",
+    "regression": "tests/ptja-w2b-crm-media-authz.test.mjs :: \"W2B-M03: a provider session cannot opt out a lead through the bot-call path\"",
+    "fix_note": "A bot disposition writes the same CRM rows the human path writes through /api/revenue-crm, and that path already requires customers.manage. Both gates now require it too, so the bot path and the human path stop disagreeing. Nothing new is decided."
   },
   {
     "id": "W2-B4-M-R01",
@@ -65,7 +71,7 @@
     "blast_radius": "None. Recorded so the next sweep does not re-litigate this endpoint.",
     "suggested_severity": "P2",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p04-voice-webhook-refutation.mjs and /tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p04b-voice-webhook-nosecret.mjs",
-    "status": "OPEN"
+    "status": "REFUTED"
   },
   {
     "id": "W2-B4-M04",
@@ -123,7 +129,7 @@
     "blast_radius": "None.",
     "suggested_severity": "P2",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p07-cross-booking-proof-refutation.mjs",
-    "status": "OPEN"
+    "status": "REFUTED"
   },
   {
     "id": "W2-B4-M06",
@@ -174,7 +180,7 @@
     "blast_radius": "None.",
     "suggested_severity": "P2",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p11-taxi-proof-nullguard.mjs",
-    "status": "OPEN"
+    "status": "REFUTED"
   },
   {
     "id": "W2-B4-M-R04",
@@ -191,6 +197,6 @@
     "blast_radius": "None on the dialler.",
     "suggested_severity": "P2",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p12-anon-lead-to-dialler.mjs",
-    "status": "OPEN"
+    "status": "REFUTED"
   }
 ]
