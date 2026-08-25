@@ -5,7 +5,7 @@
     "domain": "CRM / personal data",
     "actor": "STAFF role=associate (assoc@pawspace.test, app_users row, permissions from lib/platform-security.ts defaultRoles)",
     "request": "Two calls, same session.\n(1) gateway: authorizeApiRequest(new Request(\"https://uat.pawspace.in/api/crm\", {headers:{\"oai-authenticated-user-email\":\"assoc@pawspace.test\",\"oai-authenticated-user-full-name\":\"Probe%20Staff\",\"oai-authenticated-user-full-name-encoding\":\"percent-encoded-utf-8\"}}), {DB:db})\n(2) handler: GET https://uat.pawspace.in/api/crm with the same headers, via app/api/crm/route.ts GET",
-    "response": "GATEWAY(associate,/api/crm GET) = {\"denied\":false,\"actor\":\"assoc@pawspace.test\",\"role\":\"associate\",\"permission\":\"customers.view\"}\nHANDLER 200 {\"contacts\":[{\"id\":\"CU-VICTIM\",\"name\":\"Meera Shah\",\"primary_phone\":\"+919845012345\",\"secondary_phone\":\"+919845099999\",\"email\":\"meera.shah@example.com\",\"area\":\"Indiranagar\",\"pet_names\":\"Bruno\",\"pet_summary\":\"Golden Retriever\",\"stage\":\"New lead\",\"owner\":\"Neha\",\"source\":\"Website\",\"lifetime_value\":null,\"next_action\":\"call\",\"opportunity\":\"x\",\"created_at\":1787689154066,\"updated_at\":1787689154066,\"lifetime_value_basis\":\"unavailable\"}]}\nMEASURED actor permissions: [\"dashboard.view\",\"customers.view\",\"bookings.view\",\"scheduling.book\",\"pricing.view\",\"communications.call\",\"communications.message\",\"communications.manage\",\"attendance.view\",\"leave.view\",\"performance.view\",\"self_service.view\"]\nhasPermission(actor.permissions,\"customers.view_full_phone\") === false\nmaskPhone(\"+919845012345\") === \"+91 \u2022\u2022\u2022\u2022\u2022\u20222345\" (the platform's own helper, unused by this route)",
+    "response": "GATEWAY(associate,/api/crm GET) = {\"denied\":false,\"actor\":\"assoc@pawspace.test\",\"role\":\"associate\",\"permission\":\"customers.view\"}\nHANDLER 200 {\"contacts\":[{\"id\":\"CU-VICTIM\",\"name\":\"Meera Shah\",\"primary_phone\":\"+919845012345\",\"secondary_phone\":\"+919845099999\",\"email\":\"meera.shah@example.com\",\"area\":\"Indiranagar\",\"pet_names\":\"Bruno\",\"pet_summary\":\"Golden Retriever\",\"stage\":\"New lead\",\"owner\":\"Neha\",\"source\":\"Website\",\"lifetime_value\":null,\"next_action\":\"call\",\"opportunity\":\"x\",\"created_at\":1787689154066,\"updated_at\":1787689154066,\"lifetime_value_basis\":\"unavailable\"}]}\nMEASURED actor permissions: [\"dashboard.view\",\"customers.view\",\"bookings.view\",\"scheduling.book\",\"pricing.view\",\"communications.call\",\"communications.message\",\"communications.manage\",\"attendance.view\",\"leave.view\",\"performance.view\",\"self_service.view\"]\nhasPermission(actor.permissions,\"customers.view_full_phone\") === false\nmaskPhone(\"+919845012345\") === \"+91 ••••••2345\" (the platform's own helper, unused by this route)",
     "d1_before": "crm_contacts: 1 row CU-VICTIM / 'Meera Shah' / primary_phone '+919845012345' / secondary_phone '+919845099999' / email 'meera.shah@example.com'. app_users: USR-ASSOC assoc@pawspace.test role_code='associate' status='active'.",
     "d1_after": "Unchanged (read-only route). The exposure is in the response body, not the database.",
     "repeatable": "yes - run twice, identical 200 with the same unmasked primary_phone, secondary_phone and email both times",
@@ -13,7 +13,8 @@
     "money_consequence": "No direct money movement. The exposed asset is the marketable contact list: every lead's mobile, alternate mobile and email in one 100-row page, exportable by any associate-level account (the platform's lowest customer-facing staff tier). Cost is regulatory/reputational - an unmasked-PII disclosure to a role the platform itself defines as masked - plus the commercial value of the lead list if an associate walks with it.",
     "blast_radius": "Every crm_contacts row, capped at 100 per call and unbounded across calls; every actor holding customers.view without customers.view_full_phone (associate today, plus manager which also lacks view_full_phone). Both the staff CRM screen and any script driving /api/crm.",
     "suggested_severity": "P1",
-    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p01-crm-mask.mjs"
+    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p01-crm-mask.mjs",
+    "status": "OPEN"
   },
   {
     "id": "W2-B3-C02",
@@ -29,7 +30,8 @@
     "money_consequence": "Messaging spend on contacts who asked not to be contacted (each queued WhatsApp/SMS is billed per message), plus the compliance exposure of transactional/service-recovery messaging to a customer whose opt-out the platform holds an audit trail for. The marketing opt-out is erased in the same write; marketing happens to stay suppressed because unknown consent also blocks marketing, so the money leak is on the transactional/service_recovery side, which fails open.",
     "blast_radius": "Any customer whose communication_preferences row is touched by a staff preference write that does not restate every consent flag - including a channel-only change, a marketing-only change, or a service-updates-only change. One call per customer; a bulk preference tool would erase consent for a whole segment. It also silently destroys the consent record itself, so the prior decision cannot be recovered from this table afterwards.",
     "suggested_severity": "P1",
-    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p02-consent-wipe.mjs"
+    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p02-consent-wipe.mjs",
+    "status": "OPEN"
   },
   {
     "id": "W2-B3-C03",
@@ -45,7 +47,8 @@
     "money_consequence": "Unbounded per-message WhatsApp/SMS spend against a customer an operator was trying to protect: the operator sets the tightest cap the UI offers and gets no cap at all. Also the reputational cost of repeated marketing contact to one customer inside the configured window.",
     "blast_radius": "Every customer targeted under any crm_automation_policy row whose max_contacts or window_hours is 0. One mis-set policy key (e.g. marketing:whatsapp) removes the cap for the entire audience of that channel/purpose pair, not one customer.",
     "suggested_severity": "P2",
-    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p03-freqcap-zero.mjs"
+    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p03-freqcap-zero.mjs",
+    "status": "OPEN"
   },
   {
     "id": "W2-B3-C04",
@@ -61,7 +64,11 @@
     "money_consequence": "No direct debit, but the resulting session can spend: the customer-account, booking, offers and reward surfaces all key off the session's customerId, so PawPoints, birthday rewards and review-reward coupons belonging to CUST-NEIGHBOUR are redeemable by whoever holds the phone. The larger cost is the disclosure itself - full name, both phone numbers, email, street address with flat number and pincode, and pet records.",
     "blast_radius": "Every canonical_customers pair where one row's secondary_phone equals another row's primary_phone - a state produced routinely by CSV imports and by households sharing a number. Reachable only where PAWSPACE_UAT_LOGIN=on and PAWSPACE_UAT_SIGNING_KEY is set (lib/uat-staging-auth.ts uatLoginEnabled); with the flag off the route returns 503 and the customer app cannot log in at all. Where the flag IS on over real customer data, every affected pair is a standing account takeover.",
     "suggested_severity": "P1",
-    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p04-otp-secondary.mjs"
+    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p04-otp-secondary.mjs",
+    "status": "FIXED",
+    "fix_file": "lib/customer-otp.ts; lib/customer-account.ts",
+    "regression": "tests/ptja-w2b-identity-takeover.test.mjs :: \"W2B-C05: a planted secondary phone does not capture its real owner's login\" + \"W2B-C04: a primary-phone owner is not signed into a neighbour who lists it as secondary\" + \"W2B-C05: a profile write cannot claim a phone another customer already holds\" + \"W2B-C05: an ordinary profile update still works\"",
+    "fix_note": "Closed in both halves, which were both required. (1) lib/customer-otp.ts now resolves a login identity from primary_phone ONLY, through a newly exported resolveOtpCustomer so the rule is directly testable: a self-asserted phone is contact data, not a login identity. (2) lib/customer-account.ts update_profile refuses to claim a number that already belongs to another customer. Uniqueness alone would not have stopped a number nobody has registered yet from being planted, and precedence alone would not have stopped the claim. BEHAVIOUR CHANGE, stated plainly: someone whose number is recorded ONLY as a secondary is now signed in as a NEW customer rather than into the existing record. That is the safe direction and is what the platform already does for any number it has never seen."
   },
   {
     "id": "W2-B3-C05",
@@ -77,7 +84,11 @@
     "money_consequence": "The victim's subsequent spend, loyalty balance and reward coupons all accrue to the attacker's customer record: PawPoints (lib/paw-points-governance.ts), birthday rewards and review rewards are all keyed by customerId, and the attacker holds a session on that id. The attacker also gains whatever address and pet data the victim enters believing it is their own account.",
     "blast_radius": "Any phone number an attacker chooses to claim, one number per customer row (or more, by registering more accounts). Targets are people who have not yet created a canonical_customers row - i.e. every new customer - plus, per W2-B3-C04, existing customers whose row loses the scan-order tie. Same environment gate as C04: reachable where PAWSPACE_UAT_LOGIN=on; step 1 alone (planting an unverified number on your own record) works regardless of that flag.",
     "suggested_severity": "P0",
-    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p05-otp-hijack.mjs"
+    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p05-otp-hijack.mjs",
+    "status": "FIXED",
+    "fix_file": "lib/customer-otp.ts; lib/customer-account.ts",
+    "regression": "tests/ptja-w2b-identity-takeover.test.mjs :: \"W2B-C05: a planted secondary phone does not capture its real owner's login\" + \"W2B-C04: a primary-phone owner is not signed into a neighbour who lists it as secondary\" + \"W2B-C05: a profile write cannot claim a phone another customer already holds\" + \"W2B-C05: an ordinary profile update still works\"",
+    "fix_note": "Closed in both halves, which were both required. (1) lib/customer-otp.ts now resolves a login identity from primary_phone ONLY, through a newly exported resolveOtpCustomer so the rule is directly testable: a self-asserted phone is contact data, not a login identity. (2) lib/customer-account.ts update_profile refuses to claim a number that already belongs to another customer. Uniqueness alone would not have stopped a number nobody has registered yet from being planted, and precedence alone would not have stopped the claim. BEHAVIOUR CHANGE, stated plainly: someone whose number is recorded ONLY as a secondary is now signed in as a NEW customer rather than into the existing record. That is the safe direction and is what the platform already does for any number it has never seen."
   },
   {
     "id": "W2-B3-C06",
@@ -87,13 +98,14 @@
     "request": "One world, in order:\n1) POST /api/unified-cases {\"action\":\"create\",\"idempotencyKey\":\"case-FUTURE-RUN1\",\"caseType\":\"customer_complaint\",\"severity\":\"medium\",\"title\":\"Groomer was late\",\"description\":\"Late by an hour\",\"customerId\":\"CUST-1\",\"bookingId\":\"BKG-1\",\"sourceType\":\"manual\",\"sourceId\":\"src-FUTURE-RUN1\",\"ownerTeam\":\"customer_support\"}\n2) POST /api/staff-alerts {\"action\":\"sweep\",\"asOf\":9999999999999}\nCONTROL: the identical sequence with \"asOf\": Date.now().\nFOLLOW-UP (third world): sweep with asOf=9999999999999, then sweep again with asOf = resolution_due_at + 1000 (the genuine breach moment).",
     "response": "1) 201, case CASE-0060F894-766 created with first_response_due_at = now+90min, manager_escalation_due_at = now+180min, resolution_due_at = now+1080min - none of them overdue.\n2) 200 {\"data\":{\"created\":3,\"customerNotifications\":{\"attempted\":2,\"enqueued\":2,\"suppressed\":0,\"duplicatePrevented\":0,\"skipped\":0,\"errors\":[],\"transport\":\"canonical_chat_outbox\",\"externalDelivery\":false,\"unavailable\":false}}}\nCONTROL (asOf=now): 200 created=0, customerNotifications {\"attempted\":0,\"enqueued\":0,...} and zero rows written anywhere - so the effect is entirely the asOf value.\nFOLLOW-UP: sweep#1 asOf=FUTURE -> enqueued 2; sweep#2 at the REAL breach time -> {\"attempted\":2,\"enqueued\":0,\"duplicatePrevented\":2}; communication_messages total stays 2.",
     "d1_before": "unified_cases: one open customer_complaint for CUST-1 with all three SLA timestamps in the future.\nstaff_alerts: 0 rows. communication_messages: 0 rows. communication_outbox: 0 rows.\ncanonical_customers: CUST-1 / 'Meera' / 9845012345, city blr. No communication_preferences row (consent unknown).",
-    "d1_after": "staff_alerts (3 rows, all status='open'): [{\"alert_type\":\"case_first_response_overdue\",\"severity\":\"high\",\"title\":\"Case response overdue \u00b7 CASE-0060F894-766\",\"customer_id\":\"CUST-1\",\"due_at\":1787695023331},{\"alert_type\":\"case_manager_escalation\",\"severity\":\"high\",...},{\"alert_type\":\"case_resolution_overdue\",\"severity\":\"critical\",...}]\ncommunication_messages (2 rows, status='queued'): channel 'chat', purpose 'service_recovery', template_key 'case_first_response_overdue' and 'case_resolution_overdue', payload_json {\"caseId\":\"CASE-0060F894-766\",\"title\":\"Groomer was late\",\"status\":\"open\",\"escalationType\":\"first_response\",\"dueAt\":1787695023331,\"notice\":\"Your PawSpace support case has crossed its first-response target and is being escalated for staff attention.\"}\ncommunication_outbox: [{\"message_id\":\"MSG-57183A35-E998-\",\"status\":\"queued\"},{\"message_id\":\"MSG-3AE586E9-F21B-\",\"status\":\"queued\"}] - both live for dispatch.",
+    "d1_after": "staff_alerts (3 rows, all status='open'): [{\"alert_type\":\"case_first_response_overdue\",\"severity\":\"high\",\"title\":\"Case response overdue · CASE-0060F894-766\",\"customer_id\":\"CUST-1\",\"due_at\":1787695023331},{\"alert_type\":\"case_manager_escalation\",\"severity\":\"high\",...},{\"alert_type\":\"case_resolution_overdue\",\"severity\":\"critical\",...}]\ncommunication_messages (2 rows, status='queued'): channel 'chat', purpose 'service_recovery', template_key 'case_first_response_overdue' and 'case_resolution_overdue', payload_json {\"caseId\":\"CASE-0060F894-766\",\"title\":\"Groomer was late\",\"status\":\"open\",\"escalationType\":\"first_response\",\"dueAt\":1787695023331,\"notice\":\"Your PawSpace support case has crossed its first-response target and is being escalated for staff attention.\"}\ncommunication_outbox: [{\"message_id\":\"MSG-57183A35-E998-\",\"status\":\"queued\"},{\"message_id\":\"MSG-3AE586E9-F21B-\",\"status\":\"queued\"}] - both live for dispatch.",
     "repeatable": "yes - FUTURE-RUN1 and FUTURE-RUN2 in fresh worlds both produced created=3 and enqueued=2; the asOf=now control produced 0/0 in the same process",
     "canonical_failure": "app/api/staff-alerts/route.ts POST: `if(body.asOf!=null&&!Number.isFinite(Number(body.asOf)))return json({error:\"asOf must be a finite epoch-milliseconds number\"},400)` - the only check on asOf is finiteness; there is no upper bound at the present moment. The value flows into lib/staff-alert-center.ts runStaffAlertSweep as `const asOf=input.asOf??Date.now()` and from there into every `due_at<=?` predicate, notably caseAlerts (`WHERE status NOT IN ('resolved','closed') AND (first_response_due_at<=? OR manager_escalation_due_at<=? OR resolution_due_at<=?)`) and caseCustomerNotifications (same predicate), which then calls enqueueCommunication with `idempotencyKey:`case:${caseId}:customer:${item.kind}``. Because that key does not include the sweep time, the premature message permanently occupies the slot: the real escalation later returns duplicatePrevented and the customer is never told when the SLA actually breaches. app/api/staff-alert-runner/route.ts carries the identical unbounded check.",
     "money_consequence": "Per-message outbound spend on notices that were not due, at whatever multiple the case backlog is (one sweep touches every open case with a future due date at once, not one case). Worse commercially: the genuine breach notice is then never sent, so the service-recovery contact the SLA machinery exists to guarantee silently does not happen - and the alerts it created also mark healthy cases as 'critical - resolution overdue', pulling manager time onto cases that are inside SLA.",
     "blast_radius": "Every open unified_case with any SLA timestamp set - i.e. the entire live case backlog in one call - and every customer attached to one with a booking_id. Both /api/staff-alerts (customers.manage) and /api/staff-alert-runner (settings.manage) accept the parameter. The staff_alerts side is recoverable; the communication idempotency keys are not.",
     "suggested_severity": "P1",
-    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p06-asof-sweep.mjs"
+    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p06-asof-sweep.mjs",
+    "status": "OPEN"
   },
   {
     "id": "W2-B3-R01",
@@ -109,7 +121,8 @@
     "money_consequence": "None - no exposure found.",
     "blast_radius": "None - refuted.",
     "suggested_severity": "P2",
-    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p07-refutations.mjs"
+    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p07-refutations.mjs",
+    "status": "REFUTED"
   },
   {
     "id": "W2-B3-R02",
@@ -125,7 +138,8 @@
     "money_consequence": "None - no misdirected message possible through this path.",
     "blast_radius": "None - refuted.",
     "suggested_severity": "P2",
-    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p08-dispatch-recipient.mjs"
+    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p08-dispatch-recipient.mjs",
+    "status": "REFUTED"
   },
   {
     "id": "W2-B3-C07",
@@ -141,7 +155,8 @@
     "money_consequence": "No money moves. The exposed assets are the customer contact list (one raw mobile per conversation thread, unbounded across the 100-thread pages) and free-text internal handling notes about the customer - here a note recording a threatened consumer-court complaint - visible to the lowest customer-facing staff tier and to anyone who obtains an associate account.",
     "blast_radius": "Every communication_threads row with a matching canonical_customers row - i.e. every customer who has ever been messaged - at up to 200 per call, plus every message payload on any thread whose id the caller can name. Affects the associate role today; the same hardcoded \"staff\" scope would admit any future role granted communications.manage.",
     "suggested_severity": "P1",
-    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p09-conversations-phone.mjs"
+    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p09-conversations-phone.mjs",
+    "status": "OPEN"
   },
   {
     "id": "W2-B3-C08",
@@ -157,7 +172,8 @@
     "money_consequence": "Marketing messages billed and delivered to a customer who is on record as having opted out - the exact contact the opt-out was recorded to prevent - with a per-message channel cost and a compliance exposure the platform's own audit trail documents against it (securityAudit records the opt-out as 'communication.preference').",
     "blast_radius": "Every customer whose consent decision was captured on one surface and whose outbound goes through the other. Both directions are live: /api/crm-automation, lib/haptik-outbound-governance.ts and lib/whatsapp-uat-adapter.ts see only customer_contact_preferences; /api/communications, the customer-reminder sweep, the lifecycle-reminder engine and the staff-alert case notifications all see only communication_preferences. Any campaign run through the CRM automation engine ignores every opt-out ever recorded on the communications preference API.",
     "suggested_severity": "P1",
-    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p10-split-consent.mjs"
+    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p10-split-consent.mjs",
+    "status": "OPEN"
   },
   {
     "id": "W2-B3-C09",
@@ -173,7 +189,8 @@
     "money_consequence": "Outbound reminder volume that operations believes it has stopped keeps being generated and billed once a live adapter is attached to the lifecycle purpose - the switch that exists to stop spend does not stop it. Symmetrically, the nine rules the directory reports as awaiting approval (new_customer welcome, existing_customer re-engagement, and rebooking for training/boarding/sitting/dog_walking/pet_taxi/food/relocation) would not start sending if activated, so an operator who turns one ON also gets nothing.",
     "blast_radius": "Every customer matched by the grooming-rebooking, subscription-unused-session and subscription-renewal sweeps - the whole eligible base each run - regardless of the state of the rule table. Both entry points are affected: POST /api/lifecycle-reminders run_now and POST /api/customer-reminders run_sweep_now call the same sweep, and the background scheduler runs it too.",
     "suggested_severity": "P2",
-    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p11-lifecycle-rule-noop.mjs"
+    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p11-lifecycle-rule-noop.mjs",
+    "status": "OPEN"
   },
   {
     "id": "W2-B3-C10",
@@ -189,7 +206,8 @@
     "money_consequence": "No direct charge - meet_greet_requests are priced but not collected at this stage. The cost is operational: every row lands in the staff meet-and-greet directory as real work against a named host, and each is individually confirm/cancel/no_show-able only by a human with bookings.manage, so clearing a flood is manual. A host's queue can be buried, and genuine requests to that host become indistinguishable from noise.",
     "blast_radius": "Any provider id that passes hostEligible (present in boarding_host_profiles, or a provider_capacity_profiles row whose services_json mentions pet_sitting) - i.e. every live boarding host and pet-sitting provider, individually targetable by name. Unbounded volume from a single IP; the only limits observed were the format/time validations, which the attacker satisfies trivially.",
     "suggested_severity": "P2",
-    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p13-mg-anon-flood.mjs"
+    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p13-mg-anon-flood.mjs",
+    "status": "OPEN"
   },
   {
     "id": "W2-B3-R03",
@@ -205,6 +223,7 @@
     "money_consequence": "None - no exposure found.",
     "blast_radius": "None - refuted.",
     "suggested_severity": "P2",
-    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p12-public-contact-rate.mjs"
+    "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/b3probes/p12-public-contact-rate.mjs",
+    "status": "REFUTED"
   }
 ]
