@@ -29,7 +29,8 @@ test("Boarding commercial API exposes window-aware UAT availability without clai
   assert.match(api,/scheduledEnd/);
   assert.match(api,/petCount/);
   assert.match(api,/species/);
-  assert.match(api,/availabilityMode:windowAware\?"uat_canonical":"catalogue_only"/);
+  assert.match(api,/hasLocation=Boolean\(cityId&&zoneId\)/);
+  assert.match(api,/availabilityMode:hasLocation\?\(windowAware\?"uat_canonical":"catalogue_only"\):"location_required"/);
   assert.match(api,/availabilityVerified:windowAware/);
   assert.match(api,/liveAvailability:false/);
   assert.match(client,/availableGuestPets/);
