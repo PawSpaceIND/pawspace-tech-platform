@@ -536,6 +536,65 @@ test("a replayed callback changes nothing and still answers 200", async () => {
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM provider_verification_callbacks WHERE provider_event_id='EVT-R'").get().n, 1);
 });
 
+test("PTJA-P0-07: a redelivery of the same event id carrying a DIFFERENT outcome is not a duplicate", async () => {
+  // CONFIRMED independently by both verifiers. The replay check matched on provider_event_id alone and
+  // never compared the payload, so a second correctly-signed, fresh-timestamped callback bearing the
+  // same event id and the OPPOSITE outcome was answered 200 {ok:true, outcome:"verified", duplicate:true}
+  // - a revocation answered success, reporting the old outcome, with provider_verifications unchanged.
+  //
+  // Both verifiers ran the same control: the identical revocation under a NEW event id IS applied, so
+  // the code already intends to accept verified -> failed. Only the event-id key blocked it. A real
+  // revocation from IDfy carries its own event id; the same id with different content is the provider
+  // contradicting itself, and it must be visible, not answered "accepted".
+  const { sqlite, submit, post, statusOf } = await kycWorld();
+  submit();
+  const settled = await post({ event_id: "EVT-CONFLICT", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } });
+  assert.equal(settled.accepted, true);
+  assert.equal(statusOf().status, "verified");
+
+  const contradiction = await post({ event_id: "EVT-CONFLICT", request_id: "IDFY-REQ-1", status: "failed", result: { verification_status: "not_verified" }, note: "revoked after document review" });
+  assert.equal(contradiction.accepted, false, "a callback that says not_verified must never be answered accepted/verified");
+  assert.equal(contradiction.status, 409);
+  assert.match(String(contradiction.reason), /different payload|contradict/i);
+
+  // The delivery that actually took effect is still the record, and the contradiction is recorded too.
+  const accepted = sqlite.prepare("SELECT outcome,accepted FROM provider_verification_callbacks WHERE provider_event_id='EVT-CONFLICT'").get();
+  assert.equal(String(accepted.outcome), "verified");
+  assert.equal(Number(accepted.accepted), 1, "the accepted delivery is not overwritten by the contradiction");
+  const conflicts = sqlite.prepare("SELECT provider_event_id,outcome,accepted,rejection_reason FROM provider_verification_callbacks WHERE provider_event_id LIKE 'EVT-CONFLICT#%'").all();
+  assert.equal(conflicts.length, 1, "the contradicting delivery is recorded rather than swallowed");
+  assert.equal(Number(conflicts[0].accepted), 0);
+  assert.equal(statusOf().status, "verified", "and nothing is silently re-applied either way");
+});
+
+test("PTJA-P0-07: a genuine redelivery - same event id, same payload - is still a duplicate answered 200", async () => {
+  // Non-vacuity. Refusing every second delivery of an event id would break retry handling entirely:
+  // providers retry on any non-2xx, and a 409 would make them retry forever.
+  const { sqlite, submit, post, statusOf } = await kycWorld();
+  submit();
+  const payload = { event_id: "EVT-SAME", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } };
+  assert.equal((await post(payload)).duplicate, false);
+  sqlite.prepare("UPDATE provider_verifications SET status='failed' WHERE id='PVER-1'").run();
+  const again = await post(payload);
+  assert.equal(again.accepted, true);
+  assert.equal(again.status, 200);
+  assert.equal(again.duplicate, true);
+  assert.equal(statusOf().status, "failed", "a true duplicate still re-applies nothing");
+});
+
+test("PTJA-P0-07: the same revocation under its own event id is still applied", async () => {
+  // The control both verifiers ran. This is what a real revocation looks like, and it must keep working
+  // - the fix must not turn the monotonicity rule's permitted verified -> failed into a refusal.
+  const { submit, post, statusOf } = await kycWorld();
+  submit();
+  await post({ event_id: "EVT-1ST", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } });
+  assert.equal(statusOf().status, "verified");
+  const revocation = await post({ event_id: "EVT-2ND", request_id: "IDFY-REQ-1", status: "failed", result: { verification_status: "not_verified" } });
+  assert.equal(revocation.accepted, true);
+  assert.equal(revocation.outcome, "failed");
+  assert.equal(statusOf().status, "failed", "a revocation with its own event id settles the check");
+});
+
 test("manual and automated verification authority stay separate", async () => {
   // A police / house / pet-proofing outcome is a human's recorded judgement. A provider callback must
   // not be able to write one, or the two channels collapse into a single forgeable one.
