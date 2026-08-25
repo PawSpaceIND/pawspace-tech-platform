@@ -3,9 +3,16 @@ import{createSittingQuote,type SittingPaymentMode}from"./sitting-governance";
 import{resolveLivePrice}from"./live-pricing-resolver";
 import{splitPaymentPlan}from"./stay-split-payments";
 
+function requireQuoteLocation(input:{cityId?:string;zoneId?:string}){
+  const cityId=String(input.cityId??"").trim(),zoneId=String(input.zoneId??"").trim();
+  if(!cityId||!zoneId)throw new Error("City and zone are required for live pricing");
+  return{cityId,zoneId};
+}
+
 export async function createLiveBoardingQuote(db:D1Database,input:{packageCode:string;petCount:number;scheduledStart:string;scheduledEnd:string;paymentMode:BoardingPaymentMode;couponCode?:string;cityId?:string;zoneId?:string}){
+  const location=requireQuoteLocation(input);
   const quote=await createBoardingQuote(db,input);
-  const live=await resolveLivePrice(db,{packageCode:quote.packageCode,fallbackPrice:quote.basePricePerPet,scheduledStart:quote.scheduledStart,cityId:input.cityId??"blr",zoneId:input.zoneId??"blr-east"});
+  const live=await resolveLivePrice(db,{packageCode:quote.packageCode,fallbackPrice:quote.basePricePerPet,scheduledStart:quote.scheduledStart,...location});
   if(live.source==="fallback_default")return quote;
   const totalAmount=live.price*quote.petCount*quote.stayUnits;
   const amountDueNow=quote.paymentMode==="split_50_50"?splitPaymentPlan({totalAmount,scheduledStart:quote.scheduledStart}).dueNow:totalAmount;
@@ -14,10 +21,11 @@ export async function createLiveBoardingQuote(db:D1Database,input:{packageCode:s
 }
 
 export async function createLiveSittingQuote(db:D1Database,input:{packageCode:string;petCount:number;scheduledStart:string;scheduledEnd:string;paymentMode:SittingPaymentMode;couponCode?:string;cityId?:string;zoneId?:string}){
+  const location=requireQuoteLocation(input);
   const quote=await createSittingQuote(db,input);
   const [base,extra]=await Promise.all([
-    resolveLivePrice(db,{packageCode:quote.packageCode,fallbackPrice:quote.basePricePerPet,scheduledStart:quote.scheduledStart,cityId:input.cityId??"blr",zoneId:input.zoneId??"blr-east"}),
-    resolveLivePrice(db,{packageCode:`${quote.packageCode}__extra_pet`,fallbackPrice:quote.extraPetPrice,scheduledStart:quote.scheduledStart,cityId:input.cityId??"blr",zoneId:input.zoneId??"blr-east"}),
+    resolveLivePrice(db,{packageCode:quote.packageCode,fallbackPrice:quote.basePricePerPet,scheduledStart:quote.scheduledStart,...location}),
+    resolveLivePrice(db,{packageCode:`${quote.packageCode}__extra_pet`,fallbackPrice:quote.extraPetPrice,scheduledStart:quote.scheduledStart,...location}),
   ]);
   if(base.source==="fallback_default"&&extra.source==="fallback_default")return quote;
   const unitAmount=base.price+Math.max(0,quote.petCount-1)*extra.price,totalAmount=unitAmount*quote.billableUnits;
