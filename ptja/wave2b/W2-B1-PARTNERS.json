@@ -54,7 +54,10 @@
     "blast_radius": "Every sales employee and every trainer, every 31-day month, wherever the runtime timezone is ahead of UTC. CONDITION STATED EXPLICITLY: under TZ=UTC (the Cloudflare Workers default) the line is a no-op; it bites on any Node/host runtime configured to IST, which is what the grooming engine's own remediation comment cites as the reason it was changed.",
     "suggested_severity": "P2",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p_sales.mjs",
-    "status": "OPEN"
+    "status": "FIXED",
+    "fix_file": "lib/sales-incentive-engine.ts; lib/trainer-incentive-engine.ts; lib/field-productivity.ts",
+    "regression": "tests/ptja-w2b-incentive-regressions.test.mjs :: \"W2B-P03: the last day of a 31-day month stays inside the incentive window under IST\" + \"W2B-P03: the same window is computed under UTC, so the two agree\"",
+    "fix_note": "All three siblings now build the month end with Date.UTC, copying the remediation lib/grooming-incentive-engine.ts already carried under a comment naming this exact failure. The regression sets process.env.TZ to Asia/Kolkata and executes the engine, so it reproduces the timezone-dependent defect rather than pinning the source; its companion runs the same data under UTC and asserts the two agree. Verified afterwards that no other call site in lib/ or app/ still uses the local-time constructor for a month end."
   },
   {
     "id": "W2-B1-P04",

@@ -72,9 +72,8 @@ async function salesWorld(bookingStatus) {
   const { sqlite, db } = world();
   const sales = await import("../lib/sales-incentive-engine.ts");
   booking(sqlite, "BK-15-CONF", { status: bookingStatus, amount: 20000 });
-  sqlite.exec("CREATE TABLE IF NOT EXISTS sales_attributed_bookings (booking_id TEXT PRIMARY KEY,employee_id TEXT NOT NULL,attributed_at INTEGER NOT NULL)");
-  sqlite.prepare("INSERT INTO sales_attributed_bookings (booking_id,employee_id,attributed_at) VALUES ('BK-15-CONF','EMP-SALES-1',?)").run(Date.UTC(2026, 7, 15));
   await sales.ensureSalesIncentiveTables(db);
+  sqlite.prepare("INSERT INTO sales_attributed_bookings (id,booking_id,employee_id,recorded_by,recorded_at) VALUES ('SA-1','BK-15-CONF','EMP-SALES-1','ops',?)").run(Date.UTC(2026, 7, 15));
   sqlite.prepare("INSERT INTO sales_employee_base (id,employee_id,base_vertical,effective_from,reason,actor_id,created_at) VALUES ('SB-1','EMP-SALES-1','grooming_outbound','2026-01-01','probe','ops',?)").run(Date.UTC(2026, 0, 1));
   return { sqlite, db, sales };
 }
@@ -159,4 +158,69 @@ test("W2B-P04: an upgrade on a completed grooming booking still counts", async (
   const result = await grooming.computeGroomerMonthlyIncentive(db, { headGroomerId: "PRV-HEAD-1", monthStart: "2026-08-01", actorId: "ops" });
   assert.equal(Number(result.upgradeValue), 1500, `a genuine upgrade still counts: ${JSON.stringify(result)}`);
   assert.equal(Number(result.upgradeCount), 1, "exactly once");
+});
+
+// =====================================================================================================
+// PTJA-W2B-P03 — month-end truncation: the 31st drops out of the incentive window in any timezone ahead
+// of UTC
+//
+//   const monthEndDate = new Date(year,month,0).toISOString().slice(0,10)
+// The LOCAL-time Date constructor builds midnight local, so under UTC+05:30 toISOString() rolls back a
+// day and the last day of the month silently leaves the window.
+//
+// MEASURED, identical data and request under two process timezones:
+//   TZ=UTC          -> {achievedValue:500000, tierTarget:500000, incentive:8500}
+//   TZ=Asia/Kolkata -> {achievedValue:250000, tierTarget:250000, incentive:4500}
+// The computed window end was 2026-08-31 and 2026-08-30 respectively. Because monthly incentive is
+// tiered the effect is a step, not a shave: a 47% underpayment on identical data.
+//
+// lib/grooming-incentive-engine.ts ALREADY carries the fix - new Date(Date.UTC(year,month,0)) - under a
+// comment naming this exact failure. Its three siblings were never updated. This copies that existing,
+// deliberate remediation to sales, trainer and field-productivity. Nothing is decided.
+//
+// The condition is stated rather than hidden: under TZ=UTC, the Cloudflare Workers default, the line is
+// a no-op. It bites on any host runtime configured to IST, which is what the grooming engine's own
+// remediation comment cites as the reason it was changed.
+// =====================================================================================================
+
+test("W2B-P03: the last day of a 31-day month stays inside the incentive window under IST", async () => {
+  const original = process.env.TZ;
+  process.env.TZ = "Asia/Kolkata";
+  try {
+    const { sqlite, db } = world();
+    const sales = await import("../lib/sales-incentive-engine.ts");
+    await sales.ensureSalesIncentiveTables(db);
+    sqlite.prepare("INSERT INTO sales_employee_base (id,employee_id,base_vertical,effective_from,reason,actor_id,created_at) VALUES ('SB-1','EMP-SALES-1','grooming_outbound','2026-01-01','probe','ops',?)").run(Date.UTC(2026, 0, 1));
+    for (const [id, day] of [["BK-30-A", "30"], ["BK-31-A", "31"]]) {
+      booking(sqlite, id, { status: "completed", amount: 250000, start: `2026-08-${day}T04:00:00.000Z` });
+      sqlite.prepare("INSERT INTO sales_attributed_bookings (id,booking_id,employee_id,recorded_by,recorded_at) VALUES (?,?,'EMP-SALES-1','ops',?)").run(`SA-${id}`, id, Date.UTC(2026, 7, Number(day)));
+    }
+
+    const monthly = await sales.computeMonthlySalesIncentive(db, { employeeId: "EMP-SALES-1", monthStart: "2026-08-01", actorId: "ops" });
+    assert.equal(Number(monthly.achievedValue), 500000,
+      `both bookings are inside August, whatever the host timezone: ${JSON.stringify(monthly)}`);
+  } finally {
+    if (original === undefined) delete process.env.TZ; else process.env.TZ = original;
+  }
+});
+
+test("W2B-P03: the same window is computed under UTC, so the two agree", async () => {
+  // Non-vacuity, and the point of the fix: the answer must not depend on where the process runs.
+  const original = process.env.TZ;
+  process.env.TZ = "UTC";
+  try {
+    const { sqlite, db } = world();
+    const sales = await import("../lib/sales-incentive-engine.ts");
+    await sales.ensureSalesIncentiveTables(db);
+    sqlite.prepare("INSERT INTO sales_employee_base (id,employee_id,base_vertical,effective_from,reason,actor_id,created_at) VALUES ('SB-1','EMP-SALES-1','grooming_outbound','2026-01-01','probe','ops',?)").run(Date.UTC(2026, 0, 1));
+    for (const [id, day] of [["BK-30-A", "30"], ["BK-31-A", "31"]]) {
+      booking(sqlite, id, { status: "completed", amount: 250000, start: `2026-08-${day}T04:00:00.000Z` });
+      sqlite.prepare("INSERT INTO sales_attributed_bookings (id,booking_id,employee_id,recorded_by,recorded_at) VALUES (?,?,'EMP-SALES-1','ops',?)").run(`SA-${id}`, id, Date.UTC(2026, 7, Number(day)));
+    }
+
+    const monthly = await sales.computeMonthlySalesIncentive(db, { employeeId: "EMP-SALES-1", monthStart: "2026-08-01", actorId: "ops" });
+    assert.equal(Number(monthly.achievedValue), 500000, "the UTC answer is the same answer");
+  } finally {
+    if (original === undefined) delete process.env.TZ; else process.env.TZ = original;
+  }
 });
