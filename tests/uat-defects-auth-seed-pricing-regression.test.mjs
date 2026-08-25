@@ -18,7 +18,7 @@ test("system-wide operations dashboards require booking management authority",as
   ];
   for(const path of paths){
     const source=await read(path);
-    assert.match(source,/requirePermission\(actor,"bookings\.manage"\)|authorize\(request,"bookings\.manage"\)/,`${path} must not expose a system-wide dashboard to bookings.view`);
+    assert.match(source,/requirePermission\(actor,"bookings\.manage"\)|authorize\(request,"bookings\.manage"\)/,`${path} must not expose a system-wide dashboard to bookings.view alone`);
   }
 });
 
@@ -31,8 +31,22 @@ test("public/read dashboards do not seed synthetic host or training data",async(
 });
 
 test("live commercial quotes never infer Bengaluru when geography is absent",async()=>{
-  const source=await read("lib/live-commercial-quotes.ts");
-  assert.match(source,/if\(!location\)return quote/);
-  assert.doesNotMatch(source,/cityId:\s*input\.cityId\s*\?\?\s*["']blr["']/);
-  assert.doesNotMatch(source,/zoneId:\s*input\.zoneId\s*\?\?\s*["']blr-east["']/);
+  const quotes=await read("lib/live-commercial-quotes.ts");
+  const resolver=await read("lib/live-pricing-resolver.ts");
+  assert.match(quotes,/resolveLiveBasePrice/);
+  assert.match(quotes,/location\s*\?\s*await resolveLivePrice/);
+  assert.doesNotMatch(quotes,/cityId:\s*input\.cityId\s*\?\?\s*["']blr["']/);
+  assert.doesNotMatch(quotes,/zoneId:\s*input\.zoneId\s*\?\?\s*["']blr-east["']/);
+  assert.match(resolver,/export async function resolveLiveBasePrice/);
+  assert.doesNotMatch(resolver,/calculatePrice\([\s\S]*resolveLiveBasePrice/);
+});
+
+test("prelaunch booking swarm is blocked outside the isolated UAT sandbox",async()=>{
+  const auth=await read("lib/server-auth.ts");
+  const swarm=await read("app/api/prelaunch-booking-swarm/route.ts");
+  assert.match(swarm,/authorize\(request,"launch\.manage"\)/);
+  assert.match(auth,/pathname==="\/api\/prelaunch-booking-swarm"/);
+  assert.match(auth,/uatLoginEnabled\(uatEnv\)/);
+  assert.match(auth,/PAWSPACE_PAYMENT_ENV\|\|""\)!=="sandbox"/);
+  assert.match(auth,/Prelaunch swarm is available only in the isolated UAT sandbox/);
 });
