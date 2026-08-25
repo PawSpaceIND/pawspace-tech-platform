@@ -145,3 +145,61 @@ test("W2B-P01: the LMS overview does not carry the answer key", async () => {
   assert.equal(Number(module.quizQuestions), 2, "with its question count");
   assert.equal(String(module.title), "Handling", "and its title");
 });
+
+// =====================================================================================================
+// PTJA-W2B-R06 — the Launch Readiness handler enforces no permission and invents a role for an
+// unprovisioned identity
+//
+// app/api/launch-readiness/route.ts has its own local actor(): it reads the forwarded identity header
+// and returns {email, roleCode: row?.role_code || "associate"} - a MISSING app_users row falls through
+// to the literal "associate" instead of refusing. The GET then calls no requirePermission or authorize
+// of any kind. lib/server-auth.ts resolveActor, given the same input, throws
+// authFailure("Access has not been provisioned for this identity", 403).
+//
+// MEASURED, both gates driven independently:
+//   stranger@example.com          gateway 403 "Access has not been provisioned or is disabled"
+//                                 handler  200 with the full readiness register
+//   a real customer identity      gateway 403 "Permission denied"
+//                                 handler  200 with the same full register
+//
+// Only gate one refuses. The platform's stated convention is that the gateway is the first gate and the
+// handler is the second - the handler is not entitled to assume the gateway ran. The route now
+// authorizes on launch.view, which is exactly what the gateway already maps GET /api/launch-readiness
+// to, so the two gates agree instead of disagreeing.
+// =====================================================================================================
+
+async function launchReadiness(headers) {
+  const route = await import("../app/api/launch-readiness/route.ts");
+  const response = await route.GET(new Request("https://uat.pawspace.in/api/launch-readiness", { headers }));
+  return { status: response.status, body: await response.json().catch(() => null) };
+}
+
+test("W2B-R06: an unprovisioned identity is refused by the handler, not given a role", async () => {
+  await staffWorld("ops.admin@pawspace.test", "admin");
+  const stranger = await launchReadiness({
+    "oai-authenticated-user-email": "stranger@example.com",
+    "oai-authenticated-user-full-name": "Probe%20User",
+    "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8",
+  });
+  assert.notEqual(stranger.status, 200,
+    `an identity with no app_users row must not be handed a role: ${JSON.stringify(stranger).slice(0, 300)}`);
+});
+
+test("W2B-R06: a provisioned identity without launch.view is refused too", async () => {
+  const { db, now } = await staffWorld("ops.admin@pawspace.test", "admin");
+  await db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('USR-CUST','cust@p.test','Customer','customer','active',?,?)").bind(now, now).run();
+  const customer = await launchReadiness({
+    "oai-authenticated-user-email": "cust@p.test",
+    "oai-authenticated-user-full-name": "Probe%20User",
+    "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8",
+  });
+  assert.notEqual(customer.status, 200,
+    `a customer identity must not read the launch register: ${JSON.stringify(customer).slice(0, 300)}`);
+});
+
+test("W2B-R06: a staff identity that holds launch.view still reads it", async () => {
+  // Non-vacuity. Refusing everyone would satisfy the two cases above and break the launch console.
+  const { headers } = await staffWorld("founder@pawspace.test", "founder");
+  const founder = await launchReadiness(headers);
+  assert.equal(founder.status, 200, `the launch console must still work: ${JSON.stringify(founder).slice(0, 300)}`);
+});

@@ -74,7 +74,8 @@
     "blast_radius": "GET /api/cash-flow-statement for every period and window. All verticals, since no vertical's payment capture posts a cash journal. Only wallet top-ups and explicitly-flagged deferred-revenue collections ever appear.",
     "suggested_severity": "P1",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p03-pnl-refund.mjs",
-    "status": "OPEN"
+    "status": "OPEN — needs an accounting decision",
+    "reason_not_fixed": "The Cash Flow Statement's only input is finance_journal_entries and cash is recognised only on CASH_ACCOUNTS lines, but no vertical's payment capture posts a cash journal at all - so a month with Rs 5,000 captured reports closing cash Rs 0 while asserting reconciled:true. The report is not wrong about its own inputs; the inputs do not exist. Closing this means deciding WHERE and WHEN a collection posts to the cash ledger (on capture, on settlement, gross or net of gateway fees) and which contra account it faces. That is a double-entry design decision for the finance owner, not an engineering one, and inventing it would put fabricated journals into the statutory ledger. RECOMMENDED: post a cash journal at verified capture, debit 1010-Bank and credit the booking's existing liability/revenue account, and let this statement stay purely journal-derived."
   },
   {
     "id": "W2-B2-R05",
@@ -91,7 +92,10 @@
     "blast_radius": "GET /api/company-analytics whenever from/to are supplied (the route documents and accepts them). The two in-app consumers, app/team/analytics/page.tsx and app/control/business-intelligence-panel.tsx, currently call it with no window and so are unaffected - the exposure is API/report consumers that pass a window.",
     "suggested_severity": "P2",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p04-window.mjs",
-    "status": "OPEN"
+    "status": "FIXED",
+    "fix_file": "lib/company-analytics.ts",
+    "regression": "tests/ptja-w2b-reporting-regressions.test.mjs :: \"W2B-R05: a booking on the closing date of the window is counted\" + \"W2B-R05: the window still excludes what falls outside it\"",
+    "fix_note": "The date window now compares substr(scheduled_start,1,10) against date-only bounds, inclusive at both ends - exactly what lib/unit-economics.ts already does. It previously compared a full ISO timestamp against a date-only bound with a strict '<', so every booking on the closing date silently vanished."
   },
   {
     "id": "W2-B2-R06",
@@ -108,6 +112,9 @@
     "blast_radius": "GET /api/launch-readiness. Any identity header value at all, provisioned or not, reaches a 200 from the handler. Contained in production only by gate 1 (the gateway maps the route to launch.view).",
     "suggested_severity": "P2",
     "evidence_path": "/tmp/claude-0/-home-user-pawspace-tech-platform/6d99453c-0aae-5e93-aa82-da6198e60b3a/scratchpad/wave2b/p06-launch.mjs",
-    "status": "OPEN"
+    "status": "FIXED",
+    "fix_file": "app/api/launch-readiness/route.ts",
+    "regression": "tests/ptja-w2b-exposure-regressions.test.mjs :: \"W2B-R06: an unprovisioned identity is refused by the handler, not given a role\" + \"W2B-R06: a provisioned identity without launch.view is refused too\" + \"W2B-R06: a staff identity that holds launch.view still reads it\"",
+    "fix_note": "The GET now authorizes on launch.view - exactly what lib/api-gateway.ts already maps this route to - so both gates agree instead of only the gateway refusing. The route's local actor(), which invented the role 'associate' for an identity with no app_users row, still serves canWrite and the audit trail but is no longer the only thing between a stranger and the register."
   }
 ]

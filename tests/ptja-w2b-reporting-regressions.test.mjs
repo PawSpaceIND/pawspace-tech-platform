@@ -46,7 +46,7 @@ function world(env = {}) {
 function refundedMonth(refundStatus) {
   const { sqlite, db } = world();
   sqlite.exec(`
-CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,service_code TEXT,city_id TEXT,zone_id TEXT,provider_id TEXT,status TEXT,total_amount REAL,scheduled_start TEXT,scheduled_end TEXT,created_at INTEGER,updated_at INTEGER);
+CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,service_code TEXT,package_code TEXT,city_id TEXT,zone_id TEXT,provider_id TEXT,status TEXT,total_amount REAL,currency TEXT DEFAULT 'INR',scheduled_start TEXT,scheduled_end TEXT,created_at INTEGER,updated_at INTEGER);
 CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT,amount REAL NOT NULL,amount_due_now REAL NOT NULL DEFAULT 0,method TEXT,mode TEXT,status TEXT NOT NULL,idempotency_key TEXT,created_at INTEGER,updated_at INTEGER);
 CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'requested',requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
 `);
@@ -163,4 +163,52 @@ test("W2B-R03: an unrefunded month is unchanged, and an unapproved request deduc
   const pendingReport = await pnl(pending.db);
   assert.equal(Number(pendingReport.totalTurnover["2026-08"]), 5000,
     "and neither does one still awaiting approval");
+});
+
+// =====================================================================================================
+// PTJA-W2B-R05 — Company Analytics silently drops the whole final day of any explicit date window
+//
+// buildCompanyAnalytics filters `scheduled_start>=? AND scheduled_start<?` binding the raw `to` value.
+// scheduled_start is a full ISO timestamp ('2026-08-31T09:00:00.000Z') while `to` is a date-only string
+// ('2026-08-31'), so the string comparison '2026-08-31T09:00:00.000Z' < '2026-08-31' is FALSE and every
+// booking on the closing date is excluded.
+//
+// MEASURED: three completed Rs 1,000 grooming bookings on 1, 15 and 31 August, asked of three surfaces
+// for the same calendar month. company-analytics reported bookings.total 2 and gmv 2000, while
+// unit-economics reported gmv 3000 and the P&L reported turnover 3000. The 31 August booking exists and
+// is completed; only company-analytics could not see it.
+//
+// The sibling report already does this correctly: lib/unit-economics.ts compares
+// substr(scheduled_start,1,10) against date-only bounds, inclusive at both ends. That is applied here.
+// =====================================================================================================
+
+test("W2B-R05: a booking on the closing date of the window is counted", async () => {
+  const { sqlite, db } = world();
+  const analytics = await import("../lib/company-analytics.ts");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,service_code TEXT,package_code TEXT,city_id TEXT,zone_id TEXT,provider_id TEXT,status TEXT,total_amount REAL,currency TEXT DEFAULT 'INR',scheduled_start TEXT,scheduled_end TEXT,created_at INTEGER,updated_at INTEGER)");
+  for (const [id, day] of [["BK-1", "01"], ["BK-15", "15"], ["BK-31", "31"]]) {
+    sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,package_code,city_id,zone_id,provider_id,status,total_amount,currency,scheduled_start,scheduled_end,created_at,updated_at) VALUES (?,?,'grooming','dog-basic','blr','blr-east','PRV-1','completed',1000,'INR',?,?,?,?)")
+      .run(id, `CUS-${id}`, `2026-08-${day}T09:00:00.000Z`, `2026-08-${day}T11:00:00.000Z`, Date.UTC(2026, 7, Number(day)), Date.UTC(2026, 7, Number(day)));
+  }
+
+  const report = await analytics.buildCompanyAnalytics(db, { from: "2026-08-01", to: "2026-08-31" });
+  assert.equal(Number(report.bookings.total), 3,
+    `every booking in the window counts, including the closing date: ${JSON.stringify(report.bookings)}`);
+  assert.equal(Number(report.money.gmv), 3000,
+    `and so does its value: ${JSON.stringify(report.money)}`);
+});
+
+test("W2B-R05: the window still excludes what falls outside it", async () => {
+  // Non-vacuity. Widening the bound until everything matches would satisfy the case above.
+  const { sqlite, db } = world();
+  const analytics = await import("../lib/company-analytics.ts");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,service_code TEXT,package_code TEXT,city_id TEXT,zone_id TEXT,provider_id TEXT,status TEXT,total_amount REAL,currency TEXT DEFAULT 'INR',scheduled_start TEXT,scheduled_end TEXT,created_at INTEGER,updated_at INTEGER)");
+  for (const [id, date] of [["BK-JUL", "2026-07-31"], ["BK-AUG", "2026-08-15"], ["BK-SEP", "2026-09-01"]]) {
+    sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,package_code,city_id,zone_id,provider_id,status,total_amount,currency,scheduled_start,scheduled_end,created_at,updated_at) VALUES (?,?,'grooming','dog-basic','blr','blr-east','PRV-1','completed',1000,'INR',?,?,0,0)")
+      .run(id, `CUS-${id}`, `${date}T09:00:00.000Z`, `${date}T11:00:00.000Z`);
+  }
+
+  const report = await analytics.buildCompanyAnalytics(db, { from: "2026-08-01", to: "2026-08-31" });
+  assert.equal(Number(report.bookings.total), 1,
+    `only August counts: ${JSON.stringify(report.bookings)}`);
 });
