@@ -97,6 +97,15 @@ export async function postPayrollJournal(db:Db,input:{runId:string;periodCode:st
  const totals=await db.prepare("SELECT COUNT(*) employee_count,COALESCE(SUM(gross_earnings),0) gross_earnings,COALESCE(SUM(total_deductions),0) total_deductions,COALESCE(SUM(reimbursements),0) reimbursements,COALESCE(SUM(employer_cost),0) employer_cost,COALESCE(SUM(net_pay),0) net_pay FROM employee_payroll_results WHERE run_id=?").bind(input.runId).first<Row>();
  if(Number(totals?.employee_count||0)<=0)throw new Error("Payroll results are required before Finance posting");
  const mappings=await payrollMappings(db),journalGroup=uid("PAYJRN"),entryDate=new Date(Number(run.period_end)).toISOString().slice(0,10),now=Date.now();
+ // A payroll journal's period is not a free parameter. The entries are dated from the run's own
+ // period_end, so a declared period_code that disagrees with those dates used to post the identical
+ // journal into a LOCKED month simply by naming an open one - and, lock or no lock, it split the books:
+ // every period_code-keyed report puts the money in the declared month while the P&L, which buckets by
+ // monthKey(entry_date), puts it in the dated one. Refusing leaves a genuine cross-period payroll to a
+ // human instead of the platform quietly keeping two sets of books.
+ const datedPeriod=entryDate.slice(0,7);
+ if(datedPeriod!==input.periodCode)throw new Error(`period_mismatch: this payroll run is dated ${datedPeriod}; it cannot be posted as ${input.periodCode}`);
+ await assertPeriodOpen(db,datedPeriod);
  const lines=[
   {key:"payroll.salary_expense",debit:money(totals?.gross_earnings),credit:0,label:"Payroll salary expense"},
   {key:"payroll.reimbursement_expense",debit:money(totals?.reimbursements),credit:0,label:"Payroll reimbursements"},
@@ -122,6 +131,12 @@ export async function createSandboxStatutoryExport(db:Db,input:{runId:string;pol
  const policy=await db.prepare("SELECT * FROM people_statutory_policy_versions WHERE id=? AND status='active_uat'").bind(input.policyVersionId).first<Row>();
  if(!policy)throw new Error("Active UAT statutory policy version is required");
  if(Number(policy.effective_from)>Number(run.period_end)||(policy.effective_until!=null&&Number(policy.effective_until)<Number(run.period_start)))throw new Error("Statutory policy is not effective for this payroll run");
+ // Same rule as the payroll journal above: the export is stamped with a caller-supplied period while its
+ // contents are the run's own, so a July run could be exported as August - past a July lock, and
+ // mislabelling the statutory package itself.
+ const exportPeriod=new Date(Number(run.period_end)).toISOString().slice(0,7);
+ if(exportPeriod!==input.periodCode)throw new Error(`period_mismatch: this payroll run is dated ${exportPeriod}; it cannot be exported as ${input.periodCode}`);
+ await assertPeriodOpen(db,exportPeriod);
  const totals=await db.prepare("SELECT COUNT(*) employee_count,COALESCE(SUM(gross_earnings),0) gross_earnings,COALESCE(SUM(total_deductions),0) total_deductions,COALESCE(SUM(reimbursements),0) reimbursements,COALESCE(SUM(employer_cost),0) employer_cost,COALESCE(SUM(net_pay),0) net_pay FROM employee_payroll_results WHERE run_id=?").bind(input.runId).first<Row>();
  const payload={format:"pawspace_statutory_sandbox_v1",sandboxOnly:true,externalSubmission:false,submissionReady:false,periodCode:input.periodCode,payroll:{runId:input.runId,periodStart:run.period_start,periodEnd:run.period_end,employeeCount:Number(totals?.employee_count||0),grossEarnings:money(totals?.gross_earnings),totalDeductions:money(totals?.total_deductions),reimbursements:money(totals?.reimbursements),employerCost:money(totals?.employer_cost),netPay:money(totals?.net_pay)},policy:{id:policy.id,policyCode:policy.policy_code,version:policy.version,approvalReference:policy.approval_reference,config:parseJson(policy.config_json)}};
  const id=uid("STATEXP"),now=Date.now();

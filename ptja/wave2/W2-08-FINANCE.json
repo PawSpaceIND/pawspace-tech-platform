@@ -17,7 +17,8 @@
       "sitting_finance_reconciliation.net_customer_amount = Math.max(0, captured - refundTotal) hides the negative net that would otherwise expose the over-refund."
     ],
     "blast_radius": "Every Boarding and Pet Sitting booking. Any staff member who can raise a cancellation request plus any one finance approver can move an unbounded multiple of the collected amount out of the company per booking (3 requests = 300%). The refund rows are marked sandbox_pending/sandbox_recorded today, so the loss is realised the moment the refund executor is wired to a live gateway; the ledger, the reconciliation row and the finance UI already report the inflated figure as approved.",
-    "suggested_severity": "P0"
+    "suggested_severity": "P0",
+    "status": "OPEN"
   },
   {
     "id": "W2-08-F02",
@@ -37,7 +38,8 @@
       "lib/gst-accounting.ts DOES have a locked(db,date) helper reading the same table - the control exists, it is simply not applied to the service-side money paths."
     ],
     "blast_radius": "Every figure published from a closed month is provisional. GST returns, board-approved management accounts, statutory packages and the P&L for any locked period can all be contradicted by writes made after the lock, silently and by any actor with finance.manage. Combined with W2-08-F03 the two published surfaces for the same closed month already disagree.",
-    "suggested_severity": "P0"
+    "suggested_severity": "P0",
+    "status": "OPEN"
   },
   {
     "id": "W2-08-F03",
@@ -56,7 +58,8 @@
       "The two surfaces also use different exclusion sets: the close excludes status IN ('cancelled','refunded'); the P&L excludes ('cancelled','draft'). A booking left in status 'refunded' counts as revenue in the P&L and not in the close."
     ],
     "blast_radius": "Any consumer comparing the board-approved close pack against the P&L for the same month sees two different revenue numbers and cannot tell which is authoritative. Partial refunds are invisible on both surfaces: a booking refunded in part keeps its full total_amount in the P&L and its full total in the close snapshot.",
-    "suggested_severity": "P1"
+    "suggested_severity": "P1",
+    "status": "OPEN"
   },
   {
     "id": "W2-08-F04",
@@ -75,7 +78,8 @@
       "invoiceCount:0 is reported next to two real invoices, and nothing cross-checks it against booking_invoices."
     ],
     "blast_radius": "Every monthly close publishes GST output tax and GSTR-3B net payable as 0 for the entire service business. The board approves and locks the month on that number, and lib/gst-accounting.ts's statutory package for the same period is built from finance_tax_ledger, which the service invoice path also never writes.",
-    "suggested_severity": "P0"
+    "suggested_severity": "P0",
+    "status": "OPEN"
   },
   {
     "id": "W2-08-F05",
@@ -94,6 +98,11 @@
       "lib/pnl-reporting.ts buckets journal debits by entry_date; lib/gst-accounting.ts generateAccountingExport, lib/cash-flow-statement.ts and lib/finance-intelligence-governance.ts all key on period_code. The two dimensions are never reconciled, so this single posting is simultaneously in July (P&L) and in August (exports, cash flow, intelligence)."
     ],
     "blast_radius": "Any actor with payroll.manage can post arbitrary payroll expense into any locked month by naming an open one, and can also silently move payroll cost between months. Independently of the lock bypass, EVERY payroll posting whose declared period_code differs from its entry_date month splits the books: the accounting export for a period (SELECT ... WHERE period_code=?) omits entries the P&L for that period includes.",
-    "suggested_severity": "P0"
+    "suggested_severity": "P0",
+    "status": "FIXED",
+    "fix_file": "lib/people-finance-integration.ts",
+    "regression": "tests/ptja-w2-finance-regressions.test.mjs :: \"W2-FIN-01: a locked payroll period cannot be written into by declaring an open one\" + \"W2-FIN-01: a payroll journal's declared period must agree with the dates it posts\" + \"W2-FIN-01: an honest posting into an open period still works, and still balances\" + \"W2-FIN-01: the sandbox statutory export cannot be labelled with a period the run is not dated in\"",
+    "fix_note": "A payroll journal's period is derived, not declared: the entries are dated from the run's own period_end, so a declared period_code that disagrees with those dates is refused (period_mismatch) and the lock is then checked against the period the money actually lands in. This closes both halves - the lock bypass and, independently of any lock, the books-split where a period_code-keyed export omits entries the entry_date-bucketed P&L includes. The same shape was then MEASURED and closed in createSandboxStatutoryExport, which stamped a July run's payload as an August statutory export. No policy is invented and no side is chosen: a genuine cross-period payroll is refused and left to a human.",
+    "collateral": "tests/people-finance-integration.test.mjs is source_contract only, and its case 'Finance period locks gate employee expense links payroll journals statutory exports and reconciliations' passed for the whole life of this bypass - the string it pins was present while the control it names was walkable. The new file executes the module."
   }
 ]
