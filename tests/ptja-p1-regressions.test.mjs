@@ -1237,3 +1237,47 @@ test("W2-PAY-04: a redelivery of a genuinely PROCESSED capture still completes t
   assert.equal(String(subscription().status), "active", "the entitlement stays active");
   assert.equal(Number(subscription().sessions_reserved), 10, "and the sessions are not reserved twice");
 });
+
+// =====================================================================================================
+// PTJA-W2-PAY-05 (ledger W2-07-PAY-007) — a replayed event id takes its booking from the NEW payload
+//
+// The duplicate branch computed its repair target as
+//   String(existing.booking_id || event.bookingId || "")
+// so when the RECORDED event had no booking of its own, the REPLAYED payload's notes.booking_id decided
+// which booking got acted on.
+//
+// MEASURED: pass 1 delivered event id evt_replay with a payload matching nothing - 200
+// {"duplicate":false,"status":"exception","reason":"unmatched_gateway_event"}, recorded with booking_id
+// NULL. Pass 2 re-sent the SAME event id with notes.booking_id added, and activated a Rs 24,000
+// ten-session subscription. The stored event row was left untouched - still booking_id NULL, still
+// 'exception', payment_reconciliation_records still empty - so nothing linked evt_replay to the booking
+// it had just changed. unmatched_gateway_event is the ordinary way an event is recorded with a NULL
+// booking, so such reusable ids accumulate naturally.
+//
+// The W2-PAY-04 fix already refuses to repair a non-'processed' event, which closes this exact route.
+// The fallback itself is removed as well, because it can only ever fire in the unsafe case: a genuinely
+// processed capture always has its booking stamped on the event row, so `|| event.bookingId` never
+// supplied a booking for a legitimate repair - only for one that had none. Repair now acts strictly on
+// the booking the recorded event was reconciled against.
+// =====================================================================================================
+
+test("W2-PAY-05: a replayed event id cannot act on a booking the recorded event never referred to", async () => {
+  const { deliver, subscription, sqlite } = await subscriptionWebhookWorld();
+  const stamp = Math.floor(Date.now() / 1000);
+  const body = (notes) => ({
+    event: "payment.captured", created_at: stamp,
+    payload: { payment: { entity: { id: "pay_z", order_id: "order_NOWHERE", amount: 100, currency: "INR", ...(notes ? { notes } : {}) } } },
+  });
+
+  const first = await deliver(body(null), "evt_replay"); // matches nothing at all
+  assert.equal(String(first.body?.status), "exception", `an unmatched event is refused: ${JSON.stringify(first)}`);
+  assert.equal(sqlite.prepare("SELECT booking_id FROM payment_gateway_events WHERE event_id='evt_replay'").get().booking_id, null,
+    "and is recorded with no booking of its own");
+
+  const substituted = await deliver(body({ booking_id: "BK-SUB" }), "evt_replay"); // same id, booking added
+  assert.equal(String(subscription().status), "pending_payment",
+    `a replayed id must not act on a booking supplied by the new payload: ${JSON.stringify(substituted)}`);
+  assert.equal(Number(subscription().sessions_reserved), 0, "no sessions may be reserved");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM booking_lifecycle_events WHERE event_type='subscription_activated'").get().n, 0,
+    "and no entitlement may be granted with no audit row linking the event to the booking");
+});

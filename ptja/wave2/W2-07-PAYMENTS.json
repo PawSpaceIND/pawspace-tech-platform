@@ -128,7 +128,10 @@
     "blast_radius": "Any pending_payment entitlement can be targeted by reusing any event id already recorded with a NULL booking_id — and unmatched_gateway_event is the ordinary way an event gets recorded with a NULL booking_id, so such ids accumulate naturally in payment_gateway_events.",
     "suggested_severity": "P1",
     "evidence_path": "scratchpad/p/p6-replay-subscription.mjs",
-    "status": "OPEN"
+    "status": "FIXED",
+    "fix_file": "lib/grooming-payment-reconciliation.ts",
+    "regression": "tests/ptja-p1-regressions.test.mjs :: \"W2-PAY-05: a replayed event id cannot act on a booking the recorded event never referred to\"",
+    "fix_note": "Closed by the W2-07-PAY-006 processing_status gate (verified: the regression reproduces against the pre-fix commit and passes after), and the mechanism itself removed - the repair target is now taken strictly from the RECORDED event row, never from the replayed payload. A genuinely processed capture always has its booking stamped on the event row, so the removed fallback could only ever have fired for an event that had none."
   },
   {
     "id": "W2-07-PAY-R01",

@@ -177,7 +177,11 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
     // enforces no replay window, so that exposure never expired. This fails closed both ways: a refused
     // event repairs nothing, and the failure branch can no longer close a genuinely paid entitlement on
     // a replayed payment.failed the system had already rejected.
-    const repairBookingId=String(existing.processing_status)==="processed"?String(existing.booking_id||event.bookingId||"").trim():"";
+    // The booking comes from the RECORDED event, never from the replayed payload. A processed capture
+    // always has its booking stamped on the event row, so an `|| event.bookingId` fallback could only
+    // ever fire for an event that had NO booking - which is exactly how a replayed id was able to act on
+    // a booking it never referred to, leaving no audit row linking the two.
+    const repairBookingId=String(existing.processing_status)==="processed"?String(existing.booking_id||"").trim():"";
     if(repairBookingId){
       if(["payment.captured","order.paid","payment_link.paid"].includes(String(existing.event_type)))await activateSubscriptionOnCapture(db,{bookingId:repairBookingId,eventId:event.eventId}).catch(()=>null);
       else if(String(existing.event_type)==="payment.failed")await failSubscriptionOnPaymentFailure(db,{bookingId:repairBookingId,eventId:event.eventId}).catch(()=>null);
