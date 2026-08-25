@@ -12,19 +12,25 @@ function makeD1(sqlite) {
     run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; },
     all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
   });
+  let batchTail = Promise.resolve();
   return {
     prepare: (sql) => statement(sql, []),
-    batch: async (list) => {
-      const out = [];
-      sqlite.exec("BEGIN");
-      try {
-        for (const item of list) out.push(await item.run());
-        sqlite.exec("COMMIT");
-        return out;
-      } catch (error) {
-        sqlite.exec("ROLLBACK");
-        throw error;
-      }
+    batch: (list) => {
+      const run = async () => {
+        const out = [];
+        sqlite.exec("BEGIN");
+        try {
+          for (const item of list) out.push(await item.run());
+          sqlite.exec("COMMIT");
+          return out;
+        } catch (error) {
+          sqlite.exec("ROLLBACK");
+          throw error;
+        }
+      };
+      const result = batchTail.then(run, run);
+      batchTail = result.then(() => undefined, () => undefined);
+      return result;
     },
     exec: async (sql) => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
   };
