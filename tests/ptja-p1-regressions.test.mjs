@@ -437,3 +437,110 @@ test("P1-F23: a genuine replay - same key, same booking, same action - is still 
   assert.equal(String(sqlite.prepare("SELECT status FROM canonical_bookings WHERE id='BKG-A1'").get().status), "confirmed",
     "a true replay re-applies nothing");
 });
+
+// =====================================================================================================
+// PTJA-P1-F16 / F3 — the same unscoped-key defect in the stay balance path and the lead engine
+//
+// F16 (money). stay_payment_events.idempotency_key is TEXT UNIQUE GLOBALLY, and payStayBalance flipped
+// the schedule to 'paid' first and inserted the capture event second, swallowing a UNIQUE collision as
+// "the same request already recorded its capture". Reused across two bookings, the second booking was
+// marked PAID and its balance_captured event silently discarded. Measured: Rs 12,000 and Rs 15,000
+// settled with no capture event, across two different customers. Keys are client-supplied, so two
+// customers both sending "pay-balance" collide by accident.
+//
+// F3 (cross-lead disclosure and a silently starved lead). assignLead opened with
+// "SELECT * FROM lead_assignments WHERE idempotency_key=?" and returned that row BEFORE leadContext()
+// was ever called. Measured: assigning LEAD-B with LEAD-A's key returned 200 carrying LEAD-A's
+// assignment row - its lead_id, the assigned employee's email, team and policy - while LEAD-B was never
+// assigned and stayed unowned; and the same call for a lead id that does not exist returned the same
+// 200. security_audit_events recorded all three as completed.
+//
+// Same correction as the lifecycle modules: a key identifies one mutation of one record. Reused
+// elsewhere it is a conflict and is refused.
+// =====================================================================================================
+
+test("P1-F16: a stay balance key belonging to another booking is refused, and settles nothing", async () => {
+  const { sqlite, db } = world();
+  const split = await import("../lib/stay-split-payments.ts");
+  await split.ensureStayPaymentTables(db);
+  const now = Date.now();
+  const seed = (bookingId, customerId, total) => sqlite.prepare("INSERT INTO stay_payment_schedules (booking_id,service_code,customer_id,total_amount,paid_now_amount,balance_amount,balance_due_at,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'pending_balance',?,?)")
+    .run(bookingId, "boarding", customerId, total, total / 2, total / 2, now + 86_400_000, now, now);
+  seed("BKG-STAY-A", "CUST-A", 24000);
+  seed("BKG-STAY-B", "CUST-B", 30000);
+
+  const first = await split.payStayBalance(db, { bookingId: "BKG-STAY-A", idempotencyKey: "pay-balance", actorId: "CUST-A" });
+  assert.equal(first.schedule.status, "paid");
+
+  await assert.rejects(
+    () => split.payStayBalance(db, { bookingId: "BKG-STAY-B", idempotencyKey: "pay-balance", actorId: "CUST-B" }),
+    (error) => error instanceof Response && error.status === 409,
+    "a key that already settled another booking must be refused",
+  );
+  const b = sqlite.prepare("SELECT status FROM stay_payment_schedules WHERE booking_id='BKG-STAY-B'").get();
+  assert.equal(String(b.status), "pending_balance", "and booking B is NOT marked paid");
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM stay_payment_events WHERE booking_id='BKG-STAY-B'").get().n), 0);
+  // Every settled schedule has a capture event behind it - which is the invariant the defect broke.
+  const paid = sqlite.prepare("SELECT booking_id FROM stay_payment_schedules WHERE status='paid'").all();
+  for (const row of paid) {
+    assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM stay_payment_events WHERE booking_id=? AND event_type='balance_captured'").get(row.booking_id).n), 1,
+      `${row.booking_id} is paid, so it must have exactly one capture event`);
+  }
+});
+
+test("P1-F16: the same booking replaying its own key is still a duplicate", async () => {
+  // Non-vacuity: refusing every reuse would break the customer's own retry.
+  const { sqlite, db } = world();
+  const split = await import("../lib/stay-split-payments.ts");
+  await split.ensureStayPaymentTables(db);
+  const now = Date.now();
+  sqlite.prepare("INSERT INTO stay_payment_schedules (booking_id,service_code,customer_id,total_amount,paid_now_amount,balance_amount,balance_due_at,status,created_at,updated_at) VALUES ('BKG-STAY-A','boarding','CUST-A',24000,12000,12000,?,'pending_balance',?,?)").run(now + 86_400_000, now, now);
+  const first = await split.payStayBalance(db, { bookingId: "BKG-STAY-A", idempotencyKey: "pay-balance", actorId: "CUST-A" });
+  assert.equal(first.duplicatePrevented, false);
+  const replay = await split.payStayBalance(db, { bookingId: "BKG-STAY-A", idempotencyKey: "pay-balance", actorId: "CUST-A" });
+  assert.equal(replay.duplicatePrevented, true);
+  assert.equal(replay.schedule.status, "paid");
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) n FROM stay_payment_events WHERE booking_id='BKG-STAY-A'").get().n), 1, "one capture, not two");
+});
+
+test("P1-F3: a lead assignment key belonging to another lead is refused, not answered with that lead's record", async () => {
+  const { sqlite, db } = world();
+  const leads = await import("../lib/lead-assignment-governance.ts");
+  await leads.ensureLeadAssignmentTables(db);
+  const now = Date.now();
+  // lead_work_items is owned by lib/lead-conversion-attribution.ts; created through its own ensure so
+  // this world uses the real schema rather than a test-local guess.
+  const attribution = await import("../lib/lead-conversion-attribution.ts");
+  await attribution.ensureLeadWorkItemsTable(db).catch(() => {});
+  const columns = new Set(sqlite.prepare("PRAGMA table_info(lead_work_items)").all().map((c) => c.name));
+  assert.ok(columns.has("owner") && columns.has("customer_id"), "the real lead table is present");
+  const insertLead = (id, customerId) => sqlite.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,assigned_at,first_action_due_at,manager_alert_at,created_at,updated_at) VALUES (?,?,'App Inbound','grooming','Unassigned','Unassigned',?,?,?,?,?)").run(id, customerId, now, now + 600_000, now + 1_200_000, now, now);
+  insertLead("LEAD-A", "CRM-A");
+  insertLead("LEAD-B", "CRM-B");
+  sqlite.prepare("INSERT INTO lead_assignments (id,idempotency_key,lead_id,employee_email,team_code,policy_id,policy_version,assignment_reason,status,assigned_at,detail_json,created_by,created_at) VALUES ('LAS-A','LEAD-IDEM-SHARED','LEAD-A','sales1@pawspace.test','SALES','POL-1',1,'new_lead','current',?,'{}','ops@pawspace.test',?)").run(now, now);
+
+  await assert.rejects(
+    () => leads.assignLead(db, { leadId: "LEAD-B", idempotencyKey: "LEAD-IDEM-SHARED", reason: "new_lead", actorId: "ops@pawspace.test" }),
+    /already used for a different/i,
+    "a key that belongs to another lead must be refused, never answered with that lead's assignment",
+  );
+  assert.equal(String(sqlite.prepare("SELECT owner FROM lead_work_items WHERE id='LEAD-B'").get().owner), "Unassigned",
+    "and LEAD-B is still visibly unassigned rather than silently reported as done");
+
+  await assert.rejects(
+    () => leads.assignLead(db, { leadId: "LEAD-DOES-NOT-EXIST", idempotencyKey: "LEAD-IDEM-SHARED", reason: "new_lead", actorId: "ops@pawspace.test" }),
+    /already used for a different/i,
+    "and a lead that does not exist is certainly not assigned",
+  );
+});
+
+test("P1-F3: a lead replaying its own key is still a duplicate", async () => {
+  const { sqlite, db } = world();
+  const leads = await import("../lib/lead-assignment-governance.ts");
+  await leads.ensureLeadAssignmentTables(db);
+  const now = Date.now();
+  sqlite.prepare("INSERT INTO lead_assignments (id,idempotency_key,lead_id,employee_email,team_code,policy_id,policy_version,assignment_reason,status,assigned_at,detail_json,created_by,created_at) VALUES ('LAS-A','LEAD-IDEM-A','LEAD-A','sales1@pawspace.test','SALES','POL-1',1,'new_lead','current',?,'{}','ops@pawspace.test',?)").run(now, now);
+  const replay = await leads.assignLead(db, { leadId: "LEAD-A", idempotencyKey: "LEAD-IDEM-A", reason: "new_lead", actorId: "ops@pawspace.test" });
+  assert.equal(replay.duplicatePrevented, true);
+  assert.equal(String(replay.assignment.lead_id), "LEAD-A");
+});
