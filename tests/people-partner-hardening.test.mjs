@@ -97,7 +97,7 @@ const istDate = (ms) => new Date(ms + 19_800_000).toISOString().slice(0, 10);
 async function peopleStack() {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
-  globalThis.__PAWSPACE_TEST_ENV = { DB: db };
+  globalThis.__PAWSPACE_TEST_ENV = { DB: db, PAWSPACE_UAT_LOGIN: "on", PAWSPACE_UAT_SIGNING_KEY: "people-partner-hardening-uat-signing-key-2026" };
   for (const sql of canonicalDDL) sqlite.exec(sql);
   await serverAuth.ensureSecurityTables(db);
   await peopleFoundation.ensurePeopleTables(db);
@@ -292,7 +292,9 @@ test("live leaderboard ranks employees from real productivity fact rows", async 
 test("regression: the CRM daily leaderboard refresh never clobbers a row confirmed by a real module", async () => {
   const stack = await peopleStack();
   const { sqlite } = stack;
-  // First real GET bootstraps the CRM tables, seeds UAT leads and writes provisional leaderboard rows.
+  // UAT seed is an explicit write; GET remains observational.
+  const seeded = await revenueCrmRoute.POST(new Request("http://localhost/api/revenue-crm", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "seed_uat" }) }));
+  assert.equal(seeded.status, 200);
   const first = await revenueCrmRoute.GET(new Request("http://localhost/api/revenue-crm"));
   assert.equal(first.status, 200);
   const owners = sqlite.prepare("SELECT id,employee_name,status FROM sales_performance_daily ORDER BY employee_name").all();
@@ -302,6 +304,8 @@ test("regression: the CRM daily leaderboard refresh never clobbers a row confirm
   // A real module finalizes one owner's row; the next refresh must not clobber it.
   const locked = owners[0];
   sqlite.prepare("UPDATE sales_performance_daily SET status='confirmed',eligible_revenue=424242,incentive_amount=777 WHERE id=?").run(locked.id);
+  const refreshed = await revenueCrmRoute.POST(new Request("http://localhost/api/revenue-crm", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "refresh_leaderboard" }) }));
+  assert.equal(refreshed.status, 200);
   const second = await revenueCrmRoute.GET(new Request("http://localhost/api/revenue-crm"));
   assert.equal(second.status, 200);
   const after = sqlite.prepare("SELECT status,eligible_revenue,incentive_amount FROM sales_performance_daily WHERE id=?").get(locked.id);

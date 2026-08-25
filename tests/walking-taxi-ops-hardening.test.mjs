@@ -538,7 +538,7 @@ test("walking and taxi routes keep per-action permission boundaries", () => {
   for (const path of ["app/api/walking-ops/route.ts", "app/api/taxi-ops/route.ts"]) {
     const source = read(path);
     assert.match(source, /requirePermission\(actor,"bookings\.manage"\)/, `${path} writes must be staff-only`);
-    assert.match(source, /requirePermission\(actor,"bookings\.view"\)/, `${path} reads require bookings.view`);
+    assert.doesNotMatch(source, /requirePermission\(actor,"bookings\.view"\)/, `${path} system-wide reads must not use bookings.view`);
   }
   for (const path of ["app/api/walking-finance/route.ts", "app/api/taxi-finance/route.ts"]) {
     const source = read(path);

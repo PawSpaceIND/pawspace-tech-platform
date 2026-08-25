@@ -80,9 +80,9 @@ const DAY = 86400000, HOUR = 3600000;
 /** Each route, a payload that produces a real quote, and the table the quote lands in. */
 const ROUTES = [
   { name: "boarding", quoteTable: "boarding_commercial_quotes",
-    body: () => ({ packageCode: "boarding-4h", petCount: 1, scheduledStart: at(20 * DAY), scheduledEnd: at(20 * DAY + 3 * HOUR), paymentMode: "prepaid" }) },
+    body: () => ({ packageCode: "boarding-4h", petCount: 1, scheduledStart: at(20 * DAY), scheduledEnd: at(20 * DAY + 3 * HOUR), paymentMode: "prepaid", cityId: "blr", zoneId: "blr-east" }) },
   { name: "sitting", quoteTable: "sitting_commercial_quotes",
-    body: () => ({ packageCode: "sitting-visit-60", petCount: 1, scheduledStart: at(20 * DAY), scheduledEnd: at(20 * DAY + HOUR), paymentMode: "prepaid" }) },
+    body: () => ({ packageCode: "sitting-visit-60", petCount: 1, scheduledStart: at(20 * DAY), scheduledEnd: at(20 * DAY + HOUR), paymentMode: "prepaid", cityId: "blr", zoneId: "blr-east" }) },
   { name: "taxi", quoteTable: "taxi_commercial_quotes",
     body: () => ({ routeCode: "taxi-blr-east-short", originLabel: "Indiranagar", destinationLabel: "Koramangala", petCount: 1, scheduledStart: at(20 * DAY) }) },
   { name: "walking", quoteTable: "walking_commercial_quotes",

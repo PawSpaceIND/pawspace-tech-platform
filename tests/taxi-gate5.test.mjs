@@ -13,7 +13,7 @@ test("Replacement driver acceptance verifies booking work order trip reservation
 
 test("Operations cannot close Taxi recovery before replacement acceptance",async()=>{const source=await read("lib/taxi-ops-governance.ts");assert.match(source,/Replacement driver must accept before Operations can close recovery/);assert.match(source,/status='replacement_accepted'/);assert.match(source,/recovery_closed/);assert.match(source,/routePreserved:true/);});
 
-test("Pet Taxi Gate 5 API is staff permissioned and audited",async()=>{const api=await read("app/api/taxi-ops/route.ts");assert.match(api,/requirePermission\(actor,\"bookings\.view\"\)/);assert.match(api,/requirePermission\(actor,\"bookings\.manage\"\)/);assert.match(api,/assign_replacement/);assert.match(api,/close_recovery/);assert.match(api,/add_note/);assert.match(api,/securityAudit/);});
+test("Pet Taxi Gate 5 API is staff permissioned and audited",async()=>{const api=await read("app/api/taxi-ops/route.ts");assert.match(api,/requirePermission\(actor,\"bookings\.manage\"\)/);assert.doesNotMatch(api,/requirePermission\(actor,\"bookings\.view\"\)/);assert.match(api,/assign_replacement/);assert.match(api,/close_recovery/);assert.match(api,/add_note/);assert.match(api,/securityAudit/);});
 
 test("Pet Taxi Team Operations surface keeps specialist authority separate",async()=>{const page=await read("app/team/operations/taxi/page.tsx"),client=await read("lib/taxi-ops-client.ts");assert.match(page,/Driver recovery/);assert.match(page,/Offer replacement/);assert.match(page,/Close accepted recovery/);assert.match(page,/Incident resolution stays in Taxi proof governance/);assert.match(page,/Payments\/refunds\/driver settlement\/tax stay in Taxi Finance governance/);assert.match(client,/\/api\/taxi-ops/);});
 

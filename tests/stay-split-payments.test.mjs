@@ -189,12 +189,12 @@ test("live pricing preserves the governed 50/50 deposit for Boarding and Sitting
   sqlite.prepare("UPDATE service_packages SET active=1,base_price=900 WHERE package_code='sitting-overnight'").run();
   sqlite.prepare("UPDATE service_packages SET active=1,base_price=300 WHERE package_code='sitting-overnight__extra_pet'").run();
   const boardingStart = new Date(Date.now() + 7 * 86400000), boardingEnd = new Date(boardingStart.getTime() + 2 * 86400000);
-  const boarding = await createLiveBoardingQuote(db, { packageCode: "boarding-24h", petCount: 2, scheduledStart: boardingStart.toISOString(), scheduledEnd: boardingEnd.toISOString(), paymentMode: "split_50_50" });
+  const boarding = await createLiveBoardingQuote(db, { packageCode: "boarding-24h", petCount: 2, scheduledStart: boardingStart.toISOString(), scheduledEnd: boardingEnd.toISOString(), paymentMode: "split_50_50", cityId: "blr", zoneId: "blr-east" });
   assert.equal(boarding.totalAmount, 800 * 2 * 2);
   assert.equal(boarding.amountDueNow, boarding.totalAmount / 2);
   assert.equal(sqlite.prepare("SELECT amount_due_now FROM boarding_commercial_quotes WHERE id=?").get(boarding.quoteId).amount_due_now, boarding.totalAmount / 2);
   const sittingStart = new Date(Date.now() + 8 * 86400000), sittingEnd = new Date(sittingStart.getTime() + 2 * 86400000);
-  const sitting = await createLiveSittingQuote(db, { packageCode: "sitting-overnight", petCount: 2, scheduledStart: sittingStart.toISOString(), scheduledEnd: sittingEnd.toISOString(), paymentMode: "split_50_50" });
+  const sitting = await createLiveSittingQuote(db, { packageCode: "sitting-overnight", petCount: 2, scheduledStart: sittingStart.toISOString(), scheduledEnd: sittingEnd.toISOString(), paymentMode: "split_50_50", cityId: "blr", zoneId: "blr-east" });
   assert.equal(sitting.totalAmount, (900 + 300) * 2);
   assert.equal(sitting.amountDueNow, sitting.totalAmount / 2);
   assert.equal(sqlite.prepare("SELECT amount_due_now FROM sitting_commercial_quotes WHERE id=?").get(sitting.quoteId).amount_due_now, sitting.totalAmount / 2);
