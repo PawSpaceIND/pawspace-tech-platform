@@ -30,6 +30,18 @@ test("public/read dashboards do not seed synthetic host or training data",async(
   assert.match(training,/ensureProviderCapacityTables\s*\(/);
 });
 
+test("Revenue CRM GET is read-only and synthetic initialization is explicit UAT-only",async()=>{
+  const source=await read("app/api/revenue-crm/route.ts");
+  const getSource=source.slice(source.indexOf("export async function GET"),source.indexOf("export async function POST"));
+  for(const mutation of ["seedUat(","runLeadReopening(","runSla(","enforceOps(","generateCommandReports(","runLeadCallbackSweep("]){
+    assert.doesNotMatch(getSource,new RegExp(mutation.replace(/[()]/g,"\\$&")),`GET must not invoke ${mutation}`);
+  }
+  assert.match(source,/action==="initialize_uat"/);
+  assert.match(source,/requireUatSandbox\(\)/);
+  assert.match(source,/PAWSPACE_PAYMENT_ENV\|\|""\)!=="sandbox"/);
+  assert.match(source,/action==="run_callback_sweep"/);
+});
+
 test("live commercial quotes never infer Bengaluru when geography is absent",async()=>{
   const quotes=await read("lib/live-commercial-quotes.ts");
   const resolver=await read("lib/live-pricing-resolver.ts");
@@ -40,6 +52,21 @@ test("live commercial quotes never infer Bengaluru when geography is absent",asy
   const baseFn=resolver.slice(resolver.indexOf("export async function resolveLiveBasePrice"));
   assert.match(baseFn,/SELECT base_price FROM service_packages/);
   assert.doesNotMatch(baseFn,/calculatePrice\(/);
+});
+
+test("new pricing, Haptik and Grooming finance inputs require explicit geography",async()=>{
+  const pricingQuote=await read("app/api/pricing-quote/route.ts");
+  const pricingControl=await read("app/api/pricing-control/route.ts");
+  const haptik=await read("app/api/haptik/route.ts");
+  const groomingFinance=await read("app/api/grooming-finance/route.ts");
+  const boarding=await read("app/api/boarding-commercial/route.ts");
+  assert.match(pricingQuote,/Package, scheduled start and city are required/);
+  assert.doesNotMatch(pricingQuote,/body\.cityId\s*\?\?\s*"blr"/);
+  assert.match(pricingControl,/including city are required/);
+  assert.match(pricingControl,/city_id text NOT NULL/);
+  assert.match(haptik,/City and zone are required to fetch serviceable Haptik slots/);
+  assert.match(groomingFinance,/City is required for a Grooming tax policy/);
+  assert.match(boarding,/availabilityMode:!hasLocation\?"location_required"/);
 });
 
 test("prelaunch booking swarm is blocked outside the isolated UAT sandbox",async()=>{
