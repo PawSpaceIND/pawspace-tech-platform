@@ -43,6 +43,8 @@
     "reveal_expiry_is_advisory_server_side": "The API returns revealExpiresAt and the screen honours it. Nothing stops a caller holding the returned JSON past that moment; the value is already in their hands. What the expiry buys is that the SCREEN remasks and that the audit's window is truthful."
   },
 
+  "a_mistake_in_my_own_process": "I committed 84212c9 having read only the tail of the lint output, which showed the problem COUNT but not that two of them were errors rather than warnings. The React rules caught two real defects in the control: reading Date.now() during render made the component impure, and an already-expired reveal called setState synchronously inside the effect, which cascades renders. Both are fixed in the follow-up commit and the countdown is now driven by state on a scheduled tick. The lesson is the check, not the code: a gate is only a gate if its result is actually read.",
+
   "gates": {"focused": "11/11", "full_suite": "3430/3430", "typecheck": "clean", "lint": "0 errors, 57 warnings (pre-existing)"},
   "no_merge_no_deploy": true
 }

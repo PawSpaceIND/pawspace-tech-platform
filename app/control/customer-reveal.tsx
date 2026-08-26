@@ -42,21 +42,37 @@ export default function CustomerReveal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [view, setView] = useState<RevealedView | null>(null);
+  const [remaining, setRemaining] = useState(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const remask = useCallback(() => {
     setView(null);
     setReason("");
     setAsking(false);
+    setRemaining(0);
   }, []);
 
-  // The server decides how long a reveal lasts. Clearing on unmount matters: without it a component
-  // that unmounts mid-reveal leaves a timer holding a closure over the revealed value.
+  /*
+   * The server decides how long a reveal lasts, and this drives the countdown as well as the remask.
+   *
+   * `remaining` is state rather than a Date.now() read during render: reading the clock while
+   * rendering makes the component impure, and an already-expired reveal must remask on a scheduled
+   * tick rather than by calling setState synchronously inside the effect, which cascades renders.
+   * Clearing the timer on unmount matters for a different reason - without it, a component that
+   * unmounts mid-reveal leaves a timer holding a closure over the revealed value.
+   */
   useEffect(() => {
+    // No reset needed here: remask() is the only path that clears `view`, and it zeroes the
+    // countdown itself. Resetting again would be a synchronous setState inside an effect.
     if (!view?.revealExpiresAt) return undefined;
-    const remaining = view.revealExpiresAt - Date.now();
-    if (remaining <= 0) { remask(); return undefined; }
-    timer.current = setTimeout(remask, remaining);
+    const expiresAt = view.revealExpiresAt;
+    const tick = () => {
+      const left = expiresAt - Date.now();
+      if (left <= 0) { remask(); return; }
+      setRemaining(Math.ceil(left / 1000));
+      timer.current = setTimeout(tick, Math.min(1000, left));
+    };
+    timer.current = setTimeout(tick, 0);
     return () => { if (timer.current) clearTimeout(timer.current); timer.current = null; };
   }, [view, remask]);
 
@@ -65,11 +81,10 @@ export default function CustomerReveal({
   }
 
   if (view) {
-    const seconds = Math.max(0, Math.round(((view.revealExpiresAt ?? 0) - Date.now()) / 1000));
     return (
       <span>
         <strong>{view.contact.phone ?? view.contact.email ?? [view.address.line1, view.address.area, view.address.pincode].filter(Boolean).join(", ")}</strong>
-        <small> · remasks in {seconds}s</small>
+        <small> · remasks in {remaining}s</small>
         <button type="button" onClick={remask}>Hide now</button>
       </span>
     );
