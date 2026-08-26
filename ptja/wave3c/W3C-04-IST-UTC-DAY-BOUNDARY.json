@@ -1,0 +1,14 @@
+{
+  "wave": "3C", "id": "W3C-04", "status": "FIXED - a real defect, driven to a consequence",
+  "gap_verbatim": "Not probed to a conclusion: the IST-vs-UTC day boundary divergence between backend/src/scheduling.ts dateKey() (IST, +330m) and lib/universal-replacement-recovery.ts's `substr(scheduled_start,1,10)` (UTC) - I confirmed the two definitions differ by reading and executing both, but did not construct a booking that cross[es it].",
+  "sharper_than_recorded": "The divergence is not between two modules. It is inside ONE FUNCTION. selectCapacitySafeReplacement resolves a candidate's AVAILABILITY on the IST day (`localDate(start)`, +330m) and then counts that candidate's reservations for the maxDailyJobs cap on the UTC day (`substr(scheduled_start,1,10)` bound with `String(b.scheduled_start).slice(0,10)`).",
+  "measured": "For a booking at 2026-11-20T20:00:00Z - 01:30 IST on the 21st - a provider holding SIX reservations on the IST service day 2026-11-21 (maxDailyJobs defaults to 6, so they are full) was returned as the replacement with checks {service,zone,availability,collisionFree,capacity} all true. The cap counted 2026-11-20 UTC and saw nothing.",
+  "blast_radius_stated_not_dressed_up": "Only bookings scheduled between 18:30 and 23:59 UTC - 00:00 to 05:29 IST the next day - cross the boundary. That is a narrow window and unusual for pet services. It is reported because maxDailyJobs is a provider-welfare and capacity control, and a control measured on the wrong day is not measuring anything. The bug cut BOTH ways: a provider full on the previous IST day was also wrongly excluded.",
+  "fix": "The cap now counts a half-open UTC range spanning the IST service day, derived from the same `date` the function already computed for availability. Expressed as a range rather than SQL date arithmetic so it does not depend on SQLite parsing an ISO-8601 string with a T separator and a Z suffix - the same portability caution as the numbered-placeholder fix in 5a61da0.",
+  "regression": "tests/ptja-w3c-ist-utc-day-boundary.test.mjs - IST-01 the dangerous direction, IST-02 the opposite direction, IST-03 non-vacuity. IST-01 was RED before the fix.",
+  "sabotage": {"control":"revert to counting the UTC calendar day","result":"RED - IST-01 and IST-02"},
+  "not_claimed": [
+    "backend/src/scheduling.ts dateKey() is city-aware and was NOT changed. This entry fixes the divergence inside the recovery module; it does not unify day-boundary handling across the platform.",
+    "The 330-minute offset remains hardcoded, as it already was in this module's own localDate(). A city-aware timezone is a larger change and is not made here."
+  ]
+}
