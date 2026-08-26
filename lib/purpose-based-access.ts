@@ -54,6 +54,8 @@ export type DataAccessPolicyConfig={
   /** Purposes that may never see an internal note at all. */
   purposesDeniedInternalNotes:string[];
   requireReasonForReveal:boolean;
+  /** How long a reveal stays valid before the screen must remask, in seconds. */
+  revealTtlSeconds:number;
 };
 
 export const APPROVED_DATA_ACCESS:DataAccessPolicyConfig={
@@ -76,6 +78,7 @@ export const APPROVED_DATA_ACCESS:DataAccessPolicyConfig={
   // A customer never sees an internal note, including one marked shareable with a provider.
   purposesDeniedInternalNotes:["self_service"],
   requireReasonForReveal:true,
+  revealTtlSeconds:600,
 };
 
 registerServicePolicyDomain<DataAccessPolicyConfig&Record<string,unknown>>({
@@ -102,6 +105,10 @@ registerServicePolicyDomain<DataAccessPolicyConfig&Record<string,unknown>>({
       return "A customer must never be shown an internal note - self_service cannot be removed from purposesDeniedInternalNotes";
     }
     if(config.requireReasonForReveal===false)return "Every reveal must carry a reason";
+    const ttl=Number(config.revealTtlSeconds);
+    // A reveal that never expires is not a reveal, it is an unmasking. An unbounded one would also make
+    // the audit trail a lie: it would record a moment, while the value stayed on screen all afternoon.
+    if(!Number.isFinite(ttl)||ttl<60||ttl>900)return "A reveal must stay valid for between 60 and 900 seconds";
     return null;
   },
 });
@@ -134,6 +141,9 @@ export type CustomerDataView={
   subjectId:string;purpose:string;revealed:boolean;
   contact:{phone:string|null;email:string|null;channel:"direct"|"relay"|"masked"};
   address:{precision:AddressPrecision;line1:string|null;area:string|null;city:string|null;pincode:string|null};
+  /** When a revealed view must be remasked. Null when nothing was revealed. */
+  revealExpiresAt?:number|null;
+  revealedFields?:RevealField[];
   policyVersion:string;
 };
 
@@ -153,9 +163,17 @@ export type CustomerDataDecision=Omit<CustomerDataView,"policyVersion">;
  * something a pure function may quietly perform - resolveCustomerDataAccess owns that, and the list
  * surfaces that call this directly cannot produce one at all. [PTJA-W2-B2-R01/C01/C07]
  */
+export type RevealField="phone"|"email"|"address";
+export const REVEAL_FIELDS:RevealField[]=["phone","email","address"];
+
 export function decideCustomerDataAccess(config:DataAccessPolicyConfig,input:{
-  actor:AccessActor;subject:DataSubject;purpose:string;assignment?:Assignment|null;revealed?:boolean;now?:number;
+  actor:AccessActor;subject:DataSubject;purpose:string;assignment?:Assignment|null;revealed?:boolean;
+  /** Which fields the caller asked for. Absent means all of them. */
+  revealFields?:readonly RevealField[]|null;now?:number;
 }):CustomerDataDecision{
+  // Asking for the doorstep must not hand over the phone as well. An absent list means the caller asked
+  // for everything, which is the historical behaviour and still the common case.
+  const asked=(field:RevealField)=>!input.revealFields||input.revealFields.includes(field);
   const now=input.now??Date.now();
   const purpose=text(input.purpose)||"operations";
   const actor=input.actor;
@@ -193,9 +211,11 @@ export function decideCustomerDataAccess(config:DataAccessPolicyConfig,input:{
   if(compliance){
     const revealed=Boolean(input.revealed);
     return{...base,revealed,
-      contact:revealed?{phone:subject.phone??null,email:subject.email??null,channel:"direct" as const}
-        :{phone:maskPhone(subject.phone),email:maskEmail(subject.email),channel:"masked" as const},
-      address:revealed
+      contact:{
+        phone:revealed&&asked("phone")?(subject.phone??null):maskPhone(subject.phone),
+        email:revealed&&asked("email")?(subject.email??null):maskEmail(subject.email),
+        channel:revealed&&(asked("phone")||asked("email"))?"direct" as const:"masked" as const},
+      address:revealed&&asked("address")
         ?{precision:"full" as const,line1:subject.address?.line1??null,area:subject.address?.area??null,city:subject.address?.city??null,pincode:subject.address?.pincode??null}
         :{precision:"area" as const,line1:null,area:subject.address?.area??null,city:subject.address?.city??null,pincode:subject.address?.pincode??null}};
   }
@@ -218,9 +238,10 @@ export function decideCustomerDataAccess(config:DataAccessPolicyConfig,input:{
   const fullAddress=mine&&eligible&&nearExecution;
 
   return{...base,revealed,
-    contact:{phone:revealed?(subject.phone??null):maskPhone(subject.phone),
-      email:revealed?(subject.email??null):maskEmail(subject.email),channel:revealed?"direct":"masked"},
-    address:fullAddress
+    contact:{phone:revealed&&asked("phone")?(subject.phone??null):maskPhone(subject.phone),
+      email:revealed&&asked("email")?(subject.email??null):maskEmail(subject.email),
+      channel:revealed&&(asked("phone")||asked("email"))?"direct":"masked"},
+    address:fullAddress&&(!revealed||asked("address"))
       ?{precision:"full",line1:subject.address?.line1??null,area:subject.address?.area??null,city:subject.address?.city??null,pincode:subject.address?.pincode??null}
       :{precision:"area",line1:null,area:subject.address?.area??null,city:subject.address?.city??null,pincode:subject.address?.pincode??null}};
 }
@@ -250,7 +271,7 @@ export function mayReveal(actor:AccessActor,purpose:string,assignment?:Assignmen
  */
 export async function resolveCustomerDataAccess(db:Db,input:{
   actor:AccessActor;subject:DataSubject;purpose:string;assignment?:Assignment|null;
-  reveal?:{requested?:boolean;reason?:string}|null;now?:number;
+  reveal?:{requested?:boolean;reason?:string;fields?:readonly RevealField[]|null}|null;now?:number;
 }):Promise<CustomerDataView>{
   await ensureDataAccessTables(db);
   const policy=await resolveDataAccessPolicy(db,{});
@@ -263,15 +284,32 @@ export async function resolveCustomerDataAccess(db:Db,input:{
     throw Response.json({error:"A reveal needs a reason",code:"reveal_reason_required"},{status:400});
   }
   const revealed=wantsReveal&&mayReveal(input.actor,purpose,input.assignment??null);
-  const decision=decideCustomerDataAccess(config,{...input,revealed,now});
+  const requested=input.reveal?.fields?.length?input.reveal.fields.filter(field=>REVEAL_FIELDS.includes(field)):REVEAL_FIELDS;
+  const decision=decideCustomerDataAccess(config,{...input,revealed,revealFields:requested,now});
   if(decision.revealed){
     const assignment=input.assignment??null;
-    const dataClass=decision.address.precision==="full"?"contact+address":"contact";
+    /*
+     * WHICH FIELDS, not "something was revealed". The audit used to record contact or contact+address,
+     * which cannot answer the only question anybody asks it later: what did this person actually see?
+     * Derived from the DECISION rather than from the request, so a field that was asked for and refused
+     * is not logged as revealed. [PTJA-W3-RU]
+     */
+    const revealedFields=REVEAL_FIELDS.filter(field=>
+      field==="phone"?decision.contact.phone===(input.subject.phone??null)&&Boolean(input.subject.phone):
+      field==="email"?decision.contact.email===(input.subject.email??null)&&Boolean(input.subject.email):
+      decision.address.precision==="full");
+    const dataClass=revealedFields.length?revealedFields.join("+"):"none";
     await db.prepare("INSERT INTO customer_data_reveals (id,actor_id,actor_role,subject_id,data_class,purpose,assignment_type,assignment_id,reason,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
       .bind(`REV-${crypto.randomUUID().slice(0,10).toUpperCase()}`,input.actor.email,input.actor.roleCode,input.subject.customerId,dataClass,purpose,
         assignment?.type??null,assignment?.id??null,reason,now).run();
   }
-  return{...decision,policyVersion:policy.policyVersion};
+  const revealedFields=decision.revealed?REVEAL_FIELDS.filter(field=>
+    field==="phone"?decision.contact.phone===(input.subject.phone??null)&&Boolean(input.subject.phone):
+    field==="email"?decision.contact.email===(input.subject.email??null)&&Boolean(input.subject.email):
+    decision.address.precision==="full"):[];
+  return{...decision,revealedFields,
+    revealExpiresAt:decision.revealed?now+config.revealTtlSeconds*1000:null,
+    policyVersion:policy.policyVersion};
 }
 
 export type InternalNote={id:string;category:string;body:string;shareableWithProvider?:boolean};

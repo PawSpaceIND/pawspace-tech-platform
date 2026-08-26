@@ -16,7 +16,7 @@ import{customerDataAccessResolver,mayReveal,resolveCustomerDataAccess}from"../..
 type Row=Record<string,unknown>;
 const json=(value:unknown,status=200)=>Response.json(value,{status});
 
-type RevealInput={customerId?:string;purpose?:string;reason?:string;assignment?:{type?:"lead"|"booking";id?:string;assignedTo?:string|null;status?:string|null;scheduledStart?:number|null;completedAt?:number|null}|null};
+type RevealInput={customerId?:string;purpose?:string;reason?:string;fields?:string[];assignment?:{type?:"lead"|"booking";id?:string;assignedTo?:string|null;status?:string|null;scheduledStart?:number|null;completedAt?:number|null}|null};
 
 async function subjectRow(db:D1Database,customerId:string){
   const canonical=await db.prepare("SELECT id,name,primary_phone,email FROM canonical_customers WHERE id=?").bind(customerId).first<Row>().catch(()=>null);
@@ -59,8 +59,10 @@ export async function POST(request:Request){
         email:found.row.email?String(found.row.email):null,
         address:address?{line1:String(address.line1||""),area:address.area?String(address.area):null,city:address.city?String(address.city):null,pincode:address.postal_code?String(address.postal_code):null}
           :found.row.area?{area:String(found.row.area)}:null},
-      reveal:{requested:true,reason}});
-    await securityAudit(db,actor,"customer.data.reveal","customer",customerId,"completed",{purpose,reason,revealed:view.revealed,addressPrecision:view.address.precision,policyVersion:view.policyVersion});
+      // Which fields the caller asked for. Absent means all of them, which is what a screen with a
+      // single "reveal contact" control sends. [PTJA-W3-RU]
+      reveal:{requested:true,reason,fields:Array.isArray(body.fields)?body.fields.filter((field):field is "phone"|"email"|"address"=>field==="phone"||field==="email"||field==="address"):null}});
+    await securityAudit(db,actor,"customer.data.reveal","customer",customerId,"completed",{purpose,reason,revealed:view.revealed,fields:view.revealedFields??[],revealExpiresAt:view.revealExpiresAt??null,addressPrecision:view.address.precision,policyVersion:view.policyVersion});
     return json({data:{...view,source:found.source}});
   }catch(error){return authError(error,"Unable to reveal customer data");}
 }

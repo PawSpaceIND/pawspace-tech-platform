@@ -1,5 +1,5 @@
 import { hasPermission, maskName, maskPhone, parsePermissions } from "../../../lib/platform-security";
-import { customerDataAccessResolver } from "../../../lib/purpose-based-access";
+import { customerDataAccessResolver, mayReveal } from "../../../lib/purpose-based-access";
 
 async function database(){const {env}=await import("cloudflare:workers");return env.DB;}
 function parseCsv(text:string){
@@ -62,7 +62,11 @@ export async function GET(request:Request){
       customer_name:maskName(String(r.customer_name)),primary_phone:view.contact.phone,secondary_phone:r.secondary_phone?maskPhone(String(r.secondary_phone)):null,
       service_address:full?r.service_address:"",pincode:full?r.pincode:"",
       google_map_link:full?r.google_map_link:"",latitude:full?r.latitude:"",longitude:full?r.longitude:"",
-      addressPrecision:view.address.precision};}),masked:true,policyVersion:access.policyVersion});
+      addressPrecision:view.address.precision};}),masked:true,
+    // So the screen can offer a reveal control only where one would actually succeed. A button that is
+    // always shown and always fails teaches people to ignore refusals. [PTJA-W3-RU]
+    revealAvailable:mayReveal(listActor,"sales",null),
+    policyVersion:access.policyVersion});
 }
 
 export async function POST(request:Request){
