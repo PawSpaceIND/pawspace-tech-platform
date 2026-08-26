@@ -847,12 +847,19 @@ test("P1-F2: a clock that breached is never counted as met, and the buckets neve
 // city concurrently both read version N and both write N+1, so two DIFFERENT states carry the same
 // version number and the audit trail cannot distinguish them or order them.
 //
-// PARTIAL FIX, and the limit is stated rather than hidden. The version bump moves into SQL, so
-// concurrent saves get distinct, monotonic versions and the audit's version means something. The LOST
-// UPDATE itself - operator A's coverage silently replaced by operator B's, with no one told - is not
-// fixed here: refusing a save whose base version has moved requires the caller to send the version it
-// read, which is an API contract change and a product decision about what the operator sees on conflict.
-// That half is reported, not invented.
+// PARTIAL FIX at the time, and the limit was stated rather than hidden. The version bump moved into
+// SQL, so concurrent saves got distinct, monotonic versions and the audit's version meant something.
+// The LOST UPDATE itself - operator A's coverage silently replaced by operator B's, with no one told -
+// was left open, because refusing a save whose base version has moved needs the caller to send the
+// version it read: an API contract change and a product decision about what the operator sees.
+//
+// CLOSED LATER. The business decided: reject the stale write with 409, return the latest version, tell
+// the operator to reload, audit the conflict, no silent last-write-wins. saveCityLaunchConfig now takes
+// baseVersion and the UPDATE only fires while the row still carries it. The cases below are updated to
+// the new contract - they send the version they read, and the concurrent case now asserts that exactly
+// one save wins rather than that both do. The monotonic-version guarantee they were written for is
+// unchanged and still asserted. tests/ptja-w3-coverage-concurrency.test.mjs owns the new rule.
+// [PTJA-W3-CC]
 // =====================================================================================================
 
 test("P1-F40: concurrent city saves get distinct monotonic versions", async () => {
@@ -867,14 +874,18 @@ test("P1-F40: concurrent city saves get distinct monotonic versions", async () =
     id: String(existing.id), cityCode: String(existing.city_code), city: String(existing.city), state: String(existing.state),
     status: String(existing.status), centre: String(existing.centre), radiusKm: Number(existing.radius_km),
     pincodes, gstIncluded: Number(existing.gst_included) === 1, services: JSON.parse(String(existing.services_json)),
-  }, "ops@pawspace.test");
+    baseVersion,
+  }, "ops@pawspace.test").then((value) => ({ ok: true, value }), (error) => ({ ok: false, error }));
 
   const [a, b] = await Promise.all([save("560001,560002"), save("560003,560004")]);
-  assert.notEqual(a.version, b.version, `two concurrent saves must not both claim version ${a.version}`);
-  assert.deepEqual([a.version, b.version].sort((x, y) => x - y), [baseVersion + 1, baseVersion + 2],
-    "the versions are consecutive and monotonic from the version they started at");
-  assert.equal(Number(sqlite.prepare("SELECT version FROM city_launch_configs WHERE id=?").get(String(existing.id)).version), baseVersion + 2,
-    "and the stored row carries the later of the two");
+  const accepted = [a, b].filter((entry) => entry.ok);
+  assert.equal(accepted.length, 1,
+    "two saves from the same base version cannot both be accepted; the loser is a 409, not a silent overwrite");
+  assert.equal(accepted[0].value.version, baseVersion + 1, "the winner's version is monotonic from the base it declared");
+  assert.equal(Number(sqlite.prepare("SELECT version FROM city_launch_configs WHERE id=?").get(String(existing.id)).version), baseVersion + 1,
+    "and the stored row advanced exactly once");
+  assert.equal(String(sqlite.prepare("SELECT pincodes FROM city_launch_configs WHERE id=?").get(String(existing.id)).pincodes), accepted[0].value.pincodes,
+    "carrying the accepted operator's own coverage, not a blend");
 });
 
 test("P1-F40: a serial save still increments by exactly one", async () => {
@@ -889,9 +900,9 @@ test("P1-F40: a serial save still increments by exactly one", async () => {
     status: String(existing.status), centre: String(existing.centre), radiusKm: Number(existing.radius_km),
     pincodes, gstIncluded: Number(existing.gst_included) === 1, services: JSON.parse(String(existing.services_json)),
   });
-  const first = await city.saveCityLaunchConfig(db, input("560001"), "ops@pawspace.test");
+  const first = await city.saveCityLaunchConfig(db, { ...input("560001"), baseVersion: base }, "ops@pawspace.test");
   assert.equal(first.version, base + 1);
-  const second = await city.saveCityLaunchConfig(db, input("560002"), "ops@pawspace.test");
+  const second = await city.saveCityLaunchConfig(db, { ...input("560002"), baseVersion: first.version }, "ops@pawspace.test");
   assert.equal(second.version, base + 2);
   assert.equal(String(sqlite.prepare("SELECT pincodes FROM city_launch_configs WHERE id=?").get(String(existing.id)).pincodes), "560002");
 });

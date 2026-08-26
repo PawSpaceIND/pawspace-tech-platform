@@ -119,12 +119,19 @@ async function world() {
   const cookie = `${PLATFORM_SESSION_COOKIE}=${encodeURIComponent(issued.token)}`;
   const seededPincodes = sqlite.prepare("SELECT pincodes FROM city_launch_configs WHERE city_code='blr'").get().pincodes;
 
-  /** Drives the REAL launch-governance route, the same surface an operator uses. */
+  /**
+   * Drives the REAL launch-governance route, the same surface an operator uses.
+   *
+   * baseVersion is read fresh each time, which is what an operator's screen does: load, then save what
+   * you loaded. Coverage saves became optimistically concurrent when the business closed the lost-update
+   * half of F40, so an update that does not declare the version it read is refused. [PTJA-W3-CC]
+   */
   const saveCity = ({ status, pincodes }) => post("../app/api/city-governance/route.ts", "/api/city-governance", {
     action: "save_city",
     city: {
       id: "bengaluru", cityCode: "blr", city: "Bengaluru", state: "Karnataka", status,
       centre: "12.9716, 77.5946", radiusKm: 35, pincodes, gstIncluded: true, services: SERVICES,
+      baseVersion: Number(sqlite.prepare("SELECT version FROM city_launch_configs WHERE id='bengaluru'").get().version),
     },
   }, LAUNCH_STAFF);
 

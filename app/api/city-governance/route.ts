@@ -18,7 +18,23 @@ export async function POST(request:Request){try{
   const body=await request.json() as Record<string,unknown>,action=String(body.action||"");
   if(action==="save_city"){
     const input=body.city as CityLaunchConfigInput;
-    const saved=await saveCityLaunchConfig(db,input,actor.email);
+    let saved;
+    try{saved=await saveCityLaunchConfig(db,input,actor.email);}
+    catch(error){
+      /*
+       * A version conflict is the operator's answer, not an internal error. authError below would
+       * redact it into "Unable to update city launch governance", which tells somebody who just lost
+       * their edit nothing about what happened or what to do. The body names the version they held,
+       * the version now stored, and the coverage they need to reload. [PTJA-W3-CC]
+       */
+      if(error instanceof Response&&error.status>=400&&error.status<500){
+        const text=await error.clone().text().catch(()=>"");
+        let payload:unknown;try{payload=JSON.parse(text);}catch{payload={error:text||"Save refused"};}
+        if(error.status===409)await securityAudit(db,actor,"city_launch.save","city_launch_config",String(input.id??""),"rejected",{reason:"coverage_version_conflict",baseVersion:input.baseVersion??null});
+        return json(payload,error.status);
+      }
+      throw error;
+    }
     await securityAudit(db,actor,"city_launch.save","city_launch_config",saved.id,"completed",{city:saved.city,status:saved.status,version:saved.version});
     return json({data:saved,productionReady:false},201);
   }

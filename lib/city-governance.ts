@@ -10,7 +10,13 @@ export type CityLaunchConfig={
   id:string;cityCode:string;city:string;state:string;status:CityLaunchStatus;centre:string;radiusKm:number;pincodes:string;gstIncluded:boolean;
   services:Record<CityLaunchService,CityServicePrice>;version:number;updatedBy:string;createdAt:number;updatedAt:number;
 };
-export type CityLaunchConfigInput={id?:string;cityCode:string;city:string;state:string;status:CityLaunchStatus;centre:string;radiusKm:number;pincodes:string;gstIncluded:boolean;services:Record<CityLaunchService,CityServicePrice>};
+export type CityLaunchConfigInput={id?:string;cityCode:string;city:string;state:string;status:CityLaunchStatus;centre:string;radiusKm:number;pincodes:string;gstIncluded:boolean;services:Record<CityLaunchService,CityServicePrice>;
+  /**
+   * The version the operator LOADED. Required when updating an existing city, absent when creating one.
+   * This is the API contract half of PTJA-P1-F40 - without it the server cannot tell a fresh edit from
+   * a stale one, and "the caller did not say" must never mean "overwrite whatever is there".
+   */
+  baseVersion?:number};
 
 const serviceNames:CityLaunchService[]=["Grooming","Training","Boarding","Pet Sitting"];
 const parse=<T,>(value:unknown,fallback:T):T=>{try{return JSON.parse(String(value??""))as T;}catch{return fallback;}};
@@ -79,6 +85,18 @@ function validate(input:CityLaunchConfigInput):string|null{
   return null;
 }
 
+/**
+ * A refused save is a thing that happened. Recording only accepted writes leaves the audit trail
+ * saying two operators agreed when one of them was overruled. [PTJA-W3-CC]
+ */
+async function recordCoverageConflict(db:Db,id:string,input:CityLaunchConfigInput,actorId:string,declared:number,current:CityLaunchConfig|null,now:number){
+  await db.prepare("INSERT INTO city_launch_config_audit (id,city_config_id,city,action,before_json,after_json,actor_id,created_at) VALUES (?,?,?,?,?,?,?,?)")
+    .bind(crypto.randomUUID(),id,input.city.trim(),"update_rejected_version_conflict",
+      current?JSON.stringify(current):null,
+      JSON.stringify({attempted:{pincodes:input.pincodes,status:input.status,radiusKm:input.radiusKm},baseVersion:declared,latestVersion:current?.version??null}),
+      actorId,now).run();
+}
+
 export async function saveCityLaunchConfig(db:Db,input:CityLaunchConfigInput,actorId:string):Promise<CityLaunchConfig>{
   await seedDefaultCityLaunchConfigs(db);
   const problem=validate(input);if(problem)throw new Error(problem);
@@ -100,8 +118,41 @@ export async function saveCityLaunchConfig(db:Db,input:CityLaunchConfigInput,act
   // read - an API contract change, and a product decision about what the operator is shown on conflict.
   // That half is reported, not decided here. [PTJA-P1-F40]
   const version=before?before.version+1:1;
-  const row=await db.prepare("INSERT INTO city_launch_configs (id,city_code,city,state,status,centre,radius_km,pincodes,gst_included,services_json,version,updated_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET city_code=excluded.city_code,city=excluded.city,state=excluded.state,status=excluded.status,centre=excluded.centre,radius_km=excluded.radius_km,pincodes=excluded.pincodes,gst_included=excluded.gst_included,services_json=excluded.services_json,version=city_launch_configs.version+1,updated_by=excluded.updated_by,updated_at=excluded.updated_at RETURNING *")
-    .bind(id,code,input.city.trim(),input.state.trim(),input.status,input.centre.trim(),input.radiusKm,input.pincodes.trim(),input.gstIncluded?1:0,JSON.stringify(input.services),version,actorId,now,now).first<Row>();
+  /*
+   * OPTIMISTIC CONCURRENCY, the half F40 left open. [PTJA-W3-CC]
+   *
+   * Coverage decides booking eligibility and provider supply, so a silent last-write-wins is not a
+   * tidiness problem: B loads the city, A removes a pincode, B saves the list they loaded before A's
+   * change, and the pincode is quietly back in service with nobody told. The caller now sends the
+   * version it read and the UPDATE only fires while the row still carries it, so the check and the
+   * write are ONE statement - a read-then-compare in JavaScript is the same race with more steps.
+   *
+   * A CREATE has nothing to be stale against, so baseVersion is required only when updating.
+   */
+  if(before){
+    const declared=Number(input.baseVersion);
+    if(!Number.isFinite(declared))
+      throw Response.json({error:"This save must declare the coverage version it was based on",code:"base_version_required",latestVersion:before.version},{status:400});
+    if(declared!==before.version){
+      await recordCoverageConflict(db,id,input,actorId,declared,before,now);
+      throw Response.json({
+        error:"This city's coverage changed while you were editing it. Reload the latest version and reapply your change.",
+        code:"coverage_version_conflict",yourVersion:declared,latestVersion:before.version,latest:before,
+      },{status:409});
+    }
+  }
+  const row=await db.prepare("INSERT INTO city_launch_configs (id,city_code,city,state,status,centre,radius_km,pincodes,gst_included,services_json,version,updated_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET city_code=excluded.city_code,city=excluded.city,state=excluded.state,status=excluded.status,centre=excluded.centre,radius_km=excluded.radius_km,pincodes=excluded.pincodes,gst_included=excluded.gst_included,services_json=excluded.services_json,version=city_launch_configs.version+1,updated_by=excluded.updated_by,updated_at=excluded.updated_at WHERE city_launch_configs.version=?15 RETURNING *")
+    .bind(id,code,input.city.trim(),input.state.trim(),input.status,input.centre.trim(),input.radiusKm,input.pincodes.trim(),input.gstIncluded?1:0,JSON.stringify(input.services),version,actorId,now,now,before?before.version:0).first<Row>();
+  if(!row&&before){
+    // The row moved between the check above and this statement - the genuine race, not a stale form.
+    const latest=await db.prepare("SELECT * FROM city_launch_configs WHERE id=?").bind(id).first<Row>();
+    const current=latest?rowToConfig(latest):null;
+    await recordCoverageConflict(db,id,input,actorId,Number(input.baseVersion),current,now);
+    throw Response.json({
+      error:"This city's coverage changed while you were saving it. Reload the latest version and reapply your change.",
+      code:"coverage_version_conflict",yourVersion:Number(input.baseVersion),latestVersion:current?.version??null,latest:current,
+    },{status:409});
+  }
   // RETURNING, not a re-read. The row was read back with a second SELECT, so when two operators saved the
   // same city concurrently BOTH re-reads saw the final state: each operator was returned - and audited -
   // the other's coverage as what they had just saved. This returns the row THIS statement wrote.
