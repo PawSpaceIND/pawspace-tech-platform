@@ -103,6 +103,37 @@ export async function ensureVerificationMandateTables(db: Db) {
     db.prepare("CREATE TABLE IF NOT EXISTS provider_verifications (id TEXT PRIMARY KEY,application_id TEXT NOT NULL,category TEXT NOT NULL,verification_type TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',automated INTEGER NOT NULL DEFAULT 0,provider_ref TEXT,detail_json TEXT NOT NULL DEFAULT '{}',updated_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(application_id,verification_type))"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_verifications_app ON provider_verifications(application_id)"),
   ]);
+  /*
+   * A document that was valid on the day someone was activated does not stay valid. Without an expiry
+   * the platform could only ever ask "was this ever verified?", never "is it verified NOW" - so a walker
+   * whose police clearance lapsed last month kept receiving work. Additive and nullable: a row with no
+   * expiry is a check that does not expire, which is what every existing row means. [PTJA-W1-F53]
+   */
+  await db.prepare("ALTER TABLE provider_verifications ADD COLUMN expires_at INTEGER").run()
+    .catch((error: unknown) => { if (!/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) throw error; });
+}
+
+/** The statuses that mean a check is NOT currently satisfied. `revoked` is a decision, not an absence. */
+export const INVALID_VERIFICATION_STATUSES = ["pending", "not_started", "failed", "rejected", "revoked", "manual_review", "expired"];
+
+/**
+ * Records a verification outcome together with the window it is valid for.
+ *
+ * Distinct from recordManualVerification, which deliberately refuses automatable types so a human cannot
+ * hand-wave an IDfy check. This is the governance write used by Operations and by the adapter callbacks:
+ * it carries the validity window, and it is the only path that can record a REVOCATION, which is a
+ * decision about a check that was previously verified rather than a check that was never run.
+ */
+export async function recordVerificationValidity(db: Db, input: { applicationId: string; verificationType: string; status: string; expiresAt?: number | null; actorId: string; note?: string }) {
+  await ensureVerificationMandateTables(db);
+  const type = typeByCode(text(input.verificationType));
+  if (!type) throw new Error(`Unknown verification type: ${text(input.verificationType)}`);
+  const status = text(input.status);
+  if (!["verified", ...INVALID_VERIFICATION_STATUSES].includes(status)) throw new Error(`Unknown verification status: ${status}`);
+  const now = Date.now();
+  await db.prepare("INSERT INTO provider_verifications (id,application_id,category,verification_type,status,automated,detail_json,expires_at,updated_by,created_at,updated_at) VALUES (?,?,'',?,?,0,?,?,?,?,?) ON CONFLICT(application_id,verification_type) DO UPDATE SET status=excluded.status,expires_at=excluded.expires_at,detail_json=excluded.detail_json,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
+    .bind(uid("PVER"), text(input.applicationId), type.code, status, JSON.stringify({ note: text(input.note) || null }), input.expiresAt ?? null, input.actorId, now, now).run();
+  return { applicationId: text(input.applicationId), verificationType: type.code, status, expiresAt: input.expiresAt ?? null };
 }
 
 /**
@@ -137,6 +168,9 @@ export async function setCategoryMandate(db: Db, input: { category: string; veri
   if (unknown.length) throw new Error(`Unknown verification type(s): ${unknown.join(", ")}`);
   const types = requested;
   if (!types.length) throw new Error("At least one valid verification type is required");
+  // Validated BEFORE anything is written, so a mandate the policy floor refuses - dropping the police
+  // check from a walker, say - leaves BOTH surfaces exactly as they were rather than half-applied.
+  await assertCategoryMandateAllowed(db, category, types);
   const now = Date.now();
   // ONE batch. The DELETE and the INSERTs used to be separate un-batched statements, so a request that
   // failed partway through the loop - a duplicate entry hitting PRIMARY KEY(category,verification_type)
@@ -164,6 +198,17 @@ export async function setCategoryMandate(db: Db, input: { category: string; veri
   return { category, verificationTypes: types };
 }
 
+/** Refuses a proposed mandate that the vertical's policy floor would reject, before anything is written. */
+async function assertCategoryMandateAllowed(db: Db, category: string, types: string[]) {
+  const policy = await import("./provider-verification-policy");
+  const entry = Object.entries(policy.APPROVED_VERIFICATION_BY_VERTICAL).find(([, config]) => config.category === category);
+  if (!entry) return;
+  const spec = (await import("./service-policy-governance")).servicePolicyDomain(policy.PROVIDER_VERIFICATION_DOMAIN);
+  if (!spec) return;
+  const problem = spec.problem({ ...entry[1], configured: true, requiredTypes: types, recommendedTypes: [] } as Record<string, unknown>);
+  if (problem) throw new Error(problem);
+}
+
 /** Mirrors a category mandate onto the verticals that map to it, in the policy the gate reads. */
 async function writeCategoryMandateThrough(db: Db, category: string, types: string[], actorId: string) {
   const policy = await import("./provider-verification-policy");
@@ -179,7 +224,7 @@ async function writeCategoryMandateThrough(db: Db, category: string, types: stri
       domain: policy.PROVIDER_VERIFICATION_DOMAIN, serviceCode: vertical, cityId: "*",
       config: { ...(current?.config ?? {}), configured: true, requiredTypes: types,
         recommendedTypes: (current?.config.recommendedTypes ?? []).filter((t: string) => !types.includes(t)) },
-    }, actorId, `Category mandate for ${category} updated`).catch(() => null);
+    }, actorId, `Category mandate for ${category} updated`);
   }
 }
 

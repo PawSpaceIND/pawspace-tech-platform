@@ -62,6 +62,12 @@ export type ProviderVerificationPolicyConfig={
   preserveInProgressWorkOnBlock:boolean;
   /** The provider category these requirements belong to, for the existing mandate records. */
   category:string|null;
+  /**
+   * Whether a provider with NO onboarding verification record may still take work. False today because
+   * the seeded UAT capacity profiles predate the onboarding pipeline and have no records to judge;
+   * turning it on once real providers are backfilled makes the gate total. Configuration, not code.
+   */
+  blockProvidersWithoutVerificationRecord:boolean;
 };
 
 const STRICT_DEFAULT:ProviderVerificationPolicyConfig={
@@ -72,10 +78,13 @@ const STRICT_DEFAULT:ProviderVerificationPolicyConfig={
   blockAssignmentOnExpiredOrRejected:true,
   preserveInProgressWorkOnBlock:true,
   category:null,
+  blockProvidersWithoutVerificationRecord:false,
 };
 
 /** Government photo ID is the platform's existing `aadhaar` check - one record for one fact. */
 export const GOVERNMENT_PHOTO_ID="aadhaar";
+/** The two verticals the approved decision puts a police-check floor under. */
+const POLICE_FLOOR_VERTICALS=new Set(["dog_walker","pet_taxi_driver"]);
 const CORE_CUSTODY_CHECKS=[GOVERNMENT_PHOTO_ID,"address","police_verification","selfie_liveness","pet_handling_induction","emergency_safety_training"];
 
 export const APPROVED_VERIFICATION_BY_VERTICAL:Record<string,ProviderVerificationPolicyConfig>={
@@ -84,7 +93,7 @@ export const APPROVED_VERIFICATION_BY_VERTICAL:Record<string,ProviderVerificatio
     requiredTypes:[...CORE_CUSTODY_CHECKS,"references_background"],
     recommendedTypes:[],
     payoutBlockingTypes:["bank_kyc"],
-    blockAssignmentOnExpiredOrRejected:true,preserveInProgressWorkOnBlock:true,category:"dog_walker",
+    blockAssignmentOnExpiredOrRejected:true,preserveInProgressWorkOnBlock:true,category:"dog_walker",blockProvidersWithoutVerificationRecord:false,
   },
   pet_taxi:{
     configured:true,
@@ -93,14 +102,14 @@ export const APPROVED_VERIFICATION_BY_VERTICAL:Record<string,ProviderVerificatio
     requiredTypes:[...CORE_CUSTODY_CHECKS,"driving_licence","vehicle_registration","vehicle_insurance","vehicle_fitness_pollution"],
     recommendedTypes:["references_background"],
     payoutBlockingTypes:["bank_kyc"],
-    blockAssignmentOnExpiredOrRejected:true,preserveInProgressWorkOnBlock:true,category:"pet_taxi_driver",
+    blockAssignmentOnExpiredOrRejected:true,preserveInProgressWorkOnBlock:true,category:"pet_taxi_driver",blockProvidersWithoutVerificationRecord:false,
   },
   // The four already-configured verticals, carried across from the mandate defaults so that moving the
   // authority here changes no behaviour for them.
-  grooming:{configured:true,requiredTypes:["aadhaar","pan"],recommendedTypes:[],payoutBlockingTypes:["bank_kyc"],blockAssignmentOnExpiredOrRejected:true,preserveInProgressWorkOnBlock:true,category:"groomer"},
-  pet_sitting:{configured:true,requiredTypes:["aadhaar","pan","address"],recommendedTypes:[],payoutBlockingTypes:["bank_kyc"],blockAssignmentOnExpiredOrRejected:true,preserveInProgressWorkOnBlock:true,category:"pet_sitter"},
-  dog_training:{configured:true,requiredTypes:["aadhaar","pan","police_verification"],recommendedTypes:[],payoutBlockingTypes:["bank_kyc"],blockAssignmentOnExpiredOrRejected:true,preserveInProgressWorkOnBlock:true,category:"trainer"},
-  boarding:{configured:true,requiredTypes:["aadhaar","pan","house_verification","pet_proofing_photo"],recommendedTypes:[],payoutBlockingTypes:["bank_kyc"],blockAssignmentOnExpiredOrRejected:true,preserveInProgressWorkOnBlock:true,category:"host"},
+  grooming:{configured:true,requiredTypes:["aadhaar","pan"],recommendedTypes:[],payoutBlockingTypes:["bank_kyc"],blockAssignmentOnExpiredOrRejected:true,preserveInProgressWorkOnBlock:true,category:"groomer",blockProvidersWithoutVerificationRecord:false},
+  pet_sitting:{configured:true,requiredTypes:["aadhaar","pan","address"],recommendedTypes:[],payoutBlockingTypes:["bank_kyc"],blockAssignmentOnExpiredOrRejected:true,preserveInProgressWorkOnBlock:true,category:"pet_sitter",blockProvidersWithoutVerificationRecord:false},
+  dog_training:{configured:true,requiredTypes:["aadhaar","pan","police_verification"],recommendedTypes:[],payoutBlockingTypes:["bank_kyc"],blockAssignmentOnExpiredOrRejected:true,preserveInProgressWorkOnBlock:true,category:"trainer",blockProvidersWithoutVerificationRecord:false},
+  boarding:{configured:true,requiredTypes:["aadhaar","pan","house_verification","pet_proofing_photo"],recommendedTypes:[],payoutBlockingTypes:["bank_kyc"],blockAssignmentOnExpiredOrRejected:true,preserveInProgressWorkOnBlock:true,category:"host",blockProvidersWithoutVerificationRecord:false},
 };
 /** The catalogue's own aliases for the same verticals. */
 export const VERTICAL_ALIASES:Record<string,string>={sitting:"pet_sitting",training:"dog_training",walking:"dog_walking",taxi:"pet_taxi"};
@@ -132,6 +141,16 @@ registerServicePolicyDomain<ProviderVerificationPolicyConfig&Record<string,unkno
      * self-contradictory, that blocking behaviour is not switched off - and leaves the content to the
      * people who own it. What the platform guarantees is that unknown is never treated as satisfied.
      */
+    /*
+     * ONE FLOOR, AND ONLY FOR THE TWO VERTICALS THE BUSINESS SET IT FOR. Dog Walking and Pet Taxi must
+     * require a police check: those providers take sole physical custody of an animal, and a Pet Taxi
+     * driver drives away with it. This is an approved decision, not an inference - and it deliberately
+     * does NOT extend to Grooming, Pet Sitting or Boarding, whose existing mandates stand untouched.
+     * Everything else about these two verticals remains an operator's to narrow.
+     */
+    if(config.configured===true&&POLICE_FLOOR_VERTICALS.has(String(config.category))&&!required.includes("police_verification")){
+      return "Dog Walking and Pet Taxi must require police verification - these providers take sole physical custody of an animal";
+    }
     if(config.blockAssignmentOnExpiredOrRejected===false)return "An expired or rejected mandatory document must block new assignments";
     if(config.preserveInProgressWorkOnBlock===false)return "Blocking a provider must never delete work already in progress; Operations reassigns it";
     return null;
