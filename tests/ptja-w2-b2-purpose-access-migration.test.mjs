@@ -251,3 +251,43 @@ test("PBA-11: a list read resolves the access policy once, not once per row", as
   assert.ok(counters.policyReads <= 2,
     `twelve contacts must not cost twelve policy reads, measured ${counters.policyReads}`);
 });
+
+test("PBA-12: an uncategorised internal note is withheld from a reader without the restricted grant", async () => {
+  // The remaining half of W2-B3-C07. A free-text note on a message payload carries no category, so
+  // nothing can prove it is benign - it is treated as the most restrictive category the matrix has.
+  // The measured case was an associate reading "Customer threatened to go to c..." off a thread.
+  const { sqlite, db, headers, now } = await staffWorld("associate");
+  seedCustomer(sqlite, now);
+  const governance = await import("../lib/conversation-governance.ts");
+  await governance.ensureConversationGovernance(db);
+  const stamp = now;
+  sqlite.prepare("INSERT INTO communication_threads (id,customer_id,booking_id,lead_id,ticket_id,status,assigned_to,sla_due_at,created_at,updated_at) VALUES ('THREAD-V','CUST-1',NULL,NULL,NULL,'open','someone.else@pawspace.test',NULL,?,?)").run(stamp, stamp);
+  const columns = sqlite.prepare("PRAGMA table_info(communication_messages)").all().map((row) => String(row.name));
+  const values = {
+    id: "MSG-1", thread_id: "THREAD-V", customer_id: "CUST-1", direction: "outbound", channel: "whatsapp",
+    purpose: "service_recovery", template_key: "support_reply", status: "queued",
+    payload_json: JSON.stringify({ customerPhone: RAW_PHONE, internalNote: "Customer threatened to go to consumer court" }),
+    idempotency_key: "idem-1", policy_json: "{}", created_by: "ops", created_at: stamp, updated_at: stamp,
+  };
+  const used = columns.filter((name) => name in values);
+  sqlite.prepare(`INSERT INTO communication_messages (${used.join(",")}) VALUES (${used.map(() => "?").join(",")})`).run(...used.map((name) => values[name]));
+
+  const result = await callRoute("../app/api/conversations/route.ts", "GET", "https://uat.pawspace.in/api/conversations?threadId=THREAD-V", headers);
+  assert.equal(result.status, 200, `the thread opens: ${JSON.stringify(result).slice(0, 250)}`);
+  assert.equal(exposes(result.body, "consumer court"), false,
+    `the internal note must not reach an associate: ${JSON.stringify(result.body).slice(0, 400)}`);
+  assert.equal(exposes(result.body, RAW_PHONE), false, "nor the raw phone");
+});
+
+test("PBA-13: a reader who holds the restricted-note grant still sees it", async () => {
+  // Non-vacuity for PBA-12. Withholding from everyone would satisfy it and blind the people whose job
+  // is handling complaints.
+  const access = await import("../lib/purpose-based-access.ts");
+  const config = access.APPROVED_DATA_ACCESS;
+  assert.equal(access.mayReadUncategorisedInternalNote(config, { email: "a@x", roleCode: "associate", permissions: ["customers.view"] }, "operations"), false,
+    "an associate without the grant cannot");
+  assert.equal(access.mayReadUncategorisedInternalNote(config, { email: "b@x", roleCode: "manager", permissions: ["notes.complaint.view"] }, "operations"), true,
+    "a complaint handler can");
+  assert.equal(access.mayReadUncategorisedInternalNote(config, { email: "c@x", roleCode: "customer", permissions: ["*"] }, "self_service"), false,
+    "and a customer never can, whatever they hold");
+});

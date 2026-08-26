@@ -321,6 +321,24 @@ export type InternalNote={id:string;category:string;body:string;shareableWithPro
  * the medical grant. That is the whole point of separating the categories - the finding was complaint
  * notes travelling on a permission that meant something else entirely.
  */
+/**
+ * May this actor read an internal note that carries NO category?
+ *
+ * A free-text note on a conversation payload is not classified, so nothing can prove it is benign. It
+ * is therefore treated as the most restrictive category the matrix has - `complaint` - and needs that
+ * grant. This is a conservative default rather than a new business rule: it withholds where the
+ * platform cannot classify, which is the opposite of the defect this audit kept finding. The measured
+ * case that produced it was an associate reading "Customer threatened to go to c…" off a thread.
+ * [PTJA-W2-B3-C07]
+ */
+export function mayReadUncategorisedInternalNote(config:DataAccessPolicyConfig,actor:AccessActor,purpose:string){
+  if(config.purposesDeniedInternalNotes.map(String).includes(text(purpose)||"operations"))return false;
+  if(actor.roleCode==="customer")return false;
+  if(holdsAll(actor))return true;
+  const permission=config.restrictedNotePermissions.complaint;
+  return Boolean(permission&&holds(actor,permission));
+}
+
 export function filterVisibleNotes(config:DataAccessPolicyConfig,input:{actor:AccessActor;purpose:string;notes:InternalNote[];assignment?:Assignment|null}){
   const purpose=text(input.purpose)||"operations";
   const actor=input.actor;
@@ -375,5 +393,6 @@ export async function customerDataAccessResolver(db:Db,scope:{serviceCode?:strin
       ({...decideCustomerDataAccess(policy.config,input),policyVersion:policy.policyVersion}),
     notes:(input:{actor:AccessActor;purpose:string;notes:InternalNote[];assignment?:Assignment|null})=>
       filterVisibleNotes(policy.config,input),
+    mayReadUncategorisedNote:(actor:AccessActor,purpose:string)=>mayReadUncategorisedInternalNote(policy.config,actor,purpose),
   };
 }
