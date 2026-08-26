@@ -7,7 +7,7 @@ import * as nodeModule from "node:module";
 // Two test-only resolve hooks so the REAL route/engine sources run unmodified in node:
 // 1. "cloudflare:workers" resolves to a stub whose env.DB reads the current per-test D1 shim.
 // 2. Extensionless relative imports fall back to .ts (Node's ESM loader vs the bundler).
-const CF_STUB = "data:text/javascript,export const env={get DB(){return globalThis.__SCHED_DB__;},get FOUNDER_EMAIL(){return undefined;},get PAWSPACE_UAT_LOGIN(){return undefined;}};";
+const CF_STUB = "data:text/javascript,export const env={get DB(){return globalThis.__SCHED_DB__;},get FOUNDER_EMAIL(){return undefined;},get PAWSPACE_UAT_LOGIN(){return undefined;},get PAWSPACE_SCHEDULING_ENV(){return 'uat';}};";
 if (typeof nodeModule.registerHooks === "function") {
   nodeModule.registerHooks({
     resolve(specifier, context, nextResolve) {

@@ -3,6 +3,7 @@ import { schedule, type CustomScheduleRule, type ScheduleDecision, type Schedule
 import {createAssignmentOffer,getGovernedProvider,loadGovernedProviders,seedProviderCapacityDefaults} from "../../../lib/provider-capacity-governance";
 import {authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit,type AuthenticatedActor} from "../../../lib/server-auth";
 import {cleanupExpiredReservationLeases,ensureSchedulingReservationLeaseGovernance,reservationLeaseForRequest,SCHEDULING_RESERVATION_LEASE_MS} from "../../../lib/scheduling-reservation-leases";
+import {listAuthoritativeAvailability,uatRosterSeedingEnabled} from "../../../lib/scheduling-roster-authority";
 
 
 type RequestBody={action?:"reserve"|"assign"|"cancel"|"reassign"|"manual";assignmentStrategy?:"auto"|"admin_choice";clientRequestId:string;groupId?:string;customerId:string;petIds:string[];serviceCode:SchedulingService;cityId?:string;zoneId:string;scheduledStart:string;scheduledEnd:string;occurrences?:number;cadenceDays?:number;weekdays?:number[];careMode?:"visit"|"overnight";preferredProviderId?:string;providerId?:string;reason?:string;customRules?:CustomScheduleRule[]};
@@ -21,7 +22,24 @@ async function ensureSchedulingTables(db:Awaited<ReturnType<typeof database>>){a
   db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_group ON scheduling_reservations(group_id)"),
 ]);await ensureSchedulingReservationLeaseGovernance(db);}
 
-async function seedUatRoster(input:RequestBody,db:Awaited<ReturnType<typeof database>>){const matching=await loadGovernedProviders(db,cityIdFor(input),input.zoneId,input.serviceCode,new Date(input.scheduledStart));const recurring=input.serviceCode==="dog_training"||input.serviceCode==="dog_walking",dates=dateRange(input.scheduledStart,recurring?100:Math.max(2,Math.ceil((new Date(input.scheduledEnd).getTime()-new Date(input.scheduledStart).getTime())/86_400_000)+2));const window=input.serviceCode==="boarding"||input.careMode==="overnight"?"00:00-23:59":input.serviceCode==="pet_taxi"?"06:00-22:00":input.serviceCode==="dog_walking"?"06:00-21:00":"09:00-19:00";const statements=[];for(const provider of matching)for(const date of dates){const id=`uat_${provider.id}_${date}_${input.zoneId}`;statements.push(db.prepare("INSERT OR IGNORE INTO scheduling_availability (id,provider_id,city_id,zone_id,date,windows_json,source,updated_at) VALUES (?,?,?,?,?,?,?,?)").bind(id,provider.id,cityIdFor(input),input.zoneId,date,JSON.stringify([window]),"uat_roster",Date.now()));}for(let i=0;i<statements.length;i+=100)await db.batch(statements.slice(i,i+100));}
+/*
+ * Synthetic roster is a CAPABILITY, and it is unlocked only by an explicit PAWSPACE_SCHEDULING_ENV=uat.
+ * Measured before this gate: one unprivileged customer reserve against an empty table wrote 300 rows of
+ * 09:00-19:00 availability for three providers across 100 days, source 'uat_roster' - a source
+ * backend/src/domain.ts does not declare - and the engine's "No published availability" rule was then
+ * satisfied by the customer's own request. There was no scheduling environment flag anywhere in the
+ * domain, so production fabricated roster exactly as UAT did. An absent variable is not a declaration.
+ * Same reasoning, and the same shape, as lib/payment-environment.ts. [PTJA-W1-F27]
+ */
+async function seedUatRoster(input:RequestBody,db:Awaited<ReturnType<typeof database>>){const {env}=await import("cloudflare:workers");if(!uatRosterSeedingEnabled(env))return;const matching=await loadGovernedProviders(db,cityIdFor(input),input.zoneId,input.serviceCode,new Date(input.scheduledStart));const recurring=input.serviceCode==="dog_training"||input.serviceCode==="dog_walking",dates=dateRange(input.scheduledStart,recurring?100:Math.max(2,Math.ceil((new Date(input.scheduledEnd).getTime()-new Date(input.scheduledStart).getTime())/86_400_000)+2));const window=input.serviceCode==="boarding"||input.careMode==="overnight"?"00:00-23:59":input.serviceCode==="pet_taxi"?"06:00-22:00":input.serviceCode==="dog_walking"?"06:00-21:00":"09:00-19:00";
+  // Even with seeding declared on, a day a provider or Ops actually authored is theirs. Writing a
+  // synthetic row beside a narrow published one is what let a 15:00 request land on a 09:00-11:00 day.
+  // One range scan over the dates being seeded, not a lookup per provider-date.
+  const sorted=[...dates].sort(),authoredRows=await db.prepare("SELECT provider_id,date FROM scheduling_availability WHERE date>=? AND date<=? AND source IN ('partner_app','operations','roster')").bind(sorted[0]??"",sorted[sorted.length-1]??"").all<Record<string,unknown>>();
+  const authored=new Set(authoredRows.results.map(row=>`${String(row.provider_id)}|${String(row.date)}`));
+  const statements=[];for(const provider of matching)for(const date of dates){
+  if(authored.has(`${provider.id}|${date}`))continue;
+  const id=`uat_${provider.id}_${date}_${input.zoneId}`;statements.push(db.prepare("INSERT OR IGNORE INTO scheduling_availability (id,provider_id,city_id,zone_id,date,windows_json,source,updated_at) VALUES (?,?,?,?,?,?,?,?)").bind(id,provider.id,cityIdFor(input),input.zoneId,date,JSON.stringify([window]),"uat_roster",Date.now()));}for(let i=0;i<statements.length;i+=100)await db.batch(statements.slice(i,i+100));}
 
 function repository(db:Awaited<ReturnType<typeof database>>):PlatformRepository{return {
   async listEligibleProviders(cityId:string,zoneId:string,serviceCode:string){return loadGovernedProviders(db,cityId,zoneId,serviceCode);},
@@ -30,7 +48,10 @@ function repository(db:Awaited<ReturnType<typeof database>>):PlatformRepository{
     const dayStart=new Date(`${date}T00:00:00+05:30`).toISOString(),dayEnd=new Date(new Date(dayStart).getTime()+86_400_000).toISOString();
     const blocked=await db.prepare("SELECT id FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<? AND ends_at>? LIMIT 1").bind(providerId,dayEnd,dayStart).first<Record<string,unknown>>();
     if(blocked)return [];
-    const rows=await db.prepare("SELECT * FROM scheduling_availability WHERE provider_id=? AND date=?").bind(providerId,date).all<Record<string,unknown>>();return rows.results.map(row=>({id:String(row.id),providerId:String(row.provider_id),cityId:String(row.city_id),zoneId:String(row.zone_id),date:String(row.date),windows:JSON.parse(String(row.windows_json)),source:String(row.source) as ProviderAvailability["source"],updatedAt:new Date(Number(row.updated_at)).toISOString()}));},
+    // Authored availability, where it exists, is the whole answer for that date - see
+    // lib/scheduling-roster-authority.ts. Turning seeding off cannot retract rows already in the table,
+    // so this read is the half that actually restores Ops' ability to narrow a provider's hours.
+    const results=await listAuthoritativeAvailability(db,providerId,date);return results.map(row=>({id:String(row.id),providerId:String(row.provider_id),cityId:String(row.city_id),zoneId:String(row.zone_id),date:String(row.date),windows:JSON.parse(String(row.windows_json)),source:String(row.source) as ProviderAvailability["source"],updatedAt:new Date(Number(row.updated_at)).toISOString()}));},
   async getPet(id:string){if(!await tableExists(db,"canonical_pets"))return null;const row=await db.prepare("SELECT id,customer_id,name,species,breed,vaccination_status,created_at,updated_at FROM canonical_pets WHERE id=?").bind(id).first<Record<string,unknown>>();if(!row)return null;return{id:String(row.id),customerId:String(row.customer_id),legacyIds:[],name:String(row.name||id),species:String(row.species||"other") as Pet["species"],breed:row.breed?String(row.breed):undefined,allergies:[],vaccinationStatus:String(row.vaccination_status||"not_provided") as Pet["vaccinationStatus"],createdAt:new Date(Number(row.created_at||Date.now())).toISOString(),updatedAt:new Date(Number(row.updated_at||row.created_at||Date.now())).toISOString()} as Pet;},
   async close(){},
 } as unknown as PlatformRepository;}

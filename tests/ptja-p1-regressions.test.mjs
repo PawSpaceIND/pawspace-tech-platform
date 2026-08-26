@@ -91,7 +91,10 @@ async function post(modulePath, path, body, headers = {}) {
 // =====================================================================================================
 
 async function schedulingWorld() {
-  const { sqlite, db } = world({ PAWSPACE_PAYMENT_ENV: "sandbox" });
+  // PAWSPACE_SCHEDULING_ENV declared: /api/uat-scheduling no longer fabricates provider roster unless
+  // the runtime says it is a UAT runtime (PTJA W1-F27), and this world reserves through the real path
+  // with no Ops-published availability.
+  const { sqlite, db } = world({ PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_SCHEDULING_ENV: "uat" });
   const { ensureSecurityTables } = await import("../lib/server-auth.ts");
   const { seedProviderCapacityDefaults } = await import("../lib/provider-capacity-governance.ts");
   const { ensureSchedulingTables } = await import("../lib/scheduling-store.ts").catch(() => ({ ensureSchedulingTables: null }));

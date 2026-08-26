@@ -57,7 +57,10 @@ export async function setupJourney() {
   sqlite.exec("PRAGMA foreign_keys=ON; PRAGMA journal_mode=MEMORY;");
   const db = makeD1(sqlite);
   globalThis.__GROOM_GOLDEN_DB__ = db;
-  globalThis.__GROOM_GOLDEN_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox" };
+  // PAWSPACE_SCHEDULING_ENV declared, as every UAT harness must now: /api/uat-scheduling no longer
+  // fabricates provider roster unless the runtime says it is a UAT runtime (PTJA W1-F27). This harness
+  // books through the real reserve path with no Ops-published availability, so it says so.
+  globalThis.__GROOM_GOLDEN_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_SCHEDULING_ENV: "uat" };
 
   const { seedDefaultZones } = await import("../../lib/service-zones.ts");
   const { seedProviderCapacityDefaults } = await import("../../lib/provider-capacity-governance.ts");
