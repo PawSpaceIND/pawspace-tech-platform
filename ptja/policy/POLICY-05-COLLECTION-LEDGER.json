@@ -1,0 +1,65 @@
+{
+  "item": "W2-B2-R04",
+  "title": "Collection ledger - money the business took, posted to the books",
+  "status": "implemented",
+  "approved_by": "PawSpace business decision supplied 2026-08-26",
+  "evidence_class": "real_execution",
+  "method": "Regressions written and observed RED before any production change (13 of 13 failing), then GREEN.",
+
+  "measured_before": {
+    "read": "GET /api/cash-flow-statement?period=2026-08 -> {\"openingCash\":0,\"closingCash\":0,\"netChangeInCash\":0,\"operating\":{\"total\":0,\"lines\":[]},\"reconciled\":true,\"detail\":[]}",
+    "database": "One completed grooming booking of Rs 5,000 with a captured UPI payment of Rs 5,000 in the reported month. SELECT COUNT(*) FROM finance_journal_entries -> 0, before and after the read.",
+    "cause": "The statement's only input is finance_journal_entries, and no booking-payment capture path anywhere called postJournal. Absent journal was read as no cash, and the reconciliation check (opening + movement == closing) was trivially satisfied by 0 = 0 - so the statement asserted its own integrity while omitting every rupee collected."
+  },
+
+  "measured_after": {
+    "capture": "An online capture posts Dr 1020-Payment Gateway Clearing / Cr 2230-Customer Collections. The cash-flow statement still reports closingCash 0 - correctly, because a gateway capture is not yet money in the bank.",
+    "settlement": "A gateway settlement posts Dr 1010-Bank / Cr 1020-Payment Gateway Clearing, and the statement reports closingCash 4882, reconciled true.",
+    "cash": "A confirmed cash collection posts Dr 1000-Cash in Hand / Cr Customer Collections and is cash immediately - closingCash 5000.",
+    "end_to_end": "A real grooming journey through the actual routes now leaves a balanced journal naming the booking, the payment, the city and the service."
+  },
+
+  "approved_rules_implemented": {
+    "posting_trigger": "On successful CAPTURE, never on booking creation.",
+    "online_payment_captured": "Dr Payment Gateway Clearing / Cr Customer Collections",
+    "cash_collected_confirmed": "Dr Cash in Hand / Cr Customer Collections, and a cash collection without a named collector is refused",
+    "bank_transfer_verified": "Dr Bank / Cr Customer Collections",
+    "gateway_settlement_received": "Dr Bank / Cr Payment Gateway Clearing",
+    "refund_completed": "Dr 4900-Refunds and Cancellations / Cr the instrument the money went back through",
+    "payment_failed_or_pending": "no posting at all - not a provisional line, not a zero line",
+    "entry_identity": "booking and customer id, city and service, payment and settlement id, amount with tax and gateway fee held separately, payment method, transaction timestamp, collector for cash, reversal reference - all real additive columns on finance_journal_entries, because finance queries these",
+    "manual_entries": "post as pending_finance_verification, are reported SEPARATELY rather than folded in or hidden, and become final only when a finance.manage actor verifies them with a reason"
+  },
+
+  "a_design_point_worth_stating": "Gateway clearing is deliberately NOT a cash account. An online capture therefore does not move the cash-flow statement until the gateway settles. That is the correct answer rather than a compromise: the money is real and visible as a collection immediately, and becomes cash when it reaches the bank. The old statement could not draw that distinction because it had nothing to draw it from.",
+
+  "wiring": {
+    "gateway_capture": "lib/grooming-payment-reconciliation.ts processGatewayEvent, at the point booking_payments becomes 'captured' - the chokepoint every gateway and webhook capture passes through",
+    "prepaid_booking": "app/api/canonical-bookings/route.ts, after the booking batch commits, for a payment that arrives already captured",
+    "failure_containment": "A ledger failure never fails the capture or the booking. The money has arrived either way, and a webhook answered with an error would simply be retried into the same state.",
+    "a_correction_during_implementation": "The first wiring covered only canonical-bookings, and the end-to-end case failed because the grooming journey captures on a SEPARATE route. The gateway reconciliation chokepoint is where capture actually happens, and that is where the posting now lives."
+  },
+
+  "configurable": "The `collection_ledger_policy` domain in Control Center, scoped by service and city: the account mapping, which events must never post, whether manual collections need finance verification, and which permissions may verify. The validator refuses collapsing gateway clearing into the bank account, refuses dropping payment_failed or payment_pending from the non-posting list, and refuses switching off manual verification.",
+
+  "regression": {
+    "file": "tests/ptja-w2-b2-collection-ledger.test.mjs",
+    "cases": 15,
+    "red_before": "13 of 13 failing before the production change (the two end-to-end cases were added after the library existed).",
+    "sabotage_verification": [
+      "The capture path stops posting (the original defect) -> both end-to-end cases fail.",
+      "A failed/pending payment posts a provisional line -> the no-posting case fails alone.",
+      "Gateway clearing treated as cash -> the capture case and the cash-flow case fail.",
+      "A manual collection counts before verification -> both verification cases fail.",
+      "Replay double-posts -> the idempotency case fails alone.",
+      "Fix restored -> 15/15."
+    ],
+    "non_vacuity_controls": [
+      "a cash collection IS cash immediately, so 'settlement moved it' is not an untested story",
+      "the same booking posted twice leaves one posting, not two",
+      "every posted journal balances, and there is a journal per event rather than one merged blob"
+    ]
+  },
+
+  "gates": {"focused":"15/15","full_repository_regression":"3237/3237","typecheck":"clean","lint":"0 errors","merge_or_deploy":"none"}
+}
