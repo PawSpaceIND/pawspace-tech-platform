@@ -1,0 +1,42 @@
+{
+  "wave": "3A - adversarial verification of Wave 2 refutations",
+  "findings_verified": [
+    {
+      "id": "W2-B4-M-R03",
+      "claim": "taxi-proof's missing `if(!booking)` guard is not a crash or an auth bypass - getTaxiBooking throws a 404 Response, so the route answers 404, not 500",
+      "verdict": "CONFIRMED, and GENERALISED",
+      "executable": "tests/ptja-w3a-proof-route-missing-record.test.mjs",
+      "what_the_hunt_did_not_cover": "The refutation stopped at taxi. The missing null-check is not unique to it: of the five proof routes, walking and sitting null-check the record and BOARDING, TAXI and FOOD do not. The hunt examined one of the three. Whether the other two were equally inert depended on whether THEIR loaders throw or return null, and nobody had checked. All five are now driven with a record id that does not exist; all five answer 404.",
+      "cases": "5 route cases + MR03-x, which pins the REASON (the loaders throw a 404 Response) so it cannot quietly stop being true + MR03-y non-vacuity, proving an existing booking does not answer 404.",
+      "diagnostics_nit_not_a_defect": "taxi-proof's 404 body is the generic redacted string rather than a specific 'not found' message, because the thrown Response is not marked via markGovernedHttpError. Recorded, not fixed - it is a message-quality difference, not a security or state defect, and fixing it is outside what this verification was asked to do."
+    },
+    {
+      "id": "W2-B4-M-R04",
+      "claim": "the anonymous AI web-chat lead capture does NOT feed the automated outbound voice dialler - ai_web_leads is a terminal table with no consumer",
+      "verdict": "CONFIRMED",
+      "executable": "tests/ptja-w3a-chat-lead-containment.test.mjs",
+      "why_it_matters": "/api/ai-web-chat is reachable with NO identity of any kind. If a phone number typed into an anonymous chat box could reach the auto-dialler, anybody on the internet could make PawSpace cold-call a stranger - a consent and TRAI problem, not just a bug.",
+      "cases": [
+        "MR04-01 an anonymous capture reaches none of the three dialler campaigns",
+        "MR04-02 it writes no lead_work_items and no crm_contacts row",
+        "MR04-03 the per-sessionKey upsert bounds repeat submissions to one row",
+        "MR04-04 NON-VACUITY: a genuine CRM lead IS picked up by the same audience builder",
+        "MR04-05 CONTAINMENT: ai_web_leads is touched by exactly one module, the adapter",
+        "MR04-06 the audience builder reads lead_work_items and never ai_web_leads"
+      ],
+      "note": "The behavioural cases are true of today's code; MR04-05 is what stops a future sweep from quietly wiring the anonymous table into an outbound path and still passing them."
+    }
+  ],
+  "sabotage": [
+    {"control": "getTaxiBooking throws a 404 Response instead of returning null", "result": "RED - MR03 (taxi-proof) and MR03-x, the exact hazard the refutation was about"},
+    {"control": "buildOutboundAudience reads ai_web_leads for new_lead_followup", "result": "RED - MR04-01, MR04-05, MR04-06"}
+  ],
+  "fixture_gaps_caught_by_the_probe_itself": [
+    "The first three runs of the proof-route file reported 500 for all five routes - including walking and sitting, which DO null-check. That was the fixture, not the routes: canonical_bookings, provider_work_orders, booking_payments and taxi_trips were absent, so the 500 was 'no such table'. The refutation under test had made exactly this point about its own probe. Every DDL is now copied verbatim from its owning source (app/api/canonical-bookings/route.ts, app/api/taxi-bookings/route.ts) rather than guessed, as tests/money-hardening.test.mjs does.",
+    "This is worth recording because a green 404 assertion over a broken fixture would have looked identical to proof."
+  ],
+  "not_claimed": [
+    "Only the GET surface of each proof route is driven with a missing record. POST is not.",
+    "MR04 verifies containment of the anonymous capture table. It does not audit the dialler's consent, quiet-hours or frequency gates, which are covered by POLICY-21."
+  ]
+}
