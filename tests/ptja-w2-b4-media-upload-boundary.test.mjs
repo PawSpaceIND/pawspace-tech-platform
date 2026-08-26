@@ -217,7 +217,30 @@ test("M04-10: an external URL cannot be presented as the uploaded object", async
   for (const objectKey of ["https://attacker.example.test/not-an-object.jpg", "//evil.test/x.jpg", "s3://bucket/key"]) {
     const refused = await attempt(boundary.redeemMediaUploadGrant(db, { token: grant.token, objectKey, observed: { sizeBytes: 2048, sha256: SHA_A, mimeType: "image/jpeg" }, actorId: UPLOADER }));
     assert.equal(refused.ok, false, `${objectKey} must be refused: ${JSON.stringify(refused).slice(0, 200)}`);
+    // SHADOWED UNTIL PTJA-W3B. `ok === false` alone was satisfied by the OBJECT-KEY BINDING check
+    // further down redeemMediaUploadGrant: a URL is not the key this grant was issued for, so it was
+    // refused either way. Disabling the URL guard entirely left this case green. The reason is now
+    // asserted, so the case fails if the URL check stops being what refuses a URL.
+    assert.match(String(refused.code ?? refused.message ?? ""), /external_url_refused|not a URL/i,
+      `${objectKey} must be refused AS A URL, not incidentally by the key-binding check: ${JSON.stringify(refused).slice(0, 250)}`);
   }
+});
+
+test("M04-10b: a file name carrying a path or a URL is refused at grant time", async () => {
+  // Added in PTJA-W3B. issueMediaUploadGrant refuses a fileName containing "://", "\\" or "/" - a
+  // traversal and URL guard sitting one step before the object key is ever minted - and NOTHING
+  // exercised it. Disabling that condition entirely left the whole 33-case suite green.
+  const { boundary, db } = await world();
+  for (const fileName of ["../../etc/passwd", "https://attacker.example.test/x.jpg", "dir\\sub\\x.jpg", "a/b.jpg"]) {
+    const refused = await attempt(boundary.issueMediaUploadGrant(db, { ...GRANT, fileName }));
+    assert.equal(refused.ok, false, `${fileName} must be refused: ${JSON.stringify(refused).slice(0, 200)}`);
+    assert.match(String(refused.message ?? ""), /must not contain a path or a URL/i,
+      `${fileName} must be refused FOR THAT REASON: ${JSON.stringify(refused).slice(0, 250)}`);
+  }
+
+  // Non-vacuity: a plain file name is still accepted, so this is not "refuse every grant".
+  const ok = await attempt(boundary.issueMediaUploadGrant(db, { ...GRANT, fileName: "before-groom.jpg" }));
+  assert.equal(ok.ok, true, `a plain file name must still be accepted: ${JSON.stringify(ok).slice(0, 250)}`);
 });
 
 // ---------------------------------------------------------------------------------------------------
