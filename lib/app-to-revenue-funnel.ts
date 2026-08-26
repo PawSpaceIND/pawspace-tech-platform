@@ -29,8 +29,63 @@ export async function ensureFunnelTables(db: Db) {
     db.prepare("CREATE TABLE IF NOT EXISTS app_installs (install_id TEXT PRIMARY KEY,source TEXT,campaign TEXT,os TEXT,app_version TEXT,first_open_at INTEGER NOT NULL,created_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS install_identity_links (install_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,identified_at INTEGER NOT NULL)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_install_identity_customer ON install_identity_links(customer_id)"),
+    /*
+     * The history of who has held this installation. [PTJA-W3-DI]
+     *
+     * install_identity_links carries the ONE active binding; this carries every claim, refusal and
+     * release, with the account it replaced. The approved rule asks for an audit event recording the
+     * old and new account linkage, and a single mutable row cannot do that - it only ever knows the
+     * present.
+     */
+    db.prepare("CREATE TABLE IF NOT EXISTS install_identity_events (id TEXT PRIMARY KEY,install_id TEXT NOT NULL,event_type TEXT NOT NULL,customer_id TEXT,previous_customer_id TEXT,reason TEXT NOT NULL DEFAULT '',actor_id TEXT NOT NULL DEFAULT '',created_at INTEGER NOT NULL)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_install_identity_events ON install_identity_events(install_id,created_at)"),
     db.prepare("CREATE TABLE IF NOT EXISTS funnel_producer_marks (kind TEXT NOT NULL,ref_id TEXT NOT NULL,lead_id TEXT,created_at INTEGER NOT NULL,PRIMARY KEY(kind,ref_id))"),
   ]);
+  /*
+   * Additive lifecycle columns. A row used to mean only "this install belongs to this customer", with
+   * no way to say "nobody holds it now" - so a reset or resold device could never be re-bound and its
+   * new owner stayed permanently unlinked. Nullable/defaulted, so every row written before this reads
+   * back as the active binding it was. [PTJA-W3-DI]
+   */
+  for(const column of ["status TEXT NOT NULL DEFAULT 'active'","released_at INTEGER","released_reason TEXT"]){
+    await db.prepare(`ALTER TABLE install_identity_links ADD COLUMN ${column}`).run()
+      .catch((error:unknown)=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
+  }
+}
+
+async function installEvent(db:Db,input:{installId:string;eventType:string;customerId?:string|null;previousCustomerId?:string|null;reason?:string;actorId?:string;at:number}){
+  await db.prepare("INSERT INTO install_identity_events (id,install_id,event_type,customer_id,previous_customer_id,reason,actor_id,created_at) VALUES (?,?,?,?,?,?,?,?)")
+    .bind(`IIE-${crypto.randomUUID().slice(0,10).toUpperCase()}`,input.installId,input.eventType,input.customerId??null,input.previousCustomerId??null,text(input.reason)||"",text(input.actorId)||"",input.at).run();
+}
+
+/** The customer who currently holds this installation, or null. Never a session, never a credential. */
+export async function installIdentity(db:Db,installId:string){
+  await ensureFunnelTables(db);
+  const row=await db.prepare("SELECT customer_id,identified_at FROM install_identity_links WHERE install_id=? AND status='active'").bind(text(installId)).first<Record<string,unknown>>();
+  return row?{installId:text(installId),customerId:String(row.customer_id),identifiedAt:Number(row.identified_at||0)}:null;
+}
+
+/**
+ * Ends the current customer's context on this installation - the logout/session-revocation step the
+ * approved handover requires before anybody else may claim it.
+ *
+ * Only the holder may release their own binding, and only with a stated reason. `actorId` lets a staff
+ * release be recorded as one rather than being disguised as the customer's own action.
+ */
+export async function releaseInstall(db:Db,input:{installId:string;customerId:string;reason:string;actorId?:string;at?:number}){
+  await ensureFunnelTables(db);
+  const installId=text(input.installId),customerId=text(input.customerId),reason=text(input.reason);
+  if(!installId||!customerId)throw Response.json({error:"An installation and the customer releasing it are required"},{status:400});
+  if(reason.length<3)throw Response.json({error:"A reason for releasing this device is required"},{status:400});
+  const current=await installIdentity(db,installId);
+  if(!current)throw Response.json({error:"This installation is not bound to any customer",code:"install_not_bound"},{status:409});
+  if(current.customerId!==customerId&&!text(input.actorId))
+    throw Response.json({error:"Only the customer who holds this installation can release it",code:"install_release_forbidden"},{status:403});
+  const at=input.at??Date.now();
+  await db.prepare("UPDATE install_identity_links SET status='released',released_at=?,released_reason=? WHERE install_id=? AND status='active'")
+    .bind(at,reason,installId).run();
+  await installEvent(db,{installId,eventType:"released",customerId:current.customerId,reason,actorId:input.actorId,at});
+  return{installId,releasedFrom:current.customerId,status:"released" as const};
 }
 
 /** Anonymous app install / first-open. Idempotent on the install id. */
@@ -43,29 +98,47 @@ export async function recordAppInstall(db: Db, input: { installId: string; sourc
   return { installId, recorded: true };
 }
 
-/** Bind an install to a canonical customer at OTP verify / identification. Idempotent. */
+/**
+ * Binds an installation to the customer who has just PROVED who they are. [PTJA-W3-DI]
+ *
+ * `customerId` is the authenticated subject the caller resolved from a verified OTP. This function
+ * never derives identity from the installation - an install id is a marketing handle, not a credential,
+ * and it is reached from the fully public /api/customer-otp verify action with a caller-supplied value.
+ *
+ * ONE ACTIVE CONTEXT AT A TIME, and no silent transfer:
+ *   - unclaimed        -> bound to this customer, audited
+ *   - held by them     -> idempotent, no second event
+ *   - held by somebody else -> NOT transferred, and the caller is told so. Critically, they are handed
+ *     THEIR OWN id back, never the holder's. The previous version ended
+ *     `customerId: String(link?.customer_id ?? customerId)`, so a second customer verifying their own
+ *     phone on that device received the FIRST customer's id - an identity handed out by an install
+ *     string, which is exactly what the rule forbids.
+ *
+ * A handover is release-then-identify, which is the logout-then-login the approved rule describes. It
+ * is deliberately not a single call: a transfer nobody signed out of is the silent transfer.
+ */
 export async function identifyInstall(db: Db, input: { installId: string; customerId: string; at?: number }) {
   await ensureFunnelTables(db);
   const installId = text(input.installId), customerId = text(input.customerId);
-  if (!installId || !customerId) throw new Error("installId and customerId are required");
+  if (!installId || !customerId) throw Response.json({error:"An installation id and an authenticated customer are both required",code:"install_identity_incomplete"},{status:400});
   const at = input.at ?? Date.now();
   // record the install too (a first-open may not have been separately ingested)
   await db.prepare("INSERT OR IGNORE INTO app_installs (install_id,first_open_at,created_at) VALUES (?,?,?)").bind(installId, at, at).run();
-  // An install is claimed ONCE. This used to be ON CONFLICT DO UPDATE SET customer_id=excluded.customer_id
-  // with no check that the install was unclaimed and no check that the caller owned the prior claim -
-  // and it is reached from the fully public, unauthenticated /api/customer-otp verify action with a
-  // caller-supplied installId. Anyone who knew or guessed another customer's install id could point it
-  // at their own record: the victim's paid-acquisition source and campaign were re-attributed to the
-  // attacker, the victim silently dropped out of the App-Inbound sales sweep (the attacker got their
-  // 10-minute-SLA lead instead), and because identified_at was left alone the takeover left no trace.
-  //
-  // DO NOTHING on conflict, rather than refusing: the caller has proved their own phone and is entitled
-  // to their own session, they simply do not inherit somebody else's install. Refusing the verify would
-  // be a stricter rule than the platform states anywhere and would lock out a genuine second user of a
-  // reset or resold device.
-  await db.prepare("INSERT INTO install_identity_links (install_id,customer_id,identified_at) VALUES (?,?,?) ON CONFLICT(install_id) DO NOTHING").bind(installId, customerId, at).run();
-  const link = await db.prepare("SELECT customer_id FROM install_identity_links WHERE install_id=?").bind(installId).first<Record<string, unknown>>();
-  return { installId, customerId: String(link?.customer_id ?? customerId) };
+
+  const held = await installIdentity(db, installId);
+  if (held && held.customerId !== customerId) {
+    await installEvent(db,{installId,eventType:"claim_refused",customerId,previousCustomerId:held.customerId,
+      reason:"This installation is already bound to another customer",at});
+    return { installId, customerId, bound: false as const, conflict: "install_bound_to_another_customer" as const };
+  }
+  if (held) return { installId, customerId, bound: true as const };
+
+  const previous = await db.prepare("SELECT customer_id FROM install_identity_links WHERE install_id=?").bind(installId).first<Record<string, unknown>>();
+  await db.prepare("INSERT INTO install_identity_links (install_id,customer_id,identified_at,status,released_at,released_reason) VALUES (?,?,?,'active',NULL,NULL) ON CONFLICT(install_id) DO UPDATE SET customer_id=excluded.customer_id,identified_at=excluded.identified_at,status='active',released_at=NULL,released_reason=NULL")
+    .bind(installId, customerId, at).run();
+  await installEvent(db,{installId,eventType:"identified",customerId,
+    previousCustomerId:previous?.customer_id?String(previous.customer_id):null,at});
+  return { installId, customerId, bound: true as const };
 }
 
 /** Create an App-Inbound Sales lead (10-minute first-call SLA), once per customer. */
