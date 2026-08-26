@@ -1,0 +1,60 @@
+{
+  "item": "F53",
+  "title": "Approved provider verification requirements for Dog Walking and Pet Taxi, and unknown is never satisfied",
+  "status": "implemented_part_1_of_2",
+  "approved_by": "PawSpace business decision supplied 2026-08-26",
+  "evidence_class": "real_execution",
+
+  "measured_before": {
+    "mapping": "categoryForVertical: grooming=>groomer, boarding=>host, pet_sitting=>pet_sitter, dog_training=>trainer, dog_walking=>NULL, pet_taxi=>NULL",
+    "categories": "PROVIDER_CATEGORIES = ['groomer','pet_sitter','trainer','host']",
+    "activation": "check('category_verification_mandate', TRUE) with detail {category:null, note:'No verification category mandate is defined for vertical dog_walking'} - an unmapped vertical produced a PASSING check, and the walker activated with zero verification rows and zero onboarding documents",
+    "no_remedy": "setCategoryMandate('dog_walker') -> 'Unknown category (use one of: groomer, pet_sitter, trainer, host)' - there was no way to require Aadhaar of a dog walker at all"
+  },
+
+  "measured_after": {
+    "mapping": "dog_walking=>dog_walker, pet_taxi=>pet_taxi_driver; PROVIDER_CATEGORIES now carries both",
+    "activation_unverified_walker": "eligible false, category_verification_mandate blocked, outstanding names aadhaar, address, police_verification, selfie_liveness, references_background, pet_handling_induction, emergency_safety_training",
+    "activation_unconfigured_vertical": "eligible false, the check names the vertical and points at Control Center - forgetting a service no longer produces a pass",
+    "operator_remedy": "setCategoryMandate('pet_taxi_driver', [...]) accepted"
+  },
+
+  "approved_requirements": {
+    "dog_walking": {"required":["aadhaar (government photo ID)","address","police_verification","selfie_liveness","references_background","pet_handling_induction","emergency_safety_training"],"payout_blocking":["bank_kyc"]},
+    "pet_taxi": {"required":["aadhaar (government photo ID)","address","police_verification","selfie_liveness","pet_handling_induction","emergency_safety_training","driving_licence","vehicle_registration","vehicle_insurance","vehicle_fitness_pollution"],"recommended":["references_background"],"payout_blocking":["bank_kyc"]},
+    "note": "Government photo ID maps to the existing `aadhaar` check rather than a new duplicate type - it is already the government-identity verification IDfy runs, and a second name for the same evidence would mean two records of one fact."
+  },
+
+  "new_verification_types": ["selfie_liveness","references_background","driving_licence","vehicle_registration","vehicle_insurance","vehicle_fitness_pollution","bank_kyc","pet_handling_induction","emergency_safety_training"],
+
+  "configurable": "lib/provider-verification-policy.ts registers the `provider_verification_policy` domain on the Control Center kernel, scoped (vertical, city). A city that demands more of a taxi driver writes a (pet_taxi, <city>) row; nothing is deployed. The platform default at (*, *) carries configured:false and BLOCKS.",
+
+  "two_corrections_to_my_own_work": [
+    "A first validator demanded a police check of every configured vertical, and a second demanded government ID. Both were mine, not the business's: the approved table mandates police verification for Dog Walking and Pet Taxi only, and the platform does not ask it of Grooming, Pet Sitting or Boarding. The seed failed against my own rule and said so. The validator now guards the SHAPE of a decision - that one was made, that it is not self-contradictory, that blocking is not switched off - and leaves the content to the people who own it.",
+    "Making the policy the authority initially overruled a deliberate, tested contract in lib/provider-verification-mandate.ts that an operator may NARROW a category mandate and have it stick. tests/provider-activation-readiness-closure.test.mjs caught it. setCategoryMandate now writes through to the policy, so there is ONE authority and narrowing still works - the same single-source rule this audit applied in F14."
+  ],
+
+  "test_updates": {
+    "reason": "Five fixtures in tests/provider-lifecycle-hardening.test.mjs used verticalKey 'dog_walking' PRECISELY BECAUSE it demanded no verification - the defect was being used as a test shortcut. They now clear the approved checks explicitly, so each still isolates exactly the gate it is about. One assertion encoded the defect directly ('verticals with no mandate defined are reported as such') and was replaced with the stronger property it was protecting: an unmapped vertical is never silently treated as fine, and now BLOCKS.",
+    "no_assertion_dropped": true
+  },
+
+  "regression": {
+    "files": ["tests/ptja-w1-f53-verification-requirements.test.mjs (9 cases)","tests/provider-lifecycle-hardening.test.mjs (2 new end-to-end cases)"],
+    "sabotage_verification": [
+      "The unconfigured branch passes again (the original defect) -> the unconfigured-vertical case fails. A first sabotage run did NOT bite, because no test exercised that branch; a case was added rather than the result accepted.",
+      "dog_walking requirements emptied -> 2 cases fail.",
+      "The category write-through removed (two authorities again) -> the narrowing case and the existing activation-readiness case both fail.",
+      "Fix restored -> 30/30 across both files."
+    ],
+    "non_vacuity_controls": [
+      "once the approved checks are recorded, the same walker activates normally",
+      "a legitimate tightening through the same path is accepted and audited - refusing every write would make the requirements unconfigurable, which is half the finding",
+      "every check the approved requirements name exists as a real verification type, so no requirement is unsatisfiable"
+    ]
+  },
+
+  "still_open_part_2": "Expiry and rejection of a mandatory document must block NEW assignments while preserving in-progress work for Operations to reassign. provider_verifications carries no expiry column yet and the assignment path does not consult verification state. That is the next commit.",
+
+  "gates": {"full_repository_regression":"3205/3205","typecheck":"clean","lint":"0 errors"}
+}

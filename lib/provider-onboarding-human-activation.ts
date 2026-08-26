@@ -1,7 +1,8 @@
 import{resolveProviderOnboardingContent}from"./provider-onboarding-configuration";
 import{ensureProviderOnboardingTransactional}from"./provider-onboarding-transactional";
 import{ensureProviderCapacityTables}from"./provider-capacity-governance";
-import{verificationCategoryForVertical,verificationMandateStatus}from"./provider-verification-mandate";
+import{verificationCategoryForVertical,verificationMandateStatus,verifiedTypesForApplication}from"./provider-verification-mandate";
+import{resolveProviderVerificationPolicy,seedApprovedVerificationPolicies}from"./provider-verification-policy";
 
 type Row=Record<string,unknown>;
 const text=(v:unknown)=>String(v??"").trim();
@@ -64,12 +65,36 @@ export async function evaluateProviderActivation(db:D1Database,input:{applicatio
  // here: activation only looked at the application-level verification_status, which the older generic
  // verification flow can set to 'verified' on its own. A host could therefore be activated with
  // house_verification and pet_proofing_photo still not started.
- const mandateCategory=verificationCategoryForVertical(text(application.vertical_key));
- if(mandateCategory){
-  const mandate=await verificationMandateStatus(db,{applicationId:input.applicationId,category:mandateCategory}).catch(()=>null);
-  checks.push(check("category_verification_mandate",Boolean(mandate?.allVerified),{category:mandateCategory,required:mandate?.required??[],pending:mandate?.pending??["mandate_unavailable"]}));
+ /*
+  * WHAT A VERTICAL MUST HAVE VERIFIED is now decided by lib/provider-verification-policy.ts, which is
+  * scoped by service AND city and edited in Control Center - so a city can demand more of a taxi driver
+  * without a deploy. [PTJA-W1-F53]
+  *
+  * The `else` branch below used to push `check(..., true)`: an unmapped vertical produced a PASSING
+  * check. dog_walking and pet_taxi were both unmapped, so two of the six canonical services activated
+  * providers with no identity mandate at all - measured, a dog walker activated end to end with zero
+  * verification rows and zero onboarding documents. Unknown is now BLOCKING, and the check says which
+  * vertical nobody has decided about rather than implying somebody had.
+  */
+ await seedApprovedVerificationPolicies(db);
+ const verificationPolicy=await resolveProviderVerificationPolicy(db,text(application.vertical_key),text(application.city_code)).catch(()=>null);
+ const mandateCategory=verificationPolicy?.config.category??verificationCategoryForVertical(text(application.vertical_key));
+ if(!verificationPolicy?.config.configured){
+  checks.push(check("category_verification_mandate",false,{category:mandateCategory,vertical:text(application.vertical_key),
+   note:`No verification requirements are configured for vertical '${text(application.vertical_key)}'. Configure them in Control Center under Business policy before activating a provider for this service.`}));
+ }else if(mandateCategory){
+  const required=verificationPolicy.config.requiredTypes.map(String);
+  // The POLICY decides what is required; the RECORDS decide what is verified. Read straight from the
+  // verification records rather than through the older per-category mandate list, which would
+  // under-report a check the policy added - and could hide one the provider has not passed.
+  const verified=new Set((await verifiedTypesForApplication(db,input.applicationId).catch(()=>[])).map(String));
+  const outstanding=required.filter(type=>!verified.has(type));
+  checks.push(check("category_verification_mandate",outstanding.length===0,{category:mandateCategory,
+   policyVersion:verificationPolicy.policyVersion,required,outstanding,
+   recommended:verificationPolicy.config.recommendedTypes}));
  }else{
-  checks.push(check("category_verification_mandate",true,{category:null,note:`No verification category mandate is defined for vertical '${text(application.vertical_key)}' - application-level verification only`}));
+  checks.push(check("category_verification_mandate",false,{category:null,vertical:text(application.vertical_key),
+   note:"This vertical has verification requirements configured but no provider category to record them against."}));
  }
  for(const req of requiredMedia(policy.mediaRequirements)){checks.push(check(`media:${req.mediaType}`,Number(counts.get(req.mediaType)||0)>=req.minCount,{required:req.minCount,actual:Number(counts.get(req.mediaType)||0)}));}
  const known=new Set(checks.map(c=>c.code));for(const requirement of policy.activationRequirements){if(typeof requirement==="string"){const key=text(requirement);if(!key||known.has(key))continue;if(key.startsWith("profile:")){const field=key.slice(8);checks.push(check(key,hasProfileField(profile,field)));continue;}if(key.startsWith("media:")){const type=key.slice(6);checks.push(check(key,Number(counts.get(type)||0)>0));continue;}checks.push(check(`unsupported_policy_requirement:${key}`,false));continue;}const r=object(requirement),type=text(r.type);if(type==="profile_field"){const field=text(r.field);checks.push(check(`profile:${field}`,hasProfileField(profile,field)));}else if(type==="media"){const mediaType=text(r.mediaType),minCount=Math.max(1,Number(r.minCount||1));checks.push(check(`media:${mediaType}`,Number(counts.get(mediaType)||0)>=minCount,{required:minCount,actual:Number(counts.get(mediaType)||0)}));}else checks.push(check(`unsupported_policy_requirement:${type||"unknown"}`,false));}
