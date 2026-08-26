@@ -175,7 +175,7 @@ export default function WhatsAppTemplatesPage() {
         </table>
       </div>}
 
-      <p className={teamStyles.footnote}>Safety state: environment {text(data.environment, "uat")} · production WhatsApp delivery {data.productionDelivery ? "enabled" : "disabled"} · external Meta mutation {data.externalMetaMutation ? "enabled" : "disabled"}. Lifecycle approval changes only PawSpace's governed registry after a verified provider decision.</p>
+      <p className={teamStyles.footnote}>Safety state: environment {text(data.environment, "uat")} · production WhatsApp delivery {data.productionDelivery ? "enabled" : "disabled"} · external Meta mutation {data.externalMetaMutation ? "enabled" : "disabled"}. Lifecycle approval changes only PawSpace&apos;s governed registry after a verified provider decision.</p>
     </OpsShell>
   );
 }
