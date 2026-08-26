@@ -300,9 +300,16 @@ async function mediaWorld(env = {}) {
   const media = await import("../lib/service-media-security.ts");
   await media.ensureServiceMediaTable(db);
   const asset = (over = {}) => {
-    const row = { id: "MEDIA-1", booking_id: "BKG-1", provider_id: "PRV-1", purpose: "after_service", storage_key: "k", mime_type: "image/jpeg", size_bytes: 1000, sha256: SHA, scan_status: "clean", access_status: "ready", retention_status: "active", synthetic: 0, ...over };
-    sqlite.prepare("INSERT INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'ops',?,?)")
-      .run(row.id, row.booking_id, row.provider_id, row.purpose, row.storage_key, row.mime_type, row.size_bytes, row.sha256, row.scan_status, row.access_status, row.retention_status, row.synthetic, BASE, BASE);
+    /*
+     * review_status and release_basis joined the fixture when scan_status stopped being written by a
+     * human pressing approve. A released asset now carries all three: a scanner verdict or an agreed
+     * environment, an approved review, and the basis on which it was released. Defaulting them here
+     * keeps every existing case measuring what it was written to measure - the overrides below still
+     * flip one field at a time. [PTJA-W3-SC]
+     */
+    const row = { id: "MEDIA-1", booking_id: "BKG-1", provider_id: "PRV-1", purpose: "after_service", storage_key: "k", mime_type: "image/jpeg", size_bytes: 1000, sha256: SHA, scan_status: "clean", access_status: "ready", retention_status: "active", synthetic: 0, review_status: "approved", release_basis: "scanner_clean", ...over };
+    sqlite.prepare("INSERT INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,review_status,release_basis,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'ops',?,?)")
+      .run(row.id, row.booking_id, row.provider_id, row.purpose, row.storage_key, row.mime_type, row.size_bytes, row.sha256, row.scan_status, row.access_status, row.retention_status, row.synthetic, row.review_status, row.release_basis, BASE, BASE);
     return row.id;
   };
   const check = (over = {}) => media.assertServiceProofRef(db, { ref: "media://asset/MEDIA-1", bookingId: "BKG-1", providerId: "PRV-1", purpose: "after_service", ...over });
@@ -347,8 +354,18 @@ test("proof belonging to another booking or another provider is refused", async 
 
 test("unscanned, quarantined, revoked and still-synthetic media are all refused as proof", async () => {
   for (const [label, over] of [
-    ["never scanned", { scan_status: "pending" }],
+    /*
+     * "Never scanned" is now expressed as "never RELEASED". scan_status:'pending' on its own stopped
+     * being a defect when scanning stopped being a human pressing approve - in UAT, where unscanned
+     * media is the agreed answer, pending is the normal state of a perfectly good photo. What must
+     * still never be proof is an asset the release boundary never let through, so that is what this
+     * asserts, plus the two states a scanner itself condemns. [PTJA-W3-SC]
+     */
+    ["never released by the scan boundary", { scan_status: "pending", release_basis: null }],
+    ["reviewed but never released", { review_status: "approved", release_basis: null }],
+    ["never reviewed", { review_status: "pending_review" }],
     ["scan rejected", { scan_status: "rejected" }],
+    ["scanner reported infected", { scan_status: "infected" }],
     ["still quarantined", { access_status: "quarantined" }],
     ["upload never confirmed", { access_status: "pending_upload" }],
     ["retention revoked", { retention_status: "revoked" }],

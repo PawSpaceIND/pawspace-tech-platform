@@ -170,7 +170,19 @@ test("SPINE: media proof is owned by the booking and the provider that served it
     for (const asset of assets) {
       assert.equal(asset.provider_id, booking.provider_id,
         `${person.key}: proof is attributed to a provider who did not hold the work order`);
-      assert.equal(asset.scan_status, "clean", `${person.key}: unscanned media survived to completion`);
+      /*
+       * The guarantee is unchanged - media that was never cleared must not survive to completion - but
+       * scan_status stopped being written by a human pressing approve. In UAT, where unscanned media is
+       * the agreed answer, a good photo sits at scan_status 'pending' with an explicit release basis.
+       * Asserting the RELEASE is what the case always meant, and it checks more than the old line did:
+       * a second person approved it, the boundary released it, and access is actually open.
+       * [PTJA-W3-SC]
+       */
+      assert.equal(asset.review_status, "approved", `${person.key}: unreviewed media survived to completion`);
+      assert.ok(String(asset.release_basis || ""), `${person.key}: media that was never released survived to completion`);
+      assert.equal(asset.access_status, "ready", `${person.key}: media that is not open survived to completion`);
+      assert.equal(["infected", "unreadable", "rejected"].includes(String(asset.scan_status)), false,
+        `${person.key}: a scanner-condemned file survived to completion`);
     }
   }
 });

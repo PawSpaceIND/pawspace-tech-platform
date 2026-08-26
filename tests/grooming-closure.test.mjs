@@ -44,7 +44,12 @@ test("Grooming closure uses one canonical transaction across Customer Partner Te
   assert.match(mediaSecurity,/Service media asset belongs to another booking/);
   assert.match(mediaSecurity,/Service media asset belongs to another provider/);
   assert.match(mediaSecurity,/Service media asset purpose does not match the proof slot/);
-  assert.match(mediaSecurity,/has not passed malware\/content scanning/);
+  // The proof gate's wording moved when scanning stopped being a human pressing approve: an asset is
+  // refused for being scanner-condemned, unreviewed, or never released by the boundary - three
+  // conditions where there used to be one. All three are pinned. [PTJA-W3-SC]
+  assert.match(mediaSecurity,/rejected by malware\/content scanning/);
+  assert.match(mediaSecurity,/has not been reviewed and approved/);
+  assert.match(mediaSecurity,/has not been released by the scan\/quarantine boundary/);
   assert.match(mediaSecurity,/upload is not ready for service proof/);
   assert.match(mediaSecurity,/outside its active retention state/);
   assert.match(mediaSecurity,/still marked synthetic/);
@@ -61,7 +66,10 @@ test("Grooming closure uses one canonical transaction across Customer Partner Te
   assert.match(mediaBoundary,/SHA-256 checksum/);
   assert.match(mediaBoundary,/maxSizeBytes:10_000_000/);
   assert.match(mediaBoundary,/quarantined/);
-  assert.match(mediaBoundary,/proofReady:approved/);
+  // proofReady is no longer "the reviewer approved". It is "approved AND the scan/quarantine boundary
+  // released it", which in production with no scanner and no manual-review policy is never. [PTJA-W3-SC]
+  assert.match(mediaBoundary,/const usable=approved&&release\.releasable/);
+  assert.match(mediaBoundary,/proofReady:usable/);
   assert.match(finance,/booking_invoices/);
   assert.match(finance,/booking_subscription_usage/);
   assert.match(security,/security_audit_events/);

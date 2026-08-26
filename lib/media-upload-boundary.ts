@@ -38,6 +38,8 @@
  */
 import{POLICY_ANY,registerServicePolicyDomain,resolveServicePolicy}from"./service-policy-governance";
 import{ensureServiceMediaTable}from"./service-media-security";
+import{headStoredObject,mediaStorageStatus}from"./media-storage-adapter";
+import{mediaReleaseVerdict,mediaScanState}from"./media-scan-boundary";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -135,16 +137,8 @@ export async function ensureMediaBoundaryTables(db:Db){
     db.prepare("CREATE INDEX IF NOT EXISTS idx_media_read_grants_media ON media_read_grants(media_id,expires_at)"),
     db.prepare("CREATE TABLE IF NOT EXISTS service_media_events (id TEXT PRIMARY KEY,media_id TEXT NOT NULL,booking_id TEXT NOT NULL,event_type TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),
   ]);
-  /*
-   * Additive review state. `access_status` already answers "can this be served"; it does not answer
-   * "has a second person looked at it", and rule 6 asks for an explicit PENDING_REVIEW that a
-   * scan result cannot be mistaken for. Nullable, so every row written before this column existed
-   * reads back as "no review recorded" rather than as approved. [PTJA-W2-B4-M04]
-   */
-  for(const column of["review_status TEXT","reviewed_by TEXT","reviewed_at INTEGER","review_reason TEXT","supersedes TEXT"]){
-    await db.prepare(`ALTER TABLE service_media_assets ADD COLUMN ${column}`).run()
-      .catch((error:unknown)=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
-  }
+  // The review columns are added by ensureServiceMediaTable, which owns the table. They were briefly
+  // added here instead, which left the proof gate reading a column its own ensure path never created.
   tablesEnsured.add(db);
 }
 
@@ -282,20 +276,38 @@ export async function redeemMediaUploadGrant(db:Db,input:{token:string;objectKey
   if(String(grant!.object_key)!==objectKey)
     refuse("The confirmed object does not belong to this upload grant",403,{code:"object_key_mismatch"});
 
-  const observed=input.observed??{};
-  if(!Number.isFinite(Number(observed.sizeBytes))||!SHA256.test(String(observed.sha256||""))||!String(observed.mimeType||"").trim())
-    refuse("The stored object's size, checksum and content type must be verified before registration",400,{code:"object_verification_required"});
-  if(Number(observed.sizeBytes)!==Number(grant!.size_bytes))refuse("The stored object's size does not match the upload grant",409,{code:"object_size_mismatch"});
-  if(String(observed.sha256).toLowerCase()!==String(grant!.sha256).toLowerCase())refuse("The stored object's checksum does not match the upload grant",409,{code:"object_checksum_mismatch"});
-  if(String(observed.mimeType).trim().toLowerCase()!==String(grant!.mime_type))refuse("The stored object's content type does not match the upload grant",409,{code:"object_type_mismatch"});
+  /*
+   * WHO SAYS WHAT IS STORED. [PTJA-W3-MS]
+   *
+   * With a private bucket bound, the BUCKET answers and the caller's claim is ignored entirely - it is
+   * not corroboration, it is a value the uploader controls. With no bucket bound the caller's observed
+   * facts are all there is, which is honest and is reported as adapterConnected:false rather than
+   * dressed up. An absent object is a refusal in both cases: "could not check" must never collapse into
+   * "carry on".
+   */
+  const storage=await mediaStorageStatus();
+  if(storage.connected){
+    const stored=await headStoredObject(objectKey);
+    if(!stored)refuse("No object is stored under this upload grant's key",409,{code:"stored_object_missing"});
+    if(Number(stored!.sizeBytes)!==Number(grant!.size_bytes))refuse("The stored object's size does not match the upload grant",409,{code:"object_size_mismatch"});
+    const storedType=String(stored!.contentType||"").trim().toLowerCase();
+    if(storedType&&storedType!==String(grant!.mime_type))refuse("The stored object's content type does not match the upload grant",409,{code:"object_type_mismatch"});
+  }else{
+    const observed=input.observed??{};
+    if(!Number.isFinite(Number(observed.sizeBytes))||!SHA256.test(String(observed.sha256||""))||!String(observed.mimeType||"").trim())
+      refuse("The stored object's size, checksum and content type must be verified before registration",400,{code:"object_verification_required"});
+    if(Number(observed.sizeBytes)!==Number(grant!.size_bytes))refuse("The stored object's size does not match the upload grant",409,{code:"object_size_mismatch"});
+    if(String(observed.sha256).toLowerCase()!==String(grant!.sha256).toLowerCase())refuse("The stored object's checksum does not match the upload grant",409,{code:"object_checksum_mismatch"});
+    if(String(observed.mimeType).trim().toLowerCase()!==String(grant!.mime_type))refuse("The stored object's content type does not match the upload grant",409,{code:"object_type_mismatch"});
+  }
 
   const mediaId=String(grant!.media_id),bookingId=String(grant!.booking_id);
   await db.batch([
     db.prepare("UPDATE media_upload_grants SET status='consumed',consumed_at=? WHERE id=? AND status='issued'").bind(now,grantId),
     db.prepare("UPDATE service_media_assets SET access_status='quarantined',scan_status='pending',review_status='pending_review',updated_at=? WHERE id=?").bind(now,mediaId),
   ]);
-  await mediaEvent(db,mediaId,bookingId,"media_upload_registered",String(input.actorId||grant!.created_by),{grantId,objectKey,sizeBytes:Number(grant!.size_bytes),sha256:String(grant!.sha256),verifiedAgainstGrant:true,adapterConnected:false});
-  return{mediaId,mediaRef:`media://asset/${mediaId}`,bookingId,objectKey,reviewStatus:"pending_review" as const,accessStatus:"quarantined",proofReady:false};
+  await mediaEvent(db,mediaId,bookingId,"media_upload_registered",String(input.actorId||grant!.created_by),{grantId,objectKey,sizeBytes:Number(grant!.size_bytes),sha256:String(grant!.sha256),verifiedAgainstGrant:true,verifiedBy:storage.connected?"private_object_store":"caller_observation",adapterConnected:storage.connected});
+  return{mediaId,mediaRef:`media://asset/${mediaId}`,bookingId,objectKey,reviewStatus:"pending_review" as const,accessStatus:"quarantined",proofReady:false,adapterConnected:storage.connected};
 }
 
 async function asset(db:Db,mediaId:string){
@@ -326,10 +338,27 @@ export async function reviewMedia(db:Db,input:{mediaId:string;decision:"approved
     refuse("This media asset has not completed its verified upload",409,{code:"media_upload_incomplete"});
 
   const approved=decision==="approved",now=Date.now();
-  await db.prepare("UPDATE service_media_assets SET review_status=?,reviewed_by=?,reviewed_at=?,review_reason=?,scan_status=?,access_status=?,updated_at=? WHERE id=?")
-    .bind(decision,actorId,now,reason,approved?"clean":"rejected",approved?"ready":"quarantined",now,String(row.id)).run();
-  await mediaEvent(db,String(row.id),String(row.booking_id),approved?"media_review_approved":"media_review_rejected",actorId,{reason,uploadedBy:String(row.created_by),separateApprover:true});
-  return{mediaId:String(row.id),reviewStatus:decision,accessStatus:approved?"ready":"quarantined",proofReady:approved};
+  /*
+   * A HUMAN'S APPROVAL IS NOT A SCAN RESULT. [PTJA-W3-SC]
+   *
+   * This used to write scan_status='clean' when a person pressed approve. In UAT that was the agreed
+   * answer and nobody was misled; in production it would put an opinion in the column a scanner owns,
+   * and the next reader of that table could not tell the two apart. scan_status now carries what a
+   * SCANNER said - `not_scanned` until one does - and whether the asset is usable is a separate
+   * question the release verdict answers.
+   */
+  const grantRow=await db.prepare("SELECT service_code,city_id FROM media_upload_grants WHERE media_id=?").bind(String(row.id)).first<Row>().catch(()=>null);
+  const release=await mediaReleaseVerdict(db,{mediaId:String(row.id),serviceCode:grantRow?String(grantRow.service_code):null,cityId:grantRow?String(grantRow.city_id):null});
+  if(approved&&release.scanVerdict!=="clean"&&release.scanVerdict!=="not_scanned")
+    refuse(String(release.reason||"This media cannot be released"),409,{code:"media_scan_blocked",scanVerdict:release.scanVerdict});
+  const usable=approved&&release.releasable;
+  const scanVerdict=await mediaScanState(db,String(row.id));
+  await db.prepare("UPDATE service_media_assets SET review_status=?,reviewed_by=?,reviewed_at=?,review_reason=?,scan_status=?,access_status=?,release_basis=?,updated_at=? WHERE id=?")
+    .bind(decision,actorId,now,reason,scanVerdict==="clean"?"clean":approved?"pending":"rejected",usable?"ready":"quarantined",usable?release.basis:null,now,String(row.id)).run();
+  await mediaEvent(db,String(row.id),String(row.booking_id),approved?"media_review_approved":"media_review_rejected",actorId,
+    {reason,uploadedBy:String(row.created_by),separateApprover:true,scanVerdict,releaseBasis:release.basis,released:usable});
+  return{mediaId:String(row.id),reviewStatus:decision,accessStatus:usable?"ready":"quarantined",proofReady:usable,
+    scanVerdict,releaseBasis:release.basis,releaseBlockedReason:usable?null:release.reason??null};
 }
 
 /** Step 9, replacement. The replacement is a NEW asset that must earn its own approval. */

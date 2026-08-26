@@ -69,7 +69,7 @@ async function world() {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
   globalThis.__PTJA_MUB_DB__ = db;
-  globalThis.__PTJA_MUB_ENV__ = {};
+  globalThis.__PTJA_MUB_ENV__ = { PAWSPACE_MEDIA_ENV: "uat" };
   const { ensureSecurityTables } = await import("../lib/server-auth.ts");
   await ensureSecurityTables(db);
   const now = Date.now();

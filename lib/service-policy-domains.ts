@@ -16,6 +16,7 @@ import"./booking-time-policy";
 import"./cancellation-case-governance";
 import"./city-status-authority";
 import"./collection-ledger";
+import"./media-scan-boundary";
 import"./media-upload-boundary";
 import"./provider-verification-policy";
 import"./purpose-based-access";

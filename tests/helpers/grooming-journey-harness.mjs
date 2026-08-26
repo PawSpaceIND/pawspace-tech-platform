@@ -60,7 +60,10 @@ export async function setupJourney() {
   // PAWSPACE_SCHEDULING_ENV declared, as every UAT harness must now: /api/uat-scheduling no longer
   // fabricates provider roster unless the runtime says it is a UAT runtime (PTJA W1-F27). This harness
   // books through the real reserve path with no Ops-published availability, so it says so.
-  globalThis.__GROOM_GOLDEN_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_SCHEDULING_ENV: "uat" };
+   // PAWSPACE_MEDIA_ENV is declared because media release is now environment-aware: an absent value
+  // reads as PRODUCTION, the strict default, where unscanned media stays quarantined. These are the UAT
+  // journeys. [PTJA-W3-SC]
+ globalThis.__GROOM_GOLDEN_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_SCHEDULING_ENV: "uat", PAWSPACE_MEDIA_ENV: "uat" };
 
   const { seedDefaultZones } = await import("../../lib/service-zones.ts");
   const { seedProviderCapacityDefaults } = await import("../../lib/provider-capacity-governance.ts");
