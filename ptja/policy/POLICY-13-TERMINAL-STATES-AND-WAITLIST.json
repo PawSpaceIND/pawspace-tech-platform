@@ -1,0 +1,44 @@
+{
+  "item": "W3-TS and W3-WL (ledger items 3 and 7)",
+  "title": "Terminal booking states, and the wait-list channel disabled until a wait-list exists",
+  "status": "implemented",
+  "approved_by": "PawSpace business decision supplied 2026-08-26",
+  "evidence_class": "real_execution",
+
+  "terminal_states": {
+    "rule": "completed and cancelled are BOTH terminal. A cancelled booking cannot be reassigned - the customer creates a new booking. A completed booking cannot return to reassignment_needed. Booking, cancellation, payment, refund and audit history are preserved. An in-progress service must NOT be auto-cancelled or regressed because a provider document later expires or is rejected; the work stays intact and Operations gets a case.",
+    "what_already_existed": "The guards themselves were closed earlier in this audit, in lib/sitting-lifecycle.ts, lib/walking-lifecycle.ts, lib/boarding-stay-lifecycle.ts and lib/taxi-lifecycle.ts, and lib/provider-assignment-eligibility.ts already opens cases rather than cancelling work.",
+    "what_was_missing": "EXECUTABLE PROOF for two of the four verticals and for the in-progress half. tests/ptja-w1-leftover-regressions.test.mjs covers Sitting and Walking only. Boarding had the guard with no test, and Pet Taxi - the vertical that WROTE the rule - had no test of it either. Per the business's instruction that nothing closes on source inspection, that gap is now filled.",
+    "honest_note": "These cases are GREEN on arrival rather than red-first, because the production behaviour was already correct. Each is sabotage-verified instead, so the evidence is a reversion that fails a named case rather than a claim that the code looks right."
+  },
+
+  "waitlist": {
+    "rule": "A full wait-list is not in scope. Disable waitlist_conversion as a selectable or claimable channel, report no wait-list conversion metrics, never claim a customer has joined a wait-list. A paused-city request stays an ordinary CRM lead or service-interest record.",
+    "measured_before": "waitlist_conversion was a first-class member of BOOKING_CHANNELS gated only by city status, so in a LIVE city it was ACCEPTED - a booking could arrive claiming to be a wait-list conversion when no wait-list has ever existed: no table, no module, no route, no join, no consent, no ordering.",
+    "implemented": "waitlistAvailable() is a single function returning false, so the day the feature lands there is exactly one line to change. SELECTABLE_BOOKING_CHANNELS excludes the channel. cityBookingVerdict refuses it with reason waitlist_not_available even in a fully open city. A source sweep pins that nothing publishes a wait-list conversion figure.",
+    "why_the_name_survives": "Deleting waitlist_conversion from BOOKING_CHANNELS would be the weaker fix: the day a wait-list is built its bookings would arrive as an UNRECOGNISED channel rather than as one the city gate already refuses.",
+    "why_it_sits_after_the_city_gate": "The city status is the outer question. A paused city must keep answering city_paused on every channel - a separate rule with its own tests - and this is the inner one. Sabotage C moves the check ahead of the city gate and fails WL-05, which is what pins the ordering."
+  },
+
+  "regression": {
+    "files": ["tests/ptja-w3-terminal-booking-states.test.mjs", "tests/ptja-w3-waitlist-channel.test.mjs"],
+    "cases": 13,
+    "red_before": "Wait-list: 3 of 6 failing. Terminal states: green on arrival, sabotage-verified (see below).",
+    "sabotage_verification": [
+      "Boarding terminal guard removed -> both TS-01 cases red",
+      "Taxi safety-workflow guard removed -> both TS-03 cases red",
+      "revocation cancels in-progress work instead of opening a case -> TS-05 red",
+      "waitlist refusal removed -> WL-01 red",
+      "waitlistAvailable() flipped to true -> WL-01, WL-03, WL-04 red",
+      "waitlist refusal moved ahead of the city gate -> WL-05 red"
+    ]
+  },
+
+  "still_open_and_not_claimed": {
+    "waitlist_feature": "Not built, deliberately. FIFO by city, service and original request time followed by customer availability confirmation is recorded as future backlog logic, not implemented.",
+    "refunded": "The source guards also treat `refunded` as terminal. The approved rule names completed and cancelled; refunded is stricter and consistent, and is left as it stands."
+  },
+
+  "gates": {"focused": "13/13", "full_suite": "3378/3378", "typecheck": "clean", "lint": "0 errors, 57 warnings (pre-existing)"},
+  "no_merge_no_deploy": true
+}

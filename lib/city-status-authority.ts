@@ -40,6 +40,30 @@ export const CITY_STATUS_DOMAIN="city_status_policy";
 export const BOOKING_CHANNELS=["customer_app","ops_assisted","waitlist_conversion","subscription_renewal","partner_app"] as const;
 export type BookingChannel=(typeof BOOKING_CHANNELS)[number];
 
+/**
+ * Is there a wait-list on this platform? No. [PTJA-W3-WL]
+ *
+ * There is no join, no consent capture, no ordering, no notification and no conversion workflow - no
+ * table, no module, no route. A full wait-list is deliberately outside the current closure scope, so
+ * until one is built `waitlist_conversion` must not be selectable or claimable, no wait-list conversion
+ * figure may be reported, and nothing may tell a customer they have joined a wait-list. A request from
+ * a paused city stays an ordinary CRM lead or service-interest record.
+ *
+ * A single function rather than a scattered `false`, so the day the feature lands there is exactly one
+ * line to change and every gate below moves with it.
+ */
+export function waitlistAvailable(){return false;}
+
+/**
+ * The channels a booking may actually ARRIVE through today.
+ *
+ * BOOKING_CHANNELS keeps `waitlist_conversion` as a known name on purpose: deleting it would mean the
+ * day a wait-list is built its bookings arrive as an UNRECOGNISED channel rather than as one the city
+ * gate already refuses, which is the weaker of the two failures. This is the list a caller may pick
+ * from, and it is what any channel picker should render.
+ */
+export const SELECTABLE_BOOKING_CHANNELS=BOOKING_CHANNELS.filter(channel=>channel!=="waitlist_conversion"||waitlistAvailable());
+
 export type CityStatusPolicyConfig={
   /** Statuses that take new bookings without further conditions. `Live` is this platform's ACTIVE. */
   openStatuses:string[];
@@ -161,6 +185,14 @@ export async function cityBookingVerdict(db:Db,input:{cityId:string;serviceCode?
       if(Number(live?.n||0)>=config.pilotCapacityLimit)return{...base,allowed:false,reason:"pilot_capacity_reached",existingWorkHandling:"continue"};
     }
     return{...base,allowed:true,reason:"pilot_scope_enabled",existingWorkHandling:"continue"};
+  }
+  /*
+   * The wait-list refusal sits AFTER the city gate on purpose. The city status is the outer question -
+   * a paused city must keep answering `city_paused` on every channel, which is a separate rule with its
+   * own tests - and this is the inner one: even in a fully open city there is nothing to convert from.
+   */
+  if(text(input.channel)==="waitlist_conversion"&&!waitlistAvailable()){
+    return{...base,allowed:false,reason:"waitlist_not_available",existingWorkHandling:"continue"};
   }
   if(config.openStatuses.map(String).includes(status)){
     return{...base,allowed:true,reason:"city_open",existingWorkHandling:"continue"};
