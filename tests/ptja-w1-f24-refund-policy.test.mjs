@@ -397,9 +397,15 @@ test("F24 route: a customer cannot self-cancel a job that is under way", async (
   assert.equal(work.status, "in_service", "and the provider's work order is not cancelled out from under them mid-job");
   assert.equal(payment.status, "captured", "and no refund is set in motion");
 
-  const review = sqlite.prepare("SELECT status,amount FROM booking_refund_cases WHERE booking_id='BK-F24-INSERVICE'").get();
-  assert.equal(review.status, "pending_approval", "the request is recorded for review rather than silently refused");
-  assert.equal(review.amount, 0, "at nothing, until an approver decides otherwise");
+  // The request is recorded as a reviewable CANCELLATION CASE rather than as a refund case: opening it
+  // promises no refund, so it must not create a refund record at all. The full case flow - Operations
+  // decision, Finance decision, the STOPPED_AFTER_START terminal status, the audit trail - is asserted
+  // in tests/ptja-w1-f24-cancellation-cases.test.mjs.
+  const review = sqlite.prepare("SELECT status,case_type,reason_category FROM booking_cancellation_cases WHERE booking_id='BK-F24-INSERVICE'").get();
+  assert.equal(review.status, "open", "the request is recorded for review rather than silently refused");
+  assert.equal(review.case_type, "cancellation_review");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM booking_refund_cases WHERE booking_id='BK-F24-INSERVICE'").get().n, 0,
+    "and no refund record is created, because opening a case promises nothing");
 });
 
 test("F24 route: a cancellation with more than 24 hours' notice still refunds in full", async () => {

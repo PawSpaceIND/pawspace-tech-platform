@@ -80,8 +80,16 @@ export const APPROVED_REFUND_POLICY:RefundPolicyConfig={
     {minHoursBeforeStart:6,customerRefundPercent:50,providerCompensation:"cancellation_may_apply",label:"6-24 hours before start"},
     {minHoursBeforeStart:0,customerRefundPercent:0,providerCompensation:"cancellation_applies",label:"Less than 6 hours before start"},
   ],
-  automaticRefundBlockedStatuses:["en_route","arrived","in_service","completed"],
+  // BOTH names for the same state. The approved policy says EN_ROUTE; this platform's lifecycle calls it
+  // `on_the_way` (app/api/grooming-lifecycle/route.ts). With only `en_route` configured, a booking marked
+  // on_the_way fell past the status check into the notice ladder: measured at 48 hours of remaining
+  // notice, HTTP 200 and an automatic Rs 2,000 refund with the provider already driving. Near the start
+  // time the ladder answers 0% anyway, so the reachable window is a provider marked on_the_way well
+  // before the appointment - which nothing guards against. Either way the STATUS is what should decide,
+  // and a policy that only knows the business's word for a state does not protect the state.
+  automaticRefundBlockedStatuses:["on_the_way","en_route","arrived","in_service","completed"],
   statusOutcomes:{
+    on_the_way:{customerRefundPercent:0,providerCompensation:"travel_cancellation"},
     en_route:{customerRefundPercent:0,providerCompensation:"travel_cancellation"},
     arrived:{customerRefundPercent:0,providerCompensation:"normal_payout"},
     in_service:{customerRefundPercent:0,providerCompensation:"normal_payout"},
@@ -140,7 +148,7 @@ registerServicePolicyDomain<RefundPolicyConfig&Record<string,unknown>>({
     // The approved policy names these four explicitly. Removing one would make an in-progress or
     // completed job auto-refundable again, which is the defect this domain exists to close, so the
     // configuration surface refuses to express it.
-    for(const required of ["en_route","arrived","in_service","completed"]){
+    for(const required of ["on_the_way","en_route","arrived","in_service","completed"]){
       if(!blocked.map(String).includes(required))return `automaticRefundBlockedStatuses must include ${required}`;
     }
     const approvers=config.exceptionApprovalPermissions;
