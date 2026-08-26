@@ -95,7 +95,7 @@ export async function submitWhatsAppTemplate(db: D1Database, input: { templateKe
   const reason = text(input.reason);
   if (reason.length < 8) responseError("Submission reason must be at least 8 characters");
   const row = await templateRow(db, key);
-  if (!row) responseError("Template not found", 404);
+  if (row === null) throw new Response("Template not found", { status: 404 });
   const current = statusOf(row);
   if (!["draft", "rejected"].includes(current)) responseError("Only draft or rejected templates may be submitted", 409);
   normalizeDraft({ templateKey: key, displayName: text(row.display_name), category: text(row.category), language: text(row.approved_language), body: text(row.body), sampleValues: parse<unknown[]>(row.sample_values_json, []) });
