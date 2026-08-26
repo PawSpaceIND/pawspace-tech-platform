@@ -182,7 +182,15 @@ function hashRef(s: string) { let h = 0; for (let i = 0; i < s.length; i++) h = 
 export async function runAppFunnelSweep(db: Db, input: { asOf?: number; abandonMinutes?: number } = {}) {
   await ensureFunnelTables(db).catch(() => {});
   await ensureLeadWorkItemsTable(db).catch(() => {});
-  const at = input.asOf ?? Date.now(), abandonBefore = at - Math.max(1, Number(input.abandonMinutes) || DEFAULT_ABANDON_MINUTES) * 60_000;
+  // `Math.max(1, Number(input.abandonMinutes) || DEFAULT)` collapsed a NEGATIVE window to ONE MINUTE:
+  // -5 is truthy, so the `|| DEFAULT` never fired, and Math.max floored it at 1. A one-minute
+  // abandonment window issues recovery incentives to customers who merely paused. No caller passes the
+  // field today, which is why it was never reached - but "no caller today" is not a control, and the
+  // next caller inherits the trap. A value is honoured only if it is a finite positive number; every
+  // other input, absent included, falls back to the documented default. [PTJA-W3C]
+  const requestedAbandon = Number(input.abandonMinutes);
+  const abandonMinutes = Number.isFinite(requestedAbandon) && requestedAbandon > 0 ? requestedAbandon : DEFAULT_ABANDON_MINUTES;
+  const at = input.asOf ?? Date.now(), abandonBefore = at - abandonMinutes * 60_000;
   const expiry = await runRecoveryExpirySweep(db, { asOf: at });
 
   // payment-abandoned bookings (payment not captured, past the window, booking not cancelled)
@@ -205,7 +213,7 @@ export async function runAppFunnelSweep(db: Db, input: { asOf?: number; abandonM
   const paid = await db.prepare("SELECT DISTINCT e.customer_id cust FROM payment_recovery_entitlements e WHERE e.status='active' AND EXISTS (SELECT 1 FROM booking_payments bp JOIN canonical_bookings b ON b.id=bp.booking_id WHERE b.customer_id=e.customer_id AND bp.status='captured') LIMIT 2000").all<Row>().catch(empty);
   for (const r of paid.results) { const c = await cancelRecoveryEntitlements(db, { customerId: String(r.cust), reason: "payment_succeeded", at }).catch(() => ({ cancelled: 0 })); cancelled += c.cancelled; }
 
-  return { sweep: "app_to_revenue_funnel", asOf: at, expiredEntitlements: expiry.expired, recoveriesIssued, recoveryTasks, appInboundLeads, cancelledOnPayment: cancelled };
+  return { sweep: "app_to_revenue_funnel", asOf: at, abandonMinutes, expiredEntitlements: expiry.expired, recoveriesIssued, recoveryTasks, appInboundLeads, cancelledOnPayment: cancelled };
 }
 
 /** The four management reports (App Acquisition Funnel + Payment Recovery + Inbound Sales + Paid Lifecycle). */
