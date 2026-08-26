@@ -1,7 +1,8 @@
-import { authError, authorize, database, resolveActor, securityAudit } from "../../../lib/server-auth";
+import { authError, authorize, database, securityAudit } from "../../../lib/server-auth";
 import{maskName,maskPhone}from"../../../lib/platform-security";
 import{customerDataAccessResolver}from"../../../lib/purpose-based-access";
 import{assignLeadOwner}from"../../../lib/lead-owner-identity";
+import{startWhatsAppAiLead}from"../../../lib/whatsapp-ai-lead-orchestration";
 
 async function getDatabase(){
   const { env } = await import("cloudflare:workers");
@@ -90,18 +91,20 @@ export async function GET(request:Request){try{
 }catch(error){return authError(error,"Unable to load CRM");}}
 
 export async function POST(request:Request){
-  try{const actor=await authorize(request,"customers.manage"); await ensureTables(); const body=await request.json() as Record<string,string>; const now=Date.now(); const id=`CU-${Math.floor(10000+Math.random()*89999)}`;
+  try{const actor=await authorize(request,"customers.manage"); await ensureTables(); const body=await request.json() as Record<string,unknown>; const now=Date.now(); const id=`CU-${Math.floor(10000+Math.random()*89999)}`;
   const db=await database();
   // Ownership comes from lib/lead-owner-identity, not a list of first names. [PTJA-W3-CO]
-  const ownership=await assignLeadOwner(db,{customerId:id,service:body.service||body.opportunity,preferred:body.owner});
+  const ownership=await assignLeadOwner(db,{customerId:id,service:String(body.service||body.opportunity||""),preferred:String(body.owner||"")});
   const assignedOwner=ownership.owner;
+  const leadId=`LEAD-${now}`;
   await db.prepare("INSERT INTO crm_contacts (id,name,primary_phone,secondary_phone,email,area,pet_names,pet_summary,stage,owner,source,lifetime_value,next_action,opportunity,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-    .bind(id,body.name||"New customer",body.primaryPhone||"",body.secondaryPhone||null,body.email||null,body.area||"Bangalore",body.petNames||"Pet",body.petSummary||"Profile incomplete",body.stage||"New lead",assignedOwner,body.source||"Website",0,body.nextAction||"Call within 10 minutes",body.opportunity||body.service||"Discover requirement",now,now).run();
-  await db.prepare("INSERT INTO crm_activities (id,contact_id,type,title,detail,created_at) VALUES (?,?,?,?,?,?)").bind(`ACT-${now}`,id,"lead_created","Lead created",`Source: ${body.source||"Website"}`,now).run();
+    .bind(id,String(body.name||"New customer"),String(body.primaryPhone||""),body.secondaryPhone?String(body.secondaryPhone):null,body.email?String(body.email):null,String(body.area||"Bangalore"),String(body.petNames||"Pet"),String(body.petSummary||"Profile incomplete"),String(body.stage||"New lead"),assignedOwner,String(body.source||"Website"),0,String(body.nextAction||"Call within 10 minutes"),String(body.opportunity||body.service||"Discover requirement"),now,now).run();
+  await db.prepare("INSERT INTO crm_activities (id,contact_id,type,title,detail,created_at) VALUES (?,?,?,?,?,?)").bind(`ACT-${now}`,id,"lead_created","Lead created",`Source: ${String(body.source||"Website")}`,now).run();
   await db.batch([
     db.prepare("INSERT INTO crm_tasks (id,contact_id,title,owner,due_at,priority,status,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(`TASK-${now}`,id,"First response to new lead",assignedOwner,now+10*60*1000,"High","Open",now),
-    db.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,call_attempts,whatsapp_attempts,next_action_at,recycle_cycle,opt_out,created_at,updated_at) VALUES (?,?,?,?,?,?,'active','day_1',1,?,?,?,?,?, ?,0,0,?,?)").bind(`LEAD-${now}`,id,body.source||"Website",body.service||"Discover requirement",assignedOwner,"Sales Manager",now,now+10*60000,now+30*60000,0,0,now+10*60000,now,now),
+    db.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,call_attempts,whatsapp_attempts,next_action_at,recycle_cycle,opt_out,created_at,updated_at) VALUES (?,?,?,?,?,?,'active','day_1',1,?,?,?,?,?, ?,0,0,?,?)").bind(leadId,id,String(body.source||"Website"),String(body.service||"Discover requirement"),assignedOwner,"Sales Manager",now,now+10*60000,now+30*60000,0,0,now+10*60000,now,now),
   ]);
   await securityAudit(db,actor,"create","crm_contact",id,"completed",{source:body.source||"Website",assignedOwner,firstResponseMinutes:10,managerAlertMinutes:30});
-  return Response.json({ok:true,id,leadId:`LEAD-${now}`,assignedOwner,ownerResolved:ownership.resolved,ownerMappingException:ownership.resolved?null:ownership.reason},{status:201});}catch(error){return authError(error,"Unable to create CRM contact");}
+  let whatsappAi:Record<string,unknown>;try{whatsappAi=await startWhatsAppAiLead(db,{leadId,contactId:id,idempotencyKey:`lead-created:${leadId}`,consentGranted:body.whatsappConsent===true,consentSource:String(body.whatsappConsentSource||"manual_crm"),consentEvidenceRef:String(body.whatsappConsentEvidence||""),actorId:actor.email,assignedTo:assignedOwner,cityId:String(body.cityId||"blr")});}catch(error){whatsappAi={status:"failed",reason:"internal_automation_error",externalDelivery:false,marketing:false};await securityAudit(db,actor,"whatsapp_ai.lead_trigger","lead",leadId,"rejected",{reason:error instanceof Error?error.message:"unknown"});}
+  return Response.json({ok:true,id,leadId,assignedOwner,ownerResolved:ownership.resolved,ownerMappingException:ownership.resolved?null:ownership.reason,whatsappAi},{status:201});}catch(error){return authError(error,"Unable to create CRM contact");}
 }
