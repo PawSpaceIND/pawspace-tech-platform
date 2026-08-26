@@ -6,6 +6,7 @@ const engine = fs.readFileSync("lib/whatsapp-no-response-sequence.ts", "utf8");
 const webhook = fs.readFileSync("lib/meta-whatsapp-webhook.ts", "utf8");
 const api = fs.readFileSync("app/api/whatsapp/automation/route.ts", "utf8");
 const page = fs.readFileSync("app/team/whatsapp/automation/page.tsx", "utf8");
+const worker = fs.readFileSync("worker/index.ts", "utf8");
 
 test("recovery profile is exactly 10 minutes, 30 minutes and 3 hours with durable idempotency", () => {
   assert.match(engine, /\[10, 30, 180\]/);
@@ -37,6 +38,12 @@ test("discount recovery requires consent, marketing template and a business offe
   assert.match(engine, /recovery_discount_template_must_be_marketing/);
   assert.match(engine, /approved business offer reference/i);
   assert.match(engine, /PawSpace never invents a discount amount|offerReference/);
+});
+
+test("scheduled worker runs the retry-safe recovery sweep automatically", () => {
+  assert.match(worker, /processDueWhatsAppNoResponseSequences/);
+  assert.match(worker, /processDueWhatsAppNoResponseSequences\(env\.DB,\{now:controller\.scheduledTime,actorEmail:"system:scheduled-worker"\}\)/);
+  assert.match(worker, /whatsapp recovery:/);
 });
 
 test("Automation Studio and API remain UAT-only and authorization-gated", () => {
