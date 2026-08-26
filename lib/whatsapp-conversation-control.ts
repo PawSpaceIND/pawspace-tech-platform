@@ -8,6 +8,7 @@ export const whatsappConversationModes=["human_only","chatbot_only","ai_assistan
 export type WhatsAppConversationMode=(typeof whatsappConversationModes)[number];
 
 const text=(value:unknown)=>String(value??"").trim();
+const handoffStatus=(value:unknown)=>text((value as Row|null|undefined)?.status);
 const uid=(prefix:string)=>`${prefix}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
 
 export async function ensureWhatsAppConversationControl(db:D1Database){
@@ -64,11 +65,11 @@ export async function whatsappConversationControlSnapshot(db:D1Database,input:{a
 export async function takeOverWhatsAppConversation(db:D1Database,input:{actor:AuthenticatedActor;threadId:string;reason:string}){
  const context=await threadContext(db,input.threadId),reason=text(input.reason)||"Staff requested WhatsApp takeover";
  let snapshot=await aiHumanHandoffSnapshot(db,{actor:input.actor,threadId:input.threadId,customerId:context.customerId});
- if(!snapshot.current||!["queued","staff_active"].includes(text(snapshot.current.status))){
+ if(!snapshot.current||!["queued","staff_active"].includes(handoffStatus(snapshot.current))){
   await requestAiHumanHandoff(db,{actorEmail:input.actor.email,threadId:input.threadId,customerId:context.customerId,reason:"customer_requested_human"});
   snapshot=await aiHumanHandoffSnapshot(db,{actor:input.actor,threadId:input.threadId,customerId:context.customerId});
  }
- if(text(snapshot.current?.status)==="queued")await manageAiHumanHandoff(db,{actor:input.actor,threadId:input.threadId,customerId:context.customerId,action:"take_over",reason});
+ if(handoffStatus(snapshot.current)==="queued")await manageAiHumanHandoff(db,{actor:input.actor,threadId:input.threadId,customerId:context.customerId,action:"take_over",reason});
  const routing=await setWhatsAppConversationMode(db,{threadId:input.threadId,mode:"human_only",actorEmail:input.actor.email,reason});
  return{routing,handoff:await aiHumanHandoffSnapshot(db,{actor:input.actor,threadId:input.threadId,customerId:context.customerId}),aiPaused:true};
 }
