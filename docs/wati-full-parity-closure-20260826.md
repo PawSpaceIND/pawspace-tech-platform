@@ -129,6 +129,47 @@ PawSpace operates a first-party WhatsApp customer-operations platform with WATI-
 - [ ] Meta/Google feedback success/failure/retry
 - [ ] date range + export with role checks
 
+### G. WATI-style inbox productivity
+- [ ] governed quick replies / canned replies with variables and optional approved media
+- [ ] conversation tags for support/operational classification and analytics
+- [ ] canonical contact attributes for customer-specific facts used by personalization and automation; do not duplicate canonical customer/CRM truth
+- [ ] search/filter by owner, queue, status, tag, channel, lead/customer/booking identifiers
+- [ ] unread/favourite or equivalent priority controls without changing canonical thread ownership
+- [ ] transcript/export action with RBAC, masking and audit
+- [ ] agent identity/display-name policy for human replies
+- [ ] optional operator assists such as translation and audio transcription must remain assistive and auditable, never an authorization bypass
+
+### H. Rule automation and no-response sequences
+- [ ] rule builder contract with explicit trigger -> filters -> actions semantics
+- [ ] working-hours / out-of-office and welcome-message rules
+- [ ] keyword/default-action compatibility for deterministic bot entry points
+- [ ] time-delay/timer actions with durable idempotent scheduling
+- [ ] customer-no-response trigger differentiates template/non-template/all-message cases
+- [ ] PawSpace lead follow-up sequence supports configurable steps; initial business profile is `10m -> 30m -> 3h`
+- [ ] remaining sequence steps cancel immediately on customer reply
+- [ ] remaining sequence steps also cancel on human takeover, opt-out, completed booking, ineligible offer/discount, or send-policy failure
+- [ ] sequence execution rechecks consent, 24-hour window/template requirements, quiet hours, dedupe and frequency caps at send time
+- [ ] exactly-once/idempotent execution across scheduler retries and duplicate webhook delivery
+- [ ] routing actions include last assignee / explicit team / round-robin where permitted by PawSpace access rules
+- [ ] webhook/tool actions are allow-listed, signed/authenticated where applicable, auditable and fail closed
+
+### I. WhatsApp interactive capture
+- [ ] list/reply-button messages supported through governed message contracts where Meta allows them
+- [ ] WhatsApp Flows assessed for lead qualification, booking detail capture, surveys and feedback
+- [ ] Flow submissions validate schema, identity and idempotency before writing canonical CRM/customer/booking data
+- [ ] Flow responses never create a parallel customer/order store; canonical customer, lead and booking remain the source of truth
+
+## Tracked parity items that do not block Phase 1 staff UAT
+
+These capabilities exist in current WATI product families and are intentionally tracked so PawSpace does not lose them, but they are not Phase 1 blockers unless the business explicitly promotes them into scope:
+
+- **Campaign/broadcast expansion** — bulk/promotional sending stays disabled in Phase 1; any later enablement must use the existing governed consent, audience, maker-checker, frequency, quiet-hour and opt-out controls.
+- **Catalog / commerce / WhatsApp orders** — useful for product-led commerce such as Fresh Food, but service bookings continue through PawSpace canonical booking logic; no duplicate order ledger.
+- **Multiple WhatsApp numbers** — future-ready number/channel identity, number-specific routing rules, webhook isolation and per-number analytics; not required for the initial single-number UAT.
+- **WhatsApp Calling** — tracked as a later channel. PawSpace's existing governed voice/telephony architecture remains separate; WhatsApp Calling must not bypass voice permissions, consent, recording or audit rules.
+- **Additional channels** — Instagram, Facebook Messenger, RCS, SMS, TikTok and website chat can later feed the same canonical conversation/customer layer, but WhatsApp remains the Phase 1 execution boundary.
+- **External connectors / public APIs** — expose only governed, least-privilege endpoints and webhooks after internal contracts are stable; production tokens and live mutation remain outside this closure.
+
 ## Mandatory automated test gate
 
 No staff human UAT until all applicable tests are green on the exact candidate SHA:
@@ -143,6 +184,12 @@ No staff human UAT until all applicable tests are green on the exact candidate S
 - human takeover + resume path
 - low-confidence and forbidden-action handoff
 - marketing consent/opt-out/frequency/quiet-hour suppression
+- quick-reply RBAC/media/variable validation and audit
+- tag vs contact-attribute ownership and leakage tests
+- rule trigger/filter/action evaluation
+- working-hours / OOO boundary tests
+- no-response `10m -> 30m -> 3h` sequence scheduling, cancellation and exactly-once retry proof
+- WhatsApp Flow submission schema/identity/idempotency proof if Flows are enabled for UAT
 - associate/manager/founder access matrix and row-level leakage tests
 - Meta/Google lead ingestion + conversion-feedback simulator tests
 - analytics reconciliation against canonical source rows
