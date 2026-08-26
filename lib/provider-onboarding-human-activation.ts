@@ -149,7 +149,25 @@ const defaultZone=city?`${city}-east`:"",matchingScope=await verifiedMatchingSco
  * provider's actual zone coverage before they can receive real bookings - consistent with the
  * human-decision-authority pattern already used for verification, quiz approval and activation.
  */
-export async function addProviderToServiceMap(db:D1Database,input:{providerId:string;zoneIds:string[];actorEmail:string}){await ensureProviderOnboardingHumanActivation(db);const providerId=text(input.providerId);if(!providerId)throw new Error("Provider ID is required");const zoneIds=Array.from(new Set((input.zoneIds||[]).map(text).filter(Boolean)));if(!zoneIds.length)throw new Error("At least one real zone is required to add a provider to the service map");const profile=await db.prepare("SELECT * FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();if(!profile)throw new Error("Provider capacity profile not found - activate the provider first");if(String(profile.status)!=="uat_ready"&&String(profile.status)!=="active")throw new Error(`Provider capacity profile has status '${text(profile.status)}', not ready to go live`);const now=Date.now();await db.prepare("UPDATE provider_capacity_profiles SET zones_json=?,live=1,status='active',version=version+1,updated_by=?,updated_at=? WHERE id=?").bind(JSON.stringify(zoneIds),input.actorEmail,now,providerId).run();const application=await db.prepare("SELECT id,status FROM provider_onboarding_applications WHERE provider_id=?").bind(providerId).first<Row>();if(application)await event(db,text(application.id),"provider_added_to_service_map",input.actorEmail,text(application.status),text(application.status),{providerId,zoneIds,live:true});return{providerId,zoneIds,live:true,status:"active"};}
+export async function addProviderToServiceMap(db:D1Database,input:{providerId:string;zoneIds:string[];actorEmail:string}){await ensureProviderOnboardingHumanActivation(db);const providerId=text(input.providerId);if(!providerId)throw new Error("Provider ID is required");const zoneIds=Array.from(new Set((input.zoneIds||[]).map(text).filter(Boolean)));if(!zoneIds.length)throw new Error("At least one real zone is required to add a provider to the service map");const profile=await db.prepare("SELECT * FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();if(!profile)throw new Error("Provider capacity profile not found - activate the provider first");if(String(profile.status)!=="uat_ready"&&String(profile.status)!=="active")throw new Error(`Provider capacity profile has status '${text(profile.status)}', not ready to go live`);// A BOARDING provider cannot go live without the boarding_host_profiles row every boarding surface
+ // joins on. Nothing in this path ever wrote one - the only writer in the repository is a seed loop for
+ // four hardcoded demo hosts - so a provider onboarded end to end, verified, activated and marked
+ // live=1 simply did not exist to boarding: discovery returned the four seeded hosts, the customer got
+ // a normal-looking 200 the real host was absent from, and a meet & greet for them threw "Host is not a
+ // boarding host or pet-sitting provider". No error, no empty state, no signal, for the customer or for
+ // the host who believes they are live.
+ //
+ // The row is NOT auto-created here. It carries species_json, max_guest_pets, one_family_only,
+ // medication_support and resident_pets - the host's own declared capacity and household, which decide
+ // what bookings they receive - and inventing defaults for those would be fabricating product data.
+ // Activation refuses instead, naming what is missing, so a silent ghost host becomes an actionable
+ // message to the operator performing it.
+ const services=parse<string[]>(profile.services_json,[]);
+ if(Array.isArray(services)&&services.includes("boarding")){
+  const hostProfile=await db.prepare("SELECT provider_id FROM boarding_host_profiles WHERE provider_id=?").bind(providerId).first<Row>().catch(()=>null);
+  if(!hostProfile)throw new Error("This provider offers boarding but has no boarding host profile; capture the host's species, guest-pet capacity, household and home verification before putting them live");
+ }
+ const now=Date.now();await db.prepare("UPDATE provider_capacity_profiles SET zones_json=?,live=1,status='active',version=version+1,updated_by=?,updated_at=? WHERE id=?").bind(JSON.stringify(zoneIds),input.actorEmail,now,providerId).run();const application=await db.prepare("SELECT id,status FROM provider_onboarding_applications WHERE provider_id=?").bind(providerId).first<Row>();if(application)await event(db,text(application.id),"provider_added_to_service_map",input.actorEmail,text(application.status),text(application.status),{providerId,zoneIds,live:true});return{providerId,zoneIds,live:true,status:"active"};}
 
 const mutableProfileFields={displayName:"display_name",bio:"bio",businessName:"business_name",businessDetails:"business_details_json",services:"services_json",serviceAreas:"service_areas_json",languages:"languages_json",packageDetails:"package_details_json",facilityDetails:"facility_details_json",references:"references_json"} as const;
 const reviewSensitive=new Set(["businessDetails","services","serviceAreas"]);

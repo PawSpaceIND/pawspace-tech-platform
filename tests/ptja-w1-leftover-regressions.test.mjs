@@ -276,3 +276,74 @@ test("W1L-03: a future slot still reserves normally", async () => {
   const future = await reserve("GRP-F34-FUTURE", start, end);
   assert.equal(future.status, 200, `a future slot must still reserve: ${JSON.stringify(future).slice(0, 300)}`);
 });
+
+// =====================================================================================================
+// PTJA-W1L-04 (Wave 1 F49) — a fully onboarded, activated, LIVE boarding host does not exist to boarding
+//
+// Nothing in the activation path writes a boarding_host_profiles row. The only writer in the repository
+// is a seed loop in lib/boarding-governance.ts that inserts four hardcoded demo hosts. Every boarding
+// surface - listBoardingHosts, discoverBoardingHosts, assertHostEligible, meet-and-greet hostEligible,
+// stay capacity, ops replacement, host badges - joins or looks up that table.
+//
+// MEASURED: a provider onboarded end to end with all four host mandate checks verified, activated, and
+// added to the service map (live=1, status='active', services ["boarding"], zone blr-east). Boarding
+// discovery returned the four SEEDED hosts and not the real one; the customer GET returned HTTP 200
+// with a normal-looking list the real host was simply absent from; and createMeetGreetRequest for that
+// host threw "Host is not a boarding host or pet-sitting provider" while the same call for a seeded host
+// succeeded. There is no error, no empty state and no signal - the failure is silent for the customer
+// AND for the host, who believes they are live.
+//
+// The correction does NOT auto-create the profile. That row carries species_json, max_guest_pets,
+// one_family_only, medication_support and resident_pets - the host's own declared capacity and
+// household, which decide what bookings they receive. Inventing defaults for those would be fabricating
+// product data, so activation instead REFUSES to put a boarding provider live without it, naming what
+// is missing. A silent ghost host becomes a blocking, actionable message to the operator doing the
+// activation.
+// =====================================================================================================
+
+async function activationWorld() {
+  const { sqlite, db } = world();
+  const activation = await import("../lib/provider-onboarding-human-activation.ts");
+  await activation.ensureProviderOnboardingHumanActivation(db);
+  const capacity = await import("../lib/provider-capacity-governance.ts");
+  await capacity.seedProviderCapacityDefaults(db);
+  const boarding = await import("../lib/boarding-governance.ts");
+  await boarding.ensureBoardingGovernanceTables(db).catch(() => null);
+  const now = Date.now();
+  const seedProvider = (id, services) => sqlite.prepare("INSERT OR REPLACE INTO provider_capacity_profiles (id,name,city_id,provider_model,services_json,zones_json,status,live,capacity,rating,quality_score,version,effective_from,updated_by,updated_at) VALUES (?,?,'blr','full_time',?,'[]','uat_ready',0,4,4.8,90,1,0,'ops',?)")
+    .run(id, `Provider ${id}`, JSON.stringify(services), now);
+  return { sqlite, db, activation, seedProvider };
+}
+
+test("W1L-04: a boarding provider cannot go live without a boarding host profile", async () => {
+  const { db, activation, seedProvider } = await activationWorld();
+  seedProvider("PRV-BOARD-NEW", ["boarding"]);
+
+  const result = await activation.addProviderToServiceMap(db, {
+    providerId: "PRV-BOARD-NEW", zoneIds: ["blr-east"], actorEmail: "ops@pawspace.test",
+  }).then(() => ({ ok: true }), (error) => ({ ok: false, message: String(error?.message ?? error) }));
+
+  assert.equal(result.ok, false,
+    `a boarding provider with no host profile must not be put live silently: ${JSON.stringify(result)}`);
+  assert.match(result.message, /boarding host profile/i,
+    `and the refusal must name what is missing: ${JSON.stringify(result)}`);
+});
+
+test("W1L-04: a boarding provider WITH a host profile goes live, and other services are unaffected", async () => {
+  // Non-vacuity in both directions: the check must not block a properly configured boarding host, and
+  // it must not touch providers of any other service.
+  const { sqlite, db, activation, seedProvider } = await activationWorld();
+  seedProvider("PRV-BOARD-OK", ["boarding"]);
+  sqlite.prepare("INSERT INTO boarding_host_profiles (provider_id,city_id,zone_id,area,species_json,max_guest_pets,one_family_only,medication_support,resident_pets,home_verified,kyc_status,background_check_status,active,version,updated_by,updated_at) VALUES ('PRV-BOARD-OK','blr','blr-east','Indiranagar','[\"dog\"]',2,0,1,'none',1,'verified','verified',1,1,'ops',?)")
+    .run(Date.now());
+  const configured = await activation.addProviderToServiceMap(db, {
+    providerId: "PRV-BOARD-OK", zoneIds: ["blr-east"], actorEmail: "ops@pawspace.test",
+  }).then(() => ({ ok: true }), (error) => ({ ok: false, message: String(error?.message ?? error) }));
+  assert.equal(configured.ok, true, `a configured boarding host still goes live: ${JSON.stringify(configured)}`);
+
+  seedProvider("PRV-GROOM-NEW", ["grooming"]);
+  const grooming = await activation.addProviderToServiceMap(db, {
+    providerId: "PRV-GROOM-NEW", zoneIds: ["blr-east"], actorEmail: "ops@pawspace.test",
+  }).then(() => ({ ok: true }), (error) => ({ ok: false, message: String(error?.message ?? error) }));
+  assert.equal(grooming.ok, true, `a grooming provider is unaffected: ${JSON.stringify(grooming)}`);
+});

@@ -94,6 +94,20 @@ async function readyApplication(db, sqlite, options = {}) {
   return { applicationId, policyId, verticalKey, activation };
 }
 
+/**
+ * A boarding provider cannot be put live without a boarding_host_profiles row (PTJA W1L-04): a fully
+ * onboarded, activated, live host with no such row simply did not exist to any boarding surface, and
+ * activation now refuses rather than producing a silent ghost host. This harness defaults to
+ * ["boarding"] while testing the LIFECYCLE, not boarding, so it captures the host profile the way an
+ * operator would - species, guest-pet capacity, household and home verification - and the lifecycle
+ * assertions below are unchanged.
+ */
+function captureBoardingHostProfile(sqlite, providerId) {
+  sqlite.exec("CREATE TABLE IF NOT EXISTS boarding_host_profiles (provider_id TEXT PRIMARY KEY,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,area TEXT NOT NULL,species_json TEXT NOT NULL,max_guest_pets INTEGER NOT NULL,one_family_only INTEGER NOT NULL DEFAULT 0,medication_support INTEGER NOT NULL DEFAULT 0,resident_pets TEXT NOT NULL DEFAULT 'none',home_verified INTEGER NOT NULL DEFAULT 0,kyc_status TEXT NOT NULL DEFAULT 'pending',background_check_status TEXT NOT NULL DEFAULT 'pending',active INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT OR IGNORE INTO boarding_host_profiles (provider_id,city_id,zone_id,area,species_json,max_guest_pets,one_family_only,medication_support,resident_pets,home_verified,kyc_status,background_check_status,active,version,updated_by,updated_at) VALUES (?,'blr','blr-east','Indiranagar','[\"dog\"]',2,0,1,'none',1,'verified','verified',1,1,?,?)")
+    .run(providerId, OPS, NOW);
+}
+
 async function completeInterviewAndProfile(db, sqlite, applicationId, activation, options = {}) {
   const interviewId = `POINT-${applicationId}`;
   sqlite.prepare("INSERT INTO provider_onboarding_interviews (id,application_id,start_at,end_at,duration_minutes,ops_email,status,notes,created_by,created_at,updated_at) VALUES (?,?,?,?,15,?,'completed',?,?,?,?)")
@@ -226,6 +240,7 @@ test("an activated provider is invisible to matching until a human adds them to 
   const { applicationId, activation } = await readyApplication(db, sqlite, { verticalKey: "dog_walking" });
   await completeInterviewAndProfile(db, sqlite, applicationId, activation, { services: ["dog_walking"] });
   const activated = await activation.activateProviderUat(db, { applicationId, actorEmail: OPS });
+  captureBoardingHostProfile(sqlite, activated.providerId);
   assert.equal(activated.marketplaceLive, false);
   assert.equal(activated.orderEligible, false);
   const profile = sqlite.prepare("SELECT live,status,zones_json FROM provider_capacity_profiles WHERE id=?").get(activated.providerId);
@@ -318,6 +333,7 @@ test("P0-05: a self-declared service whose category mandate is unsatisfied is no
   }
 
   const activated = await activation.activateProviderUat(db, { applicationId, actorEmail: OPS });
+  captureBoardingHostProfile(sqlite, activated.providerId);
   const stored = JSON.parse(sqlite.prepare("SELECT services_json FROM provider_capacity_profiles WHERE id=?").get(activated.providerId).services_json);
   assert.deepEqual(stored, ["grooming"], "only the service this activation actually verified is in the matching scope");
 
@@ -344,6 +360,7 @@ test("P0-05: a provider who HAS cleared a category is matchable for it - the fix
     await mandate.recordManualVerification(db, { applicationId, verificationType: type, status: "verified", note: "Agent visited the home and confirmed", actorId: OPS });
   }
   const activated = await activation.activateProviderUat(db, { applicationId, actorEmail: OPS });
+  captureBoardingHostProfile(sqlite, activated.providerId);
   assert.deepEqual(JSON.parse(sqlite.prepare("SELECT services_json FROM provider_capacity_profiles WHERE id=?").get(activated.providerId).services_json), ["boarding"]);
   await activation.addProviderToServiceMap(db, { providerId: activated.providerId, zoneIds: ["blr-east"], actorEmail: OPS });
   const capacity = await import("../lib/provider-capacity-governance.ts");
@@ -366,6 +383,7 @@ test("P0-05: a post-activation edit cannot re-add an unverified service to the m
     await mandate.recordManualVerification(db, { applicationId, verificationType: type, status: "verified", note: "Agent visited the home and confirmed", actorId: OPS });
   }
   const activated = await activation.activateProviderUat(db, { applicationId, actorEmail: OPS });
+  captureBoardingHostProfile(sqlite, activated.providerId);
 
   // dog_training maps to the trainer mandate, which additionally requires police_verification - a check
   // this host has never had done. (Adding "grooming" here would NOT be refused, and should not be: the
@@ -416,6 +434,7 @@ async function liveVerifiedHost(sqlite, db) {
     await mandate.recordManualVerification(db, { applicationId, verificationType: type, status: "verified", note: "Agent visited the home and confirmed", actorId: OPS });
   }
   const activated = await activation.activateProviderUat(db, { applicationId, actorEmail: OPS });
+  captureBoardingHostProfile(sqlite, activated.providerId);
   await activation.addProviderToServiceMap(db, { providerId: activated.providerId, zoneIds: ["blr-east"], actorEmail: OPS });
   const capacity = await import("../lib/provider-capacity-governance.ts");
   const inPool = async () => (await capacity.loadGovernedProviders(db, "blr", "blr-east", "boarding")).some((p) => p.id === activated.providerId);
@@ -536,7 +555,7 @@ test("P1-F52: there is no orphan left live and matchable behind the bound provid
     activation.activateProviderUat(db, { applicationId, actorEmail: OPS }),
     activation.activateProviderUat(db, { applicationId, actorEmail: OPS }),
   ]);
-  for (const result of results) await activation.addProviderToServiceMap(db, { providerId: result.providerId, zoneIds: ["blr-east"], actorEmail: OPS });
+  for (const result of results) { captureBoardingHostProfile(sqlite, result.providerId); await activation.addProviderToServiceMap(db, { providerId: result.providerId, zoneIds: ["blr-east"], actorEmail: OPS }); }
 
   const capacity = await import("../lib/provider-capacity-governance.ts");
   const before = (await capacity.loadGovernedProviders(db, "blr", "blr-east", "boarding")).map((p) => p.id).filter((id) => id.startsWith("PROV-"));
@@ -567,6 +586,7 @@ test("changing service areas after activation takes the provider off the live ma
   const { applicationId, activation } = await readyApplication(db, sqlite, { verticalKey: "dog_walking" });
   await completeInterviewAndProfile(db, sqlite, applicationId, activation, { services: ["dog_walking"] });
   const activated = await activation.activateProviderUat(db, { applicationId, actorEmail: OPS });
+  captureBoardingHostProfile(sqlite, activated.providerId);
   await activation.addProviderToServiceMap(db, { providerId: activated.providerId, zoneIds: ["blr-east"], actorEmail: OPS });
 
   await assert.rejects(
