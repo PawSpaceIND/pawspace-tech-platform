@@ -29,7 +29,7 @@ test("draft validation persists deterministic variables and sample payload", asy
   assert.equal(saved.productionDelivery, false);
   assert.equal(saved.samplePayload.renderedBody, "Hi Asha, booking BK-42 is ready.");
   const row = sqlite.prepare("SELECT status,category,approved_language FROM whatsapp_uat_templates WHERE template_key=?").get("booking_followup");
-  assert.deepEqual(row, { status: "draft", category: "utility", approved_language: "en" });
+  assert.deepEqual({ ...row }, { status: "draft", category: "utility", approved_language: "en" });
   const event = sqlite.prepare("SELECT event_type,to_status FROM whatsapp_template_lifecycle_events WHERE template_key=? ORDER BY created_at DESC LIMIT 1").get("booking_followup");
   assert.equal(event.event_type, "draft_created");
   assert.equal(event.to_status, "draft");
