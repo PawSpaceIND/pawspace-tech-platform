@@ -1,3 +1,4 @@
+import{requestQuietHoursOverride}from"../../../lib/quiet-hours-override";
 import{authError,database,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{HAPTIK_CAMPAIGNS,buildOutboundAudience,triggerOutboundCampaign,listOutboundCalls,outboundReadiness}from"../../../lib/haptik-outbound-governance";
 
@@ -22,10 +23,31 @@ export async function POST(request:Request){
   try{
     sameOrigin(request);
     const db=await database(),env=await runtime(),actor=await resolveActor(request);requirePermission(actor,"marketing.manage");
-    const body=await request.json().catch(()=>({})) as {campaign?:string;limit?:number;force?:boolean};
+    const body=await request.json().catch(()=>({})) as {campaign?:string;limit?:number;force?:boolean;reasonCode?:string;caseReference?:string;reason?:string};
     const campaign=String(body.campaign||"").trim();
     if(!campaign)return json({error:"A campaign is required (new_lead_followup | reactivation | subscription_pitch)"},400);
-    const data=await triggerOutboundCampaign(db,env,{campaign,limit:body.limit,actorId:actor.email||"marketing",force:Boolean(body.force)});
+    /*
+     * THE OVERRIDE IS NOW BOUNDED. [PTJA-W2-B4-M06]
+     *
+     * Measured before: {campaign:"new_lead_followup", limit:5000, force:true} at 03:00 IST passed the
+     * quiet-hours gate and continued into the dial loop, and the audit row read outcome 'completed' with
+     * nothing saying an override had been used. The earlier fix in this audit made it auditable; the
+     * approved decision now bounds it - a permitted reason code, a booking or case reference, a written
+     * reason, ONE call attempt, manager permission except for designated emergency roles, and compliance
+     * review of repeats. `lead_followup` is named in the forbidden list, so the exact campaign measured
+     * can no longer be forced at all.
+     */
+    let overrideVerdict=null;
+    if(body.force){
+      overrideVerdict=await requestQuietHoursOverride(db,{actor:{email:actor.email,roleCode:actor.roleCode,permissions:actor.permissions},
+        reasonCode:String(body.reasonCode||""),caseReference:String(body.caseReference||""),reason:String(body.reason||""),
+        contactCount:Number(body.limit??1),channel:"voice"});
+      if(!overrideVerdict.allowed){
+        return json({error:"This call cannot override quiet hours",code:overrideVerdict.reason,
+          maxContactsPerOverride:overrideVerdict.maxContacts,policyVersion:overrideVerdict.policyVersion},409);
+      }
+    }
+    const data=await triggerOutboundCampaign(db,env,{campaign,limit:body.limit,actorId:actor.email||"marketing",force:Boolean(overrideVerdict?.allowed&&overrideVerdict.overrideUsed)});
     // `force` removes the 21:00-09:00 IST quiet-hours bar, and the audit record did not say it had been
     // used - so a campaign dialled in the middle of the night was indistinguishable in the trail from
     // one dialled at noon. It is recorded now. NOT changed here: that a caller-supplied boolean can
