@@ -1,0 +1,95 @@
+import{ensureWhatsAppAiLeadTables}from"./whatsapp-ai-lead-orchestration";
+import{recordWhatsAppUatDelivery,recordWhatsAppUatInbound}from"./whatsapp-uat-adapter";
+
+type Row=Record<string,unknown>;
+const encoder=new TextEncoder();
+const text=(value:unknown)=>String(value??"").trim();
+const hex=(buffer:ArrayBuffer)=>Array.from(new Uint8Array(buffer)).map(value=>value.toString(16).padStart(2,"0")).join("");
+const safeEqual=(left:string,right:string)=>{if(left.length!==right.length)return false;let mismatch=0;for(let i=0;i<left.length;i++)mismatch|=left.charCodeAt(i)^right.charCodeAt(i);return mismatch===0;};
+
+export type MetaWhatsAppEvent=
+ |{kind:"message";eventId:string;providerIdentity:string;timestamp:number;messageType:string;body:string;raw:Record<string,unknown>}
+ |{kind:"status";eventId:string;providerMessageId:string;timestamp:number;status:"sent"|"delivered"|"read"|"failed";raw:Record<string,unknown>};
+
+export async function sha256Hex(value:string){return hex(await crypto.subtle.digest("SHA-256",encoder.encode(value)));}
+
+/** Meta signs the exact raw request body with the app secret. Never verify re-serialized JSON. */
+export async function verifyMetaWhatsAppSignature(rawBody:string,signatureHeader:string|null,appSecret:string){
+ const signature=text(signatureHeader).toLowerCase(),secret=text(appSecret);
+ if(!signature.startsWith("sha256=")||signature.length!==71||!secret)return false;
+ const key=await crypto.subtle.importKey("raw",encoder.encode(secret),{name:"HMAC",hash:"SHA-256"},false,["sign"]);
+ const digest=await crypto.subtle.sign("HMAC",key,encoder.encode(rawBody));
+ return safeEqual(signature,`sha256=${hex(digest)}`);
+}
+
+export function verifyMetaWebhookChallenge(url:URL,verifyToken:string){
+ const mode=text(url.searchParams.get("hub.mode")),token=text(url.searchParams.get("hub.verify_token")),challenge=text(url.searchParams.get("hub.challenge"));
+ return mode==="subscribe"&&Boolean(challenge)&&Boolean(verifyToken)&&token===verifyToken?challenge:null;
+}
+
+export function parseMetaWhatsAppWebhook(payload:unknown):MetaWhatsAppEvent[]{
+ if(!payload||typeof payload!=="object")return[];
+ const root=payload as Record<string,unknown>,entries=Array.isArray(root.entry)?root.entry:[],events:MetaWhatsAppEvent[]=[];
+ for(const entry of entries){
+  if(!entry||typeof entry!=="object")continue;
+  const changes=Array.isArray((entry as Record<string,unknown>).changes)?(entry as Record<string,unknown>).changes as unknown[]:[];
+  for(const change of changes){
+   if(!change||typeof change!=="object")continue;
+   const value=((change as Record<string,unknown>).value??{})as Record<string,unknown>;
+   const messages=Array.isArray(value.messages)?value.messages as unknown[]:[];
+   for(const candidate of messages){
+    if(!candidate||typeof candidate!=="object")continue;const message=candidate as Record<string,unknown>,eventId=text(message.id),providerIdentity=text(message.from),messageType=text(message.type)||"unknown";
+    if(!eventId||!providerIdentity)continue;
+    const body=messageType==="text"&&message.text&&typeof message.text==="object"?text((message.text as Record<string,unknown>).body):"";
+    events.push({kind:"message",eventId,providerIdentity,timestamp:Number(message.timestamp||0)*1000||Date.now(),messageType,body,raw:message});
+   }
+   const statuses=Array.isArray(value.statuses)?value.statuses as unknown[]:[];
+   for(const candidate of statuses){
+    if(!candidate||typeof candidate!=="object")continue;const status=candidate as Record<string,unknown>,providerMessageId=text(status.id),state=text(status.status);
+    if(!providerMessageId||!["sent","delivered","read","failed"].includes(state))continue;
+    const statusEventId=`${providerMessageId}:${state}:${text(status.timestamp)||"0"}`;
+    events.push({kind:"status",eventId:statusEventId,providerMessageId,timestamp:Number(status.timestamp||0)*1000||Date.now(),status:state as "sent"|"delivered"|"read"|"failed",raw:status});
+   }
+  }
+ }
+ return events;
+}
+
+const optOutWords=new Set(["stop","unsubscribe","cancel","end","quit"]);
+export function isWhatsAppOptOut(message:string){return optOutWords.has(text(message).toLowerCase().replace(/[.!?,;:]+$/g,""));}
+
+async function persistOptOut(db:D1Database,customerId:string,now:number){
+ await ensureWhatsAppAiLeadTables(db);
+ await db.batch([
+  db.prepare("INSERT INTO customer_contact_preferences (customer_id,marketing_consent,service_consent,whatsapp_consent,sms_consent,email_consent,opt_out,source,updated_by,updated_at) VALUES (?,0,0,0,0,0,1,'whatsapp_inbound_opt_out','meta_whatsapp_webhook',?) ON CONFLICT(customer_id) DO UPDATE SET whatsapp_consent=0,opt_out=1,source='whatsapp_inbound_opt_out',updated_by='meta_whatsapp_webhook',updated_at=excluded.updated_at").bind(customerId,now),
+  db.prepare("UPDATE whatsapp_ai_consent_evidence SET revoked_at=COALESCE(revoked_at,?) WHERE customer_id=? AND channel='whatsapp' AND purpose='lead_response'").bind(now,customerId),
+  db.prepare("UPDATE lead_work_items SET opt_out=1,status=CASE WHEN status='converted' THEN status ELSE 'closed' END,updated_at=? WHERE id IN (SELECT lead_id FROM whatsapp_ai_lead_triggers WHERE customer_id=?)").bind(now,customerId),
+  db.prepare("UPDATE whatsapp_ai_lead_triggers SET status='closed',reason='customer_opted_out',updated_at=? WHERE customer_id=? AND status!='closed'").bind(now,customerId),
+ ]);
+}
+
+export async function processMetaWhatsAppEvents(db:D1Database,events:MetaWhatsAppEvent[],rawBody:string){
+ const payloadHash=await sha256Hex(rawBody),results:Array<Record<string,unknown>>=[];
+ for(const event of events){
+  if(event.kind==="message"){
+   if(event.messageType!=="text"||!event.body){results.push({eventId:event.eventId,status:"ignored",reason:"unsupported_message_type",externalDelivery:false});continue;}
+   const inbound=await recordWhatsAppUatInbound(db,{provider:"meta_whatsapp",eventId:event.eventId,payloadHash,providerIdentity:event.providerIdentity,text:event.body,receivedAt:event.timestamp,detail:{metaMessageType:event.messageType}});
+   if(inbound.duplicatePrevented){results.push({eventId:event.eventId,status:"duplicate",duplicatePrevented:true,externalDelivery:false});continue;}
+   if(isWhatsAppOptOut(event.body)){
+    await persistOptOut(db,inbound.customerId,event.timestamp||Date.now());
+    results.push({eventId:event.eventId,status:"opted_out",customerId:inbound.customerId,threadId:inbound.threadId,aiEligible:false,externalDelivery:false});continue;
+   }
+   await ensureWhatsAppAiLeadTables(db);
+   await db.prepare("UPDATE whatsapp_ai_lead_triggers SET status='replied',reason=NULL,updated_at=? WHERE thread_id=? AND status NOT IN ('human_owned','closed')").bind(event.timestamp||Date.now(),inbound.threadId).run();
+   const owner=await db.prepare("SELECT status FROM whatsapp_ai_lead_triggers WHERE thread_id=? ORDER BY updated_at DESC LIMIT 1").bind(inbound.threadId).first<Row>();
+   const humanOwned=text(owner?.status)==="human_owned";
+   results.push({eventId:event.eventId,status:"received",customerId:inbound.customerId,threadId:inbound.threadId,aiEligible:!humanOwned,autoSend:false,approvalRequired:true,humanOwned,externalDelivery:false});
+   continue;
+  }
+  const message=await db.prepare("SELECT id FROM communication_messages WHERE channel='whatsapp' AND provider='meta_whatsapp' AND (provider_reference=? OR id=?) LIMIT 1").bind(event.providerMessageId,event.providerMessageId).first<Row>();
+  if(!message){results.push({eventId:event.eventId,status:"ignored",reason:"unknown_provider_message",externalDelivery:false});continue;}
+  const delivery=await recordWhatsAppUatDelivery(db,{provider:"meta_whatsapp",eventId:event.eventId,messageId:text(message.id),eventType:event.status,payloadHash,detail:{metaProviderMessageId:event.providerMessageId,metaStatus:event.status}});
+  results.push({eventId:event.eventId,status:event.status,messageId:text(message.id),duplicatePrevented:Boolean(delivery.duplicatePrevented),staffFallbackRequired:Boolean(delivery.staffFallbackRequired),externalDelivery:false});
+ }
+ return results;
+}
