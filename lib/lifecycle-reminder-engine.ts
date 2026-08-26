@@ -51,6 +51,18 @@ export async function saveLifecycleReminderRule(db: Db, input: { id: string; del
   }
   const row = await db.prepare("SELECT * FROM lifecycle_reminder_rules WHERE id=?").bind(input.id).first<Row>();
   if (!row) throw new Error("Reminder rule not found");
+  /*
+   * A DROPPED rule cannot be switched back on here. Before the nine decisions were made, a dropped rule
+   * and an undecided one looked identical - both inactive - and either could be activated by anybody
+   * with this route. A decision should be harder to reverse than a default, so reversing one means
+   * changing the decision in lib/communication-rule-decisions.ts, in review. [PTJA-W3-CR]
+   */
+  if (input.active) {
+    const { isDroppedCommunicationRule, communicationRuleDecision } = await import("./communication-rule-decisions");
+    if (isDroppedCommunicationRule(input.id)) {
+      throw new Error(`${communicationRuleDecision(input.id)?.label ?? input.id} was dropped by an approved decision and cannot be activated here`);
+    }
+  }
   const configurationRequired = input.delayDays == null ? 1 : 0;
   if (input.active && configurationRequired) throw new Error("An active scheduled reminder requires an approved delay/cadence");
   const now = Date.now();
