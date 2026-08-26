@@ -8,6 +8,7 @@ import teamStyles from "../../team-console.module.css";
 type Row = Record<string, unknown>;
 type Config = { enabled?: boolean; delaysMinutes?: number[]; templateKeys?: string[]; offerType?: string; offerReference?: string; updatedBy?: string; updatedAt?: number };
 type Data = { config?: Config; sequences?: Row[]; productionDelivery?: boolean; environment?: string; aiArmingPolicy?: string };
+const defaultRecoveryTemplates = ["booking_recovery_10m", "booking_recovery_30m", "booking_recovery_180m"];
 const text = (value: unknown, fallback = "—") => String(value ?? "").trim() || fallback;
 const pretty = (value: unknown) => text(value).replaceAll("_", " ");
 const dateTime = (value: unknown) => value ? new Date(Number(value)).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) : "—";
@@ -15,7 +16,7 @@ const dateTime = (value: unknown) => value ? new Date(Number(value)).toLocaleStr
 export default function WhatsAppAutomationPage() {
   const [data, setData] = useState<Data>({});
   const [enabled, setEnabled] = useState(true);
-  const [templates, setTemplates] = useState(["booking_recovery_10m", "booking_recovery_30m", "booking_recovery_180m"]);
+  const [templates, setTemplates] = useState([...defaultRecoveryTemplates]);
   const [offerType, setOfferType] = useState("special_booking_recovery");
   const [offerReference, setOfferReference] = useState("");
   const [busy, setBusy] = useState(false);
@@ -28,7 +29,7 @@ export default function WhatsAppAutomationPage() {
     if (!response.ok) throw new Error(payload.error || `Unable to load automation (HTTP ${response.status})`);
     const next = payload.data || {};
     setData(next);
-    if (next.config) { setEnabled(next.config.enabled === true); setTemplates(next.config.templateKeys?.length === 3 ? next.config.templateKeys : templates); setOfferType(next.config.offerType || "special_booking_recovery"); setOfferReference(next.config.offerReference || ""); }
+    if (next.config) { setEnabled(next.config.enabled === true); setTemplates(next.config.templateKeys?.length === 3 ? next.config.templateKeys : [...defaultRecoveryTemplates]); setOfferType(next.config.offerType || "special_booking_recovery"); setOfferReference(next.config.offerReference || ""); }
   }, []);
 
   useEffect(() => { const timer = window.setTimeout(() => { void load().catch((cause) => setError(cause instanceof Error ? cause.message : String(cause))); }, 0); return () => window.clearTimeout(timer); }, [load]);
