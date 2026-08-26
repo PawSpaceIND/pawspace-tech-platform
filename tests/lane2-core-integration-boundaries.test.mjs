@@ -867,7 +867,7 @@ test("REVIEW: refusal then a valid retry settles once, and the next duplicate ch
   assert.equal(refused.accepted, false);
   assert.equal(refused.status, 404, "nothing to correlate to yet");
 
-  submit();                                   // the submission becomes readable
+  submit();
   const retry = await post(payload);
   assert.equal(retry.accepted, true, "the retry must be able to succeed");
   assert.equal(retry.duplicate, false, "a refusal is not a delivery, so the retry is not a duplicate");
@@ -1120,8 +1120,9 @@ test("a genuine zero distance is still a route, and a complete response still pa
 async function interleavedKycWorld(initialStatus) {
   const sqlite = new DatabaseSync(":memory:");
   const base = makeD1(sqlite);
-  let armed = true, release;
+  let armed = true, release, entered;
   const gate = new Promise((resolve) => { release = resolve; });
+  const paused = new Promise((resolve) => { entered = resolve; });
   const db = {
     ...base,
     prepare(sql) {
@@ -1130,7 +1131,11 @@ async function interleavedKycWorld(initialStatus) {
       const wrap = (inner) => ({
         ...inner,
         bind: (...bound) => wrap(statement.bind(...bound)),
-        first: async () => { const value = await inner.first(); if (armed) { armed = false; await gate; } return value; },
+        first: async () => {
+          const value = await inner.first();
+          if (armed) { armed = false; entered(); await gate; }
+          return value;
+        },
       });
       return wrap(statement);
     },
@@ -1151,7 +1156,7 @@ async function interleavedKycWorld(initialStatus) {
     return boundary.applyIdfyCallback(db, globalThis.__PAWSPACE_TEST_ENV, { rawBody, headers });
   };
   const statusOf = (id = "PVER-1") => sqlite.prepare("SELECT status FROM provider_verifications WHERE id=?").get(id).status;
-  return { sqlite, db, mandate, post, statusOf, release: () => release() };
+  return { sqlite, db, mandate, post, statusOf, waitUntilPaused: () => paused, release: () => release() };
 }
 
 test("REVIEW: a stale nonterminal delivery cannot overwrite a verified one committed while it was in flight", async () => {
@@ -1163,7 +1168,7 @@ test("REVIEW: a stale nonterminal delivery cannot overwrite a verified one commi
   // no window between deciding and writing at all.
   const world = await interleavedKycWorld("pending");
   const a = world.post({ event_id: "RACE-A", request_id: "IDFY-REQ-1", status: "in_progress" });
-  await new Promise((resolve) => setImmediate(resolve));           // let A reach the barrier
+  await world.waitUntilPaused();
   const b = await world.post({ event_id: "RACE-B", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } });
   assert.equal(b.outcome, "verified");
   assert.equal(world.statusOf(), "verified", "B commits while A is paused");
@@ -1192,7 +1197,7 @@ test("the same interleaving from a manual_review start is also consistent", asyn
   // and the database must agree.
   const world = await interleavedKycWorld("manual_review");
   const a = world.post({ event_id: "RACE2-A", request_id: "IDFY-REQ-1", status: "in_progress" });
-  await new Promise((resolve) => setImmediate(resolve));
+  await world.waitUntilPaused();
   await world.post({ event_id: "RACE2-B", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } });
   world.release();
   const resumed = await a;
@@ -1205,7 +1210,7 @@ test("a terminal delivery still wins the same interleaving", async () => {
   // The rule must not become "first writer wins". A decision arriving late still lands.
   const world = await interleavedKycWorld("pending");
   const a = world.post({ event_id: "RACE3-A", request_id: "IDFY-REQ-1", status: "completed", result: { verification_status: "verified" } });
-  await new Promise((resolve) => setImmediate(resolve));
+  await world.waitUntilPaused();
   await world.post({ event_id: "RACE3-B", request_id: "IDFY-REQ-1", status: "in_progress" });
   world.release();
   assert.equal((await a).outcome, "verified");
