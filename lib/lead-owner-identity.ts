@@ -61,7 +61,9 @@ export async function ensureLeadOwnerTables(db:Db){
 export async function resolveLeadOwner(db:Db,hint:string|null|undefined):Promise<string|null>{
   const value=text(hint);
   if(!value||value===UNASSIGNED_OWNER)return null;
-  const row=await db.prepare("SELECT email FROM app_users WHERE status='active' AND (lower(email)=lower(?1) OR id=?1)").bind(value).first<Row>().catch(()=>null);
+  // Positional, with the value repeated. See the note in lib/service-policy-governance.ts: node:sqlite's
+  // numbered-parameter handling differs between the Node CI pins and the one this container runs.
+  const row=await db.prepare("SELECT email FROM app_users WHERE status='active' AND (lower(email)=lower(?) OR id=?)").bind(value,value).first<Row>().catch(()=>null);
   return row?String(row.email):null;
 }
 

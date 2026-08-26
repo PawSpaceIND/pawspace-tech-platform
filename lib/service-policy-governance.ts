@@ -150,13 +150,20 @@ export async function resolveServicePolicy<T extends Record<string,unknown>>(db:
   if(!spec)throw new Error(`Unknown policy domain ${domain}`);
   await seedServicePolicyDefault(db,domain);
   const serviceCode=normalise(scope.serviceCode),cityId=normalise(scope.cityId),date=at.toISOString().slice(0,10);
+  /*
+   * POSITIONAL placeholders, with each value repeated, rather than numbered ?1/?2 reused across the
+   * statement. Numbered parameters are valid SQLite, but node:sqlite's handling of them changed between
+   * Node 22.13 (which CI pins) and 22.22 (which this container runs): CI failed 344 tests with
+   * "column index out of range" on a query that passed locally. Repeating the bind is portable across
+   * both, and a query that only works on the developer's Node is not a working query. [PTJA-W3-CI]
+   */
   const row=await db.prepare(
-    `SELECT *, CASE WHEN service_code=?1 AND city_id=?2 THEN 0 WHEN service_code=?1 AND city_id='*' THEN 1 WHEN service_code='*' AND city_id=?2 THEN 2 ELSE 3 END rank
+    `SELECT *, CASE WHEN service_code=? AND city_id=? THEN 0 WHEN service_code=? AND city_id='*' THEN 1 WHEN service_code='*' AND city_id=? THEN 2 ELSE 3 END rank
      FROM service_policy_configs
-     WHERE policy_domain=?3 AND active=1 AND effective_from<=?4 AND (effective_to IS NULL OR effective_to>=?4)
-       AND (service_code=?1 OR service_code='*') AND (city_id=?2 OR city_id='*')
+     WHERE policy_domain=? AND active=1 AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)
+       AND (service_code=? OR service_code='*') AND (city_id=? OR city_id='*')
      ORDER BY rank ASC, version DESC, updated_at DESC LIMIT 1`)
-    .bind(serviceCode,cityId,domain,date).first<Row>();
+    .bind(serviceCode,cityId,serviceCode,cityId,domain,date,date,serviceCode,cityId).first<Row>();
   if(!row)throw Response.json({error:`${spec.label} is not configured for this service and city`,code:"service_policy_configuration_required",domain,serviceCode,cityId},{status:409});
   const record=rowToRecord(spec,row);
   const problem=spec.problem(record.config as Record<string,unknown>);
