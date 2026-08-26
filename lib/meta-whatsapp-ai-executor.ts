@@ -1,9 +1,10 @@
+import{resolveAiAudienceGate}from"./ai-audience-rollout";
 import{aiProviderConnection,requestAiDraft}from"./ai-provider-adapter";
 import{orchestrateAiTurn,type AiProviderInput,type AiResponseProvider}from"./ai-conversation-orchestrator";
 import{ensureWhatsAppAiLeadTables}from"./whatsapp-ai-lead-orchestration";
 import{assertWhatsAppAiRoutingAllowsReply}from"./whatsapp-conversation-control";
 import{ensureWhatsAppUatTables}from"./whatsapp-uat-adapter";
-import type{AuthenticatedActor}from"./server-auth";
+import{ensureSecurityTables,securityAudit,type AuthenticatedActor}from"./server-auth";
 
 type Row=Record<string,unknown>;
 const text=(value:unknown)=>String(value??"").trim();
@@ -25,6 +26,8 @@ async function assertTrustedMetaInbound(db:D1Database,input:{eventId:string;thre
  const ownership=await db.prepare("SELECT status FROM whatsapp_ai_lead_triggers WHERE thread_id=? ORDER BY updated_at DESC LIMIT 1").bind(input.threadId).first<Row>();
  if(["human_owned","closed"].includes(text(ownership?.status)))throw new Response("Human ownership or closed lead state blocks Meta AI automation",{status:409});
  await assertWhatsAppAiRoutingAllowsReply(db,input.threadId);
+ const customerRollout=await resolveAiAudienceGate(db,{audience:"customer"});
+ if(!customerRollout.allowed)throw new Response("Customer AI rollout gate blocks Meta WhatsApp automation",{status:409});
 }
 
 async function runtimeProvider():Promise<AiResponseProvider>{
@@ -37,11 +40,16 @@ async function runtimeProvider():Promise<AiResponseProvider>{
 }
 
 export async function runGovernedMetaWhatsAppAiTurn(db:D1Database,input:{eventId:string;threadId:string;customerId:string;inputMessageId:string}){
- await assertTrustedMetaInbound(db,input);
- const data=await orchestrateAiTurn(db,{actor:serviceActor,threadId:input.threadId,customerId:input.customerId,inputMessageId:input.inputMessageId,idempotencyKey:`meta-whatsapp-ai:${input.eventId}`,channel:"whatsapp",provider:await runtimeProvider()});
- const turn=(data.turn??null)as Row|null;
- if(!turn)return{status:"ai_pending"as const,duplicatePrevented:Boolean(data.duplicatePrevented),approvalRequired:true,autoSend:false,autonomousExecution:false,recoveryArmed:false};
- const outcome=text(turn.outcome),turnId=text(turn.id),suggestionId=text(turn.suggestionId||turn.suggestion_id);
- if(outcome==="handoff")return{status:"human_handoff"as const,turnId,duplicatePrevented:Boolean(data.duplicatePrevented),approvalRequired:false,autoSend:false,autonomousExecution:false,recoveryArmed:false,handoffReason:text(turn.handoffReason||turn.handoff_reason)||"provider_error"};
- return{status:"ai_draft_ready"as const,turnId,suggestionId:suggestionId||null,duplicatePrevented:Boolean(data.duplicatePrevented),approvalRequired:true,autoSend:false,autonomousExecution:false,recoveryArmed:false};
+ await ensureSecurityTables(db);
+ try{
+  await assertTrustedMetaInbound(db,input);
+  const data=await orchestrateAiTurn(db,{actor:serviceActor,threadId:input.threadId,customerId:input.customerId,inputMessageId:input.inputMessageId,idempotencyKey:`meta-whatsapp-ai:${input.eventId}`,channel:"whatsapp",provider:await runtimeProvider()});
+  const turn=(data.turn??null)as Row|null;
+  const common={duplicatePrevented:Boolean(data.duplicatePrevented),autoSend:false,autonomousExecution:false,recoveryArmed:false};
+  if(!turn){await securityAudit(db,serviceActor,"ai.conversation.meta.internal","communication_thread",input.threadId,"completed",{eventId:input.eventId,status:"pending",autoSend:false});return{status:"ai_pending"as const,...common,approvalRequired:true};}
+  const outcome=text(turn.outcome),turnId=text(turn.id),suggestionId=text(turn.suggestionId||turn.suggestion_id);
+  if(outcome==="handoff"){await securityAudit(db,serviceActor,"ai.conversation.meta.internal","communication_thread",input.threadId,"completed",{eventId:input.eventId,turnId,status:"human_handoff",autoSend:false});return{status:"human_handoff"as const,turnId,...common,approvalRequired:false,handoffReason:text(turn.handoffReason||turn.handoff_reason)||"provider_error"};}
+  await securityAudit(db,serviceActor,"ai.conversation.meta.internal","communication_thread",input.threadId,"completed",{eventId:input.eventId,turnId,status:"ai_draft_ready",autoSend:false,approvalRequired:true});
+  return{status:"ai_draft_ready"as const,turnId,suggestionId:suggestionId||null,...common,approvalRequired:true};
+ }catch(error){await securityAudit(db,serviceActor,"ai.conversation.meta.internal","communication_thread",input.threadId,"blocked",{eventId:input.eventId,reason:"governed_internal_boundary_rejected",autoSend:false}).catch(()=>undefined);throw error;}
 }
