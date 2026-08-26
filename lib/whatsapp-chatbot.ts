@@ -5,6 +5,7 @@ import{ensureWhatsAppUatTables,queueWhatsAppUatOutbound,whatsappUatProviders,typ
 
 type Row=Record<string,unknown>;
 type ChatbotState="service"|"city"|"pet"|"qualified";
+export type WhatsAppChatbotSession={thread_id:string;customer_id:string;state:ChatbotState;service_code:string|null;city:string|null;pet_type:string|null;status:string;created_at:number;updated_at:number};
 
 const text=(value:unknown)=>String(value??"").trim();
 const lower=(value:unknown)=>text(value).toLowerCase();
@@ -71,10 +72,11 @@ function escalationReason(message:string):AiHandoffReason|null{
  return null;
 }
 
-export async function getWhatsAppChatbotSession(db:D1Database,threadId:string){
+export async function getWhatsAppChatbotSession(db:D1Database,threadId:string):Promise<WhatsAppChatbotSession|null>{
  await ensureWhatsAppChatbotTables(db);
  const row=await db.prepare("SELECT thread_id,customer_id,state,service_code,city,pet_type,status,created_at,updated_at FROM whatsapp_chatbot_sessions WHERE thread_id=?").bind(threadId).first<Row>();
- return row?{...row,state:text(row.state)as ChatbotState}:null;
+ if(!row)return null;
+ return{thread_id:text(row.thread_id),customer_id:text(row.customer_id),state:text(row.state)as ChatbotState,service_code:row.service_code==null?null:text(row.service_code),city:row.city==null?null:text(row.city),pet_type:row.pet_type==null?null:text(row.pet_type),status:text(row.status),created_at:Number(row.created_at||0),updated_at:Number(row.updated_at||0)};
 }
 
 export async function runWhatsAppChatbotTurn(db:D1Database,input:{threadId:string;inputMessageId:string;actorEmail:string}){
@@ -125,9 +127,10 @@ export async function runWhatsAppChatbotTurn(db:D1Database,input:{threadId:strin
  }
 
  await db.batch([
-  db.prepare("INSERT INTO whatsapp_chatbot_sessions (thread_id,customer_id,state,service_code,city,pet_type,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(thread_id) DO UPDATE SET state=excluded.state,service_code=excluded.service_code,city=excluded.city,pet_type=excluded.pet_type,status=excluded.status,updated_at=excluded.updated_at").bind(input.threadId,context.customerId,nextState,service||null,city||null,petType||null,sessionStatus,prior?Number(prior.created_at||now):now,now),
+  db.prepare("INSERT INTO whatsapp_chatbot_sessions (thread_id,customer_id,state,service_code,city,pet_type,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(thread_id) DO UPDATE SET state=excluded.state,service_code=excluded.service_code,city=excluded.city,pet_type=excluded.pet_type,status=excluded.status,updated_at=excluded.updated_at").bind(input.threadId,context.customerId,nextState,service||null,city||null,petType||null,sessionStatus,prior?prior.created_at||now:now,now),
   db.prepare("INSERT OR IGNORE INTO whatsapp_chatbot_turns (id,thread_id,input_message_id,output_message_id,from_state,to_state,intent,action,detail_json,created_at) VALUES (?,?,?,?,?,?,?,'reply',?,?)").bind(uid("WABOT"),input.threadId,input.inputMessageId,queued.messageId,fromState,nextState,intent,JSON.stringify({service:service||null,city:city||null,petType:petType||null,provider:context.provider,externalDelivery:false}),now),
  ]);
  const turn=await db.prepare("SELECT id,output_message_id,from_state,to_state,intent,action,detail_json,created_at FROM whatsapp_chatbot_turns WHERE input_message_id=?").bind(input.inputMessageId).first<Row>();
- return{duplicatePrevented:Boolean(queued.duplicatePrevented),turn:turn?{...turn,detail:parse(turn.detail_json,{})}:null,session:await getWhatsAppChatbotSession(db,input.threadId),routingMode:"chatbot_only",externalDelivery:false,environment:"uat"};
+ const duplicatePrevented="duplicatePrevented"in queued?Boolean(queued.duplicatePrevented):false;
+ return{duplicatePrevented,turn:turn?{...turn,detail:parse(turn.detail_json,{})}:null,session:await getWhatsAppChatbotSession(db,input.threadId),routingMode:"chatbot_only",externalDelivery:false,environment:"uat"};
 }
