@@ -240,5 +240,26 @@
       "P3": 2
     },
     "note": "21 fixed findings plus 2 additional holes surfaced by the repository's own guarded-route sweep during F36 (an anonymous GET serving the whole day board including every customer_id, and payload validation running before identity) = 23 corrections."
+  },
+  "wave1_leftovers_closed_later": {
+    "note": "These were in reported_not_fixed at the end of the first pass and were closed in the continuation, each with a permanent executable regression verified red before the fix.",
+    "closed": {
+      "F5": "install takeover — first-claim rule in lib/app-to-revenue-funnel.ts",
+      "F22": "terminal-state guard in sitting/walking/boarding lifecycle",
+      "F34": "future-window rule on the uat-scheduling reserve path",
+      "F13": "closed as W2-07-PAY-003 (explicit PAWSPACE_PAYMENT_ENV)",
+      "F49": "boarding activation refuses without a boarding host profile"
+    },
+    "regressions": "tests/ptja-w1-leftover-regressions.test.mjs (12 cases); F13 in tests/ptja-p1-regressions.test.mjs (W2-PAY-07)"
+  },
+  "wave1_leftovers_still_open": {
+    "F53": "dog_walking and pet_taxi have no verification category — which checks those services must require is a compliance decision, not an engineering one",
+    "F38": "pausing a city / deleting a pincode does not stop serviceability",
+    "F30": "travel buffer and daily job limit enforced only in application code, no DB constraint",
+    "F24": "a customer can self-cancel an in_service booking and receive a 100% refund — the refund a late cancellation earns is a pricing/policy decision",
+    "F14": "boarding catalogue GET advertises the old price while the quote POST charges the new one",
+    "F27": "a customer's own reserve fabricates roster windows over Ops-published availability",
+    "F32": "second lease expiry leaves the assignment decision assigned and the offer pending",
+    "F15": "a Sitting/Boarding price decomposition that does not add up"
   }
 }

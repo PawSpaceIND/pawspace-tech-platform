@@ -1,0 +1,47 @@
+{
+  "audit": "PawSpace Total Journey Audit (PTJA)",
+  "branch": "ptja/audit-fixes",
+  "domains_swept": 18,
+  "wave2": {
+    "FIXED": 46,
+    "PARTIAL": 1,
+    "OPEN": 1,
+    "REFUTED": 9
+  },
+  "wave1_fixed_first_pass": 21,
+  "wave1_leftovers_closed_in_continuation": 5,
+  "wave1_leftovers_still_open": 8,
+  "regression_files": [
+    "ptja-identity-spine.test.mjs",
+    "ptja-p0-regressions.test.mjs",
+    "ptja-p1-regressions.test.mjs",
+    "ptja-w1-leftover-regressions.test.mjs",
+    "ptja-w2-cross-tenant-reads.test.mjs",
+    "ptja-w2-finance-regressions.test.mjs",
+    "ptja-w2-marketing-regressions.test.mjs",
+    "ptja-w2b-consent-regressions.test.mjs",
+    "ptja-w2b-crm-media-authz.test.mjs",
+    "ptja-w2b-exposure-regressions.test.mjs",
+    "ptja-w2b-identity-takeover.test.mjs",
+    "ptja-w2b-incentive-regressions.test.mjs",
+    "ptja-w2b-partner-settlement.test.mjs",
+    "ptja-w2b-reporting-regressions.test.mjs",
+    "ptja-w2b-service-media.test.mjs"
+  ],
+  "gates_at_head": {
+    "full_repository_suite": "3133/3133",
+    "e2e100": "102/102 across the four e2e100 suites",
+    "typecheck": "clean",
+    "lint": "0 errors (50 pre-existing warnings)",
+    "build": "succeeds",
+    "artifact_validation": "ESM Worker default.fetch and hosting manifest present",
+    "release_ci": "see the run at the exact head"
+  },
+  "not_fixed_by_design": {
+    "W2-B2-R04": "Cash Flow Statement reads only finance_journal_entries and no payment capture posts a cash journal. Closing it means deciding where and when a collection posts to the cash ledger and which account it faces — a double-entry design decision.",
+    "W2-B4-M06": "A caller-supplied boolean lifts the quiet-hours bar for a bulk run. The override is now audited; what it may legitimately cover is a marketing/compliance decision.",
+    "W2-B2-R01 / W2-B3-C01 / W2-B3-C07": "Phone and name are masked; email, home address and staff internal notes are not. The platform defines only maskPhone and maskName, and an associate arranging a home service needs the address.",
+    "W2-B4-M04": "service-media issues no upload grant, where the sibling proof libraries mint an HMAC'd single-use token. A design decision about how that route obtains storage.",
+    "W2-B3-C09": "The subscription reminder generator serves two rules and is skipped only when both are inactive."
+  }
+}
