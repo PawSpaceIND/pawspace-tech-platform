@@ -149,10 +149,14 @@ export async function runCompletedJourney(ctx, config) {
 
   const media = [];
   for (const purpose of ["before_service", "after_service"]) {
-    const prepared = await routeCall("../../app/api/service-media/route.ts", "POST", "/api/service-media", { bookingId, purpose, mimeType: "image/jpeg", sizeBytes: 128, sha256: purpose === "before_service" ? "a".repeat(64) : "b".repeat(64) }, providerCookie);
-    const id = prepared.body.data.id;
-    await routeCall("../../app/api/service-media/route.ts", "PATCH", "/api/service-media", { id, action: "confirm_upload", storageReference: `uat/${id}.jpg` });
-    await routeCall("../../app/api/service-media/route.ts", "PATCH", "/api/service-media", { id, action: "record_scan", scanResult: "clean" });
+    // The signed-upload boundary [PTJA-W2-B4-M04]: the provider requests a short-lived token bound to
+    // one object key, uploads, and the confirmation presents that token together with what the stored
+    // object actually is. Review is a separate identity - the provider cookie prepares, staff decides.
+    const sha256 = purpose === "before_service" ? "a".repeat(64) : "b".repeat(64);
+    const prepared = await routeCall("../../app/api/service-media/route.ts", "POST", "/api/service-media", { bookingId, purpose, mimeType: "image/jpeg", sizeBytes: 128, sha256, fileName: `${purpose}.jpg` }, providerCookie);
+    const { id, upload } = prepared.body.data;
+    await routeCall("../../app/api/service-media/route.ts", "PATCH", "/api/service-media", { id, action: "confirm_upload", uploadToken: upload.token, storageReference: upload.objectKey, observedSizeBytes: 128, observedSha256: sha256, observedMimeType: "image/jpeg" });
+    await routeCall("../../app/api/service-media/route.ts", "PATCH", "/api/service-media", { id, action: "record_scan", scanResult: "clean", reason: `Reviewed the ${purpose.replace("_", " ")} photo` });
     media.push(prepared.body.data.ref);
   }
   const proof = await lifecycle("add_proof", { beforePhotoRef: media[0], afterPhotoRef: media[1], checklist: ["coat", "nails", "ears"], completionNotes: "Completed safely" });

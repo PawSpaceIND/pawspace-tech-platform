@@ -5,8 +5,8 @@ import{readFile}from"node:fs/promises";
 const source=async path=>readFile(new URL("../"+path,import.meta.url),"utf8");
 
 test("Grooming closure uses one canonical transaction across Customer Partner Team and Finance",async()=>{
-  const[customer,canonical,change,partnerApi,partnerUi,lifecycle,finance,security,governance,mediaSecurity,mediaApi]=await Promise.all([
-    source("app/page.tsx"),source("app/api/canonical-bookings/route.ts"),source("app/api/grooming-booking-change/route.ts"),source("app/api/partner-grooming-jobs/route.ts"),source("app/partner-app/canonical-grooming-jobs.tsx"),source("app/api/grooming-lifecycle/route.ts"),source("app/api/grooming-finance/route.ts"),source("lib/server-auth.ts"),source("lib/grooming-governance.ts"),source("lib/service-media-security.ts"),source("app/api/service-media/route.ts"),
+  const[customer,canonical,change,partnerApi,partnerUi,lifecycle,finance,security,governance,mediaSecurity,mediaApi,mediaBoundary]=await Promise.all([
+    source("app/page.tsx"),source("app/api/canonical-bookings/route.ts"),source("app/api/grooming-booking-change/route.ts"),source("app/api/partner-grooming-jobs/route.ts"),source("app/partner-app/canonical-grooming-jobs.tsx"),source("app/api/grooming-lifecycle/route.ts"),source("app/api/grooming-finance/route.ts"),source("lib/server-auth.ts"),source("lib/grooming-governance.ts"),source("lib/service-media-security.ts"),source("app/api/service-media/route.ts"),source("lib/media-upload-boundary.ts"),
   ]);
   assert.match(customer,/createCanonicalLifecycle/);
   assert.match(customer,/reserveUatSchedule/);
@@ -48,13 +48,20 @@ test("Grooming closure uses one canonical transaction across Customer Partner Te
   assert.match(mediaSecurity,/upload is not ready for service proof/);
   assert.match(mediaSecurity,/outside its active retention state/);
   assert.match(mediaSecurity,/still marked synthetic/);
-  assert.match(mediaApi,/SHA-256 checksum/);
-  assert.match(mediaApi,/10 MB/);
+  // The checksum, size ceiling and state machine moved out of the route and into the shared
+  // signed-upload boundary when W2-B4-M04 closed, so that five media surfaces stop each writing their
+  // own version. They are pinned where they now live, and the route is pinned to delegating to it.
+  // [PTJA-W2-B4-M04]
+  assert.match(mediaApi,/issueMediaUploadGrant/);
+  assert.match(mediaApi,/redeemMediaUploadGrant/);
+  assert.match(mediaApi,/reviewMedia/);
   assert.match(mediaApi,/synthetic:false/);
   assert.match(mediaApi,/pending_upload/);
-  assert.match(mediaApi,/quarantined/);
   assert.match(mediaApi,/record_scan/);
-  assert.match(mediaApi,/proofReady:clean/);
+  assert.match(mediaBoundary,/SHA-256 checksum/);
+  assert.match(mediaBoundary,/maxSizeBytes:10_000_000/);
+  assert.match(mediaBoundary,/quarantined/);
+  assert.match(mediaBoundary,/proofReady:approved/);
   assert.match(finance,/booking_invoices/);
   assert.match(finance,/booking_subscription_usage/);
   assert.match(security,/security_audit_events/);

@@ -1,5 +1,7 @@
 import{authError,authorize,requirePermission,securityAudit}from"../../../lib/server-auth";
-import{listServicePolicies,servicePolicyAudit,servicePolicyDomain,servicePolicyDomains,writeServicePolicy}from"../../../lib/service-policy-governance";
+// Through the barrel, NOT the kernel: importing lib/service-policy-governance alone leaves the domain
+// registry empty in a cold worker, which is what this route answered before. [PTJA-W2-B4-M04]
+import{listServicePolicies,servicePolicyAudit,servicePolicyDomain,servicePolicyDomains,writeServicePolicy}from"../../../lib/service-policy-domains";
 
 /*
  * Control Center: business policy by vertical and city.
