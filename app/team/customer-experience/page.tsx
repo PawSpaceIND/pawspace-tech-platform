@@ -24,6 +24,18 @@ type Conversation = {
   messages: Array<Row & { payload?: Row }>;
   assignments: Row[];
 };
+type RoutingMode = "human_only" | "chatbot_only" | "ai_assistant";
+type WhatsAppControl = {
+  threadId?: string;
+  customerId?: string;
+  provider?: string;
+  routing?: { mode?: RoutingMode; explicit?: boolean; updatedBy?: string | null; reason?: string; updatedAt?: number | null };
+  handoff?: { aiPaused?: boolean; current?: Row | null; events?: Row[] };
+  canHumanReply?: boolean;
+  chatbotReady?: boolean;
+  productionDelivery?: boolean;
+  environment?: string;
+};
 
 const text = (value: unknown, fallback = "—") => String(value ?? "").trim() || fallback;
 const pretty = (value: unknown) => text(value).replaceAll("_", " ");
@@ -39,11 +51,16 @@ export default function CustomerExperiencePage() {
   const [threads, setThreads] = useState<Thread[]>([]);
   const [selected, setSelected] = useState("");
   const [conversation, setConversation] = useState<Conversation | null>(null);
+  const [control, setControl] = useState<WhatsAppControl | null>(null);
   const [serviceWindowCheckedAt, setServiceWindowCheckedAt] = useState(0);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
+  const [reply, setReply] = useState("");
+  const [replyRequestId, setReplyRequestId] = useState("");
+  const [routingReason, setRoutingReason] = useState("CX operator routing decision");
 
   const loadThreads = useCallback(async () => {
     const response = await fetch("/api/conversations?status=open", { cache: "no-store" });
@@ -61,6 +78,20 @@ export default function CustomerExperiencePage() {
     if (!response.ok) throw new Error(payload.error || `Unable to load conversation (HTTP ${response.status})`);
     setConversation(payload.data || null);
     setServiceWindowCheckedAt(Date.now());
+  }, []);
+
+  const loadControl = useCallback(async (id: string) => {
+    if (!id) return null;
+    const response = await fetch(`/api/whatsapp/conversation-control?threadId=${encodeURIComponent(id)}`, { cache: "no-store" });
+    const payload = await response.json().catch(() => ({})) as { data?: WhatsAppControl; error?: string };
+    if (response.status === 409 || response.status === 404) {
+      setControl(null);
+      return null;
+    }
+    if (!response.ok) throw new Error(payload.error || `Unable to load WhatsApp controls (HTTP ${response.status})`);
+    const next = payload.data || null;
+    setControl(next);
+    return next;
   }, []);
 
   useEffect(() => {
@@ -84,7 +115,7 @@ export default function CustomerExperiencePage() {
     if (!selected) return;
     let active = true;
     const timer = window.setTimeout(() => {
-      void loadConversation(selected).catch((cause) => {
+      void Promise.all([loadConversation(selected), loadControl(selected)]).catch((cause) => {
         if (active) setError(cause instanceof Error ? cause.message : String(cause));
       });
     }, 0);
@@ -92,12 +123,13 @@ export default function CustomerExperiencePage() {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [selected, loadConversation]);
+  }, [selected, loadConversation, loadControl]);
 
   async function act(action: string, payload: Row) {
-    if (!selected) return;
+    if (!selected) return false;
     setBusy(true);
     setError("");
+    setNotice("");
     try {
       const response = await fetch("/api/conversations", {
         method: "POST",
@@ -106,11 +138,49 @@ export default function CustomerExperiencePage() {
       });
       const body = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(body.error || `Action failed (HTTP ${response.status})`);
-      await Promise.all([loadThreads(), loadConversation(selected)]);
+      await Promise.all([loadThreads(), loadConversation(selected), loadControl(selected)]);
+      return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+      return false;
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function controlAct(action: string, payload: Row = {}) {
+    if (!selected) return false;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch("/api/whatsapp/conversation-control", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action, threadId: selected, ...payload }),
+      });
+      const body = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(body.error || `WhatsApp control failed (HTTP ${response.status})`);
+      await Promise.all([loadThreads(), loadConversation(selected), loadControl(selected)]);
+      return true;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendHumanReply() {
+    const message = reply.trim();
+    if (!message) return;
+    const clientRequestId = replyRequestId || crypto.randomUUID();
+    if (!replyRequestId) setReplyRequestId(clientRequestId);
+    const sent = await controlAct("human_reply", { message, clientRequestId });
+    if (sent) {
+      setReply("");
+      setReplyRequestId("");
+      setNotice("Reply queued through the governed WhatsApp outbox.");
     }
   }
 
@@ -119,14 +189,19 @@ export default function CustomerExperiencePage() {
     if (!hay.includes(query.toLowerCase())) return false;
     if (filter === "unassigned") return !text(row.assigned_to, "");
     if (filter === "whatsapp") return text(row.lastMessage?.channel, "") === "whatsapp";
-    if (filter === "human") return Boolean(text(row.assigned_to, ""));
+    if (filter === "human") return Boolean(text(row.assigned_to, "")) && text(row.assigned_to, "") !== "ai-orchestrator";
     return true;
   }), [threads, query, filter]);
 
   const thread = conversation?.thread || null;
   const messages = conversation?.messages || [];
   const assigned = thread ? text(thread.assigned_to, "") : "";
-  const humanOwned = Boolean(assigned);
+  const routingMode = control?.routing?.mode || "human_only";
+  const humanMode = routingMode === "human_only";
+  const aiMode = routingMode === "ai_assistant";
+  const handoffRow = control?.handoff?.current || null;
+  const handoffStatus = text(handoffRow?.status, "");
+  const humanOwned = humanMode && (handoffStatus === "staff_active" || Boolean(assigned && assigned !== "ai-orchestrator"));
   const lastInbound = [...messages].reverse().find((message) => text(message.direction, "") === "inbound");
   const withinWindow = Boolean(
     lastInbound
@@ -141,6 +216,9 @@ export default function CustomerExperiencePage() {
   const leadId = text(thread?.lead_id, "Not lead-linked");
   const ticket = thread?.ticket as Row | undefined;
   const consentState = text((lastMessage?.payload as Row | undefined)?.consentStatus, "Verified by governed channel policy");
+  const isWhatsApp = Boolean(control);
+  const canSendHumanReply = Boolean(isWhatsApp && humanMode && control?.canHumanReply && withinWindow && reply.trim() && !busy);
+  const modeLabel = humanMode ? "Human only" : aiMode ? "AI Assistant" : "Chatbot only";
 
   return (
     <OpsShell
@@ -150,6 +228,7 @@ export default function CustomerExperiencePage() {
       actions={<><Badge tone="info">UAT sandbox</Badge><Badge tone="warning">Production delivery disabled</Badge></>}
     >
       {error ? <div className={`${teamStyles.panel} ${teamStyles.panelError}`}><b>{error}</b></div> : null}
+      {notice ? <div className={teamStyles.panel}><b>{notice}</b></div> : null}
       <div className={styles.shell}>
         <aside className={styles.rail}>
           <div className={styles.brand}><div className={styles.brandMark}>PS</div><div><strong>PawSpace</strong><small>WhatsApp AI Customer Operations</small></div></div>
@@ -190,7 +269,8 @@ export default function CustomerExperiencePage() {
             {visible.length === 0 ? (
               <EmptyState title="No conversations match this view." className={styles.empty} />
             ) : visible.map((row) => {
-              const isHuman = Boolean(text(row.assigned_to, ""));
+              const owner = text(row.assigned_to, "");
+              const isHuman = Boolean(owner && owner !== "ai-orchestrator");
               const channel = text(row.lastMessage?.channel, "thread");
               return (
                 <button
@@ -203,7 +283,7 @@ export default function CustomerExperiencePage() {
                   <div className={styles.rowTop}><strong>{text(row.customer_name || row.customer_id, "Customer")}</strong><small>{when(row.lastMessage?.created_at || row.updated_at)}</small></div>
                   <small>{pretty(channel)} · {text(row.lead_id, "canonical customer")}</small>
                   <small>{text((row.lastMessage?.payload as Row | undefined)?.text || row.lastMessage?.template_key, "No message preview")}</small>
-                  <div className={styles.pillWrap}><span className={`${styles.pill} ${isHuman ? styles.pillHuman : channel === "whatsapp" ? "" : styles.pillWarn}`}>{isHuman ? `Human owned · ${text(row.assigned_to)}` : channel === "whatsapp" ? "AI eligible" : "Open"}</span></div>
+                  <div className={styles.pillWrap}><span className={`${styles.pill} ${isHuman ? styles.pillHuman : channel === "whatsapp" ? "" : styles.pillWarn}`}>{isHuman ? `Human owned · ${owner}` : channel === "whatsapp" ? "WhatsApp open" : "Open"}</span></div>
                 </button>
               );
             })}
@@ -215,12 +295,15 @@ export default function CustomerExperiencePage() {
             <EmptyState title="Select a conversation" body="Open the canonical WhatsApp thread from the shared inbox." className={styles.empty} />
           ) : <>
             <header className={styles.chatHead}>
-              <div className={styles.person}><div className={styles.avatar}>{initials(customerName)}</div><div><h2>{customerName}</h2><small>{leadId} · {humanOwned ? `Owner: ${assigned}` : "AI-assisted queue"}</small></div></div>
-              <span className={styles.window}>{withinWindow ? "WhatsApp service window open" : "Template required"}</span>
+              <div className={styles.person}><div className={styles.avatar}>{initials(customerName)}</div><div><h2>{customerName}</h2><small>{leadId} · {isWhatsApp ? `${modeLabel}${humanOwned ? ` · Owner: ${assigned}` : ""}` : pretty(lastMessage?.channel || "conversation")}</small></div></div>
+              <span className={styles.window}>{isWhatsApp ? (withinWindow ? "WhatsApp service window open" : "Template required") : "Canonical conversation"}</span>
             </header>
             <div className={styles.aiBar}>
-              <div><b>{humanOwned ? "Human takeover active" : "PawSpace AI eligible"}</b><br /><span>{humanOwned ? "AI is stopped until an authorized resume action is implemented." : "AI may qualify the enquiry; high-impact actions remain governed."}</span></div>
-              <Button size="sm" variant="secondary" className={styles.takeover} disabled={busy || humanOwned} onClick={() => { void act("assign", { assignedTo: "CX Queue", reason: "WhatsApp AI human takeover" }); }}>Take over</Button>
+              <div>
+                <b>{isWhatsApp ? `${modeLabel} routing` : "Non-WhatsApp conversation"}</b><br />
+                <span>{!isWhatsApp ? "WhatsApp routing controls apply only to canonical WhatsApp threads." : humanMode ? "Human replies use the governed outbox; AI is blocked for this thread." : aiMode ? "AI may qualify the enquiry; high-impact actions and handoff rules remain governed." : "Chatbot mode is visible but remains fail-closed until the deterministic flow engine is certified."}</span>
+              </div>
+              <Button size="sm" variant="secondary" className={styles.takeover} disabled={busy || !isWhatsApp || humanOwned} onClick={() => { void controlAct("take_over", { reason: routingReason }); }}>Take over</Button>
             </div>
             <section className={styles.messages}>
               {messages.length === 0 ? (
@@ -235,8 +318,15 @@ export default function CustomerExperiencePage() {
             </section>
             <div className={styles.notice}>This workspace does not bypass consent, quiet-hour, retry or adapter controls. AI may make mistakes. Price, availability, payment, cancellation and provider actions stay governed.</div>
             <footer className={styles.composer}>
-              <input disabled placeholder={humanOwned ? "Human reply composer will use governed outbound actions" : "AI/customer replies appear here from the canonical channel"} />
-              <Button type="button" className={styles.send} disabled>Send</Button>
+              <input
+                value={reply}
+                onChange={(event) => { setReply(event.target.value); setReplyRequestId(""); }}
+                disabled={!isWhatsApp || !humanMode || busy || !withinWindow}
+                maxLength={4096}
+                placeholder={!isWhatsApp ? "Select a WhatsApp thread to reply" : !humanMode ? "Take over or switch to Human only to reply" : !withinWindow ? "24-hour window closed — use an approved template" : "Reply as PawSpace CX..."}
+                onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && canSendHumanReply) { event.preventDefault(); void sendHumanReply(); } }}
+              />
+              <Button type="button" className={styles.send} disabled={!canSendHumanReply} onClick={() => { void sendHumanReply(); }}>Send</Button>
             </footer>
           </>}
         </main>
@@ -247,15 +337,25 @@ export default function CustomerExperiencePage() {
           <section className={styles.card}><div className={styles.cardHead}><strong>Qualification</strong><a>AI summary</a></div><div className={styles.kv}><span>Customer</span><b>{customerName}</b><span>Source</span><b>{leadId}</b><span>Latest channel</span><b>{pretty(lastMessage?.channel)}</b><span>Status</span><b>{pretty(thread?.status)}</b></div></section>
           <section className={styles.card}><div className={styles.cardHead}><strong>Booking / Ticket Context</strong><a>Read-only</a></div><div className={styles.kv}><span>Ticket</span><b>{text(ticket?.id, "None")}</b><span>Priority</span><b>{pretty(ticket?.priority || "normal")}</b><span>Subject</span><b>{text(ticket?.subject, "No active ticket")}</b><span>Promise</span><b>Never invent slot/price</b></div></section>
           <section className={styles.card}>
+            <div className={styles.cardHead}><strong>Conversation Routing</strong><a>{isWhatsApp ? modeLabel : "Not WhatsApp"}</a></div>
+            <input className={styles.search} value={routingReason} onChange={(event) => setRoutingReason(event.target.value)} maxLength={240} aria-label="Routing change reason" />
+            <div className={styles.actions}>
+              <Button size="sm" className={`${styles.action} ${humanMode ? styles.actionPrimary : ""}`} disabled={busy || !isWhatsApp} onClick={() => { void controlAct("set_mode", { mode: "human_only", reason: routingReason }); }}>Human only</Button>
+              <Button size="sm" variant="secondary" className={styles.action} disabled title="Chatbot mode unlocks only after deterministic flow-engine certification">Chatbot only</Button>
+              <Button size="sm" className={`${styles.action} ${aiMode ? styles.actionGreen : ""}`} disabled={busy || !isWhatsApp} onClick={() => { void controlAct(control?.handoff?.aiPaused ? "resume_ai" : "set_mode", control?.handoff?.aiPaused ? { reason: routingReason } : { mode: "ai_assistant", reason: routingReason }); }}>AI Assistant</Button>
+            </div>
+            <div className={styles.kv}><span>Provider</span><b>{text(control?.provider, isWhatsApp ? "sandbox simulator" : "—")}</b><span>AI paused</span><b>{control?.handoff?.aiPaused ? "Yes" : "No"}</b><span>Handoff</span><b>{pretty(handoffStatus || "none")}</b><span>Production delivery</span><b>Disabled</b></div>
+          </section>
+          <section className={styles.card}>
             <div className={styles.cardHead}><strong>Handoff Controls</strong><a>Policy</a></div>
             <div className={styles.actions}>
-              <Button size="sm" className={`${styles.action} ${styles.actionPrimary}`} disabled={busy || humanOwned} onClick={() => { void act("assign", { assignedTo: "CX Queue", reason: "WhatsApp AI human takeover" }); }}>Take over</Button>
-              <Button size="sm" variant="secondary" className={styles.action} disabled title="Resume AI requires an explicit governed resume endpoint">Resume AI</Button>
+              <Button size="sm" className={`${styles.action} ${styles.actionPrimary}`} disabled={busy || !isWhatsApp || humanOwned} onClick={() => { void controlAct("take_over", { reason: routingReason }); }}>Take over</Button>
+              <Button size="sm" variant="secondary" className={styles.action} disabled={busy || !isWhatsApp || !control?.handoff?.aiPaused} onClick={() => { void controlAct("resume_ai", { reason: routingReason }); }}>Resume AI</Button>
               <Button size="sm" variant="secondary" className={styles.action} disabled={busy} onClick={() => { void act("status", { status: "pending_customer", reason: "Awaiting customer response" }); }}>Await customer</Button>
               <Button size="sm" className={`${styles.action} ${styles.actionGreen}`} disabled={busy} onClick={() => { void act("status", { status: "resolved", reason: "Customer Experience resolved" }); }}>Resolve</Button>
             </div>
           </section>
-          <section className={styles.card}><div className={styles.cardHead}><strong>Activity / Audit Trail</strong><a>Canonical</a></div><div className={styles.audit}>{messages.slice(-5).reverse().map((message) => <div className={styles.auditItem} key={`audit-${text(message.id)}`}><span className={styles.auditDot} /><span>{when(message.created_at)} · {pretty(message.channel)} {pretty(message.direction)} · {pretty(message.status)}</span></div>)}{messages.length === 0 ? <small>No message events yet.</small> : null}</div></section>
+          <section className={styles.card}><div className={styles.cardHead}><strong>Activity / Audit Trail</strong><a>Canonical</a></div><div className={styles.audit}>{messages.slice(-5).reverse().map((message) => <div className={styles.auditItem} key={`audit-${text(message.id)}`}><span className={styles.auditDot} /><span>{when(message.created_at)} · {pretty(message.channel)} {pretty(message.direction)} · {pretty(message.status)}</span></div>)}{control?.handoff?.events?.slice(-3).reverse().map((event) => <div className={styles.auditItem} key={`handoff-${text(event.id)}`}><span className={styles.auditDot} /><span>{when(event.created_at)} · {pretty(event.event_type)} · {text(event.actor_email)}</span></div>)}{messages.length === 0 && !control?.handoff?.events?.length ? <small>No message events yet.</small> : null}</div></section>
         </aside>
       </div>
     </OpsShell>
