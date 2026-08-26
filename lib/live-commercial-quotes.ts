@@ -72,7 +72,9 @@ export async function createLiveBoardingQuote(db:D1Database,input:{packageCode:s
   if(live.source==="fallback_default")return quote;
   const totalAmount=live.price*quote.petCount*quote.stayUnits;
   const amountDueNow=quote.paymentMode==="split_50_50"?splitPaymentPlan({totalAmount,scheduledStart:quote.scheduledStart}).dueNow:totalAmount;
-  await db.prepare("UPDATE boarding_commercial_quotes SET total_amount=?,amount_due_now=? WHERE id=? AND status='open'").bind(totalAmount,amountDueNow,quote.quoteId).run();
+  // The priced UNIT is written back beside the priced total, so governBoardingBooking records a
+  // decomposition that adds up to what was charged rather than the stale catalogue figure. [PTJA-W1-F15]
+  await db.prepare("UPDATE boarding_commercial_quotes SET total_amount=?,amount_due_now=?,priced_base_price_per_pet=? WHERE id=? AND status='open'").bind(totalAmount,amountDueNow,live.price,quote.quoteId).run();
   return{...quote,basePricePerPet:live.price,totalAmount,amountDueNow};
 }
 
@@ -85,6 +87,8 @@ export async function createLiveSittingQuote(db:D1Database,input:{packageCode:st
   if(base.source==="fallback_default"&&extra.source==="fallback_default")return quote;
   const unitAmount=base.price+Math.max(0,quote.petCount-1)*extra.price,totalAmount=unitAmount*quote.billableUnits;
   const amountDueNow=quote.paymentMode==="split_50_50"?splitPaymentPlan({totalAmount,scheduledStart:quote.scheduledStart}).dueNow:totalAmount;
-  await db.prepare("UPDATE sitting_commercial_quotes SET total_amount=?,amount_due_now=? WHERE id=? AND status='open'").bind(totalAmount,amountDueNow,quote.quoteId).run();
+  // Both priced units, for the same reason. Whichever half resolved from Pricing Control is the one
+  // that produced the total, and the other is the catalogue value this quote actually used. [PTJA-W1-F15]
+  await db.prepare("UPDATE sitting_commercial_quotes SET total_amount=?,amount_due_now=?,priced_base_price_per_pet=?,priced_extra_pet_price=? WHERE id=? AND status='open'").bind(totalAmount,amountDueNow,base.price,extra.price,quote.quoteId).run();
   return{...quote,basePricePerPet:base.price,extraPetPrice:extra.price,totalAmount,amountDueNow};
 }

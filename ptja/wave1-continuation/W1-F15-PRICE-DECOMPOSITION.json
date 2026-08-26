@@ -1,0 +1,61 @@
+{
+  "finding": "F15",
+  "domain": "02-commercial-catalogue",
+  "title": "A confirmed Sitting/Boarding booking stored a price decomposition that did not add up to the amount charged",
+  "severity": "P1",
+  "class": "data-integrity",
+  "status": "fixed",
+  "evidence_class": "real_execution",
+  "file": "lib/sitting-governance.ts governSittingBooking / lib/boarding-governance.ts governBoardingBooking",
+
+  "reproduction": "scratchpad repro executing the real libraries: activate the canonical unit price in service_packages with dynamic_pricing_rules emptied, call createLiveSittingQuote / createLiveBoardingQuote for a 48h window, then call governSittingBooking / governBoardingBooking with the quote's own amounts. The returned object is exactly what app/api/sitting-bookings/route.ts and app/api/canonical-bookings/route.ts serialise into canonical_bookings.pricing_json.",
+
+  "measured_before": {
+    "sitting": "quote returned {basePricePerPet:1200, billableUnits:2, totalAmount:2400}; GOVERNED {basePricePerPet:799, extraPetPrice:399, billableUnits:2, totalAmount:2400}. 799 x 2 = 1598 against 2400 charged - Rs 802 short.",
+    "boarding": "quote returned {basePricePerPet:2500, stayUnits:2, totalAmount:5000}; GOVERNED {basePricePerPet:699, stayUnits:2, totalAmount:5000}. 699 x 2 = 1398 against 5000 charged."
+  },
+
+  "measured_after": {
+    "sitting": "GOVERNED {basePricePerPet:1200, billableUnits:2, totalAmount:2400}. 1200 x 2 = 2400.",
+    "boarding": "GOVERNED {basePricePerPet:2500, stayUnits:2, totalAmount:5000}. 2500 x 2 = 5000.",
+    "nothing_activated_control": "GOVERNED carries the catalogue price and still adds up, byte-identical to before the fix."
+  },
+
+  "cause": "createLiveSittingQuote and createLiveBoardingQuote overwrote the quote row's total_amount with the Pricing-Control-resolved figure but never wrote the priced UNIT back. governSittingBooking / governBoardingBooking join the package table for price, so they could only ever return the stale catalogue number.",
+
+  "consequence_closed": "A booking that charged Rs 2,400 was recorded as 'Rs 799 per night x 2 nights'. Anyone reconciling it - a finance reviewer, an invoice line, a support agent explaining a disputed charge, or any report recomputing revenue from the unit breakdown - got a figure Rs 802 short of what was taken, with no marker that the two disagree. It appeared only once an operator activated a live price, which is precisely when someone is most likely to be checking the numbers.",
+
+  "rule_source": "Internal consistency of the record the route itself writes: basePricePerPet, extraPetPrice and billableUnits are persisted next to total_amount as a decomposition of that total. No product decision is involved - the two fields are claims about the same transaction and they contradicted each other.",
+
+  "fix": {
+    "approach": "The priced unit is WRITTEN BACK to the quote row, not recomputed from total/units at read time. Recomputation would hide a genuine mismatch behind arithmetic; the row is the record.",
+    "files_changed": [
+      "lib/sitting-governance.ts - two nullable quote columns (priced_base_price_per_pet, priced_extra_pet_price) via the module's existing additive ensureQuoteColumn migration; the governed read is COALESCE(priced, package)",
+      "lib/boarding-governance.ts - the same, for priced_base_price_per_pet",
+      "lib/live-commercial-quotes.ts - both repricing UPDATEs now store the priced unit(s) beside the priced total"
+    ],
+    "backward_compatible": "The columns are nullable and additive. A quote created before this change, or one never repriced because no Pricing Control row is active, carries NULL and the governed read falls back to the package column exactly as before."
+  },
+
+  "regression": {
+    "file": "tests/ptja-w1-f15-price-decomposition.test.mjs",
+    "cases": 5,
+    "sabotage_verification": [
+      "The priced unit is no longer written back to either quote row -> cases 1, 2, 3, 5 fail; the fallback control passes.",
+      "The governed reads go back to the package join only -> cases 1, 2, 3 fail; the fallback control and the durable-row case pass.",
+      "The NULL fallback broken so an unpriced quote reads 0 -> only case 4 fails.",
+      "Fix restored -> 5/5."
+    ],
+    "non_vacuity_controls": [
+      "case 4: with nothing activated the governed record is the catalogue price and still adds up - identical to before the fix. This is also the backward-compatibility guarantee, and it is the only case that catches a broken NULL fallback.",
+      "case 5: asserts the durable quote row rather than the returned object, so the fix cannot be satisfied by recomputing at read time."
+    ]
+  },
+
+  "gates": {
+    "full_repository_regression": "3155/3155",
+    "typecheck": "clean",
+    "lint": "0 errors",
+    "test_churn": "none"
+  }
+}
