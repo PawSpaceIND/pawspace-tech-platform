@@ -70,10 +70,6 @@ async function world({ withStaff = true } = {}) {
   return { sqlite, db, owner, now };
 }
 
-const attempt = (promise) => promise.then(
-  (value) => ({ ok: true, value }),
-  async (error) => ({ ok: false, message: error instanceof Response ? await error.clone().text() : String(error?.message ?? error) }),
-);
 
 const seedMembership = (sqlite, email, now) =>
   sqlite.prepare("INSERT INTO lead_assignment_memberships (id,employee_email,team_code,service_codes_json,city_ids_json,language_codes_json,active,created_by,created_at,updated_by,updated_at) VALUES (?,?,'sales','[]','[]','[]',1,'seed',?,'seed',?)")
