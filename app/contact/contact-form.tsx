@@ -10,7 +10,7 @@ export default function ContactForm(){
     event.preventDefault();
     setStatus("sending");setError("");
     const form=event.currentTarget,data=new FormData(form);
-    const body={name:String(data.get("name")||""),phone:String(data.get("phone")||""),email:String(data.get("email")||""),service:String(data.get("service")||""),message:String(data.get("message")||"")};
+    const body={name:String(data.get("name")||""),phone:String(data.get("phone")||""),email:String(data.get("email")||""),service:String(data.get("service")||""),message:String(data.get("message")||""),whatsappConsent:data.get("whatsappConsent")==="yes"};
     try{
       const response=await fetch("/api/public-contact",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
       const result=await response.json() as{error?:string};
@@ -38,6 +38,7 @@ export default function ContactForm(){
       </select></label>
     </div>
     <label>Message (optional)<textarea name="message" rows={4} placeholder="Tell us a bit more about what you need" style={{...inputStyle,resize:"vertical" as const}}/></label>
+    <label style={{display:"flex",alignItems:"flex-start",gap:9,fontSize:13,lineHeight:1.45}}><input name="whatsappConsent" value="yes" type="checkbox" style={{marginTop:3}}/> I agree that PawSpace may send one WhatsApp response about this enquiry. This is not marketing, and I can reply STOP at any time.</label>
     {error?<p style={{color:"#b3261e",fontSize:13,margin:0}}>{error}</p>:null}
     <button type="submit" disabled={status==="sending"} className={styles.primary} style={{justifySelf:"start",border:0,cursor:"pointer"}}>
       {status==="sending"?"Sending…":"Send message"}
