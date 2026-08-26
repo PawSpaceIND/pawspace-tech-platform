@@ -752,16 +752,28 @@ test("P1-F1: a booking is credited to the lead for the service that was actually
   assert.equal(leadRow("LEAD-BOARD").converted_booking_id, null);
 });
 
-test("P1-F1: with no service match the existing newest-open-lead behaviour is unchanged", async () => {
-  // Non-vacuity, and a deliberate limit: crediting NOBODY when no lead matches would be a product
-  // decision. A customer who enquired about boarding and bought grooming still converts their open lead.
+test("P1-F1: with no service match NO lead is credited", async () => {
+  /*
+   * SUPERSEDED BY A BUSINESS DECISION, not weakened. This case previously asserted the opposite - that
+   * the newest open lead still takes an unmatched booking - and said in its own comment that crediting
+   * nobody would be a product decision. The business has since made that decision: never credit the
+   * newest unrelated open lead; record the booking as direct_booking instead, because a Boarding rep
+   * credited with a Grooming conversion is a false campaign figure and a Boarding enquiry closed while
+   * the customer is still waiting to hear about boarding.
+   *
+   * The non-vacuity the old case provided is not lost: the two cases either side of it still prove that
+   * a matching lead IS credited and that recency decides within a matching service.
+   * tests/ptja-w3-lead-attribution.test.mjs owns the new rule. [PTJA-W3-LA]
+   */
   const { db, attribution, lead, booking, leadRow, now } = await attributionWorld();
   lead("LEAD-OLD", "boarding", now - 5 * 86_400_000, "rep.a@pawspace.test");
   lead("LEAD-NEW", "dog_training", now - 1 * 86_400_000, "rep.b@pawspace.test");
   booking("BK-GROOM", "grooming");
   const result = await attribution.attributeBookingToOpenLead(db, { customerId: "CUST-F1", bookingId: "BK-GROOM" });
-  assert.equal(result?.leadId, "LEAD-NEW", "the newest open lead still takes it when nothing matches");
-  assert.equal(String(leadRow("LEAD-NEW").status), "converted");
+  assert.equal(result?.leadId, null, `no unrelated lead may be credited: ${JSON.stringify(result)}`);
+  assert.equal(result?.attribution, "direct_booking", "the booking is recorded as system-origin instead");
+  assert.equal(String(leadRow("LEAD-NEW").status), "active", "and both enquiries stay open");
+  assert.equal(String(leadRow("LEAD-OLD").status), "active");
 });
 
 test("P1-F1: among several leads for the SAME service the newest still wins", async () => {

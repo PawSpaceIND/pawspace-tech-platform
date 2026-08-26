@@ -391,6 +391,11 @@ test("attribution: booking without captured payment keeps the lead open", async 
   await attribution.ensureLeadWorkItemsTable(db);
   seedContact(sqlite, "CU-ATTR");
   seedLead(sqlite, "LEAD-ATTR", "CU-ATTR", "grooming");
+  // The canonical booking is seeded because a real booking route inserts it BEFORE calling this hook,
+  // and attribution now matches on the booked service. Without the row the service is unknown, which is
+  // correctly treated as "no matching lead" - so the fixture, not the rule, was the gap. [PTJA-W3-LA]
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,service_code TEXT,status TEXT,created_at INTEGER,updated_at INTEGER)");
+  sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,status,created_at,updated_at) VALUES ('BK-ATTR','CU-ATTR','grooming','confirmed',?,?)").run(NOW, NOW);
   sqlite.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,status,created_at) VALUES (?,?,?,?,?,?)")
     .run("PAY-1", "BK-ATTR", "CU-ATTR", 1349, "created", NOW);
 
@@ -418,12 +423,16 @@ test("attribution: payment capture credits the lead the booking actually came fr
   seedLead(sqlite, "LEAD-NEW", "CU-TWO", "boarding");
   sqlite.prepare("UPDATE lead_work_items SET assigned_at=? WHERE id='LEAD-OLD'").run(NOW - HOUR);
   sqlite.prepare("UPDATE lead_work_items SET assigned_at=? WHERE id='LEAD-NEW'").run(NOW);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,service_code TEXT,status TEXT,created_at INTEGER,updated_at INTEGER)");
+  sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,status,created_at,updated_at) VALUES ('BK-GROOM','CU-TWO','grooming','confirmed',?,?)").run(NOW, NOW);
   sqlite.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,status,created_at) VALUES (?,?,?,?,?,?)")
     .run("PAY-OLD", "BK-GROOM", "CU-TWO", 1349, "created", NOW);
 
-  // The booking is attributed to the newest open lead at creation time...
+  // The booking is attributed at creation time to the lead for the service it actually books - the
+  // OLDER grooming enquiry, not the newer boarding one. The fixture previously omitted the canonical
+  // booking, so the service was unknown and the old newest-open-lead fallback picked boarding.
   const linked = await attribution.attributeBookingToOpenLead(db, { customerId: "CU-TWO", bookingId: "BK-GROOM" });
-  assert.equal(linked.leadId, "LEAD-NEW");
+  assert.equal(linked.leadId, "LEAD-OLD", "the grooming enquiry is the one this grooming booking came from");
 
   // ...then a THIRD, even newer lead arrives before the payment is captured.
   seedLead(sqlite, "LEAD-NEWEST", "CU-TWO", "dog_walking");
@@ -431,9 +440,9 @@ test("attribution: payment capture credits the lead the booking actually came fr
   sqlite.prepare("UPDATE booking_payments SET status='captured' WHERE booking_id='BK-GROOM'").run();
 
   const converted = await attribution.convertLeadOnPaymentCaptured(db, { customerId: "CU-TWO", bookingId: "BK-GROOM" });
-  assert.equal(converted.leadId, "LEAD-NEW", "the lead this booking was linked to gets the credit, not whichever lead is newest");
+  assert.equal(converted.leadId, "LEAD-OLD", "the lead this booking was linked to gets the credit, not whichever lead is newest");
   assert.equal(sqlite.prepare("SELECT status FROM lead_work_items WHERE id='LEAD-NEWEST'").get().status, "active", "an unrelated newer lead is untouched");
-  assert.equal(sqlite.prepare("SELECT status FROM lead_work_items WHERE id='LEAD-OLD'").get().status, "active");
+  assert.equal(sqlite.prepare("SELECT status FROM lead_work_items WHERE id='LEAD-NEW'").get().status, "active", "and so is the boarding enquiry");
 });
 
 // ---------------------------------------------------------------------------
