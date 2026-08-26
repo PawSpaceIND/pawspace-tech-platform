@@ -1,5 +1,6 @@
 import{authError}from"../../../lib/server-auth";
 import{governedJsonError}from"../../../lib/governed-http-error";
+import{startWhatsAppAiLead}from"../../../lib/whatsapp-ai-lead-orchestration";
 // Public, unauthenticated lead-capture endpoint for the marketing site's contact form.
 // This intentionally does NOT reuse the staff-only /api/crm route directly - that route
 // requires "customers.manage" and exposes broader staff capability. This route is create-only.
@@ -60,7 +61,8 @@ export async function POST(request:Request){
       db.prepare("INSERT INTO crm_tasks (id,contact_id,title,owner,due_at,priority,status,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(taskId,id,"First response to new website lead",assignedOwner,now+10*60*1000,"High","Open",now),
       db.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,call_attempts,whatsapp_attempts,next_action_at,recycle_cycle,opt_out,created_at,updated_at) VALUES (?,?,?,?,?,?,'active','day_1',1,?,?,?,0,0,?,0,0,?,?)").bind(leadId,id,"Website contact form",service,assignedOwner,"Sales Manager",now,now+10*60000,now+30*60000,now+10*60000,now,now),
     ]);
-    return json({ok:true,leadId},201);
+    let whatsappAi:Record<string,unknown>;try{whatsappAi=await startWhatsAppAiLead(db,{leadId,contactId:id,idempotencyKey:`lead-created:${leadId}`,consentGranted:body.whatsappConsent===true,consentSource:"website_contact_checkbox",consentEvidenceRef:body.whatsappConsent===true?"public-contact-whatsapp-consent-v1":"",actorId:"public-contact",assignedTo:assignedOwner,cityId:"blr"});}catch{whatsappAi={status:"failed",reason:"internal_automation_error",externalDelivery:false,marketing:false};}
+    return json({ok:true,leadId,whatsappAi:{status:whatsappAi.status,reason:whatsappAi.reason}},201);
   }catch(error){
     return authError(error,"Unable to submit your enquiry - please try again");
   }

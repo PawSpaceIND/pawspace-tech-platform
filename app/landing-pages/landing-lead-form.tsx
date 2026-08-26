@@ -16,6 +16,7 @@ export default function LandingLeadForm({service,pet,formTitle,formCta}:{service
       area:String(data.get("area")||""),
       petNames:pet,
       service,
+      whatsappConsent:data.get("whatsappConsent")==="yes",
     };
     try{
       const response=await fetch("/api/public-contact",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
@@ -38,6 +39,7 @@ export default function LandingLeadForm({service,pet,formTitle,formCta}:{service
       <input aria-label="Phone number" name="phone" type="tel" required pattern="[0-9+\s-]{10,15}" placeholder="Phone number"/>
       <input aria-label="Area or location" name="area" placeholder="Area / location"/>
       <select aria-label="Pet type" name="pet" disabled><option>{pet}</option></select>
+      <label style={{gridColumn:"1 / -1",display:"flex",gap:8,alignItems:"flex-start",fontSize:12,lineHeight:1.4}}><input name="whatsappConsent" value="yes" type="checkbox"/> I agree that PawSpace may send one WhatsApp response about this enquiry. This is not marketing, and I can reply STOP at any time.</label>
       {error?<p style={{color:"#b3261e",fontSize:13,margin:0,gridColumn:"1 / -1"}}>{error}</p>:null}
       <button type="submit" disabled={status==="sending"}>{status==="sending"?"Sending…":formCta}</button>
     </form>
