@@ -1,4 +1,5 @@
 import { defaultRoles, hasPermission, type Permission } from "./platform-security";
+import{isDevelopmentPreviewRequest}from"./development-preview";
 import { resolveUatStaffActor, signInRequiredResponse, uatLoginEnabled } from "./uat-staging-auth";
 import { resolvePlatformSession } from "./platform-session";
 
@@ -195,7 +196,7 @@ async function audit(env:GatewayEnv,actor:GatewayActor,request:Request,outcome:s
 
 export async function authorizeApiRequest(request:Request,env:GatewayEnv):Promise<{actor:GatewayActor;permission:Permission|null}|Response>{const url=new URL(request.url);if(!url.pathname.startsWith("/api/"))return {actor:{email:"",roleCode:"public",permissions:[],preview:false},permission:null};const permission=await requiredPermission(request);if(permission===null)return {actor:{email:"",roleCode:"public",permissions:[],preview:false},permission:null};
   if(!["GET","HEAD","OPTIONS"].includes(request.method)){const origin=request.headers.get("origin");if(origin&&origin!==url.origin)return Response.json({error:"Cross-origin write blocked"},{status:403});}
-  if(["terminal.local","localhost","127.0.0.1"].includes(url.hostname))return {actor:{email:"preview@pawspace.test",roleCode:"superuser",permissions:["*"],preview:true},permission};
+  if(isDevelopmentPreviewRequest(request))return {actor:{email:"preview@pawspace.test",roleCode:"superuser",permissions:["*"],preview:true},permission};
   // Staging-only UAT sign-in: honour the signed UAT cookie when enabled (a no-op in production, where
   // PAWSPACE_UAT_LOGIN is unset, so this falls straight through to the real header-based identity check).
   const uat=await resolveUatStaffActor(env.DB,request,env as unknown as Record<string,unknown>);
