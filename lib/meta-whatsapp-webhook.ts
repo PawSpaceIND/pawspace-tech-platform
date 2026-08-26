@@ -89,7 +89,8 @@ export async function processMetaWhatsAppEvents(db:D1Database,events:MetaWhatsAp
   const message=await db.prepare("SELECT id FROM communication_messages WHERE channel='whatsapp' AND provider='meta_whatsapp' AND (provider_reference=? OR id=?) LIMIT 1").bind(event.providerMessageId,event.providerMessageId).first<Row>();
   if(!message){results.push({eventId:event.eventId,status:"ignored",reason:"unknown_provider_message",externalDelivery:false});continue;}
   const delivery=await recordWhatsAppUatDelivery(db,{provider:"meta_whatsapp",eventId:event.eventId,messageId:text(message.id),eventType:event.status,payloadHash,detail:{metaProviderMessageId:event.providerMessageId,metaStatus:event.status}});
-  results.push({eventId:event.eventId,status:event.status,messageId:text(message.id),duplicatePrevented:Boolean(delivery.duplicatePrevented),staffFallbackRequired:Boolean(delivery.staffFallbackRequired),externalDelivery:false});
+  const staffFallbackRequired="staffFallbackRequired" in delivery&&Boolean(delivery.staffFallbackRequired);
+  results.push({eventId:event.eventId,status:event.status,messageId:text(message.id),duplicatePrevented:Boolean(delivery.duplicatePrevented),staffFallbackRequired,externalDelivery:false});
  }
  return results;
 }
