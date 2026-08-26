@@ -1,4 +1,7 @@
+import{requestAiHumanHandoff}from"./ai-human-handoff";
 import{ensureWhatsAppAiLeadTables}from"./whatsapp-ai-lead-orchestration";
+import{runWhatsAppChatbotTurn}from"./whatsapp-chatbot";
+import{getWhatsAppConversationMode,setWhatsAppConversationMode}from"./whatsapp-conversation-control";
 import{recordWhatsAppUatDelivery,recordWhatsAppUatInbound}from"./whatsapp-uat-adapter";
 
 type Row=Record<string,unknown>;
@@ -6,6 +9,7 @@ const encoder=new TextEncoder();
 const text=(value:unknown)=>String(value??"").trim();
 const hex=(buffer:ArrayBuffer)=>Array.from(new Uint8Array(buffer)).map(value=>value.toString(16).padStart(2,"0")).join("");
 const safeEqual=(left:string,right:string)=>{if(left.length!==right.length)return false;let mismatch=0;for(let i=0;i<left.length;i++)mismatch|=left.charCodeAt(i)^right.charCodeAt(i);return mismatch===0;};
+const automationAuditActor="meta-whatsapp-webhook@system.pawspace";
 
 export type MetaWhatsAppEvent=
  |{kind:"message";eventId:string;providerIdentity:string;timestamp:number;messageType:string;body:string;raw:Record<string,unknown>}
@@ -68,6 +72,26 @@ async function persistOptOut(db:D1Database,customerId:string,now:number){
  ]);
 }
 
+async function failClosedAutomation(db:D1Database,input:{threadId:string;customerId:string}){
+ await setWhatsAppConversationMode(db,{threadId:input.threadId,mode:"human_only",actorEmail:automationAuditActor,reason:"Meta WhatsApp automation failed closed"}).catch(()=>undefined);
+ await requestAiHumanHandoff(db,{actorEmail:automationAuditActor,threadId:input.threadId,customerId:input.customerId,reason:"provider_error"}).catch(()=>undefined);
+}
+
+async function routeInboundAutomation(db:D1Database,input:{threadId:string;customerId:string;messageId:string;humanOwned:boolean}){
+ if(input.humanOwned)return{status:"received",routingMode:"human_only",aiEligible:false,autoSend:false,approvalRequired:false,humanOwned:true,automationReason:"existing_human_ownership"};
+ try{
+  const routing=await getWhatsAppConversationMode(db,input.threadId);
+  if(routing.mode==="human_only")return{status:"received",routingMode:routing.mode,aiEligible:false,autoSend:false,approvalRequired:false,humanOwned:true,automationReason:"human_only"};
+  if(routing.mode==="ai_assistant")return{status:"ai_pending",routingMode:routing.mode,aiEligible:true,autoSend:false,approvalRequired:true,humanOwned:false,automationReason:"governed_ai_executor_required"};
+  const chatbot=await runWhatsAppChatbotTurn(db,{threadId:input.threadId,inputMessageId:input.messageId,actorEmail:automationAuditActor});
+  const handedOff=chatbot.routingMode==="human_only";
+  return{status:handedOff?"human_handoff":"chatbot_routed",routingMode:chatbot.routingMode,aiEligible:false,autoSend:false,approvalRequired:false,humanOwned:handedOff,automationReason:handedOff?"chatbot_handoff":"chatbot_only",chatbotDuplicatePrevented:Boolean(chatbot.duplicatePrevented)};
+ }catch{
+  await failClosedAutomation(db,input);
+  return{status:"human_handoff",routingMode:"human_only",aiEligible:false,autoSend:false,approvalRequired:false,humanOwned:true,automationReason:"chatbot_dispatch_failed"};
+ }
+}
+
 export async function processMetaWhatsAppEvents(db:D1Database,events:MetaWhatsAppEvent[],rawBody:string){
  const payloadHash=await sha256Hex(rawBody),results:Array<Record<string,unknown>>=[];
  for(const event of events){
@@ -83,7 +107,8 @@ export async function processMetaWhatsAppEvents(db:D1Database,events:MetaWhatsAp
    await db.prepare("UPDATE whatsapp_ai_lead_triggers SET status='replied',reason=NULL,updated_at=? WHERE thread_id=? AND status NOT IN ('human_owned','closed')").bind(event.timestamp||Date.now(),inbound.threadId).run();
    const owner=await db.prepare("SELECT status FROM whatsapp_ai_lead_triggers WHERE thread_id=? ORDER BY updated_at DESC LIMIT 1").bind(inbound.threadId).first<Row>();
    const humanOwned=text(owner?.status)==="human_owned";
-   results.push({eventId:event.eventId,status:"received",customerId:inbound.customerId,threadId:inbound.threadId,aiEligible:!humanOwned,autoSend:false,approvalRequired:true,humanOwned,externalDelivery:false});
+   const routed=await routeInboundAutomation(db,{threadId:inbound.threadId,customerId:inbound.customerId,messageId:inbound.messageId,humanOwned});
+   results.push({eventId:event.eventId,customerId:inbound.customerId,threadId:inbound.threadId,messageId:inbound.messageId,...routed,externalDelivery:false});
    continue;
   }
   const message=await db.prepare("SELECT id FROM communication_messages WHERE channel='whatsapp' AND provider='meta_whatsapp' AND (provider_reference=? OR id=?) LIMIT 1").bind(event.providerMessageId,event.providerMessageId).first<Row>();
