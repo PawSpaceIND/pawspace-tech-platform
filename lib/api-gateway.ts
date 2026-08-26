@@ -116,6 +116,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   // actually stop a job or approve a refund is policy, applied against the actor's real permissions
   // inside lib/cancellation-case-governance.ts.
   if(url.pathname==="/api/booking-cancellation-case")return "bookings.view";
+  if(url.pathname==="/api/customer-data-reveal")return "customers.view";
   if(url.pathname==="/api/coupon-governance"){if(method==="GET")return "pricing.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");if(action==="quote")return "scheduling.book";if(action==="save_campaign")return "pricing.manage";if(action==="consume")return "bookings.manage";return "dashboard.view";}
   if(url.pathname==="/api/grooming-subscription-plans")return method==="GET"?"pricing.view":"pricing.manage";
   if(url.pathname==="/api/grooming-commercial-policy")return method==="GET"?"pricing.view":"pricing.manage";

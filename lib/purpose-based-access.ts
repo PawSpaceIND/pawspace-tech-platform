@@ -143,32 +143,26 @@ export type CustomerDataView={
  * A reveal is an event, not a state: asking for one requires a reason and writes an audit row naming the
  * actor, the record and the time. Not asking returns the masked view and writes nothing.
  */
-export async function resolveCustomerDataAccess(db:Db,input:{
-  actor:AccessActor;subject:DataSubject;purpose:string;assignment?:Assignment|null;
-  reveal?:{requested?:boolean;reason?:string}|null;now?:number;
-}):Promise<CustomerDataView>{
-  await ensureDataAccessTables(db);
-  const policy=await resolveDataAccessPolicy(db,{});
-  const config=policy.config;
+export type CustomerDataDecision=Omit<CustomerDataView,"policyVersion">;
+
+/**
+ * The decision itself, over an ALREADY RESOLVED config. Pure: it reads no database and logs nothing, so
+ * a list of a hundred rows costs one policy read rather than a hundred.
+ *
+ * `reveal` is not decided here. A reveal is an event with a reason and an audit row, and an event is not
+ * something a pure function may quietly perform - resolveCustomerDataAccess owns that, and the list
+ * surfaces that call this directly cannot produce one at all. [PTJA-W2-B2-R01/C01/C07]
+ */
+export function decideCustomerDataAccess(config:DataAccessPolicyConfig,input:{
+  actor:AccessActor;subject:DataSubject;purpose:string;assignment?:Assignment|null;revealed?:boolean;now?:number;
+}):CustomerDataDecision{
   const now=input.now??Date.now();
   const purpose=text(input.purpose)||"operations";
   const actor=input.actor;
   const subject=input.subject;
   const assignment=input.assignment??null;
-  const base={subjectId:subject.customerId,purpose,policyVersion:policy.policyVersion};
-
+  const base={subjectId:subject.customerId,purpose};
   const compliance=holdsAll(actor)||purpose==="compliance"&&holds(actor,"audit.view");
-  const wantsReveal=Boolean(input.reveal?.requested);
-  const reason=text(input.reveal?.reason);
-  if(wantsReveal&&config.requireReasonForReveal&&!reason){
-    throw Response.json({error:"A reveal needs a reason",code:"reveal_reason_required"},{status:400});
-  }
-
-  const logReveal=async(dataClass:string)=>{
-    await db.prepare("INSERT INTO customer_data_reveals (id,actor_id,actor_role,subject_id,data_class,purpose,assignment_type,assignment_id,reason,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
-      .bind(`REV-${crypto.randomUUID().slice(0,10).toUpperCase()}`,actor.email,actor.roleCode,subject.customerId,dataClass,purpose,
-        assignment?.type??null,assignment?.id??null,reason,now).run();
-  };
 
   // ---- the provider window: relay contact, and access that shuts after the dispute period ----
   if(purpose==="service_delivery"){
@@ -185,10 +179,10 @@ export async function resolveCustomerDataAccess(db:Db,input:{
         city:subject.address?.city??null,pincode:subject.address?.pincode??null}};
   }
 
-  // ---- compliance and superuser: everything, audited ----
+  // ---- compliance and superuser: everything, audited by the caller ----
   if(compliance){
-    if(wantsReveal)await logReveal("contact+address");
-    return{...base,revealed:wantsReveal,contact:{phone:subject.phone??null,email:subject.email??null,channel:"direct"},
+    const revealed=Boolean(input.revealed);
+    return{...base,revealed,contact:{phone:subject.phone??null,email:subject.email??null,channel:"direct"},
       address:{precision:"full",line1:subject.address?.line1??null,area:subject.address?.area??null,
         city:subject.address?.city??null,pincode:subject.address?.pincode??null}};
   }
@@ -200,16 +194,14 @@ export async function resolveCustomerDataAccess(db:Db,input:{
   }
 
   // ---- everyone else: assignment decides ----
-  const mine=assignedToActor(actor,assignment)||holds(actor,"customers.view_full_phone")&&actor.roleCode==="manager";
-  const revealed=Boolean(wantsReveal&&mine);
-  if(revealed)await logReveal("contact");
-
+  const revealed=Boolean(input.revealed);
   const status=text(assignment?.status);
   const eligible=config.addressEligibleStatuses.map(String).includes(status);
   const scheduledStart=Number(assignment?.scheduledStart??0);
   // "Shortly before service" - both halves. A booking three weeks out does not justify holding somebody's
   // doorstep address on a screen today, and neither does an unconfirmed one an hour away.
   const nearExecution=scheduledStart>0&&scheduledStart-now<=config.fullAddressWindowHours*3_600_000;
+  const mine=assignedToActor(actor,assignment)||holds(actor,"customers.view_full_phone")&&actor.roleCode==="manager";
   const fullAddress=mine&&eligible&&nearExecution;
 
   return{...base,revealed,
@@ -218,6 +210,55 @@ export async function resolveCustomerDataAccess(db:Db,input:{
     address:fullAddress
       ?{precision:"full",line1:subject.address?.line1??null,area:subject.address?.area??null,city:subject.address?.city??null,pincode:subject.address?.pincode??null}
       :{precision:"area",line1:null,area:subject.address?.area??null,city:subject.address?.city??null,pincode:subject.address?.pincode??null}};
+}
+
+/**
+ * May this actor turn a masked view into a revealed one for this record?
+ *
+ * Two justifications, and only two: the record is ASSIGNED to them, or they hold the explicit
+ * customers.view_full_phone grant. Note what this deliberately does NOT copy from the address rule
+ * below: that rule reads the grant only for roleCode "manager", because a full doorstep address on a
+ * screen is a different question from a phone number somebody asked for by name and gave a reason for.
+ * Tying the reveal to one role code would have left an admin holding the grant less able to do their
+ * job than a manager holding the same grant, which is not what the permission means.
+ */
+export function mayReveal(actor:AccessActor,purpose:string,assignment?:Assignment|null){
+  if(holdsAll(actor))return true;
+  if(text(purpose)==="compliance"&&holds(actor,"audit.view"))return true;
+  if(assignedToActor(actor,assignment??null))return true;
+  return holds(actor,"customers.view_full_phone");
+}
+
+/**
+ * What this actor may see of this customer, for this purpose, right now.
+ *
+ * A reveal is an event, not a state: asking for one requires a reason and writes an audit row naming the
+ * actor, the record and the time. Not asking returns the masked view and writes nothing.
+ */
+export async function resolveCustomerDataAccess(db:Db,input:{
+  actor:AccessActor;subject:DataSubject;purpose:string;assignment?:Assignment|null;
+  reveal?:{requested?:boolean;reason?:string}|null;now?:number;
+}):Promise<CustomerDataView>{
+  await ensureDataAccessTables(db);
+  const policy=await resolveDataAccessPolicy(db,{});
+  const config=policy.config;
+  const now=input.now??Date.now();
+  const purpose=text(input.purpose)||"operations";
+  const wantsReveal=Boolean(input.reveal?.requested);
+  const reason=text(input.reveal?.reason);
+  if(wantsReveal&&config.requireReasonForReveal&&!reason){
+    throw Response.json({error:"A reveal needs a reason",code:"reveal_reason_required"},{status:400});
+  }
+  const revealed=wantsReveal&&mayReveal(input.actor,purpose,input.assignment??null);
+  const decision=decideCustomerDataAccess(config,{...input,revealed,now});
+  if(decision.revealed){
+    const assignment=input.assignment??null;
+    const dataClass=decision.address.precision==="full"?"contact+address":"contact";
+    await db.prepare("INSERT INTO customer_data_reveals (id,actor_id,actor_role,subject_id,data_class,purpose,assignment_type,assignment_id,reason,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+      .bind(`REV-${crypto.randomUUID().slice(0,10).toUpperCase()}`,input.actor.email,input.actor.roleCode,input.subject.customerId,dataClass,purpose,
+        assignment?.type??null,assignment?.id??null,reason,now).run();
+  }
+  return{...decision,policyVersion:policy.policyVersion};
 }
 
 export type InternalNote={id:string;category:string;body:string;shareableWithProvider?:boolean};
@@ -229,10 +270,7 @@ export type InternalNote={id:string;category:string;body:string;shareableWithPro
  * the medical grant. That is the whole point of separating the categories - the finding was complaint
  * notes travelling on a permission that meant something else entirely.
  */
-export async function visibleNotes(db:Db,input:{actor:AccessActor;purpose:string;notes:InternalNote[];assignment?:Assignment|null;now?:number}){
-  await ensureDataAccessTables(db);
-  const policy=await resolveDataAccessPolicy(db,{});
-  const config=policy.config;
+export function filterVisibleNotes(config:DataAccessPolicyConfig,input:{actor:AccessActor;purpose:string;notes:InternalNote[];assignment?:Assignment|null}){
   const purpose=text(input.purpose)||"operations";
   const actor=input.actor;
 
@@ -259,4 +297,32 @@ export async function visibleNotes(db:Db,input:{actor:AccessActor;purpose:string
     }
     return allowedByPurpose.has(category);
   });
+}
+
+export async function visibleNotes(db:Db,input:{actor:AccessActor;purpose:string;notes:InternalNote[];assignment?:Assignment|null;now?:number}){
+  await ensureDataAccessTables(db);
+  const policy=await resolveDataAccessPolicy(db,{});
+  return filterVisibleNotes(policy.config,input);
+}
+
+/**
+ * One policy read for a whole page.
+ *
+ * Every staff list surface shows many customers, and resolveCustomerDataAccess resolves the policy from
+ * the database on each call. Migrating a hundred-row list onto it one row at a time would have traded an
+ * exposure for a hundred queries, so the surfaces take a resolver instead: the policy is read once, and
+ * `view` and `notes` are then pure. Neither can produce a reveal - a list has no reason and names no
+ * record, so it is not a reveal. That is app/api/customer-data-reveal. [PTJA-W2-B2-R01/C01/C07]
+ */
+export async function customerDataAccessResolver(db:Db,scope:{serviceCode?:string|null;cityId?:string|null}={}){
+  await ensureDataAccessTables(db);
+  const policy=await resolveDataAccessPolicy(db,scope);
+  return{
+    policyVersion:policy.policyVersion,
+    config:policy.config,
+    view:(input:{actor:AccessActor;subject:DataSubject;purpose:string;assignment?:Assignment|null;now?:number}):CustomerDataView=>
+      ({...decideCustomerDataAccess(policy.config,input),policyVersion:policy.policyVersion}),
+    notes:(input:{actor:AccessActor;purpose:string;notes:InternalNote[];assignment?:Assignment|null})=>
+      filterVisibleNotes(policy.config,input),
+  };
 }

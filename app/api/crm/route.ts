@@ -1,5 +1,6 @@
 import { authError, authorize, database, resolveActor, securityAudit } from "../../../lib/server-auth";
-import{hasPermission,maskName,maskPhone}from"../../../lib/platform-security";
+import{maskName,maskPhone}from"../../../lib/platform-security";
+import{customerDataAccessResolver}from"../../../lib/purpose-based-access";
 
 async function getDatabase(){
   const { env } = await import("cloudflare:workers");
@@ -17,14 +18,6 @@ async function ensureTables(){
   ]);
 }
 
-/*
- * Customer contact data is masked for an actor without customers.view_full_phone, the convention
- * app/api/subscription-customers/route.ts already applies (PTJA W2-B3-C01 / C07). The same associate
- * identity saw "+91 ••••••3210" there and the raw number here.
- *
- * Email is deliberately NOT masked - the platform defines only maskPhone and maskName - and that
- * exposure is carried in the audit ledger for product confirmation rather than closed on my own reading.
- */
 export async function GET(request:Request){try{
   const crmActor=await authorize(request,"customers.view"); await ensureTables();
   const db=await getDatabase();
@@ -66,9 +59,33 @@ export async function GET(request:Request){try{
       contact.lifetime_value_basis=!known?"unavailable":booked>0?"recognized_bookings":"no_recognized_bookings";
     }
   }
-  const revealCrm=hasPermission(crmActor.permissions,"customers.view_full_phone");
-  const served=revealCrm?contacts:contacts.map(row=>({...row,name:maskName(String((row as Record<string,unknown>).name||"")),primary_phone:maskPhone(String((row as Record<string,unknown>).primary_phone||"")),secondary_phone:(row as Record<string,unknown>).secondary_phone?maskPhone(String((row as Record<string,unknown>).secondary_phone)):null}));
-  return Response.json({contacts:served});
+  /*
+   * Purpose-based access. [PTJA-W2-B2-C01]
+   *
+   * What this replaced: `hasPermission(actor.permissions,"customers.view_full_phone")` gating a
+   * maskName/maskPhone pass. That boolean never touched the EMAIL, which was served in full to every
+   * actor who could open the CRM, and when it was true a hundred raw numbers arrived in one list read
+   * with no reason asked and no record kept.
+   *
+   * The policy is resolved ONCE for the page, not once per contact. A reveal is per record and carries
+   * a reason - app/api/customer-data-reveal.
+   */
+  const access=await customerDataAccessResolver(db);
+  const crmSubject={email:crmActor.email,roleCode:crmActor.roleCode,permissions:crmActor.permissions};
+  const served=contacts.map(row=>{
+    const record=row as Record<string,unknown>;
+    const view=access.view({actor:crmSubject,purpose:"sales",
+      subject:{customerId:String(record.id),name:String(record.name||""),phone:String(record.primary_phone||""),
+        email:record.email?String(record.email):null,address:{area:record.area?String(record.area):null}},
+      // The CRM owner is a roster display name, not a login, so it can never match an actor identity.
+      // It is passed anyway rather than dropped: when owners become real identities this starts working
+      // without another change here, and until then the honest answer is "not yours", which is masked.
+      assignment:{type:"lead",id:String(record.id),assignedTo:record.owner?String(record.owner):null,status:String(record.stage||"")}});
+    return{...record,name:maskName(String(record.name||"")),primary_phone:view.contact.phone,
+      secondary_phone:record.secondary_phone?maskPhone(String(record.secondary_phone)):null,
+      email:view.contact.email,revealed:view.revealed};
+  });
+  return Response.json({contacts:served,policyVersion:access.policyVersion});
 }catch(error){return authError(error,"Unable to load CRM");}}
 
 export async function POST(request:Request){
