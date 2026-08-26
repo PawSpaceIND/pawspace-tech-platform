@@ -92,8 +92,8 @@ for (const route of PROOF_ROUTES) {
     // The schema must exist, or the 500 is "no such table" and this file measures the fixture rather
     // than the route. The refutation under test made the same point about its own probe.
     await route.tables(db);
-    const module = await import(route.module);
-    const response = await module.GET(new Request(
+    const routeModule = await import(route.module);
+    const response = await routeModule.GET(new Request(
       `https://uat.pawspace.in${route.path}?${route.param}=DOES-NOT-EXIST`, { headers: STAFF }));
     let body = null;
     try { body = await response.clone().json(); } catch { /* non-JSON */ }
@@ -133,8 +133,8 @@ test("MR03-y (non-vacuity): the same routes answer non-404 for a record that DOE
   sqlite.prepare("INSERT INTO taxi_trips (id,booking_id,schedule_group_id,reservation_id,provider_id,origin_label,destination_label,route_code,synthetic_distance_km,estimated_duration_minutes,scheduled_start,scheduled_end,status,created_at,updated_at) VALUES ('TRIP-REAL','TXB-REAL','g-real','RES-REAL','PRV-REAL','Indiranagar','Whitefield','blr-e-w',14.2,40,?,?,'scheduled',?,?)")
     .run(new Date(now + 86_400_000).toISOString(), new Date(now + 90_000_000).toISOString(), now, now);
 
-  const module = await import("../app/api/taxi-proof/route.ts");
-  const response = await module.GET(new Request("https://uat.pawspace.in/api/taxi-proof?bookingId=TXB-REAL", { headers: STAFF }));
+  const routeModule = await import("../app/api/taxi-proof/route.ts");
+  const response = await routeModule.GET(new Request("https://uat.pawspace.in/api/taxi-proof?bookingId=TXB-REAL", { headers: STAFF }));
   assert.notEqual(response.status, 404,
     "an existing booking must not answer 404, or the 404s above prove nothing about missing records");
 });
