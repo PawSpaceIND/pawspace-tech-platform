@@ -59,7 +59,8 @@ export async function assertWhatsAppAiRoutingAllowsReply(db:D1Database,threadId:
 
 export async function whatsappConversationControlSnapshot(db:D1Database,input:{actor:AuthenticatedActor;threadId:string}){
  const context=await threadContext(db,input.threadId),routing=await getWhatsAppConversationMode(db,input.threadId),handoff=await aiHumanHandoffSnapshot(db,{actor:input.actor,threadId:input.threadId,customerId:context.customerId});
- return{threadId:input.threadId,customerId:context.customerId,provider:context.provider,routing,handoff,canHumanReply:routing.mode==="human_only",chatbotReady:false,productionDelivery:false,environment:"uat"};
+ const chatbot=await db.prepare("SELECT state,service_code,city,pet_type,status,updated_at FROM whatsapp_chatbot_sessions WHERE thread_id=?").bind(input.threadId).first<Row>().catch(()=>null);
+ return{threadId:input.threadId,customerId:context.customerId,provider:context.provider,routing,handoff,canHumanReply:routing.mode==="human_only",chatbotReady:true,chatbotSession:chatbot||null,productionDelivery:false,environment:"uat"};
 }
 
 export async function takeOverWhatsAppConversation(db:D1Database,input:{actor:AuthenticatedActor;threadId:string;reason:string}){
