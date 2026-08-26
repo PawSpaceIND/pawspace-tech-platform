@@ -1,6 +1,7 @@
 import { authError, authorize, database, resolveActor, securityAudit } from "../../../lib/server-auth";
 import{maskName,maskPhone}from"../../../lib/platform-security";
 import{customerDataAccessResolver}from"../../../lib/purpose-based-access";
+import{assignLeadOwner}from"../../../lib/lead-owner-identity";
 
 async function getDatabase(){
   const { env } = await import("cloudflare:workers");
@@ -91,7 +92,9 @@ export async function GET(request:Request){try{
 export async function POST(request:Request){
   try{const actor=await authorize(request,"customers.manage"); await ensureTables(); const body=await request.json() as Record<string,string>; const now=Date.now(); const id=`CU-${Math.floor(10000+Math.random()*89999)}`;
   const db=await database();
-  const roster=["Neha","Rahul","Priya","Sanjay"]; const loads=await db.prepare("SELECT owner,COUNT(*) count FROM lead_work_items WHERE status IN ('active','sla_breached','qualified') GROUP BY owner").all(); const loadMap=new Map((loads.results as Array<Record<string,unknown>>).map(row=>[String(row.owner),Number(row.count)])); const assignedOwner=body.owner&&body.owner!=="Unassigned"?body.owner:[...roster].sort((a,b)=>(loadMap.get(a)||0)-(loadMap.get(b)||0))[0];
+  // Ownership comes from lib/lead-owner-identity, not a list of first names. [PTJA-W3-CO]
+  const ownership=await assignLeadOwner(db,{customerId:id,service:body.service||body.opportunity,preferred:body.owner});
+  const assignedOwner=ownership.owner;
   await db.prepare("INSERT INTO crm_contacts (id,name,primary_phone,secondary_phone,email,area,pet_names,pet_summary,stage,owner,source,lifetime_value,next_action,opportunity,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
     .bind(id,body.name||"New customer",body.primaryPhone||"",body.secondaryPhone||null,body.email||null,body.area||"Bangalore",body.petNames||"Pet",body.petSummary||"Profile incomplete",body.stage||"New lead",assignedOwner,body.source||"Website",0,body.nextAction||"Call within 10 minutes",body.opportunity||body.service||"Discover requirement",now,now).run();
   await db.prepare("INSERT INTO crm_activities (id,contact_id,type,title,detail,created_at) VALUES (?,?,?,?,?,?)").bind(`ACT-${now}`,id,"lead_created","Lead created",`Source: ${body.source||"Website"}`,now).run();
@@ -100,5 +103,5 @@ export async function POST(request:Request){
     db.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,call_attempts,whatsapp_attempts,next_action_at,recycle_cycle,opt_out,created_at,updated_at) VALUES (?,?,?,?,?,?,'active','day_1',1,?,?,?,?,?, ?,0,0,?,?)").bind(`LEAD-${now}`,id,body.source||"Website",body.service||"Discover requirement",assignedOwner,"Sales Manager",now,now+10*60000,now+30*60000,0,0,now+10*60000,now,now),
   ]);
   await securityAudit(db,actor,"create","crm_contact",id,"completed",{source:body.source||"Website",assignedOwner,firstResponseMinutes:10,managerAlertMinutes:30});
-  return Response.json({ok:true,id,leadId:`LEAD-${now}`,assignedOwner},{status:201});}catch(error){return authError(error,"Unable to create CRM contact");}
+  return Response.json({ok:true,id,leadId:`LEAD-${now}`,assignedOwner,ownerResolved:ownership.resolved,ownerMappingException:ownership.resolved?null:ownership.reason},{status:201});}catch(error){return authError(error,"Unable to create CRM contact");}
 }

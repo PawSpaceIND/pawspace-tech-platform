@@ -179,12 +179,25 @@ export function decideCustomerDataAccess(config:DataAccessPolicyConfig,input:{
         city:subject.address?.city??null,pincode:subject.address?.pincode??null}};
   }
 
-  // ---- compliance and superuser: everything, audited by the caller ----
+  /*
+   * ---- compliance and superuser ----
+   *
+   * Being entitled to reveal is not the same as being handed everything unasked. This branch used to
+   * return the raw phone, email and full address whatever `revealed` said, so a founder or superuser
+   * opening the CRM list got a hundred unmasked contacts with no reason recorded - the exact bulk
+   * reveal the approved rule exists to stop, wearing a seniority badge. Caught by CO-09 in
+   * tests/ptja-w3-lead-owner-identity.test.mjs, which reads the CRM as a founder. [PTJA-W3-CO]
+   *
+   * What seniority buys is that mayReveal() says yes. Asking is still asking.
+   */
   if(compliance){
     const revealed=Boolean(input.revealed);
-    return{...base,revealed,contact:{phone:subject.phone??null,email:subject.email??null,channel:"direct"},
-      address:{precision:"full",line1:subject.address?.line1??null,area:subject.address?.area??null,
-        city:subject.address?.city??null,pincode:subject.address?.pincode??null}};
+    return{...base,revealed,
+      contact:revealed?{phone:subject.phone??null,email:subject.email??null,channel:"direct" as const}
+        :{phone:maskPhone(subject.phone),email:maskEmail(subject.email),channel:"masked" as const},
+      address:revealed
+        ?{precision:"full" as const,line1:subject.address?.line1??null,area:subject.address?.area??null,city:subject.address?.city??null,pincode:subject.address?.pincode??null}
+        :{precision:"area" as const,line1:null,area:subject.address?.area??null,city:subject.address?.city??null,pincode:subject.address?.pincode??null}};
   }
 
   // ---- finance: a billing contact and a billing address, never a doorstep ----

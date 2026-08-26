@@ -33,6 +33,17 @@ test("assignment API requires customers manage for policy assignment and reassig
  assert.match(api,/authorize\(request,"customers\.manage"\)/);assert.match(api,/lead\.assignment\.policy\.save/);assert.match(api,/lead\.assignment\.assign/);assert.match(api,/lead\.assignment\.reassign/);assert.match(api,/productionReady:false/);
 });
 
-test("legacy hard-coded owner rotation remains noncanonical scaffolding to remove in later migration",()=>{
- assert.match(legacy,/const owners=\["Neha","Rahul","Priya","Sanjay"\]/);assert.match(engine,/hardCodedOwnerRotationAuthoritative:false/);
+test("the legacy hard-coded owner rotation is gone",()=>{
+ /*
+  * SUPERSEDED BY THE MIGRATION THIS CASE WAS WAITING FOR. It asserted that the scaffolding still
+  * EXISTED - a deliberate marker that a later migration had to remove it. The business has since
+  * decided that lead ownership must reference a real staff identity and never a roster label, so the
+  * migration happened: every creation, recycle and reopen path now goes through
+  * lib/lead-owner-identity. The case is inverted to pin that it stays gone, and still asserts the
+  * engine's own statement that the legacy field was never authoritative.
+  * tests/ptja-w3-lead-owner-identity.test.mjs owns the new rule. [PTJA-W3-CO]
+  */
+ assert.doesNotMatch(legacy,/const owners=\[/, "the roster rotation must not come back");
+ assert.match(legacy,/lead-owner-identity/, "and the scheduler now resolves owners through the authority");
+ assert.match(engine,/hardCodedOwnerRotationAuthoritative:false/);
 });

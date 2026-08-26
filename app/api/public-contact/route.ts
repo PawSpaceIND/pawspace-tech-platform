@@ -1,5 +1,6 @@
 import{authError}from"../../../lib/server-auth";
 import{governedJsonError}from"../../../lib/governed-http-error";
+import{assignLeadOwner}from"../../../lib/lead-owner-identity";
 // Public, unauthenticated lead-capture endpoint for the marketing site's contact form.
 // This intentionally does NOT reuse the staff-only /api/crm route directly - that route
 // requires "customers.manage" and exposes broader staff capability. This route is create-only.
@@ -19,7 +20,7 @@ async function ensureTables(db:D1Database){
 }
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
-const roster=["Neha","Rahul","Priya","Sanjay"];
+
 const RATE_WINDOW_MS=10*60*1000;
 const RATE_LIMIT=5;
 
@@ -51,9 +52,11 @@ export async function POST(request:Request){
     if(phoneDigits.length<10||phoneDigits.length>15||!/^[0-9+\s-]+$/.test(phone))return json({error:"Please enter a valid phone number"},400);
     if(email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))return json({error:"Please enter a valid email address"},400);
     const id=`CU-${crypto.randomUUID()}`,activityId=`ACT-${crypto.randomUUID()}`,taskId=`TASK-${crypto.randomUUID()}`,leadId=`LEAD-${crypto.randomUUID()}`;
-    const loads=await db.prepare("SELECT owner,COUNT(*) count FROM lead_work_items WHERE status IN ('active','sla_breached','qualified') GROUP BY owner").all<Record<string,unknown>>();
-    const loadMap=new Map(loads.results.map(row=>[String(row.owner),Number(row.count)]));
-    const assignedOwner=[...roster].sort((a,b)=>(loadMap.get(a)||0)-(loadMap.get(b)||0))[0];
+    // Ownership comes from lib/lead-owner-identity, not a list of first names. A website lead landing
+    // on "Neha" gave it an owner nobody could page; if no active member can take it the lead is
+    // Unassigned and the mapping exception is recorded for Operations. [PTJA-W3-CO]
+    const ownership=await assignLeadOwner(db,{customerId:id,service});
+    const assignedOwner=ownership.owner;
     await db.batch([
       db.prepare("INSERT INTO crm_contacts (id,name,primary_phone,secondary_phone,email,area,pet_names,pet_summary,stage,owner,source,lifetime_value,next_action,opportunity,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,name,phone,null,email||null,area,petNames,message,"New lead",assignedOwner,"Website contact form",0,"Call within 10 minutes",service,now,now),
       db.prepare("INSERT INTO crm_activities (id,contact_id,type,title,detail,created_at) VALUES (?,?,?,?,?,?)").bind(activityId,id,"lead_created","Contact form submission",`Service interest: ${service}`,now),

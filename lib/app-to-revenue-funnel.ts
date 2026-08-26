@@ -21,7 +21,6 @@ type Row = Record<string, unknown>;
 const uid = (p: string) => `${p}-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
 const text = (v: unknown) => String(v ?? "").trim();
 const empty = () => ({ results: [] as Row[] });
-const SALES_OWNERS = ["Neha", "Rahul", "Priya", "Sanjay"];
 const DEFAULT_ABANDON_MINUTES = 60;
 
 export async function ensureFunnelTables(db: Db) {
@@ -148,7 +147,10 @@ async function ensureAppInboundLead(db: Db, customerId: string, at: number): Pro
   // if the customer already has an open lead, attribute the mark to it instead of duplicating
   const open = await db.prepare("SELECT id FROM lead_work_items WHERE customer_id=? AND status NOT IN ('closed','converted') ORDER BY assigned_at DESC LIMIT 1").bind(customerId).first<Row>().catch(() => null);
   if (open) { await db.prepare("UPDATE funnel_producer_marks SET lead_id=? WHERE kind='app_inbound' AND ref_id=?").bind(String(open.id), customerId).run(); return String(open.id); }
-  const owner = SALES_OWNERS[Math.abs(hashRef(customerId)) % SALES_OWNERS.length], leadId = uid("LWI");
+  // Ownership comes from lib/lead-owner-identity, not from hashing a customer id into a list of first
+  // names. An owner nobody can page is worse than an empty queue somebody has to look at. [PTJA-W3-CO]
+  const{assignLeadOwner}=await import("./lead-owner-identity");
+  const owner = (await assignLeadOwner(db,{customerId,service:"general"})).owner, leadId = uid("LWI");
   await db.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,last_outcome,created_at,updated_at) VALUES (?,?,?,?,?,?,'active','day_1',1,?,?,?,?,?,?)")
     .bind(leadId, customerId, "App Inbound", "general", owner, "Sales Manager", at, at + 10 * 60_000, at + 30 * 60_000, "app_download_no_booking", at, at).run();
   await db.prepare("UPDATE funnel_producer_marks SET lead_id=? WHERE kind='app_inbound' AND ref_id=?").bind(leadId, customerId).run();
@@ -159,7 +161,9 @@ async function ensureAppInboundLead(db: Db, customerId: string, at: number): Pro
 async function ensureRecoveryTask(db: Db, input: { customerId: string; bookingId: string; service: string; at: number }): Promise<string | null> {
   const claim = await db.prepare("INSERT OR IGNORE INTO funnel_producer_marks (kind,ref_id,created_at) VALUES ('recovery_task',?,?)").bind(input.bookingId, input.at).run();
   if (Number(claim.meta?.changes || 0) === 0) return null;
-  const owner = SALES_OWNERS[Math.abs(hashRef(input.customerId)) % SALES_OWNERS.length], leadId = uid("LWI");
+  // Same authority as the app-inbound lead above. [PTJA-W3-CO]
+  const{assignLeadOwner:assignAbandonOwner}=await import("./lead-owner-identity");
+  const owner = (await assignAbandonOwner(db,{customerId:input.customerId,service:"general"})).owner, leadId = uid("LWI");
   await db.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,last_outcome,created_at,updated_at) VALUES (?,?,?,?,?,?,'active','day_1',1,?,?,?,?,?,?)")
     .bind(leadId, input.customerId, "Payment Recovery", text(input.service) || "general", owner, "Sales Manager", input.at, input.at + 10 * 60_000, input.at + 30 * 60_000, "payment_abandoned_high_intent", input.at, input.at).run();
   await db.prepare("UPDATE funnel_producer_marks SET lead_id=? WHERE kind='recovery_task' AND ref_id=?").bind(leadId, input.bookingId).run();
