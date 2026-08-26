@@ -69,7 +69,22 @@ installWorkersHooks("__RAC_DB__", "__RAC_ENV__");
 
 // Deliberately NOT localhost: a preview host would grant ["*"] and make every case below vacuous.
 const HOST = "https://ops.pawspace.example";
-const GUARD = /requirePermission\(|authorize\(request/;
+// A route is "guarded" if it authorizes AT ALL, by any of the mechanisms this codebase uses. This used
+// to name only requirePermission and authorize(request, which silently excluded every route that
+// authorizes by OWNERSHIP - requireCustomerOwnership / requireProviderOwnership - and every route that
+// delegates to the gateway with authorizeApiRequest. That was 52 of 205 routes, a quarter of the API
+// surface, and it excluded exactly the routes most worth sweeping: customer-owned bookings, profiles,
+// pet records, payment orders, provider workspaces.
+//
+// The hole is self-concealing, which is why it is worth naming. A route with no recognised guard token
+// is not classified as guarded, so it is never swept - meaning the routes MOST likely to be unguarded
+// are the ones this sweep cannot see. The same shape as a gate that passes because the thing it should
+// catch is invisible to it.
+//
+// Widening it brought those 52 routes into coverage. Measured at the time: not one of them serves an
+// anonymous caller or the least-privileged role, apart from food-commercial.GET, which is a public zone
+// catalogue and is recorded below alongside its sibling boarding-commercial.
+const GUARD = /requirePermission\(|authorize\(request|requireCustomerOwnership\(|requireProviderOwnership\(|authorizeApiRequest\(/;
 const METHODS = ["GET", "POST", "PATCH", "PUT", "DELETE"];
 const LOW_PRIVILEGE_EMAIL = "shopper@pawspace.in";
 
@@ -165,6 +180,10 @@ async function sweep({ roleCode = null } = {}) {
 // Each entry is a decision someone made, recorded here so the sweep stays a real assertion instead of
 // being widened whenever it goes red. Anything not listed must refuse.
 const DELIBERATELY_READABLE = new Map([
+  // Entered coverage when GUARD widened to recognise ownership-based authorization. A zone product
+  // catalogue: listFoodCatalogue(zoneId), liveMoney:false, no customer data - the same shape as
+  // boarding-commercial, which the gateway already allowlists. Its POST is not readable and is swept.
+  ["food-commercial.GET", "public zone product catalogue; no customer data and no live money"],
   // The gateway allowlists this path outright (requiredPermission returns null for it).
   ["training-requirements.GET", "public: gateway allowlists /api/training-requirements"],
   // Public content branch; the admin view (?view=admin) requires marketing.manage and is asserted below.
@@ -255,7 +274,25 @@ const AUTHORIZED_PROBE_VALIDATION = new Map([
 // backlog rather than a set of holes. It is pinned as an exact baseline so the number can only go
 // down: a NEW route that validates before authorizing fails here, and fixing one of these fails here
 // too until it is removed from the list.
+// The twelve entries marked below entered coverage when GUARD widened to recognise ownership-based
+// authorization; they were always in this state, they were simply never swept. Each authorizes by
+// OWNERSHIP, and ownership needs a subject id out of the payload, so an absent one is answered as a
+// shape error rather than a refusal - the same structural situation uat-scheduling's reserve path had.
+// None leaks data and the worker gateway refuses these callers in production. Recording existing state,
+// not accepting new debt.
 const VALIDATES_BEFORE_AUTHORIZING = [
+  "booking-rating.POST",
+  "customer-support-case.POST",
+  "food-commercial.POST",
+  "food-orders.POST",
+  "grooming-service-location.POST",
+  "payment-order.POST",
+  "pet-emergency.POST",
+  "pet-vaccination.POST",
+  "provider-availability.POST",
+  "sitting-bookings.POST",
+  "taxi-bookings.POST",
+  "walking-bookings.POST",
   "attendance-leave.POST",
   "boarding-finance.GET",
   "boarding-finance.POST",

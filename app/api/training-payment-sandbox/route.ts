@@ -1,4 +1,5 @@
 import{authError,database}from"../../../lib/server-auth";
+import{sandboxCapabilitiesUnlocked}from"../../../lib/payment-environment";
 import{captureTrainingQuoteSandbox}from"../../../lib/training-commercial-governance";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
@@ -9,6 +10,6 @@ export async function POST(request:Request){try{
  sameOriginWrite(request);const paymentKey=String(request.headers.get("x-payment-capture-key")||"").trim();if(!paymentKey)return json({error:"MISSING_CAPTURE_KEY"},400);
  const body=await request.json() as {quoteId?:string;amount?:number};const quoteId=String(body.quoteId||"").trim(),amount=Number(body.amount);
  if(!quoteId||!Number.isFinite(amount)||amount<0)return json({error:"Quote and valid amount are required"},400);
- const{env}=await import("cloudflare:workers");if(String((env as unknown as Record<string,unknown>).PAWSPACE_PAYMENT_ENV||"sandbox").toLowerCase()!=="sandbox")return json({error:"Training sandbox payment is disabled outside sandbox"},403);
+ const{env}=await import("cloudflare:workers");if(!sandboxCapabilitiesUnlocked(env as unknown as Record<string,unknown>))return json({error:"Training sandbox payment is disabled unless PAWSPACE_PAYMENT_ENV is explicitly set to sandbox"},403);
  const result=await captureTrainingQuoteSandbox(await database(),{quoteId,amount,paymentKey});return json({data:{...result,liveMoney:false,synthetic:true}},201);
 }catch(error){return failure(error);}}

@@ -1,4 +1,5 @@
 import {subscriptionExpiry} from "../../../lib/grooming-governance";
+import{sandboxCapabilitiesUnlocked}from"../../../lib/payment-environment";
 import {governGroomingBookingWithLiveMultiPet} from "../../../lib/live-grooming-governance";
 import {authError,requireCustomerOwnership,requirePermission,resolveActor} from "../../../lib/server-auth";
 import {hasPermission} from "../../../lib/platform-security";
@@ -28,7 +29,11 @@ type SubscriptionPlan={planCode:string;sessions:number;validityValue:number;vali
 const services=new Set(["grooming","dog_training","boarding","pet_sitting"]);
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 async function database(){const {env}=await import("cloudflare:workers");return env.DB;}
-async function paymentEnv(){const {env}=await import("cloudflare:workers");return String((env as unknown as Record<string,unknown>).PAWSPACE_PAYMENT_ENV||"sandbox").toLowerCase();}
+// Live UNLESS sandbox is explicitly declared. The verify-first exemption - recording a client-asserted
+// {status:"captured"} as collected money - is a sandbox CAPABILITY, and an absent variable is not a
+// declaration. Credential and webhook-secret selection keep their documented "unset -> sandbox" default
+// (lib/razorpay-client.ts, lib/payment-webhook-gate.ts), so unsetting still takes live money off.
+async function liveModePayments(){const {env}=await import("cloudflare:workers");return !sandboxCapabilitiesUnlocked(env as unknown as Record<string,unknown>);}
 // Verify-first (LIVE only): an ONLINE booking payment may NOT self-declare "captured"; it is recorded
 // "created" and only a signature-verified Razorpay webhook may mark it captured. Sandbox/UAT unchanged.
 //
@@ -192,7 +197,7 @@ export async function POST(request:Request){try{const db=await database();await 
   // captured. A customer-app caller never holds it, so its captured is demoted whatever method it sends,
   // and no unknown/blank method can slip through — the method is not what decides.
   const offlineAuthorized=OFFLINE_METHODS.has(input.payment.method)&&hasPermission(actor.permissions,"payments.manage");
-  const liveMode=(await paymentEnv())!=="sandbox",paymentStatusRecorded=recordedPaymentStatus(liveMode,input.payment,offlineAuthorized);
+  const liveMode=await liveModePayments(),paymentStatusRecorded=recordedPaymentStatus(liveMode,input.payment,offlineAuthorized);
   const commercialPolicy=input.serviceCode==="grooming"?await resolveGroomingPolicy(db,input.cityId,input.zoneId):null;
   if(commercialPolicy?.enforcementMode==="enforce"&&input.pets.length>commercialPolicy.multiPetMax)return json({error:`This city policy supports up to ${commercialPolicy.multiPetMax} pets per Grooming booking`,policyVersion:policyVersion(commercialPolicy)},409);
   if(input.serviceCode==="grooming"){
@@ -213,6 +218,19 @@ export async function POST(request:Request){try{const db=await database();await 
     }
   }
   const assignment=await db.prepare("SELECT selected_provider_id,status,shortlist_json FROM scheduling_assignment_decisions WHERE group_id=?").bind(input.scheduleGroupId).first<Record<string,unknown>>();if(!assignment||assignment.status!=="assigned")return json({error:"Scheduling must be assigned before booking confirmation"},409);if(String(assignment.selected_provider_id)!==input.provider.id)return json({error:"The provider does not match the scheduling decision"},409);const reservations=await db.prepare("SELECT id,provider_id,customer_id,service_code,city_id,zone_id,scheduled_start,scheduled_end,occurrence_number,status FROM scheduling_reservations WHERE group_id=? AND status!='cancelled' ORDER BY occurrence_number").bind(input.scheduleGroupId).all<Record<string,unknown>>();if(!schedulingGroupBelongsToCustomer(reservations.results,input.customer.id))return json({error:SCHEDULING_GROUP_OWNERSHIP_CONFLICT},409);if(!reservations.results.length||reservations.results.some(row=>String(row.provider_id)!==input.provider.id))return json({error:"A valid provider reservation is required"},409);if(reservations.results.some(row=>String(row.service_code)!==input.serviceCode))return json({error:"The booking service does not match the scheduling reservation"},409);
+  // The booking window must be the window that is actually held. dog_training, boarding and pet_sitting
+  // each check this against their own first reservation; nothing checked it for anything else, so a
+  // GROOMING booking could be confirmed and PAID for a day on which no capacity was reserved.
+  //
+  // Measured on the audit branch: reserve 2026-11-20, ask to reserve 2026-11-27 under the same
+  // clientRequestId (answered "assigned"), then book 11-27 -> 201 confirmed with 1899 captured, against a
+  // reservation still sitting on 11-20. The customer holds a paid booking for a day nobody holds and the
+  // groomer is not coming. The companion refusal on the reserve replay path is in
+  // app/api/uat-scheduling/route.ts. Same check the three governed verticals already carry, applied to
+  // every service, before any write. [PTJA-P1-F28]
+  const heldWindow=reservations.results[0];
+  if(heldWindow&&(new Date(String(heldWindow.scheduled_start)).getTime()!==new Date(input.scheduledStart).getTime()||new Date(String(heldWindow.scheduled_end)).getTime()!==new Date(input.scheduledEnd).getTime()))
+    return json({error:"The booking window does not match the scheduling reservation"},409);
   // City/zone integrity invariant: the provider equality above is not enough. The booking persists the
   // CLIENT-supplied cityId/zoneId, but the reservation it confirms was made for a specific city and zone.
   // Trust the reservation, never the client: a Bengaluru reservation must never be confirmable into a

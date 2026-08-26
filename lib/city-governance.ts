@@ -88,10 +88,22 @@ export async function saveCityLaunchConfig(db:Db,input:CityLaunchConfigInput,act
   const codeConflict=await db.prepare("SELECT id FROM city_launch_configs WHERE city_code=? AND id!=?").bind(code,input.id??"").first<Row>();
   if(codeConflict)throw new Error(`City code '${code}' is already used by another city`);
   const id=input.id??`city-${crypto.randomUUID().slice(0,10)}`;
+  // The version bump happens in SQL, not here. It used to be computed from `before`, a read taken earlier
+  // in this function, and written as `version=excluded.version` - so two operators saving the same city
+  // concurrently both read version N and both wrote N+1, leaving two DIFFERENT states carrying the same
+  // version number, which the audit trail could neither distinguish nor order. Incrementing the stored
+  // value makes concurrent saves monotonic and the recorded version meaningful.
+  //
+  // This does NOT fix the lost update itself: operator A's coverage is still silently replaced by
+  // operator B's. Refusing a save whose base version has moved requires the caller to send the version it
+  // read - an API contract change, and a product decision about what the operator is shown on conflict.
+  // That half is reported, not decided here. [PTJA-P1-F40]
   const version=before?before.version+1:1;
-  await db.prepare("INSERT INTO city_launch_configs (id,city_code,city,state,status,centre,radius_km,pincodes,gst_included,services_json,version,updated_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET city_code=excluded.city_code,city=excluded.city,state=excluded.state,status=excluded.status,centre=excluded.centre,radius_km=excluded.radius_km,pincodes=excluded.pincodes,gst_included=excluded.gst_included,services_json=excluded.services_json,version=excluded.version,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
-    .bind(id,code,input.city.trim(),input.state.trim(),input.status,input.centre.trim(),input.radiusKm,input.pincodes.trim(),input.gstIncluded?1:0,JSON.stringify(input.services),version,actorId,now,now).run();
-  const row=await db.prepare("SELECT * FROM city_launch_configs WHERE id=?").bind(id).first<Row>();
+  const row=await db.prepare("INSERT INTO city_launch_configs (id,city_code,city,state,status,centre,radius_km,pincodes,gst_included,services_json,version,updated_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET city_code=excluded.city_code,city=excluded.city,state=excluded.state,status=excluded.status,centre=excluded.centre,radius_km=excluded.radius_km,pincodes=excluded.pincodes,gst_included=excluded.gst_included,services_json=excluded.services_json,version=city_launch_configs.version+1,updated_by=excluded.updated_by,updated_at=excluded.updated_at RETURNING *")
+    .bind(id,code,input.city.trim(),input.state.trim(),input.status,input.centre.trim(),input.radiusKm,input.pincodes.trim(),input.gstIncluded?1:0,JSON.stringify(input.services),version,actorId,now,now).first<Row>();
+  // RETURNING, not a re-read. The row was read back with a second SELECT, so when two operators saved the
+  // same city concurrently BOTH re-reads saw the final state: each operator was returned - and audited -
+  // the other's coverage as what they had just saved. This returns the row THIS statement wrote.
   if(!row)throw new Error("City launch configuration could not be saved");
   const saved=rowToConfig(row);
   await db.prepare("INSERT INTO city_launch_config_audit (id,city_config_id,city,action,before_json,after_json,actor_id,created_at) VALUES (?,?,?,?,?,?,?,?)")

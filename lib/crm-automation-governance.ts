@@ -15,6 +15,23 @@ export async function automationDecision(db:Db,input:{customerId:string;purpose:
  // no recorded consent (marketing stays blocked below, service contact stays allowed).
  const consentTable=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='customer_contact_preferences'").first<Row>();
  const consent=consentTable?await db.prepare("SELECT marketing_consent,service_consent,whatsapp_consent,sms_consent,email_consent FROM customer_contact_preferences WHERE customer_id=?").bind(input.customerId).first<Row>():null;
+ // An opt-out recorded ANYWHERE is honoured. The platform keeps two consent stores and each outbound
+ // engine used to read only its own: this one reads customer_contact_preferences, while
+ // lib/communication-engine.ts reads communication_preferences - and both are written by live surfaces.
+ // Measured: a customer opted out of marketing through /api/communications; the governed outbox
+ // correctly suppressed the next marketing message as marketing_opt_out, and this engine returned
+ // {"allowed":true,"reason":"allowed"} for the same customer, channel and purpose minutes later and
+ // queued it. Every campaign run through CRM automation ignored every opt-out ever recorded on the
+ // communications preference API, and haptik-outbound and the WhatsApp adapter read the same blind
+ // store.
+ //
+ // Neither table is made the winner here - picking one would silently discard the other's decisions.
+ // A recorded opt-out in EITHER store blocks, which fails closed and is the only reading under which
+ // consent means anything. Silence in a store is not an opt-out, so a customer who has opted in stays
+ // reachable.
+ const engineConsent=await db.prepare("SELECT service_updates,marketing FROM communication_preferences WHERE customer_id=?").bind(input.customerId).first<Row>().catch(()=>null);
+ if(input.purpose==="marketing"&&Number(engineConsent?.marketing)===0)return{allowed:false,reason:"marketing_opt_out",policyStatus:"blocked",nextEligibleAt:null};
+ if(input.purpose==="service"&&Number(engineConsent?.service_updates)===0)return{allowed:false,reason:"service_updates_opt_out",policyStatus:"blocked",nextEligibleAt:null};
  if(input.purpose==="marketing"&&!Boolean(Number(consent?.marketing_consent||0)))return{allowed:false,reason:"marketing_consent_missing",policyStatus:"blocked",nextEligibleAt:null};
  if(input.purpose==="service"&&consent&&Number(consent.service_consent)===0)return{allowed:false,reason:"service_contact_disabled",policyStatus:"blocked",nextEligibleAt:null};
  const channelKey=input.channel==="whatsapp"?"whatsapp_consent":input.channel==="sms"?"sms_consent":input.channel==="email"?"email_consent":null;
@@ -22,7 +39,13 @@ export async function automationDecision(db:Db,input:{customerId:string;purpose:
  const policy=await db.prepare("SELECT * FROM crm_automation_policy WHERE policy_key=?").bind(`${input.purpose}:${input.channel}`).first<Row>();
  if(!policy||Number(policy.enabled)!==1)return{allowed:false,reason:"automation_policy_not_approved",policyStatus:"configuration_required",nextEligibleAt:null};
  if(policy.quiet_start_hour!==null&&policy.quiet_start_hour!==undefined&&policy.quiet_end_hour!==null&&policy.quiet_end_hour!==undefined){const hour=Number(new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Kolkata",hour:"2-digit",hour12:false}).format(new Date(now))),start=Number(policy.quiet_start_hour),end=Number(policy.quiet_end_hour),quiet=start<end?(hour>=start&&hour<end):(hour>=start||hour<end);if(quiet)return{allowed:false,reason:"quiet_hours",policyStatus:"approved",nextEligibleAt:null};}
- if(policy.max_contacts&&policy.window_hours){const since=now-Number(policy.window_hours)*3_600_000,count=await db.prepare("SELECT COUNT(*) count FROM crm_automation_dispatches WHERE customer_id=? AND purpose=? AND status IN ('sent','delivered','queued','retry') AND created_at>=?").bind(input.customerId,input.purpose,since).first<{count:number}>();if(Number(count?.count||0)>=Number(policy.max_contacts))return{allowed:false,reason:"frequency_cap",policyStatus:"approved",nextEligibleAt:since+Number(policy.window_hours)*3_600_000};}
+ // Absence and ZERO are different answers. This whole block used to be guarded on the truthiness of
+ // max_contacts, so a stored 0 was indistinguishable from NULL/'not configured' and the cap never ran
+ // - the STRICTEST setting the API offers produced UNLIMITED dispatches. Measured: policy saved with
+ // maxContacts 0, then five queue calls, all five 201 {"queued":true,"reason":"allowed"}; the control
+ // with maxContacts 2 capped at two. The write side accepts 0 deliberately - save_policy rejects only
+ // negatives - so 0 is a real configured value and now means what it says.
+ if(policy.max_contacts!=null&&policy.window_hours!=null){const since=now-Number(policy.window_hours)*3_600_000,count=await db.prepare("SELECT COUNT(*) count FROM crm_automation_dispatches WHERE customer_id=? AND purpose=? AND status IN ('sent','delivered','queued','retry') AND created_at>=?").bind(input.customerId,input.purpose,since).first<{count:number}>();if(Number(count?.count||0)>=Number(policy.max_contacts))return{allowed:false,reason:"frequency_cap",policyStatus:"approved",nextEligibleAt:since+Number(policy.window_hours)*3_600_000};}
  return{allowed:true,reason:"allowed",policyStatus:"approved",nextEligibleAt:now};
 }
 

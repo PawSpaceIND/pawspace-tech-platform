@@ -5,6 +5,11 @@
   "compatibility_date": "2026-05-22",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
+    // Declared explicitly, as every documented deployment does. The sandbox payment simulators no
+    // longer treat an ABSENT PAWSPACE_PAYMENT_ENV as a sandbox declaration (PTJA W2-07-PAY-003):
+    // an undeclared runtime used to unlock a staff endpoint that records a full-value capture with
+    // zero gateway contact. This harness exercises the sandbox payment path, so it says so.
+    "PAWSPACE_PAYMENT_ENV": "sandbox",
     "PAWSPACE_UAT_LOGIN": "on",
     "PAWSPACE_UAT_SIGNING_KEY": "runtime-d1-regression-only-not-a-real-signing-key-20260825",
     "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT": "runtime-d1-regression-only-not-a-real-secret-32chars"

@@ -35,6 +35,31 @@ export async function requestCustomerOtp(db:Db,input:{phone:string}){
  return{challengeId:id,phone,expiresInSeconds:300,sandboxDelivery:true,sandboxCode:code,liveSmsDelivered:false};
 }
 
+
+/**
+ * Which customer a verified phone number identifies.
+ *
+ * This used to be one OR-ed predicate - `WHERE primary_phone=? OR secondary_phone=?` with `.first()` -
+ * carrying no ORDER BY and no tie-break, so a SECONDARY match and a PRIMARY match were equally
+ * authoritative and the scan order decided whose account you landed in. Two ways that bit:
+ *
+ *   - with no attacker at all: where one customer's primary_phone happens to sit in another's
+ *     secondary_phone (CSV imports and shared household numbers produce this routinely) the number's
+ *     real owner was signed into the neighbour's account and served their name, phones, email, street
+ *     address and pets;
+ *   - with one: a self-asserted secondary planted through update_profile captured the login of whoever
+ *     really held that number.
+ *
+ * A self-asserted phone is CONTACT DATA, not a login identity, so resolution is on primary_phone only -
+ * the number the platform actually verifies. A number recorded ONLY as somebody's secondary now falls
+ * through to the existing signup path and gets its holder their own record, which is the correct
+ * outcome in both cases above and the same thing the platform already does for a number it has never
+ * seen. Exported so the rule is directly testable rather than buried in the verify flow.
+ */
+export async function resolveOtpCustomer(db:D1Database,phone:string){
+ return db.prepare("SELECT id,name,primary_phone,city_id FROM canonical_customers WHERE primary_phone=? ORDER BY created_at ASC LIMIT 1").bind(phone).first<Row>();
+}
+
 export async function verifyCustomerOtp(db:Db,input:{challengeId:string;code:string;name?:string;cityId?:string;installId?:string}){
  await ensureCustomerOtpTables(db);
  const row=await db.prepare("SELECT * FROM customer_otp_challenges WHERE id=?").bind(input.challengeId).first<Row>();
@@ -51,7 +76,7 @@ export async function verifyCustomerOtp(db:Db,input:{challengeId:string;code:str
  const claim=await db.prepare("UPDATE customer_otp_challenges SET consumed=1 WHERE id=? AND consumed=0").bind(input.challengeId).run();
  if(!Number(claim.meta.changes))throw new Error("This OTP has already been used");
  const phone=text(row.phone);
- let customer=await db.prepare("SELECT id,name,primary_phone,city_id FROM canonical_customers WHERE primary_phone=? OR secondary_phone=?").bind(phone,phone).first<Row>();
+ let customer=await resolveOtpCustomer(db,phone);
  if(!customer){
    // Two separately-issued OTP challenges for one phone can be verified concurrently. A random ID
    // allowed both requests to create customer truth after both observed the initial lookup as empty.

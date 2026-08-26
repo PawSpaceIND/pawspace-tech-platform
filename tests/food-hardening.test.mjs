@@ -273,8 +273,14 @@ test("real execution: delivery proof pipeline is scan-gated and state-gated; fin
   await fulfil(order.orderId, "pack_order");
   const early = await call(proofRoute.POST, "POST", { orderId: order.orderId, action: "record_package_proof", idempotencyKey: "p3", mediaRef, note: "sealed pack photo" });
   assert.equal(early.status, 409, "unscanned media must never count as proof");
-  const scan = await call(proofRoute.POST, "POST", { orderId: order.orderId, action: "record_media_scan", idempotencyKey: "p4", mediaRef, scanResult: "clean" });
-  assert.equal(scan.status, 200);
+  // Maker/checker: the actor who submitted the media cannot scan-approve it. Food proof was the only
+  // one of the five proof libraries missing this refusal (PTJA W2-B4-M02); the other four have always
+  // had it, and tests/walking-taxi-ops-hardening.test.mjs asserts exactly this pair for Dog Walking.
+  const selfScan = await call(proofRoute.POST, "POST", { orderId: order.orderId, action: "record_media_scan", idempotencyKey: "p4-self", mediaRef, scanResult: "clean" });
+  assert.equal(selfScan.status, 403, "the submitter must not scan-approve their own food proof");
+  sqlite.prepare("INSERT OR IGNORE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES ('usr-food-checker','food.checker@pawspace.test','Food checker','manager','active',?,?)").run(NOW, NOW);
+  const scan = await callAs(proofRoute.POST, "POST", { orderId: order.orderId, action: "record_media_scan", idempotencyKey: "p4", mediaRef, scanResult: "clean" }, "food.checker@pawspace.test");
+  assert.equal(scan.status, 200, JSON.stringify(scan.body));
   const pkg = await call(proofRoute.POST, "POST", { orderId: order.orderId, action: "record_package_proof", idempotencyKey: "p5", mediaRef, note: "sealed pack photo" });
   assert.equal(pkg.status, 200, JSON.stringify(pkg.body));
   // Delivery proof requires delivered state

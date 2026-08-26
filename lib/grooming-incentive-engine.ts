@@ -178,7 +178,17 @@ export async function computeGroomerMonthlyIncentive(db:Db,input:{headGroomerId:
  }
  orderValueTotal=money(orderValueTotal);
 
- const upgradeRow=await db.prepare("SELECT COUNT(*) n,COALESCE(SUM(upgrade_value),0) total FROM booking_upgrades WHERE provider_id=? AND booking_id IN (SELECT id FROM canonical_bookings WHERE date(scheduled_start)>=? AND date(scheduled_start)<=?)")
+ // An upgrade only counts if it sits on a COMPLETED GROOMING booking. This subquery filtered on date
+ // alone, while dailyOrdersForGroomer() a few lines above already carries both predicates. Measured for
+ // one month: a Rs 2,000 upgrade on a CANCELLED grooming booking plus twenty Rs 100 upgrades on
+ // cancelled DOG TRAINING bookings produced upgradeCount 21 and upgradeValue 4000, lifting monthTotal
+ // from the Rs 99,000 actually earned to Rs 103,000 - over the Rs 100,000 eligibility floor - and
+ // returning eligible true with Rs 1,500 head plus Rs 750 helper payable on a month that earned nothing.
+ //
+ // The larger consequence is downstream: monthTotal gates achievementTierBonus, and eligibleForRanking
+ // admits the groomer into rankGroomersForMonth, whose winner table pays up to Rs 5,000 head plus
+ // Rs 3,000 helper - so a phantom entrant both collects and demotes every genuine groomer by one rank.
+ const upgradeRow=await db.prepare("SELECT COUNT(*) n,COALESCE(SUM(upgrade_value),0) total FROM booking_upgrades WHERE provider_id=? AND booking_id IN (SELECT id FROM canonical_bookings WHERE service_code='grooming' AND status='completed' AND date(scheduled_start)>=? AND date(scheduled_start)<=?)")
    .bind(input.headGroomerId,input.monthStart,monthEndDate).first<Row>();
  const upgradeCount=Number(upgradeRow?.n||0),upgradeValue=money(upgradeRow?.total);
 

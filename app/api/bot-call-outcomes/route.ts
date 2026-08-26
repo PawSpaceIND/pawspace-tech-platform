@@ -28,7 +28,9 @@ export async function POST(request:Request){
       const actor=await authorize(request,"customers.manage");
       return json({data:await reconcileBotCallClaim(db,{dispositionId:String(body.dispositionId||""),outcome:String(body.outcome||"")as"confirmed"|"not_found",note:String(body.note||""),actorId:actor.email})},201);
     }
-    const actor=await authorize(request,"communications.call");
+    // Second gate, matched to the first: a bot disposition writes the same CRM rows the human path
+  // writes, and that path requires customers.manage (PTJA W2-B4-M03).
+  const actor=await authorize(request,"customers.manage");
     return json({data:await recordBotCallDisposition(db,{idempotencyKey:String(body.idempotencyKey||""),leadId:body.leadId as string,phone:String(body.phone||""),channel:body.channel==="whatsapp"?"whatsapp":"voice",botProvider:String(body.botProvider||"pawspace_voice_bot"),callRef:body.callRef as string,primaryTag:String(body.primaryTag||""),secondaryTags:Array.isArray(body.tags)?body.tags as string[]:[],crossSellServices:Array.isArray(body.crossSellServices)?body.crossSellServices as string[]:[],callbackAt:body.callbackAt as number,talkTimeSeconds:body.talkTimeSeconds as number,sentiment:body.sentiment as string,notes:body.notes as string,transcriptRef:body.transcriptRef as string,actorId:actor.email})},201);
   }catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);return authError(error,"Unable to record bot call outcome");}
 }

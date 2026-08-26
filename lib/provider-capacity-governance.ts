@@ -48,7 +48,22 @@ export async function ensureProviderCapacityTables(db:Db){if(capacityTablesEnsur
 export async function seedProviderCapacityDefaults(db:Db){if(capacityDefaultsSeeded.has(db))return;await ensureProviderCapacityTables(db);const now=Date.now();await db.batch(defaults.map(p=>db.prepare("INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,?,1,?,?,?,?,?,?,'active',1,'2026-08-01',NULL,'founder_seed',?)").bind(p.id,p.cityId,p.name,p.model,JSON.stringify(p.services),JSON.stringify(p.zones),p.rating,p.qualityScore,p.capacity,p.travelBufferMinutes,p.maxDailyJobs,p.acceptanceTimeoutMinutes,now)));capacityDefaultsSeeded.add(db);}
 
 function parse<T>(value:unknown,fallback:T):T{try{return JSON.parse(String(value??"")) as T;}catch{return fallback;}}
-function rowToProvider(row:Row):Provider{return{id:String(row.id),cityId:String(row.city_id),name:String(row.name),model:String(row.provider_model) as Provider["model"],services:parse<string[]>(row.services_json,[]),zones:parse<string[]>(row.zones_json,[]),live:Boolean(row.live)&&String(row.status)==="active",rating:Number(row.rating||0),qualityScore:Number(row.quality_score||0),capacity:Number(row.capacity||1),travelBufferMinutes:Number(row.travel_buffer_minutes||30),maxDailyJobs:Number(row.max_daily_jobs||6)};}
+/**
+ * A configured number, with the documented default used ONLY when there is no number.
+ *
+ * These fields used to be read as Number(row.max_daily_jobs||6) and friends, so 0 - the one value an
+ * operator uses to stand a provider DOWN - is falsy and was silently replaced by the hardcoded default:
+ * a driver whose row said max_daily_jobs=0 was handed six jobs, and the scheduler then refused the
+ * seventh with "Daily job limit 6 reached", quoting a number the row does not contain. Same idiom turned
+ * capacity 0 into 1 (a host with no kennels still took a stay) and a deliberate 0 travel buffer into 30.
+ *
+ * Present-but-zero is a decision and is honoured. Absent is still the default, which is the existing
+ * contract for a column nobody has set. A stored value that is not a number at all falls back too - the
+ * PATCH now refuses to create one, and reading a legacy NaN as 0 would silently make a live provider
+ * unbookable rather than merely mis-limited. [PTJA-P1-F29]
+ */
+function configuredNumber(value:unknown,fallback:number){if(value===null||value===undefined||value==="")return fallback;const parsed=Number(value);return Number.isFinite(parsed)?parsed:fallback;}
+function rowToProvider(row:Row):Provider{return{id:String(row.id),cityId:String(row.city_id),name:String(row.name),model:String(row.provider_model) as Provider["model"],services:parse<string[]>(row.services_json,[]),zones:parse<string[]>(row.zones_json,[]),live:Boolean(row.live)&&String(row.status)==="active",rating:configuredNumber(row.rating,0),qualityScore:configuredNumber(row.quality_score,0),capacity:configuredNumber(row.capacity,1),travelBufferMinutes:configuredNumber(row.travel_buffer_minutes,30),maxDailyJobs:configuredNumber(row.max_daily_jobs,6)};}
 
 export async function loadGovernedProviders(db:Db,cityId:string,zoneId:string,serviceCode:string,at=new Date()){await seedProviderCapacityDefaults(db);const date=at.toISOString().slice(0,10);const rows=await db.prepare("SELECT * FROM provider_capacity_profiles WHERE city_id=? AND live=1 AND status='active' AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)").bind(cityId,date,date).all<Row>();const providers=rows.results.map(rowToProvider).filter(p=>p.services.includes(serviceCode)&&p.zones.includes(zoneId));const nowIso=at.toISOString();const blocks=await Promise.all(providers.map(provider=>db.prepare("SELECT id FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<=? AND ends_at>? LIMIT 1").bind(provider.id,nowIso,nowIso).first<Row>()));return providers.filter((_,index)=>!blocks[index]);}
 
@@ -112,10 +127,22 @@ export async function setProviderAvailability(db:Db,input:{providerId:string;ava
     // Anything still standing was imposed by somebody else and stays standing. Reported rather than
     // thrown: asking to be available when nothing blocks you is not an error, and the caller needs to
     // know it did not take effect.
-    const blocking=await db.prepare("SELECT COUNT(*) n FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<=? AND ends_at>?")
+    // STILL STANDING means not yet ended, not merely in force this second. Counting only suspensions
+    // spanning the current instant (starts_at<=now AND ends_at>now) hid every FUTURE-dated one, so a
+    // provider with an Ops suspension imposed for next week cleared their calendar and was answered
+    // {available:true, restrictionsRemaining:0} - then found out on the day. That contradicts this
+    // block's own intent, stated above: anything still standing was imposed by somebody else, and the
+    // caller needs to know it did not take effect. [PTJA-P1-F33]
+    //
+    // `available` is unchanged and still means nothing blocks you RIGHT NOW - that is what matching
+    // reads. So available:true alongside restrictionsRemaining:1 is the honest answer: free today, and a
+    // restriction is still on you.
+    const blockingNow=await db.prepare("SELECT COUNT(*) n FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<=? AND ends_at>?")
       .bind(input.providerId,nowIso,nowIso).first<Row>();
-    const restricted=Number(blocking?.n||0);
-    return{providerId:input.providerId,available:restricted===0,windowsCleared:cleared,restrictionsRemaining:restricted};
+    const standing=await db.prepare("SELECT COUNT(*) n FROM provider_unavailability WHERE provider_id=? AND status='active' AND ends_at>?")
+      .bind(input.providerId,nowIso).first<Row>();
+    const restricted=Number(blockingNow?.n||0);
+    return{providerId:input.providerId,available:restricted===0,windowsCleared:cleared,restrictionsRemaining:Number(standing?.n||0)};
   }
   const startsAt=new Date(now).toISOString(),endsAt=new Date(now+10*365*86400000).toISOString();
   const id=`PUNAVAIL-${crypto.randomUUID().slice(0,12).toUpperCase()}`;

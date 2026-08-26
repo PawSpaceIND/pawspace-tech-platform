@@ -112,7 +112,10 @@ test("UAT/sandbox keeps the submitted status regardless — the gate is LIVE-onl
 });
 
 test("the demotion keys off server authorization, not a client-controlled label", () => {
-  assert.match(bookingRoute, /PAWSPACE_PAYMENT_ENV/, "the environment is read from the Worker env");
+  // See W2-07-PAY-003: the environment decision moved into lib/payment-environment.ts so that an
+  // ABSENT PAWSPACE_PAYMENT_ENV can no longer resolve to "sandbox" and unlock the verify-first exemption.
+  assert.match(bookingRoute, /sandboxCapabilitiesUnlocked\(env/, "the environment is read from the Worker env, via the shared resolver");
+  assert.doesNotMatch(bookingRoute, /PAWSPACE_PAYMENT_ENV\s*\|\|\s*"sandbox"/, "and an absent variable is not a sandbox declaration");
   assert.doesNotMatch(bookingRoute, /payment\.mode==="prepaid"\|\|payment\.mode==="split_50_50"/, "no mode allowlist may decide financial truth");
   assert.doesNotMatch(bookingRoute, /!isSubscription/, "no subscription carve-out");
   // The bug was that the demotion gated on ONLINE_METHODS.has(payment.method): an off-list method

@@ -7,6 +7,7 @@
  */
 
 import { ACCT, postJournal, periodOf, round } from "./finance-accounts";
+import { remainingPayableForCredit } from "./booking-credit-application";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
@@ -220,7 +221,13 @@ export async function redeemWalletForBooking(db: Db, input: { customerId: string
   if (!(bookingTotal > 0)) throw new Error("This booking has no payable amount");
   const requestedWallet = input.walletAmount != null ? round(Math.min(Number(input.walletAmount), balance)) : balance;
   if (!(requestedWallet > 0)) throw new Error("Wallet redemption amount must be positive");
-  const q = quoteWalletRedemption(requestedWallet, bookingTotal);
+  // Cap against what is still PAYABLE, not against the gross total. Both credit instruments used to
+  // measure their own ceiling against canonical_bookings.total_amount and neither writes the booking
+  // down, so wallet + points on one booking summed past the order value - Rs 6,000 of discount on a
+  // Rs 5,000 booking, from two ordinary self-service calls.
+  const payable = await remainingPayableForCredit(db, bookingId, bookingTotal);
+  if (!(payable > 0)) throw new Error("This booking is already fully covered by credit you have applied");
+  const q = quoteWalletRedemption(requestedWallet, payable);
   if (!(q.walletUsed > 0)) throw new Error("Wallet redemption amount must be positive");
   const now = Date.now();
   const debited = await db.prepare("UPDATE pawspace_wallet_accounts SET balance=balance-?,updated_at=? WHERE customer_id=? AND balance>=?").bind(q.walletUsed, now, customerId, q.walletUsed).run();

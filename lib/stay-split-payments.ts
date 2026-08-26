@@ -62,6 +62,14 @@ export async function payStayBalance(db:Db,input:{bookingId:string;actorId:strin
  await ensureStayPaymentTables(db);
  const bookingId=String(input.bookingId||"").trim(),idempotencyKey=String(input.idempotencyKey||"").trim();
  if(!bookingId||!idempotencyKey)throw new Response("Booking and idempotency key are required",{status:400});
+ // stay_payment_events.idempotency_key is UNIQUE GLOBALLY, and this used to flip the schedule to 'paid'
+ // first and record the capture second, swallowing a UNIQUE collision as "the same request already
+ // recorded its capture". Reused across two bookings, the SECOND booking was marked paid and its
+ // balance_captured event silently discarded - a settled schedule with no capture behind it. Keys are
+ // client-supplied, so two customers both sending "pay-balance" collide by accident. Checked before any
+ // mutation, so a foreign key settles nothing at all. [PTJA-P1-F16]
+ const claimed=await db.prepare("SELECT booking_id FROM stay_payment_events WHERE idempotency_key=?").bind(idempotencyKey).first<Row>();
+ if(claimed&&String(claimed.booking_id)!==bookingId)throw new Response("An idempotency key settles one booking; this key already settled a different one",{status:409});
  const existing=await getStayPaymentSchedule(db,bookingId);
  if(!existing)throw new Response("No split payment schedule exists for this booking",{status:404});
  if(existing.status==="paid")return{schedule:existing,duplicatePrevented:true};
@@ -72,8 +80,11 @@ export async function payStayBalance(db:Db,input:{bookingId:string;actorId:strin
  try{
   await db.prepare("INSERT INTO stay_payment_events (id,booking_id,event_type,actor_id,idempotency_key,detail_json,created_at) VALUES (?,?,?,?,?,?,?)").bind(`SPE-${crypto.randomUUID().slice(0,12).toUpperCase()}`,bookingId,"balance_captured",input.actorId,idempotencyKey,JSON.stringify({paymentRef,sandbox:true}),now).run();
  }catch(error){
-  // UNIQUE(idempotency_key) collision: the same request already recorded its capture — keep the paid state.
+  // UNIQUE(idempotency_key) collision. Keep the paid state only if the row that owns the key is THIS
+  // booking's - otherwise a key claimed between the check above and here belongs to somebody else.
   if(!(error instanceof Error&&/UNIQUE/i.test(error.message)))throw error;
+  const owner=await db.prepare("SELECT booking_id FROM stay_payment_events WHERE idempotency_key=?").bind(idempotencyKey).first<Row>();
+  if(owner&&String(owner.booking_id)!==bookingId){await db.prepare("UPDATE stay_payment_schedules SET status=?,paid_at=NULL,payment_ref=NULL,updated_at=? WHERE booking_id=? AND payment_ref=?").bind(existing.status,Date.now(),bookingId,paymentRef).run();throw new Response("An idempotency key settles one booking; this key already settled a different one",{status:409});}
  }
  const schedule=await getStayPaymentSchedule(db,bookingId);
  return{schedule:schedule!,duplicatePrevented:false};

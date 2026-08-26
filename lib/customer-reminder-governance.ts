@@ -190,10 +190,52 @@ export async function generateSubscriptionReminders(db: Db, input: { actorId: st
   return { sessionReminders, renewalReminders, suppressed, subscriptionsScanned: subs.results.length };
 }
 
+/**
+ * Deactivating a lifecycle reminder rule now actually stops it.
+ *
+ * The engine used to call this sweep and then read the rule table, without ever passing a rule, a
+ * filter or an active flag in, and neither generator reads lifecycle_reminder_rules at all. Measured:
+ * save_rule with active:false returned 200, the directory read back active=0, and the very next run
+ * queued and delivered that exact reminder. Marketing had no way to pause an outreach cadence.
+ *
+ * The gate sits HERE rather than in the engine because three entry points reach this function -
+ * /api/lifecycle-reminders run_now, /api/customer-reminders run_sweep_now, and the background
+ * scheduler - and only the first goes through the engine.
+ *
+ * The mapping is the platform's own: rule-grooming-rebook names the grooming rebooking generator, and
+ * rule-subscription-unused / rule-subscription-renewal name the subscription one.
+ *
+ * LIMIT, deliberately not papered over: the subscription generator serves TWO rules, so it is skipped
+ * only when BOTH are inactive. Deactivating one of that pair alone still runs the generator. Giving it
+ * per-rule granularity means teaching the generator which rule each reminder belongs to, which is a
+ * larger change than this correction; it is recorded in the audit ledger.
+ */
+async function ruleActive(db: Db, ids: string[]) {
+  // Queried one id at a time rather than through an IN list. The repository's own guard
+  // (tests/helpers/in-list-guard.mjs) rejects a placeholder list built from a variable-length array,
+  // and it is right to: that shape breaks past D1's 100-bound-parameter cap as soon as the list grows
+  // with the data. This one never exceeds two ids, so a short loop costs nothing and needs no
+  // exemption. (The guard reads source text, so this comment deliberately describes the forbidden
+  // shape rather than reproducing it.)
+  let known = 0;
+  for (const id of ids) {
+    const row = await db.prepare("SELECT active FROM lifecycle_reminder_rules WHERE id=?").bind(id).first<Row>().catch(() => null);
+    if (!row) continue;
+    known += 1;
+    if (Number(row.active) === 1) return true;
+  }
+  // No rule row at all means the cadence has never been governed, which is not the same as being paused.
+  return known === 0;
+}
+
 export async function runCustomerReminderSweep(db: Db, input: { actorId: string; asOf?: number }) {
+  const [groomingActive, subscriptionActive] = await Promise.all([
+    ruleActive(db, ["rule-grooming-rebook"]),
+    ruleActive(db, ["rule-subscription-unused", "rule-subscription-renewal"]),
+  ]);
   const [grooming, subscription] = await Promise.all([
-    generateGroomingRebookingReminders(db, input),
-    generateSubscriptionReminders(db, input),
+    groomingActive ? generateGroomingRebookingReminders(db, input) : Promise.resolve({ queued: 0, suppressed: 0, skipped: true, skippedInactiveRule: true }),
+    subscriptionActive ? generateSubscriptionReminders(db, input) : Promise.resolve({ queued: 0, suppressed: 0, skipped: true, skippedInactiveRule: true }),
   ]);
   const delivery=await consumeCustomerReminderSandboxOutbox(db,{asOf:input.asOf});
   return { grooming, subscription, delivery };

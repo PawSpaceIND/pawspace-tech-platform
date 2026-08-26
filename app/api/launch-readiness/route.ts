@@ -1,4 +1,4 @@
-import{authError}from"../../../lib/server-auth";
+import{authError,authorize}from"../../../lib/server-auth";
 import{integrationLaunchBlockers}from"../../../lib/integration-readiness";
 import{isPawSpaceServiceCode,listServiceControls,setServiceEnabled}from"../../../lib/service-control";
 type Status="not_started"|"in_progress"|"blocked"|"verified"|"not_applicable";
@@ -31,7 +31,21 @@ async function ensureTables(){const db=await database();await db.batch([
 async function actor(request:Request):Promise<Actor>{let email=identity(request);const host=new URL(request.url).hostname;if(!email&&["terminal.local","localhost","127.0.0.1"].includes(host))email="preview@pawspace.test";if(!email)throw new Response("Authentication required",{status:401});await ensureTables();const db=await database();const row=await db.prepare("SELECT role_code FROM app_users WHERE email=? AND status='active'").bind(email).first<{role_code:string}>();return {email,roleCode:email==="preview@pawspace.test"?"superuser":row?.role_code||"associate"};}
 function canWrite(a:Actor){return ["founder","superuser","admin","manager"].includes(a.roleCode);}
 async function audit(db:Awaited<ReturnType<typeof database>>,a:Actor,entityType:string,entityId:string,action:string,detail:unknown){await db.prepare("INSERT INTO launch_audit_events (id,entity_type,entity_id,action,detail_json,actor_email,created_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),entityType,entityId,action,JSON.stringify(detail),a.email,Date.now()).run();}
-export async function GET(request:Request){try{const a=await actor(request);const db=await database();const [items,signoffs,exceptions,audits,services,integrationBlockers]=await Promise.all([
+/*
+ * The handler authorizes on its own account (PTJA W2-B2-R06).
+ *
+ * This route has a LOCAL actor() that returns {email, roleCode: row?.role_code || "associate"} - a
+ * missing app_users row fell through to the literal "associate" instead of refusing - and the GET then
+ * called no permission check of any kind. Measured: an unknown identity got 403 from the gateway and
+ * 200 with the full readiness register from the handler; a real customer identity did the same. Only
+ * gate one refused, and the platform's stated convention is that the handler is the second gate and is
+ * not entitled to assume the first ran.
+ *
+ * launch.view is exactly what lib/api-gateway.ts already maps GET /api/launch-readiness to, so the two
+ * gates now agree rather than disagreeing. The local actor() is still used for canWrite and the audit
+ * trail, but it can no longer be the only thing standing between a stranger and the register.
+ */
+export async function GET(request:Request){try{await authorize(request,"launch.view");const a=await actor(request);const db=await database();const [items,signoffs,exceptions,audits,services,integrationBlockers]=await Promise.all([
   db.prepare("SELECT * FROM launch_readiness_items ORDER BY CASE priority WHEN 'P0' THEN 0 ELSE 1 END, module, code").all(),
   db.prepare("SELECT * FROM launch_uat_signoffs ORDER BY signed_at DESC LIMIT 100").all(),
   db.prepare("SELECT * FROM operational_exceptions ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 ELSE 2 END, created_at DESC LIMIT 100").all(),

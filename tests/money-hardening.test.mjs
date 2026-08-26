@@ -65,6 +65,7 @@ const subscriptionWalletRoute = await import("../app/api/subscription-wallet/rou
 const missionRoute = await import("../app/api/revenue-mission-control/route.ts");
 const { creditWallet, redeemWalletForBooking, walletBalance } = await import("../lib/pawspace-wallet-governance.ts");
 const { redeemPoints, runPawPointsEarnSweep, pawPointsBalance } = await import("../lib/paw-points-governance.ts");
+const { grantGoodwillPoints } = await import("../lib/paw-points-governance.ts");
 const { quoteCoupon, consumeCouponQuote } = await import("../lib/coupon-governance.ts");
 const { mutateSubscriptionWallet } = await import("../lib/subscription-wallet.ts");
 const { payStayBalance } = await import("../lib/stay-split-payments.ts");
@@ -565,4 +566,86 @@ test("real execution: payment-reconciliation console lists webhook exceptions an
   assert.equal(dismissed.body.data.status, "dismissed");
   const after = await call(reconciliationRoute.GET, "GET", "status=open");
   assert.equal(after.body.data.exceptions.length, 0);
+});
+
+// =====================================================================================================
+// PTJA-W2-MKT-01 (ledger W2-09-M01) — wallet credit and PawPoints stack to 120% of the order value
+//
+// redeemWalletForBooking and redeemPoints each computed their cap independently against
+// canonical_bookings.total_amount, and neither writes the booking down, so the two instruments applied
+// to the SAME booking sum past what the order is worth.
+//
+// MEASURED through the two real routes on one customer session: a Rs 5,000 booking, a Rs 5,000 wallet
+// balance and 5,000 PawPoints. POST /api/pawspace-wallet -> 201 {"walletUsed":4545.45,"bonus":454.55,
+// "appliedValue":5000}. POST /api/paw-points {"points":5000} -> 201 {"pointsRedeemed":2000,
+// "discountApplied":1000}. Neither call refused; neither knew about the other. Rs 6,000 of discount on a
+// Rs 5,000 order, from two ordinary self-service calls with no staff involved, and
+// canonical_bookings.total_amount still 5000. lib/unit-economics.ts then books all Rs 6,000 as real
+// discount against a Rs 5,000 GMV line, so contribution goes negative with nothing flagging it.
+//
+// PawPoints' MAX_REDEEM_FRACTION margin cap does not help: it is measured on the GROSS total, so it
+// survives intact even after the wallet has already covered 100% of the booking.
+//
+// The ceiling was never wrong - it was measured per instrument. Each redemption now caps against what
+// is still PAYABLE on the booking, via lib/booking-credit-application.ts, which reads what every
+// instrument has already applied. The margin cap stays exactly as it is, on the gross total; it is now
+// the tighter of the two that binds. No incentive policy is invented.
+// =====================================================================================================
+
+async function stackingWorld({ total = 5000, wallet = 5000, points = 5000 } = {}) {
+  freshDb(); baseTables(); seedBooking({ id: "STACK", total });
+  const db = globalThis.__MONEY_DB__;
+  if (wallet > 0) await creditWallet(db, { customerId: "cus_m1", amount: wallet, source: "goodwill", idempotencyKey: "stack-wc", actorId: "finance:uat" });
+  if (points > 0) await grantGoodwillPoints(db, { customerId: "cus_m1", points, reason: "service recovery probe", actorId: "ops:uat", idempotencyKey: "stack-pp" });
+  const applied = async () => {
+    const { creditsAppliedToBooking } = await import("../lib/booking-credit-application.ts");
+    return creditsAppliedToBooking(db, "STACK");
+  };
+  return { db, applied };
+}
+
+test("REGRESSION lib/pawspace-wallet-governance.ts + lib/paw-points-governance.ts: wallet and points together cannot exceed the order value", async () => {
+  const { db, applied } = await stackingWorld();
+
+  const walletLeg = await redeemWalletForBooking(db, { customerId: "cus_m1", bookingId: "STACK", actorId: "cus_m1" });
+  assert.equal(walletLeg.appliedValue, 5000, "the wallet alone legitimately covers the whole Rs 5,000 booking");
+  assert.equal(await applied(), 5000, "so the booking has already received its full value in credit");
+
+  await assert.rejects(
+    redeemPoints(db, { customerId: "cus_m1", points: 5000, bookingId: "STACK", actorId: "cus_m1" }),
+    /payable|redeemable|discount/i,
+    "points must not add discount to a booking that is already fully covered",
+  );
+  assert.equal(await applied(), 5000, "total credit applied must never exceed the Rs 5,000 order value");
+});
+
+test("REGRESSION: the same ceiling holds when points are redeemed first", async () => {
+  // Order must not decide the outcome - the defect was symmetric.
+  const { db, applied } = await stackingWorld({ total: 5000 });
+  const pointsLeg = await redeemPoints(db, { customerId: "cus_m1", points: 5000, bookingId: "STACK", actorId: "cus_m1" });
+  assert.equal(pointsLeg.discountApplied, 1000, "the 20% margin cap still binds first: Rs 1,000 on a Rs 5,000 booking");
+
+  const walletLeg = await redeemWalletForBooking(db, { customerId: "cus_m1", bookingId: "STACK", actorId: "cus_m1" });
+  assert.equal(walletLeg.appliedValue, 4000, "the wallet may only cover what is still payable");
+  assert.equal(await applied(), 5000, "and the two together come to exactly the order value, never past it");
+});
+
+test("REGRESSION: each instrument alone still works, and the margin cap is unchanged", async () => {
+  // Non-vacuity. Refusing the second instrument outright, or tightening the points cap, would satisfy
+  // the cases above and break both products.
+  const soloWallet = await stackingWorld({ total: 5000, points: 0 });
+  const walletOnly = await redeemWalletForBooking(soloWallet.db, { customerId: "cus_m1", bookingId: "STACK", actorId: "cus_m1" });
+  assert.equal(walletOnly.appliedValue, 5000, "wallet alone still covers a whole booking, bonus included");
+
+  const soloPoints = await stackingWorld({ total: 5000, wallet: 0 });
+  const pointsOnly = await redeemPoints(soloPoints.db, { customerId: "cus_m1", points: 5000, bookingId: "STACK", actorId: "cus_m1" });
+  assert.equal(pointsOnly.discountApplied, 1000, "points alone still redeem up to the unchanged 20% margin cap");
+  assert.equal(pointsOnly.pointsRedeemed, 2000, "for the same number of points as before");
+
+  // and a partial wallet spend still leaves room for points
+  const mixed = await stackingWorld({ total: 5000 });
+  await redeemWalletForBooking(mixed.db, { customerId: "cus_m1", bookingId: "STACK", walletAmount: 1000, actorId: "cus_m1" });
+  const rest = await redeemPoints(mixed.db, { customerId: "cus_m1", points: 5000, bookingId: "STACK", actorId: "cus_m1" });
+  assert.equal(rest.discountApplied, 1000, "Rs 1,100 of wallet value leaves the full 20% margin cap available");
+  assert.equal(await mixed.applied(), 2100, "Rs 1,100 wallet value + Rs 1,000 points, well inside the order value");
 });

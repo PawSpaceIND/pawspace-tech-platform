@@ -234,7 +234,10 @@ test("sandbox/UAT behaviour is unchanged and explicitly environment-gated", asyn
   assert.equal(usage(sqlite).status, "reserved");
 
   // The gate is the environment variable and nothing else.
-  assert.match(read("app/api/canonical-bookings/route.ts"), /PAWSPACE_PAYMENT_ENV/);
+  // W2-07-PAY-003: still environment-gated, now through lib/payment-environment.ts, which requires an
+  // EXPLICIT sandbox declaration rather than treating an absent variable as one.
+  assert.match(read("app/api/canonical-bookings/route.ts"), /sandboxCapabilitiesUnlocked\(env/);
+  assert.match(read("lib/payment-environment.ts"), /PAWSPACE_PAYMENT_ENV/);
 });
 
 // ---------------------------------------------------------------------------
