@@ -12,6 +12,12 @@ const uat=await import("../lib/whatsapp-uat-adapter.ts");
 const control=await import("../lib/whatsapp-conversation-control.ts");
 const rollout=await import("../lib/ai-audience-rollout.ts");
 
+function aiTurnCount(sqlite,threadId){
+ const table=sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='ai_conversation_turns'").get();
+ if(!table)return 0;
+ return sqlite.prepare("SELECT COUNT(*) n FROM ai_conversation_turns WHERE thread_id=?").get(threadId).n;
+}
+
 test("internal Meta AI execution is bound to the canonical signed-webhook ledger rather than an HTTP actor",()=>{
  assert.match(executorSource,/FROM whatsapp_uat_events e JOIN communication_messages m/);
  assert.match(executorSource,/e\.provider='meta_whatsapp'/);
@@ -76,28 +82,26 @@ test("real D1 execution accepts only a canonical Meta inbound and reaches the go
  const turns=sqlite.prepare("SELECT outcome,handoff_reason FROM ai_conversation_turns WHERE thread_id=?").all(inbound.threadId);
  assert.equal(turns.length,1);
  assert.equal(turns[0].outcome,"handoff");
- const audit=sqlite.prepare("SELECT actor_email,action,outcome FROM security_audit_events WHERE entity_id=? AND action='ai.conversation.meta.internal' ORDER BY created_at DESC LIMIT 1").get(inbound.threadId);
+ const audit=sqlite.prepare("SELECT actor_email,action,outcome FROM security_audit_events WHERE resource_id=? AND action='ai.conversation.meta.internal' ORDER BY created_at DESC LIMIT 1").get(inbound.threadId);
  assert.equal(audit.actor_email,"meta-whatsapp-ai@system.pawspace");
  assert.equal(audit.outcome,"completed");
 });
 
-test("replaying the same canonical Meta event is idempotent and does not create a second turn or handoff",async()=>{
+test("direct re-entry after a governed handoff fails closed and cannot create a second turn or handoff",async()=>{
  const{sqlite,db,inbound}=await world();
  const input={eventId:"wamid.executed-boundary",threadId:inbound.threadId,customerId:inbound.customerId,inputMessageId:inbound.messageId};
  const first=await executor.runGovernedMetaWhatsAppAiTurn(db,input);
- const replay=await executor.runGovernedMetaWhatsAppAiTurn(db,input);
  assert.equal(first.status,"human_handoff");
- assert.equal(replay.status,"human_handoff");
- assert.equal(replay.duplicatePrevented,true);
- assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM ai_conversation_turns WHERE thread_id=?").get(inbound.threadId).n,1);
+ await assert.rejects(executor.runGovernedMetaWhatsAppAiTurn(db,input),error=>error instanceof Response&&error.status===409);
+ assert.equal(aiTurnCount(sqlite,inbound.threadId),1);
  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM ai_handoffs WHERE thread_id=?").get(inbound.threadId).n,1);
 });
 
 test("missing Meta ledger evidence is rejected before AI execution and audited as blocked",async()=>{
  const{sqlite,db,inbound}=await world();
  await assert.rejects(executor.runGovernedMetaWhatsAppAiTurn(db,{eventId:"wamid.not-recorded",threadId:inbound.threadId,customerId:inbound.customerId,inputMessageId:inbound.messageId}),error=>error instanceof Response&&error.status===403);
- assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM ai_conversation_turns WHERE thread_id=?").get(inbound.threadId).n,0);
- const audit=sqlite.prepare("SELECT outcome FROM security_audit_events WHERE entity_id=? AND action='ai.conversation.meta.internal' ORDER BY created_at DESC LIMIT 1").get(inbound.threadId);
+ assert.equal(aiTurnCount(sqlite,inbound.threadId),0);
+ const audit=sqlite.prepare("SELECT outcome FROM security_audit_events WHERE resource_id=? AND action='ai.conversation.meta.internal' ORDER BY created_at DESC LIMIT 1").get(inbound.threadId);
  assert.equal(audit.outcome,"blocked");
 });
 
@@ -106,12 +110,12 @@ test("revoked consent and human assignment both block the service executor befor
   const{sqlite,db,inbound}=await world();
   sqlite.prepare("UPDATE canonical_customers SET consent_json='{}' WHERE id=?").run(inbound.customerId);
   await assert.rejects(executor.runGovernedMetaWhatsAppAiTurn(db,{eventId:"wamid.executed-boundary",threadId:inbound.threadId,customerId:inbound.customerId,inputMessageId:inbound.messageId}),error=>error instanceof Response&&error.status===409);
-  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM ai_conversation_turns WHERE thread_id=?").get(inbound.threadId).n,0);
+  assert.equal(aiTurnCount(sqlite,inbound.threadId),0);
  }
  {
   const{sqlite,db,inbound}=await world();
   sqlite.prepare("UPDATE communication_threads SET assigned_to='agent@pawspace.in' WHERE id=?").run(inbound.threadId);
   await assert.rejects(executor.runGovernedMetaWhatsAppAiTurn(db,{eventId:"wamid.executed-boundary",threadId:inbound.threadId,customerId:inbound.customerId,inputMessageId:inbound.messageId}),error=>error instanceof Response&&error.status===409);
-  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM ai_conversation_turns WHERE thread_id=?").get(inbound.threadId).n,0);
+  assert.equal(aiTurnCount(sqlite,inbound.threadId),0);
  }
 });
