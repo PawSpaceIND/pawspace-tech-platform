@@ -1,5 +1,5 @@
 import type { Booking, Pet, PlatformRepository, Provider, ProviderAvailability } from "../../../backend/src/domain";
-import { schedule, type CustomScheduleRule, type ScheduleDecision, type ScheduleRequest, type SchedulingService } from "../../../backend/src/scheduling";
+import { cityOffsetMinutes, schedule, scheduleRules, type CustomScheduleRule, type ScheduleDecision, type ScheduleRequest, type SchedulingService } from "../../../backend/src/scheduling";
 import {createAssignmentOffer,getGovernedProvider,loadGovernedProviders,seedProviderCapacityDefaults} from "../../../lib/provider-capacity-governance";
 import {authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit,type AuthenticatedActor} from "../../../lib/server-auth";
 import {cleanupExpiredReservationLeases,ensureSchedulingReservationLeaseGovernance,reservationLeaseForRequest,SCHEDULING_RESERVATION_LEASE_MS} from "../../../lib/scheduling-reservation-leases";
@@ -61,9 +61,42 @@ async function saveDecision(db:Awaited<ReturnType<typeof database>>,groupId:stri
 class SlotConflictError extends Error{constructor(){super("SLOT_TAKEN");this.name="SlotConflictError";}}
 const RESERVATION_COLUMNS="id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at,lease_expires_at,customer_session_id";
 type ReservationLease={leaseExpiresAt:number;customerSessionId:string|null};
-async function insertReservations(db:Awaited<ReturnType<typeof database>>,groupId:string,input:RequestBody,decision:ScheduleDecision,lease:ReservationLease){if(!decision.provider)throw new Error("No eligible provider selected");const createdAt=Date.now();const overnight=input.serviceCode==="boarding"||(input.serviceCode==="pet_sitting"&&input.careMode==="overnight");const capacity=Number(decision.provider.capacity??1),units=input.petIds.length;const statements=decision.occurrences.map(occ=>{const values=[`${groupId}_${decision.provider!.id}_${occ.occurrenceNumber}_${createdAt}`,groupId,decision.provider!.id,input.serviceCode,cityIdFor(input),input.zoneId,input.customerId,JSON.stringify(input.petIds),occ.start,occ.end,units,occ.occurrenceNumber,input.careMode??null,"assigned",JSON.stringify(decision.explanation),createdAt,lease.leaseExpiresAt,lease.customerSessionId];return overnight
+/*
+ * Every rule the engine used to declare a provider ELIGIBLE must also be a condition of the write that
+ * COMMITS the reservation. It was not, and the two disagreed under ordinary concurrency. [PTJA-W1-F30]
+ *
+ * MEASURED, letting a second request complete its whole read-decide-write while the first request's
+ * reservation batch was in flight - the ordinary interleaving of two concurrent D1 requests:
+ *
+ *   buffer      sequential A 04:00-06:00 -> 200; sequential B 06:15-08:15 -> 409 NO_SCHEDULE_AVAILABLE
+ *                            ["Existing booking conflicts with travel/service buffer"]
+ *               CONCURRENT   B -> 200 and A -> 200. Both rows durable, 15 minutes apart, for a groomer
+ *               whose configured travel buffer is 30.
+ *
+ *   daily cap   groom_arun capped at 2 jobs/day. Three reserves, the third interleaved -> all three
+ *               200, three rows durable against a cap of 2.
+ *
+ * The committing guard was `WHERE NOT EXISTS (... scheduled_start<? AND scheduled_end>?)` on the RAW
+ * occurrence bounds - raw overlap and nothing else - while backend/src/scheduling.ts:105-109 declares
+ * the buffer and the daily limit as eligibility rules. Neither state surfaced an error to the customer
+ * or to Ops; the only difference between the refused case and the accepted one was request timing.
+ *
+ * The overnight branch beside this one already did it correctly, with
+ * `SUM(capacity_units)+units<=capacity` inside the same INSERT ... SELECT. This is the same treatment
+ * for the appointment branch, using the provider's own travel_buffer_minutes and max_daily_jobs and
+ * the same IST-local day key the engine uses (cityOffsetMinutes: 330 for blr, 0 elsewhere).
+ */
+async function insertReservations(db:Awaited<ReturnType<typeof database>>,groupId:string,input:RequestBody,decision:ScheduleDecision,lease:ReservationLease){if(!decision.provider)throw new Error("No eligible provider selected");const createdAt=Date.now();const overnight=input.serviceCode==="boarding"||(input.serviceCode==="pet_sitting"&&input.careMode==="overnight");const capacity=Number(decision.provider.capacity??1),units=input.petIds.length;
+  // The same numbers backend/src/scheduling.ts evaluates, applied to the write instead of only the read.
+  const bufferMs=(decision.provider.travelBufferMinutes??scheduleRules[input.serviceCode].bufferMinutes)*60_000;
+  const maxDailyJobs=Number(decision.provider.maxDailyJobs??6);
+  const offsetMinutes=cityOffsetMinutes(cityIdFor(input)),cityOffsetModifier=`+${offsetMinutes} minutes`;
+  const shift=(value:string,ms:number)=>new Date(new Date(value).getTime()+ms).toISOString();
+  const bufferedEnd=(value:string)=>shift(value,bufferMs),bufferedStart=(value:string)=>shift(value,-bufferMs);
+  const localDayOf=(value:string)=>shift(value,offsetMinutes*60_000).slice(0,10);
+  const statements=decision.occurrences.map(occ=>{const values=[`${groupId}_${decision.provider!.id}_${occ.occurrenceNumber}_${createdAt}`,groupId,decision.provider!.id,input.serviceCode,cityIdFor(input),input.zoneId,input.customerId,JSON.stringify(input.petIds),occ.start,occ.end,units,occ.occurrenceNumber,input.careMode??null,"assigned",JSON.stringify(decision.explanation),createdAt,lease.leaseExpiresAt,lease.customerSessionId];return overnight
   ?db.prepare(`INSERT INTO scheduling_reservations (${RESERVATION_COLUMNS}) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE (SELECT COALESCE(SUM(capacity_units),0) FROM scheduling_reservations WHERE provider_id=? AND status!='cancelled' AND scheduled_start<? AND scheduled_end>?)+?<=?`).bind(...values,decision.provider!.id,occ.end,occ.start,units,capacity)
-  :db.prepare(`INSERT INTO scheduling_reservations (${RESERVATION_COLUMNS}) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM scheduling_reservations WHERE provider_id=? AND status!='cancelled' AND scheduled_start<? AND scheduled_end>?)`).bind(...values,decision.provider!.id,occ.end,occ.start);});
+  :db.prepare(`INSERT INTO scheduling_reservations (${RESERVATION_COLUMNS}) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM scheduling_reservations WHERE provider_id=? AND status!='cancelled' AND scheduled_start<? AND scheduled_end>?) AND (SELECT COUNT(*) FROM scheduling_reservations WHERE provider_id=? AND status!='cancelled' AND substr(datetime(scheduled_start,?),1,10)=?)<?`).bind(...values,decision.provider!.id,bufferedEnd(occ.end),bufferedStart(occ.start),decision.provider!.id,cityOffsetModifier,localDayOf(occ.start),maxDailyJobs);});
 await db.batch(statements);const inserted=await db.prepare("SELECT COUNT(*) count FROM scheduling_reservations WHERE group_id=? AND created_at=?").bind(groupId,createdAt).first<{count:number}>();if(Number(inserted?.count||0)!==decision.occurrences.length){await db.prepare("DELETE FROM scheduling_reservations WHERE group_id=? AND created_at=?").bind(groupId,createdAt).run();throw new SlotConflictError();}}
 async function operateAssignment(db:Awaited<ReturnType<typeof database>>,input:RequestBody,actor:AuthenticatedActor){await ensureSchedulingTables(db);await cleanupExpiredReservationLeases(db);const groupId=input.groupId??input.clientRequestId;if(!groupId)return json({error:"Group ID is required"},400);const stored=await db.prepare("SELECT * FROM scheduling_assignment_decisions WHERE group_id=?").bind(groupId).first<Record<string,unknown>>();if(!stored)return json({error:"Scheduling decision not found"},404);
   if(input.action==="cancel"){await db.batch([db.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=?").bind(groupId),db.prepare("UPDATE scheduling_assignment_decisions SET status='cancelled',actor_id=?,reason=?,updated_at=? WHERE group_id=?").bind(actor.email,input.reason??"Cancelled by Ops",Date.now(),groupId)]);await securityAudit(db,actor,"scheduling.cancel","scheduling_group",groupId,"completed",{reason:input.reason??"Cancelled by Ops"});return json({data:{groupId,status:"cancelled"}});}

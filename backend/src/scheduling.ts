@@ -47,7 +47,11 @@ export const scheduleRules = {
 const activeStatuses = new Set<Booking["status"]>(["confirmed","assigned","on_the_way","arrived","in_service"]);
 const msMinute = 60_000;
 const addDays = (value:string, days:number) => new Date(new Date(value).getTime()+days*24*60*msMinute).toISOString();
-const cityOffsetMinutes=(cityId:string)=>cityId==="blr"?330:0;
+/** The city's UTC offset in minutes. Exported so the committing SQL guard in
+ * app/api/uat-scheduling/route.ts keys its daily-job count on the same local day this engine does,
+ * rather than restating the offset - which is also how a hardcoded city id got into that route and was
+ * caught by tests/city-propagation-closure.test.mjs. [PTJA-W1-F30] */
+export const cityOffsetMinutes=(cityId:string)=>cityId==="blr"?330:0;
 const localDate=(value:string,cityId:string)=>new Date(new Date(value).getTime()+cityOffsetMinutes(cityId)*msMinute);
 const dateKey = (value:string,cityId:string) => localDate(value,cityId).toISOString().slice(0,10);
 const minutesOfDay = (value:string,cityId:string) => { const d=localDate(value,cityId); return d.getUTCHours()*60+d.getUTCMinutes(); };
