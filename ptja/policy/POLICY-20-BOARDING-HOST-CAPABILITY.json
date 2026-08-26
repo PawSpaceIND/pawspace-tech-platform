@@ -1,0 +1,58 @@
+{
+  "item": "W3-BH (ledger item 8)",
+  "title": "Boarding host capability: five answers, then five matching constraints",
+  "status": "implemented",
+  "approved_by": "PawSpace business decision supplied 2026-08-26",
+  "evidence_class": "real_execution",
+  "method": "Regressions written and observed RED before the production change (12 of 12 failing), then GREEN; two delegation cases added as the wiring landed. Six sabotage reversions.",
+
+  "measured_before": {
+    "nothing_collected_them": "boarding_host_profiles carries all five columns and the only writers in the repository were a hardcoded seed and a demo SQL file, so a real host could never be boarded. This is the gap PTJA-P1 recorded as 'unbuilt feature, needs product decisions'.",
+    "activation_checked_existence_only": "The activation gate required a profile ROW to exist, not that it said anything. A row with no service area, an empty species list and zero capacity passed, and the host went live to be matched on declarations nobody had ever made.",
+    "medication_was_read_by_nothing": "medication_support appeared in the seed and in a badge display and NOWHERE else. A host who cannot give medication was matched to a pet that needs it, every time.",
+    "one_family_fired_too_late": "It was enforced at stay ACCEPTANCE but not at booking, which turns a matching decision into a failed handover after the customer has paid."
+  },
+
+  "approved_rules_implemented": {
+    "five_answers_before_active": "saveBoardingHostCapability refuses an incomplete set outright rather than storing a half-profile - a row that exists but says nothing is exactly what let the old gate through. assertBoardingHostCapabilityComplete blocks activation and names which answers are missing.",
+    "answered_is_not_the_same_as_true": "'This host does not give medication' is information a matcher can use; 'nobody asked' is not, and both would otherwise be stored as 0. The write path takes booleans and refuses null, and capabilityGapsFrom treats NULL as unanswered while 0 is an answer.",
+    "service_area_covers_the_location": "Matched on city and zone, which is the covering unit this platform matches on. `area` is the human label an operator reads and is required as an ANSWER, not used as a geographic test - inventing area geometry would be inventing product.",
+    "species_matches_the_pet": "Unsupported species are named in the refusal.",
+    "available_capacity": "Occupied places count against declared capacity, so a host with three places and two guests has one - the previous check compared against the declared number alone.",
+    "one_family_only_when_enabled": "Fires only where the host set it, and only against a DIFFERENT family. Sabotage D makes it universal and BH-09 goes red.",
+    "medication_only_when_needed": "Fires only when a pet on the booking needs medication. Sabotage C makes it a universal rejection - which would shrink supply for no safety gain - and BH-10 goes red.",
+    "the_signal_that_makes_it_possible": "canonical-bookings pets now carry medicationRequired. Without that signal the constraint could never fire, so the rule would have been unimplementable rather than merely unimplemented."
+  },
+
+  "what_this_work_did_NOT_do": {
+    "no_new_identity_requirements": "No police or government-ID requirement is introduced for Boarding. BH-12 asserts the capability module never mentions one and that the police floor in lib/provider-verification-policy.ts is still exactly Dog Walking and Pet Taxi.",
+    "existing_boarding_verification_untouched": "Boarding's home_verified / kyc_status / background_check_status checks predate this work and are left exactly as they are. Removing them would be weakening a control; extending them to other verticals would be adding one. Neither is in scope."
+  },
+
+  "a_correction_to_my_own_test": "BH-14 was written to prove the booking gate refuses a medication booking, and refused for the wrong reason - governBoardingBooking checks the quote before the host, so the case was passing on 'A valid server Boarding quote is required'. It now creates a real quote first and asserts the refusal names medication.",
+
+  "regression": {
+    "file": "tests/ptja-w3-boarding-host-capability.test.mjs",
+    "cases": 14,
+    "red_before": "12 of 12 failing.",
+    "sabotage_verification": [
+      "A incomplete answers accepted -> BH-01 red",
+      "B medication constraint removed -> BH-10, BH-14 red",
+      "C medication becomes a universal rejection -> BH-10 red",
+      "D one-family becomes universal -> BH-09 red",
+      "E activation gate back to row-exists -> BH-05 red",
+      "F booking gate stops delegating -> BH-13, BH-14 red"
+    ]
+  },
+
+  "a_note_on_a_flaky_run": "tests/lane2-core-integration-boundaries.test.mjs reported two failing cases in one full-suite run while the run's own counter said fail 0, and the suite passed alone and on the next full run. Recorded rather than quietly re-run. It is the second intermittent seen on this branch; both are in suites that spin up heavier fixtures.",
+
+  "still_open_and_not_claimed": {
+    "onboarding_ui": "saveBoardingHostCapability is the writer. No onboarding screen or route calls it yet, so today the five answers must come through the library. Wiring the host-onboarding form is follow-up work.",
+    "area_geometry": "Service-area matching is by zone. If the business later wants sub-zone or radius matching for hosts, `area` is where that would live and this is not it.",
+    "medication_declaration": "medicationRequired is taken from the booking's pets. Nothing yet stores it on the canonical pet record, so a repeat customer re-declares it each time."
+  },
+
+  "gates": {"focused": "14/14", "full_suite": "3459/3459", "typecheck": "clean", "lint": "0 errors, 57 warnings (pre-existing)"},
+  "no_merge_no_deploy": true
+}

@@ -21,7 +21,11 @@ import {cityBookingVerdict} from "../../../lib/city-status-authority";
 
 type LifecycleInput={
   idempotencyKey:string;scheduleGroupId:string;customer:{id:string;name:string;primaryPhone:string;secondaryPhone?:string;email?:string};
-  pets:Array<{sourceId:string;name:string;species?:string;breed?:string;vaccinationStatus?:string}>;cityId:string;zoneId:string;
+  // medicationRequired is a PET fact the customer declares at booking. Boarding host matching needs it:
+  // medication handling is a hard constraint only when a pet actually needs medication, so without the
+  // signal the constraint can never fire and a host who cannot give medication is matched anyway.
+  // [PTJA-W3-BH]
+  pets:Array<{sourceId:string;name:string;species?:string;breed?:string;vaccinationStatus?:string;medicationRequired?:boolean}>;cityId:string;zoneId:string;
   serviceCode:"grooming"|"dog_training"|"boarding"|"pet_sitting";packageCode:string;packageName:string;scheduledStart:string;scheduledEnd:string;
   provider:{id:string;name:string;model:"full_time"|"commission"};totalAmount:number;amountDueNow:number;
   payment:{method:string;mode:string;status:string;detail:string};pricing:{discount:number;couponCode?:string;couponQuoteId?:string;addOns?:string[];subscription?:string;requirements?:string[];trainingQuoteId?:string;boardingQuoteId?:string;sittingQuoteId?:string;referralClaimId?:string};
@@ -273,7 +277,7 @@ export async function POST(request:Request){try{const db=await database();await 
   let boardingCommercial:Awaited<ReturnType<typeof governBoardingBooking>>|null=null;
   if(input.serviceCode==="boarding"){
     const quoteId=String(input.pricing.boardingQuoteId||"").trim();if(!quoteId)return json({error:"A server Boarding quote is required before booking confirmation"},409);const first=reservations.results[0];if(String(first.scheduled_start)!==input.scheduledStart||String(first.scheduled_end)!==input.scheduledEnd)return json({error:"Boarding booking window does not match the continuous stay reservation"},409);
-    boardingCommercial=await governBoardingBooking(db,{quoteId,packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,submittedTotal:input.totalAmount,submittedAmountDueNow:input.amountDueNow,paymentMode:input.payment.mode,paymentStatus:input.payment.status,reservationCount:reservations.results.length,providerId:input.provider.id,cityId:input.cityId,zoneId:input.zoneId,species:input.pets.map(pet=>String(pet.species||"other")),vaccinationStatuses:input.pets.map(pet=>String(pet.vaccinationStatus||"not_provided"))});governed={packageCode:boardingCommercial.packageCode,packageName:boardingCommercial.packageName,catalogueVersion:boardingCommercial.catalogueVersion,petCount:boardingCommercial.petCount,totalAmount:boardingCommercial.totalAmount,amountDueNow:boardingCommercial.amountDueNow};
+    boardingCommercial=await governBoardingBooking(db,{quoteId,packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,submittedTotal:input.totalAmount,submittedAmountDueNow:input.amountDueNow,paymentMode:input.payment.mode,paymentStatus:input.payment.status,reservationCount:reservations.results.length,providerId:input.provider.id,cityId:input.cityId,zoneId:input.zoneId,medicationRequired:input.pets.some(pet=>pet.medicationRequired===true),customerId:input.customer.id,species:input.pets.map(pet=>String(pet.species||"other")),vaccinationStatuses:input.pets.map(pet=>String(pet.vaccinationStatus||"not_provided"))});governed={packageCode:boardingCommercial.packageCode,packageName:boardingCommercial.packageName,catalogueVersion:boardingCommercial.catalogueVersion,petCount:boardingCommercial.petCount,totalAmount:boardingCommercial.totalAmount,amountDueNow:boardingCommercial.amountDueNow};
   }
   let sittingCommercial:Awaited<ReturnType<typeof governSittingBooking>>|null=null;
   let sittingCapture:Awaited<ReturnType<typeof requireSittingQuoteSandboxCapture>>|null=null;

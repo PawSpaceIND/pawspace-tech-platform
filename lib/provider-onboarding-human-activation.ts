@@ -189,8 +189,13 @@ export async function addProviderToServiceMap(db:D1Database,input:{providerId:st
  // message to the operator performing it.
  const services=parse<string[]>(profile.services_json,[]);
  if(Array.isArray(services)&&services.includes("boarding")){
-  const hostProfile=await db.prepare("SELECT provider_id FROM boarding_host_profiles WHERE provider_id=?").bind(providerId).first<Row>().catch(()=>null);
-  if(!hostProfile)throw new Error("This provider offers boarding but has no boarding host profile; capture the host's species, guest-pet capacity, household and home verification before putting them live");
+  /*
+   * This used to check only that a profile ROW EXISTED. A row with no service area, an empty species
+   * list and zero capacity satisfied it, so a host nobody had asked anything went live and was then
+   * matched to bookings on declarations that were never made. [PTJA-W3-BH]
+   */
+  const{assertBoardingHostCapabilityComplete}=await import("./boarding-host-capability");
+  await assertBoardingHostCapabilityComplete(db,providerId);
  }
  const now=Date.now();await db.prepare("UPDATE provider_capacity_profiles SET zones_json=?,live=1,status='active',version=version+1,updated_by=?,updated_at=? WHERE id=?").bind(JSON.stringify(zoneIds),input.actorEmail,now,providerId).run();const application=await db.prepare("SELECT id,status FROM provider_onboarding_applications WHERE provider_id=?").bind(providerId).first<Row>();if(application)await event(db,text(application.id),"provider_added_to_service_map",input.actorEmail,text(application.status),text(application.status),{providerId,zoneIds,live:true});return{providerId,zoneIds,live:true,status:"active"};}
 
