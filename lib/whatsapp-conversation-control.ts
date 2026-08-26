@@ -65,7 +65,7 @@ export async function takeOverWhatsAppConversation(db:D1Database,input:{actor:Au
  const context=await threadContext(db,input.threadId),reason=text(input.reason)||"Staff requested WhatsApp takeover";
  let snapshot=await aiHumanHandoffSnapshot(db,{actor:input.actor,threadId:input.threadId,customerId:context.customerId});
  if(!snapshot.current||!["queued","staff_active"].includes(text(snapshot.current.status))){
-  await requestAiHumanHandoff(db,{actorEmail:input.actor.email,threadId:input.threadId,customerId:context.customerId,reason:"staff_requested_human"});
+  await requestAiHumanHandoff(db,{actorEmail:input.actor.email,threadId:input.threadId,customerId:context.customerId,reason:"customer_requested_human"});
   snapshot=await aiHumanHandoffSnapshot(db,{actor:input.actor,threadId:input.threadId,customerId:context.customerId});
  }
  if(text(snapshot.current?.status)==="queued")await manageAiHumanHandoff(db,{actor:input.actor,threadId:input.threadId,customerId:context.customerId,action:"take_over",reason});
