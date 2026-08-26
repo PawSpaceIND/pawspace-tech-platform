@@ -13,6 +13,7 @@ async function world() {
   await control.ensureWhatsAppConversationControl(db);
   await lifecycle.ensureWhatsAppTemplateLifecycle(db);
   await recovery.ensureWhatsAppNoResponseSequenceTables(db);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS customer_contact_preferences (customer_id TEXT PRIMARY KEY,marketing_consent INTEGER NOT NULL DEFAULT 0,service_consent INTEGER NOT NULL DEFAULT 0,whatsapp_consent INTEGER NOT NULL DEFAULT 0,sms_consent INTEGER NOT NULL DEFAULT 0,email_consent INTEGER NOT NULL DEFAULT 0,opt_out INTEGER NOT NULL DEFAULT 0,source TEXT NOT NULL DEFAULT '',updated_by TEXT NOT NULL DEFAULT '',updated_at INTEGER NOT NULL DEFAULT 0)");
   await inboundMessage(sqlite, db, { threadId: "THREAD-REC", customerId: "CUS-REC", text: "Grooming", channel: "whatsapp", idempotencyKey: "recovery-inbound" });
   sqlite.prepare("INSERT INTO customer_contact_preferences (customer_id,marketing_consent,service_consent,whatsapp_consent,sms_consent,email_consent,opt_out,source,updated_by,updated_at) VALUES (?,1,1,1,0,0,0,'uat','test',?)").run("CUS-REC", Date.now());
   sqlite.prepare("INSERT INTO whatsapp_uat_sessions (customer_id,provider,last_inbound_at,last_outbound_at) VALUES (?,'sandbox_simulator',?,NULL)").run("CUS-REC", Date.now());
