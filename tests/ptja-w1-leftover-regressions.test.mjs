@@ -170,8 +170,8 @@ for (const vertical of RECOVERY_VERTICALS) {
   for (const status of ["completed", "cancelled"]) {
     test(`W1L-02 (${vertical.label}): ${vertical.action} cannot regress a ${status} booking`, async () => {
       const { sqlite, db } = lifecycleWorld(vertical.serviceCode, vertical.id, status);
-      const module = await import(vertical.module);
-      const result = await module[vertical.entry](db, {
+      const loaded = await import(vertical.module);
+      const result = await loaded[vertical.entry](db, {
         bookingId: vertical.id, action: vertical.action, actorId: "PROV-A",
         idempotencyKey: `rec-${status}`, reason: "provider fell ill",
       }).then((value) => ({ ok: true, value }), async (error) => ({
@@ -190,8 +190,8 @@ for (const vertical of RECOVERY_VERTICALS) {
     // Non-vacuity. Refusing every decline would satisfy the cases above and break provider recovery,
     // which is the whole purpose of the branch.
     const { sqlite, db } = lifecycleWorld(vertical.serviceCode, vertical.id, "assigned");
-    const module = await import(vertical.module);
-    const result = await module[vertical.entry](db, {
+    const loaded = await import(vertical.module);
+    const result = await loaded[vertical.entry](db, {
       bookingId: vertical.id, action: vertical.action, actorId: "PROV-A",
       idempotencyKey: "rec-live", reason: "provider fell ill",
     }).then((value) => ({ ok: true, value }), async (error) => ({

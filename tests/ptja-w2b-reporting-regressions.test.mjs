@@ -79,9 +79,9 @@ CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id 
 // =====================================================================================================
 
 async function unitEconomics(sqlite, db) {
-  const module = await import("../lib/unit-economics.ts");
-  const entry = module.buildUnitEconomics;
-  assert.equal(typeof entry, "function", `unit-economics must export a computation: ${Object.keys(module)}`);
+  const loaded = await import("../lib/unit-economics.ts");
+  const entry = loaded.buildUnitEconomics;
+  assert.equal(typeof entry, "function", `unit-economics must export a computation: ${Object.keys(loaded)}`);
   return entry(db, { from: "2026-08-01", to: "2026-08-31" });
 }
 
@@ -136,8 +136,8 @@ test("W2B-R02: the gateway's own terminal state is still counted, and an unappro
 // =====================================================================================================
 
 async function pnl(db) {
-  const module = await import("../lib/pnl-reporting.ts");
-  return module.generatePnlReport(db, { fromMonth: "2026-08", toMonth: "2026-08" });
+  const loaded = await import("../lib/pnl-reporting.ts");
+  return loaded.generatePnlReport(db, { fromMonth: "2026-08", toMonth: "2026-08" });
 }
 
 test("W2B-R03: a fully refunded month does not report the gross as turnover and profit", async () => {

@@ -140,10 +140,10 @@ test("W2B-P01: the LMS overview does not carry the answer key", async () => {
   assert.doesNotMatch(payload, /quiz_json/, "nor the raw column it lives in");
 
   // Non-vacuity: everything the overview is FOR is still there.
-  const module = overview.modules.find((entry) => String(entry.id) === "LMS-1");
-  assert.ok(module, "the module is still listed");
-  assert.equal(Number(module.quizQuestions), 2, "with its question count");
-  assert.equal(String(module.title), "Handling", "and its title");
+  const listed = overview.modules.find((entry) => String(entry.id) === "LMS-1");
+  assert.ok(listed, "the module is still listed");
+  assert.equal(Number(listed.quizQuestions), 2, "with its question count");
+  assert.equal(String(listed.title), "Handling", "and its title");
 });
 
 // =====================================================================================================
