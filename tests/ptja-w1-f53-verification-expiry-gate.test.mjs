@@ -394,3 +394,87 @@ test("F53X-13: a concurrent assignment cannot slip through immediately after rev
   assert.notEqual(result.status, 200, `the commit must re-check, not trust the decision: ${JSON.stringify(result.body).slice(0, 300)}`);
   assert.equal(reservationCount(w), 0, "no reservation may survive a revocation that landed before the write");
 });
+
+// =====================================================================================================
+// The last gap, closed by making it a LAUNCH blocker rather than by minting evidence.
+//
+// The obvious way to make the assignment gate total was to backfill onboarding applications for the
+// seeded providers. But the only way a backfilled record satisfies the gate is to write `verified` rows
+// for checks nobody ever ran - minting compliance evidence, which is the one thing this audit refuses.
+// A seeded fixture with a fabricated police clearance is worse than one with none: the first lies.
+//
+// So the assignment gate stays total for everyone who came through real onboarding, and launch readiness
+// refuses while any LIVE provider cannot be vouched for - naming each one, so the fix is to onboard them
+// properly rather than to paper over it.
+// =====================================================================================================
+
+test("F53X-14: a live provider with NO onboarding record at all is a named launch blocker", async () => {
+  /*
+   * The shape the assignment gate deliberately cannot judge: a capacity profile that never came through
+   * onboarding, which is exactly what the seeded UAT providers are. providerAssignmentBlock reports
+   * evaluated:false and does not block the write, because blocking would take every seeded provider off
+   * the platform. Launch readiness is what refuses instead - by name, so the fix is to onboard them.
+   *
+   * A first version of this case created an onboarding application too, so it passed through the
+   * "blocked" branch and never touched the "cannot evaluate" one. Sabotage caught that it proved nothing.
+   */
+  const w = await world();
+  w.sqlite.prepare("INSERT OR REPLACE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('walk_legacy','blr','Legacy walker','commission',?,?,1,4.5,80,1,20,6,3,'active',1,'2026-01-01',NULL,'founder_seed',?)")
+    .run(JSON.stringify(["dog_walking"]), JSON.stringify(["blr-east"]), Date.now());
+  assert.equal(w.sqlite.prepare("SELECT COUNT(*) n FROM provider_onboarding_applications WHERE provider_id='walk_legacy'").get().n, 0,
+    "this case is only meaningful while the provider has no onboarding record");
+
+  const { providerAssignmentBlock, providerVerificationLaunchBlockers } = await import("../lib/provider-assignment-eligibility.ts");
+  const verdict = await providerAssignmentBlock(w.db, "walk_legacy");
+  assert.equal(verdict.evaluated, false, "the assignment gate reports it could not judge, rather than pretending it passed");
+  assert.equal(verdict.blocked, false, "and does not block the write, which would take every seeded provider off the platform");
+
+  const blockers = await providerVerificationLaunchBlockers(w.db);
+  const mine = blockers.find((entry) => entry.providerId === "walk_legacy");
+  assert.ok(mine, `a live provider who cannot be vouched for must block LAUNCH: ${JSON.stringify(blockers)}`);
+  assert.match(mine.reason, /no onboarding verification record/);
+  assert.equal(mine.cityId, "blr", "and the blocker says where, so an operator can act on it");
+});
+
+test("F53X-15: a live provider whose mandatory check has lapsed is a launch blocker too", async () => {
+  const w = await world();
+  const { applicationId, providerId } = await w.provider();
+  await w.clearAll(applicationId);
+  await w.record(applicationId, "police_verification", "verified", { expiresAt: w.now - DAY });
+
+  const { providerVerificationLaunchBlockers } = await import("../lib/provider-assignment-eligibility.ts");
+  const blockers = await providerVerificationLaunchBlockers(w.db);
+
+  const mine = blockers.find((entry) => entry.providerId === providerId);
+  assert.ok(mine, "an expired mandatory check on a live provider blocks launch");
+  assert.ok(mine.outstanding.some((item) => item.verificationType === "police_verification" && item.state === "expired"),
+    `the blocker names the lapsed check: ${JSON.stringify(mine.outstanding)}`);
+});
+
+test("F53X-16: a fully verified live provider is not a launch blocker", async () => {
+  // Non-vacuity. If every live provider blocked launch, the gate would be noise and would be turned off.
+  const w = await world();
+  const { applicationId, providerId } = await w.provider();
+  await w.clearAll(applicationId);
+
+  const { providerVerificationLaunchBlockers } = await import("../lib/provider-assignment-eligibility.ts");
+  const blockers = await providerVerificationLaunchBlockers(w.db);
+
+  assert.ok(!blockers.some((entry) => entry.providerId === providerId),
+    `a properly verified live provider must not block launch: ${JSON.stringify(blockers)}`);
+});
+
+test("F53X-17: a provider on a verification hold is not double-counted as a launch blocker", async () => {
+  // A revoked provider is already off the map (live=0), so they are not standing in front of customers
+  // and must not appear here. Otherwise Operations would be asked to fix the same thing twice, in two
+  // places, with two different remedies.
+  const w = await world();
+  const { applicationId, providerId } = await w.provider();
+  await w.clearAll(applicationId);
+  const { revokeProviderVerification, providerVerificationLaunchBlockers } = await import("../lib/provider-assignment-eligibility.ts");
+  await revokeProviderVerification(w.db, { providerId, verificationType: "police_verification", reason: "Clearance withdrawn", actorId: OPS });
+
+  const blockers = await providerVerificationLaunchBlockers(w.db);
+  assert.ok(!blockers.some((entry) => entry.providerId === providerId),
+    "a provider already removed from matching is handled by their recovery case, not by the launch gate");
+});

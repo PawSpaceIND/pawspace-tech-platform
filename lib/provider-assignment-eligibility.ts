@@ -185,3 +185,46 @@ export async function clearProviderVerificationHold(db:Db,input:{providerId:stri
     .bind(now,now,providerId).run().catch(()=>null);
   return{providerId,status:"uat_ready",live:0,readyToRemap:true};
 }
+
+export type VerificationLaunchBlocker={providerId:string;providerName:string;cityId:string;services:string[];reason:string;outstanding:Array<{verificationType:string;state:string}>};
+
+/**
+ * Every provider who is LIVE in front of customers but whose mandatory verification cannot be confirmed.
+ *
+ * This is how the last gap is closed, and it is deliberately NOT closed the way I first recommended.
+ * The obvious move was to backfill onboarding applications for the seeded providers so the assignment
+ * gate could be made total - but the only way to make those backfilled records satisfy the gate is to
+ * write `verified` rows for checks nobody ever ran. That is minting compliance evidence, which is the
+ * one thing this audit refuses to do, and a seeded fixture with a fabricated police clearance is worse
+ * than one with none: the first lies, the second is merely unfinished.
+ *
+ * So the assignment gate stays total for every provider who came through real onboarding, and THIS is
+ * what stops a provider with no verifiable record from ever reaching a real customer: launch readiness
+ * refuses while any live provider is in that state, naming each one. The problem becomes visible and
+ * blocking instead of silently permitted, and it is fixed by onboarding those providers properly - which
+ * is the only fix that is actually true.
+ */
+export async function providerVerificationLaunchBlockers(db:Db,at=Date.now()):Promise<VerificationLaunchBlocker[]>{
+  await ensureProviderCapacityTables(db);
+  const rows=await db.prepare("SELECT id,name,city_id,services_json FROM provider_capacity_profiles WHERE live=1 AND status='active'").all<Row>().catch(()=>({results:[] as Row[]}));
+  const blockers:VerificationLaunchBlocker[]=[];
+  for(const row of rows.results){
+    const providerId=text(row.id);
+    const verdict=await providerAssignmentBlock(db,providerId,at).catch(()=>null);
+    if(!verdict)continue;
+    let services:string[]=[];
+    try{services=JSON.parse(text(row.services_json)||"[]") as string[];}catch{services=[];}
+    if(!verdict.evaluated){
+      blockers.push({providerId,providerName:text(row.name),cityId:text(row.city_id),services,
+        reason:"This provider is live to customers but has no onboarding verification record, so their mandatory checks cannot be confirmed. Onboard them through the real application path before launch.",
+        outstanding:[]});
+      continue;
+    }
+    if(verdict.blocked){
+      blockers.push({providerId,providerName:text(row.name),cityId:text(row.city_id),services,
+        reason:"This provider is live to customers with mandatory verification that is not current.",
+        outstanding:verdict.outstanding.map(item=>({verificationType:item.verificationType,state:item.state}))});
+    }
+  }
+  return blockers;
+}
