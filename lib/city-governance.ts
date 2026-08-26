@@ -2,7 +2,8 @@ type Db=D1Database;
 type Row=Record<string,unknown>;
 import{BENGALURU_SUPPORTED_PINCODES}from"./service-zones";
 
-export type CityLaunchStatus="Draft"|"Pilot"|"Live"|"Paused";
+/** `Live` is this platform's word for the approved matrix's ACTIVE; `Closed` completes it. [PTJA-W1-F38] */
+export type CityLaunchStatus="Draft"|"Pilot"|"Live"|"Paused"|"Closed";
 export type CityLaunchService="Grooming"|"Training"|"Boarding"|"Pet Sitting";
 export type CityServicePrice={enabled:boolean;price:number};
 export type CityLaunchConfig={
@@ -30,7 +31,7 @@ export async function seedDefaultCityLaunchConfigs(db:Db){await ensureCityLaunch
 }
 
 function rowToConfig(row:Row):CityLaunchConfig{return{
-  id:String(row.id),cityCode:String(row.city_code||""),city:String(row.city),state:String(row.state),status:["Draft","Pilot","Live","Paused"].includes(String(row.status))?String(row.status)as CityLaunchStatus:"Draft",
+  id:String(row.id),cityCode:String(row.city_code||""),city:String(row.city),state:String(row.state),status:["Draft","Pilot","Live","Paused","Closed"].includes(String(row.status))?String(row.status)as CityLaunchStatus:"Draft",
   centre:String(row.centre||""),radiusKm:Number(row.radius_km||15),pincodes:String(row.pincodes||""),gstIncluded:Boolean(row.gst_included),
   services:parse<Record<CityLaunchService,CityServicePrice>>(row.services_json,{Grooming:{enabled:false,price:0},Training:{enabled:false,price:0},Boarding:{enabled:false,price:0},"Pet Sitting":{enabled:false,price:0}}),
   version:Number(row.version||1),updatedBy:String(row.updated_by||""),createdAt:Number(row.created_at||0),updatedAt:Number(row.updated_at||0),
@@ -61,7 +62,7 @@ function validate(input:CityLaunchConfigInput):string|null{
   if(!/^[a-z][a-z0-9]{1,7}$/.test(code))return "City code must be 2-8 lowercase letters/numbers, starting with a letter (e.g. 'blr', 'chn')";
   if(!input.city.trim())return "City name is required";
   if(!input.state.trim())return "State is required";
-  if(!["Draft","Pilot","Live","Paused"].includes(input.status))return "Invalid launch status";
+  if(!["Draft","Pilot","Live","Paused","Closed"].includes(input.status))return "Invalid launch status";
   if(!input.centre.trim()&&!input.pincodes.trim())return "Add centre coordinates or serviceable pincodes";
   if(!Number.isFinite(input.radiusKm)||input.radiusKm<1)return "Service radius must be at least 1 km";
   if(input.centre.trim()){

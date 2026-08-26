@@ -17,6 +17,7 @@ import {prepareCouponBooking,type CouponBookingPreparation} from "../../../lib/c
 import {ensureProviderBookingGuard,providerUnavailableForWindow} from "../../../lib/provider-capacity-governance";
 import {cleanupExpiredReservationLeases,ensureSchedulingReservationLeaseGovernance} from "../../../lib/scheduling-reservation-leases";
 import {postCollectionEvent} from "../../../lib/collection-ledger";
+import {cityBookingVerdict} from "../../../lib/city-status-authority";
 
 type LifecycleInput={
   idempotencyKey:string;scheduleGroupId:string;customer:{id:string;name:string;primaryPhone:string;secondaryPhone?:string;email?:string};
@@ -174,7 +175,21 @@ async function readBundle(db:Awaited<ReturnType<typeof database>>,booking:Record
 
 export async function GET(request:Request){try{const actor=await resolveActor(request);requirePermission(actor,"bookings.manage");const db=await database();await ensureTables(db);const rows=await db.prepare("SELECT b.*,c.name customer_name,w.id work_order_id,w.provider_name,w.provider_model,w.status work_order_status,w.occurrence_count,p.id payment_id,p.status payment_status,p.amount_due_now,p.gateway FROM canonical_bookings b JOIN canonical_customers c ON c.id=b.customer_id JOIN provider_work_orders w ON w.booking_id=b.id JOIN booking_payments p ON p.booking_id=b.id ORDER BY b.created_at DESC LIMIT 100").all<Record<string,unknown>>();const bookings=[];for(const row of rows.results){const [pets,events]=await Promise.all([db.prepare("SELECT id,name,species,breed,vaccination_status FROM canonical_pets WHERE customer_id=? AND id IN (SELECT value FROM json_each(?)) ORDER BY name").bind(row.customer_id,row.pet_ids_json).all(),db.prepare("SELECT * FROM booking_lifecycle_events WHERE booking_id=? ORDER BY occurred_at ASC").bind(row.id).all()]);bookings.push({...row,pets:pets.results,events:events.results});}return json({bookings});}catch(error){return authError(error,"Unable to load lifecycle records");}}
 
-export async function POST(request:Request){try{const db=await database();await ensureSchedulingReservationLeaseGovernance(db);await cleanupExpiredReservationLeases(db);const actor=await resolveActor(request);requirePermission(actor,"scheduling.book");const input=await request.json() as LifecycleInput;const problem=validate(input);if(problem)return json({error:problem},400);await ensureTables(db);await requireCustomerOwnership(db,actor,input.customer.id);const replayInput={customerId:input.customer.id,serviceCode:input.serviceCode,idempotencyKey:input.idempotencyKey,scheduleGroupId:input.scheduleGroupId};const prior=await findCustomerReplay(db,replayInput);if(prior)return json({data:await readBundle(db,prior,true)});if(await hasForeignReplayConflict(db,replayInput))return json({error:BOOKING_REPLAY_CONFLICT},409);if(await hasReplayConflict(db,replayInput))return json({error:BOOKING_WRITE_CONFLICT},409);
+export async function POST(request:Request){try{const db=await database();await ensureSchedulingReservationLeaseGovernance(db);await cleanupExpiredReservationLeases(db);const actor=await resolveActor(request);requirePermission(actor,"scheduling.book");const input=await request.json() as LifecycleInput;const problem=validate(input);if(problem)return json({error:problem},400);await ensureTables(db);await requireCustomerOwnership(db,actor,input.customer.id);const replayInput={customerId:input.customer.id,serviceCode:input.serviceCode,idempotencyKey:input.idempotencyKey,scheduleGroupId:input.scheduleGroupId};const prior=await findCustomerReplay(db,replayInput);if(prior)return json({data:await readBundle(db,prior,true)});if(await hasForeignReplayConflict(db,replayInput))return json({error:BOOKING_REPLAY_CONFLICT},409);
+  /*
+   * THE CITY MATRIX. [PTJA-W1-F38]
+   *
+   * Checked AFTER the replay lookup on purpose: a replay is not a new booking, and answering a customer's
+   * retry with "the city is paused" would strand a booking that was already accepted while the market was
+   * open. Everything past this point IS a new booking, on whatever channel it arrived through - the app,
+   * an ops-assisted manual booking via /api/assisted-orders, a wait-list conversion, an automatic
+   * subscription renewal. A gate only the app passes through is one an operator walks around by accident.
+   *
+   * Draft and Closed take nothing; Paused takes nothing new while leaving every existing booking alone;
+   * Pilot takes only the pincodes, services and channels somebody explicitly enabled.
+   */
+  const cityVerdict=await cityBookingVerdict(db,{cityId:input.cityId,serviceCode:input.serviceCode,pincode:(input as{pincode?:string}).pincode??null,channel:(input as{channel?:string}).channel??"customer_app"});
+  if(!cityVerdict.allowed)return json({error:"PawSpace is not taking new bookings in this city right now",code:cityVerdict.reason,cityId:cityVerdict.cityId,cityStatus:cityVerdict.status,existingBookingsUnaffected:cityVerdict.existingWorkHandling==="continue"},409);if(await hasReplayConflict(db,replayInput))return json({error:BOOKING_WRITE_CONFLICT},409);
   // Identity rules apply to NEW bookings only, and are checked here — after the replay path above, so
   // history stays replayable, and before governance, quote/referral consumption, reservation reads and
   // every write, so a bad new payload costs nothing.

@@ -1,0 +1,65 @@
+{
+  "item": "F38 follow-on",
+  "title": "The approved city status matrix, and the emergency control that suspends existing work",
+  "status": "implemented_with_one_stated_gap",
+  "approved_by": "PawSpace business decision supplied 2026-08-26",
+  "evidence_class": "real_execution",
+  "method": "Regressions written and observed RED before any production change (12 of 12 failing), then GREEN; three further cases added as the wiring landed.",
+
+  "matrix_implemented": {
+    "DRAFT": "blocked; no existing work expected",
+    "PILOT": "allowed ONLY for explicitly enabled pincodes, services and channels, with an optional capacity ceiling; existing work continues",
+    "ACTIVE": "allowed normally; the platform's own word for this status is `Live` and both are accepted",
+    "PAUSED": "blocked for new work on every channel; existing work continues unless individually cancelled",
+    "CLOSED": "blocked; existing work reported as requiring an audited operation"
+  },
+
+  "a_pause_stops": ["new customer bookings","new manual ops-assisted bookings (they post through canonical-bookings, which is gated)","wait-list conversion (see the stated gap)","automatic subscription renewal scheduling"],
+  "a_pause_never": "touches a confirmed booking. That is asserted directly, and separately asserted to write no emergency record.",
+
+  "emergency_control": {
+    "name": "pauseNewAndSuspendExisting",
+    "requires": "superuser approval (settings.manage), a reason of real length, and a recorded customer communication - all three refused individually",
+    "writes": "city status Paused, existing bookings to the DISTINCT status `suspended_city_emergency`, and a city_emergency_suspensions row naming every booking touched plus the communication sent",
+    "never": "records a suspension as an ordinary cancellation. A customer whose booking was suspended by a flood has not cancelled anything, and payout, reporting and refund policy all read that difference. The configuration surface refuses `cancelled` as that status."
+  },
+
+  "the_stated_gap": {
+    "what": "Wait-list conversion is named in the approved rules and is not enforced against a real wait-list.",
+    "why": "This platform has no wait-list - no table, no module, no route anywhere in the repository. Inventing one so a rule could be ticked off would be worse than saying so.",
+    "what_was_done": "`waitlist_conversion` is a first-class channel in cityBookingVerdict and is asserted blocked while a city is paused. The day a wait-list is built it cannot convert into a paused city without deliberately routing around a gate that already refuses it.",
+    "status": "open, and recorded as open rather than satisfied"
+  },
+
+  "a_contract_i_broke_and_restored": "A first draft blocked any city with no launch config. That reversed this repository's deliberate second-city path - a reviewed service_zone_mappings row opens a city without a launch config, pinned by tests/service-zone-coverage.test.mjs and preserved explicitly by the first half of this finding. Seven suites went red immediately. The matrix now governs cities that HAVE been launched and says nothing about cities that have not; the launch-readiness gate is what stops an unverifiable city reaching customers. A regression case pins the contract so it cannot be reversed again by accident.",
+
+  "wiring": {
+    "new_bookings": "app/api/canonical-bookings/route.ts, after the replay lookup - a replay is not a new booking, and answering a retry with 'the city is paused' would strand a booking accepted while the market was open",
+    "manual_bookings": "app/api/assisted-orders posts through canonical-bookings, so it inherits the same gate",
+    "renewals": "lib/food-subscription-governance.ts processDueFoodSubscriptionRenewals skips subscriptions in a non-open city and REPORTS the skip; the subscription itself is untouched and renews when the market reopens"
+  },
+
+  "configurable": "The `city_status_policy` domain in Control Center, scoped by service and city: which statuses are open or blocked, the pilot allow-lists and capacity ceiling, who may fire the emergency control, and the suspended-booking status. The validator refuses a status that is both open and blocked, refuses dropping Draft/Paused/Closed from the blocked list, refuses treating Pilot as open, refuses recording a suspension as `cancelled`, and refuses switching off the customer-communication requirement.",
+
+  "regression": {
+    "file": "tests/ptja-w1-f38-city-status-matrix.test.mjs",
+    "cases": 15,
+    "red_before": "12 of 12 failing.",
+    "sabotage_verification": [
+      "Pilot allow-list ignored -> both pilot cases fail.",
+      "Emergency suspension writes ordinary 'cancelled' -> the emergency case fails.",
+      "An ordinary pause also suspends existing bookings -> both 'a pause is not a cancellation' cases fail.",
+      "Renewals ignore city status -> the renewal case fails.",
+      "The second-city contract broken again -> the contract case fails.",
+      "Fix restored -> 15/15."
+    ],
+    "non_vacuity_controls": [
+      "ACTIVE books normally",
+      "an ordinary pause writes no emergency record and leaves confirmed bookings alone",
+      "the same renewal runs normally once the city is live again",
+      "a city with no launch config still books"
+    ]
+  },
+
+  "gates": {"focused":"15/15","full_repository_regression":"3262/3262","typecheck":"clean","lint":"0 errors","merge_or_deploy":"none"}
+}
