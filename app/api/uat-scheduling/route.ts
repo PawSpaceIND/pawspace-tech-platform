@@ -2,6 +2,7 @@ import type { Booking, Pet, PlatformRepository, Provider, ProviderAvailability }
 import { cityOffsetMinutes, schedule, scheduleRules, type CustomScheduleRule, type ScheduleDecision, type ScheduleRequest, type SchedulingService } from "../../../backend/src/scheduling";
 import {createAssignmentOffer,getGovernedProvider,loadGovernedProviders,seedProviderCapacityDefaults} from "../../../lib/provider-capacity-governance";
 import {authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit,type AuthenticatedActor} from "../../../lib/server-auth";
+import{assertBookingWindow}from"../../../lib/booking-time-policy";
 import {cleanupExpiredReservationLeases,ensureSchedulingReservationLeaseGovernance,reservationLeaseForRequest,SCHEDULING_RESERVATION_LEASE_MS} from "../../../lib/scheduling-reservation-leases";
 import {listAuthoritativeAvailability,uatRosterSeedingEnabled} from "../../../lib/scheduling-roster-authority";
 import {assertProviderAssignable} from "../../../lib/provider-assignment-eligibility";
@@ -126,6 +127,24 @@ async function operateAssignment(db:Awaited<ReturnType<typeof database>>,input:R
   await securityAudit(db,actor,`scheduling.${input.action}`,"scheduling_group",groupId,"completed",{fromProviderId:previousProviderId,toProviderId:decision.provider.id,reason:input.reason??null});
   return json({data:{groupId,status:"assigned",provider:decision.provider,previousProviderId,offer,shortlist:decision.shortlist,explanation:decision.explanation}});}
 
+
+/**
+ * Re-emits a GOVERNED 4xx refusal as the caller's response.
+ *
+ * The handler's outer catch runs authError, which deliberately redacts everything into
+ * {"error":"Scheduling failed"} - correct for an unexpected exception, wrong for a rule the customer is
+ * entitled to be told about. "This service needs at least 120 minutes' notice" is a message we wrote,
+ * carries no internals, and is useless to the customer if it arrives as "Scheduling failed". Same
+ * treatment app/api/service-policy-control/route.ts already gives its domain refusals. [PTJA-W3-BT]
+ */
+async function governedRefusal(error:unknown){
+  if(error instanceof Response&&error.status>=400&&error.status<500){
+    const body=await error.clone().text().catch(()=>"");
+    try{return json(JSON.parse(body),error.status);}catch{return json({error:body||"Request refused"},error.status);}
+  }
+  return null;
+}
+
 export async function POST(request:Request){try{const db=await database();const input=await request.json() as RequestBody;
   // Identity BEFORE field validation, so an unauthenticated caller is answered 401 rather than being
   // told which fields it got wrong. tests/route-authorization-class.test.mjs enforces this ordering for
@@ -152,9 +171,15 @@ export async function POST(request:Request){try{const db=await database();const 
   // the service's roster window, so ANY past date inside 09:00-19:00 IST was accepted, assigned, and
   // confirmed. This is the platform's own rule, already written in lib/sitting-finance-governance.ts
   // validFutureWindow: a window whose start is not in the future is a 400.
-  const reserveStart=new Date(input.scheduledStart).getTime(),reserveEnd=new Date(input.scheduledEnd).getTime();
-  if(!Number.isFinite(reserveStart)||!Number.isFinite(reserveEnd)||reserveEnd<=reserveStart)return json({error:"A valid scheduling window is required"},400);
-  if(reserveStart<=Date.now())return json({error:"A scheduling window must start in the future; this slot has already passed"},400);await seedProviderCapacityDefaults(db);await ensureSchedulingTables(db);await cleanupExpiredReservationLeases(db);const lease=await reservationLeaseForRequest(db,request,input.customerId);
+  // The past-start refusal above used to be the WHOLE rule, written inline: no minimum lead time
+  // anywhere in the repository, no upper horizon, and no maximum stay length in the code, the tests or
+  // the seeded catalogue - so a slot seventy-three years out and a decade-long Boarding stay were both
+  // accepted. The approved rule now lives in lib/booking-time-policy.ts as a governed domain the
+  // Control Center owns, and this is the chokepoint every schedulable booking passes through: no
+  // canonical_bookings row exists without a scheduling reservation behind it. [PTJA-W3-BT]
+  let bookingWindow;
+  try{bookingWindow=await assertBookingWindow(db,{serviceCode:input.serviceCode,cityId:cityIdFor(input),scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd});}
+  catch(error){const refusal=await governedRefusal(error);if(refusal)return refusal;throw error;}await seedProviderCapacityDefaults(db);await ensureSchedulingTables(db);await cleanupExpiredReservationLeases(db);const lease=await reservationLeaseForRequest(db,request,input.customerId);
   // Host selection is a pure request-shape check needing no data access, so it answers first and keeps
   // its own error contract. The boarding pet authority gate moved below it still runs before ANY capacity
   // is reserved, which is what issue #197 item 4 requires.
@@ -172,7 +197,12 @@ export async function POST(request:Request){try{const db=await database();const 
   const sameInstant=(a:unknown,b:unknown)=>new Date(String(a)).getTime()===new Date(String(b)).getTime();
   if(held&&(!sameInstant(held.scheduled_start,input.scheduledStart)||!sameInstant(held.scheduled_end,input.scheduledEnd)))
     return json({error:"This scheduling group already holds a different window; use a new request id for a different time",code:"scheduling_group_window_conflict",held:{scheduledStart:held.scheduled_start,scheduledEnd:held.scheduled_end}},409);
-  const provider=prior.selected_provider_id?await getGovernedProvider(db,String(prior.selected_provider_id)):null;return json({data:{groupId:input.clientRequestId,status:prior.status,provider,duplicatePrevented:true}});}await seedUatRoster(input,db);const rules=await activeRules(db,input);const requestInput:ScheduleRequest={cityId:cityIdFor(input),zoneId:input.zoneId,serviceCode:input.serviceCode,petIds:input.petIds,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,occurrences:input.occurrences,cadenceDays:input.cadenceDays,weekdays:input.weekdays,careMode:input.careMode,preferredProviderId:input.preferredProviderId,customRules:rules};const decision=await schedule(repository(db),requestInput);if(!decision.provider)return json({error:"NO_SCHEDULE_AVAILABLE",evaluations:decision.evaluations},409);const strategy=input.assignmentStrategy??"auto";if(strategy==="admin_choice"){await saveDecision(db,input.clientRequestId,strategy,input,decision,"awaiting_admin");return json({data:{groupId:input.clientRequestId,status:"awaiting_admin",shortlist:decision.shortlist,explanation:decision.explanation}});}try{await insertReservations(db,input.clientRequestId,input,decision,lease);}catch(error){if(error instanceof SlotConflictError){const winner=await db.prepare("SELECT * FROM scheduling_assignment_decisions WHERE group_id=?").bind(input.clientRequestId).first<Record<string,unknown>>();if(winner&&winner.selected_provider_id)return json({data:{groupId:input.clientRequestId,status:String(winner.status),provider:await getGovernedProvider(db,String(winner.selected_provider_id)),duplicatePrevented:true}});return json({error:"SLOT_TAKEN",message:"Another reservation took this provider/slot a moment ago — pick a different time or retry for the next eligible provider"},409);}throw error;}await saveDecision(db,input.clientRequestId,strategy,input,decision,"assigned",decision.provider.id,"system","Auto-assigned by ranked rules");const offer=decision.provider.model==="commission"?await createAssignmentOffer(db,{groupId:input.clientRequestId,providerId:decision.provider.id}):null;return json({data:{groupId:input.clientRequestId,status:"assigned",provider:decision.provider,mode:decision.mode,offer,occurrences:decision.occurrences,shortlist:decision.shortlist,explanation:decision.explanation,evaluations:decision.evaluations}});}catch(error){return authError(error,"Scheduling failed");}}
+  const provider=prior.selected_provider_id?await getGovernedProvider(db,String(prior.selected_provider_id)):null;return json({data:{groupId:input.clientRequestId,status:prior.status,provider,duplicatePrevented:true}});}await seedUatRoster(input,db);const rules=await activeRules(db,input);const requestInput:ScheduleRequest={cityId:cityIdFor(input),zoneId:input.zoneId,serviceCode:input.serviceCode,petIds:input.petIds,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,occurrences:input.occurrences,cadenceDays:input.cadenceDays,weekdays:input.weekdays,careMode:input.careMode,preferredProviderId:input.preferredProviderId,customRules:rules};const decision=await schedule(repository(db),requestInput);
+  // Re-checked with the generated calendar. The first occurrence sitting inside the horizon says
+  // nothing about the twelfth, and a recurring Training or Walking plan can run months past it.
+  try{await assertBookingWindow(db,{serviceCode:input.serviceCode,cityId:cityIdFor(input),scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,occurrences:decision.occurrences});}
+  catch(error){const refusal=await governedRefusal(error);if(refusal)return refusal;throw error;}
+  if(!decision.provider)return json({error:"NO_SCHEDULE_AVAILABLE",evaluations:decision.evaluations},409);const strategy=input.assignmentStrategy??"auto";if(strategy==="admin_choice"){await saveDecision(db,input.clientRequestId,strategy,input,decision,"awaiting_admin");return json({data:{groupId:input.clientRequestId,status:"awaiting_admin",shortlist:decision.shortlist,explanation:decision.explanation}});}try{await insertReservations(db,input.clientRequestId,input,decision,lease);}catch(error){if(error instanceof SlotConflictError){const winner=await db.prepare("SELECT * FROM scheduling_assignment_decisions WHERE group_id=?").bind(input.clientRequestId).first<Record<string,unknown>>();if(winner&&winner.selected_provider_id)return json({data:{groupId:input.clientRequestId,status:String(winner.status),provider:await getGovernedProvider(db,String(winner.selected_provider_id)),duplicatePrevented:true}});return json({error:"SLOT_TAKEN",message:"Another reservation took this provider/slot a moment ago — pick a different time or retry for the next eligible provider"},409);}throw error;}await saveDecision(db,input.clientRequestId,strategy,input,decision,"assigned",decision.provider.id,"system","Auto-assigned by ranked rules");const offer=decision.provider.model==="commission"?await createAssignmentOffer(db,{groupId:input.clientRequestId,providerId:decision.provider.id}):null;return json({data:{groupId:input.clientRequestId,status:"assigned",provider:decision.provider,mode:decision.mode,offer,occurrences:decision.occurrences,shortlist:decision.shortlist,explanation:decision.explanation,evaluations:decision.evaluations,bookingWindow}});}catch(error){return authError(error,"Scheduling failed");}}
 
 export async function GET(request:Request){try{
   // The day board lists every reservation in a day - group, provider, service, zone and the CUSTOMER ID

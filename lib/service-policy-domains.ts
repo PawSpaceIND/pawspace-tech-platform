@@ -12,6 +12,7 @@
  * import this file, and any new domain must be added below. tests/ptja-policy-domain-registry.test.mjs
  * fails if a lib module registers a domain that is not listed here. [PTJA-W2-B4-M04]
  */
+import"./booking-time-policy";
 import"./cancellation-case-governance";
 import"./city-status-authority";
 import"./collection-ledger";

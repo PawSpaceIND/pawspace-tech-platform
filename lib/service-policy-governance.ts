@@ -107,6 +107,25 @@ export async function seedServicePolicyDefault(db:Db,domain:string,effectiveFrom
     .bind(`spolicy_${domain}_default`,domain,POLICY_ANY,POLICY_ANY,JSON.stringify(spec.defaults),`${spec.label} - platform default`,effectiveFrom,Date.now()).run();
 }
 
+/**
+ * Seeds one NON-default scope, e.g. (domain, "boarding", "*"). Same INSERT OR IGNORE contract as
+ * seedServicePolicyDefault: an operator's own edit is never overwritten. Used by domains whose approved
+ * answer genuinely differs per service, where a single platform default would be a fiction.
+ * [PTJA-W3-BT]
+ */
+export async function seedServicePolicyScope(db:Db,domain:string,serviceCode:string,cityId:string,config:Record<string,unknown>,notes:string,effectiveFrom="2026-08-01"){
+  const spec=registry.get(domain);
+  if(!spec)throw new Error(`Unknown policy domain ${domain}`);
+  const problem=spec.problem({...spec.defaults,...config});
+  // A seed that fails the domain's own validator would be refused the moment anybody READ it, so it is
+  // refused here instead - loudly, at startup, rather than as a 409 on a customer's booking.
+  if(problem)throw new Error(`Seed for ${domain}/${serviceCode}/${cityId} is invalid: ${problem}`);
+  await ensureServicePolicyTables(db);
+  const service=normalise(serviceCode),city=normalise(cityId);
+  await db.prepare("INSERT OR IGNORE INTO service_policy_configs (id,policy_domain,service_code,city_id,config_json,notes,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,?,1,1,?,NULL,'founder_seed',?)")
+    .bind(`spolicy_${domain}_${service}_${city}`.replace(/\*/g,"any"),domain,service,city,JSON.stringify({...spec.defaults,...config}),notes,effectiveFrom,Date.now()).run();
+}
+
 function rowToRecord<T extends Record<string,unknown>>(spec:ServicePolicyDomain<T>,row:Row):ServicePolicyRecord<T>{
   // Missing keys come from the domain defaults, so adding a field does not break a stored row. Every
   // default is the strict answer, which is what makes that safe.
