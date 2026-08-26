@@ -24,13 +24,14 @@ test("new inbound cancels recovery before chatbot can arm its next sequence", ()
   assert.match(webhook, /customer_replied/);
 });
 
-test("chatbot outbound can arm recovery while ai_pending cannot", () => {
+test("chatbot outbound can arm recovery while governed AI drafts cannot", () => {
   assert.match(webhook, /armWhatsAppNoResponseSequence/);
   assert.match(webhook, /routingMode:"chatbot_only"/);
-  const aiPending = webhook.indexOf('routing.mode==="ai_assistant"');
-  const chatbot = webhook.indexOf("runWhatsAppChatbotTurn");
-  assert.ok(aiPending >= 0 && chatbot > aiPending, "AI pending returns before chatbot/recovery dispatch");
-  assert.doesNotMatch(webhook.slice(aiPending, chatbot), /armWhatsAppNoResponseSequence/);
+  const aiBranch = webhook.indexOf('routing.mode==="ai_assistant"');
+  const chatbotDispatch = webhook.indexOf("await runWhatsAppChatbotTurn", aiBranch);
+  assert.ok(aiBranch >= 0 && chatbotDispatch > aiBranch, "governed AI branch must finish before chatbot/recovery dispatch");
+  assert.doesNotMatch(webhook.slice(aiBranch, chatbotDispatch), /armWhatsAppNoResponseSequence/);
+  assert.match(webhook.slice(aiBranch, chatbotDispatch), /runGovernedMetaWhatsAppAiTurn/);
 });
 
 test("discount recovery requires consent, marketing template and a business offer reference", () => {
