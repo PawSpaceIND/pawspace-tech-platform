@@ -201,3 +201,24 @@ test("P1-04-H04 every regular package the entry page prices exists in the flow's
   assert.ok(flowPacks.size >= 4, "the flow's catalogue was actually parsed");
   assert.ok(!flowPacks.has("Platinum Spa"), "an unknown package is not present");
 });
+
+// --- A failure after the booking commits is a partial outcome, not a booking failure ---
+// Measured: createCanonicalLifecycle commits the booking and the groomer reservation, then
+// saveServiceLocation and the ledger write run. A throw in either landed in the same catch and
+// displayed "No groomer is available for this slot" for a booking that already existed.
+
+test("P1-04-A01 a post-commit failure names the booking instead of denying it", async () => {
+  const flow = await read("app/mobile-app/grooming-flow.tsx");
+  const code = flow.split("\n").filter((l) => !l.trim().startsWith("*") && !l.trim().startsWith("//") && !l.trim().startsWith("/*")).join("\n");
+  assert.match(code, /let committedBookingId=""/, "the flow tracks whether the booking committed");
+  assert.match(code, /committedBookingId=canonical\.bookingId;await saveServiceLocation/,
+    "stamped immediately after the canonical call returns, BEFORE the writes that can still fail");
+  const start = code.indexOf("}catch(error){");
+  assert.ok(start > 0, "the confirm catch exists");
+  const handler = code.slice(start, code.indexOf("}finally", start));
+  assert.ok(handler.includes("committedBookingId?"), "the handler branches on whether the booking exists");
+  assert.ok(handler.includes("is confirmed"), "and says so rather than denying it");
+  assert.ok(handler.includes("Do not rebook"), "and tells the customer not to rebook");
+  // Non-vacuity: the pre-commit path still reports a genuine scheduling failure.
+  assert.ok(handler.includes("No groomer is available for this slot"), "a pre-commit failure still reads as one");
+});
