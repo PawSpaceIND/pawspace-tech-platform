@@ -197,7 +197,9 @@ export async function processDueWhatsAppNoResponseSequences(db: D1Database, inpu
     const thread = await db.prepare("SELECT status,booking_id FROM communication_threads WHERE id=? AND customer_id=?").bind(threadId, customerId).first<Row>();
     if (!thread || text(thread.status) !== "open") { await cancelSequence(db, sequenceId, "conversation_not_open", now); results.push({ stepId, status: "cancelled", reason: "conversation_not_open" }); continue; }
     if (text(thread.booking_id)) { await cancelSequence(db, sequenceId, "booking_already_linked", now); results.push({ stepId, status: "cancelled", reason: "booking_already_linked" }); continue; }
-    const routing = await getWhatsAppConversationMode(db, threadId).catch(() => ({ mode: "human_only" as const }));
+    let routing;
+    try { routing = await getWhatsAppConversationMode(db, threadId); }
+    catch { const nextAttemptAt = now + 5 * 60_000; await deferStep(db, stepId, "routing_state_unavailable", nextAttemptAt, now); results.push({ stepId, status: "deferred", reason: "routing_state_unavailable", nextAttemptAt }); continue; }
     if (routing.mode !== text(step.routing_mode)) { const reason = routing.mode === "human_only" ? "human_takeover" : "routing_changed"; await cancelSequence(db, sequenceId, reason, now); results.push({ stepId, status: "cancelled", reason }); continue; }
     const preference = await customerAllowsRecovery(db, customerId);
     if (!preference.allowed) { await cancelSequence(db, sequenceId, preference.reason || "send_policy_failed", now); results.push({ stepId, status: "cancelled", reason: preference.reason }); continue; }
