@@ -1,0 +1,57 @@
+{
+  "item": "W3-BT (ledger items 1 and 2)",
+  "title": "Booking time rules and maximum stay duration",
+  "status": "implemented",
+  "approved_by": "PawSpace business decision supplied 2026-08-26",
+  "evidence_class": "real_execution",
+  "method": "Regressions written and observed RED before any production change (17 of 17 module cases failing), then GREEN; four route cases added as the wiring landed. Nine sabotage reversions.",
+
+  "measured_before": {
+    "lead_time": "Did not exist anywhere in the repository. buildOccurrences validates endMs>startMs and a minimum duration; nothing else.",
+    "horizon": "None. A booking seventy-three years out was accepted.",
+    "maximum_stay": "None in the code, the tests or the seeded catalogue. A Boarding stay could be opened for a decade.",
+    "past_start": "A single hardcoded `reserveStart <= Date.now()` refusal inline in the reserve route - the past-start half only, written where nobody who owns the decision could see or change it."
+  },
+
+  "approved_rules_implemented": {
+    "past_start": "Refused for every schedulable service. The validator refuses a config that switches it off.",
+    "lead_time": "Grooming, Dog Walking, Pet Taxi 120 minutes; Training, Pet Sitting, Boarding 1440 minutes. Per-service policy rows, editable per city.",
+    "horizon": "180 days, checked against the LAST occurrence of a recurring calendar as well as the first. The validator refuses a horizon above 180.",
+    "maximum_stay": "Boarding 90 days, Pet Sitting 30 days, every other service 1 day. Measured per occurrence, so a twelve-week recurring plan is twelve short occurrences and not one long stay. The 20/30/45-day Boarding plans are pinned as accepted.",
+    "server_time": "`now` is read from the server clock inside the module and the input type carries no clock field, so no request can move the boundary it is measured against. The validator refuses trustClientTimestamp:true.",
+    "out_of_scope_services": "pet_food and relocation are named explicitly as non-occurrence services and pass through with applied:false and a stated reason. They are NOT inferred from 'not in the schedulable list' - a service nobody has classified is refused."
+  },
+
+  "strict_defaults": "The platform default is the LONGEST lead time (24h) and the SHORTEST stay (1 day), because the kernel merges defaults under any field a stored row omits. A service that forgets to seed its own row gets 24 hours' notice and a one-day cap, never 2 hours and ninety days.",
+
+  "where_enforced": "app/api/uat-scheduling reserve, twice: once on the request window before any side effect, once on the generated calendar. It is the chokepoint every schedulable booking passes through - no canonical_bookings row exists without a scheduling reservation behind it - which is what 'one central policy, not values hardcoded across routes' means.",
+
+  "a_supporting_change": "lib/service-policy-governance.ts gained seedServicePolicyScope, for domains whose approved answer genuinely differs per service and where a single platform default would be a fiction. It refuses a seed that fails the domain's own validator, loudly at startup rather than as a 409 on a customer's booking.",
+
+  "a_correction_to_my_own_test": "BT-17 was written as 'an unknown service is refused' with a three-hour window, which the strict 24-hour platform default refused on lead time alone - so deleting the unknown-service check left it green. It now uses a window that satisfies every other rule, plus a known-service control proving the window is unobjectionable. Separately, sabotage of the EARLY call site left the lead-time cases green because the second gate still refuses; BT-21 was added to pin what only the early gate buys - that nothing is written on the way, no roster seeded and no capacity consumed.",
+
+  "governed_refusals_are_no_longer_redacted": "The reserve handler's outer catch runs authError, which turned every governed refusal into {\"error\":\"Scheduling failed\"}. Correct for an unexpected exception, useless for a rule the customer is entitled to be told about. A governedRefusal helper re-emits authored 4xx bodies, the same treatment app/api/service-policy-control already gives its domain refusals.",
+
+  "regression": {
+    "file": "tests/ptja-w3-booking-time-policy.test.mjs",
+    "cases": 21,
+    "red_before": "17 of 17 failing.",
+    "sabotage_verification": [
+      "A lead-time check removed -> BT-02, BT-04, BT-13, BT-18 red",
+      "B horizon check removed -> BT-06, BT-08 red",
+      "C stay cap removed -> BT-09, BT-11, BT-19 red",
+      "D per-service seeds removed -> BT-03, BT-10, BT-11, BT-13 red",
+      "E unknown service waved through -> NOTHING red at first. Recorded, not hidden: the test's window was already refused on lead time. Rewritten, and E2 then fails BT-17.",
+      "F early call site removed -> BT-19 red only at first, because the second gate still refuses. BT-21 added; F2 then fails BT-19 and BT-21.",
+      "G server clock replaced by a caller-supplied one -> BT-12 red"
+    ]
+  },
+
+  "still_open_and_not_claimed": {
+    "extensions": "The rule says an extension must be an explicit audited modification or a new booking. This change enforces the CAP on the initial booking. No extension path is added here, so today a longer stay means a new booking; wiring an audited extension is separate work.",
+    "food_and_relocation": "Both are excluded by name. Whether Fresh Food's delivery-slot rules and Relocation's case workflow carry their own time bounds was not audited here."
+  },
+
+  "gates": {"focused": "21/21", "full_suite": "3365/3365", "typecheck": "clean", "lint": "0 errors, 57 warnings (pre-existing)"},
+  "no_merge_no_deploy": true
+}

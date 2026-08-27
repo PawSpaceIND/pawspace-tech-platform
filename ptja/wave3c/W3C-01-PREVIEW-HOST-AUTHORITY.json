@@ -1,0 +1,40 @@
+{
+  "wave": "3C - probing the coverage gaps the Wave 2 hunt recorded and did not reach",
+  "id": "W3C-01",
+  "status": "FIXED",
+  "severity_note": "Reported with its reachability stated rather than assumed - see reachability_unknown below.",
+  "the_gap_verbatim": "ptja/PTJA-FINDINGS.json, domain 01-leadgen: 'lib/server-auth.ts isDevelopmentPreview() grants permissions [\"*\"] whenever process.env.NODE_ENV !== \"production\" and the request hostname is localhost/127.0.0.1/terminal.local. In Workers process.env.NODE_ENV is commonly undefined, so this is permissive-on-absence. It is out of my domain (identity/auth) and I did not probe the Host-header reachability; flagging it here for whoever owns 00-identity rather than filing it.'",
+  "why_it_stayed_open": "It was flagged for a domain owner who never ran. Nobody owned it, so nobody probed it.",
+  "what_was_measured": {
+    "three_copies_of_one_rule": [
+      {"site": "lib/server-auth.ts:22", "environment_guarded": true, "grant": "roleCode superuser, permissions ['*']", "note": "the only guarded copy; folds to `return false` in a production build, which the local dist bundle confirms"},
+      {"site": "lib/api-gateway.ts:198", "environment_guarded": false, "grant": "roleCode superuser, permissions ['*'] from the OUTER authorization layer", "note": "hostname alone; survives a production build"},
+      {"site": "app/api/launch-readiness/route.ts:32", "environment_guarded": false, "grant": "roleCode 'superuser' hard-coded for preview@pawspace.test", "note": "hostname alone; and this route's POST calls no authorize() at all, so this was its only gate"}
+    ],
+    "executable_result": "With NODE_ENV=production, an unauthenticated POST to /api/launch-readiness on Host localhost was accepted - neither 401 nor 403 - while the identical request from a real host was refused 401.",
+    "correction_recorded": "My first reading of the built bundle was wrong and is corrected here rather than quietly dropped. I saw the hostname array surviving in dist and concluded the NODE_ENV guard had been folded AWAY. It had in fact been folded to `false` - the built isDevelopmentPreview is `{ new URL(request.url).hostname; return false; }` - so server-auth's copy is dead code in a production build. The hostname array I was looking at belonged to the two OTHER copies, which is what the finding actually is."
+  },
+  "reachability_unknown": "Whether a request bearing Host: localhost reaches the deployed Worker CANNOT be determined from this repository: no production wrangler configuration is present (only six per-harness ones). Cloudflare routes by hostname, so on a custom domain this is likely unreachable; on a workers.dev subdomain or a preview deployment it is less certain. The defect is that the code grants authority on a header without an environment guard, which is true regardless; the blast radius depends on deployment facts nobody in this repo can see. Whoever owns the deployment should confirm.",
+  "fix": {
+    "root_cause": "three copies of one authorization rule; two forgot the guard",
+    "change": "lib/development-preview.ts is now the single definition and all three sites call it",
+    "fail_closed": "the old expression `process.env.NODE_ENV !== \"production\"` read an ABSENT value as 'not production' and would throw a ReferenceError where `process` does not exist at all (a Workers isolate without nodejs_compat). Preview access now requires an EXPLICIT declaration of development or test; anything else, absent included, is production.",
+    "preserved": "an explicit NODE_ENV=development still previews - W3C-02b asserts it, so the fix cannot be mistaken for removing the feature"
+  },
+  "regression": "tests/ptja-w3c-preview-host-authority.test.mjs - 7 cases, RED-first (3 failing before the fix)",
+  "sabotage": [
+    {"control": "absence reads as development again", "result": "RED - W3C-02"},
+    {"control": "the gateway drops the environment guard", "result": "RED - W3C-02, W3C-03, W3C-06"},
+    {"control": "launch-readiness drops the environment guard", "result": "RED - W3C-04, W3C-06"}
+  ],
+  "consequence_discovered_and_recorded_not_hidden": {
+    "finding": "182 of 3589 tests were authenticating through the development-preview bypass. With NODE_ENV unset they received a superuser actor without presenting any credential; after the fix they answer 401.",
+    "what_was_done": "The CI workflow (3 invocations) and the package.json test script now declare NODE_ENV=test, which the new helper accepts. That restores the status quo for the suite - it does not change what those tests exercise.",
+    "what_was_NOT_done": "The 182 tests were NOT re-authored to present real identities. This is recorded as a COVERAGE LIMITATION: a test that obtained its authority from the preview bypass was not exercising real authentication, and any authorization property it appears to prove should be treated as unproven until it is re-authored. That is a substantial piece of work and is not claimed here.",
+    "honest_reading": "This is arguably the more important half of the finding. The production defect has an uncertain blast radius; the test-suite dependency is certain, measured, and means part of the suite's authorization coverage is weaker than it looks."
+  },
+  "not_claimed": [
+    "No deployed environment was tested. The Host-header reachability question is open and needs someone with deployment access.",
+    "The other Tier C gaps recorded in PTJA-FINDINGS.json - pricing-quote's effective-window and client-supplied coupon, the IST/UTC day-boundary divergence, the food/relocation/funeral verticals never exercised, the referral read-decide-write race, and runAppFunnelSweep's abandonMinutes - are NOT probed by this entry."
+  ]
+}

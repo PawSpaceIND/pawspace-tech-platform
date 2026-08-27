@@ -1,0 +1,70 @@
+{
+  "item": "F24",
+  "title": "Cancellation and refund policy, as governed configuration",
+  "status": "implemented",
+  "approved_by": "PawSpace business decision supplied 2026-08-26",
+  "evidence_class": "real_execution",
+
+  "why_configuration_and_not_code": "The approved decision states these terms differ by service type and will differ by city, and that advance-commitment services may carry their own stricter policy. A constant in a handler cannot express that and cannot be changed by the people who own it. The rules now live in service_policy_configs, scoped (policy_domain, service_code, city_id), versioned, effective-dated, reason-required and audited, and are edited in Control Center under Business policy.",
+
+  "kernel": {
+    "file": "lib/service-policy-governance.ts",
+    "resolution_order": ["this service + this city","this service + any city","any service + this city","any service + any city (the seeded platform default)"],
+    "guards": [
+      "An unresolvable domain is an ERROR, never an empty permissive object - the audit's most common defect was 'unknown or absent treated as satisfied', and a policy engine returning {} when nothing is configured is that defect with a config table attached.",
+      "A stored config that fails its own domain validator is refused at READ time as well as at write, so a policy nobody can vouch for is never evaluated.",
+      "One validator, both paths. PTJA-P0-03 was exactly this hole in the Grooming policy route: a policy could be CREATED with values the update path would have refused.",
+      "Domain defaults must be the STRICT answer, because a stored row missing a key adopts them."
+    ]
+  },
+
+  "approved_rules_implemented": {
+    "notice_ladder": ">24h -> 100% customer / no provider payout; 6-24h -> 50% / cancellation compensation may apply; <6h -> 0% / cancellation compensation applies",
+    "provider_status_overrides": "en_route -> 0% + travel/cancellation compensation; arrived, in_service, completed -> 0% + normal eligible payout",
+    "who_cancelled": "PawSpace or provider cancels -> 100%, customer not penalised. This wins over the status overrides: a job the platform pulls while the groomer is en route is not the customer's cancellation.",
+    "verified_service_failure": "manual full or partial refund, never automatic, requires an authorised approver",
+    "no_automatic_refund_after_start": "en_route / arrived / in_service / completed can never be auto-refunded, and the configuration surface REFUSES to save a list that drops one of those four",
+    "dispute_always_open": "every branch, including the 0% ones, returns disputeAllowed true",
+    "exception_approval": "the evaluation names the permissions that may approve (finance.manage, bookings.manage) rather than assuming the caller checked",
+    "refund_basis": "amount actually paid; coupon value is recorded and never converted to cash",
+    "gateway_deductions": "returned as a separate number beside the customer's approved amount, never subtracted from it",
+    "stricter_per_service": "Boarding, Pet Sitting, food subscriptions and relocation inherit the default until an operator writes a stricter row for them. Nothing stricter is seeded, because 'how much stricter' was not decided and inventing a number would be worse than inheriting."
+  },
+
+  "route_behaviour_changed": {
+    "file": "app/api/grooming-booking-change/route.ts",
+    "measured_before": "A customer self-cancelled a booking whose status was in_service - groomer at the house, mid-appointment - and got HTTP 200, a refund case for the full Rs 2,000, the provider's work order flipped to 'cancelled', and the payment moved to refund_pending.",
+    "measured_after": "409 cancellation_requires_approval. The booking stays in_service, the work order stays in_service, the payment stays captured, and a booking_refund_cases row is written with status pending_approval at amount 0 - recorded for review rather than silently refused. The response names the approval permissions and states the dispute route is open.",
+    "single_authority": "lib/grooming-policy-governance.ts still decides whether a change is ALLOWED (change-locks, reschedule rules, fees). The approved ladder is the only authority for the refund AMOUNT and for whether it may be paid without a human - two surfaces answering one money question is the defect this audit closed in F14."
+  },
+
+  "control_center": {
+    "route": "app/api/service-policy-control/route.ts",
+    "panel": "app/control/business-policy-panel.tsx, listed as 'Business policy'",
+    "rbac": "read launch.view (admin, manager, founder, superuser - an operator running a city can see the rules they run under); write settings.manage (founder, superuser) plus each domain's own declared permission as a second, narrower gate",
+    "gateway": "lib/api-gateway.ts maps /api/service-policy-control to launch.view on GET and settings.manage on write; the handler names the same floor as its second gate",
+    "audit": "every write bumps the version, writes a before/after row to service_policy_audit with the actor and reason, and writes a security_audit_events row (action business_policy.write)"
+  },
+
+  "a_repo_control_caught_two_drafts": "tests/route-authorization-class.test.mjs failed a first draft that resolved the policy domain before authenticating, and a second that answered an authenticated-but-unauthorised caller 'unknown policy domain' instead of 403. The floor permission is now checked before any body work.",
+
+  "regression": {
+    "file": "tests/ptja-w1-f24-refund-policy.test.mjs",
+    "cases": 19,
+    "coverage": ["the full ladder including both boundaries","all four blocked statuses","provider vs travel compensation","platform and provider cancellation","verified service failure","coupon exclusion","gateway deduction","scope resolution across service and city","eight configurations that would reopen the defect, each refused","versioning and audit","unregistered domain","RBAC across anonymous, associate, manager and founder","reason required and reaching both audit trails","five end-to-end cases through the real cancellation route"],
+    "sabotage_verification": [
+      "The route stops consulting the approved policy (the original defect restored) -> 3 route cases fail.",
+      "The status override removed from the evaluator, ladder intact -> the 2 status cases fail.",
+      "Coupon value refunded as cash and the gateway cut netted off -> the 2 basis cases fail.",
+      "Fix restored -> 19/19."
+    ],
+    "non_vacuity_controls": [
+      "a cancellation with more than 24 hours' notice still refunds in full through the real route - refusing every cancellation would satisfy the in_service case and break the product",
+      "a valid policy change through the same path is accepted, versioned and audited - refusing every write would satisfy the eight-refusal case and make the policy unconfigurable, which is the opposite of the point",
+      "a manager can READ the policy - a policy only a founder can see is not a control"
+    ]
+  },
+
+  "gates": {"full_repository_regression":"3180/3180","typecheck":"clean","lint":"0 errors"},
+  "note": "During one full-suite run two cases in tests/lane2-core-integration-boundaries.test.mjs reported not ok under parallel load; the file passes 75/75 in isolation on three consecutive runs and the full suite passes on re-run. Recorded rather than ignored."
+}

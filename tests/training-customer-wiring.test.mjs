@@ -5,7 +5,26 @@ const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
 
 test("Training customer route uses canonical commercial, trainer, scheduler and programme ledgers",async()=>{const page=await read("app/training/page.tsx");for(const token of["loadTrainingPackages","quoteTraining","loadTrainingTrainers","reserveUatSchedule","createCanonicalTrainingBooking","materializeTrainingProgramme","programme.sessions","Canonical scheduler assignment"])assert.equal(page.includes(token),true,token);assert.equal(page.includes("const challenges ="),false);assert.equal(page.includes("Meet Arjun Kumar"),false)});
 
-test("Training customer booking consumes a server quote and records only UAT sandbox payment truth",async()=>{const client=await read("lib/training-booking-client.ts");for(const token of["/api/canonical-bookings","serviceCode:\"dog_training\"","trainingQuoteId:quote.quoteId","status:\"captured\"","Training UAT sandbox capture marker","liveMoney:false"])assert.equal(client.includes(token),true,token)});
+// This case used to pin `status:"captured"` and the literal "Training UAT sandbox capture marker" as
+// REQUIRED source text - which is to say, it required the client to declare a payment capture it had
+// never obtained, and passed for as long as that was true. A source-text pin can only prove that a
+// string is present; it cannot tell whether the string is a fact. Measured in a browser, the server
+// refused every such booking: "Training quote requires server-confirmed sandbox capture before
+// programme booking". [PTJA-P1-F32]
+//
+// What the case is FOR - one server-quoted booking path, no live money - is unchanged. It is asserted
+// against the path the client actually takes now, and the behaviour behind it is proven request-by-
+// request in tests/ptja-p1-training-capture-attestation.test.mjs rather than by matching text here.
+test("Training customer booking consumes a server quote and records only UAT sandbox payment truth",async()=>{const client=await read("lib/training-booking-client.ts");for(const token of["createCanonicalLifecycle","serviceCode:\"dog_training\"","trainingQuoteId:quote.quoteId","liveMoney:false"])assert.equal(client.includes(token),true,token);
+ // The client must not assert its own capture: the attestation in lib/canonical-lifecycle-client.ts is
+ // what promotes the payment, and it is the server's reference that ends up on the booking. Asserted as
+ // the POSITIVE payload literal rather than as the ABSENCE of `status:"captured"` - a substring ban is
+ // satisfied or broken by any prose that happens to quote the string, including the comment above this
+ // file's own fix. That is the same weakness that let this case pin the defect in the first place.
+ assert.match(client,/payment:\{method:"internal_uat",mode:quote\.paymentMode,status:"created"/,"the client sends an unproven payment as 'created'");
+ const lifecycle=await read("lib/canonical-lifecycle-client.ts");
+ assert.equal(lifecycle.includes("/api/training-payment-sandbox"),true,"the single booking path performs the server sandbox capture");
+});
 
 test("Training customer programme reserves the server-governed number of sessions",async()=>{const page=await read("app/training/page.tsx");for(const token of["occurrences:quote.meetAndGreet?1:quote.sessions","cadenceDays:7","quote.minutesPerSession","currentQuote.amountDueNow"])assert.equal(page.includes(token),true,token)});
 

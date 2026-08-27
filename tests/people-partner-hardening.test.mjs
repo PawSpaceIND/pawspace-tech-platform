@@ -292,6 +292,22 @@ test("live leaderboard ranks employees from real productivity fact rows", async 
 test("regression: the CRM daily leaderboard refresh never clobbers a row confirmed by a real module", async () => {
   const stack = await peopleStack();
   const { sqlite } = stack;
+  /*
+   * Two real staff identities with lead-assignment memberships, seeded BEFORE the UAT lead seed.
+   *
+   * Lead ownership now resolves through lib/lead-owner-identity, which will only name somebody with a
+   * live login - so with no staff present every seeded lead is correctly 'Unassigned' and the
+   * leaderboard has one row. That is the rule working, not a break: the fixture was relying on the old
+   * hardcoded first-name roster to populate it. Seeding the people the leaderboard is a leaderboard OF
+   * is what the case actually needs. [PTJA-W3-CO]
+   */
+  const leadOwner = await import("../lib/lead-owner-identity.ts");
+  await leadOwner.ensureLeadOwnerTables(stack.db);
+  for (const [id, email] of [["u-sales-a", "sales.a@pawspace.test"], ["u-sales-b", "sales.b@pawspace.test"]]) {
+    sqlite.prepare("INSERT OR REPLACE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,'manager','active',?,?)").run(id, email, email, NOW, NOW);
+    sqlite.prepare("INSERT INTO lead_assignment_memberships (id,employee_email,team_code,service_codes_json,city_ids_json,language_codes_json,active,created_by,created_at,updated_by,updated_at) VALUES (?,?,'sales','[]','[]','[]',1,'seed',?,'seed',?)").run(`LAM-${id}`, email, NOW, NOW);
+  }
+
   // UAT seed is an explicit write; GET remains observational.
   const seeded = await revenueCrmRoute.POST(new Request("http://localhost/api/revenue-crm", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "seed_uat" }) }));
   assert.equal(seeded.status, 200);

@@ -2,6 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+// lib/walking-governance.ts and lib/taxi-governance.ts now share lib/booking-window-instant.ts, and a
+// lib module importing another extensionlessly needs the suite resolver. No worker env is read here.
+installWorkersHooks("__TAXI_FLOW_DB__");
 
 const flowSource = fs.readFileSync("app/mobile-app/taxi-flow.tsx", "utf8");
 const cssSource = fs.readFileSync("app/mobile-app/taxi-flow.module.css", "utf8");

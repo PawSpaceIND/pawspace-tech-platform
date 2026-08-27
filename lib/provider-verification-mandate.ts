@@ -26,9 +26,32 @@ export const VERIFICATION_TYPES: VerificationType[] = [
   { code: "police_verification", label: "Police verification", automatable: false },
   { code: "house_verification", label: "House / facility verification", automatable: false },
   { code: "pet_proofing_photo", label: "Pet-proofing photo", automatable: false },
+  /*
+   * The checks the approved Dog Walking and Pet Taxi requirements name. [PTJA-W1-F53]
+   *
+   * `automatable` is what IDfy can decide on its own; everything else waits for a human. Vehicle
+   * documents and the two trainings are deliberately manual - a licence photo that matches a name is
+   * not the same fact as a licence that is valid, and an induction is something a person signs off.
+   * "Government photo ID" is NOT added here: that is the existing `aadhaar` check, and a second name
+   * for the same evidence would mean two records of one fact.
+   */
+  { code: "selfie_liveness", label: "Selfie / liveness and identity match", automatable: true },
+  { code: "references_background", label: "References / background screening", automatable: false },
+  { code: "driving_licence", label: "Driving licence", automatable: true },
+  { code: "vehicle_registration", label: "Vehicle registration", automatable: true },
+  { code: "vehicle_insurance", label: "Vehicle insurance", automatable: false },
+  { code: "vehicle_fitness_pollution", label: "Pollution / fitness documents", automatable: false },
+  { code: "bank_kyc", label: "Bank account / KYC", automatable: true },
+  { code: "pet_handling_induction", label: "Pet-handling induction", automatable: false },
+  { code: "emergency_safety_training", label: "Emergency and safety training", automatable: false },
 ];
 const typeByCode = (c: string) => VERIFICATION_TYPES.find(t => t.code === c) || null;
-export const PROVIDER_CATEGORIES = ["groomer", "pet_sitter", "trainer", "host"];
+/*
+ * dog_walker and pet_taxi_driver were missing, and setCategoryMandate refused every category outside the
+ * four above - so there was no way to require Aadhaar of a dog walker at all, let alone a police check
+ * of someone who takes sole physical custody of an animal and drives it away. [PTJA-W1-F53]
+ */
+export const PROVIDER_CATEGORIES = ["groomer", "pet_sitter", "trainer", "host", "dog_walker", "pet_taxi_driver"];
 
 /** The two outcomes that are a DECISION about a check. Kept identical to TERMINAL_VERIFICATION_STATUSES
  *  in lib/idfy-callback-boundary.ts, which enforces the same rule on the callback path. */
@@ -39,9 +62,10 @@ const TERMINAL_VERIFICATION_OUTCOMES = ["verified", "failed"];
  * carries a service vertical_key ("grooming"), while mandates are defined per provider category
  * ("groomer") - without this mapping the activation checklist could not consult the mandate at all,
  * so a host could be activated with house/pet-proofing checks still not started.
- * A vertical absent from this map has no category mandate defined yet (walking/taxi/food): those
- * still require the application-level verification, and the activation checklist says so explicitly
- * rather than implying a category mandate was satisfied.
+ * Every canonical service vertical is mapped. Walking and taxi were absent, and the activation
+ * checklist answered that absence with a PASSING check - so two of the six services activated providers
+ * with no identity mandate whatsoever. A vertical still absent from this map now BLOCKS activation
+ * rather than passing it; see lib/provider-verification-policy.ts. [PTJA-W1-F53]
  */
 export const VERIFICATION_CATEGORY_BY_VERTICAL: Record<string, string> = {
   grooming: "groomer",
@@ -50,15 +74,27 @@ export const VERIFICATION_CATEGORY_BY_VERTICAL: Record<string, string> = {
   dog_training: "trainer",
   training: "trainer",
   boarding: "host",
+  dog_walking: "dog_walker",
+  walking: "dog_walker",
+  pet_taxi: "pet_taxi_driver",
+  taxi: "pet_taxi_driver",
 };
 export function verificationCategoryForVertical(verticalKey: string): string | null {
   return VERIFICATION_CATEGORY_BY_VERTICAL[text(verticalKey).toLowerCase()] || null;
 }
+/*
+ * The seed for a category nobody has configured yet. The AUTHORITY for what a vertical requires is
+ * lib/provider-verification-policy.ts, which is scoped by service AND city and edited in Control Center;
+ * these rows keep the existing per-category records in step for the four categories that already had
+ * them, and give the two new ones a starting set that matches the approved requirements.
+ */
 const DEFAULT_MANDATES: Record<string, string[]> = {
   groomer: ["aadhaar", "pan"],
   pet_sitter: ["aadhaar", "pan", "address"],
   trainer: ["aadhaar", "pan", "police_verification"],
   host: ["aadhaar", "pan", "house_verification", "pet_proofing_photo"],
+  dog_walker: ["aadhaar", "address", "police_verification", "selfie_liveness", "pet_handling_induction", "emergency_safety_training", "references_background"],
+  pet_taxi_driver: ["aadhaar", "address", "police_verification", "selfie_liveness", "pet_handling_induction", "emergency_safety_training", "driving_licence", "vehicle_registration", "vehicle_insurance", "vehicle_fitness_pollution"],
 };
 
 export async function ensureVerificationMandateTables(db: Db) {
@@ -67,6 +103,37 @@ export async function ensureVerificationMandateTables(db: Db) {
     db.prepare("CREATE TABLE IF NOT EXISTS provider_verifications (id TEXT PRIMARY KEY,application_id TEXT NOT NULL,category TEXT NOT NULL,verification_type TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',automated INTEGER NOT NULL DEFAULT 0,provider_ref TEXT,detail_json TEXT NOT NULL DEFAULT '{}',updated_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(application_id,verification_type))"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_verifications_app ON provider_verifications(application_id)"),
   ]);
+  /*
+   * A document that was valid on the day someone was activated does not stay valid. Without an expiry
+   * the platform could only ever ask "was this ever verified?", never "is it verified NOW" - so a walker
+   * whose police clearance lapsed last month kept receiving work. Additive and nullable: a row with no
+   * expiry is a check that does not expire, which is what every existing row means. [PTJA-W1-F53]
+   */
+  await db.prepare("ALTER TABLE provider_verifications ADD COLUMN expires_at INTEGER").run()
+    .catch((error: unknown) => { if (!/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) throw error; });
+}
+
+/** The statuses that mean a check is NOT currently satisfied. `revoked` is a decision, not an absence. */
+export const INVALID_VERIFICATION_STATUSES = ["pending", "not_started", "failed", "rejected", "revoked", "manual_review", "expired"];
+
+/**
+ * Records a verification outcome together with the window it is valid for.
+ *
+ * Distinct from recordManualVerification, which deliberately refuses automatable types so a human cannot
+ * hand-wave an IDfy check. This is the governance write used by Operations and by the adapter callbacks:
+ * it carries the validity window, and it is the only path that can record a REVOCATION, which is a
+ * decision about a check that was previously verified rather than a check that was never run.
+ */
+export async function recordVerificationValidity(db: Db, input: { applicationId: string; verificationType: string; status: string; expiresAt?: number | null; actorId: string; note?: string }) {
+  await ensureVerificationMandateTables(db);
+  const type = typeByCode(text(input.verificationType));
+  if (!type) throw new Error(`Unknown verification type: ${text(input.verificationType)}`);
+  const status = text(input.status);
+  if (!["verified", ...INVALID_VERIFICATION_STATUSES].includes(status)) throw new Error(`Unknown verification status: ${status}`);
+  const now = Date.now();
+  await db.prepare("INSERT INTO provider_verifications (id,application_id,category,verification_type,status,automated,detail_json,expires_at,updated_by,created_at,updated_at) VALUES (?,?,'',?,?,0,?,?,?,?,?) ON CONFLICT(application_id,verification_type) DO UPDATE SET status=excluded.status,expires_at=excluded.expires_at,detail_json=excluded.detail_json,updated_by=excluded.updated_by,updated_at=excluded.updated_at")
+    .bind(uid("PVER"), text(input.applicationId), type.code, status, JSON.stringify({ note: text(input.note) || null }), input.expiresAt ?? null, input.actorId, now, now).run();
+  return { applicationId: text(input.applicationId), verificationType: type.code, status, expiresAt: input.expiresAt ?? null };
 }
 
 /**
@@ -101,6 +168,9 @@ export async function setCategoryMandate(db: Db, input: { category: string; veri
   if (unknown.length) throw new Error(`Unknown verification type(s): ${unknown.join(", ")}`);
   const types = requested;
   if (!types.length) throw new Error("At least one valid verification type is required");
+  // Validated BEFORE anything is written, so a mandate the policy floor refuses - dropping the police
+  // check from a walker, say - leaves BOTH surfaces exactly as they were rather than half-applied.
+  await assertCategoryMandateAllowed(db, category, types);
   const now = Date.now();
   // ONE batch. The DELETE and the INSERTs used to be separate un-batched statements, so a request that
   // failed partway through the loop - a duplicate entry hitting PRIMARY KEY(category,verification_type)
@@ -112,7 +182,50 @@ export async function setCategoryMandate(db: Db, input: { category: string; veri
     db.prepare("DELETE FROM provider_category_verification_mandates WHERE category=?").bind(category),
     ...types.map(t => db.prepare("INSERT INTO provider_category_verification_mandates (category,verification_type,required,updated_by,updated_at) VALUES (?,?,1,?,?)").bind(category, t, input.actorId, now)),
   ]);
+  /*
+   * ONE AUTHORITY. lib/provider-verification-policy.ts is what the activation gate reads, because it is
+   * scoped by city as well as by vertical and is edited in Control Center. This write-through keeps the
+   * two surfaces from disagreeing: an operator who narrows a category here narrows what activation
+   * actually demands, which is the contract this module already promised and
+   * tests/provider-activation-readiness-closure.test.mjs already asserted. Without it, narrowing would
+   * have been accepted, recorded, and then quietly ignored by the gate - the same shape as the
+   * catalogue-versus-quote split this audit closed in F14. [PTJA-W1-F53]
+   *
+   * City-specific rows are left alone: this writes the (vertical, *) row, which a (vertical, city) row
+   * still overrides.
+   */
+  await writeCategoryMandateThrough(db, category, types, input.actorId);
   return { category, verificationTypes: types };
+}
+
+/** Refuses a proposed mandate that the vertical's policy floor would reject, before anything is written. */
+async function assertCategoryMandateAllowed(db: Db, category: string, types: string[]) {
+  const policy = await import("./provider-verification-policy");
+  const entry = Object.entries(policy.APPROVED_VERIFICATION_BY_VERTICAL).find(([, config]) => config.category === category);
+  if (!entry) return;
+  const spec = (await import("./service-policy-governance")).servicePolicyDomain(policy.PROVIDER_VERIFICATION_DOMAIN);
+  if (!spec) return;
+  const problem = spec.problem({ ...entry[1], configured: true, requiredTypes: types, recommendedTypes: [] } as Record<string, unknown>);
+  if (problem) throw new Error(problem);
+}
+
+/** Mirrors a category mandate onto the verticals that map to it, in the policy the gate reads. */
+async function writeCategoryMandateThrough(db: Db, category: string, types: string[], actorId: string) {
+  const policy = await import("./provider-verification-policy");
+  const verticals = Object.entries(policy.APPROVED_VERIFICATION_BY_VERTICAL)
+    .filter(([, config]) => config.category === category)
+    .map(([vertical]) => vertical);
+  if (!verticals.length) return;
+  const { writeServicePolicy } = await import("./service-policy-governance");
+  await policy.seedApprovedVerificationPolicies(db);
+  for (const vertical of verticals) {
+    const current = await policy.resolveProviderVerificationPolicy(db, vertical, "*").catch(() => null);
+    await writeServicePolicy(db, {
+      domain: policy.PROVIDER_VERIFICATION_DOMAIN, serviceCode: vertical, cityId: "*",
+      config: { ...(current?.config ?? {}), configured: true, requiredTypes: types,
+        recommendedTypes: (current?.config.recommendedTypes ?? []).filter((t: string) => !types.includes(t)) },
+    }, actorId, `Category mandate for ${category} updated`);
+  }
 }
 
 export async function requiredVerifications(db: Db, category: string): Promise<string[]> {
@@ -208,6 +321,19 @@ export async function recordManualVerification(db: Db, input: { applicationId: s
 
 /** The provider's verification standing: which mandated checks are verified vs pending. Assignment
  * eligibility requires EVERY mandated check verified. */
+/**
+ * Every verification type this application has actually cleared, whatever the per-category mandate
+ * happens to list. lib/provider-verification-policy.ts decides what a vertical REQUIRES; this is what
+ * the records SHOW. Filtering the evidence through the older category list would under-report a check
+ * the policy added and the provider has already passed - and, worse, could hide one it has not.
+ * [PTJA-W1-F53]
+ */
+export async function verifiedTypesForApplication(db: Db, applicationId: string) {
+  await ensureVerificationMandateTables(db);
+  const rows = await db.prepare("SELECT verification_type FROM provider_verifications WHERE application_id=? AND status='verified'").bind(text(applicationId)).all<Row>().catch(empty);
+  return rows.results.map(r => text(r.verification_type));
+}
+
 export async function verificationMandateStatus(db: Db, input: { applicationId: string; category: string }) {
   await ensureVerificationMandateTables(db);
   const required = await requiredVerifications(db, input.category);

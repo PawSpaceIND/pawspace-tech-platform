@@ -1,7 +1,20 @@
 type Row=Record<string,unknown>;
 type Db=D1Database;
 
-export async function ensureServiceMediaTable(db:Db){await db.prepare("CREATE TABLE IF NOT EXISTS service_media_assets (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,purpose TEXT NOT NULL,storage_key TEXT NOT NULL,mime_type TEXT NOT NULL,size_bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,scan_status TEXT NOT NULL DEFAULT 'pending',access_status TEXT NOT NULL DEFAULT 'pending_upload',retention_status TEXT NOT NULL DEFAULT 'active',synthetic INTEGER NOT NULL DEFAULT 1,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)").run();}
+export async function ensureServiceMediaTable(db:Db){
+  await db.prepare("CREATE TABLE IF NOT EXISTS service_media_assets (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,purpose TEXT NOT NULL,storage_key TEXT NOT NULL,mime_type TEXT NOT NULL,size_bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,scan_status TEXT NOT NULL DEFAULT 'pending',access_status TEXT NOT NULL DEFAULT 'pending_upload',retention_status TEXT NOT NULL DEFAULT 'active',synthetic INTEGER NOT NULL DEFAULT 1,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)").run();
+  /*
+   * The review columns live HERE, with the table they belong to, rather than in the upload boundary
+   * that happened to add them first. assertServiceProofRef below reads review_status, and it calls this
+   * function - not ensureMediaBoundaryTables - so a caller that only ever touches the proof gate must
+   * still get a table with the column. Additive and nullable: a row written before the column existed
+   * reads back as "no review recorded", never as approved. [PTJA-W2-B4-M04 / PTJA-W3-SC]
+   */
+  for(const column of["review_status TEXT","reviewed_by TEXT","reviewed_at INTEGER","review_reason TEXT","supersedes TEXT","release_basis TEXT"]){
+    await db.prepare(`ALTER TABLE service_media_assets ADD COLUMN ${column}`).run()
+      .catch((error:unknown)=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
+  }
+}
 
 /**
  * Is the synthetic `uat://proof/...` shortcut permitted in this runtime?
@@ -35,12 +48,30 @@ export async function assertServiceProofRef(db:Db,input:{ref:string|undefined;bo
   if(!value.startsWith(prefix))throw new Response("Proof must use a PawSpace service-media reference",{status:400});
   const id=value.slice(prefix.length).trim();if(!id||id.includes("/")||id.includes("?")||id.includes("#"))throw new Response("Invalid PawSpace media asset reference",{status:400});
   await ensureServiceMediaTable(db);
-  const row=await db.prepare("SELECT booking_id,provider_id,purpose,scan_status,access_status,retention_status,synthetic FROM service_media_assets WHERE id=?").bind(id).first<Row>();
+  const row=await db.prepare("SELECT booking_id,provider_id,purpose,scan_status,access_status,retention_status,synthetic,review_status,release_basis FROM service_media_assets WHERE id=?").bind(id).first<Row>();
   if(!row)throw new Response("Service media asset does not exist",{status:409});
   if(String(row.booking_id)!==input.bookingId)throw new Response("Service media asset belongs to another booking",{status:403});
   if(String(row.provider_id)!==input.providerId)throw new Response("Service media asset belongs to another provider",{status:403});
   if(String(row.purpose)!==input.purpose)throw new Response("Service media asset purpose does not match the proof slot",{status:409});
-  if(String(row.scan_status)!=="clean")throw new Response("Service media asset has not passed malware/content scanning",{status:409});
+  /*
+   * RELEASED, not merely "somebody pressed approve". [PTJA-W3-SC]
+   *
+   * This used to require scan_status='clean', which the review step wrote when a HUMAN approved - so
+   * the gate was reading a person's opinion out of the column a scanner is supposed to own. scan_status
+   * now carries what a scanner actually said, and access_status='ready' is written only when
+   * mediaReleaseVerdict permits release: a scanner clean, or an environment where unscanned media is
+   * agreed, or an explicitly permitted manual-review policy. In production with no scanner and no such
+   * policy, nothing reaches 'ready', so this gate is STRICTER there than the line it replaces.
+   *
+   * The scanner check stays as well, as a floor: a file a scanner condemned cannot be proof even if
+   * something else marked it ready.
+   */
+  if(["infected","unreadable","rejected"].includes(String(row.scan_status)))throw new Response("Service media asset was rejected by malware/content scanning",{status:409});
+  if(String(row.review_status??"")&&String(row.review_status)!=="approved")throw new Response("Service media asset has not been reviewed and approved",{status:409});
+  // THREE independent conditions, as before. release_basis is written only by the review step, and only
+  // when mediaReleaseVerdict actually permitted release - so a row whose access_status was set to
+  // 'ready' by any other means still fails here, exactly as an unscanned row used to.
+  if(!String(row.release_basis??"").trim())throw new Response("Service media asset has not been released by the scan/quarantine boundary",{status:409});
   if(String(row.access_status)!=="ready")throw new Response("Service media asset upload is not ready for service proof",{status:409});
   if(String(row.retention_status)!=="active")throw new Response("Service media asset is outside its active retention state",{status:409});
   if(Number(row.synthetic||0)!==0)throw new Response("Registered media asset is still marked synthetic",{status:409});

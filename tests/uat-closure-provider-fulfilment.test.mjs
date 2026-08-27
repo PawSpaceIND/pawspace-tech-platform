@@ -19,10 +19,18 @@ test("partner Grooming proof no longer fabricates synthetic before/after images"
 
 test("Grooming media proof is bound to booking provider purpose and clean private media", () => {
   const media = read("app/api/service-media/route.ts");
+  const boundary = read("lib/media-upload-boundary.ts");
   const workspace = read("lib/provider-workspace.ts");
   const lifecycle = read("app/api/grooming-lifecycle/route.ts");
-  assert.match(media, /'active',0/);
-  assert.match(media, /scan_status.*clean/);
+  // The asset INSERT and the scan/approval transition moved into the shared signed-upload boundary
+  // when W2-B4-M04 closed; the route now delegates. Both halves stay pinned. [PTJA-W2-B4-M04]
+  assert.match(media, /issueMediaUploadGrant/);
+  assert.match(boundary, /'active',0/);
+  assert.match(boundary, /scan_status=\?,access_status=\?/);
+  // reviewMedia no longer writes a scan result on a human's approval. It writes the SCANNER's verdict
+  // and, separately, the basis on which the asset was released. [PTJA-W3-SC]
+  assert.match(boundary, /scanVerdict==="clean"\?"clean":approved\?"pending":"rejected"/);
+  assert.match(boundary, /release_basis=\?/);
   assert.match(workspace, /Grooming photo proof must use a registered private media reference/);
   assert.match(workspace, /storage-confirmed and scan-approved/);
   assert.match(lifecycle, /assertServiceProofRef/);

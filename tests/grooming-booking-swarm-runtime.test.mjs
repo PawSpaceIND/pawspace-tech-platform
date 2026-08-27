@@ -87,7 +87,10 @@ async function book(body) {
 async function setup() {
   const harness = freshCountingD1({ maxBoundParams: 100 });
   globalThis.__GROOM_SWARM_DB__ = harness.db;
-  globalThis.__GROOM_SWARM_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox" };
+  // PAWSPACE_SCHEDULING_ENV declared, as every UAT harness must now: /api/uat-scheduling no longer
+  // fabricates provider roster unless the runtime says it is a UAT runtime (PTJA W1-F27). This harness
+  // books through the real reserve path with no Ops-published availability, so it says so.
+  globalThis.__GROOM_SWARM_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_SCHEDULING_ENV: "uat" };
 
   const { seedProviderCapacityDefaults } = await import("../lib/provider-capacity-governance.ts");
   const { ensureGroomingPolicyTables } = await import("../lib/grooming-policy-governance.ts");

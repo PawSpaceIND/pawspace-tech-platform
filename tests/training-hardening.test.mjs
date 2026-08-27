@@ -6,7 +6,7 @@ import * as nodeModule from "node:module";
 
 // Test-only resolve hooks: "cloudflare:workers" resolves to a stub whose env.DB is the current
 // per-test SQLite-backed D1 shim, so the REAL training routes and libs execute unmodified.
-const CF_STUB = "data:text/javascript,export const env={get DB(){return globalThis.__TRN_DB__;},get FOUNDER_EMAIL(){return undefined;},get PAWSPACE_UAT_LOGIN(){return undefined;}};";
+const CF_STUB = "data:text/javascript,export const env={get DB(){return globalThis.__TRN_DB__;},get FOUNDER_EMAIL(){return undefined;},get PAWSPACE_UAT_LOGIN(){return undefined;},get PAWSPACE_SCHEDULING_ENV(){return 'uat';}};";
 if (typeof nodeModule.registerHooks === "function") {
   nodeModule.registerHooks({
     resolve(specifier, context, nextResolve) {
@@ -548,7 +548,11 @@ test("contract: gateway permission map, DB access rule, and team surfaces for th
   }
   const lifecycle = fs.readFileSync(new URL("../lib/training-session-lifecycle.ts", import.meta.url), "utf8");
   assert.match(lifecycle, /rosterCovers/, "reschedule/replace must keep the roster availability check");
-  assert.match(lifecycle, /scheduling_availability WHERE provider_id=\? AND date=\?/);
+  // The query itself moved into lib/scheduling-roster-authority.ts listAuthoritativeAvailability, which
+  // runs it and then discards synthetic uat_roster rows for any provider-date a provider or Ops actually
+  // authored (PTJA W1-F27). What this line asserts - that rosterCovers reads published availability
+  // rather than assuming it - is unchanged; it now names the call that does the reading.
+  assert.match(lifecycle, /listAuthoritativeAvailability\(db,providerId,date\)/);
   const panel = fs.readFileSync(new URL("../app/admin/training-panel.tsx", import.meta.url), "utf8");
   assert.match(panel, /\/api\/training-(ops|sessions)/);
   const financePage = fs.readFileSync(new URL("../app/team/finance/training/page.tsx", import.meta.url), "utf8");

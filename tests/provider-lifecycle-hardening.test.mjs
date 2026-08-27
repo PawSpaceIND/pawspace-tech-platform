@@ -108,6 +108,32 @@ function captureBoardingHostProfile(sqlite, providerId) {
     .run(providerId, OPS, NOW);
 }
 
+/**
+ * Records every verification the application's vertical requires as verified.
+ *
+ * These fixtures used to pick verticalKey "dog_walking" precisely BECAUSE it demanded nothing - it was
+ * the convenient vertical for isolating some other gate. That was the defect being used as a test
+ * shortcut: dog_walking and pet_taxi had no verification category at all, and the activation checklist
+ * answered that absence with a passing check (PTJA W1-F53). Both now demand the approved set, so a test
+ * about the SLA gate or the media gate has to clear verification explicitly rather than rely on a
+ * service asking for none. Each test still isolates exactly the gate it is about.
+ */
+async function clearVerificationMandate(db, sqlite, applicationId) {
+  const mandate = await import("../lib/provider-verification-mandate.ts");
+  const policyLib = await import("../lib/provider-verification-policy.ts");
+  // Seeded first: without it the resolver falls back to the strict (*, *) default, whose requiredTypes
+  // is empty, and the fixture would clear nothing while appearing to.
+  await policyLib.seedApprovedVerificationPolicies(db);
+  const application = sqlite.prepare("SELECT vertical_key,city_code FROM provider_onboarding_applications WHERE id=?").get(applicationId);
+  const policy = await policyLib.resolveProviderVerificationPolicy(db, application.vertical_key, application.city_code);
+  for (const type of policy.config.requiredTypes) {
+    await mandate.recordManualVerification(db, { applicationId, verificationType: type, status: "verified", note: "cleared by fixture", actorId: OPS })
+      .catch(() => sqlite.prepare("INSERT OR REPLACE INTO provider_verifications (id,application_id,category,verification_type,status,automated,detail_json,updated_by,created_at,updated_at) VALUES (?,?,?,?,'verified',0,'{}',?,?,?)")
+        .run(`PV-${applicationId}-${type}`, applicationId, policy.config.category ?? "", type, OPS, NOW, NOW));
+    sqlite.prepare("UPDATE provider_verifications SET status='verified' WHERE application_id=? AND verification_type=?").run(applicationId, type);
+  }
+}
+
 async function completeInterviewAndProfile(db, sqlite, applicationId, activation, options = {}) {
   const interviewId = `POINT-${applicationId}`;
   sqlite.prepare("INSERT INTO provider_onboarding_interviews (id,application_id,start_at,end_at,duration_minutes,ops_email,status,notes,created_by,created_at,updated_at) VALUES (?,?,?,?,15,?,'completed',?,?,?,?)")
@@ -161,7 +187,13 @@ test("verification mandate: category mandates are configurable and vertical-mapp
   assert.equal(mandate.verificationCategoryForVertical("grooming"), "groomer");
   assert.equal(mandate.verificationCategoryForVertical("dog_training"), "trainer");
   assert.equal(mandate.verificationCategoryForVertical("pet_sitting"), "pet_sitter");
-  assert.equal(mandate.verificationCategoryForVertical("dog_walking"), null, "verticals with no mandate defined are reported as such, not silently mapped");
+  // dog_walking and pet_taxi used to map to null, and the activation checklist answered that null with a
+  // PASSING check - so two of the six canonical services activated providers with no identity mandate at
+  // all. Both are mapped now (PTJA W1-F53). The property this line was protecting - an unmapped vertical
+  // is never silently treated as fine - is asserted below, and far more strongly: it now BLOCKS.
+  assert.equal(mandate.verificationCategoryForVertical("dog_walking"), "dog_walker");
+  assert.equal(mandate.verificationCategoryForVertical("pet_taxi"), "pet_taxi_driver");
+  assert.equal(mandate.verificationCategoryForVertical("astrology_for_cats"), null, "a vertical nobody has decided about is still reported as unmapped");
 
   await assert.rejects(() => mandate.setCategoryMandate(db, { category: "astrologer", verificationTypes: ["pan"], actorId: OPS }), /Unknown category/);
   await assert.rejects(() => mandate.setCategoryMandate(db, { category: "groomer", verificationTypes: ["nonsense"], actorId: OPS }), /Unknown verification type\(s\): nonsense/);
@@ -207,6 +239,56 @@ test("activation is blocked while any mandated category check is unverified", as
   assert.equal(cleared.eligible, true, `still blocked: ${cleared.checks.filter((c) => !c.passed).map((c) => c.code).join(", ")}`);
 });
 
+test("PTJA W1-F53: a dog walker with no verification cannot be activated", async () => {
+  /*
+   * The finding, end to end. MEASURED before the fix: this exact journey produced
+   *   mandate check: {"code":"category_verification_mandate","passed":true,
+   *                   "detail":{"category":null,"note":"No verification category mandate is defined
+   *                             for vertical 'dog_walking' - application-level verification only"}}
+   * and then ACTIVATED the walker - zero verification rows, zero onboarding documents, sole physical
+   * custody of somebody's animal. An unmapped vertical produced a PASSING check.
+   */
+  const { sqlite, db } = fresh();
+  const { applicationId, activation } = await readyApplication(db, sqlite, { verticalKey: "dog_walking" });
+  await completeInterviewAndProfile(db, sqlite, applicationId, activation);
+
+  const evaluated = await activation.evaluateProviderActivation(db, { applicationId });
+  const mandateCheck = evaluated.checks.find((check) => check.code === "category_verification_mandate");
+
+  assert.equal(mandateCheck.passed, false, "an unverified walker must not be activatable");
+  assert.equal(mandateCheck.detail.category, "dog_walker");
+  for (const required of ["aadhaar", "police_verification", "pet_handling_induction", "emergency_safety_training"]) {
+    assert.ok(mandateCheck.detail.outstanding.includes(required), `${required} must be named as outstanding`);
+  }
+  assert.equal(evaluated.eligible, false);
+  await assert.rejects(() => activation.activateProviderUat(db, { applicationId, actorEmail: OPS }), /category_verification_mandate/);
+
+  // Non-vacuity: once the approved checks are recorded, the same walker activates normally.
+  await clearVerificationMandate(db, sqlite, applicationId);
+  const cleared = await activation.evaluateProviderActivation(db, { applicationId });
+  assert.equal(cleared.checks.find((check) => check.code === "category_verification_mandate").passed, true,
+    `still blocked: ${cleared.checks.filter((c) => !c.passed).map((c) => c.code).join(", ")}`);
+});
+
+test("PTJA W1-F53: a vertical nobody has configured blocks activation instead of passing it", async () => {
+  /*
+   * The root cause, isolated. It was not that walking and taxi were forgotten - it was that FORGETTING
+   * produced a passing check, so the next service added would inherit the same hole. A vertical with no
+   * configured requirements now fails the gate and names itself, so somebody has to decide.
+   */
+  const { sqlite, db } = fresh();
+  const { applicationId, activation } = await readyApplication(db, sqlite, { verticalKey: "aquarium_care" });
+  await completeInterviewAndProfile(db, sqlite, applicationId, activation);
+
+  const evaluated = await activation.evaluateProviderActivation(db, { applicationId });
+  const mandateCheck = evaluated.checks.find((check) => check.code === "category_verification_mandate");
+
+  assert.equal(mandateCheck.passed, false, "an unconfigured vertical must not produce a passing check");
+  assert.equal(mandateCheck.detail.vertical, "aquarium_care", "and it names the vertical nobody has decided about");
+  assert.match(String(mandateCheck.detail.note), /Control Center/, "and says where to decide it");
+  assert.equal(evaluated.eligible, false);
+});
+
 test("activation is blocked by each individual gate: verification, approval, SLA, profile, media", async () => {
   const cases = [
     { name: "verification_verified", mutate: (sqlite, id) => sqlite.prepare("UPDATE provider_onboarding_applications SET verification_status='manual_review_required' WHERE id=?").run(id) },
@@ -219,6 +301,7 @@ test("activation is blocked by each individual gate: verification, approval, SLA
     const { sqlite, db } = fresh();
     const { applicationId, activation } = await readyApplication(db, sqlite, { verticalKey: "dog_walking" });
     await completeInterviewAndProfile(db, sqlite, applicationId, activation);
+    await clearVerificationMandate(db, sqlite, applicationId);
     const before = await activation.evaluateProviderActivation(db, { applicationId });
     assert.equal(before.eligible, true, `baseline should be activatable, blocked by: ${before.checks.filter((c) => !c.passed).map((c) => c.code).join(", ")}`);
     scenario.mutate(sqlite, applicationId);
@@ -233,12 +316,15 @@ test("activation is blocked by each individual gate: verification, approval, SLA
 // ---------------------------------------------------------------------------
 test("an activated provider is invisible to matching until a human adds them to the service map", async () => {
   const { sqlite, db } = fresh();
-  // dog_walking is the mandate-free vehicle this test wants (no category mandate is defined for it), so
-  // the profile declares dog_walking too. It used to declare "boarding" while onboarding as dog_walking,
-  // which is the shape PTJA-P0-05 closed: a declared service whose category mandate was never satisfied
-  // is no longer part of the provider's matching scope.
+  // dog_walking is the vehicle this test wants, and the profile declares dog_walking too. It used to
+  // declare "boarding" while onboarding as dog_walking, which is the shape PTJA-P0-05 closed: a declared
+  // service whose category mandate was never satisfied is no longer part of the provider's matching
+  // scope. dog_walking is no longer mandate-FREE - it demands the approved walker checks (PTJA W1-F53) -
+  // so the fixture clears them explicitly below. What this test is about is unchanged: an activated
+  // provider stays invisible to matching until a human puts them on the service map.
   const { applicationId, activation } = await readyApplication(db, sqlite, { verticalKey: "dog_walking" });
   await completeInterviewAndProfile(db, sqlite, applicationId, activation, { services: ["dog_walking"] });
+  await clearVerificationMandate(db, sqlite, applicationId);
   const activated = await activation.activateProviderUat(db, { applicationId, actorEmail: OPS });
   captureBoardingHostProfile(sqlite, activated.providerId);
   assert.equal(activated.marketplaceLive, false);
@@ -572,6 +658,7 @@ test("P1-F52: repeated SERIAL activation is still idempotent - the fix is not a 
   const { sqlite, db } = fresh();
   const { applicationId, activation } = await readyApplication(db, sqlite, { verticalKey: "dog_walking" });
   await completeInterviewAndProfile(db, sqlite, applicationId, activation, { services: ["dog_walking"] });
+  await clearVerificationMandate(db, sqlite, applicationId);
   const first = await activation.activateProviderUat(db, { applicationId, actorEmail: OPS });
   const second = await activation.activateProviderUat(db, { applicationId, actorEmail: OPS });
   assert.equal(second.providerId, first.providerId, "a retry returns the identity already minted");
@@ -585,6 +672,7 @@ test("changing service areas after activation takes the provider off the live ma
   const { sqlite, db } = fresh();
   const { applicationId, activation } = await readyApplication(db, sqlite, { verticalKey: "dog_walking" });
   await completeInterviewAndProfile(db, sqlite, applicationId, activation, { services: ["dog_walking"] });
+  await clearVerificationMandate(db, sqlite, applicationId);
   const activated = await activation.activateProviderUat(db, { applicationId, actorEmail: OPS });
   captureBoardingHostProfile(sqlite, activated.providerId);
   await activation.addProviderToServiceMap(db, { providerId: activated.providerId, zoneIds: ["blr-east"], actorEmail: OPS });

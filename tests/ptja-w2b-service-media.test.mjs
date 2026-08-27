@@ -59,6 +59,23 @@ async function mediaWorld() {
     return { status: response.status, body: await response.json().catch(() => null) };
   };
   call.checker = CHECKER;
+  /*
+   * The signed-upload path, added when W2-B4-M04 closed. These cases were written against the earlier
+   * route, where POST minted no grant and confirm_upload accepted any opaque string. Their assertions
+   * are unchanged - a public URL is still refused, a misspelled action still must not revoke, and the
+   * submitter still cannot scan-approve - but the LEGITIMATE half of each now has to present the grant
+   * token the asset was issued, because that is what the route requires today.
+   */
+  call.upload = async (body, as = STAFF) => {
+    const created = await call("POST", { fileName: "proof.jpg", ...body }, as);
+    const { id, upload } = created.body?.data ?? {};
+    if (!upload) return { created, id, upload: null, confirmed: null };
+    const confirmed = await call("PATCH", {
+      id, action: "confirm_upload", uploadToken: upload.token, storageReference: upload.objectKey,
+      observedSizeBytes: body.sizeBytes, observedSha256: body.sha256, observedMimeType: body.mimeType,
+    }, as);
+    return { created, id, upload, confirmed };
+  };
   return { sqlite, db, call };
 }
 
@@ -101,12 +118,9 @@ test("W2B-M04: a public URL cannot become a service-proof storage reference", as
 test("W2B-M04: an opaque storage object id is still accepted", async () => {
   // Non-vacuity. Refusing every confirmation would satisfy the case above and break proof upload.
   const { call } = await mediaWorld();
-  const created = await call("POST", { bookingId: "BK-GROOM-1", purpose: "after_service", mimeType: "image/jpeg", sizeBytes: 2048, sha256: "d".repeat(64) });
-  const id = created.body.data.id;
-
-  const confirmed = await call("PATCH", { id, action: "confirm_upload", storageReference: "uat/grooming/BK-GROOM-1/after-service-01.jpg" });
+  const { confirmed } = await call.upload({ bookingId: "BK-GROOM-1", purpose: "after_service", mimeType: "image/jpeg", sizeBytes: 2048, sha256: "d".repeat(64) });
   assert.equal(confirmed.status, 200,
-    `an opaque object id must still confirm: ${JSON.stringify(confirmed).slice(0, 250)}`);
+    `an opaque object id presented with its own grant token must still confirm: ${JSON.stringify(confirmed).slice(0, 250)}`);
 });
 
 // =====================================================================================================
@@ -131,10 +145,8 @@ test("W2B-M04: an opaque storage object id is still accepted", async () => {
 
 test("W2B-M05: a misspelled action does not revoke the asset", async () => {
   const { sqlite, call } = await mediaWorld();
-  const created = await call("POST", { bookingId: "BK-GROOM-1", purpose: "before_service", mimeType: "image/jpeg", sizeBytes: 2048, sha256: "e".repeat(64) });
-  const id = created.body.data.id;
-  await call("PATCH", { id, action: "confirm_upload", storageReference: "uat/grooming/BK-GROOM-1/before-01.jpg" });
-  await call("PATCH", { id, action: "record_scan", scanResult: "clean" }, call.checker);
+  const { id } = await call.upload({ bookingId: "BK-GROOM-1", purpose: "before_service", mimeType: "image/jpeg", sizeBytes: 2048, sha256: "e".repeat(64) });
+  await call("PATCH", { id, action: "record_scan", scanResult: "clean", reason: "Both before photos are clear" }, call.checker);
   const approved = sqlite.prepare("SELECT access_status FROM service_media_assets WHERE id=?").get(id);
   assert.equal(String(approved.access_status), "ready", "the asset is approved before the probe");
 
@@ -250,11 +262,9 @@ test("W2B-M04: the actor who created a service-media asset cannot scan-approve i
   // did not, so one identity could POST the record, confirm the upload and mark its own asset clean -
   // the chain assertServiceProofRef then accepts as the before/after photo gate on completion.
   const { call } = await mediaWorld();
-  const created = await call("POST", { bookingId: "BK-GROOM-1", purpose: "after_service", mimeType: "image/jpeg", sizeBytes: 2048, sha256: "1".repeat(64) });
-  const id = created.body.data.id;
-  await call("PATCH", { id, action: "confirm_upload", storageReference: "uat/grooming/BK-GROOM-1/after-02.jpg" });
+  const { id } = await call.upload({ bookingId: "BK-GROOM-1", purpose: "after_service", mimeType: "image/jpeg", sizeBytes: 2048, sha256: "1".repeat(64) });
 
-  const selfScan = await call("PATCH", { id, action: "record_scan", scanResult: "clean" });
+  const selfScan = await call("PATCH", { id, action: "record_scan", scanResult: "clean", reason: "Looks fine to me" });
   assert.equal(selfScan.status, 403,
     `the submitter must not scan-approve their own asset: ${JSON.stringify(selfScan).slice(0, 250)}`);
 });

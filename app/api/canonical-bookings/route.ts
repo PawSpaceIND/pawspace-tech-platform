@@ -1,4 +1,5 @@
 import {subscriptionExpiry} from "../../../lib/grooming-governance";
+import{sameInstant}from"../../../lib/booking-window-instant";
 import{sandboxCapabilitiesUnlocked}from"../../../lib/payment-environment";
 import {governGroomingBookingWithLiveMultiPet} from "../../../lib/live-grooming-governance";
 import {authError,requireCustomerOwnership,requirePermission,resolveActor} from "../../../lib/server-auth";
@@ -16,10 +17,16 @@ import {BOOKING_REPLAY_CONFLICT,BOOKING_WRITE_CONFLICT,SCHEDULING_GROUP_OWNERSHI
 import {prepareCouponBooking,type CouponBookingPreparation} from "../../../lib/coupon-governance";
 import {ensureProviderBookingGuard,providerUnavailableForWindow} from "../../../lib/provider-capacity-governance";
 import {cleanupExpiredReservationLeases,ensureSchedulingReservationLeaseGovernance} from "../../../lib/scheduling-reservation-leases";
+import {postCollectionEvent} from "../../../lib/collection-ledger";
+import {cityBookingVerdict} from "../../../lib/city-status-authority";
 
 type LifecycleInput={
   idempotencyKey:string;scheduleGroupId:string;customer:{id:string;name:string;primaryPhone:string;secondaryPhone?:string;email?:string};
-  pets:Array<{sourceId:string;name:string;species?:string;breed?:string;vaccinationStatus?:string}>;cityId:string;zoneId:string;
+  // medicationRequired is a PET fact the customer declares at booking. Boarding host matching needs it:
+  // medication handling is a hard constraint only when a pet actually needs medication, so without the
+  // signal the constraint can never fire and a host who cannot give medication is matched anyway.
+  // [PTJA-W3-BH]
+  pets:Array<{sourceId:string;name:string;species?:string;breed?:string;vaccinationStatus?:string;medicationRequired?:boolean}>;cityId:string;zoneId:string;
   serviceCode:"grooming"|"dog_training"|"boarding"|"pet_sitting";packageCode:string;packageName:string;scheduledStart:string;scheduledEnd:string;
   provider:{id:string;name:string;model:"full_time"|"commission"};totalAmount:number;amountDueNow:number;
   payment:{method:string;mode:string;status:string;detail:string};pricing:{discount:number;couponCode?:string;couponQuoteId?:string;addOns?:string[];subscription?:string;requirements?:string[];trainingQuoteId?:string;boardingQuoteId?:string;sittingQuoteId?:string;referralClaimId?:string};
@@ -168,12 +175,59 @@ async function ensureTables(db:Awaited<ReturnType<typeof database>>){await db.ba
   db.prepare("CREATE INDEX IF NOT EXISTS idx_booking_lifecycle_events_booking ON booking_lifecycle_events(booking_id,occurred_at)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_canonical_pets_customer ON canonical_pets(customer_id)"),
 ]);}
+/*
+ * The service-wide window guard, and the three verticals that re-state it, all ask ONE question: is the
+ * booking window the window that was reserved? A window is an instant, not a string - see
+ * lib/booking-window-instant.ts for what was measured. The verticals compared strings and refused every
+ * Training, Boarding and Sitting booking the customer app made, after its reservation had already been
+ * committed. They now share this one predicate with the guard above them. [PTJA-P1-F31]
+ */
+function bookingWindowMatchesReservation(reserved:Record<string,unknown>,input:Pick<LifecycleInput,"scheduledStart"|"scheduledEnd">){
+  return sameInstant(reserved.scheduled_start,input.scheduledStart)&&sameInstant(reserved.scheduled_end,input.scheduledEnd);
+}
+/*
+ * A governance module refuses by THROWING a Response, and it does so in two shapes: a plain sentence
+ * (lib/training-commercial-governance.ts, lib/boarding-governance.ts) and a JSON envelope
+ * (lib/sitting-governance.ts and the auth layer, via governedJsonError). Reading both as plain text put
+ * the envelope itself into the field the UI renders, and the customer was shown, verbatim:
+ *   {"error":"{\"error\":\"Authentication required\"}"}
+ * Take the sentence out of the envelope when there is one, and leave a plain sentence alone. Same class
+ * as PTJA-P1-01: a machine artifact reaching a customer as copy. [PTJA-P1-F33]
+ */
+async function governedRefusalBody(refusal:Response){
+  const text=await refusal.text().catch(()=>"");
+  const trimmed=text.trim();
+  if(trimmed.startsWith("{")){
+    try{
+      const parsed=JSON.parse(trimmed) as Record<string,unknown>;
+      // Re-emit the governance module's OWN envelope, so the fields it authored for a client -
+      // lib/grooming-policy-governance.ts sends code/cityId/zoneId - stay at the top level where a
+      // client can read them, instead of being flattened into a string.
+      if(parsed&&typeof parsed.error==="string"&&parsed.error.trim())return parsed;
+    }catch{/* not an envelope after all; fall through to the plain sentence */}
+  }
+  return text?{error:text}:null;
+}
 function validate(input:LifecycleInput){if(!input.idempotencyKey||!input.scheduleGroupId||!input.customer?.id||!input.customer?.name||!input.customer?.primaryPhone)return "Customer and request identity are required";if(!Array.isArray(input.pets)||input.pets.length<1)return "At least one pet is required";if(!services.has(input.serviceCode)||!input.packageCode||!input.scheduledStart||!input.scheduledEnd)return "Complete service and schedule details are required";if(!input.provider?.id||!input.provider?.name||!Number.isFinite(input.totalAmount)||input.totalAmount<0||!Number.isFinite(input.amountDueNow)||input.amountDueNow<0)return "Provider and valid payment amounts are required";return null;}
 async function readBundle(db:Awaited<ReturnType<typeof database>>,booking:Record<string,unknown>,duplicatePrevented:boolean){const [workOrder,payment]=await Promise.all([db.prepare("SELECT * FROM provider_work_orders WHERE booking_id=?").bind(booking.id).first<Record<string,unknown>>(),db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(booking.id).first<Record<string,unknown>>()]);return {bookingId:String(booking.id),customerId:String(booking.customer_id),petIds:JSON.parse(String(booking.pet_ids_json)),scheduleGroupId:String(booking.schedule_group_id),workOrderId:String(workOrder?.id||""),paymentId:String(payment?.id||""),status:String(booking.status),duplicatePrevented};}
 
 export async function GET(request:Request){try{const actor=await resolveActor(request);requirePermission(actor,"bookings.manage");const db=await database();await ensureTables(db);const rows=await db.prepare("SELECT b.*,c.name customer_name,w.id work_order_id,w.provider_name,w.provider_model,w.status work_order_status,w.occurrence_count,p.id payment_id,p.status payment_status,p.amount_due_now,p.gateway FROM canonical_bookings b JOIN canonical_customers c ON c.id=b.customer_id JOIN provider_work_orders w ON w.booking_id=b.id JOIN booking_payments p ON p.booking_id=b.id ORDER BY b.created_at DESC LIMIT 100").all<Record<string,unknown>>();const bookings=[];for(const row of rows.results){const [pets,events]=await Promise.all([db.prepare("SELECT id,name,species,breed,vaccination_status FROM canonical_pets WHERE customer_id=? AND id IN (SELECT value FROM json_each(?)) ORDER BY name").bind(row.customer_id,row.pet_ids_json).all(),db.prepare("SELECT * FROM booking_lifecycle_events WHERE booking_id=? ORDER BY occurred_at ASC").bind(row.id).all()]);bookings.push({...row,pets:pets.results,events:events.results});}return json({bookings});}catch(error){return authError(error,"Unable to load lifecycle records");}}
 
-export async function POST(request:Request){try{const db=await database();await ensureSchedulingReservationLeaseGovernance(db);await cleanupExpiredReservationLeases(db);const actor=await resolveActor(request);requirePermission(actor,"scheduling.book");const input=await request.json() as LifecycleInput;const problem=validate(input);if(problem)return json({error:problem},400);await ensureTables(db);await requireCustomerOwnership(db,actor,input.customer.id);const replayInput={customerId:input.customer.id,serviceCode:input.serviceCode,idempotencyKey:input.idempotencyKey,scheduleGroupId:input.scheduleGroupId};const prior=await findCustomerReplay(db,replayInput);if(prior)return json({data:await readBundle(db,prior,true)});if(await hasForeignReplayConflict(db,replayInput))return json({error:BOOKING_REPLAY_CONFLICT},409);if(await hasReplayConflict(db,replayInput))return json({error:BOOKING_WRITE_CONFLICT},409);
+export async function POST(request:Request){try{const db=await database();await ensureSchedulingReservationLeaseGovernance(db);await cleanupExpiredReservationLeases(db);const actor=await resolveActor(request);requirePermission(actor,"scheduling.book");const input=await request.json() as LifecycleInput;const problem=validate(input);if(problem)return json({error:problem},400);await ensureTables(db);await requireCustomerOwnership(db,actor,input.customer.id);const replayInput={customerId:input.customer.id,serviceCode:input.serviceCode,idempotencyKey:input.idempotencyKey,scheduleGroupId:input.scheduleGroupId};const prior=await findCustomerReplay(db,replayInput);if(prior)return json({data:await readBundle(db,prior,true)});if(await hasForeignReplayConflict(db,replayInput))return json({error:BOOKING_REPLAY_CONFLICT},409);
+  /*
+   * THE CITY MATRIX. [PTJA-W1-F38]
+   *
+   * Checked AFTER the replay lookup on purpose: a replay is not a new booking, and answering a customer's
+   * retry with "the city is paused" would strand a booking that was already accepted while the market was
+   * open. Everything past this point IS a new booking, on whatever channel it arrived through - the app,
+   * an ops-assisted manual booking via /api/assisted-orders, a wait-list conversion, an automatic
+   * subscription renewal. A gate only the app passes through is one an operator walks around by accident.
+   *
+   * Draft and Closed take nothing; Paused takes nothing new while leaving every existing booking alone;
+   * Pilot takes only the pincodes, services and channels somebody explicitly enabled.
+   */
+  const cityVerdict=await cityBookingVerdict(db,{cityId:input.cityId,serviceCode:input.serviceCode,pincode:(input as{pincode?:string}).pincode??null,channel:(input as{channel?:string}).channel??"customer_app"});
+  if(!cityVerdict.allowed)return json({error:"PawSpace is not taking new bookings in this city right now",code:cityVerdict.reason,cityId:cityVerdict.cityId,cityStatus:cityVerdict.status,existingBookingsUnaffected:cityVerdict.existingWorkHandling==="continue"},409);if(await hasReplayConflict(db,replayInput))return json({error:BOOKING_WRITE_CONFLICT},409);
   // Identity rules apply to NEW bookings only, and are checked here — after the replay path above, so
   // history stays replayable, and before governance, quote/referral consumption, reservation reads and
   // every write, so a bad new payload costs nothing.
@@ -229,7 +283,7 @@ export async function POST(request:Request){try{const db=await database();await 
   // app/api/uat-scheduling/route.ts. Same check the three governed verticals already carry, applied to
   // every service, before any write. [PTJA-P1-F28]
   const heldWindow=reservations.results[0];
-  if(heldWindow&&(new Date(String(heldWindow.scheduled_start)).getTime()!==new Date(input.scheduledStart).getTime()||new Date(String(heldWindow.scheduled_end)).getTime()!==new Date(input.scheduledEnd).getTime()))
+  if(heldWindow&&!bookingWindowMatchesReservation(heldWindow,input))
     return json({error:"The booking window does not match the scheduling reservation"},409);
   // City/zone integrity invariant: the provider equality above is not enough. The booking persists the
   // CLIENT-supplied cityId/zoneId, but the reservation it confirms was made for a specific city and zone.
@@ -251,13 +305,13 @@ export async function POST(request:Request){try{const db=await database();await 
   }
   let trainingCommercial:Awaited<ReturnType<typeof governTrainingBooking>>|null=null;
   if(input.serviceCode==="dog_training"){
-    const quoteId=String(input.pricing.trainingQuoteId||"").trim();if(!quoteId)return json({error:"A server Training quote is required before booking confirmation"},409);const first=reservations.results[0];if(String(first.scheduled_start)!==input.scheduledStart||String(first.scheduled_end)!==input.scheduledEnd)return json({error:"Training booking window does not match the first reserved session"},409);
+    const quoteId=String(input.pricing.trainingQuoteId||"").trim();if(!quoteId)return json({error:"A server Training quote is required before booking confirmation"},409);const first=reservations.results[0];if(!bookingWindowMatchesReservation(first,input))return json({error:"Training booking window does not match the first reserved session"},409);
     trainingCommercial=await governTrainingBooking(db,{quoteId,packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,scheduledStart:input.scheduledStart,submittedTotal:input.totalAmount,submittedAmountDueNow:input.amountDueNow,paymentMode:input.payment.mode,paymentStatus:input.payment.status,reservationCount:reservations.results.length});governed={packageCode:trainingCommercial.packageCode,packageName:trainingCommercial.packageName,catalogueVersion:trainingCommercial.catalogueVersion,petCount:trainingCommercial.petCount,totalAmount:trainingCommercial.totalAmount,amountDueNow:trainingCommercial.amountDueNow};
   }
   let boardingCommercial:Awaited<ReturnType<typeof governBoardingBooking>>|null=null;
   if(input.serviceCode==="boarding"){
-    const quoteId=String(input.pricing.boardingQuoteId||"").trim();if(!quoteId)return json({error:"A server Boarding quote is required before booking confirmation"},409);const first=reservations.results[0];if(String(first.scheduled_start)!==input.scheduledStart||String(first.scheduled_end)!==input.scheduledEnd)return json({error:"Boarding booking window does not match the continuous stay reservation"},409);
-    boardingCommercial=await governBoardingBooking(db,{quoteId,packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,submittedTotal:input.totalAmount,submittedAmountDueNow:input.amountDueNow,paymentMode:input.payment.mode,paymentStatus:input.payment.status,reservationCount:reservations.results.length,providerId:input.provider.id,cityId:input.cityId,zoneId:input.zoneId,species:input.pets.map(pet=>String(pet.species||"other")),vaccinationStatuses:input.pets.map(pet=>String(pet.vaccinationStatus||"not_provided"))});governed={packageCode:boardingCommercial.packageCode,packageName:boardingCommercial.packageName,catalogueVersion:boardingCommercial.catalogueVersion,petCount:boardingCommercial.petCount,totalAmount:boardingCommercial.totalAmount,amountDueNow:boardingCommercial.amountDueNow};
+    const quoteId=String(input.pricing.boardingQuoteId||"").trim();if(!quoteId)return json({error:"A server Boarding quote is required before booking confirmation"},409);const first=reservations.results[0];if(!bookingWindowMatchesReservation(first,input))return json({error:"Boarding booking window does not match the continuous stay reservation"},409);
+    boardingCommercial=await governBoardingBooking(db,{quoteId,packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,submittedTotal:input.totalAmount,submittedAmountDueNow:input.amountDueNow,paymentMode:input.payment.mode,paymentStatus:input.payment.status,reservationCount:reservations.results.length,providerId:input.provider.id,cityId:input.cityId,zoneId:input.zoneId,medicationRequired:input.pets.some(pet=>pet.medicationRequired===true),customerId:input.customer.id,species:input.pets.map(pet=>String(pet.species||"other")),vaccinationStatuses:input.pets.map(pet=>String(pet.vaccinationStatus||"not_provided"))});governed={packageCode:boardingCommercial.packageCode,packageName:boardingCommercial.packageName,catalogueVersion:boardingCommercial.catalogueVersion,petCount:boardingCommercial.petCount,totalAmount:boardingCommercial.totalAmount,amountDueNow:boardingCommercial.amountDueNow};
   }
   let sittingCommercial:Awaited<ReturnType<typeof governSittingBooking>>|null=null;
   let sittingCapture:Awaited<ReturnType<typeof requireSittingQuoteSandboxCapture>>|null=null;
@@ -265,7 +319,7 @@ export async function POST(request:Request){try{const db=await database();await 
     const quoteId=String(input.pricing.sittingQuoteId||"").trim();
     if(!quoteId)return json({error:"A server Sitting quote is required before booking confirmation"},409);
     const first=reservations.results[0];
-    if(reservations.results.length!==1||String(first.scheduled_start)!==input.scheduledStart||String(first.scheduled_end)!==input.scheduledEnd)return json({error:"Sitting booking window does not match the canonical care reservation"},409);
+    if(reservations.results.length!==1||!bookingWindowMatchesReservation(first,input))return json({error:"Sitting booking window does not match the canonical care reservation"},409);
     sittingCapture=await requireSittingQuoteSandboxCapture(db,{quoteId,amount:input.amountDueNow});
     sittingCommercial=await governSittingBooking(db,{quoteId,packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,cityId:input.cityId,zoneId:input.zoneId,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,submittedTotal:input.totalAmount,submittedAmountDueNow:input.amountDueNow,paymentMode:input.payment.mode,paymentStatus:sittingCapture.status,reservationCount:reservations.results.length});
     governed={packageCode:sittingCommercial.packageCode,packageName:sittingCommercial.packageName,catalogueVersion:sittingCommercial.catalogueVersion,petCount:sittingCommercial.petCount,totalAmount:sittingCommercial.totalAmount,amountDueNow:sittingCommercial.amountDueNow};
@@ -442,5 +496,28 @@ export async function POST(request:Request){try{const db=await database();await 
   if(referralCommercial)events.push(["referral_claim_bound","referral_claim",referralCommercial.claimId,{programmeId:referralCommercial.programmeId,code:referralCommercial.code,baseAmount:referralCommercial.baseAmount,discountAmount:referralCommercial.discountAmount,totalAmount:referralCommercial.totalAmount,testOnly:true,liveMoney:false}]);
   if(subscriptionId&&governed.subscriptionPlan)events.push([entitlementActive?"subscription_reserved":"subscription_pending_payment","subscription",subscriptionId,{planCode:governed.subscriptionPlan.planCode,sessionsReserved:entitlementActive?governed.subscriptionPlan.reserveSessions:0,totalSessions:governed.subscriptionPlan.sessions,validityValue:governed.subscriptionPlan.validityValue,validityUnit:governed.subscriptionPlan.validityUnit,cityId:governed.subscriptionPlan.cityId,zoneId:governed.subscriptionPlan.zoneId,awaitingGatewayVerification:!entitlementActive}]);
   for(const [eventType,entityType,entityId,detail] of events)statements.push(db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),bookingId,eventType,entityType,entityId,input.customer.id,JSON.stringify(detail),now));
-  try{await db.batch(statements)}catch(error){const message=error instanceof Error?error.message:String(error);if(/reservation_lease_expired_before_booking/.test(message)){await cleanupExpiredReservationLeases(db);return json({error:"The scheduling reservation expired before booking confirmation",code:"reservation_expired"},409);}if(/provider_unavailable_before_booking/.test(message)){const reason="Provider became unavailable before booking confirmation",blockedAt=Date.now();await db.batch([db.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=? AND status!='cancelled'").bind(input.scheduleGroupId),db.prepare("UPDATE scheduling_assignment_decisions SET status='reassignment_needed',actor_id=?,reason=?,updated_at=? WHERE group_id=?").bind(actor.email,reason,blockedAt,input.scheduleGroupId)]);return json({error:reason,code:"provider_unavailable_before_booking",reassignmentRequired:true},409);}if(couponCommercial&&/coupon_redemptions\.campaign_id|coupon quote/i.test(message))return json({error:"Coupon quote is no longer available; refresh the quote and try again"},409);if(!isUniqueConstraintError(error))throw error;const raced=await findCustomerReplay(db,replayInput);if(raced)return json({data:await readBundle(db,raced,true)});if(await hasForeignReplayConflict(db,replayInput))return json({error:BOOKING_REPLAY_CONFLICT},409);return json({error:BOOKING_WRITE_CONFLICT},409)};if(trainingCommercial)await consumeTrainingQuote(db,trainingCommercial.quoteId,bookingId);if(boardingCommercial)await consumeBoardingQuote(db,boardingCommercial.quoteId,bookingId);if(sittingCommercial)await consumeSittingQuote(db,sittingCommercial.quoteId,bookingId);await attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId});const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=?").bind(bookingId).first<Record<string,unknown>>();return json({data:await readBundle(db,booking!,false)},201);
-}catch(error){if(error instanceof Response){const message=await error.text().catch(()=>"");return json({error:message||"Canonical booking validation failed"},error.status||409);}return json({error:error instanceof Error?error.message:"Unable to create shared booking lifecycle"},500);}}
+  try{await db.batch(statements)}catch(error){const message=error instanceof Error?error.message:String(error);if(/reservation_lease_expired_before_booking/.test(message)){await cleanupExpiredReservationLeases(db);return json({error:"The scheduling reservation expired before booking confirmation",code:"reservation_expired"},409);}if(/provider_unavailable_before_booking/.test(message)){const reason="Provider became unavailable before booking confirmation",blockedAt=Date.now();await db.batch([db.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE group_id=? AND status!='cancelled'").bind(input.scheduleGroupId),db.prepare("UPDATE scheduling_assignment_decisions SET status='reassignment_needed',actor_id=?,reason=?,updated_at=? WHERE group_id=?").bind(actor.email,reason,blockedAt,input.scheduleGroupId)]);return json({error:reason,code:"provider_unavailable_before_booking",reassignmentRequired:true},409);}if(couponCommercial&&/coupon_redemptions\.campaign_id|coupon quote/i.test(message))return json({error:"Coupon quote is no longer available; refresh the quote and try again"},409);if(!isUniqueConstraintError(error))throw error;const raced=await findCustomerReplay(db,replayInput);if(raced)return json({data:await readBundle(db,raced,true)});if(await hasForeignReplayConflict(db,replayInput))return json({error:BOOKING_REPLAY_CONFLICT},409);return json({error:BOOKING_WRITE_CONFLICT},409)};/*
+   * The collection ledger. [PTJA-W2-B2-R04]
+   *
+   * Measured before this call existed: a month holding a completed booking with a captured Rs 5,000
+   * payment produced GET /api/cash-flow-statement -> closingCash 0, reconciled TRUE, and zero rows in
+   * finance_journal_entries. No booking-payment capture path anywhere called postJournal, so the
+   * statement's only input was empty and its reconciliation check was satisfied by 0 = 0.
+   *
+   * Posted AFTER the booking batch commits, and only for a payment that actually reached `captured` -
+   * the approved rule is that a collection posts on capture, never on booking creation. The posting is
+   * idempotent on the payment id, so the replay paths above cannot double-count the money, and a
+   * ledger failure is contained: the booking is already committed and the customer is not told their
+   * confirmed booking failed because a journal line did not write.
+   */
+  if(String(paymentStatusPersisted)==="captured"){
+    await postCollectionEvent(db,{
+      event:String(input.payment.method).toLowerCase()==="cash"?"cash_collected_confirmed":"online_payment_captured",
+      bookingId,customerId:input.customer.id,cityId:input.cityId,serviceCode:input.serviceCode,
+      paymentId,amount:Number(governed.amountDueNow||governed.totalAmount||0),
+      paymentMethod:String(input.payment.method),collectorId:String(input.payment.method).toLowerCase()==="cash"?actor.email:null,
+      entryDate:new Date().toISOString().slice(0,10),transactionAt:Date.now(),actorId:actor.email,
+    }).catch(error=>{console.warn("[collection-ledger] posting deferred",error instanceof Error?error.message:String(error));});
+  }
+  if(trainingCommercial)await consumeTrainingQuote(db,trainingCommercial.quoteId,bookingId);if(boardingCommercial)await consumeBoardingQuote(db,boardingCommercial.quoteId,bookingId);if(sittingCommercial)await consumeSittingQuote(db,sittingCommercial.quoteId,bookingId);await attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId});const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=?").bind(bookingId).first<Record<string,unknown>>();return json({data:await readBundle(db,booking!,false)},201);
+}catch(error){if(error instanceof Response){const body=await governedRefusalBody(error);return json(body??{error:"Canonical booking validation failed"},error.status||409);}return json({error:error instanceof Error?error.message:"Unable to create shared booking lifecycle"},500);}}

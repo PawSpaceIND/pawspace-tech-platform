@@ -1,0 +1,64 @@
+{
+  "item": "W2-B2-R01 / C01 / C07 (migration)",
+  "title": "The staff read surfaces move onto the purpose-based access authority",
+  "status": "implemented",
+  "approved_by": "PawSpace business decision supplied 2026-08-26 (purpose-based access)",
+  "evidence_class": "real_execution",
+  "method": "Regressions written and observed RED before any production change (10 of 11 failing; the eleventh is an N+1 guard on the implementation that follows). Nine sabotage reversions.",
+
+  "what_was_left_open": {
+    "the_gap": "lib/purpose-based-access.ts was built to the approved rule and then NOTHING imported it. Four staff read surfaces kept making their own masking decision from one boolean: hasPermission(actor.permissions,'customers.view_full_phone').",
+    "consequence_1": "That boolean masks the NAME and the PHONE and nothing else, so EMAIL was served in full on every one of those surfaces, and Customer 360 served the full home address including line 1 and the postcode.",
+    "consequence_2": "subscription-customers carries the widest personal data on the platform - its enrichment join brings service_address, pincode, a Google Maps link and latitude/longitude - and the boolean never touched any of it.",
+    "consequence_3": "When the boolean was TRUE, a hundred raw numbers arrived in one list read with no reason asked and no record kept. That is the exact opposite of 'every reveal is logged with the user, the reason, the record and the time'."
+  },
+
+  "what_changed": {
+    "customer_360": "Masked view from the authority; addresses reduced to area precision unless the policy opens the doorstep. Area and city survive so an associate arranging a home visit can still recognise where they are going.",
+    "crm": "Masked phone, secondary phone and email. The lead owner is passed as the assignment even though it is a roster display name and can never match a login - so the honest answer stays 'not yours', and this starts working unchanged when owners become identities.",
+    "subscription_customers": "service_address, pincode, google_map_link, latitude and longitude are withheld unless the policy opens the doorstep. sub_area and city survive so the segmentation work stays possible.",
+    "conversations": "Thread listings and message payloads take the phone from the authority. The thread's assignee is passed through, so a thread genuinely assigned to this actor is decided on assignment rather than on seniority.",
+    "the_reveal": "app/api/customer-data-reveal - one record, one stated reason of at least five characters, one customer_data_reveals row, one security_audit_events row. Mapped in lib/api-gateway.ts. GET returns the masked view and logs nothing.",
+    "performance": "customerDataAccessResolver reads the policy ONCE per request and hands back pure view/notes functions. Migrating a hundred-row list one row at a time would have traded an exposure for a hundred queries; PBA-11 pins that it did not."
+  },
+
+  "a_judgement_call_recorded": {
+    "what": "mayReveal accepts the customers.view_full_phone grant from any role. The address rule inside decideCustomerDataAccess reads that same grant only for roleCode 'manager', and that narrower rule is UNCHANGED.",
+    "why": "A full doorstep address sitting on a screen is a different question from a phone number somebody asked for by name and gave a reason for. Carrying the role-code condition into the reveal would have left an admin holding the grant less able to do their job than a manager holding the same grant, which is not what the permission means."
+  },
+
+  "existing_assertions_updated_not_weakened": [
+    "tests/ptja-w2b-exposure-regressions.test.mjs W2B-R01 and W2B-C01 were the non-vacuity controls proving the grant still reaches the real number. Both still prove exactly that - they now go through the reveal path the approved rule puts it on, and W2B-R01 additionally asserts the reveal is RECORDED, which the old list read never was.",
+    "No masking assertion was relaxed. Every 'must not see' assertion in that suite is untouched."
+  ],
+
+  "a_defect_i_introduced_and_caught": "Rewriting app/api/customer-360/route.ts by replacing everything from `export async function GET` onward silently dropped its POST handler - the consent update and duplicate review actions. The full suite caught it (three cases across two suites) and the handler was restored unchanged.",
+
+  "a_correction_to_my_own_test": "Sabotage of the reveal route's own reason check left PBA-06 green: the authority refuses an empty reason first, so the route line is shadowed for that case. It is NOT redundant - it is stricter, requiring at least five characters where the authority requires non-empty - so PBA-06b was added to pin the stricter half, and PBA-06 now says in the test which control is actually holding the line. Sabotage of the authority's requirement fails PBA-06 and the original R01-3.",
+
+  "regression": {
+    "file": "tests/ptja-w2-b2-purpose-access-migration.test.mjs",
+    "cases": 12,
+    "red_before": "10 of 11 failing. PBA-11 (one policy read per list, not one per row) is green before the change because the surfaces did not consult the policy at all; it is a guard on the implementation, and sabotage F confirms it bites.",
+    "sabotage_verification": [
+      "A customer-360 stops narrowing the address -> PBA-01 red",
+      "B the masked email falls back to the raw one -> PBA-01, PBA-02, PBA-03 red",
+      "C the reveal route's reason check removed -> NOTHING red. Recorded, not hidden: the authority refuses an empty reason first. Split into C2/C3 below.",
+      "C2 the route's five-character floor removed -> PBA-06b red",
+      "C3 the authority's requireReasonForReveal check removed -> PBA-06 and the original R01-3 red",
+      "D the reveal stops writing its audit row -> PBA-07 red",
+      "E an unknown customer answers empty instead of refusing -> PBA-09 red",
+      "F the policy is resolved per row again -> PBA-11 red",
+      "G subscription-customers republishes the coordinates -> PBA-04 red"
+    ]
+  },
+
+  "still_open_and_not_claimed": {
+    "crm_owner_identity": "CRM lead owners are roster display names ('Neha'), not logins, so assignment can never match and every CRM contact is masked for everybody until a reveal is asked for. That is the correct answer under the rule, but it is stricter than the intended design, and it resolves itself when owners become real identities.",
+    "ui": "The staff screens are not updated to offer a reveal control. The API is in place and audited; wiring the button is front-end work that was not in this change.",
+    "other_readers": "buildCustomer360 is deliberately NOT masked - the AI conversation orchestrator, marketing and promotion governance call it and need real contact details to reach a customer. Masking the shared builder would have broken outbound messaging. Those callers were not audited here."
+  },
+
+  "gates": {"focused": "12/12", "full_suite": "3344/3344", "typecheck": "clean", "lint": "0 errors, 57 warnings (pre-existing)"},
+  "no_merge_no_deploy": true
+}

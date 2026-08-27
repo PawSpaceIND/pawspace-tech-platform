@@ -1,0 +1,81 @@
+{
+  "finding": "F38",
+  "domain": "05-city-launch-geofence",
+  "title": "Pausing a city, or deleting a pincode from its coverage, did not stop serviceability or fulfilment - the fulfilment path never read city_launch_configs",
+  "severity": "P1",
+  "class": "business-logic",
+  "status": "fixed_within_a_stated_scope",
+  "evidence_class": "real_execution",
+  "file": "lib/service-zones.ts / app/api/service-zone/route.ts / app/api/grooming-service-location/route.ts",
+
+  "reproduction": "scratchpad repro driving the real routes: seed zones and city launch configs, then POST /api/city-governance {action:'save_city', city:{id:'bengaluru', status:'Paused', pincodes:<seeded list with 560034 removed>}} as a launch.manage actor; then GET /api/service-zone?pincode=560034 and POST /api/grooming-service-location {bookingId:'BK1',customerId:'CUST1',address:'221B Koramangala 5th Block',pincode:'560034'} against a canonical_bookings row with city_id='blr', zone_id='blr-south'.",
+
+  "measured_before": {
+    "governance_save": "201. city_launch_configs -> {status:'Paused', has 560034: no}.",
+    "platform_own_resolver": "resolveCityServiceCoverage(blr,grooming,560034) -> {supported:false, reason:'city_not_live'} - correct, and the only thing that was.",
+    "service_zone_GET": "200 {zone:{zoneId:'blr-south', zoneName:'South Bengaluru', serviceAvailable:true}, ...}",
+    "grooming_service_location_POST": "201 {addressSaved:true, navigationUrl:'https://www.google.com/maps/dir/?api=1&destination=221B+Koramangala+5th+Block%2C+Koramangala%2C+Bengaluru+560034&travelmode=driving'}",
+    "durable_rows": "booking_service_locations [{booking_id:'BK1', status:'active'}]; customer_addresses [{id:'ADDR-CUST1-560034', postal_code:'560034', is_default:1}]"
+  },
+
+  "measured_after": {
+    "paused_city": "GET /api/service-zone -> 409 {code:'city_paused'}; POST /api/grooming-service-location -> 409 {code:'city_paused'}; durable rows: none.",
+    "live_city_pincode_removed": "resolveCityServiceCoverage -> {supported:false, reason:'pincode_not_supported'}; both routes -> 409 {code:'pincode_not_in_city_coverage'}; durable rows: none.",
+    "live_city_coverage_intact_control": "resolveCityServiceCoverage -> {supported:true, reason:'live_and_explicitly_supported'}; GET -> 200 blr-south; POST -> 201 with the address and navigation URL; durable rows written. Unchanged."
+  },
+
+  "consequence_closed": "The City & Geofence console is the founder's only kill switch for a market. Pausing Bengaluru - for a monsoon, a licensing problem, a provider walkout, a safety incident - left the customer app resolving zones normally and let a customer save an active doorstep service address plus a default address record against a booking, generating a navigation URL for a provider to drive to. The operator believed the city was closed; the system kept taking work in it.",
+
+  "scope_stated_rather_than_assumed": {
+    "why": "The finding's own rule_source says NONE -> decision ledger, and names the undecided part precisely: which of Paused, Draft and Pilot must refuse, and whether in-flight fulfilment stops or only new work. Inventing that would be worse than leaving it visible. Separately, tests/service-zone-coverage.test.mjs pins three decisions this repository has ALREADY made, and a first draft of this fix reversed all three - 20 assertions across 6 suites went red and said so. That was the right answer from the repo's own controls, not a test problem, and the fix was narrowed rather than the tests changed.",
+    "existing_decisions_left_standing": [
+      "'city launch ranges must not fabricate operational zone coverage' - a launch config cannot WIDEN coverage past the reviewed service_zone_mappings table, and that suite asserts lib/service-zones.ts contains no query against city_launch_configs. The mapping question is still answered only by the mapping table; the market question is asked separately, afterwards, by the two customer-facing routes.",
+      "'an explicit reviewed database mapping enables a second-city zone without opening a broad range' - a reviewed mapping for a city with NO launch config is sufficient authority on its own. A city with no launch config is not refused.",
+      "'560102 is in the explicit table, so it still resolves - that is intended' for a Draft city. Draft and Pilot are not refused on status."
+    ],
+    "what_is_enforced": [
+      "Status 'Paused' refuses. A control named pause, operated on a live market, has no reading under which it means nothing - the finding says as much: 'the pause control has literally no effect on any customer or fulfilment path' cannot be the intended semantics.",
+      "A 'Live' city that advertises a parseable pincode list which no longer contains this pincode refuses. This is the property tests/service-zone-coverage.test.mjs states in its own header - 'the coverage the business ADVERTISES must equal the coverage the booking flow ACCEPTS' - read in the narrowing direction, which nothing covered. It applies only when a parseable list exists, so a centre+radius city or a range-style list is unaffected.",
+      "Coverage tokens are parsed with validateIndianPincode rather than .replace(/\\D/g,'').slice(0,6). lib/pincode-validation.ts states why: 'do not strip letters/punctuation or truncate longer input, because doing so can silently turn garbage into a different, serviceable PIN.'"
+    ],
+    "left_open_as_product_decisions": [
+      "What Draft and Pilot must do to serviceability. Applying the Live-only rule from resolveCityServiceCoverage would close Pilot cities, and whether a Pilot market should serve a limited cohort is not an engineering question.",
+      "Whether an IN-FLIGHT booking in a paused market must stop, or only new work. Today the address gate refuses for a booking that already exists in that city, which is the stricter reading; a product owner may want the pause to apply only at the next booking boundary.",
+      "The remaining findings in this domain are untouched and stay open on their own terms: a second city can still be published Live with no bookable pincode and no API to make one (there is no writer to service_zone_mappings but seedDefaultZones), resolveCityServiceCoverage still answers supported:true when no pincode is supplied, and validate() still accepts unvalidated free-text coverage."
+    ]
+  },
+
+  "fix": {
+    "new_file": "lib/city-coverage-authority.ts - cityFulfilmentVerdict(db,cityId,pincode) and advertisedPincodes(raw)",
+    "files_changed": [
+      "lib/city-coverage-authority.ts (new)",
+      "app/api/service-zone/route.ts - GET resolve asks the verdict after the mapping resolves, and answers 409 with the reason rather than a misleading 404 'zone not found'",
+      "app/api/grooming-service-location/route.ts - the doorstep-address gate asks the same verdict before any write"
+    ],
+    "not_changed": "lib/service-zones.ts. resolveZoneByPincode answers the mapping question and nothing else, which is what that suite asserts."
+  },
+
+  "regression": {
+    "file": "tests/ptja-w1-f38-city-kill-switch.test.mjs",
+    "cases": 6,
+    "sabotage_verification": [
+      "Both routes stop consulting the verdict (the original defect restored) -> cases 1 and 2 fail, 4 pass.",
+      "Paused no longer refuses, coverage rule intact -> case 1 fails, 5 pass.",
+      "Advertised-coverage intersection removed, Paused rule intact -> case 2 fails, 5 pass.",
+      "Strict parsing replaced by the truncating form the repository forbids -> case 6 fails, 5 pass.",
+      "Fix restored -> 6/6. Each rule is locked independently by exactly one case."
+    ],
+    "non_vacuity_controls": [
+      "case 3: a Live city that still advertises the pincode resolves 200 and the doorstep address still saves 201 with both durable rows. Passes in every sabotage state.",
+      "case 4: the reviewed second-city mapping (Chennai 600001, no launch config) still opens its zone.",
+      "case 5: a Draft city's explicitly mapped pincode still resolves."
+    ]
+  },
+
+  "gates": {
+    "full_repository_regression": "3145/3145",
+    "typecheck": "clean",
+    "lint": "0 errors",
+    "test_churn": "none - no existing assertion was changed, updated or removed"
+  }
+}

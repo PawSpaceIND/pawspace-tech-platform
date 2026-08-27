@@ -150,8 +150,14 @@ test("W2B-M03: a provider session cannot opt out a lead through the bot-call pat
 
   const route = await import("../app/api/bot-call-outcomes/route.ts");
   const response = await route.POST(request());
-  assert.notEqual(response.status, 201,
-    `nor may the handler record it: ${response.status} ${(await response.clone().text()).slice(0, 250)}`);
+  // SHADOWED UNTIL PTJA-W3B. This asserted only `!== 201`, which a CRASH satisfies as readily as a
+  // refusal: with the handler's own permission weakened to one the provider holds, it let the caller
+  // past authorize() and then answered 500 on the write - and this case stayed green. "The handler did
+  // not return 201" is not the security property; "the handler refused this actor" is.
+  assert.equal(response.status, 403,
+    `the handler must REFUSE a provider session, not merely fail to return 201: ${response.status} ${(await response.clone().text()).slice(0, 250)}`);
+  assert.match((await response.clone().text()), /Permission denied/,
+    "and refuse it on the permission, not on an incidental error");
 });
 
 // =====================================================================================================

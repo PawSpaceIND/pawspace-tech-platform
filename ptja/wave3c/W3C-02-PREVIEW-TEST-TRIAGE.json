@@ -1,0 +1,31 @@
+{
+  "wave": "3C - triage of the 182 preview-authenticated tests",
+  "id": "W3C-02",
+  "status": "COMPLETE",
+  "purpose": "W3C-01 measured that 182 of 3589 tests obtained their authority from the development-preview bypass, and recorded that as a coverage limitation. This entry establishes HOW MANY of them actually prove less than they appear to, rather than leaving the number sounding like 182.",
+  "correction_to_W3C-01": {
+    "what_I_wrote": "'any authorization property they appear to prove should be treated as unproven until re-authored' and 'arguably the more important half of this finding'",
+    "why_that_was_wrong": "It conflated two different things. A test that obtains its authority from a bypass cannot prove a POSITIVE authority claim - 'this role MAY do X' - because the actor held ['*'] rather than that role. But a REFUSAL proven the same way is STRONGER, not weaker: the preview superuser is a strict superset of any named role, so anything refused for it is refused for a lesser actor too. Most of the 182 are refusals or business-logic assertions.",
+    "the_repository_already_knew": "tests/founder-role-escalation.test.mjs states the superset argument explicitly in a comment. tests/provider-availability-write-ownership.test.mjs, tests/route-authorization-class.test.mjs and tests/scheduling-rules-authorization.test.mjs each carry a case asserting that the preview bypass is HOST-GATED, precisely so their own authorization cases are non-vacuous - and those suites use real hosts for every authority claim. The discipline was already there; W3C-01 did not credit it.",
+    "corrected_severity": "The test-suite consequence is NOT the more important half of W3C-01. The production defect - two of three preview branches carrying no environment guard - is."
+  },
+  "triage": {
+    "population": "182 failing test instances / 180 distinct titles, captured by running the suite with NODE_ENV unset after the W3C-01 fix",
+    "business_logic_scaffolding": 111,
+    "refusal_via_a_superset_actor_stronger_not_weaker": 41,
+    "e2e100_journey_titles_built_dynamically": 24,
+    "genuine_positive_authority_claims": 1,
+    "method": "Classified by whether the test's CLAIM is that a named role was PERMITTED something, then every candidate examined by hand. A cross-check swept all 382 suites for tests naming a role and asserting a 2xx on a preview host: 20 matched, and all but one resolved to either a real host (provider-availability uses https://ops.pawspace.example) or a calculation assertion (money-hardening's authorization cases both use callAs with real identities and assert 403)."
+  },
+  "the_one_genuine_case": {
+    "test": "tests/content-controls.test.mjs - 'real execution: the public GET needs no identity; admin view and mutations are permission-gated'",
+    "what_was_wrong": "the ADMIN VIEW half called call(), which drives http://localhost and therefore read as the preview superuser. 'The preview superuser could read the admin view' says nothing about whether an ADMIN may. The gating half was always sound - it uses callAs() with a real customer identity and asserts 403.",
+    "fix": "a real app_users row with role_code 'admin' is seeded and the positive half now presents it through callAs()",
+    "sabotage": "downgrading that seeded role to 'customer' turns the case RED, which it could not do before"
+  },
+  "gates": {"full_suite": "3589/3589", "typecheck": "clean", "lint": "0 errors, 59 pre-existing warnings"},
+  "not_claimed": [
+    "This triages the tests that FAILED without preview - the ones that depended on it to be admitted. A test that passes either way was not relying on the bypass and is out of scope.",
+    "The classification of the 111 scaffolding and 24 journey tests is by their assertions, sampled and cross-checked, not exhaustively re-read one by one."
+  ]
+}
