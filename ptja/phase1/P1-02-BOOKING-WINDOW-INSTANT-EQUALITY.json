@@ -1,0 +1,59 @@
+{
+  "phase": "1 - grooming and training end-to-end, driven in a real browser with demo data",
+  "id": "P1-02",
+  "ref": "PTJA-P1-F31",
+  "status": "FIXED",
+  "title": "A booking window was compared as a string, so the same moment spelled two ways was refused as two different windows",
+  "method": "Continued the browser journey from P1-01. A trainer roster was published for train_kiran and train_asha (blr / blr-east, 09:00-19:00, 120 days) so the scheduling refusal in P1-01 no longer applied, and the booking button was pressed again in Chromium.",
+  "measured": [
+    "POST /api/uat-scheduling -> 200 {\"data\":{\"groupId\":\"training:TQ-...\",\"status\":\"assigned\",\"provider\":{\"id\":\"train_kiran\"}}}",
+    "POST /api/canonical-bookings -> 409 {\"error\":\"Training booking window does not match the first reserved session\"}",
+    "Two steps of the same flow disagreeing about the same window, with the reservation already committed and the trainer's capacity already held."
+  ],
+  "root_cause": [
+    "app/training/page.tsx:49 builds scheduledStart as `${date}T10:00:00+05:30`.",
+    "backend/src/scheduling.ts:49 writes every reservation occurrence through new Date(v).toISOString(), so the reservation holds '2026-08-30T04:30:00.000Z'.",
+    "Identical instant, different spelling. app/api/canonical-bookings/route.ts compared the two with `!==` on strings in the Training, Boarding and Sitting branches.",
+    "The SERVICE-WIDE guard immediately above them (PTJA-P1-F28) already compared instants. Three checks contradicted the one they sat under.",
+    "The same class again in the commercial layer: lib/training-commercial-governance.ts ('Training schedule changed after quote'), lib/boarding-governance.ts ('Boarding stay window changed after quote') and lib/sitting-governance.ts ('Sitting care window changed after quote') all compared the quote's window to the booking's as strings. lib/walking-governance.ts:17 and lib/taxi-governance.ts:17 - the two newest verticals - each already carried a private `sameInstant`, so the correct semantics was established and simply never applied backwards."
+  ],
+  "impact": "Every Training programme booking made from the customer app was refused at the last step, after its reservation was committed. The reservation was NOT released on that refusal, so the trainer's capacity stayed held for the full 15-minute lease and an immediate retry was refused again - see the observation below.",
+  "fix": [
+    "New lib/booking-window-instant.ts: one exported sameInstant(a,b), fail-closed via Number.isFinite on both sides so an unreadable value is refused rather than read as matching.",
+    "The four private copies (lib/walking-governance.ts, lib/taxi-governance.ts, app/api/uat-scheduling/route.ts, app/api/sitting-bookings/route.ts) now import it - four copies is how three verticals came to be written without one.",
+    "app/api/canonical-bookings/route.ts: the service-wide guard and the three vertical guards now share a single bookingWindowMatchesReservation predicate built on it.",
+    "lib/training-commercial-governance.ts, lib/boarding-governance.ts, lib/sitting-governance.ts: the quote-drift window checks now compare instants."
+  ],
+  "regression": [
+    "tests/ptja-p1-booking-window-instant-equality.test.mjs - 6 cases against the real POST handler and a real SQLite database",
+    "tests/ptja-p1-quote-window-instant-equality.test.mjs - 7 cases against the real exported governance functions"
+  ],
+  "red_first": {
+    "P1-W01": "RED - dog_training refused with the exact production message",
+    "P1-W02": "RED - Sitting 409 instead of 201",
+    "P1-Q01": "RED - 'Training schedule changed after quote'",
+    "P1-Q04": "RED - 'Boarding stay window changed after quote'",
+    "P1-Q06": "RED - 'Sitting care window changed after quote'"
+  },
+  "non_vacuity_controls_green_throughout": [
+    "P1-W03/W04 - a genuinely different instant, and a matching start with a different end, are still refused with the window message",
+    "P1-W05/W06 - an unreadable window on either the submitted or the stored side is still refused",
+    "P1-Q02/Q03/Q05/Q07 - each vertical still refuses a different instant and an unreadable one"
+  ],
+  "sabotage": {
+    "control": "lib/booking-window-instant.ts sameInstant reverted to String(a)===String(b) - reverts all seven call sites at once",
+    "result": "RED on exactly the five acceptance cases (P1-W01, P1-W02, P1-Q01, P1-Q04, P1-Q06); all eight controls stayed GREEN"
+  },
+  "verified_in_the_browser": "The full Training journey now completes: reservation assigned to train_kiran (4 occurrences), booking PS-UAT-MTB1R7MN-DE94 confirmed, work order WO-AEFD814F, programme TP-D05BC5B4-C69 with 4 scheduled sessions, page reads 'Training programme confirmed' with no alert.",
+  "corrected_in_this_ledger": "An earlier reading of mine held that the service-wide guard was ALSO fail-open on an unparseable window, because `NaN!==NaN` is false. It is true - NaN is not equal to itself - so that guard already refused. There was no second defect there; P1-W05 and P1-W06 were green before this change and are pinned as regressions, not refutations.",
+  "not_claimed": [
+    "This was found by driving one journey. Other client surfaces may spell windows the same way; that has not been swept.",
+    "Grooming has no vertical window check of its own and relies solely on the service-wide guard. That is unchanged by this fix."
+  ],
+  "observation_not_fixed": {
+    "id": "P1-OBS-01",
+    "what": "A booking refused AFTER its reservation was committed does not release that reservation. The 15-minute lease (lib/scheduling-reservation-leases.ts:6) eventually reclaims it, but within that window every retry is refused with 'Existing booking conflicts with travel/service buffer' - measured three times in the browser, on a fresh quote and therefore a fresh schedule group each time.",
+    "why_not_fixed": "Which refusals should release a hold and which should keep it is a product decision - a deterministic refusal and a transient one warrant different answers, and choosing between them here would be inventing a business rule. Reported for the owner, not changed.",
+    "note": "The specific refusal that made this visible is now fixed, so the path that reached it is closed. The behaviour itself is not."
+  }
+}

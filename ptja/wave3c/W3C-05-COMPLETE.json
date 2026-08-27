@@ -1,0 +1,19 @@
+{
+  "wave": "3C - the coverage gaps the Wave 2 hunt recorded and never executed",
+  "status": "COMPLETE - all six gaps probed",
+  "outcome": {"real_defects_found_and_fixed": 3, "refuted_with_guards_added": 3},
+  "gaps": [
+    {"id":"W3C-01","gap":"isDevelopmentPreview permissive-on-absence, Host-header reachability unprobed","verdict":"DEFECT, FIXED","note":"three copies of one auth rule, two with no environment guard; one definition now, fail-closed on absence. Deployment reachability remains open and is NOT claimed."},
+    {"id":"W3C-02","gap":"(consequence of W3C-01) 182 tests authenticated through the bypass","verdict":"TRIAGED - 1 genuine, not 182","note":"a refusal proven by a superset actor is stronger, not weaker. Corrects my own overstatement."},
+    {"id":"W3C-03","gap":"pricing-quote: no effective-window check, client-supplied coupon","verdict":"REFUTED, guarded","note":"the window check is present (the note was wrong); the coupon has no money path because resolveLivePrice passes none and the route writes nothing. Both properties now pinned."},
+    {"id":"W3C-04","gap":"IST-vs-UTC day boundary, never driven to a consequence","verdict":"DEFECT, FIXED","note":"sharper than recorded - the divergence is inside ONE function. A provider at their daily cap on the IST service day was returned with capacity:true."},
+    {"id":"W3C-05a","gap":"food/relocation/funeral never exercised; 'likely share the resolveLivePrice defect'","verdict":"REFUTED, guarded","note":"none calls resolveLivePrice; relocation and funeral carry no price at all; Food pins item_version so a repriced catalogue makes the stale quote unconvertible rather than silently repricing."},
+    {"id":"W3C-05b","gap":"referral prepareReferralBooking read-decide-write race","verdict":"REFUTED, guarded","note":"prepareReferralBooking only READS - the caller batches the write - so the UNIQUE(programme_id,referred_customer_id) index is indeed the only thing closing the window, and it holds. Recorded unfixed: the losing caller gets a generic 500 rather than a governed 409, a diagnostics nit of the same class as taxi-proof's 404 body."},
+    {"id":"W3C-05c","gap":"runAppFunnelSweep abandonMinutes collapses -5 to a 1-minute window","verdict":"DEFECT, FIXED","note":"-5 is truthy so `|| DEFAULT` never fired and Math.max floored it at 1. No caller passes it today, which is why it was never reached - but 'no caller today' is not a control."}
+  ],
+  "gates": {"full_suite":"3605/3605","typecheck":"clean","lint":"0 errors, 59 pre-existing warnings"},
+  "not_claimed": [
+    "Three gaps recorded by the hunt remain genuinely out of reach here and are NOT probed: real Cloudflare D1 semantics (every probe runs against a node:sqlite shim), the deployed edge path (worker/index.ts needs a Workers runtime), and every external provider, none of which has a credential in any environment.",
+    "True parallelism was not exercised. TRAP-A1 models the referral race by issuing both writes against one database, which reproduces the index's decision but not the timing window's width."
+  ]
+}

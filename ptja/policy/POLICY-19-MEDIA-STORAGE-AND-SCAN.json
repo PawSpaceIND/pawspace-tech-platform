@@ -1,0 +1,53 @@
+{
+  "item": "W3-MS and W3-SC (ledger items 10 and 11)",
+  "title": "The private storage contract, and an honest scan/quarantine boundary",
+  "status": "implemented_contract_only_for_storage",
+  "approved_by": "PawSpace business decision supplied 2026-08-26",
+  "evidence_class": "real_execution",
+  "method": "Regressions written and observed RED before the production change (14 of 15 failing), then GREEN. Seven sabotage reversions.",
+
+  "storage": {
+    "measured_before": "lib/media-upload-boundary verified the uploaded object against what the CALLER said it observed and reported adapterConnected:false everywhere - honest, but there was no adapter at all, so nothing would change if a bucket appeared.",
+    "implemented": "lib/media-storage-adapter.ts is the contract: PAWSPACE_MEDIA_BUCKET, and exactly one read operation. With the binding present the BUCKET answers and the caller's claim is ignored entirely - it is not corroboration, it is a value the uploader controls. With no binding the caller's observation is all there is, reported as adapterConnected:false rather than dressed up. An absent object refuses in both cases.",
+    "no_url_is_composable": "There is no bucket hostname, account id or public base anywhere in the adapter. A permanent object URL is what the rule forbids, and the reliable way not to leak one is to have no code capable of composing one. A test asserts the file cannot.",
+    "no_credentials": "A worker binding IS the credential, which is the point of using one. A test asserts accessKeyId, secretAccessKey, R2_SECRET and ACCOUNT_ID appear nowhere in the adapter.",
+    "NOT_OPERATIONALLY_READY": "No bucket exists, no binding is configured, and nothing in this repository can supply either. mediaStorageStatus() reports connected:false with the binding name and the reason. No wrangler file was touched: creating Cloudflare resources is outside what this work may do, and it is the operational step the business owns."
+  },
+
+  "scanning": {
+    "measured_before": "reviewMedia wrote scan_status='clean' when a HUMAN pressed approve. In UAT that is the agreed answer and nobody is misled; in production it would put a person's opinion in the column a scanner owns, and the next reader of that table could not tell the two apart.",
+    "implemented": "lib/media-scan-boundary.ts is vendor-neutral. scan_status now carries what a SCANNER said - not_scanned until one does - and whether an asset is usable is a separate question mediaReleaseVerdict answers: a scanner clean, or an environment where unscanned media is agreed, or an explicitly permitted manual-review policy.",
+    "absent_environment_is_production": "mediaEnvironment() reads PAWSPACE_MEDIA_ENV and treats an absent value as production, the strict reading - matching the polarity lib/service-media-security.ts already used. Several UAT test worlds had never declared an environment and were correctly blocked; they now declare it, as the real UAT deployment does.",
+    "production_cannot_be_opened_quietly": "The domain validator refuses listing 'production' in unscannedPermittedEnvironments. Opening production is possible only through manualReviewPermittedWithoutScanner, which is a reason-carrying, audited policy write.",
+    "scanner_wins": "infected and unreadable are absolute. No permission, environment or human approval releases a file a scanner actually looked at and condemned.",
+    "anonymous_verdicts_refused": "recordScanVerdict demands the name of whatever produced the verdict. An unattributed 'clean' is indistinguishable from a human's opinion, which is how the two got confused in the first place.",
+    "STILL_AN_OPERATIONAL_BLOCKER": "No scanner is procured or configured. mediaScanStatus() reports provider:'none', connected:false, productionBlocker:true."
+  },
+
+  "the_proof_gate_moved_and_got_stricter": "lib/service-media-security assertServiceProofRef required scan_status='clean' - which was a human's approval. It now requires three independent conditions: not scanner-condemned, reviewed and approved, and carrying a release_basis that only the review step writes and only when the boundary permitted release. In production with no scanner and no manual policy nothing reaches that state, so the gate is STRICTER there than the line it replaces.",
+
+  "a_correction_to_my_own_test": "SC-02 asserted only that the RESPONSE said not_scanned. Sabotage C - restoring the human-approval-writes-clean behaviour - left it green, because the response reads the verdicts table while the column is written separately. It now also asserts the stored scan_status column, and C2 fails it.",
+
+  "existing_assertions_updated_not_weakened": [
+    "tests/lane2-core-integration-boundaries.test.mjs: 'never scanned' as a defect became 'never RELEASED'. scan_status:'pending' stopped being a defect when scanning stopped being a human pressing approve - in UAT it is the normal state of a perfectly good photo. Two cases were ADDED alongside: reviewed-but-never-released, and never-reviewed, plus a scanner-infected case.",
+    "tests/ptja-identity-spine.test.mjs: asserted scan_status==='clean' after each journey. It now asserts the release - approved review, a release basis, open access, and no scanner condemnation - which is what the case always meant and checks more than the old line did.",
+    "tests/grooming-closure.test.mjs and tests/uat-closure-provider-fulfilment.test.mjs: source-text assertions repointed to the new wording, and the single refusal message is now pinned as three."
+  ],
+
+  "regression": {
+    "file": "tests/ptja-w3-media-storage-and-scan.test.mjs",
+    "cases": 15,
+    "red_before": "14 of 15 failing.",
+    "sabotage_verification": [
+      "A a missing stored object treated as verified -> MS-05 red",
+      "B the caller's claim wins over the bucket -> MS-03, MS-04, MS-05 red",
+      "C human review writes a scan result again -> SC-04 red; SC-02 was shadowed, tightened, and C2 then fails SC-02 and SC-04",
+      "D production listed as an unscanned-permitted environment -> SC-04 red",
+      "E an anonymous scan verdict accepted -> SC-08 red",
+      "F an infected file can be approved -> SC-06 red"
+    ]
+  },
+
+  "gates": {"focused": "15/15", "full_suite": "3445/3445", "typecheck": "clean", "lint": "0 errors, 57 warnings (pre-existing)"},
+  "no_merge_no_deploy": true
+}

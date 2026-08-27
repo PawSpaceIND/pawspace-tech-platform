@@ -1,0 +1,38 @@
+{
+  "wave": "3B - Tier B: do the FIXED findings' tests actually bite?",
+  "why": "51 of 62 findings name an executable test, but only 8 record sabotage evidence. A test that passes on both the old and the new code proves nothing. This wave reverts each finding's production control and confirms the named test goes red. Anything that stays green is a shadowed test and is rewritten.",
+  "method": "A harness (/tmp/tierb/sab.py) applies one targeted revert, runs the named test file(s), reports which cases go RED, and restores the file. The control to revert is taken from each ledger entry's own fix_file and fix_note, never guessed.",
+  "batch": 1,
+  "verified_bites": [
+    {"id":"W2-07-PAY-001","red":2,"control":"prior+requested>captured refund cap"},
+    {"id":"W2-07-PAY-002","red":1,"control":"refund case must be approved before the gateway boundary"},
+    {"id":"W2-07-PAY-003","red":2,"control":"sandboxCapabilitiesUnlocked requires an explicit PAWSPACE_PAYMENT_ENV"},
+    {"id":"W2-07-PAY-004","red":1,"control":"a refund settles the case carrying its own gateway refund id"},
+    {"id":"W2-07-PAY-005","red":1,"control":"claimedBookingConflict - a gateway reference cannot settle another booking"},
+    {"id":"W2-07-PAY-006","red":2,"control":"repair runs only for a recorded event whose processing_status is 'processed'"},
+    {"id":"W2-07-PAY-007","red":2,"control":"closed by the same gate as PAY-006"},
+    {"id":"W2-08-F01","red":2,"control":"refund ceiling = collectedForBooking minus prior approvals"},
+    {"id":"W2-08-F02","red":2,"control":"postJournal refuses a journal dated into a locked month"},
+    {"id":"W2-08-F04","red":3,"control":"the close reads booking_invoices tax as well as finance_invoices"},
+    {"id":"W2-09-M01","red":2,"control":"credits cap against remaining PAYABLE, not gross total"},
+    {"id":"W2-09-M02","red":1,"control":"only the caller whose UPDATE changed a row advances the usage counter"},
+    {"id":"W2-09-M03","red":1,"control":"the monthly ceiling is enforced inside the reward INSERT"},
+    {"id":"W2-09-M04","red":2,"control":"programme status AND validity window re-read at redemption - both halves bite separately"},
+    {"id":"W2-17-F01","red":1,"control":"capacity console read raised to scheduling.manage"},
+    {"id":"W2-17-F03","red":1,"control":"funeral read gated on customers.view, not bookings.view"},
+    {"id":"W2-17-F04","red":1,"control":"relocation read gated on customers.view, not bookings.view"}
+  ],
+  "shadowed_and_fixed": [
+    {
+      "id": "W2-08-F05",
+      "case": "W2-FIN-01: the sandbox statutory export cannot be labelled with a period the run is not dated in",
+      "what_was_wrong": "createSandboxStatutoryExport carries TWO independent controls - the period_mismatch check, and assertPeriodOpen(exportPeriod) on the very next line. The fixture ran against payrollWorld({lockedPeriod:'2026-07'}) with a run dated in July, exported as August, and asserted only ok===false. Removing the period_mismatch guard entirely left the case GREEN: it refused with 'period_locked' instead. The test could not see the control it named.",
+      "fix": "The world is now UNLOCKED, so a mismatched label is the only thing that can refuse; the reason is asserted with a /period_mismatch/ match; and a non-vacuity case proves the honestly-labelled export of the same run succeeds.",
+      "after": "the same sabotage now turns the case RED",
+      "note": "The payroll JOURNAL half of F05 was already sound - its case uses an unlocked world - and bit correctly. Only the export half was shadowed."
+    }
+  ],
+  "harness_defect_caught": "The first version of the harness replaced only the FIRST occurrence of the anchor. For W2-17-F03/F04/F01 the first occurrence of 'customers.view' is inside a PROSE COMMENT, so three sabotages silently edited documentation and reported 'no case went red'. That would have been three false shadowed-test findings. The harness now replaces every occurrence and reports the count; all three then bit. Recorded because a verification tool that produces false negatives is the same defect class this whole audit hunts.",
+  "no_op_sabotage_caught": "The first W2-08-F05 attempt swapped period_end for period_start in the payroll entry date. The fixture's run is 2026-07-01 to 2026-07-31 - both in July - so the derived period was identical and the sabotage changed nothing. Not evidence of a weak test; the anchor was simply wrong, and the real control was found and reverted instead.",
+  "progress": {"verified": 17, "shadowed_then_fixed": 1, "remaining": 25}
+}

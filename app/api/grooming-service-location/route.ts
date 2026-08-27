@@ -1,6 +1,7 @@
 import { authError, database, requireCustomerOwnership, resolveActor, securityAudit } from "../../../lib/server-auth";
 import { ensureGroomingMapTables, mapsNavigationUrl } from "../../../lib/grooming-maps";
 import { resolveZoneByPincode } from "../../../lib/service-zones";
+import { cityFulfilmentVerdict } from "../../../lib/city-coverage-authority";
 import { ensureCustomerAccountTables } from "../../../lib/customer-account";
 
 type Input = { bookingId: string; customerId: string; address: string; pincode?: string; latitude?: number; longitude?: number };
@@ -27,6 +28,13 @@ export async function POST(request: Request) {
 
     const resolved = await resolveZoneByPincode(db, pincode);
     if (!resolved || !resolved.zone.serviceAvailable) return json({ error: "The service address is outside an enabled PawSpace zone" }, 409);
+    // Whether the pincode MAPS to a zone and whether that market is still OPEN are two questions, and
+    // this gate asked only the first. Measured: with Bengaluru saved as Paused and 560034 removed from
+    // its advertised coverage, this route answered 201 and wrote an active booking_service_locations
+    // row, a default customer_addresses row, and a Google Maps navigation URL for a provider to drive
+    // to a closed market. The verdict applies the launch console's own kill switch. [PTJA-W1-F38]
+    const cityVerdict = await cityFulfilmentVerdict(db, String(resolved.assignment.cityId || ""), pincode);
+    if (!cityVerdict.open) return json({ error: "PawSpace is not currently serving this address; the city or this pincode is not open for fulfilment", code: cityVerdict.reason }, 409);
     const resolvedCityId = String(resolved.assignment.cityId || "").trim().toLowerCase();
     if (!resolvedCityId || String(booking.zone_id) !== resolved.assignment.zoneId || String(booking.city_id).toLowerCase() !== resolvedCityId) return json({ error: "The verified address zone does not match the booking reservation" }, 409);
 

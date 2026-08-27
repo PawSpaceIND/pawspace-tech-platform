@@ -1,0 +1,76 @@
+{
+  "item": "W2-B4-M04",
+  "title": "The signed-upload boundary for service media",
+  "status": "implemented",
+  "approved_by": "PawSpace business decision supplied 2026-08-26",
+  "evidence_class": "real_execution",
+  "method": "Regressions written and observed RED before any production change (33 of 33 failing), then GREEN. Eleven sabotage reversions, each confirmed to fail the named case for the named reason.",
+
+  "measured_before": {
+    "service_media": "POST /api/service-media minted NO upload grant at all - it answered storage:{mode:'not_connected'},uploadReady:false - and PATCH confirm_upload accepted ANY opaque object id from ANY bookings.manage actor, with no token, no expiry, no binding to the prepared asset's booking, and no check that the stored object matched what was declared.",
+    "training_session_media": "POST answered the same storage:{mode:'not_connected'} and offered no confirmation path at all, so an asset either sat at pending_upload forever or was advanced by something writing to the table directly.",
+    "siblings": "The four sibling proof libraries - walking, food, boarding, sitting/taxi - each mint a single-use hashed token with a 15-minute expiry and verify it on finalisation. Service media and Training evidence were the two surfaces left on the weaker path.",
+    "not_previously_present_anywhere": "No surface bound a token to an object key, verified the stored object against the declaration, distinguished PENDING_REVIEW from a scan result, or issued a short-lived read link. Customers had no signed-read path at all."
+  },
+
+  "approved_rules_implemented": {
+    "1_short_lived_token": "issueMediaUploadGrant mints `<grantId>.<secret>`, stored only as a SHA-256 hash. Lifetime is a governed setting, defaulting to 900s and bounded to 60-3600s.",
+    "2_assignment_and_category": "Assignment is read from the record that proves it - provider_work_orders for a booking, training_sessions for a session - not from the caller's claim. An absent record refuses. The category must be in the policy's permittedCategories for that service and city.",
+    "3_token_restricted": "The grant pins object key, MIME type, declared size and checksum, and an expiry. The object key is derived, never caller-supplied: `<serviceCode>/<scopeType>/<scopeId>/<mediaId>`.",
+    "4_private_storage": "No storage adapter is connected in this environment and none is claimed. Every response says adapterConnected:false and rawPublicUrl:false.",
+    "5_verify_before_registration": "redeemMediaUploadGrant refuses unless the observed size, checksum and content type all match the grant. An ABSENT observation is refused, not treated as a match.",
+    "6_pending_review": "An explicit review_status column, additive and nullable so no pre-existing row reads back as approved. Registration lands at pending_review with access_status quarantined.",
+    "7_no_self_approval": "reviewMedia refuses when the reviewer is the uploader - checked BEFORE the reason validation, so the separation refusal never depends on request shape.",
+    "8_signed_read": "issueMediaReadGrant returns a hashed, expiring token (default 300s) and never the private object key. Only approved, ready, active media can be shared.",
+    "9_audited": "Grant issue, registration, approval, rejection, replacement, deletion, revocation and every read-grant issue write a service_media_events row; the routes additionally write security_audit_events.",
+    "executable_formats": "Refused two ways: the domain validator refuses storing any type outside the JPEG/PNG/WebP floor (SVG excluded deliberately - it is a document that executes script), and 36 executable/scriptable file-name suffixes are refused at grant time whatever content type is claimed.",
+    "external_urls": "A confirmation containing '://' or starting '//' is refused; the object key must match /^[A-Za-z0-9._\\/-]{8,256}$/.",
+    "cross_booking_keys": "A token only redeems its own derived object key.",
+    "reused_or_expired_tokens": "Single use by status, plus an expiry check, plus a hash comparison so guessing the grant id is not enough."
+  },
+
+  "configurable": "The `media_upload` domain in Control Center, scoped by service and city: permitted categories, accepted formats, the size floor and ceiling, and both token lifetimes. The validator refuses an unknown category, a format outside the platform floor, a ceiling above 10 MB, a lifetime outside 60-3600s, and any attempt to switch off separate-approver review.",
+
+  "a_defect_found_in_my_own_earlier_work": {
+    "what": "lib/service-policy-governance.ts registers domains in a module-level Map filled by import side effect. app/api/service-policy-control/route.ts imported the kernel and nothing else, so in a cold worker the registry was EMPTY: GET answered {\"domains\":[]} and POST answered 'Unknown policy domain' 400 for all nine governed policies. The Control Center panel built for these decisions listed nothing.",
+    "why_no_test_caught_it": "Every domain suite imports its own domain module before calling the route, which registers it as a side effect. The route was never exercised cold.",
+    "class": "The audit's own recurring defect - an empty registry read as 'there are no policies' rather than 'the policies have not been loaded'.",
+    "fix": "lib/service-policy-domains.ts, an explicit barrel the route imports. tests/ptja-policy-domain-registry.test.mjs fails if any lib module registers a domain that is not in the barrel, or if the route stops importing it."
+  },
+
+  "a_correction_to_my_own_test": "M04-09 was written as 'a widened policy still cannot mint an executable upload token' and pointed at the MIME floor inside issueMediaUploadGrant. Sabotage showed that check is unreachable through configuration - deleting it left the test green, because the read-time validator had already refused the row. The test now names the control that actually does the work (refusal at READ of a stored row listing an executable), and the code comment on the redundant line says plainly that it is a restatement, not the enforcement.",
+
+  "existing_assertions_updated_not_weakened": [
+    "tests/ptja-w2b-service-media.test.mjs: three cases whose LEGITIMATE half used the old tokenless confirmation now present the grant token. Every assertion is unchanged - a public URL is still refused, a misspelled action still must not revoke, the submitter still cannot scan-approve.",
+    "tests/grooming-closure.test.mjs, tests/uat-closure-provider-fulfilment.test.mjs, tests/training-closure.test.mjs: source-text assertions that pinned the checksum rule, the size ceiling and the scan transition inside the route files now pin them in lib/media-upload-boundary.ts where they moved, AND additionally pin that the routes delegate to it.",
+    "tests/helpers/grooming-journey-harness.mjs: the end-to-end grooming journey now walks the signed path - provider requests the token, staff confirms with the observed object, staff reviews with a reason."
+  ],
+
+  "regression": {
+    "files": ["tests/ptja-w2-b4-media-upload-boundary.test.mjs", "tests/ptja-policy-domain-registry.test.mjs"],
+    "cases": 36,
+    "red_before": "33 of 33 failing on the boundary suite; 3 of 3 on the registry suite.",
+    "sabotage_verification": [
+      "A object-key binding removed -> M04-11 red",
+      "B single-use status check removed -> M04-12 red",
+      "C self-approval check removed -> M04-19 red, M04-20 still green",
+      "D observed-object verification removed -> M04-15, M04-16, M04-17 red",
+      "E route accepts confirmation with no token -> M04-30 red, M04-31 still green",
+      "F executable-suffix check removed -> M04-07 red",
+      "G runtime MIME floor removed -> NOTHING red. Recorded, not hidden: the read-time validator makes that line unreachable through configuration. M04-09 was rewritten to pin the validator instead.",
+      "I floor removed from the domain validator -> M04-08 and M04-09 red",
+      "J read-grant expiry check removed -> M04-23 red",
+      "K assignment verification removed -> M04-33 red",
+      "L replacement no longer supersedes -> M04-25 red"
+    ]
+  },
+
+  "still_open_and_not_claimed": {
+    "storage_adapter": "No private object storage is connected. redeem verifies the object against what the CALLER observed. When an adapter lands, that argument is replaced by a HEAD against the private bucket and no other control in the module changes.",
+    "malware_scanning": "There is no scanner. What was called record_scan is a human review decision and is now named as one in the review state; scan_status follows the review rather than an engine.",
+    "read_delivery": "The signed read grant resolves to a platform response describing the media. It cannot deliver bytes, because there is no storage to deliver them from."
+  },
+
+  "gates": {"focused": "36/36", "full_suite": "3332/3332", "typecheck": "clean", "lint": "0 errors, 57 warnings (pre-existing)"},
+  "no_merge_no_deploy": true
+}

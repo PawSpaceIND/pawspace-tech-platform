@@ -1,0 +1,48 @@
+{
+  "item": "W3-LA (ledger item 6), closing the remaining half of PTJA-P1-F1",
+  "title": "Lead attribution without a service match becomes a direct booking",
+  "status": "implemented",
+  "approved_by": "PawSpace business decision supplied 2026-08-26",
+  "evidence_class": "real_execution",
+  "method": "Regressions written and observed RED before the production change (7 of 9 failing), then GREEN. Four sabotage reversions.",
+
+  "measured_before": {
+    "creation_path": "attributeBookingToOpenLead preferred a lead whose service matched what was booked - that half closed as P1-F1 - and then fell back to 'the customer's newest open lead' with NO reference to the service. A customer whose only open enquiry was BOARDING, who booked GROOMING, had the Boarding lead marked converted by a booking that had nothing to do with it.",
+    "capture_path": "convertLeadOnPaymentCaptured carried the same fallback in a different shape: its ORDER BY DEMOTED unlinked rows rather than excluding them, so a capture with nothing linked converted whichever lead happened to be newest - the same false attribution arriving one webhook later.",
+    "consequence": "A rep credited with a conversion they never made, an enquiry closed while the customer was still waiting to hear about it, and a campaign conversion figure counting bookings no campaign produced."
+  },
+
+  "approved_rules_implemented": {
+    "match": "Customer AND service, or nothing. Recency still decides WITHIN a matching service.",
+    "no_match": "No existing lead is credited or modified - not its status, not converted_booking_id, not initiated_booking_id, not last_outcome.",
+    "system_origin": "A booking_attribution row records the booking as direct_booking with source system_direct_booking, so the Identity Spine has a clearly labelled originating record instead of an unrelated marketing lead being repurposed as one.",
+    "reporting": "bookingAttributionSummary counts campaign conversions and direct bookings separately, which is what stops the false figure.",
+    "idempotent": "booking_attribution is keyed on booking_id and written INSERT OR IGNORE - the first recorded origin stands. A booking does not change how it was won, and a replayed hook must not inflate either column."
+  },
+
+  "existing_assertions_updated_not_weakened": [
+    "tests/ptja-p1-regressions.test.mjs 'P1-F1: with no service match the existing newest-open-lead behaviour is unchanged' asserted the OPPOSITE of the new rule, and said in its own comment that crediting nobody would be a product decision. The business has since made that decision, so the case is inverted and renamed. The non-vacuity it provided is not lost: the cases either side still prove a matching lead IS credited and that recency decides within a matching service.",
+    "tests/crm-conversion-integrity-runtime.test.mjs 'two open leads yield exactly one conversion': the guarantee it was written for - one booking never becomes two conversions - is unchanged and still asserted. With neither lead linked the count is now zero, which the case now states, plus the direct_booking record. Its sibling, a lead genuinely linked via initiated_booking_id, is what proves conversion still happens.",
+    "tests/lead-engine-hardening.test.mjs two attribution cases: FIXTURE gaps, not rule changes. Neither seeded a canonical_bookings row, so the booked service was unknown and the old fallback masked it. Seeding the booking - which is what a real booking route does before calling the hook - makes one of them STRONGER: the linked lead is now the grooming enquiry the grooming booking actually came from, rather than the newer boarding one the fallback had picked."
+  ],
+
+  "regression": {
+    "file": "tests/ptja-w3-lead-attribution.test.mjs",
+    "cases": 9,
+    "red_before": "7 of 9 failing.",
+    "sabotage_verification": [
+      "A newest-open-lead fallback restored at creation -> LA-02, LA-03 red",
+      "B newest-open-lead fallback restored at capture -> LA-07 red",
+      "C direct bookings recorded as lead conversions -> LA-03, LA-04, LA-09 red",
+      "D attribution row not deduplicated -> LA-08 red"
+    ]
+  },
+
+  "still_open_and_not_claimed": {
+    "historic_rows": "Bookings attributed before this change keep whatever lead they were given. No backfill is attempted: rewriting historic attribution would be inventing a history nobody recorded, and the leads wrongly closed as converted are an operations question, not a migration.",
+    "reporting_surfaces": "sales-productivity-governance and revenue-mission-command-center read lead_work_items.converted_booking_id directly. They will now see fewer conversions, correctly. Whether they should also SHOW the direct-booking count beside it was not decided here."
+  },
+
+  "gates": {"focused": "9/9", "full_suite": "3397/3397", "typecheck": "clean", "lint": "0 errors, 57 warnings (pre-existing)"},
+  "no_merge_no_deploy": true
+}

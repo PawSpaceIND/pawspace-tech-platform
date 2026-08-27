@@ -1,0 +1,72 @@
+{
+  "item": "F53 part 2",
+  "title": "Verification expiry and revocation gate on the authoritative assignment write path",
+  "status": "implemented",
+  "approved_by": "PawSpace business decision supplied 2026-08-26 (rules 1-9)",
+  "evidence_class": "real_execution",
+  "method": "Regressions written and observed RED before any production change, then GREEN after.",
+  "red_before": "13 cases: 12 failed, 1 passed. The single pass was F53X-11, which asserts that Grooming, Sitting and Boarding are NOT given new universal requirements - correctly green from the start, because it asserts an absence of change.",
+  "green_after": "13 of 13 pass.",
+  "rules_implemented": {
+    "1_walking_taxi_police_mandatory": "The policy validator refuses a configured Dog Walking or Pet Taxi requirement set without police_verification, and setCategoryMandate is validated against the same floor BEFORE anything is written, so a refused mandate leaves both surfaces untouched rather than half-applied.",
+    "2_no_universal_requirement": "The floor is scoped to those two categories only. Grooming keeps [aadhaar, pan], Pet Sitting [aadhaar, pan, address], Boarding [aadhaar, pan, house_verification, pet_proofing_photo] - asserted exactly, so a future widening fails the test.",
+    "3_operator_narrowing_authoritative": "setCategoryMandate still writes through to the policy the gate reads, so a narrowed mandate is what is enforced. F53X-12 narrows dog_walker to [aadhaar, police_verification] and then proves an assignment succeeds on exactly that set.",
+    "4_write_time_eligibility": "assertProviderAssignable runs inside insertReservations and inside createAssignmentOffer. A check counts only when status='verified' AND it has not lapsed.",
+    "5_immediate_removal": "revokeProviderVerification sets live=0 and status='verification_hold' on provider_capacity_profiles - the row loadGovernedProviders reads - so new matching stops at once rather than at the next sweep.",
+    "6_in_progress_work_preserved": "A revocation opens Operations recovery cases and changes nothing else. Booking, work order, payment and proof are all asserted unchanged after a revocation on an in_service job.",
+    "7_scheduled_work_recovered": "A scheduled but not-started reservation keeps its row and its status, and a provider_recovery_cases row with reason_code 'provider_verification_revoked' is opened against it. Further acceptance is stopped because the offer write is gated.",
+    "8_non_mandatory_expiry_ignored": "Only requiredTypes gate assignment. An expired `pan` on a dog walker - not in the approved Walking set - does not block, proved by an assignment that still succeeds.",
+    "9_governed_return": "TWO deliberate steps, neither automatic. Renewing a document re-lists nobody. clearProviderVerificationHold refuses while any mandatory check is still not current, and when it succeeds it sets status back to uat_ready while LEAVING live=0 - the existing addProviderToServiceMap is what puts the provider back in front of customers."
+  },
+  "why_the_gate_is_at_write_time": "A matching-read filter alone loses the race. A request that reads a valid provider, decides, and commits after a revocation lands would still write the assignment. So the provider's standing is part of the INSERT itself - `AND EXISTS (SELECT 1 FROM provider_capacity_profiles WHERE id=? AND live=1 AND status='active')` - the same shape the capacity and travel-buffer guards already use. When that guard refuses, the route re-checks and answers with the verification refusal rather than a misleading SLOT_TAKEN, so a customer is never told to retry a provider who must not be assigned at all.",
+  "the_one_permissive_answer_stated_plainly": {
+    "what": "A provider with NO onboarding application has no verification records to judge. providerAssignmentBlock reports evaluated:false and does not block.",
+    "why": "The seeded UAT capacity profiles are exactly this shape and predate the onboarding pipeline. Blocking them would take every seeded provider off the platform rather than close a hole.",
+    "how_it_is_visible": "The verdict carries evaluated:false and the reason `no_onboarding_verification_record` rather than pretending it passed, and the policy field `blockProvidersWithoutVerificationRecord` turns it into a block - configuration in Control Center, per service and city.",
+    "recommended_follow_up": "Backfill onboarding applications for the seeded providers, then set blockProvidersWithoutVerificationRecord to true so the gate is total.",
+    "closed_by": {
+      "decision": "NOT by backfilling seeded providers, which was my own first recommendation and was wrong.",
+      "why_the_recommendation_changed": "The only way a backfilled onboarding record satisfies the assignment gate is to write `verified` rows for checks nobody ever ran. That is minting compliance evidence - the one thing this audit refuses - and a seeded fixture carrying a fabricated police clearance is worse than one carrying none: the first lies, the second is merely unfinished.",
+      "what_was_done_instead": "providerVerificationLaunchBlockers lists every LIVE provider whose mandatory verification cannot be confirmed, and /api/launch-readiness refuses approval while any exist. The assignment gate stays total for everyone who came through real onboarding; a provider nobody can vouch for can no longer reach a real customer because the deployment cannot go live. The remedy is to onboard them properly, which is the only fix that is actually true.",
+      "regressions": [
+        "a live provider with NO onboarding record at all is a named launch blocker",
+        "a live provider whose mandatory check has lapsed is a launch blocker too",
+        "a fully verified live provider is not a blocker",
+        "a provider already on a verification hold is not double-counted"
+      ],
+      "a_correction_to_my_own_test": "The first version of the no-record case created an onboarding application too, so it passed through the 'blocked' branch and never touched the 'cannot evaluate' one. Sabotage caught that it proved nothing; it now uses a profile with no application, and removing the branch fails it."
+    }
+  },
+  "files_changed": [
+    "lib/provider-verification-mandate.ts - additive nullable provider_verifications.expires_at; new recordVerificationValidity; INVALID_VERIFICATION_STATUSES; setCategoryMandate validated against the policy floor before writing",
+    "lib/provider-verification-policy.ts - police floor for the two custody verticals; blockProvidersWithoutVerificationRecord",
+    "lib/provider-assignment-eligibility.ts (new) - providerAssignmentBlock, assertProviderAssignable, filterAssignableProviders, revokeProviderVerification, clearProviderVerificationHold",
+    "lib/provider-capacity-governance.ts - loadGovernedProviders filters on verification standing; createAssignmentOffer is gated",
+    "app/api/uat-scheduling/route.ts - assertProviderAssignable at write time, provider standing bound into the reservation INSERT, and an accurate refusal when that guard rejects",
+    "tests/ptja-w1-f53-verification-expiry-gate.test.mjs (new, 13 cases)"
+  ],
+  "sabotage_verification": [
+    "Write-time gate removed from the reservation -> the race case fails (the read filter still catches 1-3).",
+    "SQL guard removed, pre-check kept -> the race case fails: a pre-check is not a write-time guarantee.",
+    "Expiry ignored, status alone consulted -> the expired case fails alone.",
+    "Revocation cancels the work instead of preserving it -> the in-progress case fails alone.",
+    "MATCHING READ filter removed, write gate intact -> 13/13 still pass: the write-time gate alone is sufficient.",
+    "BOTH removed (the original defect) -> 4 cases fail.",
+    "Fix restored -> 13/13."
+  ],
+  "non_vacuity_controls": [
+    "a fully valid provider still receives assignments",
+    "a non-mandatory document expiring does not block",
+    "Grooming, Sitting and Boarding keep exactly their existing mandates",
+    "an operator-narrowed mandate is satisfied by exactly the narrowed set"
+  ],
+  "gates": {
+    "focused": "17/17 in the expiry-gate suite",
+    "full_repository_regression": "3222/3222",
+    "typecheck": "clean",
+    "lint": "0 errors, 53 warnings (all pre-existing)",
+    "existing_assertions": "none removed or weakened",
+    "dog_walking_shortcut": "not reintroduced - every fixture in this suite clears the approved checks explicitly",
+    "merge_or_deploy": "none - work is committed to ptja/audit-fixes and pushed; no merge, no PR, no deployment"
+  }
+}

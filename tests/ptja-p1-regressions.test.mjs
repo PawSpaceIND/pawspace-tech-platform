@@ -91,7 +91,10 @@ async function post(modulePath, path, body, headers = {}) {
 // =====================================================================================================
 
 async function schedulingWorld() {
-  const { sqlite, db } = world({ PAWSPACE_PAYMENT_ENV: "sandbox" });
+  // PAWSPACE_SCHEDULING_ENV declared: /api/uat-scheduling no longer fabricates provider roster unless
+  // the runtime says it is a UAT runtime (PTJA W1-F27), and this world reserves through the real path
+  // with no Ops-published availability.
+  const { sqlite, db } = world({ PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_SCHEDULING_ENV: "uat" });
   const { ensureSecurityTables } = await import("../lib/server-auth.ts");
   const { seedProviderCapacityDefaults } = await import("../lib/provider-capacity-governance.ts");
   const { ensureSchedulingTables } = await import("../lib/scheduling-store.ts").catch(() => ({ ensureSchedulingTables: null }));
@@ -749,16 +752,28 @@ test("P1-F1: a booking is credited to the lead for the service that was actually
   assert.equal(leadRow("LEAD-BOARD").converted_booking_id, null);
 });
 
-test("P1-F1: with no service match the existing newest-open-lead behaviour is unchanged", async () => {
-  // Non-vacuity, and a deliberate limit: crediting NOBODY when no lead matches would be a product
-  // decision. A customer who enquired about boarding and bought grooming still converts their open lead.
+test("P1-F1: with no service match NO lead is credited", async () => {
+  /*
+   * SUPERSEDED BY A BUSINESS DECISION, not weakened. This case previously asserted the opposite - that
+   * the newest open lead still takes an unmatched booking - and said in its own comment that crediting
+   * nobody would be a product decision. The business has since made that decision: never credit the
+   * newest unrelated open lead; record the booking as direct_booking instead, because a Boarding rep
+   * credited with a Grooming conversion is a false campaign figure and a Boarding enquiry closed while
+   * the customer is still waiting to hear about boarding.
+   *
+   * The non-vacuity the old case provided is not lost: the two cases either side of it still prove that
+   * a matching lead IS credited and that recency decides within a matching service.
+   * tests/ptja-w3-lead-attribution.test.mjs owns the new rule. [PTJA-W3-LA]
+   */
   const { db, attribution, lead, booking, leadRow, now } = await attributionWorld();
   lead("LEAD-OLD", "boarding", now - 5 * 86_400_000, "rep.a@pawspace.test");
   lead("LEAD-NEW", "dog_training", now - 1 * 86_400_000, "rep.b@pawspace.test");
   booking("BK-GROOM", "grooming");
   const result = await attribution.attributeBookingToOpenLead(db, { customerId: "CUST-F1", bookingId: "BK-GROOM" });
-  assert.equal(result?.leadId, "LEAD-NEW", "the newest open lead still takes it when nothing matches");
-  assert.equal(String(leadRow("LEAD-NEW").status), "converted");
+  assert.equal(result?.leadId, null, `no unrelated lead may be credited: ${JSON.stringify(result)}`);
+  assert.equal(result?.attribution, "direct_booking", "the booking is recorded as system-origin instead");
+  assert.equal(String(leadRow("LEAD-NEW").status), "active", "and both enquiries stay open");
+  assert.equal(String(leadRow("LEAD-OLD").status), "active");
 });
 
 test("P1-F1: among several leads for the SAME service the newest still wins", async () => {
@@ -844,12 +859,19 @@ test("P1-F2: a clock that breached is never counted as met, and the buckets neve
 // city concurrently both read version N and both write N+1, so two DIFFERENT states carry the same
 // version number and the audit trail cannot distinguish them or order them.
 //
-// PARTIAL FIX, and the limit is stated rather than hidden. The version bump moves into SQL, so
-// concurrent saves get distinct, monotonic versions and the audit's version means something. The LOST
-// UPDATE itself - operator A's coverage silently replaced by operator B's, with no one told - is not
-// fixed here: refusing a save whose base version has moved requires the caller to send the version it
-// read, which is an API contract change and a product decision about what the operator sees on conflict.
-// That half is reported, not invented.
+// PARTIAL FIX at the time, and the limit was stated rather than hidden. The version bump moved into
+// SQL, so concurrent saves got distinct, monotonic versions and the audit's version meant something.
+// The LOST UPDATE itself - operator A's coverage silently replaced by operator B's, with no one told -
+// was left open, because refusing a save whose base version has moved needs the caller to send the
+// version it read: an API contract change and a product decision about what the operator sees.
+//
+// CLOSED LATER. The business decided: reject the stale write with 409, return the latest version, tell
+// the operator to reload, audit the conflict, no silent last-write-wins. saveCityLaunchConfig now takes
+// baseVersion and the UPDATE only fires while the row still carries it. The cases below are updated to
+// the new contract - they send the version they read, and the concurrent case now asserts that exactly
+// one save wins rather than that both do. The monotonic-version guarantee they were written for is
+// unchanged and still asserted. tests/ptja-w3-coverage-concurrency.test.mjs owns the new rule.
+// [PTJA-W3-CC]
 // =====================================================================================================
 
 test("P1-F40: concurrent city saves get distinct monotonic versions", async () => {
@@ -864,14 +886,18 @@ test("P1-F40: concurrent city saves get distinct monotonic versions", async () =
     id: String(existing.id), cityCode: String(existing.city_code), city: String(existing.city), state: String(existing.state),
     status: String(existing.status), centre: String(existing.centre), radiusKm: Number(existing.radius_km),
     pincodes, gstIncluded: Number(existing.gst_included) === 1, services: JSON.parse(String(existing.services_json)),
-  }, "ops@pawspace.test");
+    baseVersion,
+  }, "ops@pawspace.test").then((value) => ({ ok: true, value }), (error) => ({ ok: false, error }));
 
   const [a, b] = await Promise.all([save("560001,560002"), save("560003,560004")]);
-  assert.notEqual(a.version, b.version, `two concurrent saves must not both claim version ${a.version}`);
-  assert.deepEqual([a.version, b.version].sort((x, y) => x - y), [baseVersion + 1, baseVersion + 2],
-    "the versions are consecutive and monotonic from the version they started at");
-  assert.equal(Number(sqlite.prepare("SELECT version FROM city_launch_configs WHERE id=?").get(String(existing.id)).version), baseVersion + 2,
-    "and the stored row carries the later of the two");
+  const accepted = [a, b].filter((entry) => entry.ok);
+  assert.equal(accepted.length, 1,
+    "two saves from the same base version cannot both be accepted; the loser is a 409, not a silent overwrite");
+  assert.equal(accepted[0].value.version, baseVersion + 1, "the winner's version is monotonic from the base it declared");
+  assert.equal(Number(sqlite.prepare("SELECT version FROM city_launch_configs WHERE id=?").get(String(existing.id)).version), baseVersion + 1,
+    "and the stored row advanced exactly once");
+  assert.equal(String(sqlite.prepare("SELECT pincodes FROM city_launch_configs WHERE id=?").get(String(existing.id)).pincodes), accepted[0].value.pincodes,
+    "carrying the accepted operator's own coverage, not a blend");
 });
 
 test("P1-F40: a serial save still increments by exactly one", async () => {
@@ -886,9 +912,9 @@ test("P1-F40: a serial save still increments by exactly one", async () => {
     status: String(existing.status), centre: String(existing.centre), radiusKm: Number(existing.radius_km),
     pincodes, gstIncluded: Number(existing.gst_included) === 1, services: JSON.parse(String(existing.services_json)),
   });
-  const first = await city.saveCityLaunchConfig(db, input("560001"), "ops@pawspace.test");
+  const first = await city.saveCityLaunchConfig(db, { ...input("560001"), baseVersion: base }, "ops@pawspace.test");
   assert.equal(first.version, base + 1);
-  const second = await city.saveCityLaunchConfig(db, input("560002"), "ops@pawspace.test");
+  const second = await city.saveCityLaunchConfig(db, { ...input("560002"), baseVersion: first.version }, "ops@pawspace.test");
   assert.equal(second.version, base + 2);
   assert.equal(String(sqlite.prepare("SELECT pincodes FROM city_launch_configs WHERE id=?").get(String(existing.id)).pincodes), "560002");
 });

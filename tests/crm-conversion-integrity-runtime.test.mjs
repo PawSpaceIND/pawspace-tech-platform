@@ -267,14 +267,25 @@ test("cancelling one city's booking does not disturb the other city's credit", a
 
 // --- duplicate leads on the same customer -------------------------------
 
-test("two open leads for one customer yield exactly one conversion", async () => {
+test("two open leads for one customer yield no more than one conversion", async () => {
+  /*
+   * The guarantee this case was written for - one booking never becomes two conversions - is unchanged
+   * and still asserted. What changed is the answer when NEITHER lead is linked to the booking: the
+   * business decided a booking may be attributed only to a lead matching customer AND service, and an
+   * unmatched booking credits nobody and is recorded as direct_booking. So the count here is zero, not
+   * one, and the two enquiries stay open. The sibling case below - a lead genuinely linked via
+   * initiated_booking_id - is what proves conversion still happens at all. [PTJA-W3-LA]
+   */
   const { sqlite, db, conversion } = await world();
   seedBooking(sqlite, { id: "BK-9", customerId: "CU-9", createdAt: NOW - 2 * DAY });
   seedLead(sqlite, { id: "LEAD-9a", customerId: "CU-9" });
   seedLead(sqlite, { id: "LEAD-9b", customerId: "CU-9" });
   await conversion.convertLeadOnPaymentCaptured(db, { customerId: "CU-9", bookingId: "BK-9" });
-  assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM lead_work_items WHERE status='converted'").get().c, 1,
-    "a duplicate lead must not turn one booking into two conversions");
+  const converted = Number(sqlite.prepare("SELECT COUNT(*) c FROM lead_work_items WHERE status='converted'").get().c);
+  assert.ok(converted <= 1, `a duplicate lead must not turn one booking into two conversions, saw ${converted}`);
+  assert.equal(converted, 0, "and an unlinked booking credits neither of them");
+  assert.equal(String(sqlite.prepare("SELECT attribution_type FROM booking_attribution WHERE booking_id='BK-9'").get().attribution_type), "direct_booking",
+    "it is recorded as a direct booking instead of inflating a campaign figure");
 });
 
 test("concurrent conversion of the same booking credits it once", async () => {

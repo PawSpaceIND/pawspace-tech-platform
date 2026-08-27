@@ -1,4 +1,5 @@
 import { defaultRoles, hasPermission, type Permission } from "./platform-security";
+import{isDevelopmentPreviewRequest}from"./development-preview";
 import { resolveUatStaffActor, signInRequiredResponse, uatLoginEnabled } from "./uat-staging-auth";
 import { resolvePlatformSession } from "./platform-session";
 
@@ -108,6 +109,15 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/training-reconciliation")return "reports.view";
   if(url.pathname==="/api/marketing-control")return method==="GET"?"marketing.view":"marketing.manage";
   if(url.pathname==="/api/pricing-control")return method==="GET"?"pricing.view":"pricing.manage";
+  // Business policy by vertical and city. Reading is for every Control Center operator; writing is
+  // settings.manage, which only founder and superuser hold. The handler names the same pair as its
+  // second gate, and resolves the domain first so each domain's own manage permission applies.
+  if(url.pathname==="/api/service-policy-control")return method==="GET"?"launch.view":"settings.manage";
+  // Post-start cancellation cases. bookings.view is the floor for both reading and deciding; who may
+  // actually stop a job or approve a refund is policy, applied against the actor's real permissions
+  // inside lib/cancellation-case-governance.ts.
+  if(url.pathname==="/api/booking-cancellation-case")return "bookings.view";
+  if(url.pathname==="/api/customer-data-reveal")return "customers.view";
   if(url.pathname==="/api/coupon-governance"){if(method==="GET")return "pricing.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");if(action==="quote")return "scheduling.book";if(action==="save_campaign")return "pricing.manage";if(action==="consume")return "bookings.manage";return "dashboard.view";}
   if(url.pathname==="/api/grooming-subscription-plans")return method==="GET"?"pricing.view":"pricing.manage";
   if(url.pathname==="/api/grooming-commercial-policy")return method==="GET"?"pricing.view":"pricing.manage";
@@ -186,7 +196,7 @@ async function audit(env:GatewayEnv,actor:GatewayActor,request:Request,outcome:s
 
 export async function authorizeApiRequest(request:Request,env:GatewayEnv):Promise<{actor:GatewayActor;permission:Permission|null}|Response>{const url=new URL(request.url);if(!url.pathname.startsWith("/api/"))return {actor:{email:"",roleCode:"public",permissions:[],preview:false},permission:null};const permission=await requiredPermission(request);if(permission===null)return {actor:{email:"",roleCode:"public",permissions:[],preview:false},permission:null};
   if(!["GET","HEAD","OPTIONS"].includes(request.method)){const origin=request.headers.get("origin");if(origin&&origin!==url.origin)return Response.json({error:"Cross-origin write blocked"},{status:403});}
-  if(["terminal.local","localhost","127.0.0.1"].includes(url.hostname))return {actor:{email:"preview@pawspace.test",roleCode:"superuser",permissions:["*"],preview:true},permission};
+  if(isDevelopmentPreviewRequest(request))return {actor:{email:"preview@pawspace.test",roleCode:"superuser",permissions:["*"],preview:true},permission};
   // Staging-only UAT sign-in: honour the signed UAT cookie when enabled (a no-op in production, where
   // PAWSPACE_UAT_LOGIN is unset, so this falls straight through to the real header-based identity check).
   const uat=await resolveUatStaffActor(env.DB,request,env as unknown as Record<string,unknown>);

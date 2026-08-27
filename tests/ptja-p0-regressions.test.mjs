@@ -181,7 +181,10 @@ async function call(modulePath, method, path, body, cookie, extraHeaders = {}) {
 
 // One real customer, one real sitter assignment, one real server quote, one real sandbox capture.
 async function sittingWorld(tag) {
-  const { sqlite, db } = world({ PAWSPACE_PAYMENT_ENV: "sandbox" });
+  // PAWSPACE_SCHEDULING_ENV declared: /api/uat-scheduling no longer fabricates provider roster unless
+  // the runtime says it is a UAT runtime (PTJA W1-F27), and this world reserves through the real path
+  // with no Ops-published availability.
+  const { sqlite, db } = world({ PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_SCHEDULING_ENV: "uat" });
   sqlite.exec("PRAGMA foreign_keys=ON; PRAGMA journal_mode=MEMORY;");
   const { ensureSecurityTables } = await import("../lib/server-auth.ts");
   const { seedDefaultZones } = await import("../lib/service-zones.ts");

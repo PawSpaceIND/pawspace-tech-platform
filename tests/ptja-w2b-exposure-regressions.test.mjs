@@ -96,13 +96,28 @@ test("W2B-R01: Customer 360 masks the phone for an actor without customers.view_
   assert.match(payload, /•/, "it is masked, not removed");
 });
 
-test("W2B-R01: an actor who holds customers.view_full_phone still sees it", async () => {
+test("W2B-R01: an actor who holds customers.view_full_phone can still reach the number", async () => {
   // Non-vacuity. Masking unconditionally would satisfy the case above and blind the roles whose job
   // needs the number.
-  const result = await customer360World("admin");
-  assert.equal(result.status, 200, `an admin may open Customer 360: ${JSON.stringify(result).slice(0, 200)}`);
-  assert.match(JSON.stringify(result.body), /\+?919876543210/,
-    "an actor holding customers.view_full_phone still sees the real number");
+  //
+  // UPDATED when the read surfaces moved onto lib/purpose-based-access.ts. The assertion is the same -
+  // the grant still reaches the real number - but it now goes through the path the approved rule puts
+  // it on: a per-record request carrying a reason, which writes a customer_data_reveals row. A LIST read
+  // carries no reason and names no record, so it can no longer hand back a hundred numbers unasked.
+  // [PTJA-W2-B2-R01]
+  const { sqlite, headers, now } = await staffWorld("admin@pawspace.test", "admin");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,email,created_at,updated_at) VALUES ('CUST-1','blr','Ritu Malhotra','+919876543210','ritu@example.com',?,?)").run(now, now);
+  const route = await import("../app/api/customer-data-reveal/route.ts");
+  const response = await route.POST(new Request("https://uat.pawspace.in/api/customer-data-reveal", {
+    method: "POST", headers: { ...headers, "content-type": "application/json" },
+    body: JSON.stringify({ customerId: "CUST-1", purpose: "operations", reason: "Customer called about today's visit" }),
+  }));
+  assert.equal(response.status, 200, "an actor holding customers.view_full_phone may still reveal");
+  assert.match(await response.text(), /\+?919876543210/,
+    "and receives the real number");
+  const logged = sqlite.prepare("SELECT COUNT(*) c FROM customer_data_reveals WHERE subject_id='CUST-1'").get();
+  assert.equal(Number(logged.c), 1, "and the reveal is recorded, which the old list read never was");
 });
 
 // =====================================================================================================
@@ -239,15 +254,20 @@ test("W2B-C01: the CRM contact list masks phones for an actor without customers.
   assert.match(payload, /•/, "they are masked, not removed");
 });
 
-test("W2B-C01: an actor with customers.view_full_phone still sees the CRM numbers", async () => {
-  // Non-vacuity.
+test("W2B-C01: an actor with customers.view_full_phone can still reach a CRM number", async () => {
+  // Non-vacuity, on the same corrected path as W2B-R01 above. [PTJA-W2-B2-C01]
   const { sqlite, db, headers } = await staffWorld("ops.admin2@pawspace.test", "admin");
-  const crm = await import("../app/api/crm/route.ts");
+  void db;
   sqlite.exec("CREATE TABLE IF NOT EXISTS crm_contacts (id TEXT PRIMARY KEY,name TEXT,primary_phone TEXT,secondary_phone TEXT,email TEXT,area TEXT,pet_names TEXT,pet_summary TEXT,stage TEXT,owner TEXT,source TEXT,lifetime_value REAL,next_action TEXT,opportunity TEXT,created_at INTEGER,updated_at INTEGER)");
   sqlite.prepare("INSERT INTO crm_contacts (id,name,primary_phone,secondary_phone,email,area,stage,owner,source,created_at,updated_at) VALUES ('CU-VICTIM','Meera Shah','+919845012345','+919845099999','meera.shah@example.com','Indiranagar','New lead','Neha','Website',?,?)").run(Date.now(), Date.now());
 
-  const response = await crm.GET(new Request("https://uat.pawspace.in/api/crm", { headers }));
-  assert.match(await response.text(), /\+?919845012345/, "an admin still sees the real number");
+  const route = await import("../app/api/customer-data-reveal/route.ts");
+  const response = await route.POST(new Request("https://uat.pawspace.in/api/customer-data-reveal", {
+    method: "POST", headers: { ...headers, "content-type": "application/json" },
+    body: JSON.stringify({ customerId: "CU-VICTIM", purpose: "sales", reason: "Returning her missed call about grooming" }),
+  }));
+  assert.equal(response.status, 200, "the grant still reaches the number");
+  assert.match(await response.text(), /\+?919845012345/, "an admin who asks, with a reason, still sees the real number");
 });
 
 test("W2B-C07: the conversation thread list masks the customer phone", async () => {

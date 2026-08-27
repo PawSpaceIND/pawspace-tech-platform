@@ -1,6 +1,7 @@
 import { defaultRoles, hasPermission, parsePermissions, type Permission } from "./platform-security";
 import {ensureIdentityBindingTables,findIdentityBinding,type IdentitySource,type PrincipalType} from "./identity-binding";
 import {resolvePlatformSession} from "./platform-session";
+import {isDevelopmentPreviewRequest} from "./development-preview";
 import {resolveUatStaffActor,signInRequiredResponse} from "./uat-staging-auth";
 import {governedJsonError,isGovernedHttpError,markGovernedHttpError} from "./governed-http-error";
 
@@ -17,10 +18,9 @@ function forwardedIdentity(request:Request){
   return {email,name};
 }
 
-function isDevelopmentPreview(request:Request){
-  const host=new URL(request.url).hostname;
-  return process.env.NODE_ENV!=="production"&&["terminal.local","localhost","127.0.0.1"].includes(host);
-}
+// One definition, in lib/development-preview.ts. This copy read an ABSENT NODE_ENV as "not
+// production", and two sibling copies of the same rule carried no environment guard at all. [PTJA-W3C]
+const isDevelopmentPreview=(request:Request)=>isDevelopmentPreviewRequest(request);
 
 // Per-isolate memoization: security DDL, identity-binding DDL and the fixed role catalogue are
 // idempotent. resolveActor() runs this on every authenticated request; before this it also issued 9

@@ -1,5 +1,6 @@
 import{governedJsonError}from"./governed-http-error";
 import{splitPaymentPlan}from"./stay-split-payments";
+import{sameInstant}from"./booking-window-instant";
 type Row=Record<string,unknown>;
 export type SittingMode="visit"|"overnight";
 export type SittingPaymentMode="prepaid"|"split_50_50";
@@ -27,6 +28,16 @@ export async function ensureSittingGovernanceTables(db:D1Database){
  ]);
  await ensureQuoteColumn(db,"city_id","TEXT NOT NULL DEFAULT 'blr'");
  await ensureQuoteColumn(db,"zone_id","TEXT NOT NULL DEFAULT 'blr-east'");
+ // The unit price persisted beside the total must be the unit price that produced it. Measured before
+ // these columns existed: an Overnight Sitting quote priced at 1200/night by Pricing Control was
+ // governed into canonical_bookings.pricing_json as {basePricePerPet:799, billableUnits:2,
+ // totalAmount:2400} - 799 x 2 = 1598, Rs 802 short of what was taken - because createLiveSittingQuote
+ // overwrote total_amount on the quote row and never wrote the priced UNIT back, so the join to the
+ // package table could only ever return the stale catalogue figure. Nullable and additive: a quote that
+ // was never repriced carries NULL and the governed read falls back to the package column, exactly as
+ // before. [PTJA-W1-F15]
+ await ensureQuoteColumn(db,"priced_base_price_per_pet","REAL");
+ await ensureQuoteColumn(db,"priced_extra_pet_price","REAL");
  for(const item of packages)await db.prepare("INSERT OR IGNORE INTO sitting_commercial_packages (package_code,name,mode,base_price_per_pet,extra_pet_price,currency,max_pets,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,'INR',?,1,1,'2026-08-01',NULL,'founder_seed',?)").bind(item.code,item.name,item.mode,item.basePrice,item.extraPetPrice,item.maxPets,now).run();
 }
 
@@ -52,8 +63,8 @@ export async function governSittingBooking(db:D1Database,input:{quoteId:string;p
  const linked=await db.prepare("SELECT booking_id FROM sitting_booking_quote_links WHERE quote_id=?").bind(input.quoteId).first<Row>();if(linked)throw governedJsonError({error:"Sitting quote is already linked to a booking"},409);
  const quote=await db.prepare("SELECT q.*,p.name,p.base_price_per_pet,p.extra_pet_price FROM sitting_commercial_quotes q JOIN sitting_commercial_packages p ON p.package_code=q.package_code AND p.version=q.package_version WHERE q.id=?").bind(input.quoteId).first<Row>();
  if(!quote)throw governedJsonError({error:"A valid server Sitting quote is required"},409);if(String(quote.status)!=="open")throw governedJsonError({error:"Sitting quote has already been used"},409);if(Number(quote.expires_at)<Date.now())throw governedJsonError({error:"Sitting quote expired; refresh price and availability"},409);
- if(String(quote.package_code)!==input.packageCode||String(quote.name)!==input.packageName)throw governedJsonError({error:"Sitting package does not match the server quote"},409);if(Number(quote.pet_count)!==input.petCount)throw governedJsonError({error:"Sitting pet count changed after quote"},409);if(String(quote.city_id)!==String(input.cityId||"blr")||String(quote.zone_id)!==String(input.zoneId||"blr-east"))throw governedJsonError({error:"Sitting quote city/zone does not match the scheduling reservation"},409);if(String(quote.scheduled_start)!==input.scheduledStart||String(quote.scheduled_end)!==input.scheduledEnd)throw governedJsonError({error:"Sitting care window changed after quote"},409);if(Number(quote.total_amount)!==input.submittedTotal||Number(quote.amount_due_now)!==input.submittedAmountDueNow)throw governedJsonError({error:"Sitting amount does not match the server quote"},409);if(String(quote.payment_mode)!==input.paymentMode)throw governedJsonError({error:"Sitting payment mode does not match the server quote"},409);if(input.paymentStatus!=="captured")throw governedJsonError({error:"Sitting payment must be captured in sandbox before confirmation"},409);if(input.reservationCount!==1)throw governedJsonError({error:"Sitting Gate 1 requires exactly one canonical care reservation"},409);
- return{quoteId:String(quote.id),packageCode:String(quote.package_code),packageName:String(quote.name),catalogueVersion:`sitting-v${Number(quote.package_version)}`,mode:String(quote.mode) as SittingMode,petCount:Number(quote.pet_count),scheduledStart:String(quote.scheduled_start),scheduledEnd:String(quote.scheduled_end),billableUnits:Number(quote.billable_units),basePricePerPet:Number(quote.base_price_per_pet),extraPetPrice:Number(quote.extra_pet_price),totalAmount:Number(quote.total_amount),amountDueNow:Number(quote.amount_due_now),paymentMode:String(quote.payment_mode)};
+ if(String(quote.package_code)!==input.packageCode||String(quote.name)!==input.packageName)throw governedJsonError({error:"Sitting package does not match the server quote"},409);if(Number(quote.pet_count)!==input.petCount)throw governedJsonError({error:"Sitting pet count changed after quote"},409);if(String(quote.city_id)!==String(input.cityId||"blr")||String(quote.zone_id)!==String(input.zoneId||"blr-east"))throw governedJsonError({error:"Sitting quote city/zone does not match the scheduling reservation"},409);if(!sameInstant(quote.scheduled_start,input.scheduledStart)||!sameInstant(quote.scheduled_end,input.scheduledEnd))throw governedJsonError({error:"Sitting care window changed after quote"},409);if(Number(quote.total_amount)!==input.submittedTotal||Number(quote.amount_due_now)!==input.submittedAmountDueNow)throw governedJsonError({error:"Sitting amount does not match the server quote"},409);if(String(quote.payment_mode)!==input.paymentMode)throw governedJsonError({error:"Sitting payment mode does not match the server quote"},409);if(input.paymentStatus!=="captured")throw governedJsonError({error:"Sitting payment must be captured in sandbox before confirmation"},409);if(input.reservationCount!==1)throw governedJsonError({error:"Sitting Gate 1 requires exactly one canonical care reservation"},409);
+ return{quoteId:String(quote.id),packageCode:String(quote.package_code),packageName:String(quote.name),catalogueVersion:`sitting-v${Number(quote.package_version)}`,mode:String(quote.mode) as SittingMode,petCount:Number(quote.pet_count),scheduledStart:String(quote.scheduled_start),scheduledEnd:String(quote.scheduled_end),billableUnits:Number(quote.billable_units),basePricePerPet:Number(quote.priced_base_price_per_pet??quote.base_price_per_pet),extraPetPrice:Number(quote.priced_extra_pet_price??quote.extra_pet_price),totalAmount:Number(quote.total_amount),amountDueNow:Number(quote.amount_due_now),paymentMode:String(quote.payment_mode)};
 }
 
 export function sittingQuoteLinkStatement(db:D1Database,quoteId:string,bookingId:string){return db.prepare("INSERT INTO sitting_booking_quote_links (quote_id,booking_id,created_at) VALUES (?,?,?)").bind(quoteId,bookingId,Date.now());}

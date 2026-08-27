@@ -1,10 +1,12 @@
 import{authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{evaluateBookingChange,parsePolicySnapshot,resolveGroomingPolicy}from"../../../lib/grooming-policy-governance";
 import{handleReferralBookingCancellation}from"../../../lib/referral-booking-governance";
+import{evaluateCancellationRefund,resolveRefundPolicy}from"../../../lib/refund-policy-governance";
+import{openCancellationCase}from"../../../lib/cancellation-case-governance";
 
 type Db=Awaited<ReturnType<typeof database>>;
 type Row=Record<string,unknown>;
-type Input={bookingId:string;customerId:string;action:"cancel"|"reschedule";reason?:string;scheduledStart?:string;scheduledEnd?:string};
+type Input={bookingId:string;customerId:string;action:"cancel"|"reschedule";reason?:string;reasonCategory?:string;scheduledStart?:string;scheduledEnd?:string};
 
 const json=(value:unknown,status=200)=>Response.json(value,{status});
 async function database(){const{env}=await import("cloudflare:workers");return env.DB;}
@@ -13,7 +15,12 @@ async function ensureTables(db:Db){await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS booking_subscription_usage (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,plan_code TEXT NOT NULL,sessions_reserved INTEGER NOT NULL DEFAULT 1,sessions_consumed INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'reserved',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS customer_grooming_subscriptions (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,plan_code TEXT NOT NULL,service_package_code TEXT NOT NULL,total_sessions INTEGER NOT NULL,sessions_reserved INTEGER NOT NULL DEFAULT 0,sessions_consumed INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'active',started_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,source_booking_id TEXT NOT NULL UNIQUE,catalogue_version TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'requested',requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
-]);}
+]);
+  // Additive: the approved refund evaluation that produced the case, so a finance reviewer can see which
+  // policy version, which notice band and which basis were applied - and the gateway deduction recorded
+  // BESIDE the customer's amount rather than taken out of it. [PTJA-W1-F24]
+  await db.prepare("ALTER TABLE booking_refund_cases ADD COLUMN policy_json TEXT NOT NULL DEFAULT '{}'").run().catch((error:unknown)=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
+}
 async function event(db:Db,bookingId:string,eventType:string,actorId:string,detail:unknown,now:number){await db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),bookingId,eventType,"booking",bookingId,actorId,JSON.stringify(detail),now).run();}
 
 export async function POST(request:Request){
@@ -31,16 +38,69 @@ export async function POST(request:Request){
     const frozenPolicy=parsePolicySnapshot(pricing.commercialPolicy)??await resolveGroomingPolicy(db,String(booking.city_id),String(booking.zone_id),new Date(Number(booking.created_at||Date.now())));
     const rescheduleHistory=await db.prepare("SELECT COUNT(*) count FROM booking_lifecycle_events WHERE booking_id=? AND event_type='booking_rescheduled'").bind(input.bookingId).first<{count:number}>();
     const policyEvaluation=evaluateBookingChange(frozenPolicy,{action:input.action,scheduledStart:String(booking.scheduled_start),status,bookingAmount:Number(booking.total_amount||0),rescheduleCount:Number(rescheduleHistory?.count||0)});
-    if(!policyEvaluation.allowed)return json({error:`Booking change is blocked by policy ${policyEvaluation.policyVersion}`,policy:policyEvaluation},409);
     const work=await db.prepare("SELECT * FROM provider_work_orders WHERE booking_id=?").bind(input.bookingId).first<Row>();
     const payment=await db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Row>();
     if(!work||!payment)return json({error:"Booking work order or payment record is missing"},409);
     const now=Date.now(),auditActor=actor.email;
 
+    /*
+     * A booking that has already started is not cancelled by the customer asking. It opens a REVIEWABLE
+     * CASE and the operational state is preserved exactly as it is:
+     *
+     *   Cancellation requested -> Case opened -> Booking remains active -> Operations decision
+     *   -> Finance decision if applicable -> Customer and provider notified -> Case closed
+     *
+     * on_the_way / arrived : the booking stays active; Operations decides proceed, stop or return.
+     * in_service           : the booking stays in service; the customer cannot cancel it automatically.
+     * completed            : cancellation is unavailable; the request becomes a service-quality dispute.
+     *
+     * This runs BEFORE the commercial policy's change-lock refusal on purpose. That lock answers
+     * "completed bookings cannot be changed", which is true and stays true - but the approved rule says
+     * the customer's request must still become a DISPUTE rather than a bare refusal, and a refusal with
+     * nothing recorded is how a service-quality complaint disappears.
+     *
+     * Opening a case promises no refund and reverses nothing. The payment, the provider payout,
+     * attendance, OTP, delivery evidence and every service record are untouched until an authorised
+     * decision, and a stop uses a distinct terminal status, never ordinary 'cancelled'. A repeat tap
+     * reuses the open case rather than opening a second one.
+     */
+    let refundEvaluation:Awaited<ReturnType<typeof evaluateCancellationRefund>>|null=null;
+    if(input.action==="cancel"){
+      const captured=["captured","paid"].includes(String(payment.status));
+      const refundPolicy=await resolveRefundPolicy(db,{serviceCode:String(booking.service_code||"grooming"),cityId:String(booking.city_id||"")});
+      refundEvaluation=evaluateCancellationRefund(refundPolicy,{
+        scheduledStart:String(booking.scheduled_start),bookingStatus:status,cancelledBy:"customer",
+        amountPaid:captured?Number(payment.amount||0):0,
+        couponValue:Number((pricing.discount as number|undefined)??0),
+        now,
+      });
+      if(!refundEvaluation.automatic&&refundEvaluation.requiresApproval){
+        const reasonText=(input.reason||"Customer cancelled from PawSpace").trim();
+        const opened=await openCancellationCase(db,{
+          bookingId:input.bookingId,customerId:input.customerId,serviceCode:String(booking.service_code||"grooming"),
+          cityId:String(booking.city_id||""),bookingStatus:status,requestedBy:auditActor,
+          reasonCategory:input.reasonCategory??null,reasonText,refundEvaluation,now,
+        });
+        await event(db,input.bookingId,opened.reused?"booking_cancellation_case_reopened_request":"booking_cancellation_case_opened",auditActor,{caseId:opened.case.id,caseType:opened.case.caseType,refundEvaluation,status},now);
+        await securityAudit(db,actor,"grooming.booking.cancel","booking",input.bookingId,"blocked",{reason:reasonText,status,policyVersion:refundEvaluation.policyVersion,caseId:opened.case.id,reused:opened.reused});
+        return json({
+          error:opened.case.caseType==="service_dispute"
+            ?"This booking is complete, so it cannot be cancelled; a service-quality dispute has been opened"
+            :"This booking has already started, so it cannot be cancelled directly; a review case has been opened and the booking is unchanged",
+          code:opened.case.caseType==="service_dispute"?"dispute_case_opened":"cancellation_requires_approval",
+          caseId:opened.case.id,caseType:opened.case.caseType,caseStatus:opened.case.status,
+          reasonCategory:opened.case.reasonCategory,duplicateOfOpenCase:opened.reused,
+          bookingStatusUnchanged:status,refundPromised:false,
+          refundPolicy:refundEvaluation,approvalPermissions:refundEvaluation.approvalPermissions,disputeAllowed:refundEvaluation.disputeAllowed,
+        },409);
+      }
+    }
+    if(!policyEvaluation.allowed)return json({error:`Booking change is blocked by policy ${policyEvaluation.policyVersion}`,policy:policyEvaluation},409);
+
     if(input.action==="cancel"){
       const reason=(input.reason||"Customer cancelled from PawSpace").trim();
-      const captured=["captured","paid"].includes(String(payment.status));
-      const refundAmount=captured?Math.round(Number(payment.amount||0)*policyEvaluation.refundPercent)/100:0;
+      if(!refundEvaluation)return json({error:"The cancellation refund policy could not be evaluated"},409);
+      const refundAmount=refundEvaluation.customerRefundAmount;
       const refundId=refundAmount>0?crypto.randomUUID():null;
       const usage=await db.prepare("SELECT * FROM booking_subscription_usage WHERE booking_id=?").bind(input.bookingId).first<Row>();
       const reservedSessions=usage?Number(usage.sessions_reserved||0):0;
@@ -55,7 +115,7 @@ export async function POST(request:Request){
         db.prepare("UPDATE booking_subscription_usage SET sessions_reserved=0,status=CASE WHEN sessions_consumed=0 THEN 'reversed' ELSE status END,updated_at=? WHERE booking_id=?").bind(now,input.bookingId),
       ];
       if(subscriptionId&&reservedSessions>0)statements.push(db.prepare("UPDATE customer_grooming_subscriptions SET sessions_reserved=MAX(0,sessions_reserved-?),status=CASE WHEN source_booking_id=? THEN ? ELSE status END,updated_at=? WHERE id=?").bind(reservedSessions,input.bookingId,refundAmount>0?"refund_pending":"cancelled",now,subscriptionId));
-      if(refundId)statements.push(db.prepare("INSERT OR IGNORE INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,created_at,updated_at) VALUES (?,?,?,?,?,'requested',?,?,?)").bind(refundId,input.bookingId,payment.id,refundAmount,reason,auditActor,now,now));
+      if(refundId)statements.push(db.prepare("INSERT OR IGNORE INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,policy_json,created_at,updated_at) VALUES (?,?,?,?,?,'requested',?,?,?,?)").bind(refundId,input.bookingId,payment.id,refundAmount,reason,auditActor,JSON.stringify(refundEvaluation),now,now));
       await db.batch(statements);
       let referral:unknown;try{referral=await handleReferralBookingCancellation(db,{bookingId:input.bookingId,actorId:auditActor,reason});}catch(error){referral={applicable:true,status:"review_required",reason:error instanceof Error?error.message:"Referral cancellation consequence requires review"};}
       await event(db,input.bookingId,"booking_cancelled",auditActor,{customerId:input.customerId,reason,capacityReleased:true,paymentStatus:refundAmount>0?"refund_pending":"cancelled",refundCaseId:refundId,refundAmount,policy:policyEvaluation,subscriptionId:subscription?.id??null,subscriptionSessionsReleased:reservedSessions,subscriptionStatus:subscription?refundAmount>0?"refund_pending":"cancelled":null,referral},now);

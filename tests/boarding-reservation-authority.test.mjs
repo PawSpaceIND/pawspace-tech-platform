@@ -67,7 +67,7 @@ const STRANGER = "CUS-STRANGER";
 async function world() {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
-  globalThis.__PAWSPACE_TEST_ENV = { DB: db };
+  globalThis.__PAWSPACE_TEST_ENV = { DB: db, PAWSPACE_SCHEDULING_ENV: "uat" };
 
   const capacity = await import("../lib/provider-capacity-governance.ts");
   await capacity.ensureProviderCapacityTables(db);
@@ -191,7 +191,7 @@ test("NEGATIVE: with no canonical pet records at all, Boarding refuses rather th
   // Fail-closed when the authority source is absent, instead of trusting the client-sent status.
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
-  globalThis.__PAWSPACE_TEST_ENV = { DB: db };
+  globalThis.__PAWSPACE_TEST_ENV = { DB: db, PAWSPACE_SCHEDULING_ENV: "uat" };
   const capacity = await import("../lib/provider-capacity-governance.ts");
   await capacity.ensureProviderCapacityTables(db);
   await capacity.seedProviderCapacityDefaults(db);

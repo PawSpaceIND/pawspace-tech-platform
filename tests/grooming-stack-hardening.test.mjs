@@ -227,7 +227,13 @@ test("regression: the reschedule reservation move is atomic — an overlapping r
 test("reschedule and cancel are server-priced: no client price fields, fee/refund from the frozen policy", async () => {
   assert.doesNotMatch(changeRoute, /type Input=\{[^}]*(amount|price|total)/i, "the change API accepts no client-submitted money");
   assert.match(changeRoute, /parsePolicySnapshot\(pricing\.commercialPolicy\)\?\?await resolveGroomingPolicy/, "policy comes from the frozen snapshot, else the server policy");
-  assert.match(changeRoute, /policyEvaluation\.refundPercent/);
+  // The refund amount moved from `policyEvaluation.refundPercent` to the approved cancellation policy's
+  // `refundEvaluation.customerRefundAmount` (PTJA W1-F24), which is governed configuration resolved per
+  // service and city rather than a single grooming percentage. What this line asserts - that the refund
+  // is computed SERVER-side from a policy and never from the request body - is unchanged and stronger:
+  // the route now binds an amount the server derived, not a percentage applied to a client-visible one.
+  assert.match(changeRoute, /refundEvaluation\.customerRefundAmount/);
+  assert.match(changeRoute, /resolveRefundPolicy\(db,\{serviceCode/, "the refund policy is resolved for this service and city");
   assert.match(changeRoute, /policyEvaluation\.feeAmount/);
   // Real execution of the policy: completed bookings are change-locked.
   const { sqlite, db } = groomingDb();

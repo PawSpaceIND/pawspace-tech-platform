@@ -43,10 +43,18 @@ test('Training operations and finance project canonical records', async () => {
 
 test('Training evidence remains private and external-storage gated', async () => {
   const media = await read('app/api/training-session-media/route.ts');
+  const boundary = await read('lib/media-upload-boundary.ts');
   assert.match(media, /requireProviderOwnership/);
-  assert.match(media, /SHA-256/);
-  assert.match(media, /storageBackend:\"not_connected\"/);
+  // Training evidence now goes through the shared signed-upload boundary, so the checksum rule lives
+  // there and the route is pinned to delegating to it. The "no storage is connected" statement moved
+  // from storageBackend:"not_connected" to adapterConnected:false and is asserted on both files, so
+  // neither can start claiming a connected backend. [PTJA-W2-B4-M04]
+  assert.match(media, /issueMediaUploadGrant/);
+  assert.match(media, /redeemMediaUploadGrant/);
+  assert.match(media, /adapterConnected:false/);
   assert.match(media, /proofReady:false/);
+  assert.match(boundary, /SHA-256/);
+  assert.match(boundary, /adapterConnected:false/);
 });
 
 test('Training API permissions are explicit in the gateway', async () => {

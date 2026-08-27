@@ -139,7 +139,15 @@ test("W2-FIN-01: the sandbox statutory export cannot be labelled with a period t
   // Same shape, verified here rather than assumed: createSandboxStatutoryExport also takes a
   // caller-supplied periodCode alongside a runId whose dates the module already knows, and stamps that
   // period into the exported payload.
-  const { db, people } = await payrollWorld({ lockedPeriod: "2026-07" });
+  //
+  // SHADOWED UNTIL PTJA-W3B. This case used to run against payrollWorld({lockedPeriod:"2026-07"}) and
+  // assert only `ok === false`. createSandboxStatutoryExport carries TWO independent controls - the
+  // period_mismatch check and, on the very next line, assertPeriodOpen(exportPeriod) - and with the run
+  // dated in the locked month the SECOND one refused every attempt. Removing the mismatch guard
+  // entirely left this case green, refusing with "period_locked" instead. Defence in depth working as
+  // intended, and a test that could not see the control it named. The world is now UNLOCKED, so a
+  // mismatched label is the only thing that can refuse, and the reason is asserted.
+  const { db, people } = await payrollWorld();
   const policy = await people.saveStatutoryPolicy(db, {
     policyCode: "pf_esi", effectiveFrom: Date.UTC(2026, 0, 1), config: { pfRate: 0.12 },
     approvalReference: "BOARD-2026-07", actorId: "fin@pawspace.in",
@@ -149,6 +157,15 @@ test("W2-FIN-01: the sandbox statutory export cannot be labelled with a period t
   }).then((value) => ({ ok: true, value }), (error) => ({ ok: false, message: error instanceof Error ? error.message : String(error) }));
   assert.equal(attempt.ok, false,
     `a statutory export must not be labelled with a period the payroll run is not dated in: ${JSON.stringify(attempt)}`);
+  assert.match(String(attempt.message ?? ""), /period_mismatch/,
+    `and for THAT reason, not because the run's own month happened to be locked: ${JSON.stringify(attempt)}`);
+
+  // Non-vacuity: the honestly-labelled export of the same run does succeed, so "refuses everything"
+  // cannot pass as "refuses a mislabelled export".
+  const honest = await people.createSandboxStatutoryExport(db, {
+    runId: "RUN-JUL", policyVersionId: String(policy.id), periodCode: "2026-07", actorId: "fin@pawspace.in",
+  }).then((value) => ({ ok: true, value }), (error) => ({ ok: false, message: error instanceof Error ? error.message : String(error) }));
+  assert.equal(honest.ok, true, `an honestly labelled export must succeed: ${JSON.stringify(honest)}`);
 });
 
 // =====================================================================================================

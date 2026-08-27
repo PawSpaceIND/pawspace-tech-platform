@@ -10,6 +10,12 @@
     // an undeclared runtime used to unlock a staff endpoint that records a full-value capture with
     // zero gateway contact. This harness exercises the sandbox payment path, so it says so.
     "PAWSPACE_PAYMENT_ENV": "sandbox",
+    // Declared for the same reason. /api/uat-scheduling no longer fabricates provider roster unless the
+    // runtime says it is a UAT runtime (PTJA W1-F27): a customer's own reserve used to write the
+    // "published availability" rows the eligibility engine then checked, and could book straight over a
+    // window Ops had narrowed. This harness books through the real reserve path with no Ops-published
+    // availability, so it declares what it is.
+    "PAWSPACE_SCHEDULING_ENV": "uat",
     "PAWSPACE_UAT_LOGIN": "on",
     "PAWSPACE_UAT_SIGNING_KEY": "runtime-d1-regression-only-not-a-real-signing-key-20260825",
     "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT": "runtime-d1-regression-only-not-a-real-secret-32chars"

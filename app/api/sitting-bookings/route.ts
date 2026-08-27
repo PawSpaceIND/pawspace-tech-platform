@@ -17,7 +17,7 @@ type Input={
 };
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 const petId=(customerId:string,sourceId:string)=>`PET-${customerId.replace(/[^A-Za-z0-9]/g,"").toUpperCase()}-${sourceId.replace(/[^A-Za-z0-9]/g,"").toUpperCase()}`;
-const sameInstant=(a:unknown,b:unknown)=>new Date(String(a)).getTime()===new Date(String(b)).getTime();
+import{sameInstant}from"../../../lib/booking-window-instant";
 function sameOriginWrite(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin Sitting booking blocked",{status:403});}
 async function ensureTables(db:D1Database){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'uat_customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),

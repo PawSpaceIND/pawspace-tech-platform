@@ -1,0 +1,77 @@
+{
+  "item": "F24 (final rule)",
+  "title": "Post-start cancellation becomes a reviewable case; the operational booking state is preserved",
+  "status": "implemented",
+  "approved_by": "PawSpace business decision supplied 2026-08-26, confirmed as final",
+  "evidence_class": "real_execution",
+
+  "state_flow": "Cancellation requested -> Case opened -> Booking remains active -> Operations decision -> Finance decision if applicable -> Customer and provider notified -> Case closed",
+
+  "per_status": {
+    "on_the_way / en_route": "booking stays active; Operations decides proceed, stop or return",
+    "arrived": "booking stays active; Operations decides proceed, stop or return",
+    "in_service": "booking stays in service; the customer cannot cancel it automatically; Operations may proceed or stop",
+    "completed": "cancellation is unavailable; the request becomes a service-quality/refund dispute"
+  },
+
+  "guarantees_implemented": [
+    "Opening a case promises no refund and reverses nothing.",
+    "Payment, provider payout, attendance, OTP, delivery evidence and service records are unchanged until an authorised decision.",
+    "Only Operations/Manager staff may operationally stop a job, checked against the actor's real permission set from policy rather than assumed of the caller.",
+    "Only Finance/Manager roles may approve a full or partial refund - a separate decision, separately authorised, never implied by the Operations decision.",
+    "A stop writes the distinct terminal status `stopped_after_start`, never ordinary `cancelled`; the configuration surface refuses to save `cancelled` as that status.",
+    "Every decision records actor, reason, timestamp, evidence where the policy requires it, and the customer/provider communication.",
+    "Provider payout stays a calculation from arrival, work performed, travel and fault attribution - an open case does not touch the payout line.",
+    "Exactly one open case per booking, enforced by a partial UNIQUE index rather than by handler logic, so concurrency cannot open a second. A repeat request reuses it and is recorded as a repeat."
+  ],
+
+  "reason_categories": ["customer_changed_mind","pet_unavailable_or_unsafe","provider_misconduct","service_quality_failure","medical_or_safety_incident","access_denied","wrong_service_or_booking_details","duplicate_or_incorrect_booking","pawspace_operational_failure"],
+
+  "configurable": "Everything above is the `cancellation_case_policy` domain in service_policy_configs - reason categories, which statuses open a case, which Operations decisions each status offers, the terminal status name, and both permission sets - scoped by service and city and edited in Control Center under Business policy.",
+
+  "defect_found_while_building": {
+    "what": "The approved rule names EN_ROUTE; this platform's lifecycle calls the same state `on_the_way`. With only `en_route` configured, a booking marked on_the_way fell past the status check into the notice ladder.",
+    "measured": "status on_the_way with 48 hours of remaining notice -> HTTP 200 and an automatic Rs 2,000 refund, with the provider already driving.",
+    "honest_scope": "Near the start time the ladder answers 0% anyway and a case opens either way, so the reachable window is a provider marked on_the_way well before the appointment - which app/api/grooming-lifecycle does not guard against. Recorded rather than overstated.",
+    "correction_to_my_own_test": "The first version of the regression seeded a start time in the past, so it passed whether or not on_the_way was configured. Sabotage verification caught that it proved nothing; the case now uses a far-future start so the STATUS is the only thing that can refuse, and dropping on_the_way fails it."
+  },
+
+  "files": {
+    "governance": "lib/cancellation-case-governance.ts",
+    "customer_path": "app/api/grooming-booking-change/route.ts",
+    "decision_route": "app/api/booking-cancellation-case/route.ts",
+    "gateway": "lib/api-gateway.ts maps /api/booking-cancellation-case to bookings.view as the floor; who may stop or refund is policy applied against the actor's permissions",
+    "tables": ["booking_cancellation_cases (partial UNIQUE index on one open case per booking)","booking_cancellation_case_events"]
+  },
+
+  "regression": {
+    "file": "tests/ptja-w1-f24-cancellation-cases.test.mjs",
+    "cases": 14,
+    "business_cases_covered": {
+      "1 IN_SERVICE stays IN_SERVICE": "CASE-1",
+      "2 no automatic refund or payout reversal": "CASE-2",
+      "3 case created exactly once": "CASE-3/4",
+      "4 duplicates reuse the open case": "CASE-3/4",
+      "5 provider continues unless Operations stops": "CASE-5",
+      "6 Operations stop records STOPPED_AFTER_START": "CASE-6",
+      "7 refund requires separate authorised approval": "CASE-7",
+      "8 customer cannot alter evidence or payout": "CASE-8",
+      "9 completed bookings create disputes": "CASE-9",
+      "10 all changes and communications auditable": "CASE-10"
+    },
+    "sabotage_verification": [
+      "The customer request cancels the booking again (the original defect) -> 10 of 14 fail.",
+      "A stop writes ordinary 'cancelled' -> only CASE-6 fails.",
+      "The one-open-case rule dropped -> only CASE-3/4 fails.",
+      "on_the_way dropped from the blocked statuses -> only the status case fails (after that case was corrected to be load-bearing).",
+      "Fix restored -> 14/14."
+    ],
+    "non_vacuity_controls": [
+      "a booking that has NOT started still cancels directly and opens no case - routing every cancellation to a case would satisfy every other assertion and replace self-serve cancellation with a manual queue",
+      "a provider driving at short notice also opens a case - the everyday shape of the same state, kept beside the artificial one",
+      "Operations decisions are bounded by the status the request was made at, and the refusal names what is available"
+    ]
+  },
+
+  "gates": {"full_repository_regression":"3194/3194","typecheck":"clean","lint":"0 errors"}
+}

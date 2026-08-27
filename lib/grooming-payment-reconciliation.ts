@@ -1,3 +1,4 @@
+import{postCollectionEvent}from"./collection-ledger";
 import{convertLeadOnPaymentCaptured}from"./lead-conversion-attribution";
 import{cancelRecoveryEntitlements}from"./payment-recovery-governance";
 import{activateSubscriptionOnCapture,failSubscriptionOnPaymentFailure}from"./subscription-payment-activation";
@@ -246,6 +247,21 @@ export async function processGatewayEvent(db:Db,event:GatewayEvent){
     const settlesBalance=Boolean(schedule)&&String(schedule?.status)!=="paid"&&stagesCollected>=2&&capturedTotal+0.009>=scheduleTotal;
     const collectedInFull=schedule?capturedTotal+0.009>=scheduleTotal:capturedTotal+0.009>=expected;
     await db.prepare("UPDATE booking_payments SET status='captured',gateway=?,detail_json=json_set(detail_json,'$.gatewayPaymentId',?,'$.gatewayOrderId',?,'$.lastGatewayEventId',?),updated_at=? WHERE id=?").bind(event.environment==="sandbox"?"razorpay_sandbox":"razorpay",event.gatewayPaymentId??null,event.gatewayOrderId??null,event.eventId,now,paymentId).run();
+ /*
+  * The collection posts here, on CAPTURE, because this is where the money actually becomes ours. The
+  * approved rule is explicit that a collection posts on successful capture and never on booking creation.
+  *
+  * Measured before this call existed: a month holding a completed booking with a captured Rs 5,000
+  * payment produced GET /api/cash-flow-statement -> closingCash 0 with reconciled TRUE, and zero rows in
+  * finance_journal_entries - no capture path in the platform had ever called postJournal.
+  *
+  * Idempotent on the payment id, which matters more here than anywhere: one gateway capture arrives as
+  * several webhook events and the reconciliation sweep replays them again. A ledger that double-posted
+  * on replay would overstate cash, which is a worse failure than the understatement being fixed.
+  * The posting cannot fail the capture: the money has arrived either way, and a webhook answered with an
+  * error would simply be retried into the same state. [PTJA-W2-B2-R04]
+  */
+ await postBookingCollectionOnCapture(db,{bookingId,paymentId,eventId:event.eventId}).catch(error=>{console.warn("[collection-ledger] capture posting deferred",error instanceof Error?error.message:String(error));});
     await upsert("captured",collectedInFull?"matched":"partially_captured",capturedTotal,refundedCurrent,0);
     if(collectedInFull)await db.prepare("UPDATE provider_settlement_readiness SET status=CASE WHEN payout_amount IS NULL THEN 'payment_verified_rule_pending' ELSE 'eligible' END,reason=CASE WHEN payout_amount IS NULL THEN reason ELSE 'Verified gateway capture reconciled; eligible after the recorded hold period' END,updated_at=? WHERE booking_id=?").bind(now,bookingId).run().catch(()=>null);
     if(settlesBalance)await settleStayBalance(db,{bookingId,eventId:event.eventId,paymentRef:event.gatewayPaymentId??null,now});
@@ -331,3 +347,19 @@ export async function resolvePaymentException(db:Db,input:{exceptionId:string;ac
   const newStatus=input.action==="investigate"?"investigating":input.action==="dismiss"?"dismissed":"resolved";
   await db.prepare("UPDATE payment_reconciliation_exceptions SET status=?,resolved_by=?,resolved_at=?,detail_json=json_set(detail_json,'$.resolution',?,'$.note',?) WHERE id=?").bind(newStatus,newStatus==="investigating"?null:input.actorId,newStatus==="investigating"?null:now,input.action,input.note.trim(),input.exceptionId).run();
   return{exceptionId:input.exceptionId,status:newStatus,action:input.action};}
+
+/** Reads the canonical payment and booking, then posts the approved collection entry for a capture. */
+async function postBookingCollectionOnCapture(db:Db,input:{bookingId:string;paymentId:string;eventId?:string|null}){
+  const payment=await db.prepare("SELECT id,customer_id,amount,method FROM booking_payments WHERE id=?").bind(input.paymentId).first<Row>();
+  if(!payment)return;
+  const booking=await db.prepare("SELECT city_id,service_code FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>().catch(()=>null);
+  const method=String(payment.method||"").toLowerCase();
+  await postCollectionEvent(db,{
+    event:method==="cash"?"cash_collected_confirmed":"online_payment_captured",
+    bookingId:input.bookingId,customerId:payment.customer_id?String(payment.customer_id):null,
+    cityId:booking?.city_id?String(booking.city_id):null,serviceCode:booking?.service_code?String(booking.service_code):null,
+    paymentId:String(payment.id),amount:Number(payment.amount||0),paymentMethod:method||null,
+    collectorId:method==="cash"?"gateway_reconciliation":null,
+    entryDate:new Date().toISOString().slice(0,10),transactionAt:Date.now(),actorId:"gateway_reconciliation",
+  });
+}

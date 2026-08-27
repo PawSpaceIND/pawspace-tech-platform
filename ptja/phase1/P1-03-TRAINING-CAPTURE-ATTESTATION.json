@@ -1,0 +1,64 @@
+{
+  "phase": "1 - grooming and training end-to-end, driven in a real browser with demo data",
+  "id": "P1-03",
+  "ref": "PTJA-P1-F32",
+  "status": "FIXED",
+  "title": "The Training booking declared a payment capture it never obtained, and its own declaration is what suppressed the capture",
+  "method": "Same browser journey, immediately after P1-02 unblocked the window check.",
+  "measured": [
+    "POST /api/uat-scheduling -> 200 assigned",
+    "POST /api/canonical-bookings -> 409 {\"error\":\"Training quote requires server-confirmed sandbox capture before programme booking\"}",
+    "The body it sent carried payment:{\"status\":\"captured\",\"detail\":\"Training UAT sandbox capture marker; live money disabled\"}",
+    "No request to /api/training-payment-sandbox was made at any point in the journey."
+  ],
+  "the_server_was_right": "lib/training-commercial-governance.ts requires a real attestation row (requireTrainingQuoteSandboxCapture) and will not take the client's word for it. That control held, and is untouched. The client is what was broken - and it was broken for every non-Meet-&-Greet Training booking a customer can make, so the journey could not complete at all.",
+  "root_cause": [
+    "lib/training-booking-client.ts POSTed /api/canonical-bookings itself, with a hardcoded status:'captured' and a marker string it wrote, never passing through the attestation step.",
+    "lib/canonical-lifecycle-client.ts HAS that step, but gated it on `input.payment.status!==\"captured\"`. So any caller that pre-labels its own payment 'captured' silently skips the capture that label is supposed to stand for. The client's claim about itself decided whether the claim would be checked - the same 'unknown or self-asserted treated as satisfied' shape this audit has found repeatedly."
+  ],
+  "fix": [
+    "lib/canonical-lifecycle-client.ts: the attestation gate no longer consults input.payment.status. What decides is what the booking IS - a governed Training programme with a server quote to capture against. attestTrainingProgramme is replay-safe: the capture key is memoised per quote and the server returns the same attestation for a repeat.",
+    "lib/training-booking-client.ts: now routes through createCanonicalLifecycle instead of its own fetch, so there is ONE booking path for Training and the attestation is on it. It sends status:'created'; the attestation is what promotes it."
+  ],
+  "meet_and_greet_left_alone": "lib/training-commercial-governance.ts refuses to sandbox-capture a Meet & Greet quote at all and holds it pending a verified payment event. The client mirrors that by package code, which is the only signal it holds; the authority is the package table's meet_and_greet column, so a NEW Meet-&-Greet package code would need that line updated with it. Recorded rather than papered over.",
+  "regression": "tests/ptja-p1-training-capture-attestation.test.mjs - 7 cases driving the real exported client functions with a stubbed fetch, asserting the request SEQUENCE",
+  "red_first": {
+    "P1-C01": "RED - only /api/canonical-bookings was called; no capture at all",
+    "P1-C02": "RED - the booking carried the self-written marker, not a server reference",
+    "P1-C03": "RED - a failing capture did not prevent the booking POST",
+    "P1-C05": "RED - a caller declaring its own payment 'captured' skipped the capture"
+  },
+  "non_vacuity_controls_green_throughout": [
+    "P1-C04 - Trainer Meet & Greet still books without attempting a capture",
+    "P1-C06 - a Training booking with no server quote is not sent to the capture endpoint",
+    "P1-C07 - grooming, boarding and pet_sitting never capture a Training quote"
+  ],
+  "sabotage": [
+    {
+      "control": "restore the `input.payment.status!==\"captured\"` gate AND the hardcoded captured marker",
+      "result": "RED - P1-C01, P1-C02, P1-C03, P1-C05; controls GREEN"
+    },
+    {
+      "control": "bypass the lifecycle client entirely - direct POST to /api/canonical-bookings with status forced to captured",
+      "result": "RED - P1-C01, P1-C02, P1-C03; controls GREEN"
+    }
+  ],
+  "verified_in_the_browser": [
+    "POST /api/training-payment-sandbox -> 201 reference TRN-UAT-PAY-D75CDCF9-514",
+    "POST /api/canonical-bookings -> 201 PS-UAT-MTB1R7MN-DE94",
+    "Persisted booking_payments.detail_json: {\"detail\":\"Server-attested Training UAT sandbox capture · TRN-UAT-PAY-D75CDCF9-514\",\"liveMoney\":false,...} - the server's own reference, not the fabricated marker",
+    "training_quote_payment_attestations row present: status captured, amount 3000, environment sandbox"
+  ],
+  "environment_note": "Reaching the capture at all required declaring PAWSPACE_PAYMENT_ENV=sandbox in the gitignored local .dev.vars. Before that the endpoint refused with 'Training sandbox payment is disabled unless PAWSPACE_PAYMENT_ENV is explicitly set to sandbox' - the Wave-1 rule that an absent variable is not a declaration, working exactly as intended. No secret value was printed or committed and no deployed configuration was changed.",
+  "not_claimed": [
+    "No live money moved and none can: this is the sandbox attestation path, liveMoney:false throughout. Live payment remains a launch dependency.",
+    "Only the Training vertical was driven this way. Boarding, Sitting and Grooming client paths have not been checked for the same self-declared-payment shape."
+  ],
+  "shadowed_test_found": {
+    "file": "tests/training-customer-wiring.test.mjs",
+    "case": "Training customer booking consumes a server quote and records only UAT sandbox payment truth",
+    "what": "A source-text contract case that REQUIRED lib/training-booking-client.ts to contain `status:\"captured\"` and the literal \"Training UAT sandbox capture marker\". It required the client to declare a payment capture it had never obtained, and passed for exactly as long as that was true.",
+    "why_it_could_not_catch_this": "A source-text pin proves a string is present. It cannot tell whether the string is a fact. The behaviour it was standing in for - one server-quoted booking path, no live money - is now proven request-by-request in tests/ptja-p1-training-capture-attestation.test.mjs.",
+    "how_it_was_updated": "Retargeted at the path the client actually takes (createCanonicalLifecycle) and at the POSITIVE payload literal `status:\"created\"`. A negative substring ban was tried first and rejected: it tripped on the fix's own explanatory comment quoting the old string - the same weakness, one step removed."
+  }
+}
