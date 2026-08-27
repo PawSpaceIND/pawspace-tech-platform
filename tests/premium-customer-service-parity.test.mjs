@@ -21,6 +21,33 @@ test("premium customer shell keeps the real signed-in service flows", () => {
   ], "mobile shell");
 });
 
+test("premium discovery keeps all eight legacy customer services reachable while video stays six-slot", () => {
+  const home = read("app/mobile-app/premium-discovery-home.tsx");
+  hasAll(home, [
+    /const careServices = visible/,
+    /VIDEO_SERVICE_CODES/,
+    /"grooming"/,
+    /"dog_training"/,
+    /"boarding"/,
+    /"pet_sitting"/,
+    /"dog_walking"/,
+    /"pet_taxi"/,
+    /careServices\.map/,
+    /videoServices\.map/,
+  ], "premium discovery");
+  const shell = read("app/mobile-app/page.tsx");
+  hasAll(shell, [
+    /serviceCode:"grooming"/,
+    /serviceCode:"dog_training"/,
+    /serviceCode:"boarding"/,
+    /serviceCode:"pet_sitting"/,
+    /serviceCode:"pet_taxi"/,
+    /serviceCode:"dog_walking"/,
+    /serviceCode:"food"/,
+    /serviceCode:"relocation"/,
+  ], "customer service registry");
+});
+
 test("grooming premium presentation preserves packages, live pricing and canonical booking", () => {
   const source = read("app/mobile-app/grooming-flow.tsx");
   hasAll(source, [
@@ -84,4 +111,10 @@ test("food premium presentation still uses catalogue quote order and subscriptio
   const source = read("app/mobile-app/food-flow.tsx");
   hasAll(source, [/loadFoodCatalogue/, /quoteFoodCart/, /placeQuotedFoodOrders/, /createFoodSubscription/, /resolveServiceCoverage/], "Food");
   assert.doesNotMatch(source, /customerId\s*:\s*["']TST-101["']/);
+});
+
+test("relocation remains a governed enquiry flow with no invented payment path", () => {
+  const source = read("app/mobile-app/relocation-flow.tsx");
+  hasAll(source, [/\/api\/relocation-enquiry/, /fetch\(/], "Relocation");
+  assert.doesNotMatch(source, /createCanonicalLifecycle|payment-link|payment_link|captureSittingQuoteSandbox|createTestTransaction/);
 });
