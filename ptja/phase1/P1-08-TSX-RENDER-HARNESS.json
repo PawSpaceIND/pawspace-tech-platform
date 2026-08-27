@@ -1,0 +1,29 @@
+{
+  "phase": "1 - grooming and training end-to-end, driven in a real browser with demo data",
+  "id": "P1-08",
+  "ref": "PTJA-P1-F34",
+  "status": "FIXED",
+  "title": "No UI render branch on this platform could be tested at all",
+  "the_gap": "node --experimental-strip-types removes type annotations but has no JSX transform, so importing any component failed outright with 'Unknown file extension \".tsx\"'. There is no jsdom and no @testing-library either (tests/partner-surface-contract.test.mjs:21 already said so). The consequence was not that UI tests were thin - it was that a UI render branch could not be reached by a test at any effort.",
+  "how_it_showed_up": "Every UI-state defect Phase 1 found had to be found by opening a browser, and none could be pinned afterwards: P1-01's raw NO_SCHEDULE_AVAILABLE shown as customer copy, P1-04's hardcoded fixture pet list, and P1-07a's order page drawn for an order that does not exist. P1-07a and P1-07b were left unfixed for exactly this reason.",
+  "fix": [
+    "tests/helpers/module-hooks.mjs now transpiles .tsx with TypeScript's own compiler. TypeScript is already a direct devDependency, so no package is introduced.",
+    "CSS-module imports resolve to a Proxy whose every string key returns itself, so a className is a usable class name rather than the literal 'undefined' - a bare {} would make a missing stylesheet look like a render bug.",
+    "The extensionless resolver now falls back .ts then .tsx, so a component's sibling import resolves too.",
+    "A bare specifier into a package with no exports map (next/link) falls back to +'.js'. Reached ONLY after the real resolution has already failed, so it cannot change an import that works.",
+    ".ts is deliberately NOT intercepted: Node already strips it, and taking that over would change the loading of every existing suite for no gain."
+  ],
+  "the_data_url_problem_and_why_it_mattered": "The out-of-thread hook is handed to Node as a data: URL, and a data: URL module has no base path - so `import \"typescript\"` inside it failed with ERR_UNSUPPORTED_RESOLVE_REQUEST no matter what parentURL register() was given. Resolving TypeScript's absolute path in the parent and interpolating it is what makes that branch work. This matters because the out-of-thread branch is the one CI's Node 22.13 pin actually takes: a version that only worked in-thread would have passed on this machine and failed in CI.",
+  "regression": "tests/ptja-p1-tsx-render-harness.test.mjs - 3 cases. The capability now has its own regression, so if the transform breaks it goes red rather than the gap silently reopening.",
+  "non_vacuity": "P1-H02 renders the SAME component with two different props and requires two different screens. If the transform were returning something inert both would look alike and every assertion in the file would be worthless.",
+  "sabotage": [
+    {"control": "remove the .tsx load branch", "result": "RED - P1-H01, P1-H02; the CSS case stayed GREEN"},
+    {"control": "remove the CSS-module stub", "result": "RED - P1-H03 only; both render cases stayed GREEN"}
+  ],
+  "verified_on_both_hook_branches": "Full suite 3632/3632 in-thread (registerHooks), and 3632/3632 with PAWSPACE_FORCE_LOADER_HOOK=1, which is the out-of-thread path CI takes. This file is imported by most suites, so 'unchanged' had to be measured, not assumed.",
+  "what_this_buys_and_what_it_does_not": "react-dom/server renders the INITIAL state. Effects do not run, so a component's post-fetch states are still out of reach, and this is not a substitute for a browser. It is enough to pin what a screen shows before its data arrives - which is exactly where 'absent drawn as present' lives.",
+  "not_claimed": [
+    "No existing UI defect is fixed by this commit. It makes them fixable with evidence.",
+    "Components that need effect flushing, user events or layout still cannot be tested here."
+  ]
+}
