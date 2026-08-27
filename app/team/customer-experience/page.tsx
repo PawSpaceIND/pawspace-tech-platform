@@ -71,26 +71,27 @@ export default function CustomerExperiencePage() {
     return next;
   }, []);
 
-  const loadConversation = useCallback(async (id: string) => {
+  const loadConversation = useCallback(async (id: string, shouldApply: () => boolean = () => true) => {
     if (!id) return;
     const response = await fetch(`/api/conversations?threadId=${encodeURIComponent(id)}`, { cache: "no-store" });
     const payload = await response.json().catch(() => ({})) as { data?: Conversation; error?: string };
     if (!response.ok) throw new Error(payload.error || `Unable to load conversation (HTTP ${response.status})`);
+    if (!shouldApply()) return;
     setConversation(payload.data || null);
     setServiceWindowCheckedAt(Date.now());
   }, []);
 
-  const loadControl = useCallback(async (id: string) => {
+  const loadControl = useCallback(async (id: string, shouldApply: () => boolean = () => true) => {
     if (!id) return null;
     const response = await fetch(`/api/whatsapp/conversation-control?threadId=${encodeURIComponent(id)}`, { cache: "no-store" });
     const payload = await response.json().catch(() => ({})) as { data?: WhatsAppControl; error?: string };
     if (response.status === 409 || response.status === 404) {
-      setControl(null);
+      if (shouldApply()) setControl(null);
       return null;
     }
     if (!response.ok) throw new Error(payload.error || `Unable to load WhatsApp controls (HTTP ${response.status})`);
     const next = payload.data || null;
-    setControl(next);
+    if (shouldApply()) setControl(next);
     return next;
   }, []);
 
@@ -115,7 +116,7 @@ export default function CustomerExperiencePage() {
     if (!selected) return;
     let active = true;
     const timer = window.setTimeout(() => {
-      void Promise.all([loadConversation(selected), loadControl(selected)]).catch((cause) => {
+      void Promise.all([loadConversation(selected, () => active), loadControl(selected, () => active)]).catch((cause) => {
         if (active) setError(cause instanceof Error ? cause.message : String(cause));
       });
     }, 0);
