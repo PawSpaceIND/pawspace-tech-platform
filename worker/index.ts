@@ -5,6 +5,7 @@ import { auditApiResponse, authorizeApiRequest } from "../lib/api-gateway";
 import {authorizePlatformSessionRequest} from "../lib/session-api-gateway";
 import {blockDisabledServiceRequest} from "../lib/service-control";
 import {runBackgroundScheduler} from "../lib/background-scheduler";
+import {processDueWhatsAppNoResponseSequences} from "../lib/whatsapp-no-response-sequence";
 import {cleanupExpiredReservationLeases} from "../lib/scheduling-reservation-leases";
 
 interface Env {
@@ -71,7 +72,7 @@ const worker = {
     return handler.fetch(request, env, ctx);
   },
   async scheduled(controller:ScheduledControllerLike,env:Env,ctx:ExecutionContext){
-    ctx.waitUntil((async()=>{const [cleanup,scheduler]=await Promise.allSettled([cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron})]);const errors:string[]=[];if(cleanup.status==="rejected")errors.push(`reservation cleanup: ${cleanup.reason instanceof Error?cleanup.reason.message:String(cleanup.reason)}`);if(scheduler.status==="rejected")errors.push(`background scheduler: ${scheduler.reason instanceof Error?scheduler.reason.message:String(scheduler.reason)}`);else if(Array.isArray(scheduler.value.errors)&&scheduler.value.errors.length)errors.push(...scheduler.value.errors);if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);})());
+    ctx.waitUntil((async()=>{const [cleanup,scheduler,whatsappRecovery]=await Promise.allSettled([cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),processDueWhatsAppNoResponseSequences(env.DB,{now:controller.scheduledTime,actorEmail:"system:scheduled-worker"})]);const errors:string[]=[];if(cleanup.status==="rejected")errors.push(`reservation cleanup: ${cleanup.reason instanceof Error?cleanup.reason.message:String(cleanup.reason)}`);if(scheduler.status==="rejected")errors.push(`background scheduler: ${scheduler.reason instanceof Error?scheduler.reason.message:String(scheduler.reason)}`);else if(Array.isArray(scheduler.value.errors)&&scheduler.value.errors.length)errors.push(...scheduler.value.errors);if(whatsappRecovery.status==="rejected")errors.push(`whatsapp recovery: ${whatsappRecovery.reason instanceof Error?whatsappRecovery.reason.message:String(whatsappRecovery.reason)}`);if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);})());
   },
 };
 

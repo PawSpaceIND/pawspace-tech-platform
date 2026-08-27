@@ -23,10 +23,13 @@ test("STOP-family opt-outs are explicit whole-message commands",()=>{
  assert.match(source,/revoked_at=COALESCE/);
 });
 
-test("human ownership prevents AI eligibility and all replies remain approval-gated in this rollout",()=>{
- assert.match(source,/human_owned/);
- assert.match(source,/aiEligible:!humanOwned/);
- assert.match(source,/autoSend:false,approvalRequired:true/);
+test("human ownership blocks AI while governed AI drafts remain approval-gated and never auto-send",()=>{
+ assert.match(source,/if\(input\.humanOwned\)return\{status:"received",routingMode:"human_only",aiEligible:false,autoSend:false/);
+ assert.match(source,/routing\.mode==="ai_assistant"/);
+ assert.match(source,/runGovernedMetaWhatsAppAiTurn/);
+ assert.match(source,/aiEligible:true/);
+ assert.match(source,/automationReason:ai\.status==="ai_draft_ready"\?"governed_ai_draft_ready":"governed_ai_pending"/);
+ assert.doesNotMatch(source,/autoSend:true/);
 });
 
 test("Meta delivery callbacks map to canonical communication messages",()=>{

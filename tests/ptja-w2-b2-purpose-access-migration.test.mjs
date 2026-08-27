@@ -256,12 +256,19 @@ test("PBA-12: an uncategorised internal note is withheld from a reader without t
   // The remaining half of W2-B3-C07. A free-text note on a message payload carries no category, so
   // nothing can prove it is benign - it is treated as the most restrictive category the matrix has.
   // The measured case was an associate reading "Customer threatened to go to c..." off a thread.
-  const { sqlite, db, headers, now } = await staffWorld("associate");
+  const { sqlite, db, headers, now, email } = await staffWorld("associate");
   seedCustomer(sqlite, now);
   const governance = await import("../lib/conversation-governance.ts");
   await governance.ensureConversationGovernance(db);
+  const access = await import("../lib/conversation-access.ts");
+  await access.ensureConversationAccessTables(db);
   const stamp = now;
-  sqlite.prepare("INSERT INTO communication_threads (id,customer_id,booking_id,lead_id,ticket_id,status,assigned_to,sla_due_at,created_at,updated_at) VALUES ('THREAD-V','CUST-1',NULL,NULL,NULL,'open','someone.else@pawspace.test',NULL,?,?)").run(stamp, stamp);
+  sqlite.prepare("INSERT INTO crm_contacts (id,name,primary_phone,area,stage,owner,source,created_at,updated_at) VALUES ('CUST-1','Ritu Malhotra',?,'blr','New lead','Unassigned','test',?,?)").run(RAW_PHONE, stamp, stamp);
+  sqlite.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,created_at,updated_at) VALUES ('LEAD-V','CUST-1','website','grooming','Unassigned','Unassigned','active','day_1',1,?,?,?,?,?)").run(stamp, stamp + 600000, stamp + 1800000, stamp, stamp);
+  sqlite.prepare("INSERT INTO lead_assignment_policies (id,name,status,version,team_code,service_codes_json,city_ids_json,language_codes_json,max_active_workload,continuity_enabled,require_shift,fallback_queue,effective_from,effective_until,approval_reference,created_by,created_at,updated_by,updated_at) VALUES ('POL-PBA12','PBA 12 scope','active_uat',1,'sales','[\"grooming\"]','[\"blr\"]','[]',100,1,0,'cx-sales',?,NULL,'PBA-12','seed',?,'seed',?)").run(stamp - 60000, stamp, stamp);
+  sqlite.prepare("INSERT INTO lead_assignment_memberships (id,employee_email,team_code,service_codes_json,city_ids_json,language_codes_json,active,workload_cap_override,created_by,created_at,updated_by,updated_at) VALUES ('MEM-PBA12',?,'sales','[\"grooming\"]','[\"blr\"]','[]',1,NULL,'seed',?,'seed',?)").run(email, stamp, stamp);
+  sqlite.prepare("INSERT INTO lead_assignments (id,idempotency_key,lead_id,employee_email,team_code,policy_id,policy_version,assignment_reason,status,fallback_queue,assigned_at,detail_json,created_by,created_at) VALUES ('ASG-PBA12','IDEM-PBA12','LEAD-V',?,'sales','POL-PBA12',1,'new_lead','current',NULL,?,'{}','seed',?)").run(email, stamp, stamp);
+  sqlite.prepare("INSERT INTO communication_threads (id,customer_id,booking_id,lead_id,ticket_id,status,assigned_to,sla_due_at,created_at,updated_at) VALUES ('THREAD-V','CUST-1',NULL,'LEAD-V',NULL,'open','someone.else@pawspace.test',NULL,?,?)").run(stamp, stamp);
   const columns = sqlite.prepare("PRAGMA table_info(communication_messages)").all().map((row) => String(row.name));
   const values = {
     id: "MSG-1", thread_id: "THREAD-V", customer_id: "CUST-1", direction: "outbound", channel: "whatsapp",
