@@ -51,7 +51,7 @@ jobs:
           test "${#tracked_tests[@]}" -gt 0
           status=0
           set +e
-          NODE_ENV=test node --experimental-strip-types --test "${tracked_tests[@]}" 2>&1 | tee web-tests.tap
+          PAWSPACE_LOCAL_PREVIEW=on NODE_ENV=test node --experimental-strip-types --test "${tracked_tests[@]}" 2>&1 | tee web-tests.tap
           status=${PIPESTATUS[0]}
           set -e
           if [ "$status" -ne 0 ]; then
@@ -297,7 +297,7 @@ jobs:
           set -euo pipefail
           node -e "const m=require('node:module');if(typeof m.registerHooks!=='function'){console.error('this runner has no registerHooks - the job cannot prove that branch');process.exit(1)}"
           mapfile -t suites < harness-suites.txt
-          NODE_ENV=test node --experimental-strip-types --test "${suites[@]}"
+          PAWSPACE_LOCAL_PREVIEW=on NODE_ENV=test node --experimental-strip-types --test "${suites[@]}"
       - name: Loader-hook fallback path (what the pinned CI Node uses)
         shell: bash
         env:
@@ -305,7 +305,7 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t suites < harness-suites.txt
-          NODE_ENV=test node --experimental-strip-types --test "${suites[@]}"
+          PAWSPACE_LOCAL_PREVIEW=on NODE_ENV=test node --experimental-strip-types --test "${suites[@]}"
 
   backend:
     name: Backend
