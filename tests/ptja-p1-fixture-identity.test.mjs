@@ -69,3 +69,29 @@ test("P1-I03 non-vacuity: the fixture list is the one that was actually there", 
   assert.match(ledger, /TST-101/, "the banned id is the one the sweep recorded");
   assert.equal(CUSTOMER_PAGES.length, 8, "training plus the seven the sweep found");
 });
+
+// --- P1-04: the landing page books through the governed flow, not a second implementation ---
+
+test("P1-I04 the landing page carries no simulated identity of its own", async () => {
+  const source = await read("app/page.tsx");
+  const code = source.split("\n").filter((line) => !line.trim().startsWith("*") && !line.trim().startsWith("//")).join("\n");
+  // Each of these was measured on the page before this change.
+  assert.ok(!code.includes("OTP verification is simulated"), "the simulated-OTP note is gone");
+  assert.ok(!/`WEB-\$\{/.test(code), "identity is no longer synthesised from an unverified phone number");
+  assert.ok(!code.includes("savedPets"), "the hardcoded pet list is gone");
+});
+
+test("P1-I05 it hands booking to the governed grooming flow and sign-in to the existing login", async () => {
+  const source = await read("app/page.tsx");
+  assert.match(source, /import GroomingFlow from "\.\/mobile-app\/grooming-flow"/, "the governed flow is what books");
+  assert.match(source, /<GroomingFlow customer=\{customer\} \/>/, "and it is given the resolved customer");
+  assert.match(source, /import CustomerLogin/, "sign-in reuses the existing customer login, not a new identity model");
+  assert.match(source, /loadCustomerAccount\(\)/, "the customer comes from the platform session");
+});
+
+test("P1-I06 non-vacuity: the governed flow itself still books for its own customer", async () => {
+  // If GroomingFlow were the broken one, routing into it would be no fix at all.
+  const flow = await read("app/mobile-app/grooming-flow.tsx");
+  assert.ok(!flow.includes("TST-101"), "the governed flow carries no fixture identity");
+  assert.match(flow, /createCanonicalLifecycle/, "and books through the canonical lifecycle");
+});

@@ -6,8 +6,11 @@ const source=async path=>readFile(new URL("../"+path,import.meta.url),"utf8");
 
 test("Grooming closure uses one canonical transaction across Customer Partner Team and Finance",async()=>{
   const[customer,canonical,change,partnerApi,partnerUi,lifecycle,finance,security,governance,mediaSecurity,mediaApi,mediaBoundary]=await Promise.all([
-    source("app/page.tsx"),source("app/api/canonical-bookings/route.ts"),source("app/api/grooming-booking-change/route.ts"),source("app/api/partner-grooming-jobs/route.ts"),source("app/partner-app/canonical-grooming-jobs.tsx"),source("app/api/grooming-lifecycle/route.ts"),source("app/api/grooming-finance/route.ts"),source("lib/server-auth.ts"),source("lib/grooming-governance.ts"),source("lib/service-media-security.ts"),source("app/api/service-media/route.ts"),source("lib/media-upload-boundary.ts"),
+    source("app/mobile-app/grooming-flow.tsx"),source("app/api/canonical-bookings/route.ts"),source("app/api/grooming-booking-change/route.ts"),source("app/api/partner-grooming-jobs/route.ts"),source("app/partner-app/canonical-grooming-jobs.tsx"),source("app/api/grooming-lifecycle/route.ts"),source("app/api/grooming-finance/route.ts"),source("lib/server-auth.ts"),source("lib/grooming-governance.ts"),source("lib/service-media-security.ts"),source("app/api/service-media/route.ts"),source("lib/media-upload-boundary.ts"),
   ]);
+  // The customer surface that books grooming is app/mobile-app/grooming-flow.tsx; app/page.tsx hands
+  // over to it rather than running a second implementation [PTJA-P1-F38]. The property is unchanged:
+  // one canonical transaction, reserved and booked through the governed clients.
   assert.match(customer,/createCanonicalLifecycle/);
   assert.match(customer,/reserveUatSchedule/);
   assert.match(canonical,/idempotency_key TEXT NOT NULL UNIQUE/);
