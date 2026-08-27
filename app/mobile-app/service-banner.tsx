@@ -10,14 +10,14 @@ import styles from "./service-banner.module.css";
 type BannerSpec = { image: string; alt: string; headline: string; sub: string };
 
 const BANNERS: Record<string, BannerSpec> = {
-  Grooming: { image: "/assets/banners/grooming-groomer-action.jpg", alt: "PawSpace groomer bathing a dog", headline: "Doorstep grooming, clearly booked", sub: "Provider status · package details · canonical booking updates" },
-  Training: { image: "/assets/banners/training-handshake.jpg", alt: "Trainer teaching a dog to shake hands", headline: "Structured training, visible progress", sub: "Governed programmes · session-by-session records" },
-  Boarding: { image: "/assets/banners/boarding-puppy-hug.jpg", alt: "Host hugging a boarding puppy", headline: "Home boarding with explicit checks", sub: "Host verification status · capacity · stay records" },
-  "Pet Sitting": { image: "/assets/banners/sitting-woman-cat.jpg", alt: "Pet sitter caring for a cat at home", headline: "Care in your own home", sub: "Provider details · care plan · visit records" },
-  "Dog Walking": { image: "/assets/banners/walking-husky-forest.jpg", alt: "Dog walker with a husky", headline: "Scheduled walks with clear status", sub: "Canonical schedule · walker assignment · evidence status" },
-  "Pet Taxi": { image: "/assets/banners/taxi-car-window.jpg", alt: "Dog looking out of a pet taxi window", headline: "Pet transport, clearly governed", sub: "Driver assignment · handover record · trip status" },
-  "Fresh Food": { image: "/assets/banners/food-prep-bowl.jpg", alt: "Fresh pet food being prepared", headline: "Pet food orders with explicit status", sub: "Catalogue details · stock status · order record" },
-  Relocation: { image: "/assets/banners/taxi-vintage-truck.jpg", alt: "Pet travel crate ready for relocation", headline: "Relocation requests reviewed carefully", sub: "Requirements · document status · human confirmation" },
+  Grooming: { image: "/assets/breeds/shih-tzu-hero.jpg", alt: "Shih tzu ready for grooming", headline: "Doorstep grooming, beautifully simple", sub: "Choose care, time and preferences in one place" },
+  Training: { image: "/assets/breeds/german-shepherd-hero.jpg", alt: "German Shepherd in training", headline: "Structured training, visible progress", sub: "Build everyday skills, session by session" },
+  Boarding: { image: "/assets/breeds/golden-retriever-hero.jpg", alt: "Golden Retriever ready for boarding", headline: "Home boarding with thoughtful checks", sub: "Stay details, care preferences and updates together" },
+  "Pet Sitting": { image: "/assets/breeds/labrador-retriever-hero.jpg", alt: "Labrador Retriever receiving care at home", headline: "Care in your own home", sub: "A care plan built around your pet" },
+  "Dog Walking": { image: "/assets/banners/walking-husky-forest.jpg", alt: "A large dog enjoying a guided walk", headline: "Big walks with a clear plan", sub: "Scheduled walks, live updates and familiar routines" },
+  "Pet Taxi": { image: "/assets/banners/taxi-car-window.jpg", alt: "Dog looking out of a pet taxi window", headline: "A calmer way to travel together", sub: "Trip details, handover updates and care information in one place" },
+  "Fresh Food": { image: "/assets/banners/food-prep-bowl.jpg", alt: "Fresh pet food being prepared", headline: "Fresh meals, simply ordered", sub: "Explore the catalogue, delivery choices and order updates" },
+  Relocation: { image: "/assets/banners/taxi-vintage-truck.jpg", alt: "Pet travel crate ready for relocation", headline: "Thoughtful support for every move", sub: "Share your plan and let the PawSpace team guide the details" },
 };
 
 const HOME_BANNER: BannerSpec = { image: "/assets/banners/grooming-bag-shihtzu.jpg", alt: "Freshly groomed shih tzu in a PawSpace bag", headline: "PawSpace care in one family record", sub: "Provider details · service updates · one family record" };
