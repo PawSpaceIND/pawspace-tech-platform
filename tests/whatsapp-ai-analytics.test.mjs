@@ -38,7 +38,8 @@ test("WhatsApp analytics reconciles funnel, SLA, automation, queue, consent, att
   assert.equal(report.whatsapp.funnel.readEvents, 1);
   assert.equal(report.whatsapp.firstResponse.averageMs, 60_000);
   assert.equal(report.whatsapp.resolutionSla.averageMs, 300_000);
-  assert.deepEqual(report.whatsapp.templateFunnel.messageStatus.map((row) => row.template_key), ["inbound_message", "lead_first_response"]);
+  assert.deepEqual(report.whatsapp.templateFunnel.messageStatus.map((row) => row.template_key), ["lead_first_response"]);
+  assert.deepEqual(report.whatsapp.templateFunnel.deliveryEvents.map((row) => row.template_key), ["lead_first_response", "lead_first_response"]);
   assert.equal(report.automation.aiTurns, 1);
   assert.equal(report.automation.aiContainmentRate, 1);
   assert.equal(report.automation.chatbotTurns, 1);
