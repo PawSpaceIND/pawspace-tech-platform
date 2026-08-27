@@ -1,7 +1,7 @@
 {
   "phase": "1 - grooming and training end-to-end, driven in a real browser with demo data",
   "id": "P1-07",
-  "status": "REPORTED - NOT FIXED (cannot be pinned by this test harness)",
+  "status": "FIXED",
   "title": "Two Food screens answer a stale link badly; a third was flagged and is correct",
   "why_this_was_looked_at": "The screen sweep flagged /food/manage, /food/subscription-invoice and /food/subscription-payment as blank. Bare visits are NOT a user path - all three are only ever linked with a query parameter (app/food/canonical-food-page.tsx:21 and app/food/subscriptions/page.tsx:60-61; subscription-payment has no in-app link at all and is reached from a stored payment_link_path). A STALE or expired link is a real path, so that is what was driven.",
   "measured_in_a_browser": [
@@ -26,5 +26,51 @@
   "refuted": "/food/subscription-invoice was flagged by the same sweep and is CORRECT: it reports 'Unable to load Food subscription' for an unknown id. /food/manage with NO orderId at all also renders a deliberate placeholder with a way back; the defect is specifically the unknown-id case.",
   "why_not_fixed": "Both are render branches of client .tsx components, and this repository has no harness that can render one: there is no jsdom or @testing-library (tests/partner-surface-contract.test.mjs:21 says so), and `node --experimental-strip-types` cannot load .tsx at all - 'Unknown file extension \".tsx\"'. Fixing these without a regression test would put unpinned changes into a branch whose whole claim is that every fix is RED-first and sabotage-verified. Reported instead.",
   "the_coverage_gap_itself": "No .tsx render branch anywhere in this platform can be pinned by the current test suite. Every UI-state defect found so far - P1-01's refusal copy, P1-04's fixture pets, these two - had to be found by opening a browser. That is a standing gap in the suite, not a property of these three screens.",
-  "not_claimed": ["Only these three Food screens were driven. Other screens' stale-link and not-found states have not been swept."]
+  "not_claimed": [
+    "Only these Food screens were driven. Other screens' stale-link and not-found states have not been swept, though lib/resource-screen-state.ts is now there for them."
+  ],
+  "ref": "PTJA-P1-F35",
+  "correction": "My first probe used ?requestId= on /food/subscription-payment. That page reads renewalId, so what I measured was the NO-PARAMETER case, not an unknown id. Both are broken, and both are now fixed, but the original note described the wrong one.",
+  "fix": [
+    "New lib/resource-screen-state.ts: one five-state decision - no-id, loading, not-found, failed, ready - for a screen that loads one record by id. `loaded` is the field that does the work: without it 'we have not asked yet' and 'we asked and there is nothing' are the same value, and no screen can tell a missing record from a pending one. An error outranks both, so a failed request is never reported to a customer as a missing record.",
+    "app/food/manage/food-customer-management.tsx and app/food/subscription-payment/page.tsx both use it, and each now says what happened instead of drawing or omitting silently.",
+    "app/food/manage/page.tsx nests the incidents section INSIDE the order screen, so an order-scoped section cannot outlive the order it belongs to."
+  ],
+  "why_it_could_be_fixed_now": "P1-08 added a .tsx render harness. Before that these were unfixable with evidence, which is exactly why they were reported and left.",
+  "regression": "tests/ptja-p1-food-order-not-found.test.mjs - 6 cases",
+  "red_first": {
+    "P1-N01": "RED - an unknown order was 'ready'",
+    "P1-N02": "RED - loading and not-found were the same state",
+    "P1-N03": "RED - the failed state did not exist",
+    "P1-N04": "RED - the initial render drew Order truth, Inventory reservation, Dispatch and a cancellation control",
+    "P1-N06": "RED - the renewal payment screen rendered its header and nothing else"
+  },
+  "non_vacuity_controls_green_throughout": [
+    "P1-N05 - the empty-orderId screen still renders its placeholder and a way back, so 'render nothing for everything' cannot pass"
+  ],
+  "sabotage": [
+    {
+      "control": "not-found collapses back into ready",
+      "result": "RED - P1-N01 only"
+    },
+    {
+      "control": "loading is not distinguished from not-found",
+      "result": "RED - P1-N02 only"
+    },
+    {
+      "control": "an error is masked by a stale record",
+      "result": "RED - P1-N03 only"
+    },
+    {
+      "control": "the payment screen stops explaining itself",
+      "result": "RED - P1-N06 only"
+    }
+  ],
+  "verified_in_the_browser": [
+    "/food/manage?orderId=<unknown> -> 'We could not find that Food order. No Food order matches ... The link may be out of date, or the order may have been placed on a different account.' and nothing else",
+    "/food/manage with no id -> the existing placeholder, unchanged",
+    "/food/subscription-payment with no id -> 'This payment link is incomplete. Please open the renewal from your Food subscriptions, or check the link you were sent.'",
+    "/food/subscription-payment?renewalId=<unknown> -> 'Unable to load Food subscription'"
+  ],
+  "not_pinned_and_why": "The nesting of order-scoped sections is browser-verified only. A test for it would be vacuous in this harness: the 'does not render' half passes even against a component that drops children entirely, and the 'does render' half needs the ready state, which needs effects to have run - the limit recorded in P1-08. Said plainly rather than pinned by an assertion that cannot fail."
 }
