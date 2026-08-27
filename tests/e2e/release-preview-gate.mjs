@@ -22,7 +22,7 @@ export * from "./release-preview-gate-legacy.mjs";
  * product contracts. It never bypasses a product guard: quotes and captures are obtained through the
  * deployed HTTP routes, and the canonical booking is still accepted or refused by the deployed handler.
  */
-export const CURRENT_PRODUCT_CONTRACT = "canonical-booking-2026-08-27";
+export const CURRENT_PRODUCT_CONTRACT = "canonical-booking-2026-08-27-v2";
 
 // Keep fail-closed evidence recording in the active wrapper too. This is deliberately a runtime helper,
 // not a source-text compatibility shim: the current-contract adapter uses it whenever its own required
@@ -37,23 +37,54 @@ function cookieFrom(headers) {
   return String(headers?.["set-cookie"] ?? headers?.get?.("set-cookie") ?? "").split(";")[0];
 }
 
+function safeHttpError(res) {
+  const raw = res?.body?.error;
+  if (typeof raw !== "string") return "";
+  return raw.replace(/\s+/g, " ").trim().slice(0, 160);
+}
+
+function statusCount(bucket, status) {
+  const key = String(Number(status) || 0);
+  bucket[key] = Number(bucket[key] || 0) + 1;
+}
+
 export function adaptCurrentProductContracts({ http, d1 }) {
   const sessionEmail = new Map();
   const preparedByIdentity = new Map();
+  let preparationBlocked = false;
+  let diagnosticsCollected = false;
   const metrics = {
     permissionRewrites: 0,
+    bookerPermissionPreserved: 0,
     zoneRewrites: 0,
+    quoteAttempts: 0,
     quotePreparations: 0,
-    quotePreparationFailures: 0,
+    quoteFailures: 0,
+    quoteFailureStatuses: {},
+    captureAttempts: 0,
+    captureFailures: 0,
+    captureFailureStatuses: {},
+    preparationSuppressions: 0,
+    firstPreparationFailure: null,
+    preparationDiagnostics: null,
   };
 
   const currentD1 = async (sql) => {
     let next = String(sql);
-    if (/^INSERT OR REPLACE INTO role_definitions /i.test(next) && next.includes("bookings.view")) {
-      const rewritten = next.replaceAll('["bookings.view"]', '["bookings.manage"]')
-        .replaceAll('["bookings.view","scheduling.book"]', '["bookings.manage","scheduling.book"]');
-      if (rewritten !== next) metrics.permissionRewrites++;
-      next = rewritten;
+    if (/^INSERT OR REPLACE INTO role_definitions /i.test(next)) {
+      // The lifecycle GET genuinely moved from bookings.view to bookings.manage. Only the dedicated
+      // preview VIEWER needs that adaptation. The customer booker must NOT be promoted: production's
+      // requireCustomerOwnership intentionally treats bookings.manage as a staff ownership bypass, so
+      // rewriting preview_booker changes the security semantics and turns the wrong-owner 403 probe into
+      // a later business-rule failure instead of testing ownership at all.
+      if (next.includes("'preview_viewer'") && next.includes('[\"bookings.view\"]')) {
+        const rewritten = next.replaceAll('[\"bookings.view\"]', '[\"bookings.manage\"]');
+        if (rewritten !== next) metrics.permissionRewrites++;
+        next = rewritten;
+      }
+      if (next.includes("'preview_booker'") && next.includes('[\"bookings.view\",\"scheduling.book\"]')) {
+        metrics.bookerPermissionPreserved++;
+      }
     }
     if (/^INSERT OR REPLACE INTO scheduling_reservations /i.test(next)) {
       const rewritten = next.replaceAll("'blr','koramangala'", "'blr','blr-east'");
@@ -74,6 +105,74 @@ export function adaptCurrentProductContracts({ http, d1 }) {
     payment: { ...(body.payment || {}), mode: quote.paymentMode || "prepaid", status: "captured" },
     pricing: { ...(body.pricing || {}), sittingQuoteId: quote.quoteId },
   });
+
+  const readColumns = async (table) => {
+    try {
+      const rows = await d1(`PRAGMA table_info(${table})`);
+      return rows.map((row) => String(row.name || "")).filter(Boolean).sort();
+    } catch {
+      return ["<unavailable>"];
+    }
+  };
+
+  const readOne = async (sql) => {
+    try { return (await d1(sql))[0] ?? null; }
+    catch { return null; }
+  };
+
+  const collectPreparationDiagnostics = async () => {
+    if (diagnosticsCollected) return;
+    diagnosticsCollected = true;
+    const [sittingQuoteColumns, paymentColumns, pricingPackageColumns, pricingRuleColumns] = await Promise.all([
+      readColumns("sitting_commercial_quotes"),
+      readColumns("sitting_quote_payment_attestations"),
+      readColumns("service_packages"),
+      readColumns("dynamic_pricing_rules"),
+    ]);
+    const sittingPackage = await readOne("SELECT package_code,active,version,effective_from,effective_to FROM sitting_commercial_packages WHERE package_code='sitting-visit-60'");
+    const pricingPackage = await readOne("SELECT package_code,service_code,active,version,effective_from,effective_to FROM service_packages WHERE package_code='sitting-visit-60'");
+    let pricingRules = [];
+    try {
+      pricingRules = await d1("SELECT days_json FROM dynamic_pricing_rules WHERE status='published' AND service_code='pet_sitting'");
+    } catch { /* table may be unavailable; the column list above records that */ }
+    let invalidPublishedRuleDaysJson = 0;
+    for (const row of pricingRules) {
+      try {
+        const parsed = JSON.parse(String(row.days_json ?? "[]"));
+        if (!Array.isArray(parsed)) invalidPublishedRuleDaysJson++;
+      } catch { invalidPublishedRuleDaysJson++; }
+    }
+    const packageShape = (row, includeService = false) => row ? {
+      packageCode: String(row.package_code || ""),
+      ...(includeService ? { serviceCode: String(row.service_code || "") } : {}),
+      active: Number(row.active),
+      version: Number(row.version),
+      effectiveFrom: String(row.effective_from || ""),
+      effectiveTo: row.effective_to == null ? null : String(row.effective_to),
+    } : null;
+    metrics.preparationDiagnostics = {
+      sittingQuoteColumns,
+      paymentColumns,
+      pricingPackageColumns,
+      pricingRuleColumns,
+      sittingPackage: packageShape(sittingPackage),
+      pricingPackage: packageShape(pricingPackage, true),
+      publishedPricingRuleCount: pricingRules.length,
+      invalidPublishedRuleDaysJson,
+    };
+  };
+
+  const blockPreparation = async (phase, res) => {
+    preparationBlocked = true;
+    const message = safeHttpError(res);
+    if (!metrics.firstPreparationFailure) {
+      metrics.firstPreparationFailure = `${phase}:status=${res?.status ?? 0}${message ? `:error=${message}` : ""}`;
+    }
+    await collectPreparationDiagnostics();
+    // This is a gate-internal dependency failure, not a response from the product. Returning a distinct
+    // status keeps the legacy oracle fail-closed while preventing 75 more doomed quote/capture attempts.
+    return { status: 424, body: { error: "PREVIEW_CONTRACT_PREPARATION_FAILED" }, headers: {} };
+  };
 
   const currentHttp = async (method, requestPath, options = {}) => {
     if (requestPath === "/api/staging-login") {
@@ -112,6 +211,12 @@ export function adaptCurrentProductContracts({ http, d1 }) {
         && sourceIdsAreText;
 
       if (shouldPrepare) {
+        if (preparationBlocked) {
+          metrics.preparationSuppressions++;
+          return { status: 424, body: { error: "PREVIEW_CONTRACT_PREPARATION_FAILED" }, headers: {} };
+        }
+
+        metrics.quoteAttempts++;
         const quoteRes = await http("POST", "/api/sitting-commercial", {
           body: {
             packageCode: "sitting-visit-60",
@@ -125,17 +230,20 @@ export function adaptCurrentProductContracts({ http, d1 }) {
         });
         const quote = quoteRes.body?.data;
         if (quoteRes.status !== 201 || !quote?.quoteId || !Number.isFinite(Number(quote?.amountDueNow))) {
-          metrics.quotePreparationFailures++;
-          return http(method, requestPath, { ...options, body });
+          metrics.quoteFailures++;
+          statusCount(metrics.quoteFailureStatuses, quoteRes.status);
+          return blockPreparation("quote", quoteRes);
         }
 
+        metrics.captureAttempts++;
         const captureRes = await http("POST", "/api/sitting-payment-sandbox", {
           headers: { "x-payment-capture-key": `preview-gate-${String(body.idempotencyKey || body.scheduleGroupId).slice(0, 96)}` },
           body: { quoteId: quote.quoteId, amount: Number(quote.amountDueNow) },
         });
         if (captureRes.status < 200 || captureRes.status >= 300) {
-          metrics.quotePreparationFailures++;
-          return http(method, requestPath, { ...options, body });
+          metrics.captureFailures++;
+          statusCount(metrics.captureFailureStatuses, captureRes.status);
+          return blockPreparation("capture", captureRes);
         }
 
         const prepared = {
@@ -157,7 +265,16 @@ export function adaptCurrentProductContracts({ http, d1 }) {
     return http(method, requestPath, options);
   };
 
-  return { http: currentHttp, d1: currentD1, stats: () => ({ ...metrics }) };
+  return {
+    http: currentHttp,
+    d1: currentD1,
+    stats: () => ({
+      ...metrics,
+      quoteFailureStatuses: { ...metrics.quoteFailureStatuses },
+      captureFailureStatuses: { ...metrics.captureFailureStatuses },
+      preparationDiagnostics: metrics.preparationDiagnostics ? { ...metrics.preparationDiagnostics } : null,
+    }),
+  };
 }
 
 export async function runGate(io) {
@@ -178,11 +295,24 @@ export async function runGate(io) {
   }));
   const contract = adapted.stats();
   const contractOk = contract.permissionRewrites > 0
+    && contract.bookerPermissionPreserved > 0
     && contract.zoneRewrites > 0
     && contract.quotePreparations > 0
-    && contract.quotePreparationFailures === 0;
+    && contract.quoteFailures === 0
+    && contract.captureFailures === 0;
   const contractName = "current booking contracts were exercised without bypass";
-  const contractDetail = `permissions=${contract.permissionRewrites} zones=${contract.zoneRewrites} quotes=${contract.quotePreparations} quoteFailures=${contract.quotePreparationFailures}`;
+  const contractDetail = [
+    `viewerPermissions=${contract.permissionRewrites}`,
+    `bookerOwnershipPreserved=${contract.bookerPermissionPreserved}`,
+    `zones=${contract.zoneRewrites}`,
+    `prepared=${contract.quotePreparations}`,
+    `quoteAttempts=${contract.quoteAttempts}`,
+    `quoteFailures=${contract.quoteFailures}`,
+    `captureAttempts=${contract.captureAttempts}`,
+    `captureFailures=${contract.captureFailures}`,
+    `suppressed=${contract.preparationSuppressions}`,
+    `firstFailure=${contract.firstPreparationFailure || "none"}`,
+  ].join(" ");
   if (contractOk) report.checks.push({ name: contractName, ok: true, detail: contractDetail });
   else unavailable(report, contractName, contractDetail);
   report.counts = { ...(report.counts || {}), currentProductContract: contract };
