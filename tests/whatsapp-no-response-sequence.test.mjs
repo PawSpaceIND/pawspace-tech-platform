@@ -113,6 +113,32 @@ test("customer reply and human takeover cancel all remaining recovery reminders"
   assert.equal(sqlite.prepare("SELECT cancel_reason FROM whatsapp_no_response_sequences WHERE id=?").get(second.sequenceId).cancel_reason, "human_takeover");
 });
 
+test("routing-state lookup failure defers recovery instead of cancelling as human takeover", async () => {
+  const { sqlite, db } = await world();
+  const outbound = await anchor(sqlite, db);
+  const armed = await recovery.armWhatsAppNoResponseSequence(db, { threadId: "THREAD-REC", customerId: "CUS-REC", anchorMessageId: outbound.id, routingMode: "chatbot_only", now: BASE_TIME });
+  const routingSelect = "SELECT mode,updated_by,reason,updated_at FROM whatsapp_conversation_routing_modes WHERE thread_id=?";
+  const failingDb = {
+    ...db,
+    prepare(sql) {
+      if (sql === routingSelect) return { bind: () => ({ first: async () => { throw new Error("simulated routing-state read failure"); } }) };
+      return db.prepare(sql);
+    },
+  };
+  const sweepAt = outbound.createdAt + 10 * 60_000 + 1;
+  const result = await recovery.processDueWhatsAppNoResponseSequences(failingDb, { now: sweepAt, actorEmail: "system:test-routing-failure" });
+  assert.equal(result.deferred, 1);
+  assert.equal(result.cancelled, 0);
+  assert.equal(result.results[0].reason, "routing_state_unavailable");
+  const sequence = sqlite.prepare("SELECT status,cancel_reason FROM whatsapp_no_response_sequences WHERE id=?").get(armed.sequenceId);
+  assert.equal(sequence.status, "active");
+  assert.equal(sequence.cancel_reason, null);
+  const step = sqlite.prepare("SELECT status,reason,due_at FROM whatsapp_no_response_steps WHERE id=?").get(result.results[0].stepId);
+  assert.equal(step.status, "pending");
+  assert.equal(step.reason, "routing_state_unavailable");
+  assert.equal(step.due_at, sweepAt + 5 * 60_000);
+});
+
 test("discount recovery fails closed without marketing consent or approved offer reference", async () => {
   const { sqlite, db } = await world();
   const outbound = await anchor(sqlite, db);
