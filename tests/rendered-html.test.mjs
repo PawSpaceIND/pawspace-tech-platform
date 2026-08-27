@@ -255,7 +255,14 @@ test("keeps payment timing, confidence meetings and delay recovery explicit", as
   );
   assert.match(grooming, /Pay after service/);
   assert.match(grooming, /Create canonical UAT booking/);
-  assert.match(grooming, /status:pay==="online"\?"captured":"created"/);
+  // This line used to REQUIRE status:pay==="online"?"captured":"created" — it pinned a client-declared
+  // capture as a contract, and passed for exactly as long as the flow claimed money it had not
+  // received. An online payment is an authorization request; the explicit timing this case is named
+  // for is the PENDING state, not a fabricated captured one. Same shape PTJA-P1-F32 fixed for
+  // Training. [PTJA-P1-F38]
+  assert.match(grooming, /status:"created"/);
+  assert.match(grooming, /initialPaymentStatus:pay==="online"\?"payment_pending":"due_after_service"/);
+  assert.doesNotMatch(grooming.split("\n").filter((l) => !l.trim().startsWith("*") && !l.trim().startsWith("//")).join("\n"), /status:pay==="online"\?"captured":"created"/);
   assert.match(training, /MEET A TRAINER FIRST/);
   assert.match(training, /Book Meet & Greet only/);
   assert.match(stays, /10-minute phone call · Included/);

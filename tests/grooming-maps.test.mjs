@@ -6,10 +6,11 @@ const source=async path=>readFile(new URL("../"+path,import.meta.url),"utf8");
 
 test("Grooming Maps keeps doorstep location canonical and provider-owned",async()=>{
   const[customer,locationClient,locationApi,routeApi,routeCard,partner,gateway]=await Promise.all([
-    source("app/page.tsx"),source("lib/grooming-location-client.ts"),source("app/api/grooming-service-location/route.ts"),source("app/api/grooming-route/route.ts"),source("app/partner-app/grooming-route-card.tsx"),source("app/partner-app/canonical-grooming-jobs.tsx"),source("lib/api-gateway.ts"),
+    source("app/mobile-app/grooming-flow.tsx"),source("lib/grooming-location-client.ts"),source("app/api/grooming-service-location/route.ts"),source("app/api/grooming-route/route.ts"),source("app/partner-app/grooming-route-card.tsx"),source("app/partner-app/canonical-grooming-jobs.tsx"),source("lib/api-gateway.ts"),
   ]);
-  assert.match(customer,/serviceAddress/);
-  assert.match(customer,/saveGroomingServiceLocation\(\{\s*bookingId:\s*canonical\.bookingId,\s*customerId,\s*address:\s*normalizedAddress\s*\}\)/);
+  assert.match(customer,/serviceLocation\.address/);
+  // Same governed endpoint, this flow's own call shape [PTJA-P1-F38].
+assert.match(customer,/saveServiceLocation\(\{bookingId:canonical\.bookingId,customerId:customer\.customerId,address:serviceLocation\.address/);
   assert.match(locationClient,/\/api\/grooming-service-location/);
   assert.match(locationApi,/requireCustomerOwnership\(db,actor,customerId\)/);
   assert.match(locationApi,/booking_service_locations/);
