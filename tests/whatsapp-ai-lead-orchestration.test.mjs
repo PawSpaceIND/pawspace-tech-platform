@@ -54,7 +54,7 @@ test("an approved non-marketing template creates one lead-linked WhatsApp conver
 test("missing Meta template approval preserves the lead and reports setup required",async()=>{
  const ctx=await world(),ids=seed(ctx);
  const result=await ctx.workflow.startWhatsAppAiLead(ctx.db,input(ids));
- assert.equal(result.status,"setup_required");assert.equal(result.reason,"approved_template_required_outside_session");
+ assert.equal(result.status,"setup_required");assert.equal(result.reason,"approved_template_required");
  assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) count FROM crm_contacts WHERE id=?").get(ids.contactId).count,1);
  assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) count FROM communication_messages").get().count,0);
  ctx.sqlite.prepare("UPDATE whatsapp_uat_templates SET status='approved' WHERE template_key=?").run(ctx.workflow.WHATSAPP_AI_LEAD_TEMPLATE);
