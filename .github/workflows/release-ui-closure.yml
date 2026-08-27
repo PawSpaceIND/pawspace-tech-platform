@@ -70,7 +70,7 @@ jobs:
       - name: Run signed-in customer acceptance against isolated preview
         env:
           PREVIEW_URL: ${{ github.event.inputs.preview_url }}
-        run: node scripts/customer-ui-acceptance.mjs --base="$PREVIEW_URL" --json=customer-ui-acceptance-report.json
+        run: node scripts/customer-ui-acceptance-v2.mjs --base="$PREVIEW_URL" --json=customer-ui-acceptance-report.json
 
       - name: Print actionable UI closure failures
         if: ${{ always() }}
