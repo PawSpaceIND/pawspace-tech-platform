@@ -27,20 +27,27 @@ const percent = (value: unknown) => value == null ? "—" : `${(Number(value) * 
 const money = (value: unknown) => `₹${Number(value || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 
 export default function WhatsAppAnalyticsPage() {
-  const initial = useMemo(() => Date.now(), []);
-  const [fromDate, setFromDate] = useState(() => dateInput(initial - 30 * day));
-  const [toDate, setToDate] = useState(() => dateInput(initial));
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
   const [report, setReport] = useState<Report | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    const now = Date.now();
+    setFromDate(dateInput(now - 30 * day));
+    setToDate(dateInput(now));
+  }, []);
+
   const range = useMemo(() => {
+    if (!fromDate || !toDate) return null;
     const from = Date.parse(`${fromDate}T00:00:00.000Z`);
     const to = Date.parse(`${toDate}T23:59:59.999Z`);
     return { from, to };
   }, [fromDate, toDate]);
 
   const load = useCallback(async () => {
+    if (!range) return;
     setBusy(true); setError("");
     try {
       const response = await fetch(`/api/whatsapp/analytics?from=${range.from}&to=${range.to}`, { cache: "no-store" });
@@ -48,16 +55,16 @@ export default function WhatsAppAnalyticsPage() {
       if (!response.ok) throw new Error(payload.error || `Unable to load WhatsApp analytics (HTTP ${response.status})`);
       setReport(payload.data || null);
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); }
-  }, [range.from, range.to]);
+  }, [range]);
 
-  useEffect(() => { const timer = window.setTimeout(() => { void load(); }, 0); return () => window.clearTimeout(timer); }, [load]);
+  useEffect(() => { if (!range) return; const timer = window.setTimeout(() => { void load(); }, 0); return () => window.clearTimeout(timer); }, [load, range]);
 
   const funnel = report?.whatsapp?.funnel || {};
   const assignees = report?.people?.byAssignee || [];
   const queues = report?.people?.byQueueTeam || [];
   const feedback = report?.feedback?.byPlatformStatus || [];
   const sources = report?.sources || [];
-  const exportUrl = `/api/whatsapp/analytics?from=${range.from}&to=${range.to}&export=csv`;
+  const exportUrl = range ? `/api/whatsapp/analytics?from=${range.from}&to=${range.to}&export=csv` : "";
 
   return <OpsShell eyebrow="PawSpace team · WhatsApp" title="WhatsApp / Marketing Analytics" description="Canonical WhatsApp funnel, automation containment, SLA, consent suppression, source attribution and simulator conversion-feedback reconciliation. No live ad-account mutation is enabled." actions={<><Badge tone="info">Canonical metrics</Badge><Badge tone="warning">Live ad mutation disabled</Badge></>}>
     {error ? <div className={`${teamStyles.panel} ${teamStyles.panelError}`}><b>{error}</b></div> : null}
@@ -67,7 +74,7 @@ export default function WhatsAppAnalyticsPage() {
         <label className={teamStyles.field}>From<input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label>
         <label className={teamStyles.field}>To<input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} /></label>
       </div>
-      <div className={teamStyles.actions}><Button type="button" disabled={busy} onClick={() => { void load(); }}>{busy ? "Refreshing…" : "Refresh report"}</Button><Button type="button" variant="secondary" disabled={busy} onClick={() => { window.location.assign(exportUrl); }}>Export CSV</Button></div>
+      <div className={teamStyles.actions}><Button type="button" disabled={busy || !range} onClick={() => { void load(); }}>{busy ? "Refreshing…" : "Refresh report"}</Button><Button type="button" variant="secondary" disabled={busy || !range} onClick={() => { if (exportUrl) window.location.assign(exportUrl); }}>Export CSV</Button></div>
     </section>
     {!report ? <EmptyState title="No analytics loaded." body="Choose a date range and refresh the report." /> : <>
       <section className={teamStyles.panel}><div className={teamStyles.panelHead}><h2>WhatsApp funnel & SLA</h2><span>canonical messages</span></div><div className={teamStyles.grid}>
