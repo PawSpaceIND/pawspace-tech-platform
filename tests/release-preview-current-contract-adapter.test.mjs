@@ -62,6 +62,7 @@ test("current preview adapter reaches governed Sitting confirmation without weak
   const canonical = calls.filter((call) => call.path === "/api/canonical-bookings").at(-1);
   assert.ok(quoteCall, "a valid booking must obtain the deployed server quote");
   assert.ok(captureCall, "the quote must be captured through the deployed sandbox payment route");
+  assert.equal(captureCall.options.headers.cookie, cookie, "sandbox capture must carry the authenticated preview-booker session just like a same-origin browser request");
   assert.equal(captureCall.options.headers["x-payment-capture-key"].startsWith("preview-gate-"), true);
   assert.equal(canonical.options.body.zoneId, "blr-east");
   assert.equal(canonical.options.body.packageCode, "sitting-visit-60");
@@ -154,6 +155,8 @@ test("capture failure is reported separately from quote failure", async () => {
 
   const result = await adapted.http("POST", "/api/canonical-bookings", { headers: { cookie }, body: booking() });
   assert.equal(result.status, 424);
+  const captureCall = calls.find((call) => call.path === "/api/sitting-payment-sandbox");
+  assert.equal(captureCall.options.headers.cookie, cookie);
   const stats = adapted.stats();
   assert.equal(stats.quoteAttempts, 1);
   assert.equal(stats.quoteFailures, 0);
