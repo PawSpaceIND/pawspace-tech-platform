@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { actorCanAccessConversation, ensureConversationAccessTables } from "../lib/conversation-access.ts";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+installWorkersHooks("__CONVERSATION_ACCESS_DB__");
+const { actorCanAccessConversation, ensureConversationAccessTables } = await import("../lib/conversation-access.ts");
 
 function makeD1(sqlite) {
   const statement = (sql, args = []) => ({
