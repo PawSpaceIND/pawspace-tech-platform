@@ -1,4 +1,4 @@
-import{ensureLeadAssignmentTables}from"./lead-assignment-governance.ts";
+import{ensureLeadAssignmentTables}from"./lead-assignment-governance";
 import type{AuthenticatedActor}from"./server-auth";
 
 type Row=Record<string,unknown>;
