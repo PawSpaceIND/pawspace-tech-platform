@@ -240,6 +240,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
   return (
     <>
       {toast && <div className={styles.toast}>{toast}</div>}
+      <header className={styles.trainingIntro}><span>PAWSPACE TRAINING</span><div><h2>Build better days together.</h2><small>Tell us the goal, choose a programme, then plan the journey.</small></div><b>{stage}<i>/5</i></b></header>
       <div className={styles.trainingSteps}>
         {[1, 2, 3, 4, 5].map((n) => (
           <span key={n} className={stage >= n ? styles.active : ""}>
