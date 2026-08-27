@@ -1,0 +1,4 @@
+import{authError,authorize,database}from"../../../../lib/server-auth";
+import{buildWhatsAppAiAnalytics,whatsappAnalyticsCsv}from"../../../../lib/whatsapp-ai-analytics";
+const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
+export async function GET(request:Request){try{await authorize(request,"reports.view");const url=new URL(request.url),from=Number(url.searchParams.get("from")||0)||undefined,to=Number(url.searchParams.get("to")||0)||undefined,report=await buildWhatsAppAiAnalytics(await database(),{from,to});if(url.searchParams.get("export")==="csv")return new Response(whatsappAnalyticsCsv(report),{status:200,headers:{"content-type":"text/csv; charset=utf-8","cache-control":"no-store","content-disposition":"attachment; filename=whatsapp-analytics.csv"}});return json({data:report});}catch(error){return authError(error,"Unable to load WhatsApp analytics");}}
