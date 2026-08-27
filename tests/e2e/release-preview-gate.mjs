@@ -48,6 +48,41 @@ function statusCount(bucket, status) {
   bucket[key] = Number(bucket[key] || 0) + 1;
 }
 
+/**
+ * Hosted Workers.dev traffic is external transport, not product logic. One lost TCP/TLS/header response
+ * must not turn an otherwise deterministic gate into a five-minute anonymous `fetch failed`, but neither
+ * may retries weaken any product assertion. This helper therefore retries ONLY thrown transport errors;
+ * every HTTP response, including 4xx/5xx, is returned untouched to the existing gate assertions.
+ *
+ * The timeout is deliberately far below Node/undici's multi-minute header timeout. If both attempts fail,
+ * the error names only the method and pathname (never query strings, cookies, bodies or secrets), so the
+ * sanitized artifact identifies the exact request that could not be exercised in one run.
+ */
+export async function boundedPreviewFetch(fetchImpl, url, init = {}, options = {}) {
+  const attempts = Math.max(1, Number(options.attempts || 2));
+  const timeoutMs = Math.max(1, Number(options.timeoutMs || 45_000));
+  const retryDelayMs = Math.max(0, Number(options.retryDelayMs ?? 750));
+  const onRetry = typeof options.onRetry === "function" ? options.onRetry : () => {};
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const signal = init.signal ?? AbortSignal.timeout(timeoutMs);
+      return await fetchImpl(url, { ...init, signal });
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts) break;
+      onRetry({ attempt, error });
+      if (retryDelayMs) await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+  }
+  let pathname = "/";
+  try { pathname = new URL(url).pathname || "/"; } catch { /* keep safe pathname fallback */ }
+  const method = String(init.method || "GET").toUpperCase();
+  const errorName = lastError instanceof Error ? lastError.name : "Error";
+  const errorMessage = lastError instanceof Error ? lastError.message : String(lastError || "transport failed");
+  throw new Error(`HTTP transport failed ${method} ${pathname} after ${attempts} attempts (${errorName}: ${errorMessage})`);
+}
+
 export function adaptCurrentProductContracts({ http, d1 }) {
   const sessionEmail = new Map();
   const preparedByIdentity = new Map();
@@ -347,10 +382,21 @@ if (isMain) {
   });
 
   const http = async (method, requestPath, { headers = {}, body } = {}) => {
-    const res = await fetch(`${BASE}${requestPath}`, {
+    const url = `${BASE}${requestPath}`;
+    const res = await boundedPreviewFetch(fetch, url, {
       method,
       headers: { "content-type": "application/json", ...headers },
       ...(body === undefined ? {} : { body: typeof body === "string" ? body : JSON.stringify(body) }),
+    }, {
+      attempts: 2,
+      timeoutMs: 45_000,
+      retryDelayMs: 750,
+      onRetry: ({ attempt, error }) => {
+        let pathname = "/";
+        try { pathname = new URL(url).pathname || "/"; } catch { /* safe fallback */ }
+        const errorName = error instanceof Error ? error.name : "Error";
+        console.log(`preview HTTP transport retry ${attempt + 1}/2 ${String(method).toUpperCase()} ${pathname} after ${errorName}`);
+      },
     });
     let parsed = null;
     try { parsed = JSON.parse(await res.text()); } catch { /* non-JSON */ }
