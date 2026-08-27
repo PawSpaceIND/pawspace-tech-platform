@@ -185,6 +185,29 @@ async function ensureTables(db:Awaited<ReturnType<typeof database>>){await db.ba
 function bookingWindowMatchesReservation(reserved:Record<string,unknown>,input:Pick<LifecycleInput,"scheduledStart"|"scheduledEnd">){
   return sameInstant(reserved.scheduled_start,input.scheduledStart)&&sameInstant(reserved.scheduled_end,input.scheduledEnd);
 }
+/*
+ * A governance module refuses by THROWING a Response, and it does so in two shapes: a plain sentence
+ * (lib/training-commercial-governance.ts, lib/boarding-governance.ts) and a JSON envelope
+ * (lib/sitting-governance.ts and the auth layer, via governedJsonError). Reading both as plain text put
+ * the envelope itself into the field the UI renders, and the customer was shown, verbatim:
+ *   {"error":"{\"error\":\"Authentication required\"}"}
+ * Take the sentence out of the envelope when there is one, and leave a plain sentence alone. Same class
+ * as PTJA-P1-01: a machine artifact reaching a customer as copy. [PTJA-P1-F33]
+ */
+async function governedRefusalBody(refusal:Response){
+  const text=await refusal.text().catch(()=>"");
+  const trimmed=text.trim();
+  if(trimmed.startsWith("{")){
+    try{
+      const parsed=JSON.parse(trimmed) as Record<string,unknown>;
+      // Re-emit the governance module's OWN envelope, so the fields it authored for a client -
+      // lib/grooming-policy-governance.ts sends code/cityId/zoneId - stay at the top level where a
+      // client can read them, instead of being flattened into a string.
+      if(parsed&&typeof parsed.error==="string"&&parsed.error.trim())return parsed;
+    }catch{/* not an envelope after all; fall through to the plain sentence */}
+  }
+  return text?{error:text}:null;
+}
 function validate(input:LifecycleInput){if(!input.idempotencyKey||!input.scheduleGroupId||!input.customer?.id||!input.customer?.name||!input.customer?.primaryPhone)return "Customer and request identity are required";if(!Array.isArray(input.pets)||input.pets.length<1)return "At least one pet is required";if(!services.has(input.serviceCode)||!input.packageCode||!input.scheduledStart||!input.scheduledEnd)return "Complete service and schedule details are required";if(!input.provider?.id||!input.provider?.name||!Number.isFinite(input.totalAmount)||input.totalAmount<0||!Number.isFinite(input.amountDueNow)||input.amountDueNow<0)return "Provider and valid payment amounts are required";return null;}
 async function readBundle(db:Awaited<ReturnType<typeof database>>,booking:Record<string,unknown>,duplicatePrevented:boolean){const [workOrder,payment]=await Promise.all([db.prepare("SELECT * FROM provider_work_orders WHERE booking_id=?").bind(booking.id).first<Record<string,unknown>>(),db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(booking.id).first<Record<string,unknown>>()]);return {bookingId:String(booking.id),customerId:String(booking.customer_id),petIds:JSON.parse(String(booking.pet_ids_json)),scheduleGroupId:String(booking.schedule_group_id),workOrderId:String(workOrder?.id||""),paymentId:String(payment?.id||""),status:String(booking.status),duplicatePrevented};}
 
@@ -497,4 +520,4 @@ export async function POST(request:Request){try{const db=await database();await 
     }).catch(error=>{console.warn("[collection-ledger] posting deferred",error instanceof Error?error.message:String(error));});
   }
   if(trainingCommercial)await consumeTrainingQuote(db,trainingCommercial.quoteId,bookingId);if(boardingCommercial)await consumeBoardingQuote(db,boardingCommercial.quoteId,bookingId);if(sittingCommercial)await consumeSittingQuote(db,sittingCommercial.quoteId,bookingId);await attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId});const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=?").bind(bookingId).first<Record<string,unknown>>();return json({data:await readBundle(db,booking!,false)},201);
-}catch(error){if(error instanceof Response){const message=await error.text().catch(()=>"");return json({error:message||"Canonical booking validation failed"},error.status||409);}return json({error:error instanceof Error?error.message:"Unable to create shared booking lifecycle"},500);}}
+}catch(error){if(error instanceof Response){const body=await governedRefusalBody(error);return json(body??{error:"Canonical booking validation failed"},error.status||409);}return json({error:error instanceof Error?error.message:"Unable to create shared booking lifecycle"},500);}}
