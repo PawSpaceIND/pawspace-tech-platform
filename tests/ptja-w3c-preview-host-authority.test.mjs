@@ -1,27 +1,8 @@
 /**
- * WAVE 3C - a coverage gap the Wave 2 hunt recorded and did not probe. [PTJA-W3C]
+ * WAVE 3C - development-preview authority proof. [PTJA-W3C]
  *
- * THE GAP, in the hunt's own words (ptja/PTJA-FINDINGS.json, domain 01-leadgen):
- *
- *   "lib/server-auth.ts isDevelopmentPreview() grants permissions ["*"] whenever
- *    process.env.NODE_ENV !== "production" and the request hostname is localhost/127.0.0.1/
- *    terminal.local. In Workers process.env.NODE_ENV is commonly undefined, so this is
- *    permissive-on-absence. It is out of my domain (identity/auth) and I did not probe the
- *    Host-header reachability; flagging it here for whoever owns 00-identity rather than filing it."
- *
- * Nobody owned it, so nobody probed it. This file does.
- *
- * WHAT THE PROBE FOUND. The repository has THREE preview branches keyed on the same three hostnames,
- * and they do NOT agree with each other:
- *
- *   lib/server-auth.ts:22        GUARDED by process.env.NODE_ENV !== "production".
- *   lib/api-gateway.ts:198       NO environment guard. Hostname alone -> superuser, permissions ["*"].
- *   app/api/launch-readiness     NO environment guard. Hostname alone -> roleCode "superuser", and its
- *                                POST does not call authorize() at all - only this local actor().
- *
- * The guarded one is the one that folds away in a production build; the two unguarded ones survive it.
- * That is the audit's own defect class - a control whose safety depends on something being SET, which
- * disappears when it is absent instead of failing closed.
+ * Preview authority must never be derivable from request host alone. The canonical helper requires
+ * explicit development/test runtime state plus PAWSPACE_LOCAL_PREVIEW=on and one local hostname.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -56,9 +37,8 @@ function makeD1(sqlite) {
 const PREVIEW_HOSTS = ["terminal.local", "localhost", "127.0.0.1"];
 const REAL_HOST = "uat.pawspace.in";
 
-let sqlite;
 async function world() {
-  sqlite = new DatabaseSync(":memory:");
+  const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
   globalThis.__W3C_DB__ = db;
   globalThis.__W3C_ENV__ = {};
@@ -67,130 +47,107 @@ async function world() {
   return db;
 }
 
-// A production deployment. Every case below runs with this set, because that is the state that matters.
-const withProductionEnv = async (fn) => {
-  const before = process.env.NODE_ENV;
-  process.env.NODE_ENV = "production";
+async function withEnv(values, fn) {
+  const prior = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
+  for (const [key, value] of Object.entries(values)) value === undefined ? delete process.env[key] : process.env[key] = value;
   try { return await fn(); } finally {
-    if (before === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = before;
+    for (const [key, value] of Object.entries(prior)) value === undefined ? delete process.env[key] : process.env[key] = value;
   }
-};
+}
 
-test("W3C-01: server-auth's preview branch IS environment-guarded and refuses in production", async () => {
-  // The one the hunt flagged. It behaves correctly - which is why the other two matter.
-  const db = await world();
-  const { resolveActor } = await import("../lib/server-auth.ts");
-  await withProductionEnv(async () => {
-    for (const host of PREVIEW_HOSTS) {
-      const outcome = await resolveActor(new Request(`http://${host}/api/crm`))
-        .then((actor) => ({ ok: true, actor }), (error) => ({ ok: false, error }));
-      assert.equal(outcome.ok, false,
-        `with NODE_ENV=production, ${host} must not resolve a preview superuser: ${JSON.stringify(outcome.actor ?? {})}`);
-    }
-  });
-});
+const withProductionEnv = (fn) => withEnv({ NODE_ENV: "production", PAWSPACE_LOCAL_PREVIEW: undefined }, fn);
 
-test("W3C-02: an ABSENT environment is treated as production, not as development", async () => {
-  // This is the core of the finding. The old rule was `process.env.NODE_ENV !== "production"`, which
-  // reads an UNSET value as "not production" - permissive on absence, the defect class this audit
-  // hunts - and throws a ReferenceError outright where `process` does not exist, as in a Workers
-  // isolate without nodejs_compat. Preview access is now granted only on an EXPLICIT declaration.
-  const db = await world();
-  const { resolveActor } = await import("../lib/server-auth.ts");
-  const { authorizeApiRequest } = await import("../lib/api-gateway.ts");
-  const before = process.env.NODE_ENV;
-  delete process.env.NODE_ENV;
-  try {
-    for (const host of PREVIEW_HOSTS) {
-      const outcome = await resolveActor(new Request(`http://${host}/api/crm`))
-        .then((actor) => ({ ok: true, actor }), () => ({ ok: false }));
-      assert.equal(outcome.ok, false,
-        `an unset NODE_ENV must not admit a preview superuser at ${host}: ${JSON.stringify(outcome.actor ?? {})}`);
-
-      const decision = await authorizeApiRequest(new Request(`http://${host}/api/crm`), { DB: db });
-      const actor = decision instanceof Response ? null : decision.actor;
-      assert.notEqual(actor?.roleCode, "superuser",
-        `nor may the gateway, at ${host}: ${JSON.stringify(actor)}`);
-    }
-  } finally {
-    if (before === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = before;
-  }
-});
-
-test("W3C-02b (non-vacuity): an EXPLICIT development declaration still works", async () => {
-  // Without this the fix would read as "preview access removed", which is not what was intended and
-  // would break local development silently.
+test("W3C-01: production refuses every local preview hostname", async () => {
   await world();
   const { resolveActor } = await import("../lib/server-auth.ts");
-  const before = process.env.NODE_ENV;
-  process.env.NODE_ENV = "development";
-  try {
-    const actor = await resolveActor(new Request("http://localhost/api/crm"));
-    assert.equal(actor.roleCode, "superuser", "an explicit development environment still previews");
-    assert.equal(actor.developmentPreview, true, "and is marked as a preview actor");
-  } finally {
-    if (before === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = before;
-  }
+  await withProductionEnv(async () => {
+    for (const host of PREVIEW_HOSTS) {
+      const outcome = await resolveActor(new Request(`http://${host}/api/crm`)).then((actor) => ({ ok: true, actor }), () => ({ ok: false }));
+      assert.equal(outcome.ok, false, `${host} must not resolve a preview superuser in production`);
+    }
+  });
 });
 
-test("W3C-03: the API GATEWAY does not grant superuser on the hostname alone in production", async () => {
-  // MEASURED BEFORE THE FIX: lib/api-gateway.ts:198 had no environment guard at all, so any request
-  // whose Host was one of the three preview names received roleCode "superuser" and permissions ["*"]
-  // from the OUTER authorization layer, in a production build.
+test("W3C-02: absent runtime declarations fail closed", async () => {
+  const db = await world();
+  const { resolveActor } = await import("../lib/server-auth.ts");
+  const { authorizeApiRequest } = await import("../lib/api-gateway.ts");
+  await withEnv({ NODE_ENV: undefined, PAWSPACE_LOCAL_PREVIEW: undefined }, async () => {
+    for (const host of PREVIEW_HOSTS) {
+      const outcome = await resolveActor(new Request(`http://${host}/api/crm`)).then((actor) => ({ ok: true, actor }), () => ({ ok: false }));
+      assert.equal(outcome.ok, false, `unset runtime must not admit ${host}`);
+      const decision = await authorizeApiRequest(new Request(`http://${host}/api/crm`), { DB: db });
+      assert.notEqual(decision instanceof Response ? null : decision.actor?.roleCode, "superuser");
+    }
+  });
+});
+
+test("W3C-02a sabotage: forged local Host is insufficient even in development without runtime opt-in", async () => {
+  await world();
+  const { resolveActor } = await import("../lib/server-auth.ts");
+  await withEnv({ NODE_ENV: "development", PAWSPACE_LOCAL_PREVIEW: undefined }, async () => {
+    for (const host of PREVIEW_HOSTS) {
+      await assert.rejects(() => resolveActor(new Request(`http://${host}/api/crm`)), `${host} must not create authority without PAWSPACE_LOCAL_PREVIEW=on`);
+    }
+  });
+});
+
+test("W3C-02b non-vacuity: explicit local preview runtime still works", async () => {
+  await world();
+  const { resolveActor } = await import("../lib/server-auth.ts");
+  await withEnv({ NODE_ENV: "development", PAWSPACE_LOCAL_PREVIEW: "on" }, async () => {
+    const actor = await resolveActor(new Request("http://localhost/api/crm"));
+    assert.equal(actor.roleCode, "superuser");
+    assert.equal(actor.developmentPreview, true);
+  });
+});
+
+test("W3C-02c: runtime opt-in cannot turn a real remote host into preview authority", async () => {
+  await world();
+  const { resolveActor } = await import("../lib/server-auth.ts");
+  await withEnv({ NODE_ENV: "development", PAWSPACE_LOCAL_PREVIEW: "on" }, async () => {
+    await assert.rejects(() => resolveActor(new Request(`https://${REAL_HOST}/api/crm`)));
+  });
+});
+
+test("W3C-03: API gateway does not grant superuser on hostname alone in production", async () => {
   const db = await world();
   const { authorizeApiRequest } = await import("../lib/api-gateway.ts");
   await withProductionEnv(async () => {
     for (const host of PREVIEW_HOSTS) {
       const decision = await authorizeApiRequest(new Request(`http://${host}/api/crm`), { DB: db });
       const actor = decision instanceof Response ? null : decision.actor;
-      assert.notEqual(actor?.roleCode, "superuser",
-        `${host} must not receive a preview superuser in production: ${JSON.stringify(actor)}`);
-      assert.notDeepEqual(actor?.permissions, ["*"],
-        `nor every permission: ${JSON.stringify(actor)}`);
+      assert.notEqual(actor?.roleCode, "superuser");
+      assert.notDeepEqual(actor?.permissions, ["*"]);
     }
   });
 });
 
-test("W3C-04: launch-readiness POST refuses an unauthenticated write on the hostname alone", async () => {
-  // The sharpest of the three. GET calls authorize(request,"launch.view") first - correct, and closed
-  // by W2-B2-R06. POST does NOT: it calls only the route's own actor(), which sets
-  // email="preview@pawspace.test" on hostname and then hard-codes roleCode "superuser" for that email.
-  // canWrite() admits superuser. No credential of any kind is presented here.
-  const db = await world();
+test("W3C-04: launch-readiness POST refuses unauthenticated local-host write in production", async () => {
+  await world();
   const route = await import("../app/api/launch-readiness/route.ts");
   await withProductionEnv(async () => {
     const response = await route.POST(new Request("http://localhost/api/launch-readiness", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
+      method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ action: "record_signoff", gateCode: "REL-01", note: "w3c probe" }),
     }));
-    assert.ok(response.status === 401 || response.status === 403,
-      `an unauthenticated POST on a preview hostname must be refused in production, got ${response.status} ${(await response.clone().text()).slice(0, 250)}`);
+    assert.ok(response.status === 401 || response.status === 403, `expected refusal, got ${response.status}`);
   });
 });
 
-test("W3C-05 (non-vacuity): the same unauthenticated POST from a REAL host is refused 401", async () => {
-  // Without this, W3C-04 would prove nothing about the hostname - the route might simply accept
-  // anything from anyone.
+test("W3C-05: same unauthenticated POST from real host is refused", async () => {
   await world();
   const route = await import("../app/api/launch-readiness/route.ts");
   await withProductionEnv(async () => {
     const response = await route.POST(new Request(`https://${REAL_HOST}/api/launch-readiness`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
+      method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ action: "record_signoff", gateCode: "REL-01", note: "w3c probe" }),
     }));
-    assert.equal(response.status, 401,
-      `a real host with no credential must be refused: ${response.status} ${(await response.clone().text()).slice(0, 200)}`);
+    assert.equal(response.status, 401);
   });
 });
 
-test("W3C-06: the preview-host rule has exactly ONE definition", async () => {
-  // A guard against the inventory drifting: if a fourth appears, or one of these is fixed, this fails
-  // and the ledger has to be updated deliberately.
-  // After the fix there is ONE definition. Any file that names a preview hostname other than that
-  // definition is a fourth copy of an authorization rule, which is how two of the three came to be
-  // wrong in the first place.
+test("W3C-06: preview-host rule has exactly one definition", async () => {
   const offenders = [];
   const walk = async (dir) => {
     const { readdir } = await import("node:fs/promises");
@@ -200,18 +157,12 @@ test("W3C-06: the preview-host rule has exactly ONE definition", async () => {
       const path = `${dir}/${entry.name}`;
       if (path === "lib/development-preview.ts") continue;
       const source = await readFile(new URL(`../${path}`, import.meta.url), "utf8");
-      for (const line of source.split("\n")) {
-        if (line.includes("terminal.local") && !line.trimStart().startsWith("*") && !line.trimStart().startsWith("//")) {
-          offenders.push(`${path}: ${line.trim().slice(0, 90)}`);
-        }
-      }
+      for (const line of source.split("\n")) if (line.includes("terminal.local") && !line.trimStart().startsWith("*") && !line.trimStart().startsWith("//")) offenders.push(`${path}: ${line.trim().slice(0, 90)}`);
     }
   };
   for (const root of ["lib", "app"]) await walk(root);
-  assert.deepEqual(offenders, [],
-    "the preview-host rule has exactly one definition, lib/development-preview.ts - a second copy is how two of the original three lost their environment guard");
-
-  // Non-vacuity: the one definition really does name those hosts.
+  assert.deepEqual(offenders, []);
   const canonical = await readFile(new URL("../lib/development-preview.ts", import.meta.url), "utf8");
-  assert.match(canonical, /terminal\.local/, "the single definition still names the preview hosts");
+  assert.match(canonical, /terminal\.local/);
+  assert.match(canonical, /PAWSPACE_LOCAL_PREVIEW/);
 });

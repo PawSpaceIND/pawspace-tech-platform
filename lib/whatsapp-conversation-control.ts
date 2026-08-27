@@ -44,10 +44,16 @@ export async function setWhatsAppConversationMode(db:D1Database,input:{threadId:
  if(!whatsappConversationModes.includes(input.mode))throw new Response("Unsupported WhatsApp conversation mode",{status:400});
  const reason=text(input.reason);if(reason.length<8)throw new Response("A routing-change reason of at least 8 characters is required",{status:400});
  const before=await getWhatsAppConversationMode(db,input.threadId),now=Date.now();
- await db.batch([
-  db.prepare("INSERT INTO whatsapp_conversation_routing_modes (thread_id,mode,updated_by,reason,updated_at) VALUES (?,?,?,?,?) ON CONFLICT(thread_id) DO UPDATE SET mode=excluded.mode,updated_by=excluded.updated_by,reason=excluded.reason,updated_at=excluded.updated_at").bind(input.threadId,input.mode,input.actorEmail,reason,now),
-  db.prepare("INSERT INTO whatsapp_conversation_routing_events (id,thread_id,from_mode,to_mode,actor_email,reason,created_at) VALUES (?,?,?,?,?,?,?)").bind(uid("WAMODE"),input.threadId,before.mode,input.mode,input.actorEmail,reason,now),
- ]);
+ let changed=0;
+ if(before.explicit){
+  const result=await db.prepare("UPDATE whatsapp_conversation_routing_modes SET mode=?,updated_by=?,reason=?,updated_at=? WHERE thread_id=? AND mode=? AND updated_at=?").bind(input.mode,input.actorEmail,reason,now,input.threadId,before.mode,before.updatedAt).run();
+  changed=Number(result.meta?.changes||0);
+ }else{
+  const result=await db.prepare("INSERT OR IGNORE INTO whatsapp_conversation_routing_modes (thread_id,mode,updated_by,reason,updated_at) VALUES (?,?,?,?,?)").bind(input.threadId,input.mode,input.actorEmail,reason,now).run();
+  changed=Number(result.meta?.changes||0);
+ }
+ if(changed!==1)throw new Response("WhatsApp routing changed concurrently; reload before retrying",{status:409});
+ await db.prepare("INSERT INTO whatsapp_conversation_routing_events (id,thread_id,from_mode,to_mode,actor_email,reason,created_at) VALUES (?,?,?,?,?,?,?)").bind(uid("WAMODE"),input.threadId,before.mode,input.mode,input.actorEmail,reason,now).run();
  return{...(await getWhatsAppConversationMode(db,input.threadId)),previousMode:before.mode};
 }
 

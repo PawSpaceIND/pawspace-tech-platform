@@ -31,6 +31,11 @@ const typescriptUrl = pathToFileURL(nodeModule.createRequire(import.meta.url).re
 // shim never read: it looked for __FANOUT_DB___ENV. Those suites need no env values, so nothing failed -
 // the first suite to read one would have got undefined and no clue why.
 
+// Each real-execution suite must own its Worker DB global. Re-registering the same global in one test
+// process makes cloudflare:workers resolve to whichever suite wrote the global last, which can turn an
+// authorization refusal into a fixture-dependent 500. Fail immediately instead of allowing that alias.
+const installedWorkersDbGlobals = new Set();
+
 // Both hook branches below need the same two things, so they are written once, as source text, because
 // the out-of-thread branch can only receive its hook as a string.
 const TSX_TRANSFORM = `
@@ -69,6 +74,11 @@ function transpileTsx(source, fileName) {
 const cssStub = () => 'const handler={get:(_,key)=>typeof key==="string"?key:undefined};export default new Proxy({},handler);';
 
 export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
+  if (installedWorkersDbGlobals.has(globalName)) {
+    throw new Error(`installWorkersHooks DB global already registered in this test process: ${globalName}`);
+  }
+  installedWorkersDbGlobals.add(globalName);
+
   const shim = `export const env = new Proxy({}, { get: (_, key) => key === "DB" ? globalThis[${JSON.stringify(globalName)}] : (globalThis[${JSON.stringify(envName)}] ?? {})[key] });`;
   const workersUrl = `data:text/javascript,${encodeURIComponent(shim)}`;
 

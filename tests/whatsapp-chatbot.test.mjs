@@ -45,6 +45,16 @@ test("chatbot mode runs deterministic qualification and is idempotent",async()=>
  assert.equal(outbound,3);
 });
 
+test("negated service mentions do not select a service",async()=>{
+ const{sqlite,db}=await world();
+ const inputId=await inbound(sqlite,db,"bot-negated-service","not grooming");
+ await control.setWhatsAppConversationMode(db,{threadId:"THREAD-BOT",mode:"chatbot_only",actorEmail:staffActor.email,reason:"Enable chatbot for negation regression"});
+ const result=await chatbot.runWhatsAppChatbotTurn(db,{threadId:"THREAD-BOT",inputMessageId:inputId,actorEmail:"whatsapp-chatbot"});
+ assert.equal(result.session.state,"service");
+ assert.equal(result.session.service_code,null);
+ assert.equal(result.turn.intent,"service_prompt");
+});
+
 test("customer human request immediately hands off and disables chatbot",async()=>{
  const{sqlite,db}=await world();
  const inputId=await inbound(sqlite,db,"bot-human-1","I want to speak to a human");

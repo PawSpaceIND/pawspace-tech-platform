@@ -12,15 +12,27 @@ type Row=Record<string,unknown>;
 export type ConversationAccessActor=Pick<AuthenticatedActor,"email"|"roleCode"|"permissions"|"developmentPreview">;
 
 const accessEnsured=new WeakSet<D1Database>();
+const accessEnsuring=new WeakMap<D1Database,Promise<void>>();
 export async function ensureConversationAccessTables(db:D1Database){
  if(accessEnsured.has(db))return;
- await ensureLeadAssignmentTables(db);
- // CRM contacts are the canonical lead-city source. Some older environments create this table from
- // a route rather than a shared migration, so guarantee the same additive schema before access SQL.
- await db.prepare("CREATE TABLE IF NOT EXISTS crm_contacts (id TEXT PRIMARY KEY,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,area TEXT,pet_names TEXT,pet_summary TEXT,stage TEXT NOT NULL DEFAULT 'New lead',owner TEXT DEFAULT 'Unassigned',source TEXT DEFAULT 'Website',lifetime_value REAL DEFAULT 0,next_action TEXT,opportunity TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)").run();
- const columns=await db.prepare("PRAGMA table_info(crm_contacts)").all<Row>();
- if(!columns.results.some(column=>String(column.name)==="area"))await db.prepare("ALTER TABLE crm_contacts ADD COLUMN area TEXT").run();
- accessEnsured.add(db);
+ const pending=accessEnsuring.get(db);if(pending)return pending;
+ const operation=(async()=>{
+  await ensureLeadAssignmentTables(db);
+  // CRM contacts are the canonical lead-city source. Some older environments create this table from
+  // a route rather than a shared migration, so guarantee the same additive schema before access SQL.
+  await db.prepare("CREATE TABLE IF NOT EXISTS crm_contacts (id TEXT PRIMARY KEY,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,area TEXT,pet_names TEXT,pet_summary TEXT,stage TEXT NOT NULL DEFAULT 'New lead',owner TEXT DEFAULT 'Unassigned',source TEXT DEFAULT 'Website',lifetime_value REAL DEFAULT 0,next_action TEXT,opportunity TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)").run();
+  const columns=await db.prepare("PRAGMA table_info(crm_contacts)").all<Row>();
+  if(!columns.results.some(column=>String(column.name)==="area")){
+   try{await db.prepare("ALTER TABLE crm_contacts ADD COLUMN area TEXT").run();}
+   catch(error){
+    const refreshed=await db.prepare("PRAGMA table_info(crm_contacts)").all<Row>();
+    if(!refreshed.results.some(column=>String(column.name)==="area"))throw error;
+   }
+  }
+  accessEnsured.add(db);
+ })();
+ accessEnsuring.set(db,operation);
+ try{await operation;}finally{accessEnsuring.delete(db);}
 }
 
 export function hasPlatformConversationAccess(actor:ConversationAccessActor){
@@ -39,7 +51,21 @@ export function conversationAccessPredicate(actor:ConversationAccessActor,thread
     ON lower(access_member.employee_email)=lower(?)
    AND access_member.active=1
   WHERE access_lead.customer_id=${threadAlias}.customer_id
-    AND (${threadAlias}.lead_id IS NULL OR ${threadAlias}.lead_id=access_lead.id)
+    AND (
+      ${threadAlias}.lead_id=access_lead.id
+      OR (
+        ${threadAlias}.lead_id IS NULL
+        AND access_lead.converted_booking_id IS NULL
+        AND access_lead.status NOT IN ('closed','converted')
+        AND NOT EXISTS (
+          SELECT 1 FROM lead_work_items access_other_lead
+          WHERE access_other_lead.customer_id=${threadAlias}.customer_id
+            AND access_other_lead.id!=access_lead.id
+            AND access_other_lead.converted_booking_id IS NULL
+            AND access_other_lead.status NOT IN ('closed','converted')
+        )
+      )
+    )
     AND EXISTS (
       SELECT 1 FROM json_each(access_member.service_codes_json) member_service
       WHERE lower(trim(CAST(member_service.value AS TEXT)))=lower(trim(access_lead.service))
