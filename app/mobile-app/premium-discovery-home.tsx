@@ -53,6 +53,8 @@ const communityCards = [
   { icon: "+", title: "Help requests", copy: "Neighbourhood requests when a pet parent needs support." },
 ];
 
+const VIDEO_SERVICE_CODES = ["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi"];
+
 export default function PremiumDiscoveryHome({
   services,
   disabledServices,
@@ -102,7 +104,10 @@ export default function PremiumDiscoveryHome({
     () => services.filter((service) => `${service.name} ${service.subtitle}`.toLowerCase().includes(query.toLowerCase())),
     [query, services],
   );
-  const primaryServices = visible.filter((service) => ["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi"].includes(service.serviceCode));
+  // Every service that existed in the legacy customer shell remains discoverable here. The video rail
+  // deliberately stays at six slots, but Food and Relocation must never disappear from the booking grid.
+  const careServices = visible;
+  const videoServices = visible.filter((service) => VIDEO_SERVICE_CODES.includes(service.serviceCode));
   const offer = sponsoredOffers[activeOffer];
 
   const saveLocation = (value: string) => {
@@ -164,7 +169,7 @@ export default function PremiumDiscoveryHome({
     <section className={styles.quick}>
       <div className={styles.sectionHead}><div><small>BOOK IN A FEW TAPS</small><h2>Care for every kind of day</h2></div><button onClick={onShowBookings}>Your bookings →</button></div>
       <div className={styles.grid}>
-        {primaryServices.map((service) => {
+        {careServices.map((service) => {
           const paused = disabledServices.has(service.serviceCode);
           return <button key={service.serviceCode} className={styles.serviceCard} onClick={() => onOpen(service.serviceCode)} disabled={paused}>
             <img src={service.image} alt={service.imageAlt} />
@@ -173,13 +178,13 @@ export default function PremiumDiscoveryHome({
           </button>;
         })}
       </div>
-      {primaryServices.length === 0 && <p className={styles.empty}>No care service matches “{query}”.</p>}
+      {careServices.length === 0 && <p className={styles.empty}>No care service matches “{query}”.</p>}
     </section>
 
     <section className={styles.videoSection}>
       <div className={styles.sectionHead}><div><small>SIX SERVICE VIDEO SLOTS</small><h2>Watch before you book</h2></div><span>Swipe →</span></div>
       <div className={styles.videoRail}>
-        {primaryServices.map((service) => <button className={styles.videoCard} key={service.serviceCode} onClick={() => setVideoGuide(service)}>
+        {videoServices.map((service) => <button className={styles.videoCard} key={service.serviceCode} onClick={() => setVideoGuide(service)}>
           <img src={service.image} alt="" /><span className={styles.videoWash} /><i>▶</i><div><small>VIDEO PLACEHOLDER · {service.name.toUpperCase()}</small><b>{service.name} guide</b></div>
         </button>)}
       </div>
