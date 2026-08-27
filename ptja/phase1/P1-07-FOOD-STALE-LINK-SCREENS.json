@@ -1,0 +1,30 @@
+{
+  "phase": "1 - grooming and training end-to-end, driven in a real browser with demo data",
+  "id": "P1-07",
+  "status": "REPORTED - NOT FIXED (cannot be pinned by this test harness)",
+  "title": "Two Food screens answer a stale link badly; a third was flagged and is correct",
+  "why_this_was_looked_at": "The screen sweep flagged /food/manage, /food/subscription-invoice and /food/subscription-payment as blank. Bare visits are NOT a user path - all three are only ever linked with a query parameter (app/food/canonical-food-page.tsx:21 and app/food/subscriptions/page.tsx:60-61; subscription-payment has no in-app link at all and is reached from a stored payment_link_path). A STALE or expired link is a real path, so that is what was driven.",
+  "measured_in_a_browser": [
+    "/food/manage?orderId=PS-UAT-FOOD-DOES-NOT-EXIST renders a complete order page for an order that does not exist: 'PS-UAT-FOOD-DOES-NOT-EXIST · qty · not set · fulfilment not set / Order truth / Inventory reservation: not set · lot not picked / Dispatch not dispatched ...'",
+    "/food/subscription-invoice?invoiceId=INV-DOES-NOT-EXIST says 'Unable to load Food subscription'.",
+    "/food/subscription-payment?requestId=REQ-DOES-NOT-EXIST renders its header and 'Payment request' and nothing else - no explanation at all."
+  ],
+  "findings": [
+    {
+      "id": "P1-07a",
+      "where": "app/food/manage/food-customer-management.tsx",
+      "what": "loadCustomerFoodOrder returns [] for an unknown order, so setOrder(rows[0]||null) stores null - and the render path has no `if(!order)` branch. Every field goes through label(value)=String(value||'not set'), so ABSENT is drawn as an order whose fields merely happen to be unset. The screen cannot tell apart 'still loading', 'no such order' and 'a real order with nothing filled in'. This is the audit's recurring class - unknown or absent treated as a valid state - rendered as a whole page.",
+      "severity": "A customer following a stale link is shown a plausible order page for an order that is not there, with a Cancel control on it."
+    },
+    {
+      "id": "P1-07b",
+      "where": "app/food/subscription-payment",
+      "what": "An unknown request id produces a header and no message. Same class as P1-01: the customer is told nothing about why the page is empty.",
+      "severity": "Low, but it is the page a customer reaches from an expired payment link."
+    }
+  ],
+  "refuted": "/food/subscription-invoice was flagged by the same sweep and is CORRECT: it reports 'Unable to load Food subscription' for an unknown id. /food/manage with NO orderId at all also renders a deliberate placeholder with a way back; the defect is specifically the unknown-id case.",
+  "why_not_fixed": "Both are render branches of client .tsx components, and this repository has no harness that can render one: there is no jsdom or @testing-library (tests/partner-surface-contract.test.mjs:21 says so), and `node --experimental-strip-types` cannot load .tsx at all - 'Unknown file extension \".tsx\"'. Fixing these without a regression test would put unpinned changes into a branch whose whole claim is that every fix is RED-first and sabotage-verified. Reported instead.",
+  "the_coverage_gap_itself": "No .tsx render branch anywhere in this platform can be pinned by the current test suite. Every UI-state defect found so far - P1-01's refusal copy, P1-04's fixture pets, these two - had to be found by opening a browser. That is a standing gap in the suite, not a property of these three screens.",
+  "not_claimed": ["Only these three Food screens were driven. Other screens' stale-link and not-found states have not been swept."]
+}
