@@ -16,7 +16,8 @@ import{stableBookingInputKey}from"../../lib/booking-input-fingerprint";
 
 type PetType = "dog" | "cat" | "puppy" | "kitten";
 type Pack = {id:string;name:string;detail:string;price:number;badge:string;bestFor:string;includes:string[];missing:string[]};
-const slots=["9:00–11:00 AM","11:00 AM–1:00 PM","1:00–3:00 PM","3:00–5:00 PM"];
+export const GROOMING_SLOTS=["9:00–11:00 AM","11:00 AM–1:00 PM","1:00–3:00 PM","3:00–5:00 PM"];
+const slots=GROOMING_SLOTS;
 const IST_SLOT_HOUR=[9,11,13,15];
 // Real, upcoming dates from today through the end of the current month (client/IST calendar). This
 // replaces a hardcoded early-August list that sat in the past, which made every reserve fail with
@@ -60,8 +61,19 @@ type ProviderProof={providerId:string;displayName:string;bio:string|null;verifie
 function typeSpecies(t:PetType){return t==="cat"||t==="kitten"?"cat":"dog";}
 async function saveServiceLocation(input:{bookingId:string;customerId:string;address:string;pincode:string}){const response=await fetch("/api/grooming-service-location",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)}),body=await response.json() as{error?:string};if(!response.ok)throw new Error(body.error||"Unable to save the verified service address");}
 
-export default function GroomingFlow({customer}:{customer:LoggedInCustomer}){
- const[providerProof,setProviderProof]=useState<ProviderProof|null>(null),[safetyNotes,setSafetyNotes]=useState("friendly"),[step,setStep]=useState(1),[type,setType]=useState<PetType>("dog"),[packId,setPackId]=useState("bath"),[plan,setPlan]=useState("single"),[addons,setAddons]=useState<string[]>([]),[date,setDate]=useState<string>(()=>{const d=buildDates();return (d[1]??d[0])?.iso??"";}),[slot,setSlot]=useState(slots[1]),[preferred,setPreferred]=useState(true),[pay,setPay]=useState("after"),[discount,setDiscount]=useState(0),[couponCode,setCouponCode]=useState(""),[couponQuoteId,setCouponQuoteId]=useState(""),[serviceLocation,setServiceLocation]=useState<ZoneResult|null>(null),[assignedProvider,setAssignedProvider]=useState<{name:string;model:string}|null>(null),[done,setDone]=useState(false),[bookedId,setBookedId]=useState(""),[scheduling,setScheduling]=useState(false),[scheduleError,setScheduleError]=useState(""),[view,setView]=useState("status"),[toast,setToast]=useState(""),[livePrice,setLivePrice]=useState<number|null>(null),[showPetManager,setShowPetManager]=useState(false),[petsState,setPets]=useState<CustomerPet[]|null>(null),[selectedPetIds,setSelectedPetIds]=useState<string[]>([]),[petsLoading,setPetsLoading]=useState(true),[petsError,setPetsError]=useState("");
+/* The public entry (app/page.tsx) shows the customer a package, date and slot before handing booking
+ * here. Mounting with only `customer` would silently reset all of it and could take them into a
+ * DIFFERENT booking than the one they just confirmed, so the selection travels with them. Only values
+ * this flow can actually honour are accepted: an unresolved package or an unserved slot falls back to
+ * this flow's own default rather than being approximated. [PTJA-P1-F38] */
+export type GroomingEntrySelection={type?:PetType;packId?:string;date?:string;slot?:string};
+
+/* Resolved by NAME against this flow's own catalogue, so the two id vocabularies ("dog-makeover" here,
+ * "complete" there) never need a hand-maintained translation table that could drift. */
+export function resolveGroomingPackId(type:PetType,name:string){return packages[type]?.find(p=>p.name===name)?.id??"";}
+
+export default function GroomingFlow({customer,initial}:{customer:LoggedInCustomer;initial?:GroomingEntrySelection}){
+ const[providerProof,setProviderProof]=useState<ProviderProof|null>(null),[safetyNotes,setSafetyNotes]=useState("friendly"),[step,setStep]=useState(1),[type,setType]=useState<PetType>(initial?.type??"dog"),[packId,setPackId]=useState(initial?.packId||"bath"),[plan,setPlan]=useState("single"),[addons,setAddons]=useState<string[]>([]),[date,setDate]=useState<string>(()=>{if(initial?.date)return initial.date;const d=buildDates();return (d[1]??d[0])?.iso??"";}),[slot,setSlot]=useState(initial?.slot&&slots.includes(initial.slot)?initial.slot:slots[1]),[preferred,setPreferred]=useState(true),[pay,setPay]=useState("after"),[discount,setDiscount]=useState(0),[couponCode,setCouponCode]=useState(""),[couponQuoteId,setCouponQuoteId]=useState(""),[serviceLocation,setServiceLocation]=useState<ZoneResult|null>(null),[assignedProvider,setAssignedProvider]=useState<{name:string;model:string}|null>(null),[done,setDone]=useState(false),[bookedId,setBookedId]=useState(""),[scheduling,setScheduling]=useState(false),[scheduleError,setScheduleError]=useState(""),[view,setView]=useState("status"),[toast,setToast]=useState(""),[livePrice,setLivePrice]=useState<number|null>(null),[showPetManager,setShowPetManager]=useState(false),[petsState,setPets]=useState<CustomerPet[]|null>(null),[selectedPetIds,setSelectedPetIds]=useState<string[]>([]),[petsLoading,setPetsLoading]=useState(true),[petsError,setPetsError]=useState("");
  // pets is null until the first load resolves — distinguishes "not hydrated" from "hydrated empty"
  // (e.g. the last pet was deleted), so a late initial load can't re-insert a removed pet. selectedPets
  // below is derived from pets, so the selection is always reconciled against the accepted list.

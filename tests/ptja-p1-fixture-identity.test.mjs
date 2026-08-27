@@ -85,8 +85,9 @@ test("P1-I04 the landing page carries no simulated identity of its own", async (
 
 test("P1-I05 it hands booking to the governed grooming flow and sign-in to the existing login", async () => {
   const source = await read("app/page.tsx");
-  assert.match(source, /import GroomingFlow from "\.\/mobile-app\/grooming-flow"/, "the governed flow is what books");
-  assert.match(source, /<GroomingFlow customer=\{customer\} \/>/, "and it is given the resolved customer");
+  assert.match(source, /import GroomingFlow, \{ GROOMING_SLOTS, resolveGroomingPackId \} from "\.\/mobile-app\/grooming-flow"/, "the governed flow is what books");
+  assert.match(source, /<GroomingFlow customer=\{customer\} initial=\{\{/, "and it is given the resolved customer");
+  assert.match(source, /packId: resolveGroomingPackId\(petType, selectedPackage\.name\)/, "together with the booking the customer was actually shown");
   assert.match(source, /import CustomerLogin/, "sign-in reuses the existing customer login, not a new identity model");
   assert.match(source, /loadCustomerAccount\(\)/, "the customer comes from the platform session");
 });

@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import TestSyncPanel from "./components/test-sync-panel";
-import GroomingFlow from "./mobile-app/grooming-flow";
+import GroomingFlow, { GROOMING_SLOTS, resolveGroomingPackId } from "./mobile-app/grooming-flow";
 import CustomerLogin, { type LoggedInCustomer } from "./mobile-app/customer-login";
 import { loadCustomerAccount } from "../lib/customer-account-client";
 import { groomingBookingDates, groomingSlotFitsRoster } from "../lib/grooming-booking-calendar";
@@ -64,7 +64,9 @@ const subscriptionPackages: Package[] = [
   { id: "sub-trim", name: "3 Just Trim sessions", detail: "Dogs & cats · use across registered family pets", price: 4197 },
 ];
 
-const slots = ["9:00–11:00 AM", "11:00 AM–1:00 PM", "1:00–3:00 PM", "3:00–5:00 PM", "5:00–7:00 PM"];
+// Taken from the flow that actually reserves the groomer. Listing a slot here that grooming-flow.tsx
+// does not offer would advertise an appointment no booking can honour.
+const slots = GROOMING_SLOTS;
 const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(value);
 
 export default function Home() {
@@ -113,7 +115,15 @@ export default function Home() {
     setSelectedSlot(null);
   }
 
-  if (booking && customer) return <GroomingFlow customer={customer} />;
+  // What the customer just confirmed on the summary bar travels into the flow. A package with no
+  // equivalent in the flow's catalogue (the subscription and young-pet offers) resolves to "" and the
+  // flow keeps its own default rather than this page guessing a substitute.
+  if (booking && customer) return <GroomingFlow customer={customer} initial={{
+    type: petType,
+    packId: resolveGroomingPackId(petType, selectedPackage.name),
+    date: dates[selectedDate]?.isoDate,
+    slot: selectedSlot ?? undefined,
+  }} />;
   if (signingIn) return <CustomerLogin onLoggedIn={next => { setCustomer(next); setSigningIn(false); setBooking(true); }} />;
 
   return (

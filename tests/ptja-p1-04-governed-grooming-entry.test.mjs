@@ -139,8 +139,8 @@ test("P1-04-E02 the entry page resolves the session customer and hands booking t
   const source = await read(ENTRY);
   assert.match(source, /loadCustomerAccount\(\)/, "the customer comes from the platform session");
   assert.doesNotMatch(source, /loadCustomerAccount\(\s*["'`]/, "never a literal id");
-  assert.match(source, /import GroomingFlow from "\.\/mobile-app\/grooming-flow"/);
-  assert.match(source, /<GroomingFlow customer=\{customer\} \/>/, "the governed flow books");
+  assert.match(source, /import GroomingFlow, \{ GROOMING_SLOTS, resolveGroomingPackId \} from "\.\/mobile-app\/grooming-flow"/);
+  assert.match(source, /<GroomingFlow customer=\{customer\} initial=/, "the governed flow books");
   assert.match(source, /import CustomerLogin/, "sign-in reuses the existing login, not a new identity model");
 });
 
@@ -150,4 +150,54 @@ test("P1-04-E03 non-vacuity: the governed flow is itself session-bound", async (
   assert.ok(!flow.includes("TST-101"), "no fixture identity in the flow");
   assert.match(flow, /customer\.customerId/, "it books for the customer it is given");
   assert.match(flow, /createCanonicalLifecycle/, "through the canonical lifecycle");
+});
+
+// --- The handoff must carry the booking the customer was shown, not restart a different one ---
+// Measured before this: the summary bar read "Complete Makeover · 3 Sep · 1:00-3:00 PM · Rs 2,399",
+// and pressing Confirm booking mounted the flow with only `customer`, which re-initialised to
+// Essential Bath, tomorrow, 11:00 AM. The customer could confirm one booking and be taken into another.
+
+test("P1-04-H01 the entry page hands its selection to the flow, not just the customer", async () => {
+  const source = await read("app/page.tsx");
+  assert.match(source, /<GroomingFlow customer=\{customer\} initial=\{\{/, "the selection travels with the customer");
+  for (const field of ["type: petType", "packId: resolveGroomingPackId(petType, selectedPackage.name)", "date: dates[selectedDate]?.isoDate", "slot: selectedSlot"]) {
+    assert.ok(source.includes(field), `and carries ${field}`);
+  }
+});
+
+test("P1-04-H02 the flow seeds itself from that selection instead of its own defaults", async () => {
+  const flow = await read("app/mobile-app/grooming-flow.tsx");
+  assert.match(flow, /useState<PetType>\(initial\?\.type\?\?"dog"\)/, "pet type");
+  assert.match(flow, /useState\(initial\?\.packId\|\|"bath"\)/, "package");
+  assert.match(flow, /if\(initial\?\.date\)return initial\.date/, "date");
+  assert.match(flow, /initial\?\.slot&&slots\.includes\(initial\.slot\)\?initial\.slot:slots\[1\]/,
+    "slot - and only a slot this flow actually serves, never an approximation");
+});
+
+test("P1-04-H03 the entry page cannot advertise a slot the flow will not reserve", async () => {
+  const source = await read("app/page.tsx");
+  const flow = await read("app/mobile-app/grooming-flow.tsx");
+  assert.match(flow, /export const GROOMING_SLOTS=/, "the flow owns the slot vocabulary");
+  assert.match(source, /const slots = GROOMING_SLOTS;/, "and the entry page uses it rather than its own list");
+  // The measured divergence: the entry page offered 5:00-7:00 PM, which the flow has never served.
+  const code = source.split("\n").filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*")).join("\n");
+  assert.ok(!code.includes("5:00–7:00 PM"), "the unbookable fifth slot is gone");
+});
+
+test("P1-04-H04 every regular package the entry page prices exists in the flow's catalogue", async () => {
+  const source = await read("app/page.tsx");
+  const flow = await read("app/mobile-app/grooming-flow.tsx");
+  // resolveGroomingPackId matches by NAME, so parity is checked on the names and their prices: a
+  // package the entry page prices at one figure and the flow at another is the same silent
+  // substitution, just later in the journey.
+  const flowPacks = new Map([...flow.matchAll(/\{id:"[a-z]+",name:"([^"]+)"[^}]*?price:(\d+)/g)].map((m) => [m[1], m[2]]));
+  const entryPacks = [...source.matchAll(/id: "(?:dog|cat)-[a-z]+", name: "([^"]+)"[^}]*?price: (\d+)/g)];
+  assert.ok(entryPacks.length >= 8, `the entry page prices ${entryPacks.length} regular packages`);
+  for (const [, name, price] of entryPacks) {
+    assert.ok(flowPacks.has(name), `"${name}" exists in the flow - no silent substitution`);
+    assert.equal(flowPacks.get(name), price, `"${name}" costs the same in both`);
+  }
+  // Non-vacuity: the flow's catalogue is real, and does not carry an invented name.
+  assert.ok(flowPacks.size >= 4, "the flow's catalogue was actually parsed");
+  assert.ok(!flowPacks.has("Platinum Spa"), "an unknown package is not present");
 });
