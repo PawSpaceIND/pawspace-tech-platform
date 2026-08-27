@@ -1,7 +1,7 @@
 {
   "phase": "1 - grooming and training end-to-end, driven in a real browser with demo data",
   "id": "P1-04",
-  "status": "REPORTED - NOT FIXED",
+  "status": "FIXED - Option 2 (site root books through the governed grooming flow)",
   "title": "The public landing page's grooming flow is not the governed customer journey, and cannot complete a booking on any real host",
   "method": "Drove app/page.tsx (the site root) in Chromium as a brand-new ANONYMOUS context - no session cookie at all - and again with the signed-in demo customer's session.",
   "measured": [
@@ -22,10 +22,34 @@
     "Because it holds no session, on any host that is not a development preview its FIRST API call returns 401 - after the customer has entered name, phone, secondary phone, doorstep address, pet, safety notes and payment preference. A real customer on the live site cannot complete a grooming booking here and only finds out at the end.",
     "app/mobile-app/grooming-flow.tsx is the governed twin: it loads the customer's own pets, resolves the service location, and books through createCanonicalLifecycle. app/mobile-app/page.tsx renders it EMBEDDED. So a correct grooming journey exists; the site root runs a different, older one."
   ],
-  "why_not_fixed_here": "The remedy is a product decision, not a defect fix: route / to the governed flow, gate its CTA behind real sign-in, or make / marketing-only and send booking to /mobile-app. Each changes what the public site does. Choosing one would be inventing product semantics, which this audit does not do.",
   "severity": "Launch-blocking for the grooming journey as presented on the public site, and only for that surface. No data was exposed and no control was bypassed.",
   "not_claimed": [
     "No production or staging system was touched. Every measurement is local.",
     "The booking created during this probe exists only in the local .wrangler dev database."
-  ]
+  ],
+  "remedy_chosen_by_the_product_owner": {
+    "option": "Option 2 - the public entry hands booking to app/mobile-app/grooming-flow.tsx, gated behind real sign-in",
+    "why_this_is_not_the_audit_inventing_semantics": "The choice between routing / to the governed flow, gating its own CTA, or making / marketing-only was put to the product owner and Option 2 was returned. This ledger records the instruction, it does not originate it."
+  },
+  "what_changed": [
+    "app/page.tsx no longer runs its own booking. It loads the authenticated customer with loadCustomerAccount(); 'Confirm booking' renders <GroomingFlow customer={...}/> when signed in and <CustomerLogin/> (the real OTP screen) when signed out.",
+    "Deleted from app/page.tsx: the savedPets module fixture, verifyOtp, finishBooking, both modals including the 'OTP verification is simulated for review' note, the confirmed-booking branch, and the state and handlers that only served them. Net -287 lines, +39.",
+    "app/mobile-app/grooming-flow.tsx was corrected where it was WEAKER than the entry page it replaces, so no behaviour was lost in the move: the safety-notes / bite-history question was carried over into pricing requirements; bookingNonce() (a per-call random value, so a resubmit created a second booking) was replaced with stableBookingInputKey() over the 17 booking inputs, restoring deduplication; a re-entrancy guard was added to the scheduling submit.",
+    "lib/booking-input-fingerprint.ts is new: FNV-1a over the inputs joined by U+001F. Deterministic - no clock, no randomness - which is what makes the resubmit collapse onto the same booking."
+  ],
+  "fifth_behaviour_loss_found_during_implementation": {
+    "defect": "app/mobile-app/grooming-flow.tsx declared status: pay===\"online\" ? \"captured\" : \"created\" - the client asserting money was received, with no gateway attestation. This is the same defect class as PTJA-P1-F32 (Training), which was fixed in an earlier closure.",
+    "correction": "status is now always \"created\"; initialPaymentStatus carries pay===\"online\" ? \"payment_pending\" : \"due_after_service\". Verified that grooming governance, unlike boarding/sitting/training, does not require captured, so this does not block the journey.",
+    "measured": "booking_payments.status = 'created' with detail 'Pay now, sandbox authorization pending; live capture not connected'.",
+    "shadowed_test": "tests/rendered-html.test.mjs asserted the fabricated capture as a contract. It was retargeted to assert the corrected behaviour, not relaxed."
+  },
+  "verification": {
+    "focused": "tests/ptja-p1-04-governed-grooming-entry.test.mjs - 12 cases, unique namespace, no shared globals",
+    "browser_signed_out": "real OTP login shown ('Enter your phone number to sign in or create your account'); no simulated-OTP note; no WEB- or TST-101 identity in any request",
+    "browser_signed_in": "governed flow reached; the customer's real pet 'Bruno Labrador Retriever' listed; fixture pets Milo/Coco/Rio absent; safety question present with all three options",
+    "dedup": "FIRST 201 PS-UAT-MTBAZ6LM-64F6 duplicatePrevented=false; RESUBMIT same inputs 200 same id duplicatePrevented=true; DB row count for that key = 1",
+    "provider_proof_endpoint": "groom_arun -> verified:false, stats:null, isNewProvider:true; unknown provider -> 404"
+  },
+  "remaining_uncertainty": "Provider-proof ON-SCREEN visibility was not obtained in the browser: the flow's 'Verify service address' step could not be driven from Playwright (the Check button stayed disabled under both fill() and pressSequentially()). The proof block itself is covered by the gate test, the negative-case test, sabotage, and the live endpoint behaviour above - but it was not seen rendered.",
+  "why_it_was_not_fixed_at_audit_time": "The remedy is a product decision, not a defect fix: route / to the governed flow, gate its CTA behind real sign-in, or make / marketing-only and send booking to /mobile-app. Each changes what the public site does. Choosing one would be inventing product semantics, which this audit does not do."
 }
