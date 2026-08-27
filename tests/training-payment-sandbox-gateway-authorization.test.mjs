@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
-installWorkersHooks("__TRAINING_CAPTURE_DB__", "__TRAINING_CAPTURE_ENV__");
+installWorkersHooks("__TRAINING_PAYMENT_GATEWAY_DB__", "__TRAINING_PAYMENT_GATEWAY_ENV__");
 
 const ORIGIN = "https://app.pawspace.in";
 const ENDPOINT = `${ORIGIN}/api/training-payment-sandbox`;
@@ -25,8 +25,8 @@ function makeD1(sqlite) {
 async function world() {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
-  globalThis.__TRAINING_CAPTURE_DB__ = db;
-  globalThis.__TRAINING_CAPTURE_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox" };
+  globalThis.__TRAINING_PAYMENT_GATEWAY_DB__ = db;
+  globalThis.__TRAINING_PAYMENT_GATEWAY_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox" };
   const { ensureSecurityTables } = await import("../lib/server-auth.ts");
   await ensureSecurityTables(db);
   const { createTrainingQuote } = await import("../lib/training-commercial-governance.ts");
@@ -67,7 +67,7 @@ async function customerCookie(db, customerId = "CUS-TRAINING-CAPTURE") {
 }
 
 async function throughGateway(request) {
-  const env = { DB: globalThis.__TRAINING_CAPTURE_DB__, ...globalThis.__TRAINING_CAPTURE_ENV__ };
+  const env = { DB: globalThis.__TRAINING_PAYMENT_GATEWAY_DB__, ...globalThis.__TRAINING_PAYMENT_GATEWAY_ENV__ };
   const { authorizePlatformSessionRequest } = await import("../lib/session-api-gateway.ts");
   const { authorizeApiRequest } = await import("../lib/api-gateway.ts");
   const sessionAccess = await authorizePlatformSessionRequest(request, env.DB);
