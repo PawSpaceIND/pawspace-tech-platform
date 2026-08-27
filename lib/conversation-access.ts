@@ -50,8 +50,22 @@ export function conversationAccessPredicate(actor:ConversationAccessActor,thread
   JOIN lead_assignment_memberships access_member
     ON lower(access_member.employee_email)=lower(?)
    AND access_member.active=1
-  WHERE ${threadAlias}.lead_id=access_lead.id
-    AND access_lead.customer_id=${threadAlias}.customer_id
+  WHERE access_lead.customer_id=${threadAlias}.customer_id
+    AND (
+      ${threadAlias}.lead_id=access_lead.id
+      OR (
+        ${threadAlias}.lead_id IS NULL
+        AND access_lead.converted_booking_id IS NULL
+        AND access_lead.status NOT IN ('closed','converted')
+        AND NOT EXISTS (
+          SELECT 1 FROM lead_work_items access_other_lead
+          WHERE access_other_lead.customer_id=${threadAlias}.customer_id
+            AND access_other_lead.id!=access_lead.id
+            AND access_other_lead.converted_booking_id IS NULL
+            AND access_other_lead.status NOT IN ('closed','converted')
+        )
+      )
+    )
     AND EXISTS (
       SELECT 1 FROM json_each(access_member.service_codes_json) member_service
       WHERE lower(trim(CAST(member_service.value AS TEXT)))=lower(trim(access_lead.service))
