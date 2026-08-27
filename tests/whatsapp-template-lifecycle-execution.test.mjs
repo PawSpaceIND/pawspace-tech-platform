@@ -74,7 +74,7 @@ test("marketing template send requires explicit marketing consent even inside th
   await adapter.ensureWhatsAppUatTables(db);
   sqlite.prepare("INSERT OR REPLACE INTO whatsapp_uat_sessions (customer_id,provider,last_inbound_at,last_outbound_at) VALUES ('CUS-TPL-1','sandbox_simulator',?,NULL)").run(Date.now());
   await lifecycle.saveWhatsAppTemplateDraft(db, { templateKey: "marketing_offer", displayName: "Marketing offer", category: "marketing", language: "en", body: "Offer {{1}}", sampleValues: ["OFFER"], actorEmail: staffActor.email });
-  await lifecycle.submitWhatsAppTemplate(db, { templateKey: "marketing_offer", actorEmail: staffActor.email, reason: "submit" });
+  await lifecycle.submitWhatsAppTemplate(db, { templateKey: "marketing_offer", actorEmail: staffActor.email, reason: "submit for review" });
   await lifecycle.reconcileWhatsAppTemplate(db, { templateKey: "marketing_offer", actorEmail: staffActor.email, outcome: "approved", metaReference: "META-MKT-1", reason: "verified" });
   const blocked = await adapter.queueWhatsAppUatOutbound(db, { provider: "sandbox_simulator", threadId: "THREAD-TPL-1", customerId: "CUS-TPL-1", text: "Offer", idempotencyKey: "marketing-no-consent", createdBy: staffActor.email, templateKey: "marketing_offer", language: "en" });
   assert.equal(blocked.queued, false);
