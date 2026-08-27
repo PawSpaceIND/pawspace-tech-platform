@@ -30,7 +30,7 @@ const safetyPhrases=["medical emergency","emergency","injured","injury","bleedin
 const funeralPhrases=["funeral","memorial","cremation","passed away","died","death"];
 
 function containsAny(value:string,phrases:string[]){return phrases.some(phrase=>value.includes(phrase));}
-function serviceFrom(value:string){const normalized=value.trim().toLowerCase();return serviceChoices.find(choice=>choice.labels.some(label=>normalized===label||normalized.includes(label)))?.code||null;}
+function serviceFrom(value:string){const normalized=value.trim().toLowerCase().replace(/[.!]+$/g,"");return serviceChoices.find(choice=>choice.labels.some(label=>normalized===label||[`i need ${label}`,`i want ${label}`,`book ${label}`,`looking for ${label}`,`${label} please`,`${label} service`].includes(normalized)))?.code||null;}
 function petFrom(value:string){const normalized=value.trim().toLowerCase();if(/\bdog\b|\bpuppy\b/.test(normalized))return"dog";if(/\bcat\b|\bkitten\b/.test(normalized))return"cat";return null;}
 function serviceLabel(code:string){return code.replaceAll("_"," ").replace(/\b\w/g,match=>match.toUpperCase());}
 
