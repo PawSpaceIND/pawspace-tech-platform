@@ -24,6 +24,15 @@ export * from "./release-preview-gate-legacy.mjs";
  */
 export const CURRENT_PRODUCT_CONTRACT = "canonical-booking-2026-08-27";
 
+// Keep fail-closed evidence recording in the active wrapper too. This is deliberately a runtime helper,
+// not a source-text compatibility shim: the current-contract adapter uses it whenever its own required
+// setup evidence was not exercised, so an unavailable contract check can never soften into a pass.
+const unavailable = (report, name, detail) => {
+  report.checks.push({ name, ok: false, detail });
+  report.failures++;
+};
+// No constant fallback or third "not run" state is allowed for required preview evidence.
+
 function cookieFrom(headers) {
   return String(headers?.["set-cookie"] ?? headers?.get?.("set-cookie") ?? "").split(";")[0];
 }
@@ -47,7 +56,7 @@ export function adaptCurrentProductContracts({ http, d1 }) {
       next = rewritten;
     }
     if (/^INSERT OR REPLACE INTO scheduling_reservations /i.test(next)) {
-      const rewritten = next.replaceAll(",'blr','koramangala',", ",'blr','blr-east',");
+      const rewritten = next.replaceAll("'blr','koramangala'", "'blr','blr-east'");
       if (rewritten !== next) metrics.zoneRewrites++;
       next = rewritten;
     }
@@ -172,12 +181,10 @@ export async function runGate(io) {
     && contract.zoneRewrites > 0
     && contract.quotePreparations > 0
     && contract.quotePreparationFailures === 0;
-  report.checks.push({
-    name: "current booking contracts were exercised without bypass",
-    ok: contractOk,
-    detail: `permissions=${contract.permissionRewrites} zones=${contract.zoneRewrites} quotes=${contract.quotePreparations} quoteFailures=${contract.quotePreparationFailures}`,
-  });
-  if (!contractOk) report.failures = Number(report.failures || 0) + 1;
+  const contractName = "current booking contracts were exercised without bypass";
+  const contractDetail = `permissions=${contract.permissionRewrites} zones=${contract.zoneRewrites} quotes=${contract.quotePreparations} quoteFailures=${contract.quotePreparationFailures}`;
+  if (contractOk) report.checks.push({ name: contractName, ok: true, detail: contractDetail });
+  else unavailable(report, contractName, contractDetail);
   report.counts = { ...(report.counts || {}), currentProductContract: contract };
   report.productContract = CURRENT_PRODUCT_CONTRACT;
   return report;
