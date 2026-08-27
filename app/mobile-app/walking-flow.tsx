@@ -160,6 +160,7 @@ export default function WalkingFlow({ customer }: { customer: LoggedInCustomer }
   return (
     <div className={styles.wrap}>
       {toast && <div className={styles.toast}>{toast}</div>}
+      <header className={styles.journeyIntro}><span>PAWSPACE WALKING</span><div><h2>Every walk, a better day.</h2><small>Choose a plan, set the rhythm and reserve a dedicated walker.</small></div><b>{stage}<i>/4</i></b></header>
       <div className={styles.steps}>{[1, 2, 3, 4].map(n => <span key={n} className={stage >= n ? styles.active : ""}>{n}</span>)}</div>
 
       {stage === 1 && (

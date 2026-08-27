@@ -230,6 +230,7 @@ export default function FoodFlow({ customer, onCompleted }: { customer: LoggedIn
 
   return (
     <section className={styles.flow}>
+      <header className={styles.foodIntro}><span>PAWSPACE FRESH FOOD</span><div><h2>Better bowls, made simple.</h2><small>Check your area, choose a meal and set delivery preferences.</small></div><b>{step}<i>/5</i></b></header>
       <div className={styles.steps}>
         {[1, 2, 3, 4, 5].map((n) => (
           <span key={n} className={step >= n ? styles.active : ""}>
