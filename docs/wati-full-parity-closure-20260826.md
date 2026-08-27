@@ -102,11 +102,18 @@ PawSpace operates a first-party WhatsApp customer-operations platform with WATI-
 ### D. Users / lead access
 - [ ] team/city/queue scope model
 - [ ] row-level lead access for associate/manager roles
-- [ ] conversation list/detail honors the same scope
+- [x] conversation list/detail and mutation controls honor the canonical lead-assignment scope
 - [ ] reassignment and round-robin tested
 - [ ] masked phone remains masked without explicit permission
-- [ ] cross-team/cross-city negative tests
+- [x] cross-team/cross-city conversation negatives, including forged inbox ownership
 - [ ] founder/superuser protected-role rules remain intact
+
+Conversation scope closure uses `lead_assignments` as current authority and active
+`lead_assignment_policies` only for legacy leads without a current assignment. Active
+`lead_assignment_memberships` supplies employee/team/service/city scope;
+`communication_threads.assigned_to` is explicitly not an authorization source. The same policy is
+executed for inbox list/detail, assignment/status/inbound writes, WhatsApp control actions, and AI
+handoff detail/queue. Runtime proof: `tests/conversation-row-authorization.test.mjs`.
 
 ### E. Meta/Google leads and conversion feedback
 - [ ] source metadata persisted for Meta/Google leads

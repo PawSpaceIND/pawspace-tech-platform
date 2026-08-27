@@ -96,5 +96,5 @@ test("the handoff screen opens on a live escalation instead of an arbitrary thre
   const lib = read("lib/ai-human-handoff.ts");
   assert.match(lib, /export async function listAiHandoffQueue/);
   assert.match(lib, /WHERE h\.status IN \('queued','staff_active'\)/, "the queue is live escalations only");
-  assert.match(lib, /catch\(\(\)=>\(\{results:\[\] as Row\[\]\}\)\)/, "cold-DB safe: a fresh environment returns an empty queue, not an error");
+  assert.match(lib, /listAiHandoffQueue[\s\S]*await ensureAiHumanHandoff\(db\)/, "cold-DB safe: the queue creates its owned tables before the scoped read");
 });

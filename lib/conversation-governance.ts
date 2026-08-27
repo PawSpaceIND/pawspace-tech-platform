@@ -1,4 +1,5 @@
 import{ensureCommunicationTables,type CommunicationChannel}from"./communication-engine";
+import{conversationAccessPredicate,ensureConversationAccessTables,type ConversationAccessActor}from"./conversation-access";
 
 type Row=Record<string,unknown>;
 export type ConversationScope="customer"|"provider"|"staff";
@@ -20,7 +21,7 @@ function missingTableOnly(table:string){
   throw error;
  };
 }
-export async function listConversationThreads(db:D1Database,input:{customerId?:string;status?:string;limit?:number}){await ensureConversationGovernance(db);const limit=Math.min(200,Math.max(1,input.limit||100));let query="SELECT t.*,c.name customer_name,c.primary_phone FROM communication_threads t LEFT JOIN canonical_customers c ON c.id=t.customer_id";const binds:unknown[]=[];const where:string[]=[];if(input.customerId){where.push("t.customer_id=?");binds.push(input.customerId);}if(input.status){where.push("t.status=?");binds.push(input.status);}if(where.length)query+=` WHERE ${where.join(" AND ")}`;query+=" ORDER BY t.updated_at DESC LIMIT ?";binds.push(limit);let result:{results:Row[]};
+export async function listConversationThreads(db:D1Database,input:{customerId?:string;status?:string;limit?:number;actor?:ConversationAccessActor}){await ensureConversationGovernance(db);const limit=Math.min(200,Math.max(1,input.limit||100));let query="SELECT t.*,c.name customer_name,c.primary_phone FROM communication_threads t LEFT JOIN canonical_customers c ON c.id=t.customer_id";const binds:unknown[]=[];const where:string[]=[];if(input.actor){await ensureConversationAccessTables(db);const access=conversationAccessPredicate(input.actor,"t");where.push(access.sql);binds.push(...access.binds);}if(input.customerId){where.push("t.customer_id=?");binds.push(input.customerId);}if(input.status){where.push("t.status=?");binds.push(input.status);}if(where.length)query+=` WHERE ${where.join(" AND ")}`;query+=" ORDER BY t.updated_at DESC LIMIT ?";binds.push(limit);let result:{results:Row[]};
  try{result=await db.prepare(query).bind(...binds).all<Row>();}
  catch(error){
   // The customer name is a convenience join onto another module's table. A deployment that has not
