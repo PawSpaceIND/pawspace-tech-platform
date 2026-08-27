@@ -18,10 +18,18 @@
     "P1-M02": "RED - sitting offered 3 enabled controls, including Save on a care-plan form",
     "P1-M03": "RED - taxi said nothing about what state it was in"
   },
-  "non_vacuity_controls_green_throughout": ["P1-M04 - each screen's own empty-id placeholder still renders, so flattening every screen to nothing cannot pass"],
+  "non_vacuity_controls_green_throughout": [
+    "P1-M04 - each screen's own empty-id placeholder still renders, so flattening every screen to nothing cannot pass"
+  ],
   "sabotage": [
-    {"control": "sitting alone stops gating its screen", "result": "RED - P1-M02 only; the other three cases stayed GREEN"},
-    {"control": "not-found collapses into ready in the shared decision", "result": "DID NOT BITE this file - see the coverage limit below. It turned P1-N01 red in the food suite, which is where that branch is pinned."}
+    {
+      "control": "sitting alone stops gating its screen",
+      "result": "RED - P1-M02 only; the other three cases stayed GREEN"
+    },
+    {
+      "control": "not-found collapses into ready in the shared decision",
+      "result": "DID NOT BITE this file - see the coverage limit below. It turned P1-N01 red in the food suite, which is where that branch is pinned."
+    }
   ],
   "coverage_limit_stated_rather_than_glossed": "react-dom/server runs no effects, so what these four cases render is the LOADING state, not not-found. The second sabotage proves it. They therefore pin 'nothing is drawn and nothing is clickable before the record has been loaded' - the half that was actually broken and the half a customer following a stale link hits first - and they do NOT pin the not-found rendering of these three screens. That half is covered by the shared decision's own cases (P1-N01..N03) plus the browser verification below. A case that cannot fail is worse than no case at all, so this is written into the test file as well as here.",
   "verified_in_the_browser": [
@@ -33,5 +41,11 @@
   "not_claimed": [
     "Eighteen files use the not-set helper. Only the three customer-facing manage twins were fixed; the Operations and partner screens that share the helper have NOT been checked.",
     "These screens' authenticated behaviour is a separate matter - P1-06 covers the fixture-identity defect that affects taxi, walking and sitting independently of this."
-  ]
+  ],
+  "ci_lint_failure_and_what_it_exposed": {
+    "measured": "Lint failed on 261c762 and f91652c: app/food/subscription-payment/page.tsx - 'Calling setState synchronously within an effect can trigger cascading renders'. Mine, from setLoaded(false) at the top of the effect.",
+    "the_real_defect_underneath": "A boolean `loaded` says THAT something was loaded, not WHAT. When the id changes it stays true, so the screen reports the previous record's outcome for the new id until the next fetch resolves - the same 'flag treated as an answer' shape this phase has been unpicking, in the fix for it. All five screens now hold the loaded ID and compare it to the current one, which removes the synchronous setState as a side effect rather than as the point.",
+    "own_warnings_cleaned": "The patch that introduced the flag also left 15 comma-expressions ((setBooking(...),setLoadedId(...))), each an eslint no-unused-expressions warning, plus one unused parameter in the new test. All were mine and all are cleared: lint is 0 errors and 60 warnings, down from 76, and every remaining warning predates this branch.",
+    "not_pinned": "That a changed id returns the screen to loading needs a re-render with effects, which this harness cannot do. Browser-verified across all six screens instead."
+  }
 }

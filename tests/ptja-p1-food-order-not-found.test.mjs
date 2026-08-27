@@ -80,7 +80,7 @@ test("P1-N05 the empty-orderId screen is unchanged", async () => {
 
 const PAYMENT = "../app/food/subscription-payment/page.tsx";
 
-async function paymentText(search) {
+async function paymentText() {
   const { renderToStaticMarkup } = await import("react-dom/server");
   const React = await import("react");
   const mod = await import(PAYMENT);
@@ -91,7 +91,7 @@ test("P1-N06 the renewal payment screen says something when it has no renewal to
   // MEASURED: with no renewalId, and with one that matches nothing, the page rendered its header and
   // then silently nothing — the page a customer reaches from a truncated or expired payment link.
   // (My first probe used ?requestId=, which this page does not read; that is the no-parameter case.)
-  const text = await paymentText("");
+  const text = await paymentText();
   assert.ok(text.length > 0, "the screen renders");
   assert.match(text, /payment request|renewal/i, "it still identifies itself");
   assert.doesNotMatch(text, /^\s*← Food subscriptions FOOD RENEWAL PAYMENT REQUEST · UAT Payment request\s*$/,
