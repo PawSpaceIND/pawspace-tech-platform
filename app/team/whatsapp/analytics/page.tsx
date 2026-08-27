@@ -34,9 +34,12 @@ export default function WhatsAppAnalyticsPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const now = Date.now();
-    setFromDate(dateInput(now - 30 * day));
-    setToDate(dateInput(now));
+    const timer = window.setTimeout(() => {
+      const now = Date.now();
+      setFromDate(dateInput(now - 30 * day));
+      setToDate(dateInput(now));
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const range = useMemo(() => {
