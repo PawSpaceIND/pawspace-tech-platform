@@ -5,6 +5,8 @@
   "compatibility_date": "2026-05-22",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
+    "NODE_ENV": "test",
+    "PAWSPACE_LOCAL_PREVIEW": "on",
     "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT": "booking-fanout-atomicity-proof-secret-32chars"
   },
   "d1_databases": [
