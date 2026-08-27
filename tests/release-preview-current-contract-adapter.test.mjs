@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { adaptCurrentProductContracts } from "./e2e/release-preview-gate.mjs";
+import { adaptCurrentProductContracts, boundedPreviewFetch } from "./e2e/release-preview-gate.mjs";
 
 const booking = (over = {}) => ({
   idempotencyKey: "preview-1-ik", scheduleGroupId: "preview-1-sg",
@@ -26,6 +26,42 @@ async function signInBooker(adapted) {
   return "ps=preview-booker@pawspace.test";
 }
 
+test("preview transport retries one thrown network failure and returns the next response unchanged", async () => {
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls++;
+    if (calls === 1) throw new TypeError("fetch failed");
+    return { status: 400, marker: "real-response" };
+  };
+  const response = await boundedPreviewFetch(fetchImpl, "https://preview.example/api/canonical-bookings", { method: "POST" }, {
+    attempts: 2, timeoutMs: 1000, retryDelayMs: 0,
+  });
+  assert.equal(calls, 2);
+  assert.equal(response.status, 400);
+  assert.equal(response.marker, "real-response");
+});
+
+test("preview transport never retries or softens an HTTP failure response", async () => {
+  let calls = 0;
+  const response = await boundedPreviewFetch(async () => {
+    calls++;
+    return { status: 500 };
+  }, "https://preview.example/api/canonical-bookings", { method: "POST" }, {
+    attempts: 2, timeoutMs: 1000, retryDelayMs: 0,
+  });
+  assert.equal(calls, 1);
+  assert.equal(response.status, 500);
+});
+
+test("preview transport failure names method and path after bounded attempts", async () => {
+  await assert.rejects(
+    boundedPreviewFetch(async () => { throw new TypeError("fetch failed"); }, "https://preview.example/api/canonical-bookings?secret=do-not-print", { method: "POST" }, {
+      attempts: 2, timeoutMs: 1000, retryDelayMs: 0,
+    }),
+    /HTTP transport failed POST \/api\/canonical-bookings after 2 attempts \(TypeError: fetch failed\)/,
+  );
+});
+
 test("current preview adapter reaches governed Sitting confirmation without weakening ownership", async () => {
   const sql = [];
   const calls = [];
@@ -44,8 +80,6 @@ test("current preview adapter reaches governed Sitting confirmation without weak
   assert.match(sql.at(-1), /bookings\.manage/);
   assert.doesNotMatch(sql.at(-1), /bookings\.view/);
 
-  // The customer booker must keep bookings.view. Giving it bookings.manage bypasses
-  // requireCustomerOwnership and invalidates the wrong-owner 403 probe.
   await adapted.d1("INSERT OR REPLACE INTO role_definitions (code,permissions_json) VALUES ('preview_booker','[\"bookings.view\",\"scheduling.book\"]')");
   assert.match(sql.at(-1), /bookings\.view/);
   assert.match(sql.at(-1), /scheduling\.book/);
@@ -60,9 +94,9 @@ test("current preview adapter reaches governed Sitting confirmation without weak
   const quoteCall = calls.find((call) => call.path === "/api/sitting-commercial");
   const captureCall = calls.find((call) => call.path === "/api/sitting-payment-sandbox");
   const canonical = calls.filter((call) => call.path === "/api/canonical-bookings").at(-1);
-  assert.ok(quoteCall, "a valid booking must obtain the deployed server quote");
-  assert.ok(captureCall, "the quote must be captured through the deployed sandbox payment route");
-  assert.equal(captureCall.options.headers.cookie, cookie, "sandbox capture must carry the authenticated preview-booker session just like a same-origin browser request");
+  assert.ok(quoteCall);
+  assert.ok(captureCall);
+  assert.equal(captureCall.options.headers.cookie, cookie);
   assert.equal(captureCall.options.headers["x-payment-capture-key"].startsWith("preview-gate-"), true);
   assert.equal(canonical.options.body.zoneId, "blr-east");
   assert.equal(canonical.options.body.packageCode, "sitting-visit-60");
@@ -72,9 +106,6 @@ test("current preview adapter reaches governed Sitting confirmation without weak
   assert.equal(canonical.options.body.pricing.sittingQuoteId, "SQ-1");
   assert.equal(canonical.options.body.payment.status, "captured");
 
-  // Historical replay uses the already-prepared quote identity. It must not create a second quote,
-  // even when the payload now contains an invalid source-id type: the product replay lookup happens
-  // before new-booking identity validation.
   await adapted.http("POST", "/api/canonical-bookings", {
     headers: { cookie }, body: { ...booking(), pets: [{ sourceId: 7, name: "Bruno" }] },
   });
@@ -82,7 +113,6 @@ test("current preview adapter reaches governed Sitting confirmation without weak
   const replay = calls.filter((call) => call.path === "/api/canonical-bookings").at(-1);
   assert.equal(replay.options.body.pricing.sittingQuoteId, "SQ-1");
 
-  // A NEW malformed payload is not pre-authorized by creating commercial state for it.
   await adapted.http("POST", "/api/canonical-bookings", {
     headers: { cookie },
     body: booking({ idempotencyKey: "preview-bad-ik", scheduleGroupId: "preview-bad-sg", pets: [{ sourceId: 7, name: "Seven" }] }),
