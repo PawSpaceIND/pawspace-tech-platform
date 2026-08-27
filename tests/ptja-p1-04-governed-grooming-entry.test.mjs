@@ -222,3 +222,37 @@ test("P1-04-A01 a post-commit failure names the booking instead of denying it", 
   // Non-vacuity: the pre-commit path still reports a genuine scheduling failure.
   assert.ok(handler.includes("No groomer is available for this slot"), "a pre-commit failure still reads as one");
 });
+
+test("P1-04-K06 the key covers every input the request actually carries", async () => {
+  const flow = await read("app/mobile-app/grooming-flow.tsx");
+  // Measured: preferredProviderId was sent to the scheduler but left OUT of the fingerprint, so a
+  // customer who booked with "scheduler decides", went back, chose "Arun R. preferred" and resubmitted
+  // got duplicatePrevented=true and their ORIGINAL assignment. The preference was silently discarded.
+  const open = flow.indexOf("stableBookingInputKey([");
+  assert.ok(open > 0, "the flow fingerprints its booking inputs");
+  let depth = 0, close = open;
+  for (let i = flow.indexOf("[", open); i < flow.length; i += 1) {
+    if (flow[i] === "[") depth += 1;
+    else if (flow[i] === "]") { depth -= 1; if (depth === 0) { close = i + 1; break; } }
+  }
+  const key = flow.slice(flow.indexOf("[", open), close);
+  assert.ok(key.includes("String(preferred)"), `the preferred-groomer choice is part of the key: ${key}`);
+  // The other request-shaping inputs, so this cannot regress silently either.
+  for (const input of ["customer.customerId", "date", "String(slotIndex)", "String(count)", "type", "packId",
+                       "plan", "String(pay)", "safetyNotes", "String(total)", "String(discount)",
+                       "chosen.map(p=>p.id)", "serviceLocation.assignment.zoneId", "serviceLocation.address"]) {
+    assert.ok(key.includes(input), `${input} is part of the key`);
+  }
+  // Non-vacuity: the extraction really read the array, not the whole file.
+  assert.ok(key.length < 400 && key.startsWith("["), "the fingerprint array was isolated");
+});
+
+test("P1-04-K07 two bookings differing only in groomer preference are not deduplicated", () => {
+  const base = ["CUST-1", "2026-09-03", "2", "1", "dog", "complete", "single", "after", "friendly", "2399", "0", "", "", "", "PET-1", "BLR-E", "12 MG Road"];
+  const withPreference = base.map((value, index) => (index === 14 ? value : value));
+  assert.notEqual(
+    stableBookingInputKey([...base.slice(0, 15), "false", ...base.slice(15)]),
+    stableBookingInputKey([...withPreference.slice(0, 15), "true", ...withPreference.slice(15)]),
+    "flipping the preference changes the key, so the resubmit is a new booking rather than a replay",
+  );
+});
