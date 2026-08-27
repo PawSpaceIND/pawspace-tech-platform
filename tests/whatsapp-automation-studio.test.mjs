@@ -47,11 +47,26 @@ test("scheduled worker runs the retry-safe recovery sweep automatically", () => 
   assert.match(worker, /whatsapp recovery:/);
 });
 
+test("Automation Studio exposes governed rule contracts and UAT evaluation without external mutation", () => {
+  assert.match(api, /save_rule_contract/);
+  assert.match(api, /evaluate_rule_uat/);
+  assert.match(api, /authorize\(request, "communications\.manage"\)/);
+  assert.match(api, /sameOrigin\(request\)/);
+  assert.match(page, /Governed rule builder/);
+  assert.match(page, /trigger → filters → actions/);
+  assert.match(page, /save_rule_contract/);
+  assert.match(page, /evaluate_rule_uat/);
+  assert.match(page, /Routing strategy/);
+  assert.match(page, /Allow-listed target/);
+  assert.match(page, /Allow-listed tool/);
+  assert.match(page, /External mutation remains disabled|external mutation disabled/i);
+});
+
 test("Automation Studio and API remain UAT-only and authorization-gated", () => {
   assert.match(api, /authorize\(request, "communications\.manage"\)/);
   assert.match(api, /sameOrigin\(request\)/);
   assert.match(api, /process_due_uat/);
-  assert.match(page, /10 minutes → 30 minutes → 3 hours/);
+  assert.match(page, /10m → 30m → 3h/);
   assert.match(page, /Production delivery disabled/);
   assert.match(page, /Run due sweep in UAT/);
   assert.doesNotMatch(engine, /externalDelivery:\s*true/);
