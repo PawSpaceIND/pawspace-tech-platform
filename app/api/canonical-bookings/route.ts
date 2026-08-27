@@ -1,4 +1,5 @@
 import {subscriptionExpiry} from "../../../lib/grooming-governance";
+import{sameInstant}from"../../../lib/booking-window-instant";
 import{sandboxCapabilitiesUnlocked}from"../../../lib/payment-environment";
 import {governGroomingBookingWithLiveMultiPet} from "../../../lib/live-grooming-governance";
 import {authError,requireCustomerOwnership,requirePermission,resolveActor} from "../../../lib/server-auth";
@@ -174,6 +175,16 @@ async function ensureTables(db:Awaited<ReturnType<typeof database>>){await db.ba
   db.prepare("CREATE INDEX IF NOT EXISTS idx_booking_lifecycle_events_booking ON booking_lifecycle_events(booking_id,occurred_at)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_canonical_pets_customer ON canonical_pets(customer_id)"),
 ]);}
+/*
+ * The service-wide window guard, and the three verticals that re-state it, all ask ONE question: is the
+ * booking window the window that was reserved? A window is an instant, not a string - see
+ * lib/booking-window-instant.ts for what was measured. The verticals compared strings and refused every
+ * Training, Boarding and Sitting booking the customer app made, after its reservation had already been
+ * committed. They now share this one predicate with the guard above them. [PTJA-P1-F31]
+ */
+function bookingWindowMatchesReservation(reserved:Record<string,unknown>,input:Pick<LifecycleInput,"scheduledStart"|"scheduledEnd">){
+  return sameInstant(reserved.scheduled_start,input.scheduledStart)&&sameInstant(reserved.scheduled_end,input.scheduledEnd);
+}
 function validate(input:LifecycleInput){if(!input.idempotencyKey||!input.scheduleGroupId||!input.customer?.id||!input.customer?.name||!input.customer?.primaryPhone)return "Customer and request identity are required";if(!Array.isArray(input.pets)||input.pets.length<1)return "At least one pet is required";if(!services.has(input.serviceCode)||!input.packageCode||!input.scheduledStart||!input.scheduledEnd)return "Complete service and schedule details are required";if(!input.provider?.id||!input.provider?.name||!Number.isFinite(input.totalAmount)||input.totalAmount<0||!Number.isFinite(input.amountDueNow)||input.amountDueNow<0)return "Provider and valid payment amounts are required";return null;}
 async function readBundle(db:Awaited<ReturnType<typeof database>>,booking:Record<string,unknown>,duplicatePrevented:boolean){const [workOrder,payment]=await Promise.all([db.prepare("SELECT * FROM provider_work_orders WHERE booking_id=?").bind(booking.id).first<Record<string,unknown>>(),db.prepare("SELECT * FROM booking_payments WHERE booking_id=?").bind(booking.id).first<Record<string,unknown>>()]);return {bookingId:String(booking.id),customerId:String(booking.customer_id),petIds:JSON.parse(String(booking.pet_ids_json)),scheduleGroupId:String(booking.schedule_group_id),workOrderId:String(workOrder?.id||""),paymentId:String(payment?.id||""),status:String(booking.status),duplicatePrevented};}
 
@@ -249,7 +260,7 @@ export async function POST(request:Request){try{const db=await database();await 
   // app/api/uat-scheduling/route.ts. Same check the three governed verticals already carry, applied to
   // every service, before any write. [PTJA-P1-F28]
   const heldWindow=reservations.results[0];
-  if(heldWindow&&(new Date(String(heldWindow.scheduled_start)).getTime()!==new Date(input.scheduledStart).getTime()||new Date(String(heldWindow.scheduled_end)).getTime()!==new Date(input.scheduledEnd).getTime()))
+  if(heldWindow&&!bookingWindowMatchesReservation(heldWindow,input))
     return json({error:"The booking window does not match the scheduling reservation"},409);
   // City/zone integrity invariant: the provider equality above is not enough. The booking persists the
   // CLIENT-supplied cityId/zoneId, but the reservation it confirms was made for a specific city and zone.
@@ -271,12 +282,12 @@ export async function POST(request:Request){try{const db=await database();await 
   }
   let trainingCommercial:Awaited<ReturnType<typeof governTrainingBooking>>|null=null;
   if(input.serviceCode==="dog_training"){
-    const quoteId=String(input.pricing.trainingQuoteId||"").trim();if(!quoteId)return json({error:"A server Training quote is required before booking confirmation"},409);const first=reservations.results[0];if(String(first.scheduled_start)!==input.scheduledStart||String(first.scheduled_end)!==input.scheduledEnd)return json({error:"Training booking window does not match the first reserved session"},409);
+    const quoteId=String(input.pricing.trainingQuoteId||"").trim();if(!quoteId)return json({error:"A server Training quote is required before booking confirmation"},409);const first=reservations.results[0];if(!bookingWindowMatchesReservation(first,input))return json({error:"Training booking window does not match the first reserved session"},409);
     trainingCommercial=await governTrainingBooking(db,{quoteId,packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,scheduledStart:input.scheduledStart,submittedTotal:input.totalAmount,submittedAmountDueNow:input.amountDueNow,paymentMode:input.payment.mode,paymentStatus:input.payment.status,reservationCount:reservations.results.length});governed={packageCode:trainingCommercial.packageCode,packageName:trainingCommercial.packageName,catalogueVersion:trainingCommercial.catalogueVersion,petCount:trainingCommercial.petCount,totalAmount:trainingCommercial.totalAmount,amountDueNow:trainingCommercial.amountDueNow};
   }
   let boardingCommercial:Awaited<ReturnType<typeof governBoardingBooking>>|null=null;
   if(input.serviceCode==="boarding"){
-    const quoteId=String(input.pricing.boardingQuoteId||"").trim();if(!quoteId)return json({error:"A server Boarding quote is required before booking confirmation"},409);const first=reservations.results[0];if(String(first.scheduled_start)!==input.scheduledStart||String(first.scheduled_end)!==input.scheduledEnd)return json({error:"Boarding booking window does not match the continuous stay reservation"},409);
+    const quoteId=String(input.pricing.boardingQuoteId||"").trim();if(!quoteId)return json({error:"A server Boarding quote is required before booking confirmation"},409);const first=reservations.results[0];if(!bookingWindowMatchesReservation(first,input))return json({error:"Boarding booking window does not match the continuous stay reservation"},409);
     boardingCommercial=await governBoardingBooking(db,{quoteId,packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,submittedTotal:input.totalAmount,submittedAmountDueNow:input.amountDueNow,paymentMode:input.payment.mode,paymentStatus:input.payment.status,reservationCount:reservations.results.length,providerId:input.provider.id,cityId:input.cityId,zoneId:input.zoneId,medicationRequired:input.pets.some(pet=>pet.medicationRequired===true),customerId:input.customer.id,species:input.pets.map(pet=>String(pet.species||"other")),vaccinationStatuses:input.pets.map(pet=>String(pet.vaccinationStatus||"not_provided"))});governed={packageCode:boardingCommercial.packageCode,packageName:boardingCommercial.packageName,catalogueVersion:boardingCommercial.catalogueVersion,petCount:boardingCommercial.petCount,totalAmount:boardingCommercial.totalAmount,amountDueNow:boardingCommercial.amountDueNow};
   }
   let sittingCommercial:Awaited<ReturnType<typeof governSittingBooking>>|null=null;
@@ -285,7 +296,7 @@ export async function POST(request:Request){try{const db=await database();await 
     const quoteId=String(input.pricing.sittingQuoteId||"").trim();
     if(!quoteId)return json({error:"A server Sitting quote is required before booking confirmation"},409);
     const first=reservations.results[0];
-    if(reservations.results.length!==1||String(first.scheduled_start)!==input.scheduledStart||String(first.scheduled_end)!==input.scheduledEnd)return json({error:"Sitting booking window does not match the canonical care reservation"},409);
+    if(reservations.results.length!==1||!bookingWindowMatchesReservation(first,input))return json({error:"Sitting booking window does not match the canonical care reservation"},409);
     sittingCapture=await requireSittingQuoteSandboxCapture(db,{quoteId,amount:input.amountDueNow});
     sittingCommercial=await governSittingBooking(db,{quoteId,packageCode:input.packageCode,packageName:input.packageName,petCount:input.pets.length,cityId:input.cityId,zoneId:input.zoneId,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,submittedTotal:input.totalAmount,submittedAmountDueNow:input.amountDueNow,paymentMode:input.payment.mode,paymentStatus:sittingCapture.status,reservationCount:reservations.results.length});
     governed={packageCode:sittingCommercial.packageCode,packageName:sittingCommercial.packageName,catalogueVersion:sittingCommercial.catalogueVersion,petCount:sittingCommercial.petCount,totalAmount:sittingCommercial.totalAmount,amountDueNow:sittingCommercial.amountDueNow};

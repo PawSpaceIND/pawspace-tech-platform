@@ -14,7 +14,7 @@ export async function ensureWalkingGovernanceTables(db:D1Database){const now=Dat
  db.prepare("CREATE INDEX IF NOT EXISTS idx_walking_quote_expiry ON walking_commercial_quotes(status,expires_at)"),
  db.prepare("CREATE TABLE IF NOT EXISTS walking_booking_quote_links (quote_id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,created_at INTEGER NOT NULL)"),
 ]);for(const item of packages)await db.prepare("INSERT OR IGNORE INTO walking_commercial_packages (package_code,name,duration_minutes,amount_per_walk,currency,max_pets,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,'INR',?,1,1,'2026-08-01',NULL,'founder_seed',?)").bind(item.code,item.name,item.durationMinutes,item.amount,item.maxPets,now).run();}
-const sameInstant=(a:string,b:string)=>new Date(a).getTime()===new Date(b).getTime();
+import{sameInstant}from"./booking-window-instant";
 function activePackage(row:Row,at:string){const date=at.slice(0,10);return Number(row.active)===1&&date>=String(row.effective_from)&&(!row.effective_to||date<=String(row.effective_to));}
 function validWeekdays(value:number[]){return value.length>0&&value.every(day=>Number.isInteger(day)&&day>=0&&day<=6)&&new Set(value).size===value.length;}
 

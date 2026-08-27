@@ -6,6 +6,7 @@ import{assertBookingWindow}from"../../../lib/booking-time-policy";
 import {cleanupExpiredReservationLeases,ensureSchedulingReservationLeaseGovernance,reservationLeaseForRequest,SCHEDULING_RESERVATION_LEASE_MS} from "../../../lib/scheduling-reservation-leases";
 import {listAuthoritativeAvailability,uatRosterSeedingEnabled} from "../../../lib/scheduling-roster-authority";
 import {assertProviderAssignable} from "../../../lib/provider-assignment-eligibility";
+import {sameInstant} from "../../../lib/booking-window-instant";
 
 
 type RequestBody={action?:"reserve"|"assign"|"cancel"|"reassign"|"manual";assignmentStrategy?:"auto"|"admin_choice";clientRequestId:string;groupId?:string;customerId:string;petIds:string[];serviceCode:SchedulingService;cityId?:string;zoneId:string;scheduledStart:string;scheduledEnd:string;occurrences?:number;cadenceDays?:number;weekdays?:number[];careMode?:"visit"|"overnight";preferredProviderId?:string;providerId?:string;reason?:string;customRules?:CustomScheduleRule[]};
@@ -194,7 +195,6 @@ export async function POST(request:Request){try{const db=await database();const 
   // confirmed booking for 11-27 with 1899 captured. Same rule as the lifecycle and payment keys: a key
   // reused for a different request is a CONFLICT, not a duplicate. [PTJA-P1-F28]
   const held=await db.prepare("SELECT scheduled_start,scheduled_end FROM scheduling_reservations WHERE group_id=? AND status!='cancelled' ORDER BY occurrence_number LIMIT 1").bind(input.clientRequestId).first<Record<string,unknown>>();
-  const sameInstant=(a:unknown,b:unknown)=>new Date(String(a)).getTime()===new Date(String(b)).getTime();
   if(held&&(!sameInstant(held.scheduled_start,input.scheduledStart)||!sameInstant(held.scheduled_end,input.scheduledEnd)))
     return json({error:"This scheduling group already holds a different window; use a new request id for a different time",code:"scheduling_group_window_conflict",held:{scheduledStart:held.scheduled_start,scheduledEnd:held.scheduled_end}},409);
   const provider=prior.selected_provider_id?await getGovernedProvider(db,String(prior.selected_provider_id)):null;return json({data:{groupId:input.clientRequestId,status:prior.status,provider,duplicatePrevented:true}});}await seedUatRoster(input,db);const rules=await activeRules(db,input);const requestInput:ScheduleRequest={cityId:cityIdFor(input),zoneId:input.zoneId,serviceCode:input.serviceCode,petIds:input.petIds,scheduledStart:input.scheduledStart,scheduledEnd:input.scheduledEnd,occurrences:input.occurrences,cadenceDays:input.cadenceDays,weekdays:input.weekdays,careMode:input.careMode,preferredProviderId:input.preferredProviderId,customRules:rules};const decision=await schedule(repository(db),requestInput);
