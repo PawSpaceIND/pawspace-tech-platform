@@ -237,7 +237,10 @@ export function adaptCurrentProductContracts({ http, d1 }) {
 
         metrics.captureAttempts++;
         const captureRes = await http("POST", "/api/sitting-payment-sandbox", {
-          headers: { "x-payment-capture-key": `preview-gate-${String(body.idempotencyKey || body.scheduleGroupId).slice(0, 96)}` },
+          headers: {
+            cookie,
+            "x-payment-capture-key": `preview-gate-${String(body.idempotencyKey || body.scheduleGroupId).slice(0, 96)}`,
+          },
           body: { quoteId: quote.quoteId, amount: Number(quote.amountDueNow) },
         });
         if (captureRes.status < 200 || captureRes.status >= 300) {
@@ -414,7 +417,8 @@ if (isMain) {
   }
   writeFileSync("release-preview-report.json", JSON.stringify(report, null, 2));
   const passed = report.failures === 0 && report.authHarness !== "unavailable" && report.schema !== "unavailable";
-  console.log(`\nrelease preview gate: ${passed ? "PASS" : "FAIL"}`);
+  console.log(`\
+release preview gate: ${passed ? "PASS" : "FAIL"}`);
   if (report.unavailable?.length) for (const name of report.unavailable) console.log(`  could not run (counted as a failure): ${name}`);
   process.exit(passed ? 0 : 1);
 }
