@@ -77,7 +77,9 @@ test("P1-I04 the landing page carries no simulated identity of its own", async (
   const code = source.split("\n").filter((line) => !line.trim().startsWith("*") && !line.trim().startsWith("//")).join("\n");
   // Each of these was measured on the page before this change.
   assert.ok(!code.includes("OTP verification is simulated"), "the simulated-OTP note is gone");
-  assert.ok(!/`WEB-\$\{/.test(code), "identity is no longer synthesised from an unverified phone number");
+  // Banned by PREFIX, not by string syntax: "WEB-" + phone, a different quoting form, or a helper
+  // would each evade a check pinned to the backtick-interpolation spelling.
+  assert.ok(!code.includes("WEB-"), "identity is no longer synthesised from an unverified phone number");
   assert.ok(!code.includes("savedPets"), "the hardcoded pet list is gone");
 });
 
