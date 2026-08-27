@@ -1,4 +1,5 @@
 import { authError, authorize, database, securityAudit } from "../../../../lib/server-auth";
+import { actorCanAccessConversation } from "../../../../lib/conversation-access";
 import { evaluateWhatsAppAutomationRule, listWhatsAppAutomationRules, saveWhatsAppAutomationRule, type WhatsAppAutomationRule, type WhatsAppAutomationTrigger } from "../../../../lib/whatsapp-automation-rules";
 import { listWhatsAppNoResponseAutomation, processDueWhatsAppNoResponseSequences, saveWhatsAppNoResponseConfig } from "../../../../lib/whatsapp-no-response-sequence";
 
@@ -54,8 +55,14 @@ export async function POST(request: Request) {
       return json({ data });
     }
     if (action === "evaluate_rule_uat") {
-      const data = await evaluateWhatsAppAutomationRule(db, { ruleId: String(body.ruleId || ""), threadId: String(body.threadId || ""), eventId: String(body.eventId || ""), trigger: body.trigger as WhatsAppAutomationTrigger, messageText: body.messageText, messageClass: body.messageClass, now: body.now, actorEmail: actor.email });
-      await securityAudit(db, actor, "whatsapp.automation.rule_evaluated", "whatsapp_automation", String(body.ruleId || ""), "completed", { matched: data.matched, actionCount: data.plan.length, externalMutation: false, productionDelivery: false });
+      const threadId = String(body.threadId || "").trim();
+      if (!threadId) return json({ error: "Canonical conversation thread is required" }, 400);
+      if (!(await actorCanAccessConversation(db, actor, threadId))) {
+        await securityAudit(db, actor, "whatsapp.automation.rule_evaluated", "conversation", threadId, "denied", { reason: "row_scope", externalMutation: false, productionDelivery: false });
+        return json({ error: "Conversation access denied" }, 403);
+      }
+      const data = await evaluateWhatsAppAutomationRule(db, { ruleId: String(body.ruleId || ""), threadId, eventId: String(body.eventId || ""), trigger: body.trigger as WhatsAppAutomationTrigger, messageText: body.messageText, messageClass: body.messageClass, now: body.now, actorEmail: actor.email });
+      await securityAudit(db, actor, "whatsapp.automation.rule_evaluated", "whatsapp_automation", String(body.ruleId || ""), "completed", { matched: data.matched, actionCount: data.plan.length, threadId, externalMutation: false, productionDelivery: false });
       return json({ data });
     }
     return json({ error: "Supported actions are save_no_response, process_due_uat, save_rule_contract or evaluate_rule_uat" }, 400);
