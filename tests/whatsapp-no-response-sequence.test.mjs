@@ -17,6 +17,9 @@ async function world() {
   await recovery.ensureWhatsAppNoResponseSequenceTables(db);
   sqlite.exec("CREATE TABLE IF NOT EXISTS customer_contact_preferences (customer_id TEXT PRIMARY KEY,marketing_consent INTEGER NOT NULL DEFAULT 0,service_consent INTEGER NOT NULL DEFAULT 0,whatsapp_consent INTEGER NOT NULL DEFAULT 0,sms_consent INTEGER NOT NULL DEFAULT 0,email_consent INTEGER NOT NULL DEFAULT 0,opt_out INTEGER NOT NULL DEFAULT 0,source TEXT NOT NULL DEFAULT '',updated_by TEXT NOT NULL DEFAULT '',updated_at INTEGER NOT NULL DEFAULT 0)");
   await inboundMessage(sqlite, db, { threadId: "THREAD-REC", customerId: "CUS-REC", text: "Grooming", channel: "whatsapp", idempotencyKey: "recovery-inbound" });
+  // The seed inbound establishes the conversation before the recovery anchor. Keep its fixture time
+  // explicitly before BASE_TIME so this suite does not change meaning when wall-clock time passes it.
+  sqlite.prepare("UPDATE communication_messages SET created_at=?,updated_at=? WHERE idempotency_key='recovery-inbound'").run(BASE_TIME - 60_000, BASE_TIME - 60_000);
   sqlite.prepare("INSERT INTO customer_contact_preferences (customer_id,marketing_consent,service_consent,whatsapp_consent,sms_consent,email_consent,opt_out,source,updated_by,updated_at) VALUES (?,1,1,1,0,0,0,'uat','test',?)").run("CUS-REC", BASE_TIME);
   sqlite.prepare("INSERT INTO whatsapp_uat_sessions (customer_id,provider,last_inbound_at,last_outbound_at) VALUES (?,'sandbox_simulator',?,NULL)").run("CUS-REC", BASE_TIME);
   for (const [key, label] of [["booking_recovery_10m","10 minute"],["booking_recovery_30m","30 minute"],["booking_recovery_180m","3 hour"]]) {
