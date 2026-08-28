@@ -379,6 +379,7 @@ export default function StayFlow({ mode: initialMode, customer }: { mode: Mode; 
     );
   return (
     <section className={styles.flow}>
+      <header className={styles.stayIntro}><span>{mode === "boarding" ? "PAWSPACE BOARDING" : "PAWSPACE SITTING"}</span><div><h2>{mode === "boarding" ? "A stay that feels like home." : "Care at home, around their routine."}</h2><small>Plan the stay, choose the right caregiver, then confirm together.</small></div><b>{stage}<i>/4</i></b></header>
       <div className={styles.steps}>
         {[1, 2, 3, 4].map((n) => (
           <span key={n} className={stage >= n ? styles.active : ""}>

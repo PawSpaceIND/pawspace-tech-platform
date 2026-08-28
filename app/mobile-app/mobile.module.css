@@ -71,3 +71,7 @@
  .services i{width:60px;height:60px}
  .title h2{font-size:28px}
 }
+
+/* The premium discovery screen owns its location and pet header. Keep the legacy shell for all
+   booking/account tabs, but remove it on Home so the customer sees one coherent top experience. */
+.phone:has([data-discovery])>header,.phone:has([data-discovery])>.title{display:none}.phone:has([data-discovery])>.screen{height:100%}
