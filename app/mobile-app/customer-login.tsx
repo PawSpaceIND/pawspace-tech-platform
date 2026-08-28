@@ -58,6 +58,7 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
                 <input
                   type="tel"
                   placeholder="10-digit phone number"
+                  aria-label="Phone number"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
                   style={{ width: "100%", padding: 12, borderRadius: 12, border: "1px solid var(--ps-border)", marginTop: 14, fontSize: 14, textAlign: "center" }}
@@ -81,7 +82,9 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
                 )}
                 <input
                   type="text"
+                  inputMode="numeric"
                   placeholder="6-digit code"
+                  aria-label="OTP code"
                   value={code}
                   onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
                   style={{ width: "100%", padding: 12, borderRadius: 12, border: "1px solid var(--ps-border)", marginTop: 10, fontSize: 14, textAlign: "center" }}
