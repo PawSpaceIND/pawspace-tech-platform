@@ -110,6 +110,12 @@ export default function WhatsAppTemplatesPage() {
   const templates = data.templates || [];
   const visible = useMemo(() => filter === "all" ? templates : templates.filter((row) => text(row.status, "") === filter), [templates, filter]);
   const counts = useMemo(() => templates.reduce<Record<string, number>>((acc, row) => { const key = text(row.status, "unknown"); acc[key] = (acc[key] || 0) + 1; return acc; }, {}), [templates]);
+  const draftIsPristine = draft.templateKey === emptyDraft.templateKey
+    && draft.displayName === emptyDraft.displayName
+    && draft.category === emptyDraft.category
+    && draft.language === emptyDraft.language
+    && draft.body === emptyDraft.body
+    && draft.samples === emptyDraft.samples;
 
   return (
     <OpsShell
@@ -134,7 +140,7 @@ export default function WhatsAppTemplatesPage() {
           <label className={teamStyles.field}>Body<textarea rows={5} value={draft.body} onChange={(event) => setDraft((current) => ({ ...current, body: event.target.value }))} placeholder="Hi {{1}}, your PawSpace booking for {{2}} is ready." maxLength={1024} /></label>
           <label className={teamStyles.field}>Sample values — one per variable<textarea rows={5} value={draft.samples} onChange={(event) => setDraft((current) => ({ ...current, samples: event.target.value }))} placeholder={"Asha\nGrooming"} /></label>
         </div>
-        <div className={teamStyles.actions}><Button type="button" disabled={busy} onClick={() => { void saveDraft(); }}>Save governed draft</Button><Button type="button" variant="secondary" disabled={busy} onClick={() => setDraft(emptyDraft)}>Clear</Button></div>
+        <div className={teamStyles.actions}><Button type="button" disabled={busy} onClick={() => { void saveDraft(); }}>Save governed draft</Button><Button type="button" variant="secondary" disabled={busy || draftIsPristine} onClick={() => setDraft(emptyDraft)}>Clear</Button></div>
       </section>
 
       <section className={teamStyles.panel}>
