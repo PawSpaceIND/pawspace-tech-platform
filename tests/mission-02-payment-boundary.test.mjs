@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveRazorpayRuntime } from "../lib/payments/razorpay-runtime.ts";
-import { verifyRazorpayCheckout } from "../lib/payments/razorpay-checkout-verification.ts";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+installWorkersHooks("__MISSION02_PAYMENT_DB__", "__MISSION02_PAYMENT_ENV__");
+const { resolveRazorpayRuntime } = await import("../lib/payments/razorpay-runtime.ts");
+const { verifyRazorpayCheckout } = await import("../lib/payments/razorpay-checkout-verification.ts");
 
 async function signature(secret, orderId, paymentId) {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);

@@ -1,4 +1,4 @@
-import { expect, test, type Frame, type Page } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 async function visibleInFrames(page: Page, selectors: string[]) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -38,7 +38,8 @@ async function login(page: Page) {
 }
 async function ensureDog(page: Page) {
   await page.getByRole('button', { name: 'Dog', exact: true }).click();
-  if (await page.locator('button[aria-pressed]').count()) return;
+  const selectableDogPets = page.locator('button[aria-pressed]:not([aria-disabled="true"])');
+  if (await selectableDogPets.count()) return;
   await page.getByRole('button', { name: /add or edit pet details/i }).click();
   await page.getByRole('button', { name: /add pet/i }).click();
   await page.getByLabel('Name', { exact: true }).fill('Mission Dog');
@@ -49,13 +50,13 @@ async function ensureDog(page: Page) {
   await page.getByLabel('Temperament', { exact: true }).selectOption({ index: 1 });
   await page.getByLabel('Vaccinated?', { exact: true }).selectOption('no');
   await page.getByRole('button', { name: 'Add pet', exact: true }).click();
-  await expect(page.locator('button[aria-pressed]').first()).toBeVisible();
+  await expect(selectableDogPets.first()).toBeVisible();
 }
 
 test('Mission 02: canonical booking plus real Razorpay sandbox card capture', async ({ page }) => {
   await login(page);
   await ensureDog(page);
-  const pet = page.locator('button[aria-pressed]').filter({ hasNot: page.locator('[aria-disabled="true"]') }).first();
+  const pet = page.locator('button[aria-pressed]:not([aria-disabled="true"])').first();
   if ((await pet.getAttribute('aria-pressed')) !== 'true') await pet.click();
   await page.getByRole('button', { name: /choose a package/i }).click();
   const bathBasic = page.getByRole('button', { name: /Bath & Basic/ }).first();
@@ -74,6 +75,7 @@ test('Mission 02: canonical booking plus real Razorpay sandbox card capture', as
     if (!response.url().includes('/api/payment-order') || response.request().method() !== 'POST') return false;
     try { return (await response.request().postDataJSON()).action === 'complete'; } catch { return false; }
   });
+  const providerProfile = page.waitForResponse(response => response.url().includes('/api/provider-public-profile')).catch(() => null);
   await page.getByRole('button', { name: /create canonical uat booking|confirm booking/i }).click();
 
   await (await visibleButton(page, /card/i)).click().catch(() => {});
@@ -96,4 +98,10 @@ test('Mission 02: canonical booking plus real Razorpay sandbox card capture', as
   expect(payload.data?.paymentStatus).toBe('captured');
   expect(payload.data?.environment).toBe('sandbox');
   await expect(page.getByText(/BOOKING CONFIRMED/)).toBeVisible({ timeout: 30000 });
+
+  const profileResponse = await providerProfile;
+  const profilePayload = profileResponse?.ok() ? await profileResponse.json().catch(() => null) as { data?: { verified?: boolean } } | null : null;
+  const verifiedBadge = page.getByText('✓ Verified', { exact: true });
+  if (profilePayload?.data?.verified === true) await expect(verifiedBadge).toBeVisible();
+  else await expect(verifiedBadge).toHaveCount(0);
 });

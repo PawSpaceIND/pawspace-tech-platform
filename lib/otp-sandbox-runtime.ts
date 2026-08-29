@@ -1,11 +1,12 @@
-const LOCAL_OTP_HOSTS=new Set(["terminal.local","localhost","127.0.0.1"]);
+import { DEVELOPMENT_PREVIEW_HOSTS } from "./development-preview";
+
 const DEVELOPMENT_ASSERTION_SECRET="pawspace-local-development-otp-assertion-secret-v1";
 
 function processEnv(name:string){
   try{return typeof process!=="undefined"&&process?.env?String(process.env[name]??"").trim().toLowerCase():"";}catch{return"";}
 }
 function runtimeEnv(runtime:Record<string,unknown>,name:string){return String(runtime[name]??"").trim().toLowerCase();}
-function localHost(request:Request){try{return LOCAL_OTP_HOSTS.has(new URL(request.url).hostname);}catch{return false;}}
+function localHost(request:Request){try{return DEVELOPMENT_PREVIEW_HOSTS.includes(new URL(request.url).hostname);}catch{return false;}}
 function localPreviewEnabled(runtime:Record<string,unknown>={}){
   const nodeEnv=processEnv("NODE_ENV");
   const runtimePreview=runtimeEnv(runtime,"PAWSPACE_LOCAL_PREVIEW")==="on";

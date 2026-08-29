@@ -12,14 +12,14 @@ type Row = Record<string, unknown>;
 export async function createBookingPaymentOrder(db: Db, env: Record<string, unknown>, input: { bookingId: string; customerId: string; actorId: string }) {
   const bookingId = String(input.bookingId || "").trim(), customerId = String(input.customerId || "").trim();
   if (!bookingId || !customerId) throw new Error("A booking and customer are required");
-  const row = await db.prepare("SELECT b.customer_id customer_id,p.id payment_id,p.mode mode,p.status status FROM canonical_bookings b JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=?").bind(bookingId).first<Row>();
+  const row = await db.prepare("SELECT b.customer_id customer_id,p.id payment_id,p.status status FROM canonical_bookings b JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=?").bind(bookingId).first<Row>();
   if (!row) throw new Error("Booking or its payment record was not found");
   if (String(row.customer_id) !== customerId) throw governedJsonError({ error: "You can only pay for your own booking" }, 403);
-  if (String(row.mode) !== "prepaid") return { connected: false, paymentRequired: false, environment: "sandbox" as const, reason: "This booking is pay after service" };
   const runtime = resolveRazorpayRuntime(env);
   const stage = await paymentStageAmount(db, bookingId);
   if (!stage) throw new Error("Booking or its payment record was not found");
-  if (stage.stage === "settled" || stage.dueNow <= 0) throw new Error("This booking is already paid");
+  if (stage.stage === "settled") throw new Error("This booking is already paid");
+  if (stage.dueNow <= 0) return { connected: false, paymentRequired: false, environment: runtime.environment, reason: "No online payment is due now", bookingId, paymentId: stage.paymentId, status: "not_due", stage: stage.stage, bookingTotal: stage.bookingTotal, outstandingBalance: stage.outstandingBalance };
   const created = await createPaymentOrder(env, { bookingId, paymentId: stage.paymentId, amount: stage.dueNow, currency: stage.currency });
   if (!created.connected) return { connected: false, paymentRequired: true, environment: runtime.environment, reason: created.reason };
   if (created.environment !== runtime.environment) throw new Error("Razorpay order environment does not match the governed payment runtime");
