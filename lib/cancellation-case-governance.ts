@@ -263,6 +263,8 @@ export async function recordFinanceDecision(db:Db,input:FinanceDecisionInput){
 
 export async function listCancellationCaseEvents(db:Db,caseId:string){
   await ensureCancellationCaseTables(db);
-  const rows=await db.prepare("SELECT * FROM booking_cancellation_case_events WHERE case_id=? ORDER BY occurred_at,id").bind(caseId).all<Row>();
+  // UUIDs are deliberately random and cannot break ties between events written in the same
+  // millisecond. SQLite/D1 rowid preserves the actual append order for this immutable audit table.
+  const rows=await db.prepare("SELECT * FROM booking_cancellation_case_events WHERE case_id=? ORDER BY occurred_at,rowid").bind(caseId).all<Row>();
   return rows.results;
 }

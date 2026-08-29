@@ -3,7 +3,7 @@ import{sandboxCapabilitiesUnlocked}from"../../../lib/payment-environment";
 import{createPostServicePaymentRequest,ensurePaymentReconciliationTables,getPostServicePaymentRequest,linkSandboxGatewayOrder,processGatewayEvent}from"../../../lib/grooming-payment-reconciliation";
 import{createSandboxOrder,createSandboxRefund}from"../../../lib/razorpay-sandbox-client";
 
-type Input={action:"create_order"|"initiate_refund"|"link_order"|"simulate_event"|"request_after_service";bookingId:string;gatewayOrderId?:string;eventType?:"payment.authorized"|"payment.captured"|"payment.failed"|"order.paid"|"refund.created"|"refund.processed"|"refund.failed";eventId?:string;gatewayPaymentId?:string;gatewayRefundId?:string;amount?:number;currency?:string};
+type Input={action:"create_order"|"initiate_refund"|"link_order"|"simulate_event"|"request_after_service";bookingId:string;refundCaseId?:string;gatewayOrderId?:string;eventType?:"payment.authorized"|"payment.captured"|"payment.failed"|"order.paid"|"refund.created"|"refund.processed"|"refund.failed";eventId?:string;gatewayPaymentId?:string;gatewayRefundId?:string;amount?:number;currency?:string};
 const json=(value:unknown,status=200)=>Response.json(value,{status});
 
 export async function GET(request:Request){try{const bookingId=(new URL(request.url).searchParams.get("bookingId")||"").trim();if(!bookingId)return json({error:"Booking is required"},400);const actor=await resolveActor(request);requirePermission(actor,"bookings.view");const db=await database();const work=await db.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id=?").bind(bookingId).first<Record<string,unknown>>();if(!work)return json({error:"Provider work order not found"},404);await requireProviderOwnership(db,actor,String(work.provider_id));return json({data:await getPostServicePaymentRequest(db,{bookingId,providerId:String(work.provider_id)})});}catch(error){return authError(error,"Unable to load post-service payment request");}}
@@ -23,7 +23,14 @@ export async function POST(request:Request){try{
   if(input.action==="initiate_refund"){
     if(!runtime.RAZORPAY_KEY_ID_SANDBOX||!runtime.RAZORPAY_KEY_SECRET_SANDBOX)return json({error:"configuration_required",detail:"Add Razorpay test-mode credentials before initiating a sandbox refund"},503);
     const link=await db.prepare("SELECT gateway_order_id,gateway_payment_id FROM payment_gateway_links WHERE booking_id=?").bind(input.bookingId).first<Record<string,unknown>>();if(!link?.gateway_payment_id)return json({error:"A captured Razorpay sandbox payment ID is required before refund"},409);
-    const refund=await db.prepare("SELECT * FROM booking_refund_cases WHERE booking_id=? ORDER BY created_at DESC LIMIT 1").bind(input.bookingId).first<Record<string,unknown>>();if(!refund)return json({error:"Create and approve an internal refund case before gateway refund"},409);if(String(refund.status)==="processed")return json({data:{bookingId:input.bookingId,refundCaseId:String(refund.id),gatewayRefundId:refund.gateway_reference,status:"processed",duplicatePrevented:true}});
+    // Prefer an explicit case identity. The legacy booking-only request remains supported, but uses
+    // rowid as a deterministic tie-breaker because two refund cases can be created in the same
+    // millisecond. Ordering only by created_at could select the already-processing older case and
+    // reject a legitimate second partial refund.
+    const refund=input.refundCaseId
+      ?await db.prepare("SELECT * FROM booking_refund_cases WHERE booking_id=? AND id=?").bind(input.bookingId,input.refundCaseId).first<Record<string,unknown>>()
+      :await db.prepare("SELECT * FROM booking_refund_cases WHERE booking_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1").bind(input.bookingId).first<Record<string,unknown>>();
+    if(!refund)return json({error:"Create and approve an internal refund case before gateway refund"},409);if(String(refund.status)==="processed")return json({data:{bookingId:input.bookingId,refundCaseId:String(refund.id),gatewayRefundId:refund.gateway_reference,status:"processed",duplicatePrevented:true}});
     // MONEY DOES NOT MOVE FOR A CASE NOBODY APPROVED. The error text three lines up has always claimed
     // this - "Create and approve an internal refund case" - but the only status ever refused was
     // 'processed', so a 'requested', 'rejected' or 'cancelled' case reached the gateway. [W2-PAY-02]
@@ -33,11 +40,19 @@ export async function POST(request:Request){try{
     // measured at Rs 24,000 of refund instructions against Rs 8,000 collected, each carrying a different
     // X-Refund-Idempotency header so the gateway's own idempotency could not collapse them. Every
     // service line shares this table and this endpoint. [W2-PAY-01]
-    const captured=Number(payment.amount||0);
+    const reconciliation=await db.prepare("SELECT captured_amount FROM payment_reconciliation_records WHERE payment_id=?").bind(payment.id).first<Record<string,unknown>>();
+    const captured=reconciliation&&Number(reconciliation.captured_amount)>0?Number(reconciliation.captured_amount):["captured","partially_refunded","refunded"].includes(String(payment.status))?Number(payment.amount||0):0;
+    if(captured<=0)return json({error:"No verified captured funds are available to refund",code:"refund_without_capture"},409);
     const priorRow=await db.prepare("SELECT COALESCE(SUM(amount),0) total FROM booking_refund_cases WHERE booking_id=? AND id!=? AND status IN ('approved','processing','processed','completed')").bind(input.bookingId,refund.id).first<Record<string,unknown>>();
     const prior=Number(priorRow?.total||0),requested=Number(refund.amount||0);
     if(prior+requested>captured)return json({error:"Refunds for this booking would exceed the amount captured",code:"refund_exceeds_capture",captured,alreadyRefunded:prior,requested},409);
-    const result=await createSandboxRefund(runtime,{bookingId:input.bookingId,paymentId:String(payment.id),gatewayPaymentId:String(link.gateway_payment_id),refundCaseId:String(refund.id),amount:Number(refund.amount||0)});const gatewayRefundId=String(result.id),now=Date.now();await db.prepare("UPDATE booking_refund_cases SET status='processing',gateway_reference=?,updated_at=? WHERE id=?").bind(gatewayRefundId,now,refund.id).run();await db.prepare("UPDATE payment_reconciliation_records SET gateway_status='refund_requested',reconciliation_status='pending_refund',updated_at=? WHERE payment_id=?").bind(now,payment.id).run();await securityAudit(db,actor,"grooming.payment_sandbox.initiate_refund","booking",input.bookingId,"completed",{refundCaseId:refund.id,gatewayRefundId,amount:refund.amount});return json({data:{bookingId:input.bookingId,refundCaseId:String(refund.id),gatewayRefundId,status:String(result.status||"processing"),environment:"sandbox"}},201);
+    // Claim the approved case before crossing the gateway boundary. This prevents two concurrent
+    // staff requests from both initiating the same refund. If the gateway refuses the call, release
+    // the claim so Finance can retry the approved case.
+    const claimTime=Date.now();const claim=await db.prepare("UPDATE booking_refund_cases SET status='processing',updated_at=? WHERE id=? AND status='approved'").bind(claimTime,refund.id).run();
+    if(Number(claim.meta?.changes||0)!==1)return json({error:"This refund case is already being processed",code:"refund_already_claimed",refundCaseId:String(refund.id)},409);
+    let result:Record<string,unknown>;try{result=await createSandboxRefund(runtime,{bookingId:input.bookingId,paymentId:String(payment.id),gatewayPaymentId:String(link.gateway_payment_id),refundCaseId:String(refund.id),amount:Number(refund.amount||0)});}catch(error){await db.prepare("UPDATE booking_refund_cases SET status='approved',updated_at=? WHERE id=? AND status='processing' AND gateway_reference IS NULL").bind(Date.now(),refund.id).run();throw error;}
+    const gatewayRefundId=String(result.id),now=Date.now();await db.prepare("UPDATE booking_refund_cases SET gateway_reference=?,updated_at=? WHERE id=? AND status='processing'").bind(gatewayRefundId,now,refund.id).run();await db.prepare("UPDATE payment_reconciliation_records SET gateway_status='refund_requested',reconciliation_status='pending_refund',updated_at=? WHERE payment_id=?").bind(now,payment.id).run();await securityAudit(db,actor,"grooming.payment_sandbox.initiate_refund","booking",input.bookingId,"completed",{refundCaseId:refund.id,gatewayRefundId,amount:refund.amount});return json({data:{bookingId:input.bookingId,refundCaseId:String(refund.id),gatewayRefundId,status:String(result.status||"processing"),environment:"sandbox"}},201);
   }
 
   if(input.action==="link_order"){
