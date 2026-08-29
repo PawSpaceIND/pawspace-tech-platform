@@ -1,0 +1,36 @@
+name: Mission 02 exact qa
+on:
+  push:
+    branches: [feat/mission-02-booking]
+permissions:
+  contents: read
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PAWSPACE_PAYMENT_ENV: sandbox
+      RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+      RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/mission-02-booking
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Prove Razorpay sandbox keys are configured
+        run: |
+          test -n "$RAZORPAY_KEY_ID_SANDBOX" || { echo 'RAZORPAY_KEY_ID_SANDBOX missing'; exit 1; }
+          test -n "$RAZORPAY_KEY_SECRET_SANDBOX" || { echo 'RAZORPAY_KEY_SECRET_SANDBOX missing'; exit 1; }
+          case "$RAZORPAY_KEY_ID_SANDBOX" in rzp_test_*) ;; *) echo 'Razorpay key is not a test-mode key'; exit 1;; esac
+      - name: Run unchanged qa.sh (Mission 01 + Mission 02)
+        run: |
+          rm -rf "$HOME/pawspace-tech-platform"
+          ln -s "$GITHUB_WORKSPACE" "$HOME/pawspace-tech-platform"
+          bash qa.sh feat/mission-02-booking
