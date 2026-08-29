@@ -14,6 +14,7 @@ name: Deploy staging
 #              PRODUCTION_D1_ID        optional; when set, certification refuses to run if the deploy
 #                                      is bound to it
 #              PRODUCTION_WORKER_NAME  optional; same, for the worker name
+#              STAGING_R2_BUCKET_NAME  optional private UAT media bucket
 #
 # The deploy is CERTIFIED before it is handed to testers. tests/e2e/staging-certification.mjs proves,
 # against the deployed origin and the deployed configuration: isolation (the staging worker and its own
@@ -86,6 +87,7 @@ jobs:
       - name: Configure staging (name + D1 + sandbox)
         env:
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
           PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
@@ -123,6 +125,22 @@ jobs:
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
           PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
+          PAWSPACE_AI_PROVIDER_API_KEY: ${{ secrets.PAWSPACE_AI_PROVIDER_API_KEY }}
+          META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
+          META_WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.META_WHATSAPP_PHONE_NUMBER_ID }}
+          META_WHATSAPP_WABA_ID: ${{ secrets.META_WHATSAPP_WABA_ID }}
+          META_WHATSAPP_APP_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET }}
+          META_WHATSAPP_VERIFY_TOKEN: ${{ secrets.META_WHATSAPP_VERIFY_TOKEN }}
+          META_WHATSAPP_UAT_ALLOWLIST: ${{ secrets.META_WHATSAPP_UAT_ALLOWLIST }}
+          META_WHATSAPP_TEMPLATE_ALLOWLIST: ${{ secrets.META_WHATSAPP_TEMPLATE_ALLOWLIST }}
+          PAWSPACE_COMMUNICATION_PROVIDER_URL: ${{ secrets.PAWSPACE_COMMUNICATION_PROVIDER_URL }}
+          PAWSPACE_COMMUNICATION_PROVIDER_TOKEN: ${{ secrets.PAWSPACE_COMMUNICATION_PROVIDER_TOKEN }}
+          PAWSPACE_COMMUNICATION_WEBHOOK_SECRET: ${{ secrets.PAWSPACE_COMMUNICATION_WEBHOOK_SECRET }}
+          PAWSPACE_COMMUNICATION_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_COMMUNICATION_UAT_ALLOWLIST }}
         # --message is what makes the DEPLOYED version attributable to a sha: `wrangler versions list`
         # exposes it, and certification requires an exact match. Without it, "which build is live?" has
         # no answer that does not rely on trusting this log.
@@ -133,9 +151,20 @@ jobs:
           trap 'rm -f "$SECRETS_FILE"' EXIT
           node --input-type=module -e '
             import { writeFileSync } from "node:fs";
-            const names = ["PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"];
-            const values = Object.fromEntries(names.map(name => [name, process.env[name] || ""]));
-            if (Object.values(values).some(value => !value)) throw new Error("a required UAT secret is missing");
+            const requiredNames = ["PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"];
+            const optionalNames = [
+              "RAZORPAY_KEY_ID_SANDBOX", "RAZORPAY_KEY_SECRET_SANDBOX", "RAZORPAY_WEBHOOK_SECRET_SANDBOX",
+              "GOOGLE_MAPS_SERVER_API_KEY_UAT", "PAWSPACE_AI_PROVIDER_API_KEY",
+              "META_WHATSAPP_UAT_ACCESS_TOKEN", "META_WHATSAPP_PHONE_NUMBER_ID", "META_WHATSAPP_WABA_ID",
+              "META_WHATSAPP_APP_SECRET", "META_WHATSAPP_VERIFY_TOKEN", "META_WHATSAPP_UAT_ALLOWLIST",
+              "META_WHATSAPP_TEMPLATE_ALLOWLIST", "PAWSPACE_COMMUNICATION_PROVIDER_URL",
+              "PAWSPACE_COMMUNICATION_PROVIDER_TOKEN", "PAWSPACE_COMMUNICATION_WEBHOOK_SECRET",
+              "PAWSPACE_COMMUNICATION_UAT_ALLOWLIST"
+            ];
+            const required = Object.fromEntries(requiredNames.map(name => [name, process.env[name] || ""]));
+            if (Object.values(required).some(value => !value)) throw new Error("a required UAT secret is missing");
+            const optional = Object.fromEntries(optionalNames.filter(name => process.env[name]).map(name => [name, process.env[name]]));
+            const values = { ...required, ...optional };
             writeFileSync(process.env.SECRETS_FILE, JSON.stringify(values), { mode: 0o600 });
           '
           # Cloudflare documents that `secret put` creates and immediately deploys a new Worker

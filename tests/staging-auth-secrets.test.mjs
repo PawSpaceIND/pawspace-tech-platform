@@ -135,6 +135,10 @@ test("real execution: with every secret supplied, only NON-SECRET config is writ
   // The non-secret staging settings are written…
   assert.equal(result.config.vars.PAWSPACE_PAYMENT_ENV, "sandbox", "sandbox payments are preserved");
   assert.equal(result.config.vars.PAWSPACE_UAT_LOGIN, "on", "the UAT login flag is a non-secret var and is preserved");
+  assert.equal(result.config.vars.PAWSPACE_MAPS_ENV, "sandbox", "Maps stays locked to sandbox");
+  assert.equal(result.config.vars.PAWSPACE_COMMUNICATION_ENV, "uat", "communications stay locked to UAT");
+  assert.equal(result.config.vars.META_WHATSAPP_UAT_DELIVERY_ENABLED, "true", "Meta delivery can run only through its UAT allow-list gate");
+  assert.equal(result.config.vars.PAWSPACE_MEDIA_ENV, "uat", "media stays in the UAT policy environment");
   assert.equal(result.config.name, "pawspace-staging", "existing behaviour is preserved");
   // …but NONE of the three credentials may land in `vars`. Writing them there makes them plaintext
   // Worker variables — the exact defect #170 exists to close. They are installed as Worker secrets.
@@ -168,6 +172,30 @@ test("the workflow supplies all three from GitHub secrets", () => {
     assert.match(deployStep, new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`), `${name} must be in scope for the one attributed deploy`);
     assert.doesNotMatch(workflow, new RegExp(`${name}:\\s*\\$\\{\\{\\s*vars\\.${name}`), `${name} must not come from a repository VARIABLE, which is not secret`);
   }
+});
+
+test("the workflow forwards configured vendor sandbox secrets without requiring or serializing them", () => {
+  const vendorSecrets = [
+    "RAZORPAY_KEY_ID_SANDBOX", "RAZORPAY_KEY_SECRET_SANDBOX", "RAZORPAY_WEBHOOK_SECRET_SANDBOX",
+    "GOOGLE_MAPS_SERVER_API_KEY_UAT", "PAWSPACE_AI_PROVIDER_API_KEY", "META_WHATSAPP_UAT_ACCESS_TOKEN",
+    "META_WHATSAPP_PHONE_NUMBER_ID", "META_WHATSAPP_WABA_ID", "META_WHATSAPP_APP_SECRET",
+    "META_WHATSAPP_VERIFY_TOKEN", "META_WHATSAPP_UAT_ALLOWLIST", "META_WHATSAPP_TEMPLATE_ALLOWLIST",
+    "PAWSPACE_COMMUNICATION_PROVIDER_URL", "PAWSPACE_COMMUNICATION_PROVIDER_TOKEN",
+    "PAWSPACE_COMMUNICATION_WEBHOOK_SECRET", "PAWSPACE_COMMUNICATION_UAT_ALLOWLIST",
+  ];
+  const deployStep = workflow.slice(workflow.indexOf("- name: Deploy to staging"), workflow.indexOf("- name: Certify deployed isolation"));
+  for (const name of vendorSecrets) {
+    assert.match(deployStep, new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`), `${name} must come from a GitHub secret`);
+  }
+  assert.match(deployStep, /optionalNames\.filter\(name => process\.env\[name\]\)/,
+    "missing optional vendor secrets must stay absent instead of being uploaded as blank values");
+});
+
+test("real execution: an approved private R2 bucket is bound only when its staging variable is supplied", () => {
+  const withoutBucket = runStageConfig(GOOD);
+  assert.ok(!withoutBucket.config.r2_buckets, "no bucket variable must not fabricate a media binding");
+  const withBucket = runStageConfig({ ...GOOD, STAGING_R2_BUCKET_NAME: "pawspace-uat-private-media" });
+  assert.deepEqual(withBucket.config.r2_buckets, [{ binding: "PAWSPACE_MEDIA_BUCKET", bucket_name: "pawspace-uat-private-media" }]);
 });
 
 test("the workflow installs all three as Cloudflare Worker SECRETS, not plain vars", () => {
