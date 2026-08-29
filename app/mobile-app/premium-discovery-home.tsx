@@ -181,7 +181,7 @@ export default function PremiumDiscoveryHome({
       {careServices.length === 0 && <p className={styles.empty}>No care service matches “{query}”.</p>}
     </section>
 
-    <section className={styles.videoSection}>
+    <section className={styles.videoSection} aria-label="Service video guides">
       <div className={styles.sectionHead}><div><small>SIX SERVICE VIDEO SLOTS</small><h2>Watch before you book</h2></div><span>Swipe →</span></div>
       <div className={styles.videoRail}>
         {videoServices.map((service) => <button className={styles.videoCard} key={service.serviceCode} onClick={() => setVideoGuide(service)}>
