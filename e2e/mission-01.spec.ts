@@ -27,7 +27,10 @@ test('Mission 06: full autonomous login', async ({ page }) => {
   await otpInput.fill(code);
   console.log('STEP 3 OK: code filled');
 
+  const verifyResponsePromise = page.waitForResponse(response => response.url().includes('/api/customer-otp') && response.request().method() === 'POST');
   await dialog.getByRole('button', { name: /verify & continue/i }).click();
+  const verifyResponse = await verifyResponsePromise;
+  if (!verifyResponse.ok()) console.log('VERIFY FAILURE:', verifyResponse.status(), await verifyResponse.text());
   await expect(dialog).toBeHidden();
   await expect(page.getByRole('heading', { name: /who needs grooming/i })).toBeVisible();
   await page.waitForTimeout(2500);
