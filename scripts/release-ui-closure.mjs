@@ -90,9 +90,22 @@ async function collectVisual(page, route, viewport) {
       const style = getComputedStyle(el); const rect = el.getBoundingClientRect();
       return style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0;
     };
+    // A control can legitimately start outside the viewport when it belongs to an explicit
+    // horizontal carousel. It is reachable by scrolling that rail and must not be confused with a
+    // control clipped by the page layout. Only exempt real scroll containers whose own box is on
+    // screen; ordinary overflow and fixed-width layout mistakes still fail below.
+    const insideHorizontalScroller = (el) => {
+      for (let parent = el.parentElement; parent && parent !== body; parent = parent.parentElement) {
+        const style = getComputedStyle(parent);
+        if (!["auto", "scroll"].includes(style.overflowX) || parent.scrollWidth <= parent.clientWidth + 2) continue;
+        const rect = parent.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && rect.left < innerWidth + 2 && rect.right > -2;
+      }
+      return false;
+    };
     const clipped = [...document.querySelectorAll("button,a,input,select,textarea")].filter(visible).filter((el) => {
       const r = el.getBoundingClientRect();
-      return r.left < -2 || r.right > innerWidth + 2;
+      return (r.left < -2 || r.right > innerWidth + 2) && !insideHorizontalScroller(el);
     }).map((el) => (el.textContent || el.getAttribute("aria-label") || el.tagName).trim().slice(0, 80)).slice(0, 10);
     return {
       horizontalOverflow: Math.max(root.scrollWidth, body?.scrollWidth || 0) > innerWidth + 2,
