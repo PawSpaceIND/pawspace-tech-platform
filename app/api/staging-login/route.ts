@@ -5,7 +5,10 @@ type Row=Record<string,unknown>;
 type Db=Awaited<ReturnType<typeof database>>;
 const text=(v:unknown)=>String(v??"").trim();
 const json=(value:unknown,status=200,cookie?:string)=>{const h:Record<string,string>={"cache-control":"no-store"};if(cookie)h["set-cookie"]=cookie;return Response.json(value,{status,headers:h});};
-const TTL=8*3600;
+// UAT browser sessions are intentionally long-lived so human testers do not have to re-authenticate
+// several times a day. This path remains staging-only because uatLoginEnabled() requires the explicit
+// PAWSPACE_UAT_LOGIN=on flag plus the staging signing key; production never enables that branch.
+const TTL=30*24*3600;
 
 // These are the identities advertised by /staging-login and docs/UAT-TESTER-GUIDE.md. A freshly
 // isolated release-preview D1 does not load the large employee/payroll demo seed, so advertising these
