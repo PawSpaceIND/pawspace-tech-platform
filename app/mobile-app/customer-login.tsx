@@ -24,27 +24,30 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  // The login shell is server-rendered. Keep its controlled phone field and submit button inert until
-  // React has attached the input/change/click handlers; otherwise a fast user (or UAT robot) can type
-  // and click into the SSR HTML before hydration, silently losing the interaction with no OTP request.
+  // The login shell is server-rendered. Delay client-state restoration until after hydration so the
+  // SSR controls stay inert until React handlers are attached, while a dev-only remount can still
+  // recover the outstanding sandbox OTP challenge without resetting the customer to the phone stage.
   useEffect(() => {
-    setHydrated(true);
-    if (!persistDevOtpSession) return;
-    try {
-      const raw = sessionStorage.getItem(DEV_OTP_SESSION_KEY);
-      if (!raw) return;
-      const saved = JSON.parse(raw) as Partial<DevOtpSession>;
-      if (!/^\d{10}$/.test(saved.phone || "") || !saved.challengeId) {
+    const timer = window.setTimeout(() => {
+      setHydrated(true);
+      if (!persistDevOtpSession) return;
+      try {
+        const raw = sessionStorage.getItem(DEV_OTP_SESSION_KEY);
+        if (!raw) return;
+        const saved = JSON.parse(raw) as Partial<DevOtpSession>;
+        if (!/^\d{10}$/.test(saved.phone || "") || !saved.challengeId) {
+          sessionStorage.removeItem(DEV_OTP_SESSION_KEY);
+          return;
+        }
+        setPhone(saved.phone || "");
+        setChallengeId(saved.challengeId);
+        setSandboxCode(saved.sandboxCode || "");
+        setStage("code");
+      } catch {
         sessionStorage.removeItem(DEV_OTP_SESSION_KEY);
-        return;
       }
-      setPhone(saved.phone || "");
-      setChallengeId(saved.challengeId);
-      setSandboxCode(saved.sandboxCode || "");
-      setStage("code");
-    } catch {
-      sessionStorage.removeItem(DEV_OTP_SESSION_KEY);
-    }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const requestOtp = async () => {
