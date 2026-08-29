@@ -4,7 +4,7 @@ import { chromium } from "playwright";
 const readArg=(name,fallback="")=>{const item=process.argv.find(value=>value.startsWith(`--${name}=`));return item?item.slice(name.length+3):fallback;};
 const BASE=readArg("base",process.env.PREVIEW_URL||"").replace(/\/$/,"");
 const OUT=readArg("json","customer-ui-acceptance-report.json");
-const PHONE=readArg("phone","9000000911"),PIN="560034",PET="UI Test Bruno",CUSTOMER="UI Acceptance Customer",ADDRESS="12 Acceptance Road, Koramangala, Bengaluru";
+const PHONE=readArg("phone","9000000911"),PIN="560034",FOOD_PIN="560038",PET="UI Test Bruno",CUSTOMER="UI Acceptance Customer",ADDRESS="12 Acceptance Road, Koramangala, Bengaluru";
 const TIMEOUT=Number(readArg("timeout","18000"));
 if(!BASE)throw new Error("--base or PREVIEW_URL is required");
 
@@ -29,10 +29,10 @@ async function ensurePet(page){
  await nav(page,"My Pets");if(await page.getByText(PET,{exact:true}).count())return`${PET} reused`;
  const add=page.getByRole("button",{name:/Add pet/i}).first();await add.waitFor({state:"visible",timeout:TIMEOUT});await add.click();await page.getByPlaceholder("Pet name").fill(PET);
  await page.getByLabel("Breed").selectOption({index:1});await page.getByLabel("Age").selectOption({index:1});await page.getByLabel("Weight").selectOption({index:1});await page.getByLabel("Temperament").selectOption({index:1});await page.getByLabel("Vaccinated?").selectOption("yes");
- const gender=page.getByLabel("Gender (optional)");if(await gender.count())await gender.selectOption({index:1});await page.getByRole("button",{name:"Add pet",exact:true}).click();await page.getByText(PET,{exact:true}).waitFor({state:"visible",timeout:TIMEOUT});return`${PET} created through UI`;
+ const gender=page.getByLabel("Gender (optional)");if(await gender.count())await gender.selectOption({index:1});await page.getByRole("button",{name:"Add pet",exact:true}).click();await page.getByText(PET,{exact:true}).first().waitFor({state:"visible",timeout:TIMEOUT});return`${PET} created through UI`;
 }
 
-const care=(page)=>page.locator("section").filter({hasText:"Everything they need"}).first();
+const care=(page)=>page.getByRole("heading",{name:"Everything they need",exact:true}).locator("xpath=ancestor::section[1]");
 async function goHome(page){await gotoApp(page);await nav(page,"Home");await page.getByText("Everything they need",{exact:true}).waitFor({state:"visible",timeout:TIMEOUT});}
 async function openService(page,name){await goHome(page);const card=care(page).getByRole("button",{name:new RegExp(name,"i")});const count=await card.count();if(count!==1)die(`${name} discovery card count=${count}`);if(await card.isDisabled())die(`${name} discovery card disabled`);await card.click();await wait(page,450);}
 
@@ -43,7 +43,7 @@ async function observeFinal(page,button,target,safePosts=[]){
 
 async function homeControls(page){
  await goHome(page);for(const name of["Grooming","Training","Boarding","Pet Sitting","Pet Taxi","Dog Walking","Fresh Food","Relocation"]){const card=care(page).getByRole("button",{name:new RegExp(name,"i")});if(await card.count()!==1)die(`${name} missing/duplicated`);if(await card.isDisabled())die(`${name} disabled`);}
- const guides=page.locator("section").filter({hasText:"Quick service guides"}).first().getByRole("button");if(await guides.count()!==6)die(`guide slots=${await guides.count()}, expected 6`);
+ const guides=page.getByRole("heading",{name:"Quick service guides",exact:true}).locator("xpath=ancestor::section[1]").getByRole("button");if(await guides.count()!==6)die(`guide slots=${await guides.count()}, expected 6`);
  await page.getByRole("button",{name:"Choose your service location"}).click();await page.getByPlaceholder("e.g. HSR Layout, Bengaluru").fill("Koramangala, Bengaluru");await page.getByRole("button",{name:"Save location"}).click();await text(page,"Koramangala, Bengaluru");
  const search=page.getByLabel("Search PawSpace services");await search.fill("food");await care(page).getByRole("button",{name:/Fresh Food/i}).waitFor({state:"visible",timeout:TIMEOUT});if(await care(page).getByRole("button",{name:/Grooming/i}).count())die("search failed to filter service cards");await search.fill("");
  await page.getByRole("button",{name:/View your bookings/i}).click();await wait(page,200);await nav(page,"Home");await page.getByRole("button",{name:"Open pet profiles"}).click();await text(page,"Your pets");return"8 services + search + location + six guides + bookings + pets";
@@ -70,7 +70,7 @@ async function taxi(page){
 }
 
 async function food(page){
- await openService(page,"Fresh Food");await text(page,"Fresh food for your pets");await page.getByPlaceholder("Enter six-digit PIN code").first().fill(PIN);await page.getByRole("button",{name:"Check service area & load catalogue"}).click();await text(page,"Delivery coverage confirmed");const add=page.getByRole("button",{name:"Add",exact:true}).first();await add.waitFor({state:"visible",timeout:TIMEOUT});await add.click();const cart=page.getByRole("button",{name:/Review cart/i});if(await cart.isDisabled())die("Food cart empty after Add");await cart.click();await page.getByRole("button",{name:"Choose delivery plan"}).click();await page.getByRole("button",{name:"Delivery details"}).click();await page.getByPlaceholder("House, street, area").fill(ADDRESS);const review=page.getByRole("button",{name:"Review with server quote"});if(await review.isDisabled())die("Food coverage lost before review");await review.click();await text(page,"Review and confirm");const final=page.getByRole("button",{name:/Confirm food order|Confirm order \+ repeat plan/i});if(await final.isDisabled())die("Food final action disabled after quote");const seen=await observeFinal(page,final,/POST \/api\/food-orders/);return`5 stages + catalogue + quote + order wiring (${seen})`;
+ await openService(page,"Fresh Food");await text(page,"Fresh food for your pets");await page.getByPlaceholder("Enter six-digit PIN code").first().fill(FOOD_PIN);await page.getByRole("button",{name:"Check service area & load catalogue"}).click();await text(page,"Delivery coverage confirmed");const add=page.getByRole("button",{name:"Add",exact:true}).first();await add.waitFor({state:"visible",timeout:TIMEOUT});await add.click();const cart=page.getByRole("button",{name:/Review cart/i});if(await cart.isDisabled())die("Food cart empty after Add");await cart.click();await page.getByRole("button",{name:"Choose delivery plan"}).click();await page.getByRole("button",{name:"Delivery details"}).click();await page.getByPlaceholder("House, street, area").fill(ADDRESS);const review=page.getByRole("button",{name:"Review with server quote"});if(await review.isDisabled())die("Food coverage lost before review");await review.click();await text(page,"Review and confirm");const final=page.getByRole("button",{name:/Confirm food order|Confirm order \+ repeat plan/i});if(await final.isDisabled())die("Food final action disabled after quote");const seen=await observeFinal(page,final,/POST \/api\/food-orders/);return`5 stages + catalogue + quote + order wiring (${seen})`;
 }
 
 async function relocation(page){await openService(page,"Relocation");await text(page,"PET RELOCATION · ENQUIRY");await page.getByLabel("Email").fill("ui-acceptance@pawspace.test");await page.getByLabel("Pickup location").fill("Koramangala, Bengaluru");await page.getByLabel("Drop location").fill("Indiranagar, Bengaluru");const seen=await observeFinal(page,page.getByRole("button",{name:"Request relocation plan & quote"}),/POST \/api\/relocation-enquiry/);return`enquiry-only wiring (${seen}); no payment endpoint`;
