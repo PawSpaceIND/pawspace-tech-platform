@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 cd ~/pawspace-tech-platform
 git fetch origin
 git switch "$1" 2>/dev/null || git switch -c "$1" "origin/$1"
