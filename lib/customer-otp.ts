@@ -1,6 +1,7 @@
 import { hmac, bytesToBase64Url, type AssertionPayload } from "./verified-identity-assertion";
 import { identifyInstall } from "./app-to-revenue-funnel";
 import { resolveOtpAssertionSecret } from "./otp-sandbox-runtime";
+import { ensureCustomerAccountTables } from "./customer-account";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -35,6 +36,9 @@ export async function resolveOtpCustomer(db:D1Database,phone:string){return db.p
 
 export async function verifyCustomerOtp(db:Db,input:{challengeId:string;code:string;name?:string;cityId?:string;installId?:string}){
  await ensureCustomerOtpTables(db);
+ // OTP verification can be the first customer-account write on a fresh local/UAT database.
+ // Reuse the canonical account owner's initializer instead of assuming another route seeded it first.
+ await ensureCustomerAccountTables(db);
  const row=await db.prepare("SELECT * FROM customer_otp_challenges WHERE id=?").bind(input.challengeId).first<Row>();
  if(!row)throw new Error("OTP challenge not found");
  if(Number(row.consumed)===1)throw new Error("This OTP has already been used");
