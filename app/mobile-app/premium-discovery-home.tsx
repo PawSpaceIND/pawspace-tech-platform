@@ -166,7 +166,7 @@ export default function PremiumDiscoveryHome({
       <div className={styles.offerDots}>{sponsoredOffers.map((item, index) => <button key={item.title} aria-label={`Show ${item.brand}`} className={index === activeOffer ? styles.selectedOffer : ""} onClick={() => setActiveOffer(index)} />)}</div>
     </section>
 
-    <section className={styles.quick}>
+    <section className={styles.quick} aria-label="Care services">
       <div className={styles.sectionHead}><div><small>BOOK IN A FEW TAPS</small><h2>Care for every kind of day</h2></div><button onClick={onShowBookings}>Your bookings →</button></div>
       <div className={styles.grid}>
         {careServices.map((service) => {

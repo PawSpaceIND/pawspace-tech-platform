@@ -14,3 +14,8 @@ test("customer acceptance waits for OTP verification to replace the login UI", (
   assert.match(source, /codeInput\.waitFor\(\{state:"hidden",timeout:TIMEOUT\}\)/);
   assert.doesNotMatch(source, /Verify & continue"\}\)\.click\(\);await wait\(page,550\)/);
 });
+
+test("customer acceptance scopes service-card checks to the labelled discovery region", () => {
+  assert.match(source, /page\.getByRole\("region",\{name:"Care services"\}\)/);
+  assert.doesNotMatch(source, /filter\(\{hasText:"Care for every kind of day"\}\)/);
+});
