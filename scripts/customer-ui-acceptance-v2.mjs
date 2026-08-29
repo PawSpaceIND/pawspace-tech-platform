@@ -33,7 +33,7 @@ async function ensurePet(page){
  const gender=page.getByLabel("Gender (optional)");if(await gender.count())await gender.selectOption({index:1});await page.getByRole("button",{name:"Add pet",exact:true}).click();await page.getByText(PET,{exact:true}).first().waitFor({state:"visible",timeout:TIMEOUT});return`${PET} created through UI`;
 }
 
-const care=(page)=>page.getByRole("heading",{name:"Everything they need",exact:true}).locator("xpath=ancestor::section[1]");
+const care=(page)=>page.getByRole("region",{name:"Care services"});
 async function goHome(page){await gotoApp(page);await nav(page,"Home");await page.getByText("Everything they need",{exact:true}).waitFor({state:"visible",timeout:TIMEOUT});}
 async function openService(page,name){await goHome(page);const card=care(page).getByRole("button",{name:new RegExp(name,"i")});const count=await card.count();if(count!==1)die(`${name} discovery card count=${count}`);if(await card.isDisabled())die(`${name} discovery card disabled`);await card.click();await wait(page,450);}
 
