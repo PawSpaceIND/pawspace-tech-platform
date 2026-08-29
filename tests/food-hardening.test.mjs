@@ -153,7 +153,7 @@ test("real execution: quantity caps and zone scoping are enforced server-side on
   assert.match(String(over.error), /1-5/);
   assert.equal((await quoteVia(DOG_SKU, 0)).status, 409);
   // Zone without seeded inventory: no quote at all
-  const wrongZone = await quoteVia(DOG_SKU, 1, "blr-north");
+  const wrongZone = await quoteVia(DOG_SKU, 1, "unsupported-zone");
   assert.equal(wrongZone.status, 404, "a zone with no UAT inventory row must not quote");
   // Zone flip between quote and order is rejected
   const { quote } = await quoteVia(DOG_SKU, 1);
