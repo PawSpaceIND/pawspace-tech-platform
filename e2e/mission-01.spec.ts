@@ -14,16 +14,25 @@ test('Mission 06: full autonomous login', async ({ page }) => {
   await dialog.getByRole('button', { name: /send otp/i }).click();
   console.log('STEP 2 OK: send otp clicked');
 
-  await page.waitForTimeout(1500);
+  const otpInput = dialog.getByLabel('OTP code');
+  try {
+    await expect(otpInput).toBeVisible({ timeout: 10000 });
+  } catch (error) {
+    const visibleText = await dialog.innerText().catch(() => '<customer login dialog unavailable>');
+    console.log('--- OTP INPUT TIMEOUT: DIALOG TEXT ---');
+    console.log(visibleText.slice(0, 1500));
+    console.log('--- END OTP INPUT TIMEOUT ---');
+    throw error;
+  }
+
   const otpText = await dialog.innerText();
   console.log('--- OTP SCREEN ---');
   console.log(otpText.slice(0, 1500));
   const m = otpText.match(/\b(\d{6})\b/) || otpText.match(/\b(\d{4})\b/);
   const code = m ? m[1] : '';
   console.log('DETECTED CODE:', code);
+  expect(code, `Sandbox OTP code missing from dialog: ${otpText.slice(0, 500)}`).toMatch(/^\d{6}$/);
 
-  const otpInput = dialog.getByLabel('OTP code');
-  await otpInput.waitFor();
   await otpInput.fill(code);
   console.log('STEP 3 OK: code filled');
 
