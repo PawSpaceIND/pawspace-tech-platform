@@ -19,6 +19,10 @@ jobs:
           node-version: '22.13.0'
           cache: npm
       - run: npm ci
+      - name: Generate missing Playwright Test dependency diff
+        run: |
+          npm install --save-dev @playwright/test@1.62.1
+          git diff -- package.json package-lock.json
       - run: npx playwright install --with-deps chromium
       - name: Run exact local QA harness
         run: |
