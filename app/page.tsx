@@ -71,7 +71,6 @@ const money = (value: number) => new Intl.NumberFormat("en-IN", { style: "curren
 
 export default function Home() {
   const [customer, setCustomer] = useState<LoggedInCustomer | null>(null);
-  const [signingIn, setSigningIn] = useState(false);
   const [booking, setBooking] = useState(false);
   // loadCustomerAccount() sends NO id: the server derives the subject from the platform session.
   useEffect(() => {
@@ -81,7 +80,15 @@ export default function Home() {
       .catch(() => { /* signed out: the booking control offers sign-in instead */ });
     return () => { active = false; };
   }, []);
-  function startBooking() { if (customer) setBooking(true); else setSigningIn(true); }
+  function startBooking() {
+    if (customer) setBooking(true);
+    else window.location.hash = "customer-login-modal";
+  }
+  function completeLogin(next: LoggedInCustomer) {
+    setCustomer(next);
+    if (window.location.hash === "#customer-login-modal") window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+    setBooking(true);
+  }
   const [petType, setPetType] = useState<PetType>("dog");
   const [offerType, setOfferType] = useState<OfferType>("regular");
   const [petCount, setPetCount] = useState(1);
@@ -124,7 +131,6 @@ export default function Home() {
     date: dates[selectedDate]?.isoDate,
     slot: selectedSlot ?? undefined,
   }} />;
-  if (signingIn) return <CustomerLogin onLoggedIn={next => { setCustomer(next); setSigningIn(false); setBooking(true); }} />;
 
   return (
     <main className="app-shell">
@@ -132,9 +138,17 @@ export default function Home() {
       <header className="topbar">
         <img src="/assets/pawspace-logo.jpeg" alt="PawSpace" />
         <div className="location"><span>Doorstep grooming in</span><strong>📍 Bengaluru</strong></div>
-        <div className="header-links"><Link href="/mobile-app">Mobile App</Link><Link href="/food">Fresh Food</Link><Link href="/boarding">Boarding</Link><Link href="/sitting">Pet Sitting</Link><Link href="/taxi">Pet Taxi</Link><Link href="/walking">Dog Walking</Link><Link href="/training">Training</Link><Link href="/mobile-app">My PawSpace</Link><Link href="/team">Team</Link><button className="login-link" onClick={() => setSigningIn(true)}>{customer ? customer.customerName : "Login"}</button></div>
+        <div className="header-links"><Link href="/mobile-app">Mobile App</Link><Link href="/food">Fresh Food</Link><Link href="/boarding">Boarding</Link><Link href="/sitting">Pet Sitting</Link><Link href="/taxi">Pet Taxi</Link><Link href="/walking">Dog Walking</Link><Link href="/training">Training</Link><Link href="/mobile-app">My PawSpace</Link><Link href="/team">Team</Link>{customer ? <Link className="login-link" href="/mobile-app">{customer.customerName}</Link> : <a className="login-link" href="#customer-login-modal">Login</a>}</div>
       </header>
       <TestSyncPanel surface="customer" />
+
+      {!customer && <div id="customer-login-modal" className="modal-backdrop customer-login-target" role="dialog" aria-modal="true" aria-label="Customer login">
+        <div className="modal details-modal">
+          <a className="modal-close" href="#" aria-label="Close customer login">×</a>
+          <CustomerLogin embedded onLoggedIn={completeLogin} />
+        </div>
+      </div>}
+      <style>{`.customer-login-target{display:none}.customer-login-target:target{display:grid}.customer-login-target .modal-close{display:grid;place-items:center;text-decoration:none}`}</style>
 
       <section className="hero">
         <div className="hero-copy">
