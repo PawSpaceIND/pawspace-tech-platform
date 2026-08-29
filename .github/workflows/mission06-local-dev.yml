@@ -1,0 +1,29 @@
+name: Mission 06 local dev
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  mission06:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Run exact local QA harness
+        run: |
+          ln -s "$GITHUB_WORKSPACE" "$HOME/pawspace-tech-platform"
+          bash qa.sh fix/login-otp-inputs
+      - name: Print dev server log on failure
+        if: failure()
+        run: tail -200 /tmp/pawspace-dev.log || true
