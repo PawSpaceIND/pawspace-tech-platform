@@ -5,7 +5,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   mission06:
@@ -13,16 +13,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: fix/login-otp-inputs
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22.13.0'
           cache: npm
       - run: npm ci
-      - name: Generate missing Playwright Test dependency diff
+      - name: Commit missing Playwright Test dependency atomically
         run: |
           npm install --save-dev @playwright/test@1.62.1
-          git diff -- package.json package-lock.json
+          if ! git diff --quiet -- package.json package-lock.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add package.json package-lock.json
+            git commit -m "test(e2e): declare playwright test runner"
+            git push origin HEAD:fix/login-otp-inputs
+          fi
       - run: npx playwright install --with-deps chromium
       - name: Run exact local QA harness
         run: |
