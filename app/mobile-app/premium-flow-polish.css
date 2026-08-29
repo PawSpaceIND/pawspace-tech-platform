@@ -1,0 +1,283 @@
+/* PawSpace customer-app visual system v2.
+   Presentation only: no data flow, API, booking, pricing, availability or business logic. */
+
+:root{
+  --pv2-forest:#013e31;
+  --pv2-forest-2:#075b48;
+  --pv2-ink:#142a23;
+  --pv2-muted:#6f7e78;
+  --pv2-gold:#f2b33d;
+  --pv2-cream:#fbfaf6;
+  --pv2-surface:#ffffff;
+  --pv2-soft:#f3f6f4;
+  --pv2-line:#e4e9e6;
+  --pv2-shadow:0 10px 28px rgba(1,62,49,.07);
+}
+
+/* Remove the old marketing/demo wrapper. The customer app should review as an app, not as a phone mock inside a brochure. */
+[class*="mobile_stage"][data-theme]{
+  min-height:100svh!important;
+  display:grid!important;
+  grid-template-columns:1fr!important;
+  place-items:start center!important;
+  gap:0!important;
+  padding:0!important;
+  background:#f2f0e9!important;
+  color:var(--pv2-ink)!important;
+}
+[class*="mobile_context"]{display:none!important}
+[class*="mobile_phone"]{
+  width:100%!important;
+  max-width:430px!important;
+  height:100svh!important;
+  max-height:none!important;
+  margin:0 auto!important;
+  border:0!important;
+  border-radius:0!important;
+  padding:18px 16px 78px!important;
+  background:var(--pv2-cream)!important;
+  box-shadow:none!important;
+  color:var(--pv2-ink)!important;
+}
+[class*="mobile_phone"]:before{display:none!important}
+[class*="mobile_phone"]>header{height:45px!important;margin-top:0!important}
+[class*="mobile_phone"]>header small{font-size:9px!important;color:var(--pv2-muted)!important}
+[class*="mobile_phone"]>header b{font-size:12px!important;color:var(--pv2-ink)!important}
+[class*="mobile_title"]{margin:7px 0 14px!important}
+[class*="mobile_title"] small{font-size:8px!important;color:var(--pv2-forest-2)!important;letter-spacing:.12em!important}
+[class*="mobile_title"] h2{font-size:24px!important;line-height:1.05!important;letter-spacing:-.045em!important}
+[class*="mobile_screen"]{height:calc(100% - 77px)!important;padding-bottom:112px!important}
+[class*="mobile_phone"]>nav{
+  height:72px!important;
+  padding:7px 8px 10px!important;
+  background:rgba(255,255,255,.97)!important;
+  border-top:1px solid var(--pv2-line)!important;
+  backdrop-filter:blur(18px);
+}
+[class*="mobile_phone"]>nav button{font-size:8px!important;color:#74827d!important}
+[class*="mobile_phone"]>nav i{font-size:18px!important}
+[class*="mobile_phone"]>nav [class*="active"]{color:var(--pv2-forest)!important}
+[class*="mobile_avatar"],[class*="mobile_bell"]{background:#fff!important;border:1px solid var(--pv2-line)!important;color:var(--pv2-forest)!important;box-shadow:0 5px 16px rgba(1,62,49,.05)}
+
+/* Home owns its own premium header, so remove the duplicated shell header/title there. */
+[class*="mobile_phone"]:has([data-discovery])>header,
+[class*="mobile_phone"]:has([data-discovery])>[class*="mobile_title"]{display:none!important}
+[class*="mobile_phone"]:has([data-discovery])>[class*="mobile_screen"]{height:100%!important}
+
+/* Compact service hero cards: visual confidence without taking half the booking viewport. */
+[class*="service-banner_banner"]{gap:8px!important;margin-bottom:15px!important}
+[class*="service-banner_banner"] figure{border-radius:20px!important;box-shadow:var(--pv2-shadow)!important}
+[class*="service-banner_compact"] img{height:132px!important}
+[class*="service-banner_banner"] figcaption{padding:30px 15px 13px!important}
+[class*="service-banner_banner"] figcaption h3{font-size:17px!important;letter-spacing:-.025em!important}
+[class*="service-banner_banner"] figcaption p{font-size:9px!important}
+[class*="service-banner_trust"] li{font-size:8px!important;border-color:var(--pv2-line)!important;background:#fff!important;color:#40544d!important}
+
+/* Shared progress treatment across booking journeys. */
+[data-theme] [class*="training_trainingSteps"],
+[data-theme] [class*="stay-flow_steps"],
+[data-theme] [class*="walking-flow_steps"],
+[data-theme] [class*="taxi-flow_steps"],
+[data-theme] [class*="food-flow_steps"]{gap:7px!important;margin:3px 0 19px!important}
+[data-theme] [class*="training_trainingSteps"] span,
+[data-theme] [class*="stay-flow_steps"] span,
+[data-theme] [class*="walking-flow_steps"] span,
+[data-theme] [class*="taxi-flow_steps"] span,
+[data-theme] [class*="food-flow_steps"] span{
+  width:auto!important;
+  flex:1!important;
+  height:6px!important;
+  min-height:6px!important;
+  border:0!important;
+  border-radius:999px!important;
+  color:transparent!important;
+  background:#e2e9e5!important;
+  font-size:0!important;
+}
+[data-theme] [class*="training_trainingSteps"] span[class*="active"],
+[data-theme] [class*="stay-flow_steps"] [class*="active"],
+[data-theme] [class*="walking-flow_steps"] span[class*="active"],
+[data-theme] [class*="taxi-flow_steps"] span[class*="active"],
+[data-theme] [class*="food-flow_steps"] [class*="active"]{background:var(--pv2-forest)!important;color:transparent!important}
+[data-theme] [class*="stay-flow_steps"] span:after{display:none!important}
+
+/* Training */
+[data-theme] [class*="training_head"] h3{font-size:23px!important;letter-spacing:-.04em!important;color:var(--pv2-ink)!important}
+[data-theme] [class*="training_head"] small{font-size:9px!important;color:var(--pv2-forest-2)!important;text-transform:uppercase;letter-spacing:.07em}
+[data-theme] [class*="training_assessmentPet"],
+[data-theme] [class*="training_calendarPreview"],
+[data-theme] [class*="training_review"],
+[data-theme] [class*="training_trainingSummary"],
+[data-theme] [class*="training_nextSession"],
+[data-theme] [class*="training_homework"],
+[data-theme] [class*="training_report"]{border:1px solid var(--pv2-line)!important;border-radius:18px!important;background:#fff!important;box-shadow:var(--pv2-shadow)!important}
+[data-theme] [class*="training_assessmentPet"]{padding:14px!important}
+[data-theme] [class*="training_assessmentPet"] span{font-size:9px!important;color:var(--pv2-muted)!important}
+[data-theme] [class*="training_field"]{font-size:11px!important;color:#42564f!important}
+[data-theme] [class*="training_field"] select,[data-theme] [class*="training_field"] textarea{border:1px solid var(--pv2-line)!important;border-radius:14px!important;padding:12px!important;font-size:11px!important;background:#fff!important;color:var(--pv2-ink)!important}
+[data-theme] [class*="training_goalGrid"]{gap:8px!important}
+[data-theme] [class*="training_goalGrid"] button,
+[data-theme] [class*="training_trainingPetGrid"] button,
+[data-theme] [class*="training_trainers"]>button,
+[data-theme] [class*="training_trainingTimes"] button,
+[data-theme] [class*="training_paymentOptions"]>button{
+  border:1px solid var(--pv2-line)!important;
+  border-radius:15px!important;
+  background:#fff!important;
+  color:var(--pv2-ink)!important;
+  box-shadow:0 6px 20px rgba(1,62,49,.04);
+}
+[data-theme] [class*="training_goalGrid"] button[class*="selected"],
+[data-theme] [class*="training_trainers"] button[class*="selected"],
+[data-theme] [class*="training_trainingTimes"] button[class*="selected"],
+[data-theme] [class*="training_paymentOptions"] button[class*="selected"]{border-color:var(--pv2-forest)!important;background:#eef6f2!important;box-shadow:inset 0 0 0 1px rgba(1,62,49,.15)!important}
+[data-theme] [class*="training_primary"]{min-height:48px!important;border-radius:15px!important;background:var(--pv2-forest)!important;color:#fff!important;font-size:12px!important;box-shadow:0 10px 24px rgba(1,62,49,.18)}
+[data-theme] [class*="training_back"]{font-size:11px!important;color:var(--pv2-forest)!important}
+[data-theme] [class*="training_planRecommendation"]{border-radius:18px!important;background:linear-gradient(135deg,#013e31,#08624e)!important;box-shadow:var(--pv2-shadow)!important}
+[data-theme] [class*="training_selectedPlanSummary"]{border-radius:18px!important;background:linear-gradient(135deg,#013e31,#075544)!important}
+[data-theme] [class*="training_selectedPlanSummary"] header strong{color:var(--pv2-gold)!important}
+[data-theme] [class*="training_trainingSuccess"]{border-radius:22px!important;background:linear-gradient(145deg,#eef8f3,#fffdf7)!important;color:var(--pv2-ink)!important;border:1px solid #cee6da!important}
+[data-theme] [class*="training_trainingSuccess"] small{color:var(--pv2-forest-2)!important}
+[data-theme] [class*="training_trainingSuccess"] p{color:var(--pv2-muted)!important}
+[data-theme] [class*="training-trainingPlans"]{gap:10px!important}
+[data-theme] [class*="training-plans_card"]{border:1px solid var(--pv2-line)!important;border-radius:18px!important;background:#fff!important;color:var(--pv2-ink)!important;box-shadow:var(--pv2-shadow)!important}
+[data-theme] [class*="training-plans_selected"]{border:2px solid var(--pv2-forest)!important;background:#eef6f2!important;color:var(--pv2-ink)!important}
+[data-theme] [class*="training-plans_price"]{color:var(--pv2-forest)!important}
+[data-theme] [class*="training-plans_badge"]{color:#936819!important}
+[data-theme] [class*="training-extra_policy"],
+[data-theme] [class*="training-extra_attendanceChoice"]>button,
+[data-theme] [class*="training-extra_balance"],
+[data-theme] [class*="training-extra_bonus"],
+[data-theme] [class*="training-extra_feedback"],
+[data-theme] [class*="training-extra_trainerChecklist"],
+[data-theme] [class*="training-extra_certificate"],
+[data-theme] [class*="training-extra_crossSell"]{border-radius:16px!important}
+
+/* Boarding + Sitting */
+[data-theme] [class*="stay-flow_flow"]{color:var(--pv2-ink)!important}
+[data-theme] [class*="stay-flow_head"] h3{font-size:23px!important;letter-spacing:-.04em!important;color:var(--pv2-ink)!important}
+[data-theme] [class*="stay-flow_head"] small{font-size:9px!important;color:var(--pv2-forest-2)!important;text-transform:uppercase;letter-spacing:.06em}
+[data-theme] [class*="stay-flow_modeSwitch"]{gap:9px!important}
+[data-theme] [class*="stay-flow_modeSwitch"] button{min-height:112px!important;border:1px solid var(--pv2-line)!important;border-radius:18px!important;padding:14px!important;background:#fff!important;color:var(--pv2-ink)!important;box-shadow:var(--pv2-shadow)!important}
+[data-theme] [class*="stay-flow_modeSwitch"] b{font-size:13px!important}
+[data-theme] [class*="stay-flow_modeSwitch"] span{font-size:9px!important;line-height:1.45!important;color:var(--pv2-muted)!important}
+[data-theme] [class*="stay-flow_careWindows"] button,
+[data-theme] [class*="stay-flow_petList"] button,
+[data-theme] [class*="stay-flow_caregivers"]>button,
+[data-theme] [class*="stay-flow_paymentChoice"] button,
+[data-theme] [class*="stay-flow_options"] label,
+[data-theme] [class*="stay-flow_review"],
+[data-theme] [class*="stay-flow_person"],
+[data-theme] [class*="stay-flow_events"],
+[data-theme] [class*="stay-flow_next"],
+[data-theme] [class*="stay-flow_careLive"]{border:1px solid var(--pv2-line)!important;border-radius:16px!important;background:#fff!important;color:var(--pv2-ink)!important;box-shadow:0 7px 22px rgba(1,62,49,.04)}
+[data-theme] [class*="stay-flow_field"]{font-size:11px!important;color:#42564f!important}
+[data-theme] [class*="stay-flow_field"] input,[data-theme] [class*="stay-flow_field"] select,[data-theme] [class*="stay-flow_field"] textarea{border:1px solid var(--pv2-line)!important;border-radius:14px!important;padding:12px!important;font-size:11px!important;background:#fff!important;color:var(--pv2-ink)!important}
+[data-theme] [class*="stay-flow_chips"] button{border:1px solid var(--pv2-line)!important;background:#fff!important;color:#53665f!important;border-radius:999px!important;font-size:9px!important;padding:8px 10px!important}
+[data-theme] [class*="stay-flow_selected"]{border-color:var(--pv2-forest)!important;background:#eef6f2!important;outline:none!important;box-shadow:inset 0 0 0 1px rgba(1,62,49,.14)!important}
+[data-theme] [class*="stay-flow_bill"]{border-radius:18px!important;background:linear-gradient(135deg,#013e31,#075544)!important;color:#fff!important}
+[data-theme] [class*="stay-flow_bill"] strong{color:#fff!important}
+[data-theme] [class*="stay-flow_primary"]{min-height:48px!important;border-radius:15px!important;background:var(--pv2-forest)!important;color:#fff!important;font-size:12px!important;box-shadow:0 10px 24px rgba(1,62,49,.18)}
+[data-theme] [class*="stay-flow_back"]{font-size:11px!important;color:var(--pv2-forest)!important}
+[data-theme] [class*="stay-flow_success"]{border:1px solid #cfe7db!important;border-radius:22px!important;background:linear-gradient(145deg,#eef9f3,#fffdf8)!important;color:var(--pv2-ink)!important}
+[data-theme] [class*="stay-flow_success"] small{color:var(--pv2-forest-2)!important}
+[data-theme] [class*="stay-flow_success"] p{color:var(--pv2-muted)!important}
+[data-theme] [class*="stay-flow_safety"]{border-radius:18px!important;background:linear-gradient(135deg,#013e31,#064f40)!important}
+[data-theme] [class*="stay-flow_profileHeader"]{background:linear-gradient(135deg,#013e31,#08624e)!important}
+
+/* Walking + Taxi share the same commerce language. */
+[data-theme] [class*="walking-flow_wrap"],
+[data-theme] [class*="taxi-flow_wrap"]{max-width:none!important;color:var(--pv2-ink)!important}
+[data-theme] [class*="walking-flow_head"] h3,
+[data-theme] [class*="taxi-flow_head"] h3{font-size:23px!important;letter-spacing:-.04em!important;color:var(--pv2-ink)!important}
+[data-theme] [class*="walking-flow_wrap"] small,
+[data-theme] [class*="taxi-flow_wrap"] small{color:var(--pv2-muted)!important}
+[data-theme] [class*="walking-flow_card"],
+[data-theme] [class*="taxi-flow_card"],
+[data-theme] [class*="walking-flow_petGrid"] button,
+[data-theme] [class*="taxi-flow_petGrid"] button,
+[data-theme] [class*="walking-flow_review"],
+[data-theme] [class*="taxi-flow_review"],
+[data-theme] [class*="walking-flow_walker"],
+[data-theme] [class*="taxi-flow_driver"],
+[data-theme] [class*="walking-flow_sessions"],
+[data-theme] [class*="taxi-flow_trip"]{border:1px solid var(--pv2-line)!important;border-radius:17px!important;background:#fff!important;color:var(--pv2-ink)!important;box-shadow:var(--pv2-shadow)!important}
+[data-theme] [class*="walking-flow_card"][class*="selected"],
+[data-theme] [class*="taxi-flow_card"][class*="selected"],
+[data-theme] [class*="walking-flow_petGrid"] button[class*="selected"],
+[data-theme] [class*="taxi-flow_petGrid"] button[class*="selected"]{border-color:var(--pv2-forest)!important;background:#eef6f2!important;box-shadow:inset 0 0 0 1px rgba(1,62,49,.15)!important}
+[data-theme] [class*="walking-flow_price"],
+[data-theme] [class*="taxi-flow_price"],
+[data-theme] [class*="walking-flow_rating"],
+[data-theme] [class*="taxi-flow_rating"]{color:var(--pv2-forest)!important}
+[data-theme] [class*="walking-flow_chip"],
+[data-theme] [class*="taxi-flow_chip"]{border:1px solid var(--pv2-line)!important;background:#fff!important;color:#4f625b!important}
+[data-theme] [class*="walking-flow_chip"][class*="selected"],
+[data-theme] [class*="taxi-flow_chip"][class*="selected"]{border-color:var(--pv2-forest)!important;background:var(--pv2-forest)!important;color:#fff!important}
+[data-theme] [class*="walking-flow_label"],
+[data-theme] [class*="taxi-flow_label"]{color:var(--pv2-forest-2)!important;font-size:10px!important;letter-spacing:.07em!important}
+[data-theme] [class*="walking-flow_note"],
+[data-theme] [class*="taxi-flow_note"]{border:1px solid #edd9ae!important;border-radius:14px!important;background:#fff9ed!important;color:#73591f!important;font-size:10px!important;line-height:1.5!important}
+[data-theme] [class*="taxi-flow_input"]{border:1px solid var(--pv2-line)!important;border-radius:14px!important;background:#fff!important;color:var(--pv2-ink)!important}
+[data-theme] [class*="walking-flow_primary"],
+[data-theme] [class*="taxi-flow_primary"]{min-height:48px!important;border-radius:15px!important;background:var(--pv2-forest)!important;color:#fff!important;font-size:12px!important;box-shadow:0 10px 24px rgba(1,62,49,.18)!important}
+[data-theme] [class*="walking-flow_back"],
+[data-theme] [class*="taxi-flow_back"]{color:var(--pv2-forest)!important;font-size:11px!important}
+[data-theme] [class*="walking-flow_success"],
+[data-theme] [class*="taxi-flow_success"]{border:1px solid #cfe7db!important;border-radius:22px!important;background:linear-gradient(145deg,#eef9f3,#fffdf8)!important;color:var(--pv2-ink)!important}
+[data-theme] [class*="walking-flow_success"] small,
+[data-theme] [class*="taxi-flow_success"] small{color:var(--pv2-forest-2)!important}
+[data-theme] [class*="walking-flow_journeyIntro"],
+[data-theme] [class*="taxi-flow_journeyIntro"]{border-radius:20px!important;background:linear-gradient(135deg,#013e31,#08624e)!important}
+
+/* Fresh Food */
+[data-theme] [class*="food-flow_flow"]{color:var(--pv2-ink)!important}
+[data-theme] [class*="food-flow_head"] h3{font-size:23px!important;letter-spacing:-.04em!important}
+[data-theme] [class*="food-flow_head"] small,[data-theme] [class*="food-flow_section"] span{font-size:9px!important;color:var(--pv2-forest-2)!important;text-transform:uppercase;letter-spacing:.06em}
+[data-theme] [class*="food-flow_petRow"] button,
+[data-theme] [class*="food-flow_item"],
+[data-theme] [class*="food-flow_planRow"] button,
+[data-theme] [class*="food-flow_review"],
+[data-theme] [class*="food-flow_orderCard"]{border:1px solid var(--pv2-line)!important;border-radius:17px!important;background:#fff!important;color:var(--pv2-ink)!important;box-shadow:var(--pv2-shadow)!important}
+[data-theme] [class*="food-flow_petRow"] [class*="selected"],
+[data-theme] [class*="food-flow_planRow"] [class*="selected"]{border-color:var(--pv2-forest)!important;background:#eef6f2!important;color:var(--pv2-ink)!important}
+[data-theme] [class*="food-flow_field"] input{border:1px solid var(--pv2-line)!important;border-radius:14px!important;background:#fff!important;color:var(--pv2-ink)!important}
+[data-theme] [class*="food-flow_addBtn"]{border-radius:11px!important;background:var(--pv2-forest)!important;color:#fff!important}
+[data-theme] [class*="food-flow_totalRow"]{border:1px solid #e9d7ad!important;border-radius:17px!important;background:#fff9ed!important}
+[data-theme] [class*="food-flow_primary"]{min-height:48px!important;border-radius:15px!important;background:var(--pv2-forest)!important;color:#fff!important;font-size:12px!important;box-shadow:0 10px 24px rgba(1,62,49,.18)}
+[data-theme] [class*="food-flow_back"]{font-size:11px!important;color:var(--pv2-forest)!important}
+[data-theme] [class*="food-flow_success"]{border:1px solid #cfe7db!important;border-radius:22px!important;background:linear-gradient(145deg,#eef9f3,#fffdf8)!important}
+[data-theme] [class*="food-flow_foodIntro"]{border-radius:20px!important;background:linear-gradient(135deg,#013e31,#08624e)!important}
+
+/* Relocation stays an enquiry flow; this only improves presentation. */
+[data-theme] [class*="relocation-flow_flow"]{gap:14px!important;color:var(--pv2-ink)!important}
+[data-theme] [class*="relocation-flow_flow"]>header{padding:18px!important;border-radius:20px!important;background:linear-gradient(135deg,#013e31,#08624e)!important}
+[data-theme] [class*="relocation-flow_flow"]>header h3{font-size:23px!important;letter-spacing:-.04em!important}
+[data-theme] [class*="relocation-flow_kind"]{gap:9px!important}
+[data-theme] [class*="relocation-flow_kind"] button,
+[data-theme] [class*="relocation-flow_pets"] button{border:1px solid var(--pv2-line)!important;border-radius:16px!important;background:#fff!important;color:var(--pv2-ink)!important;box-shadow:0 6px 20px rgba(1,62,49,.04)}
+[data-theme] [class*="relocation-flow_selected"]{outline:none!important;border-color:var(--pv2-forest)!important;background:#eef6f2!important;box-shadow:inset 0 0 0 1px rgba(1,62,49,.15)!important}
+[data-theme] [class*="relocation-flow_field"]{gap:6px!important;font-size:11px!important;color:#42564f!important}
+[data-theme] [class*="relocation-flow_field"] input{border:1px solid var(--pv2-line)!important;border-radius:14px!important;padding:12px 13px!important;background:#fff!important;color:var(--pv2-ink)!important}
+[data-theme] [class*="relocation-flow_primary"]{min-height:48px!important;border-radius:15px!important;background:var(--pv2-forest)!important;color:#fff!important;font-size:12px!important;box-shadow:0 10px 24px rgba(1,62,49,.18)}
+[data-theme] [class*="relocation-flow_confirm"]{border:1px solid #cfe7db!important;border-radius:22px!important;background:linear-gradient(145deg,#eef9f3,#fffdf8)!important;box-shadow:var(--pv2-shadow)!important}
+
+/* Pets / account / guest auth use the same quieter surface language. */
+[data-theme] [class*="pet-manager_manager"]{border:1px solid var(--pv2-line)!important;border-radius:20px!important;padding:15px!important;background:#fff!important;box-shadow:var(--pv2-shadow)!important;color:var(--pv2-ink)!important}
+[data-theme] [class*="pet-manager_pet"]{border:1px solid var(--pv2-line)!important;border-radius:15px!important;padding:12px!important}
+[data-theme] [class*="pet-manager_add"]{border-radius:12px!important;background:var(--pv2-forest)!important;color:#fff!important}
+[data-theme] [class*="mobile_starter"]{border:1px solid var(--pv2-line)!important;border-radius:21px!important;background:#fff!important;box-shadow:var(--pv2-shadow)!important;color:var(--pv2-ink)!important}
+[data-theme] [class*="mobile_starter"] input,[data-theme] [class*="mobile_starter"] select{border:1px solid var(--pv2-line)!important;border-radius:14px!important;background:#fff!important;color:var(--pv2-ink)!important}
+[data-theme] [class*="mobile_primary"]{border-radius:14px!important;background:var(--pv2-forest)!important;color:#fff!important}
+
+@media(min-width:600px){
+  [class*="mobile_stage"][data-theme]{padding:18px 0!important}
+  [class*="mobile_phone"]{height:calc(100svh - 36px)!important;border-radius:30px!important;box-shadow:0 28px 80px rgba(0,0,0,.16)!important;overflow:hidden!important}
+}
+
+@media(max-width:370px){
+  [data-theme] [class*="training_goalGrid"],
+  [data-theme] [class*="stay-flow_petList"],
+  [data-theme] [class*="walking-flow_petGrid"],
+  [data-theme] [class*="taxi-flow_petGrid"]{grid-template-columns:1fr!important}
+}

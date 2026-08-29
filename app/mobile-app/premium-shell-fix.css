@@ -1,0 +1,23 @@
+/* UI-only shell correction. No data, API, booking, pricing or business behaviour changes. */
+body:has(main[data-theme]){margin:0;background:#fbfaf6}
+
+/* The customer app is the product surface, not a brochure plus device mockup. */
+main[data-theme]{display:block!important;min-height:100dvh!important;padding:0!important;background:#fbfaf6!important}
+main[data-theme]>aside{display:none!important}
+main[data-theme]>section{width:min(100%,460px)!important;height:100dvh!important;max-height:none!important;margin:0 auto!important;align-self:auto!important;border:0!important;border-radius:0!important;box-shadow:none!important;background:#fbfaf6!important;padding:18px 16px 78px!important}
+main[data-theme]>section:before{display:none!important}
+main[data-theme]>section>[class*="mobile_screen"]{scroll-behavior:smooth!important}
+main[data-theme]>section>nav{background:rgba(255,255,255,.97)!important;border-top:1px solid #e6ece8!important;backdrop-filter:blur(18px)}
+main[data-theme]>section>nav button{font-size:9px!important}
+main[data-theme]>section>nav i{font-size:19px!important}
+
+/* Home owns its own premium brand/location/search header. Remove the legacy duplicate shell chrome only on Home. */
+main[data-theme]>section:has([data-discovery])>header,
+main[data-theme]>section:has([data-discovery])>[class*="mobile_title"]{display:none!important}
+main[data-theme]>section:has([data-discovery])>[class*="mobile_screen"]{height:100%!important;padding-bottom:88px!important}
+main[data-theme]>section:has([data-discovery]){padding:0 0 74px!important}
+
+@media (min-width:461px){
+  body:has(main[data-theme]){background:#eef2ef}
+  main[data-theme]>section{box-shadow:0 24px 80px rgba(1,38,31,.13)!important}
+}
