@@ -1,5 +1,6 @@
 import{authError,database,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{readIntegrationReadinessSnapshot,recordIntegrationLiveEvidence,requestIntegrationEvidence,updateIntegrationReadiness,type IntegrationEvidenceKind}from"../../../lib/integration-readiness";
+import{readUatSandboxReadiness}from"../../../lib/uat-sandbox-readiness";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin integration readiness write blocked",{status:403});}
@@ -9,7 +10,8 @@ export async function GET(request:Request){
   const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;
   const url=new URL(request.url),integrationCode=String(url.searchParams.get("integrationCode")||"").trim();
   const{data,blockers,audit,evidenceRequests,liveEvidence}=await readIntegrationReadinessSnapshot(db,runtime,integrationCode||undefined);
-  return json({data,blockers,audit,evidenceRequests,liveEvidence,productionReady:false});
+  const uatSandbox=await readUatSandboxReadiness(db,runtime);
+  return json({data,blockers,audit,evidenceRequests,liveEvidence,uatSandbox,productionReady:false});
  }catch(error){return authError(error,"Unable to load integration readiness");}
 }
 

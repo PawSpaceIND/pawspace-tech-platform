@@ -112,6 +112,19 @@ test("anonymous public AI knowledge GET reaches the real route without customer 
   assert.equal(body.data.toolExecution, false);
 });
 
+test("a natural-language services question retrieves the approved public PawSpace grounding",async()=>{
+ const{sqlite,db}=await world(),now=Date.now();
+ const{ensureAiBusinessConfiguration}=await import("../lib/ai-business-configuration.ts");
+ await ensureAiBusinessConfiguration(db);
+ sqlite.prepare("INSERT INTO ai_knowledge_source_versions (id,source_key,version,status,title,source_type,content_text,visibility_scope_json,effective_from,effective_to,immutable_hash,created_by,reviewed_by,reviewed_at,approved_by,approved_at,activated_by,activated_at,retired_at,created_at,updated_at) VALUES (?,?,1,'active',?,'policy',?,'[\"public\"]',?,NULL,?,'uat',NULL,NULL,'uat',?,'uat',?,NULL,?,?)")
+  .run("KNOW-SERVICES","pawspace-services","PawSpace services","PawSpace offers Grooming, Dog Training, Boarding, Pet Sitting, Pet Taxi and Dog Walking.",now,"hash-services",now,now,now,now);
+ const result=await callEndpoint(new Request(`${ENDPOINT}?q=${encodeURIComponent("What services does PawSpace offer?")}`));
+ assert.equal(result.response.status,200);
+ const body=await result.response.json();
+ assert.equal(body.data.knowledge[0]?.id,"KNOW-SERVICES");
+ assert.match(body.data.knowledge[0]?.excerpt||"",/Grooming/);
+});
+
 test("anonymous public lead capture reaches the real route and writes exactly one customer-data-free lead", async () => {
   const { sqlite } = await world();
   const result = await callEndpoint(post({ mode: "public", sessionKey: "public-session-1", message: "Please call me about grooming", phone: "+919900000001" }));
