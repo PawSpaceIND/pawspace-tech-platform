@@ -132,6 +132,24 @@ async function provisionOps(sqlite, db) {
     .run("u_ops", "ops@pawspace.in", "Ops", "ops_scheduler", now, now);
 }
 
+test("public Boarding host discovery works before the first canonical booking table exists", async () => {
+  const sqlite = new DatabaseSync(":memory:");
+  const db = makeD1(sqlite);
+  globalThis.__PAWSPACE_TEST_ENV = { DB: db };
+  const { discoverBoardingHosts } = await import("../lib/boarding-host-discovery.ts");
+  const hosts = await discoverBoardingHosts(db, {
+    cityId: "blr",
+    zoneId: "blr-east",
+    scheduledStart: "2026-09-03T10:00:00+05:30",
+    scheduledEnd: "2026-09-06T10:00:00+05:30",
+    petCount: 1,
+    species: ["dog"],
+  });
+  assert.ok(hosts.length > 0, "a cold UAT database still exposes eligible governed hosts");
+  assert.equal(sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='canonical_bookings'").get(), undefined,
+    "public discovery remains a read and does not create canonical booking storage");
+});
+
 const reservations = (sqlite) => {
   try { return sqlite.prepare("SELECT id,customer_id,pet_ids_json,status FROM scheduling_reservations").all(); }
   catch { return []; } // the table only exists once something actually reserved

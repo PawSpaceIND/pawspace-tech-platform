@@ -241,9 +241,9 @@ test("journey: boarding 50/50 split pays a deposit then the balance, and reports
   assert.equal(dashboard.money.gmv, total, "the stay is recognized once at its full value, not twice and not half");
   assert.equal(report.totalTurnoverAmount, total);
   assert.equal(record.lifetimeValue, total);
-  // The booking_payments row still holds only the deposit: the schedule is where the balance lives,
-  // so 'collected' legitimately reads the deposit until the balance is captured into a payment row.
-  assert.equal(dashboard.money.collected, plan.dueNow);
+  // The booking_payments row holds the deposit and the governed split schedule proves the balance
+  // capture. Analytics must reconcile both sources so the paid stay is not under-reported as half paid.
+  assert.equal(dashboard.money.collected, total);
   const schedule = await split.getStayPaymentSchedule(db, "BK-J2");
   assert.equal(schedule.paidNowAmount + schedule.balanceAmount, total, "deposit plus balance is the whole price");
   assert.ok(schedule.paymentRef?.startsWith("SBX-BAL-"), "the capture reference is honestly labelled sandbox");
@@ -353,7 +353,7 @@ test("release gate: across every service, P&L turnover === analytics GMV === the
 
   // Every unconnected source is still declared honestly on the same dashboard.
   assert.equal(dashboard.sourceStatus.marketingSpend, "not_connected");
-  assert.equal(dashboard.money.refundsStatus, "service_finance_sources_required");
+  assert.equal(dashboard.money.refundsStatus, "booking_refund_cases_processing_processed_completed");
   assert.equal(report.dataSource, "platform_live");
 });
 

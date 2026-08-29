@@ -38,6 +38,13 @@ test("release UI closure checks visual failures instead of screenshot-only evide
   assert.match(script, /apiFailures/);
 });
 
+test("release UI closure distinguishes horizontally scrollable rails from clipped controls", () => {
+  assert.match(script, /insideHorizontalScroller/);
+  assert.match(script, /\["auto", "scroll"\]\.includes\(style\.overflowX\)/);
+  assert.match(script, /parent\.scrollWidth <= parent\.clientWidth \+ 2/);
+  assert.match(script, /!insideHorizontalScroller\(el\)/);
+});
+
 test("release UI closure returns visual findings before expensive control probing", () => {
   assert.match(script, /stopped after visual phase/);
   assert.match(script, /Control probing was intentionally skipped/);
@@ -61,9 +68,12 @@ test("release UI closure no longer waits for networkidle on every route/control"
   assert.doesNotMatch(script, /waitForLoadState\("networkidle"/);
 });
 
-test("manual workflow is isolated-preview only and exact-SHA bound", () => {
+test("manual workflow is isolated-environment only and exact-SHA bound", () => {
   assert.match(workflow, /workflow_dispatch/);
-  assert.match(workflow, /environment: pawspace-release-preview/);
+  assert.match(workflow, /target_environment/);
+  assert.match(workflow, /pawspace-release-preview/);
+  assert.match(workflow, /pawspace-staging/);
+  assert.match(workflow, /environment: \$\{\{ github\.event\.inputs\.target_environment \}\}/);
   assert.match(workflow, /expected_sha/);
   assert.match(workflow, /test "\$\(git rev-parse HEAD\)" = "\$EXPECTED_SHA"/);
   assert.match(workflow, /workers\\\.dev/);

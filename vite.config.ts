@@ -50,7 +50,9 @@ export default defineConfig(async () => {
       host: "0.0.0.0",
       allowedHosts: ["terminal.local"],
       watch: {
-        ignored: ["**/.wrangler/**"],
+        // D1/Miniflare writes can emit events for both the directory node and
+        // descendants. Ignore both so sandbox OTP writes cannot remount the UI.
+        ignored: ["**/.wrangler", "**/.wrangler/**"],
         ...(isCodexSeatbeltSandbox
           ? { useFsEvents: false, usePolling: true }
           : {}),

@@ -222,6 +222,28 @@ test("W2B-C03: an unset cap still means unlimited, and a real cap still counts",
   assert.equal((await capped.decide()).allowed, true, "a cap of 2 admits the first dispatch");
 });
 
+test("W2B-C03: concurrent dispatches cannot race past a cap of one", async () => {
+  const { sqlite, db, automation } = await automationWorld(1);
+  const at = Date.parse("2026-08-28T12:00:00.000Z");
+  const results = await Promise.all([
+    automation.queueGovernedAutomation(db, { customerId: "CUST-M", journeyCode: "winback-a", channel: "whatsapp", purpose: "marketing", idempotencyKey: "cap-race-a", now: at }),
+    automation.queueGovernedAutomation(db, { customerId: "CUST-M", journeyCode: "winback-b", channel: "whatsapp", purpose: "marketing", idempotencyKey: "cap-race-b", now: at }),
+  ]);
+  assert.equal(results.filter(result => result.queued).length, 1, "only one concurrent dispatch may pass the cap");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM crm_automation_dispatches WHERE status='queued'").get().count, 1);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM crm_automation_dispatches WHERE status='suppressed_frequency_cap'").get().count, 1, "the refused race remains auditable");
+});
+
+test("W2B-C03: an automation idempotency key cannot change customer or journey", async () => {
+  const { sqlite, db, automation } = await automationWorld(null);
+  const first = { customerId: "CUST-M", journeyCode: "winback-a", channel: "whatsapp", purpose: "marketing", idempotencyKey: "bound-automation-key" };
+  await automation.queueGovernedAutomation(db, first);
+  const conflict = await automation.queueGovernedAutomation(db, { ...first, journeyCode: "winback-b" }).catch(error => error);
+  assert.ok(conflict instanceof Response);
+  assert.equal(conflict.status, 409);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) count FROM crm_automation_dispatches").get().count, 1);
+});
+
 // =====================================================================================================
 // PTJA-W2B-C06 — a caller-supplied future asOf fabricates SLA breaches and sends premature notices
 //

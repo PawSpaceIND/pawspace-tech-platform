@@ -2,7 +2,7 @@ import test from"node:test";
 import assert from"node:assert/strict";
 import fs from"node:fs";
 const read=path=>fs.readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
-const registry=read("lib/integration-readiness.ts"),api=read("app/api/integration-readiness/route.ts"),gateway=read("lib/api-gateway.ts"),launch=read("app/api/launch-readiness/route.ts"),page=read("app/control/integrations/page.tsx");
+const registry=read("lib/integration-readiness.ts"),sandbox=read("lib/uat-sandbox-readiness.ts"),api=read("app/api/integration-readiness/route.ts"),gateway=read("lib/api-gateway.ts"),launch=read("app/api/launch-readiness/route.ts"),page=read("app/control/integrations/page.tsx");
 
 test("integration readiness owns one canonical registry and immutable audit trail",()=>{
  assert.match(registry,/integration_registry/);assert.match(registry,/integration_readiness_events/);assert.match(registry,/integration_code TEXT PRIMARY KEY/);assert.match(registry,/controlled_live_verified_by/);
@@ -48,4 +48,11 @@ test("registry covers required launch dependency classes",()=>{
 
 test("control integrations page uses the canonical register without exposing secrets",()=>{
  assert.match(page,/Integration Readiness Register/);assert.match(page,/\/api\/integration-readiness/);assert.match(page,/No secret values displayed/);assert.match(page,/Credential presence alone never satisfies this gate/);assert.doesNotMatch(page,/RAZORPAY_KEY_SECRET_SANDBOX|WATI_API_TOKEN|EXOTEL_API_TOKEN/);
+});
+
+test("strict UAT sandbox readiness separates key presence from matched provider evidence",()=>{
+ assert.match(api,/readUatSandboxReadiness/);assert.match(api,/uatSandbox/);assert.match(page,/STRICT UAT SANDBOX/);assert.match(page,/Five-provider test readiness/);
+ for(const code of ["razorpay","sms_otp","meta_whatsapp","maps_gps","ai"])assert.match(sandbox,new RegExp(`code:\"${code}\"`));
+ assert.match(sandbox,/integration_live_evidence/);assert.match(sandbox,/e\.matched=1/);assert.match(sandbox,/live-evidence:/);assert.match(sandbox,/AI rollout must be staff_only/);
+ assert.doesNotMatch(page,/RAZORPAY_KEY_SECRET_SANDBOX|PAWSPACE_AI_PROVIDER_API_KEY|META_WHATSAPP_UAT_ACCESS_TOKEN/);
 });

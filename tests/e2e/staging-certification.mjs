@@ -64,6 +64,9 @@ export const REQUIRED_STAFF_IDENTITIES = [
   { email: "anita.associate17@tkpetcare.in", role: "associate" },
 ];
 
+/** Disposable customer identity used only to prove the sandbox OTP and customer-session path. */
+export const SYNTHETIC_CUSTOMER_PERSONA = { phone: "9999999998", name: "UAT Customer", cityId: "blr" };
+
 /** Build the read-only staff probe against the canonical role_definitions(code) schema. */
 export function staffIdentityQuery(email) {
   const escaped = String(email).replaceAll("'", "''");
@@ -255,6 +258,52 @@ export async function runStagingCertification({ http, d1, deployedConfig, liveVe
       unavailable(`sign-in: ${identity.role} can sign in at /api/staging-login`, `the deployed origin did not answer (${error?.message})`);
     }
   }
+
+  // The five staff identities above plus this sandbox-only customer are the six human-UAT personas.
+  // The returned code is consumed in memory and is never copied into a log, check detail or artifact.
+  let customerSession = false;
+  try {
+    const requested = await http("POST", "/api/customer-otp", { body: { action: "request", phone: SYNTHETIC_CUSTOMER_PERSONA.phone } });
+    const challengeId = val(requested.body?.data, "challengeId");
+    const sandboxCode = val(requested.body?.data, "sandboxCode");
+    const honestlySandboxed = requested.status >= 200 && requested.status < 300
+      && requested.body?.data?.sandboxDelivery === true
+      && requested.body?.data?.liveSmsDelivered === false
+      && Boolean(challengeId && sandboxCode);
+    if (!honestlySandboxed) {
+      check("sign-in: customer can complete sandbox OTP and receive a customer session", false,
+        `OTP request status ${requested.status}; sandbox-only delivery proof was absent`);
+    } else {
+      const verified = await http("POST", "/api/customer-otp", { body: {
+        action: "verify", challengeId, code: sandboxCode,
+        name: SYNTHETIC_CUSTOMER_PERSONA.name, cityId: SYNTHETIC_CUSTOMER_PERSONA.cityId,
+      } });
+      const setCookie = String(verified.headers?.["set-cookie"] ?? verified.headers?.get?.("set-cookie") ?? "");
+      const cookie = setCookie.split(";")[0];
+      if (!(verified.status >= 200 && verified.status < 300 && cookie)) {
+        check("sign-in: customer can complete sandbox OTP and receive a customer session", false,
+          `OTP verification status ${verified.status}; no session cookie`);
+      } else {
+        const [resolved, anonymous] = await Promise.all([
+          http("GET", "/api/identity-session", { headers: { cookie } }),
+          http("GET", "/api/identity-session", {}),
+        ]);
+        const customerOnly = resolved.status === 200
+          && val(resolved.body?.data, "subjectType") === "customer"
+          && val(resolved.body?.data, "roleCode") === "customer"
+          && (anonymous.status === 401 || anonymous.status === 403);
+        customerSession = customerOnly;
+        check("sign-in: customer can complete sandbox OTP and receive a customer session", customerOnly,
+          customerOnly ? "sandbox-only OTP consumed and session issued" : `customer identity status ${resolved.status}; anonymous status ${anonymous.status}`);
+      }
+    }
+  } catch (error) {
+    unavailable("sign-in: customer can complete sandbox OTP and receive a customer session", `the deployed customer identity path did not answer (${error?.message})`);
+  }
+  report.counts.personasCertified = sessions.size + (customerSession ? 1 : 0);
+  report.counts.personasTotal = REQUIRED_STAFF_IDENTITIES.length + 1;
+  check("all six disposable UAT personas can authenticate", report.counts.personasCertified === report.counts.personasTotal,
+    `${report.counts.personasCertified}/${report.counts.personasTotal} authenticated`);
 
   // ── hosted route smoke pack ─────────────────────────────────────────────────────────────────
   const founderCookie = sessions.get("founder");

@@ -158,6 +158,31 @@ test("a mutation waits for explicit confirmation, then executes exactly once how
   assert.equal(rows(sqlite, "SELECT id FROM unified_cases").length, 1, "a replayed confirmation must not create a second case");
 });
 
+test("an AI idempotency key cannot be reused with different arguments", async () => {
+  const { sqlite, db } = await world();
+  const base = { actor: staffActor, toolCode: "case.create", threadId: "THREAD-1", customerId: "CUS-1", intent: "support", channel: "chat", idempotencyKey: "case-bound-request" };
+  await registry.prepareAiToolExecution(db, { ...base, arguments: { title: "Original complaint" } });
+  const conflict = await registry.prepareAiToolExecution(db, { ...base, arguments: { title: "Different complaint" } }).catch(error => error);
+  assert.ok(conflict instanceof Response);
+  assert.equal(conflict.status, 409);
+  assert.equal(rows(sqlite, "SELECT id FROM ai_tool_execution_requests").length, 1);
+});
+
+test("concurrent AI confirmations claim and execute a staff handoff only once", async () => {
+  const { sqlite, db } = await world();
+  const prepared = await registry.prepareAiToolExecution(db, {
+    actor: staffActor, toolCode: "staff_handoff.create", threadId: "THREAD-1", customerId: "CUS-1",
+    intent: "human_handoff", channel: "chat", arguments: { reason: "Customer asked for a person" }, idempotencyKey: "handoff-confirm-once",
+  });
+  const results = await Promise.all([
+    registry.confirmAiToolExecution(db, { actor: staffActor, requestId: prepared.requestId }),
+    registry.confirmAiToolExecution(db, { actor: staffActor, requestId: prepared.requestId }),
+  ]);
+  assert.equal(results.filter(result => result.executed === true).length, 1, "only the confirmation claim winner executes");
+  assert.equal(rows(sqlite, "SELECT id FROM conversation_assignments WHERE thread_id='THREAD-1'").length, 1, "only one handoff assignment exists");
+  assert.equal(rows(sqlite, "SELECT id FROM ai_tool_audit_events WHERE event_type='executed_mutation'").length, 1, "the audit trail records one execution");
+});
+
 test("a customer cannot drive a tool against another customer's data", async () => {
   const { sqlite, db } = await world();
   seedCustomer(sqlite, "CUS-2", "Bala", "9876500002");

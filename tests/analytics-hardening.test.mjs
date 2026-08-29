@@ -61,6 +61,8 @@ function fresh() {
   globalThis.__PAWSPACE_TEST_ENV = { DB: db };
   sqlite.exec("CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,pet_ids_json TEXT NOT NULL,source_pet_ids_json TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,service_code TEXT NOT NULL,package_code TEXT NOT NULL,package_name TEXT NOT NULL,schedule_group_id TEXT NOT NULL UNIQUE,provider_id TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'confirmed',channel TEXT NOT NULL DEFAULT 'customer_app',total_amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',pricing_json TEXT NOT NULL DEFAULT '{}',created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
   sqlite.exec("CREATE TABLE booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,amount_due_now REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',method TEXT NOT NULL,mode TEXT NOT NULL,status TEXT NOT NULL,gateway TEXT NOT NULL DEFAULT 'uat_sandbox',idempotency_key TEXT NOT NULL UNIQUE,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE stay_payment_schedules (booking_id TEXT PRIMARY KEY,paid_now_amount REAL NOT NULL,balance_amount REAL NOT NULL,status TEXT NOT NULL)");
+  sqlite.exec("CREATE TABLE booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,amount REAL NOT NULL,status TEXT NOT NULL)");
   sqlite.exec("CREATE TABLE customer_experience_tickets (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,booking_id TEXT,lead_id TEXT,category TEXT NOT NULL,priority TEXT NOT NULL,subject TEXT NOT NULL,detail TEXT NOT NULL,owner TEXT NOT NULL,manager TEXT NOT NULL,sla_due_at INTEGER NOT NULL,status TEXT NOT NULL,escalation_level INTEGER NOT NULL DEFAULT 0,customer_status TEXT NOT NULL,resolution TEXT,resolution_evidence TEXT,root_cause TEXT,reopened_count INTEGER NOT NULL DEFAULT 0,resolved_at INTEGER,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
   sqlite.exec("CREATE TABLE provider_capacity_profiles (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,provider_model TEXT NOT NULL,services_json TEXT NOT NULL,zones_json TEXT NOT NULL,live INTEGER NOT NULL DEFAULT 1,rating REAL NOT NULL DEFAULT 0,quality_score REAL NOT NULL DEFAULT 0,capacity INTEGER NOT NULL DEFAULT 1,travel_buffer_minutes INTEGER NOT NULL DEFAULT 30,max_daily_jobs INTEGER NOT NULL DEFAULT 6,acceptance_timeout_minutes INTEGER NOT NULL DEFAULT 3,status TEXT NOT NULL DEFAULT 'active',version INTEGER NOT NULL DEFAULT 1,effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)");
   return { sqlite, db };
@@ -86,7 +88,7 @@ function seedJulyUniverse(sqlite) {
   seedBooking(sqlite, "B5", "boarding", "draft", 800, "2026-07-25T09:00:00.000Z");
   seedPayment(sqlite, "B1", 5000, "captured");
   seedPayment(sqlite, "B2", 1500, "captured"); // partial collection
-  seedPayment(sqlite, "B3", 2000, "refunded"); // refunded money must not count as collected
+  seedPayment(sqlite, "B3", 2000, "refunded"); // historical collection is held-on-cancelled; the refund is reported separately
   seedPayment(sqlite, "B4", 1000, "initiated"); // not yet captured
   // B5 (draft) deliberately has no payment row -> dataQuality.paymentsMissing
 }
@@ -110,7 +112,7 @@ test("company analytics: GMV excludes cancelled+draft, collected counts only cap
     .run("PROV-2", "blr", "Pending Host", "home_boarder", "[]", "[]", 0, 0, 0, "pending_verification", "2026-01-01", "test", NOW);
 
   const { buildCompanyAnalytics } = await import("../lib/company-analytics.ts");
-  const data = await buildCompanyAnalytics(globalThis.__PAWSPACE_TEST_ENV.DB, { from: "2026-07-01", to: "2026-08-01" });
+  const data = await buildCompanyAnalytics(db, { from: "2026-07-01", to: "2026-08-01" });
 
   // GMV: 5000 (completed) + 3000 (completed) + 1000 (confirmed) = 9000.
   // NOT 11800 — the cancelled 2000 and draft 800 must be excluded, matching P&L recognition.
@@ -151,6 +153,28 @@ test("company analytics: GMV excludes cancelled+draft, collected counts only cap
 
   // Data quality: B5 has no payment row.
   assert.equal(data.dataQuality.paymentsMissing, 1);
+});
+
+test("company analytics keeps gross collections, refunds and split-payment cash distinct", async () => {
+  const { sqlite, db } = fresh();
+  seedBooking(sqlite, "B-REF", "grooming", "completed", 8000, "2026-07-05T09:00:00.000Z");
+  seedPayment(sqlite, "B-REF", 8000, "partially_refunded");
+  sqlite.prepare("INSERT INTO booking_refund_cases (id,booking_id,amount,status) VALUES ('REF-1','B-REF',3000,'processing')").run();
+
+  seedBooking(sqlite, "B-SPLIT", "boarding", "confirmed", 10000, "2026-07-06T09:00:00.000Z");
+  seedPayment(sqlite, "B-SPLIT", 10000, "captured");
+  sqlite.prepare("UPDATE booking_payments SET amount_due_now=5000 WHERE booking_id='B-SPLIT'").run();
+  sqlite.prepare("INSERT INTO stay_payment_schedules (booking_id,paid_now_amount,balance_amount,status) VALUES ('B-SPLIT',5000,5000,'pending_balance')").run();
+
+  const { buildCompanyAnalytics } = await import("../lib/company-analytics.ts");
+  const data = await buildCompanyAnalytics(db, { from: "2026-07-01", to: "2026-07-31" });
+  assert.equal(data.money.gmv, 18000);
+  assert.equal(data.money.collected, 13000, "a refund does not erase historical capture, and an unpaid split balance is not collected");
+  assert.equal(data.money.refunds, 3000);
+  assert.equal(data.money.netCollections, 10000);
+  assert.equal(data.services.grooming.collected, 8000);
+  assert.equal(data.services.grooming.refunds, 3000);
+  assert.equal(data.services.boarding.collected, 5000);
 });
 
 test("company analytics: period + service filters bound the aggregates", async () => {
@@ -224,5 +248,5 @@ test("company analytics declares unconnected sources honestly", async () => {
   const { buildCompanyAnalytics } = await import("../lib/company-analytics.ts");
   const data = await buildCompanyAnalytics(globalThis.__PAWSPACE_TEST_ENV.DB, { from: "2026-07-01", to: "2026-08-01" });
   assert.equal(data.sourceStatus.marketingSpend, "not_connected");
-  assert.equal(data.money.refundsStatus, "service_finance_sources_required");
+  assert.equal(data.money.refundsStatus, "booking_refund_cases_processing_processed_completed");
 });

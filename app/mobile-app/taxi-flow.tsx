@@ -146,6 +146,7 @@ export default function TaxiFlow({ customer }: { customer: LoggedInCustomer }) {
 
   return (
     <div className={styles.wrap}>
+      <header className={styles.journeyIntro}><span>PAWSPACE PET TAXI</span><div><h2>Every ride, calmly covered.</h2><small>Set the route, choose your pet and confirm a safe trip.</small></div><b>{stage}<i>/4</i></b></header>
       <div className={styles.steps}>{[1, 2, 3, 4].map(n => <span key={n} className={stage >= n ? styles.active : ""}>{n}</span>)}</div>
 
       {stage === 1 && (

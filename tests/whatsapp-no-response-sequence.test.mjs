@@ -32,7 +32,7 @@ async function world() {
 }
 
 async function anchor(sqlite, db, createdAt = BASE_TIME) {
-  const queued = await adapter.queueWhatsAppUatOutbound(db, { provider: "sandbox_simulator", threadId: "THREAD-REC", customerId: "CUS-REC", text: "Which area do you need grooming in?", idempotencyKey: `chatbot-anchor-${createdAt}`, createdBy: "whatsapp-chatbot" });
+  const queued = await adapter.queueWhatsAppUatOutbound(db, { provider: "sandbox_simulator", threadId: "THREAD-REC", customerId: "CUS-REC", text: "Which area do you need grooming in?", idempotencyKey: `chatbot-anchor-${createdAt}`, createdBy: "whatsapp-chatbot", now: createdAt });
   assert.equal(queued.queued, true);
   sqlite.prepare("UPDATE communication_messages SET created_at=?,updated_at=? WHERE id=?").run(createdAt, createdAt, queued.messageId);
   return { id: queued.messageId, createdAt };
