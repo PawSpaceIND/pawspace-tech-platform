@@ -17,6 +17,7 @@ import {
   runStagingCertification, assertStagingIsolation, stagingEvidenceArtifact, StagingIsolationRefused,
   STAGING_SECRET_NAMES, SMOKE_ROUTES, REQUIRED_STAFF_IDENTITIES, activeVersionId,
   deployedConfigFromVersion, versionMessage, runStagingIsolationPreflight, staffIdentityQuery, isMainModule,
+  SYNTHETIC_CUSTOMER_PERSONA,
 } from "./e2e/staging-certification.mjs";
 import { pathToFileURL } from "node:url";
 
@@ -56,6 +57,17 @@ function world(over = {}) {
         return ok
           ? { status: 200, headers: { "set-cookie": "pawspace_session=signed-value; Path=/; HttpOnly" } }
           : { status: 403, headers: {} };
+      }
+      if (path === "/api/customer-otp" && options.body?.action === "request") {
+        return { status: 200, headers: {}, body: { data: { challengeId: "OTP-UAT", sandboxCode: "654321", sandboxDelivery: true, liveSmsDelivered: false } } };
+      }
+      if (path === "/api/customer-otp" && options.body?.action === "verify") {
+        const ok = options.body?.challengeId === "OTP-UAT" && options.body?.code === "654321";
+        return ok ? { status: 200, headers: { "set-cookie": "pawspace_session=customer-value; Path=/; HttpOnly" } } : { status: 403, headers: {} };
+      }
+      if (path === "/api/identity-session") {
+        if (options.headers?.cookie === "pawspace_session=customer-value") return { status: 200, headers: {}, body: { data: { subjectType: "customer", subjectId: "CUS-UAT", roleCode: "customer" } } };
+        return { status: 401, headers: {}, body: { error: "Identity session required" } };
       }
       if (options.headers?.cookie) return { status: 200, headers: {} };
       return { status: 401, headers: {} };
@@ -150,6 +162,8 @@ test("a correct staging deploy certifies, and the report names the sha and the s
   assert.equal(report.failures, 0);
   assert.equal(report.sha, SHA);
   assert.equal(report.counts.smokeRoutesAnswered, SMOKE_ROUTES.length);
+  assert.equal(report.counts.personasCertified, 6);
+  assert.equal(report.counts.personasTotal, 6);
   assert.equal(report.rollbackReferenceRecorded, true);
   assert.deepEqual(report.unavailable, []);
 });
@@ -278,7 +292,7 @@ test("a seeded identity that cannot actually sign in fails - the row existing is
   });
   const report = await runStagingCertification(state);
   assert.equal(report.ok, false);
-  assert.equal(failed(report, "sign-in:").length, REQUIRED_STAFF_IDENTITIES.length);
+  assert.equal(failed(report, "at /api/staging-login").length, REQUIRED_STAFF_IDENTITIES.length);
 });
 
 test("a sign-in that returns success with no session cookie is not a sign-in", async () => {
@@ -293,10 +307,11 @@ test("a sign-in that returns success with no session cookie is not a sign-in", a
 });
 
 test("the gate reads set-cookie from a Headers object as well as a plain record", async () => {
+  const base = world();
   const report = await runStagingCertification(world({
     http: async (method, path, options = {}) => {
       if (path === "/api/staging-login") return { status: 200, headers: new Headers({ "set-cookie": "pawspace_session=abc; Path=/" }) };
-      return options.headers?.cookie ? { status: 200, headers: new Headers() } : { status: 401, headers: new Headers() };
+      return base.http(method, path, options);
     },
   }));
   assert.equal(report.ok, true, JSON.stringify(report.checks.filter(check => !check.ok)));
@@ -344,11 +359,52 @@ test("with no founder session the smoke pack is reported as not run rather than 
   assert.ok(report.unavailable.includes("hosted smoke pack refuses an anonymous caller"));
 });
 
-test("the smoke pack is read-only: certification never posts to a business route", async () => {
+test("certification only writes disposable authentication records, never business records", async () => {
   const state = world();
   await runStagingCertification(state);
-  const writes = state.calls.http.filter(call => call.method !== "GET" && call.path !== "/api/staging-login");
-  assert.deepEqual(writes, [], "certification must not create records in a database testers are about to use");
+  const writes = state.calls.http.filter(call => call.method !== "GET" && !["/api/staging-login", "/api/customer-otp"].includes(call.path));
+  assert.deepEqual(writes, [], "certification must not create business records in a database testers are about to use");
+});
+
+test("the customer persona fails when OTP is not explicitly sandbox-only", async () => {
+  const base = world();
+  const report = await runStagingCertification(world({ http: async (method, path, options = {}) => {
+    if (path === "/api/customer-otp" && options.body?.action === "request") return { status: 200, headers: {}, body: { data: { challengeId: "OTP", sandboxCode: "123456", sandboxDelivery: false, liveSmsDelivered: true } } };
+    return base.http(method, path, options);
+  } }));
+  assert.equal(report.ok, false);
+  assert.equal(failed(report, "sign-in: customer").length, 1);
+  assert.equal(report.counts.personasCertified, 5);
+});
+
+test("the customer persona fails when OTP verification issues no session", async () => {
+  const base = world();
+  const report = await runStagingCertification(world({ http: async (method, path, options = {}) => {
+    if (path === "/api/customer-otp" && options.body?.action === "verify") return { status: 200, headers: {} };
+    return base.http(method, path, options);
+  } }));
+  assert.equal(report.ok, false);
+  assert.equal(failed(report, "sign-in: customer").length, 1);
+});
+
+test("the customer persona fails if its session is not customer-scoped or anonymous identity is open", async () => {
+  for (const identityResponse of [
+    { status: 200, headers: {}, body: { data: { subjectType: "staff", roleCode: "founder" } } },
+    { status: 200, headers: {}, body: { data: { subjectType: "customer", roleCode: "customer" } } },
+  ]) {
+    const base = world();
+    let identityCalls = 0;
+    const report = await runStagingCertification(world({ http: async (method, path, options = {}) => {
+      if (path === "/api/identity-session") {
+        identityCalls += 1;
+        if (identityCalls === 1) return identityResponse;
+        return identityResponse.body?.data?.subjectType === "customer" ? { status: 200, headers: {}, body: identityResponse.body } : { status: 401, headers: {} };
+      }
+      return base.http(method, path, options);
+    } }));
+    assert.equal(report.ok, false);
+    assert.equal(failed(report, "sign-in: customer").length, 1);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -477,6 +533,10 @@ test("hosted certification uses the advertised seeded identities and routes that
     const pathname = new URL(route, "https://staging.invalid").pathname;
     assert.equal(fs.existsSync(new URL(`../app${pathname}/route.ts`, import.meta.url)), true,
       `${pathname} has no deployed route module`);
+  }
+  assert.match(SYNTHETIC_CUSTOMER_PERSONA.phone, /^\d{10}$/);
+  for (const route of ["/api/customer-otp", "/api/identity-session"]) {
+    assert.equal(fs.existsSync(new URL(`../app${route}/route.ts`, import.meta.url)), true, `${route} has no deployed route module`);
   }
 });
 
