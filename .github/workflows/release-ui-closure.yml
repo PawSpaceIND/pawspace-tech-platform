@@ -12,9 +12,17 @@ on:
         required: true
         default: ''
       preview_url:
-        description: 'Isolated release-preview workers.dev URL'
+        description: 'Isolated release-preview or staging workers.dev URL'
         required: true
         default: ''
+      target_environment:
+        description: 'Secret scope that owns the matching UAT access code'
+        required: true
+        type: choice
+        default: 'pawspace-release-preview'
+        options:
+          - pawspace-release-preview
+          - pawspace-staging
 
 permissions:
   contents: read
@@ -27,7 +35,9 @@ jobs:
   ui-closure:
     if: ${{ github.event.inputs.confirm == 'ui-closure' }}
     runs-on: ubuntu-latest
-    environment: pawspace-release-preview
+    # Preview and staging deliberately use different UAT credentials. Selecting the environment
+    # alongside the URL prevents a valid preview code being sent to staging (or vice versa).
+    environment: ${{ github.event.inputs.target_environment }}
     steps:
       - name: Validate candidate and preview inputs
         env:
