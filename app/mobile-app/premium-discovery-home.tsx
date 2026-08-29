@@ -128,7 +128,7 @@ export default function PremiumDiscoveryHome({
       <span className={styles.heroPaw}>🐾</span>
     </section>
 
-    <section className={styles.servicesSection}>
+    <section className={styles.servicesSection} aria-label="Care services">
       <div className={styles.sectionHead}>
         <div><small>PAWSPACE CARE</small><h2>Everything they need</h2></div>
         <button onClick={() => setQuery("")}>View all</button>
