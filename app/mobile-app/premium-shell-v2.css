@@ -14,12 +14,6 @@ body:has([data-theme]){background:#f5f2eb}
 
 [data-theme] button,[data-theme] input,[data-theme] select{font:inherit}
 
-[data-theme] .phone{background:var(--psv2-cream)!important;border-color:#171317!important;box-shadow:0 28px 90px rgba(0,0,0,.32)!important}
-[data-theme] .screen{scroll-behavior:smooth}
-[data-theme] .phone>nav{background:rgba(255,255,255,.97)!important;border-top:1px solid var(--psv2-line)!important;backdrop-filter:blur(18px)}
-[data-theme] .phone>nav button{font-size:9px!important}
-[data-theme] .phone>nav i{font-size:19px!important}
-
 /* Grooming flow refinement: retain every existing state/callback while making the journey read like a premium consumer app. */
 [data-theme] [class*="grooming-flow_flow"]{padding:4px 0 18px;color:var(--psv2-ink)}
 [data-theme] [class*="grooming-flow_steps"]{gap:8px!important;margin:2px 0 18px!important}
