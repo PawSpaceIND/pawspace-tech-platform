@@ -310,7 +310,7 @@ test("CASE-10: every decision and communication is auditable", async () => {
     reason: "Half the groom was completed", communication: { customer: "refund confirmed by SMS" },
   }, MANAGER);
 
-  const events = w.sqlite.prepare("SELECT event_type,actor_id,reason,evidence_json,communication_json FROM booking_cancellation_case_events WHERE case_id=? ORDER BY occurred_at,id").all(opened.body.caseId);
+  const events = w.sqlite.prepare("SELECT event_type,actor_id,reason,evidence_json,communication_json FROM booking_cancellation_case_events WHERE case_id=? ORDER BY occurred_at,rowid").all(opened.body.caseId);
   const types = events.map((row) => row.event_type);
   assert.deepEqual(types, ["case_opened", "ops_stop", "finance_refund_partial"], `the full trail: ${JSON.stringify(types)}`);
   for (const row of events.slice(1)) {

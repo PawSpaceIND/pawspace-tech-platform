@@ -56,12 +56,12 @@ const LEDGERS = {
 function seedVertical(serviceCode, count) {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,service_code TEXT,package_code TEXT,zone_id TEXT,provider_id TEXT,status TEXT,total_amount REAL,currency TEXT,scheduled_start TEXT,scheduled_end TEXT)");
-  sqlite.exec("CREATE TABLE booking_payments (booking_id TEXT,amount REAL,status TEXT,gateway TEXT)");
+  sqlite.exec("CREATE TABLE booking_payments (booking_id TEXT,amount REAL,amount_due_now REAL,status TEXT,gateway TEXT)");
   sqlite.exec(LEDGERS[serviceCode]);
   for (let index = 0; index < count; index += 1) {
     const id = `BK${String(index).padStart(5, "0")}`;
     sqlite.prepare("INSERT INTO canonical_bookings VALUES (?,?,?,'pkg','z1','PRV-1','completed',1000,'INR','2026-07-01T09:00:00.000Z','2026-07-02T09:00:00.000Z')").run(id, `CUS${index}`, serviceCode);
-    sqlite.prepare("INSERT INTO booking_payments VALUES (?,1000,'captured','uat_sandbox')").run(id);
+    sqlite.prepare("INSERT INTO booking_payments VALUES (?,1000,1000,'captured','uat_sandbox')").run(id);
     if (serviceCode === "dog_training") sqlite.prepare("INSERT INTO training_session_earnings VALUES (?,600,'earned')").run(id);
     else sqlite.prepare(`INSERT INTO ${serviceCode === "boarding" ? "boarding_host_settlement_ledger" : "sitting_sitter_settlement_ledger"} VALUES (?,600)`).run(id);
   }

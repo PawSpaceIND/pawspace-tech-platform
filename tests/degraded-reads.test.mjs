@@ -65,7 +65,7 @@ test("a database missing other modules names them rather than reporting their ab
   assert.equal(analytics.money.gmv, 12000, "the reads that worked report the truth");
   assert.equal(analytics.money.collected, 12000, "including the money, which is the number that was wrong");
   assert.ok(analytics.degraded, "and the modules it could not read are named");
-  assert.deepEqual(analytics.degraded.sources.sort(), ["customer experience tickets", "providers"]);
+  assert.deepEqual(analytics.degraded.sources.sort(), ["customer experience tickets", "providers", "refunds", "split payment schedules"]);
   assert.match(analytics.degraded.entries[0].reason, /no such table/);
 });
 
