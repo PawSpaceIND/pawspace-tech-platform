@@ -1,10 +1,11 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import styles from "./mobile.module.css";
 
 export type LoggedInCustomer = { customerId: string; customerName: string; phone: string };
 
 export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLoggedIn: (customer: LoggedInCustomer) => void; embedded?: boolean }) {
+  const [hydrated, setHydrated] = useState(false);
   const [stage, setStage] = useState<"phone" | "otp">("phone");
   const [phone, setPhone] = useState("");
   const [name, setName] = useState("");
@@ -13,6 +14,11 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
   const [sandboxCode, setSandboxCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  // The login shell is server-rendered. Keep its controlled phone field and submit button inert until
+  // React has attached the input/change/click handlers; otherwise a fast user (or UAT robot) can type
+  // and click into the SSR HTML before hydration, silently losing the interaction with no OTP request.
+  useEffect(() => { setHydrated(true); }, []);
 
   const requestOtp = async () => {
     setError("");
@@ -60,11 +66,12 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
                   placeholder="10-digit phone number"
                   aria-label="Phone number"
                   value={phone}
+                  disabled={!hydrated}
                   onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
                   style={{ width: "100%", padding: 12, borderRadius: 12, border: "1px solid var(--ps-border)", marginTop: 14, fontSize: 14, textAlign: "center" }}
                 />
                 {error && <p style={{ color: "#b3261e", fontSize: 11, marginTop: 8 }}>{error}</p>}
-                <button className={styles.primary} disabled={busy} onClick={() => void requestOtp()}>
+                <button className={styles.primary} disabled={!hydrated || busy} onClick={() => void requestOtp()}>
                   {busy ? "Sending…" : "Send OTP"}
                 </button>
                 <p style={{ fontSize: 9, color: "var(--ps-muted)", marginTop: 10 }}>
