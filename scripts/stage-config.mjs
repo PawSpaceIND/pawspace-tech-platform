@@ -48,6 +48,7 @@ export function readSecret(env, name, minLength, purpose) {
 }
 
 const d1Id = String(process.env.STAGING_D1_ID || "").trim();
+const r2BucketName = String(process.env.STAGING_R2_BUCKET_NAME || "").trim();
 const problems = [];
 if (!d1Id || d1Id === "00000000-0000-4000-8000-000000000000") {
   problems.push("STAGING_D1_ID is not set (from: npx wrangler d1 create pawspace-staging).");
@@ -84,7 +85,14 @@ cfg.vars = {
   ...(cfg.vars || {}),
   PAWSPACE_PAYMENT_ENV: "sandbox",
   PAWSPACE_UAT_LOGIN: "on",
+  PAWSPACE_MAPS_ENV: "sandbox",
+  PAWSPACE_COMMUNICATION_ENV: "uat",
+  META_WHATSAPP_UAT_DELIVERY_ENABLED: "true",
+  PAWSPACE_MEDIA_ENV: "uat",
 };
+if (r2BucketName) {
+  cfg.r2_buckets = [{ binding: "PAWSPACE_MEDIA_BUCKET", bucket_name: r2BucketName }];
+}
 // Defensively strip the credentials in case an inherited cfg.vars already carried them — no code path
 // may leave a UAT credential in the serialized config.
 for (const [name] of REQUIRED) delete cfg.vars[name];
@@ -92,5 +100,6 @@ writeFileSync(path, JSON.stringify(cfg));
 
 // Report only what is safe to read in a build log. The access code used to be printed here, which put
 // it in every CI log for anyone with repository read access.
-console.log(`Staging config written → name=pawspace-staging, DB=${d1Id}, PAWSPACE_PAYMENT_ENV=sandbox, UAT_LOGIN=on`);
+console.log(`Staging config written → name=pawspace-staging, DB=${d1Id}, PAWSPACE_PAYMENT_ENV=sandbox, UAT_LOGIN=on, UAT integrations locked`);
+console.log(`Private media binding: ${r2BucketName ? "configured" : "not configured"}`);
 console.log("UAT credentials were validated from the environment, are NOT written to wrangler.json, and are uploaded as Cloudflare Worker secrets — nothing secret is logged.");
