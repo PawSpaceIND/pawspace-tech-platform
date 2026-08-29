@@ -32,8 +32,8 @@ async function ensurePet(page){
  const gender=page.getByLabel("Gender (optional)");if(await gender.count())await gender.selectOption({index:1});await page.getByRole("button",{name:"Add pet",exact:true}).click();await page.getByText(PET,{exact:true}).waitFor({state:"visible",timeout:TIMEOUT});return`${PET} created through UI`;
 }
 
-const care=(page)=>page.locator("section").filter({hasText:"Care for every kind of day"}).first();
-async function goHome(page){await gotoApp(page);await nav(page,"Home");await page.getByText("Care for every kind of day",{exact:true}).waitFor({state:"visible",timeout:TIMEOUT});}
+const care=(page)=>page.locator("section").filter({hasText:"Everything they need"}).first();
+async function goHome(page){await gotoApp(page);await nav(page,"Home");await page.getByText("Everything they need",{exact:true}).waitFor({state:"visible",timeout:TIMEOUT});}
 async function openService(page,name){await goHome(page);const card=care(page).getByRole("button",{name:new RegExp(name,"i")});const count=await card.count();if(count!==1)die(`${name} discovery card count=${count}`);if(await card.isDisabled())die(`${name} discovery card disabled`);await card.click();await wait(page,450);}
 
 async function observeFinal(page,button,target,safePosts=[]){
@@ -43,11 +43,10 @@ async function observeFinal(page,button,target,safePosts=[]){
 
 async function homeControls(page){
  await goHome(page);for(const name of["Grooming","Training","Boarding","Pet Sitting","Pet Taxi","Dog Walking","Fresh Food","Relocation"]){const card=care(page).getByRole("button",{name:new RegExp(name,"i")});if(await card.count()!==1)die(`${name} missing/duplicated`);if(await card.isDisabled())die(`${name} disabled`);}
- const video=page.locator("section").filter({hasText:"Watch before you book"}).first(),guides=video.getByRole("button",{name:/guide/i});if(await guides.count()!==6)die(`video slots=${await guides.count()}, expected 6`);
+ const guides=page.locator("section").filter({hasText:"Quick service guides"}).first().getByRole("button");if(await guides.count()!==6)die(`guide slots=${await guides.count()}, expected 6`);
  await page.getByRole("button",{name:"Choose your service location"}).click();await page.getByPlaceholder("e.g. HSR Layout, Bengaluru").fill("Koramangala, Bengaluru");await page.getByRole("button",{name:"Save location"}).click();await text(page,"Koramangala, Bengaluru");
  const search=page.getByLabel("Search PawSpace services");await search.fill("food");await care(page).getByRole("button",{name:/Fresh Food/i}).waitFor({state:"visible",timeout:TIMEOUT});if(await care(page).getByRole("button",{name:/Grooming/i}).count())die("search failed to filter service cards");await search.fill("");
- await page.getByRole("button",{name:/Preview next ad/i}).click();await text(page,"Pet-friendly dining slot");await video.getByRole("button",{name:/Grooming guide/i}).click();const dialog=page.getByRole("dialog",{name:/Grooming video guide/i});await dialog.waitFor({state:"visible",timeout:TIMEOUT});await dialog.getByRole("button",{name:/Close video guide/i}).click();
- await page.getByRole("button",{name:/Your bookings/i}).click();await wait(page,200);await nav(page,"Home");await page.getByRole("button",{name:"Open pet profiles"}).click();await text(page,"Your pets");return"8 services + search + location + ads + six videos + bookings + pets";
+ await page.getByRole("button",{name:/View your bookings/i}).click();await wait(page,200);await nav(page,"Home");await page.getByRole("button",{name:"Open pet profiles"}).click();await text(page,"Your pets");return"8 services + search + location + six guides + bookings + pets";
 }
 
 async function grooming(page){await openService(page,"Grooming");await text(page,"Who needs grooming?");const pet=page.getByText(PET,{exact:true}).first();await pet.click();const next=page.getByRole("button",{name:/Choose a package/i});if(await next.isDisabled())die("pet selection did not enable Grooming progression");await next.click();for(const label of["Essential Bath","Bath & Basic","Complete Makeover","Just Trim"])await text(page,label);return"pet -> package stage + legacy packages";}
