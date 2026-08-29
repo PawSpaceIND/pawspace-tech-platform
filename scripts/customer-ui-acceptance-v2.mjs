@@ -13,15 +13,16 @@ const persist=()=>{report.summary={total:report.cases.length,passed:report.cases
 const die=(message)=>{throw new Error(message);};
 const wait=async(page,ms=350)=>{await page.waitForLoadState("domcontentloaded",{timeout:TIMEOUT}).catch(()=>undefined);await page.waitForTimeout(ms);};
 async function runCase(name,fn){const started=Date.now();try{const detail=await fn();report.cases.push({name,ok:true,ms:Date.now()-started,detail:detail||"passed"});console.log(`PASS ${name}${detail?` — ${detail}`:""}`);}catch(error){const detail=error instanceof Error?error.message:String(error);report.cases.push({name,ok:false,ms:Date.now()-started,detail});report.failures.push({name,detail});console.error(`FAIL ${name} — ${detail}`);}finally{persist();}}
-async function gotoApp(page){const response=await page.goto(`${BASE}/mobile-app`,{waitUntil:"domcontentloaded",timeout:TIMEOUT});if(!response||response.status()>=500)die(`mobile app HTTP ${response?.status()??0}`);await wait(page);}
-async function nav(page,label){const buttons=page.getByRole("button").filter({hasText:new RegExp(label,"i")});const count=await buttons.count();if(!count)die(`bottom navigation ${label} not found`);await buttons.last().click();await wait(page,220);}
+async function bottomNav(page){const nav=page.locator("nav");await nav.waitFor({state:"visible",timeout:TIMEOUT});return nav;}
+async function gotoApp(page){const response=await page.goto(`${BASE}/mobile-app`,{waitUntil:"domcontentloaded",timeout:TIMEOUT});if(!response||response.status()>=500)die(`mobile app HTTP ${response?.status()??0}`);await bottomNav(page);}
+async function nav(page,label){const buttons=(await bottomNav(page)).getByRole("button").filter({hasText:new RegExp(label,"i")});const count=await buttons.count();if(!count)die(`bottom navigation ${label} not found`);await buttons.last().click();await wait(page,220);}
 async function text(page,value){await page.getByText(value,{exact:false}).first().waitFor({state:"visible",timeout:TIMEOUT});}
 
 async function login(page,context){
  await gotoApp(page);const session=await context.request.get(`${BASE}/api/identity-session`);if(session.ok()){const body=await session.json().catch(()=>({}));if(body?.data?.subjectType==="customer")return`existing customer ${body.data.subjectId}`;}
  await nav(page,"Account");await page.getByPlaceholder("10-digit phone number").fill(PHONE);await page.getByRole("button",{name:"Send OTP"}).click();
  const sandbox=page.getByText(/Sandbox code \(no real SMS yet\):/i);await sandbox.waitFor({state:"visible",timeout:TIMEOUT});const code=(await sandbox.textContent())?.match(/\b(\d{6})\b/)?.[1];if(!code)die("sandbox OTP not rendered");
- await page.getByPlaceholder("6-digit code").fill(code);await page.getByPlaceholder("Your name (first time only)").fill(CUSTOMER);await page.getByRole("button",{name:"Verify & continue"}).click();await wait(page,550);
+ const codeInput=page.getByPlaceholder("6-digit code");await codeInput.fill(code);await page.getByPlaceholder("Your name (first time only)").fill(CUSTOMER);await page.getByRole("button",{name:"Verify & continue"}).click();await codeInput.waitFor({state:"hidden",timeout:TIMEOUT});
  const verified=await context.request.get(`${BASE}/api/identity-session`),body=await verified.json().catch(()=>({}));if(!verified.ok()||body?.data?.subjectType!=="customer")die(`OTP did not establish customer session (HTTP ${verified.status()})`);return`real OTP -> ${body.data.subjectId}`;
 }
 
