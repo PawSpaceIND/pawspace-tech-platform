@@ -12,7 +12,7 @@ export type DiscoveryService = {
   imageAlt: string;
 };
 
-const PRIMARY_SERVICE_CODES = ["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi"];
+const VIDEO_SERVICE_CODES = ["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi"];
 
 const serviceShortCopy: Record<string, string> = {
   grooming: "Clean & fresh",
@@ -72,8 +72,8 @@ export default function PremiumDiscoveryHome({
     () => services.filter((service) => `${service.name} ${service.subtitle}`.toLowerCase().includes(query.trim().toLowerCase())),
     [query, services],
   );
-  const primaryServices = visible.filter((service) => PRIMARY_SERVICE_CODES.includes(service.serviceCode));
-  const moreServices = visible.filter((service) => !PRIMARY_SERVICE_CODES.includes(service.serviceCode));
+  const careServices = visible;
+  const videoServices = services.filter((service) => VIDEO_SERVICE_CODES.includes(service.serviceCode));
   const heroService = services.find((service) => service.serviceCode === "grooming") ?? services[0];
   const petName = pet?.name || "your pet";
   const firstName = customerName?.split(" ")[0];
@@ -135,7 +135,7 @@ export default function PremiumDiscoveryHome({
       </div>
 
       <div className={styles.serviceGrid}>
-        {primaryServices.map((service) => {
+        {careServices.map((service) => {
           const paused = disabledServices.has(service.serviceCode);
           return <button key={service.serviceCode} className={styles.serviceCard} onClick={() => onOpen(service.serviceCode)} disabled={paused}>
             <div className={styles.serviceVisual}><img src={service.image} alt={service.imageAlt} /></div>
@@ -145,15 +145,6 @@ export default function PremiumDiscoveryHome({
           </button>;
         })}
       </div>
-
-      {moreServices.length > 0 && <div className={styles.moreRail}>
-        {moreServices.map((service) => {
-          const paused = disabledServices.has(service.serviceCode);
-          return <button key={service.serviceCode} onClick={() => onOpen(service.serviceCode)} disabled={paused}>
-            <span><img src={service.image} alt="" /></span><div><b>{service.name}</b><small>{paused ? "Temporarily paused" : serviceShortCopy[service.serviceCode] || service.subtitle}</small></div><i>→</i>
-          </button>;
-        })}
-      </div>}
 
       {visible.length === 0 && <p className={styles.empty}>No PawSpace service matches “{query}”.</p>}
     </section>
@@ -172,6 +163,22 @@ export default function PremiumDiscoveryHome({
       <span><i>◇</i><b>Background<br/>checked</b></span>
       <span><i>✦</i><b>Hygiene<br/>assured</b></span>
       <span><i>◌</i><b>24/7<br/>support</b></span>
+    </section>
+
+    <section className={styles.servicesSection} aria-label="Quick service guides">
+      <div className={styles.sectionHead}>
+        <div><small>KNOW BEFORE YOU BOOK</small><h2>Quick service guides</h2></div>
+      </div>
+      <div className={styles.moreRail}>
+        {videoServices.map((service) => {
+          const paused = disabledServices.has(service.serviceCode);
+          return <button key={`guide-${service.serviceCode}`} onClick={() => onOpen(service.serviceCode)} disabled={paused}>
+            <span><img src={service.image} alt="" /></span>
+            <div><b>{service.name}</b><small>{paused ? "Temporarily paused" : "1-min service guide"}</small></div>
+            <i>▶</i>
+          </button>;
+        })}
+      </div>
     </section>
 
     <button className={styles.bookingShortcut} onClick={onShowBookings}>View your bookings <span>→</span></button>
