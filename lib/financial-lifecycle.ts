@@ -108,7 +108,6 @@ export async function executeRazorpayOrderOutbox(db: Db, env: Record<string, unk
   const created = await createPaymentOrderPaise(env, request);
   const now = Date.now();
   if (!created.connected) {
-    // A timeout/network error can be ambiguous: never blindly create a second gateway order.
     const ambiguous = /timed out|request failed|network|fetch/i.test(created.reason);
     await db.batch([
       db.prepare("UPDATE financial_outbox SET status=?,response_json=?,last_error=?,lease_owner=NULL,lease_expires_at=NULL,updated_at=? WHERE id=? AND lease_owner=?")
@@ -163,7 +162,6 @@ export async function acceptRazorpayWebhook(db: Db, input: {
   if (!row) throw new Error("Webhook inbox persistence failed");
   if (String(row.payload_sha256) !== payloadHash) throw new Error("Razorpay event id was replayed with a different payload");
   if (!inserted) return { duplicate: true as const, row };
-  // JSON normalization deliberately occurs only after signature verification + immutable inbox insert.
   let event: Record<string, unknown>;
   try { event = JSON.parse(input.rawBody) as Record<string, unknown>; } catch {
     await db.prepare("UPDATE gateway_webhook_events SET processing_status='REJECTED',failure_reason=?,processed_at=? WHERE id=?").bind("invalid_json", Date.now(), String(row.id)).run();
@@ -180,7 +178,6 @@ export async function advancePaymentState(db: Db, input: { intentId: string; tar
   if (PAYMENT_RANK[input.target] < PAYMENT_RANK[from]) return { changed: false, state: from, regressive: true };
   if (input.target === from) return { changed: false, state: from, regressive: false };
   if (PAYMENT_RANK[input.target] >= 90 || PAYMENT_RANK[from] >= 90) throw new Error(`Payment transition ${from} -> ${input.target} is not allowed`);
-  // Strict adjacent transitions prevent out-of-order delivery from skipping authoritative states.
   if (PAYMENT_RANK[input.target] !== PAYMENT_RANK[from] + 1) return { changed: false, state: from, deferred: true };
   const now = Date.now(), version = Number(current.version || 0);
   const result = await db.prepare(`UPDATE payment_intents SET state=?,gateway_payment_id=COALESCE(?,gateway_payment_id),gateway_settlement_id=COALESCE(?,gateway_settlement_id),version=version+1,updated_at=?
@@ -230,16 +227,25 @@ export async function releasePartnerEarning(db: Db, input: { bookingId: string; 
     JOIN canonical_bookings b ON b.id=e.booking_id WHERE e.booking_id=?`).bind(input.bookingId).first<Row>();
   if (!earning) throw new Error("Pending partner earning was not found");
   if (String(earning.booking_status).toLowerCase() !== "completed") throw new Error("Partner earning cannot be released before booking completion");
-  const result = await db.prepare(`INSERT INTO partner_payable_released
-    (id,booking_id,partner_id,pending_earning_id,release_type,amount_paise,currency,transfer_status,released_at,updated_at)
-    VALUES (?,?,?,?,?,?,?,'ELIGIBLE',?,?) ON CONFLICT(booking_id,release_type) DO NOTHING`)
-    .bind(id, input.bookingId, String(earning.partner_id), String(earning.id), input.releaseType, Number(earning.earning_paise), String(earning.currency), now, now).run();
-  if (Number(result.meta?.changes || 0) === 1) {
-    await db.prepare("UPDATE partner_earning_pending SET status='RELEASED',updated_at=? WHERE id=? AND status='PENDING'").bind(now, String(earning.id)).run();
-  }
+  const results = await db.batch([
+    db.prepare(`INSERT INTO partner_payable_released
+      (id,booking_id,partner_id,pending_earning_id,release_type,amount_paise,currency,transfer_status,released_at,updated_at)
+      SELECT ?,e.booking_id,e.partner_id,e.id,?,e.earning_paise,e.currency,'ELIGIBLE',?,?
+      FROM partner_earning_pending e JOIN canonical_bookings b ON b.id=e.booking_id
+      WHERE e.id=? AND e.status='PENDING' AND lower(b.status)='completed'
+      ON CONFLICT(booking_id,release_type) DO NOTHING`)
+      .bind(id, input.releaseType, now, now, String(earning.id)),
+    db.prepare(`UPDATE partner_earning_pending SET status='RELEASED',updated_at=?
+      WHERE id=? AND status='PENDING' AND EXISTS (
+        SELECT 1 FROM partner_payable_released r WHERE r.pending_earning_id=? AND r.booking_id=? AND r.release_type=?
+      )`).bind(now, String(earning.id), String(earning.id), input.bookingId, input.releaseType),
+  ]);
+  const inserted = Number(results[0]?.meta?.changes || 0) === 1;
   const released = await db.prepare("SELECT * FROM partner_payable_released WHERE booking_id=? AND release_type=?").bind(input.bookingId, input.releaseType).first<Row>();
   if (!released) throw new Error("Partner earning release failed");
-  return { released, duplicate: Number(result.meta?.changes || 0) !== 1 };
+  const source = await db.prepare("SELECT status FROM partner_earning_pending WHERE id=?").bind(String(earning.id)).first<Row>();
+  if (String(source?.status || "") !== "RELEASED") throw new Error("Partner earning release was not atomic");
+  return { released, duplicate: !inserted };
 }
 
 export function activePaymentEnvironment(env: Record<string, unknown>) {
