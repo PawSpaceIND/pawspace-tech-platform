@@ -3,8 +3,8 @@
 -- A Razorpay bank settlement is a batch: several payment transactions can legitimately share the
 -- same settlement_id. payment_intents.gateway_settlement_id was introduced as a convenience field
 -- with a one-to-one uniqueness constraint, so it is intentionally NOT used as the authoritative
--- mapping here. The payment-level evidence key is gateway_payment_id + gateway_settlement_id and
--- gateway_settlement_id itself is deliberately non-unique.
+-- mapping here. Each Razorpay payment may have exactly one settlement evidence row, while one
+-- settlement_id may legitimately be shared by many different payments in the same bank batch.
 
 CREATE TABLE IF NOT EXISTS payment_settlement_reconciliations (
   id TEXT PRIMARY KEY NOT NULL,
@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS payment_settlement_reconciliations (
   recon_date TEXT NOT NULL,
   raw_payload_json TEXT NOT NULL,
   observed_at INTEGER NOT NULL,
-  UNIQUE(provider, environment, gateway_payment_id, gateway_settlement_id),
+  UNIQUE(provider, environment, gateway_payment_id),
   FOREIGN KEY(payment_intent_id) REFERENCES payment_intents(id)
 );
 
@@ -32,6 +32,18 @@ CREATE INDEX IF NOT EXISTS payment_settlement_recon_settlement_idx
   ON payment_settlement_reconciliations(provider, environment, gateway_settlement_id);
 CREATE INDEX IF NOT EXISTS payment_settlement_recon_intent_idx
   ON payment_settlement_reconciliations(payment_intent_id, settled_at);
+
+CREATE TRIGGER IF NOT EXISTS payment_settlement_reconciliations_no_update
+BEFORE UPDATE ON payment_settlement_reconciliations
+BEGIN
+  SELECT RAISE(ABORT,'payment settlement evidence is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS payment_settlement_reconciliations_no_delete
+BEFORE DELETE ON payment_settlement_reconciliations
+BEGIN
+  SELECT RAISE(ABORT,'payment settlement evidence cannot be deleted');
+END;
 
 CREATE TABLE IF NOT EXISTS razorpay_settlement_recon_runs (
   run_key TEXT PRIMARY KEY NOT NULL,

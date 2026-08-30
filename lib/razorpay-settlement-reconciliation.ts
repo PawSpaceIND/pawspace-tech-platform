@@ -156,11 +156,16 @@ export async function applyRazorpaySettlementReconItems(db: Db, input: {
     if (!currency || currency !== text(intent.currency)) {
       throw new Error(`Razorpay settlement currency mismatch for ${paymentId}`);
     }
+    const priorEvidence = await db.prepare("SELECT gateway_settlement_id FROM payment_settlement_reconciliations WHERE provider='razorpay' AND environment=? AND gateway_payment_id=?")
+      .bind(input.environment, paymentId).first<Row>();
+    if (priorEvidence && text(priorEvidence.gateway_settlement_id) !== settlementId) {
+      throw new Error(`Razorpay settlement identity conflict for ${paymentId}`);
+    }
     const now = Date.now();
     const inserted = await db.prepare(`INSERT INTO payment_settlement_reconciliations
       (id,provider,environment,payment_intent_id,gateway_payment_id,gateway_settlement_id,settlement_utr,amount_paise,credit_paise,debit_paise,fee_paise,tax_paise,currency,settled_at,recon_date,raw_payload_json,observed_at)
       VALUES (?,'razorpay',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(provider,environment,gateway_payment_id,gateway_settlement_id) DO NOTHING`)
+      ON CONFLICT(provider,environment,gateway_payment_id) DO NOTHING`)
       .bind(
         `PSR-${crypto.randomUUID()}`, input.environment, String(intent.id), paymentId, settlementId, text(item.settlement_utr) || null,
         amountPaise, nonNegativeInteger(item.credit, "credit"), nonNegativeInteger(item.debit, "debit"), nonNegativeInteger(item.fee, "fee"), nonNegativeInteger(item.tax, "tax"),

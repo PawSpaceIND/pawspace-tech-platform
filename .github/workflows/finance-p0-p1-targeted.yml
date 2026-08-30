@@ -34,5 +34,7 @@ jobs:
         run: node --test tests/financial-lifecycle-executable-concurrency.test.mjs
       - name: Razorpay payment-level settlement reconciliation acceptance
         run: node --test tests/razorpay-settlement-reconciliation.test.mjs
+      - name: Razorpay conflicting settlement identity acceptance
+        run: node --test tests/razorpay-settlement-conflict.test.mjs
       - name: Typecheck
         run: npm run typecheck
