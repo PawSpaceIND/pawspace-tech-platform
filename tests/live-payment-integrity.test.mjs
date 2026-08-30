@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { installFinancialLifecycleSchema } from "./helpers/financial-lifecycle-schema.mjs";
 
 // ---------------------------------------------------------------------------
 // PAY-001. Two live-payment integrity defects, both about money and neither caught by the tests that
@@ -135,6 +136,7 @@ function paymentsDb({ amount, amountDueNow, status = "created" }) {
   globalThis.__PAY001_DB__ = db;
   sqlite.exec("CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL)");
   sqlite.exec("CREATE TABLE booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,amount_due_now REAL NOT NULL,currency TEXT NOT NULL,status TEXT NOT NULL)");
+  installFinancialLifecycleSchema(sqlite);
   sqlite.prepare("INSERT INTO canonical_bookings VALUES (?,?)").run("BK-1", "CUS-1");
   sqlite.prepare("INSERT INTO booking_payments VALUES (?,?,?,?,?,?,?)").run("PAY-1", "BK-1", "CUS-1", amount, amountDueNow, "INR", status);
   return { sqlite, db };
@@ -192,5 +194,6 @@ test("real execution: a full-payment booking creates a gateway order for the ful
 test("the order intent still never self-captures", () => {
   const intentSource = read("lib/payment-order-intent.ts");
   assert.match(intentSource, /status: "awaiting_payment"/, "capture remains the webhook's job");
-  assert.match(intentSource, /if \(!created\.connected\) return \{ connected: false/, "and it fails closed without credentials");
+  assert.match(intentSource, /if \(execution\.claimed && !execution\.connected\)/, "and provider refusal is handled before any order link is persisted");
+  assert.match(intentSource, /return \{ connected: false, environment, reason: execution\.reason/, "and it fails closed without credentials");
 });

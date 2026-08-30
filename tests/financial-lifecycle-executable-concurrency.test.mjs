@@ -79,8 +79,8 @@ async function loadFinanceModule() {
   const financeSource = (await readFile(new URL("lib/financial-lifecycle.ts", repoRoot), "utf8"))
     .replace('from "./razorpay-client"', 'from "./razorpay-client.mjs"');
   await writeFile(path.join(tempDir, "financial-lifecycle.mjs"), transpile(financeSource));
-  const module = await import(`${pathToFileURL(path.join(tempDir, "financial-lifecycle.mjs")).href}?v=${Date.now()}`);
-  return { module, cleanup: () => rm(tempDir, { recursive: true, force: true }) };
+  const loadedModule = await import(`${pathToFileURL(path.join(tempDir, "financial-lifecycle.mjs")).href}?v=${Date.now()}`);
+  return { module: loadedModule, cleanup: () => rm(tempDir, { recursive: true, force: true }) };
 }
 
 async function createFinanceDb() {
