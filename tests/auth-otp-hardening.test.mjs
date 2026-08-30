@@ -1,30 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { registerHooks } from "node:module";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
 const PEPPER = "otp-pepper-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const ASSERTION_SECRET = "assertion-secret-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const TEST_SECRET = "sandbox-test-secret-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
+globalThis.__PAWSPACE_AUTH_HARDENING_DB__ = null;
 globalThis.__pawspaceAuthTestEnv = {};
-registerHooks({
-  resolve(specifier, context, nextResolve) {
-    if (specifier === "cloudflare:workers") return { url: "pawspace:cloudflare-workers", shortCircuit: true };
-    if (specifier.startsWith(".") && context.parentURL && !/\.[cm]?[jt]sx?$/.test(specifier)) {
-      const candidate = new URL(`${specifier}.ts`, context.parentURL);
-      if (candidate.protocol === "file:" && existsSync(fileURLToPath(candidate))) return { url: candidate.href, shortCircuit: true };
-    }
-    return nextResolve(specifier, context);
-  },
-  load(url, context, nextLoad) {
-    if (url === "pawspace:cloudflare-workers") {
-      return { format: "module", source: "export const env = globalThis.__pawspaceAuthTestEnv;", shortCircuit: true };
-    }
-    return nextLoad(url, context);
-  },
-});
+installWorkersHooks("__PAWSPACE_AUTH_HARDENING_DB__", "__pawspaceAuthTestEnv");
 
 const customerOtp = await import("../lib/customer-otp.ts");
 const partnerOtp = await import("../lib/partner-otp.ts");
@@ -55,55 +39,55 @@ class MemoryDb {
   }
 
   prepare(sql) {
-    const db = this;
-    return {
+    const statement = {
       args: [],
-      bind(...args) { this.args = args; return this; },
-      async run() {
-        const args = this.args;
+      bind: (...args) => { statement.args = args; return statement; },
+      run: async () => {
+        const args = statement.args;
         if (sql.startsWith("CREATE ")) return { meta: { changes: 0 } };
         if (sql.startsWith("INSERT INTO customer_otp_challenges")) {
           const [id, phone, code, createdAt, expiresAt] = args;
-          db.customerChallenges.set(id, { id, phone, code, attempts: 0, consumed: 0, created_at: createdAt, expires_at: expiresAt });
+          this.customerChallenges.set(id, { id, phone, code, attempts: 0, consumed: 0, created_at: createdAt, expires_at: expiresAt });
           return { meta: { changes: 1 } };
         }
         if (sql.startsWith("INSERT INTO partner_otp_challenges")) {
           const [id, phone, code, createdAt, expiresAt] = args;
-          db.partnerChallenges.set(id, { id, phone, code, attempts: 0, consumed: 0, created_at: createdAt, expires_at: expiresAt });
+          this.partnerChallenges.set(id, { id, phone, code, attempts: 0, consumed: 0, created_at: createdAt, expires_at: expiresAt });
           return { meta: { changes: 1 } };
         }
         if (sql.startsWith("UPDATE customer_otp_challenges SET attempts=")) {
-          const row = db.customerChallenges.get(args[0]);
+          const row = this.customerChallenges.get(args[0]);
           if (row && row.attempts < 5) row.attempts += 1;
           return { meta: { changes: row ? 1 : 0 } };
         }
         if (sql.startsWith("UPDATE partner_otp_challenges SET attempts=")) {
-          const row = db.partnerChallenges.get(args[0]);
+          const row = this.partnerChallenges.get(args[0]);
           if (row && row.attempts < 5 && !row.consumed) row.attempts += 1;
           return { meta: { changes: row ? 1 : 0 } };
         }
         if (sql.startsWith("UPDATE customer_otp_challenges SET consumed=1")) {
-          const row = db.customerChallenges.get(args[0]);
+          const row = this.customerChallenges.get(args[0]);
           if (!row || row.consumed) return { meta: { changes: 0 } };
           row.consumed = 1;
           return { meta: { changes: 1 } };
         }
         if (sql.startsWith("INSERT OR IGNORE INTO verified_identity_assertion_nonces")) {
           const [nonce, identitySource, principalKey, subjectType, subjectId, usedAt, expiresAt] = args;
-          if (db.nonces.has(nonce)) return { meta: { changes: 0 } };
-          db.nonces.set(nonce, { identitySource, principalKey, subjectType, subjectId, usedAt, expiresAt });
+          if (this.nonces.has(nonce)) return { meta: { changes: 0 } };
+          this.nonces.set(nonce, { identitySource, principalKey, subjectType, subjectId, usedAt, expiresAt });
           return { meta: { changes: 1 } };
         }
         throw new Error(`Unhandled test SQL run: ${sql}`);
       },
-      async first() {
-        const args = this.args;
-        if (sql.startsWith("SELECT * FROM customer_otp_challenges")) return db.customerChallenges.get(args[0]) ?? null;
-        if (sql.startsWith("SELECT * FROM partner_otp_challenges")) return db.partnerChallenges.get(args[0]) ?? null;
-        if (sql.includes("FROM canonical_customers WHERE primary_phone=?")) return db.customer?.primary_phone === args[0] ? db.customer : null;
+      first: async () => {
+        const args = statement.args;
+        if (sql.startsWith("SELECT * FROM customer_otp_challenges")) return this.customerChallenges.get(args[0]) ?? null;
+        if (sql.startsWith("SELECT * FROM partner_otp_challenges")) return this.partnerChallenges.get(args[0]) ?? null;
+        if (sql.includes("FROM canonical_customers WHERE primary_phone=?")) return this.customer?.primary_phone === args[0] ? this.customer : null;
         throw new Error(`Unhandled test SQL first: ${sql}`);
       },
     };
+    return statement;
   }
 }
 
