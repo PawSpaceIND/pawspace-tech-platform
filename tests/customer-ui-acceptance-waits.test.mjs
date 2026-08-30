@@ -53,6 +53,19 @@ test("customer acceptance accepts the current Boarding empty-selection CTA", () 
   assert.match(source, /name:\/Continue with\|Choose an available host\/i/);
 });
 
+test("customer acceptance allows the governed Boarding/Sitting re-quote before the final scheduling mutation", () => {
+  // The Boarding confirm handler re-quotes POST /api/boarding-commercial for price
+  // integrity immediately before POST /api/uat-scheduling. observeFinal must classify
+  // that governed re-quote as a permitted precursor (as it already does for
+  // training/walking/taxi -commercial quotes) rather than an unexpected commit, while
+  // still requiring the final scheduling mutation to be attempted.
+  assert.match(source, /safePosts=\[\]/); // observeFinal still defaults to no allowance
+  assert.match(source, /\[\/POST \\\/api\\\/\(boarding\|sitting\)-commercial\//);
+  // The final scheduling mutation remains the required target for both stays.
+  assert.match(source, /request final partner approval/);
+  assert.match(source, /POST \\\/api\\\/uat-scheduling/);
+});
+
 test("customer acceptance follows current Fresh Food stages and delivery field", () => {
   assert.match(source, /"One-time or repeat\?"/);
   assert.match(source, /"Where and when\?"/);

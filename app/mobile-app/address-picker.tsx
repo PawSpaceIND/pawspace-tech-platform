@@ -42,8 +42,12 @@ export default function AddressPicker({onZoneResolved}:{onZoneResolved?:(zone:Zo
       if(address.trim().length<8){setError("Enter the complete doorstep address");return;}
       if(!/^\d{6}$/.test(pincode)){setError("Please enter a valid 6-digit pincode");return;}
       const coverage=await resolveServiceCoverage(pincode);
-      const zone=zones.find(item=>item.zoneId===coverage.zoneId);
-      if(!zone){setError("The resolved service zone is not enabled in this UAT build");return;}
+      // Resolve from the canonical coverage response, which already carries the full
+      // zone. Do NOT join against the asynchronously-loaded zone list: on a cold Worker
+      // that list can still be empty when the customer taps Check, and the join would
+      // silently fail so onZoneResolved never fires and every downstream host/quote
+      // stalls. The informational list below stays list-driven for display only.
+      const zone:Zone={zoneId:coverage.zone.zoneId,zoneName:coverage.zone.zoneName,description:coverage.zone.description,color:coverage.zone.color,serviceAvailable:coverage.zone.serviceAvailable};
       const result:ZoneResult={zone,assignment:{pincode:coverage.pincode,zoneId:coverage.zoneId,cityId:coverage.cityId,city:coverage.city,area:coverage.area},address:address.trim()};
       setResolvedZone(result);
       onZoneResolved?.(result);
