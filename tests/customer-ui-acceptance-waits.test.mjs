@@ -42,6 +42,7 @@ test("customer acceptance waits for pets and selects a pet button", () => {
 });
 
 test("customer acceptance observes async final mutations for the full timeout", () => {
-  assert.match(source, /Promise\.race\(\[observed,page\.waitForTimeout\(TIMEOUT\)\]\)/);
+  assert.match(source, /async function observeFinal\(page,button,target,safePosts=\[\],timeout=SERVER_TIMEOUT\)/);
+  assert.match(source, /Promise\.race\(\[observed,page\.waitForTimeout\(timeout\)\]\)/);
   assert.doesNotMatch(source, /page\.waitForTimeout\(1100\)/);
 });
