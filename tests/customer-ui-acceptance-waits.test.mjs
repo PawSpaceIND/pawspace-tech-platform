@@ -16,15 +16,11 @@ test("customer acceptance waits for OTP verification to replace the login UI", (
   assert.doesNotMatch(source, /Verify & continue"\}\)\.click\(\);await wait\(page,550\)/);
 });
 
-test("customer acceptance scopes service-card checks to the labelled discovery region", () => {
-  assert.match(source, /page\.getByRole\("region",\{name:"Care services"\}\)/);
-  assert.doesNotMatch(source, /filter\(\{hasText:"Care for every kind of day"\}\)/);
-});
-
-test("customer acceptance scopes video-guide counts to their labelled region", () => {
-  assert.match(discoverySource, /aria-label="Service video guides"/);
-  assert.match(source, /getByRole\("region",\{name:"Service video guides"\}\)/);
-  assert.doesNotMatch(source, /filter\(\{hasText:"Watch before you book"\}\)/);
+test("approved premium Home exposes stable labelled discovery regions", () => {
+  assert.match(discoverySource, /aria-label="Care services"/);
+  assert.match(discoverySource, /aria-label="Quick service guides"/);
+  assert.match(discoverySource, />Everything they need</);
+  assert.doesNotMatch(discoverySource, /Care for every kind of day/);
 });
 
 test("customer acceptance uses a longer server timeout for provider and quote readiness", () => {

@@ -6,36 +6,31 @@ const component = fs.readFileSync("app/mobile-app/premium-discovery-home.tsx", "
 const css = fs.readFileSync("app/mobile-app/premium-discovery-home.module.css", "utf8");
 
 const requiredClasses = [
-  "header",
-  "location",
+  "home",
+  "topShell",
+  "brandRow",
   "brandLogo",
-  "pin",
   "profile",
-  "hero",
-  "pawMark",
+  "location",
+  "pin",
   "search",
-  "adWhisper",
-  "sponsored",
-  "offerImage",
-  "offerShade",
-  "offerCopy",
-  "offerDots",
-  "selectedOffer",
-  "quick",
+  "hero",
+  "heroCopy",
+  "heroPaw",
+  "servicesSection",
   "sectionHead",
-  "grid",
+  "serviceGrid",
   "serviceCard",
-  "imageWash",
-  "videoSection",
-  "videoRail",
-  "videoCard",
-  "videoWash",
-  "community",
-  "communityRail",
-  "featured",
-  "trust",
+  "serviceVisual",
+  "serviceIcon",
+  "empty",
+  "reminder",
+  "reminderCopy",
+  "reminderPaw",
+  "trustStrip",
+  "moreRail",
+  "bookingShortcut",
   "sheetBackdrop",
-  "videoSheet",
   "sheet",
   "handle",
   "deviceLocation",
@@ -43,9 +38,14 @@ const requiredClasses = [
   "locationNote",
 ];
 
-test("premium discovery component and CSS module stay on the same style contract", () => {
+test("premium discovery stays on the approved rebuilt Home style contract", () => {
   for (const className of requiredClasses) {
     assert.match(component, new RegExp(`styles\\.${className}\\b`), `component should use styles.${className}`);
     assert.match(css, new RegExp(`\\.${className}(?:[,{:.\\s>]|$)`), `CSS should define .${className}`);
   }
+  assert.match(component, />Everything they need</);
+  assert.match(component, /aria-label="Care services"/);
+  assert.match(component, /aria-label="Quick service guides"/);
+  assert.doesNotMatch(component, /Care for every kind of day/);
+  assert.doesNotMatch(component, /sponsoredOffers/);
 });
