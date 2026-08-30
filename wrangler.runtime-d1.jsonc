@@ -23,7 +23,12 @@
     "PAWSPACE_SCHEDULING_ENV": "uat",
     "PAWSPACE_UAT_LOGIN": "on",
     "PAWSPACE_UAT_SIGNING_KEY": "runtime-d1-regression-only-not-a-real-signing-key-20260825",
-    "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT": "runtime-d1-regression-only-not-a-real-secret-32chars"
+    "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT": "runtime-d1-regression-only-not-a-real-secret-32chars",
+    // The runtime regression deliberately exercises the guarded sandbox OTP path. These synthetic local
+    // values are scoped only to this Wrangler harness; production must provide independent real secrets.
+    "PAWSPACE_OTP_PEPPER": "runtime-d1-regression-only-otp-pepper-20260830-32chars",
+    "PAWSPACE_IDENTITY_ENV": "sandbox",
+    "PAWSPACE_IDENTITY_TEST_SECRET": "runtime-d1-regression-only-test-secret-20260830-32chars"
   },
   "d1_databases": [
     {
