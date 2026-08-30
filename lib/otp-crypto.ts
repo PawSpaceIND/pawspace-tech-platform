@@ -37,7 +37,7 @@ export async function getOtpSecurityConfig(){
   if(assertionSecret&&equalConstantTime(pepper,assertionSecret))throw new Error("PAWSPACE_OTP_PEPPER must be separate from the identity assertion secret");
   return{
     pepper,
-    identityEnv:String(runtime.PAWSPACE_IDENTITY_ENV||"sandbox").trim().toLowerCase(),
+    identityEnv:String(runtime.PAWSPACE_IDENTITY_ENV||"").trim().toLowerCase(),
     testSecret:String(runtime.PAWSPACE_IDENTITY_TEST_SECRET||"").trim(),
   };
 }
