@@ -2,7 +2,7 @@ import{authError,requirePermission,requireProviderOwnership,resolveActor,securit
 import{assertServiceProofRef}from"../../../lib/service-media-security";
 import{tryQualifyLinkedReferral}from"../../../lib/referral-booking-governance";
 import{notifyBookingLifecycle}from"../../../lib/booking-notifications";
-import{issueUatGovernedInvoice,UAT_GST_DUMMY_GSTIN}from"../../../lib/gst-uat-activation";
+import{finalizeUatCompletionInvoice}from"../../../lib/uat-completion-invoice";
 
 type Db=Awaited<ReturnType<typeof database>>;
 type Row=Record<string,unknown>;
@@ -97,21 +97,11 @@ export async function POST(request:Request){try{const input=await request.json()
       db.prepare("UPDATE customer_grooming_subscriptions SET sessions_reserved=MAX(0,sessions_reserved-?),sessions_consumed=sessions_consumed+?,status=CASE WHEN status='active' AND sessions_consumed+?>=total_sessions THEN 'exhausted' ELSE status END,updated_at=? WHERE id=?").bind(sessionsToConsume,sessionsToConsume,sessionsToConsume,now,usage.plan_code)
     );}
     await db.batch(statements);
-    // UAT PLACEHOLDER GST + provider payout (user-authorized: dummy GSTIN, 18%). Non-production and
-    // fail-safe — if governed issuance fails the booking still completes with the UAT zero-tax invoice.
-    // Computes the taxable base per the UAT rules and issues through gst-accounting.issueInvoice, then
-    // mirrors the tax + payout onto the booking-level records the app reads.
-    try{
-      const engagementModel=String(work.provider_model)==="commission"?"commission":"full_time" as const;
-      const gov=await issueUatGovernedInvoice(db,{bookingId:input.bookingId,customerId:String(booking.customer_id),serviceCode:"grooming",engagementModel,gross:Number(booking.total_amount||0),packageName:String(booking.package_name||""),actorId:actor});
-      if(gov.ok){const c=gov.computation,financeNumber=String((gov.financeInvoice as Row).invoice_number||"");
-        await db.batch([
-          db.prepare("UPDATE booking_invoices SET tax_amount=?,net_amount=?,updated_at=? WHERE booking_id=?").bind(c.gstAmount,c.netAmount,now,input.bookingId),
-          db.prepare("UPDATE booking_tax_readiness SET tax_amount=?,tax_rule_status='uat_placeholder',reason=?,updated_at=? WHERE booking_id=?").bind(c.gstAmount,`UAT non-production ${c.gstRatePercent}% GST (dummy GSTIN ${UAT_GST_DUMMY_GSTIN}); governed finance invoice ${financeNumber}`,now,input.bookingId),
-          db.prepare("UPDATE provider_settlement_readiness SET payout_amount=?,status=?,reason=?,updated_at=? WHERE booking_id=?").bind(c.providerPayout,engagementModel==="commission"?"uat_computed":"not_applicable",`UAT placeholder payout (${c.payoutModel}); provider share ${c.providerSharePercent}% of ${c.payoutBase}`,now,input.bookingId),
-        ]);
-      }
-    }catch{/* fail-safe: placeholder tax must never block completion */}
+    // UAT PLACEHOLDER GST + provider payout (user-authorized: dummy GSTIN, 18%). The shared finalizer
+    // issues the governed UAT invoice and mirrors the tax + payout onto the booking-level records. It is
+    // self-guarding (only acts once the booking is `completed`, which the batch above just set) and
+    // fail-safe — completion never breaks if placeholder tax issuance fails.
+    await finalizeUatCompletionInvoice(db,input.bookingId,actor);
     const referral=await referralQualification(db,input.bookingId,actor);
     await event(db,input.bookingId,"service_completed",actor,{providerId:work.provider_id,invoiceNumber,paymentStatus:String(payment?.status||"unknown"),subscriptionSessionsConsumed:sessionsToConsume,repeatEligibleAt:now+21*86_400_000,taxRuleStatus:"configuration_required",payoutReadiness:String(work.provider_model)==="commission"?"rule_pending":"not_applicable",referral},now);
     await securityAudit(db,actorIdentity,"grooming.complete","booking",input.bookingId,"completed",{providerId:work.provider_id,invoiceNumber,sessionsToConsume,referral});

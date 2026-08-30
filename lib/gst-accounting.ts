@@ -1,7 +1,7 @@
 type Db=D1Database;
 type Row=Record<string,unknown>;
 export const GST_ACCOUNTING_PRODUCTION_READY=false;
-export class ConfigurationRequired extends Error{constructor(public key:string){super(`configuration_required:${key}`);}}
+export class ConfigurationRequired extends Error{readonly key:string;constructor(key:string){super(`configuration_required:${key}`);this.key=key;}}
 const text=(v:unknown)=>String(v??"").trim();
 const num=(v:unknown)=>Number(v??0);
 const id=(p:string)=>`${p}_${crypto.randomUUID().slice(0,16)}`;

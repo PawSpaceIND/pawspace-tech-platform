@@ -1,6 +1,7 @@
 import{authError,authorize,database,securityAudit}from"../../../lib/server-auth";
 import{ensurePaymentReconciliationTables}from"../../../lib/grooming-payment-reconciliation";
-import{issueGroomingInvoice,saveGroomingTaxPolicy}from"../../../lib/grooming-invoice";
+import{saveGroomingTaxPolicy}from"../../../lib/grooming-invoice";
+import{finalizeUatCompletionInvoice}from"../../../lib/uat-completion-invoice";
 
 type Row=Record<string,unknown>;
 
@@ -45,7 +46,7 @@ export async function POST(request:Request){try{
   const action=String(body.action||""),reason=String(body.reason||"");
   let data:unknown;
   if(action==="save_tax_policy")data=await saveGroomingTaxPolicy(db,{cityId:String(body.cityId||"blr"),taxMode:String(body.taxMode||"") as"inclusive"|"exclusive",taxRate:Number(body.taxRate),effectiveFrom:String(body.effectiveFrom||new Date().toISOString().slice(0,10)),reason,actorId:actor.email});
-  else if(action==="issue_invoice")data=await issueGroomingInvoice(db,{bookingId:String(body.bookingId||""),reason,actorId:actor.email});
+  else if(action==="issue_invoice")data=await finalizeUatCompletionInvoice(db,String(body.bookingId||""),actor.email);/* legacy manual issue now delegates to the unified governed UAT invoice module; completion auto-issues too */
   else return Response.json({error:"Unsupported Grooming finance action"},{status:400});
   await securityAudit(db,actor,`grooming.finance.${action}`,"grooming_finance",String(body.bookingId||body.cityId||"blr"),"completed",{liveMoney:false,executionMode:"sandbox_not_connected"});
   return Response.json({data});
