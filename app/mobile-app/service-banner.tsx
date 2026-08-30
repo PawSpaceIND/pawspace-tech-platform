@@ -1,32 +1,29 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
-// Premium trust banner rendered at the top of every service booking screen (and reusable on Home).
-// Real photography from /assets/banners (groomers at work, boarding cuddles, walkers, taxi, food
-// prep) + a trust strip + an honest video slot: the play card is a labelled placeholder until real
-// footage is produced — it never fakes a video that does not exist.
 import { useState } from "react";
 import styles from "./service-banner.module.css";
 
-type BannerSpec = { image: string; alt: string; headline: string; sub: string };
+type BannerSpec = { image: string; alt: string; headline: string; sub: string; review: string };
 
 const BANNERS: Record<string, BannerSpec> = {
-  Grooming: { image: "/assets/breeds/shih-tzu-hero.jpg", alt: "Shih tzu ready for grooming", headline: "Doorstep grooming, beautifully simple", sub: "Choose care, time and preferences in one place" },
-  Training: { image: "/assets/breeds/german-shepherd-hero.jpg", alt: "German Shepherd in training", headline: "Structured training, visible progress", sub: "Build everyday skills, session by session" },
-  Boarding: { image: "/assets/breeds/golden-retriever-hero.jpg", alt: "Golden Retriever ready for boarding", headline: "Home boarding with thoughtful checks", sub: "Stay details, care preferences and updates together" },
-  "Pet Sitting": { image: "/assets/breeds/labrador-retriever-hero.jpg", alt: "Labrador Retriever receiving care at home", headline: "Care in your own home", sub: "A care plan built around your pet" },
-  "Dog Walking": { image: "/assets/banners/walking-husky-forest.jpg", alt: "A large dog enjoying a guided walk", headline: "Big walks with a clear plan", sub: "Scheduled walks, live updates and familiar routines" },
-  "Pet Taxi": { image: "/assets/banners/taxi-car-window.jpg", alt: "Dog looking out of a pet taxi window", headline: "A calmer way to travel together", sub: "Trip details, handover updates and care information in one place" },
-  "Fresh Food": { image: "/assets/banners/food-prep-bowl.jpg", alt: "Fresh pet food being prepared", headline: "Fresh meals, simply ordered", sub: "Explore the catalogue, delivery choices and order updates" },
-  Relocation: { image: "/assets/banners/taxi-vintage-truck.jpg", alt: "Pet travel crate ready for relocation", headline: "Thoughtful support for every move", sub: "Share your plan and let the PawSpace team guide the details" },
+  Grooming: { image: "/assets/banners/grooming-groomer-action.jpg", alt: "PawSpace groomer caring for a dog", headline: "Grooming with a human touch", sub: "Expert hands, calm care and a cleaner booking flow", review: "Google review carousel · Grooming" },
+  Training: { image: "/assets/banners/training-handshake.jpg", alt: "PawSpace trainer working with a dog and pet parent", headline: "Training built around real families", sub: "Clear programmes, visible progress and parent participation", review: "Google review carousel · Training" },
+  Boarding: { image: "/assets/banners/sitter-hug-golden.jpg", alt: "Female home host caring for a Golden Retriever", headline: "A home stay, not a cage", sub: "Comfort, trusted hosts and room to feel at home", review: "Google review carousel · Boarding" },
+  "Pet Sitting": { image: "/assets/banners/sitting-woman-cat.jpg", alt: "Female pet sitter caring for a cat at home", headline: "Care that comes home", sub: "A familiar environment with a trusted sitter", review: "Google review carousel · Pet Sitting" },
+  "Dog Walking": { image: "/assets/banners/walking-leash-city.jpg", alt: "Dog walker taking a pet on a neighbourhood walk", headline: "Happy walks with people you can trust", sub: "Simple scheduling, familiar routines and clear updates", review: "Google review carousel · Dog Walking" },
+  "Pet Taxi": { image: "/assets/banners/taxi-car-window.jpg", alt: "Pet travelling safely inside a car", headline: "Safe travel for pets and parents", sub: "Pickup, handover and trip details in one place", review: "Google review carousel · Pet Taxi" },
+  "Fresh Food": { image: "/assets/banners/food-prep-pouring.jpg", alt: "Fresh pet food being prepared by hand", headline: "Fresh food made with care", sub: "Explore meals, delivery choices and order updates", review: "Google review carousel · Fresh Food" },
+  Relocation: { image: "/assets/banners/taxi-vintage-truck.jpg", alt: "Pet travel and relocation support", headline: "Relocation with calm, guided support", sub: "Domestic and international move assistance from one place", review: "Google review carousel · Relocation" },
 };
 
-const HOME_BANNER: BannerSpec = { image: "/assets/banners/grooming-bag-shihtzu.jpg", alt: "Freshly groomed shih tzu in a PawSpace bag", headline: "PawSpace care in one family record", sub: "Provider details · service updates · one family record" };
+const HOME_BANNER: BannerSpec = { image: "/assets/banners/sitter-hug-golden.jpg", alt: "PawSpace caregiver with a happy pet", headline: "Real care. Real people.", sub: "One familiar PawSpace experience across every service", review: "Google review carousel" };
 
 export default function ServiceBanner({ service, compact }: { service?: string; compact?: boolean }) {
   const spec = (service && BANNERS[service]) || HOME_BANNER;
   const [videoOpen, setVideoOpen] = useState(false);
   return (
     <section className={`${styles.banner} ${compact ? styles.compact : ""}`} aria-label={`${service ?? "PawSpace"} highlights`}>
+      <div className={styles.adSlot}><small>PAWSPACE MEDIA</small><b>Offer / education / partner placement</b></div>
       <figure>
         <img src={spec.image} alt={spec.alt} loading="lazy" />
         <figcaption>
@@ -35,20 +32,22 @@ export default function ServiceBanner({ service, compact }: { service?: string; 
         </figcaption>
       </figure>
       <ul className={styles.trust}>
-        <li>✓ Verification status shown explicitly</li>
-        <li>✓ Updates reflect the active service workflow</li>
-        <li>✓ Invoices follow recorded payment status</li>
-        <li>✓ Cancellation terms shown per service</li>
+        <li>✓ Verified care professional</li>
+        <li>✓ Clear service inclusions</li>
+        <li>✓ Secure booking journey</li>
       </ul>
-      {!compact && (
-        <button type="button" className={styles.video} onClick={() => setVideoOpen(value => !value)} aria-expanded={videoOpen}>
-          <i>▶</i>
-          <span>
-            <b>Watch how {service ? `${service.toLowerCase()} works` : "PawSpace works"}</b>
-            <small>{videoOpen ? "Filming in progress — this slot plays the real service video once produced. No stock footage, only our own team." : "60-second walkthrough · tap to preview slot"}</small>
-          </span>
-        </button>
-      )}
+      <button type="button" className={styles.video} onClick={() => setVideoOpen(value => !value)} aria-expanded={videoOpen}>
+        <i>▶</i>
+        <span>
+          <b>{service ? `${service} video` : "PawSpace service video"}</b>
+          <small>{videoOpen ? "Video placeholder ready for the approved PawSpace service film." : "60-second service guide · video slot"}</small>
+        </span>
+      </button>
+      <div className={styles.reviews} aria-label={spec.review}>
+        <div><b>4.9 ★</b><span>Google Reviews</span></div>
+        <p>{spec.review}</p>
+        <small>Scroll recent verified customer feedback here</small>
+      </div>
     </section>
   );
 }
