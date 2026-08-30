@@ -6,6 +6,8 @@ import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 installWorkersHooks("__T1_CUSTOMER_DB__", "__T1_CUSTOMER_ENV__");
 
 const SECRET = "e2e100-t1-customer-identity-secret-000000000000000000";
+const OTP_PEPPER = "test-only-customer-otp-pepper-0123456789abcdef0123456789abcdef";
+const TEST_SECRET = "test-only-customer-identity-secret-0123456789abcdef0123456789abcdef";
 
 function makeD1(sqlite) {
   function statement(sql, args) {
@@ -36,7 +38,12 @@ async function fresh() {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
   globalThis.__T1_CUSTOMER_DB__ = db;
-  globalThis.__T1_CUSTOMER_ENV__ = { PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: SECRET };
+  globalThis.__T1_CUSTOMER_ENV__ = {
+    PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: SECRET,
+    PAWSPACE_OTP_PEPPER: OTP_PEPPER,
+    PAWSPACE_IDENTITY_ENV: "sandbox",
+    PAWSPACE_IDENTITY_TEST_SECRET: TEST_SECRET,
+  };
   const account = await import("../lib/customer-account.ts");
   await account.ensureCustomerAccountTables(db);
   return { sqlite, db, account };
@@ -44,7 +51,7 @@ async function fresh() {
 
 async function register(db, phone, { name, cityId }) {
   const otp = await import("../lib/customer-otp.ts");
-  const challenge = await otp.requestCustomerOtp(db, { phone });
+  const challenge = await otp.requestCustomerOtpForSandbox(db, { phone, testSecret: TEST_SECRET });
   return otp.verifyCustomerOtp(db, {
     challengeId: challenge.challengeId,
     code: challenge.sandboxCode,
@@ -56,8 +63,8 @@ async function register(db, phone, { name, cityId }) {
 test("concurrent OTP registrations for one phone bind to exactly one canonical customer", async () => {
   const { sqlite, db } = await fresh();
   const otp = await import("../lib/customer-otp.ts");
-  const first = await otp.requestCustomerOtp(db, { phone: "+91 90000 01001" });
-  const second = await otp.requestCustomerOtp(db, { phone: "9000001001" });
+  const first = await otp.requestCustomerOtpForSandbox(db, { phone: "+91 90000 01001", testSecret: TEST_SECRET });
+  const second = await otp.requestCustomerOtpForSandbox(db, { phone: "9000001001", testSecret: TEST_SECRET });
 
   const verified = await Promise.all([
     otp.verifyCustomerOtp(db, { challengeId: first.challengeId, code: first.sandboxCode, name: "First Request", cityId: "blr" }),
