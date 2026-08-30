@@ -28,8 +28,8 @@ test("customer acceptance scopes video-guide counts to their labelled region", (
 });
 
 test("customer acceptance waits for async controls instead of using fixed quote delays", () => {
-  assert.match(source, /async function ready\(page,button,label\)/);
-  assert.match(source, /button\.click\(\{trial:true,timeout:TIMEOUT\}\)/);
+  assert.match(source, /async function ready\(page,button,label,timeout=TIMEOUT\)/);
+  assert.match(source, /button\.click\(\{trial:true,timeout\}\)/);
   assert.doesNotMatch(source, /waitForTimeout\((900|1000)\)/);
 });
 
