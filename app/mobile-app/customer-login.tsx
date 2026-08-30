@@ -28,7 +28,8 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
   // React has attached the input/change/click handlers; otherwise a fast user (or UAT robot) can type
   // and click into the SSR HTML before hydration, silently losing the interaction with no OTP request.
   useEffect(() => {
-    setHydrated(true);
+    queueMicrotask(() => {
+      setHydrated(true);
     if (!persistDevOtpSession) return;
     try {
       const raw = sessionStorage.getItem(DEV_OTP_SESSION_KEY);
