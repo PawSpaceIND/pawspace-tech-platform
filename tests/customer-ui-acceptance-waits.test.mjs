@@ -45,3 +45,12 @@ test("customer acceptance observes async final mutations for the full timeout", 
   assert.match(source, /Promise\.race\(\[observed,page\.waitForTimeout\(TIMEOUT\)\]\)/);
   assert.doesNotMatch(source, /page\.waitForTimeout\(1100\)/);
 });
+
+test("customer acceptance allows for isolated Worker cold starts", () => {
+  assert.match(source, /readArg\("timeout","45000"\)/);
+});
+
+test("food acceptance targets the accessible address label used after UX enhancement", () => {
+  assert.match(source, /getByLabel\("Delivery address",\{exact:true\}\)/);
+  assert.doesNotMatch(source, /getByPlaceholder\("House, street, area"\)/);
+});
