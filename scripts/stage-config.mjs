@@ -3,7 +3,7 @@
 // pin sandbox mode. Run AFTER `npm run build`, BEFORE `wrangler deploy` (from dist/server).
 //
 // SECRETS: this script configures the staging UAT sign-in, and it used to carry a committed fallback
-// for each of the three credentials involved — the access code, the UAT signing key and the
+// for each of the credentials involved — the access code, the UAT signing key and the
 // identity-assertion secret. Because .github/workflows/deploy-staging.yml passed only STAGING_D1_ID,
 // those fallbacks were not merely available, they were what every CI deploy actually shipped, and all
 // three were readable in a public repository. The signing key is what mints the session cookie
@@ -18,6 +18,7 @@
 //   PAWSPACE_UAT_ACCESS_CODE               shared code testers type at /staging-login (>=32 chars)
 //   PAWSPACE_UAT_SIGNING_KEY               HMAC key for the UAT session cookie   (>=32 chars)
 //   PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT signs customer/partner OTP assertions (>=32 chars)
+//   PAWSPACE_OTP_PEPPER                    HMAC key for OTP challenge storage     (>=32 chars)
 import { readFileSync, writeFileSync } from "node:fs";
 
 const path = "dist/server/wrangler.json";
@@ -58,6 +59,7 @@ const REQUIRED = [
   ["PAWSPACE_UAT_ACCESS_CODE", 32, "Testers type this at /staging-login."],
   ["PAWSPACE_UAT_SIGNING_KEY", 32, "This signs the UAT session cookie that resolveActor trusts."],
   ["PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT", 32, "This signs customer and partner OTP identity assertions."],
+  ["PAWSPACE_OTP_PEPPER", 32, "This HMACs customer and partner OTP challenges at rest."],
 ];
 for (const [name, minLength, purpose] of REQUIRED) {
   const result = readSecret(process.env, name, minLength, purpose);
@@ -76,14 +78,15 @@ cfg.name = "pawspace-staging";
 cfg.topLevelName = "pawspace-staging";
 cfg.d1_databases = [{ binding: "DB", database_name: "pawspace-staging", database_id: d1Id }];
 
-// Only NON-SECRET configuration is serialized into wrangler.json. The three UAT credentials are
-// validated above (fail-closed) but are DELIBERATELY NOT written here: wrangler.json is a generated
+// Only NON-SECRET configuration is serialized into wrangler.json. The required UAT/security credentials
+// are validated above (fail-closed) but are DELIBERATELY NOT written here: wrangler.json is a generated
 // deploy artifact, and anything under `vars` becomes a plaintext Worker variable readable in the
 // dashboard, in the file, and in any build log that echoes it. The credentials are installed into the
 // Worker runtime as Cloudflare Worker SECRETS (`wrangler deploy --secrets-file`) by the deploy step.
 cfg.vars = {
   ...(cfg.vars || {}),
   PAWSPACE_PAYMENT_ENV: "sandbox",
+  PAWSPACE_IDENTITY_ENV: "sandbox",
   PAWSPACE_UAT_LOGIN: "on",
   PAWSPACE_MAPS_ENV: "sandbox",
   PAWSPACE_COMMUNICATION_ENV: "uat",
@@ -100,6 +103,6 @@ writeFileSync(path, JSON.stringify(cfg));
 
 // Report only what is safe to read in a build log. The access code used to be printed here, which put
 // it in every CI log for anyone with repository read access.
-console.log(`Staging config written → name=pawspace-staging, DB=${d1Id}, PAWSPACE_PAYMENT_ENV=sandbox, UAT_LOGIN=on, UAT integrations locked`);
+console.log(`Staging config written → name=pawspace-staging, DB=${d1Id}, PAWSPACE_PAYMENT_ENV=sandbox, PAWSPACE_IDENTITY_ENV=sandbox, UAT_LOGIN=on, UAT integrations locked`);
 console.log(`Private media binding: ${r2BucketName ? "configured" : "not configured"}`);
-console.log("UAT credentials were validated from the environment, are NOT written to wrangler.json, and are uploaded as Cloudflare Worker secrets — nothing secret is logged.");
+console.log("UAT/security credentials were validated from the environment, are NOT written to wrangler.json, and are uploaded as Cloudflare Worker secrets — nothing secret is logged.");
