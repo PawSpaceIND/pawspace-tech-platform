@@ -51,10 +51,18 @@ function makeD1(sqlite) {
 }
 
 const SECRET = "uat-signing-secret-0123456789abcdef0123456789abcdef";
+const OTP_PEPPER = "test-only-comms-otp-pepper-0123456789abcdef0123456789abcdef";
+const TEST_SECRET = "test-only-comms-identity-secret-0123456789abcdef0123456789abcdef";
 function fresh() {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
-  globalThis.__PAWSPACE_TEST_ENV = { DB: db, PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: SECRET, PAWSPACE_IDENTITY_ENV: "sandbox" };
+  globalThis.__PAWSPACE_TEST_ENV = {
+    DB: db,
+    PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: SECRET,
+    PAWSPACE_OTP_PEPPER: OTP_PEPPER,
+    PAWSPACE_IDENTITY_ENV: "sandbox",
+    PAWSPACE_IDENTITY_TEST_SECRET: TEST_SECRET,
+  };
   // canonical_customers from its owning DDL (customer-otp upserts into it)
   const account = read("lib/customer-account.ts");
   for (const match of account.matchAll(/\.prepare\(\s*(["'`])([\s\S]*?)\1/g)) {
@@ -68,10 +76,10 @@ function fresh() {
 // ---------------------------------------------------------------------------
 
 test("OTP: expiry (5 min), max attempts, consumed rejection - all enforced by real execution", async () => {
-  const { requestCustomerOtp, verifyCustomerOtp } = await import("../lib/customer-otp.ts");
+  const { requestCustomerOtpForSandbox, verifyCustomerOtp } = await import("../lib/customer-otp.ts");
   const { sqlite, db } = fresh();
 
-  const challenge = await requestCustomerOtp(db, { phone: "+91 98765 43210" });
+  const challenge = await requestCustomerOtpForSandbox(db, { phone: "+91 98765 43210", testSecret: TEST_SECRET });
   assert.equal(challenge.expiresInSeconds, 300);
   assert.equal(challenge.sandboxDelivery, true, "sandbox delivery is honestly labeled");
 
@@ -84,12 +92,12 @@ test("OTP: expiry (5 min), max attempts, consumed rejection - all enforced by re
   assert.equal(sqlite.prepare("SELECT attempts FROM customer_otp_challenges WHERE id=?").get(challenge.challengeId).attempts, 5);
 
   // Expiry: a fresh challenge forced past its window is rejected.
-  const expired = await requestCustomerOtp(db, { phone: "9876543211" });
+  const expired = await requestCustomerOtpForSandbox(db, { phone: "9876543211", testSecret: TEST_SECRET });
   sqlite.prepare("UPDATE customer_otp_challenges SET expires_at=? WHERE id=?").run(Date.now() - 1000, expired.challengeId);
   await assert.rejects(() => verifyCustomerOtp(db, { challengeId: expired.challengeId, code: expired.sandboxCode }), /expired/);
 
   // Consumed: a verified challenge cannot verify again.
-  const good = await requestCustomerOtp(db, { phone: "9876543212" });
+  const good = await requestCustomerOtpForSandbox(db, { phone: "9876543212", testSecret: TEST_SECRET });
   const verified = await verifyCustomerOtp(db, { challengeId: good.challengeId, code: good.sandboxCode });
   assert.ok(verified.assertion.includes("."), "verification mints a signed assertion");
   await assert.rejects(() => verifyCustomerOtp(db, { challengeId: good.challengeId, code: good.sandboxCode }), /already been used/);
@@ -98,9 +106,9 @@ test("OTP: expiry (5 min), max attempts, consumed rejection - all enforced by re
 test("OTP double-consume race: two concurrent correct verifies mint exactly ONE assertion", async () => {
   // Defect fixed in this audit (lib/customer-otp.ts): the consume UPDATE had no consumed=0 guard,
   // so both racers passed the read-side check and each minted a signed assertion from one OTP.
-  const { requestCustomerOtp, verifyCustomerOtp } = await import("../lib/customer-otp.ts");
+  const { requestCustomerOtpForSandbox, verifyCustomerOtp } = await import("../lib/customer-otp.ts");
   const { db } = fresh();
-  const challenge = await requestCustomerOtp(db, { phone: "9876543213" });
+  const challenge = await requestCustomerOtpForSandbox(db, { phone: "9876543213", testSecret: TEST_SECRET });
   const results = await Promise.allSettled([
     verifyCustomerOtp(db, { challengeId: challenge.challengeId, code: challenge.sandboxCode }),
     verifyCustomerOtp(db, { challengeId: challenge.challengeId, code: challenge.sandboxCode }),
@@ -117,10 +125,10 @@ test("OTP double-consume race: two concurrent correct verifies mint exactly ONE 
 // ---------------------------------------------------------------------------
 
 test("assertion: replay rejected 409 (incl. concurrent replay - exactly one accepted), tamper rejected 401", async () => {
-  const { requestCustomerOtp, verifyCustomerOtp } = await import("../lib/customer-otp.ts");
+  const { requestCustomerOtpForSandbox, verifyCustomerOtp } = await import("../lib/customer-otp.ts");
   const { verifyIdentityAssertion } = await import("../lib/verified-identity-assertion.ts");
   const { db } = fresh();
-  const challenge = await requestCustomerOtp(db, { phone: "9876543214" });
+  const challenge = await requestCustomerOtpForSandbox(db, { phone: "9876543214", testSecret: TEST_SECRET });
   const { assertion } = await verifyCustomerOtp(db, { challengeId: challenge.challengeId, code: challenge.sandboxCode });
 
   // Concurrent replay of the same assertion: the atomic nonce claim admits exactly one.
