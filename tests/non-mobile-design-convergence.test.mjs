@@ -36,3 +36,17 @@ test("canonical partner hub is no longer an inline-styled prototype", () => {
   assert.doesNotMatch(source, /style=\{/);
   assert.match(source, /CanonicalGroomingJobs/);
 });
+
+test("canonical grooming board collapses below tablet so /partner has no horizontal overflow", () => {
+  // The two-column work-order board carried fixed minmax minimums (300px + 420px + gap)
+  // that exceeded the tablet content width and pushed a 19px horizontal overflow at 768px.
+  // The board is now a responsive CSS-module grid that collapses to a single column at
+  // tablet-and-below, keeping the desktop two-column layout above the breakpoint.
+  const source = read("app/partner-app/canonical-grooming-jobs.tsx");
+  assert.match(source, /canonical-grooming-jobs\.module\.css/, "board must use its responsive stylesheet");
+  assert.match(source, /className=\{styles\.board\}/, "board grid must be class-driven, not a fixed inline grid");
+  assert.doesNotMatch(source, /gridTemplateColumns:"minmax\(300px,\.9fr\) minmax\(420px,1\.1fr\)"/, "the overflowing fixed inline grid must be gone");
+  const css = read("app/partner-app/canonical-grooming-jobs.module.css");
+  assert.match(css, /\.board\s*\{[^}]*grid-template-columns:\s*minmax\(300px, ?\.9fr\) minmax\(420px, ?1\.1fr\)/, "desktop two-column layout is preserved");
+  assert.match(css, /@media\s*\(max-width:\s*900px\)\s*\{[^}]*\.board\s*\{[^}]*grid-template-columns:\s*1fr/s, "board collapses to one column at tablet-and-below");
+});
