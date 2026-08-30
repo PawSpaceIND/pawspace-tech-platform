@@ -28,7 +28,9 @@ jobs:
           cache: npm
       - name: Install verified dependencies
         run: npm run install:ci
-      - name: Finance P0/P1 concurrency and duplicate acceptance
+      - name: Finance P0/P1 source contracts
         run: node --test tests/financial-lifecycle-concurrency.test.mjs
+      - name: Finance P0/P1 executable concurrency and duplicate acceptance
+        run: node --test tests/financial-lifecycle-executable-concurrency.test.mjs
       - name: Typecheck
         run: npm run typecheck
