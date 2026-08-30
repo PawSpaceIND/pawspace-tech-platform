@@ -180,6 +180,12 @@ export default function PremiumDiscoveryHome({
       {visible.length === 0 && <p className={styles.empty}>No PawSpace service matches “{query}”.</p>}
     </section>
 
+    <section className={styles.specialCare} aria-label="Sensitive care">
+      <img src="/assets/banners/sitter-handshake-bw.jpg" alt="A quiet moment of care and remembrance" />
+      <div><small>SPECIAL CARE</small><h2>Funeral & Memorial</h2><p>Compassionate support and remembrance when a family needs us most.</p></div>
+      <button onClick={() => window.location.assign("/funeral-memorial")} aria-label="Open Funeral and Memorial support">→</button>
+    </section>
+
     <section className={styles.reviewsSection} aria-label="Google review placements">
       <div className={styles.sectionHead}>
         <div><small>GOOGLE REVIEWS</small><h2>Loved by pet parents</h2></div>
