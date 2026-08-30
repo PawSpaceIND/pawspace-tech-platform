@@ -166,7 +166,7 @@ export default function PremiumDiscoveryHome({
       <div className={styles.offerDots}>{sponsoredOffers.map((item, index) => <button key={item.title} aria-label={`Show ${item.brand}`} className={index === activeOffer ? styles.selectedOffer : ""} onClick={() => setActiveOffer(index)} />)}</div>
     </section>
 
-    <section className={styles.quick}>
+    <section className={styles.quick} aria-label="Care services">
       <div className={styles.sectionHead}><div><small>BOOK IN A FEW TAPS</small><h2>Care for every kind of day</h2></div><button onClick={onShowBookings}>Your bookings →</button></div>
       <div className={styles.grid}>
         {careServices.map((service) => {
@@ -181,7 +181,7 @@ export default function PremiumDiscoveryHome({
       {careServices.length === 0 && <p className={styles.empty}>No care service matches “{query}”.</p>}
     </section>
 
-    <section className={styles.videoSection}>
+    <section className={styles.videoSection} aria-label="Service video guides">
       <div className={styles.sectionHead}><div><small>SIX SERVICE VIDEO SLOTS</small><h2>Watch before you book</h2></div><span>Swipe →</span></div>
       <div className={styles.videoRail}>
         {videoServices.map((service) => <button className={styles.videoCard} key={service.serviceCode} onClick={() => setVideoGuide(service)}>

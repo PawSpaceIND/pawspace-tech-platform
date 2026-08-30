@@ -128,7 +128,7 @@ async function ensureDog(page) {
 }
 
 function careSection(page) {
-  return page.locator("section").filter({ hasText: "Care for every kind of day" }).first();
+  return page.getByRole("region", { name: "Care services" });
 }
 
 async function home(page) {

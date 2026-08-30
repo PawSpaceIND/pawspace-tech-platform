@@ -1,4 +1,5 @@
 import type{Provider}from"../backend/src/domain";
+import{assertProviderAssignable,filterAssignableProviders}from"./provider-assignment-eligibility";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -70,7 +71,6 @@ export async function loadGovernedProviders(db:Db,cityId:string,zoneId:string,se
   // pool immediately. This is the READ side; the authoritative guarantee is the write-time check in the
   // reservation and offer inserts, because a filter here alone loses the race against a revocation that
   // lands between the decision and the commit. [PTJA-W1-F53]
-  const{filterAssignableProviders}=await import("./provider-assignment-eligibility");
   return filterAssignableProviders(db,available,at.getTime());}
 
 export async function getGovernedProvider(db:Db,providerId:string){await seedProviderCapacityDefaults(db);const row=await db.prepare("SELECT * FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();return row?rowToProvider(row):null;}
@@ -95,7 +95,6 @@ export async function getProviderAcceptanceTimeout(db:Db,providerId:string){awai
 export async function createAssignmentOffer(db:Db,input:{groupId:string;bookingId?:string;providerId:string;attemptNo?:number}){await seedProviderCapacityDefaults(db);
   // An offer IS an assignment write - it puts a job in front of a provider and invites them to accept -
   // so it is gated exactly like the reservation. [PTJA-W1-F53]
-  const{assertProviderAssignable}=await import("./provider-assignment-eligibility");
   await assertProviderAssignable(db,input.providerId);const timeout=await getProviderAcceptanceTimeout(db,input.providerId),now=Date.now(),expiresAt=now+timeout*60_000;await db.prepare("INSERT INTO provider_assignment_offers (group_id,booking_id,provider_id,status,offered_at,expires_at,responded_at,response_reason,attempt_no,updated_at) VALUES (?,?,?,'pending',?,?,NULL,NULL,?,?) ON CONFLICT(group_id) DO UPDATE SET booking_id=COALESCE(excluded.booking_id,booking_id),provider_id=excluded.provider_id,status='pending',offered_at=excluded.offered_at,expires_at=excluded.expires_at,responded_at=NULL,response_reason=NULL,attempt_no=excluded.attempt_no,updated_at=excluded.updated_at").bind(input.groupId,input.bookingId??null,input.providerId,now,expiresAt,input.attemptNo??1,now).run();return{timeoutMinutes:timeout,expiresAt};}
 
 export async function recordProviderPerformance(db:Db,input:{providerId:string;groupId?:string;bookingId?:string;eventType:string;impactScore:number;detail?:unknown}){await ensureProviderCapacityTables(db);await db.prepare("INSERT INTO provider_performance_events (id,provider_id,group_id,booking_id,event_type,impact_score,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.providerId,input.groupId??null,input.bookingId??null,input.eventType,input.impactScore,JSON.stringify(input.detail??{}),Date.now()).run();}

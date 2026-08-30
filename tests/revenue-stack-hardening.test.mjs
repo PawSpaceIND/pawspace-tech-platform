@@ -223,6 +223,10 @@ test("real execution: leadership report snapshots the command truth and replays 
   assert.equal(generate.body.data.duplicatePrevented, false);
   const replay = await call(leadershipRoute.POST, "POST", { action: "generate_report", missionId, periodType: "mission", idempotencyKey: "run-1" });
   assert.equal(replay.body.data.duplicatePrevented, true, "same idempotency key never creates a second run");
+  const rebound = await call(leadershipRoute.POST, "POST", { action: "generate_report", missionId, periodType: "daily", idempotencyKey: "run-1" });
+  assert.equal(rebound.status, 409, "the same key cannot be rebound to a different reporting period");
+  const badClock = await call(leadershipRoute.POST, "POST", { action: "generate_report", missionId, periodType: "mission", idempotencyKey: "run-bad-clock", asOf: "not-a-number" });
+  assert.equal(badClock.status, 400, "an invalid snapshot clock is rejected instead of producing a corrupt report");
   const directory = await call(leadershipRoute.GET, "GET", `missionId=${missionId}`);
   assert.equal(directory.status, 200);
   assert.equal(directory.body.runs.length, 1);

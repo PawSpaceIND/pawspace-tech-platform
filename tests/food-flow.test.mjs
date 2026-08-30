@@ -150,6 +150,21 @@ test("real execution: quoteFoodCart returns server-priced quotes summing to the 
   });
 });
 
+test("real execution: Koramangala coverage exposes orderable UAT Food inventory", async () => {
+  await withFoodBackend(async ({ db }) => {
+    const { resolveZoneByPincode, SERVICE_ZONES } = await import("../lib/service-zones.ts");
+    const { listFoodCatalogue } = await import("../lib/food-governance.ts");
+    const coverage = await resolveZoneByPincode(db, "560034");
+
+    assert.equal(coverage?.assignment.zoneId, "blr-south", "Koramangala resolves to the governed South Bengaluru zone");
+    for (const zone of Object.values(SERVICE_ZONES).filter((item) => item.serviceAvailable)) {
+      const catalogue = await listFoodCatalogue(db, zone.zoneId);
+      assert.ok(catalogue.length > 0, `${zone.zoneId} receives the UAT catalogue`);
+      assert.ok(catalogue.every((item) => Number(item.uat_available_units) > 0), `${zone.zoneId} has synthetic UAT stock`);
+    }
+  });
+});
+
 test("real execution: placeQuotedFoodOrders creates one canonical order per quote with reservations", async () => {
   await withFoodBackend(async ({ sqlite }) => {
     const { quoteFoodCart, placeQuotedFoodOrders } = await import("../lib/food-client.ts");

@@ -4,6 +4,9 @@ import fs from "node:fs";
 
 const css = fs.readFileSync(new URL("../app/review-overrides.css", import.meta.url), "utf8");
 const providerTraining = fs.readFileSync(new URL("../app/team/people/provider-training/page.tsx", import.meta.url), "utf8");
+const customerExperienceCss = fs.readFileSync(new URL("../app/team/customer-experience/whatsapp-inbox.module.css", import.meta.url), "utf8");
+const customerExperience = fs.readFileSync(new URL("../app/team/customer-experience/page.tsx", import.meta.url), "utf8");
+const whatsappTemplates = fs.readFileSync(new URL("../app/team/whatsapp/templates/page.tsx", import.meta.url), "utf8");
 
 function has(pattern, message) {
   assert.match(css, pattern, message);
@@ -36,4 +39,20 @@ test("phone grids, flex rows and fixed-width controls adapt instead of hiding ov
 test("provider training source grid can shrink at the 768px tablet closure viewport", () => {
   assert.match(providerTraining, /gridTemplateColumns:\"minmax\(0,\.9fr\) minmax\(0,1\.1fr\)\"/, "provider training columns must use zero intrinsic minimums");
   assert.doesNotMatch(providerTraining, /minmax\(360px,\.9fr\) minmax\(480px,1\.1fr\)/, "provider training must not restore the 856px rigid tablet grid");
+});
+
+test("CX inspector collapses before the Operations shell clips it on desktop", () => {
+  assert.match(customerExperienceCss, /@media\(max-width:1600px\)/, "the inbox must account for the outer Operations sidebar and workspace padding");
+  assert.doesNotMatch(customerExperienceCss, /@media\(max-width:1320px\)/, "the old viewport-only breakpoint clipped the inspector at 1440px");
+  assert.match(customerExperienceCss, /\.inspector\{grid-column:2\/4;[^}]*max-height:none\}/, "the collapsed inspector must move below the conversation columns without clipping controls");
+});
+
+test("CX status controls cannot advertise an action without a selected conversation", () => {
+  assert.match(customerExperience, /disabled=\{busy \|\| !selected\}[\s\S]{0,260}>Await customer<\/Button>/);
+  assert.match(customerExperience, /disabled=\{busy \|\| !selected\}[\s\S]{0,260}>Resolve<\/Button>/);
+});
+
+test("WhatsApp template Clear is enabled only when the editor has state to clear", () => {
+  assert.match(whatsappTemplates, /const draftDirty =/);
+  assert.match(whatsappTemplates, /disabled=\{busy \|\| !draftDirty\}[\s\S]{0,160}>Clear<\/Button>/);
 });
