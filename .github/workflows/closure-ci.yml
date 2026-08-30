@@ -279,7 +279,7 @@ jobs:
       # the fallback on the same runner, so neither branch can rot unnoticed.
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.16.0'
           cache: npm
       - run: npm ci
       - name: Collect the suites that install the shared workers hooks
