@@ -2,7 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import * as nodeModule from "node:module";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+installWorkersHooks("__PAWSPACE_TEST_DB__", "__PAWSPACE_TEST_ENV");
 
 // ---------------------------------------------------------------------------
 // Provider identity -> onboarding -> KYC -> staff review -> activation -> capacity
@@ -18,33 +20,6 @@ import * as nodeModule from "node:module";
 // internal contract around it — that an unconnected verifier yields `pending` and never `verified`,
 // and that nothing downstream treats "not checked" as "checked".
 // ---------------------------------------------------------------------------
-
-const WORKERS_SHIM = `export const env = new Proxy({}, { get: (_, key) => globalThis.__PAWSPACE_TEST_ENV?.[key] });`;
-const workersUrl = `data:text/javascript,${encodeURIComponent(WORKERS_SHIM)}`;
-
-if (typeof nodeModule.registerHooks === "function") {
-  nodeModule.registerHooks({
-    resolve(specifier, context, nextResolve) {
-      if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
-      try { return nextResolve(specifier, context); }
-      catch (error) {
-        if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
-        throw error;
-      }
-    },
-  });
-} else {
-  const hook = `const workersUrl=${JSON.stringify(workersUrl)};
-  export async function resolve(specifier, context, nextResolve) {
-    if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
-    try { return await nextResolve(specifier, context); }
-    catch (error) {
-      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(specifier + ".ts", context);
-      throw error;
-    }
-  }`;
-  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
-}
 
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -65,6 +40,8 @@ function makeD1(sqlite) {
 }
 
 const OPS = "ops.one@pawspace.in";
+const OTP_PEPPER = "provider-identity-test-otp-pepper-0123456789abcdef0123456789";
+const TEST_SECRET = "provider-identity-test-secret-0123456789abcdef0123456789";
 
 /**
  * A UAT signing secret is required by the real assertion signer. It is obviously synthetic and local to
@@ -73,7 +50,14 @@ const OPS = "ops.one@pawspace.in";
 function fresh() {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
-  const env = { DB: db, PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: "not-a-real-uat-signing-secret-for-tests" };
+  const env = {
+    DB: db,
+    PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: "not-a-real-uat-signing-secret-for-tests",
+    PAWSPACE_OTP_PEPPER: OTP_PEPPER,
+    PAWSPACE_IDENTITY_ENV: "sandbox",
+    PAWSPACE_IDENTITY_TEST_SECRET: TEST_SECRET,
+  };
+  globalThis.__PAWSPACE_TEST_DB__ = db;
   globalThis.__PAWSPACE_TEST_ENV = env;
   return { sqlite, db, env };
 }
@@ -91,7 +75,7 @@ const mod = {
 /** Drive the REAL OTP flow end to end and return the provider it created. */
 async function signUpProvider(db, { phone, name, cityId = "blr" }) {
   const otp = await mod.otp();
-  const challenge = await otp.requestPartnerOtp(db, { phone });
+  const challenge = await otp.requestPartnerOtpForSandbox(db, { phone, testSecret: TEST_SECRET });
   const verified = await otp.verifyPartnerOtp(db, { challengeId: challenge.challengeId, code: challenge.sandboxCode, name, cityId });
   return { challenge, verified, providerId: verified.providerId };
 }
@@ -102,11 +86,11 @@ test("JOURNEY 1 — a provider is created only by completing the real OTP flow, 
   const { sqlite, db } = fresh();
   const otp = await mod.otp();
 
-  const challenge = await otp.requestPartnerOtp(db, { phone: "9000000001" });
+  const challenge = await otp.requestPartnerOtpForSandbox(db, { phone: "9000000001", testSecret: TEST_SECRET });
   // The external SMS dependency is OFF and says so, rather than reporting a delivery that never happened.
   assert.equal(challenge.liveSmsDelivered, false, "no SMS gateway is connected; delivery must not be claimed");
   assert.equal(challenge.sandboxDelivery, true);
-  assert.ok(challenge.sandboxCode, "the sandbox returns the code in-band precisely because it did not send it");
+  assert.ok(challenge.sandboxCode, "the guarded sandbox helper returns the code only with the dedicated test credential");
 
   // No provider exists until the code is actually verified.
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM canonical_providers").get().n, 0,
@@ -257,7 +241,6 @@ test("KYC — a rejected check is recorded as failed and does not decay into pen
 });
 
 // --- 4. availability authority: the defect this file exists for --------------------------------
-
 test("LIFECYCLE — a provider may make itself unavailable and clear its OWN window", async () => {
   const { db } = fresh();
   const capacity = await mod.capacity();
