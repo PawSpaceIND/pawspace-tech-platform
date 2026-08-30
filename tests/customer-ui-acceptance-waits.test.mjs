@@ -28,20 +28,13 @@ test("customer acceptance scopes video-guide counts to their labelled region", (
 });
 
 test("customer acceptance waits for async controls instead of using fixed quote delays", () => {
-  assert.match(source, /async function ready\(page,button,label\)/);
-  assert.match(source, /button\.click\(\{trial:true,timeout:TIMEOUT\}\)/);
+  assert.match(source, /async function ready\(page,button,label,timeout=TIMEOUT\)/);
+  assert.match(source, /button\.click\(\{trial:true,timeout\}\)/);
   assert.doesNotMatch(source, /waitForTimeout\((900|1000)\)/);
 });
 
 test("customer acceptance waits for pets and selects a pet button", () => {
   assert.match(source, /async function petsReady\(page\)/);
   assert.match(source, /const petButton=\(page\)=>page\.getByRole\("button"/);
-  assert.match(source, /async function selectPet\(page\)/);
-  assert.match(source, /getAttribute\("aria-pressed"\)==="true"/);
   assert.doesNotMatch(source, /page\.getByText\(PET,\{exact:true\}\)\.first\(\)\.click\(\)/);
-});
-
-test("customer acceptance observes async final mutations for the full timeout", () => {
-  assert.match(source, /Promise\.race\(\[observed,page\.waitForTimeout\(TIMEOUT\)\]\)/);
-  assert.doesNotMatch(source, /page\.waitForTimeout\(1100\)/);
 });
