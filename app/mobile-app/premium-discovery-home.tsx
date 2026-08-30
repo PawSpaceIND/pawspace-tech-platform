@@ -89,6 +89,7 @@ export default function PremiumDiscoveryHome({
     () => services.filter((service) => `${service.name} ${service.subtitle}`.toLowerCase().includes(query.trim().toLowerCase())),
     [query, services],
   );
+  const careServices = visible;
   const videoServices = services.filter((service) => VIDEO_SERVICE_CODES.includes(service.serviceCode));
   const petName = pet?.name || "your pet";
   const firstName = customerName?.split(" ")[0];
@@ -148,6 +149,7 @@ export default function PremiumDiscoveryHome({
         <button onClick={() => onOpen("grooming")}>Book a service <span>→</span></button>
       </div>
       <img src="/assets/banners/grooming-groomer-action.jpg" alt="PawSpace care professional with a pet" />
+      <span className={styles.heroPaw} aria-hidden="true">🐾</span>
     </section>
 
     <section className={styles.proofStrip} aria-label="PawSpace trust proof">
@@ -163,11 +165,12 @@ export default function PremiumDiscoveryHome({
       </div>
 
       <div className={styles.serviceGrid}>
-        {visible.map((service) => {
+        {careServices.map((service) => {
           const paused = disabledServices.has(service.serviceCode);
           const visual = serviceVisuals[service.serviceCode] ?? { image: service.image, alt: service.imageAlt };
           return <button key={service.serviceCode} className={styles.serviceCard} onClick={() => onOpen(service.serviceCode)} disabled={paused}>
             <div className={styles.serviceVisual}><img src={visual.image} alt={visual.alt} /></div>
+            <span className={styles.serviceIcon} aria-hidden="true">✦</span>
             <div className={styles.serviceCopy}>
               <strong>{service.name}</strong>
               <small>{paused ? "Temporarily paused" : serviceShortCopy[service.serviceCode] || service.subtitle}</small>
