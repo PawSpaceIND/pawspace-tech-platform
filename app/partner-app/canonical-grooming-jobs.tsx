@@ -2,6 +2,7 @@
 
 import{useEffect,useMemo,useState}from"react";
 import GroomingRouteCard from"./grooming-route-card";
+import styles from"./canonical-grooming-jobs.module.css";
 
 type Pet={id:string;name:string;species:string;breed:string;vaccinationStatus:string};
 type Event={eventType:string;entityType:string;actorId:string;detail:Record<string,unknown>;occurredAt:number};
@@ -33,7 +34,7 @@ export default function CanonicalGroomingJobs(){
   const actionLabel=nextAction==="accept"?"Accept job":nextAction==="on_the_way"?"Start journey":nextAction==="arrived"?"Mark arrived":nextAction==="start_service"?"Start service":nextAction==="add_proof"?"Add UAT proof":nextAction==="complete"?"Complete job":"Closed";
   const canDecline=Boolean(selected&&selected.providerModel==="commission"&&(selected.status==="confirmed"||selected.workOrderStatus==="awaiting_acceptance"));
 
-  return <div style={{display:"grid",gridTemplateColumns:"minmax(300px,.9fr) minmax(420px,1.1fr)",gap:18}}>
+  return <div className={styles.board}>
     <section style={{background:"white",border:"1px solid #eadff4",borderRadius:18,padding:20}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,marginBottom:16}}><div><small style={{fontWeight:800,color:"#7540aa",letterSpacing:1}}>CANONICAL WORK ORDERS</small><h2 style={{margin:"6px 0"}}>Grooming assignments</h2>{providerId?<small>Provider {providerId}</small>:null}</div><button onClick={()=>setRefreshKey(value=>value+1)} disabled={!providerId} style={{border:"1px solid #d8cae7",background:"white",borderRadius:10,padding:"9px 12px",fontWeight:700}}>Refresh</button></div>
       {error&&<div style={{padding:12,borderRadius:10,background:"#fff1f1",marginBottom:12}}>{error}</div>}
