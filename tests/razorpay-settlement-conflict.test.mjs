@@ -18,6 +18,7 @@ class BoundStatement {
   }
   run() { return Promise.resolve(this.runSync()); }
   first() { return Promise.resolve(this.sqlite.prepare(this.sql).get(...this.values) || null); }
+  all() { return Promise.resolve({ results: this.sqlite.prepare(this.sql).all(...this.values) }); }
 }
 
 class D1SqliteAdapter {
@@ -26,6 +27,17 @@ class D1SqliteAdapter {
     this.sqlite.exec("PRAGMA foreign_keys = ON");
   }
   prepare(sql) { return new BoundStatement(this.sqlite, sql); }
+  batch(statements) {
+    this.sqlite.exec("BEGIN IMMEDIATE");
+    try {
+      const results = statements.map((statement) => statement.runSync());
+      this.sqlite.exec("COMMIT");
+      return Promise.resolve(results);
+    } catch (error) {
+      this.sqlite.exec("ROLLBACK");
+      return Promise.reject(error);
+    }
+  }
   exec(sql) { this.sqlite.exec(sql); }
   close() { this.sqlite.close(); }
 }
