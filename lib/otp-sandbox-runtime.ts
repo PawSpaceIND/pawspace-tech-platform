@@ -1,4 +1,6 @@
-const LOCAL_OTP_HOSTS=new Set(["terminal.local","localhost","127.0.0.1"]);
+import { DEVELOPMENT_PREVIEW_HOSTS } from "./development-preview";
+
+const LOCAL_OTP_HOSTS=new Set(DEVELOPMENT_PREVIEW_HOSTS);
 const DEVELOPMENT_ASSERTION_SECRET="pawspace-local-development-otp-assertion-secret-v1";
 
 function processEnv(name:string){

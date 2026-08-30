@@ -30,7 +30,7 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
   useEffect(() => {
     queueMicrotask(() => {
       setHydrated(true);
-    if (!persistDevOtpSession) return;
+      if (!persistDevOtpSession) return;
     try {
       const raw = sessionStorage.getItem(DEV_OTP_SESSION_KEY);
       if (!raw) return;
@@ -46,6 +46,7 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
     } catch {
       sessionStorage.removeItem(DEV_OTP_SESSION_KEY);
     }
+    });
   }, []);
 
   const requestOtp = async () => {

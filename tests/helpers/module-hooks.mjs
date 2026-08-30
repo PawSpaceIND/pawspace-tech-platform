@@ -74,6 +74,8 @@ function transpileTsx(source, fileName) {
 const cssStub = () => 'const handler={get:(_,key)=>typeof key==="string"?key:undefined};export default new Proxy({},handler);';
 
 export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
+  process.env.NODE_ENV = "test";
+  process.env.PAWSPACE_LOCAL_PREVIEW = "on";
   if (installedWorkersDbGlobals.has(globalName)) {
     throw new Error(`installWorkersHooks DB global already registered in this test process: ${globalName}`);
   }
