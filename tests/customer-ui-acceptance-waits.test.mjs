@@ -36,5 +36,12 @@ test("customer acceptance waits for async controls instead of using fixed quote 
 test("customer acceptance waits for pets and selects a pet button", () => {
   assert.match(source, /async function petsReady\(page\)/);
   assert.match(source, /const petButton=\(page\)=>page\.getByRole\("button"/);
+  assert.match(source, /async function selectPet\(page\)/);
+  assert.match(source, /getAttribute\("aria-pressed"\)==="true"/);
   assert.doesNotMatch(source, /page\.getByText\(PET,\{exact:true\}\)\.first\(\)\.click\(\)/);
+});
+
+test("customer acceptance observes async final mutations for the full timeout", () => {
+  assert.match(source, /Promise\.race\(\[observed,page\.waitForTimeout\(TIMEOUT\)\]\)/);
+  assert.doesNotMatch(source, /page\.waitForTimeout\(1100\)/);
 });
