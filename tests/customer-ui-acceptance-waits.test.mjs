@@ -27,14 +27,39 @@ test("customer acceptance scopes video-guide counts to their labelled region", (
   assert.doesNotMatch(source, /filter\(\{hasText:"Watch before you book"\}\)/);
 });
 
-test("customer acceptance waits for async controls instead of using fixed quote delays", () => {
+test("customer acceptance uses a longer server timeout for provider and quote readiness", () => {
+  assert.match(source, /const SERVER_TIMEOUT=Number\(readArg\("server-timeout","60000"\)\)/);
   assert.match(source, /async function ready\(page,button,label,timeout=TIMEOUT\)/);
   assert.match(source, /button\.click\(\{trial:true,timeout\}\)/);
-  assert.doesNotMatch(source, /waitForTimeout\((900|1000)\)/);
+  assert.doesNotMatch(source, /waitForTimeout\((900|1000|1100)\)/);
 });
 
-test("customer acceptance waits for pets and selects a pet button", () => {
-  assert.match(source, /async function petsReady\(page\)/);
+test("customer acceptance preserves auto-selected pets before toggling selection", () => {
+  assert.match(source, /async function ensurePetProgress\(page,continueButton,label\)/);
+  assert.match(source, /continueButton\.click\(\{trial:true,timeout:1200\}\)/);
   assert.match(source, /const petButton=\(page\)=>page\.getByRole\("button"/);
   assert.doesNotMatch(source, /page\.getByText\(PET,\{exact:true\}\)\.first\(\)\.click\(\)/);
+});
+
+test("customer acceptance observes async final mutations through the server timeout", () => {
+  assert.match(source, /async function observeFinal\(page,button,target,safePosts=\[\],timeout=SERVER_TIMEOUT\)/);
+  assert.match(source, /const deadline=Date\.now\(\)\+timeout/);
+  assert.match(source, /while\(!seen\.length&&!unexpected\.length&&Date\.now\(\)<deadline\)await page\.waitForTimeout\(100\)/);
+});
+
+test("customer acceptance uses the governed east-zone UAT location for Training", () => {
+  assert.match(source, /PIN="560038"/);
+  assert.match(source, /ADDRESS="12 Acceptance Road, Indiranagar, Bengaluru"/);
+  assert.doesNotMatch(source, /PIN="560034"/);
+});
+
+test("customer acceptance accepts the current Boarding empty-selection CTA", () => {
+  assert.match(source, /name:\/Continue with\|Choose an available host\/i/);
+});
+
+test("customer acceptance follows current Fresh Food stages and delivery field", () => {
+  assert.match(source, /"One-time or repeat\?"/);
+  assert.match(source, /"Where and when\?"/);
+  assert.match(source, /getByLabel\("Delivery address"\)/);
+  assert.match(source, /async function transition\(page,button,marker,label,timeout=TIMEOUT\)/);
 });
