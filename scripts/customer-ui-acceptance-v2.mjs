@@ -25,7 +25,7 @@ async function ready(page,button,label,timeout=TIMEOUT){
  return button;
 }
 async function petsReady(page){const loading=page.getByText("Loading your pets…",{exact:true}).first();if(await loading.count())await loading.waitFor({state:"hidden",timeout:SERVER_TIMEOUT});}
-const petButton=(page)=>page.getByRole("button",{name:new RegExp(PET.replace(/[.*+?^${}()|[\]\\]/g,"\\const petButton=(page)=>page.getByRole("button",{name:new RegExp(PET.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"),"i")}).first();"),"i")}).first();
+const petButton=(page)=>page.getByRole("button",{name:new RegExp(PET.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"),"i")}).first();
 async function selectPet(page){await petsReady(page);const button=petButton(page);await button.waitFor({state:"visible",timeout:SERVER_TIMEOUT});const selected=await button.evaluate(element=>element.getAttribute("aria-pressed")==="true"||String(element.className).includes("selected")||element.textContent?.includes("✓"));if(!selected)await button.click();}
 async function ensurePetProgress(page,continueButton,label){
  await petsReady(page);
