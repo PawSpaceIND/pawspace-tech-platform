@@ -39,6 +39,8 @@ function makeD1(sqlite) {
 
 const SIGNING_KEY = "uat-signing-key-0123456789abcdef0123456789abcdef";
 const ASSERTION_SECRET = "uat-assertion-secret-0123456789abcdef0123456789abcdef";
+const OTP_PEPPER = "test-only-otp-pepper-0123456789abcdef0123456789abcdef";
+const TEST_SECRET = "test-only-identity-secret-0123456789abcdef0123456789abcdef";
 
 function freshPartnerDb() {
   const sqlite = new DatabaseSync(":memory:");
@@ -47,6 +49,9 @@ function freshPartnerDb() {
   globalThis.__PAWSPACE_TEST_ENV = {
     DB: db,
     PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ASSERTION_SECRET,
+    PAWSPACE_OTP_PEPPER: OTP_PEPPER,
+    PAWSPACE_IDENTITY_ENV: "sandbox",
+    PAWSPACE_IDENTITY_TEST_SECRET: TEST_SECRET,
     PAWSPACE_UAT_LOGIN: "on",
     PAWSPACE_UAT_SIGNING_KEY: SIGNING_KEY,
   };
@@ -78,9 +83,9 @@ test("customer and partner OTP verification routes fail closed after UAT is disa
 });
 
 test("partner OTP double-consume race mints exactly one assertion", async () => {
-  const { requestPartnerOtp, verifyPartnerOtp } = await import("../lib/partner-otp.ts");
+  const { requestPartnerOtpForSandbox, verifyPartnerOtp } = await import("../lib/partner-otp.ts");
   const { db } = freshPartnerDb();
-  const challenge = await requestPartnerOtp(db, { phone: "9876543211" });
+  const challenge = await requestPartnerOtpForSandbox(db, { phone: "9876543211", testSecret: TEST_SECRET });
   const results = await Promise.allSettled([
     verifyPartnerOtp(db, { challengeId: challenge.challengeId, code: challenge.sandboxCode }),
     verifyPartnerOtp(db, { challengeId: challenge.challengeId, code: challenge.sandboxCode }),
@@ -92,10 +97,10 @@ test("partner OTP double-consume race mints exactly one assertion", async () => 
 });
 
 test("separate valid partner OTP challenges for one phone converge on one canonical provider", async () => {
-  const { requestPartnerOtp, verifyPartnerOtp } = await import("../lib/partner-otp.ts");
+  const { requestPartnerOtpForSandbox, verifyPartnerOtp } = await import("../lib/partner-otp.ts");
   const { sqlite, db } = freshPartnerDb();
-  const first = await requestPartnerOtp(db, { phone: "9876543212" });
-  const second = await requestPartnerOtp(db, { phone: "9876543212" });
+  const first = await requestPartnerOtpForSandbox(db, { phone: "9876543212", testSecret: TEST_SECRET });
+  const second = await requestPartnerOtpForSandbox(db, { phone: "9876543212", testSecret: TEST_SECRET });
   const results = await Promise.all([
     verifyPartnerOtp(db, { challengeId: first.challengeId, code: first.sandboxCode, name: "Provider One" }),
     verifyPartnerOtp(db, { challengeId: second.challengeId, code: second.sandboxCode, name: "Provider One" }),
@@ -105,9 +110,9 @@ test("separate valid partner OTP challenges for one phone converge on one canoni
 });
 
 test("partner OTP wrong-attempt counter is capped at five", async () => {
-  const { requestPartnerOtp, verifyPartnerOtp } = await import("../lib/partner-otp.ts");
+  const { requestPartnerOtpForSandbox, verifyPartnerOtp } = await import("../lib/partner-otp.ts");
   const { sqlite, db } = freshPartnerDb();
-  const challenge = await requestPartnerOtp(db, { phone: "9876543213" });
+  const challenge = await requestPartnerOtpForSandbox(db, { phone: "9876543213", testSecret: TEST_SECRET });
   for (let i = 0; i < 5; i += 1) await assert.rejects(() => verifyPartnerOtp(db, { challengeId: challenge.challengeId, code: "000000" }), /Incorrect OTP/);
   await assert.rejects(() => verifyPartnerOtp(db, { challengeId: challenge.challengeId, code: challenge.sandboxCode }), /Too many incorrect attempts/);
   assert.equal(sqlite.prepare("SELECT attempts FROM partner_otp_challenges WHERE id=?").get(challenge.challengeId).attempts, 5);
