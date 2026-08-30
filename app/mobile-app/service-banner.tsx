@@ -32,9 +32,9 @@ export default function ServiceBanner({ service, compact }: { service?: string; 
         </figcaption>
       </figure>
       <ul className={styles.trust}>
-        <li>✓ Verified care professional</li>
+        <li>✓ Verification status shown explicitly</li>
         <li>✓ Clear service inclusions</li>
-        <li>✓ Secure booking journey</li>
+        <li>✓ Cancellation terms shown per service</li>
       </ul>
       <button type="button" className={styles.video} onClick={() => setVideoOpen(value => !value)} aria-expanded={videoOpen}>
         <i>▶</i>
