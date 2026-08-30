@@ -8,6 +8,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { installFinancialLifecycleSchema } from "./helpers/financial-lifecycle-schema.mjs";
 
 installWorkersHooks("__PTJA_P1_DB__", "__PTJA_P1_ENV__");
 
@@ -35,6 +36,7 @@ function makeD1(sqlite) {
 
 function world(env = {}) {
   const sqlite = new DatabaseSync(":memory:");
+  installFinancialLifecycleSchema(sqlite);
   const db = makeD1(sqlite);
   globalThis.__PTJA_P1_DB__ = db;
   globalThis.__PTJA_P1_ENV__ = env;

@@ -118,7 +118,7 @@ test("inventory: every background job is wired into the scheduled worker; none a
   }
   const funnel = fs.readFileSync("lib/app-to-revenue-funnel.ts", "utf8");
   for (const sweep of sweepExports) {
-    const wired = scheduler.includes(`${sweep}(`) || funnel.includes(`${sweep}(`); // recovery-expiry runs inside the funnel sweep
+    const wired = scheduler.includes(`${sweep}(`) || funnel.includes(`${sweep}(`) || workerSource.includes(`${sweep}(`); // some integration sweeps are direct scheduled-worker siblings
     assert.ok(wired, `${sweep} is exported but never reachable from the scheduled worker`);
   }
   assert.match(scheduler, /"\*\/5 \* \* \* \*"/, "the scheduler contract is the 5-minute cron");

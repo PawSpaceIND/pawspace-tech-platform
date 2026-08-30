@@ -1,0 +1,160 @@
+.workspace {
+  --ws-ink: #06231c;
+  --ws-deep: #01261f;
+  --ws-deeper: #001913;
+  --ws-gold: #e6b34e;
+  --ws-surface: #ffffff;
+  --ws-canvas: #f3f7f5;
+  --ws-soft: #eaf2ee;
+  --ws-line: #d8e6e0;
+  --ws-muted: #5c6f68;
+  --ws-positive: #11885b;
+  --ws-danger: #b93a45;
+  --ws-shadow: 0 12px 34px rgba(1, 38, 31, .07);
+  min-height: 100vh;
+  background: var(--ws-canvas) !important;
+  color: var(--ws-ink) !important;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+}
+
+.workspace :is(h1, h2, h3, strong) { color: var(--ws-ink); }
+.workspace :is(p, small, dt) { color: var(--ws-muted); }
+.workspace :is(input, select, textarea) {
+  border-color: var(--ws-line) !important;
+  border-radius: 10px !important;
+  background: var(--ws-surface) !important;
+  color: var(--ws-ink) !important;
+}
+.workspace :is(input, select, textarea):focus-visible,
+.workspace button:focus-visible,
+.workspace a:focus-visible {
+  outline: 3px solid rgba(230, 179, 78, .46) !important;
+  outline-offset: 2px !important;
+}
+.workspace > aside {
+  background: linear-gradient(180deg, var(--ws-deeper), var(--ws-deep) 68%, #00271f) !important;
+  border-right: 1px solid rgba(255,255,255,.06);
+}
+.workspace > aside :is(strong, b) { color: #fff; }
+.workspace > aside :is(span, small, p) { color: #b9cbc5; }
+.workspace > aside nav button { border-radius: 10px !important; }
+.workspace > aside nav button:hover { background: rgba(255,255,255,.10) !important; }
+.workspace > aside nav button[class*="active"] {
+  background: rgba(230,179,78,.16) !important;
+  color: #fff !important;
+  box-shadow: inset 3px 0 0 var(--ws-gold);
+}
+.workspace > aside nav button[class*="active"] :is(span, i) { color: #fff !important; }
+.workspace > aside nav b,
+.workspace > aside [class*="User"] > span,
+.workspace > aside [class*="user"] > i {
+  background: var(--ws-gold) !important;
+  color: var(--ws-deeper) !important;
+}
+.workspace > :is(section, div):not(aside) > header h1,
+.workspace > section > header h1 { letter-spacing: -.035em; }
+.workspace :is(article, section)[class*="panel"],
+.workspace [class*="Panel"],
+.workspace [class*="panel"],
+.workspace [class*="Card"],
+.workspace [class*="card"] {
+  border-color: var(--ws-line) !important;
+}
+.workspace [class*="panel"],
+.workspace [class*="Panel"],
+.workspace [class*="customerList"],
+.workspace [class*="customer360"],
+.workspace [class*="detailPanel"] {
+  box-shadow: var(--ws-shadow);
+}
+.workspace [class*="metric"] article,
+.workspace [class*="Metric"] article,
+.workspace [class*="stats"] article {
+  border-color: var(--ws-line) !important;
+  background: var(--ws-surface) !important;
+}
+.workspace [class*="metric"] article strong,
+.workspace [class*="Metric"] article strong,
+.workspace [class*="stats"] article strong { color: var(--ws-deep) !important; }
+.workspace button[class*="primary"],
+.workspace a[class*="primary"] {
+  background: var(--ws-deep) !important;
+  color: #fff !important;
+  border-color: var(--ws-deep) !important;
+}
+.workspace button[class*="primary"]:hover,
+.workspace a[class*="primary"]:hover { background: #06483b !important; }
+.workspace button[class*="ghost"],
+.workspace a[class*="ghost"] {
+  color: var(--ws-deep) !important;
+  border-color: var(--ws-line) !important;
+  background: #fff !important;
+}
+.workspace [class*="hero"] {
+  background: linear-gradient(135deg, var(--ws-deeper), #075342) !important;
+  border: 1px solid rgba(255,255,255,.08);
+  box-shadow: 0 18px 44px rgba(1,38,31,.14);
+}
+.workspace [class*="hero"] :is(h1,h2,h3,strong) { color: #fff !important; }
+.workspace [class*="hero"] :is(p,span,small) { color: #c8ddd5 !important; }
+.workspace [class*="hero"] button { background: var(--ws-gold) !important; color: var(--ws-deeper) !important; }
+.workspace [class*="kicker"],
+.workspace [class*="eyebrow"],
+.workspace header > div > p { color: #326f61 !important; letter-spacing: .1em; }
+.workspace table { border-color: var(--ws-line) !important; }
+.workspace th { background: #edf4f1 !important; color: #46645c !important; }
+.workspace td { border-color: #e3ece8 !important; }
+.workspace tr:hover td { background: #f8fbfa; }
+.workspace [class*="selected"],
+.workspace [aria-current="true"] { border-color: #77a99b !important; }
+.workspace [class*="notice"] { border-color: #d8e6e0 !important; }
+.workspace [class*="positive"],
+.workspace [class*="good"] { color: var(--ws-positive) !important; }
+.workspace [class*="warning"],
+.workspace [class*="warn"] { color: #9b650b !important; }
+.workspace [class*="toast"] { background: var(--ws-deep) !important; color: #fff !important; }
+
+.crm > aside { background: linear-gradient(180deg, #001913, #01261f 62%, #06382f) !important; }
+.crm [class*="brand"] span { background: var(--ws-gold) !important; color: var(--ws-deeper) !important; }
+.crm [class*="nextBar"] { background: #edf4f1 !important; }
+.crm [class*="stage"] { border: 1px solid rgba(1,38,31,.08); }
+.crm [class*="selectedCustomer"] { background: #edf4f1 !important; }
+
+.control [class*="side"] { background: linear-gradient(180deg, #001913, #01261f 68%, #06382f) !important; }
+.control [class*="hero"] > button { background: var(--ws-gold) !important; color: var(--ws-deeper) !important; }
+.control [class*="bar"] i b,
+.control [class*="stat"] i b { background: linear-gradient(90deg, #0e6d58, var(--ws-gold)) !important; }
+.control [class*="selected"] { background: #eaf2ee !important; }
+
+.operations [class*="sidebar"] { background: linear-gradient(180deg, #001913, #01261f 68%, #06382f) !important; }
+.operations [class*="brand"] span { color: #d7e5df !important; }
+.operations [class*="metricIcon"] { background: #e7f0ec !important; color: var(--ws-deep) !important; }
+.operations [class*="alertIcon"] { background: #fff2e0 !important; color: #9b650b !important; }
+.operations [class*="selected"] { background: #edf4f1 !important; }
+
+.partner {
+  --ws-canvas: #eef4f1;
+  background: var(--ws-canvas) !important;
+}
+.partner [class*="phoneShell"] { background: #f8fbfa !important; box-shadow: 0 24px 70px rgba(1,38,31,.14) !important; }
+.partner [class*="appHeader"] { border-color: var(--ws-line) !important; }
+.partner [class*="brand"] { color: var(--ws-gold) !important; }
+.partner [class*="brand"] b { color: var(--ws-deep) !important; }
+.partner [class*="identityPill"] { background: #e7f4ee !important; color: #0d6b46 !important; }
+.partner [class*="heroCard"] { background: linear-gradient(135deg, var(--ws-deeper), #075342) !important; }
+.partner [class*="heroCard"] button { background: var(--ws-gold) !important; color: var(--ws-deeper) !important; }
+.partner [class*="heroCard"] button[class*="secondary"] { background: #fff !important; color: var(--ws-deep) !important; }
+.partner [class*="stats"] span,
+.partner [class*="financeRows"] strong { color: var(--ws-deep) !important; }
+.partner [class*="quickGrid"] i,
+.partner [class*="menuList"] i,
+.partner [class*="financeHero"] i { background: #e7f0ec !important; color: var(--ws-deep) !important; }
+.partner [class*="selectorActive"] { background: var(--ws-deep) !important; border-color: var(--ws-deep) !important; }
+.partner [class*="jobSelected"] { border-color: var(--ws-deep) !important; background: #f1f7f4 !important; }
+.partner [class*="bottomNav"] { border-color: var(--ws-line) !important; }
+.partner [class*="navActive"] { color: var(--ws-deep) !important; }
+.partner [class*="avatar"] { background: var(--ws-gold) !important; color: var(--ws-deeper) !important; }
+
+@media (max-width: 720px) {
+  .workspace > aside { border-right: 0; border-top: 1px solid rgba(255,255,255,.08); }
+}

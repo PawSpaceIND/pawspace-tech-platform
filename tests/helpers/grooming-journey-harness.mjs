@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./module-hooks.mjs";
+import { installFinancialLifecycleSchema } from "./financial-lifecycle-schema.mjs";
 
 installWorkersHooks("__GROOM_GOLDEN_DB__", "__GROOM_GOLDEN_ENV__");
 
@@ -56,6 +57,7 @@ export async function setupJourney() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys=ON; PRAGMA journal_mode=MEMORY;");
   const db = makeD1(sqlite);
+  installFinancialLifecycleSchema(sqlite);
   globalThis.__GROOM_GOLDEN_DB__ = db;
   // PAWSPACE_SCHEDULING_ENV declared, as every UAT harness must now: /api/uat-scheduling no longer
   // fabricates provider roster unless the runtime says it is a UAT runtime (PTJA W1-F27). This harness

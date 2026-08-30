@@ -21,8 +21,10 @@ test("Grooming payment integration is sandbox-locked signed idempotent and recon
   assert.match(webhook,/request\.text\(\)/);
   assert.match(webhook,/x-razorpay-signature/);
   assert.match(webhook,/x-razorpay-event-id/);
-  assert.match(webhook,/HMAC/);
-  assert.match(webhook,/SHA-256/);
+  assert.match(webhook,/acceptRazorpayWebhook\(db,\{rawBody:raw,signature,webhookSecret:gate\.secret/);
+  const lifecycle=await source("lib/financial-lifecycle.ts");
+  assert.match(lifecycle,/name: "HMAC", hash: "SHA-256"/);
+  assert.ok(lifecycle.indexOf("verifyRazorpayRawBody(input.rawBody")<lifecycle.indexOf("JSON.parse(input.rawBody)"));
   // the webhook delegates its env/secret decision to the fail-closed gate; sandbox is the default there
   assert.match(webhook,/resolvePaymentWebhookGate/);
   assert.match(gate,/RAZORPAY_WEBHOOK_SECRET_SANDBOX/);

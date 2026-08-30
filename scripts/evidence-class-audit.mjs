@@ -224,6 +224,16 @@ export function executedSourceModules(source) {
   return [...found].sort();
 }
 
+/** Product modules transpiled into a temporary executable module before dynamic import. */
+function transpiledSourceModules(source) {
+  if (!/\bts\.transpileModule\s*\(/.test(source) || !/\bimport\s*\(/.test(source)) return [];
+  const found = new Set();
+  for (const match of source.matchAll(/new URL\(["']((?:lib|app|worker|scripts|components|e2e)\/[^"']+\.(?:ts|tsx|mjs))["']/g)) {
+    found.add(match[1]);
+  }
+  return [...found].sort();
+}
+
 /** Test-local modules whose signals belong to whichever suite imports them. */
 function localTestModules(source, fromFile) {
   const dir = path.dirname(fromFile);
@@ -313,6 +323,7 @@ function collectSignals(file, repoRoot, seen = new Set()) {
   let source;
   try { source = fs.readFileSync(path.join(repoRoot, key), "utf8"); } catch { return signals; }
   for (const reached of executedSourceModules(source)) signals.modules.add(reached);
+  for (const reached of transpiledSourceModules(source)) signals.modules.add(reached);
   if (moduleReferences(source).some(reference => reference.executed && reference.specifier === "node:sqlite")) signals.sqlite = true;
 
   // A deployed origin or provider host supplied by the environment - the only way a suite here can

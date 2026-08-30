@@ -43,7 +43,8 @@ test("Verify-first: prepaid online bookings cannot self-capture in LIVE mode (sa
   assert.match(bookingRoute, /input\.payment\.method,paymentModePersisted,paymentStatusPersisted,/);
   // customer order intent never self-captures; stays awaiting_payment
   assert.match(intent, /status: "awaiting_payment"/);
-  assert.match(intent, /if \(!created\.connected\) return \{ connected: false/);
+  assert.match(intent, /if \(execution\.claimed && !execution\.connected\)/);
+  assert.match(intent, /return \{ connected: false, environment, reason: execution\.reason/);
 });
 
 test("Reconciliation matches by ID (never by phone) and captures only on verified events", () => {
