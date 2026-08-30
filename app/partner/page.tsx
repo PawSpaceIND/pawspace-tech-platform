@@ -1,43 +1,30 @@
 import Link from "next/link";
 import CanonicalGroomingJobs from "../partner-app/canonical-grooming-jobs";
-
-const linkStyle = {
-  display: "inline-block",
-  padding: "12px 16px",
-  borderRadius: 12,
-  textDecoration: "none",
-  fontWeight: 800,
-} as const;
+import styles from "./partner-hub.module.css";
 
 export default function PartnerUatHub() {
   return (
-    <main style={{ padding: 24, maxWidth: 1200, margin: "0 auto", fontFamily: "system-ui" }}>
-      <header>
+    <main className={styles.hub}>
+      <header className={styles.hero}>
         <small>PAWSPACE PARTNER · CANONICAL UAT</small>
         <h1>Partner UAT hub</h1>
         <p>
           Provider onboarding and assigned work below use canonical server-owned state. This surface does not infer verification, approval, activation, marketplace availability, or booking eligibility from prototype data.
         </p>
-        <p>
+        <p className={styles.status}>
           <strong>PRODUCTION READY = FALSE.</strong> Marketplace live: No · Order eligible: No · Live money: No.
         </p>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 16 }}>
-          <Link
-            href="/partner-mobile"
-            style={{ ...linkStyle, background: "#5b21b6", color: "white" }}
-          >
+        <div className={styles.actions}>
+          <Link href="/partner-mobile" className={styles.primary}>
             Open Partner Mobile App →
           </Link>
-          <Link
-            href="/partner/onboarding"
-            style={{ ...linkStyle, border: "1px solid #d8cbea", color: "#5b21b6" }}
-          >
+          <Link href="/partner/onboarding" className={styles.secondary}>
             Open canonical provider onboarding →
           </Link>
         </div>
       </header>
 
-      <section style={{ marginTop: 28 }}>
+      <section className={styles.work}>
         <small>IDENTITY-SCOPED PROVIDER WORK</small>
         <h2>Canonical Grooming assignments</h2>
         <p>

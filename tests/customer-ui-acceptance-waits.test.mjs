@@ -16,32 +16,59 @@ test("customer acceptance waits for OTP verification to replace the login UI", (
   assert.doesNotMatch(source, /Verify & continue"\}\)\.click\(\);await wait\(page,550\)/);
 });
 
-test("customer acceptance scopes service-card checks to the labelled discovery region", () => {
-  assert.match(source, /page\.getByRole\("region",\{name:"Care services"\}\)/);
-  assert.doesNotMatch(source, /filter\(\{hasText:"Care for every kind of day"\}\)/);
+test("approved premium Home exposes stable labelled discovery regions", () => {
+  assert.match(discoverySource, /aria-label="Care services"/);
+  assert.match(discoverySource, /aria-label="Quick service guides"/);
+  assert.match(discoverySource, />Everything they need</);
+  assert.doesNotMatch(discoverySource, /Care for every kind of day/);
 });
 
-test("customer acceptance scopes video-guide counts to their labelled region", () => {
-  assert.match(discoverySource, /aria-label="Service video guides"/);
-  assert.match(source, /getByRole\("region",\{name:"Service video guides"\}\)/);
-  assert.doesNotMatch(source, /filter\(\{hasText:"Watch before you book"\}\)/);
+test("customer acceptance uses a longer server timeout for provider and quote readiness", () => {
+  assert.match(source, /const SERVER_TIMEOUT=Number\(readArg\("server-timeout","60000"\)\)/);
+  assert.match(source, /async function ready\(page,button,label,timeout=TIMEOUT\)/);
+  assert.match(source, /button\.click\(\{trial:true,timeout\}\)/);
+  assert.doesNotMatch(source, /waitForTimeout\((900|1000|1100)\)/);
 });
 
-test("customer acceptance waits for async controls instead of using fixed quote delays", () => {
-  assert.match(source, /async function ready\(page,button,label\)/);
-  assert.match(source, /button\.click\(\{trial:true,timeout:TIMEOUT\}\)/);
-  assert.doesNotMatch(source, /waitForTimeout\((900|1000)\)/);
-});
-
-test("customer acceptance waits for pets and selects a pet button", () => {
-  assert.match(source, /async function petsReady\(page\)/);
+test("customer acceptance preserves auto-selected pets before toggling selection", () => {
+  assert.match(source, /async function ensurePetProgress\(page,continueButton,label\)/);
+  assert.match(source, /continueButton\.click\(\{trial:true,timeout:1200\}\)/);
   assert.match(source, /const petButton=\(page\)=>page\.getByRole\("button"/);
-  assert.match(source, /async function selectPet\(page\)/);
-  assert.match(source, /getAttribute\("aria-pressed"\)==="true"/);
   assert.doesNotMatch(source, /page\.getByText\(PET,\{exact:true\}\)\.first\(\)\.click\(\)/);
 });
 
-test("customer acceptance observes async final mutations for the full timeout", () => {
-  assert.match(source, /Promise\.race\(\[observed,page\.waitForTimeout\(TIMEOUT\)\]\)/);
-  assert.doesNotMatch(source, /page\.waitForTimeout\(1100\)/);
+test("customer acceptance observes async final mutations through the server timeout", () => {
+  assert.match(source, /async function observeFinal\(page,button,target,safePosts=\[\],timeout=SERVER_TIMEOUT\)/);
+  assert.match(source, /const deadline=Date\.now\(\)\+timeout/);
+  assert.match(source, /while\(!seen\.length&&!unexpected\.length&&Date\.now\(\)<deadline\)await page\.waitForTimeout\(100\)/);
+});
+
+test("customer acceptance uses the governed east-zone UAT location for Training", () => {
+  assert.match(source, /PIN="560038"/);
+  assert.match(source, /ADDRESS="12 Acceptance Road, Indiranagar, Bengaluru"/);
+  assert.doesNotMatch(source, /PIN="560034"/);
+});
+
+test("customer acceptance accepts the current Boarding empty-selection CTA", () => {
+  assert.match(source, /name:\/Continue with\|Choose an available host\/i/);
+});
+
+test("customer acceptance allows the governed Boarding/Sitting re-quote before the final scheduling mutation", () => {
+  // The Boarding confirm handler re-quotes POST /api/boarding-commercial for price
+  // integrity immediately before POST /api/uat-scheduling. observeFinal must classify
+  // that governed re-quote as a permitted precursor (as it already does for
+  // training/walking/taxi -commercial quotes) rather than an unexpected commit, while
+  // still requiring the final scheduling mutation to be attempted.
+  assert.match(source, /safePosts=\[\]/); // observeFinal still defaults to no allowance
+  assert.match(source, /\[\/POST \\\/api\\\/\(boarding\|sitting\)-commercial\//);
+  // The final scheduling mutation remains the required target for both stays.
+  assert.match(source, /request final partner approval/);
+  assert.match(source, /POST \\\/api\\\/uat-scheduling/);
+});
+
+test("customer acceptance follows current Fresh Food stages and delivery field", () => {
+  assert.match(source, /"One-time or repeat\?"/);
+  assert.match(source, /"Where and when\?"/);
+  assert.match(source, /getByLabel\("Delivery address"\)/);
+  assert.match(source, /async function transition\(page,button,marker,label,timeout=TIMEOUT\)/);
 });
