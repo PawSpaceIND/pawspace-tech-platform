@@ -1,11 +1,21 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import styles from "./mobile.module.css";
 
 export type LoggedInCustomer = { customerId: string; customerName: string; phone: string };
 
+type DevOtpSession = {
+  phone: string;
+  challengeId: string;
+  sandboxCode: string;
+};
+
+const DEV_OTP_SESSION_KEY = "pawspace:customer-login:otp";
+const persistDevOtpSession = process.env.NODE_ENV === "development";
+
 export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLoggedIn: (customer: LoggedInCustomer) => void; embedded?: boolean }) {
-  const [stage, setStage] = useState<"phone" | "otp">("phone");
+  const [hydrated, setHydrated] = useState(false);
+  const [stage, setStage] = useState<"phone" | "code">("phone");
   const [phone, setPhone] = useState("");
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
@@ -13,6 +23,30 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
   const [sandboxCode, setSandboxCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+
+  // The login shell is server-rendered. Keep its controlled phone field and submit button inert until
+  // React has attached the input/change/click handlers; otherwise a fast user (or UAT robot) can type
+  // and click into the SSR HTML before hydration, silently losing the interaction with no OTP request.
+  useEffect(() => {
+    queueMicrotask(() => {
+      setHydrated(true);
+    if (!persistDevOtpSession) return;
+    try {
+      const raw = sessionStorage.getItem(DEV_OTP_SESSION_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as Partial<DevOtpSession>;
+      if (!/^\d{10}$/.test(saved.phone || "") || !saved.challengeId) {
+        sessionStorage.removeItem(DEV_OTP_SESSION_KEY);
+        return;
+      }
+      setPhone(saved.phone || "");
+      setChallengeId(saved.challengeId);
+      setSandboxCode(saved.sandboxCode || "");
+      setStage("code");
+    } catch {
+      sessionStorage.removeItem(DEV_OTP_SESSION_KEY);
+    }
+  }, []);
 
   const requestOtp = async () => {
     setError("");
@@ -24,7 +58,14 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
       if (!r.ok || !b.data) throw new Error(b.error || "Unable to send OTP");
       setChallengeId(b.data.challengeId);
       setSandboxCode(b.data.sandboxCode);
-      setStage("otp");
+      if (persistDevOtpSession) {
+        sessionStorage.setItem(DEV_OTP_SESSION_KEY, JSON.stringify({
+          phone,
+          challengeId: b.data.challengeId,
+          sandboxCode: b.data.sandboxCode,
+        } satisfies DevOtpSession));
+      }
+      setStage("code");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to send OTP");
     } finally {
@@ -40,6 +81,7 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
       const r = await fetch("/api/customer-otp", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "verify", challengeId, code, name: name || undefined, cityId: "blr" }) });
       const b = (await r.json()) as { data?: LoggedInCustomer; error?: string };
       if (!r.ok || !b.data) throw new Error(b.error || "Incorrect code");
+      if (persistDevOtpSession) sessionStorage.removeItem(DEV_OTP_SESSION_KEY);
       onLoggedIn(b.data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to verify code");
@@ -58,12 +100,14 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
                 <input
                   type="tel"
                   placeholder="10-digit phone number"
+                  aria-label="Phone number"
                   value={phone}
+                  disabled={!hydrated}
                   onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 10))}
                   style={{ width: "100%", padding: 12, borderRadius: 12, border: "1px solid var(--ps-border)", marginTop: 14, fontSize: 14, textAlign: "center" }}
                 />
                 {error && <p style={{ color: "#b3261e", fontSize: 11, marginTop: 8 }}>{error}</p>}
-                <button className={styles.primary} disabled={busy} onClick={() => void requestOtp()}>
+                <button className={styles.primary} disabled={!hydrated || busy} onClick={() => void requestOtp()}>
                   {busy ? "Sending…" : "Send OTP"}
                 </button>
                 <p style={{ fontSize: 9, color: "var(--ps-muted)", marginTop: 10 }}>
@@ -71,7 +115,7 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
                 </p>
               </>
             )}
-            {stage === "otp" && (
+            {stage === "code" && (
               <>
                 <p>Enter the 6-digit code sent to +91 {phone}.</p>
                 {sandboxCode && (
@@ -81,7 +125,9 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
                 )}
                 <input
                   type="text"
+                  inputMode="numeric"
                   placeholder="6-digit code"
+                  aria-label="OTP code"
                   value={code}
                   onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
                   style={{ width: "100%", padding: 12, borderRadius: 12, border: "1px solid var(--ps-border)", marginTop: 10, fontSize: 14, textAlign: "center" }}
@@ -97,7 +143,14 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
                 <button className={styles.primary} disabled={busy} onClick={() => void verifyOtp()}>
                   {busy ? "Verifying…" : "Verify & continue"}
                 </button>
-                <button className={styles.back} onClick={() => { setStage("phone"); setError(""); }}>
+                <button className={styles.back} onClick={() => {
+                  if (persistDevOtpSession) sessionStorage.removeItem(DEV_OTP_SESSION_KEY);
+                  setStage("phone");
+                  setChallengeId("");
+                  setSandboxCode("");
+                  setCode("");
+                  setError("");
+                }}>
                   ← Change number
                 </button>
               </>

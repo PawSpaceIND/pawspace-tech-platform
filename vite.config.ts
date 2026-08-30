@@ -14,6 +14,7 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 const localBindingConfig = {
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
+  vars: { PAWSPACE_LOCAL_PREVIEW: "on" },
   triggers:{crons:["*/5 * * * *"]},
   d1_databases: d1
     ? [
@@ -48,9 +49,14 @@ export default defineConfig(async () => {
     server: {
       host: "0.0.0.0",
       allowedHosts: ["terminal.local"],
-      ...(isCodexSeatbeltSandbox
-        ? { watch: { useFsEvents: false, usePolling: true } }
-        : {}),
+      watch: {
+        // D1/Miniflare writes can emit events for both the directory node and
+        // descendants. Ignore both so sandbox OTP writes cannot remount the UI.
+        ignored: ["**/.wrangler", "**/.wrangler/**"],
+        ...(isCodexSeatbeltSandbox
+          ? { useFsEvents: false, usePolling: true }
+          : {}),
+      },
     },
     plugins: [
       vinext(),
