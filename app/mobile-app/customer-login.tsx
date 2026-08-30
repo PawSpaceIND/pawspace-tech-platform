@@ -30,22 +30,23 @@ export default function CustomerLogin({ onLoggedIn, embedded = false }: { onLogg
   useEffect(() => {
     queueMicrotask(() => {
       setHydrated(true);
-    if (!persistDevOtpSession) return;
-    try {
-      const raw = sessionStorage.getItem(DEV_OTP_SESSION_KEY);
-      if (!raw) return;
-      const saved = JSON.parse(raw) as Partial<DevOtpSession>;
-      if (!/^\d{10}$/.test(saved.phone || "") || !saved.challengeId) {
+      if (!persistDevOtpSession) return;
+      try {
+        const raw = sessionStorage.getItem(DEV_OTP_SESSION_KEY);
+        if (!raw) return;
+        const saved = JSON.parse(raw) as Partial<DevOtpSession>;
+        if (!/^\d{10}$/.test(saved.phone || "") || !saved.challengeId) {
+          sessionStorage.removeItem(DEV_OTP_SESSION_KEY);
+          return;
+        }
+        setPhone(saved.phone || "");
+        setChallengeId(saved.challengeId);
+        setSandboxCode(saved.sandboxCode || "");
+        setStage("code");
+      } catch {
         sessionStorage.removeItem(DEV_OTP_SESSION_KEY);
-        return;
       }
-      setPhone(saved.phone || "");
-      setChallengeId(saved.challengeId);
-      setSandboxCode(saved.sandboxCode || "");
-      setStage("code");
-    } catch {
-      sessionStorage.removeItem(DEV_OTP_SESSION_KEY);
-    }
+    });
   }, []);
 
   const requestOtp = async () => {
