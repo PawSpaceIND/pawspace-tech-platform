@@ -1,6 +1,7 @@
 import{authError,requirePermission,requireProviderOwnership,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{assertServiceProofRef}from"../../../lib/service-media-security";
 import{tryQualifyLinkedReferral}from"../../../lib/referral-booking-governance";
+import{notifyBookingLifecycle}from"../../../lib/booking-notifications";
 
 type Db=Awaited<ReturnType<typeof database>>;
 type Row=Record<string,unknown>;
@@ -98,6 +99,7 @@ export async function POST(request:Request){try{const input=await request.json()
     const referral=await referralQualification(db,input.bookingId,actor);
     await event(db,input.bookingId,"service_completed",actor,{providerId:work.provider_id,invoiceNumber,paymentStatus:String(payment?.status||"unknown"),subscriptionSessionsConsumed:sessionsToConsume,repeatEligibleAt:now+21*86_400_000,taxRuleStatus:"configuration_required",payoutReadiness:String(work.provider_model)==="commission"?"rule_pending":"not_applicable",referral},now);
     await securityAudit(db,actorIdentity,"grooming.complete","booking",input.bookingId,"completed",{providerId:work.provider_id,invoiceNumber,sessionsToConsume,referral});
+    {const notifyCtx={bookingId:input.bookingId,customerId:String(booking.customer_id),cityId:String(booking.city_id),serviceCode:"grooming",packageName:String(booking.package_name||""),scheduledStart:String(booking.scheduled_start||""),providerName:String(work.provider_name||""),amount:Number(booking.total_amount)};await notifyBookingLifecycle(db,"job_completed",notifyCtx);await notifyBookingLifecycle(db,"invoice_issued",{...notifyCtx,invoiceNumber});}
     return json({data:await bundle(db,input.bookingId),referral});
   }
 
@@ -107,5 +109,6 @@ export async function POST(request:Request){try{const input=await request.json()
   ]);
   await event(db,input.bookingId,`booking_${next}`,actor,{providerId:work.provider_id,from:current,to:next},now);
   await securityAudit(db,actorIdentity,`grooming.${input.action}`,"booking",input.bookingId,"completed",{providerId:work.provider_id,from:current,to:next});
+  if(input.action==="accept"||input.action==="start_service"){const notifyCtx={bookingId:input.bookingId,customerId:String(booking.customer_id),cityId:String(booking.city_id),serviceCode:"grooming",packageName:String(booking.package_name||""),scheduledStart:String(booking.scheduled_start||""),providerName:String(work.provider_name||""),amount:Number(booking.total_amount)};await notifyBookingLifecycle(db,input.action==="accept"?"provider_assigned":"job_started",notifyCtx);}
   return json({data:await bundle(db,input.bookingId)});
 }catch(error){return authError(error,"Unable to update grooming lifecycle");}}

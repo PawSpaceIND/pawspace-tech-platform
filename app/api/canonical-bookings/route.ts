@@ -9,6 +9,7 @@ import {ensureStayPaymentTables,splitPaymentPlan,staySplitScheduleStatement} fro
 import {prepareReferralBooking,referralBookingLinkStatement,referralClaimBoundStatement,type ReferralBookingPreparation} from "../../../lib/referral-booking-governance";
 import {attributeBookingToOpenLead} from "../../../lib/lead-conversion-attribution";
 import {PENDING_PAYMENT_STATUS} from "../../../lib/subscription-payment-activation";
+import {notifyBookingLifecycle} from "../../../lib/booking-notifications";
 
 type LifecycleInput={
   idempotencyKey:string;scheduleGroupId:string;customer:{id:string;name:string;primaryPhone:string;secondaryPhone?:string;email?:string};
@@ -145,5 +146,12 @@ export async function POST(request:Request){try{const input=await request.json()
   if(referralCommercial)events.push(["referral_claim_bound","referral_claim",referralCommercial.claimId,{programmeId:referralCommercial.programmeId,code:referralCommercial.code,baseAmount:referralCommercial.baseAmount,discountAmount:referralCommercial.discountAmount,totalAmount:referralCommercial.totalAmount,testOnly:true,liveMoney:false}]);
   if(subscriptionId&&governed.subscriptionPlan)events.push([entitlementActive?"subscription_reserved":"subscription_pending_payment","subscription",subscriptionId,{planCode:governed.subscriptionPlan.planCode,sessionsReserved:entitlementActive?governed.subscriptionPlan.reserveSessions:0,totalSessions:governed.subscriptionPlan.sessions,validityValue:governed.subscriptionPlan.validityValue,validityUnit:governed.subscriptionPlan.validityUnit,cityId:governed.subscriptionPlan.cityId,zoneId:governed.subscriptionPlan.zoneId,awaitingGatewayVerification:!entitlementActive}]);
   for(const [eventType,entityType,entityId,detail] of events)statements.push(db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),bookingId,eventType,entityType,entityId,input.customer.id,JSON.stringify(detail),now));
-  await db.batch(statements);if(trainingCommercial)await consumeTrainingQuote(db,trainingCommercial.quoteId,bookingId);if(boardingCommercial)await consumeBoardingQuote(db,boardingCommercial.quoteId,bookingId);await attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId});const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=?").bind(bookingId).first<Record<string,unknown>>();return json({data:await readBundle(db,booking!,false)},201);
+  await db.batch(statements);if(trainingCommercial)await consumeTrainingQuote(db,trainingCommercial.quoteId,bookingId);if(boardingCommercial)await consumeBoardingQuote(db,boardingCommercial.quoteId,bookingId);await attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId});
+  // Best-effort customer notifications (never blocks the booking). booking_confirmed always; a
+  // full-time provider is assigned at confirmation, so provider_assigned fires here too — a commission
+  // provider is only offered now, so its provider_assigned fires when it accepts (grooming-lifecycle).
+  const notifyCtx={bookingId,customerId:input.customer.id,cityId:input.cityId,serviceCode:input.serviceCode,packageName:governed.packageName,scheduledStart:input.scheduledStart,providerName:input.provider.name,amount:governed.totalAmount,createdBy:input.customer.id};
+  await notifyBookingLifecycle(db,"booking_confirmed",notifyCtx);
+  if(input.provider.model==="full_time")await notifyBookingLifecycle(db,"provider_assigned",notifyCtx);
+  const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=?").bind(bookingId).first<Record<string,unknown>>();return json({data:await readBundle(db,booking!,false)},201);
 }catch(error){if(error instanceof Response){const message=await error.text().catch(()=>"");return json({error:message||"Canonical booking validation failed"},error.status||409);}return json({error:error instanceof Error?error.message:"Unable to create shared booking lifecycle"},500);}}

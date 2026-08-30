@@ -3,6 +3,7 @@ import{governSittingBooking}from"../../../lib/sitting-governance";
 import{ensureStayPaymentTables,splitPaymentPlan,staySplitScheduleStatement}from"../../../lib/stay-split-payments";
 import{requireSittingQuoteSandboxCapture}from"../../../lib/sitting-payment-governance";
 import{attributeBookingToOpenLead}from"../../../lib/lead-conversion-attribution";
+import{notifyBookingLifecycle}from"../../../lib/booking-notifications";
 
 type Row=Record<string,unknown>;
 type Input={
@@ -56,5 +57,5 @@ export async function POST(request:Request){try{
   db.prepare("UPDATE sitting_commercial_quotes SET status='used',used_at=?,used_booking_id=? WHERE id=? AND status='open'").bind(now,bookingId,input.sittingQuoteId),
  ];
  if(governed.paymentMode==="split_50_50"){await ensureStayPaymentTables(db);const plan=splitPaymentPlan({totalAmount:governed.totalAmount,scheduledStart:governed.scheduledStart});statements.push(staySplitScheduleStatement(db,{bookingId,serviceCode:"pet_sitting",customerId:input.customer.id,totalAmount:governed.totalAmount,paidNowAmount:governed.amountDueNow,balanceAmount:plan.balance,balanceDueAt:plan.balanceDueAt}));}
- await db.batch(statements);await attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId});return json({data:{bookingId,customerId:input.customer.id,petIds:ids,scheduleGroupId:input.scheduleGroupId,workOrderId,paymentId,status:"confirmed",duplicatePrevented:false,liveMoney:false}},201);
+ await db.batch(statements);await attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId});await notifyBookingLifecycle(db,"booking_confirmed",{bookingId,customerId:input.customer.id,cityId:input.cityId,serviceCode:"pet_sitting",packageName:governed.packageName,scheduledStart:input.scheduledStart,providerName:input.provider.name,amount:governed.totalAmount});return json({data:{bookingId,customerId:input.customer.id,petIds:ids,scheduleGroupId:input.scheduleGroupId,workOrderId,paymentId,status:"confirmed",duplicatePrevented:false,liveMoney:false}},201);
 }catch(error){return failure(error);}}
