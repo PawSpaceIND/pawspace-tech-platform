@@ -3,6 +3,9 @@ import { equalConstantTime, generateSixDigitOtp, getOtpSecurityConfig, hmacOtp, 
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
+type OtpSecurityConfig=Awaited<ReturnType<typeof getOtpSecurityConfig>>;
+type PartnerOtpRequestResult={challengeId:string;phone:string;expiresInSeconds:number;sandboxDelivery:boolean;liveSmsDelivered:boolean};
+type PartnerOtpSandboxRequestResult=PartnerOtpRequestResult&{sandboxCode:string};
 
 const text=(v:unknown)=>String(v??"").trim();
 const normalizePhone=(value:string)=>String(value??"").replace(/\D/g,"").slice(-10);
@@ -15,7 +18,8 @@ async function canonicalOtpProviderId(phone:string){
 
 /**
  * Partner OTP challenge flow. The raw OTP is generated with Web Crypto and only an HMAC digest is
- * persisted. Sandbox disclosure requires both sandbox mode and the dedicated test secret.
+ * persisted. The ordinary request API never exposes the raw code; sandbox disclosure is isolated
+ * behind requestPartnerOtpForSandbox and requires both sandbox mode and the dedicated test secret.
  */
 export async function ensurePartnerOtpTables(db:Db){await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS partner_otp_challenges (id TEXT PRIMARY KEY,phone TEXT NOT NULL,code TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,consumed INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL)"),
@@ -23,20 +27,31 @@ export async function ensurePartnerOtpTables(db:Db){await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS canonical_providers (id TEXT PRIMARY KEY,city_id TEXT,name TEXT NOT NULL,phone TEXT NOT NULL UNIQUE,email TEXT,source TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
 ]);}
 
-export async function requestPartnerOtp(db:Db,input:{phone:string;testSecret?:string}){
+async function createPartnerOtpChallenge(db:Db,input:{phone:string},security:OtpSecurityConfig){
   await ensurePartnerOtpTables(db);
   const phone=normalizePhone(input.phone);
   if(phone.length!==10)throw new Error("A valid 10-digit phone number is required");
   const now=Date.now(),code=generateSixDigitOtp(),id=uid("POTP");
-  const security=await getOtpSecurityConfig();
   const digest=await hmacOtp(id,code,security.pepper);
   await db.prepare("INSERT INTO partner_otp_challenges (id,phone,code,attempts,consumed,created_at,expires_at) VALUES (?,?,?,0,0,?,?)")
     .bind(id,phone,digest,now,now+5*60000).run();
-  const result:{challengeId:string;phone:string;expiresInSeconds:number;sandboxDelivery:boolean;liveSmsDelivered:boolean;sandboxCode?:string}={
-    challengeId:id,phone,expiresInSeconds:300,sandboxDelivery:security.identityEnv==="sandbox",liveSmsDelivered:false,
+  return{
+    result:{challengeId:id,phone,expiresInSeconds:300,sandboxDelivery:security.identityEnv==="sandbox",liveSmsDelivered:false} satisfies PartnerOtpRequestResult,
+    code,
   };
-  if(mayDiscloseSandboxOtp(security.identityEnv,security.testSecret,input.testSecret))result.sandboxCode=code;
+}
+
+export async function requestPartnerOtp(db:Db,input:{phone:string}):Promise<PartnerOtpRequestResult>{
+  const security=await getOtpSecurityConfig();
+  const {result}=await createPartnerOtpChallenge(db,input,security);
   return result;
+}
+
+export async function requestPartnerOtpForSandbox(db:Db,input:{phone:string;testSecret:string}):Promise<PartnerOtpSandboxRequestResult>{
+  const security=await getOtpSecurityConfig();
+  if(!mayDiscloseSandboxOtp(security.identityEnv,security.testSecret,input.testSecret))throw new Error("Sandbox OTP disclosure is not authorized");
+  const {result,code}=await createPartnerOtpChallenge(db,{phone:input.phone},security);
+  return{...result,sandboxCode:code};
 }
 
 export async function signPartnerIdentityAssertion(input:{providerId:string;phone:string;cityId?:string|null;issuedAt?:number;expiresAt?:number;nonce?:string}){
@@ -64,6 +79,7 @@ export async function verifyPartnerOtp(db:Db,input:{challengeId:string;code:stri
   const security=await getOtpSecurityConfig();
   const submittedDigest=await hmacOtp(input.challengeId,text(input.code),security.pepper);
   if(!equalConstantTime(text(row.code),submittedDigest)){
+    // Pre-hardening plaintext rows intentionally fail closed; users must request a fresh challenge.
     await db.prepare("UPDATE partner_otp_challenges SET attempts=attempts+1 WHERE id=? AND attempts<5 AND consumed=0").bind(input.challengeId).run();
     throw new Error("Incorrect OTP code");
   }

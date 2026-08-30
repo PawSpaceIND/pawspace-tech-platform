@@ -4,6 +4,9 @@ import { equalConstantTime, generateSixDigitOtp, getOtpSecurityConfig, hmacOtp, 
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
+type OtpSecurityConfig=Awaited<ReturnType<typeof getOtpSecurityConfig>>;
+type CustomerOtpRequestResult={challengeId:string;phone:string;expiresInSeconds:number;sandboxDelivery:boolean;liveSmsDelivered:boolean};
+type CustomerOtpSandboxRequestResult=CustomerOtpRequestResult&{sandboxCode:string};
 
 const text=(v:unknown)=>String(v??"").trim();
 const normalizePhone=(value:string)=>value.replace(/\D/g,"").slice(-10);
@@ -16,28 +19,39 @@ async function canonicalOtpCustomerId(phone:string){
 
 /**
  * Customer OTP challenge flow. OTPs are generated with Web Crypto and only an HMAC digest is
- * persisted. The raw code is never part of the standard return value. A sandbox caller can request
- * the raw code only by supplying the dedicated test secret while PAWSPACE_IDENTITY_ENV=sandbox.
+ * persisted. The ordinary request API never exposes the raw code; sandbox disclosure is isolated
+ * behind requestCustomerOtpForSandbox and requires both sandbox mode and the dedicated test secret.
  */
 export async function ensureCustomerOtpTables(db:Db){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS customer_otp_challenges (id TEXT PRIMARY KEY,phone TEXT NOT NULL,code TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,consumed INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL)"),
  db.prepare("CREATE INDEX IF NOT EXISTS idx_customer_otp_phone ON customer_otp_challenges(phone,created_at)"),
 ]);}
 
-export async function requestCustomerOtp(db:Db,input:{phone:string;testSecret?:string}){
+async function createCustomerOtpChallenge(db:Db,input:{phone:string},security:OtpSecurityConfig){
  await ensureCustomerOtpTables(db);
  const phone=normalizePhone(input.phone);
  if(phone.length!==10)throw new Error("A valid 10-digit phone number is required");
  const now=Date.now(),code=generateSixDigitOtp(),id=uid("OTP");
- const security=await getOtpSecurityConfig();
  const digest=await hmacOtp(id,code,security.pepper);
  await db.prepare("INSERT INTO customer_otp_challenges (id,phone,code,attempts,consumed,created_at,expires_at) VALUES (?,?,?,0,0,?,?)")
    .bind(id,phone,digest,now,now+5*60000).run();
- const result:{challengeId:string;phone:string;expiresInSeconds:number;sandboxDelivery:boolean;liveSmsDelivered:boolean;sandboxCode?:string}={
-   challengeId:id,phone,expiresInSeconds:300,sandboxDelivery:security.identityEnv==="sandbox",liveSmsDelivered:false,
+ return{
+   result:{challengeId:id,phone,expiresInSeconds:300,sandboxDelivery:security.identityEnv==="sandbox",liveSmsDelivered:false} satisfies CustomerOtpRequestResult,
+   code,
  };
- if(mayDiscloseSandboxOtp(security.identityEnv,security.testSecret,input.testSecret))result.sandboxCode=code;
+}
+
+export async function requestCustomerOtp(db:Db,input:{phone:string}):Promise<CustomerOtpRequestResult>{
+ const security=await getOtpSecurityConfig();
+ const {result}=await createCustomerOtpChallenge(db,input,security);
  return result;
+}
+
+export async function requestCustomerOtpForSandbox(db:Db,input:{phone:string;testSecret:string}):Promise<CustomerOtpSandboxRequestResult>{
+ const security=await getOtpSecurityConfig();
+ if(!mayDiscloseSandboxOtp(security.identityEnv,security.testSecret,input.testSecret))throw new Error("Sandbox OTP disclosure is not authorized");
+ const {result,code}=await createCustomerOtpChallenge(db,{phone:input.phone},security);
+ return{...result,sandboxCode:code};
 }
 
 /**
@@ -59,6 +73,7 @@ export async function verifyCustomerOtp(db:Db,input:{challengeId:string;code:str
  const security=await getOtpSecurityConfig();
  const submittedDigest=await hmacOtp(input.challengeId,text(input.code),security.pepper);
  if(!equalConstantTime(text(row.code),submittedDigest)){
+   // Pre-hardening plaintext rows intentionally fail closed; users must request a fresh challenge.
    await db.prepare("UPDATE customer_otp_challenges SET attempts=attempts+1 WHERE id=? AND attempts<5").bind(input.challengeId).run();
    throw new Error("Incorrect OTP code");
  }
