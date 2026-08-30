@@ -85,11 +85,22 @@ export async function claimPaymentIntent(db: Db, input: {
 
 export async function claimOutboxWork(db: Db, input: { outboxId: string; workerId: string; leaseMs?: number }) {
   const now = Date.now(), leaseUntil = now + Math.max(5_000, Math.min(input.leaseMs || 30_000, 120_000));
+  // A lease that expired while PROCESSING is an ambiguous provider outcome: the worker may have
+  // created the Razorpay order and crashed before persisting its id. Never auto-reinvoke Razorpay.
+  const stale = await db.prepare(`UPDATE financial_outbox SET status='RECONCILIATION_REQUIRED',last_error=COALESCE(last_error,'stale_processing_lease_requires_reconciliation'),lease_owner=NULL,lease_expires_at=NULL,updated_at=?
+    WHERE id=? AND event_type='CREATE_RAZORPAY_ORDER' AND status='PROCESSING' AND lease_expires_at IS NOT NULL AND lease_expires_at<?`)
+    .bind(now, input.outboxId, now).run();
+  if (Number(stale.meta?.changes || 0) === 1) {
+    const stranded = await db.prepare("SELECT * FROM financial_outbox WHERE id=? AND status='RECONCILIATION_REQUIRED'").bind(input.outboxId).first<Row>();
+    if (stranded?.aggregate_id) {
+      await db.prepare("UPDATE payment_intents SET order_request_state='RECONCILIATION_REQUIRED',version=version+1,updated_at=? WHERE id=? AND gateway_order_id IS NULL")
+        .bind(now, String(stranded.aggregate_id)).run();
+    }
+    return stranded;
+  }
   const result = await db.prepare(`UPDATE financial_outbox SET status='PROCESSING',lease_owner=?,lease_expires_at=?,attempts=attempts+1,updated_at=?
-    WHERE id=? AND event_type='CREATE_RAZORPAY_ORDER' AND (
-      (status IN ('PENDING','RETRY') AND next_attempt_at<=?) OR
-      (status='PROCESSING' AND lease_expires_at IS NOT NULL AND lease_expires_at<?)
-    )`).bind(input.workerId, leaseUntil, now, input.outboxId, now, now).run();
+    WHERE id=? AND event_type='CREATE_RAZORPAY_ORDER' AND status IN ('PENDING','RETRY') AND next_attempt_at<=?`)
+    .bind(input.workerId, leaseUntil, now, input.outboxId, now).run();
   if (Number(result.meta?.changes || 0) !== 1) return null;
   return db.prepare("SELECT * FROM financial_outbox WHERE id=? AND lease_owner=?").bind(input.outboxId, input.workerId).first<Row>();
 }
@@ -97,6 +108,9 @@ export async function claimOutboxWork(db: Db, input: { outboxId: string; workerI
 export async function executeRazorpayOrderOutbox(db: Db, env: Record<string, unknown>, input: { outboxId: string; workerId: string }) {
   const work = await claimOutboxWork(db, input);
   if (!work) return { claimed: false as const };
+  if (String(work.status || "") === "RECONCILIATION_REQUIRED") {
+    return { claimed: true as const, connected: false as const, reason: "A previous Razorpay order attempt ended ambiguously; reconciliation is required before retry", reconciliationRequired: true };
+  }
   const intent = await db.prepare("SELECT * FROM payment_intents WHERE id=?").bind(String(work.aggregate_id)).first<Row>();
   if (!intent) throw new Error("Outbox payment intent is missing");
   if (String(intent.gateway_order_id || "")) {
