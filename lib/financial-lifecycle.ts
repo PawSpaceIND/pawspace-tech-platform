@@ -26,8 +26,8 @@ export function rupeesToPaiseExact(value: string | number) {
   if (!match) throw new Error("Money must be a positive decimal with at most two fractional digits");
   const rupees = BigInt(match[1]);
   const fraction = BigInt((match[2] || "").padEnd(2, "0"));
-  const paise = rupees * 100n + fraction;
-  if (paise <= 0n || paise > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Money is outside the supported paise range");
+  const paise = rupees * BigInt(100) + fraction;
+  if (paise <= BigInt(0) || paise > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Money is outside the supported paise range");
   return Number(paise);
 }
 
@@ -194,7 +194,7 @@ export async function postBalancedJournal(db: Db, input: {
   entries: Array<{ accountCode: string; direction: "DEBIT" | "CREDIT"; amountPaise: number; bookingId?: string; partnerId?: string }>;
 }) {
   if (input.entries.length < 2) throw new Error("A journal requires at least two entries");
-  let debits = 0n, credits = 0n;
+  let debits = BigInt(0), credits = BigInt(0);
   for (const entry of input.entries) {
     if (!Number.isSafeInteger(entry.amountPaise) || entry.amountPaise <= 0) throw new Error("Journal amounts must be positive integer paise");
     if (entry.direction === "DEBIT") debits += BigInt(entry.amountPaise); else credits += BigInt(entry.amountPaise);

@@ -30,8 +30,8 @@ function exactRupeesToPaise(value: string | number) {
   const source = String(value).trim();
   const match = /^(0|[1-9]\d*)(?:\.(\d{1,2}))?$/.exec(source);
   if (!match) throw new Error("Razorpay amount must have at most two decimal places");
-  const paise = BigInt(match[1]) * 100n + BigInt((match[2] || "").padEnd(2, "0"));
-  if (paise <= 0n || paise > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Razorpay amount is outside the supported paise range");
+  const paise = BigInt(match[1]) * BigInt(100) + BigInt((match[2] || "").padEnd(2, "0"));
+  if (paise <= BigInt(0) || paise > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Razorpay amount is outside the supported paise range");
   return Number(paise);
 }
 
