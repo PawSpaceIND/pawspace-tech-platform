@@ -25,6 +25,23 @@ const serviceShortCopy: Record<string, string> = {
   relocation: "Travel support",
 };
 
+const serviceVisuals: Record<string, { image: string; alt: string }> = {
+  grooming: { image: "/assets/banners/grooming-groomer-action.jpg", alt: "PawSpace groomer caring for a dog" },
+  dog_training: { image: "/assets/banners/training-handshake.jpg", alt: "PawSpace trainer working with a dog and pet parent" },
+  boarding: { image: "/assets/banners/sitter-hug-golden.jpg", alt: "Home host caring for a Golden Retriever" },
+  pet_sitting: { image: "/assets/banners/sitting-woman-cat.jpg", alt: "Pet sitter caring for a cat at home" },
+  dog_walking: { image: "/assets/banners/walking-leash-city.jpg", alt: "Dog walker taking a pet on a neighbourhood walk" },
+  pet_taxi: { image: "/assets/banners/taxi-car-window.jpg", alt: "Pet travelling safely inside a PawSpace taxi" },
+  food: { image: "/assets/banners/food-prep-pouring.jpg", alt: "Fresh pet food being prepared by hand" },
+  relocation: { image: "/assets/banners/taxi-vintage-truck.jpg", alt: "Pet travel and relocation support" },
+};
+
+const adSlots = [
+  { eyebrow: "PAWSPACE SPOTLIGHT", title: "A better day for every pet", copy: "Campaign / offer placement" },
+  { eyebrow: "COMMUNITY", title: "Apartment offers & pet events", copy: "Local partner placement" },
+  { eyebrow: "PET PARENTS", title: "Helpful care, without the clutter", copy: "Education / brand placement" },
+];
+
 export default function PremiumDiscoveryHome({
   services,
   disabledServices,
@@ -72,9 +89,7 @@ export default function PremiumDiscoveryHome({
     () => services.filter((service) => `${service.name} ${service.subtitle}`.toLowerCase().includes(query.trim().toLowerCase())),
     [query, services],
   );
-  const careServices = visible;
   const videoServices = services.filter((service) => VIDEO_SERVICE_CODES.includes(service.serviceCode));
-  const heroService = services.find((service) => service.serviceCode === "grooming") ?? services[0];
   const petName = pet?.name || "your pet";
   const firstName = customerName?.split(" ")[0];
 
@@ -119,13 +134,26 @@ export default function PremiumDiscoveryHome({
       </label>
     </section>
 
+    <section className={styles.adRail} aria-label="Promotional placements">
+      {adSlots.map((slot) => <article key={slot.title}>
+        <small>{slot.eyebrow}</small><b>{slot.title}</b><span>{slot.copy}</span>
+      </article>)}
+    </section>
+
     <section className={styles.hero}>
       <div className={styles.heroCopy}>
         {firstName && <small>GOOD TO SEE YOU, {firstName.toUpperCase()}</small>}
-        <h1>What does <em>{pet?.name || "your pet"}</em> need today?</h1>
+        <h1>Happier pets, <em>healthier lives.</em></h1>
+        <p>Trusted care, real people and one simple place for every PawSpace service.</p>
+        <button onClick={() => onOpen("grooming")}>Book a service <span>→</span></button>
       </div>
-      {heroService && <img src={heroService.image} alt={heroService.imageAlt} />}
-      <span className={styles.heroPaw}>🐾</span>
+      <img src="/assets/banners/grooming-groomer-action.jpg" alt="PawSpace care professional with a pet" />
+    </section>
+
+    <section className={styles.proofStrip} aria-label="PawSpace trust proof">
+      <span><b>4.9 ★</b><small>customer rating</small></span>
+      <span><b>30,000+</b><small>happy pets</small></span>
+      <span><b>500+</b><small>verified caregivers</small></span>
     </section>
 
     <section className={styles.servicesSection} aria-label="Care services">
@@ -135,13 +163,16 @@ export default function PremiumDiscoveryHome({
       </div>
 
       <div className={styles.serviceGrid}>
-        {careServices.map((service) => {
+        {visible.map((service) => {
           const paused = disabledServices.has(service.serviceCode);
+          const visual = serviceVisuals[service.serviceCode] ?? { image: service.image, alt: service.imageAlt };
           return <button key={service.serviceCode} className={styles.serviceCard} onClick={() => onOpen(service.serviceCode)} disabled={paused}>
-            <div className={styles.serviceVisual}><img src={service.image} alt={service.imageAlt} /></div>
-            <span className={styles.serviceIcon}>✦</span>
-            <strong>{service.name}</strong>
-            <small>{paused ? "Temporarily paused" : serviceShortCopy[service.serviceCode] || service.subtitle}</small>
+            <div className={styles.serviceVisual}><img src={visual.image} alt={visual.alt} /></div>
+            <div className={styles.serviceCopy}>
+              <strong>{service.name}</strong>
+              <small>{paused ? "Temporarily paused" : serviceShortCopy[service.serviceCode] || service.subtitle}</small>
+            </div>
+            <i>→</i>
           </button>;
         })}
       </div>
@@ -149,12 +180,24 @@ export default function PremiumDiscoveryHome({
       {visible.length === 0 && <p className={styles.empty}>No PawSpace service matches “{query}”.</p>}
     </section>
 
+    <section className={styles.reviewsSection} aria-label="Google review placements">
+      <div className={styles.sectionHead}>
+        <div><small>GOOGLE REVIEWS</small><h2>Loved by pet parents</h2></div>
+        <span className={styles.googleScore}>4.9 ★</span>
+      </div>
+      <div className={styles.reviewRail}>
+        <article><b>Google review</b><p>Live customer review carousel slot</p><small>Verified review feed placement</small></article>
+        <article><b>Recent feedback</b><p>Service-specific Google review slot</p><small>Grooming · Training · Boarding</small></article>
+        <article><b>Neighbourhood trust</b><p>Local pet-parent review slot</p><small>Rendered once review feed is connected</small></article>
+      </div>
+    </section>
+
     <section className={styles.reminder}>
       <div className={styles.reminderCopy}>
-        <span className={styles.reminderPaw}>🐾</span>
-        <div><h3>{pet?.name ? `${pet.name} is due for grooming` : "A fresh grooming day"}</h3><p>Regular grooming keeps {petName} comfortable, healthy and happy.</p></div>
+        <span className={styles.reminderPaw}>♥</span>
+        <div><h3>{pet?.name ? `${pet.name} deserves a great care day` : "Real care. Real people."}</h3><p>Book trusted care for {petName} in a few clear steps.</p></div>
       </div>
-      {heroService && <img src={heroService.image} alt="" />}
+      <img src="/assets/banners/sitter-hug-golden.jpg" alt="Pet sitter and Golden Retriever" />
       <button onClick={() => onOpen("grooming")}>Book now</button>
     </section>
 
@@ -172,8 +215,9 @@ export default function PremiumDiscoveryHome({
       <div className={styles.moreRail}>
         {videoServices.map((service) => {
           const paused = disabledServices.has(service.serviceCode);
+          const visual = serviceVisuals[service.serviceCode] ?? { image: service.image, alt: service.imageAlt };
           return <button key={`guide-${service.serviceCode}`} onClick={() => onOpen(service.serviceCode)} disabled={paused}>
-            <span><img src={service.image} alt="" /></span>
+            <span><img src={visual.image} alt="" /></span>
             <div><b>{service.name}</b><small>{paused ? "Temporarily paused" : "1-min service guide"}</small></div>
             <i>▶</i>
           </button>;
