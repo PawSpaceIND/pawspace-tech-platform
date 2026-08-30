@@ -60,8 +60,10 @@ export async function GET(request: Request, {params}: {params: Promise<{id: stri
       db.prepare("SELECT * FROM canonical_customers WHERE id=?").bind(text(invoice.customer_id)).first<Row>().catch(() => null),
     ]);
 
-    const taxConfigured = !!tax && text(tax.tax_rule_status) !== "configuration_required" && tax.tax_amount != null;
-    const taxAmount = taxConfigured ? Number(invoice.tax_amount) : null;
+    const taxStatus = text(tax?.tax_rule_status);
+    const taxApplied = !!tax && taxStatus !== "configuration_required" && tax.tax_amount != null;
+    const isPlaceholderTax = taxStatus === "uat_placeholder";
+    const taxAmount = taxApplied ? Number(invoice.tax_amount) : null;
     const gross = Number(invoice.gross_amount ?? booking?.total_amount ?? 0);
     const net = Number(invoice.net_amount ?? gross);
 
@@ -92,7 +94,9 @@ export async function GET(request: Request, {params}: {params: Promise<{id: stri
       grossAmount: gross,
       taxAmount,
       netAmount: net,
-      taxNote: taxConfigured ? undefined : text(tax?.reason) || "Tax not applied — production GST rule pending approval; this is not a production tax invoice.",
+      taxNote: !taxApplied
+        ? (text(tax?.reason) || "Tax not applied — production GST rule pending approval; this is not a production tax invoice.")
+        : (isPlaceholderTax ? "UAT non-production placeholder GST (dummy GSTIN) — NOT a production tax invoice." : undefined),
       footerNote: "Sandbox/UAT document — no live money movement.",
     });
 
