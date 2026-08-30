@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { installFinancialLifecycleSchema } from "./helpers/financial-lifecycle-schema.mjs";
 
 installWorkersHooks("__POST_SERVICE_LINK_DB__", "__POST_SERVICE_LINK_ENV__");
 
@@ -70,6 +71,7 @@ test("payment-link expiry, webhook mapping and refund-required payment ID stay c
     INSERT INTO canonical_bookings VALUES ('BK-LINK','completed','PROVIDER-1','CUS-1');
     INSERT INTO booking_payments VALUES ('PAY-LINK','BK-LINK','CUS-1',1149,'INR','created','pay_after_service','uat_sandbox','{}',0);
   `);
+  installFinancialLifecycleSchema(sqlite);
   const db = makeD1(sqlite), reconciliation = await import("../lib/grooming-payment-reconciliation.ts");
   const expectedExpirySeconds = Math.floor((Date.now() + 24 * 60 * 60 * 1000) / 1000);
   let providerExpirySeconds = 0, linkAttempt = 0;

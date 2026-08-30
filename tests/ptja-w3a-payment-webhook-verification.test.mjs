@@ -19,6 +19,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
+import { installFinancialLifecycleSchema } from "./helpers/financial-lifecycle-schema.mjs";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
 installWorkersHooks("__W3A_PAY_DB__", "__W3A_PAY_ENV__");
@@ -76,6 +77,7 @@ function freshDb(env = { RAZORPAY_WEBHOOK_SECRET_SANDBOX: SANDBOX_SECRET }) {
   globalThis.__W3A_PAY_DB__ = makeD1(sqlite);
   globalThis.__W3A_PAY_ENV__ = env;
   baseTables();
+  installFinancialLifecycleSchema(sqlite);
 }
 
 const webhookRoute = await import("../app/api/razorpay-webhook/route.ts");
@@ -252,7 +254,8 @@ test("A2-01: the same event id replayed as a REFUND does not run the refund mone
 
   // Same id, different type, correctly signed - the attack.
   const replay = await postSigned(refundEvent("bkg_w3a_r1", 200_000), { eventId: "evt_shared" });
-  assert.equal(replay.body?.duplicate, true, "an already-seen event id must be reported as a duplicate");
+  assert.equal(replay.status, 409, "an event id replayed with a different signed payload must fail closed");
+  assert.equal(replay.body?.error, "Razorpay event ID payload mismatch");
 
   const afterReplay = sqlite.prepare("SELECT captured_amount,refunded_amount FROM payment_reconciliation_records WHERE booking_id=?").get("bkg_w3a_r1");
   assert.deepEqual(afterReplay, afterCapture, "a replayed id under a new event type must not move any money figure");
