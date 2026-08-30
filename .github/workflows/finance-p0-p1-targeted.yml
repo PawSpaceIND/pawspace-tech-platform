@@ -1,0 +1,34 @@
+name: Finance P0 P1 targeted gate
+
+on:
+  push:
+    branches:
+      - fix/financial-lifecycle-p0-p1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: finance-p0-p1-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  finance-targeted:
+    name: Finance concurrency + typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - name: Install verified dependencies
+        run: npm run install:ci
+      - name: Finance P0/P1 concurrency and duplicate acceptance
+        run: node --test tests/financial-lifecycle-concurrency.test.mjs
+      - name: Typecheck
+        run: npm run typecheck
