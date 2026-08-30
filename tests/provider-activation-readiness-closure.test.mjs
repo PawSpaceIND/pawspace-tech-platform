@@ -2,7 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import * as nodeModule from "node:module";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+installWorkersHooks("__PAWSPACE_TEST_DB__", "__PAWSPACE_TEST_ENV");
 
 // ---------------------------------------------------------------------------
 // The second half of the provider closure: ACTIVATION and READINESS.
@@ -14,33 +16,6 @@ import * as nodeModule from "node:module";
 //
 // Executed against real SQLite. No source-text matching for anything behavioural.
 // ---------------------------------------------------------------------------
-
-const WORKERS_SHIM = `export const env = new Proxy({}, { get: (_, key) => globalThis.__PAWSPACE_TEST_ENV?.[key] });`;
-const workersUrl = `data:text/javascript,${encodeURIComponent(WORKERS_SHIM)}`;
-
-if (typeof nodeModule.registerHooks === "function") {
-  nodeModule.registerHooks({
-    resolve(specifier, context, nextResolve) {
-      if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
-      try { return nextResolve(specifier, context); }
-      catch (error) {
-        if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
-        throw error;
-      }
-    },
-  });
-} else {
-  const hook = `const workersUrl=${JSON.stringify(workersUrl)};
-  export async function resolve(specifier, context, nextResolve) {
-    if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
-    try { return await nextResolve(specifier, context); }
-    catch (error) {
-      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(specifier + ".ts", context);
-      throw error;
-    }
-  }`;
-  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
-}
 
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
@@ -62,18 +37,27 @@ function makeD1(sqlite) {
 
 const OPS = "ops.one@pawspace.in";
 const NOW = 1770000000000;
+const OTP_PEPPER = "provider-activation-test-otp-pepper-0123456789abcdef0123456789";
+const TEST_SECRET = "provider-activation-test-secret-0123456789abcdef0123456789";
 
 function fresh() {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
-  globalThis.__PAWSPACE_TEST_ENV = { DB: db, PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: "not-a-real-uat-signing-secret-for-tests" };
+  globalThis.__PAWSPACE_TEST_DB__ = db;
+  globalThis.__PAWSPACE_TEST_ENV = {
+    DB: db,
+    PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: "not-a-real-uat-signing-secret-for-tests",
+    PAWSPACE_OTP_PEPPER: OTP_PEPPER,
+    PAWSPACE_IDENTITY_ENV: "sandbox",
+    PAWSPACE_IDENTITY_TEST_SECRET: TEST_SECRET,
+  };
   return { sqlite, db };
 }
 
 /** A provider that exists because the real OTP flow created it — never a hand-written row. */
 async function signUpProvider(db, { phone, name, cityId = "blr" }) {
   const otp = await import("../lib/partner-otp.ts");
-  const challenge = await otp.requestPartnerOtp(db, { phone });
+  const challenge = await otp.requestPartnerOtpForSandbox(db, { phone, testSecret: TEST_SECRET });
   const verified = await otp.verifyPartnerOtp(db, { challengeId: challenge.challengeId, code: challenge.sandboxCode, name, cityId });
   return verified.providerId;
 }
