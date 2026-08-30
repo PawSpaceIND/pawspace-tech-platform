@@ -1,0 +1,13 @@
+.frame aside {
+  background: linear-gradient(180deg, #001913, #01261f 64%, #06382f) !important;
+  border-right: 1px solid rgba(255,255,255,.06);
+}
+.frame aside nav button:hover { background: rgba(255,255,255,.10) !important; }
+.frame aside nav button[class*="active"] {
+  background: rgba(230,179,78,.16) !important;
+  color: #fff !important;
+  box-shadow: inset 3px 0 0 #e6b34e;
+}
+.frame aside [class*="workspace"] { border-color: rgba(255,255,255,.12) !important; background: rgba(255,255,255,.05) !important; }
+.frame aside [class*="brand"] span { background: #e6b34e !important; color: #001913 !important; }
+.frame aside [class*="integrations"] { border-color: rgba(255,255,255,.10) !important; }

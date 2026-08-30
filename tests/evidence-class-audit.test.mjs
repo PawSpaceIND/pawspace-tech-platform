@@ -59,6 +59,13 @@ test("importing the real module without a database is imported_unit, and adding 
   assert.equal(row.database, true);
 });
 
+test("transpiling a real product module and dynamically importing the output counts as execution", () => {
+  const root = sandbox({
+    "tests/a-executable.test.mjs": `import { DatabaseSync } from "node:sqlite";\nimport ts from "typescript";\nimport { readFile, writeFile } from "node:fs/promises";\nconst source = await readFile(new URL("lib/financial-lifecycle.ts", repoRoot), "utf8");\nawait writeFile(tempPath, ts.transpileModule(source, {}).outputText);\nconst loaded = await import(tempUrl);\nloaded.claimPaymentIntent(new DatabaseSync(":memory:"));\n`,
+  });
+  assert.equal(classifyTestFile("tests/a-executable.test.mjs", root).evidenceClass, "real_execution");
+});
+
 test("a database with nothing imported is still only source_contract", () => {
   // node:sqlite on its own proves nothing about the product: the suite has to drive real code with it.
   const root = sandbox({ "tests/a.test.mjs": `import { DatabaseSync } from "node:sqlite";\nnew DatabaseSync(":memory:").exec("create table t(x)");\n` });

@@ -1,0 +1,17 @@
+/* Canonical Grooming work-order board.
+   Two columns (work-order list | selected detail) on desktop. The detail column
+   carries a 420px minimum, so at tablet width and below the fixed minimums
+   (300 + 420 + gap) exceed the available width and force a horizontal overflow.
+   Collapse to a single column at tablet-and-below to keep the workspace within
+   its viewport; the desktop two-column layout is unchanged above the breakpoint. */
+.board {
+  display: grid;
+  grid-template-columns: minmax(300px, .9fr) minmax(420px, 1.1fr);
+  gap: 18px;
+}
+
+@media (max-width: 900px) {
+  .board {
+    grid-template-columns: 1fr;
+  }
+}

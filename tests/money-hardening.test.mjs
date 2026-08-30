@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import * as nodeModule from "node:module";
+import { installFinancialLifecycleSchema } from "./helpers/financial-lifecycle-schema.mjs";
 
 // Test-only resolve hooks: "cloudflare:workers" resolves to a stub whose env.DB is the current
 // per-test SQLite-backed D1 shim and whose other keys read a mutable test env object, so the REAL
@@ -122,6 +123,7 @@ function baseTables() {
   sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,pet_ids_json TEXT NOT NULL,source_pet_ids_json TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,service_code TEXT NOT NULL,package_code TEXT NOT NULL,package_name TEXT NOT NULL,schedule_group_id TEXT NOT NULL UNIQUE,provider_id TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'confirmed',channel TEXT NOT NULL DEFAULT 'customer_app',total_amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',pricing_json TEXT NOT NULL DEFAULT '{}',created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
   sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,amount_due_now REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',method TEXT NOT NULL,mode TEXT NOT NULL,status TEXT NOT NULL,gateway TEXT NOT NULL DEFAULT 'uat_sandbox',idempotency_key TEXT NOT NULL UNIQUE,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
   sqlite.exec("CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'requested',requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  installFinancialLifecycleSchema(sqlite);
 }
 function seedCustomer(id = "cus_m1", phone = "+91-9000000021", email = "meera@example.in") {
   sqlite.prepare("INSERT OR IGNORE INTO canonical_customers (id,city_id,name,primary_phone,email,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").run(id, "blr", `Customer ${id}`, phone, email, NOW, NOW);
@@ -212,7 +214,9 @@ test("contract: verify-first pins EVERY LIVE online payment to 'created' regardl
   assert.doesNotMatch(bookings, /payment\.mode==="prepaid"\|\|payment\.mode==="split_50_50"/, "a mode-name allowlist is exactly what let 'full' and 'split' through");
   assert.doesNotMatch(bookings, /!isSubscription/, "and a subscription carve-out is what let a LIVE subscription self-declare capture");
   const webhook = fs.readFileSync(new URL("../app/api/razorpay-webhook/route.ts", import.meta.url), "utf8");
-  assert.ok(webhook.indexOf("safeEqual(expected,signature)") < webhook.indexOf("JSON.parse(raw)"), "signature verification must run before the payload is even parsed");
+  const lifecycle = fs.readFileSync(new URL("../lib/financial-lifecycle.ts", import.meta.url), "utf8");
+  assert.match(webhook, /acceptRazorpayWebhook\(db,\{rawBody:raw,signature,webhookSecret:gate\.secret/, "the route passes the exact raw body to the lifecycle verifier");
+  assert.ok(lifecycle.indexOf("verifyRazorpayRawBody(input.rawBody") < lifecycle.indexOf("JSON.parse(input.rawBody)"), "signature verification must run before the payload is parsed");
   const gateway = fs.readFileSync(new URL("../lib/api-gateway.ts", import.meta.url), "utf8");
   assert.match(gateway, /url\.pathname==="\/api\/razorpay-webhook"/, "webhook stays on the public (signature-authenticated) gateway list");
   assert.match(gateway, /stay-balance"\)return "scheduling\.book"/);

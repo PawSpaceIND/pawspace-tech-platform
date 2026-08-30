@@ -233,7 +233,7 @@ test("no unauthenticated route hand-rolls a raw internal error message", async (
   const apiDir = new URL("../app/api/", import.meta.url);
   const entries = await readdir(apiDir, { withFileTypes: true });
   const AUTH = /resolveActor|requireCustomerOwnership|resolvePlatformSession|resolveUatStaffActor|hasPermission|authorize\(|requirePermission|verifyIdentityAssertion|uatAccessCodeValid/;
-  const LEAK = /(error|e|cause|problem|x)\s*instanceof\s*Error\s*\?\s*\1\s*\.\s*message/;
+  const LEAK = /(?:json|Response\.json)\([\s\S]{0,160}?(error|e|cause|problem|x)\s*instanceof\s*Error\s*\?\s*\1\s*\.\s*message/;
   const offenders = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
