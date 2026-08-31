@@ -6,6 +6,9 @@ on:
       - cert/finance-e2e-razorpay
     paths:
       - .github/workflows/finance-uat-checkout-prep.yml
+      - backend/vercel-entry.ts
+      - backend/src/finance-uat-auth.ts
+      - backend/src/finance-uat-bootstrap.ts
   workflow_dispatch:
 
 permissions:
