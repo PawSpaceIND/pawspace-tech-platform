@@ -29,10 +29,18 @@ export async function issueInvoice(repository:PlatformRepository,payment:Payment
   return repository.createInvoice(invoice);
 }
 
+/**
+ * Create a refund request only. Approval is deliberately a separate control surface.
+ *
+ * The previous implementation auto-approved any request made by finance or super_admin and wrote the
+ * same actor into requestedBy and approvedBy. That collapses maker/checker into one click and lets a
+ * privileged requester move straight to a gateway-eligible state. Role authority is still required by
+ * the API boundary, but it no longer substitutes for a second human decision.
+ */
 export async function requestRefund(repository:PlatformRepository,payment:Payment,actor:RequestActor,amount:number,reason:string){
   const existingRefunds=await repository.listRefunds(payment.id);const already=existingRefunds.filter(x=>["approved","processing","completed"].includes(x.status)).reduce((sum,x)=>sum+x.amount,0);
   if(amount<=0||amount>payment.amount-already)throw Object.assign(new Error("Refund exceeds refundable balance"),{statusCode:422});
-  const timestamp=now();const refund:Refund={id:id("refund"),paymentId:payment.id,bookingId:payment.bookingId,amount,reason,status:actor.role==="finance"||actor.role==="super_admin"?"approved":"requested",requestedBy:actor.id,approvedBy:actor.role==="finance"||actor.role==="super_admin"?actor.id:undefined,createdAt:timestamp,updatedAt:timestamp};
+  const timestamp=now();const refund:Refund={id:id("refund"),paymentId:payment.id,bookingId:payment.bookingId,amount,reason,status:"requested",requestedBy:actor.id,createdAt:timestamp,updatedAt:timestamp};
   return repository.createRefund(refund);
 }
 
