@@ -1,0 +1,141 @@
+name: Finance provider Test transaction
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Readiness only, RazorpayX payout, Razorpay Payments refund, or both
+        required: true
+        default: readiness
+        type: choice
+        options:
+          - readiness
+          - payout
+          - refund
+          - both
+      confirmation:
+        description: For payout/refund enter EXECUTE_RAZORPAY_TEST; leave blank for readiness
+        required: false
+        type: string
+      provider_id:
+        description: Provider key in the RazorpayX fund-account map
+        required: true
+        default: pro_finance_uat
+        type: string
+      refund_payment_id:
+        description: Optional captured Razorpay Test pay_ ID; blank selects the newest eligible payment
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: finance-provider-test-transaction
+  cancel-in-progress: false
+
+jobs:
+  provider-test:
+    if: github.ref_name == 'cert/finance-e2e-razorpay'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+      RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+      RAZORPAYX_KEY_ID: ${{ secrets.RAZORPAYX_KEY_ID_SANDBOX || secrets.RAZORPAYX_KEY_ID }}
+      RAZORPAYX_KEY_SECRET: ${{ secrets.RAZORPAYX_KEY_SECRET_SANDBOX || secrets.RAZORPAYX_KEY_SECRET }}
+      RAZORPAYX_ACCOUNT_NUMBER: ${{ secrets.RAZORPAYX_ACCOUNT_NUMBER_SANDBOX || secrets.RAZORPAYX_ACCOUNT_NUMBER }}
+      RAZORPAYX_FUND_ACCOUNT_MAP: ${{ secrets.RAZORPAYX_FUND_ACCOUNT_MAP_SANDBOX || secrets.RAZORPAYX_FUND_ACCOUNT_MAP }}
+      OPERATION: ${{ inputs.operation }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+      PROVIDER_ID: ${{ inputs.provider_id }}
+      REFUND_PAYMENT_ID: ${{ inputs.refund_payment_id }}
+    steps:
+      - name: Validate Test configuration and optionally execute INR 1 transactions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { randomUUID } from "node:crypto";
+
+          const operation = String(process.env.OPERATION || "readiness");
+          const execute = operation !== "readiness";
+          const wantsPayout = operation === "payout" || operation === "both";
+          const wantsRefund = operation === "refund" || operation === "both";
+          const amount = 100;
+          const providerId = String(process.env.PROVIDER_ID || "").trim();
+          const paymentKey = String(process.env.RAZORPAY_KEY_ID || "").trim();
+          const paymentSecret = String(process.env.RAZORPAY_KEY_SECRET || "");
+          const payoutKey = String(process.env.RAZORPAYX_KEY_ID || "").trim();
+          const payoutSecret = String(process.env.RAZORPAYX_KEY_SECRET || "");
+          const accountNumber = String(process.env.RAZORPAYX_ACCOUNT_NUMBER || "").trim();
+          const auth = (key, secret) => `Basic ${Buffer.from(`${key}:${secret}`).toString("base64")}`;
+          const fail = message => { console.error(`FINANCE_PROVIDER_TEST_BLOCKED: ${message}`); process.exit(1); };
+          const json = async response => response.json().catch(() => null);
+          const apiError = (label, response, body) => fail(`${label} returned HTTP ${response.status}${body?.error?.code ? ` (${body.error.code})` : ""}`);
+
+          if (!paymentKey.startsWith("rzp_test_") || !paymentSecret) fail("Razorpay Payments Test credentials are missing or not Test Mode credentials");
+          if (!payoutKey.startsWith("rzp_test_") || !payoutSecret) fail("RazorpayX Test credentials are missing or not Test Mode credentials");
+          if (!accountNumber) fail("RazorpayX Test account number is missing");
+
+          let fundAccountMap;
+          try { fundAccountMap = JSON.parse(String(process.env.RAZORPAYX_FUND_ACCOUNT_MAP || "")); }
+          catch { fail("RAZORPAYX_FUND_ACCOUNT_MAP_SANDBOX is not valid JSON"); }
+          const fundAccountId = fundAccountMap?.[providerId];
+          if (typeof fundAccountId !== "string" || !fundAccountId.startsWith("fa_")) fail(`provider ${providerId} has no fa_ Test fund-account mapping`);
+
+          if (!execute) {
+            console.log("FINANCE_PROVIDER_TEST_READY mode=test amount_paise=100 payout_config=true refund_config=true");
+            console.log("No payout or refund was executed.");
+            process.exit(0);
+          }
+          if (process.env.CONFIRMATION !== "EXECUTE_RAZORPAY_TEST") fail("execution confirmation did not match EXECUTE_RAZORPAY_TEST");
+
+          let refundPayment;
+          if (wantsRefund) {
+            const requestedId = String(process.env.REFUND_PAYMENT_ID || "").trim();
+            if (requestedId && !requestedId.startsWith("pay_")) fail("refund_payment_id must begin with pay_");
+            if (requestedId) {
+              const response = await fetch(`https://api.razorpay.com/v1/payments/${encodeURIComponent(requestedId)}`, { headers: { authorization: auth(paymentKey, paymentSecret) } });
+              const body = await json(response);
+              if (!response.ok) apiError("Razorpay Test payment lookup", response, body);
+              refundPayment = body;
+            } else {
+              const response = await fetch("https://api.razorpay.com/v1/payments?count=100", { headers: { authorization: auth(paymentKey, paymentSecret) } });
+              const body = await json(response);
+              if (!response.ok) apiError("Razorpay Test payment listing", response, body);
+              refundPayment = body?.items?.find(item => item?.status === "captured" && item?.currency === "INR" && Number(item.amount) - Number(item.amount_refunded || 0) >= amount);
+            }
+            if (!refundPayment?.id) fail("no captured INR Razorpay Test payment with at least INR 1 refundable balance was found");
+            if (refundPayment.status !== "captured" || refundPayment.currency !== "INR" || Number(refundPayment.amount) - Number(refundPayment.amount_refunded || 0) < amount) fail("selected Test payment is not eligible for an INR 1 refund");
+          }
+
+          const results = [];
+          if (wantsPayout) {
+            const idempotencyKey = `finuat-${process.env.GITHUB_RUN_ID}-${randomUUID().slice(0, 8)}`.slice(0, 36);
+            const response = await fetch("https://api.razorpay.com/v1/payouts", {
+              method: "POST",
+              headers: { authorization: auth(payoutKey, payoutSecret), "content-type": "application/json", "X-Payout-Idempotency": idempotencyKey },
+              body: JSON.stringify({ account_number: accountNumber, fund_account_id: fundAccountId, amount, currency: "INR", mode: "IMPS", purpose: "payout", queue_if_low_balance: false, reference_id: idempotencyKey, narration: "PawSpace UAT payout", notes: { purpose: "pawspace_finance_uat" } }),
+            });
+            const body = await json(response);
+            if (!response.ok) apiError("RazorpayX Test payout", response, body);
+            if (!String(body?.id || "").startsWith("pout_") || Number(body?.amount) !== amount || body?.currency !== "INR") fail("RazorpayX Test payout response did not match the INR 1 request");
+            results.push(`payout_id=${body.id} payout_status=${body.status || "unknown"}`);
+          }
+
+          if (wantsRefund) {
+            const idempotencyKey = `finuat-refund-${process.env.GITHUB_RUN_ID}-${randomUUID().slice(0, 8)}`.slice(0, 40);
+            const response = await fetch(`https://api.razorpay.com/v1/payments/${encodeURIComponent(refundPayment.id)}/refund`, {
+              method: "POST",
+              headers: { authorization: auth(paymentKey, paymentSecret), "content-type": "application/json", "X-Refund-Idempotency": idempotencyKey },
+              body: JSON.stringify({ amount, receipt: idempotencyKey, notes: { purpose: "pawspace_finance_uat" } }),
+            });
+            const body = await json(response);
+            if (!response.ok) apiError("Razorpay Payments Test refund", response, body);
+            if (!String(body?.id || "").startsWith("rfnd_") || body?.payment_id !== refundPayment.id || Number(body?.amount) !== amount) fail("Razorpay Test refund response did not match the INR 1 request");
+            results.push(`refund_id=${body.id} refund_status=${body.status || "unknown"} payment_id=${refundPayment.id}`);
+          }
+
+          console.log(`FINANCE_PROVIDER_TEST_OK mode=test amount_paise=${amount} ${results.join(" ")}`);
+          NODE
