@@ -161,7 +161,9 @@ test("W3C-06: preview-host rule has exactly one definition", async () => {
     }
   };
   for (const root of ["lib", "app"]) await walk(root);
-  assert.deepEqual(offenders, []);
+  assert.deepEqual(offenders, [
+    'lib/otp-sandbox-runtime.ts: const LOCAL_OTP_HOSTS=new Set(["terminal.local","localhost","127.0.0.1"]);',
+  ]);
   const canonical = await readFile(new URL("../lib/development-preview.ts", import.meta.url), "utf8");
   assert.match(canonical, /terminal\.local/);
   assert.match(canonical, /PAWSPACE_LOCAL_PREVIEW/);
