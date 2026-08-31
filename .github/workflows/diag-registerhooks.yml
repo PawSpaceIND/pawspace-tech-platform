@@ -1,0 +1,40 @@
+name: Diagnose registerHooks harness
+on:
+  push:
+    branches: [cert/boarding-sitting-taxi-razorpay-e2e]
+    paths: [.github/workflows/diag-registerhooks.yml]
+permissions:
+  contents: read
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.15.0
+          cache: npm
+      - run: npm ci
+      - name: Inspect generated auth hook harness
+        run: |
+          set -euo pipefail
+          echo '--- node ---'
+          node --version
+          echo '--- registerHooks type ---'
+          node --input-type=module -e "import Module from 'node:module'; console.log(typeof Module.registerHooks)"
+          echo '--- test/auth-hook-register.mjs ---'
+          sed -n '1,240p' test/auth-hook-register.mjs
+          echo '--- test/auth-hook.cjs ---'
+          sed -n '1,280p' test/auth-hook.cjs
+          echo '--- classifier references ---'
+          grep -n -C 8 'auth-hook.cjs' tests/api-path-classification.test.mjs || true
+          echo '--- package test commands ---'
+          node -e "const p=require('./package.json'); console.log(JSON.stringify({pretest:p.scripts?.pretest,test:p.scripts?.test},null,2))"
+          echo '--- registerHooks API source shape ---'
+          node --input-type=module - <<'NODE'
+          import Module from 'node:module';
+          console.log(String(Module.registerHooks).slice(0,1200));
+          NODE
