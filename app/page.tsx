@@ -59,8 +59,8 @@ const youngPackages: Package[] = [
 const subscriptionPackages: Package[] = [
   { id: "sub-3-dog", name: "3 sessions · Dog", detail: "Use within 4 months · ₹1,199/session", price: 3597 },
   { id: "sub-3-cat", name: "3 sessions · Cat Routine", detail: "Use within 4 months · flexible family wallet", price: 2999 },
-  { id: "sub-6", name: "6 sessions", detail: "Use within 8 months · ₹1,099/session", price: 6594, badge: "Flexible" },
-  { id: "sub-12", name: "12 sessions", detail: "Use within 15 months · ₹999/session", price: 11988, badge: "Lowest price" },
+  { id: "sub-6", name: "6 sessions", detail: "Use within 6 months · ₹1,099/session", price: 6594, badge: "Flexible" },
+  { id: "sub-12", name: "12 sessions", detail: "Use within 12 months · ₹999/session", price: 11988, badge: "Lowest price" },
   { id: "sub-trim", name: "3 Just Trim sessions", detail: "Dogs & cats · use across registered family pets", price: 4197 },
 ];
 
