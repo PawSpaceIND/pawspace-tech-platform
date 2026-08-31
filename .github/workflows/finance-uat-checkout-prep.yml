@@ -1,0 +1,105 @@
+name: Finance UAT Razorpay checkout prep
+
+on:
+  push:
+    branches:
+      - cert/finance-e2e-razorpay
+    paths:
+      - .github/workflows/finance-uat-checkout-prep.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prepare-checkout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+      PLATFORM_API_UAT_BASE_URL: ${{ vars.PLATFORM_API_UAT_BASE_URL || 'https://pawspace-tech-platform-git-cert-finance-e2e-23e3c6-shweta-2150.vercel.app' }}
+    steps:
+      - name: Create canonical PawSpace UAT booking and Razorpay Test order
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { createHmac, randomUUID } from 'node:crypto';
+
+          const base = String(process.env.PLATFORM_API_UAT_BASE_URL || '').trim();
+          const root = String(process.env.RAZORPAY_WEBHOOK_SECRET || '');
+          const sha = String(process.env.GITHUB_SHA || '');
+          const runId = String(process.env.GITHUB_RUN_ID || Date.now());
+          const fail = message => { console.error(`FINANCE_UAT_CHECKOUT_PREP_BLOCKED: ${message}`); process.exit(1); };
+          const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+          if (!base || !root || !/^[0-9a-f]{40}$/.test(sha)) fail('missing UAT base URL, Test webhook secret, or exact SHA');
+
+          const domain = 'pawspace-finance-uat-proof-v1';
+          const proofKey = createHmac('sha256', root).update(domain).digest();
+          let token = '';
+          for (let attempt = 1; attempt <= 24; attempt++) {
+            const timestamp = Math.floor(Date.now() / 1000);
+            const nonce = randomUUID().replaceAll('-', '');
+            const signature = createHmac('sha256', proofKey).update(`${domain}\n${timestamp}\n${nonce}\n${sha}`).digest('hex');
+            try {
+              const response = await fetch(new URL('/v1/auth/finance-uat-session', base), { method: 'POST', redirect: 'error', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ timestamp, nonce, sha, signature }) });
+              const body = await response.json().catch(() => null);
+              if ((response.status === 404 || response.status === 409 || response.status === 401) && attempt < 24) { await sleep(15000); continue; }
+              if (!response.ok) fail(`exact-SHA signed session returned HTTP ${response.status}`);
+              if (body?.meta?.commitSha !== sha || typeof body?.data?.accessToken !== 'string') fail('signed session was not bound to the exact SHA');
+              token = body.data.accessToken;
+              break;
+            } catch (error) {
+              if (attempt < 24) { await sleep(15000); continue; }
+              fail(`preview remained unreachable (${error instanceof Error ? error.name : 'error'})`);
+            }
+          }
+          if (!token) fail('could not obtain exact-SHA UAT session');
+
+          const api = async (path, init = {}) => {
+            const response = await fetch(new URL(path, base), {
+              ...init,
+              redirect: 'error',
+              headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(init.headers || {}) },
+            });
+            const body = await response.json().catch(() => null);
+            if (!response.ok) fail(`${init.method || 'GET'} ${path} returned HTTP ${response.status}${body?.error?.code ? ` (${body.error.code})` : ''}`);
+            return body;
+          };
+
+          const catalog = await api('/v1/catalog?serviceCode=grooming');
+          const price = Array.isArray(catalog?.data) ? catalog.data.find(item => item?.packageCode === 'essential_bath') : null;
+          if (!price || Number(price.amount || 0) <= 0) fail('UAT grooming price essential_bath is not available');
+
+          const unique = runId.replace(/\D/g, '').slice(-8).padStart(8, '0');
+          const customerBody = await api('/v1/customers', { method: 'POST', body: JSON.stringify({ name: `Finance UAT ${unique}`, primaryPhone: `+9199${unique}`, type: 'new', marketingConsent: false, legacyIds: [`finance-uat:${runId}`] }) });
+          const customerId = String(customerBody?.data?.id || '');
+          if (!customerId) fail('customer fixture was not created');
+
+          const petBody = await api('/v1/pets', { method: 'POST', body: JSON.stringify({ customerId, name: 'Finance UAT Pet', species: 'dog', breed: 'Golden Retriever', allergies: [], behaviourNotes: 'Synthetic Finance certification fixture', vaccinationStatus: 'verified', legacyIds: [`finance-uat-pet:${runId}`] }) });
+          const petId = String(petBody?.data?.id || '');
+          if (!petId) fail('pet fixture was not created');
+
+          const target = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+          const date = target.toISOString().slice(0, 10);
+          await api('/v1/providers/pro_arjun/availability', { method: 'PUT', body: JSON.stringify({ zoneId: 'blr-east', date, windows: ['09:00-13:00'], source: 'roster' }) });
+
+          const scheduledStart = `${date}T03:30:00.000Z`;
+          const scheduledEnd = `${date}T05:30:00.000Z`;
+          const bookingKey = `finuatbook${unique}`;
+          const bookingBody = await api('/v1/bookings', { method: 'POST', headers: { 'idempotency-key': bookingKey }, body: JSON.stringify({ customerId, petIds: [petId], serviceCode: 'grooming', packageCode: 'essential_bath', addonCodes: [], zoneId: 'blr-east', scheduledStart, scheduledEnd, channel: 'operations_assisted', manualProviderId: 'pro_arjun', manualOverrideReason: 'Finance UAT synthetic lifecycle certification' }) });
+          const booking = bookingBody?.data;
+          if (!booking?.id || booking?.providerId !== 'pro_arjun') fail('canonical UAT booking was not assigned to pro_arjun');
+
+          const paymentKey = `finuatpay${unique}`;
+          const paymentBody = await api(`/v1/bookings/${encodeURIComponent(booking.id)}/payments`, { method: 'POST', headers: { 'idempotency-key': paymentKey }, body: JSON.stringify({ method: 'card', mode: 'prepaid' }) });
+          const payment = paymentBody?.data;
+          if (!payment?.id || payment?.gateway !== 'razorpay' || !/^order_[A-Za-z0-9]+$/.test(String(payment?.gatewayOrderId || ''))) fail('canonical Razorpay Test payment order was not created');
+          if (Number(payment.amount || 0) !== Number(booking.totalAmount || 0)) fail('payment amount does not match canonical booking total');
+
+          const checkout = new URL('/v1/finance-uat-checkout', base);
+          checkout.searchParams.set('orderId', payment.gatewayOrderId);
+          console.log(`FINANCE_UAT_CHECKOUT_READY booking_id=${booking.id} payment_id=${payment.id} order_id=${payment.gatewayOrderId} amount_rupees=${payment.amount} provider_id=${booking.providerId}`);
+          console.log(`FINANCE_UAT_CHECKOUT_URL ${checkout.toString()}`);
+          await import('node:fs/promises').then(fs => fs.appendFile(process.env.GITHUB_STEP_SUMMARY, `## Finance UAT checkout ready\n\n- Canonical booking: \`${booking.id}\`\n- Internal payment: \`${payment.id}\`\n- Razorpay Test order: \`${payment.gatewayOrderId}\`\n- Amount: INR ${payment.amount}\n- Provider: \`${booking.providerId}\`\n- [Open the isolated Razorpay Test checkout](${checkout.toString()})\n`));
+          NODE
