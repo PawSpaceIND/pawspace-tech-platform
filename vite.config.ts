@@ -14,7 +14,7 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 const localBindingConfig = {
   main: "./worker/index.ts",
   compatibility_flags: ["nodejs_compat"],
-  vars: { PAWSPACE_LOCAL_PREVIEW: "on" },
+  vars: { PAWSPACE_LOCAL_PREVIEW: "on", PAWSPACE_SCHEDULING_ENV: "uat" },
   triggers:{crons:["*/5 * * * *"]},
   d1_databases: d1
     ? [

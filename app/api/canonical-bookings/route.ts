@@ -29,7 +29,7 @@ type LifecycleInput={
   pets:Array<{sourceId:string;name:string;species?:string;breed?:string;vaccinationStatus?:string;medicationRequired?:boolean}>;cityId:string;zoneId:string;
   serviceCode:"grooming"|"dog_training"|"boarding"|"pet_sitting";packageCode:string;packageName:string;scheduledStart:string;scheduledEnd:string;
   provider:{id:string;name:string;model:"full_time"|"commission"};totalAmount:number;amountDueNow:number;
-  payment:{method:string;mode:string;status:string;detail:string};pricing:{discount:number;couponCode?:string;couponQuoteId?:string;addOns?:string[];subscription?:string;requirements?:string[];trainingQuoteId?:string;boardingQuoteId?:string;sittingQuoteId?:string;referralClaimId?:string};
+  payment:{method:string;mode:string;status:string;detail:string};pricing:{discount:number;couponCode?:string;couponQuoteId?:string;addOns?:string[];subscription?:string;requirements?:string[];trainingQuoteId?:string;trainingCategory?:string;healthSafetyNotes?:string;behaviourNotes?:string;boardingQuoteId?:string;sittingQuoteId?:string;referralClaimId?:string};
 };
 
 type SubscriptionPlan={planCode:string;sessions:number;validityValue:number;validityUnit:"days"|"months";reserveSessions:number;servicePackageCode:string;cityId:string;zoneId?:string|null;familyWallet:boolean;pauseDays:number;graceDays:number;renewalWindowDays:number;benefits:unknown[];terms:Record<string,unknown>};

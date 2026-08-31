@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { developmentOtpSandboxEnabled, resolveOtpAssertionSecret } from "../lib/otp-sandbox-runtime.ts";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+installWorkersHooks("__OTP_PREVIEW_DB__", "__OTP_PREVIEW_ENV__");
+
+const { developmentOtpSandboxEnabled, resolveOtpAssertionSecret } =
+  await import("../lib/otp-sandbox-runtime.ts");
 
 test("local Worker preview binding enables OTP sandbox without relying on process NODE_ENV",()=>{
   const previous=process.env.NODE_ENV;
