@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "./mobile-safe.css";
 import "./review-overrides.css";
+import "./unified-pawspace-theme.css";
 import ReviewUxFixes from "./components/review-ux-fixes";
 import OrderNotificationCenter from "./components/order-notification-center";
 
