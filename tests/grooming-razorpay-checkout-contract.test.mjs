@@ -29,7 +29,7 @@ test("Razorpay browser callback is verified against PawSpace's stored order and 
   assert.doesNotMatch(route, /status='captured'.*verify_checkout/s);
   assert.match(verifier, /HMAC/);
   assert.match(verifier, /SHA-256/);
-  assert.match(verifier, /`${orderId}\|${paymentId}`/);
+  assert.match(verifier, /`\$\{orderId\}\|\$\{paymentId\}`/);
 });
 
 test("Checkout callback stores pay_ id only after signature verification and fails closed on conflicts", async () => {
