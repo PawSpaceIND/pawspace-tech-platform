@@ -7,6 +7,7 @@ import PetManager from "./pet-manager";
 import { loadCustomerPets, type CustomerPet } from "../../lib/customer-account-client";
 import type { LoggedInCustomer } from "./customer-login";
 import { resolveServiceCoverage } from "../../lib/service-zone-client";
+import { openRazorpayTestCheckout } from "../../lib/razorpay-checkout-client";
 
 // Same prop contract as the other embedded flows: the shell passes the logged-in customer; pets
 // follow the UAT roster pattern. Pet Taxi carries dogs AND cats — one pet per trip (Gate 1 rule).
@@ -51,6 +52,9 @@ export default function TaxiFlow({ customer }: { customer: LoggedInCustomer }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [pincode, setPincode] = useState("");
+  const [safetyNotes, setSafetyNotes] = useState("");
+  const [behaviourNotes, setBehaviourNotes] = useState("");
+  const [paymentNote, setPaymentNote] = useState("Payment pending");
 
   useEffect(() => {
     let active = true;
@@ -107,12 +111,14 @@ export default function TaxiFlow({ customer }: { customer: LoggedInCustomer }) {
       // the reservation must match the quote's window exactly, so both use the quote's own end time.
       if (!pet) { setError("Add a pet to book a Pet Taxi trip."); setBusy(false); return; }
       const fresh = await createTaxiQuote({ routeCode, originLabel: origin, destinationLabel: destination, petCount: 1, scheduledStart });
-      const requestId = `taxi-${customer.customerId}-${fresh.routeCode}-${fresh.scheduledStart}`;
-      // Auto-assignment is allowed for taxi (founder rule) — the scheduler picks the driver.
       const coverage = await resolveServiceCoverage(pincode);
+      const normalized=(value:string)=>value.trim().replace(/\s+/g," ").toLowerCase();
+      const requestId=["taxi",customer.customerId,pet.id,fresh.routeCode,fresh.scheduledStart,coverage.cityId,coverage.zoneId,normalized(fresh.originLabel),normalized(fresh.destinationLabel),normalized(safetyNotes),normalized(behaviourNotes)].map(value=>encodeURIComponent(String(value))).join(":");
+      // Auto-assignment is allowed for taxi (founder rule) — the scheduler picks the driver.
       const reservation = await reserveTaxiSchedule({ clientRequestId: requestId, customerId: customer.customerId, petIds: [pet.id], cityId: coverage.cityId, zoneId: coverage.zoneId, scheduledStart: fresh.scheduledStart, scheduledEnd: fresh.scheduledEnd });
-      const created = await createCanonicalTaxiBooking({ idempotencyKey: requestId, groupId: reservation.groupId, taxiQuoteId: fresh.quoteId, customer: { id: customer.customerId, name: customer.customerName, primaryPhone: customer.phone }, pets: [{ sourceId: pet.sourceId ?? pet.id, name: pet.name, species: pet.species === "cat" ? "cat" : pet.species === "dog" ? "dog" : "other" }], cityId: coverage.cityId, zoneId: coverage.zoneId, routeCode: fresh.routeCode, originLabel: fresh.originLabel, destinationLabel: fresh.destinationLabel, scheduledStart: fresh.scheduledStart, scheduledEnd: fresh.scheduledEnd, provider: { id: reservation.driver.id, name: reservation.driver.name, model: reservation.driver.model }, totalAmount: fresh.totalAmount, amountDueNow: fresh.amountDueNow, payment: { method: "payment_link", mode: "sandbox_deferred", detail: "Payment remains pending until a verified payment event" } });
+      const created = await createCanonicalTaxiBooking({ idempotencyKey: requestId, groupId: reservation.groupId, taxiQuoteId: fresh.quoteId, customer: { id: customer.customerId, name: customer.customerName, primaryPhone: customer.phone }, pets: [{ sourceId: pet.sourceId ?? pet.id, name: pet.name, species: pet.species === "cat" ? "cat" : pet.species === "dog" ? "dog" : "other", breed: pet.profile?.breed || pet.breed || undefined, vaccinationStatus: pet.vaccinationStatus }], cityId: coverage.cityId, zoneId: coverage.zoneId, routeCode: fresh.routeCode, originLabel: fresh.originLabel, destinationLabel: fresh.destinationLabel, scheduledStart: fresh.scheduledStart, scheduledEnd: fresh.scheduledEnd, provider: { id: reservation.driver.id, name: reservation.driver.name, model: reservation.driver.model }, totalAmount: fresh.totalAmount, amountDueNow: fresh.amountDueNow, payment: { method: "payment_link", mode: "sandbox_deferred", detail: "Payment remains pending until a verified payment event" }, safety:{healthSafetyNotes:safetyNotes.trim()||undefined,behaviourNotes:behaviourNotes.trim()||undefined,requirements:["Safe pet transport","Pickup/drop verification"]} });
       setQuote(fresh); setDriver(reservation.driver); setBooking(created);
+      try{const paid=await openRazorpayTestCheckout({bookingId:created.bookingId,customerName:customer.customerName,customerPhone:customer.phone,description:"Pet Taxi booking"});setPaymentNote(paid.outcome==="captured"?"Razorpay Test Mode captured":"Razorpay Test Mode pending verified webhook capture");}catch(paymentError){setPaymentNote(`Razorpay Test Mode pending · ${paymentError instanceof Error?paymentError.message:"checkout unavailable"}`);}
     } catch (problem) { setError(problem instanceof Error ? problem.message : "Unable to confirm the Pet Taxi booking"); }
     finally { setBusy(false); }
   }
@@ -213,6 +219,10 @@ export default function TaxiFlow({ customer }: { customer: LoggedInCustomer }) {
           </div>
           {showPetManager && <PetManager customer={customer} onPetsChanged={onPetsChanged} />}
           <p className={styles.note}>Dogs and cats welcome — one pet per trip so the driver&apos;s full attention stays on your companion. 🐾</p>
+          <span className={styles.label}>Medical &amp; transport safety notes</span>
+          <textarea className={styles.input} value={safetyNotes} onChange={event => setSafetyNotes(event.target.value)} placeholder="Medical restrictions, allergies, medication or handling requirements" />
+          <span className={styles.label}>Behaviour notes</span>
+          <textarea className={styles.input} value={behaviourNotes} onChange={event => setBehaviourNotes(event.target.value)} placeholder="Bite/aggression history, anxiety or reactivity" />
           <button className={styles.primary} disabled={!pet} onClick={() => { setQuote(null); setStage(4); }}>Review &amp; confirm</button>
           <button className={styles.back} onClick={() => setStage(2)}>← Trip</button>
         </section>
@@ -231,6 +241,7 @@ export default function TaxiFlow({ customer }: { customer: LoggedInCustomer }) {
             <div><span>Distance / duration</span><b>{quote ? `~${quote.syntheticDistanceKm} km · ~${quote.estimatedDurationMinutes} min` : "Server quote…"}</b></div>
             <div><span>Fare (sandbox deferred)</span><b>{quote ? money(quote.totalAmount) : "Server quote…"}</b></div>
             <div><span>Due today</span><b>{quote ? money(quote.amountDueNow) : money(0)}</b></div>
+            <div><span>Payment</span><b>{paymentNote}</b></div>
           </div>
           <span className={styles.label}>Pickup service PIN code</span>
           <input className={styles.input} value={pincode} inputMode="numeric" maxLength={6} onChange={event => setPincode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="Enter six-digit PIN code" />
