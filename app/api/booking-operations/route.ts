@@ -245,6 +245,7 @@ export async function POST(request: Request) {
       if (input.refundStatus === "completed") {
         const gatewayReference=String(refund.gateway_reference||"").trim();
         if (!gatewayReference) return json({ error: "Refund completion requires an authoritative gateway reference" }, 409);
+        if (input.gatewayReference && input.gatewayReference !== gatewayReference) return json({ error: "Refund gateway reference is immutable after reconciliation" }, 409);
         const gatewayProof=await db.prepare("SELECT id FROM payment_gateway_events WHERE booking_id=? AND payment_id=? AND gateway_refund_id=? AND event_type='refund.processed' AND signature_verified=1 AND processing_status='processed' LIMIT 1").bind(input.bookingId,refund.payment_id??null,gatewayReference).first<Record<string,unknown>>().catch(()=>null);
         if (!gatewayProof) return json({ error: "Refund completion requires signature-verified gateway reconciliation evidence" }, 409);
       }
