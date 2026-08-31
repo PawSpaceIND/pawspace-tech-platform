@@ -24,7 +24,7 @@ jobs:
       RAZORPAYX_ACCOUNT_NUMBER: ${{ secrets.RAZORPAYX_ACCOUNT_NUMBER_SANDBOX || secrets.RAZORPAYX_ACCOUNT_NUMBER }}
       RAZORPAYX_FUND_ACCOUNT_MAP: ${{ secrets.RAZORPAYX_FUND_ACCOUNT_MAP_SANDBOX || secrets.RAZORPAYX_FUND_ACCOUNT_MAP }}
       RAZORPAYX_IP_ALLOWLIST_CONFIRMED: ${{ vars.RAZORPAYX_IP_ALLOWLIST_CONFIRMED || 'false' }}
-      PLATFORM_API_UAT_BASE_URL: ${{ vars.PLATFORM_API_UAT_BASE_URL }}
+      PLATFORM_API_UAT_BASE_URL: ${{ vars.PLATFORM_API_UAT_BASE_URL || 'https://pawspace-tech-platform-git-cert-finance-e2e-23e3c6-shweta-2150.vercel.app' }}
     steps:
       - uses: actions/checkout@v4
 
