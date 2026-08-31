@@ -40,6 +40,30 @@ test("renewal accounting is exactly-once and tax invoice mismatch fails closed",
   assert.match(source,/accounting_status='exception'/);
 });
 
+test("renewal entitlement is cycle-keyed, idempotent and repairable",()=>{
+  const entitlement=read("lib/subscription-entitlement-renewal.ts"),webhook=after(read("app/api/razorpay-webhook/route.ts"),"export async function POST"),scheduled=after(read("lib/subscription-scheduled.ts"),"export async function runSubscriptionScheduledMaintenance");
+  assert.match(entitlement,/subscription_entitlement_grants \(cycle_id TEXT PRIMARY KEY/);
+  assert.match(entitlement,/subscription-renewal:\$\{cycleId\}/);
+  assert.match(entitlement,/NOT EXISTS \(SELECT 1 FROM subscription_entitlement_grants WHERE cycle_id=\?\)/);
+  assert.match(entitlement,/export async function repairSubscriptionRenewalEntitlements/);
+  assert.ok(webhook.indexOf("processSubscriptionProviderEvent")<webhook.indexOf("grantSubscriptionRenewalEntitlement"));
+  assert.match(webhook,/eventType==="subscription\.charged"\?await grantSubscriptionRenewalEntitlement/);
+  assert.ok(scheduled.indexOf("runSubscriptionBillingSweep")<scheduled.indexOf("repairSubscriptionRenewalEntitlements"));
+  assert.ok(scheduled.indexOf("repairSubscriptionRenewalEntitlements")<scheduled.indexOf("enqueueSubscriptionDunningNotifications"));
+});
+
+test("refunds are capped by unused entitlement before deferred-revenue reversal",()=>{
+  const entitlement=read("lib/subscription-entitlement-renewal.ts"),customer=read("app/api/subscription-billing/route.ts"),admin=read("app/api/subscription-billing-admin/route.ts"),webhook=after(read("app/api/razorpay-webhook/route.ts"),"export async function POST"),refund=read("lib/subscription-refund-reconciliation.ts");
+  assert.match(entitlement,/subscription_refund_exceeds_unused_entitlement/);
+  assert.match(entitlement,/sessions_reserved\)\+n\(target\.sessions_consumed/);
+  assert.match(entitlement,/total_sessions=\?/);
+  assert.match(customer,/validateSubscriptionRefundAgainstUnusedEntitlement/);
+  assert.match(admin,/approveSubscriptionRefundAgainstUnusedEntitlement/);
+  assert.ok(webhook.indexOf("prepareSubscriptionRefundEntitlementForWebhook")<webhook.indexOf("processSubscriptionRefundEvent"));
+  assert.ok(webhook.indexOf("processSubscriptionRefundEvent")<webhook.indexOf("finalizeSubscriptionRefundEntitlement"));
+  assert.match(refund,/ACCT\.DEFERRED_REVENUE/);
+});
+
 test("subscription refund maker-checker and provider proration remain capped and idempotent",()=>{
   const billing=read("lib/subscription-billing.ts");
   const refund=read("lib/subscription-refund-reconciliation.ts");
@@ -84,16 +108,17 @@ test("subscription-origin payments cannot be counted as a second source-booking 
   assert.ok(webhook.indexOf("processSubscriptionProviderEvent")<webhook.indexOf("processGatewayEvent"));
 });
 
-test("customer and finance mutation routes enforce ownership, role separation and same-origin writes",()=>{
-  const customer=read("app/api/subscription-billing/route.ts"),admin=read("app/api/subscription-billing-admin/route.ts"),worker=read("worker/index.ts");
+test("canonical gateway owns subscription route permission classification and worker has no alias",()=>{
+  const customer=read("app/api/subscription-billing/route.ts"),admin=read("app/api/subscription-billing-admin/route.ts"),gateway=read("lib/api-gateway.ts"),worker=read("worker/index.ts");
   assert.match(customer,/Cross-origin write blocked/);
   assert.match(customer,/requireCustomerOwnership/);
   assert.match(customer,/authorize\(request,"scheduling\.book"\)/);
   assert.match(admin,/Cross-origin write blocked/);
   assert.match(admin,/finance.manage/);
   assert.match(admin,/pricing.manage/);
-  assert.match(worker,/gatewayAuthorizationRequest/);
-  assert.match(worker,/\/api\/payment-order/);
-  assert.match(worker,/\/api\/pricing-control/);
-  assert.match(worker,/\/api\/finance-control/);
+  assert.match(gateway,/url\.pathname==="\/api\/subscription-billing"\)return "scheduling\.book"/);
+  assert.match(gateway,/url\.pathname==="\/api\/subscription-billing-admin"/);
+  assert.match(gateway,/\["save_plan","approve_plan"\]\.includes\(action\)\?"pricing\.manage":"finance\.manage"/);
+  assert.doesNotMatch(worker,/gatewayAuthorizationRequest|policyRequest/);
+  assert.match(worker,/authorizeApiRequest\(request, env\)/);
 });

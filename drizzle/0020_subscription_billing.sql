@@ -57,3 +57,10 @@ CREATE TABLE IF NOT EXISTS subscription_refund_transition_claims (
 CREATE TABLE IF NOT EXISTS subscription_provider_refunds (
   id TEXT PRIMARY KEY,cycle_id TEXT NOT NULL,gateway_refund_id TEXT NOT NULL UNIQUE,provider_event_id TEXT NOT NULL UNIQUE,amount_paise INTEGER NOT NULL CHECK(amount_paise>0),kind TEXT NOT NULL CHECK(kind IN ('maker_checker','provider_proration')),created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS subscription_entitlement_grants (
+  cycle_id TEXT PRIMARY KEY,contract_id TEXT NOT NULL,entitlement_subscription_id TEXT NOT NULL,credits_granted INTEGER NOT NULL CHECK(credits_granted>0),amount_paise INTEGER NOT NULL CHECK(amount_paise>0),total_before INTEGER NOT NULL CHECK(total_before>=0),period_end INTEGER,refund_reserved_credits INTEGER NOT NULL DEFAULT 0 CHECK(refund_reserved_credits>=0),refunded_credits INTEGER NOT NULL DEFAULT 0 CHECK(refunded_credits>=0),refunded_paise INTEGER NOT NULL DEFAULT 0 CHECK(refunded_paise>=0),status TEXT NOT NULL DEFAULT 'applied' CHECK(status IN ('claiming','applied')),created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_subscription_entitlement_grants_subscription ON subscription_entitlement_grants(entitlement_subscription_id,created_at,cycle_id);
+CREATE TABLE IF NOT EXISTS subscription_refund_entitlement_allocations (
+  id TEXT PRIMARY KEY,allocation_key TEXT NOT NULL UNIQUE,cycle_id TEXT NOT NULL,refund_case_id TEXT UNIQUE,gateway_refund_id TEXT UNIQUE,amount_paise INTEGER NOT NULL CHECK(amount_paise>0),credits INTEGER NOT NULL CHECK(credits>0),kind TEXT NOT NULL CHECK(kind IN ('maker_checker','provider_proration')),status TEXT NOT NULL DEFAULT 'reserved' CHECK(status IN ('reserved','processed')),created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL
+);

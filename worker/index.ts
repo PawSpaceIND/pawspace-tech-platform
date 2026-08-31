@@ -36,8 +36,6 @@ interface ScheduledControllerLike {
 }
 
 function secureApiResponse(response:Response){const secured=new Response(response.body,response);secured.headers.set("cache-control","no-store");secured.headers.set("x-content-type-options","nosniff");secured.headers.set("referrer-policy","same-origin");return secured;}
-function policyRequest(request:Request,path:string){const url=new URL(request.url);url.pathname=path;url.search="";return new Request(url.toString(),{method:request.method,headers:request.headers});}
-async function gatewayAuthorizationRequest(request:Request,url:URL){if(url.pathname==="/api/subscription-billing")return policyRequest(request,"/api/payment-order");if(url.pathname==="/api/subscription-billing-admin"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");return policyRequest(request,action==="save_plan"||action==="approve_plan"?"/api/pricing-control":"/api/finance-control");}return request;}
 
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -48,8 +46,7 @@ const worker = {
       if(request.method==="POST"&&(url.pathname==="/api/uat-scheduling"||url.pathname==="/api/canonical-bookings"))await cleanupExpiredReservationLeases(env.DB);
       const sessionAccess=await authorizePlatformSessionRequest(request,env.DB);
       if(sessionAccess instanceof Response)return sessionAccess;
-      const authorizationRequest=await gatewayAuthorizationRequest(request,url);
-      const access=sessionAccess??await authorizeApiRequest(authorizationRequest, env);
+      const access=sessionAccess??await authorizeApiRequest(request, env);
       if (access instanceof Response) return access;
       const serviceBlock=await blockDisabledServiceRequest(request,env.DB);
       if(serviceBlock){ctx.waitUntil(auditApiResponse(env,access.actor,access.permission,request,serviceBlock.clone()));return secureApiResponse(serviceBlock);}
