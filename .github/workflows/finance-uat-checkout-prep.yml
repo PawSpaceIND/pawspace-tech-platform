@@ -35,6 +35,7 @@ jobs:
           const runId = String(process.env.GITHUB_RUN_ID || Date.now());
           const fail = message => { console.error(`FINANCE_UAT_CHECKOUT_PREP_BLOCKED: ${message}`); process.exit(1); };
           const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+          const safeError = value => String(value || '').replace(/rzp_(?:test|live)_[A-Za-z0-9]+/g, 'rzp_[redacted]').replace(/(?:key|secret|token|authorization)\s*[:=]\s*[^,}\s]+/gi, '$1=[redacted]').slice(0, 500);
           if (!base || !root || !/^[0-9a-f]{40}$/.test(sha)) fail('missing UAT base URL, Test webhook secret, or exact SHA');
 
           const domain = 'pawspace-finance-uat-proof-v1';
@@ -66,7 +67,11 @@ jobs:
               headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(init.headers || {}) },
             });
             const body = await response.json().catch(() => null);
-            if (!response.ok) fail(`${init.method || 'GET'} ${path} returned HTTP ${response.status}${body?.error?.code ? ` (${body.error.code})` : ''}`);
+            if (!response.ok) {
+              const code = body?.error?.code ? ` (${body.error.code})` : '';
+              const detail = body?.error?.message ? ` detail=${safeError(body.error.message)}` : '';
+              fail(`${init.method || 'GET'} ${path} returned HTTP ${response.status}${code}${detail}`);
+            }
             return body;
           };
 
