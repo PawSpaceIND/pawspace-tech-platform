@@ -3,6 +3,8 @@ import{processGatewayEvent,type GatewayEvent}from"../../../lib/grooming-payment-
 import{resolvePaymentWebhookGate}from"../../../lib/payment-webhook-gate";
 import{acceptRazorpayWebhook,advancePaymentState,postBalancedJournal,type PaymentState}from"../../../lib/financial-lifecycle";
 import{ACCT}from"../../../lib/finance-accounts";
+import{isPawSpaceSubscriptionPayload,processSubscriptionProviderEvent}from"../../../lib/subscription-billing";
+import{processSubscriptionRefundEvent}from"../../../lib/subscription-refund-reconciliation";
 
 type RazorEntity=Record<string,unknown>;
 type RazorPayload={event?:string;created_at?:number;payload?:Record<string,{entity?:RazorEntity}>};
@@ -12,10 +14,13 @@ const rank:Record<PaymentState,number>={CREATED:0,AUTHORIZED:1,CAPTURED:2,SETTLE
 
 function entity(payload:RazorPayload,key:string){return payload.payload?.[key]?.entity||{};}
 function extract(payload:RazorPayload,eventId:string,payloadHash:string,environment:"sandbox"|"live"):GatewayEvent{
-  const eventType=String(payload.event||"");const payment=entity(payload,"payment"),refund=entity(payload,"refund"),order=entity(payload,"order"),paymentLink=entity(payload,"payment_link");const notes=(payment.notes&&typeof payment.notes==="object"?payment.notes:order.notes&&typeof order.notes==="object"?order.notes:paymentLink.notes&&typeof paymentLink.notes==="object"?paymentLink.notes:{}) as Record<string,unknown>;
-  const bookingId=String(notes.booking_id||notes.bookingId||notes.pawspace_booking_id||"").trim()||undefined;
+  const eventType=String(payload.event||"");const payment=entity(payload,"payment"),refund=entity(payload,"refund"),order=entity(payload,"order"),paymentLink=entity(payload,"payment_link"),subscription=entity(payload,"subscription");const notes=(payment.notes&&typeof payment.notes==="object"?payment.notes:order.notes&&typeof order.notes==="object"?order.notes:paymentLink.notes&&typeof paymentLink.notes==="object"?paymentLink.notes:subscription.notes&&typeof subscription.notes==="object"?subscription.notes:{}) as Record<string,unknown>;
+  // A recurring subscription payment can carry the source booking note. It is not another payment
+  // against that booking. The subscription processor consumes it before the booking reconciler below.
+  const subscriptionOrigin=Boolean(String(notes.pawspace_billing_subscription_id||payment.subscription_id||subscription.id||"").trim());
+  const bookingId=subscriptionOrigin?undefined:String(notes.booking_id||notes.bookingId||notes.pawspace_booking_id||"").trim()||undefined;
   const amountEntity=eventType.startsWith("refund.")?refund:payment;const amount=Number(amountEntity.amount??order.amount_paid??0);
-  return{provider:"razorpay",environment,eventId,eventType,bookingId,gatewayOrderId:String(payment.order_id||refund.order_id||order.id||"").trim()||undefined,gatewayPaymentLinkId:String(paymentLink.id||"").trim()||undefined,gatewayPaymentId:String(refund.payment_id||payment.id||"").trim()||undefined,gatewayRefundId:String(refund.id||"").trim()||undefined,amountSubunits:Number.isFinite(amount)?amount:undefined,currency:String(amountEntity.currency||payment.currency||order.currency||"").trim()||undefined,createdAt:Number(payload.created_at||0)*1000||Date.now(),signatureVerified:true,payloadHash,detail:{contains:Object.keys(payload.payload||{}),source:"razorpay_webhook"}};
+  return{provider:"razorpay",environment,eventId,eventType,bookingId,gatewayOrderId:String(payment.order_id||refund.order_id||order.id||"").trim()||undefined,gatewayPaymentLinkId:String(paymentLink.id||"").trim()||undefined,gatewayPaymentId:String(refund.payment_id||payment.id||"").trim()||undefined,gatewayRefundId:String(refund.id||"").trim()||undefined,amountSubunits:Number.isFinite(amount)?amount:undefined,currency:String(amountEntity.currency||payment.currency||order.currency||"").trim()||undefined,createdAt:Number(payload.created_at||0)*1000||Date.now(),signatureVerified:true,payloadHash,detail:{contains:Object.keys(payload.payload||{}),source:"razorpay_webhook",subscriptionOrigin}};
 }
 
 function targetFor(eventType:string):PaymentState|null{
@@ -84,6 +89,17 @@ export async function POST(request:Request){
     if(!eventType){await markInbox(db,accepted.row,"REJECTED",undefined,"missing_event_type");return json({error:"Webhook event type is required"},400);}
     if(!(await claimInbox(db,accepted.row,eventType)))return json({ok:true,environment:gate.environment,duplicate:true,status:String(accepted.row.processing_status)});
     try{
+      // Refunds are checked first because a provider-generated proration refund may not carry a
+      // subscription entity. Matching by the original recurring payment id keeps it out of booking refunds.
+      if(eventType==="refund.processed"){
+        const refundResult=await processSubscriptionRefundEvent(db,payload as unknown as Row,eventId);
+        if(refundResult.handled){await markInbox(db,accepted.row,"PROCESSED",eventType);return json({ok:true,environment:gate.environment,subscriptionRefund:refundResult});}
+      }
+      if(eventType.startsWith("subscription.")||isPawSpaceSubscriptionPayload(payload as unknown as Row)){
+        const subscriptionResult=await processSubscriptionProviderEvent(db,payload as unknown as Row,eventId);
+        if(subscriptionResult.handled){await markInbox(db,accepted.row,"PROCESSED",eventType);return json({ok:true,environment:gate.environment,subscription:subscriptionResult});}
+      }
+
       const event=extract(payload,eventId,String(accepted.row.payload_sha256),gate.environment);
       const target=targetFor(eventType);const intent=target?await matchedIntent(db,event):null;
       if(intent&&target&&transitionWouldDefer(intent,target)){
