@@ -1,6 +1,11 @@
 name: Finance provider Test transaction
 
 on:
+  push:
+    branches:
+      - cert/finance-e2e-razorpay
+    paths:
+      - .github/workflows/finance-provider-test.yml
   workflow_dispatch:
     inputs:
       operation:
@@ -46,10 +51,10 @@ jobs:
       RAZORPAYX_KEY_SECRET: ${{ secrets.RAZORPAYX_KEY_SECRET_SANDBOX || secrets.RAZORPAYX_KEY_SECRET }}
       RAZORPAYX_ACCOUNT_NUMBER: ${{ secrets.RAZORPAYX_ACCOUNT_NUMBER_SANDBOX || secrets.RAZORPAYX_ACCOUNT_NUMBER }}
       RAZORPAYX_FUND_ACCOUNT_MAP: ${{ secrets.RAZORPAYX_FUND_ACCOUNT_MAP_SANDBOX || secrets.RAZORPAYX_FUND_ACCOUNT_MAP }}
-      OPERATION: ${{ inputs.operation }}
-      CONFIRMATION: ${{ inputs.confirmation }}
-      PROVIDER_ID: ${{ inputs.provider_id }}
-      REFUND_PAYMENT_ID: ${{ inputs.refund_payment_id }}
+      OPERATION: ${{ github.event_name == 'workflow_dispatch' && inputs.operation || 'readiness' }}
+      CONFIRMATION: ${{ github.event_name == 'workflow_dispatch' && inputs.confirmation || '' }}
+      PROVIDER_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.provider_id || 'pro_finance_uat' }}
+      REFUND_PAYMENT_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.refund_payment_id || '' }}
     steps:
       - name: Validate Test configuration and optionally execute INR 1 transactions
         shell: bash
