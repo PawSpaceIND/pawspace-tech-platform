@@ -38,6 +38,18 @@ test("assigned groomer receives canonical safety requirements and add-ons", () =
   assert.match(partnerJobsPage, /job\.serviceCode==="grooming"&&job\.addOns\.length/);
 });
 
+test("grooming subscription copy matches governed 6 and 12 month commercial truth", () => {
+  assert.match(source, /id:"6",name:"6 sessions",price:6594,validity:"6 months"/);
+  assert.match(source, /id:"12",name:"12 sessions",price:11988,validity:"12 months"/);
+  assert.doesNotMatch(code, /validity:"8 months"/);
+  assert.doesNotMatch(code, /validity:"15 months"/);
+});
+
+test("coupon quote uses the verified service-location city instead of a hardcoded geography", () => {
+  assert.match(source, /cityId=\{serviceLocation\?\.assignment\.cityId\?\?""\}/);
+  assert.doesNotMatch(code, /cityId="blr"/);
+});
+
 test("confirmation proof is derived from the public provider profile", () => {
   assert.match(source, /provider-public-profile\?providerId=/);
   assert.match(source, /providerProof\.stats\.completedServices/);
