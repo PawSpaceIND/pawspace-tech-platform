@@ -2,12 +2,13 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 import { auditApiResponse, authorizeApiRequest } from "../lib/api-gateway";
-import {authorizePlatformSessionRequest} from "../lib/session-api-gateway";
-import {blockDisabledServiceRequest} from "../lib/service-control";
+import{authorizePlatformSessionRequest}from"../lib/session-api-gateway";
+import{blockDisabledServiceRequest}from"../lib/service-control";
 import {runBackgroundScheduler} from "../lib/background-scheduler";
 import {processDueWhatsAppNoResponseSequences} from "../lib/whatsapp-no-response-sequence";
 import {cleanupExpiredReservationLeases} from "../lib/scheduling-reservation-leases";
 import {runRazorpaySettlementReconciliationSweep} from "../lib/razorpay-settlement-reconciliation";
+import {runSubscriptionBillingSweep} from "../lib/subscription-billing";
 import {runSubscriptionScheduledMaintenance} from "../lib/subscription-scheduled";
 
 interface Env {
@@ -34,13 +35,9 @@ interface ScheduledControllerLike {
   noRetry(): void;
 }
 
-// Image security config. SVG sources with .svg extension auto-skip the
-// optimization endpoint on the client side (served directly, no proxy).
-// To route SVGs through the optimizer (with security headers), set
-// dangerouslyAllowSVG: true in next.config.js and uncomment below:
-// const imageConfig: ImageConfig = { dangerouslyAllowSVG: true };
-
 function secureApiResponse(response:Response){const secured=new Response(response.body,response);secured.headers.set("cache-control","no-store");secured.headers.set("x-content-type-options","nosniff");secured.headers.set("referrer-policy","same-origin");return secured;}
+function policyRequest(request:Request,path:string){const url=new URL(request.url);url.pathname=path;url.search="";return new Request(url.toString(),{method:request.method,headers:request.headers});}
+async function gatewayAuthorizationRequest(request:Request,url:URL){if(url.pathname==="/api/subscription-billing")return policyRequest(request,"/api/payment-order");if(url.pathname==="/api/subscription-billing-admin"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");return policyRequest(request,action==="save_plan"||action==="approve_plan"?"/api/pricing-control":"/api/finance-control");}return request;}
 
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -48,15 +45,11 @@ const worker = {
 
     if (url.pathname.startsWith("/api/")) {
       if(url.pathname==="/api/identity-session")return secureApiResponse(await handler.fetch(request,env,ctx));
-      // These two routes resolve the canonical customer/staff actor inside the handler because their
-      // action-specific permissions vary (customer self-service vs pricing/finance administration).
-      // Keeping that decision in the route avoids mapping a finance-only action to a customer permission
-      // at the coarse path gateway. Both routes still fail closed through server-auth and emit security audit rows.
-      if(url.pathname==="/api/subscription-billing"||url.pathname==="/api/subscription-billing-admin")return secureApiResponse(await handler.fetch(request,env,ctx));
       if(request.method==="POST"&&(url.pathname==="/api/uat-scheduling"||url.pathname==="/api/canonical-bookings"))await cleanupExpiredReservationLeases(env.DB);
       const sessionAccess=await authorizePlatformSessionRequest(request,env.DB);
       if(sessionAccess instanceof Response)return sessionAccess;
-      const access=sessionAccess??await authorizeApiRequest(request, env);
+      const authorizationRequest=await gatewayAuthorizationRequest(request,url);
+      const access=sessionAccess??await authorizeApiRequest(authorizationRequest, env);
       if (access instanceof Response) return access;
       const serviceBlock=await blockDisabledServiceRequest(request,env.DB);
       if(serviceBlock){ctx.waitUntil(auditApiResponse(env,access.actor,access.permission,request,serviceBlock.clone()));return secureApiResponse(serviceBlock);}
@@ -79,7 +72,7 @@ const worker = {
     return handler.fetch(request, env, ctx);
   },
   async scheduled(controller:ScheduledControllerLike,env:Env,ctx:ExecutionContext){
-    ctx.waitUntil((async()=>{const [cleanup,scheduler,whatsappRecovery,settlementRecon,subscriptionMaintenance]=await Promise.allSettled([cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),processDueWhatsAppNoResponseSequences(env.DB,{now:controller.scheduledTime,actorEmail:"system:scheduled-worker"}),runRazorpaySettlementReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),runSubscriptionScheduledMaintenance(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime})]);const errors:string[]=[];if(cleanup.status==="rejected")errors.push(`reservation cleanup: ${cleanup.reason instanceof Error?cleanup.reason.message:String(cleanup.reason)}`);if(scheduler.status==="rejected")errors.push(`background scheduler: ${scheduler.reason instanceof Error?scheduler.reason.message:String(scheduler.reason)}`);else if(Array.isArray(scheduler.value.errors)&&scheduler.value.errors.length)errors.push(...scheduler.value.errors);if(whatsappRecovery.status==="rejected")errors.push(`whatsapp recovery: ${whatsappRecovery.reason instanceof Error?whatsappRecovery.reason.message:String(whatsappRecovery.reason)}`);if(settlementRecon.status==="rejected")errors.push(`razorpay settlement reconciliation: ${settlementRecon.reason instanceof Error?settlementRecon.reason.message:String(settlementRecon.reason)}`);if(subscriptionMaintenance.status==="rejected")errors.push(`subscription maintenance: ${subscriptionMaintenance.reason instanceof Error?subscriptionMaintenance.reason.message:String(subscriptionMaintenance.reason)}`);else if(Number(subscriptionMaintenance.value.errors||0)>0)errors.push(`subscription maintenance: ${subscriptionMaintenance.value.errors} exception(s)`);if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);})());
+    ctx.waitUntil((async()=>{const [cleanup,scheduler,whatsappRecovery,settlementRecon,subscriptionMaintenance]=await Promise.allSettled([cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),processDueWhatsAppNoResponseSequences(env.DB,{now:controller.scheduledTime,actorEmail:"system:scheduled-worker"}),runRazorpaySettlementReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),runSubscriptionScheduledMaintenance(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,billingSweep:runSubscriptionBillingSweep})]);const errors:string[]=[];if(cleanup.status==="rejected")errors.push(`reservation cleanup: ${cleanup.reason instanceof Error?cleanup.reason.message:String(cleanup.reason)}`);if(scheduler.status==="rejected")errors.push(`background scheduler: ${scheduler.reason instanceof Error?scheduler.reason.message:String(scheduler.reason)}`);else if(Array.isArray(scheduler.value.errors)&&scheduler.value.errors.length)errors.push(...scheduler.value.errors);if(whatsappRecovery.status==="rejected")errors.push(`whatsapp recovery: ${whatsappRecovery.reason instanceof Error?whatsappRecovery.reason.message:String(whatsappRecovery.reason)}`);if(settlementRecon.status==="rejected")errors.push(`razorpay settlement reconciliation: ${settlementRecon.reason instanceof Error?settlementRecon.reason.message:String(settlementRecon.reason)}`);if(subscriptionMaintenance.status==="rejected")errors.push(`subscription maintenance: ${subscriptionMaintenance.reason instanceof Error?subscriptionMaintenance.reason.message:String(subscriptionMaintenance.reason)}`);else if(Number(subscriptionMaintenance.value.errors||0)>0)errors.push(`subscription maintenance: ${subscriptionMaintenance.value.errors} exception(s)`);if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);})());
   },
 };
 

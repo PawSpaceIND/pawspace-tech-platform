@@ -6,6 +6,7 @@ import { addCalendarMonthsClamped } from "../lib/subscription-calendar.ts";
 
 const root=process.cwd();
 const read=(file)=>fs.readFileSync(path.join(root,file),"utf8");
+const after=(source,marker)=>source.slice(source.indexOf(marker));
 
 test("subscription calendar clamps month-end without rolling into the following month",()=>{
   assert.equal(new Date(addCalendarMonthsClamped(Date.UTC(2027,0,31,12,30),1)).toISOString(),"2027-02-28T12:30:00.000Z");
@@ -66,27 +67,33 @@ test("existing service subscription-plan governance contract remains intact",()=
 });
 
 test("cycle-end plan changes reconcile before accounting and dunning",()=>{
-  const scheduled=read("lib/subscription-scheduled.ts");
+  const scheduled=after(read("lib/subscription-scheduled.ts"),"export async function runSubscriptionScheduledMaintenance");
   const worker=read("worker/index.ts");
   const reconcileIndex=scheduled.indexOf("reconcilePendingSubscriptionPlanChanges");
   const billingIndex=scheduled.indexOf("runSubscriptionBillingSweep");
   const dunningIndex=scheduled.indexOf("enqueueSubscriptionDunningNotifications");
   assert.ok(reconcileIndex>=0&&billingIndex>reconcileIndex&&dunningIndex>billingIndex);
   assert.match(worker,/runSubscriptionScheduledMaintenance/);
+  assert.match(worker,/runSubscriptionBillingSweep/);
 });
 
 test("subscription-origin payments cannot be counted as a second source-booking payment",()=>{
-  const webhook=read("app/api/razorpay-webhook/route.ts");
+  const webhook=after(read("app/api/razorpay-webhook/route.ts"),"export async function POST");
   assert.match(webhook,/bookingId=subscriptionOrigin\?undefined/);
   assert.ok(webhook.indexOf("processSubscriptionRefundEvent")<webhook.indexOf("processGatewayEvent"));
   assert.ok(webhook.indexOf("processSubscriptionProviderEvent")<webhook.indexOf("processGatewayEvent"));
 });
 
 test("customer and finance mutation routes enforce ownership, role separation and same-origin writes",()=>{
-  const customer=read("app/api/subscription-billing/route.ts"),admin=read("app/api/subscription-billing-admin/route.ts");
+  const customer=read("app/api/subscription-billing/route.ts"),admin=read("app/api/subscription-billing-admin/route.ts"),worker=read("worker/index.ts");
   assert.match(customer,/Cross-origin write blocked/);
   assert.match(customer,/requireCustomerOwnership/);
+  assert.match(customer,/authorize\(request,"scheduling\.book"\)/);
   assert.match(admin,/Cross-origin write blocked/);
   assert.match(admin,/finance.manage/);
   assert.match(admin,/pricing.manage/);
+  assert.match(worker,/gatewayAuthorizationRequest/);
+  assert.match(worker,/\/api\/payment-order/);
+  assert.match(worker,/\/api\/pricing-control/);
+  assert.match(worker,/\/api\/finance-control/);
 });
