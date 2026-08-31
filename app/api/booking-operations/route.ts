@@ -268,9 +268,10 @@ export async function POST(request: Request) {
       : { results: [] as Record<string, unknown>[] };
     const impactedBookings = impacted.results.map((row) => ({ bookingId: String(row.id), customerId: String(row.customer_id), scheduledStart: String(row.scheduled_start) }));
     const detail = { impactMinutes, upgradedPackageName: input.upgradedPackageName, upgradedAmount: input.upgradedAmount, impactedBookingIds: impactedBookings.map((item) => item.bookingId), rebookingAvailable };
+    const eventActorId = input.action === "refund_requested" ? actor.email : input.providerId;
     const statements = [
-      db.prepare("INSERT INTO booking_operational_events (id,booking_id,provider_id,event_type,reason,impact_minutes,detail_json,actor_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(eventId,input.bookingId,input.providerId,input.action,input.reason.trim(),impactMinutes,JSON.stringify(detail),input.providerId,now),
-      db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.bookingId,`operation.${input.action}`,"booking",input.bookingId,input.providerId,JSON.stringify(detail),now),
+      db.prepare("INSERT INTO booking_operational_events (id,booking_id,provider_id,event_type,reason,impact_minutes,detail_json,actor_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(eventId,input.bookingId,input.providerId,input.action,input.reason.trim(),impactMinutes,JSON.stringify(detail),eventActorId,now),
+      db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.bookingId,`operation.${input.action}`,"booking",input.bookingId,eventActorId,JSON.stringify(detail),now),
     ];
     // A provider reporting an agreed upgrade records a REQUEST. It used to write the new price
     // straight into canonical_bookings.total_amount and booking_payments.amount from the request
