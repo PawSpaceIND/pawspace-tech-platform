@@ -10,6 +10,8 @@ import fs from "node:fs";
 const source = fs.readFileSync("app/mobile-app/grooming-flow.tsx", "utf8");
 const entry = fs.readFileSync("app/page.tsx", "utf8");
 const transactionSource = fs.readFileSync("lib/test-transaction.ts", "utf8");
+const partnerFeedSource = fs.readFileSync("lib/partner-job-feed.ts", "utf8");
+const partnerJobsPage = fs.readFileSync("app/partner/jobs/page.tsx", "utf8");
 const code = source.split("\n").filter((line) => !line.trim().startsWith("//") && !line.trim().startsWith("*") && !line.trim().startsWith("/*")).join("\n");
 
 test("grooming checkout persists normalized customer identity instead of generated placeholders", () => {
@@ -26,6 +28,14 @@ test("grooming checkout persists normalized customer identity instead of generat
 test("grooming checkout persists the selected safety requirement", () => {
   assert.match(source, /requirements:\[`grooming_safety:\$\{safetyNotes\}`\]/);
   assert.match(source, /Aggressive \/ bite history/);
+});
+
+test("assigned groomer receives canonical safety requirements and add-ons", () => {
+  assert.match(partnerFeedSource, /pricing_json FROM canonical_bookings/);
+  assert.match(partnerFeedSource, /safetyRequirements:pricingList\(booking\.pricing_json,"requirements"\)/);
+  assert.match(partnerFeedSource, /addOns:pricingList\(booking\.pricing_json,"addOns"\)/);
+  assert.match(partnerJobsPage, /job\.serviceCode==="grooming"&&job\.safetyRequirements\.length/);
+  assert.match(partnerJobsPage, /job\.serviceCode==="grooming"&&job\.addOns\.length/);
 });
 
 test("confirmation proof is derived from the public provider profile", () => {
