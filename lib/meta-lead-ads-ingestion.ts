@@ -50,7 +50,7 @@ async function recordMarketingAttribution(db:Db,input:{leadId:string;customerId:
 export async function ingestMetaLeadChange(db:Db,input:{change:MetaLeadChange;graphProfile:Row;defaultCityId:string;actorId?:string}){
   await ensureMetaLeadAdsTables(db);const now=input.change.createdAt||Date.now();
   const prior=await db.prepare("SELECT * FROM meta_lead_ads_events WHERE leadgen_id=?").bind(input.change.leadgenId).first<Row>();if(prior&&text(prior.status)==="ingested")return{leadgenId:input.change.leadgenId,customerId:text(prior.customer_id),leadId:text(prior.lead_id),duplicatePrevented:true};
-  const profile={...input.graphProfile,ad_id:text(input.graphProfile.ad_id||input.change.adId),form_id:text(input.graphProfile.form_id||input.change.formId)};
+  const profile:Row={...input.graphProfile,ad_id:text(input.graphProfile.ad_id||input.change.adId),form_id:text(input.graphProfile.form_id||input.change.formId)};
   const resolved=await resolveOrCreateCustomer(db,{leadgenId:input.change.leadgenId,profile,cityId:input.defaultCityId||"blr",now});
   if(!resolved.customerId){const exceptionId=uid("METALEAD-EX");await db.batch([
     db.prepare("INSERT OR IGNORE INTO meta_lead_ingestion_exceptions (id,leadgen_id,reason,candidate_customer_ids_json,detail_json,status,created_at) VALUES (?,?,?,? ,?,'open',?)").bind(exceptionId,input.change.leadgenId,"ambiguous_customer_identity",JSON.stringify(resolved.ambiguous),JSON.stringify(profile),now),
