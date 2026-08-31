@@ -90,6 +90,9 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
       "Basic obedience",
       "Leash walking",
     ]),
+    [trainingCategory, setTrainingCategory] = useState("obedience"),
+    [behaviourNotes, setBehaviourNotes] = useState("Pulls on walks and gets excited when guests arrive."),
+    [healthSafetyNotes, setHealthSafetyNotes] = useState("No aggression or medical concern"),
     [selRaw, setSelectedPets] = useState<string[]>([]),
     [petsState, setPets] = useState<CustomerPet[] | null>(null),
     [petsLoading, setPetsLoading] = useState(true),
@@ -205,7 +208,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
         const start=new Date(meetSlot),quote=await quoteTraining({packageCode:"trainer-meet-greet",petCount:selectedPets.length,scheduledStart:start.toISOString(),paymentMode:"prepaid"}),end=new Date(start.getTime()+quote.minutesPerSession*60_000);
         const requestId=`training-meet-${customer.customerId}-${meetTrainer.id}-${start.toISOString()}`;
         const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:"dog_training",cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,preferredProviderId:meetTrainer.id});
-        const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:"dog" as const})),cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,serviceCode:"dog_training",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"payment_link",mode:"prepaid",status:"created",detail:"Awaiting a verified payment event"},pricing:{discount:quote.discount,trainingQuoteId:quote.quoteId}});
+        const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:"dog" as const})),cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,serviceCode:"dog_training",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:start.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"payment_link",mode:"prepaid",status:"created",detail:"Awaiting a verified payment event"},pricing:{discount:quote.discount,trainingQuoteId:quote.quoteId,trainingCategory,healthSafetyNotes,behaviourNotes:behaviourNotes.trim()}});
         setMeetBookingId(canonical.bookingId);setMeetPetKey(petKey);setMeetTrainerName(decision.provider.name);setCheckoutQuote(null);
       } catch(error){setScheduleError(error instanceof Error?error.message:"This Meet & Greet slot is no longer available");} finally {setScheduling(false);}
     },
@@ -216,9 +219,9 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
       try {
         const serviceCoverage=await resolveServiceCoverage(pincode);
         const linkedMeetBookingId=meetLinked?meetBookingId:"";
-        const mode=paymentMode==="full"?"prepaid":"split",quote=checkoutQuote,end=new Date(selectedStart.getTime()+quote.minutesPerSession*60_000),requestId=trainingProgrammeRequestId({customerId:customer.customerId,petIds:selectedPets,packageCode:quote.packageCode,scheduledStart:selectedStart.toISOString(),frequency});
+        const mode=paymentMode==="full"?"prepaid":"split",quote=checkoutQuote,end=new Date(selectedStart.getTime()+quote.minutesPerSession*60_000),requestId=trainingProgrammeRequestId({customerId:customer.customerId,petIds:selectedPets,packageCode:quote.packageCode,scheduledStart:selectedStart.toISOString(),frequency,trainingCategory,healthSafetyNotes,behaviourNotes});
         const decision=await reserveUatSchedule({clientRequestId:requestId,customerId:customer.customerId,petIds:selectedPets,serviceCode:"dog_training",cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),occurrences:quote.sessions,weekdays:weekdayMap[frequency],preferredProviderId:selectedTrainer?.id});
-        const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:"dog" as const})),cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,serviceCode:"dog_training",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"payment_link",mode,status:"created",detail:"Awaiting a verified payment event"},pricing:{discount:quote.discount,couponCode:couponCode||undefined,subscription:`${quote.sessions} sessions`,requirements:selectedGoals,trainingQuoteId:quote.quoteId}});
+        const canonical=await createCanonicalLifecycle({idempotencyKey:requestId,scheduleGroupId:decision.groupId,customer:{id:customer.customerId,name:customer.customerName,primaryPhone:customer.phone},pets:selectedPetObjs.map(p=>({sourceId:p.sourceId??p.id,name:p.name,species:"dog" as const})),cityId:serviceCoverage.cityId,zoneId:serviceCoverage.zoneId,serviceCode:"dog_training",packageCode:quote.packageCode,packageName:quote.packageName,scheduledStart:selectedStart.toISOString(),scheduledEnd:end.toISOString(),provider:decision.provider,totalAmount:quote.totalAmount,amountDueNow:quote.amountDueNow,payment:{method:"payment_link",mode,status:"created",detail:"Awaiting a verified payment event"},pricing:{discount:quote.discount,couponCode:couponCode||undefined,subscription:`${quote.sessions} sessions`,requirements:selectedGoals,trainingQuoteId:quote.quoteId,trainingCategory,healthSafetyNotes,behaviourNotes:behaviourNotes.trim()}});
         await materializeTrainingProgramme({bookingId:canonical.bookingId,meetBookingId:linkedMeetBookingId||undefined});
         setConfirmedTrainerName(decision.provider.name);
         const booking=createTestTransaction({customerId:customer.customerId,customerName:customer.customerName,primary:customer.phone,secondary:"",pets:selectedPetNames.join(", "),petCount:selectedPets.length,service:"Dog Training",packageName:quote.packageName,area:`${serviceCoverage.area}, ${serviceCoverage.city}`,slot:`${frequency} · ${time}`,duration:`${quote.sessions} sessions · ${quote.minutesPerSession} min/session · ${quote.validityDays} days`,amount:quote.totalAmount,offerCode:couponCode||undefined,discount:quote.discount,payment:`${mode==="prepaid"?"Full payment pending verification":"Split payment pending verification"}${linkedMeetBookingId?` · Meet booking ${linkedMeetBookingId}`:""}`,provider:decision.provider.name,providerModel:"Commission",subscription:`${quote.packageName} · ${quote.sessions} sessions`,creditsBefore:quote.sessions,crmOwner:"Unassigned",crmNextAction:attendanceMode==="parent"?"Trainer acceptance; parent/caretaker coaching required":"Trainer acceptance; confirm package allows trainer-led outdoor practice",reminder:"In-app reminders queued; external delivery not active"},canonical.bookingId);
@@ -306,7 +309,7 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
           </div>
           <label className={styles.field}>
             Training category
-            <select defaultValue="obedience"><option value="puppy">Puppy training</option><option value="obedience">Basic & advanced obedience</option><option value="behaviour">Behaviour correction</option></select>
+            <select value={trainingCategory} onChange={(event) => setTrainingCategory(event.target.value)}><option value="puppy">Puppy training</option><option value="obedience">Basic & advanced obedience</option><option value="behaviour">Behaviour correction</option></select>
           </label>
           <div className={styles.goalGrid}>
             {goals.map((goal) => (
@@ -321,8 +324,8 @@ export default function TrainingFlow({ customer }: { customer: LoggedInCustomer 
             )}
             <small>{selectedGoals.length} requirement{selectedGoals.length === 1 ? "" : "s"} selected · Tap any highlighted option to remove it.</small>
           </div>
-          <label className={styles.field}>Home routine, behaviour and trainer notes<textarea defaultValue="Pulls on walks and gets excited when guests arrive." /></label>
-          <label className={styles.field}>Health and safety<select><option>No aggression or medical concern</option><option>Anxious or fearful</option><option>Bite or aggression history</option><option>Medical restriction</option></select></label>
+          <label className={styles.field}>Home routine, behaviour and trainer notes<textarea value={behaviourNotes} onChange={(event) => setBehaviourNotes(event.target.value)} /></label>
+          <label className={styles.field}>Health and safety<select value={healthSafetyNotes} onChange={(event) => setHealthSafetyNotes(event.target.value)}><option>No aggression or medical concern</option><option>Anxious or fearful</option><option>Bite or aggression history</option><option>Medical restriction</option></select></label>
           <button disabled={!selectedGoals.length || selectedPets.length === 0} className={styles.primary} onClick={() => setStage(2)}>{selectedPets.length === 0 ? "Select a dog to continue" : "See PawSpace plans"}</button>
         </section>
       )}
