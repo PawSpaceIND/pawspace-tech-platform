@@ -76,7 +76,7 @@ jobs:
 
           for(const name of ["RAZORPAYX_KEY_ID","RAZORPAYX_KEY_SECRET","RAZORPAYX_ACCOUNT_NUMBER","RAZORPAYX_FUND_ACCOUNT_MAP"]){if(!present(name))add(name,"missing Test-mode repository secret");}
           if(present("RAZORPAYX_KEY_ID")&&!process.env.RAZORPAYX_KEY_ID.startsWith("rzp_test_"))add("RAZORPAYX_KEY_ID","configured key is not a Test key");
-          if(process.env.RAZORPAYX_IP_ALLOWLIST_CONFIRMED!=="true")add("RAZORPAYX_IP_ALLOWLIST_CONFIRMED","repository variable must be true after the CI/staging outbound IP is allowlisted in RazorpayX");
+          if(process.env.RAZORPAYX_MODE==="live"&&process.env.RAZORPAYX_IP_ALLOWLIST_CONFIRMED!=="true")add("RAZORPAYX_IP_ALLOWLIST_CONFIRMED","repository variable must be true for Live Mode after the payout-calling outbound IP is allowlisted in RazorpayX");
           if(present("RAZORPAYX_FUND_ACCOUNT_MAP")){
             try{
               const map=JSON.parse(process.env.RAZORPAYX_FUND_ACCOUNT_MAP);
