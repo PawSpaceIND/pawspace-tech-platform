@@ -1,0 +1,26 @@
+name: Apply BST runtime compatibility repair
+on:
+  push:
+    branches: [cert/boarding-sitting-taxi-razorpay-e2e]
+    paths: [scripts/apply-bst-runtime-fix.py]
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: {fetch-depth: 0}
+      - run: python scripts/apply-bst-runtime-fix.py
+      - run: node --test tests/boarding-sitting-taxi-customer-integrity.test.mjs
+      - run: git diff --check
+      - run: |
+          set -euo pipefail
+          rm -f scripts/apply-bst-runtime-fix.py .github/workflows/apply-bst-runtime-fix.yml
+          git config user.name "PawSpace Certification Bot"
+          git config user.email "actions@pawspace.in"
+          git add -A
+          git diff --cached --check
+          git commit -m "Preserve attested Sitting capture evidence"
+          git push origin HEAD:cert/boarding-sitting-taxi-razorpay-e2e
