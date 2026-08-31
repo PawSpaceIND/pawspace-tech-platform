@@ -38,7 +38,10 @@ export async function issueInvoice(repository:PlatformRepository,payment:Payment
  * the API boundary, but it no longer substitutes for a second human decision.
  */
 export async function requestRefund(repository:PlatformRepository,payment:Payment,actor:RequestActor,amount:number,reason:string){
-  const existingRefunds=await repository.listRefunds(payment.id);const already=existingRefunds.filter(x=>["approved","processing","completed"].includes(x.status)).reduce((sum,x)=>sum+x.amount,0);
+  // A pending request reserves refundable balance as soon as it is created. Otherwise two makers can
+  // each submit an individually valid request that collectively exceeds the captured payment before a
+  // checker approves either one. Rejected/cancelled/failed requests do not reserve balance.
+  const existingRefunds=await repository.listRefunds(payment.id);const already=existingRefunds.filter(x=>["requested","approved","processing","completed"].includes(x.status)).reduce((sum,x)=>sum+x.amount,0);
   if(amount<=0||amount>payment.amount-already)throw Object.assign(new Error("Refund exceeds refundable balance"),{statusCode:422});
   const timestamp=now();const refund:Refund={id:id("refund"),paymentId:payment.id,bookingId:payment.bookingId,amount,reason,status:"requested",requestedBy:actor.id,createdAt:timestamp,updatedAt:timestamp};
   return repository.createRefund(refund);
