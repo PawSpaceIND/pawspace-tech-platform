@@ -104,7 +104,10 @@ export async function attributeBookingToOpenLead(db:Db,input:{customerId:string;
   const captured=String(payment?.status||"")==="captured";
   await recordAttribution(db,{bookingId:input.bookingId,customerId:input.customerId,serviceCode:bookedService,type:"lead",leadId,detail:{matchedOn:"customer_and_service"}});
   if(captured){
-    await db.prepare("UPDATE lead_work_items SET converted_booking_id=?,status='converted',updated_at=? WHERE id=? AND converted_booking_id IS NULL").bind(input.bookingId,now,leadId).run();
+    await db.batch([
+      db.prepare("UPDATE lead_work_items SET converted_booking_id=?,status='converted',updated_at=? WHERE id=? AND converted_booking_id IS NULL").bind(input.bookingId,now,leadId),
+      db.prepare("UPDATE crm_contacts SET stage='Converted',next_action='Booking converted',updated_at=? WHERE id=?").bind(now,input.customerId),
+    ]);
     return{leadId,converted:true,attribution:"lead"};
   }
   // booking initiated but payment not done - keep the lead open for Sales/recovery, don't convert yet
@@ -133,6 +136,9 @@ export async function convertLeadOnPaymentCaptured(db:Db,input:{customerId:strin
     return null;
   }
   const leadId=String(openLead.id),now=Date.now();
-  await db.prepare("UPDATE lead_work_items SET converted_booking_id=?,status='converted',updated_at=? WHERE id=? AND converted_booking_id IS NULL").bind(input.bookingId,now,leadId).run();
+  await db.batch([
+    db.prepare("UPDATE lead_work_items SET converted_booking_id=?,status='converted',updated_at=? WHERE id=? AND converted_booking_id IS NULL").bind(input.bookingId,now,leadId),
+    db.prepare("UPDATE crm_contacts SET stage='Converted',next_action='Booking converted',updated_at=? WHERE id=?").bind(now,input.customerId),
+  ]);
   return{leadId};
 }
