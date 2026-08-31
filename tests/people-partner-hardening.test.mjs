@@ -348,7 +348,9 @@ test("partner workspace earnings reconcile with provider_payout_computations; co
   const one = await commercialTerms.computeOrderPayout(db, { bookingId: "BK-C1", actorId: "finance@test" });
   const two = await commercialTerms.computeOrderPayout(db, { bookingId: "BK-C2", actorId: "finance@test" });
   await commercialTerms.computeOrderPayout(db, { bookingId: "BK-M1", actorId: "finance@test" });
-  assert.equal(one.providerNetPayout, 31_200, "70% share of 60k minus 18% GST on the order");
+  // commission_standard, true-inclusive: carve embedded 18% off the ₹60k inclusive order (60000*18/118 =
+  // 9152.54), then pay the provider 70% of the ₹50847.46 net pool = 35593.22.
+  assert.equal(one.providerNetPayout, 35_593.22, "70% of the GST-exclusive net pool of a ₹60k inclusive order");
 
   // regression (workforce classification): the platform's real registries drive the engagement kind.
   const contractWs = await workspaceLib.providerWorkspace(db, { providerId: "prov_contract" });
@@ -399,24 +401,25 @@ test("regression: partner payouts classify into 194J for contract providers and 
   const period = istDate(NOW).slice(0, 7);
   const result = await tds.computeMonthlyTds(db, { period, actorId: "finance@test", asOf: NOW });
 
-  // Contract (full_time) provider: 62,400 net payouts cross the 194J Rs 50,000 FY threshold -> 10%.
+  // Contract (full_time) provider: two ₹60k inclusive orders -> 2 x 35593.22 = 71186.44 net payouts,
+  // crossing the 194J Rs 50,000 FY threshold -> 10%.
   const contractWs = await workspaceLib.providerWorkspace(db, { providerId: "prov_contract" });
   assert.equal(result.sections["194J"].base, contractWs.earnings.netPayout, "the 194J base equals the payout the partner workspace shows");
-  assert.equal(result.sections["194J"].base, 62_400);
-  assert.equal(result.sections["194J"].tds, 6_240);
+  assert.equal(result.sections["194J"].base, 71_186.44);
+  assert.equal(result.sections["194J"].tds, 7_118.64);
   const jRow = sqlite.prepare("SELECT deductee_id,rate_pct FROM tds_deductions WHERE period=? AND section='194J'").get(period);
   assert.equal(String(jRow.deductee_id), "prov_contract");
   assert.equal(Number(jRow.rate_pct), 10);
 
-  // Commission provider: 31,200 crosses the 194H Rs 20,000 threshold -> 2%.
-  assert.equal(result.sections["194H"].base, 31_200);
-  assert.equal(result.sections["194H"].tds, 624);
+  // Commission provider: 35593.22 crosses the 194H Rs 20,000 threshold -> 2%.
+  assert.equal(result.sections["194H"].base, 35_593.22);
+  assert.equal(result.sections["194H"].tds, 711.86);
   const hRow = sqlite.prepare("SELECT deductee_id FROM tds_deductions WHERE period=? AND section='194H'").get(period);
   assert.equal(String(hRow.deductee_id), "prov_comm");
 
   // Recompute is idempotent (period rows replaced, not doubled).
   const again = await tds.computeMonthlyTds(db, { period, actorId: "finance@test", asOf: NOW });
-  assert.equal(again.sections["194J"].tds, 6_240);
+  assert.equal(again.sections["194J"].tds, 7_118.64);
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM tds_deductions WHERE period=?").get(period).c, 2);
 });
 
