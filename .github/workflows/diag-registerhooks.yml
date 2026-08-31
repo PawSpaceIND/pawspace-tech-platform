@@ -8,7 +8,7 @@ permissions:
 jobs:
   diag:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -21,48 +21,47 @@ jobs:
       - name: Isolate auth-hook fixture creator
         shell: bash
         run: |
+          set +e
           set -uo pipefail
           echo '--- node/registerHooks ---'
           node --version
           node --input-type=module -e "import Module from 'node:module'; console.log(typeof Module.registerHooks)"
 
-          echo '--- literal references before tests ---'
+          echo '--- locate classifier title and auth-hook references ---'
+          grep -RFn --exclude-dir=node_modules 'does not keep new duplicate route/method implementations' . || true
           grep -RFn --exclude-dir=node_modules 'auth-hook.cjs' . || true
-          echo '--- filesystem before tests ---'
-          find test tests -maxdepth 2 -type f -name '*auth-hook*' -print 2>/dev/null || true
 
-          echo '--- api-path classifier alone ---'
-          PAWSPACE_LOCAL_PREVIEW=on NODE_ENV=test node --experimental-strip-types --test tests/api-path-classification.test.mjs
-          classifier_rc=$?
-          echo "classifier_rc=$classifier_rc"
-          if test -e test/auth-hook.cjs; then
-            echo 'CLASSIFIER_CREATED_AUTH_HOOK=1'
-            sed -n '1,260p' test/auth-hook.cjs || true
-            git status --short
-            exit 0
-          fi
-
-          echo '--- hook suites one by one ---'
-          mapfile -t suites < <(grep -l 'helpers/module-hooks.mjs' tests/*.test.mjs | sort)
+          echo '--- hook-dependent suites ---'
+          mapfile -t suites < <(grep -l 'helpers/module-hooks.mjs' tests/*.test.mjs 2>/dev/null | sort)
+          printf '%s\n' "${suites[@]}"
           echo "suite_count=${#suites[@]}"
+
+          echo '--- execute each hook suite in isolation ---'
           for suite in "${suites[@]}"; do
             rm -f test/auth-hook.cjs test/auth-hook-register.mjs
             echo "RUN_SUITE=$suite"
             PAWSPACE_LOCAL_PREVIEW=on NODE_ENV=test node --experimental-strip-types --test "$suite" >/tmp/one-suite.tap 2>&1
             rc=$?
-            tail -n 12 /tmp/one-suite.tap || true
             echo "SUITE_RC=$rc"
+            if test "$rc" -ne 0; then tail -n 35 /tmp/one-suite.tap || true; fi
             if test -e test/auth-hook.cjs || test -e test/auth-hook-register.mjs; then
               echo "FIRST_FIXTURE_CREATOR=$suite"
               find test -maxdepth 1 -type f -name '*auth-hook*' -print || true
-              if test -e test/auth-hook.cjs; then sed -n '1,280p' test/auth-hook.cjs || true; fi
-              if test -e test/auth-hook-register.mjs; then sed -n '1,280p' test/auth-hook-register.mjs || true; fi
+              echo '--- created helper content ---'
+              test ! -e test/auth-hook.cjs || sed -n '1,320p' test/auth-hook.cjs
+              test ! -e test/auth-hook-register.mjs || sed -n '1,320p' test/auth-hook-register.mjs
+              echo '--- git status ---'
               git status --short
               break
             fi
           done
 
-          echo '--- classifier after isolated suite loop ---'
-          PAWSPACE_LOCAL_PREVIEW=on NODE_ENV=test node --experimental-strip-types --test tests/api-path-classification.test.mjs || true
-          find test tests -maxdepth 2 -type f -name '*auth-hook*' -print 2>/dev/null || true
+          echo '--- collective execution reproducer ---'
+          rm -f test/auth-hook.cjs test/auth-hook-register.mjs
+          PAWSPACE_LOCAL_PREVIEW=on NODE_ENV=test node --experimental-strip-types --test "${suites[@]}" >/tmp/all-hooks.tap 2>&1
+          collective_rc=$?
+          echo "COLLECTIVE_RC=$collective_rc"
+          grep -n -C 8 'does not keep new duplicate route/method implementations\|auth-hook.cjs' /tmp/all-hooks.tap || true
+          find test -maxdepth 1 -type f -name '*auth-hook*' -print 2>/dev/null || true
           git status --short
+          exit 0
