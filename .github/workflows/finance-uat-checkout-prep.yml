@@ -90,12 +90,25 @@ jobs:
           const petId = String(petBody?.data?.id || '');
           if (!petId) fail('pet fixture was not created');
 
-          const target = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-          const date = target.toISOString().slice(0, 10);
-          await api('/v1/providers/pro_arjun/availability', { method: 'PUT', body: JSON.stringify({ zoneId: 'blr-east', date, windows: ['09:00-13:00'], source: 'roster' }) });
+          let date = '';
+          let scheduledStart = '';
+          let scheduledEnd = '';
+          for (let offsetDays = 14; offsetDays <= 35; offsetDays++) {
+            const target = new Date(Date.now() + offsetDays * 24 * 60 * 60 * 1000);
+            const candidateDate = target.toISOString().slice(0, 10);
+            await api('/v1/providers/pro_arjun/availability', { method: 'PUT', body: JSON.stringify({ zoneId: 'blr-east', date: candidateDate, windows: ['09:00-19:00'], source: 'roster' }) });
+            const query = new URLSearchParams({ serviceCode: 'grooming', zoneId: 'blr-east', date: candidateDate, petIds: petId });
+            const slotsBody = await api(`/v1/availability?${query.toString()}`);
+            const slot = Array.isArray(slotsBody?.data) ? slotsBody.data.find(item => item?.available === true && typeof item?.start === 'string' && typeof item?.end === 'string') : null;
+            if (slot) {
+              date = candidateDate;
+              scheduledStart = String(slot.start);
+              scheduledEnd = String(slot.end);
+              break;
+            }
+          }
+          if (!date || !scheduledStart || !scheduledEnd) fail('no scheduler-approved grooming slot was available in the isolated UAT horizon');
 
-          const scheduledStart = `${date}T03:30:00.000Z`;
-          const scheduledEnd = `${date}T05:30:00.000Z`;
           const bookingKey = `finuatbook${unique}`;
           const bookingBody = await api('/v1/bookings', { method: 'POST', headers: { 'idempotency-key': bookingKey }, body: JSON.stringify({ customerId, petIds: [petId], serviceCode: 'grooming', packageCode, addonCodes: [], zoneId: 'blr-east', scheduledStart, scheduledEnd, channel: 'operations_assisted', manualProviderId: 'pro_arjun', manualOverrideReason: 'Finance UAT synthetic lifecycle certification' }) });
           const booking = bookingBody?.data;
@@ -109,7 +122,7 @@ jobs:
 
           const checkout = new URL('/v1/finance-uat-checkout', base);
           checkout.searchParams.set('orderId', payment.gatewayOrderId);
-          console.log(`FINANCE_UAT_CHECKOUT_READY booking_id=${booking.id} payment_id=${payment.id} order_id=${payment.gatewayOrderId} amount_rupees=${payment.amount} provider_id=${booking.providerId} package_code=${packageCode}`);
+          console.log(`FINANCE_UAT_CHECKOUT_READY booking_id=${booking.id} payment_id=${payment.id} order_id=${payment.gatewayOrderId} amount_rupees=${payment.amount} provider_id=${booking.providerId} package_code=${packageCode} service_date=${date}`);
           console.log(`FINANCE_UAT_CHECKOUT_URL ${checkout.toString()}`);
-          await import('node:fs/promises').then(fs => fs.appendFile(process.env.GITHUB_STEP_SUMMARY, `## Finance UAT checkout ready\n\n- Canonical booking: \`${booking.id}\`\n- Internal payment: \`${payment.id}\`\n- Razorpay Test order: \`${payment.gatewayOrderId}\`\n- Package: \`${packageCode}\`\n- Amount: INR ${payment.amount}\n- Provider: \`${booking.providerId}\`\n- [Open the isolated Razorpay Test checkout](${checkout.toString()})\n`));
+          await import('node:fs/promises').then(fs => fs.appendFile(process.env.GITHUB_STEP_SUMMARY, `## Finance UAT checkout ready\n\n- Canonical booking: \`${booking.id}\`\n- Internal payment: \`${payment.id}\`\n- Razorpay Test order: \`${payment.gatewayOrderId}\`\n- Package: \`${packageCode}\`\n- Amount: INR ${payment.amount}\n- Provider: \`${booking.providerId}\`\n- Service date: \`${date}\`\n- [Open the isolated Razorpay Test checkout](${checkout.toString()})\n`));
           NODE
