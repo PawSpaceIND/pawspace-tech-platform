@@ -1,0 +1,94 @@
+name: Finance external readiness
+
+on:
+  push:
+    branches:
+      - cert/finance-e2e-razorpay
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  external-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      RAZORPAY_MODE: test
+      RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+      RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+      RAZORPAY_WEBHOOK_SECRET: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+      RAZORPAYX_MODE: test
+      RAZORPAYX_KEY_ID: ${{ secrets.RAZORPAYX_KEY_ID_SANDBOX || secrets.RAZORPAYX_KEY_ID }}
+      RAZORPAYX_KEY_SECRET: ${{ secrets.RAZORPAYX_KEY_SECRET_SANDBOX || secrets.RAZORPAYX_KEY_SECRET }}
+      RAZORPAYX_ACCOUNT_NUMBER: ${{ secrets.RAZORPAYX_ACCOUNT_NUMBER_SANDBOX || secrets.RAZORPAYX_ACCOUNT_NUMBER }}
+      RAZORPAYX_FUND_ACCOUNT_MAP: ${{ secrets.RAZORPAYX_FUND_ACCOUNT_MAP_SANDBOX || secrets.RAZORPAYX_FUND_ACCOUNT_MAP }}
+      RAZORPAYX_IP_ALLOWLIST_CONFIRMED: ${{ vars.RAZORPAYX_IP_ALLOWLIST_CONFIRMED || 'false' }}
+      PLATFORM_API_UAT_BASE_URL: ${{ vars.PLATFORM_API_UAT_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Prove external Test readiness without exposing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const blockers=[];
+          const add=(name,detail)=>blockers.push(`${name}: ${detail}`);
+          const present=name=>Boolean(process.env[name]?.trim());
+          const safeHost=value=>{try{return new URL(value).host;}catch{return "invalid";}};
+
+          if(!present("RAZORPAY_KEY_ID")) add("RAZORPAY_KEY_ID_SANDBOX","missing repository secret");
+          if(!present("RAZORPAY_KEY_SECRET")) add("RAZORPAY_KEY_SECRET_SANDBOX","missing repository secret");
+          if(!present("RAZORPAY_WEBHOOK_SECRET")) add("RAZORPAY_WEBHOOK_SECRET_SANDBOX","missing repository secret");
+          if(present("RAZORPAY_KEY_ID")&&!process.env.RAZORPAY_KEY_ID.startsWith("rzp_test_")) add("RAZORPAY_KEY_ID_SANDBOX","configured key is not a Razorpay Test key");
+
+          if(present("RAZORPAY_KEY_ID")&&present("RAZORPAY_KEY_SECRET")&&process.env.RAZORPAY_KEY_ID.startsWith("rzp_test_")){
+            const receipt=`finuat${process.env.GITHUB_RUN_ID ?? Date.now()}`.slice(0,40);
+            const auth=Buffer.from(`${process.env.RAZORPAY_KEY_ID}:${process.env.RAZORPAY_KEY_SECRET}`).toString("base64");
+            try{
+              const response=await fetch("https://api.razorpay.com/v1/orders",{method:"POST",headers:{authorization:`Basic ${auth}`,"content-type":"application/json"},body:JSON.stringify({amount:100,currency:"INR",receipt,notes:{purpose:"pawspace_finance_external_readiness"}})});
+              const body=await response.json().catch(()=>null);
+              if(!response.ok) add("RAZORPAY_TEST_ORDER",`provider rejected Test order with HTTP ${response.status}`);
+              else if(!body||typeof body.id!=="string"||!body.id.startsWith("order_")||Number(body.amount)!==100||body.currency!=="INR") add("RAZORPAY_TEST_ORDER","provider response did not match the INR 1 Test order");
+              else console.log(`RAZORPAY_TEST_ORDER_OK id=${body.id} amount_paise=${body.amount} status=${body.status ?? "created"}`);
+            }catch(error){add("RAZORPAY_TEST_ORDER",`provider connectivity failed: ${error instanceof Error?error.name:"unknown error"}`);}
+          }
+
+          const base=process.env.PLATFORM_API_UAT_BASE_URL?.trim();
+          if(!base) add("PLATFORM_API_UAT_BASE_URL","missing repository variable; genuine Razorpay webhook has no fixed public Platform API target");
+          else {
+            try{
+              const url=new URL(base);
+              if(url.protocol!=="https:") add("PLATFORM_API_UAT_BASE_URL","must be HTTPS");
+              else {
+                const response=await fetch(new URL("/health",url),{redirect:"error"});
+                const body=await response.json().catch(()=>null);
+                if(!response.ok||body?.service!=="pawspace-platform-api") add("PLATFORM_API_UAT_BASE_URL",`HTTPS endpoint ${safeHost(base)} does not serve pawspace-platform-api /health`);
+                else console.log(`PLATFORM_API_UAT_OK host=${safeHost(base)} service=${body.service}`);
+              }
+            }catch(error){add("PLATFORM_API_UAT_BASE_URL",`configured endpoint is unreachable or invalid (${error instanceof Error?error.name:"error"})`);}
+          }
+
+          for(const name of ["RAZORPAYX_KEY_ID","RAZORPAYX_KEY_SECRET","RAZORPAYX_ACCOUNT_NUMBER","RAZORPAYX_FUND_ACCOUNT_MAP"]){if(!present(name))add(name,"missing Test-mode repository secret");}
+          if(present("RAZORPAYX_KEY_ID")&&!process.env.RAZORPAYX_KEY_ID.startsWith("rzp_test_"))add("RAZORPAYX_KEY_ID","configured key is not a Test key");
+          if(process.env.RAZORPAYX_IP_ALLOWLIST_CONFIRMED!=="true")add("RAZORPAYX_IP_ALLOWLIST_CONFIRMED","repository variable must be true after the CI/staging outbound IP is allowlisted in RazorpayX");
+          if(present("RAZORPAYX_FUND_ACCOUNT_MAP")){
+            try{
+              const map=JSON.parse(process.env.RAZORPAYX_FUND_ACCOUNT_MAP);
+              if(!map||typeof map!=="object"||!Object.values(map).some(value=>typeof value==="string"&&value.startsWith("fa_")))add("RAZORPAYX_FUND_ACCOUNT_MAP","must contain at least one provider mapped to a fa_... Test fund account");
+            }catch{add("RAZORPAYX_FUND_ACCOUNT_MAP","secret is not valid JSON");}
+          }
+
+          if(blockers.length){
+            console.error("FINANCE_EXTERNAL_READINESS_BLOCKED");
+            for(const blocker of blockers)console.error(`- ${blocker}`);
+            process.exit(1);
+          }
+          console.log("FINANCE_EXTERNAL_READINESS_OK");
+          console.log("No payment, refund or payout was executed by this readiness gate; only an INR 1 Razorpay Test order was created.");
+          NODE
