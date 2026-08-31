@@ -14,91 +14,17 @@ const validateReceipt=(value:string)=>{const receipt=value.trim();if(receipt.len
 const validateRefundKey=(value:string)=>{const key=value.trim();if(!/^[A-Za-z0-9_-]{10,}$/.test(key))fail("REFUND_IDEMPOTENCY_KEY_INVALID","Refund idempotency key must be at least 10 characters using letters, numbers, hyphen or underscore",422);return key;};
 const validatePayoutKey=(value:string)=>{const key=value.trim();if(key.length<4||key.length>36||!/^[A-Za-z0-9_ -]+$/.test(key))fail("PAYOUT_IDEMPOTENCY_KEY_INVALID","Payout idempotency key must be 4 to 36 allowed characters",422);return key;};
 
-async function parseResponse(response:Response,code:string){
-  let body:unknown;
-  try{body=await response.json();}catch{body=null;}
-  if(!response.ok){const detail=body&&typeof body==="object"&&"error" in body?JSON.stringify((body as {error:unknown}).error):response.statusText;fail(code,`${code}: ${detail||`HTTP ${response.status}`}`,502);}
-  if(!body||typeof body!=="object")fail(code,`${code}: malformed provider response`,502);
-  return body as Record<string,unknown>;
-}
+async function parseResponse(response:Response,code:string){let body:unknown;try{body=await response.json();}catch{body=null;}if(!response.ok){const detail=body&&typeof body==="object"&&"error" in body?JSON.stringify((body as {error:unknown}).error):response.statusText;fail(code,`${code}: ${detail||`HTTP ${response.status}`}`,502);}if(!body||typeof body!=="object")fail(code,`${code}: malformed provider response`,502);return body as Record<string,unknown>;}
+function paymentCredentials(env:NodeJS.ProcessEnv){const keyId=env.RAZORPAY_KEY_ID?.trim();const keySecret=env.RAZORPAY_KEY_SECRET?.trim();if(!keyId||!keySecret)fail("PAYMENTS_NOT_CONFIGURED","Razorpay key id and secret are required");return {keyId:keyId as string,keySecret:keySecret as string};}
+function payoutCredentials(env:NodeJS.ProcessEnv){const keyId=env.RAZORPAYX_KEY_ID?.trim()||env.RAZORPAY_KEY_ID?.trim();const keySecret=env.RAZORPAYX_KEY_SECRET?.trim()||env.RAZORPAY_KEY_SECRET?.trim();if(!keyId||!keySecret)fail("PAYOUTS_NOT_CONFIGURED","RazorpayX key id and secret are required");return {keyId:keyId as string,keySecret:keySecret as string};}
 
-function paymentCredentials(env:NodeJS.ProcessEnv){
-  const keyId=env.RAZORPAY_KEY_ID?.trim(),keySecret=env.RAZORPAY_KEY_SECRET?.trim();
-  if(!keyId||!keySecret)fail("PAYMENTS_NOT_CONFIGURED","Razorpay key id and secret are required");
-  return {keyId,keySecret};
-}
-function payoutCredentials(env:NodeJS.ProcessEnv){
-  const keyId=env.RAZORPAYX_KEY_ID?.trim()||env.RAZORPAY_KEY_ID?.trim();
-  const keySecret=env.RAZORPAYX_KEY_SECRET?.trim()||env.RAZORPAY_KEY_SECRET?.trim();
-  if(!keyId||!keySecret)fail("PAYOUTS_NOT_CONFIGURED","RazorpayX key id and secret are required");
-  return {keyId,keySecret};
-}
+export function paymentReadiness(env:NodeJS.ProcessEnv=process.env){const missing=["RAZORPAY_KEY_ID","RAZORPAY_KEY_SECRET","RAZORPAY_WEBHOOK_SECRET"].filter(key=>!configured(env,key));const providerMode=env.RAZORPAY_MODE?.trim();if(providerMode!=="test"&&providerMode!=="live")missing.push("RAZORPAY_MODE(test|live)");return {ready:missing.length===0,providerMode:providerMode==="test"||providerMode==="live"?providerMode:null,missing};}
+export function payoutReadiness(env:NodeJS.ProcessEnv=process.env){const hasPayoutCredentials=Boolean((env.RAZORPAYX_KEY_ID?.trim()&&env.RAZORPAYX_KEY_SECRET?.trim())||(env.RAZORPAY_KEY_ID?.trim()&&env.RAZORPAY_KEY_SECRET?.trim()));const missing=["RAZORPAYX_ACCOUNT_NUMBER","RAZORPAYX_FUND_ACCOUNT_MAP"].filter(key=>!configured(env,key));if(!hasPayoutCredentials)missing.push("RAZORPAYX_KEY_ID/SECRET or RAZORPAY_KEY_ID/SECRET");const providerMode=env.RAZORPAYX_MODE?.trim();if(providerMode!=="test"&&providerMode!=="live")missing.push("RAZORPAYX_MODE(test|live)");if(env.RAZORPAYX_IP_ALLOWLIST_CONFIRMED!=="true")missing.push("RAZORPAYX_IP_ALLOWLIST_CONFIRMED=true");return {ready:missing.length===0,providerMode:providerMode==="test"||providerMode==="live"?providerMode:null,missing};}
 
-export function paymentReadiness(env:NodeJS.ProcessEnv=process.env){
-  const missing=["RAZORPAY_KEY_ID","RAZORPAY_KEY_SECRET","RAZORPAY_WEBHOOK_SECRET"].filter(key=>!configured(env,key));
-  const providerMode=env.RAZORPAY_MODE?.trim();
-  if(providerMode!=="test"&&providerMode!=="live")missing.push("RAZORPAY_MODE(test|live)");
-  return {ready:missing.length===0,providerMode:providerMode==="test"||providerMode==="live"?providerMode:null,missing};
-}
+export function resolveRazorpayXFundAccount(providerId:string,env:NodeJS.ProcessEnv=process.env):string{const raw=env.RAZORPAYX_FUND_ACCOUNT_MAP?.trim();if(!raw)fail("PAYOUT_FUND_ACCOUNT_NOT_CONFIGURED","RazorpayX provider fund-account map is required");let parsed:unknown;try{parsed=JSON.parse(raw as string);}catch{fail("PAYOUT_FUND_ACCOUNT_MAP_INVALID","RazorpayX fund-account map must be valid JSON");}if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))fail("PAYOUT_FUND_ACCOUNT_MAP_INVALID","RazorpayX fund-account map must be a JSON object");const fundAccountId=(parsed as Record<string,unknown>)[providerId];if(typeof fundAccountId!=="string"||!fundAccountId.startsWith("fa_"))fail("PAYOUT_FUND_ACCOUNT_NOT_CONFIGURED",`No RazorpayX fund account is configured for provider ${providerId}`,422);return fundAccountId as string;}
 
-export function payoutReadiness(env:NodeJS.ProcessEnv=process.env){
-  const hasPayoutCredentials=Boolean((env.RAZORPAYX_KEY_ID?.trim()&&env.RAZORPAYX_KEY_SECRET?.trim())||(env.RAZORPAY_KEY_ID?.trim()&&env.RAZORPAY_KEY_SECRET?.trim()));
-  const missing=["RAZORPAYX_ACCOUNT_NUMBER","RAZORPAYX_FUND_ACCOUNT_MAP"].filter(key=>!configured(env,key));
-  if(!hasPayoutCredentials)missing.push("RAZORPAYX_KEY_ID/SECRET or RAZORPAY_KEY_ID/SECRET");
-  const providerMode=env.RAZORPAYX_MODE?.trim();
-  if(providerMode!=="test"&&providerMode!=="live")missing.push("RAZORPAYX_MODE(test|live)");
-  if(env.RAZORPAYX_IP_ALLOWLIST_CONFIRMED!=="true")missing.push("RAZORPAYX_IP_ALLOWLIST_CONFIRMED=true");
-  return {ready:missing.length===0,providerMode:providerMode==="test"||providerMode==="live"?providerMode:null,missing};
-}
-
-export function resolveRazorpayXFundAccount(providerId:string,env:NodeJS.ProcessEnv=process.env){
-  const raw=env.RAZORPAYX_FUND_ACCOUNT_MAP?.trim();
-  if(!raw)fail("PAYOUT_FUND_ACCOUNT_NOT_CONFIGURED","RazorpayX provider fund-account map is required");
-  let map:Record<string,unknown>;
-  try{map=JSON.parse(raw) as Record<string,unknown>;}catch{fail("PAYOUT_FUND_ACCOUNT_MAP_INVALID","RazorpayX fund-account map must be valid JSON");}
-  const fundAccountId=map[providerId];
-  if(typeof fundAccountId!=="string"||!fundAccountId.startsWith("fa_"))fail("PAYOUT_FUND_ACCOUNT_NOT_CONFIGURED",`No RazorpayX fund account is configured for provider ${providerId}`,422);
-  return fundAccountId;
-}
-
-export async function createRazorpayOrder(amount:number,receiptInput:string,fetchImpl:FetchLike=globalThis.fetch,env:NodeJS.ProcessEnv=process.env):Promise<RazorpayOrderResult>{
-  const receipt=validateReceipt(receiptInput);const {keyId,keySecret}=paymentCredentials(env);const amountSubunits=subunits(amount);
-  const response=await fetchImpl(`${API_BASE}/orders`,{method:"POST",headers:{authorization:basicAuth(keyId,keySecret),"content-type":"application/json"},body:JSON.stringify({amount:amountSubunits,currency:"INR",receipt,notes:{pawspace_receipt:receipt}})});
-  const body=await parseResponse(response,"RAZORPAY_ORDER_CREATE_FAILED");
-  if(typeof body.id!=="string"||!body.id.startsWith("order_"))fail("RAZORPAY_ORDER_RESPONSE_INVALID","Razorpay order response did not contain a valid order id",502);
-  if(Number(body.amount)!==amountSubunits||body.currency!=="INR")fail("RAZORPAY_ORDER_AMOUNT_MISMATCH","Razorpay order amount/currency did not match PawSpace",502);
-  return {id:body.id,amount:amountSubunits,currency:"INR",status:String(body.status??"created"),receipt};
-}
-
-export async function fetchRazorpayOrder(orderId:string,fetchImpl:FetchLike=globalThis.fetch,env:NodeJS.ProcessEnv=process.env):Promise<RazorpayOrderResult>{
-  const {keyId,keySecret}=paymentCredentials(env);if(!orderId.startsWith("order_"))fail("RAZORPAY_ORDER_ID_INVALID","A Razorpay order id is required",422);
-  const body=await parseResponse(await fetchImpl(`${API_BASE}/orders/${encodeURIComponent(orderId)}`,{headers:{authorization:basicAuth(keyId,keySecret)}}),"RAZORPAY_ORDER_FETCH_FAILED");
-  if(body.id!==orderId||typeof body.receipt!=="string")fail("RAZORPAY_ORDER_RESPONSE_INVALID","Razorpay order response did not match the requested order",502);
-  return {id:orderId,amount:Number(body.amount),currency:String(body.currency),status:String(body.status),receipt:body.receipt};
-}
-
-export async function fetchRazorpayPayment(paymentId:string,fetchImpl:FetchLike=globalThis.fetch,env:NodeJS.ProcessEnv=process.env):Promise<RazorpayPaymentResult>{
-  const {keyId,keySecret}=paymentCredentials(env);if(!paymentId.startsWith("pay_"))fail("RAZORPAY_PAYMENT_ID_INVALID","A Razorpay payment id is required",422);
-  const body=await parseResponse(await fetchImpl(`${API_BASE}/payments/${encodeURIComponent(paymentId)}`,{headers:{authorization:basicAuth(keyId,keySecret)}}),"RAZORPAY_PAYMENT_FETCH_FAILED");
-  if(body.id!==paymentId||typeof body.order_id!=="string")fail("RAZORPAY_PAYMENT_RESPONSE_INVALID","Razorpay payment response did not match the requested payment",502);
-  return {id:paymentId,orderId:body.order_id,amount:Number(body.amount),currency:String(body.currency),status:String(body.status)};
-}
-
-export async function createRazorpayRefund(paymentId:string,amount:number,idempotencyKeyInput:string,fetchImpl:FetchLike=globalThis.fetch,env:NodeJS.ProcessEnv=process.env):Promise<RazorpayRefundResult>{
-  const idempotencyKey=validateRefundKey(idempotencyKeyInput);const {keyId,keySecret}=paymentCredentials(env);if(!paymentId.startsWith("pay_"))fail("RAZORPAY_PAYMENT_ID_INVALID","A Razorpay payment id is required for refund",422);const amountSubunits=subunits(amount);
-  const response=await fetchImpl(`${API_BASE}/payments/${encodeURIComponent(paymentId)}/refund`,{method:"POST",headers:{authorization:basicAuth(keyId,keySecret),"content-type":"application/json","X-Refund-Idempotency":idempotencyKey},body:JSON.stringify({amount:amountSubunits,receipt:idempotencyKey,notes:{pawspace_refund_key:idempotencyKey}})});
-  const body=await parseResponse(response,"RAZORPAY_REFUND_CREATE_FAILED");
-  if(typeof body.id!=="string"||!body.id.startsWith("rfnd_"))fail("RAZORPAY_REFUND_RESPONSE_INVALID","Razorpay refund response did not contain a valid refund id",502);
-  if(body.payment_id!==paymentId||Number(body.amount)!==amountSubunits)fail("RAZORPAY_REFUND_AMOUNT_MISMATCH","Razorpay refund did not match the requested PawSpace payment/amount",502);
-  return {id:body.id,paymentId,amount:amountSubunits,status:String(body.status??"processing")};
-}
-
-export async function createRazorpayXPayout(amount:number,fundAccountId:string,idempotencyKeyInput:string,fetchImpl:FetchLike=globalThis.fetch,env:NodeJS.ProcessEnv=process.env):Promise<RazorpayPayoutResult>{
-  const idempotencyKey=validatePayoutKey(idempotencyKeyInput);const readiness=payoutReadiness(env);if(!readiness.ready)fail("PAYOUTS_NOT_CONFIGURED",`RazorpayX is not operational: ${readiness.missing.join(", ")}`);
-  const {keyId,keySecret}=payoutCredentials(env);const accountNumber=env.RAZORPAYX_ACCOUNT_NUMBER!.trim();const amountSubunits=subunits(amount);
-  const response=await fetchImpl(`${API_BASE}/payouts`,{method:"POST",headers:{authorization:basicAuth(keyId,keySecret),"content-type":"application/json","X-Payout-Idempotency":idempotencyKey},body:JSON.stringify({account_number:accountNumber,fund_account_id:fundAccountId,amount:amountSubunits,currency:"INR",mode:env.RAZORPAYX_PAYOUT_MODE?.trim()||"IMPS",purpose:"payout",queue_if_low_balance:false,reference_id:idempotencyKey,narration:"PawSpace provider payout",notes:{pawspace_payout_key:idempotencyKey}})});
-  const body=await parseResponse(response,"RAZORPAYX_PAYOUT_CREATE_FAILED");
-  if(typeof body.id!=="string"||!body.id.startsWith("pout_"))fail("RAZORPAYX_PAYOUT_RESPONSE_INVALID","RazorpayX response did not contain a valid payout id",502);
-  if(Number(body.amount)!==amountSubunits||body.currency!=="INR")fail("RAZORPAYX_PAYOUT_AMOUNT_MISMATCH","RazorpayX payout amount/currency did not match PawSpace",502);
-  return {id:body.id,amount:amountSubunits,currency:"INR",status:String(body.status??"processing")};
-}
+export async function createRazorpayOrder(amount:number,receiptInput:string,fetchImpl:FetchLike=globalThis.fetch,env:NodeJS.ProcessEnv=process.env):Promise<RazorpayOrderResult>{const receipt=validateReceipt(receiptInput);const {keyId,keySecret}=paymentCredentials(env);const amountSubunits=subunits(amount);const response=await fetchImpl(`${API_BASE}/orders`,{method:"POST",headers:{authorization:basicAuth(keyId,keySecret),"content-type":"application/json"},body:JSON.stringify({amount:amountSubunits,currency:"INR",receipt,notes:{pawspace_receipt:receipt}})});const body=await parseResponse(response,"RAZORPAY_ORDER_CREATE_FAILED");const orderId=body.id;if(typeof orderId!=="string"||!orderId.startsWith("order_"))fail("RAZORPAY_ORDER_RESPONSE_INVALID","Razorpay order response did not contain a valid order id",502);if(Number(body.amount)!==amountSubunits||body.currency!=="INR")fail("RAZORPAY_ORDER_AMOUNT_MISMATCH","Razorpay order amount/currency did not match PawSpace",502);return {id:orderId as string,amount:amountSubunits,currency:"INR",status:String(body.status??"created"),receipt};}
+export async function fetchRazorpayOrder(orderId:string,fetchImpl:FetchLike=globalThis.fetch,env:NodeJS.ProcessEnv=process.env):Promise<RazorpayOrderResult>{const {keyId,keySecret}=paymentCredentials(env);if(!orderId.startsWith("order_"))fail("RAZORPAY_ORDER_ID_INVALID","A Razorpay order id is required",422);const body=await parseResponse(await fetchImpl(`${API_BASE}/orders/${encodeURIComponent(orderId)}`,{headers:{authorization:basicAuth(keyId,keySecret)}}),"RAZORPAY_ORDER_FETCH_FAILED");const receipt=body.receipt;if(body.id!==orderId||typeof receipt!=="string")fail("RAZORPAY_ORDER_RESPONSE_INVALID","Razorpay order response did not match the requested order",502);return {id:orderId,amount:Number(body.amount),currency:String(body.currency),status:String(body.status),receipt:receipt as string};}
+export async function fetchRazorpayPayment(paymentId:string,fetchImpl:FetchLike=globalThis.fetch,env:NodeJS.ProcessEnv=process.env):Promise<RazorpayPaymentResult>{const {keyId,keySecret}=paymentCredentials(env);if(!paymentId.startsWith("pay_"))fail("RAZORPAY_PAYMENT_ID_INVALID","A Razorpay payment id is required",422);const body=await parseResponse(await fetchImpl(`${API_BASE}/payments/${encodeURIComponent(paymentId)}`,{headers:{authorization:basicAuth(keyId,keySecret)}}),"RAZORPAY_PAYMENT_FETCH_FAILED");const orderId=body.order_id;if(body.id!==paymentId||typeof orderId!=="string")fail("RAZORPAY_PAYMENT_RESPONSE_INVALID","Razorpay payment response did not match the requested payment",502);return {id:paymentId,orderId:orderId as string,amount:Number(body.amount),currency:String(body.currency),status:String(body.status)};}
+export async function createRazorpayRefund(paymentId:string,amount:number,idempotencyKeyInput:string,fetchImpl:FetchLike=globalThis.fetch,env:NodeJS.ProcessEnv=process.env):Promise<RazorpayRefundResult>{const idempotencyKey=validateRefundKey(idempotencyKeyInput);const {keyId,keySecret}=paymentCredentials(env);if(!paymentId.startsWith("pay_"))fail("RAZORPAY_PAYMENT_ID_INVALID","A Razorpay payment id is required for refund",422);const amountSubunits=subunits(amount);const response=await fetchImpl(`${API_BASE}/payments/${encodeURIComponent(paymentId)}/refund`,{method:"POST",headers:{authorization:basicAuth(keyId,keySecret),"content-type":"application/json","X-Refund-Idempotency":idempotencyKey},body:JSON.stringify({amount:amountSubunits,receipt:idempotencyKey,notes:{pawspace_refund_key:idempotencyKey}})});const body=await parseResponse(response,"RAZORPAY_REFUND_CREATE_FAILED");const refundId=body.id;if(typeof refundId!=="string"||!refundId.startsWith("rfnd_"))fail("RAZORPAY_REFUND_RESPONSE_INVALID","Razorpay refund response did not contain a valid refund id",502);if(body.payment_id!==paymentId||Number(body.amount)!==amountSubunits)fail("RAZORPAY_REFUND_AMOUNT_MISMATCH","Razorpay refund did not match the requested PawSpace payment/amount",502);return {id:refundId as string,paymentId,amount:amountSubunits,status:String(body.status??"processing")};}
+export async function createRazorpayXPayout(amount:number,fundAccountId:string,idempotencyKeyInput:string,fetchImpl:FetchLike=globalThis.fetch,env:NodeJS.ProcessEnv=process.env):Promise<RazorpayPayoutResult>{const idempotencyKey=validatePayoutKey(idempotencyKeyInput);const readiness=payoutReadiness(env);if(!readiness.ready)fail("PAYOUTS_NOT_CONFIGURED",`RazorpayX is not operational: ${readiness.missing.join(", ")}`);const {keyId,keySecret}=payoutCredentials(env);const accountNumber=env.RAZORPAYX_ACCOUNT_NUMBER?.trim();if(!accountNumber)fail("PAYOUTS_NOT_CONFIGURED","RazorpayX account number is required");const amountSubunits=subunits(amount);const response=await fetchImpl(`${API_BASE}/payouts`,{method:"POST",headers:{authorization:basicAuth(keyId,keySecret),"content-type":"application/json","X-Payout-Idempotency":idempotencyKey},body:JSON.stringify({account_number:accountNumber,fund_account_id:fundAccountId,amount:amountSubunits,currency:"INR",mode:env.RAZORPAYX_PAYOUT_MODE?.trim()||"IMPS",purpose:"payout",queue_if_low_balance:false,reference_id:idempotencyKey,narration:"PawSpace provider payout",notes:{pawspace_payout_key:idempotencyKey}})});const body=await parseResponse(response,"RAZORPAYX_PAYOUT_CREATE_FAILED");const payoutId=body.id;if(typeof payoutId!=="string"||!payoutId.startsWith("pout_"))fail("RAZORPAYX_PAYOUT_RESPONSE_INVALID","RazorpayX response did not contain a valid payout id",502);if(Number(body.amount)!==amountSubunits||body.currency!=="INR")fail("RAZORPAYX_PAYOUT_AMOUNT_MISMATCH","RazorpayX payout amount/currency did not match PawSpace",502);return {id:payoutId as string,amount:amountSubunits,currency:"INR",status:String(body.status??"processing")};}
