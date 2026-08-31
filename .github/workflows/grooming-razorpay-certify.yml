@@ -41,6 +41,6 @@ jobs:
       - name: Finance executable concurrency
         run: node --test tests/financial-lifecycle-executable-concurrency.test.mjs
       - name: Money hardening
-        run: node --experimental-strip-types --test tests/money-hardening.test.mjs
+        run: PAWSPACE_LOCAL_PREVIEW=on NODE_ENV=test node --experimental-strip-types --test tests/money-hardening.test.mjs
       - name: Typecheck
         run: npm run typecheck
