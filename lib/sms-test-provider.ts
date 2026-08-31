@@ -1,7 +1,19 @@
 export const PAWSPACE_SMS_TEST_MESSAGE="PawSpace SMS API test successful. No action is required.";
 
 type Fetcher=(input:string|URL|Request,init?:RequestInit)=>Promise<Response>;
-type Fast2SmsPayload={return?:boolean;request_id?:string;message?:string[]|string};
+type Fast2SmsPayload={return?:boolean;request_id?:string;message?:string[]|string;status_code?:string|number};
+
+export class Fast2SmsProviderError extends Error{
+  readonly httpStatus:number|null;
+  readonly providerStatusCode:string|null;
+  constructor(httpStatus:number|null,providerStatusCode:string|null){
+    const detail=httpStatus===null?"transport":`HTTP ${httpStatus}${providerStatusCode?` / code ${providerStatusCode}`:""}`;
+    super(`Fast2SMS test request rejected (${detail})`);
+    this.name="Fast2SmsProviderError";
+    this.httpStatus=httpStatus;
+    this.providerStatusCode=providerStatusCode;
+  }
+}
 
 export function normalizeIndianMobile(value:string){
   const digits=value.replace(/\D/g,"");
@@ -25,9 +37,17 @@ export async function sendFast2SmsTest({apiKey,phone,fetcher=fetch}:{apiKey:stri
   url.searchParams.set("sms_details","1");
   url.searchParams.set("udf1","pawspace-sms-test");
 
-  const response=await fetcher(url,{method:"GET",headers:{Authorization:apiKey.trim(),accept:"application/json"}});
+  let response:Response;
+  try{
+    response=await fetcher(url,{method:"GET",headers:{Authorization:apiKey.trim(),accept:"application/json"}});
+  }catch{
+    throw new Fast2SmsProviderError(null,"transport");
+  }
   let payload:Fast2SmsPayload|null=null;
   try{payload=await response.json() as Fast2SmsPayload;}catch{}
-  if(!response.ok||payload?.return!==true)throw new Error(`Fast2SMS test request rejected (${response.status})`);
+  if(!response.ok||payload?.return!==true){
+    const providerStatusCode=payload?.status_code===undefined?null:String(payload.status_code);
+    throw new Fast2SmsProviderError(response.status,providerStatusCode);
+  }
   return {requestId:typeof payload.request_id==="string"?payload.request_id:null};
 }
