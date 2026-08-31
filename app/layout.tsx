@@ -3,6 +3,7 @@ import "./globals.css";
 import "./mobile-safe.css";
 import "./review-overrides.css";
 import ReviewUxFixes from "./components/review-ux-fixes";
+import OrderNotificationCenter from "./components/order-notification-center";
 
 export const metadata: Metadata = {
   title: "PawSpace — Pet Care Platform",
@@ -33,6 +34,7 @@ export default function RootLayout({
       <body className="antialiased">
         <ReviewUxFixes />
         {children}
+        <OrderNotificationCenter />
       </body>
     </html>
   );
