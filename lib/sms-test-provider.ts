@@ -1,6 +1,6 @@
 export const PAWSPACE_SMS_TEST_MESSAGE="PawSpace SMS API test successful. No action is required.";
 
-type Fetcher=(input:RequestInfo|URL,init?:RequestInit)=>Promise<Response>;
+type Fetcher=(input:string|URL|Request,init?:RequestInit)=>Promise<Response>;
 type Fast2SmsPayload={return?:boolean;request_id?:string;message?:string[]|string};
 
 export function normalizeIndianMobile(value:string){
