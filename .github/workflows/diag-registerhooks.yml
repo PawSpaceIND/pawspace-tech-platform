@@ -8,7 +8,7 @@ permissions:
 jobs:
   diag:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -18,23 +18,51 @@ jobs:
           node-version: 22.15.0
           cache: npm
       - run: npm ci
-      - name: Inspect generated auth hook harness
+      - name: Isolate auth-hook fixture creator
+        shell: bash
         run: |
-          set -euo pipefail
-          echo '--- node ---'
+          set -uo pipefail
+          echo '--- node/registerHooks ---'
           node --version
-          echo '--- registerHooks type ---'
           node --input-type=module -e "import Module from 'node:module'; console.log(typeof Module.registerHooks)"
-          echo '--- test/auth-hook-register.mjs ---'
-          sed -n '1,240p' test/auth-hook-register.mjs
-          echo '--- test/auth-hook.cjs ---'
-          sed -n '1,280p' test/auth-hook.cjs
-          echo '--- classifier references ---'
-          grep -n -C 8 'auth-hook.cjs' tests/api-path-classification.test.mjs || true
-          echo '--- package test commands ---'
-          node -e "const p=require('./package.json'); console.log(JSON.stringify({pretest:p.scripts?.pretest,test:p.scripts?.test},null,2))"
-          echo '--- registerHooks API source shape ---'
-          node --input-type=module - <<'NODE'
-          import Module from 'node:module';
-          console.log(String(Module.registerHooks).slice(0,1200));
-          NODE
+
+          echo '--- literal references before tests ---'
+          grep -RFn --exclude-dir=node_modules 'auth-hook.cjs' . || true
+          echo '--- filesystem before tests ---'
+          find test tests -maxdepth 2 -type f -name '*auth-hook*' -print 2>/dev/null || true
+
+          echo '--- api-path classifier alone ---'
+          PAWSPACE_LOCAL_PREVIEW=on NODE_ENV=test node --experimental-strip-types --test tests/api-path-classification.test.mjs
+          classifier_rc=$?
+          echo "classifier_rc=$classifier_rc"
+          if test -e test/auth-hook.cjs; then
+            echo 'CLASSIFIER_CREATED_AUTH_HOOK=1'
+            sed -n '1,260p' test/auth-hook.cjs || true
+            git status --short
+            exit 0
+          fi
+
+          echo '--- hook suites one by one ---'
+          mapfile -t suites < <(grep -l 'helpers/module-hooks.mjs' tests/*.test.mjs | sort)
+          echo "suite_count=${#suites[@]}"
+          for suite in "${suites[@]}"; do
+            rm -f test/auth-hook.cjs test/auth-hook-register.mjs
+            echo "RUN_SUITE=$suite"
+            PAWSPACE_LOCAL_PREVIEW=on NODE_ENV=test node --experimental-strip-types --test "$suite" >/tmp/one-suite.tap 2>&1
+            rc=$?
+            tail -n 12 /tmp/one-suite.tap || true
+            echo "SUITE_RC=$rc"
+            if test -e test/auth-hook.cjs || test -e test/auth-hook-register.mjs; then
+              echo "FIRST_FIXTURE_CREATOR=$suite"
+              find test -maxdepth 1 -type f -name '*auth-hook*' -print || true
+              if test -e test/auth-hook.cjs; then sed -n '1,280p' test/auth-hook.cjs || true; fi
+              if test -e test/auth-hook-register.mjs; then sed -n '1,280p' test/auth-hook-register.mjs || true; fi
+              git status --short
+              break
+            fi
+          done
+
+          echo '--- classifier after isolated suite loop ---'
+          PAWSPACE_LOCAL_PREVIEW=on NODE_ENV=test node --experimental-strip-types --test tests/api-path-classification.test.mjs || true
+          find test tests -maxdepth 2 -type f -name '*auth-hook*' -print 2>/dev/null || true
+          git status --short
