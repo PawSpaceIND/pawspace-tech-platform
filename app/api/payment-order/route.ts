@@ -14,8 +14,8 @@ async function ownedContext(request:Request,requestedCustomerId?:string){const d
 export async function GET(request:Request){
   try{
     const bookingId=String(new URL(request.url).searchParams.get("bookingId")||"").trim();
-    if(!bookingId)return json({error:"A booking is required"},400);
     const{db,customerId}=await ownedContext(request);
+    if(!bookingId)return json({error:"A booking is required"},400);
     const payment=await db.prepare("SELECT b.id booking_id,p.id payment_id,p.status payment_status,p.currency,p.detail_json,p.updated_at FROM canonical_bookings b JOIN booking_payments p ON p.booking_id=b.id WHERE b.id=? AND b.customer_id=?").bind(bookingId,customerId).first<Row>();
     if(!payment)return json({error:"Payment was not found"},404);
     const paymentId=String(payment.payment_id||"");

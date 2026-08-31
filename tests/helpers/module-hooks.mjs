@@ -73,6 +73,22 @@ function transpileTsx(source, fileName) {
 }
 const cssStub = () => 'const handler={get:(_,key)=>typeof key==="string"?key:undefined};export default new Proxy({},handler);';
 
+function loadWithRegisterHooksCompatibility(url, context, nextLoad) {
+  try {
+    return nextLoad(url, context);
+  } catch (error) {
+    // Node 22.15-22.18 can reject a null/undefined CommonJS source while synchronous hooks are chained
+    // with another loader. Repair only that runtime defect; every other load failure remains authoritative.
+    if (error?.code !== "ERR_INVALID_RETURN_PROPERTY_VALUE" || !url.startsWith("file:")) throw error;
+    const path = fileURLToPath(url);
+    return {
+      format: context.format ?? (path.endsWith(".cjs") ? "commonjs" : "module"),
+      source: readFileSync(path),
+      shortCircuit: true,
+    };
+  }
+}
+
 export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
   process.env.NODE_ENV = "test";
   process.env.PAWSPACE_LOCAL_PREVIEW = "on";
@@ -110,7 +126,7 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
       },
       load(url, context, nextLoad) {
         if (url.endsWith(".css")) return { format: "module", source: cssStub(), shortCircuit: true };
-        if (!url.endsWith(".tsx")) return nextLoad(url, context);
+        if (!url.endsWith(".tsx")) return loadWithRegisterHooksCompatibility(url, context, nextLoad);
         const path = fileURLToPath(url);
         return { format: "module", source: transpileTsx(readFileSync(path, "utf8"), path), shortCircuit: true };
       },
