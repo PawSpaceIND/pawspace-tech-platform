@@ -98,7 +98,7 @@ export async function POST(request:Request){
   const assignedOwner=ownership.owner;
   const leadId=`LEAD-${now}`;
   await db.prepare("INSERT INTO crm_contacts (id,name,primary_phone,secondary_phone,email,area,pet_names,pet_summary,stage,owner,source,lifetime_value,next_action,opportunity,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-    .bind(id,String(body.name||"New customer"),String(body.primaryPhone||""),body.secondaryPhone?String(body.secondaryPhone):null,body.email?String(body.email):null,String(body.area||"Bangalore"),String(body.petNames||"Pet"),String(body.petSummary||"Profile incomplete"),String(body.stage||"New lead"),assignedOwner,String(body.source||"Website"),0,String(body.nextAction||"Call within 10 minutes"),String(body.opportunity||body.service||"Discover requirement"),now,now).run();
+    .bind(id,String(body.name||"New customer"),String(body.primaryPhone||""),body.secondaryPhone?String(body.secondaryPhone):null,body.email?String(body.email):null,String(body.area||"Bangalore"),String(body.petNames||"Pet"),String(body.petSummary||"Profile incomplete"),"New lead",assignedOwner,String(body.source||"Website"),0,String(body.nextAction||"Call within 10 minutes"),String(body.opportunity||body.service||"Discover requirement"),now,now).run();
   await db.prepare("INSERT INTO crm_activities (id,contact_id,type,title,detail,created_at) VALUES (?,?,?,?,?,?)").bind(`ACT-${now}`,id,"lead_created","Lead created",`Source: ${String(body.source||"Website")}`,now).run();
   await db.batch([
     db.prepare("INSERT INTO crm_tasks (id,contact_id,title,owner,due_at,priority,status,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(`TASK-${now}`,id,"First response to new lead",assignedOwner,now+10*60*1000,"High","Open",now),
