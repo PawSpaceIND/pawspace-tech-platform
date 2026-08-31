@@ -69,6 +69,8 @@ test("provider preview never reserves capacity before confirmation", () => {
 
 test("pay-now state is explicitly pending and cannot fall through to pay-after-service", () => {
   assert.match(source, /initialPaymentStatus:pay==="online"\?"payment_pending":"due_after_service"/);
+  assert.match(source, /UAT sandbox authorization pending/);
+  assert.doesNotMatch(code, /Paid in UAT sandbox/);
   assert.match(transactionSource, /"payment_pending"/);
   assert.match(transactionSource, /initialPaymentStatus\?\?\(/);
 });
