@@ -51,12 +51,18 @@ test("subscription refund maker-checker and provider proration remain capped and
 });
 
 test("provider plan must be verified before local activation",()=>{
-  const governance=read("lib/subscription-plan-governance.ts");
+  const governance=read("lib/subscription-billing-plan-governance.ts");
   const verify=read("lib/razorpay-plan-verification.ts");
   assert.match(governance,/verifyRazorpayPlan/);
   assert.match(governance,/razorpay_plan_mismatch/);
   assert.match(governance,/provider_verified_at/);
   for(const field of ["item.amount","item.currency","body.period","body.interval"])assert.ok(verify.includes(field));
+});
+
+test("existing service subscription-plan governance contract remains intact",()=>{
+  const governance=read("lib/subscription-plan-governance.ts");
+  for(const contract of ["createSubscriptionPlan","updateSubscriptionPlan","listSubscriptionPlans"])assert.match(governance,new RegExp(`export async function ${contract}`));
+  assert.match(governance,/addCalendarMonthsClamped/);
 });
 
 test("cycle-end plan changes reconcile before accounting and dunning",()=>{
