@@ -10,11 +10,14 @@ name: Deploy staging
 #              PAWSPACE_UAT_ACCESS_CODE                (>=32 chars) tester code for /staging-login
 #              PAWSPACE_UAT_SIGNING_KEY                (>=32 chars) signs the UAT session cookie
 #              PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT  (>=32 chars) signs OTP identity assertions
+#              FAST2SMS_API_KEY                         optional; required only for approved SMS smoke
+#              PAWSPACE_SMS_TEST_NUMBERS                optional; comma-separated approved Indian test numbers
 #   Variables: STAGING_D1_ID           (from `npx wrangler d1 create pawspace-staging`)
 #              PRODUCTION_D1_ID        optional; when set, certification refuses to run if the deploy
 #                                      is bound to it
 #              PRODUCTION_WORKER_NAME  optional; same, for the worker name
 #              STAGING_R2_BUCKET_NAME  optional private UAT media bucket
+#              PAWSPACE_SMS_TEST_ENABLED optional; set exactly to true only for an approved SMS smoke
 #
 # The deploy is CERTIFIED before it is handed to testers. tests/e2e/staging-certification.mjs proves,
 # against the deployed origin and the deployed configuration: isolation (the staging worker and its own
@@ -141,6 +144,9 @@ jobs:
           PAWSPACE_COMMUNICATION_PROVIDER_TOKEN: ${{ secrets.PAWSPACE_COMMUNICATION_PROVIDER_TOKEN }}
           PAWSPACE_COMMUNICATION_WEBHOOK_SECRET: ${{ secrets.PAWSPACE_COMMUNICATION_WEBHOOK_SECRET }}
           PAWSPACE_COMMUNICATION_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_COMMUNICATION_UAT_ALLOWLIST }}
+          PAWSPACE_SMS_TEST_ENABLED: ${{ vars.PAWSPACE_SMS_TEST_ENABLED }}
+          PAWSPACE_SMS_TEST_NUMBERS: ${{ secrets.PAWSPACE_SMS_TEST_NUMBERS }}
+          FAST2SMS_API_KEY: ${{ secrets.FAST2SMS_API_KEY }}
         # --message is what makes the DEPLOYED version attributable to a sha: `wrangler versions list`
         # exposes it, and certification requires an exact match. Without it, "which build is live?" has
         # no answer that does not rely on trusting this log.
@@ -159,7 +165,8 @@ jobs:
               "META_WHATSAPP_APP_SECRET", "META_WHATSAPP_VERIFY_TOKEN", "META_WHATSAPP_UAT_ALLOWLIST",
               "META_WHATSAPP_TEMPLATE_ALLOWLIST", "PAWSPACE_COMMUNICATION_PROVIDER_URL",
               "PAWSPACE_COMMUNICATION_PROVIDER_TOKEN", "PAWSPACE_COMMUNICATION_WEBHOOK_SECRET",
-              "PAWSPACE_COMMUNICATION_UAT_ALLOWLIST"
+              "PAWSPACE_COMMUNICATION_UAT_ALLOWLIST", "PAWSPACE_SMS_TEST_ENABLED",
+              "PAWSPACE_SMS_TEST_NUMBERS", "FAST2SMS_API_KEY"
             ];
             const required = Object.fromEntries(requiredNames.map(name => [name, process.env[name] || ""]));
             if (Object.values(required).some(value => !value)) throw new Error("a required UAT secret is missing");
