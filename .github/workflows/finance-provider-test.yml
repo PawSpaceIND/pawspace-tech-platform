@@ -25,7 +25,7 @@ on:
       provider_id:
         description: Provider key in the RazorpayX fund-account map
         required: true
-        default: pro_finance_uat
+        default: pro_arjun
         type: string
       refund_payment_id:
         description: Optional captured Razorpay Test pay_ ID; blank selects the newest eligible payment
@@ -53,7 +53,7 @@ jobs:
       RAZORPAYX_FUND_ACCOUNT_MAP: ${{ secrets.RAZORPAYX_FUND_ACCOUNT_MAP_SANDBOX || secrets.RAZORPAYX_FUND_ACCOUNT_MAP }}
       OPERATION: ${{ github.event_name == 'workflow_dispatch' && inputs.operation || 'readiness' }}
       CONFIRMATION: ${{ github.event_name == 'workflow_dispatch' && inputs.confirmation || '' }}
-      PROVIDER_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.provider_id || 'pro_finance_uat' }}
+      PROVIDER_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.provider_id || 'pro_arjun' }}
       REFUND_PAYMENT_ID: ${{ github.event_name == 'workflow_dispatch' && inputs.refund_payment_id || '' }}
     steps:
       - name: Validate Test configuration and optionally execute INR 1 transactions

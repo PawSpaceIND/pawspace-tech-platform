@@ -23,68 +23,33 @@ jobs:
           set -euo pipefail
           node --input-type=module <<'NODE'
           import { createHmac, randomUUID } from "node:crypto";
-
           const base = String(process.env.PLATFORM_API_UAT_BASE_URL || "").trim();
           const root = String(process.env.RAZORPAY_WEBHOOK_SECRET || "");
           const sha = String(process.env.GITHUB_SHA || "");
-          if (!base || !root || !/^[0-9a-f]{40}$/.test(sha)) {
-            console.error("FINANCE_UAT_AUTH_BLOCKED: missing base URL, Test webhook secret, or exact GitHub SHA");
-            process.exit(1);
-          }
+          if (!base || !root || !/^[0-9a-f]{40}$/.test(sha)) { console.error("FINANCE_UAT_AUTH_BLOCKED: missing base URL, Test webhook secret, or exact GitHub SHA"); process.exit(1); }
           const safeHost = value => { try { return new URL(value).host; } catch { return "invalid"; } };
-          const domain = "pawspace-finance-uat-proof-v1";
-          const proofKey = createHmac("sha256", root).update(domain).digest();
-          const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-          let lastStatus = 0;
-
+          const domain = "pawspace-finance-uat-proof-v1"; const proofKey = createHmac("sha256", root).update(domain).digest(); const sleep = ms => new Promise(resolve => setTimeout(resolve, ms)); let lastStatus = 0;
           for (let attempt = 1; attempt <= 24; attempt++) {
-            const timestamp = Math.floor(Date.now() / 1000);
-            const nonce = randomUUID().replaceAll("-", "");
-            const signature = createHmac("sha256", proofKey)
-              .update(`${domain}\n${timestamp}\n${nonce}\n${sha}`)
-              .digest("hex");
+            const timestamp = Math.floor(Date.now() / 1000); const nonce = randomUUID().replaceAll("-", ""); const signature = createHmac("sha256", proofKey).update(`${domain}\n${timestamp}\n${nonce}\n${sha}`).digest("hex");
             try {
-              const sessionResponse = await fetch(new URL("/v1/auth/finance-uat-session", base), {
-                method: "POST",
-                redirect: "error",
-                headers: { "content-type": "application/json" },
-                body: JSON.stringify({ timestamp, nonce, sha, signature }),
-              });
+              const sessionResponse = await fetch(new URL("/v1/auth/finance-uat-session", base), { method: "POST", redirect: "error", headers: { "content-type": "application/json" }, body: JSON.stringify({ timestamp, nonce, sha, signature }) });
               lastStatus = sessionResponse.status;
-              if ((sessionResponse.status === 404 || sessionResponse.status === 409) && attempt < 24) {
-                await sleep(15000);
-                continue;
-              }
+              if ((sessionResponse.status === 404 || sessionResponse.status === 409) && attempt < 24) { await sleep(15000); continue; }
               const sessionBody = await sessionResponse.json().catch(() => null);
-              if (!sessionResponse.ok) {
-                console.error(`FINANCE_UAT_AUTH_BLOCKED: signed session endpoint rejected exact-SHA proof with HTTP ${sessionResponse.status}`);
-                process.exit(1);
+              if (sessionResponse.status === 503 && sessionBody?.error?.code === "FINANCE_UAT_CONFIGURATION_REQUIRED") {
+                const required = Array.isArray(sessionBody.error.required) ? sessionBody.error.required.filter(value => typeof value === "string") : [];
+                console.error(`FINANCE_UAT_AUTH_BLOCKED: Preview runtime needs ${required.join(", ") || "configuration"}`); process.exit(1);
               }
+              if (!sessionResponse.ok) { console.error(`FINANCE_UAT_AUTH_BLOCKED: signed session endpoint rejected exact-SHA proof with HTTP ${sessionResponse.status}`); process.exit(1); }
               const token = sessionBody?.data?.accessToken;
-              if (typeof token !== "string" || sessionBody?.meta?.commitSha !== sha) {
-                console.error("FINANCE_UAT_AUTH_BLOCKED: session response did not bind the token to the exact workflow SHA");
-                process.exit(1);
-              }
-              const protectedResponse = await fetch(new URL("/v1/integrations/health", base), {
-                redirect: "error",
-                headers: { authorization: `Bearer ${token}` },
-              });
-              const protectedBody = await protectedResponse.json().catch(() => null);
-              if (!protectedResponse.ok || protectedBody?.meta?.financeExternalReady !== true) {
-                console.error(`FINANCE_UAT_AUTH_BLOCKED: signed token could not prove protected Finance readiness (HTTP ${protectedResponse.status})`);
-                process.exit(1);
-              }
-              console.log(`FINANCE_UAT_AUTH_OK host=${safeHost(base)} exact_sha=true finance_external_ready=true`);
-              process.exit(0);
+              if (typeof token !== "string" || sessionBody?.meta?.commitSha !== sha) { console.error("FINANCE_UAT_AUTH_BLOCKED: session response did not bind the token to the exact workflow SHA"); process.exit(1); }
+              const protectedResponse = await fetch(new URL("/v1/integrations/health", base), { redirect: "error", headers: { authorization: `Bearer ${token}` } }); const protectedBody = await protectedResponse.json().catch(() => null);
+              if (!protectedResponse.ok || protectedBody?.meta?.financeExternalReady !== true) { console.error(`FINANCE_UAT_AUTH_BLOCKED: signed token could not prove protected Finance readiness (HTTP ${protectedResponse.status})`); process.exit(1); }
+              console.log(`FINANCE_UAT_AUTH_OK host=${safeHost(base)} exact_sha=true finance_external_ready=true`); process.exit(0);
             } catch (error) {
-              if (attempt < 24) {
-                await sleep(15000);
-                continue;
-              }
-              console.error(`FINANCE_UAT_AUTH_BLOCKED: preview remained unreachable (${error instanceof Error ? error.name : "error"})`);
-              process.exit(1);
+              if (attempt < 24) { await sleep(15000); continue; }
+              console.error(`FINANCE_UAT_AUTH_BLOCKED: preview remained unreachable (${error instanceof Error ? error.name : "error"})`); process.exit(1);
             }
           }
-          console.error(`FINANCE_UAT_AUTH_BLOCKED: exact-SHA preview never exposed the signed UAT endpoint (last HTTP ${lastStatus})`);
-          process.exit(1);
+          console.error(`FINANCE_UAT_AUTH_BLOCKED: exact-SHA preview never exposed the signed UAT endpoint (last HTTP ${lastStatus})`); process.exit(1);
           NODE
