@@ -4,16 +4,21 @@ CREATE TABLE IF NOT EXISTS subscription_billing_plans (
   id TEXT PRIMARY KEY,
   plan_code TEXT NOT NULL UNIQUE,
   service_code TEXT NOT NULL,
+  city_id TEXT,
   provider TEXT NOT NULL DEFAULT 'razorpay',
   provider_plan_id TEXT NOT NULL UNIQUE,
   charge_amount_paise INTEGER NOT NULL CHECK(charge_amount_paise>0),
   invoice_taxable_paise INTEGER NOT NULL CHECK(invoice_taxable_paise>0 AND invoice_taxable_paise<=charge_amount_paise),
   currency TEXT NOT NULL DEFAULT 'INR',
+  interval_period TEXT,
+  interval_count INTEGER,
   total_cycles INTEGER NOT NULL CHECK(total_cycles BETWEEN 1 AND 1200),
   trial_days INTEGER NOT NULL DEFAULT 0 CHECK(trial_days BETWEEN 0 AND 365),
   grace_days INTEGER NOT NULL DEFAULT 3 CHECK(grace_days BETWEEN 0 AND 30),
   status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','active','retired')),
   finance_entity_id TEXT NOT NULL,
+  provider_verified_at INTEGER,
+  provider_plan_snapshot_json TEXT,
   created_by TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
@@ -48,4 +53,7 @@ CREATE TABLE IF NOT EXISTS subscription_refund_cases (
 );
 CREATE TABLE IF NOT EXISTS subscription_refund_transition_claims (
   id TEXT PRIMARY KEY,refund_case_id TEXT NOT NULL,from_status TEXT NOT NULL,to_status TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL,UNIQUE(refund_case_id,from_status)
+);
+CREATE TABLE IF NOT EXISTS subscription_provider_refunds (
+  id TEXT PRIMARY KEY,cycle_id TEXT NOT NULL,gateway_refund_id TEXT NOT NULL UNIQUE,provider_event_id TEXT NOT NULL UNIQUE,amount_paise INTEGER NOT NULL CHECK(amount_paise>0),kind TEXT NOT NULL CHECK(kind IN ('maker_checker','provider_proration')),created_at INTEGER NOT NULL
 );
