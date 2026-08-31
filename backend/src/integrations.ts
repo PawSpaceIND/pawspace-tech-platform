@@ -2,6 +2,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto
 import type { NotificationEvent, PlatformRepository } from "./domain.js";
 import { evaluateCommunicationPolicy, voiceSafetyState } from "./lane3.js";
 import { processNotification } from "./notifications.js";
+import { createRazorpayOrder, createRazorpayRefund, createRazorpayXPayout, fetchRazorpayOrder, fetchRazorpayPayment, paymentReadiness, payoutReadiness, resolveRazorpayXFundAccount, type FetchLike } from "./razorpay.js";
 
 export type IntegrationKey = "database" | "otp" | "whatsapp" | "sms" | "email" | "push" | "payments" | "payouts" | "maps" | "media" | "ai" | "voice";
 export type IntegrationMode = "sandbox" | "production";
@@ -10,9 +11,8 @@ export interface DeliveryResult { channel:NotificationEvent["channels"][number];
 
 const now=()=>new Date().toISOString();
 const ref=(prefix:string,input:string)=>`${prefix}_${createHash("sha256").update(input).digest("hex").slice(0,16)}`;
-const configured=(key:string)=>Boolean(process.env[key]?.trim());
+const configured=(env:NodeJS.ProcessEnv,key:string)=>Boolean(env[key]?.trim());
 
-function modeFor(required:string[]):IntegrationMode{return required.every(configured)?"production":"sandbox";}
 function constantTimeEqual(expected:string,received:string){
   const left=Buffer.from(expected,"utf8");
   const right=Buffer.from(received,"utf8");
@@ -33,47 +33,54 @@ const requiredForChannel:Record<NotificationEvent["channels"][number],string[]>=
   voice:["VOICE_PROVIDER_API_KEY"],
 };
 
+type GatewayOptions={failChannels?:Set<NotificationEvent["channels"][number]>;allowSandboxSuccess?:boolean;fetcher?:FetchLike;env?:NodeJS.ProcessEnv};
+
 export class IntegrationGateway {
-  constructor(private readonly options:{failChannels?:Set<NotificationEvent["channels"][number]>;allowSandboxSuccess?:boolean}={}){}
+  private readonly env:NodeJS.ProcessEnv;
+  private readonly fetcher:FetchLike;
+  constructor(private readonly options:GatewayOptions={}){this.env=options.env??process.env;this.fetcher=options.fetcher??globalThis.fetch;}
 
   health():IntegrationHealth[]{
     const checked=now();
-    const row=(key:IntegrationKey,provider:string,mode:IntegrationMode,status?:IntegrationHealth["status"]):IntegrationHealth=>({key,provider,mode,status:status??(mode==="production"?"ready":"configuration_required"),lastCheckedAt:checked});
-    const databaseReady=process.env.DATABASE_DRIVER==="mongodb"&&configured("MONGODB_URI");
-    const voice=voiceSafetyState();
+    const row=(key:IntegrationKey,provider:string,mode:IntegrationMode,status:IntegrationHealth["status"]):IntegrationHealth=>({key,provider,mode,status,lastCheckedAt:checked});
+    const databaseReady=this.env.DATABASE_DRIVER==="mongodb"&&configured(this.env,"MONGODB_URI");
+    const voice=voiceSafetyState(this.env);const payments=paymentReadiness(this.env),payouts=payoutReadiness(this.env);
     return [
       row("database",databaseReady?"MongoDB Atlas":"In-memory sandbox",databaseReady?"production":"sandbox",databaseReady?"ready":"configuration_required"),
-      row("otp",process.env.OTP_PROVIDER??"OTP adapter not connected","sandbox","configuration_required"),
-      row("whatsapp",process.env.WHATSAPP_PROVIDER??"WhatsApp adapter not connected","sandbox","configuration_required"),
-      row("sms",process.env.SMS_PROVIDER??"SMS adapter not connected","sandbox","configuration_required"),
-      row("email",process.env.EMAIL_PROVIDER??"Email adapter not connected","sandbox","configuration_required"),
-      row("push",process.env.PUSH_PROVIDER??"Push adapter not connected","sandbox","configuration_required"),
-      row("payments","Razorpay",modeFor(["RAZORPAY_KEY_ID","RAZORPAY_KEY_SECRET"])),
-      row("payouts","RazorpayX",modeFor(["RAZORPAYX_ACCOUNT_NUMBER","RAZORPAY_KEY_SECRET"])),
-      row("maps",process.env.MAPS_PROVIDER??"Maps adapter not connected","sandbox","configuration_required"),
-      row("media",process.env.MEDIA_PROVIDER??"Object storage adapter not connected","sandbox","configuration_required"),
-      row("ai",process.env.AI_PROVIDER??"AI adapter not connected","sandbox","configuration_required"),
-      row("voice",process.env.VOICE_PROVIDER??"Voice provider","sandbox",voice.enabled?(voice.canDial?"ready":"configuration_required"):"disabled"),
+      row("otp",this.env.OTP_PROVIDER??"OTP adapter not connected","sandbox","configuration_required"),
+      row("whatsapp",this.env.WHATSAPP_PROVIDER??"WhatsApp adapter not connected","sandbox","configuration_required"),
+      row("sms",this.env.SMS_PROVIDER??"SMS adapter not connected","sandbox","configuration_required"),
+      row("email",this.env.EMAIL_PROVIDER??"Email adapter not connected","sandbox","configuration_required"),
+      row("push",this.env.PUSH_PROVIDER??"Push adapter not connected","sandbox","configuration_required"),
+      row("payments",payments.providerMode==="test"?"Razorpay Test":"Razorpay",payments.providerMode==="live"?"production":"sandbox",payments.ready?"ready":"configuration_required"),
+      row("payouts",payouts.providerMode==="test"?"RazorpayX Test":"RazorpayX",payouts.providerMode==="live"?"production":"sandbox",payouts.ready?"ready":"configuration_required"),
+      row("maps",this.env.MAPS_PROVIDER??"Maps adapter not connected","sandbox","configuration_required"),
+      row("media",this.env.MEDIA_PROVIDER??"Object storage adapter not connected","sandbox","configuration_required"),
+      row("ai",this.env.AI_PROVIDER??"AI adapter not connected","sandbox","configuration_required"),
+      row("voice",this.env.VOICE_PROVIDER??"Voice provider","sandbox",voice.enabled?(voice.canDial?"ready":"configuration_required"):"disabled"),
     ];
   }
 
   async sendOtp(phone:string,purpose:string){return {provider:"otp-sandbox",challengeRef:ref("otp",`${phone}:${purpose}:${Date.now()}`),accepted:true};}
 
   async deliver(channel:NotificationEvent["channels"][number],event:NotificationEvent):Promise<DeliveryResult>{
-    if(channel==="voice"){const voice=voiceSafetyState();if(!voice.canDial)return {channel,delivered:false,errorCode:voice.reason};}
+    if(channel==="voice"){const voice=voiceSafetyState(this.env);if(!voice.canDial)return {channel,delivered:false,errorCode:voice.reason};}
     if(this.options.failChannels?.has(channel))return {channel,delivered:false,errorCode:"SANDBOX_PROVIDER_UNAVAILABLE"};
     if(this.options.allowSandboxSuccess)return {channel,delivered:true,providerMessageId:ref(channel,`${event.id}:${event.attempts}`)};
-    const ready=requiredForChannel[channel].every(configured);
+    const ready=requiredForChannel[channel].every(key=>configured(this.env,key));
     if(!ready)return {channel,delivered:false,errorCode:"PROVIDER_NOT_CONFIGURED"};
     return {channel,delivered:false,errorCode:"PROVIDER_ADAPTER_NOT_CONNECTED"};
   }
 
-  async createPaymentOrder(amount:number,receipt:string){return {provider:"razorpay-sandbox",orderId:ref("order",`${receipt}:${amount}`),amount,currency:"INR",status:"created"};}
-  async createPayout(amount:number,providerId:string){return {provider:"razorpayx-sandbox",payoutId:ref("payout",`${providerId}:${amount}:${Date.now()}`),amount,currency:"INR",status:"queued"};}
+  async createPaymentOrder(amount:number,receipt:string){return createRazorpayOrder(amount,receipt,this.fetcher,this.env);}
+  async fetchPaymentOrder(orderId:string){return fetchRazorpayOrder(orderId,this.fetcher,this.env);}
+  async fetchPayment(paymentId:string){return fetchRazorpayPayment(paymentId,this.fetcher,this.env);}
+  async refundPayment(paymentId:string,amount:number,idempotencyKey:string){return createRazorpayRefund(paymentId,amount,idempotencyKey,this.fetcher,this.env);}
+  async createPayout(amount:number,providerId:string,idempotencyKey:string){const fundAccountId=resolveRazorpayXFundAccount(providerId,this.env);return createRazorpayXPayout(amount,fundAccountId,idempotencyKey,this.fetcher,this.env);}
 
   async quoteRoute(origin:string,destination:string){
     if(!this.options.allowSandboxSuccess){
-      const code=configured("MAPS_API_KEY")?"MAPS_ADAPTER_NOT_CONNECTED":"MAPS_NOT_CONFIGURED";
+      const code=configured(this.env,"MAPS_API_KEY")?"MAPS_ADAPTER_NOT_CONNECTED":"MAPS_NOT_CONFIGURED";
       throw Object.assign(new Error(code),{statusCode:503,code});
     }
     const seed=parseInt(createHash("sha256").update(`${origin}:${destination}`).digest("hex").slice(0,4),16);
@@ -82,7 +89,7 @@ export class IntegrationGateway {
   }
 }
 
-export function buildIntegrationGateway(options?:{failChannels?:Set<NotificationEvent["channels"][number]>;allowSandboxSuccess?:boolean}){return new IntegrationGateway(options);}
+export function buildIntegrationGateway(options?:GatewayOptions){return new IntegrationGateway(options);}
 
 function notificationPurpose(event:NotificationEvent):"service"|"reminder"|"marketing"{const explicit=String(event.payload.purpose??"");if(explicit==="service"||explicit==="reminder"||explicit==="marketing")return explicit;const value=`${event.eventType} ${event.templateCode}`.toLowerCase();return value.includes("marketing")||value.includes("campaign")?"marketing":value.includes("reminder")?"reminder":"service";}
 function priorPolicy(event:NotificationEvent,channel:NotificationEvent["channels"][number]){const decisions=event.payload.policyDecisions;if(!decisions||typeof decisions!=="object"||Array.isArray(decisions))return null;const decision=(decisions as Record<string,unknown>)[channel];if(!decision||typeof decision!=="object"||Array.isArray(decision))return null;const row=decision as Record<string,unknown>;return typeof row.allowed==="boolean"&&typeof row.reason==="string"?{allowed:row.allowed,reason:String(row.reason)}:null;}
