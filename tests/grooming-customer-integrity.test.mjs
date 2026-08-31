@@ -6,7 +6,7 @@ import fs from "node:fs";
 // hands booking to the governed flow rather than running a second implementation of one [PTJA-P1-F38].
 // Every property below is asserted against the flow that actually books, and NONE is relaxed to accept
 // less than the retired page provided — where the flow lacked a behaviour it was carried across, not
-// written off. The entry page is still checked for the identity defect that caused P1-04.
+// written off. The entry page is still checked for identity and commercial-truth drift.
 const source = fs.readFileSync("app/mobile-app/grooming-flow.tsx", "utf8");
 const entry = fs.readFileSync("app/page.tsx", "utf8");
 const transactionSource = fs.readFileSync("lib/test-transaction.ts", "utf8");
@@ -38,11 +38,15 @@ test("assigned groomer receives canonical safety requirements and add-ons", () =
   assert.match(partnerJobsPage, /job\.serviceCode==="grooming"&&job\.addOns\.length/);
 });
 
-test("grooming subscription copy matches governed 6 and 12 month commercial truth", () => {
+test("grooming subscription copy matches governed 6 and 12 month commercial truth on every purchase surface", () => {
   assert.match(source, /id:"6",name:"6 sessions",price:6594,validity:"6 months"/);
   assert.match(source, /id:"12",name:"12 sessions",price:11988,validity:"12 months"/);
   assert.doesNotMatch(code, /validity:"8 months"/);
   assert.doesNotMatch(code, /validity:"15 months"/);
+  assert.match(entry, /id: "sub-6", name: "6 sessions", detail: "Use within 6 months/);
+  assert.match(entry, /id: "sub-12", name: "12 sessions", detail: "Use within 12 months/);
+  assert.doesNotMatch(entry, /Use within 8 months/);
+  assert.doesNotMatch(entry, /Use within 15 months/);
 });
 
 test("coupon quote uses the verified service-location city instead of a hardcoded geography", () => {
