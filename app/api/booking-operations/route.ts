@@ -1,8 +1,6 @@
 import { authError, requirePermission, requireProviderOwnership, resolveActor } from "../../../lib/server-auth";
 import { repairSchemaDrift } from "../../../lib/schema-drift-repair";
 
-/** Per-isolate guard so the in-place column repair runs once, not on every request. */
-/** One in-flight repair per isolate, so concurrent cold requests wait for it instead of racing past. */
 const driftRepair = new WeakMap<object, Promise<unknown>>();
 
 type OperationAction =
@@ -41,11 +39,6 @@ const actions = new Set<OperationAction>([
 ]);
 const json = (value: unknown, status = 200) => Response.json(value, { status });
 
-/**
- * A provider reporting what happened on a job is a communications act. Changing what a customer owes
- * is not: `apply_package_upgrade` moves canonical_bookings.total_amount and booking_payments.amount,
- * so it is a pricing decision, and refund progress belongs to Finance.
- */
 const REQUIRED_PERMISSION: Record<OperationAction, "communications.message" | "pricing.manage" | "payments.manage"> = {
   package_upgrade: "communications.message",
   apply_package_upgrade: "pricing.manage",
@@ -66,21 +59,10 @@ async function ensureTables(db: Awaited<ReturnType<typeof database>>) {
     db.prepare("CREATE TABLE IF NOT EXISTS booking_operational_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,event_type TEXT NOT NULL,reason TEXT NOT NULL,impact_minutes INTEGER NOT NULL DEFAULT 0,detail_json TEXT NOT NULL DEFAULT '{}',actor_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS booking_customer_notifications (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,customer_id TEXT,channel TEXT NOT NULL,template_code TEXT NOT NULL,message TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',event_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS booking_rebooking_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,source_event_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'offered',reason TEXT NOT NULL,eligible_at INTEGER NOT NULL,selected_start TEXT,assigned_provider_id TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
-    db.prepare("CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'requested',requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'requested',requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,claim_token TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS booking_package_upgrade_requests (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,source_event_id TEXT NOT NULL,requested_package_name TEXT NOT NULL,requested_amount REAL NOT NULL,previous_amount REAL NOT NULL,status TEXT NOT NULL DEFAULT 'pricing_approval_required',requested_by TEXT NOT NULL,approved_by TEXT,approved_amount REAL,decision_reason TEXT,claim_token TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_package_upgrade_booking ON booking_package_upgrade_requests(booking_id,status,created_at)"),
   ]);
-  // The DDL above is CREATE TABLE IF NOT EXISTS, which is a no-op once the table exists — so it cannot
-  // add claim_token to a database that created booking_package_upgrade_requests before the approval
-  // became a claim-token compare-and-set. On such a database every apply_package_upgrade fails with
-  // "no such column: claim_token". repairSchemaDrift adds it in place; the column is registered there.
-  //
-  // Once per isolate: the repair is idempotent (it checks PRAGMA table_info before altering) but it costs
-  // a lookup per registered column, and this route is on a per-request path.
-  // The isolate used to be marked repaired BEFORE the repair was awaited, so a second concurrent
-  // request saw the mark, skipped the wait and ran against a table that had not been altered yet.
-  // Callers now share one in-flight promise and all await it; the entry is dropped on failure so the
-  // next request in the same isolate retries rather than inheriting a repair that never happened.
   let repair = driftRepair.get(db);
   if (!repair) {
     repair = repairSchemaDrift(db);
@@ -116,36 +98,14 @@ function customerMessage(action: OperationAction, minutes: number, rebook: boole
   return "Your refund request is recorded and can be tracked from this order until the amount is completed.";
 }
 
-/**
- * Order operations for ONE booking: operational events, the customer notification bodies, rebooking
- * cases and refund cases.
- *
- * This read used to go straight from the `bookingId` query parameter to the four queries below, with no
- * actor resolution and no record-level check — it relied entirely on the gateway, which maps this route
- * to `bookings.view`. `service_provider` holds `bookings.view`; its own description is "sees assigned
- * jobs only". So any signed-in provider could read any other provider's booking operations, including
- * customer notification text, refund amounts and gateway references. Horizontal authorization, missing.
- *
- * The permission is deliberately unchanged: providers do legitimately need this read for their own
- * assigned jobs, so escalating to a staff-only permission would break the provider app rather than fix
- * the boundary. What was missing is the per-record check, and that is what is added here.
- */
 export async function GET(request: Request) {
   try {
-    // Authenticate before answering anything, including shape questions like a missing parameter.
     const actor = await resolveActor(request);
     requirePermission(actor, "bookings.view");
     const bookingId = new URL(request.url).searchParams.get("bookingId");
     if (!bookingId) return json({ error: "Booking ID is required" }, 400);
     const db = await database();
     await ensureTables(db);
-    // Record-level ownership. requireProviderOwnership passes privileged staff through
-    // (bookings.manage / providers.manage / grooming.manage) so intended cross-booking authority is
-    // preserved, and holds an ordinary provider to its own assignment.
-    //
-    // The empty-string fallback is deliberate: a booking with no work order has no assignment for a
-    // provider to own, so it must fail closed. Guarding this call behind `if (workOrder)` instead would
-    // leave every unassigned booking readable by any provider — the same hole in a smaller window.
     const workOrder = await db.prepare("SELECT provider_id FROM provider_work_orders WHERE booking_id=?").bind(bookingId).first<{ provider_id?: unknown }>();
     await requireProviderOwnership(db, actor, String(workOrder?.provider_id ?? ""));
     const [events, notifications, rebooking, refunds] = await Promise.all([
@@ -156,8 +116,6 @@ export async function GET(request: Request) {
     ]);
     return json({ data: { events: events.results, notifications: notifications.results, rebooking: rebooking.results, refunds: refunds.results } });
   } catch (error) {
-    // authError passes a thrown auth Response through with its own status (401/403) instead of
-    // flattening it into a 500 with the refusal text in the body.
     return authError(error, "Unable to load order operations");
   }
 }
@@ -171,10 +129,6 @@ export async function POST(request: Request) {
     await ensureTables(db);
     const now = Date.now();
 
-    // The route authorises itself rather than trusting the gateway alone, and it verifies that the
-    // caller may act for the provider they claim: providerId arrives in the request body, so without
-    // this check any holder of the action's permission could file events - and, before the split
-    // below, rewrite the price - against a booking assigned to somebody else entirely.
     const actor = await resolveActor(request);
     requirePermission(actor, REQUIRED_PERMISSION[input.action]);
     const booking = await db.prepare("SELECT customer_id,provider_id,total_amount FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Record<string, unknown>>();
@@ -183,35 +137,17 @@ export async function POST(request: Request) {
       await requireProviderOwnership(db, actor, input.providerId);
       if (String(booking.provider_id) !== String(input.providerId)) return json({ error: "This booking is assigned to another provider" }, 403);
     }
+
     if (input.action === "apply_package_upgrade") {
       const upgrade = await db.prepare("SELECT * FROM booking_package_upgrade_requests WHERE id=? AND booking_id=?").bind(input.upgradeRequestId, input.bookingId).first<Record<string, unknown>>();
       if (!upgrade) return json({ error: "Package upgrade request not found" }, 404);
       if (String(upgrade.status) !== "pricing_approval_required") return json({ error: `Package upgrade is already ${String(upgrade.status)}` }, 409);
-      // Segregation of duties, matching the Boarding cancellation rule: whoever reported the upgrade
-      // cannot also be the one who prices it.
       if (String(upgrade.requested_by) === actor.email) return json({ error: "Segregation of duties: the requester cannot approve their own package upgrade" }, 409);
-      // The amount is the priced decision, not the provider's number. It must be explicit, real, and
-      // an upgrade - a "package upgrade" that lowers what the customer owes is a refund, and refunds
-      // have their own governed path.
       const amount = Number(input.upgradedAmount);
       const previous = Number(booking.total_amount || 0);
       if (!Number.isFinite(amount) || amount <= 0) return json({ error: "Approved upgrade amount must be a real positive figure" }, 400);
       if (amount < previous) return json({ error: "A package upgrade cannot reduce the booking total; use the governed refund path" }, 409);
       const eventId = crypto.randomUUID(), claim = crypto.randomUUID();
-      // Claim, money, audit and the `applied` transition are ONE atomic batch, so `applied` can only
-      // mean the financial application committed.
-      //
-      // Two earlier shapes both failed. Putting the compare-and-set first in the batch and never
-      // reading its result let a losing approval rewrite the price anyway. Claiming in a separate
-      // statement before the batch fixed that, but a failure inside the batch then rolled back the
-      // money while leaving the claim committed - the request read `applied` for an amount that was
-      // never applied, and no approver could retry it because the status no longer matched.
-      //
-      // Now every dependent statement is guarded by EXISTS on this attempt's own `claim_token`, so a
-      // caller whose CAS changed nothing writes nothing - it cannot ride the winner's claim. And
-      // because the CAS is inside the batch, any failure rolls the whole thing back: the request
-      // returns to pricing_approval_required, the money is untouched, and the next approval retries
-      // cleanly. Either all seven facts commit together, or none of them do.
       const guard = "EXISTS (SELECT 1 FROM booking_package_upgrade_requests WHERE id=? AND claim_token=?)";
       const applied = await db.batch([
         db.prepare("UPDATE booking_package_upgrade_requests SET status='applied',approved_by=?,approved_amount=?,decision_reason=?,claim_token=?,updated_at=? WHERE id=? AND status='pricing_approval_required'")
@@ -229,28 +165,45 @@ export async function POST(request: Request) {
         db.prepare(`INSERT INTO security_audit_events (id,actor_email,actor_role,action,resource_type,resource_id,outcome,detail_json,created_at) SELECT ?,?,?,?,?,?,?,?,? WHERE ${guard}`)
           .bind(crypto.randomUUID(), actor.email, actor.roleCode, "booking_operations.apply_package_upgrade", "booking", input.bookingId, "completed", JSON.stringify({ requestId: upgrade.id, previousAmount: previous, approvedAmount: amount }), now, upgrade.id, claim),
       ]);
-      // The CAS is the first statement; if it changed nothing this attempt lost the race, and every
-      // guarded statement above it wrote nothing either.
       if (Number(applied[0]?.meta?.changes || 0) !== 1) return json({ error: "Package upgrade has already been priced" }, 409);
-
       return json({ data: { eventId, bookingId: input.bookingId, action: input.action, upgradeRequestId: String(upgrade.id), previousAmount: previous, approvedAmount: amount } }, 200);
     }
 
     if (input.action === "refund_status") {
       const refund = await db.prepare("SELECT * FROM booking_refund_cases WHERE id=? AND booking_id=?").bind(input.refundCaseId,input.bookingId).first<Record<string,unknown>>();
       if (!refund) return json({ error: "Refund case not found" }, 404);
-      const transitions:Record<string,string[]>={requested:["approved","rejected"],approved:["processing"],processing:["completed"]};
-      if (!(transitions[String(refund.status)]??[]).includes(String(input.refundStatus))) return json({ error: `Refund cannot move from ${String(refund.status)} to ${String(input.refundStatus)}` },409);
-      const eventId=crypto.randomUUID();
-      const message=input.refundStatus==="approved"?"Your refund is approved and will now be sent to the original payment method.":input.refundStatus==="processing"?"Your refund has been sent to the payment gateway for processing.":input.refundStatus==="completed"?"Your refund is complete. The gateway reference is available in this order.":"Your refund request was not approved. Open the order to see the reason or contact support.";
-      await db.batch([
-        db.prepare("UPDATE booking_refund_cases SET status=?,approved_by=CASE WHEN ?='approved' THEN ? ELSE approved_by END,gateway_reference=COALESCE(?,gateway_reference),updated_at=? WHERE id=?").bind(input.refundStatus,input.refundStatus,input.providerId,input.gatewayReference??null,now,input.refundCaseId),
-        db.prepare("INSERT INTO booking_operational_events (id,booking_id,provider_id,event_type,reason,impact_minutes,detail_json,actor_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(eventId,input.bookingId,input.providerId,`refund.${input.refundStatus}`,input.reason,0,JSON.stringify({refundCaseId:input.refundCaseId,gatewayReference:input.gatewayReference}),input.providerId,now),
-        db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.bookingId,`refund.${input.refundStatus}`,"refund",input.refundCaseId,input.providerId,JSON.stringify({gatewayReference:input.gatewayReference}),now),
-        db.prepare("INSERT INTO booking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) SELECT ?,b.id,b.customer_id,'whatsapp',?,?, 'queued',?,? FROM canonical_bookings b WHERE b.id=?").bind(crypto.randomUUID(),`refund_${input.refundStatus}`,message,eventId,now,input.bookingId),
+      const currentStatus = String(refund.status);
+      const nextStatus = String(input.refundStatus);
+      const transitions: Record<string, string[]> = { requested: ["approved", "rejected"], approved: ["processing"], processing: ["completed"] };
+      if (!(transitions[currentStatus] ?? []).includes(nextStatus)) return json({ error: `Refund cannot move from ${currentStatus} to ${nextStatus}` }, 409);
+      if (nextStatus === "approved" && String(refund.requested_by) === actor.email)
+        return json({ error: "Segregation of duties: the refund requester cannot approve their own refund" }, 409);
+      const eventId = crypto.randomUUID();
+      const claim = crypto.randomUUID();
+      const message = nextStatus === "approved"
+        ? "Your refund is approved and will now be sent to the original payment method."
+        : nextStatus === "processing"
+          ? "Your refund has been sent to the payment gateway for processing."
+          : nextStatus === "completed"
+            ? "Your refund is complete. The gateway reference is available in this order."
+            : "Your refund request was not approved. Open the order to see the reason or contact support.";
+      const guard = "EXISTS (SELECT 1 FROM booking_refund_cases WHERE id=? AND claim_token=?)";
+      const applied = await db.batch([
+        db.prepare("UPDATE booking_refund_cases SET status=?,approved_by=CASE WHEN ?='approved' THEN ? ELSE approved_by END,gateway_reference=COALESCE(?,gateway_reference),claim_token=?,updated_at=? WHERE id=? AND status=?")
+          .bind(nextStatus,nextStatus,actor.email,input.gatewayReference??null,claim,now,input.refundCaseId,currentStatus),
+        db.prepare(`INSERT INTO booking_operational_events (id,booking_id,provider_id,event_type,reason,impact_minutes,detail_json,actor_id,created_at) SELECT ?,?,?,?,?,0,?,?,? WHERE ${guard}`)
+          .bind(eventId,input.bookingId,input.providerId,`refund.${nextStatus}`,input.reason.trim(),JSON.stringify({refundCaseId:input.refundCaseId,gatewayReference:input.gatewayReference}),actor.email,now,input.refundCaseId,claim),
+        db.prepare(`INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) SELECT ?,?,?,?,?,?,?,? WHERE ${guard}`)
+          .bind(crypto.randomUUID(),input.bookingId,`refund.${nextStatus}`,"refund",input.refundCaseId,actor.email,JSON.stringify({gatewayReference:input.gatewayReference}),now,input.refundCaseId,claim),
+        db.prepare(`INSERT INTO booking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) SELECT ?,b.id,b.customer_id,'whatsapp',?,?,'queued',?,? FROM canonical_bookings b WHERE b.id=? AND ${guard}`)
+          .bind(crypto.randomUUID(),`refund_${nextStatus}`,message,eventId,now,input.bookingId,input.refundCaseId,claim),
+        db.prepare(`INSERT INTO security_audit_events (id,actor_email,actor_role,action,resource_type,resource_id,outcome,detail_json,created_at) SELECT ?,?,?,?,?,?,?,?,? WHERE ${guard}`)
+          .bind(crypto.randomUUID(),actor.email,actor.roleCode,`booking_operations.refund_${nextStatus}`,"refund",String(input.refundCaseId),"completed",JSON.stringify({bookingId:input.bookingId,from:currentStatus,to:nextStatus}),now,input.refundCaseId,claim),
       ]);
+      if (Number(applied[0]?.meta?.changes || 0) !== 1) return json({ error: "Refund status was already changed by another actor" }, 409);
       return json({data:{eventId,bookingId:input.bookingId,action:input.action,impactMinutes:0,impactedBookings:[],notificationsQueued:1,rebookingAvailable:false,refundCaseId:input.refundCaseId}},200);
     }
+
     const eventId = crypto.randomUUID();
     const impactMinutes = Math.round(input.impactMinutes ?? 0);
     const rebookingAvailable = ["vehicle_issue", "running_late", "service_overrun"].includes(input.action) && impactMinutes >= 30;
@@ -261,14 +214,9 @@ export async function POST(request: Request) {
     const impactedBookings = impacted.results.map((row) => ({ bookingId: String(row.id), customerId: String(row.customer_id), scheduledStart: String(row.scheduled_start) }));
     const detail = { impactMinutes, upgradedPackageName: input.upgradedPackageName, upgradedAmount: input.upgradedAmount, impactedBookingIds: impactedBookings.map((item) => item.bookingId), rebookingAvailable };
     const statements = [
-      db.prepare("INSERT INTO booking_operational_events (id,booking_id,provider_id,event_type,reason,impact_minutes,detail_json,actor_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(eventId,input.bookingId,input.providerId,input.action,input.reason.trim(),impactMinutes,JSON.stringify(detail),input.providerId,now),
-      db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.bookingId,`operation.${input.action}`,"booking",input.bookingId,input.providerId,JSON.stringify(detail),now),
+      db.prepare("INSERT INTO booking_operational_events (id,booking_id,provider_id,event_type,reason,impact_minutes,detail_json,actor_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(eventId,input.bookingId,input.providerId,input.action,input.reason.trim(),impactMinutes,JSON.stringify(detail),actor.email,now),
+      db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.bookingId,`operation.${input.action}`,"booking",input.bookingId,actor.email,JSON.stringify(detail),now),
     ];
-    // A provider reporting an agreed upgrade records a REQUEST. It used to write the new price
-    // straight into canonical_bookings.total_amount and booking_payments.amount from the request
-    // body, so anyone holding communications.message - which the service_provider and associate roles
-    // both do - could set any booking's price to any number, including a negative one. The money now
-    // moves only through apply_package_upgrade, which requires pricing.manage.
     let upgradeRequestId: string | undefined;
     if (input.action === "package_upgrade") {
       upgradeRequestId = crypto.randomUUID();
@@ -291,7 +239,7 @@ export async function POST(request: Request) {
     if (input.action === "refund_requested") {
       refundCaseId = crypto.randomUUID();
       const payment = await db.prepare("SELECT id,amount FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Record<string, unknown>>();
-      statements.push(db.prepare("INSERT INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(refundCaseId,input.bookingId,payment?.id ?? null,Number(payment?.amount ?? 0),input.reason,"requested",input.providerId,now,now));
+      statements.push(db.prepare("INSERT INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(refundCaseId,input.bookingId,payment?.id ?? null,Number(payment?.amount ?? 0),input.reason,"requested",actor.email,now,now));
     }
     await db.batch(statements);
     return json({ data: { eventId, bookingId: input.bookingId, action: input.action, impactMinutes, impactedBookings, notificationsQueued: allRecipients.length * 2, rebookingAvailable, rebookingCaseId, refundCaseId, upgradeRequestId } }, 201);
