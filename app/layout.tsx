@@ -3,6 +3,7 @@ import "./globals.css";
 import "./mobile-safe.css";
 import "./review-overrides.css";
 import ReviewUxFixes from "./components/review-ux-fixes";
+import GroomingRazorpayBridge from "./components/grooming-razorpay-bridge";
 
 export const metadata: Metadata = {
   title: "PawSpace — Pet Care Platform",
@@ -32,6 +33,7 @@ export default function RootLayout({
     <html lang="en">
       <body className="antialiased">
         <ReviewUxFixes />
+        <GroomingRazorpayBridge />
         {children}
       </body>
     </html>

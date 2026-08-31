@@ -1,0 +1,46 @@
+name: Grooming Razorpay Test Mode certification
+
+on:
+  push:
+    branches:
+      - cert/grooming-razorpay-test-e2e
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: grooming-razorpay-cert-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  certify:
+    name: Grooming payment + refund + reconciliation
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - name: Install verified dependencies
+        run: npm run install:ci
+      - name: Grooming customer integrity
+        run: node --test tests/grooming-customer-integrity.test.mjs
+      - name: Grooming Razorpay checkout authority
+        run: node --test tests/grooming-razorpay-checkout.test.mjs
+      - name: Grooming payment and refund reconciliation
+        run: node --test tests/grooming-payment-reconciliation.test.mjs
+      - name: Payment verify-first acceptance
+        run: node --test tests/payment-verify-first.test.mjs
+      - name: Finance concurrency contracts
+        run: node --test tests/financial-lifecycle-concurrency.test.mjs
+      - name: Finance executable concurrency
+        run: node --test tests/financial-lifecycle-executable-concurrency.test.mjs
+      - name: Money hardening
+        run: node --test tests/money-hardening.test.mjs
+      - name: Typecheck
+        run: npm run typecheck
