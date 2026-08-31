@@ -94,7 +94,7 @@ test("QA-P0-002: refund completion fails closed without gateway proof and preser
   const { sqlite } = refundDb();
   const now = Date.now();
   sqlite.exec("CREATE TABLE booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'requested',requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
-  sqlite.prepare("INSERT INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,approved_by,gateway_reference,created_at,updated_at) VALUES (?,?,?,?,?,'processing',?,?,?,?,?,?)")
+  sqlite.prepare("INSERT INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,approved_by,gateway_reference,created_at,updated_at) VALUES (?,?,?,?,?,'processing',?,?,?,?,?)")
     .run("RF-PROOF", "BK-REFUND", "PAY-REFUND", 2500, "Refund after service issue", "maker@pawspace.test", "checker@pawspace.test", null, now, now);
 
   const missingReference = await postRefund("checker@pawspace.test", statusBody("RF-PROOF", "completed"));
