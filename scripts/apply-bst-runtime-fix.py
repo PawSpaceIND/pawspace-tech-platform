@@ -1,4 +1,5 @@
 from pathlib import Path
+# Applies the product compatibility patch, then the workflow validates and removes this temporary runner.
 p=Path('app/api/canonical-bookings/route.ts');s=p.read_text()
 def r(old,new):
  global s
