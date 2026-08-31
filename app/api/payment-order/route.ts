@@ -1,6 +1,7 @@
 import{authError,database,requireCustomerOwnership,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{resolvePlatformSession}from"../../../lib/platform-session";
 import{createBookingPaymentOrder}from"../../../lib/payment-order-intent";
+import{verifyRazorpayCheckoutSignature}from"../../../lib/razorpay-checkout-verification";
 
 type Row=Record<string,unknown>;
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
@@ -45,15 +46,32 @@ export async function GET(request:Request){
   }catch(error){return authError(error,"Unable to read payment status");}
 }
 
-// Verify-first customer payment: open a real Razorpay order for an unpaid booking. Fails closed
-// (connected:false) when Razorpay is not configured for the active environment - never fakes "paid".
+// Verify-first customer payment. "create" opens a durable Razorpay order. "verify_checkout" proves
+// the browser callback signature and binds the returned pay_ id to PawSpace's existing order, but it
+// still does NOT mark money captured. Only the verified Razorpay webhook may advance capture truth.
 export async function POST(request:Request){
   try{
     sameOrigin(request);
-    const body=await request.json() as {customerId?:string;bookingId?:string};
+    const body=await request.json() as {action?:"create"|"verify_checkout";customerId?:string;bookingId?:string;razorpayPaymentId?:string;razorpaySignature?:string};
     if(!body.bookingId)return json({error:"A booking is required"},400);
     const{db,actor,customerId}=await ownedContext(request,body.customerId);
     const env=await paymentRuntime();
+    if(body.action==="verify_checkout"){
+      const link=await db.prepare("SELECT l.id,l.payment_id,l.gateway_order_id,l.environment FROM payment_gateway_links l JOIN canonical_bookings b ON b.id=l.booking_id WHERE l.booking_id=? AND b.customer_id=? AND l.provider='razorpay' AND l.status='active'").bind(body.bookingId,customerId).first<Row>();
+      if(!link)return json({error:"An active Razorpay order was not found for this booking"},409);
+      const environment=String(link.environment||"")==="live"?"live":"sandbox";
+      const paymentId=String(body.razorpayPaymentId||"").trim(),signature=String(body.razorpaySignature||"").trim();
+      const verification=await verifyRazorpayCheckoutSignature(env,{environment,orderId:String(link.gateway_order_id||""),paymentId,signature});
+      if(!verification.verified){
+        await securityAudit(db,actor,"payment.checkout.verify","customer",customerId,"denied",{bookingId:body.bookingId,environment,reason:verification.reason});
+        return json({error:verification.reason,code:"checkout_signature_invalid"},400);
+      }
+      await db.prepare("UPDATE payment_gateway_links SET gateway_payment_id=?,updated_at=? WHERE id=? AND (gateway_payment_id IS NULL OR gateway_payment_id='' OR gateway_payment_id=?)").bind(paymentId,Date.now(),String(link.id),paymentId).run();
+      const rebound=await db.prepare("SELECT gateway_payment_id FROM payment_gateway_links WHERE id=?").bind(String(link.id)).first<Row>();
+      if(String(rebound?.gateway_payment_id||"")!==paymentId)return json({error:"This Razorpay order is already bound to a different payment id",code:"checkout_payment_conflict"},409);
+      await securityAudit(db,actor,"payment.checkout.verify","customer",customerId,"completed",{bookingId:body.bookingId,environment,paymentId});
+      return json({data:{verified:true,bookingId:body.bookingId,paymentId,status:"awaiting_webhook_capture"}});
+    }
     const data=await createBookingPaymentOrder(db,env,{bookingId:body.bookingId,customerId,actorId:customerId});
     await securityAudit(db,actor,"payment.order.create","customer",customerId,"completed",{bookingId:body.bookingId,connected:data.connected,environment:data.environment});
     return json({data},data.connected?201:200);
