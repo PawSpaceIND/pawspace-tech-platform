@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: grooming-razorpay-cert-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   certify:
@@ -41,6 +41,6 @@ jobs:
       - name: Finance executable concurrency
         run: node --test tests/financial-lifecycle-executable-concurrency.test.mjs
       - name: Money hardening
-        run: node --test tests/money-hardening.test.mjs
+        run: node --experimental-strip-types --test tests/money-hardening.test.mjs
       - name: Typecheck
         run: npm run typecheck
