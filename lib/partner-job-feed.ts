@@ -51,8 +51,11 @@ export async function listProviderJobs(db:Db,providerId:string,now=Date.now()):P
 
   // Base: canonical bookings assigned to this provider. Read-only — no DDL in this module.
   // pricing_json carries provider-execution facts such as Grooming add-ons and safety requirements;
-  // these are customer-selected canonical booking facts, not customer contact data.
-  const bookings=await safeAll(db,"SELECT id,customer_id,service_code,package_code,package_name,schedule_group_id,scheduled_start,scheduled_end,status,pet_ids_json,pricing_json FROM canonical_bookings WHERE provider_id=? ORDER BY scheduled_start ASC LIMIT 500",[id]);
+  // these are customer-selected canonical booking facts, not customer contact data. Older isolated
+  // fixtures/environments may predate pricing_json, so fall back to the legacy projection rather than
+  // dropping every provider job. Current canonical bookings always use the richer projection.
+  let bookings=await safeAll(db,"SELECT id,customer_id,service_code,package_code,package_name,schedule_group_id,scheduled_start,scheduled_end,status,pet_ids_json,pricing_json FROM canonical_bookings WHERE provider_id=? ORDER BY scheduled_start ASC LIMIT 500",[id]);
+  if(!bookings.length)bookings=await safeAll(db,"SELECT id,customer_id,service_code,package_code,package_name,schedule_group_id,scheduled_start,scheduled_end,status,pet_ids_json FROM canonical_bookings WHERE provider_id=? ORDER BY scheduled_start ASC LIMIT 500",[id]);
 
   // Enrichments, each optional. Boarding stays carry the host-facing status + care plan state.
   const stays=await safeAll(db,"SELECT booking_id,id,status,check_in_at,check_out_at,care_plan_status,pet_count FROM boarding_stays WHERE host_provider_id=?",[id]);
