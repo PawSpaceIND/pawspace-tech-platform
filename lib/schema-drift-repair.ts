@@ -34,6 +34,10 @@ const REQUIRED_COLUMNS: Array<{ table: string; column: string; definition: strin
     table: "booking_package_upgrade_requests", column: "claim_token", definition: "TEXT",
     why: "the table shipped without claim_token before the package-upgrade approval became a claim-token compare-and-set; on a database that already created it, every apply_package_upgrade fails with 'no such column: claim_token'",
   },
+  {
+    table: "booking_refund_cases", column: "claim_token", definition: "TEXT",
+    why: "refund status decisions require a per-attempt claim token so concurrent finance actors cannot both emit audit, lifecycle, and customer-notification side effects for one transition",
+  },
 ];
 
 async function tableExists(db: Db, name: string) {
@@ -56,11 +60,6 @@ export async function repairSchemaDrift(db: Db) {
       await db.prepare(`ALTER TABLE ${item.table} ADD COLUMN ${item.column} ${item.definition}`).run();
       repaired.push(`${item.table}.${item.column}`);
     } catch (error) {
-      // This used to swallow the failure AND still report the column as repaired, so a genuinely failed
-      // ALTER resolved successfully and every caller carried on against a table that still lacks the
-      // column. Only one failure is benign: a concurrent request winning the race and adding it first,
-      // which fails with "duplicate column name". Distinguish them by re-reading the schema - accept
-      // only if the column is actually there now, and otherwise fail closed so the caller knows.
       const after = await db.prepare(`PRAGMA table_info(${item.table})`).all<Row>().catch(() => ({ results: [] as Row[] }));
       if (!after.results.some(row => String(row.name) === item.column)) throw error;
     }
