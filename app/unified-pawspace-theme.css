@@ -1,0 +1,98 @@
+/*
+ * PawSpace unified customer presentation layer.
+ * UI-only: this file deliberately changes no booking, pricing, identity, payment,
+ * scheduling, provider or lifecycle behaviour. Route layouts below only add a
+ * presentation scope so legacy service screens inherit the same brand language.
+ */
+:root{
+  --psu-emerald:#01261f;
+  --psu-emerald-2:#064c3c;
+  --psu-emerald-3:#0a604b;
+  --psu-emerald-soft:#edf3ef;
+  --psu-gold:#e6b34e;
+  --psu-gold-soft:#fff5dc;
+  --psu-ivory:#fffdf8;
+  --psu-surface:#ffffff;
+  --psu-border:#e6e1d5;
+  --psu-text:#0c2e25;
+  --psu-muted:#64756f;
+  --psu-shadow:0 16px 42px rgba(6,54,43,.09);
+  --psu-hero:radial-gradient(circle at 84% 8%,#1f6b57 0,transparent 31%),linear-gradient(135deg,#01261f 0%,#064c3c 68%,#0a604b 100%);
+}
+
+body{background:var(--psu-ivory);color:var(--psu-text)}
+
+/* Governed Grooming root: keep all existing controls and hand-off logic; replace only presentation. */
+.app-shell{background:var(--psu-ivory)!important;color:var(--psu-text)!important}
+.app-shell .topbar{background:rgba(255,253,248,.96)!important;border-color:var(--psu-border)!important;box-shadow:0 6px 24px rgba(6,54,43,.05)!important}
+.app-shell .location strong,.app-shell .header-links>a,.app-shell .login-link{color:var(--psu-emerald)!important}
+.app-shell .login-link{border-color:#cfded8!important;background:#fff!important}
+.app-shell>.hero{background:var(--psu-hero)!important;box-shadow:0 24px 64px rgba(1,38,31,.22)!important}
+.app-shell>.hero:before{border-color:rgba(230,179,78,.24)!important}
+.app-shell>.hero h1{color:#fff!important;font-family:Georgia,"Times New Roman",serif!important}
+.app-shell>.hero h1 em{color:var(--psu-gold)!important}
+.app-shell>.hero p{color:#dce9e4!important}
+.app-shell .trust-chip{background:rgba(255,255,255,.1)!important;border-color:rgba(230,179,78,.45)!important;color:#fff!important}
+.app-shell .pet-orb{background:linear-gradient(145deg,#fff8e7,#f3d89f)!important;box-shadow:inset 0 0 0 14px rgba(255,255,255,.5),0 30px 65px rgba(0,20,15,.35)!important}
+.app-shell .floating-note strong{color:var(--psu-emerald)!important}
+.app-shell .booking-panel{border-color:var(--psu-border)!important;background:#fff!important;box-shadow:var(--psu-shadow)!important}
+.app-shell .eyebrow{color:var(--psu-emerald-3)!important}
+.app-shell .step-badge,.app-shell .offer-tabs button.active{background:var(--psu-emerald-soft)!important;color:var(--psu-emerald)!important}
+.app-shell .pet-switch{background:#f2f5f1!important}
+.app-shell .pet-switch button.active{color:var(--psu-emerald)!important}
+.app-shell .count-picker button.active,.app-shell .package-card.selected,.app-shell .slots-grid button.selected{background:var(--psu-emerald)!important;border-color:var(--psu-emerald)!important;color:#fff!important}
+.app-shell .package-card:hover{border-color:#8fb5a8!important;box-shadow:0 14px 34px rgba(6,54,43,.08)!important}
+.app-shell .package-card.selected{background:linear-gradient(180deg,#fff,#f3f8f5)!important;color:var(--psu-text)!important}
+.app-shell .selected .radio-dot{background:var(--psu-emerald)!important;border-color:var(--psu-emerald)!important}
+.app-shell .package-card>strong{color:var(--psu-emerald)!important}
+.app-shell .addons-strip{background:var(--psu-gold-soft)!important}
+.app-shell .checkout-bar{background:rgba(1,38,31,.97)!important;box-shadow:0 18px 45px rgba(1,38,31,.28)!important}
+.app-shell .checkout-bar button{background:var(--psu-gold)!important;color:#251b05!important}
+
+/* Shared customer service scope. Route wrappers are intentionally presentation-only. */
+.ps-unified-service{min-height:100vh;background:var(--psu-ivory);color:var(--psu-text)}
+.ps-unified-service main{background:var(--psu-ivory)!important;color:var(--psu-text)!important;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif!important}
+.ps-unified-service a{color:var(--psu-emerald-3)!important}
+.ps-unified-service input,.ps-unified-service select,.ps-unified-service textarea{border-color:#d8e4df!important;color:var(--psu-text)!important;background:#fff!important;border-radius:10px!important}
+.ps-unified-service button{border-color:#d9e4df!important}
+.ps-unified-service button:focus-visible,.ps-unified-service input:focus-visible,.ps-unified-service select:focus-visible,.ps-unified-service textarea:focus-visible{outline:3px solid rgba(230,179,78,.45)!important;outline-offset:2px}
+
+/* Inline canonical UAT pages: Training, Boarding and Relocation. */
+.ps-training main>header,.ps-boarding main>header,.ps-relocation main>header{padding:38px 42px!important;border-radius:28px!important;background:var(--psu-hero)!important;color:#fff!important;box-shadow:0 22px 56px rgba(1,38,31,.18)!important}
+.ps-training main>header h1,.ps-boarding main>header h1,.ps-relocation main>header h1{margin:8px 0!important;color:#fff!important;font-family:Georgia,"Times New Roman",serif!important;letter-spacing:-.035em}
+.ps-training main>header p,.ps-boarding main>header p,.ps-relocation main>header p{color:#dce9e4!important}
+.ps-training main>header a,.ps-boarding main>header a,.ps-relocation main>header a{color:var(--psu-gold)!important;font-weight:900}
+.ps-training main>section,.ps-boarding main>section,.ps-relocation main>section{border-color:var(--psu-border)!important;border-radius:22px!important;background:#fff!important;box-shadow:var(--psu-shadow)!important}
+.ps-training main>section h2,.ps-boarding main>section h2,.ps-relocation main>section h2{color:var(--psu-emerald)!important;font-family:Georgia,"Times New Roman",serif!important}
+.ps-training main>section button,.ps-boarding main>section button,.ps-relocation main>section button{border:1px solid #cfe0d9!important;border-radius:11px!important;background:#fff!important;color:var(--psu-emerald)!important;font-weight:800}
+.ps-training main>section button[aria-pressed="true"],.ps-boarding main>section button[aria-pressed="true"]{outline:2px solid var(--psu-emerald)!important;background:var(--psu-emerald-soft)!important;color:var(--psu-emerald)!important}
+.ps-training main>section:last-child button,.ps-boarding main>section:last-child button,.ps-relocation main>section button:not([aria-pressed]){background:var(--psu-emerald)!important;color:#fff!important;border-color:var(--psu-emerald)!important}
+.ps-training main>section:last-child button:hover,.ps-boarding main>section:last-child button:hover,.ps-relocation main>section button:hover{background:var(--psu-emerald-2)!important}
+
+/* CSS-module service pages. These selectors key off semantic local class names that Next preserves. */
+.ps-sitting [class*="shell"],.ps-walking [class*="shell"],.ps-taxi [class*="shell"],.ps-food [class*="shell"]{background:var(--psu-ivory)!important;color:var(--psu-text)!important}
+.ps-sitting [class*="header"],.ps-walking [class*="header"],.ps-taxi [class*="header"],.ps-food [class*="header"]{background:rgba(255,253,248,.97)!important;border-color:var(--psu-border)!important;box-shadow:0 6px 24px rgba(6,54,43,.05)!important}
+.ps-sitting [class*="header"] a,.ps-walking [class*="header"] a,.ps-taxi [class*="header"] a,.ps-food [class*="header"] a{color:var(--psu-emerald)!important}
+.ps-sitting [class*="hero"],.ps-walking [class*="hero"],.ps-taxi [class*="hero"],.ps-food [class*="hero"]{background:var(--psu-hero)!important;color:#fff!important;box-shadow:0 22px 56px rgba(1,38,31,.18)!important}
+.ps-sitting [class*="hero"] h1,.ps-walking [class*="hero"] h1,.ps-taxi [class*="hero"] h1,.ps-food [class*="hero"] h1{color:#fff!important;font-family:Georgia,"Times New Roman",serif!important}
+.ps-sitting [class*="hero"] h1 em,.ps-walking [class*="hero"] h1 em,.ps-taxi [class*="hero"] h1 em,.ps-food [class*="hero"] h1 em{color:var(--psu-gold)!important}
+.ps-sitting [class*="hero"] p,.ps-walking [class*="hero"] p,.ps-taxi [class*="hero"] p,.ps-food [class*="hero"] p{color:#dce9e4!important}
+.ps-sitting [class*="kicker"],.ps-walking [class*="kicker"],.ps-taxi [class*="kicker"],.ps-food [class*="kicker"]{color:#b58527!important}
+.ps-sitting [class*="panel"],.ps-walking [class*="panel"],.ps-taxi [class*="booking"],.ps-food [class*="panel"],.ps-sitting [class*="search"],.ps-sitting [class*="filters"],.ps-sitting [class*="confirmed"],.ps-walking [class*="confirmed"],.ps-taxi [class*="confirmed"],.ps-food [class*="confirmed"]{border-color:var(--psu-border)!important;background:#fff!important;box-shadow:var(--psu-shadow)!important}
+.ps-sitting [class*="checkout"],.ps-walking [class*="checkout"],.ps-taxi [class*="checkout"],.ps-food [class*="checkout"]{background:rgba(1,38,31,.97)!important;color:#fff!important;box-shadow:0 18px 45px rgba(1,38,31,.27)!important}
+.ps-sitting [class*="checkout"] button,.ps-walking [class*="checkout"] button,.ps-taxi [class*="checkout"] button,.ps-food [class*="checkout"] button,.ps-sitting [class*="confirmBtn"],.ps-taxi [class*="confirmButton"]{background:var(--psu-gold)!important;color:#251b05!important;border-color:var(--psu-gold)!important}
+.ps-unified-service [class*="selected"],.ps-unified-service [class*="active"],.ps-unified-service [class*="chosen"],.ps-unified-service [class*="optionOn"]{border-color:var(--psu-emerald)!important}
+.ps-sitting [class*="mode"] [class*="active"],.ps-walking [class*="switch"] [class*="active"],.ps-taxi [class*="tripSwitch"] [class*="active"]{background:var(--psu-emerald-soft)!important;color:var(--psu-emerald)!important;box-shadow:inset 0 0 0 1px #a9c7bc!important}
+.ps-sitting [class*="sitter"][class*="chosen"],.ps-walking [class*="walker"][class*="chosen"]{background:#f5faf7!important;border-color:var(--psu-emerald)!important}
+.ps-sitting [class*="purple"],.ps-walking [class*="purple"]{background:var(--psu-emerald-2)!important}
+.ps-sitting [class*="green"],.ps-walking [class*="green"]{background:#16705a!important}
+.ps-sitting [class*="orange"],.ps-walking [class*="orange"]{background:#a97823!important}
+
+@media(max-width:850px){
+  .ps-training main>header,.ps-boarding main>header,.ps-relocation main>header{padding:30px 24px!important;border-radius:22px!important}
+}
+@media(max-width:560px){
+  .app-shell>.hero{margin:12px!important;padding:38px 26px!important;border-radius:25px!important}
+  .app-shell>.hero h1{font-size:42px!important}
+  .ps-training main,.ps-boarding main,.ps-relocation main{padding:14px!important}
+}
