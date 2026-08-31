@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+// Customer paths stay verify-first; legacy/server-attested captured scenarios retain evidence compatibility.
 const stay=fs.readFileSync("app/mobile-app/stay-flow.tsx","utf8"),taxi=fs.readFileSync("app/mobile-app/taxi-flow.tsx","utf8"),canonical=fs.readFileSync("app/api/canonical-bookings/route.ts","utf8"),payment=fs.readFileSync("app/api/payment-order/route.ts","utf8"),boarding=fs.readFileSync("lib/boarding-governance.ts","utf8"),sitting=fs.readFileSync("lib/sitting-governance.ts","utf8"),taxiApi=fs.readFileSync("app/api/taxi-bookings/route.ts","utf8");
 test("stay material controls are controlled and preserved",()=>{assert.doesNotMatch(stay,/defaultValue=|defaultChecked/);assert.match(stay,/value=\{startTime\}/);assert.match(stay,/healthSafetyNotes:medicalNotes/);assert.match(stay,/behaviourNotes:behaviourSafetyNotes/);assert.match(stay,/requirements/);assert.match(stay,/breed:p\.profile\?\.breed\|\|p\.breed/);assert.match(stay,/vaccinationStatus:p\.vaccinationStatus/);});
 test("stay retries use normalized material identity and never self-claim capture",()=>{assert.doesNotMatch(stay,/bookingNonce|Date\.now\(\).*request/);assert.match(stay,/selectedPets\.slice\(\)\.sort\(\)/);assert.match(stay,/status:"created"/);assert.doesNotMatch(stay,/captureSittingQuoteSandbox|status:"captured"/);});
