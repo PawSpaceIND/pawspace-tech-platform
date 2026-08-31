@@ -28,7 +28,9 @@ export default function ServiceBanner({ service, compact }: { service?: string; 
   const sub = media?.sub ?? HOME_BANNER.sub;
   const review = service ? `Google review carousel · ${service}` : HOME_BANNER.review;
   const breedOptions = media?.breedLine.split(" · ") ?? [];
-  const canAutoplayVideo = Boolean(media && videoSrc && !videoFailed && !reducedMotion && videoInView && pageVisible);
+  const supportsIntersectionObserver = typeof window !== "undefined" && "IntersectionObserver" in window;
+  const videoVisibleEnough = supportsIntersectionObserver ? videoInView : typeof window !== "undefined";
+  const canAutoplayVideo = Boolean(media && videoSrc && !videoFailed && !reducedMotion && videoVisibleEnough && pageVisible);
 
   useEffect(() => {
     const query = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -41,16 +43,13 @@ export default function ServiceBanner({ service, compact }: { service?: string; 
   useEffect(() => {
     const target = videoPreviewRef.current;
     if (!target) return;
-    if (!("IntersectionObserver" in window)) {
-      setVideoInView(true);
-      return;
-    }
+    if (!supportsIntersectionObserver) return;
     const observer = new IntersectionObserver(([entry]) => {
       setVideoInView(entry.isIntersecting && entry.intersectionRatio >= 0.35);
     }, { threshold: [0, 0.35, 1] });
     observer.observe(target);
     return () => observer.disconnect();
-  }, [service]);
+  }, [service, supportsIntersectionObserver]);
 
   useEffect(() => {
     const sync = () => setPageVisible(!document.hidden);
