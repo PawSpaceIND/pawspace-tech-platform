@@ -48,6 +48,7 @@ export async function POST(request:Request){
     await enforceAbuseGate(db,request,now);
     const body=await request.json() as Record<string,unknown>;
     const name=clean(body.name,80),phone=clean(body.phone,20),email=clean(body.email,160),area=clean(body.area||"Bangalore",80),petNames=clean(body.petNames||"Not shared",160),service=clean(body.service||"General enquiry",120),message=clean(body.message||"No message left",500);
+    const source=clean(body.source||request.headers.get("x-pawspace-lead-source")||"Website contact form",120);
     if(name.length<2)return json({error:"Please enter your name"},400);
     const phoneDigits=phone.replace(/\D/g,"");
     if(phoneDigits.length<10||phoneDigits.length>15||!/^[0-9+\s-]+$/.test(phone))return json({error:"Please enter a valid phone number"},400);
@@ -59,10 +60,10 @@ export async function POST(request:Request){
     const ownership=await assignLeadOwner(db,{customerId:id,service});
     const assignedOwner=ownership.owner;
     await db.batch([
-      db.prepare("INSERT INTO crm_contacts (id,name,primary_phone,secondary_phone,email,area,pet_names,pet_summary,stage,owner,source,lifetime_value,next_action,opportunity,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,name,phone,null,email||null,area,petNames,message,"New lead",assignedOwner,"Website contact form",0,"Call within 10 minutes",service,now,now),
-      db.prepare("INSERT INTO crm_activities (id,contact_id,type,title,detail,created_at) VALUES (?,?,?,?,?,?)").bind(activityId,id,"lead_created","Contact form submission",`Service interest: ${service}`,now),
+      db.prepare("INSERT INTO crm_contacts (id,name,primary_phone,secondary_phone,email,area,pet_names,pet_summary,stage,owner,source,lifetime_value,next_action,opportunity,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(id,name,phone,null,email||null,area,petNames,message,"New lead",assignedOwner,source,0,"Call within 10 minutes",service,now,now),
+      db.prepare("INSERT INTO crm_activities (id,contact_id,type,title,detail,created_at) VALUES (?,?,?,?,?,?)").bind(activityId,id,"lead_created","Contact form submission",`Service interest: ${service} · Source: ${source}`,now),
       db.prepare("INSERT INTO crm_tasks (id,contact_id,title,owner,due_at,priority,status,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(taskId,id,"First response to new website lead",assignedOwner,now+10*60*1000,"High","Open",now),
-      db.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,call_attempts,whatsapp_attempts,next_action_at,recycle_cycle,opt_out,created_at,updated_at) VALUES (?,?,?,?,?,?,'active','day_1',1,?,?,?,0,0,?,0,0,?,?)").bind(leadId,id,"Website contact form",service,assignedOwner,"Sales Manager",now,now+10*60000,now+30*60000,now+10*60000,now,now),
+      db.prepare("INSERT INTO lead_work_items (id,customer_id,source,service,owner,manager,status,stage,work_day,assigned_at,first_action_due_at,manager_alert_at,call_attempts,whatsapp_attempts,next_action_at,recycle_cycle,opt_out,created_at,updated_at) VALUES (?,?,?,?,?,?,'active','day_1',1,?,?,?,0,0,?,0,0,?,?)").bind(leadId,id,source,service,assignedOwner,"Sales Manager",now,now+10*60000,now+30*60000,now+10*60000,now,now),
     ]);
     let whatsappAi:Record<string,unknown>;try{whatsappAi=await startWhatsAppAiLead(db,{leadId,contactId:id,idempotencyKey:`lead-created:${leadId}`,consentGranted:body.whatsappConsent===true,consentSource:"website_contact_checkbox",consentEvidenceRef:body.whatsappConsent===true?"public-contact-whatsapp-consent-v1":"",actorId:"public-contact",assignedTo:assignedOwner,cityId:"blr"});}catch{whatsappAi={status:"failed",reason:"internal_automation_error",externalDelivery:false,marketing:false};}
     return json({ok:true,leadId,whatsappAi:{status:whatsappAi.status,reason:whatsappAi.reason}},201);
