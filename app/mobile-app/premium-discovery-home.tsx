@@ -13,8 +13,8 @@ export type DiscoveryService = {
   imageAlt: string;
 };
 
-const PRIMARY_SERVICE_CODES = ["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi"];
-const SECONDARY_SERVICE_CODES = ["food", "relocation"];
+const VIDEO_SERVICE_CODES = ["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi"] as const;
+const VIDEO_SERVICE_CODE_SET = new Set<string>(VIDEO_SERVICE_CODES);
 
 const serviceShortCopy: Record<string, string> = {
   grooming: "Clean & fresh",
@@ -66,11 +66,12 @@ const adSlots = [
   },
 ] as const;
 
+const carouselSlots = [adSlots[adSlots.length - 1], ...adSlots, adSlots[0]] as const;
+
 export default function PremiumDiscoveryHome({
   services,
   disabledServices,
   customerName,
-  customerId,
   onOpen,
   onShowBookings,
   onShowPets,
@@ -88,10 +89,10 @@ export default function PremiumDiscoveryHome({
   const [location, setLocation] = useState("HSR Layout, Bengaluru");
   const [draft, setDraft] = useState("");
   const [locationNote, setLocationNote] = useState("");
-  const [pet, setPet] = useState<{ name: string; profile?: { photo?: string } } | null>(null);
   const [activeAd, setActiveAd] = useState(0);
   const [adPaused, setAdPaused] = useState(false);
   const adRailRef = useRef<HTMLDivElement>(null);
+  const adSettleTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const stored = window.localStorage.getItem("pawspace_discovery_location");
@@ -100,25 +101,39 @@ export default function PremiumDiscoveryHome({
     return () => window.clearTimeout(timer);
   }, []);
 
+  const scrollToPhysicalAd = useCallback((physicalIndex: number, behavior: ScrollBehavior) => {
+    const rail = adRailRef.current;
+    const target = rail?.children.item(physicalIndex) as HTMLElement | null;
+    if (rail && target) rail.scrollTo({ left: target.offsetLeft - rail.offsetLeft, behavior });
+  }, []);
+
   useEffect(() => {
-    if (!customerId) return;
-    let active = true;
-    void fetch(`/api/customer-account?customerId=${encodeURIComponent(customerId)}`, { cache: "no-store" })
-      .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((body: { data?: { pets?: Array<{ name: string; profile?: { photo?: string } }> } }) => {
-        if (active) setPet(body.data?.pets?.[0] ?? null);
-      })
-      .catch(() => { if (active) setPet(null); });
-    return () => { active = false; };
-  }, [customerId]);
+    const frame = window.requestAnimationFrame(() => scrollToPhysicalAd(1, "auto"));
+    return () => window.cancelAnimationFrame(frame);
+  }, [scrollToPhysicalAd]);
+
+  useEffect(() => () => {
+    if (adSettleTimerRef.current !== null) window.clearTimeout(adSettleTimerRef.current);
+  }, []);
+
+  const scheduleCloneSnap = useCallback((physicalIndex: number) => {
+    if (adSettleTimerRef.current !== null) window.clearTimeout(adSettleTimerRef.current);
+    adSettleTimerRef.current = window.setTimeout(() => {
+      if (physicalIndex === 0) scrollToPhysicalAd(adSlots.length, "auto");
+      if (physicalIndex === adSlots.length + 1) scrollToPhysicalAd(1, "auto");
+      adSettleTimerRef.current = null;
+    }, 460);
+  }, [scrollToPhysicalAd]);
 
   const goToAd = useCallback((index: number, behavior: ScrollBehavior = "smooth") => {
     const next = (index + adSlots.length) % adSlots.length;
+    const crossesForwardBoundary = activeAd === adSlots.length - 1 && index >= adSlots.length;
+    const crossesBackwardBoundary = activeAd === 0 && index < 0;
+    const physicalIndex = crossesForwardBoundary ? adSlots.length + 1 : crossesBackwardBoundary ? 0 : next + 1;
     setActiveAd(next);
-    const rail = adRailRef.current;
-    const target = rail?.children.item(next) as HTMLElement | null;
-    if (rail && target) rail.scrollTo({ left: target.offsetLeft - rail.offsetLeft, behavior });
-  }, []);
+    scrollToPhysicalAd(physicalIndex, behavior);
+    if (physicalIndex === 0 || physicalIndex === adSlots.length + 1) scheduleCloneSnap(physicalIndex);
+  }, [activeAd, scheduleCloneSnap, scrollToPhysicalAd]);
 
   useEffect(() => {
     if (adPaused || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
@@ -126,20 +141,33 @@ export default function PremiumDiscoveryHome({
     return () => window.clearInterval(timer);
   }, [activeAd, adPaused, goToAd]);
 
+  const handleAdScroll = useCallback(() => {
+    const rail = adRailRef.current;
+    if (!rail) return;
+    let closest = 1;
+    let distance = Number.POSITIVE_INFINITY;
+    Array.from(rail.children).forEach((child, index) => {
+      const nextDistance = Math.abs((child as HTMLElement).offsetLeft - rail.scrollLeft);
+      if (nextDistance < distance) {
+        distance = nextDistance;
+        closest = index;
+      }
+    });
+    const logicalIndex = closest === 0 ? adSlots.length - 1 : closest === adSlots.length + 1 ? 0 : closest - 1;
+    if (logicalIndex !== activeAd) setActiveAd(logicalIndex);
+    if (closest === 0 || closest === adSlots.length + 1) scheduleCloneSnap(closest);
+  }, [activeAd, scheduleCloneSnap]);
+
   const visible = useMemo(
     () => services.filter((service) => `${service.name} ${service.subtitle}`.toLowerCase().includes(query.trim().toLowerCase())),
     [query, services],
   );
-  // Existing parity hook intentionally retained for Release UI/Web tests.
   const careServices = visible;
-  const primaryServices = query.trim()
-    ? careServices
-    : careServices.filter((service) => PRIMARY_SERVICE_CODES.includes(service.serviceCode));
-  const secondaryServices = query.trim()
-    ? []
-    : services.filter((service) => SECONDARY_SERVICE_CODES.includes(service.serviceCode));
-  const petName = pet?.name || "your pet";
-  const firstName = customerName?.split(" ")[0];
+  const videoServices = careServices.filter((service) => VIDEO_SERVICE_CODE_SET.has(service.serviceCode));
+  const firstName = customerName?.trim().split(/\s+/)[0];
+  const customerInitials = customerName?.trim()
+    ? customerName.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("")
+    : "PS";
 
   const saveLocation = (value: string) => {
     const next = value.trim();
@@ -168,7 +196,7 @@ export default function PremiumDiscoveryHome({
       <div className={styles.brandRow}>
         <img className={styles.brandLogo} src="/assets/pawspace-logo.jpeg" alt="PawSpace" />
         <button className={styles.profile} onClick={onShowPets} aria-label="Open pet profiles">
-          {pet?.profile?.photo ? <img src={pet.profile.photo} alt={`${pet.name}'s profile`} /> : <span>PS</span>}
+          <span>{customerInitials}</span>
         </button>
       </div>
 
@@ -185,7 +213,7 @@ export default function PremiumDiscoveryHome({
       </label>
     </section>
 
-    <section className={styles.carouselShell} aria-label="PawSpace offers and launches">
+    <section className={styles.carouselShell} aria-label="Offers carousel">
       <div
         className={styles.adRail}
         ref={adRailRef}
@@ -193,32 +221,26 @@ export default function PremiumDiscoveryHome({
         onMouseLeave={() => setAdPaused(false)}
         onFocusCapture={() => setAdPaused(true)}
         onBlurCapture={() => setAdPaused(false)}
-        onScroll={() => {
-          const rail = adRailRef.current;
-          if (!rail) return;
-          let closest = 0;
-          let distance = Number.POSITIVE_INFINITY;
-          Array.from(rail.children).forEach((child, index) => {
-            const next = Math.abs((child as HTMLElement).offsetLeft - rail.scrollLeft);
-            if (next < distance) { distance = next; closest = index; }
-          });
-          if (closest !== activeAd) setActiveAd(closest);
-        }}
+        onScroll={handleAdScroll}
       >
-        {adSlots.map((slot) => <article
-          key={slot.title}
-          className={`${styles.promoCard} ${styles[slot.tone]}`}
-          style={{ backgroundImage: `linear-gradient(90deg, rgba(2,35,28,.92), rgba(2,35,28,.34)), url(${slot.image})` }}
-        >
-          <small>{slot.eyebrow}</small>
-          <b>{slot.title}</b>
-          <span>{slot.copy}</span>
-          <button onClick={() => onOpen(slot.serviceCode)}>{slot.cta} <i>→</i></button>
-        </article>)}
+        {carouselSlots.map((slot, physicalIndex) => {
+          const isClone = physicalIndex === 0 || physicalIndex === carouselSlots.length - 1;
+          return <article
+            key={`${slot.title}-${physicalIndex}`}
+            className={`${styles.promoCard} ${styles[slot.tone]}`}
+            aria-hidden={isClone || undefined}
+            style={{ backgroundImage: `linear-gradient(90deg, rgba(2,35,28,.92), rgba(2,35,28,.34)), url(${slot.image})` }}
+          >
+            <small>{slot.eyebrow}</small>
+            <b>{slot.title}</b>
+            <span>{slot.copy}</span>
+            <button tabIndex={isClone ? -1 : 0} onClick={() => onOpen(slot.serviceCode)}>{slot.cta} <i>→</i></button>
+          </article>;
+        })}
       </div>
-      <div className={styles.carouselControls}>
+      <div className={`${styles.carouselControls} ${styles.segmented}`}>
         <button onClick={() => goToAd(activeAd - 1)} aria-label="Previous promotion">←</button>
-        <div>{adSlots.map((slot, index) => <button key={slot.title} className={index === activeAd ? styles.dotActive : ""} onClick={() => goToAd(index)} aria-label={`Show promotion ${index + 1}`} />)}</div>
+        <div className={styles.railDots}>{adSlots.map((slot, index) => <button key={slot.title} className={index === activeAd ? styles.dotActive : ""} onClick={() => goToAd(index)} aria-label={`Show promotion ${index + 1}`} />)}</div>
         <button onClick={() => goToAd(activeAd + 1)} aria-label="Next promotion">→</button>
       </div>
     </section>
@@ -234,14 +256,14 @@ export default function PremiumDiscoveryHome({
       <span className={styles.heroPaw} aria-hidden="true">🐾</span>
     </section>
 
-    <section className={styles.servicesSection} aria-label="Primary care services">
+    <section className={styles.servicesSection} aria-label="Care services">
       <div className={styles.sectionHead}>
         <div><small>PAWSPACE CARE</small><h2>What do they need today?</h2></div>
         {query && <button onClick={() => setQuery("")}>Clear</button>}
       </div>
 
       <div className={styles.serviceGrid}>
-        {primaryServices.map((service) => {
+        {careServices.map((service) => {
           const paused = disabledServices.has(service.serviceCode);
           const media = getServiceMedia(service.serviceCode);
           const visuals = media?.visuals ?? [{ image: service.image, alt: service.imageAlt }];
@@ -254,6 +276,7 @@ export default function PremiumDiscoveryHome({
               {media?.breedLine && <span className={styles.visualLabel}>{media.breedLine}</span>}
             </div>
             <div className={styles.serviceCopy}>
+              <span className={styles.serviceIcon} aria-hidden="true">✦</span>
               <strong>{service.name}</strong>
               <small>{paused ? "Temporarily paused" : serviceShortCopy[service.serviceCode] || service.subtitle}</small>
             </div>
@@ -275,7 +298,7 @@ export default function PremiumDiscoveryHome({
     {!query && <section className={styles.reminder}>
       <div className={styles.reminderCopy}>
         <span className={styles.reminderPaw}>♥</span>
-        <div><small>PERSONALISED CARE</small><h3>{pet?.name ? `${pet.name}'s next care day` : "Real care. Real people."}</h3><p>Book trusted care for {petName} without leaving the PawSpace app.</p></div>
+        <div><small>PERSONALISED CARE</small><h3>Real care. Real people.</h3><p>Your uploaded pet photos stay inside booking and repeat-booking contexts.</p></div>
       </div>
       <button onClick={() => onOpen("grooming")}>Book now <span>→</span></button>
     </section>}
@@ -286,14 +309,17 @@ export default function PremiumDiscoveryHome({
       <span>Verified customer review feed placement</span>
     </section>}
 
-    {!query && <section className={styles.secondarySection} aria-label="More PawSpace services">
-      <div className={styles.sectionHead}><div><small>MORE FROM PAWSPACE</small><h2>Food & travel support</h2></div></div>
-      <div className={styles.secondaryRail}>
-        {secondaryServices.map((service) => {
+    {!query && <section className={styles.secondarySection} aria-label="Quick service guides">
+      <div className={styles.sectionHead}><div><small>CURATED SERVICE VISUALS</small><h2>Everything they need</h2></div></div>
+      <div className={styles.moreRail}>
+        {videoServices.map((service) => {
           const media = getServiceMedia(service.serviceCode);
           const visual = media?.visuals[0] ?? { image: service.image, alt: service.imageAlt };
           return <button key={service.serviceCode} onClick={() => onOpen(service.serviceCode)} disabled={disabledServices.has(service.serviceCode)}>
-            <img src={visual.image} alt={visual.alt} />
+            <span className={styles.mediaFrame}>
+              <img className={styles.feedImage} src={visual.image} alt={visual.alt} />
+              <span className={styles.serviceIcon} aria-hidden="true">▶</span>
+            </span>
             <span><b>{service.name}</b><small>{serviceShortCopy[service.serviceCode]}</small></span><i>→</i>
           </button>;
         })}

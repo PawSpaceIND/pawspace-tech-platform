@@ -1,6 +1,6 @@
 "use client";
 /* eslint-disable @next/next/no-img-element */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import styles from "./service-banner.module.css";
 import { getServiceMediaByName, getServiceVideoUrl } from "./service-media";
 
@@ -14,13 +14,50 @@ const HOME_BANNER = {
 
 export default function ServiceBanner({ service, compact }: { service?: string; compact?: boolean }) {
   const media = getServiceMediaByName(service);
-  const [videoOpen, setVideoOpen] = useState(false);
+  const [visualSelection, setVisualSelection] = useState<{ service?: string; index: number }>({ service, index: 0 });
   const [videoFailed, setVideoFailed] = useState(false);
+  const [reducedMotion, setReducedMotion] = useState(true);
+  const [videoInView, setVideoInView] = useState(false);
+  const [pageVisible, setPageVisible] = useState(true);
+  const videoPreviewRef = useRef<HTMLElement>(null);
   const videoSrc = media ? getServiceVideoUrl(media.serviceCode) : null;
-  const mainVisual = media?.visuals[0] ?? { image: HOME_BANNER.image, alt: HOME_BANNER.alt };
+  const activeVisual = visualSelection.service === service ? visualSelection.index : 0;
+  const safeVisualIndex = media ? Math.min(activeVisual, media.visuals.length - 1) : 0;
+  const mainVisual = media?.visuals[safeVisualIndex] ?? { image: HOME_BANNER.image, alt: HOME_BANNER.alt };
   const headline = media?.headline ?? HOME_BANNER.headline;
   const sub = media?.sub ?? HOME_BANNER.sub;
   const review = service ? `Google review carousel · ${service}` : HOME_BANNER.review;
+  const breedOptions = media?.breedLine.split(" · ") ?? [];
+  const canAutoplayVideo = Boolean(media && videoSrc && !videoFailed && !reducedMotion && videoInView && pageVisible);
+
+  useEffect(() => {
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const sync = () => setReducedMotion(query.matches);
+    sync();
+    query.addEventListener("change", sync);
+    return () => query.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
+    const target = videoPreviewRef.current;
+    if (!target) return;
+    if (!("IntersectionObserver" in window)) {
+      setVideoInView(true);
+      return;
+    }
+    const observer = new IntersectionObserver(([entry]) => {
+      setVideoInView(entry.isIntersecting && entry.intersectionRatio >= 0.35);
+    }, { threshold: [0, 0.35, 1] });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [service]);
+
+  useEffect(() => {
+    const sync = () => setPageVisible(!document.hidden);
+    sync();
+    document.addEventListener("visibilitychange", sync);
+    return () => document.removeEventListener("visibilitychange", sync);
+  }, []);
 
   return (
     <section className={`${styles.banner} ${compact ? styles.compact : ""}`} aria-label={`${service ?? "PawSpace"} highlights`}>
@@ -28,10 +65,25 @@ export default function ServiceBanner({ service, compact }: { service?: string; 
       <figure>
         <div className={styles.visualStack}>
           <img className={styles.heroImage} src={mainVisual.image} alt={mainVisual.alt} loading="lazy" />
-          {media && media.visuals.length > 1 && <div className={styles.visualThumbs} aria-label={`${service} visual examples`}>
-            {media.visuals.slice(1, 3).map((visual) => <img key={visual.image} src={visual.image} alt={visual.alt} loading="lazy" />)}
+          {media && media.visuals.length > 1 && <div className={styles.visualThumbs} aria-label={`${service} curated visual examples`}>
+            {media.visuals.map((visual, index) => <button
+              type="button"
+              key={visual.image}
+              className={index === safeVisualIndex ? styles.visualThumbActive : ""}
+              onClick={() => setVisualSelection({ service, index })}
+              aria-label={`Show ${breedOptions[index] ?? media.serviceName} visual`}
+              aria-pressed={index === safeVisualIndex}
+            ><img src={visual.image} alt={visual.alt} loading="lazy" /></button>)}
           </div>}
-          {media?.breedLine && <span className={styles.breedLine}>{media.breedLine}</span>}
+          {media?.breedLine && <div className={styles.breedLine} aria-label={`${service} curated breed and service visuals`}>
+            {breedOptions.map((label, index) => <button
+              type="button"
+              key={label}
+              className={`${styles.breedChip} ${index === safeVisualIndex ? styles.breedChipActive : ""}`}
+              onClick={() => setVisualSelection({ service, index })}
+              aria-pressed={index === safeVisualIndex}
+            >{label}</button>)}
+          </div>}
         </div>
         <figcaption>
           <h3>{headline}</h3>
@@ -45,19 +97,18 @@ export default function ServiceBanner({ service, compact }: { service?: string; 
         <li>✓ Cancellation terms shown per service</li>
       </ul>
 
-      {media && <section className={styles.videoPreview} aria-label={`${service} video preview`}>
-        {videoOpen && videoSrc && !videoFailed ? <video controls autoPlay playsInline preload="metadata" poster={media.videoPoster} onError={() => setVideoFailed(true)}>
-          <source src={videoSrc} type="video/mp4" />
+      {media && <section ref={videoPreviewRef} className={styles.videoPreview} aria-label={`${service} video preview`}>
+        {canAutoplayVideo ? <video muted autoPlay loop playsInline preload="metadata" poster={media.videoPoster} onError={() => setVideoFailed(true)}>
+          <source src={videoSrc ?? undefined} type="video/mp4" />
           Your browser does not support embedded video.
-        </video> : <button type="button" className={styles.videoPoster} onClick={() => setVideoOpen(true)} aria-expanded={videoOpen} style={{ backgroundImage: `linear-gradient(90deg,rgba(1,38,31,.82),rgba(1,38,31,.28)),url(${media.videoPoster})` }}>
-          <i>▶</i>
+        </video> : <div className={styles.videoPoster} style={{ backgroundImage: `linear-gradient(90deg,rgba(1,38,31,.82),rgba(1,38,31,.28)),url(${media.videoPoster})` }}>
+          <i aria-hidden="true">▶</i>
           <span>
-            <small>HD DOORSTEP PREVIEW</small>
+            <small>HD SERVICE PREVIEW</small>
             <b>{media.videoTitle}</b>
-            <em>{videoSrc ? "Tap to play" : "Approved film slot ready for the PawSpace media CDN"}</em>
+            <em>{videoFailed ? "Premium poster fallback" : reducedMotion ? "Still preview for reduced-motion preference" : videoSrc ? "Film plays silently while visible" : "Premium poster shown until approved footage is published"}</em>
           </span>
-        </button>}
-        {videoOpen && (!videoSrc || videoFailed) && <p className={styles.videoNote}>The UI is ready for the approved real-service film. Playback activates when <code>NEXT_PUBLIC_PAWSPACE_SERVICE_VIDEO_BASE</code> points to the published HD media library.</p>}
+        </div>}
       </section>}
 
       <div className={styles.reviews} aria-label={review}>
