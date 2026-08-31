@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { buildApp } from './src/app.js';
 import { issueSession } from './src/auth.js';
 import { deriveFinanceUatSessionSecret, financeUatConfigurationBlockers, financeUatDeploymentMatches, financeUatEnabled, verifyFinanceUatProof } from './src/finance-uat-auth.js';
+import { bootstrapFinanceUatReferenceData } from './src/finance-uat-bootstrap.js';
 import { createRepository } from './src/repository.js';
 
 const financeUatDeployment = financeUatDeploymentMatches();
@@ -10,6 +11,7 @@ const financeUat = financeUatEnabled();
 if (financeUatDeployment) {
   process.env.AUTH_MODE = 'token';
   if (financeUat && (!process.env.API_SECRET || process.env.API_SECRET.length < 32)) process.env.API_SECRET = deriveFinanceUatSessionSecret();
+  if (financeUat) await bootstrapFinanceUatReferenceData();
 }
 
 const app = buildApp(await createRepository());
