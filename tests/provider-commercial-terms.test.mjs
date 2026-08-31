@@ -15,8 +15,8 @@ test("payout engine supports the four engagement models with the correct GST tre
   assert.match(terms, /providerNetPayout=providerGrossShare/);
   // PawSpace GST is on the platform fee only
   assert.match(terms, /platformGst=money\(platformFee\*platformGstRate\)/);
-  // direct employee: 18% on the whole order value + direct invoice, no provider payout
-  assert.match(terms, /directInvoice=true;pawspaceGstOnOrder=money\(orderValue\*0\.18\)/);
+  // direct employee (principal): GST-inclusive order -> carve embedded 18% (18/118) + direct invoice, no payout
+  assert.match(terms, /directInvoice=true;pawspaceGstOnOrder=money\(orderValue\*18\/118\)/);
   // funeral: GST-exempt, vendor paid a share of PawSpace's OWN standard price, no GST on the platform fee
   assert.match(terms, /engagementModel==="funeral_exempt"/);
   assert.match(terms, /gstExempt=true;payoutBasis="standard_price"/);

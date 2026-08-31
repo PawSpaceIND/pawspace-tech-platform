@@ -126,6 +126,48 @@ test("funeral_exempt is GST-exempt and pays the vendor a share of PawSpace's OWN
   assert.equal(g.platformGst, 0);
 });
 
+test("direct_employee carves the embedded GST from the inclusive order (18/118), not 18% on top", async () => {
+  const { sqlite, db, terms } = await payoutWorld();
+  await activate(terms, db, { serviceCode: "vet_home", model: "direct_employee", share: 0 });
+  booking(sqlite, "BKD", { serviceCode: "vet_home", providerId: "E1", amount: 1180, start: "2026-07-10" });
+
+  const d = await terms.computeOrderPayout(db, { bookingId: "BKD", actorId: FINANCE });
+  assert.equal(d.directInvoice, true);
+  assert.equal(d.pawspaceGstOnOrder, 180, "embedded GST on a ₹1180 inclusive order (1180*18/118), not 1180*0.18=212.4");
+  assert.equal(d.platformFee, 1000, "the GST-exclusive taxable value PawSpace recognizes");
+  assert.equal(d.platformGst, 0);
+  assert.equal(d.providerNetPayout, 0, "no provider payout for a direct employee");
+  assert.equal(d.payoutBasis, "full_order");
+});
+
+function bookingInvoicesTable(sqlite) {
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_invoices (id TEXT PRIMARY KEY,booking_id TEXT,customer_id TEXT,invoice_number TEXT,status TEXT,currency TEXT,gross_amount REAL,tax_amount REAL,net_amount REAL,issued_at INTEGER,created_at INTEGER,updated_at INTEGER)");
+}
+
+test("statutory package + monthly close count only PawSpace's commission GST as own output for a costed marketplace booking", async () => {
+  const { sqlite, db, terms } = await payoutWorld();
+  const gst = await import("../lib/gst-accounting.ts");
+  const close = await import("../lib/finance-monthly-close.ts");
+  await gst.ensureGstAccountingTables(db);
+  bookingInvoicesTable(sqlite);
+  await activate(terms, db, { serviceCode: "boarding", model: "commission_standard", share: 0.70 });
+  booking(sqlite, "BK1", { serviceCode: "boarding", providerId: "P1", amount: 1000, start: "2026-07-10" });
+  await terms.computeOrderPayout(db, { bookingId: "BK1", actorId: FINANCE });
+  sqlite.prepare("INSERT INTO booking_invoices (id,booking_id,invoice_number,status,currency,gross_amount,tax_amount,net_amount,issued_at) VALUES ('bi1','BK1','GRM-1','issued','INR',1000,152.54,847.46,?)").run(istMs(2026, 7, 10));
+
+  const pkg = await gst.generateStatutoryPackage(db, { entityId: "e", registrationId: "r", periodCode: "2026-07", reason: "close" }, MAKER);
+  assert.equal(pkg.summary.serviceOutputTax, 45.76, "package own output = commission GST only");
+  assert.equal(pkg.summary.outputTax, 45.76, "no B2B ledger output, so total own output = commission GST");
+  assert.equal(pkg.summary.taxCollectedFromCustomers, 152.54);
+  assert.equal(pkg.summary.providerSupplyGstCollectedOnBehalf, 106.78);
+
+  const view = await close.monthlyCloseView(db, { period: "2026-07", actorId: FINANCE });
+  assert.equal(view.gst.outputTax, 45.76, "monthly-close net-payable output is commission-only, matching GSTR-3B");
+  assert.equal(view.gst.taxCollectedFromCustomers, 152.54);
+  assert.equal(view.gst.providerSupplyGstCollectedOnBehalf, 106.78);
+  assert.equal(view.gst.netPayable, 45.76, "no eligible ITC seeded, so net payable = own output");
+});
+
 test("GSTR-3B counts only PawSpace's commission GST as output; the provider-supply GST is disclosed for GSTR-8", async () => {
   const { sqlite, db, terms } = await payoutWorld();
   const returns = await import("../lib/gst-returns.ts");

@@ -21,6 +21,7 @@
 // a default. Import-safe for `node --experimental-strip-types` (no TS parameter properties).
 
 import{ConfigurationRequired,ensureGstAccountingTables}from"./gst-accounting";
+import{serviceVerticalOutputTax}from"./service-output-tax";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -33,31 +34,9 @@ const now=()=>Date.now();
 const periodMs=(period:string)=>{const[y,m]=period.split("-").map(Number);return{startMs:Date.UTC(y,m-1,1)-330*60_000,endMs:Date.UTC(m===12?y+1:y,m===12?0:m,1)-330*60_000};};
 async function sha256(value:string){const bytes=new TextEncoder().encode(value),digest=await crypto.subtle.digest("SHA-256",bytes);return[...new Uint8Array(digest)].map(x=>x.toString(16).padStart(2,"0")).join("");}
 async function safeFirst(db:Db,sql:string,b:unknown[]):Promise<Row|null>{try{return await db.prepare(sql).bind(...b).first<Row>();}catch{return null;}}
-
-/** Split the service-vertical (booking_invoices) output tax into PawSpace's OWN output GST and the
- * provider-supply GST PawSpace merely collected on the provider's behalf. Under the confirmed commercial
- * model, only the COMMISSION portion of a marketplace supply is PawSpace's own output tax; the provider's
- * supply GST is the PROVIDER's liability and is surfaced via s52 GST TCS / GSTR-8, never in PawSpace's own
- * GSTR-1/3B outward-tax. The engagement-model-aware split already lives in provider_payout_computations:
- *   - provider_gst_deducted>0  => marketplace commission_standard: PawSpace own = platform_gst (commission);
- *                                 provider supply = provider_gst_deducted - platform_gst (-> TCS/GSTR-8).
- *   - provider_gst_deducted=0  => groomer / direct-employee / principal: PawSpace is the supplier of record,
- *                                 so the FULL invoice tax is PawSpace output (conservative).
- * A booking with an invoice but no payout computation cannot be split, so its full tax is counted as
- * PawSpace output (never understates the statutory liability). Cold-DB safe: a missing payout table degrades
- * to the full booking-invoice tax. */
-async function serviceVerticalOutputTax(db:Db,startMs:number,endMs:number){
- const total=await safeFirst(db,"SELECT COALESCE(SUM(tax_amount),0) tax,COALESCE(SUM(gross_amount),0) gross,COUNT(*) n FROM booking_invoices WHERE issued_at>=? AND issued_at<? AND status!='cancelled'",[startMs,endMs]);
- const totalTax=round2(num(total?.tax)),grossTotal=round2(num(total?.gross)),invoiceCount=num(total?.n);
- const costed=await safeFirst(db,"SELECT COALESCE(SUM(CASE WHEN p.provider_gst_deducted>0 THEN p.platform_gst ELSE bi.tax_amount END),0) ownTax,COALESCE(SUM(CASE WHEN p.provider_gst_deducted>0 THEN p.provider_gst_deducted-p.platform_gst ELSE 0 END),0) providerSupply,COALESCE(SUM(CASE WHEN p.provider_gst_deducted>0 THEN p.platform_fee ELSE bi.gross_amount-bi.tax_amount END),0) ownTaxable,COALESCE(SUM(bi.tax_amount),0) costedTax,COALESCE(SUM(bi.gross_amount),0) costedGross,COUNT(*) n FROM booking_invoices bi JOIN provider_payout_computations p ON p.booking_id=bi.booking_id WHERE bi.issued_at>=? AND bi.issued_at<? AND bi.status!='cancelled'",[startMs,endMs]);
- const ownTaxCosted=round2(num(costed?.ownTax)),providerSupply=round2(num(costed?.providerSupply)),ownTaxableCosted=round2(num(costed?.ownTaxable)),costedTax=round2(num(costed?.costedTax)),costedGross=round2(num(costed?.costedGross));
- const uncostedTax=round2(totalTax-costedTax),uncostedTaxable=round2((grossTotal-costedGross)-uncostedTax);
- return{totalTaxCollected:totalTax,grossTotal,invoiceCount,
-  pawspaceOwnOutputTax:round2(ownTaxCosted+uncostedTax),
-  pawspaceOwnTaxableValue:round2(ownTaxableCosted+uncostedTaxable),
-  providerSupplyGstOnBehalf:round2(providerSupply),
-  costedCount:num(costed?.n),uncostedTax};
-}
+// serviceVerticalOutputTax (the PawSpace-own vs provider-supply output-tax split) lives in
+// ./service-output-tax so the monthly close, statutory package, GSTR-9 and these return generators all read
+// one identical figure.
 
 async function ensureColumn(db:Db,table:string,column:string,definition:string){
  const columns=await db.prepare(`PRAGMA table_info(${table})`).all<Row>();

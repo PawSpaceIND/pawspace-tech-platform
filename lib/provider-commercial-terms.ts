@@ -161,8 +161,9 @@ export async function computeOrderPayout(db:Db,input:{bookingId:string;actorId:s
  let providerGrossShare=0,platformFee=orderValue,providerGstDeducted=0,providerNetPayout=0,platformGst=0,pawspaceGstOnOrder=0,directInvoice=false,gstExempt=false,standardReferencePrice=0;
  let payoutBasis:"net_pool"|"full_order"|"standard_price"="net_pool";
  if(engagementModel==="direct_employee"){
-  // no provider split; PawSpace is the principal, bills the customer and pays 18% GST on the whole order
-  directInvoice=true;pawspaceGstOnOrder=money(orderValue*0.18);platformFee=orderValue;platformGst=0;payoutBasis="full_order";
+  // no provider split; PawSpace is the principal. The order is GST-INCLUSIVE, so carve the embedded 18%
+  // (18/118) as PawSpace's own output GST and recognise the GST-exclusive remainder as the taxable value.
+  directInvoice=true;pawspaceGstOnOrder=money(orderValue*18/118);platformFee=money(orderValue-pawspaceGstOnOrder);platformGst=0;payoutBasis="full_order";
  }else if(engagementModel==="funeral_exempt"){
   // GST-EXEMPT supply: nothing carved from the collection, and NO GST on PawSpace's platform fee. The
   // vendor is paid a share of PawSpace's OWN STANDARD price (not the customer payment, which may be

@@ -1,8 +1,10 @@
 // Monthly finance close: one governed checklist per calendar month, computed from REAL platform
 // data, gated by the founder's monthly board approval, and locked once closed.
 //   revenue        - canonical_bookings totals + food orders for the month
-//   gst            - output tax from finance_invoices, eligible input tax from finance_bills via
-//                    approved vendor reviews; GSTR-3B net payable = output - eligible input
+//   gst            - PawSpace's OWN output tax (B2B ledger + the commission/principal share of service
+//                    verticals; the provider-supply GST collected on their behalf is disclosed but goes to
+//                    s52 TCS/GSTR-8, not here), eligible input tax from finance_bills via approved vendor
+//                    reviews; GSTR-3B net payable = own output - eligible input
 //   tds            - the month's computed TDS liability + deposit status (lib/tds-governance)
 //   payroll        - the month's payroll run status
 //   board approval - lib/statutory-compliance board_approvals
@@ -11,6 +13,7 @@
 
 import{computeMonthlyTds}from"./tds-governance";
 import{ensureStatutoryTables,getBoardApproval}from"./statutory-compliance";
+import{serviceVerticalOutputTax}from"./service-output-tax";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
@@ -39,7 +42,7 @@ async function safeFirst(db:Db,sql:string,bindings:unknown[]=[]){
 }
 
 export type CloseChecklistItem={key:string;label:string;ok:boolean;value:number|string|null;detail:string};
-export type MonthlyCloseView={period:string;status:"open"|"ready"|"closed";checklist:CloseChecklistItem[];revenue:{bookings:number;bookingCount:number;foodOrders:number;foodOrderCount:number;total:number};gst:{outputTax:number;eligibleInputTax:number;netPayable:number;invoiceCount:number};tds:{total:number;sections:Record<string,{base:number;tds:number;deductees:number}>;deposited:boolean;depositDueDate:string};payroll:{runStatus:string|null;employees:number;grossTotal:number};boardApproval:{approved:boolean;approvedBy:string|null;approvedAt:number|null};closedBy:string|null;closedAt:number|null};
+export type MonthlyCloseView={period:string;status:"open"|"ready"|"closed";checklist:CloseChecklistItem[];revenue:{bookings:number;bookingCount:number;foodOrders:number;foodOrderCount:number;total:number};gst:{outputTax:number;eligibleInputTax:number;netPayable:number;invoiceCount:number;taxCollectedFromCustomers?:number;providerSupplyGstCollectedOnBehalf?:number};tds:{total:number;sections:Record<string,{base:number;tds:number;deductees:number}>;deposited:boolean;depositDueDate:string};payroll:{runStatus:string|null;employees:number;grossTotal:number};boardApproval:{approved:boolean;approvedBy:string|null;approvedAt:number|null};closedBy:string|null;closedAt:number|null};
 
 /** Build (or rebuild) the month's close view from real data. Never mutates a locked close. */
 export async function monthlyCloseView(db:Db,input:{period:string;actorId:string;asOf?:number}):Promise<MonthlyCloseView>{
@@ -70,8 +73,11 @@ export async function monthlyCloseView(db:Db,input:{period:string;actorId:string
  // published as 0 under a GREEN gst_computed check. The two tables are disjoint - a B2B invoice is
  // never a booking invoice - so their tax sums and nothing is counted twice. No tax rule is decided
  // here: each invoice's own tax_amount, computed by the module that issued it, is simply included.
- const serviceOutput=await safeFirst(db,"SELECT COALESCE(SUM(tax_amount),0) tax,COUNT(*) count FROM booking_invoices WHERE issued_at>=? AND issued_at<? AND status!='cancelled'",[startMs,endMs]);
- const gst={outputTax:round2(Number(output?.tax||0)+Number(serviceOutput?.tax||0)),eligibleInputTax:round2(Number(input_?.tax||0)),netPayable:0,invoiceCount:Number(output?.count||0)+Number(serviceOutput?.count||0)};
+ // Of the service-vertical GST collected, only PawSpace's OWN output GST (commission/principal) is its
+ // GSTR-3B net-payable liability; the provider-supply GST collected on their behalf is a separate
+ // pass-through (remitted via s52 GST TCS / GSTR-8), disclosed but NOT part of PawSpace's net payable.
+ const serviceOutput=await serviceVerticalOutputTax(db,startMs,endMs);
+ const gst={outputTax:round2(Number(output?.tax||0)+serviceOutput.pawspaceOwnOutputTax),eligibleInputTax:round2(Number(input_?.tax||0)),netPayable:0,invoiceCount:Number(output?.count||0)+serviceOutput.invoiceCount,taxCollectedFromCustomers:round2(Number(output?.tax||0)+serviceOutput.totalTaxCollected),providerSupplyGstCollectedOnBehalf:serviceOutput.providerSupplyGstOnBehalf};
  gst.netPayable=round2(Math.max(0,gst.outputTax-gst.eligibleInputTax));
 
  // TDS: recompute from source data (idempotent), then check the deposit.
@@ -87,7 +93,7 @@ export async function monthlyCloseView(db:Db,input:{period:string;actorId:string
 
  const checklist:CloseChecklistItem[]=[
   {key:"revenue_reconciled",label:"Revenue aggregated from canonical bookings + food orders",ok:true,value:revenue.total,detail:`${revenue.bookingCount} bookings + ${revenue.foodOrderCount} food orders`},
-  {key:"gst_computed",label:"GSTR-3B net payable computed (output - eligible input)",ok:true,value:gst.netPayable,detail:`output ${gst.outputTax} - eligible input ${gst.eligibleInputTax}`},
+  {key:"gst_computed",label:"GSTR-3B net payable computed (own output - eligible input)",ok:true,value:gst.netPayable,detail:`own output ${gst.outputTax} - eligible input ${gst.eligibleInputTax}${gst.providerSupplyGstCollectedOnBehalf?` · provider-supply GST collected on behalf ${gst.providerSupplyGstCollectedOnBehalf} -> s52 TCS/GSTR-8`:""}`},
   {key:"tds_computed",label:"TDS liability computed from payroll + payouts",ok:true,value:tds.totalTds,detail:Object.entries(tds.sections).map(([section,bucket])=>`${section}: ${bucket.tds}`).join(" · ")||"no deductions this month"},
   {key:"tds_deposited",label:`TDS deposited (due ${tds.depositDueDate})`,ok:tds.totalTds===0||Boolean(deposit),value:deposit?round2(Number(deposit.amount)):null,detail:tds.totalTds===0?"no liability":deposit?"challan recorded":"deposit pending"},
   {key:"payroll_finalised",label:"Payroll run approved for the month",ok:payroll.runStatus==null||["approved","payment_prepared","completed"].includes(String(payroll.runStatus)),value:payroll.runStatus,detail:payroll.runStatus?`${payroll.employees} employees · gross ${payroll.grossTotal}`:"no payroll run in this month (acceptable for pre-payroll months)"},
