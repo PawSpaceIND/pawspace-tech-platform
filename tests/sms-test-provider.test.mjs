@@ -1,0 +1,9 @@
+import test from"node:test";import assert from"node:assert/strict";import{normalizeIndianMobile,parseSmsTestAllowlist,PAWSPACE_SMS_TEST_MESSAGE,sendFast2SmsTest}from"../lib/sms-test-provider.ts";
+
+test("SMS test provider normalizes Indian mobile numbers and rejects invalid input",()=>{assert.equal(normalizeIndianMobile("+91 98765 43210"),"9876543210");assert.equal(normalizeIndianMobile("9876543210"),"9876543210");assert.equal(normalizeIndianMobile("5876543210"),null);});
+
+test("SMS test allowlist keeps only valid Indian mobile numbers",()=>{const allowed=parseSmsTestAllowlist("9876543210,+91 91234 56789,123");assert.deepEqual([...allowed],["9876543210","9123456789"]);});
+
+test("Fast2SMS test request is fixed-message, authorized and returns provider request id",async()=>{let captured;const result=await sendFast2SmsTest({apiKey:"test-key",phone:"+91 98765 43210",fetcher:async(input,init)=>{captured={url:String(input),init};return new Response(JSON.stringify({return:true,request_id:"REQ-1"}),{status:200,headers:{"content-type":"application/json"}});}});const url=new URL(captured.url);assert.equal(url.origin,"https://www.fast2sms.com");assert.equal(url.pathname,"/dev/bulkV2");assert.equal(url.searchParams.get("route"),"q");assert.equal(url.searchParams.get("message"),PAWSPACE_SMS_TEST_MESSAGE);assert.equal(url.searchParams.get("numbers"),"9876543210");assert.equal(url.searchParams.get("sms_details"),"1");assert.equal(url.searchParams.get("udf1"),"pawspace-sms-test");assert.equal(captured.init.method,"GET");assert.equal(captured.init.headers.Authorization,"test-key");assert.equal(result.requestId,"REQ-1");});
+
+test("Fast2SMS provider failure is fail-closed",async()=>{await assert.rejects(()=>sendFast2SmsTest({apiKey:"test-key",phone:"9876543210",fetcher:async()=>new Response(JSON.stringify({return:false}),{status:200})}),/rejected/);});
