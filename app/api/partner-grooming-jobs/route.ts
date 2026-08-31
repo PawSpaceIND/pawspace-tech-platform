@@ -14,7 +14,7 @@ async function ensureTables(db:Db){await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,amount_due_now REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',method TEXT NOT NULL,mode TEXT NOT NULL,status TEXT NOT NULL,gateway TEXT NOT NULL DEFAULT 'uat_sandbox',idempotency_key TEXT NOT NULL UNIQUE,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS booking_lifecycle_events (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,event_type TEXT NOT NULL,entity_type TEXT NOT NULL,entity_id TEXT NOT NULL,actor_id TEXT NOT NULL,detail_json TEXT NOT NULL DEFAULT '{}',occurred_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS grooming_service_proof (booking_id TEXT PRIMARY KEY,before_photo_ref TEXT,after_photo_ref TEXT,checklist_json TEXT NOT NULL DEFAULT '[]',completion_notes TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
-  db.prepare("CREATE TABLE IF NOT EXISTS booking_invoices (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,invoice_number TEXT NOT NULL UNIQUE,status TEXT NOT NULL DEFAULT 'draft',currency TEXT NOT NULL DEFAULT 'INR',gross_amount REAL NOT NULL,tax_amount REAL NOT NULL DEFAULT 0,net_amount REAL NOT NULL,issued_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+  db.prepare("CREATE TABLE IF NOT EXISTS booking_invoices (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,invoice_number TEXT NOT NULL UNIQUE,status TEXT NOT NULL DEFAULT 'draft',currency TEXT TEXT NOT NULL DEFAULT 'INR',gross_amount REAL NOT NULL,tax_amount REAL NOT NULL DEFAULT 0,net_amount REAL NOT NULL,issued_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
 ]);}
 
 function maskPhone(value:unknown){const digits=String(value||"").replace(/\D/g,"");return digits.length>=4?`+91 ••••••${digits.slice(-4)}`:"Masked";}
@@ -47,6 +47,8 @@ export async function GET(request:Request){
         db.prepare("SELECT invoice_number,status,net_amount,issued_at FROM booking_invoices WHERE booking_id=?").bind(row.booking_id).first<Row>(),
       ]);
       const pricing=parseJson<Record<string,unknown>>(row.pricing_json,{});
+      const addOns=Array.isArray(pricing.addOns)?pricing.addOns.filter((item):item is string=>typeof item==="string"):[];
+      const safetyRequirements=Array.isArray(pricing.requirements)?pricing.requirements.filter((item):item is string=>typeof item==="string"):[];
       jobs.push({
         bookingId:String(row.booking_id),workOrderId:String(row.work_order_id),providerId:String(row.provider_id),providerName:String(row.provider_name),providerModel:String(row.provider_model),
         status:String(row.booking_status),workOrderStatus:String(row.work_order_status),occurrenceCount:Number(row.occurrence_count||1),packageCode:String(row.package_code),packageName:String(row.package_name),
@@ -55,6 +57,8 @@ export async function GET(request:Request){
         pets:pets.results.map(pet=>({id:String(pet.id),name:String(pet.name),species:String(pet.species),breed:String(pet.breed||""),vaccinationStatus:String(pet.vaccination_status)})),
         payment:{method:String(row.payment_method),mode:String(row.payment_mode),status:String(row.payment_status),amount:Number(row.payment_amount||0),amountDueNow:Number(row.amount_due_now||0)},
         subscription:pricing.subscription?String(pricing.subscription):null,
+        addOns,
+        safetyRequirements,
         proof:proof?{beforePhotoRef:proof.before_photo_ref?String(proof.before_photo_ref):null,afterPhotoRef:proof.after_photo_ref?String(proof.after_photo_ref):null,checklist:parseJson<string[]>(proof.checklist_json,[]),completionNotes:proof.completion_notes?String(proof.completion_notes):null,updatedAt:Number(proof.updated_at||0)}:null,
         invoice:invoice?{invoiceNumber:String(invoice.invoice_number),status:String(invoice.status),netAmount:Number(invoice.net_amount||0),issuedAt:Number(invoice.issued_at||0)}:null,
         events:events.results.map(item=>({eventType:String(item.event_type),entityType:String(item.entity_type),actorId:String(item.actor_id),detail:parseJson<Record<string,unknown>>(item.detail_json,{}),occurredAt:Number(item.occurred_at||0)})),
