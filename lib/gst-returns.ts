@@ -10,6 +10,11 @@
 //   2. booking_invoices.tax_amount               - the five service verticals, AGGREGATE only (no
 //      rate / place-of-supply / HSN). It cannot become compliant GSTR-1 line detail, so it is
 //      surfaced in a reconciliation block, never fabricated into invoice rows.
+// For source 2, only PawSpace's OWN output GST is its statutory liability: on a marketplace supply that is
+// the COMMISSION GST alone; the provider's supply GST (carved from the GST-inclusive order) is the
+// provider's liability, remitted via s52 GST TCS / GSTR-8 - NOT PawSpace GSTR-1/3B. serviceVerticalOutputTax
+// derives the split from provider_payout_computations and falls back to the full tax for any booking without
+// a payout split, so the liability is never understated.
 //
 // No tax rate is decided here: rates/components come from the tax_snapshot the issuing module already
 // computed. Missing Finance/CA-approved configuration throws ConfigurationRequired (HTTP 409), never
@@ -28,6 +33,31 @@ const now=()=>Date.now();
 const periodMs=(period:string)=>{const[y,m]=period.split("-").map(Number);return{startMs:Date.UTC(y,m-1,1)-330*60_000,endMs:Date.UTC(m===12?y+1:y,m===12?0:m,1)-330*60_000};};
 async function sha256(value:string){const bytes=new TextEncoder().encode(value),digest=await crypto.subtle.digest("SHA-256",bytes);return[...new Uint8Array(digest)].map(x=>x.toString(16).padStart(2,"0")).join("");}
 async function safeFirst(db:Db,sql:string,b:unknown[]):Promise<Row|null>{try{return await db.prepare(sql).bind(...b).first<Row>();}catch{return null;}}
+
+/** Split the service-vertical (booking_invoices) output tax into PawSpace's OWN output GST and the
+ * provider-supply GST PawSpace merely collected on the provider's behalf. Under the confirmed commercial
+ * model, only the COMMISSION portion of a marketplace supply is PawSpace's own output tax; the provider's
+ * supply GST is the PROVIDER's liability and is surfaced via s52 GST TCS / GSTR-8, never in PawSpace's own
+ * GSTR-1/3B outward-tax. The engagement-model-aware split already lives in provider_payout_computations:
+ *   - provider_gst_deducted>0  => marketplace commission_standard: PawSpace own = platform_gst (commission);
+ *                                 provider supply = provider_gst_deducted - platform_gst (-> TCS/GSTR-8).
+ *   - provider_gst_deducted=0  => groomer / direct-employee / principal: PawSpace is the supplier of record,
+ *                                 so the FULL invoice tax is PawSpace output (conservative).
+ * A booking with an invoice but no payout computation cannot be split, so its full tax is counted as
+ * PawSpace output (never understates the statutory liability). Cold-DB safe: a missing payout table degrades
+ * to the full booking-invoice tax. */
+async function serviceVerticalOutputTax(db:Db,startMs:number,endMs:number){
+ const total=await safeFirst(db,"SELECT COALESCE(SUM(tax_amount),0) tax,COALESCE(SUM(gross_amount),0) gross,COUNT(*) n FROM booking_invoices WHERE issued_at>=? AND issued_at<? AND status!='cancelled'",[startMs,endMs]);
+ const totalTax=round2(num(total?.tax)),grossTotal=round2(num(total?.gross)),invoiceCount=num(total?.n);
+ const costed=await safeFirst(db,"SELECT COALESCE(SUM(CASE WHEN p.provider_gst_deducted>0 THEN p.platform_gst ELSE bi.tax_amount END),0) ownTax,COALESCE(SUM(CASE WHEN p.provider_gst_deducted>0 THEN p.provider_gst_deducted-p.platform_gst ELSE 0 END),0) providerSupply,COALESCE(SUM(CASE WHEN p.provider_gst_deducted>0 THEN p.platform_fee ELSE bi.gross_amount-bi.tax_amount END),0) ownTaxable,COALESCE(SUM(bi.tax_amount),0) costedTax,COALESCE(SUM(bi.gross_amount),0) costedGross,COUNT(*) n FROM booking_invoices bi JOIN provider_payout_computations p ON p.booking_id=bi.booking_id WHERE bi.issued_at>=? AND bi.issued_at<? AND bi.status!='cancelled'",[startMs,endMs]);
+ const ownTaxCosted=round2(num(costed?.ownTax)),providerSupply=round2(num(costed?.providerSupply)),ownTaxableCosted=round2(num(costed?.ownTaxable)),costedTax=round2(num(costed?.costedTax)),costedGross=round2(num(costed?.costedGross));
+ const uncostedTax=round2(totalTax-costedTax),uncostedTaxable=round2((grossTotal-costedGross)-uncostedTax);
+ return{totalTaxCollected:totalTax,grossTotal,invoiceCount,
+  pawspaceOwnOutputTax:round2(ownTaxCosted+uncostedTax),
+  pawspaceOwnTaxableValue:round2(ownTaxableCosted+uncostedTaxable),
+  providerSupplyGstOnBehalf:round2(providerSupply),
+  costedCount:num(costed?.n),uncostedTax};
+}
 
 async function ensureColumn(db:Db,table:string,column:string,definition:string){
  const columns=await db.prepare(`PRAGMA table_info(${table})`).all<Row>();
@@ -114,16 +144,19 @@ export async function generateGstr1(db:Db,input:Row,actor:string){
  const notes=await db.prepare("SELECT a.document_number,a.kind,a.amount,a.tax_amount,a.created_at,i.invoice_number,i.issue_date,i.total,i.customer_id FROM finance_adjustment_documents a JOIN finance_invoices i ON i.id=a.invoice_id WHERE i.entity_id=? AND substr(i.issue_date,1,7)=? AND a.status='issued'").bind(entityId,period).all<Row>();
  const cdnr:Row[]=[],cdnur:Row[]=[];
  for(const n of notes.results){const profile=await safeFirst(db,"SELECT registration_reference,customer_type FROM finance_customer_tax_profiles WHERE customer_id=?",[text(n.customer_id)]);const cgstin=text(profile?.registration_reference);const ntty=text(n.kind)==="credit_note"?"C":"D";const nt_det={ntty,nt_num:text(n.document_number),nt_dt:text(n.issue_date),val:round2(num(n.amount)+num(n.tax_amount)),itms:[{num:1,itm_det:{txval:round2(num(n.amount)),iamt:round2(num(n.tax_amount))}}]};if(cgstin&&text(profile?.customer_type)!=="consumer")cdnr.push({ctin:cgstin,...nt_det});else cdnur.push(nt_det);}
- // Service verticals: aggregate-only in booking_invoices; cannot be compliant GSTR-1 line detail.
+ // Service verticals: aggregate-only in booking_invoices; cannot be compliant GSTR-1 line detail. Only
+ // PawSpace's OWN output GST (commission / principal) belongs in PawSpace's outward tax; the provider-supply
+ // GST is the provider's, routed to s52 GST TCS / GSTR-8 (see serviceVerticalOutputTax).
  const{startMs,endMs}=periodMs(period);
- const svc=await safeFirst(db,"SELECT COALESCE(SUM(tax_amount),0) tax,COALESCE(SUM(gross_amount),0) gross,COUNT(*) count FROM booking_invoices WHERE issued_at>=? AND issued_at<? AND status!='cancelled'",[startMs,endMs]);
- const serviceTax=round2(num(svc?.tax)),serviceGross=round2(num(svc?.gross)),serviceCount=num(svc?.count);
+ const svc=await serviceVerticalOutputTax(db,startMs,endMs);
+ const serviceTax=svc.pawspaceOwnOutputTax,serviceGross=svc.grossTotal,serviceCount=svc.invoiceCount;
  const payload={gstin,fp:returnPeriod(period),gt:round2(canonicalTaxable),cur_gt:round2(canonicalTaxable),
   b2b:[...b2b.values()],b2cs:[...b2csMap.values()],cdnr,cdnur,hsn:{data:[...hsnMap.values()]}};
  const summary={returnType:"GSTR-1",period,gstin,b2bInvoices:b2bCount,b2cInvoices:b2cCount,cdnrCount:cdnr.length,cdnurCount:cdnur.length,hsnLines:hsnMap.size,
   canonicalTaxableValue:round2(canonicalTaxable),canonicalOutputTax:round2(canonicalTax),
   serviceVerticalTax:serviceTax,serviceVerticalGross:serviceGross,serviceVerticalInvoices:serviceCount,totalOutputTax:round2(canonicalTax+serviceTax),
-  reconciliation:{note:serviceCount>0?"Service-vertical supplies are aggregate-only in booking_invoices (no line-level rate/place-of-supply/HSN) and are NOT represented in GSTR-1 sections; issue canonical finance_invoices for them to file line-level. They are included in totalOutputTax for GSTR-3B tie-out.":"No aggregate-only service supplies this period.",serviceVerticalTaxExcludedFromSections:serviceTax}};
+  taxCollectedFromCustomers:svc.totalTaxCollected,providerSupplyGstCollectedOnBehalf:svc.providerSupplyGstOnBehalf,
+  reconciliation:{note:serviceCount>0?"Service-vertical supplies are aggregate-only in booking_invoices (no line-level rate/place-of-supply/HSN) and are NOT represented in GSTR-1 sections; issue canonical finance_invoices for them to file line-level. Only PawSpace's OWN output GST (commission/principal) is in totalOutputTax; the provider-supply GST collected on their behalf is routed to s52 GST TCS / GSTR-8, not PawSpace GSTR-1/3B.":"No aggregate-only service supplies this period.",serviceVerticalTaxExcludedFromSections:svc.totalTaxCollected,providerSupplyGstToGstr8:svc.providerSupplyGstOnBehalf}};
  return persist(db,entityId,regId,"GSTR-1",period,payload,summary,actor,reason);
 }
 
@@ -140,8 +173,10 @@ export async function generateGstr3b(db:Db,input:Row,actor:string){
  let ledgerTaxable=0;const iamt0={iamt:0,camt:0,samt:0,csamt:0};for(const c of components.results){const code=text(c.component).toLowerCase(),amt=round2(num(c.total));if(code.includes("igst"))iamt0.iamt+=amt;else if(code.includes("cgst"))iamt0.camt+=amt;else if(code.includes("sgst")||code.includes("utgst"))iamt0.samt+=amt;else if(code.includes("cess"))iamt0.csamt+=amt;else iamt0.iamt+=amt;}
  const taxableRow=await safeFirst(db,"SELECT COALESCE(SUM(subtotal),0) txval FROM finance_invoices WHERE entity_id=? AND substr(issue_date,1,7)=? AND status!='cancelled'",[entityId,period]);ledgerTaxable=round2(num(taxableRow?.txval));
  const{startMs,endMs}=periodMs(period);
- const svc=await safeFirst(db,"SELECT COALESCE(SUM(tax_amount),0) tax,COALESCE(SUM(gross_amount),0) gross FROM booking_invoices WHERE issued_at>=? AND issued_at<? AND status!='cancelled'",[startMs,endMs]);
- const serviceTax=round2(num(svc?.tax)),serviceGross=round2(num(svc?.gross));
+ // Only PawSpace's OWN service-vertical output GST (commission/principal) is its 3B liability; the
+ // provider-supply GST collected on their behalf goes to s52 GST TCS / GSTR-8, not here.
+ const svc=await serviceVerticalOutputTax(db,startMs,endMs);
+ const serviceTax=svc.pawspaceOwnOutputTax,serviceTaxable=svc.pawspaceOwnTaxableValue;
  // Eligible ITC only from approved vendor reviews (never claim unreviewed credit).
  const itc=await safeFirst(db,"SELECT COALESCE(SUM(v.eligible_tax_amount),0) total FROM finance_vendor_tax_reviews v JOIN finance_bills b ON b.id=v.bill_id WHERE v.review_status='eligible' AND substr(b.bill_date,1,7)=?",[period]);
  const eligibleItc=round2(num(itc?.total));
@@ -150,10 +185,11 @@ export async function generateGstr3b(db:Db,input:Row,actor:string){
  const netTaxPayable=round2(Math.max(0,totalOutputTax-eligibleItc));
  // Portal 3B shape: 3.1(a) outward taxable supplies; 4 eligible ITC; 5.1 interest/late (0 in UAT).
  const payload={gstin,ret_period:returnPeriod(period),
-  sup_details:{osup_det:{txval:round2(ledgerTaxable+serviceGross),iamt:round2(iamt0.iamt),camt:round2(iamt0.camt),samt:round2(iamt0.samt),csamt:round2(iamt0.csamt)}},
+  sup_details:{osup_det:{txval:round2(ledgerTaxable+serviceTaxable),iamt:round2(iamt0.iamt),camt:round2(iamt0.camt),samt:round2(iamt0.samt),csamt:round2(iamt0.csamt)}},
   itc_elg:{itc_avl:[{ty:"OTH",iamt:eligibleItc,camt:0,samt:0,csamt:0}],itc_net:{iamt:eligibleItc,camt:0,samt:0,csamt:0}},
   intr_ltfee:{intr_details:{iamt:0,camt:0,samt:0,csamt:0}}};
- const summary={returnType:"GSTR-3B",period,gstin,outputTaxLedger,serviceVerticalTax:serviceTax,totalOutputTax,eligibleInputTax:eligibleItc,netTaxPayable,outputTaxByComponent:iamt0};
+ const summary={returnType:"GSTR-3B",period,gstin,outputTaxLedger,serviceVerticalTax:serviceTax,totalOutputTax,eligibleInputTax:eligibleItc,netTaxPayable,outputTaxByComponent:iamt0,
+  taxCollectedFromCustomers:svc.totalTaxCollected,providerSupplyGstCollectedOnBehalf:svc.providerSupplyGstOnBehalf,providerSupplyGstNote:"Provider-supply GST collected on the provider's behalf is remitted via s52 GST TCS / GSTR-8, not in PawSpace's own GSTR-3B outward liability."};
  return persist(db,entityId,regId,"GSTR-3B",period,payload,summary,actor,reason);
 }
 
@@ -166,12 +202,14 @@ export async function generateGstr9c(db:Db,input:Row,actor:string){
  const startYear=Number(text(input.financialYear).slice(0,4));if(!Number.isInteger(startYear)||startYear<2000||startYear>2100)throw new Error("valid_financial_year_required");
  const fyLabel=`${startYear}-${String((startYear+1)%100).padStart(2,"0")}`,fromPeriod=`${startYear}-04`,toPeriod=`${startYear+1}-03`;
  const reg=await registration(db,entityId,`${startYear+1}-03-28`);const gstin=text(reg.registration_reference);
- // Books turnover + tax: canonical invoices (accrual) + service verticals; the same two sources.
+ // Books turnover + tax: canonical invoices (accrual) + service verticals; the same two sources. Only
+ // PawSpace's OWN service output GST is its liability (commission/principal); the provider-supply GST is
+ // reconciled separately (routed to s52 GST TCS / GSTR-8), never in PawSpace's own books output tax.
  const canonical=await safeFirst(db,"SELECT COALESCE(SUM(subtotal),0) txval,COALESCE(SUM(tax_total),0) tax FROM finance_invoices WHERE entity_id=? AND substr(issue_date,1,7) BETWEEN ? AND ? AND status!='cancelled'",[entityId,fromPeriod,toPeriod]);
  const fyStartMs=Date.UTC(startYear,3,1)-330*60_000,fyEndMs=Date.UTC(startYear+1,3,1)-330*60_000;
- const svc=await safeFirst(db,"SELECT COALESCE(SUM(gross_amount),0) gross,COALESCE(SUM(tax_amount),0) tax FROM booking_invoices WHERE issued_at>=? AND issued_at<? AND status!='cancelled'",[fyStartMs,fyEndMs]);
- const booksTaxable=round2(num(canonical?.txval)+num(svc?.gross)-num(svc?.tax));// service gross is inclusive; taxable = gross - tax
- const booksOutputTax=round2(num(canonical?.tax)+num(svc?.tax));
+ const svc=await serviceVerticalOutputTax(db,fyStartMs,fyEndMs);
+ const booksTaxable=round2(num(canonical?.txval)+svc.pawspaceOwnTaxableValue);
+ const booksOutputTax=round2(num(canonical?.tax)+svc.pawspaceOwnOutputTax);
  // The annual return (GSTR-9) as filed/drafted, if present.
  const annual=await safeFirst(db,"SELECT summary_json FROM finance_annual_returns WHERE entity_id=? AND registration_id=? AND financial_year=? ORDER BY version DESC LIMIT 1",[entityId,regId,fyLabel]);
  const annualSummary=(()=>{try{return annual?JSON.parse(text(annual.summary_json)):null;}catch{return null;}})() as Row|null;
@@ -188,6 +226,7 @@ export async function generateGstr9c(db:Db,input:Row,actor:string){
   partIII_tax:{taxPayablePerBooks:booksOutputTax,taxPaidPerReturn:returnOutputTax,unreconciledDifference:outputTaxDelta},
   partIV_itc:{itcPerBooks:booksItc,itcPerReturn:returnItc,unreconciledDifference:itcDelta}};
  const summary={returnType:"GSTR-9C",financialYear:fyLabel,gstin,booksTaxable,booksOutputTax,booksItc,returnOutputTax,returnItc,outputTaxDelta,itcDelta,reconciled,
+  taxCollectedFromCustomers:svc.totalTaxCollected,providerSupplyGstCollectedOnBehalf:svc.providerSupplyGstOnBehalf,
   reconciliation:{note:annualSummary===null?"No GSTR-9 annual return has been drafted for this FY; generate it first for a books-vs-return reconciliation.":reconciled?"Books reconcile with the annual return.":"Books do NOT reconcile with the annual return; investigate the unreconciled differences before certification."}};
  return persist(db,entityId,regId,"GSTR-9C",fyLabel,payload,summary,actor,reason);
 }

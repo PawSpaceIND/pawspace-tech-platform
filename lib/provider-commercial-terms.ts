@@ -1,27 +1,37 @@
 /**
  * Provider commercial terms + the payout/GST engine - the single money core for how a service order's
- * value is split between the service provider and PawSpace, and how GST is treated. ALL services settle
- * through the same finance, but three engagement models are supported, each with its own GST treatment:
+ * value is split between the service provider and PawSpace, and how GST is treated. ALL customer prices
+ * are GST-INCLUSIVE (a ₹1000 order is ₹1000 all-in, not ₹1000 + GST). Four engagement models are
+ * supported, each with its own GST treatment:
  *
  *   1. commission_groomer  - provider keeps their share (default 70%); PawSpace keeps the rest (30%) and
- *                            pays GST ONLY on its platform fee. NOTHING is deducted from the provider's
+ *                            pays GST ONLY on its platform fee. NOTHING is carved from the provider's
  *                            share (groomers are the exception). Cash collection allowed by default.
- *   2. commission_standard - trainer / sitter / host / walker etc. Provider share default 70%, BUT the
- *                            payout is net of 18% GST computed on the OVERALL order value (deducted from
- *                            the provider and, by default, deposited as the provider's own GST on their
- *                            behalf - a pass-through, not PawSpace income). PawSpace still pays GST on the
- *                            30% platform fee only. Cash NOT allowed by default (GPay/online only).
+ *   2. commission_standard - boarding / sitting / training / walking. The GST-inclusive order carries an
+ *                            embedded 18% GST which is carved off the TOP first (true inclusive reverse-
+ *                            calc, 18/118); the remaining GST-exclusive NET POOL is split - provider share
+ *                            default 70%, PawSpace platform fee the rest - and PawSpace pays 18% GST on its
+ *                            platform fee only. The provider's own supply GST rides inside the carved
+ *                            amount and is the PROVIDER's liability (surfaced downstream via s52 GST TCS /
+ *                            GSTR-8), NOT PawSpace output GST. Cash NOT allowed by default (GPay/online).
+ *                            Example: ₹1000 @ 70% -> carve ₹152.54 GST -> net pool ₹847.46 -> provider
+ *                            ₹593.22, PawSpace fee ₹254.24, PawSpace GST ₹45.76.
  *   3. direct_employee     - service delivered by a salaried direct employee. No provider split; PawSpace
- *                            pays 18% GST on the full order value and invoices the customer directly.
+ *                            is the principal, pays 18% GST on the full order value and invoices directly.
+ *   4. funeral_exempt      - pet funeral / cremation: a GST-EXEMPT supply. No GST is carved from the
+ *                            collection and PawSpace charges NO GST on its platform fee. The vendor is paid
+ *                            a share (50-60%) of PawSpace's OWN STANDARD price (not the customer payment,
+ *                            which may be full/partial and carry priced add-ons); PawSpace keeps the
+ *                            remainder as an exempt platform fee. Payout via RazorpayX.
  *
  * Every number is CONFIGURATION, not a hard-coded rule: share %, gst mode, platform GST rate, cash
  * eligibility and the onboarding/renewal fee are set per service, overridable per provider, and
  * overridable per order. Terms are versioned + maker/checker governed (activation needs a second party).
  * The engine only computes and records - real disbursement stays in the governed sandbox settlement flow.
  *
- * DEFAULTS ARE DELIBERATE AND FLIP-ABLE: gstMode "provider_gst_on_behalf" books the 18%-of-overall as a
- * pass-through liability; switch a term to "platform_retained" if that 18% should instead be PawSpace TCS/
- * margin. No code change - just a new term version.
+ * DEFAULTS ARE DELIBERATE AND FLIP-ABLE: gstMode "provider_gst_on_behalf" books the carved GST as a
+ * pass-through liability; switch a term to "platform_retained" if that carve should instead be PawSpace
+ * TCS/margin. No code change - just a new term version.
  */
 
 type Db=D1Database;
@@ -31,19 +41,21 @@ const num=(v:unknown)=>Number(v||0);
 const money=(v:unknown)=>Math.round(Number(v||0)*100)/100;
 const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
 
-export type EngagementModel="commission_groomer"|"commission_standard"|"direct_employee";
+export type EngagementModel="commission_groomer"|"commission_standard"|"direct_employee"|"funeral_exempt";
 export type GstMode="none"|"provider_gst_on_behalf"|"platform_retained";
 export type PayoutBreakdown={
  bookingId:string;serviceCode:string;providerId:string;engagementModel:EngagementModel;orderValue:number;
  providerSharePct:number;platformFeePct:number;platformFee:number;platformGstRate:number;platformGst:number;
  providerGrossShare:number;providerGstMode:GstMode;providerGstDeducted:number;providerNetPayout:number;
  pawspaceGstOnOrder:number;directInvoice:boolean;cashAllowed:boolean;termId:string;termSource:string;
+ gstExempt:boolean;standardReferencePrice:number;payoutBasis:"net_pool"|"full_order"|"standard_price";
 };
 
 const MODEL_DEFAULTS:Record<EngagementModel,{share:number;gstMode:GstMode;cash:boolean}>={
  commission_groomer:{share:0.70,gstMode:"none",cash:true},
  commission_standard:{share:0.70,gstMode:"provider_gst_on_behalf",cash:false},
  direct_employee:{share:0,gstMode:"none",cash:false},
+ funeral_exempt:{share:0.55,gstMode:"none",cash:true},
 };
 
 export async function ensureCommercialTermsTables(db:Db){await db.batch([
@@ -131,7 +143,7 @@ export async function resolveCommercialTerm(db:Db,input:{serviceCode:string;prov
 }
 
 /** THE PAYOUT ENGINE. Compute the full split + GST breakdown for one booking. Fail-closed: no active term → throws. */
-export async function computeOrderPayout(db:Db,input:{bookingId:string;actorId:string;persist?:boolean}):Promise<PayoutBreakdown>{
+export async function computeOrderPayout(db:Db,input:{bookingId:string;actorId:string;persist?:boolean;standardReferencePrice?:number}):Promise<PayoutBreakdown>{
  await ensureCommercialTermsTables(db);
  const booking=await db.prepare("SELECT id,service_code,provider_id,total_amount,scheduled_start FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>();
  if(!booking)throw new Error("Canonical booking not found");
@@ -146,19 +158,43 @@ export async function computeOrderPayout(db:Db,input:{bookingId:string;actorId:s
  const platformGstRate=num(term.platform_gst_rate)||0.18;
  validate(engagementModel,providerSharePct,gstMode);
 
- let providerGrossShare=0,platformFee=orderValue,providerGstDeducted=0,providerNetPayout=0,platformGst=0,pawspaceGstOnOrder=0,directInvoice=false;
+ let providerGrossShare=0,platformFee=orderValue,providerGstDeducted=0,providerNetPayout=0,platformGst=0,pawspaceGstOnOrder=0,directInvoice=false,gstExempt=false,standardReferencePrice=0;
+ let payoutBasis:"net_pool"|"full_order"|"standard_price"="net_pool";
  if(engagementModel==="direct_employee"){
-  // no provider split; PawSpace bills the customer and pays 18% GST on the whole order value
-  directInvoice=true;pawspaceGstOnOrder=money(orderValue*0.18);platformFee=orderValue;platformGst=0;
- }else{
+  // no provider split; PawSpace is the principal, bills the customer and pays 18% GST on the whole order
+  directInvoice=true;pawspaceGstOnOrder=money(orderValue*0.18);platformFee=orderValue;platformGst=0;payoutBasis="full_order";
+ }else if(engagementModel==="funeral_exempt"){
+  // GST-EXEMPT supply: nothing carved from the collection, and NO GST on PawSpace's platform fee. The
+  // vendor is paid a share of PawSpace's OWN STANDARD price (not the customer payment, which may be
+  // full/partial and carry priced add-ons); PawSpace keeps the remainder as an exempt platform fee.
+  gstExempt=true;payoutBasis="standard_price";
+  standardReferencePrice=input.standardReferencePrice!=null&&Number(input.standardReferencePrice)>0?money(input.standardReferencePrice):orderValue;
+  providerGrossShare=money(standardReferencePrice*providerSharePct);
+  providerNetPayout=providerGrossShare;                        // vendor payout via RazorpayX
+  platformFee=money(orderValue-providerNetPayout);             // exempt platform fee PawSpace retains
+  platformGst=0;
+ }else if(gstMode==="none"){
+  // Groomer (share-of-order with no GST carve): split the full inclusive order; nothing is carved from the
+  // provider's share. PawSpace pays GST on its platform fee only.
+  payoutBasis="full_order";
   providerGrossShare=money(orderValue*providerSharePct);
   platformFee=money(orderValue-providerGrossShare);
   platformGst=money(platformFee*platformGstRate);              // PawSpace GST on its platform fee only
-  providerGstDeducted=gstMode==="none"?0:money(orderValue*0.18); // groomer: none; others: 18% of overall
-  providerNetPayout=money(providerGrossShare-providerGstDeducted);
+  providerNetPayout=providerGrossShare;
+ }else{
+  // commission_standard: the customer's payment is GST-INCLUSIVE. Carve the statutory embedded GST off the
+  // top (true inclusive reverse-calc, 18/118), split the GST-exclusive NET POOL between the provider and
+  // PawSpace, and PawSpace pays GST on its platform fee only. The carved GST is the provider's own supply
+  // GST (surfaced via s52 GST TCS / GSTR-8) - NOT PawSpace output GST.
+  providerGstDeducted=money(orderValue*18/118);               // embedded GST carved from the inclusive order
+  const netPool=money(orderValue-providerGstDeducted);        // GST-exclusive pool that gets split
+  providerGrossShare=money(netPool*providerSharePct);
+  providerNetPayout=providerGrossShare;                       // paid to the provider via RazorpayX
+  platformFee=money(netPool-providerGrossShare);              // PawSpace commission (GST-exclusive)
+  platformGst=money(platformFee*platformGstRate);             // PawSpace's OWN output GST (commission only)
  }
  const cashAllowed=num(term.cash_allowed)===1;
- const breakdown:PayoutBreakdown={bookingId:input.bookingId,serviceCode,providerId,engagementModel,orderValue,providerSharePct,platformFeePct:money(1-providerSharePct),platformFee,platformGstRate,platformGst,providerGrossShare,providerGstMode:gstMode,providerGstDeducted,providerNetPayout,pawspaceGstOnOrder,directInvoice,cashAllowed,termId:text(term.id),termSource:text(term.termSource)};
+ const breakdown:PayoutBreakdown={bookingId:input.bookingId,serviceCode,providerId,engagementModel,orderValue,providerSharePct,platformFeePct:money(1-providerSharePct),platformFee,platformGstRate,platformGst,providerGrossShare,providerGstMode:gstMode,providerGstDeducted,providerNetPayout,pawspaceGstOnOrder,directInvoice,cashAllowed,termId:text(term.id),termSource:text(term.termSource),gstExempt,standardReferencePrice,payoutBasis};
  if(input.persist!==false){const now=Date.now();
   await db.prepare("INSERT INTO provider_payout_computations (booking_id,provider_id,service_code,order_value,provider_net_payout,platform_fee,platform_gst,provider_gst_deducted,pawspace_gst_on_order,breakdown_json,term_id,computed_by,computed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(booking_id) DO UPDATE SET provider_id=excluded.provider_id,service_code=excluded.service_code,order_value=excluded.order_value,provider_net_payout=excluded.provider_net_payout,platform_fee=excluded.platform_fee,platform_gst=excluded.platform_gst,provider_gst_deducted=excluded.provider_gst_deducted,pawspace_gst_on_order=excluded.pawspace_gst_on_order,breakdown_json=excluded.breakdown_json,term_id=excluded.term_id,computed_by=excluded.computed_by,computed_at=excluded.computed_at")
    .bind(input.bookingId,providerId,serviceCode,orderValue,providerNetPayout,platformFee,platformGst,providerGstDeducted,pawspaceGstOnOrder,JSON.stringify(breakdown),text(term.id),input.actorId,now).run();
@@ -180,5 +216,5 @@ export async function commercialTermsDirectory(db:Db){
   db.prepare("SELECT * FROM provider_payout_computations ORDER BY computed_at DESC LIMIT 100").all<Row>().catch(()=>({results:[] as Row[]})),
   db.prepare("SELECT * FROM provider_onboarding_fee_obligations ORDER BY due_date DESC LIMIT 100").all<Row>().catch(()=>({results:[] as Row[]})),
  ]);
- return{terms:terms.results,payouts:payouts.results,fees:fees.results,truth:{modelsSupported:["commission_groomer","commission_standard","direct_employee"],gstModeDefaultForOthers:"provider_gst_on_behalf",platformGstOnFeeOnly:true,perOrderOverridable:true,liveMoney:false,productionReady:false}};
+ return{terms:terms.results,payouts:payouts.results,fees:fees.results,truth:{modelsSupported:["commission_groomer","commission_standard","direct_employee","funeral_exempt"],gstModeDefaultForOthers:"provider_gst_on_behalf",platformGstOnFeeOnly:true,commissionStandardGstInclusiveReverseCalc:true,funeralGstExempt:true,perOrderOverridable:true,liveMoney:false,productionReady:false}};
 }
