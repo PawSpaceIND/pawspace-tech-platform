@@ -24,6 +24,8 @@ export type PartnerJob={
   stayId:string|null;
   carePlanStatus:string|null;
   nextSlotStart:string|null;
+  addOns:string[];
+  safetyRequirements:string[];
 };
 export type PartnerJobFeed={providerId:string;needsAction:PartnerJob[];today:PartnerJob[];upcoming:PartnerJob[];completed:PartnerJob[]};
 export type PartnerJobCounts={needsAction:number;today:number;upcoming:number;completed:number;total:number};
@@ -41,13 +43,19 @@ async function safeAll(db:Db,sql:string,bindings:unknown[]=[]){
 const firstName=(value:unknown)=>{const name=String(value||"").trim();return name?name.split(/\s+/)[0]:"Customer";};
 const ts=(value:unknown)=>{const parsed=Date.parse(String(value||""));return Number.isFinite(parsed)?parsed:null;};
 const petCountFromJson=(value:unknown)=>{try{const parsed=JSON.parse(String(value||"[]"));return Array.isArray(parsed)&&parsed.length?parsed.length:1;}catch{return 1;}};
+const pricingList=(value:unknown,key:"addOns"|"requirements")=>{try{const parsed=JSON.parse(String(value||"{}")) as Record<string,unknown>,items=parsed[key];return Array.isArray(items)?items.filter((item):item is string=>typeof item==="string"):[];}catch{return[] as string[];}};
 
 export async function listProviderJobs(db:Db,providerId:string,now=Date.now()):Promise<PartnerJobFeed>{
   const id=String(providerId||"").trim();
   if(!id)throw new Error("providerId is required");
 
   // Base: canonical bookings assigned to this provider. Read-only — no DDL in this module.
-  const bookings=await safeAll(db,"SELECT id,customer_id,service_code,package_code,package_name,schedule_group_id,scheduled_start,scheduled_end,status,pet_ids_json FROM canonical_bookings WHERE provider_id=? ORDER BY scheduled_start ASC LIMIT 500",[id]);
+  // pricing_json carries provider-execution facts such as Grooming add-ons and safety requirements;
+  // these are customer-selected canonical booking facts, not customer contact data. Older isolated
+  // fixtures/environments may predate pricing_json, so fall back to the legacy projection rather than
+  // dropping every provider job. Current canonical bookings always use the richer projection.
+  let bookings=await safeAll(db,"SELECT id,customer_id,service_code,package_code,package_name,schedule_group_id,scheduled_start,scheduled_end,status,pet_ids_json,pricing_json FROM canonical_bookings WHERE provider_id=? ORDER BY scheduled_start ASC LIMIT 500",[id]);
+  if(!bookings.length)bookings=await safeAll(db,"SELECT id,customer_id,service_code,package_code,package_name,schedule_group_id,scheduled_start,scheduled_end,status,pet_ids_json FROM canonical_bookings WHERE provider_id=? ORDER BY scheduled_start ASC LIMIT 500",[id]);
 
   // Enrichments, each optional. Boarding stays carry the host-facing status + care plan state.
   const stays=await safeAll(db,"SELECT booking_id,id,status,check_in_at,check_out_at,care_plan_status,pet_count FROM boarding_stays WHERE host_provider_id=?",[id]);
@@ -97,6 +105,8 @@ export async function listProviderJobs(db:Db,providerId:string,now=Date.now()):P
       stayId:stay?String(stay.id):null,
       carePlanStatus,
       nextSlotStart:nextSlotByBooking.get(String(booking.id))||nextSlotByGroup.get(String(booking.schedule_group_id))||null,
+      addOns:pricingList(booking.pricing_json,"addOns"),
+      safetyRequirements:pricingList(booking.pricing_json,"requirements"),
     };
 
     const stayFinished=stayStatus==="completed"||stayStatus==="cancelled";

@@ -10,11 +10,15 @@ name: Deploy staging
 #              PAWSPACE_UAT_ACCESS_CODE                (>=32 chars) tester code for /staging-login
 #              PAWSPACE_UAT_SIGNING_KEY                (>=32 chars) signs the UAT session cookie
 #              PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT  (>=32 chars) signs OTP identity assertions
+#              FAST2SMS_API_KEY                         optional; required only for approved SMS smoke
+#              PAWSPACE_SMS_TEST_NUMBERS                optional; comma-separated approved Indian test numbers
 #   Variables: STAGING_D1_ID           (from `npx wrangler d1 create pawspace-staging`)
 #              PRODUCTION_D1_ID        optional; when set, certification refuses to run if the deploy
 #                                      is bound to it
 #              PRODUCTION_WORKER_NAME  optional; same, for the worker name
 #              STAGING_R2_BUCKET_NAME  optional private UAT media bucket
+#              PAWSPACE_SMS_TEST_ENABLED optional fallback; the explicit sms_smoke=approved input
+#                                         enables the transport for one certified smoke run
 #
 # The deploy is CERTIFIED before it is handed to testers. tests/e2e/staging-certification.mjs proves,
 # against the deployed origin and the deployed configuration: isolation (the staging worker and its own
@@ -39,6 +43,14 @@ on:
         description: 'Exact 40-character commit sha to deploy and certify'
         required: true
         default: ''
+      sms_smoke:
+        description: 'Choose approved to enable Fast2SMS and send exactly one fixed-message smoke after certification'
+        required: true
+        default: 'disabled'
+        type: choice
+        options:
+          - disabled
+          - approved
 
 jobs:
   deploy:
@@ -141,6 +153,9 @@ jobs:
           PAWSPACE_COMMUNICATION_PROVIDER_TOKEN: ${{ secrets.PAWSPACE_COMMUNICATION_PROVIDER_TOKEN }}
           PAWSPACE_COMMUNICATION_WEBHOOK_SECRET: ${{ secrets.PAWSPACE_COMMUNICATION_WEBHOOK_SECRET }}
           PAWSPACE_COMMUNICATION_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_COMMUNICATION_UAT_ALLOWLIST }}
+          PAWSPACE_SMS_TEST_ENABLED: ${{ github.event.inputs.sms_smoke == 'approved' && 'true' || vars.PAWSPACE_SMS_TEST_ENABLED }}
+          PAWSPACE_SMS_TEST_NUMBERS: ${{ secrets.PAWSPACE_SMS_TEST_NUMBERS }}
+          FAST2SMS_API_KEY: ${{ secrets.FAST2SMS_API_KEY }}
         # --message is what makes the DEPLOYED version attributable to a sha: `wrangler versions list`
         # exposes it, and certification requires an exact match. Without it, "which build is live?" has
         # no answer that does not rely on trusting this log.
@@ -159,7 +174,8 @@ jobs:
               "META_WHATSAPP_APP_SECRET", "META_WHATSAPP_VERIFY_TOKEN", "META_WHATSAPP_UAT_ALLOWLIST",
               "META_WHATSAPP_TEMPLATE_ALLOWLIST", "PAWSPACE_COMMUNICATION_PROVIDER_URL",
               "PAWSPACE_COMMUNICATION_PROVIDER_TOKEN", "PAWSPACE_COMMUNICATION_WEBHOOK_SECRET",
-              "PAWSPACE_COMMUNICATION_UAT_ALLOWLIST"
+              "PAWSPACE_COMMUNICATION_UAT_ALLOWLIST", "PAWSPACE_SMS_TEST_ENABLED",
+              "PAWSPACE_SMS_TEST_NUMBERS", "FAST2SMS_API_KEY"
             ];
             const required = Object.fromEntries(requiredNames.map(name => [name, process.env[name] || ""]));
             if (Object.values(required).some(value => !value)) throw new Error("a required UAT secret is missing");
@@ -221,6 +237,57 @@ jobs:
           EVIDENCE_PATH: staging-certification.json
         run: node tests/e2e/staging-certification.mjs
 
+      # Only an explicit manual approval enables this step. It signs in as the disposable founder UAT
+      # persona, sends the fixed route-defined message to the FIRST allowlisted number, and records only
+      # provider/request-id/last-four evidence. No API key, access code, cookie or full phone is logged.
+      - name: Send one approved Fast2SMS smoke
+        if: ${{ github.event.inputs.sms_smoke == 'approved' }}
+        timeout-minutes: 2
+        env:
+          STAGING_URL: ${{ steps.deploy.outputs.staging_url }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_SMS_TEST_NUMBERS: ${{ secrets.PAWSPACE_SMS_TEST_NUMBERS }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from "node:fs";
+          const base = String(process.env.STAGING_URL || "").replace(/\/$/, "");
+          const accessCode = String(process.env.PAWSPACE_UAT_ACCESS_CODE || "").trim();
+          const rawNumber = String(process.env.PAWSPACE_SMS_TEST_NUMBERS || "").split(",")[0]?.trim() || "";
+          const digits = rawNumber.replace(/\D/g, "");
+          const phone = digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits;
+          if (!base || !accessCode || !/^[6-9]\d{9}$/.test(phone)) throw new Error("SMS smoke prerequisites are not configured");
+
+          const login = await fetch(`${base}/api/staging-login`, {
+            method: "POST",
+            headers: { "content-type": "application/json", origin: base },
+            body: JSON.stringify({ action: "login", code: accessCode, email: "founder@pawspace.in" }),
+            signal: AbortSignal.timeout(15000),
+          });
+          const cookie = String(login.headers.get("set-cookie") || "").split(";")[0];
+          if (!(login.status >= 200 && login.status < 400 && cookie)) throw new Error(`staging founder sign-in failed (${login.status})`);
+
+          const response = await fetch(`${base}/api/sms-test`, {
+            method: "POST",
+            headers: { "content-type": "application/json", origin: base, cookie },
+            body: JSON.stringify({ phone }),
+            signal: AbortSignal.timeout(30000),
+          });
+          let payload = null;
+          try { payload = await response.json(); } catch {}
+          if (!(response.ok && payload?.ok === true && payload?.provider === "fast2sms")) {
+            const reason = typeof payload?.error === "string" ? payload.error : `HTTP ${response.status}`;
+            throw new Error(`Fast2SMS smoke failed: ${reason}`);
+          }
+          const evidence = {
+            ok: true,
+            provider: "fast2sms",
+            requestId: typeof payload.requestId === "string" ? payload.requestId : null,
+            recipientSuffix: phone.slice(-4),
+          };
+          writeFileSync("sms-smoke-evidence.json", JSON.stringify(evidence, null, 2));
+          console.log(JSON.stringify(evidence));
+          NODE
+
       # Uploaded whether or not certification passed: a failed run's report is the thing worth reading.
       # The artifact is sanitized inside the gate and refused outright if a known sensitive value
       # survives into it.
@@ -230,6 +297,14 @@ jobs:
         with:
           name: staging-certification-${{ github.event.inputs.expected_sha }}
           path: staging-certification.json
+          if-no-files-found: warn
+
+      - name: Upload sanitized SMS smoke evidence
+        if: ${{ always() && github.event.inputs.sms_smoke == 'approved' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sms-smoke-${{ github.event.inputs.expected_sha }}
+          path: sms-smoke-evidence.json
           if-no-files-found: warn
 
       - name: Where to test
