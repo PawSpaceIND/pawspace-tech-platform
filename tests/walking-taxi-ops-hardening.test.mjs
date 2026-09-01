@@ -120,6 +120,8 @@ async function opsStack() {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
   globalThis.__PAWSPACE_TEST_ENV = { DB: db };
+  const auth = await import("../lib/server-auth.ts");
+  await auth.ensureSecurityTables(db);
   for (const sql of [...schedulingDDL, ...canonicalDDL]) sqlite.exec(sql);
   await capacity.seedProviderCapacityDefaults(db);
   await walkingOps.ensureWalkingOpsTables(db);
@@ -172,8 +174,17 @@ async function opsStack() {
       packageCode: "walking-30", mode: walkCount === 1 ? "once" : "recurring", petCount: 1, walkCount,
       weekdays, scheduledStart: windows[0].start, scheduledEnd: windows[0].end, paymentMode: "pay_after_service",
     });
+    const actorEmail = `walking.${customerId.toLowerCase().replace(/[^a-z0-9]+/g, ".")}@fixture.pawspace.test`;
+    sqlite.prepare("INSERT OR REPLACE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,'customer','active',?,?)")
+      .run(`USR-WALK-${tag}`, actorEmail, "Walking customer fixture", NOW, NOW);
+    sqlite.prepare("INSERT OR REPLACE INTO customer_identity_links (email,customer_id,status,verified_at,updated_at) VALUES (?,?,'active',?,?)")
+      .run(actorEmail, customerId, NOW, NOW);
     const response = await walkingBookingsRoute.POST(new Request("http://localhost/api/walking-bookings", {
       method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "oai-authenticated-user-email": actorEmail,
+      },
       body: JSON.stringify({
         idempotencyKey: `book-${tag}`, scheduleGroupId: groupId, walkingQuoteId: quote.quoteId,
         customer: { id: customerId, name: "Test Customer", primaryPhone: "9999900001" },
