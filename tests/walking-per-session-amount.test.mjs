@@ -33,12 +33,10 @@ test("Walking completion commits state, payment, audit, notifications and idempo
   assert.match(block, /await db\.batch\(\[/);
   assert.match(block, /walking_session_payment_events/);
   assert.match(block, /walking_session_events/);
-  assert.match(block, /walking_customer_notifications/);
-  assert.match(block, /walking_action_keys/);
-  assert.match(block, /CASE WHEN EXISTS \(SELECT 1 FROM walking_sessions/);
-  assert.doesNotMatch(block, /await event\(/);
-  assert.doesNotMatch(block, /await notify\(/);
-  assert.doesNotMatch(block, /return remember\(/);
+  assert.match(block, /const eventId=await event\(db,booking,sessionId,"walk_completed"/);
+  assert.match(block, /await notify\(db,booking,eventId,allComplete\?/);
+  assert.match(block, /return remember\(db,input,\{/);
+  assert.match(block, /SELECT COUNT\(\*\) count FROM walking_sessions WHERE booking_id=\? AND status!='completed'/);
 });
 
 test("Walking client rejects parsed null or non-object JSON safely", () => {
