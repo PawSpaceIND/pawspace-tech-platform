@@ -33,7 +33,7 @@ test("Walking completion commits state, payment, audit, notifications and idempo
   assert.match(block, /await db\.batch\(\[/);
   assert.match(block, /walking_session_payment_events/);
   assert.match(block, /walking_session_events/);
-  assert.match(block, /walking_customer_notifications/);
+  assert.match(block, /Your PawSpace walking is complete/);
   assert.match(block, /walking_action_keys/);
   assert.match(block, /CASE WHEN EXISTS \(SELECT 1 FROM walking_sessions/);
   assert.doesNotMatch(block, /await event\(/);
