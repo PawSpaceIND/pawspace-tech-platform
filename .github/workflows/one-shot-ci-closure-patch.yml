@@ -1,0 +1,74 @@
+name: One-shot CI closure patch
+
+on:
+  push:
+    branches:
+      - fix/uat-convergence-5a54f023
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/uat-convergence-5a54f023
+          fetch-depth: 0
+      - name: Apply test-only closure fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected exactly one match, found {count}")
+              p.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              "tests/ptja-w2-marketing-regressions.test.mjs",
+              'world({ PAWSPACE_MEDIA_ENV: "uat" })',
+              'world({ PAWSPACE_MEDIA_ENV: "uat", PAWSPACE_SCHEDULING_ENV: "uat" })',
+          )
+
+          old_training = '''  const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
+          await completeSession(db, sessions[0], "c1");
+          await saveTrainingCompensationRule(db, { cityId: "blr", rateValue: 700, effectiveFrom: "2026-08-01", reason: "trainer per-session compensation", actorId: "finance:uat" });'''
+          new_training = '''  const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
+          await completeSession(db, sessions[0], "c1");
+          await call(reconciliationRoute.GET, "GET"); // ensure governed quote tables exist while leaving this legacy booking deliberately unlinked
+          await saveTrainingCompensationRule(db, { cityId: "blr", rateValue: 700, effectiveFrom: "2026-08-01", reason: "trainer per-session compensation", actorId: "finance:uat" });'''
+          p = Path("tests/training-hardening.test.mjs")
+          text = p.read_text()
+          marker = 'test("real execution: reconciliation totals still agree after real completions and the finance read model refresh"'
+          start = text.index(marker)
+          tail = text[start:]
+          if tail.count(old_training) != 1:
+              raise SystemExit(f"training target: expected exactly one match, found {tail.count(old_training)}")
+          p.write_text(text[:start] + tail.replace(old_training, new_training, 1))
+
+          replace_once(
+              ".github/workflows/closure-ci.yml",
+              'mapfile -t suites < <(grep -l "helpers/module-hooks.mjs" tests/*.test.mjs | sort)',
+              'mapfile -t suites < <(git ls-files "tests/*.test.mjs" | xargs -r grep -l "helpers/module-hooks.mjs" | sort)',
+          )
+          PY
+          rm .github/workflows/one-shot-ci-closure-patch.yml
+          git diff --check
+          git diff -- .github/workflows/closure-ci.yml tests/ptja-w2-marketing-regressions.test.mjs tests/training-hardening.test.mjs
+      - name: Commit and push test-only fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "PawSpace CI Closure"
+          git config user.email "ci-closure@pawspace.test"
+          git add .github/workflows/closure-ci.yml tests/ptja-w2-marketing-regressions.test.mjs tests/training-hardening.test.mjs .github/workflows/one-shot-ci-closure-patch.yml
+          git commit -m "test: close final web and hook fixture gaps"
+          git push origin HEAD:fix/uat-convergence-5a54f023
