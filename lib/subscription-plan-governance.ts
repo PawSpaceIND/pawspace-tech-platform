@@ -9,6 +9,8 @@
  * Versioned + audited. Cold-DB safe.
  */
 
+import { addCalendarMonthsClamped } from "./subscription-calendar";
+
 type Db = D1Database;
 type Row = Record<string, unknown>;
 const uid = (p: string) => `${p}-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
@@ -29,7 +31,7 @@ export async function ensureSubscriptionPlanTables(db: Db) {
 /** The expiry rule: a plan bought at `startAt` expires `validityValue` days/months later. */
 export function computePlanExpiry(startAt: number, validityValue: number, validityUnit: "days" | "months"): number {
   const v = Math.max(1, Math.floor(Number(validityValue) || 0));
-  if (validityUnit === "months") { const d = new Date(startAt); d.setUTCMonth(d.getUTCMonth() + v); return d.getTime(); }
+  if (validityUnit === "months") return addCalendarMonthsClamped(startAt, v);
   return startAt + v * DAY;
 }
 
@@ -62,29 +64,13 @@ export async function updateSubscriptionPlan(db: Db, input: { id: string; change
   if (!before) throw new Error("Subscription plan not found");
   const entries = Object.entries(input.changes || {}).filter(([k]) => EDITABLE.includes(k));
   if (!entries.length) throw new Error("No supported plan fields supplied");
-
-  // PATCH must preserve the same core commercial invariants enforced at plan creation. Validate JSON
-  // types before normalization so null, strings and truthy values cannot silently change commercial data.
   const normalizedEntries = entries.map(([key, value]): [string, unknown] => {
-    if (key === "price") {
-      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new Error("A valid numeric price is required");
-      return [key, value];
-    }
-    if (key === "session_count" || key === "validity_value") {
-      if (typeof value !== "number" || !Number.isFinite(value) || value < 1) throw new Error("session_count and validity_value must be numeric values of at least 1");
-      return [key, Math.floor(value)];
-    }
-    if (key === "validity_unit") {
-      if (typeof value !== "string" || !["days", "months"].includes(value)) throw new Error("validity_unit must be 'days' or 'months'");
-      return [key, value];
-    }
-    if (key === "active" || key === "family_wallet") {
-      if (typeof value !== "boolean") throw new Error(`${key} must be a boolean`);
-      return [key, value ? 1 : 0];
-    }
+    if (key === "price") { if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new Error("A valid numeric price is required"); return [key, value]; }
+    if (key === "session_count" || key === "validity_value") { if (typeof value !== "number" || !Number.isFinite(value) || value < 1) throw new Error("session_count and validity_value must be numeric values of at least 1"); return [key, Math.floor(value)]; }
+    if (key === "validity_unit") { if (typeof value !== "string" || !["days", "months"].includes(value)) throw new Error("validity_unit must be 'days' or 'months'"); return [key, value]; }
+    if (key === "active" || key === "family_wallet") { if (typeof value !== "boolean") throw new Error(`${key} must be a boolean`); return [key, value ? 1 : 0]; }
     return [key, value];
   });
-
   const now = Date.now(), set = normalizedEntries.map(([k]) => `${k}=?`).join(",");
   await db.prepare(`UPDATE subscription_plans SET ${set},version=version+1,updated_by=?,updated_at=? WHERE id=?`).bind(...normalizedEntries.map(([, v]) => v as never), input.actorId, now, input.id).run();
   const after = await db.prepare("SELECT * FROM subscription_plans WHERE id=?").bind(input.id).first<Row>();

@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+installWorkersHooks("__SUBSCRIPTION_PLAN_TEST_DB__");
 
 function makeD1(sqlite) {
   const statement = (sql, args) => ({
@@ -28,6 +31,7 @@ function makeD1(sqlite) {
 async function seededPlan() {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
+  globalThis.__SUBSCRIPTION_PLAN_TEST_DB__ = db;
   const { createSubscriptionPlan } = await import("../lib/subscription-plan-governance.ts");
   const plan = await createSubscriptionPlan(db, {
     serviceCode: "grooming",
@@ -45,6 +49,7 @@ async function seededPlan() {
 }
 
 const update = async (db, plan, changes) => {
+  globalThis.__SUBSCRIPTION_PLAN_TEST_DB__ = db;
   const { updateSubscriptionPlan } = await import("../lib/subscription-plan-governance.ts");
   return updateSubscriptionPlan(db, {
     id: plan.id,

@@ -2,12 +2,14 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 import { auditApiResponse, authorizeApiRequest } from "../lib/api-gateway";
-import {authorizePlatformSessionRequest} from "../lib/session-api-gateway";
-import {blockDisabledServiceRequest} from "../lib/service-control";
+import{authorizePlatformSessionRequest}from"../lib/session-api-gateway";
+import{blockDisabledServiceRequest}from"../lib/service-control";
 import {runBackgroundScheduler} from "../lib/background-scheduler";
 import {processDueWhatsAppNoResponseSequences} from "../lib/whatsapp-no-response-sequence";
 import {cleanupExpiredReservationLeases} from "../lib/scheduling-reservation-leases";
 import {runRazorpaySettlementReconciliationSweep} from "../lib/razorpay-settlement-reconciliation";
+import {runSubscriptionBillingSweep} from "../lib/subscription-billing";
+import {runSubscriptionScheduledMaintenance} from "../lib/subscription-scheduled";
 
 interface Env {
   ASSETS: Fetcher;
@@ -32,12 +34,6 @@ interface ScheduledControllerLike {
   cron: string;
   noRetry(): void;
 }
-
-// Image security config. SVG sources with .svg extension auto-skip the
-// optimization endpoint on the client side (served directly, no proxy).
-// To route SVGs through the optimizer (with security headers), set
-// dangerouslyAllowSVG: true in next.config.js and uncomment below:
-// const imageConfig: ImageConfig = { dangerouslyAllowSVG: true };
 
 function secureApiResponse(response:Response){const secured=new Response(response.body,response);secured.headers.set("cache-control","no-store");secured.headers.set("x-content-type-options","nosniff");secured.headers.set("referrer-policy","same-origin");return secured;}
 
@@ -73,7 +69,7 @@ const worker = {
     return handler.fetch(request, env, ctx);
   },
   async scheduled(controller:ScheduledControllerLike,env:Env,ctx:ExecutionContext){
-    ctx.waitUntil((async()=>{const [cleanup,scheduler,whatsappRecovery,settlementRecon]=await Promise.allSettled([cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),processDueWhatsAppNoResponseSequences(env.DB,{now:controller.scheduledTime,actorEmail:"system:scheduled-worker"}),runRazorpaySettlementReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime})]);const errors:string[]=[];if(cleanup.status==="rejected")errors.push(`reservation cleanup: ${cleanup.reason instanceof Error?cleanup.reason.message:String(cleanup.reason)}`);if(scheduler.status==="rejected")errors.push(`background scheduler: ${scheduler.reason instanceof Error?scheduler.reason.message:String(scheduler.reason)}`);else if(Array.isArray(scheduler.value.errors)&&scheduler.value.errors.length)errors.push(...scheduler.value.errors);if(whatsappRecovery.status==="rejected")errors.push(`whatsapp recovery: ${whatsappRecovery.reason instanceof Error?whatsappRecovery.reason.message:String(whatsappRecovery.reason)}`);if(settlementRecon.status==="rejected")errors.push(`razorpay settlement reconciliation: ${settlementRecon.reason instanceof Error?settlementRecon.reason.message:String(settlementRecon.reason)}`);if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);})());
+    ctx.waitUntil((async()=>{const [cleanup,scheduler,whatsappRecovery,settlementRecon,subscriptionMaintenance]=await Promise.allSettled([cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),processDueWhatsAppNoResponseSequences(env.DB,{now:controller.scheduledTime,actorEmail:"system:scheduled-worker"}),runRazorpaySettlementReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),runSubscriptionScheduledMaintenance(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,billingSweep:(db,input)=>runSubscriptionBillingSweep(db,input)})]);const errors:string[]=[];if(cleanup.status==="rejected")errors.push(`reservation cleanup: ${cleanup.reason instanceof Error?cleanup.reason.message:String(cleanup.reason)}`);if(scheduler.status==="rejected")errors.push(`background scheduler: ${scheduler.reason instanceof Error?scheduler.reason.message:String(scheduler.reason)}`);else if(Array.isArray(scheduler.value.errors)&&scheduler.value.errors.length)errors.push(...scheduler.value.errors);if(whatsappRecovery.status==="rejected")errors.push(`whatsapp recovery: ${whatsappRecovery.reason instanceof Error?whatsappRecovery.reason.message:String(whatsappRecovery.reason)}`);if(settlementRecon.status==="rejected")errors.push(`razorpay settlement reconciliation: ${settlementRecon.reason instanceof Error?settlementRecon.reason.message:String(settlementRecon.reason)}`);if(subscriptionMaintenance.status==="rejected")errors.push(`subscription maintenance: ${subscriptionMaintenance.reason instanceof Error?subscriptionMaintenance.reason.message:String(subscriptionMaintenance.reason)}`);else if(Number(subscriptionMaintenance.value.errors||0)>0)errors.push(`subscription maintenance: ${subscriptionMaintenance.value.errors} exception(s)`);if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);})());
   },
 };
 
