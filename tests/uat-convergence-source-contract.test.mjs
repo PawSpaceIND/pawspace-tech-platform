@@ -27,10 +27,15 @@ test("UAT convergence: scheduling and Training controls are wired end to end",()
   assert.match(training,/training_completion_certificates/);
   assert.match(training,/training_customer_notifications/);
   assert.match(training,/status=\x27locked\x27|status='locked'/);
-  assert.match(training,/CLOSED/);
+  // A terminal programme keeps two outcomes; readers ask the shared predicate instead of comparing a
+  // string, so no consumer can be left behind on a value the writer stopped emitting.
+  assert.match(training,/completed_with_exceptions/);
+  assert.match(training,/export function isTerminalTrainingProgramme/);
+  assert.doesNotMatch(training,/terminal\?"CLOSED"/);
   assert.match(sessionsRoute,/latitude:body\.latitude/);
   assert.match(sessionsRoute,/ownerHandoverMinutes:body\.ownerHandoverMinutes/);
-  assert.match(sessionsRoute,/===\"CLOSED\"/);
+  assert.match(sessionsRoute,/isTerminalTrainingProgramme\(/);
+  assert.doesNotMatch(sessionsRoute,/===\"CLOSED\"/);
 });
 
 test("UAT convergence: Boarding, Sitting and Walking proof/location/finance are active",()=>{

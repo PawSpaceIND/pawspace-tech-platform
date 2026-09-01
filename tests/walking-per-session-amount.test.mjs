@@ -25,7 +25,7 @@ test("Walking pricing parser tolerates null pricing", () => {
   assert.match(walkingSource, /pricing\?\.perWalkAmount/);
 });
 
-test("Walking completion records payment, audit, notification, idempotency and governed final finance", () => {
+test("Walking completion commits payment, audit, notification, idempotency and governed finance in one batch", () => {
   const start = walkingSource.indexOf('if(input.action==="complete_walk")');
   const end = walkingSource.indexOf('throw new Response("Unsupported Dog Walking lifecycle action"');
   const block = walkingSource.slice(start, end);
@@ -36,9 +36,20 @@ test("Walking completion records payment, audit, notification, idempotency and g
   assert.match(block, /resolveServiceCompletionFinance/);
   assert.match(block, /Your PawSpace Walking programme is complete/);
   assert.match(block, /Your PawSpace walk is complete/);
-  assert.match(block, /await event\(/);
-  assert.match(block, /await notify\(/);
-  assert.match(block, /return remember\(/);
+  /*
+   * The whole completion commits in ONE batch. walking_session_payment_events.session_id is UNIQUE, so
+   * while the idempotency key was written after the batch through remember(), a worker lost between the
+   * two left a DUE payment row with no key: the retry re-executed, hit that UNIQUE constraint, and the
+   * walk could never be completed through the API again. The key, the payment row, the audit event and
+   * both notifications must therefore land together, and none of them may be a separate awaited call.
+   */
+  assert.match(block, /walking_action_keys/);
+  assert.match(block, /walking_customer_notifications/);
+  assert.match(block, /CASE WHEN EXISTS \(SELECT 1 FROM walking_sessions/);
+  assert.doesNotMatch(block, /await event\(/);
+  assert.doesNotMatch(block, /await notify\(/);
+  assert.doesNotMatch(block, /return remember\(/);
+  assert.equal(block.match(/await db\.batch\(\[/g)?.length, 1, "exactly one batch commits the completion");
   assert.match(block, /gpsConnected:true/);
   assert.match(block, /payout:finance\?\.payoutStatus/);
   assert.match(block, /tax:finance\?\.taxStatus/);

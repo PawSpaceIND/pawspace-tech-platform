@@ -258,11 +258,11 @@ test("real execution: no_show respects the 15-minute grace for providers; progra
   assert.equal(ns.status, "no_show");
   assert.equal(ns.consumption, "pending_policy", "no_show must never auto-consume a session");
   const prog = sqlite.prepare("SELECT status,completed_sessions,no_show_sessions FROM training_programmes").get();
-  // #388 deliberately streamlined the terminal programme vocabulary to a single CLOSED state.
-  // Recorded as a decision, not a discovery: the clean/no-show distinction is no longer carried by
-  // the status, so the assertions below carry it instead - the no_show session outcome itself is
-  // what must survive, and that is what is checked.
-  assert.equal(prog.status, "CLOSED", "a terminal programme is CLOSED");
+  // The single "CLOSED" state #388 introduced is reverted. The distinction is not cosmetic: the guard in
+  // lib/training-cancellation.ts refuses a fresh cancellation request only for
+  // ["completed","completed_with_exceptions","cancelled"], so while the writer emitted "CLOSED" it never
+  // matched and a finished programme could open a new refund case.
+  assert.equal(prog.status, "completed_with_exceptions", "a terminal programme carrying a no_show is not a clean completion");
   assert.equal(prog.completed_sessions, 1);
   assert.equal(prog.no_show_sessions, 1);
 });
@@ -275,12 +275,32 @@ test("real execution: a programme whose every session completes cleanly ends sta
   await completeSession(db, sessions[0], "c1");
   await completeSession(db, sessions[1], "c2");
   const prog = sqlite.prepare("SELECT status,completed_sessions,no_show_sessions FROM training_programmes").get();
-  // Terminal programmes are all CLOSED since #388, so the status alone no longer separates a clean
-  // programme from one that ended with exceptions. The counters do, and are asserted here so that
-  // distinction is still pinned by a test: this one closed with two clean sessions and NO no-shows.
-  assert.equal(prog.status, "CLOSED");
+  // The counterpart of the assertion above: a programme with no exceptions ends plainly completed, so the
+  // status separates the two outcomes again rather than the counters having to carry it alone.
+  assert.equal(prog.status, "completed");
   assert.equal(prog.completed_sessions, 2);
   assert.equal(prog.no_show_sessions, 0, "a cleanly completed programme carries no exceptions");
+});
+
+test("REGRESSION lib/training-cancellation.ts: a terminal programme cannot open a new cancellation/refund case", async () => {
+  // The guard refuses ["completed","completed_with_exceptions","cancelled"] on the PROGRAMME status.
+  // While recalcProgramme() emitted a single "CLOSED" that list matched nothing, so a fully delivered
+  // programme could still open a fresh refund case against money already earned. This drives the real
+  // cancellation entry point rather than reading the source, so the guard cannot silently stop matching
+  // again if the terminal vocabulary is changed.
+  freshDb(); baseTables();
+  seedBooking({ id: "B1", group: "G1", sessions: 2, dueNow: 8000 });
+  const db = globalThis.__TRN_DB__;
+  const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
+  await completeSession(db, sessions[0], "c1");
+  await completeSession(db, sessions[1], "c2");
+  assert.equal(sqlite.prepare("SELECT status FROM training_programmes").get().status, "completed");
+
+  await assert.rejects(
+    requestTrainingCancellation(db, { bookingId: "B1", reason: "changed my mind after delivery", idempotencyKey: "can-terminal", actorId: "customer:cus_t1" }),
+    (e) => e instanceof Response && e.status === 409,
+    "a delivered programme must not open a refund case");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM training_cancellation_cases").get().n, 0, "and no case row may be written");
 });
 
 // ---- 3. THE ROSTER DEFECT: reschedule/replace must respect trainer roster availability ---------
