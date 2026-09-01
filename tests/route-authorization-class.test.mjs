@@ -118,12 +118,15 @@ async function guardedRoutes() {
   return names.sort();
 }
 
+// A handler that hangs would stall CI rather than fail it, so every call is bounded.
 function withDeadline(promise, ms, label) {
   let timer;
   const deadline = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} did not settle within ${ms}ms`)), ms); });
   return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
 }
 
+// The least-privileged role in the catalogue, derived rather than hardcoded: whatever role holds the
+// fewest permissions is the sharpest escalation probe, and it stays sharp if the catalogue changes.
 function leastPrivilegedRole() {
   let best = null;
   for (const role of platformSecurity.defaultRoles) {
@@ -134,6 +137,11 @@ function leastPrivilegedRole() {
   return best;
 }
 
+/**
+ * Drives every method of every guarded route once. `identity` is null for an anonymous caller, or an
+ * email seeded against `roleCode`. Each route gets a FRESH in-memory database, so a handler that does
+ * manage to write cannot affect any other case - and the sweep cannot accumulate state.
+ */
 async function sweep({ roleCode = null } = {}) {
   const names = await guardedRoutes();
   const served = [], refused = [], validatedFirst = [], inconclusive = [], problems = [];
@@ -147,7 +155,7 @@ async function sweep({ roleCode = null } = {}) {
       const sqlite = new DatabaseSync(":memory:");
       globalThis.__RAC_DB__ = makeD1(sqlite);
       globalThis.__RAC_ENV__ = {};
-      try { await serverAuth.ensureSecurityTables(globalThis.__RAC_DB__); } catch { }
+      try { await serverAuth.ensureSecurityTables(globalThis.__RAC_DB__); } catch { /* route may own its schema */ }
       const headers = { "content-type": "application/json" };
       if (roleCode) {
         sqlite.prepare("INSERT OR REPLACE INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,'active',?,?)")
@@ -168,10 +176,20 @@ async function sweep({ roleCode = null } = {}) {
   return { names, served, refused, validatedFirst, inconclusive, problems };
 }
 
+// Routes whose GET is deliberately readable by the probe identity, with the reason it is legitimate.
+// Each entry is a decision someone made, recorded here so the sweep stays a real assertion instead of
+// being widened whenever it goes red. Anything not listed must refuse.
 const DELIBERATELY_READABLE = new Map([
+  // Entered coverage when GUARD widened to recognise ownership-based authorization. A zone product
+  // catalogue: listFoodCatalogue(zoneId), liveMoney:false, no customer data - the same shape as
+  // boarding-commercial, which the gateway already allowlists. Its POST is not readable and is swept.
   ["food-commercial.GET", "public zone product catalogue; no customer data and no live money"],
+  // The gateway allowlists this path outright (requiredPermission returns null for it).
   ["training-requirements.GET", "public: gateway allowlists /api/training-requirements"],
+  // Public content branch; the admin view (?view=admin) requires marketing.manage and is asserted below.
   ["content-controls.GET", "public content branch; ?view=admin is guarded"],
+  // These guard on pricing.view, which the customer role legitimately holds - a customer reading the
+  // published catalogue and price list is the intended behaviour.
   ["catalogue.GET", "guards pricing.view, which the probe role holds by design"],
   ["pricing-rules.GET", "guards pricing.view, which the probe role holds by design"],
   ["pricing-control.GET", "guards pricing.view, which the probe role holds by design"],
@@ -180,7 +198,10 @@ const DELIBERATELY_READABLE = new Map([
   ["grooming-commercial-policy.GET", "guards pricing.view, which the probe role holds by design"],
   ["coupon-governance.GET", "guards pricing.view, which the probe role holds by design"],
   ["referral-governance.GET", "guards pricing.view, which the probe role holds by design"],
+  // UI message resolution for a signed-in identity; the coverage view requires settings.manage.
   ["i18n.GET", "translated UI strings for any signed-in identity; ?mode=coverage is guarded"],
+  // Cold-database branch only: guarding first would mean resolveActor -> ensureSecurityTables, and
+  // the D7 read-side contract forbids a cold GET from creating any table. Content is asserted below.
   ["ops-work-queue.GET", "cold-DB zeroed snapshot; guarding first would violate the D7 read-side DDL contract"],
 ]);
 
@@ -194,6 +215,7 @@ test("the sweep enumerates a real guarded surface and a real least-privileged ro
     `expected the guarded surface to be substantial, found ${anonymousSweep.names.length}`);
   assert.ok(probeRole && probeRole.permissions.length > 0, "no least-privileged role was derived");
   assert.ok(!probeRole.permissions.includes("*"), "the probe role must not hold the wildcard");
+  // If the probe role ever gained broad staff permissions the escalation sweep would quietly weaken.
   for (const forbidden of ["dashboard.view", "bookings.manage", "users.manage", "finance.manage", "settings.manage"]) {
     assert.ok(!probeRole.permissions.includes(forbidden),
       `probe role ${probeRole.code} holds ${forbidden}; it is no longer a low-privilege probe`);
@@ -213,19 +235,52 @@ test("no guarded route serves a least-privileged identity it should refuse", asy
 });
 
 test("the sweep actually reaches authorization rather than failing earlier", async () => {
+  // Without this floor both assertions above could pass while every handler died before its guard -
+  // a green sweep that proved nothing. 401/403 is the only outcome that shows a guard ran and denied.
   assert.ok(anonymousSweep.refused.length >= 150,
     `only ${anonymousSweep.refused.length} handlers reached a 401/403 for an anonymous caller; the sweep has stopped exercising authorization`);
   assert.ok(lowPrivilegeSweep.refused.length >= 150,
     `only ${lowPrivilegeSweep.refused.length} handlers reached a 401/403 for role ${probeRole.code}`);
 });
 
+// Three routes use TypeScript parameter properties, which Node's --experimental-strip-types cannot
+// parse, so this harness cannot load them at all. That is a limitation of the runner, not a finding
+// about those routes - but it is enumerated rather than filtered by pattern, so a fourth route
+// dropping out of the sweep fails here instead of quietly shrinking the surface.
+// finance-control and gst-accounting used to sit here too. lib/gst-accounting.ts declared its
+// ConfigurationRequired field as a constructor parameter property, so every module reaching it was
+// unloadable and both routes sat outside this sweep. That field is now assigned explicitly — identical
+// at runtime — and both routes are swept like any other.
+//
+// location-recovery was the last entry, for the same parameter property in
+// lib/universal-location-recovery.ts. That field is now assigned explicitly too, so the list is EMPTY
+// and every route in the repository is swept. Keep it that way: an empty baseline means the next
+// parameter property to appear fails here immediately rather than silently removing a route - and its
+// module - from authorization coverage.
 const UNLOADABLE_UNDER_STRIP_ONLY = [];
 
+// The low-privilege probe role is the customer role. It legitimately holds scheduling.book, so an
+// empty canonical-bookings POST is authorized first and then rejected as an invalid payload. That is
+// the opposite of validation-before-authorization: the anonymous sweep must still show 401/403, while
+// the authorized customer probe may show 400. Keep these explicit so adding a route-local guard does
+// not turn a correct customer path into a false ordering defect.
 const AUTHORIZED_PROBE_VALIDATION = new Map([
   ["canonical-bookings.POST", "customer probe holds scheduling.book; empty body is validated only after authorization"],
   ["subscription-billing.GET", "customer probe holds scheduling.book; missing subscription selector is validated only after authorization"],
 ]);
 
+// Route/method pairs that answer a non-401/403 4xx to an unauthorized caller: they do route-specific
+// work - parse a body, reject a missing parameter - BEFORE reaching their permission check. None of
+// them leaks data, and the worker gateway refuses these callers in production, so this is an ordering
+// backlog rather than a set of holes. It is pinned as an exact baseline so the number can only go
+// down: a NEW route that validates before authorizing fails here, and fixing one of these fails here
+// too until it is removed from the list.
+// The twelve entries marked below entered coverage when GUARD widened to recognise ownership-based
+// authorization; they were always in this state, they were simply never swept. Each authorizes by
+// OWNERSHIP, and ownership needs a subject id out of the payload, so an absent one is answered as a
+// shape error rather than a refusal - the same structural situation uat-scheduling's reserve path had.
+// None leaks data and the worker gateway refuses these callers in production. Recording existing state,
+// not accepting new debt.
 const VALIDATES_BEFORE_AUTHORIZING = [
   "booking-rating.POST",
   "customer-support-case.POST",
@@ -341,9 +396,15 @@ test("the set of routes this harness cannot load has not grown", async () => {
 });
 
 test("no guarded route answers 5xx to an unauthorized caller", async () => {
+  // A 500 here would mean the handler did work before deciding whether the caller was allowed to ask.
   assert.deepEqual(anonymousSweep.inconclusive, [],
     `these handlers failed internally instead of refusing: ${anonymousSweep.inconclusive.join(", ")}`);
 });
+
+// ---------------------------------------------------------------------------
+// The two defects this sweep found, pinned individually so a regression names itself rather than
+// showing up as one entry in a list of 300.
+// ---------------------------------------------------------------------------
 
 test("platform-governance does not serve the role and permission catalogue without dashboard.view", async () => {
   const sqlite = new DatabaseSync(":memory:");
@@ -378,6 +439,9 @@ test("platform-governance still serves an identity that holds dashboard.view", a
 });
 
 test("the ops-work-queue cold-DB reply carries no task data and creates no tables", async () => {
+  // This is the invariant that actually protects the exemption above: the anonymous cold read may
+  // answer 200, but it must stay a zeroed snapshot and must not perform DDL. If either changes, the
+  // D7 trade-off stops being safe and the guard has to move after all.
   const sqlite = new DatabaseSync(":memory:");
   globalThis.__RAC_DB__ = makeD1(sqlite);
   globalThis.__RAC_ENV__ = {};
@@ -395,6 +459,7 @@ test("the ops-work-queue cold-DB reply carries no task data and creates no table
 });
 
 test("ops-work-queue refuses an unauthorized caller once its tables exist", async () => {
+  // The exemption is scoped to the cold database. With the queue initialised, the guard must bite.
   const sqlite = new DatabaseSync(":memory:");
   globalThis.__RAC_DB__ = makeD1(sqlite);
   globalThis.__RAC_ENV__ = {};
@@ -408,6 +473,8 @@ test("ops-work-queue refuses an unauthorized caller once its tables exist", asyn
 });
 
 test("the content-controls admin view is refused even though its public branch is open", async () => {
+  // Pins the reason content-controls.GET is on the deliberately-readable list: the exemption covers
+  // the public branch only, and must not be read as the whole route being open.
   const sqlite = new DatabaseSync(":memory:");
   globalThis.__RAC_DB__ = makeD1(sqlite);
   globalThis.__RAC_ENV__ = {};
@@ -433,6 +500,9 @@ test("the development-preview superuser is host-gated, which is what makes this 
 });
 
 test("a denied governance read performs no route-owned schema creation", async () => {
+  // The permission check used to run after this route's own ensureTables(), so a refused caller still
+  // triggered route-owned DDL. resolveActor() legitimately ensures the shared security tables - that
+  // is how the caller is identified at all - so this asserts on the governance tables the route owns.
   const sqlite = new DatabaseSync(":memory:");
   globalThis.__RAC_DB__ = makeD1(sqlite);
   globalThis.__RAC_ENV__ = {};
