@@ -52,8 +52,8 @@ test("Boarding Gate 2 checkout closes capacity and resolves governed completion 
   assert.match(source,/status='completed'/);
   assert.match(source,/UPDATE scheduling_reservations SET status='completed'/);
   assert.match(source,/resolveServiceCompletionFinance/);
-  assert.match(source,/payout:finance\?\.payoutStatus\?\?null/);
-  assert.match(source,/tax:finance\?\.taxStatus\?\?null/);
+  assert.match(source,/payout:finance\.payoutStatus/);
+  assert.match(source,/tax:finance\.taxStatus/);
   assert.doesNotMatch(source,/payout:\"rule_pending\"/);
   assert.doesNotMatch(source,/tax:\"configuration_required\"/);
 });
