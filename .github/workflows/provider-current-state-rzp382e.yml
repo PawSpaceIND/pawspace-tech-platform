@@ -13,18 +13,27 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Read sanitized provider state
+      - name: Read sanitized provider and local lifecycle state
         env:
           RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
           RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
         run: |
           set -euo pipefail
           case "$RAZORPAY_KEY_ID_SANDBOX" in rzp_test_*) ;; *) exit 1;; esac
           node --input-type=module <<'NODE'
           const auth=`Basic ${Buffer.from(`${process.env.RAZORPAY_KEY_ID_SANDBOX}:${process.env.RAZORPAY_KEY_SECRET_SANDBOX}`).toString('base64')}`;
           const get=async p=>{const r=await fetch(`https://api.razorpay.com${p}`,{headers:{authorization:auth},redirect:'manual'});const b=await r.json();if(!r.ok)throw new Error(`HTTP ${r.status}`);return b};
+          const cf=async(sql,params=[])=>{const r=await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID)}/d1/database/${encodeURIComponent(process.env.STAGING_D1_ID)}/query`,{method:'POST',headers:{authorization:`Bearer ${process.env.CLOUDFLARE_API_TOKEN}`,'content-type':'application/json'},body:JSON.stringify({sql,params})});const b=await r.json();if(!r.ok||b?.success!==true||b?.result?.[0]?.success!==true)throw new Error('D1 query failed');return b.result[0].results||[]};
           const sub=await get('/v1/subscriptions/sub_TWg9yixMBHpX2w');
           const pay=await get('/v1/payments/pay_TWgmGExMvHg9kZ');
           const inv=await get('/v1/invoices/inv_TWg9zIJKnpe4UU');
-          console.log(JSON.stringify({subscription:{id:sub.id,status:sub.status,paid_count:sub.paid_count},payment:{id:pay.id,status:pay.status,amount:pay.amount,amount_refunded:pay.amount_refunded,refund_status:pay.refund_status,order_id:pay.order_id,subscription_id:pay.subscription_id,invoice_id:pay.invoice_id},invoice:{id:inv.id,status:inv.status,subscription_id:inv.subscription_id,payment_id:inv.payment_id,order_id:inv.order_id}}));
+          const refunds=await get('/v1/payments/pay_TWgmGExMvHg9kZ/refunds');
+          const cert=(await cf('SELECT * FROM provider_certification_runs WHERE cert_key=?',['rzp382-20260901e']))[0]||null;
+          const cycles=cert?await cf('SELECT id,provider_payment_id,provider_event_id,status,accounting_status,amount_paise FROM subscription_billing_cycles WHERE contract_id=? ORDER BY created_at',[cert.contract_id]):[];
+          const cases=cert?await cf('SELECT id,status,requested_by,approved_by,gateway_refund_id,provider_payment_id,amount_paise FROM subscription_refund_cases WHERE contract_id=? ORDER BY created_at',[cert.contract_id]):[];
+          const providerRefunds=cert?await cf('SELECT gateway_refund_id,provider_event_id,status,amount_paise FROM subscription_provider_refunds WHERE contract_id=? ORDER BY created_at',[cert.contract_id]).catch(()=>[]):[];
+          console.log(JSON.stringify({subscription:{id:sub.id,status:sub.status,paid_count:sub.paid_count},payment:{id:pay.id,status:pay.status,amount:pay.amount,amount_refunded:pay.amount_refunded,refund_status:pay.refund_status,order_id:pay.order_id,invoice_id:pay.invoice_id},invoice:{id:inv.id,status:inv.status,subscription_id:inv.subscription_id,payment_id:inv.payment_id,order_id:inv.order_id},refunds:(refunds.items||[]).map(r=>({id:r.id,status:r.status,amount:r.amount,payment_id:r.payment_id,created_at:r.created_at})),local:{cert:cert&&{status:cert.status,contract_id:cert.contract_id,cycle_id:cert.cycle_id,payment_id:cert.payment_id,refund_case_id:cert.refund_case_id,refund_id:cert.refund_id,refund_event_id:cert.refund_event_id},cycles,cases,providerRefunds}}));
           NODE
