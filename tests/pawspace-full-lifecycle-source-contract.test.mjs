@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert";
 
-test("PawSpace Master System-Wide Closure Matrix", async (t) => {
+test("PawSpace Full Lifecycle Source Contract", async (t) => {
 
   // ==========================================
   // MODULE 1: INGESTION & OMNICHANNEL INBOX
