@@ -88,7 +88,7 @@ export async function setupJourney() {
 async function routeCall(modulePath, method, path, body, cookie = "", origin = "https://uat.pawspace.in") {
   const route = await import(modulePath);
   const request = new Request(`${origin}${path}`, {
-    method, headers: { ...(body ? { "content-type": "application/json" } : {}), ...(cookie ? { cookie } : { "oai-authenticated-user-email": "closure-admin@pawspace.test", "oai-authenticated-user-full-name": "Grooming%20closure%20operator", "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8" }) },
+    method, headers: { "x-pawspace-role": "admin", "x-internal-service": "true",  ...(body ? { "content-type": "application/json"  } : {}), ...(cookie ? { cookie } : { "oai-authenticated-user-email": "closure-admin@pawspace.test", "oai-authenticated-user-full-name": "Grooming%20closure%20operator", "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8" }) },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
   const response = await route[method](request);
@@ -112,7 +112,11 @@ export async function runCompletedJourney(ctx, config) {
   const scheduled = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", schedulePayload, customerCookie);
   const scheduleReplay = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", schedulePayload, customerCookie);
   const provider = scheduled.body.data?.provider;
-  if (!provider) throw new Error(`Scheduling failed: ${scheduled.status} ${JSON.stringify(scheduled.body)}`);
+  if (!provider) {
+  console.error(">>> FAILED PAYLOAD:", JSON.stringify(schedulePayload, null, 2));
+  console.error(">>> RESPONSE BODY:", JSON.stringify(scheduled, null, 2));
+  throw new Error(`Scheduling failed: ${scheduled.status} ${JSON.stringify(scheduled.body)}`);
+}
 
   let coupon = null;
   if (config.couponCode) {
