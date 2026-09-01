@@ -56,5 +56,5 @@ test("scheduler stores, filters and reassigns by request city", async () => {
   assert.match(route, /city_id IS NULL OR city_id=\?/);
   assert.match(route, /input\.serviceCode,cityIdFor\(input\),input\.zoneId/);
   assert.match(route, /cityId:cityIdFor\(original\)/);
-  assert.match(route, /const requestInput:ScheduleRequest=\{cityId:cityIdFor\(input\)/);
+  assert.match(route, /\brequestInput:ScheduleRequest=\{[\s\S]*?cityId:cityIdFor\(input\)/); // `const` is no longer adjacent
 });

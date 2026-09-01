@@ -49,11 +49,13 @@ async function world() {
   sqlite.exec(`
     CREATE TABLE provider_commercial_terms (id TEXT PRIMARY KEY, engagement_model TEXT);
     CREATE TABLE provider_payout_computations (booking_id TEXT PRIMARY KEY, provider_id TEXT, service_code TEXT, order_value REAL, provider_net_payout REAL, provider_gst_deducted REAL, term_id TEXT, computed_at INTEGER);
+    CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, city_id TEXT NOT NULL);
   `);
   return { sqlite, db };
 }
 function term(sqlite, id, model) { sqlite.prepare("INSERT INTO provider_commercial_terms (id,engagement_model) VALUES (?,?)").run(id, model); }
 function payout(sqlite, { booking, provider, order, gst, term, at, net = 0 }) {
+  sqlite.prepare("INSERT OR IGNORE INTO canonical_bookings (id,customer_id,city_id) VALUES (?,?,'blr')").run(booking, `CUS-${booking}`);
   sqlite.prepare("INSERT INTO provider_payout_computations (booking_id,provider_id,service_code,order_value,provider_net_payout,provider_gst_deducted,term_id,computed_at) VALUES (?,?,?,?,?,?,?,?)")
     .run(booking, provider, "boarding", order, net, gst, term, at);
 }
@@ -63,10 +65,10 @@ test("s52 TCS engine collects 1% of net value on marketplace supplies only, spli
   const tcs = await import("../lib/tcs-governance.ts");
   term(sqlite, "T_mkt", "commission_standard");
   term(sqlite, "T_emp", "direct_employee");
-  payout(sqlite, { booking: "bk1", provider: "P1", order: 1180, gst: 180, term: "T_mkt", at: istMs(2026, 7, 10) }); // net 1000 -> TCS 10
-  payout(sqlite, { booking: "bk2", provider: "P1", order: 590, gst: 90, term: "T_mkt", at: istMs(2026, 7, 20) });  // net 500 -> TCS 5
-  payout(sqlite, { booking: "bk3", provider: "E9", order: 2000, gst: 0, term: "T_emp", at: istMs(2026, 7, 11) });  // own supply -> excluded
-  payout(sqlite, { booking: "bk4", provider: "P2", order: 1180, gst: 180, term: "T_mkt", at: istMs(2026, 6, 28) }); // prior month -> excluded
+  payout(sqlite, { booking: "bk1", provider: "P1", order: 1180, gst: 180, term: "T_mkt", at: istMs(2026, 7, 10) });
+  payout(sqlite, { booking: "bk2", provider: "P1", order: 590, gst: 90, term: "T_mkt", at: istMs(2026, 7, 20) });
+  payout(sqlite, { booking: "bk3", provider: "E9", order: 2000, gst: 0, term: "T_emp", at: istMs(2026, 7, 11) });
+  payout(sqlite, { booking: "bk4", provider: "P2", order: 1180, gst: 180, term: "T_mkt", at: istMs(2026, 6, 28) });
 
   const res = await tcs.computeMonthlyTcs(db, { period: PERIOD, actorId: ACTOR });
   assert.equal(res.supplierCount, 1);
@@ -102,9 +104,9 @@ test("TDS reconciliation flags rate/amount mismatch, PAN-pending, and deposit ga
   await tds.ensureTdsTables(db);
   const insert = (section, id, base, rate, amount, pan) => sqlite.prepare("INSERT INTO tds_deductions (id,period,section,deductee_type,deductee_id,deductee_name,pan_status,base_amount,rate_pct,tds_amount,source_type,source_ref,computed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
     .run(`d_${id}`, PERIOD, section, "provider", id, id, pan, base, rate, amount, "provider_payouts", id, Date.now());
-  insert("194J", "P_ok", 1000, 10, 100, "verified");      // correct
-  insert("194H", "P_bad", 1000, 2, 50, "verified");        // WRONG: 2% of 1000 = 20, not 50
-  insert("194H", "P_pan", 1000, 2, 20, "pending_verification"); // correct amount, PAN pending
+  insert("194J", "P_ok", 1000, 10, 100, "verified");
+  insert("194H", "P_bad", 1000, 2, 50, "verified");
+  insert("194H", "P_pan", 1000, 2, 20, "pending_verification");
 
   const res = await recon.reconcileTds(db, { period: PERIOD });
   assert.equal(res.summary.recordedTds, 170);
@@ -114,7 +116,6 @@ test("TDS reconciliation flags rate/amount mismatch, PAN-pending, and deposit ga
   assert.equal(res.summary.reconciled, false);
   assert.equal(res.summary.payoutWithholdingNote.withheldAtPayout, 0);
 
-  // Record the matching challan -> deposit reconciles (the amount mismatch keeps it non-reconciled).
   await tds.recordTdsDeposit(db, { period: PERIOD, challanReference: "ITNS-1", amount: 170, actorId: ACTOR }).catch(() => {});
   const after = await recon.reconcileTds(db, { period: PERIOD });
   assert.equal(after.summary.depositStatus, "matched");
@@ -132,7 +133,7 @@ test("TCS reconciliation verifies recorded collections and catches a tampered ro
   assert.equal(clean.summary.reconciled, true);
   assert.equal(clean.summary.recordedTcs, 10);
 
-  sqlite.prepare("UPDATE tcs_collections SET tcs_total=99 WHERE period=?").run(PERIOD); // tamper
+  sqlite.prepare("UPDATE tcs_collections SET tcs_total=99 WHERE period=?").run(PERIOD);
   const tampered = await recon.reconcileTcs(db, { period: PERIOD });
   assert.equal(tampered.summary.reconciled, false);
   assert.ok(tampered.findings.some((f) => f.code === "amount_mismatch"), "detects the tampered TCS total");

@@ -2,6 +2,9 @@
  * Installs the resolver every real-execution suite needs: `cloudflare:workers` resolves to a stub that
  * reads a per-suite global, and lib modules that import each other extensionlessly resolve to `.ts`.
  *
+ * This harness remains test-only: production modules are deliberately not modified to satisfy loader fixtures.
+ * This comment-only touch forces exact-head CI after production files were restored to main.
+ *
  * `module.registerHooks` only exists from Node 22.15. CI pins 22.13.0, where calling it throws
  * `TypeError: nodeModule.registerHooks is not a function` and takes the whole file down before a single
  * test runs - which is exactly what it did. On that version the same resolver is registered as an
@@ -73,6 +76,14 @@ function transpileTsx(source, fileName) {
 }
 const cssStub = () => 'const handler={get:(_,key)=>typeof key==="string"?key:undefined};export default new Proxy({},handler);';
 
+function normalizedFileUrl(url) {
+  const parsed = new URL(url);
+  const pathname = parsed.pathname;
+  parsed.search = "";
+  parsed.hash = "";
+  return { pathname, parsed };
+}
+
 export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
   process.env.NODE_ENV = "test";
   process.env.PAWSPACE_LOCAL_PREVIEW = "on";
@@ -109,9 +120,10 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
         }
       },
       load(url, context, nextLoad) {
-        if (url.endsWith(".css")) return { format: "module", source: cssStub(), shortCircuit: true };
-        if (!url.endsWith(".tsx")) return nextLoad(url, context);
-        const path = fileURLToPath(url);
+        const { pathname, parsed } = normalizedFileUrl(url);
+        if (pathname.endsWith(".css")) return { format: "module", source: cssStub(), shortCircuit: true };
+        if (!pathname.endsWith(".tsx")) return nextLoad(url, context);
+        const path = fileURLToPath(parsed);
         return { format: "module", source: transpileTsx(readFileSync(path, "utf8"), path), shortCircuit: true };
       },
     });
@@ -121,7 +133,7 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
   const hook = `const workersUrl=${JSON.stringify(workersUrl)};
   import * as tsModule from ${JSON.stringify(typescriptUrl)};
   import { readFile } from "node:fs/promises";
-  import { fileURLToPath, pathToFileURL } from "node:url";
+  import { fileURLToPath } from "node:url";
   ${TSX_TRANSFORM}
   export async function resolve(specifier, context, nextResolve) {
     if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
@@ -136,11 +148,15 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
     }
   }
   export async function load(url, context, nextLoad) {
-    if (url.endsWith(".css")) return { format: "module", source: CSS_STUB, shortCircuit: true };
-    if (!url.endsWith(".tsx")) return nextLoad(url, context);
-    const path = fileURLToPath(url);
+    const parsed = new URL(url);
+    const pathname = parsed.pathname;
+    parsed.search = "";
+    parsed.hash = "";
+    if (pathname.endsWith(".css")) return { format: "module", source: CSS_STUB, shortCircuit: true };
+    if (!pathname.endsWith(".tsx")) return nextLoad(url, context);
+    const path = fileURLToPath(parsed);
     return { format: "module", source: transpileTsx(await readFile(path, "utf8"), path), shortCircuit: true };
   }`;
-  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
+  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`), import.meta.url);
   return workersUrl;
 }

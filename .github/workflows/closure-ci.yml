@@ -287,7 +287,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t suites < <(grep -l "helpers/module-hooks.mjs" tests/*.test.mjs | sort)
+          mapfile -t suites < <(git ls-files "tests/*.test.mjs" | xargs -r grep -l "helpers/module-hooks.mjs" | sort)
           test "${#suites[@]}" -gt 0
           printf '%s\n' "${suites[@]}" > harness-suites.txt
           echo "count=${#suites[@]}" >> "$GITHUB_OUTPUT"

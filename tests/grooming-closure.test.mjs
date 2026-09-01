@@ -8,9 +8,6 @@ test("Grooming closure uses one canonical transaction across Customer Partner Te
   const[customer,canonical,change,partnerApi,partnerUi,lifecycle,finance,security,governance,mediaSecurity,mediaApi,mediaBoundary]=await Promise.all([
     source("app/mobile-app/grooming-flow.tsx"),source("app/api/canonical-bookings/route.ts"),source("app/api/grooming-booking-change/route.ts"),source("app/api/partner-grooming-jobs/route.ts"),source("app/partner-app/canonical-grooming-jobs.tsx"),source("app/api/grooming-lifecycle/route.ts"),source("app/api/grooming-finance/route.ts"),source("lib/server-auth.ts"),source("lib/grooming-governance.ts"),source("lib/service-media-security.ts"),source("app/api/service-media/route.ts"),source("lib/media-upload-boundary.ts"),
   ]);
-  // The customer surface that books grooming is app/mobile-app/grooming-flow.tsx; app/page.tsx hands
-  // over to it rather than running a second implementation [PTJA-P1-F38]. The property is unchanged:
-  // one canonical transaction, reserved and booked through the governed clients.
   assert.match(customer,/createCanonicalLifecycle/);
   assert.match(customer,/reserveUatSchedule/);
   assert.match(canonical,/idempotency_key TEXT NOT NULL UNIQUE/);
@@ -21,9 +18,6 @@ test("Grooming closure uses one canonical transaction across Customer Partner Te
   assert.match(canonical,/grooming_subscription_purchase_snapshots/);
   assert.match(canonical,/governGroomingBooking/);
   assert.match(canonical,/cityId:input\.cityId,zoneId:input\.zoneId/);
-  // Prepay-only still holds. The "and captured" half was dropped deliberately (PAY-002): demanding a
-  // captured payment at purchase is what forced the LIVE verify-first exemption, so the purchase may now
-  // await gateway verification while the entitlement stays pending.
   assert.match(canonical,/Grooming subscription purchases must be prepaid/);
   assert.match(canonical,/subscription_reserved/);
   assert.match(change,/booking_cancelled/);
@@ -47,19 +41,12 @@ test("Grooming closure uses one canonical transaction across Customer Partner Te
   assert.match(mediaSecurity,/Service media asset belongs to another booking/);
   assert.match(mediaSecurity,/Service media asset belongs to another provider/);
   assert.match(mediaSecurity,/Service media asset purpose does not match the proof slot/);
-  // The proof gate's wording moved when scanning stopped being a human pressing approve: an asset is
-  // refused for being scanner-condemned, unreviewed, or never released by the boundary - three
-  // conditions where there used to be one. All three are pinned. [PTJA-W3-SC]
   assert.match(mediaSecurity,/rejected by malware\/content scanning/);
   assert.match(mediaSecurity,/has not been reviewed and approved/);
   assert.match(mediaSecurity,/has not been released by the scan\/quarantine boundary/);
   assert.match(mediaSecurity,/upload is not ready for service proof/);
   assert.match(mediaSecurity,/outside its active retention state/);
   assert.match(mediaSecurity,/still marked synthetic/);
-  // The checksum, size ceiling and state machine moved out of the route and into the shared
-  // signed-upload boundary when W2-B4-M04 closed, so that five media surfaces stop each writing their
-  // own version. They are pinned where they now live, and the route is pinned to delegating to it.
-  // [PTJA-W2-B4-M04]
   assert.match(mediaApi,/issueMediaUploadGrant/);
   assert.match(mediaApi,/redeemMediaUploadGrant/);
   assert.match(mediaApi,/reviewMedia/);
@@ -69,8 +56,6 @@ test("Grooming closure uses one canonical transaction across Customer Partner Te
   assert.match(mediaBoundary,/SHA-256 checksum/);
   assert.match(mediaBoundary,/maxSizeBytes:10_000_000/);
   assert.match(mediaBoundary,/quarantined/);
-  // proofReady is no longer "the reviewer approved". It is "approved AND the scan/quarantine boundary
-  // released it", which in production with no scanner and no manual-review policy is never. [PTJA-W3-SC]
   assert.match(mediaBoundary,/const usable=approved&&release\.releasable/);
   assert.match(mediaBoundary,/proofReady:usable/);
   assert.match(finance,/booking_invoices/);
@@ -174,11 +159,14 @@ test("Grooming production-readiness policy is city-configurable, frozen per book
   assert.match(gateway,/\/api\/grooming-commercial-policy/);
 });
 
-test("Grooming closure keeps live integrations explicitly outside the UAT transaction",async()=>{
+test("Grooming closure keeps live gateways outside UAT while completion finance is ledger-governed",async()=>{
   const[lifecycle,finance,plan]=await Promise.all([source("app/api/grooming-lifecycle/route.ts"),source("app/team/finance/page.tsx"),source("docs/GROOMING_CLOSURE_PLAN.md")]);
   assert.match(lifecycle,/uat_sandbox/);
-  assert.match(lifecycle,/Production GST\/tax rule is not yet approved/);
-  assert.match(lifecycle,/Provider payout percentage\/travel\/incentive\/penalty rule must be approved/);
+  assert.match(lifecycle,/resolveServiceCompletionFinance/);
+  assert.match(lifecycle,/tax_rule_status[\s\S]*'resolved'/);
+  assert.match(lifecycle,/status[\s\S]*'accrued'/);
+  assert.doesNotMatch(lifecycle,/Production GST\/tax rule is not yet approved/);
+  assert.doesNotMatch(lifecycle,/Provider payout percentage\/travel\/incentive\/penalty rule must be approved/);
   assert.match(finance,/Razorpay production credentials, live refunds/);
   assert.match(plan,/Deliberately still UAT \/ not production-complete/);
   assert.match(plan,/Do not connect live operational customer feeds, live payment\/communication integrations or production credentials/);
