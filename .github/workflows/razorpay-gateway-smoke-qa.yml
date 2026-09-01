@@ -6,11 +6,32 @@ on:
       - qa/razorpay-gateway-smoke-20260901
     paths:
       - scripts/razorpay-gateway-smoke-prepare.mjs
+      - scripts/razorpay-gateway-smoke-diagnose.mjs
       - .github/workflows/razorpay-gateway-smoke-qa.yml
   workflow_dispatch:
 
 jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Inspect persisted staging payment state
+        env:
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/razorpay-gateway-smoke-diagnose.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: razorpay-gateway-smoke-diagnostics
+          path: gateway-smoke-diagnostics.json
+
   prepare:
+    needs: diagnose
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
