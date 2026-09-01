@@ -11,17 +11,7 @@ export type CompletionFinanceFact={bookingId:string;serviceCode:string;providerI
 function enabled(value:unknown){return["on","true","1","yes"].includes(String(value??"").trim().toLowerCase());}
 async function ensureExplicitUatCommercialTerm(db:D1Database,input:{serviceCode:string;providerId:string;atDate:string}){
  await ensureCommercialTermsTables(db);if(await resolveCommercialTerm(db,input))return;
- /* NODE_ENV and PAWSPACE_LOCAL_PREVIEW are PROCESS environment, not Worker bindings.
-  * Read only off the cloudflare:workers env they are invisible under test and in local preview
-  * (that env exposes DB and the per-suite stub, nothing else), so explicitUat was always false,
-  * this seeding never ran, and computeOrderPayout then threw configuration_required - aborting
-  * grooming completion before the subscription session was consumed. lib/development-preview.ts
-  * reads these same two names from process.env; this now follows that precedent, falling back to
-  * the Worker env so a real deployment can still supply them as bindings.
-  * Fail-closed is unchanged: outside explicit UAT this still returns without seeding. */
- const{env}=await import("cloudflare:workers"),workerEnv=env as unknown as Record<string,unknown>;
- const runtimeValue=(name:string)=>{try{const fromProcess=typeof process!=="undefined"&&process?.env?process.env[name]:undefined;if(String(fromProcess??"").trim())return fromProcess;}catch{/* no process in a real Worker */}return workerEnv[name];};
- const explicitUat=String(runtimeValue("PAWSPACE_SCHEDULING_ENV")??"").trim().toLowerCase()==="uat"||(String(runtimeValue("NODE_ENV")??"").trim().toLowerCase()==="test"&&enabled(runtimeValue("PAWSPACE_LOCAL_PREVIEW")));
+ const{env}=await import("cloudflare:workers"),runtime=env as unknown as Record<string,unknown>,explicitUat=String(runtime.PAWSPACE_SCHEDULING_ENV??"").trim().toLowerCase()==="uat"||(String(runtime.NODE_ENV??"").trim().toLowerCase()==="test"&&enabled(runtime.PAWSPACE_LOCAL_PREVIEW));
  if(!explicitUat)return;
  const provider=await db.prepare("SELECT provider_model FROM provider_capacity_profiles WHERE id=?").bind(input.providerId).first<Row>().catch(()=>null),providerModel=String(provider?.provider_model??"").trim().toLowerCase();
  const engagementModel:EngagementModel=providerModel==="full_time"?"direct_employee":input.serviceCode==="grooming"?"commission_groomer":"commission_standard",providerSharePct=engagementModel==="direct_employee"?0:0.70,gstMode:GstMode=engagementModel==="commission_standard"?"provider_gst_on_behalf":"none",cashAllowed=engagementModel==="commission_groomer"?1:0,now=Date.now(),id=`UAT-PCT-${input.serviceCode}-${input.providerId}`;
