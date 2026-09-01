@@ -32,7 +32,7 @@ jobs:
           const b=await r.json(); if(!r.ok||b.id!==id) throw new Error('Test subscription guard failed');
           console.log(JSON.stringify({mode:'test',id:b.id,status:b.status,planId:b.plan_id,shortUrlPresent:Boolean(b.short_url)}));
           NODE
-      - name: Inspect checkout overlay without bypassing it
+      - name: Inspect payment form after valid synthetic contact
         shell: bash
         run: |
           set -euo pipefail
@@ -47,27 +47,31 @@ jobs:
           await page.goto(process.env.AUTH_URL,{waitUntil:'domcontentloaded',timeout:60000}); await page.waitForTimeout(4000);
           await page.getByRole('button',{name:'Start Subscription'}).click(); await page.waitForTimeout(7000);
           const checkout=page.frames().find(f=>f.url().includes('/v1/checkout/public')); if(!checkout) throw new Error('checkout frame missing');
-          const contact=checkout.locator('input[name="contact"]'); if(await contact.count()) await contact.fill('9999999999');
+          const contact=checkout.locator('input[name="contact"]'); if(await contact.count()) await contact.fill('9876543210');
           const email=checkout.locator('input[name="email"]'); if(await email.count()) await email.fill('provider-cert-e@example.com');
-          await page.waitForTimeout(1500);
+          const cont=checkout.getByRole('button',{name:'Continue'}); if(await cont.count()!==1) throw new Error('Contact Continue button missing');
+          await cont.click(); await page.waitForTimeout(4000);
           const overlay=checkout.locator('#overlay-backdrop');
-          const overlayCount=await overlay.count();
-          const overlayText=overlayCount ? (await overlay.innerText().catch(()=>'')) : '';
-          const overlayControls=overlayCount ? await overlay.locator('input,button,[role="button"],a').evaluateAll(els=>els.slice(0,80).map((e,i)=>({i,tag:e.tagName,type:e.getAttribute('type'),name:e.getAttribute('name'),placeholder:e.getAttribute('placeholder'),aria:e.getAttribute('aria-label'),text:(e.innerText||e.textContent||'').trim().replace(/\s+/g,' ').slice(0,180),disabled:Boolean(e.disabled)}))) : [];
-          const frameUrls=page.frames().map(f=>f.url());
-          const captchaFrames=frameUrls.filter(u=>u.includes('hcaptcha'));
-          const checkoutControls=await checkout.locator('input,button,[role="button"],[data-testid]').evaluateAll(els=>els.slice(0,120).map((e,i)=>({i,tag:e.tagName,testid:e.getAttribute('data-testid'),type:e.getAttribute('type'),name:e.getAttribute('name'),placeholder:e.getAttribute('placeholder'),text:(e.innerText||e.textContent||'').trim().replace(/\s+/g,' ').slice(0,180),disabled:Boolean(e.disabled)})));
-          console.log(JSON.stringify({mode:'test',subscriptionId:process.env.SUBSCRIPTION_ID,overlayPresent:Boolean(overlayCount),overlayText:overlayText.trim().replace(/\s+/g,' ').slice(0,1200),overlayControls,captchaFrames,checkoutControls},null,2));
-          await page.screenshot({path:'mandate-overlay.png',fullPage:true});
+          const overlayVisible=await overlay.isVisible().catch(()=>false);
+          const overlayText=overlayVisible ? (await overlay.innerText().catch(()=>'')) : '';
+          let selected='none';
+          if(!overlayVisible){
+            const card=checkout.locator('[data-testid="card"]');
+            if(await card.count()){await card.click(); selected='card'; await page.waitForTimeout(3500);}
+          }
+          const controls=await checkout.locator('input,button,[role="button"],[data-testid]').evaluateAll(els=>els.slice(0,160).map((e,i)=>({i,tag:e.tagName,testid:e.getAttribute('data-testid'),type:e.getAttribute('type'),name:e.getAttribute('name'),placeholder:e.getAttribute('placeholder'),autocomplete:e.getAttribute('autocomplete'),text:(e.innerText||e.textContent||'').trim().replace(/\s+/g,' ').slice(0,180),disabled:Boolean(e.disabled)})));
+          const captchaFrames=page.frames().filter(f=>f.url().includes('hcaptcha')).map(f=>f.url());
+          console.log(JSON.stringify({mode:'test',subscriptionId:process.env.SUBSCRIPTION_ID,contactAccepted:!overlayVisible,overlayText:overlayText.trim().replace(/\s+/g,' ').slice(0,500),selected,captchaFrameCount:captchaFrames.length,controls},null,2));
+          await page.screenshot({path:'mandate-valid-contact-form.png',fullPage:true});
           await browser.close();
           NODE
-          node inspect.mjs | tee mandate-overlay.json.log
-          cp mandate-overlay.png "$GITHUB_WORKSPACE/mandate-overlay.png"
-          cp mandate-overlay.json.log "$GITHUB_WORKSPACE/mandate-overlay.json.log"
+          node inspect.mjs | tee mandate-valid-contact-form.json.log
+          cp mandate-valid-contact-form.png "$GITHUB_WORKSPACE/mandate-valid-contact-form.png"
+          cp mandate-valid-contact-form.json.log "$GITHUB_WORKSPACE/mandate-valid-contact-form.json.log"
       - name: Upload inspection evidence
         uses: actions/upload-artifact@v4
         with:
-          name: mandate-overlay-rzp382-20260901e
+          name: mandate-valid-contact-form-rzp382-20260901e
           path: |
-            mandate-overlay.png
-            mandate-overlay.json.log
+            mandate-valid-contact-form.png
+            mandate-valid-contact-form.json.log
