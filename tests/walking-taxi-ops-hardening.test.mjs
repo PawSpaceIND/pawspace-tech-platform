@@ -167,8 +167,8 @@ async function opsStack() {
     sqlite.prepare("INSERT INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,actor_id,reason,updated_at) VALUES (?,?,?,?,?,?,?,?)")
       .run(groupId, "governed", "[]", providerId, "assigned", "test", "test", NOW);
     for (const window of windows)
-      sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,1,?,NULL,'assigned','{}',?)")
-        .run(`RES-${tag}-${window.occurrence}`, groupId, providerId, "dog_walking", "tstcity", "tst-zone", customerId, "[]", window.start, window.end, window.occurrence, NOW);
+      sqlite.prepare("INSERT INTO scheduling_reservations (id, group_id, provider_id, service_code, city_id, zone_id, customer_id, pet_ids_json, scheduled_start, scheduled_end, capacity_units, occurrence_number, care_mode, status, explanation_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(`RES-${tag}-${window.occurrence}`, groupId, providerId, "dog_walking", "tstcity", "tst-zone", customerId, "[]", window.start, window.end, 1, window.occurrence, "once", "held", "{}", NOW);
     const weekdays = walkCount === 1 ? [] : [...new Set(windows.map((window) => new Date(window.start).getUTCDay()))];
     const quote = await walkingGovernance.createWalkingQuote(db, {
       packageCode: "walking-30", mode: walkCount === 1 ? "once" : "recurring", petCount: 1, walkCount,
@@ -196,8 +196,14 @@ async function opsStack() {
         payment: { method: "upi", mode: "pay_after_service", detail: "pay after each walk" },
       }),
     }));
-    const payload = await response.json();
-    assert.equal(response.status, 201, `walking booking route failed: ${JSON.stringify(payload)}`);
+    const clone = response.clone();
+    let errText = "";
+    try { errText = await clone.text(); } catch (e) {}
+    if (response.status !== 201) {
+      console.error(">>> ROUTE_FAILURE_PAYLOAD:", response.status, errText);
+    }
+    const payload = JSON.parse(errText || "{}");
+    assert.equal(response.status, 201, `walking booking route failed: ${errText}`);
     return { bookingId: payload.data.bookingId, groupId, customerId, sessions: payload.data.sessions, quote, payload };
   }
 
