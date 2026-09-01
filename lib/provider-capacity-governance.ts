@@ -1,8 +1,10 @@
 import type{Provider}from"../backend/src/domain";
 import{assertProviderAssignable,filterAssignableProviders}from"./provider-assignment-eligibility";
+import{currentHomeBase}from"./provider-home-base";
 
 type Db=D1Database;
 type Row=Record<string,unknown>;
+type LocatedProvider=Provider&{latitude?:number;longitude?:number};
 
 const defaults=[
   {id:"groom_arun",cityId:"blr",name:"Arun R.",model:"full_time",services:["grooming"],zones:["blr-east"],rating:4.9,qualityScore:96,capacity:1,travelBufferMinutes:30,maxDailyJobs:4,acceptanceTimeoutMinutes:0},
@@ -26,11 +28,6 @@ const defaults=[
   {id:"walk_asha",cityId:"blr",name:"Asha R.",model:"commission",services:["dog_walking"],zones:["blr-east"],rating:5.0,qualityScore:94,capacity:1,travelBufferMinutes:20,maxDailyJobs:10,acceptanceTimeoutMinutes:3},
 ] as const;
 
-// Per-isolate memoization: table DDL and the fixed default roster are idempotent constants, so once
-// they have run against a given D1 binding there is no reason to re-issue them on every helper call.
-// Before this, seedProviderCapacityDefaults ran ~18 sequential INSERTs and was invoked 3+ times per
-// scheduling request (POST + loadGovernedProviders in seedUatRoster + loadGovernedProviders in the
-// engine), i.e. ~57 sequential D1 round-trips that dominated the ~20s reserve latency.
 const capacityTablesEnsured=new WeakSet<Db>();
 const capacityDefaultsSeeded=new WeakSet<Db>();
 
@@ -49,113 +46,16 @@ export async function ensureProviderCapacityTables(db:Db){if(capacityTablesEnsur
 export async function seedProviderCapacityDefaults(db:Db){if(capacityDefaultsSeeded.has(db))return;await ensureProviderCapacityTables(db);const now=Date.now();await db.batch(defaults.map(p=>db.prepare("INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,?,1,?,?,?,?,?,?,'active',1,'2026-08-01',NULL,'founder_seed',?)").bind(p.id,p.cityId,p.name,p.model,JSON.stringify(p.services),JSON.stringify(p.zones),p.rating,p.qualityScore,p.capacity,p.travelBufferMinutes,p.maxDailyJobs,p.acceptanceTimeoutMinutes,now)));capacityDefaultsSeeded.add(db);}
 
 function parse<T>(value:unknown,fallback:T):T{try{return JSON.parse(String(value??"")) as T;}catch{return fallback;}}
-/**
- * A configured number, with the documented default used ONLY when there is no number.
- *
- * These fields used to be read as Number(row.max_daily_jobs||6) and friends, so 0 - the one value an
- * operator uses to stand a provider DOWN - is falsy and was silently replaced by the hardcoded default:
- * a driver whose row said max_daily_jobs=0 was handed six jobs, and the scheduler then refused the
- * seventh with "Daily job limit 6 reached", quoting a number the row does not contain. Same idiom turned
- * capacity 0 into 1 (a host with no kennels still took a stay) and a deliberate 0 travel buffer into 30.
- *
- * Present-but-zero is a decision and is honoured. Absent is still the default, which is the existing
- * contract for a column nobody has set. A stored value that is not a number at all falls back too - the
- * PATCH now refuses to create one, and reading a legacy NaN as 0 would silently make a live provider
- * unbookable rather than merely mis-limited. [PTJA-P1-F29]
- */
 function configuredNumber(value:unknown,fallback:number){if(value===null||value===undefined||value==="")return fallback;const parsed=Number(value);return Number.isFinite(parsed)?parsed:fallback;}
-function rowToProvider(row:Row):Provider{return{id:String(row.id),cityId:String(row.city_id),name:String(row.name),model:String(row.provider_model) as Provider["model"],services:parse<string[]>(row.services_json,[]),zones:parse<string[]>(row.zones_json,[]),live:Boolean(row.live)&&String(row.status)==="active",rating:configuredNumber(row.rating,0),qualityScore:configuredNumber(row.quality_score,0),capacity:configuredNumber(row.capacity,1),travelBufferMinutes:configuredNumber(row.travel_buffer_minutes,30),maxDailyJobs:configuredNumber(row.max_daily_jobs,6)};}
+function rowToProvider(row:Row):LocatedProvider{return{id:String(row.id),cityId:String(row.city_id),name:String(row.name),model:String(row.provider_model) as Provider["model"],services:parse<string[]>(row.services_json,[]),zones:parse<string[]>(row.zones_json,[]),live:Boolean(row.live)&&String(row.status)==="active",rating:configuredNumber(row.rating,0),qualityScore:configuredNumber(row.quality_score,0),capacity:configuredNumber(row.capacity,1),travelBufferMinutes:configuredNumber(row.travel_buffer_minutes,30),maxDailyJobs:configuredNumber(row.max_daily_jobs,6)};}
+async function attachHomeBase(db:Db,provider:LocatedProvider,at:number){const base=await currentHomeBase(db,provider.id,at);return base?{...provider,latitude:base.latitude,longitude:base.longitude}:provider;}
 
-export async function loadGovernedProviders(db:Db,cityId:string,zoneId:string,serviceCode:string,at=new Date()){await seedProviderCapacityDefaults(db);const date=at.toISOString().slice(0,10);const rows=await db.prepare("SELECT * FROM provider_capacity_profiles WHERE city_id=? AND live=1 AND status='active' AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)").bind(cityId,date,date).all<Row>();const providers=rows.results.map(rowToProvider).filter(p=>p.services.includes(serviceCode)&&p.zones.includes(zoneId));const nowIso=at.toISOString();const blocks=await Promise.all(providers.map(provider=>db.prepare("SELECT id FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<=? AND ends_at>? LIMIT 1").bind(provider.id,nowIso,nowIso).first<Row>()));const available=providers.filter((_,index)=>!blocks[index]);
-  // A provider whose mandatory verification has lapsed, been rejected or been revoked leaves the matching
-  // pool immediately. This is the READ side; the authoritative guarantee is the write-time check in the
-  // reservation and offer inserts, because a filter here alone loses the race against a revocation that
-  // lands between the decision and the commit. [PTJA-W1-F53]
-  return filterAssignableProviders(db,available,at.getTime());}
+export async function loadGovernedProviders(db:Db,cityId:string,zoneId:string,serviceCode:string,at=new Date()){await seedProviderCapacityDefaults(db);const date=at.toISOString().slice(0,10);const rows=await db.prepare("SELECT * FROM provider_capacity_profiles WHERE city_id=? AND live=1 AND status='active' AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)").bind(cityId,date,date).all<Row>();const baseProviders=rows.results.map(rowToProvider).filter(p=>p.services.includes(serviceCode)&&p.zones.includes(zoneId));const providers=await Promise.all(baseProviders.map(provider=>attachHomeBase(db,provider,at.getTime())));const nowIso=at.toISOString();const blocks=await Promise.all(providers.map(provider=>db.prepare("SELECT id FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<=? AND ends_at>? LIMIT 1").bind(provider.id,nowIso,nowIso).first<Row>()));const available=providers.filter((_,index)=>!blocks[index]);return filterAssignableProviders(db,available,at.getTime());}
 
-export async function getGovernedProvider(db:Db,providerId:string){await seedProviderCapacityDefaults(db);const row=await db.prepare("SELECT * FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();return row?rowToProvider(row):null;}
-export async function providerUnavailableForWindow(db:Db,input:{providerId:string;scheduledStart:string;scheduledEnd:string}){
-  await ensureProviderCapacityTables(db);
-  const blocked=await db.prepare("SELECT id FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<? AND ends_at>? LIMIT 1")
-    .bind(input.providerId,input.scheduledEnd,input.scheduledStart).first<Row>();
-  return Boolean(blocked);
-}
-export async function ensureProviderBookingGuard(db:Db){
-  await ensureProviderCapacityTables(db);
-  await db.batch([
-    db.prepare("CREATE TABLE IF NOT EXISTS provider_booking_confirmation_guards (group_id TEXT PRIMARY KEY,created_at INTEGER NOT NULL)"),
-    // This trigger executes in the SAME D1 batch/transaction as the canonical customer, pet,
-    // booking, work-order and payment writes. A leave inserted after the friendly pre-check but before
-    // that batch therefore aborts the whole batch instead of leaving a contradictory booking.
-    db.prepare("CREATE TRIGGER IF NOT EXISTS block_unavailable_provider_booking BEFORE INSERT ON provider_booking_confirmation_guards WHEN EXISTS (SELECT 1 FROM scheduling_reservations r JOIN provider_unavailability u ON u.provider_id=r.provider_id AND u.status='active' AND u.starts_at<r.scheduled_end AND u.ends_at>r.scheduled_start WHERE r.group_id=NEW.group_id AND r.status!='cancelled') BEGIN SELECT RAISE(ABORT,'provider_unavailable_before_booking'); END"),
-  ]);
-}
+export async function getGovernedProvider(db:Db,providerId:string){await seedProviderCapacityDefaults(db);const row=await db.prepare("SELECT * FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();if(!row)return null;return attachHomeBase(db,rowToProvider(row),Date.now());}
+export async function providerUnavailableForWindow(db:Db,input:{providerId:string;scheduledStart:string;scheduledEnd:string}){await ensureProviderCapacityTables(db);const blocked=await db.prepare("SELECT id FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<? AND ends_at>? LIMIT 1").bind(input.providerId,input.scheduledEnd,input.scheduledStart).first<Row>();return Boolean(blocked);}
+export async function ensureProviderBookingGuard(db:Db){await ensureProviderCapacityTables(db);await db.batch([db.prepare("CREATE TABLE IF NOT EXISTS provider_booking_confirmation_guards (group_id TEXT PRIMARY KEY,created_at INTEGER NOT NULL)"),db.prepare("CREATE TRIGGER IF NOT EXISTS block_unavailable_provider_booking BEFORE INSERT ON provider_booking_confirmation_guards WHEN EXISTS (SELECT 1 FROM scheduling_reservations r JOIN provider_unavailability u ON u.provider_id=r.provider_id AND u.status='active' AND u.starts_at<r.scheduled_end AND u.ends_at>r.scheduled_start WHERE r.group_id=NEW.group_id AND r.status!='cancelled') BEGIN SELECT RAISE(ABORT,'provider_unavailable_before_booking'); END")]);}
 export async function getProviderAcceptanceTimeout(db:Db,providerId:string){await seedProviderCapacityDefaults(db);const row=await db.prepare("SELECT acceptance_timeout_minutes FROM provider_capacity_profiles WHERE id=?").bind(providerId).first<Row>();return Math.max(1,Number(row?.acceptance_timeout_minutes||3));}
-
-export async function createAssignmentOffer(db:Db,input:{groupId:string;bookingId?:string;providerId:string;attemptNo?:number}){await seedProviderCapacityDefaults(db);
-  // An offer IS an assignment write - it puts a job in front of a provider and invites them to accept -
-  // so it is gated exactly like the reservation. [PTJA-W1-F53]
-  await assertProviderAssignable(db,input.providerId);const timeout=await getProviderAcceptanceTimeout(db,input.providerId),now=Date.now(),expiresAt=now+timeout*60_000;await db.prepare("INSERT INTO provider_assignment_offers (group_id,booking_id,provider_id,status,offered_at,expires_at,responded_at,response_reason,attempt_no,updated_at) VALUES (?,?,?,'pending',?,?,NULL,NULL,?,?) ON CONFLICT(group_id) DO UPDATE SET booking_id=COALESCE(excluded.booking_id,booking_id),provider_id=excluded.provider_id,status='pending',offered_at=excluded.offered_at,expires_at=excluded.expires_at,responded_at=NULL,response_reason=NULL,attempt_no=excluded.attempt_no,updated_at=excluded.updated_at").bind(input.groupId,input.bookingId??null,input.providerId,now,expiresAt,input.attemptNo??1,now).run();return{timeoutMinutes:timeout,expiresAt};}
-
+export async function createAssignmentOffer(db:Db,input:{groupId:string;bookingId?:string;providerId:string;attemptNo?:number}){await seedProviderCapacityDefaults(db);await assertProviderAssignable(db,input.providerId);const timeout=await getProviderAcceptanceTimeout(db,input.providerId),now=Date.now(),expiresAt=now+timeout*60_000;await db.prepare("INSERT INTO provider_assignment_offers (group_id,booking_id,provider_id,status,offered_at,expires_at,responded_at,response_reason,attempt_no,updated_at) VALUES (?,?,?,'pending',?,?,NULL,NULL,?,?) ON CONFLICT(group_id) DO UPDATE SET booking_id=COALESCE(excluded.booking_id,booking_id),provider_id=excluded.provider_id,status='pending',offered_at=excluded.offered_at,expires_at=excluded.expires_at,responded_at=NULL,response_reason=NULL,attempt_no=excluded.attempt_no,updated_at=excluded.updated_at").bind(input.groupId,input.bookingId??null,input.providerId,now,expiresAt,input.attemptNo??1,now).run();return{timeoutMinutes:timeout,expiresAt};}
 export async function recordProviderPerformance(db:Db,input:{providerId:string;groupId?:string;bookingId?:string;eventType:string;impactScore:number;detail?:unknown}){await ensureProviderCapacityTables(db);await db.prepare("INSERT INTO provider_performance_events (id,provider_id,group_id,booking_id,event_type,impact_score,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.providerId,input.groupId??null,input.bookingId??null,input.eventType,input.impactScore,JSON.stringify(input.detail??{}),Date.now()).run();}
-
-/**
- * The real write path the partner app's Available/Offline toggle should call. Before this
- * function existed, that toggle was pure local UI state - loadGovernedProviders() has always
- * correctly checked provider_unavailability, but nothing anywhere ever wrote a real row to it from
- * the provider's own self-service toggle. Going offline creates a real, open-ended unavailability
- * window (closed only by explicitly going available again, not auto-expiring) - matching how a real
- * "I'm offline" toggle should behave: it stays off until the provider turns it back on themselves.
- */
-/**
- * Going UNAVAILABLE is always the provider's own call. Coming BACK is not.
- *
- * Unavailability is two different things wearing one row: a provider taking a day off, and the platform
- * restricting a provider it does not currently trust — a rejected KYC check, a suspension, an
- * accountability case. Clearing every active window on request treated those as the same thing, so a
- * provider suspended by staff could lift the suspension by asking to be available again. Ownership was
- * enforced and authority was not: the record is theirs, the restriction is not.
- *
- * A window may therefore only be cleared by the actor who imposed it, unless the caller is acting as
- * staff over providers. `actorIsStaff` defaults to FALSE so a caller that has not established authority
- * gets the restrictive branch rather than the permissive one.
- */
-export async function setProviderAvailability(db:Db,input:{providerId:string;available:boolean;reason:string;actorId:string;actorIsStaff?:boolean}){
-  await ensureProviderCapacityTables(db);
-  if(!input.providerId.trim())throw new Error("Provider is required");
-  if(input.reason.trim().length<3)throw new Error("A real reason is required");
-  const now=Date.now();
-  if(input.available){
-    const nowIso=new Date(now).toISOString();
-    const staff=input.actorIsStaff===true;
-    const sql="UPDATE provider_unavailability SET ends_at=?,status='cleared',updated_at=? WHERE provider_id=? AND status='active' AND starts_at<=? AND ends_at>?"+(staff?"":" AND created_by=?");
-    const args=[nowIso,now,input.providerId,nowIso,nowIso];
-    if(!staff)args.push(input.actorId);
-    const result=await db.prepare(sql).bind(...args).run();
-    const cleared=Number(result.meta?.changes||0);
-    // Anything still standing was imposed by somebody else and stays standing. Reported rather than
-    // thrown: asking to be available when nothing blocks you is not an error, and the caller needs to
-    // know it did not take effect.
-    // STILL STANDING means not yet ended, not merely in force this second. Counting only suspensions
-    // spanning the current instant (starts_at<=now AND ends_at>now) hid every FUTURE-dated one, so a
-    // provider with an Ops suspension imposed for next week cleared their calendar and was answered
-    // {available:true, restrictionsRemaining:0} - then found out on the day. That contradicts this
-    // block's own intent, stated above: anything still standing was imposed by somebody else, and the
-    // caller needs to know it did not take effect. [PTJA-P1-F33]
-    //
-    // `available` is unchanged and still means nothing blocks you RIGHT NOW - that is what matching
-    // reads. So available:true alongside restrictionsRemaining:1 is the honest answer: free today, and a
-    // restriction is still on you.
-    const blockingNow=await db.prepare("SELECT COUNT(*) n FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<=? AND ends_at>?")
-      .bind(input.providerId,nowIso,nowIso).first<Row>();
-    const standing=await db.prepare("SELECT COUNT(*) n FROM provider_unavailability WHERE provider_id=? AND status='active' AND ends_at>?")
-      .bind(input.providerId,nowIso).first<Row>();
-    const restricted=Number(blockingNow?.n||0);
-    return{providerId:input.providerId,available:restricted===0,windowsCleared:cleared,restrictionsRemaining:Number(standing?.n||0)};
-  }
-  const startsAt=new Date(now).toISOString(),endsAt=new Date(now+10*365*86400000).toISOString();
-  const id=`PUNAVAIL-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
-  await db.prepare("INSERT INTO provider_unavailability (id,provider_id,starts_at,ends_at,reason,status,created_by,created_at,updated_at) VALUES (?,?,?,?,?,'active',?,?,?)")
-    .bind(id,input.providerId,startsAt,endsAt,input.reason.trim(),input.actorId,now,now).run();
-  return{providerId:input.providerId,available:false,unavailabilityId:id};
-}
+export async function setProviderAvailability(db:Db,input:{providerId:string;available:boolean;reason:string;actorId:string;actorIsStaff?:boolean}){await ensureProviderCapacityTables(db);if(!input.providerId.trim())throw new Error("Provider is required");if(input.reason.trim().length<3)throw new Error("A real reason is required");const now=Date.now();if(input.available){const nowIso=new Date(now).toISOString();const staff=input.actorIsStaff===true;const sql="UPDATE provider_unavailability SET ends_at=?,status='cleared',updated_at=? WHERE provider_id=? AND status='active' AND starts_at<=? AND ends_at>?"+(staff?"":" AND created_by=?");const args=[nowIso,now,input.providerId,nowIso,nowIso];if(!staff)args.push(input.actorId);const result=await db.prepare(sql).bind(...args).run();const cleared=Number(result.meta?.changes||0);const blockingNow=await db.prepare("SELECT COUNT(*) n FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<=? AND ends_at>?").bind(input.providerId,nowIso,nowIso).first<Row>();const standing=await db.prepare("SELECT COUNT(*) n FROM provider_unavailability WHERE provider_id=? AND status='active' AND ends_at>?").bind(input.providerId,nowIso).first<Row>();const restricted=Number(blockingNow?.n||0);return{providerId:input.providerId,available:restricted===0,windowsCleared:cleared,restrictionsRemaining:Number(standing?.n||0)};}const startsAt=new Date(now).toISOString(),endsAt=new Date(now+10*365*86400000).toISOString();const id=`PUNAVAIL-${crypto.randomUUID().slice(0,12).toUpperCase()}`;await db.prepare("INSERT INTO provider_unavailability (id,provider_id,starts_at,ends_at,reason,status,created_by,created_at,updated_at) VALUES (?,?,?,?,?,'active',?,?,?)").bind(id,input.providerId,startsAt,endsAt,input.reason.trim(),input.actorId,now,now).run();return{providerId:input.providerId,available:false,unavailabilityId:id};}
