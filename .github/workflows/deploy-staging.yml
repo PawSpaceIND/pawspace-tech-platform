@@ -60,6 +60,7 @@ on:
           - none
           - prepare
           - finalize
+          - diagnose
       provider_cert_key:
         description: 'Unique non-secret key for one provider certification lifecycle'
         required: false
@@ -87,7 +88,25 @@ jobs:
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
           RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
-        run: node scripts/razorpay-provider-certification.mjs
+          WRANGLER_SEND_METRICS: "false"
+        run: |
+          if [ "$PROVIDER_CERT_PHASE" != "diagnose" ]; then
+            node scripts/razorpay-provider-certification.mjs
+            exit
+          fi
+          TAIL_LOG="$RUNNER_TEMP/provider-certification-tail.log"
+          timeout 25s npx wrangler tail pawspace-staging --format pretty --status error >"$TAIL_LOG" 2>&1 &
+          TAIL_PID=$!
+          sleep 4
+          set +e
+          node scripts/razorpay-provider-certification.mjs
+          STATUS=$?
+          set -e
+          wait "$TAIL_PID" || true
+          echo "Sanitized staging error tail:"
+          cat "$TAIL_LOG"
+          rm -f "$TAIL_LOG"
+          exit "$STATUS"
       - name: Upload sanitized provider evidence
         if: always()
         uses: actions/upload-artifact@v4
