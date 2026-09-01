@@ -70,6 +70,11 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/customer-contact")return "communications.manage";
   if(url.pathname==="/api/subscription-customers")return method==="GET"?"customers.view":"data.import";
   if(url.pathname==="/api/subscription-wallet"){if(method==="GET")return url.searchParams.get("customerId")?"customers.view":"scheduling.book";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["reserve","pause","resume"].includes(String(body.action))?"scheduling.book":"bookings.manage";}
+  // Subscription billing belongs in the gateway's canonical permission map. The worker must not alias
+  // these requests onto unrelated routes: ownership stays in the customer route, while pricing/finance
+  // role separation remains duplicated at the admin route as a second gate.
+  if(url.pathname==="/api/subscription-billing")return "scheduling.book";
+  if(url.pathname==="/api/subscription-billing-admin"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");return ["save_plan","approve_plan"].includes(action)?"pricing.manage":"finance.manage";}
   if(url.pathname==="/api/crm")return method==="GET"?"customers.view":"customers.manage";
   if(url.pathname==="/api/customer-360")return method==="GET"?"customers.view":"customers.manage";
   if(url.pathname==="/api/revenue-crm")return method==="GET"?"customers.view":"customers.manage";

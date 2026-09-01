@@ -1,4 +1,5 @@
 import { resolveLivePrice } from "./live-pricing-resolver";
+import { addCalendarMonthsClamped } from "./subscription-calendar";
 
 export type GroomingPetType="dog"|"cat"|"other";
 export type GroomingOfferType="regular"|"young"|"subscription";
@@ -86,4 +87,4 @@ export async function governGroomingBooking(db:Db,input:GroomingGovernanceInput)
   };
 }
 
-export function subscriptionExpiry(startedAt:number,validityValue:number,validityUnit:"days"|"months"){const date=new Date(startedAt);if(validityUnit==="days")date.setUTCDate(date.getUTCDate()+validityValue);else date.setUTCMonth(date.getUTCMonth()+validityValue);return date.getTime();}
+export function subscriptionExpiry(startedAt:number,validityValue:number,validityUnit:"days"|"months"){if(validityUnit==="months")return addCalendarMonthsClamped(startedAt,validityValue);const date=new Date(startedAt);date.setUTCDate(date.getUTCDate()+validityValue);return date.getTime();}
