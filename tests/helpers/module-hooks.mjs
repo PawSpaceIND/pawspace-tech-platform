@@ -30,7 +30,7 @@ function typescript() {
  * parentURL register() is given. Resolving the absolute path here and interpolating it is what makes
  * that branch work, and that branch is the one CI's Node 22.13 pin actually takes.
  */
-const typescriptUrl = pathToFileURL(require.resolve("typescript")).href;
+const typescriptUrl = pathToFileURL(nodeModule.createRequire(import.meta.url).resolve("typescript")).href;
 
 // envName defaults to `${globalName}_ENV`, which is what the suites written before it existed use. The
 // two call sites that pass a name of their own (__FANOUT_ENV__, __SEED_ENV__) were setting a global the
@@ -149,7 +149,7 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
   const hook = `const workersUrl=${JSON.stringify(workersUrl)};
   import * as tsModule from ${JSON.stringify(typescriptUrl)};
   import { readFile } from "node:fs/promises";
-  import { fileURLToPath } from "node:url";
+  import { fileURLToPath, pathToFileURL } from "node:url";
   ${TSX_TRANSFORM}
   function splitSpecifierSuffix(specifier) {
     const queryIndex = specifier.indexOf("?");
