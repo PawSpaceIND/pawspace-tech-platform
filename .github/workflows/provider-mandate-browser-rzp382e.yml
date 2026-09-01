@@ -42,7 +42,7 @@ jobs:
           appendFileSync(process.env.GITHUB_ENV,`CERT_PHONE=${phone}\n`);
           console.log(JSON.stringify({mode:'test',id:b.id,status:b.status,planId:b.plan_id,uatContactLoaded:true}));
           NODE
-      - name: Complete Razorpay Test card authorisation
+      - name: Complete Razorpay Test recurring-card authorisation
         shell: bash
         run: |
           set -euo pipefail
@@ -74,17 +74,22 @@ jobs:
           await checkout.locator('input[name="card.number"]').fill('4718609108204366');
           await checkout.locator('input[name="card.expiry"]').fill('1230');
           await checkout.locator('input[name="card.cvv"]').fill('123');
+          const save=checkout.locator('[data-testid="save-card-checkbox"]');
+          if(await save.count()!==1) throw new Error('Recurring-card consent checkbox missing');
+          if(!(await save.isChecked())) await save.check();
+          console.log(JSON.stringify({recurringCardConsent:await save.isChecked()}));
           if(await visibleHumanChallenge()){await snap('mandate-human-checkpoint'); console.log(JSON.stringify({safeStop:true,blocked:'human_verification_required'})); await browser.close(); process.exit(42);}
-          const continueButton=checkout.getByRole('button',{name:'Continue'});
-          await continueButton.click();
+          await checkout.getByRole('button',{name:'Continue'}).click();
           await page.waitForTimeout(7000);
           if(await visibleHumanChallenge()){await snap('mandate-human-checkpoint'); console.log(JSON.stringify({safeStop:true,blocked:'human_verification_required_after_card'})); await browser.close(); process.exit(42);}
-          const contexts=[page,...page.frames()];
-          let acted=false;
+          const states=[];
+          for(const f of page.frames()) states.push({url:f.url(),text:(await f.locator('body').innerText().catch(()=> '')).trim().replace(/\s+/g,' ').slice(0,500)});
+          console.log(JSON.stringify({postCardFrames:states}));
+          const contexts=[page,...page.frames()]; let acted=false;
           for(const ctx of contexts){
-            const otp=ctx.locator('input').filter({has:undefined});
-            const candidates=['input[name*="otp" i]','input[placeholder*="OTP" i]','input[type="tel"]'];
-            for(const sel of candidates){const l=ctx.locator(sel); if(await l.count()){const ph=await l.first().getAttribute('placeholder').catch(()=>null); const nm=await l.first().getAttribute('name').catch(()=>null); if(/otp/i.test(`${ph||''} ${nm||''}`)){await l.first().fill('123456'); const submit=ctx.getByRole('button',{name:/Submit|Pay|Continue|Verify/i}); if(await submit.count()){await submit.first().click(); acted=true; break;}}}}
+            for(const sel of ['input[name*="otp" i]','input[placeholder*="OTP" i]']){
+              const l=ctx.locator(sel); if(await l.count()){await l.first().fill('123456'); const submit=ctx.getByRole('button',{name:/Submit|Pay|Continue|Verify/i}); if(await submit.count()){await submit.first().click(); acted=true; break;}}
+            }
             if(acted) break;
             const success=ctx.getByRole('button',{name:/^Success$/i}); if(await success.count()){await success.first().click(); acted=true; break;}
             const successText=ctx.getByText('Success',{exact:true}); if(await successText.count()){await successText.first().click(); acted=true; break;}
