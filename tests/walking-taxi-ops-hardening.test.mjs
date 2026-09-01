@@ -49,6 +49,7 @@ const taxiOps = await import("../lib/taxi-ops-governance.ts");
 const taxiFinance = await import("../lib/taxi-finance-governance.ts");
 const taxiProof = await import("../lib/taxi-proof-governance.ts");
 const taxiRecovery = await import("../lib/taxi-recovery-governance.ts");
+const commercialTerms = await import("../lib/provider-commercial-terms.ts");
 const capacity = await import("../lib/provider-capacity-governance.ts");
 const walkingBookingsRoute = await import("../app/api/walking-bookings/route.ts");
 const partnerFeedRoute = await import("../app/api/partner-job-feed/route.ts");
@@ -134,6 +135,24 @@ async function opsStack() {
     sqlite.prepare("INSERT INTO taxi_vehicle_profiles (id,provider_id,label,vehicle_type,pet_restraint,inspection_status,active,updated_at) VALUES (?,?,?,?,?,'uat_verified',1,?)")
       .run(vehicleId, providerId, `${providerId} vehicle`, "hatchback", "rear-seat harness", NOW);
 
+  async function seedActiveCommercialTerm({ serviceCode, providerId }) {
+    const draft = await commercialTerms.saveCommercialTerm(db, {
+      serviceCode,
+      providerId,
+      engagementModel: "commission_standard",
+      providerSharePct: 0.70,
+      effectiveFrom: "2026-01-01",
+      reason: `${serviceCode} hardening fixture terms`,
+      actorId: "commercial-maker@test",
+    });
+    await commercialTerms.activateCommercialTerm(db, {
+      termId: draft.id,
+      approvalReference: `TEST-${serviceCode.toUpperCase()}`,
+      actorId: "commercial-checker@test",
+    });
+    return draft.id;
+  }
+
   // Creates a Dog Walking booking through the REAL customer path: server quote
   // (lib/walking-governance) + POST /api/walking-bookings route handler.
   async function createWalkingBooking({ tag, providerId, walkCount = 2, customerId = `CUS-${tag}` }) {
@@ -189,7 +208,7 @@ async function opsStack() {
     return { bookingId, groupId, tripId, reservationId, customerId, amount };
   }
 
-  return { sqlite, db, seedProvider, seedVehicle, createWalkingBooking, seedTaxiBooking };
+  return { sqlite, db, seedProvider, seedVehicle, seedActiveCommercialTerm, createWalkingBooking, seedTaxiBooking };
 }
 
 const wMutate = (stack, bookingId, action, extra = {}) =>
@@ -344,6 +363,7 @@ test("regression: taxi driver replacement re-attributes pickup/dropoff handover 
   stack.seedProvider("taxi_two", { services: ["pet_taxi"] });
   stack.seedVehicle("TXV-ONE", "taxi_one");
   stack.seedVehicle("TXV-TWO", "taxi_two");
+  await stack.seedActiveCommercialTerm({ serviceCode: "pet_taxi", providerId: "taxi_two" });
   const { bookingId, tripId, amount } = stack.seedTaxiBooking({ tag: "TREC", providerId: "taxi_one" });
 
   await tMutate(stack, bookingId, "accept");
@@ -424,6 +444,7 @@ test("regression: walking proof cannot be scan-approved by its submitter; incide
   const sessionId = String(stack.sqlite.prepare("SELECT id FROM walking_sessions WHERE booking_id=?").get(bookingId).id);
   await wMutate(stack, bookingId, "confirm_handover", { sessionId, handoverMethod: "owner" });
   await wMutate(stack, bookingId, "start_walk", { sessionId });
+  assert.equal(stack.sqlite.prepare("SELECT status FROM walking_sessions WHERE id=?").get(sessionId).status, "in_progress", "proof scan fixture requires an active walk");
 
   const prepared = await wProof(stack, bookingId, "prepare_media", { sessionId, purpose: "walking_update", mimeType: "image/jpeg", sizeBytes: 2048, sha256: SHA, actorId: "ops1@test" });
   await wProof(stack, bookingId, "sandbox_finalize_media", { uploadToken: prepared.upload.token, storageObjectId: "walking/objects/wproof-1", actorId: "ops1@test" });
@@ -476,6 +497,9 @@ test("regression: paying the preserved completed walk on a cancelled booking set
   await wMutate(stack, bookingId, "accept");
   const [first, second] = sqlite.prepare("SELECT id FROM walking_sessions WHERE booking_id=? ORDER BY occurrence_number").all(bookingId).map((row) => String(row.id));
   await completeWalkingSession(stack, bookingId, first);
+  assert.equal(sqlite.prepare("SELECT status FROM canonical_bookings WHERE id=?").get(bookingId).status, "assigned", "cancellation fixture requires the programme to be between walks");
+  assert.equal(sqlite.prepare("SELECT status FROM walking_sessions WHERE id=?").get(first).status, "completed", "completed walk evidence must exist before cancellation");
+  assert.equal(sqlite.prepare("SELECT status FROM walking_sessions WHERE id=?").get(second).status, "scheduled", "remaining walk must not be active when cancellation is requested");
 
   await wFinance(stack, bookingId, "request_cancel", { reason: "Customer travelling", actorId: `customer:${customerId}` });
   await rejects(wFinance(stack, bookingId, "approve_cancel", { reason: "Self approval", approvedRefundAmount: 0, actorId: `customer:${customerId}` }), 409, /Segregation of duties/);
@@ -516,11 +540,15 @@ test("walking offer expiry, no_show recovery and evidence-class walk events stay
   await rejects(wMutate(stack, bookingId, "walk_event", { sessionId, walkEventType: "photo_update" }), 409, /governed Walking proof workflow/);
   const logged = await wMutate(stack, bookingId, "walk_event", { sessionId, walkEventType: "pee" });
   assert.equal(logged.status, "logged");
-  // no_show opens a recovery case that preserves the booking.
-  const noShow = await wMutate(stack, bookingId, "no_show", { reason: "Customer unreachable at pickup", actorId: "ops@test" });
+
+  // no_show is a pre-service recovery transition; keep it on a fresh assigned booking rather than
+  // mutating the already in-progress evidence scenario above.
+  const { bookingId: noShowBookingId } = await stack.createWalkingBooking({ tag: "GOV-NOSHOW", providerId: "walker_one", walkCount: 1 });
+  await wMutate(stack, noShowBookingId, "accept");
+  const noShow = await wMutate(stack, noShowBookingId, "no_show", { reason: "Customer unreachable at pickup", actorId: "ops@test" });
   assert.equal(noShow.status, "ops_escalation");
-  assert.equal(sqlite.prepare("SELECT reason_code FROM walking_recovery_cases WHERE booking_id=?").get(bookingId).reason_code, "no_show");
-  assert.equal(sqlite.prepare("SELECT status FROM canonical_bookings WHERE id=?").get(bookingId).status, "reassignment_needed");
+  assert.equal(sqlite.prepare("SELECT reason_code FROM walking_recovery_cases WHERE booking_id=?").get(noShowBookingId).reason_code, "no_show");
+  assert.equal(sqlite.prepare("SELECT status FROM canonical_bookings WHERE id=?").get(noShowBookingId).status, "reassignment_needed");
 });
 
 // ---------------------------------------------------------------------------
