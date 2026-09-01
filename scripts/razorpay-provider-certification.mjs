@@ -15,7 +15,7 @@ const amountPaise = 11_800;
 const taxablePaise = 10_000;
 const evidencePath = `provider-certification-${certKey}-${phase}.json`;
 
-if (!["prepare", "finalize"].includes(phase)) throw new Error("provider certification phase must be prepare or finalize");
+if (!["prepare", "finalize", "diagnose"].includes(phase)) throw new Error("provider certification phase must be prepare, finalize, or diagnose");
 if (!/^[a-z0-9-]{6,48}$/.test(certKey)) throw new Error("provider certification key is invalid");
 for (const [name, value] of Object.entries({ STAGING_URL: base, CLOUDFLARE_ACCOUNT_ID: cfAccount, CLOUDFLARE_API_TOKEN: cfToken, STAGING_D1_ID: dbId, PAWSPACE_UAT_ACCESS_CODE: accessCode, RAZORPAY_KEY_ID_SANDBOX: razorKey, RAZORPAY_KEY_SECRET_SANDBOX: razorSecret })) {
   if (!value) throw new Error(`${name} is required`);
@@ -179,6 +179,25 @@ async function prepare() {
   return evidence;
 }
 
+async function diagnose() {
+  await ensureCertificationTable();
+  const founder = await staffLogin("founder@pawspace.in");
+  const tag = certKey.replace(/[^a-z0-9]/g, "").slice(-16).toUpperCase();
+  const planCode = `PROVIDER_CERT_${tag}`;
+  const local = await one("SELECT provider_plan_id,charge_amount_paise,currency,interval_period,interval_count,status,provider_verified_at,CASE WHEN provider_plan_snapshot_json IS NULL THEN 0 ELSE 1 END provider_snapshot_present FROM subscription_billing_plans WHERE plan_code=?", [planCode]);
+  assert(local?.provider_plan_id, "diagnostic provider plan is missing");
+  try {
+    await postAs("/api/subscription-billing-admin", { action: "approve_plan", planCode }, founder);
+  } catch (error) {
+    writeFileSync(evidencePath, JSON.stringify({ ok: false, phase, certKey, expectedSha, stagingUrl: base, local }, null, 2));
+    throw error;
+  }
+  const approved = await one("SELECT provider_plan_id,status,provider_verified_at,CASE WHEN provider_plan_snapshot_json IS NULL THEN 0 ELSE 1 END provider_snapshot_present FROM subscription_billing_plans WHERE plan_code=?", [planCode]);
+  const evidence = { ok: true, phase, certKey, expectedSha, stagingUrl: base, approved };
+  writeFileSync(evidencePath, JSON.stringify(evidence, null, 2));
+  return evidence;
+}
+
 async function chargeSnapshot(state, cycle) {
   const eventId = String(cycle.provider_event_id);
   const row = await one(`SELECT
@@ -288,5 +307,5 @@ async function finalize() {
   return evidence;
 }
 
-const result = phase === "prepare" ? await prepare() : await finalize();
+const result = phase === "prepare" ? await prepare() : phase === "diagnose" ? await diagnose() : await finalize();
 console.log(JSON.stringify({ ok: result.ok, phase, certKey, expectedSha, providerLifecycleCertified: Boolean(result.providerLifecycleCertified) }));
