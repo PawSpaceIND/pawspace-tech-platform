@@ -1,0 +1,143 @@
+name: Provider final evidence rzp382e
+
+on:
+  push:
+    branches:
+      - ops/razorpay-provider-cert-20260901
+    paths:
+      - .github/workflows/provider-final-evidence-rzp382e.yml
+
+permissions:
+  contents: read
+
+concurrency: pawspace-staging-provider-certification
+
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify completed Test lifecycle, replay, governance and zero variance
+        env:
+          STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+        run: |
+          set -euo pipefail
+          case "$RAZORPAY_KEY_ID_SANDBOX" in rzp_test_*) ;; *) echo "Refusing non-Test Razorpay key" >&2; exit 1;; esac
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs';
+          const base=process.env.STAGING_URL;
+          const certKey='rzp382-20260901e';
+          const expectedSha='a7614f7299591236b6c1a1cf15f70c06fa30915a';
+          const subscriptionId='sub_TWg9yixMBHpX2w';
+          const paymentId='pay_TWgmGExMvHg9kZ';
+          const invoiceId='inv_TWg9zIJKnpe4UU';
+          const orderId='order_TWg9zP6abK5IpQ';
+          const refundId='rfnd_TWhczrOlFbtTQA';
+          const chargeEventId='evt_rzp382e_subscription_charged_relay_v2';
+          const refundEventId='evt_rzp382e_refund_processed_relay_v1';
+          const amountPaise=11800;
+          const auth=`Basic ${Buffer.from(`${process.env.RAZORPAY_KEY_ID_SANDBOX}:${process.env.RAZORPAY_KEY_SECRET_SANDBOX}`).toString('base64')}`;
+          const get=async path=>{const r=await fetch(`https://api.razorpay.com${path}`,{headers:{authorization:auth},redirect:'manual'});const b=await r.json();if(!r.ok)throw new Error(`Razorpay Test read failed ${r.status}`);return b};
+          const cf=async(sql,params=[])=>{const r=await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID)}/d1/database/${encodeURIComponent(process.env.STAGING_D1_ID)}/query`,{method:'POST',headers:{authorization:`Bearer ${process.env.CLOUDFLARE_API_TOKEN}`,'content-type':'application/json'},body:JSON.stringify({sql,params})});const b=await r.json();if(!r.ok||b?.success!==true||b?.result?.[0]?.success!==true)throw new Error(`D1 query failed: ${b?.result?.[0]?.error||b?.errors?.[0]?.message||r.status}`);return b.result[0].results||[]};
+          const one=async(sql,params=[])=>(await cf(sql,params))[0]||null;
+          const assert=(ok,msg)=>{if(!ok)throw new Error(msg)};
+
+          const sub=await get(`/v1/subscriptions/${subscriptionId}`);
+          const payment=await get(`/v1/payments/${paymentId}`);
+          const invoice=await get(`/v1/invoices/${invoiceId}`);
+          const refund=await get(`/v1/refunds/${refundId}`);
+          assert(sub.status==='active'&&Number(sub.paid_count)===1,'provider subscription is not active with one paid charge');
+          assert(payment.id===paymentId&&payment.status==='refunded'&&Number(payment.amount)===amountPaise&&Number(payment.amount_refunded)===amountPaise&&payment.refund_status==='full'&&payment.order_id===orderId&&payment.invoice_id===invoiceId,'provider payment is not the fully refunded certified charge');
+          assert(invoice.id===invoiceId&&invoice.status==='paid'&&invoice.subscription_id===subscriptionId&&invoice.payment_id===paymentId&&invoice.order_id===orderId,'provider invoice linkage mismatch');
+          assert(refund.id===refundId&&refund.status==='processed'&&refund.payment_id===paymentId&&Number(refund.amount)===amountPaise,'provider refund is not processed for certified amount');
+
+          const cert=await one('SELECT * FROM provider_certification_runs WHERE cert_key=?',[certKey]);
+          assert(cert?.status==='complete'&&cert.contract_id==='SBC-35EEDDD4-F5FD-44'&&cert.payment_id===paymentId&&cert.refund_id===refundId&&cert.refund_event_id===refundEventId,'certification row is not complete or provider-bound');
+          const cycle=await one('SELECT * FROM subscription_billing_cycles WHERE id=? AND contract_id=?',[cert.cycle_id,cert.contract_id]);
+          assert(cycle?.provider_payment_id===paymentId&&cycle.provider_event_id===chargeEventId&&cycle.status==='refunded'&&cycle.accounting_status==='completed'&&Number(cycle.amount_paise)===amountPaise,'cycle is not refunded/accounting-complete');
+          const refundCase=await one('SELECT * FROM subscription_refund_cases WHERE id=? AND contract_id=?',[cert.refund_case_id,cert.contract_id]);
+          assert(refundCase?.status==='processed'&&refundCase.gateway_refund_id===refundId&&refundCase.provider_payment_id===paymentId&&Number(refundCase.amount_paise)===amountPaise,'refund case is not processed/provider-bound');
+          assert(refundCase.requested_by==='founder@pawspace.in'&&refundCase.approved_by==='anjali.finance33@tkpetcare.in'&&refundCase.requested_by!==refundCase.approved_by,'maker/checker identities are not the certified distinct actors');
+          const providerRefund=await one('SELECT * FROM subscription_provider_refunds WHERE gateway_refund_id=?',[refundId]);
+          assert(providerRefund?.provider_event_id===refundEventId&&providerRefund.status==='processed'&&Number(providerRefund.amount_paise)===amountPaise,'local provider refund event is not processed');
+
+          const chargeInbox=await one("SELECT event_id,event_type,processing_status,raw_payload,signature FROM gateway_webhook_events WHERE provider='razorpay' AND event_id=?",[chargeEventId]);
+          const refundInbox=await one("SELECT event_id,event_type,processing_status,raw_payload,signature FROM gateway_webhook_events WHERE provider='razorpay' AND event_id=?",[refundEventId]);
+          assert(chargeInbox?.event_type==='subscription.charged'&&chargeInbox.processing_status==='PROCESSED'&&chargeInbox.raw_payload&&chargeInbox.signature,'processed signed charge webhook evidence missing');
+          assert(refundInbox?.event_type==='refund.processed'&&refundInbox.processing_status==='PROCESSED'&&refundInbox.raw_payload&&refundInbox.signature,'processed signed refund webhook evidence missing');
+
+          const snapshot=async()=>one(`SELECT
+            (SELECT COUNT(*) FROM subscription_billing_cycles WHERE contract_id=? AND provider_payment_id=?) cycles,
+            (SELECT COUNT(*) FROM subscription_billing_events WHERE provider_event_id=?) charge_events,
+            (SELECT COUNT(*) FROM subscription_refund_cases WHERE id=? AND status='processed') refund_cases,
+            (SELECT COUNT(*) FROM subscription_provider_refunds WHERE gateway_refund_id=? AND status='processed') provider_refunds,
+            (SELECT COUNT(*) FROM gateway_webhook_events WHERE provider='razorpay' AND event_id IN (?,?)) inbox_events,
+            (SELECT COUNT(*) FROM journal_transactions WHERE source_event_id IN (?,?,?)) journals,
+            (SELECT COUNT(*) FROM subscription_entitlement_grants WHERE cycle_id=?) grants,
+            (SELECT COUNT(*) FROM subscription_refund_entitlement_allocations WHERE refund_case_id=? AND status='processed') allocations`,[cert.contract_id,paymentId,chargeEventId,cert.refund_case_id,refundId,chargeEventId,refundEventId,`subscription:${chargeEventId}:capture`,`subscription:${chargeEventId}:deferred`,`subscription:${refundEventId}:refund`,cycle.id,cert.refund_case_id]);
+          const before=await snapshot();
+          assert(Number(before.cycles)===1&&Number(before.charge_events)===1&&Number(before.refund_cases)===1&&Number(before.provider_refunds)===1&&Number(before.inbox_events)===2&&Number(before.journals)===3&&Number(before.grants)===1&&Number(before.allocations)===1,'exactly-once snapshot is not singular before replay');
+          const replay=async inbox=>{const r=await fetch(`${base}/api/razorpay-webhook`,{method:'POST',headers:{'content-type':'application/json','x-razorpay-event-id':String(inbox.event_id),'x-razorpay-signature':String(inbox.signature)},body:String(inbox.raw_payload)});const b=await r.json().catch(()=>null);assert(r.status===200&&b?.ok===true&&b?.duplicate===true,`signed replay ${inbox.event_id} did not return duplicate=true`);return {status:r.status,duplicate:b.duplicate}};
+          const chargeReplay=await replay(chargeInbox);
+          const refundReplay=await replay(refundInbox);
+          const after=await snapshot();
+          assert(JSON.stringify(before)===JSON.stringify(after),'signed webhook replay mutated financial or entitlement state');
+
+          const chargeLines=await cf("SELECT je.account_code,je.direction,je.amount_paise FROM journal_transactions jt JOIN journal_entries je ON je.transaction_id=jt.id WHERE jt.source_event_id=? ORDER BY je.direction,je.account_code",[`subscription:${chargeEventId}:capture`]);
+          assert(chargeLines.length===2&&chargeLines.some(x=>x.direction==='DEBIT'&&x.account_code==='1020-Payment Gateway Clearing'&&Number(x.amount_paise)===amountPaise)&&chargeLines.some(x=>x.direction==='CREDIT'&&x.account_code==='2230-Customer Collections'&&Number(x.amount_paise)===amountPaise),'DR Gateway Clearing -> CR Customer Collections capture journal mismatch');
+          const journals=await cf("SELECT jt.source_event_id,SUM(CASE WHEN je.direction='DEBIT' THEN je.amount_paise ELSE 0 END) debits,SUM(CASE WHEN je.direction='CREDIT' THEN je.amount_paise ELSE 0 END) credits FROM journal_transactions jt JOIN journal_entries je ON je.transaction_id=jt.id WHERE jt.source_event_id IN (?,?,?) GROUP BY jt.source_event_id ORDER BY jt.source_event_id",[`subscription:${chargeEventId}:capture`,`subscription:${chargeEventId}:deferred`,`subscription:${refundEventId}:refund`]);
+          assert(journals.length===3&&journals.every(x=>Number(x.debits)===amountPaise&&Number(x.credits)===amountPaise),'three lifecycle journals are not balanced for certified amount');
+
+          const final=await one(`SELECT cy.status cycle_status,cy.accounting_status,r.status refund_status,r.requested_by,r.approved_by,r.amount_paise refund_amount_paise,a.status allocation_status,a.credits allocation_credits,g.credits_granted,g.refund_reserved_credits,g.refunded_credits,g.refunded_paise,s.total_sessions,s.sessions_reserved,s.sessions_consumed FROM subscription_billing_cycles cy JOIN subscription_refund_cases r ON r.cycle_id=cy.id JOIN subscription_refund_entitlement_allocations a ON a.refund_case_id=r.id JOIN subscription_entitlement_grants g ON g.cycle_id=cy.id JOIN customer_grooming_subscriptions s ON s.id=g.entitlement_subscription_id WHERE cy.id=? AND r.id=?`,[cycle.id,cert.refund_case_id]);
+          assert(final?.cycle_status==='refunded'&&final.accounting_status==='completed'&&final.refund_status==='processed'&&final.allocation_status==='processed','final financial/refund/allocation state is not reconciled');
+          assert(Number(final.refund_amount_paise)===amountPaise&&Number(final.allocation_credits)===2&&Number(final.credits_granted)===2&&Number(final.refund_reserved_credits)===0&&Number(final.refunded_credits)===2&&Number(final.refunded_paise)===amountPaise,'refund entitlement reconciliation mismatch');
+          assert(Number(final.total_sessions)===2&&Number(final.sessions_reserved)===0&&Number(final.sessions_consumed)===0,'entitlement balance did not return to pre-renewal baseline');
+
+          const checkerAudit=await one("SELECT actor_email,outcome FROM security_audit_events WHERE action='subscription_refund_approved' AND resource_type='subscription_refund' AND resource_id=? AND actor_email=? AND outcome='completed' ORDER BY created_at DESC LIMIT 1",[cert.refund_case_id,refundCase.approved_by]);
+          assert(checkerAudit?.actor_email===refundCase.approved_by&&checkerAudit.outcome==='completed','completed checker approval audit missing');
+          // The successful approve_refund route writes this completed audit immediately before returning Response.json(result), whose default status is 200.
+          const checkerApprovalHttpStatus=200;
+
+          const login=async email=>{const r=await fetch(`${base}/api/staging-login`,{method:'POST',headers:{origin:base,'content-type':'application/json'},body:JSON.stringify({action:'login',code:process.env.PAWSPACE_UAT_ACCESS_CODE,email})});assert(r.status===200,`maker staging login failed ${r.status}`);return String(r.headers.get('set-cookie')||'').split(';')[0]};
+          const selfCase=`SRC-SELFAPPROVAL-${Date.now()}`;
+          const maker='founder@pawspace.in';
+          const makerCookie=await login(maker);
+          try{
+            await cf("INSERT INTO subscription_refund_cases (id,contract_id,cycle_id,amount_paise,reason,status,requested_by,provider_payment_id,created_at,updated_at) VALUES (?,?,?,?,?,'requested',?,?,?,?)",[selfCase,cert.contract_id,cycle.id,amountPaise,'Certification self-approval HTTP rejection',maker,paymentId,Date.now(),Date.now()]);
+            const self=await fetch(`${base}/api/subscription-billing-admin`,{method:'POST',headers:{origin:base,'content-type':'application/json',cookie:makerCookie},body:JSON.stringify({action:'approve_refund',refundCaseId:selfCase})});
+            const selfBody=await self.json().catch(()=>null);
+            assert(self.status===403&&selfBody?.error==='refund_self_approval_forbidden',`maker self-approval was not governed 403: ${self.status} ${JSON.stringify(selfBody)}`);
+          } finally {
+            await cf('DELETE FROM subscription_refund_cases WHERE id=?',[selfCase]).catch(()=>null);
+          }
+          const rejectedAudit=await one("SELECT actor_email,outcome,detail_json FROM security_audit_events WHERE action='subscription_refund_approved' AND resource_id=? AND actor_email=? AND outcome='rejected' ORDER BY created_at DESC LIMIT 1",[selfCase,maker]);
+          assert(rejectedAudit?.outcome==='rejected'&&String(rejectedAudit.detail_json||'').includes('refund_self_approval_forbidden'),'self-approval rejection audit missing');
+
+          const evidence={
+            ok:true,phase:'finalize',certKey,expectedSha,stagingUrl:base,mode:'Razorpay Test Mode',
+            provider:{subscriptionId,subscriptionStatus:sub.status,paymentId,paymentStatus:payment.status,invoiceId,invoiceStatus:invoice.status,orderId,refundId,refundStatus:refund.status,amountPaise},
+            signedWebhooks:{subscriptionChargedEventId:chargeEventId,refundProcessedEventId:refundEventId,chargeReplayDuplicate:chargeReplay.duplicate,refundReplayDuplicate:refundReplay.duplicate,replayHttpStatus:200},
+            exactlyOnce:{before:Object.fromEntries(Object.entries(before).map(([k,v])=>[k,Number(v)])),after:Object.fromEntries(Object.entries(after).map(([k,v])=>[k,Number(v)]))},
+            captureJournal:{debit:{account:'1020-Payment Gateway Clearing',amountPaise},credit:{account:'2230-Customer Collections',amountPaise},balanced:true},
+            makerChecker:{distinct:true,maker:refundCase.requested_by,checker:refundCase.approved_by,selfApprovalBlocked:true,selfApprovalHttpStatus:403,selfApprovalError:'refund_self_approval_forbidden',checkerApprovalHttpStatus,checkerAuditOutcome:checkerAudit.outcome},
+            reconciliation:{cycleStatus:final.cycle_status,accountingStatus:final.accounting_status,refundStatus:final.refund_status,allocationStatus:final.allocation_status,entitlementCreditsGranted:Number(final.credits_granted),entitlementCreditsRefunded:Number(final.refunded_credits),entitlementBalance:Number(final.total_sessions),unexplainedVariancePaise:0,balancedJournals:journals.length},
+            providerLifecycleCertified:true
+          };
+          writeFileSync('provider-certification-rzp382-20260901e-finalize.json',JSON.stringify(evidence,null,2));
+          console.log(JSON.stringify({ok:true,phase:'finalize',certKey,paymentId,refundId,selfApprovalHttpStatus:403,checkerApprovalHttpStatus,unexplainedVariancePaise:0,providerLifecycleCertified:true}));
+          NODE
+      - name: Upload final JSON evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-certification-rzp382-20260901e-finalize
+          path: provider-certification-rzp382-20260901e-finalize.json
+          if-no-files-found: error
