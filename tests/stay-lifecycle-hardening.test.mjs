@@ -2,28 +2,20 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import * as nodeModule from "node:module";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
-// Test-only resolve hook (same pattern as tests/customer-offers.test.mjs).
-if (typeof nodeModule.registerHooks === "function") {
-  nodeModule.registerHooks({
-    resolve(specifier, context, nextResolve) {
-      try { return nextResolve(specifier, context); } catch (error) {
-        if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
-        throw error;
-      }
-    },
-  });
-} else {
-  const hook = `export async function resolve(specifier, context, nextResolve) {
-    try { return await nextResolve(specifier, context); }
-    catch (error) {
-      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(specifier + ".ts", context);
-      throw error;
-    }
-  }`;
-  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
-}
+// This suite used to carry its own resolve hook, which handled only the extensionless `.ts` imports the
+// lib modules use. lib/sitting-lifecycle.ts now reaches lib/service-completion-finance.ts, which resolves
+// its runtime with `await import("cloudflare:workers")` - a specifier that hook never intercepted. Because
+// that import is lazy, nothing failed until a test actually ran completion finance, and then it failed as
+// ERR_UNSUPPORTED_ESM_URL_SCHEME ("protocol 'cloudflare:'") rather than as anything about this suite. The
+// shared helper resolves `cloudflare:workers` to the per-suite env stub, which is the reason it exists.
+installWorkersHooks("__STAY_LIFECYCLE_DB__", "__STAY_LIFECYCLE_ENV__");
+
+// resolveServiceCompletionFinance seeds its deterministic UAT commercial term only when the runtime says
+// so explicitly. The Release CI jobs pass `PAWSPACE_LOCAL_PREVIEW=on NODE_ENV=test` in the environment;
+// the stub reads Worker env, not process.env, so the same two values are declared here.
+globalThis.__STAY_LIFECYCLE_ENV__ = { NODE_ENV: "test", PAWSPACE_LOCAL_PREVIEW: "on" };
 
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const staysRoute = read("app/api/boarding-stays/route.ts");
@@ -52,6 +44,37 @@ function makeD1(sqlite) {
 const DAY = 86_400_000;
 const NOW = Date.now();
 const iso = (offsetMs) => new Date(NOW + offsetMs).toISOString();
+
+// The same IST day key lib/boarding-stay-lifecycle.ts buckets stay milestones by.
+const istDate = (value) => new Date(new Date(value).getTime() + 330 * 60_000).toISOString().slice(0, 10);
+// stayDays() in that module: one key per day from check-in up to (not including) check-out.
+function stayDayKeys(startIso, endIso) {
+  const days = [];
+  let cursor = new Date(`${istDate(startIso)}T00:00:00Z`);
+  const end = new Date(`${istDate(endIso)}T00:00:00Z`);
+  while (cursor < end) { days.push(cursor.toISOString().slice(0, 10)); cursor = new Date(cursor.getTime() + DAY); }
+  return days.length ? days : [istDate(startIso)];
+}
+/*
+ * Checkout is gated on a meal, a play and a scanned media update for EVERY day of the stay. Only
+ * care_event takes an explicit stayDate; record_daily_update always buckets its media by wall-clock
+ * date, so the days of a stay that are not today cannot be satisfied through the API inside one test
+ * process. The gate reads `detail.stayDate` when it is present on any of the three event types, so the
+ * per-day history is seeded directly here - the same fixture technique this suite already uses for
+ * provider_work_orders - and the real gate still runs against it at check_out.
+ */
+function seedDailyMilestones(sqlite, { stayId, bookingId, startIso, endIso, skipDays = [] }) {
+  const insert = sqlite.prepare("INSERT INTO boarding_stay_events (id,stay_id,booking_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?)");
+  const days = stayDayKeys(startIso, endIso).filter((day) => !skipDays.includes(day));
+  for (const day of days) {
+    for (const [eventType, detail] of [
+      ["care_meal", { stayDate: day }],
+      ["care_play", { stayDate: day }],
+      ["proof_daily_update", { stayDate: day, mimeType: "image/jpeg", note: "Daily update" }],
+    ]) insert.run(`${stayId}-${eventType}-${day}`, stayId, bookingId, eventType, "host@test", JSON.stringify(detail), NOW);
+  }
+  return days;
+}
 
 async function stayStack() {
   const sqlite = new DatabaseSync(":memory:");
@@ -132,8 +155,12 @@ test("real execution: awaiting_host_acceptance -> accept -> care plan -> check-i
   assert.equal(checkedIn.status, "in_progress");
   assert.equal(sqlite.prepare("SELECT status FROM canonical_bookings WHERE id='BK-S1'").get().status, "in_progress");
 
-  const care = await mutate(stack, "STAY-1", "care_event", { careEventType: "walk", detail: { minutes: 30 } });
+  const stayDays = stayDayKeys(iso(2 * DAY), iso(5 * DAY));
+  const care = await mutate(stack, "STAY-1", "care_event", { careEventType: "walk", detail: { minutes: 30, stayDate: stayDays[0] } });
   assert.equal(care.status, "logged");
+  assert.equal(care.stayDate, stayDays[0], "a care event is attributed to the stay day it belongs to");
+  // A care milestone outside the paid window is not a milestone for this stay.
+  await rejects(mutate(stack, "STAY-1", "care_event", { careEventType: "meal", detail: { stayDate: istDate(iso(30 * DAY)) } }), 400, /valid stayDate within the stay window/);
 
   // Extension: must extend beyond current checkout, never changes the stay window itself.
   await rejects(mutate(stack, "STAY-1", "request_extension", { requestedEnd: iso(4 * DAY) }), 400, /later than the current checkout/);
@@ -142,8 +169,14 @@ test("real execution: awaiting_host_acceptance -> accept -> care plan -> check-i
   assert.equal(extension.stayWindowUnchanged, true);
   assert.equal(sqlite.prepare("SELECT check_out_at FROM boarding_stays WHERE id='STAY-1'").get().check_out_at, iso(5 * DAY), "requesting an extension never moves the paid window");
 
+  // Checkout is gated on complete daily milestones: prove the gate bites on a missing day first.
+  seedDailyMilestones(sqlite, { stayId: "STAY-1", bookingId: "BK-S1", startIso: iso(2 * DAY), endIso: iso(5 * DAY), skipDays: [stayDays[stayDays.length - 1]] });
+  await rejects(mutate(stack, "STAY-1", "check_out"), 409, /mandatory daily milestones are incomplete/);
+  seedDailyMilestones(sqlite, { stayId: "STAY-1", bookingId: "BK-S1", startIso: iso(2 * DAY), endIso: iso(5 * DAY), skipDays: stayDays.slice(0, -1) });
+
   const done = await mutate(stack, "STAY-1", "check_out", { idempotencyKey: "STAY-1-check-out-key" });
   assert.equal(done.status, "completed");
+  assert.deepEqual(done.milestones.days, stayDays, "checkout records the milestone days it verified");
   assert.equal(sqlite.prepare("SELECT status FROM boarding_capacity_locks WHERE stay_id='STAY-1'").get().status, "released");
   assert.equal(sqlite.prepare("SELECT status FROM canonical_bookings WHERE id='BK-S1'").get().status, "completed");
   // Idempotent replay of the SAME consumed key returns the remembered result instead of re-executing.
