@@ -96,6 +96,16 @@ test("QA-P0-002: refund completion fails closed without gateway proof and preser
   sqlite.exec("CREATE TABLE booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'requested',requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
   sqlite.prepare("INSERT INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,approved_by,gateway_reference,created_at,updated_at) VALUES (?,?,?,?,?,'processing',?,?,?,?,?)")
     .run("RF-PROOF", "BK-REFUND", "PAY-REFUND", 2500, "Refund after service issue", "maker@pawspace.test", "checker@pawspace.test", null, now, now);
+  sqlite.prepare("INSERT INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,approved_by,gateway_reference,created_at,updated_at) VALUES (?,?,?,?,?,'requested',?,?,?,?,?)")
+    .run("RF-CLIENT", "BK-REFUND", "PAY-REFUND", 2500, "Refund after service issue", "maker@pawspace.test", null, null, now, now);
+
+  const clientApproval = await postRefund("checker@pawspace.test", statusBody("RF-CLIENT", "approved", { gatewayReference: "rf_fabricated_before_reconciliation" }));
+  assert.equal(clientApproval.status, 200, JSON.stringify(clientApproval.payload));
+  const clientProcessing = await postRefund("checker@pawspace.test", statusBody("RF-CLIENT", "processing", { gatewayReference: "rf_fabricated_before_reconciliation" }));
+  assert.equal(clientProcessing.status, 200, JSON.stringify(clientProcessing.payload));
+  const preReconciliation = sqlite.prepare("SELECT status,gateway_reference FROM booking_refund_cases WHERE id='RF-CLIENT'").get();
+  assert.equal(preReconciliation.status, "processing");
+  assert.equal(preReconciliation.gateway_reference, null, "manual status transitions must never establish the gateway refund reference");
 
   const missingReference = await postRefund("checker@pawspace.test", statusBody("RF-PROOF", "completed"));
   assert.equal(missingReference.status, 409, JSON.stringify(missingReference.payload));
