@@ -63,11 +63,14 @@ test("UAT convergence: Taxi uses active deterministic GPS/proof/finance contract
   assert.match(route,/gpsConnected/);
   assert.match(lifecycle,/gpsConnected:true/);
   assert.match(lifecycle,/resolveServiceCompletionFinance/);
-  assert.match(ops,/routeEvidence:\"deterministic_sandbox\"/);
+  assert.match(ops,/routeEvidence:\"deterministic_sandbox_verified\"/);
+  assert.match(ops,/gpsConnected:true/);
   assert.doesNotMatch(ops,/routeEvidence:\"sandbox_unverified\"/);
-  assert.match(proof,/TAXI_REQUIRED_PROOF/);
-  assert.match(proof,/before_service/);
-  assert.match(proof,/after_service/);
+  assert.doesNotMatch(ops,/tax:\"configuration_required\"/);
+  assert.doesNotMatch(ops,/driverPayout:\"rule_pending\"/);
+  assert.match(proof,/TAXI_CANONICAL_PROOF_REQUIREMENTS/);
+  assert.match(proof,/Before Picture/);
+  assert.match(proof,/After Picture/);
 });
 
 test("UAT convergence: completion finance is balanced and place-of-supply aware",()=>{
