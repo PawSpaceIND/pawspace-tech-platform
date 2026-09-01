@@ -73,12 +73,11 @@ async function throughGateway(request) {
   const env = { DB: globalThis.__AI_WEB_CHAT_DB__, ...globalThis.__AI_WEB_CHAT_ENV__ };
   const { authorizePlatformSessionRequest } = await import("../lib/session-api-gateway.ts");
   const { authorizeApiRequest } = await import("../lib/api-gateway.ts");
-  // The real Worker gateway may inspect a write body while deciding session/staff authority. Give each
-  // gateway its own clone so this executable harness never consumes the Request later handed to the
-  // route; otherwise Node's Fetch implementation can leave the public lead POST with an unusable body.
-  const sessionAccess = await authorizePlatformSessionRequest(request.clone(), env.DB);
+  // Mirror worker/index.ts exactly: the same Request passes through the session gateway, then the
+  // staff/public API gateway, then the route. Gateways that need JSON clone internally themselves.
+  const sessionAccess = await authorizePlatformSessionRequest(request, env.DB);
   if (sessionAccess instanceof Response) return { refused: sessionAccess };
-  const access = sessionAccess ?? await authorizeApiRequest(request.clone(), env);
+  const access = sessionAccess ?? await authorizeApiRequest(request, env);
   if (access instanceof Response) return { refused: access };
   return { access };
 }
