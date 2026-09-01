@@ -1,0 +1,33 @@
+name: Razorpay gateway smoke QA
+
+on:
+  push:
+    branches:
+      - qa/razorpay-gateway-smoke-20260901
+    paths:
+      - scripts/razorpay-gateway-smoke-prepare.mjs
+      - .github/workflows/razorpay-gateway-smoke-qa.yml
+  workflow_dispatch:
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Create real Razorpay Test order and verify idempotency
+        env:
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node scripts/razorpay-gateway-smoke-prepare.mjs
+      - name: Upload sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: razorpay-gateway-smoke-prepare
+          path: gateway-smoke-prepare.json
+          if-no-files-found: warn
