@@ -75,9 +75,14 @@ test("Training Finance blocks invented tax and trainer rates and keeps payout sa
  assert.match(finance,/issueTrainingInvoice/);
  assert.match(finance,/issued_uat/);
  assert.match(finance,/liveTaxFiling:false/);
- assert.match(finance,/captured_amount/);
+ // Provider earnings are released only up to the coverage the GOVERNED customer payment provides - the
+ // sandbox attestation on the booking's commercial quote, via governedPayment(), rather than a
+ // booking_payments row a client surface can write. The +0.01 is the paise tolerance that stops a float
+ // remainder from holding a fully covered session; both halves of that comparison are pinned here.
+ assert.match(finance,/governedPayment/);
+ assert.match(finance,/training_quote_payment_attestations/);
  assert.match(finance,/requiredCoverage/);
- assert.match(finance,/captured\+0\.01>=requiredCoverage/);
+ assert.match(finance,/paid\+0\.01>=requiredCoverage/);
  assert.match(finance,/does not yet cover delivered Training value/);
  assert.doesNotMatch(finance,/founder_seed/);
  assert.doesNotMatch(finance,/booking_status\)!==\"cancelled\"\?\"earned\"/);
@@ -125,7 +130,7 @@ test("Training cancellation refund and credit-note flow is policy governed and c
  assert.match(financePage,/Configure cancellation policy/);
  assert.match(financePage,/Training cancellation & refund cases/);
  assert.match(financePage,/Issue UAT credit note/);
- assert.match(finance,/captured\+0\.01>=requiredCoverage/);
+ assert.match(finance,/paid\+0\.01>=requiredCoverage/);
  assert.doesNotMatch(finance,/booking_status\)!==\"cancelled\"\?\"earned\"/);
 });
 

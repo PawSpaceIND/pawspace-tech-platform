@@ -58,7 +58,12 @@ const opsRoute = await import("../app/api/training-ops/route.ts");
 const { materializeTrainingProgramme } = await import("../lib/training-programme.ts");
 const { mutateTrainingSession } = await import("../lib/training-session-lifecycle.ts");
 const { requestTrainingCancellation, approveTrainingCancellation } = await import("../lib/training-cancellation.ts");
-const { saveTrainingCompensationRule, refreshTrainingFinanceReadModel } = await import("../lib/training-finance.ts");
+const { ensureTrainingFinanceTables, saveTrainingCompensationRule, saveTrainingTaxPolicy, refreshTrainingFinanceReadModel } = await import("../lib/training-finance.ts");
+
+// The GST rate a Training invoice is raised at is never self-approved: the seeded policy row carries no
+// mode and no rate, and the finance read model refuses to price an invoice until Finance publishes one.
+// Every test below that reaches an invoice therefore publishes the rate first, explicitly.
+const publishTaxPolicy = (db) => saveTrainingTaxPolicy(db, { cityId: "blr", taxMode: "inclusive", taxRate: 18, effectiveFrom: "2026-08-01", reason: "Bengaluru GST rate approved for UAT invoicing", actorId: "finance:uat" });
 
 // Preview actor (localhost + NODE_ENV!=production) resolves to a superuser; ownership checks pass.
 const call = async (handler, method, bodyOrQuery, headers = {}) => {
@@ -97,10 +102,20 @@ function baseTables() {
   sqlite.exec("CREATE TABLE IF NOT EXISTS scheduling_availability (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,date TEXT NOT NULL,windows_json TEXT NOT NULL,source TEXT NOT NULL,updated_at INTEGER NOT NULL)");
   sqlite.exec("CREATE TABLE IF NOT EXISTS provider_work_orders (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,schedule_group_id TEXT NOT NULL,provider_id TEXT NOT NULL,provider_name TEXT NOT NULL,provider_model TEXT NOT NULL,service_code TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,occurrence_count INTEGER NOT NULL DEFAULT 1,status TEXT NOT NULL DEFAULT 'assigned',assignment_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
   sqlite.exec("CREATE TABLE IF NOT EXISTS service_media_assets (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,purpose TEXT NOT NULL,storage_key TEXT NOT NULL,mime_type TEXT NOT NULL,size_bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,scan_status TEXT NOT NULL DEFAULT 'pending',access_status TEXT NOT NULL DEFAULT 'pending_upload',retention_status TEXT NOT NULL DEFAULT 'active',synthetic INTEGER NOT NULL DEFAULT 1,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  // booking_service_addresses from lib/provider-daily-travel.ts. ARRIVED resolves the doorstep
+  // coordinates from this table and refuses without them.
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_service_addresses (booking_id TEXT PRIMARY KEY,address TEXT NOT NULL,latitude REAL,longitude REAL,source TEXT NOT NULL DEFAULT 'staff_entered',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
 }
 
 const NOW = Date.now();
 const TRAINER = "train_kiran";
+// The customer doorstep every training booking below is served at, and the trainer coordinates ARRIVED
+// is called with. Identical on purpose: the geofence distance is what these tests keep at zero so a
+// lifecycle assertion never turns into a geofence assertion. The refusal itself is proved separately.
+const DOORSTEP = { latitude: 12.9611, longitude: 77.6387 };
+const AT_DOORSTEP = { ...DOORSTEP };
+// A session cannot be closed until the Owner Handover phase has recorded its 15-minute minimum.
+const HANDOVER = { ownerHandoverMinutes: 15 };
 // Session times: far enough in the future to reschedule, spread across days.
 // 05:30Z == 11:00 IST, 06:30Z == 12:00 IST — inside a 09:00-19:00 IST roster window.
 const sessionStart = (dayOffset) => new Date(Date.UTC(2026, 8, 1 + dayOffset, 5, 30, 0)).toISOString();
@@ -114,10 +129,30 @@ function seedBooking({ id, group, customer = "cus_t1", sessions = 4, total = 800
     .run(id, `idem-${id}`, customer, group, provider, sessionStart(dayBase), sessionEnd(dayBase + sessions - 1), total, NOW, NOW);
   sqlite.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,amount_due_now,method,mode,status,idempotency_key,created_at,updated_at) VALUES (?,?,?,?,?,'upi','deposit','captured',?,?,?)")
     .run(`PAY-${id}`, id, customer, total, dueNow, `payk-${id}`, NOW, NOW);
+  sqlite.prepare("INSERT OR IGNORE INTO booking_service_addresses (booking_id,address,latitude,longitude,source,created_at,updated_at) VALUES (?,?,?,?,'staff_entered',?,?)")
+    .run(id, "12 Indiranagar 100ft Road, Bengaluru", DOORSTEP.latitude, DOORSTEP.longitude, NOW, NOW);
   for (let i = 0; i < sessions; i++) {
     sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES (?,?,?,?,'blr','blr-east',?,'[\"pet_1\"]',?,?,1,?,NULL,'assigned','{}',?)")
       .run(`R-${id}-${i + 1}`, group, provider, "dog_training", customer, sessionStart(dayBase + i), sessionEnd(dayBase + i), i + 1, NOW);
   }
+}
+
+/*
+ * The FINAL session of a programme cannot be closed until the remaining balance is paid, which is
+ * resolved through the commercial quote linked to the booking (assertFinalBalancePaid in
+ * lib/training-session-lifecycle.ts). Seeds that governed quote, its booking link and a sandbox payment
+ * attestation. Pass status:"PARTIALLY_PAID" to leave the balance outstanding and prove the gate holds.
+ * DDL is owned by lib/training-commercial-governance.ts, whose ensure runs before these inserts.
+ */
+async function seedCommercialQuote(db, { bookingId, quoteId = `Q-${bookingId}`, total = 8000, sessions = 4, status = "FULLY_PAID", paid = total, paymentMode = "split" }) {
+  const { ensureTrainingCommercialTables } = await import("../lib/training-commercial-governance.ts");
+  await ensureTrainingCommercialTables(db);
+  sqlite.prepare("INSERT INTO training_commercial_quotes (id,package_code,package_version,pet_count,scheduled_start,payment_mode,discount,total_amount,amount_due_now,minutes_per_session,sessions,validity_days,expires_at,status,created_at,used_at,used_booking_id) VALUES (?,?,1,1,?,?,0,?,?,45,?,90,?,'used',?,?,?)")
+    .run(quoteId, "obedience-starter", sessionStart(0), paymentMode, total, total / 2, sessions, NOW + 86_400_000, NOW, NOW, bookingId);
+  sqlite.prepare("INSERT INTO training_booking_quote_links (quote_id,booking_id,created_at) VALUES (?,?,?)").run(quoteId, bookingId, NOW);
+  sqlite.prepare("INSERT INTO training_quote_payment_attestations (quote_id,status,amount,currency,environment,reference,bound_payment_key,created_at,updated_at) VALUES (?,?,?,'INR','sandbox',?,?,?,?)")
+    .run(quoteId, status, paid, `ref-${quoteId}`, `payk-${quoteId}`, NOW, NOW);
+  return quoteId;
 }
 
 function seedRoster(provider, dateIso, windows = ["09:00-19:00"], zone = "blr-east") {
@@ -126,19 +161,25 @@ function seedRoster(provider, dateIso, windows = ["09:00-19:00"], zone = "blr-ea
 }
 
 // Secure evidence pipeline: clean/ready/active non-synthetic asset + session link, per the exact
-// requirements in secureEvidenceReady (lib/training-session-lifecycle.ts).
+// requirements in secureEvidenceReady (lib/training-session-lifecycle.ts). Completion needs BOTH
+// canonical proofs - one purpose=before_service and one purpose=after_service - so each seed lays down
+// the pair and evidenceRefs() names them.
+const evidenceRefs = (mediaId) => [`media://asset/${mediaId}-BEFORE`, `media://asset/${mediaId}-AFTER`];
 function seedEvidence(mediaId, sessionRow) {
-  sqlite.prepare("INSERT INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'clean','ready','active',0,'uat',?,?)")
-    .run(mediaId, sessionRow.booking_id, sessionRow.provider_id, "training_homework", `media/${mediaId}`, "image/jpeg", 2048, `sha-${mediaId}`, NOW, NOW);
-  sqlite.prepare("INSERT INTO training_session_media_links (media_id,session_id,programme_id,booking_id,provider_id,created_at) VALUES (?,?,?,?,?,?)")
-    .run(mediaId, sessionRow.id, sessionRow.programme_id, sessionRow.booking_id, sessionRow.provider_id, NOW);
+  for (const [suffix, purpose] of [["BEFORE", "before_service"], ["AFTER", "after_service"]]) {
+    const id = `${mediaId}-${suffix}`;
+    sqlite.prepare("INSERT INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'clean','ready','active',0,'uat',?,?)")
+      .run(id, sessionRow.booking_id, sessionRow.provider_id, purpose, `media/${id}`, "image/jpeg", 2048, `sha-${id}`, NOW, NOW);
+    sqlite.prepare("INSERT INTO training_session_media_links (media_id,session_id,programme_id,booking_id,provider_id,created_at) VALUES (?,?,?,?,?,?)")
+      .run(id, sessionRow.id, sessionRow.programme_id, sessionRow.booking_id, sessionRow.provider_id, NOW);
+  }
 }
 
 const REPORT = { attendance: { mode: "parent", safeAreaConfirmed: true, parentOrCaretakerConfirmed: true }, homework: "Practise loose-leash walking 10 minutes daily", progress: { obedience: 6 } };
 
 async function completeSession(db, sessionRow, key) {
   let seeded = false;
-  for (const [action, extra] of [["accept", {}], ["on_the_way", {}], ["arrive", {}], ["start", {}], ["complete", { report: { ...REPORT, evidenceRefs: [`media://asset/MA-${key}`] } }]]) {
+  for (const [action, extra] of [["accept", {}], ["on_the_way", {}], ["arrive", AT_DOORSTEP], ["start", {}], ["owner_handover", HANDOVER], ["complete", { report: { ...REPORT, evidenceRefs: evidenceRefs(`MA-${key}`) } }]]) {
     await mutateTrainingSession(db, { sessionId: sessionRow.id, action, actorId: `trainer:${sessionRow.provider_id}`, idempotencyKey: `${key}-${action}`, ...extra });
     // The first mutation ensures the lifecycle tables (incl. training_session_media_links) exist.
     if (!seeded) { seedEvidence(`MA-${key}`, sessionRow); seeded = true; }
@@ -162,7 +203,10 @@ test("real execution: dog_training booking materializes exactly N sessions and r
   assert.equal(first.duplicatePrevented, false);
   assert.equal(first.sessions.length, 4);
   assert.deepEqual(first.sessions.map(s => Number(s.sequence_no)), [1, 2, 3, 4]);
-  assert.ok(first.sessions.every(s => s.status === "scheduled" && s.provider_id === TRAINER));
+  assert.ok(first.sessions.every(s => s.provider_id === TRAINER));
+  // Programme sessions are locked sequentially: only session 1 is workable on materialization, so a
+  // trainer cannot start session 3 before session 2 has been delivered.
+  assert.deepEqual(first.sessions.map(s => s.status), ["scheduled", "locked", "locked", "locked"]);
   assert.equal(Number(first.programme.total_sessions), 4);
   const replay = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   assert.equal(replay.duplicatePrevented, true);
@@ -176,15 +220,30 @@ test("real execution: complete demands validated report + clean evidence, consum
   const db = globalThis.__TRN_DB__;
   const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   const s1 = sessions[0];
-  for (const action of ["accept", "on_the_way", "arrive", "start"]) {
-    await mutateTrainingSession(db, { sessionId: s1.id, action, actorId: "trainer:t", idempotencyKey: `s1-${action}` });
+  // ARRIVED is refused off the doorstep before it is accepted at it, so the geofence stays proved here
+  // rather than only in the source-contract suite.
+  await assert.rejects(
+    mutateTrainingSession(db, { sessionId: s1.id, action: "accept", actorId: "trainer:t", idempotencyKey: "s1-accept" }).then(() =>
+      mutateTrainingSession(db, { sessionId: s1.id, action: "on_the_way", actorId: "trainer:t", idempotencyKey: "s1-on_the_way" })).then(() =>
+      mutateTrainingSession(db, { sessionId: s1.id, action: "arrive", actorId: "trainer:t", idempotencyKey: "s1-arrive-far", latitude: 13.2, longitude: 77.9 })),
+    (e) => e instanceof Response && e.status === 409);
+  for (const [action, extra] of [["arrive", AT_DOORSTEP], ["start", {}]]) {
+    await mutateTrainingSession(db, { sessionId: s1.id, action, actorId: "trainer:t", idempotencyKey: `s1-${action}`, ...extra });
   }
+  // Closing without the Owner Handover phase is refused, and a short handover cannot satisfy it.
+  await assert.rejects(
+    mutateTrainingSession(db, { sessionId: s1.id, action: "complete", actorId: "trainer:t", idempotencyKey: "s1-complete-nohandover", report: { ...REPORT, evidenceRefs: evidenceRefs("MA-1") } }),
+    (e) => e instanceof Response && e.status === 409);
+  await assert.rejects(
+    mutateTrainingSession(db, { sessionId: s1.id, action: "owner_handover", actorId: "trainer:t", idempotencyKey: "s1-handover-short", ownerHandoverMinutes: 14 }),
+    (e) => e instanceof Response && e.status === 409);
+  await mutateTrainingSession(db, { sessionId: s1.id, action: "owner_handover", actorId: "trainer:t", idempotencyKey: "s1-handover", ...HANDOVER });
   // Without evidence -> 409 (money consequence: a completed session is chargeable value)
   await assert.rejects(
     mutateTrainingSession(db, { sessionId: s1.id, action: "complete", actorId: "trainer:t", idempotencyKey: "s1-complete-bad", report: { ...REPORT, evidenceRefs: ["media://asset/GHOST"] } }),
     (e) => e instanceof Response && e.status === 409);
   seedEvidence("MA-1", s1);
-  const done = await mutateTrainingSession(db, { sessionId: s1.id, action: "complete", actorId: "trainer:t", idempotencyKey: "s1-complete", report: { ...REPORT, evidenceRefs: ["media://asset/MA-1"] } });
+  const done = await mutateTrainingSession(db, { sessionId: s1.id, action: "complete", actorId: "trainer:t", idempotencyKey: "s1-complete", report: { ...REPORT, evidenceRefs: evidenceRefs("MA-1") } });
   assert.equal(done.status, "completed");
   assert.equal(done.consumedExactlyOnce, true);
   assert.equal(done.programme.completed, 1);
@@ -200,11 +259,14 @@ test("real execution: no_show respects the 15-minute grace for providers; progra
   freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", sessions: 2 });
   const db = globalThis.__TRN_DB__;
   const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
+  // Session 2 starts out locked behind session 1, so it is unlocked first - otherwise the refusal below
+  // would prove the sequential lock again rather than the grace window it is here to prove.
+  await completeSession(db, sessions[0], "c1");
+  assert.equal(sqlite.prepare("SELECT status FROM training_sessions WHERE id=?").get(sessions[1].id).status, "scheduled");
   // Sessions are in the future: provider-recorded no_show inside grace must 409
   await assert.rejects(
     mutateTrainingSession(db, { sessionId: sessions[1].id, action: "no_show", actorId: "trainer:t", idempotencyKey: "ns-early", reason: "customer absent at start", staffOverride: false }),
     (e) => e instanceof Response && e.status === 409, "no_show before scheduled_start+grace must be rejected");
-  await completeSession(db, sessions[0], "c1");
   const ns = await mutateTrainingSession(db, { sessionId: sessions[1].id, action: "no_show", actorId: "ops:staff", idempotencyKey: "ns-staff", reason: "customer absent at start", staffOverride: true });
   assert.equal(ns.status, "no_show");
   assert.equal(ns.consumption, "pending_policy", "no_show must never auto-consume a session");
@@ -219,7 +281,15 @@ test("real execution: a programme whose every session completes cleanly ends sta
   const db = globalThis.__TRN_DB__;
   const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   await completeSession(db, sessions[0], "c1");
-  await completeSession(db, sessions[1], "c2");
+  // The final session is gated on the remaining balance: an outstanding one holds the programme open.
+  await seedCommercialQuote(db, { bookingId: "B1", total: 8000, sessions: 2, status: "PARTIALLY_PAID", paid: 4000 });
+  await assert.rejects(
+    completeSession(db, sessions[1], "c2-unpaid"),
+    (e) => e instanceof Response && e.status === 409, "the last session cannot close while the balance is unpaid");
+  // That refusal leaves the session in_session with its handover and evidence already recorded, so
+  // collecting the balance and retrying only the close is what a trainer would actually do next.
+  sqlite.prepare("UPDATE training_quote_payment_attestations SET status='FULLY_PAID',amount=8000 WHERE quote_id='Q-B1'").run();
+  await mutateTrainingSession(db, { sessionId: sessions[1].id, action: "complete", actorId: `trainer:${sessions[1].provider_id}`, idempotencyKey: "c2-complete-after-balance", report: { ...REPORT, evidenceRefs: evidenceRefs("MA-c2-unpaid") } });
   const prog = sqlite.prepare("SELECT status,completed_sessions FROM training_programmes").get();
   assert.equal(prog.status, "completed");
   assert.equal(prog.completed_sessions, 2);
@@ -382,6 +452,7 @@ test("real execution: approval enforces segregation of duties, cancels everythin
   sqlite.prepare("INSERT INTO provider_work_orders (id,booking_id,schedule_group_id,provider_id,provider_name,provider_model,service_code,scheduled_start,scheduled_end,occurrence_count,status,created_at,updated_at) VALUES ('WO1','B1','G1',?,'Kiran S.','commission','dog_training',?,?,4,'assigned',?,?)")
     .run(TRAINER, sessionStart(0), sessionEnd(3), NOW, NOW);
   const db = globalThis.__TRN_DB__;
+  await publishTaxPolicy(db);
   const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   await completeSession(db, sessions[0], "c1");
   await call(cancellationRoute.POST, "POST", { action: "configure_policy", cityId: "blr", feeType: "none", feeValue: 0, noShowTreatment: "refundable", effectiveFrom: "2026-08-01", reason: "platform 100% refund rule" });
@@ -419,6 +490,7 @@ test("REGRESSION lib/training-cancellation.ts: approval no longer crashes when t
   sqlite.exec("DROP TABLE provider_work_orders");
   seedBooking({ id: "B1", group: "G1", total: 8000, dueNow: 4000 });
   const db = globalThis.__TRN_DB__;
+  await publishTaxPolicy(db);
   await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   await call(cancellationRoute.POST, "POST", { action: "configure_policy", cityId: "blr", feeType: "none", feeValue: 0, noShowTreatment: "refundable", effectiveFrom: "2026-08-01", reason: "platform 100% refund rule" });
   const req = await requestTrainingCancellation(db, { bookingId: "B1", reason: "relocating out of city", idempotencyKey: "can-4", actorId: "customer:cus_t1" });
@@ -427,11 +499,37 @@ test("REGRESSION lib/training-cancellation.ts: approval no longer crashes when t
   assert.equal(approve.body.data.approvedRefund, 4000);
 });
 
+test("real execution: an unpublished city GST policy blocks Training invoicing instead of inventing a rate", async () => {
+  freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", sessions: 2 });
+  const db = globalThis.__TRN_DB__;
+  await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
+  await ensureTrainingFinanceTables(db);
+  // No publishTaxPolicy() here on purpose: the seeded row exists for the city but carries no mode and no
+  // rate, so the read model must refuse rather than price the invoice at a rate nobody approved.
+  const seeded = sqlite.prepare("SELECT tax_mode,tax_rate,status FROM training_tax_policies WHERE city_id='blr'").get();
+  assert.equal(seeded.status, "configuration_required");
+  assert.equal(seeded.tax_mode, null);
+  assert.equal(seeded.tax_rate, null);
+  await assert.rejects(
+    refreshTrainingFinanceReadModel(db),
+    (e) => e instanceof Response && e.status === 409, "an unapproved GST rate must never be applied to a customer invoice");
+  // Once Finance publishes the rate explicitly, the same refresh prices the invoice.
+  await publishTaxPolicy(db);
+  await refreshTrainingFinanceReadModel(db);
+  const invoice = sqlite.prepare("SELECT tax_mode,tax_rate FROM training_finance_invoices WHERE booking_id='B1'").get();
+  assert.equal(invoice.tax_mode, "inclusive");
+  assert.equal(invoice.tax_rate, 18);
+});
+
 // ---- 6. Provider earnings derive from completed sessions only ---------------------------------
 
 test("real execution: trainer earnings exist ONLY for completed sessions and derive from the published per-session rule", async () => {
   freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", total: 8000, dueNow: 4000, sessions: 3 });
   const db = globalThis.__TRN_DB__;
+  await publishTaxPolicy(db);
+  // Provider earnings are released against the GOVERNED customer payment - the sandbox attestation on
+  // the booking's commercial quote - not against the booking_payments row, so that is what is seeded.
+  await seedCommercialQuote(db, { bookingId: "B1", total: 8000, sessions: 3, status: "PARTIALLY_PAID", paid: 4000 });
   const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   await completeSession(db, sessions[0], "c1");
   await mutateTrainingSession(db, { sessionId: sessions[1].id, action: "no_show", actorId: "ops:staff", idempotencyKey: "ns-1", reason: "customer absent at start", staffOverride: true });
@@ -453,6 +551,7 @@ test("real execution: earnings are held when captured money does not yet cover d
   freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", total: 8000, dueNow: 0, sessions: 4 });
   sqlite.prepare("UPDATE booking_payments SET amount_due_now=0 WHERE booking_id='B1'").run();
   const db = globalThis.__TRN_DB__;
+  await publishTaxPolicy(db);
   const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   await completeSession(db, sessions[0], "c1");
   await saveTrainingCompensationRule(db, { cityId: "blr", rateValue: 700, effectiveFrom: "2026-08-01", reason: "trainer per-session compensation", actorId: "finance:uat" });
@@ -466,6 +565,7 @@ test("real execution: earnings are held when captured money does not yet cover d
 test("real execution: a pristine quote-linked programme reconciles with ZERO issues; every tampered total surfaces as an exception", async () => {
   freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", total: 8000, dueNow: 4000 });
   const db = globalThis.__TRN_DB__;
+  await publishTaxPolicy(db);
   await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   // Canonical server-quote linkage exactly as the commercial engine writes it
   await call(reconciliationRoute.GET, "GET"); // ensures training_commercial_quotes tables exist via the real route
@@ -506,6 +606,7 @@ test("real execution: a pristine quote-linked programme reconciles with ZERO iss
 test("real execution: reconciliation totals still agree after real completions and the finance read model refresh", async () => {
   freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", total: 8000, dueNow: 4000, sessions: 2 });
   const db = globalThis.__TRN_DB__;
+  await publishTaxPolicy(db);
   const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   await completeSession(db, sessions[0], "c1");
   await saveTrainingCompensationRule(db, { cityId: "blr", rateValue: 700, effectiveFrom: "2026-08-01", reason: "trainer per-session compensation", actorId: "finance:uat" });

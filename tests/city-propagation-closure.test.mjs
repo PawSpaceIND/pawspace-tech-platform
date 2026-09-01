@@ -56,5 +56,7 @@ test("scheduler stores, filters and reassigns by request city", async () => {
   assert.match(route, /city_id IS NULL OR city_id=\?/);
   assert.match(route, /input\.serviceCode,cityIdFor\(input\),input\.zoneId/);
   assert.match(route, /cityId:cityIdFor\(original\)/);
-  assert.match(route, /const requestInput:ScheduleRequest=\{cityId:cityIdFor\(input\)/);
+  // Declared in a combined const list alongside `rules`, so the binding keyword is not adjacent to the
+  // name; what matters is that the ScheduleRequest handed to the scheduler carries the resolved city.
+  assert.match(route, /requestInput:ScheduleRequest=\{cityId:cityIdFor\(input\)/);
 });

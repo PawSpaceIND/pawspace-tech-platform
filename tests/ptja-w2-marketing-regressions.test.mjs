@@ -31,11 +31,16 @@ function makeD1(sqlite) {
   };
 }
 
+// Service completion resolves its finance through lib/service-completion-finance.ts, which seeds its
+// deterministic UAT commercial term only when the runtime says so explicitly. The shim reads Worker env
+// rather than process.env, so the two values the Release CI jobs export are the baseline here; without
+// them a completion fails closed with "configuration_required" and surfaces as a bare 500.
+const UAT_RUNTIME = { NODE_ENV: "test", PAWSPACE_LOCAL_PREVIEW: "on" };
 function world(env = {}) {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
   globalThis.__PTJA_MKT_DB__ = db;
-  globalThis.__PTJA_MKT_ENV__ = env;
+  globalThis.__PTJA_MKT_ENV__ = { ...UAT_RUNTIME, ...env };
   return { sqlite, db };
 }
 

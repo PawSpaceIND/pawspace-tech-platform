@@ -99,6 +99,10 @@ async function setup() {
       gateway TEXT NOT NULL DEFAULT 'uat_sandbox', idempotency_key TEXT NOT NULL UNIQUE,
       detail_json TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
     );
+    CREATE TABLE booking_service_addresses (
+      booking_id TEXT PRIMARY KEY, address TEXT NOT NULL, latitude REAL, longitude REAL,
+      source TEXT NOT NULL DEFAULT 'staff_entered', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
   `);
 
   sqlite.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
@@ -118,6 +122,11 @@ async function setup() {
   insertPayment.run("PAY-GROOM-JOURNEY", "BK-GROOM-JOURNEY", "CUS-GROOM-1", 1899, 0, "INR", "cash", "pay_after_service", "created", "uat_sandbox", "pik-groom-journey", "{}", now, now);
   insertPayment.run("PAY-GROOM-OTHER", "BK-GROOM-OTHER", "CUS-GROOM-1", 1899, 0, "INR", "cash", "pay_after_service", "created", "uat_sandbox", "pik-groom-other", "{}", now, now);
 
+  // ARRIVED is geofenced against the customer doorstep, so both bookings carry coordinates.
+  const insertAddress = sqlite.prepare("INSERT INTO booking_service_addresses (booking_id,address,latitude,longitude,source,created_at,updated_at) VALUES (?,?,?,?,'staff_entered',?,?)");
+  insertAddress.run("BK-GROOM-JOURNEY", "12 Indiranagar 100ft Road, Bengaluru", DOORSTEP.latitude, DOORSTEP.longitude, now, now);
+  insertAddress.run("BK-GROOM-OTHER", "40 Koramangala 5th Block, Bengaluru", DOORSTEP.latitude, DOORSTEP.longitude, now, now);
+
   return { sqlite, db };
 }
 
@@ -127,12 +136,17 @@ async function listJobs(cookie, providerId) {
   return { status: response.status, body: await response.json() };
 }
 
-async function lifecycle(cookie, action) {
+// The doorstep every grooming booking here is served at, and the groomer coordinates ARRIVED is called
+// with - identical, so the geofence distance is zero and a lifecycle assertion stays a lifecycle
+// assertion. The refusal off the doorstep is proved separately.
+const DOORSTEP = { latitude: 12.9611, longitude: 77.6387 };
+
+async function lifecycle(cookie, action, extra = {}) {
   const { POST } = await import("../app/api/grooming-lifecycle/route.ts");
   const response = await POST(new Request("https://uat.pawspace.in/api/grooming-lifecycle", {
     method: "POST",
     headers: { "content-type": "application/json", cookie },
-    body: JSON.stringify({ bookingId: "BK-GROOM-JOURNEY", action }),
+    body: JSON.stringify({ bookingId: "BK-GROOM-JOURNEY", action, ...extra }),
   }));
   return { status: response.status, body: await response.json() };
 }
@@ -162,12 +176,12 @@ test("authenticated groomer can accept, start journey, arrive, and start service
   const steps = [
     ["accept", "assigned", "booking_assigned"],
     ["on_the_way", "on_the_way", "booking_on_the_way"],
-    ["arrived", "arrived", "booking_arrived"],
+    ["arrived", "arrived", "booking_arrived", DOORSTEP],
     ["start_service", "in_service", "booking_in_service"],
   ];
 
-  for (const [action, expectedStatus, expectedEvent] of steps) {
-    const result = await lifecycle(cookie, action);
+  for (const [action, expectedStatus, expectedEvent, extra] of steps) {
+    const result = await lifecycle(cookie, action, extra);
     assert.equal(result.status, 200, `${action} should succeed: ${JSON.stringify(result.body)}`);
     assert.equal(String(result.body.data.booking.status), expectedStatus);
     assert.equal(String(result.body.data.booking.work_order_status), expectedStatus);

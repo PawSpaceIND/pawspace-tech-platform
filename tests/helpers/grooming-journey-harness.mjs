@@ -153,7 +153,13 @@ export async function runCompletedJourney(ctx, config) {
   const jobs = await routeCall("../../app/api/partner-grooming-jobs/route.ts", "GET", `/api/partner-grooming-jobs?providerId=${provider.id}`, null, providerCookie);
   const lifecycle = async (action, extra = {}) => routeCall("../../app/api/grooming-lifecycle/route.ts", "POST", "/api/grooming-lifecycle", { bookingId, action, ...extra }, providerCookie);
   const transitions = [];
-  for (const action of ["accept", "on_the_way", "arrived", "start_service"]) transitions.push(await lifecycle(action));
+  // ARRIVED is geofenced against the doorstep the customer set above, so the groomer reports standing at
+  // it. Same coordinates on both sides keeps the distance at zero; the refusal off the doorstep is proved
+  // in tests/grooming-provider-journey-closure.test.mjs.
+  const atDoorstep = { latitude: config.latitude, longitude: config.longitude };
+  for (const action of ["accept", "on_the_way", "arrived", "start_service"]) {
+    transitions.push(await lifecycle(action, action === "arrived" ? atDoorstep : {}));
+  }
   const invalidEarlyComplete = await lifecycle("complete");
 
   const media = [];

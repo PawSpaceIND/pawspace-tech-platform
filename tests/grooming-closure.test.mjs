@@ -177,8 +177,21 @@ test("Grooming production-readiness policy is city-configurable, frozen per book
 test("Grooming closure keeps live integrations explicitly outside the UAT transaction",async()=>{
   const[lifecycle,finance,plan]=await Promise.all([source("app/api/grooming-lifecycle/route.ts"),source("app/team/finance/page.tsx"),source("docs/GROOMING_CLOSURE_PLAN.md")]);
   assert.match(lifecycle,/uat_sandbox/);
-  assert.match(lifecycle,/Production GST\/tax rule is not yet approved/);
-  assert.match(lifecycle,/Provider payout percentage\/travel\/incentive\/penalty rule must be approved/);
+  // Grooming completion no longer stamps an unresolved tax placeholder: booking_tax_readiness is written
+  // from the governed completion ledger, carrying the resolved GST amount and the place of supply that
+  // decides the tax heads. The refusal that used to be represented by the placeholder now lives upstream
+  // in lib/provider-commercial-terms.ts, which throws "configuration_required" when no approved
+  // commercial term exists, so completion fails closed instead of recording an unpriced invoice.
+  assert.match(lifecycle,/resolveServiceCompletionFinance/);
+  assert.match(lifecycle,/tax_rule_status,reason.*'resolved'/);
+  assert.match(lifecycle,/placeOfSupplyStateCode/);
+  assert.match(await source("lib/provider-commercial-terms.ts"),/configuration_required: no active commercial term/);
+  // Settlement readiness is likewise resolved rather than pending: it records the accrued payout against
+  // the commercial term that produced it, the TCS withheld, and the balanced-ledger status.
+  assert.match(lifecycle,/providerPayoutAccrued/);
+  assert.match(lifecycle,/finance\.commercial\.termId/);
+  assert.match(lifecycle,/TCS withheld/);
+  assert.match(lifecycle,/ledger \$\{finance\.ledgerStatus\}/);
   assert.match(finance,/Razorpay production credentials, live refunds/);
   assert.match(plan,/Deliberately still UAT \/ not production-complete/);
   assert.match(plan,/Do not connect live operational customer feeds, live payment\/communication integrations or production credentials/);

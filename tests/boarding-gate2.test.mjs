@@ -51,8 +51,12 @@ test("Boarding Gate 2 checkout closes capacity but leaves tax and payout policy 
   assert.match(source,/check_out/);
   assert.match(source,/status='completed'/);
   assert.match(source,/UPDATE scheduling_reservations SET status='completed'/);
-  assert.match(source,/payout:\"rule_pending\"/);
-  assert.match(source,/tax:\"configuration_required\"/);
+  // Boarding checkout no longer stamps placeholder finance: it resolves the payout and tax from the
+  // governed completion ledger (lib/service-completion-finance.ts), which posts a balanced journal and
+  // fails closed with "configuration_required" when no approved commercial term exists for the provider.
+  assert.match(source,/resolveServiceCompletionFinance/);
+  assert.match(source,/payout:finance\.payoutStatus/);
+  assert.match(source,/tax:finance\.taxStatus/);
 });
 
 test("Boarding stay API enforces provider customer and staff ownership boundaries",()=>{

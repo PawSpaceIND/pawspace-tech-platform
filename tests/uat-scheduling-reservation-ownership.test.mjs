@@ -10,14 +10,19 @@ test('reserve enforces customer ownership before reservation work and preserves 
 
   const postStart = route.indexOf('export async function POST(request:Request)');
   assert.notEqual(postStart, -1, 'POST handler must exist');
-  const post = route.slice(postStart, route.indexOf('// Staff day board:', postStart));
+  // Bounded by the next exported handler rather than by a comment: the '// Staff day board:' comment this
+  // used to slice on is gone, and indexOf returning -1 silently widened `post` to the rest of the file,
+  // so the ordering assertions below were no longer confined to POST at all.
+  const nextExport = route.indexOf('export async function', postStart + 1);
+  const post = route.slice(postStart, nextExport === -1 ? route.length : nextExport);
 
   // resolveActor used to sit AFTER the field validation, and this test located it that way. It now runs
   // first, because tests/route-authorization-class.test.mjs requires a guarded route to settle identity
   // before it judges a payload - an unauthorized caller must never be answered "Missing scheduling
   // fields". The ordering this test actually protects is unchanged and is asserted below, and one link
   // is now stronger: ownership is checked BEFORE the field validation, not after it.
-  const resolveIndex = post.indexOf('const actor=await resolveActor(request);');
+  // Declared in a combined const list alongside db and input, so the binding keyword is not adjacent.
+  const resolveIndex = post.indexOf('actor=await resolveActor(request);');
   const permissionIndex = post.indexOf('requirePermission(actor,"scheduling.book");');
   const ownershipIndex = post.indexOf('await requireCustomerOwnership(db,actor,input.customerId);');
   // The code form, not the phrase: the route's own comment mentions it too, ahead of the check.

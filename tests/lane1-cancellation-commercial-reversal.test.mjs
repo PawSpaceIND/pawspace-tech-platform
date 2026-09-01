@@ -53,6 +53,7 @@ const {
   requestTrainingCancellation,
   approveTrainingCancellation,
 } = await import("../lib/training-cancellation.ts");
+const { saveTrainingTaxPolicy } = await import("../lib/training-finance.ts");
 const {
   creditWallet,
   redeemWalletForBooking,
@@ -163,6 +164,10 @@ test("confirmed Training cancellation releases work/capacity, caps cash refund, 
   });
   assert.equal(request.calculation.capturedAmount, 3000);
   assert.equal(request.calculation.calculatedRefund, 3000, "cash refund is capped to captured cash, not booking face value or restored credits");
+
+  // Approval refreshes the Training finance read model, which will not price an invoice at a GST rate
+  // nobody approved, so Finance publishes the city rate explicitly first.
+  await saveTrainingTaxPolicy(db, { cityId: "blr", taxMode: "inclusive", taxRate: 18, effectiveFrom: "2026-08-01", reason: "Bengaluru GST rate approved for UAT invoicing", actorId: "finance:lane1-test" });
 
   const approved = await approveTrainingCancellation(db, {
     caseId: request.caseId,
