@@ -28,6 +28,13 @@ function envValue(name: string): string {
  * never sufficient authority, including in a deployed Worker whose Host header can be client supplied.
  */
 export function isDevelopmentPreviewRequest(request: Request): boolean {
+  // Gate 0, and the reason it exists: scripts/stage-config.mjs SPREADS the built worker's vars into
+  // the staging config, and vite.config.ts sets PAWSPACE_LOCAL_PREVIEW:"on" among them. So a deployed
+  // staging Worker already satisfies gate 2, and a forged `Host: localhost` satisfies gate 3. Only
+  // NODE_ENV being unset stood between a remote caller and an authentication-free actor - safe by
+  // OMISSION, on one gate. A declared deployment environment now refuses preview outright, whatever
+  // the other three say, so the guarantee no longer depends on a variable happening to be absent.
+  if (envValue("PAWSPACE_DEPLOYMENT_ENV")) return false;
   const declared = envValue("NODE_ENV");
   if (declared !== "development" && declared !== "test") return false;
   if (envValue("PAWSPACE_LOCAL_PREVIEW") !== "on") return false;

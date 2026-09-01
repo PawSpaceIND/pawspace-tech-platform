@@ -4,6 +4,7 @@ import{tryQualifyLinkedReferral}from"../../../lib/referral-booking-governance";
 import{haversineDistanceKm}from"../../../backend/src/scheduling";
 import{resolveServiceCompletionFinance}from"../../../lib/service-completion-finance";
 import{resolveBookingDoorstep}from"../../../lib/booking-doorstep";
+import{CommercialTermConfigurationRequired}from"../../../lib/provider-commercial-terms";
 
 type Db=Awaited<ReturnType<typeof database>>;
 type Row=Record<string,unknown>;
@@ -43,4 +44,11 @@ export async function POST(request:Request){try{const input=await request.json()
     await db.batch(statements);const referral=await referralQualification(db,input.bookingId,actor);await event(db,input.bookingId,"service_completed",actor,{providerId:work.provider_id,invoiceNumber,paymentStatus:String(payment?.status||"unknown"),subscriptionSessionsConsumed:consumedNow,repeatEligibleAt:now+21*86_400_000,taxRuleStatus:"resolved",payoutReadiness:"accrued",finance,referral},now);await securityAudit(db,actorIdentity,"grooming.complete","booking",input.bookingId,"completed",{providerId:work.provider_id,invoiceNumber,sessionsToConsume:consumedNow,finance,referral});return json({data:await bundle(db,input.bookingId),finance,referral});
   }
   let geofence:unknown=null;if(input.action==="arrived")geofence=await arrivalGeofence(db,input);await db.batch([db.prepare("UPDATE canonical_bookings SET status=?,updated_at=? WHERE id=?").bind(next,now,input.bookingId),db.prepare("UPDATE provider_work_orders SET status=?,updated_at=? WHERE booking_id=?").bind(next,now,input.bookingId)]);await event(db,input.bookingId,`booking_${next}`,actor,{providerId:work.provider_id,from:current,to:next,geofence},now);await securityAudit(db,actorIdentity,`grooming.${input.action}`,"booking",input.bookingId,"completed",{providerId:work.provider_id,from:current,to:next,geofence});return json({data:await bundle(db,input.bookingId),geofence});
-}catch(error){return authError(error,"Unable to update grooming lifecycle");}}
+}catch(error){
+  /* A missing commercial term is a CONFIGURATION state, not a crash. Reported the way
+   * app/api/gst-accounting and app/api/location-recovery already report theirs, so operations
+   * can see which key is unset instead of reading an opaque 500. Before this, the throw from
+   * computeOrderPayout reached authError as a bare Error, became a 500, and aborted the
+   * completion before the subscription-session write. */
+  if(error instanceof CommercialTermConfigurationRequired)return json({error:"configuration_required",configurationKey:error.key,productionReady:false},409);
+  return authError(error,"Unable to update grooming lifecycle");}}

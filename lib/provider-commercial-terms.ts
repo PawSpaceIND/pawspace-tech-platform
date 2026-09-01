@@ -143,6 +143,13 @@ export async function resolveCommercialTerm(db:Db,input:{serviceCode:string;prov
 }
 
 /** THE PAYOUT ENGINE. Compute the full split + GST breakdown for one booking. Fail-closed: no active term → throws. */
+/** Mirrors ConfigurationRequired in lib/gst-accounting.ts: the settled shape for "a governed value
+ * cannot be computed because the platform was never configured for it". */
+export class CommercialTermConfigurationRequired extends Error{
+ key:string;
+ constructor(serviceCode:string){super(`configuration_required: no active commercial term for service ${serviceCode}`);this.key=`commercial_term:${serviceCode}`;this.name="CommercialTermConfigurationRequired";}
+}
+
 export async function computeOrderPayout(db:Db,input:{bookingId:string;actorId:string;persist?:boolean;standardReferencePrice?:number}):Promise<PayoutBreakdown>{
  await ensureCommercialTermsTables(db);
  const booking=await db.prepare("SELECT id,service_code,provider_id,total_amount,scheduled_start FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>();
@@ -150,7 +157,12 @@ export async function computeOrderPayout(db:Db,input:{bookingId:string;actorId:s
  const serviceCode=text(booking.service_code),providerId=text(booking.provider_id),orderValue=money(booking.total_amount);
  const atDate=text(booking.scheduled_start).slice(0,10)||undefined;
  const term=await resolveCommercialTerm(db,{serviceCode,providerId,atDate});
- if(!term)throw new Error(`configuration_required: no active commercial term for service ${serviceCode}`);
+ /* Typed so a caller can tell "this platform is not configured for this service" apart from "this
+  * crashed". It was a bare Error, so authError could not classify it and every missing commercial
+  * term surfaced as an opaque 500 - taking the completion, and the subscription-session write that
+  * follows it, down with no way for operations to see why. Still extends Error, so existing callers
+  * that catch broadly are unaffected. */
+ if(!term)throw new CommercialTermConfigurationRequired(serviceCode);
  const override=await db.prepare("SELECT * FROM order_commercial_overrides WHERE booking_id=?").bind(input.bookingId).first<Row>();
  const engagementModel=(text(override?.engagement_model)||text(term.engagement_model)) as EngagementModel;
  const providerSharePct=override?.provider_share_pct!=null?num(override.provider_share_pct):num(term.provider_share_pct);
