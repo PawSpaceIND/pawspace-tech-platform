@@ -48,7 +48,7 @@ export async function POST(request:Request){
     await enforceAbuseGate(db,request,now);
     const body=await request.json() as Record<string,unknown>;
     const name=clean(body.name,80),phone=clean(body.phone,20),email=clean(body.email,160),area=clean(body.area||"Bangalore",80),petNames=clean(body.petNames||"Not shared",160),service=clean(body.service||"General enquiry",120),message=clean(body.message||"No message left",500);
-    const source=clean(body.source||request.headers.get("x-pawspace-lead-source")||"Website contact form",120);
+    const source=(()=>{try{const referrer=new URL(String(request.headers.get("referer")||""));return referrer.origin===new URL(request.url).origin&&referrer.pathname.startsWith("/landing-pages/")?"Website landing page":"Website contact form";}catch{return"Website contact form";}})();
     if(name.length<2)return json({error:"Please enter your name"},400);
     const phoneDigits=phone.replace(/\D/g,"");
     if(phoneDigits.length<10||phoneDigits.length>15||!/^[0-9+\s-]+$/.test(phone))return json({error:"Please enter a valid phone number"},400);
