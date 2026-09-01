@@ -81,7 +81,7 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
   }
   installedWorkersDbGlobals.add(globalName);
 
-  const shim = `export const env = new Proxy({}, { get: (_, key) => key === "DB" ? globalThis[${JSON.stringify(globalName)}] : (globalThis[${JSON.stringify(envName)}] ?? {})[key] });`;
+  const shim = `export const env = new Proxy({}, { get: (_, key) => key === "DB" ? globalThis[${JSON.stringify(globalName)}] : ((globalThis[${JSON.stringify(envName)}] ?? {})[key] ?? (typeof key === "string" ? process.env[key] : undefined)) });`;
   const workersUrl = `data:text/javascript,${encodeURIComponent(shim)}`;
 
   // The fallback below only runs on the Node CI pins, so on a newer machine it is never exercised -
