@@ -2,7 +2,7 @@ import{ensureTrainingProgrammeTables}from"./training-programme";
 import{getGovernedProvider,seedProviderCapacityDefaults}from"./provider-capacity-governance";
 import{listAuthoritativeAvailability}from"./scheduling-roster-authority";
 import{haversineDistanceKm}from"../backend/src/scheduling";
-import{trainingQuotePaymentState}from"./training-commercial-governance";
+import{trainingQuotePaymentState,ensureTrainingCommercialTables}from"./training-commercial-governance";
 
 type Row=Record<string,unknown>;
 export const TRAINING_REQUIRED_PROOF=["before_service","after_service"] as const;
@@ -11,7 +11,13 @@ export type TrainingSessionAction="accept"|"on_the_way"|"arrive"|"start"|"save_r
 export type TrainingReport={attendance?:Record<string,unknown>;homework?:string;progress?:Record<string,unknown>;evidenceRefs?:string[]};
 export type TrainingSessionMutation={sessionId:string;action:TrainingSessionAction;actorId:string;idempotencyKey:string;reason?:string;report?:TrainingReport;newStart?:string;newEnd?:string;newProviderId?:string;staffOverride?:boolean;latitude?:number;longitude?:number;ownerHandoverMinutes?:number};
 
-export async function ensureTrainingSessionLifecycleTables(db:D1Database){await ensureTrainingProgrammeTables(db);await db.batch([
+export async function ensureTrainingSessionLifecycleTables(db:D1Database){
+ /* #388 added governedPayment() and assertFinalBalancePaid() here, both of which SELECT from
+  * training_booking_quote_links - a table owned by training-commercial-governance and never
+  * created by this module. Any caller that reached session lifecycle without first going
+  * through the commercial path therefore threw "no such table". Ensuring it here makes this
+  * module self-sufficient for the tables it reads; CREATE TABLE IF NOT EXISTS is idempotent. */
+ await ensureTrainingCommercialTables(db);await ensureTrainingProgrammeTables(db);await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS training_session_events (id TEXT PRIMARY KEY,session_id TEXT NOT NULL,programme_id TEXT NOT NULL,booking_id TEXT NOT NULL,event_type TEXT NOT NULL,actor_id TEXT NOT NULL,idempotency_key TEXT NOT NULL UNIQUE,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),
  db.prepare("CREATE INDEX IF NOT EXISTS idx_training_session_events_session ON training_session_events(session_id,created_at)"),
  db.prepare("CREATE TABLE IF NOT EXISTS training_session_consumptions (session_id TEXT PRIMARY KEY,programme_id TEXT NOT NULL,booking_id TEXT NOT NULL,actor_id TEXT NOT NULL,consumed_at INTEGER NOT NULL)"),
