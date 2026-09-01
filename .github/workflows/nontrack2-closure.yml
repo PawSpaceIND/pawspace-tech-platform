@@ -2,7 +2,7 @@ name: Non-Track-2 operational closure
 
 on:
   pull_request:
-    branches: [main]
+    branches: [ops/nontrack2-certified-base-94cdd]
 
 permissions:
   contents: read
