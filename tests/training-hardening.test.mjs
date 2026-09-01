@@ -566,6 +566,7 @@ test("real execution: reconciliation totals still agree after real completions a
   const db = globalThis.__TRN_DB__;
   const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   await completeSession(db, sessions[0], "c1");
+  await call(reconciliationRoute.GET, "GET"); // ensure governed quote tables exist while leaving this legacy booking deliberately unlinked
   await saveTrainingCompensationRule(db, { cityId: "blr", rateValue: 700, effectiveFrom: "2026-08-01", reason: "trainer per-session compensation", actorId: "finance:uat" });
   const res = await call(reconciliationRoute.GET, "GET");
   const record = res.body.data.records.find(r => r.bookingId === "B1");

@@ -69,7 +69,7 @@ function world(env = {}) {
 // =====================================================================================================
 
 async function groomingCompletionWorld() {
-  const { sqlite, db } = world({ PAWSPACE_MEDIA_ENV: "uat" });
+  const { sqlite, db } = world({ PAWSPACE_MEDIA_ENV: "uat", PAWSPACE_SCHEDULING_ENV: "uat" });
   const now = Date.now();
   sqlite.exec(`
 CREATE TABLE canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
