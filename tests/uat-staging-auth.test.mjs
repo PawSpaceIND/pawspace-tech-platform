@@ -29,6 +29,12 @@ test("the login route requires the access code and only works when enabled", () 
   assert.match(route, /clearUatCookie/);                                // logout
 });
 
+test("staging login fails closed with 503 when its D1 dependency is unavailable", () => {
+  assert.match(route, /staging_dependency_unavailable/);
+  assert.match(route, /dependencyUnavailable/);
+  assert.match(route, /return json\(\{error:"Staging authentication dependency is unavailable",code:"staging_dependency_unavailable"\},503\)/);
+});
+
 test("the API gateway allowlists the login endpoint and honours the UAT cookie", async () => {
   const gw = await read("../lib/api-gateway.ts");
   assert.match(gw, /pathname==="\/api\/staging-login"/);    // login endpoint is allowlisted (public)
