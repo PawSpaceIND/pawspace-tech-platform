@@ -38,21 +38,16 @@ jobs:
               'world({ PAWSPACE_MEDIA_ENV: "uat", PAWSPACE_SCHEDULING_ENV: "uat" })',
           )
 
-          old_training = '''  const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
-          await completeSession(db, sessions[0], "c1");
-          await saveTrainingCompensationRule(db, { cityId: "blr", rateValue: 700, effectiveFrom: "2026-08-01", reason: "trainer per-session compensation", actorId: "finance:uat" });'''
-          new_training = '''  const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
-          await completeSession(db, sessions[0], "c1");
-          await call(reconciliationRoute.GET, "GET"); // ensure governed quote tables exist while leaving this legacy booking deliberately unlinked
-          await saveTrainingCompensationRule(db, { cityId: "blr", rateValue: 700, effectiveFrom: "2026-08-01", reason: "trainer per-session compensation", actorId: "finance:uat" });'''
           p = Path("tests/training-hardening.test.mjs")
           text = p.read_text()
           marker = 'test("real execution: reconciliation totals still agree after real completions and the finance read model refresh"'
           start = text.index(marker)
           tail = text[start:]
-          if tail.count(old_training) != 1:
-              raise SystemExit(f"training target: expected exactly one match, found {tail.count(old_training)}")
-          p.write_text(text[:start] + tail.replace(old_training, new_training, 1))
+          needle = '  await saveTrainingCompensationRule(db, { cityId: "blr", rateValue: 700, effectiveFrom: "2026-08-01", reason: "trainer per-session compensation", actorId: "finance:uat" });'
+          if tail.count(needle) != 1:
+              raise SystemExit(f"training target: expected exactly one compensation-rule match after marker, found {tail.count(needle)}")
+          tail = tail.replace(needle, '  await call(reconciliationRoute.GET, "GET"); // ensure governed quote tables exist while leaving this legacy booking deliberately unlinked\n' + needle, 1)
+          p.write_text(text[:start] + tail)
 
           replace_once(
               ".github/workflows/closure-ci.yml",
