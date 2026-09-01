@@ -84,6 +84,14 @@ jobs:
           PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
           PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
         run: node tests/e2e/staging-certification.mjs --isolation-only
+      - name: Seed deterministic UAT identities and roles
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types scripts/ops/staging-role-seed.mjs "$RUNNER_TEMP/staging-role-seed.sql"
+          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --yes --file="$RUNNER_TEMP/staging-role-seed.sql"
       - name: Seed staging staff
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
