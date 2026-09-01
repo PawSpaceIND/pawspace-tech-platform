@@ -1,4 +1,4 @@
-name: Inspect Razorpay Test mandate rzp382e
+name: Authenticate Razorpay Test mandate rzp382e
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  inspect:
+  mandate:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -24,7 +24,7 @@ jobs:
       RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
       RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
     steps:
-      - name: Guard Test Mode subscription and load disposable UAT contact
+      - name: Guard exact Test Mode subscription and lifecycle contact
         shell: bash
         run: |
           set -euo pipefail
@@ -35,13 +35,14 @@ jobs:
           const auth=`Basic ${Buffer.from(`${process.env.RAZORPAY_KEY_ID_SANDBOX}:${process.env.RAZORPAY_KEY_SECRET_SANDBOX}`).toString('base64')}`;
           const r=await fetch(`https://api.razorpay.com/v1/subscriptions/${encodeURIComponent(id)}`,{headers:{authorization:auth},redirect:'manual'});
           const b=await r.json(); if(!r.ok||b.id!==id) throw new Error('Test subscription guard failed');
+          if(!['created','authenticated','active'].includes(b.status)) throw new Error(`Unexpected subscription state ${b.status}`);
           const q=await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID)}/d1/database/${encodeURIComponent(process.env.STAGING_D1_ID)}/query`,{method:'POST',headers:{authorization:`Bearer ${process.env.CLOUDFLARE_API_TOKEN}`,'content-type':'application/json'},body:JSON.stringify({sql:'SELECT phone FROM provider_certification_runs WHERE cert_key=? AND provider_subscription_id=?',params:[process.env.CERT_KEY,id]})});
           const qb=await q.json(); const phone=String(qb?.result?.[0]?.results?.[0]?.phone||'');
-          if(!/^[6-9][0-9]{9}$/.test(phone)) throw new Error('Disposable UAT certification phone is invalid or missing');
+          if(!/^[6-9][0-9]{9}$/.test(phone)) throw new Error('Disposable UAT certification phone invalid or missing');
           appendFileSync(process.env.GITHUB_ENV,`CERT_PHONE=${phone}\n`);
           console.log(JSON.stringify({mode:'test',id:b.id,status:b.status,planId:b.plan_id,uatContactLoaded:true}));
           NODE
-      - name: Inspect card mandate form using lifecycle contact
+      - name: Complete Razorpay Test card authorisation
         shell: bash
         run: |
           set -euo pipefail
@@ -49,32 +50,79 @@ jobs:
           npm init -y >/dev/null
           npm install --silent playwright@1.55.0
           npx playwright install --with-deps chromium >/dev/null
-          cat > inspect.mjs <<'NODE'
+          cat > mandate.mjs <<'NODE'
           import { chromium } from 'playwright';
           const browser=await chromium.launch({headless:true});
           const page=await browser.newPage({viewport:{width:1280,height:900}});
+          const visibleHumanChallenge=async()=>{
+            for(const f of page.frames()){
+              if(!f.url().includes('hcaptcha') || f.url().includes('checkbox-invisible')) continue;
+              const body=await f.locator('body').innerText().catch(()=> '');
+              if(/verify you are human|select all|please click|challenge/i.test(body)) return true;
+            }
+            return false;
+          };
+          const snap=async name=>{await page.screenshot({path:`${name}.png`,fullPage:true});};
           await page.goto(process.env.AUTH_URL,{waitUntil:'domcontentloaded',timeout:60000}); await page.waitForTimeout(4000);
-          await page.getByRole('button',{name:'Start Subscription'}).click(); await page.waitForTimeout(7000);
-          const checkout=page.frames().find(f=>f.url().includes('/v1/checkout/public')); if(!checkout) throw new Error('checkout frame missing');
-          const contact=checkout.locator('input[name="contact"]');
-          await contact.click(); await contact.press('Control+A'); await contact.type(process.env.CERT_PHONE,{delay:80});
-          const email=checkout.locator('input[name="email"]'); await email.click(); await email.type('provider-cert-e@example.com',{delay:40});
-          const cont=checkout.getByRole('button',{name:'Continue'}); if(await cont.count()!==1) throw new Error('Contact Continue button missing');
-          await cont.click(); await page.waitForTimeout(4000);
-          const overlay=checkout.locator('#overlay-backdrop'); const overlayVisible=await overlay.isVisible().catch(()=>false);
-          let selected='none';
-          if(!overlayVisible){const card=checkout.locator('[data-testid="card"]'); if(await card.count()){await card.click(); selected='card'; await page.waitForTimeout(3500);}}
-          const controls=await checkout.locator('input,button,[role="button"],[data-testid]').evaluateAll(els=>els.slice(0,160).map((e,i)=>({i,tag:e.tagName,testid:e.getAttribute('data-testid'),type:e.getAttribute('type'),name:e.getAttribute('name'),placeholder:e.getAttribute('placeholder'),autocomplete:e.getAttribute('autocomplete'),text:(e.innerText||e.textContent||'').trim().replace(/\s+/g,' ').slice(0,180),disabled:Boolean(e.disabled)})));
-          console.log(JSON.stringify({mode:'test',subscriptionId:process.env.SUBSCRIPTION_ID,contactAccepted:!overlayVisible,selected,controls},null,2));
-          await page.screenshot({path:'mandate-lifecycle-contact-form.png',fullPage:true}); await browser.close();
+          await page.getByRole('button',{name:'Start Subscription'}).click(); await page.waitForTimeout(6500);
+          const checkout=page.frames().find(f=>f.url().includes('/v1/checkout/public')); if(!checkout) throw new Error('Razorpay checkout frame missing');
+          const contact=checkout.locator('input[name="contact"]'); await contact.click(); await contact.type(process.env.CERT_PHONE,{delay:70});
+          const email=checkout.locator('input[name="email"]'); await email.click(); await email.type('provider-cert-e@example.com',{delay:35});
+          await checkout.getByRole('button',{name:'Continue'}).click(); await page.waitForTimeout(3000);
+          if(await checkout.locator('#overlay-backdrop').isVisible().catch(()=>false)) throw new Error('Razorpay rejected lifecycle UAT contact');
+          await checkout.locator('[data-testid="card"]').click(); await page.waitForTimeout(2000);
+          await checkout.locator('input[name="card.number"]').fill('4718609108204366');
+          await checkout.locator('input[name="card.expiry"]').fill('1230');
+          await checkout.locator('input[name="card.cvv"]').fill('123');
+          if(await visibleHumanChallenge()){await snap('mandate-human-checkpoint'); console.log(JSON.stringify({safeStop:true,blocked:'human_verification_required'})); await browser.close(); process.exit(42);}
+          const continueButton=checkout.getByRole('button',{name:'Continue'});
+          await continueButton.click();
+          await page.waitForTimeout(7000);
+          if(await visibleHumanChallenge()){await snap('mandate-human-checkpoint'); console.log(JSON.stringify({safeStop:true,blocked:'human_verification_required_after_card'})); await browser.close(); process.exit(42);}
+          const contexts=[page,...page.frames()];
+          let acted=false;
+          for(const ctx of contexts){
+            const otp=ctx.locator('input').filter({has:undefined});
+            const candidates=['input[name*="otp" i]','input[placeholder*="OTP" i]','input[type="tel"]'];
+            for(const sel of candidates){const l=ctx.locator(sel); if(await l.count()){const ph=await l.first().getAttribute('placeholder').catch(()=>null); const nm=await l.first().getAttribute('name').catch(()=>null); if(/otp/i.test(`${ph||''} ${nm||''}`)){await l.first().fill('123456'); const submit=ctx.getByRole('button',{name:/Submit|Pay|Continue|Verify/i}); if(await submit.count()){await submit.first().click(); acted=true; break;}}}}
+            if(acted) break;
+            const success=ctx.getByRole('button',{name:/^Success$/i}); if(await success.count()){await success.first().click(); acted=true; break;}
+            const successText=ctx.getByText('Success',{exact:true}); if(await successText.count()){await successText.first().click(); acted=true; break;}
+          }
+          console.log(JSON.stringify({mockBankAction:acted}));
+          await page.waitForTimeout(9000);
+          if(await visibleHumanChallenge()){await snap('mandate-human-checkpoint'); console.log(JSON.stringify({safeStop:true,blocked:'human_verification_required_after_mock_bank'})); await browser.close(); process.exit(42);}
+          await snap('mandate-after-authorisation');
+          console.log(JSON.stringify({finalUrl:page.url(),title:await page.title()}));
+          await browser.close();
           NODE
-          node inspect.mjs | tee mandate-lifecycle-contact-form.json.log
-          cp mandate-lifecycle-contact-form.png "$GITHUB_WORKSPACE/mandate-lifecycle-contact-form.png"
-          cp mandate-lifecycle-contact-form.json.log "$GITHUB_WORKSPACE/mandate-lifecycle-contact-form.json.log"
-      - name: Upload inspection evidence
+          set +e
+          node mandate.mjs | tee mandate-browser.log
+          status=$?
+          set -e
+          cp *.png "$GITHUB_WORKSPACE/" 2>/dev/null || true
+          cp mandate-browser.log "$GITHUB_WORKSPACE/"
+          if [ "$status" -eq 42 ]; then echo "Human verification required; no bypass attempted." >&2; exit 42; fi
+          exit "$status"
+      - name: Verify Razorpay Test provider state
+        if: always()
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE' | tee mandate-provider-state.json
+          const id=process.env.SUBSCRIPTION_ID;
+          const auth=`Basic ${Buffer.from(`${process.env.RAZORPAY_KEY_ID_SANDBOX}:${process.env.RAZORPAY_KEY_SECRET_SANDBOX}`).toString('base64')}`;
+          const r=await fetch(`https://api.razorpay.com/v1/subscriptions/${encodeURIComponent(id)}`,{headers:{authorization:auth},redirect:'manual'});
+          const b=await r.json(); if(!r.ok) throw new Error(`Subscription verify failed ${r.status}`);
+          const out={mode:'test',id:b.id,status:b.status,planId:b.plan_id,paidCount:b.paid_count,remainingCount:b.remaining_count,currentStart:b.current_start,currentEnd:b.current_end};
+          console.log(JSON.stringify(out,null,2));
+          if(!['authenticated','active'].includes(b.status)) process.exitCode=3;
+          NODE
+      - name: Upload mandate evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mandate-lifecycle-contact-form-rzp382-20260901e
+          name: mandate-auth-rzp382-20260901e
           path: |
-            mandate-lifecycle-contact-form.png
-            mandate-lifecycle-contact-form.json.log
+            mandate*.png
+            mandate-browser.log
+            mandate-provider-state.json
