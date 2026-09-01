@@ -107,8 +107,8 @@ test("cycle-end plan changes reconcile before accounting and dunning",()=>{
 });
 
 test("subscription-origin payments cannot be counted as a second source-booking payment",()=>{
-  const webhook=after(read("app/api/razorpay-webhook/route.ts"),"export async function POST");
-  assert.match(webhook,/bookingId=subscriptionOrigin\?undefined/);
+  const route=read("app/api/razorpay-webhook/route.ts"),webhook=after(route,"export async function POST");
+  assert.match(route,/bookingId=subscriptionOrigin\?undefined/);
   assert.ok(webhook.indexOf("processSubscriptionRefundEvent")<webhook.indexOf("processGatewayEvent"));
   assert.ok(webhook.indexOf("processSubscriptionProviderEvent")<webhook.indexOf("processGatewayEvent"));
 });
