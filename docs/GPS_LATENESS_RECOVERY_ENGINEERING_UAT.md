@@ -13,7 +13,7 @@ Status: **ENGINEERING UAT CANDIDATE / STAFF + DEVICE UAT PENDING**
 5. Recovery cases are opened before accountability. Replacement search rechecks service, zone, availability, collision, daily capacity and commission-provider acceptance requirements.
 6. Accountability is a separate human-review workflow. GPS/ETA/performance signals cannot directly create settlement or payroll deductions.
 7. Financial adjustment creation requires an approved accountability case plus `finance.manage`, is one-per-case/idempotent, and does not transmit live money.
-8. Policy and controls remain configurable. Taxi is outside active scope. Production map mode is rejected by the UAT API.
+8. Policy and controls remain configurable. Pet Taxi is **within active GPS UAT scope**: `/api/location-recovery` accepts a `pet_taxi` punctuality policy and reports its telemetry as `deterministic_sandbox`. This scope was widened by PR #388; the exclusion previously recorded here no longer matches the API. Sandbox telemetry is not production GPS - `lib/taxi-proof-governance.ts` continues to report `productionGpsConnected: false`, and **PRODUCTION READY = FALSE** above still governs. Production map mode is rejected by the UAT API.
 9. Privacy and safety controls include least-privilege raw GPS access, configurable raw-GPS retention, explicit GPS/map kill switches, sandbox-only map transport and audit events.
 
 ## Required staff/device UAT
