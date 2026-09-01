@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 
+// QA-only runner for one isolated Razorpay Test Mode transaction; no production code is changed.
 const base = "https://pawspace-staging.karthik-fce.workers.dev";
 const dbId = String(process.env.STAGING_D1_ID || "").trim();
 const cfAccount = String(process.env.CLOUDFLARE_ACCOUNT_ID || "").trim();
