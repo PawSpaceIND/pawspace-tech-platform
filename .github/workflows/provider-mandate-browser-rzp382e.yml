@@ -1,0 +1,78 @@
+name: Inspect Razorpay Test mandate rzp382e
+
+on:
+  push:
+    branches:
+      - ops/razorpay-provider-cert-20260901
+    paths:
+      - .github/workflows/provider-mandate-browser-rzp382e.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      AUTH_URL: https://rzp.io/rzp/4QgT6Lh
+      SUBSCRIPTION_ID: sub_TWg9yixMBHpX2w
+      RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+      RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+    steps:
+      - name: Guard Test Mode subscription
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$RAZORPAY_KEY_ID_SANDBOX" in rzp_test_*) ;; *) echo "Refusing non-test Razorpay key" >&2; exit 1;; esac
+          node --input-type=module <<'NODE'
+          const id = process.env.SUBSCRIPTION_ID;
+          const auth = `Basic ${Buffer.from(`${process.env.RAZORPAY_KEY_ID_SANDBOX}:${process.env.RAZORPAY_KEY_SECRET_SANDBOX}`).toString('base64')}`;
+          const r = await fetch(`https://api.razorpay.com/v1/subscriptions/${encodeURIComponent(id)}`, { headers: { authorization: auth }, redirect: 'manual' });
+          const b = await r.json();
+          if (!r.ok) throw new Error(`Razorpay Test subscription lookup failed ${r.status}`);
+          if (b.id !== id) throw new Error('Subscription identity mismatch');
+          console.log(JSON.stringify({ mode:'test', id:b.id, status:b.status, planId:b.plan_id, shortUrlPresent:Boolean(b.short_url) }));
+          NODE
+      - name: Inspect hosted authorization controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/mandate-browser"
+          mkdir -p "$WORK"
+          cd "$WORK"
+          npm init -y >/dev/null
+          npm install --silent playwright@1.55.0
+          npx playwright install --with-deps chromium >/dev/null
+          cat > inspect.mjs <<'NODE'
+          import { chromium } from 'playwright';
+          const browser = await chromium.launch({headless:true});
+          const page = await browser.newPage({viewport:{width:1280,height:900}});
+          page.on('console', m => console.log(`[browser-console:${m.type()}] ${m.text().slice(0,300)}`));
+          await page.goto(process.env.AUTH_URL, {waitUntil:'domcontentloaded', timeout:60000});
+          await page.waitForTimeout(7000);
+          const controls = await page.locator('input,button,[role="button"],select,a').evaluateAll(els => els.slice(0,100).map((e,i) => ({
+            i,
+            tag:e.tagName,
+            type:e.getAttribute('type'),
+            name:e.getAttribute('name'),
+            placeholder:e.getAttribute('placeholder'),
+            aria:e.getAttribute('aria-label'),
+            text:(e.innerText||e.textContent||'').trim().replace(/\s+/g,' ').slice(0,180),
+            valuePresent:Boolean(e.value),
+            disabled:Boolean(e.disabled)
+          })));
+          console.log(JSON.stringify({url:page.url(),title:await page.title(),controls},null,2));
+          await page.screenshot({path:'mandate-inspect.png',fullPage:true});
+          await browser.close();
+          NODE
+          node inspect.mjs | tee mandate-inspect.json.log
+          cp mandate-inspect.png "$GITHUB_WORKSPACE/mandate-inspect.png"
+          cp mandate-inspect.json.log "$GITHUB_WORKSPACE/mandate-inspect.json.log"
+      - name: Upload inspection evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: mandate-inspect-rzp382-20260901e
+          path: |
+            mandate-inspect.png
+            mandate-inspect.json.log
