@@ -2,6 +2,8 @@
  * Installs the resolver every real-execution suite needs: `cloudflare:workers` resolves to a stub that
  * reads a per-suite global, and lib modules that import each other extensionlessly resolve to `.ts`.
  *
+ * This harness remains test-only: production modules are deliberately not modified to satisfy loader fixtures.
+ *
  * `module.registerHooks` only exists from Node 22.15. CI pins 22.13.0, where calling it throws
  * `TypeError: nodeModule.registerHooks is not a function` and takes the whole file down before a single
  * test runs - which is exactly what it did. On that version the same resolver is registered as an
