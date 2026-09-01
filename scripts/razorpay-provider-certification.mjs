@@ -142,7 +142,10 @@ async function prepare() {
     await postAs("/api/gst-accounting", { action: "save_series", id: `CERT-SERIES-${documentType}-${tag}`, entityId, documentType, prefix: `${documentType === "invoice" ? "INV" : "CN"}-${tag}-`, nextNumber: 1, padding: 4, policyId, reason }, founder);
   }
 
-  const providerPlan = await razor("/v1/plans", { method: "POST", body: JSON.stringify({ period: "monthly", interval: 1, item: { name: `PawSpace certification ${tag}`, amount: amountPaise, currency: "INR", description: "Isolated Test Mode recurring lifecycle certification" }, notes: { pawspace_certification_key: certKey, expected_sha: expectedSha } }) });
+  const existingPlan = await one("SELECT provider_plan_id FROM subscription_billing_plans WHERE plan_code=?", [planCode]).catch(() => null);
+  const providerPlan = existingPlan?.provider_plan_id
+    ? await razor(`/v1/plans/${encodeURIComponent(existingPlan.provider_plan_id)}`)
+    : await razor("/v1/plans", { method: "POST", body: JSON.stringify({ period: "monthly", interval: 1, item: { name: `PawSpace certification ${tag}`, amount: amountPaise, currency: "INR", description: "Isolated Test Mode recurring lifecycle certification" }, notes: { pawspace_certification_key: certKey, expected_sha: expectedSha } }) });
   assert(/^plan_[A-Za-z0-9]+$/.test(String(providerPlan?.id || "")), "Razorpay Test plan was not created");
 
   const now = Date.now();
@@ -156,7 +159,14 @@ async function prepare() {
   await d1("INSERT OR IGNORE INTO grooming_subscription_purchase_snapshots (subscription_id,booking_id,city_id,zone_id,plan_code,catalogue_version,config_json,created_at) VALUES (?,?,'blr','blr-cert',?,'provider-cert-v1',?,?)", [entitlementId, bookingId, planCode, JSON.stringify({ sessions: 2, validityValue: 1, validityUnit: "months" }), now]);
 
   await postAs("/api/subscription-billing-admin", { action: "save_plan", planCode, providerPlanId: providerPlan.id, serviceCode: "grooming", financeEntityId: entityId, chargeAmountPaise: amountPaise, invoiceTaxablePaise: taxablePaise, currency: "INR", totalCycles: 2, trialDays: 0, graceDays: 3, cityId: "blr", intervalPeriod: "monthly", intervalCount: 1 }, founder);
-  await postAs("/api/subscription-billing-admin", { action: "approve_plan", planCode }, founder);
+  await eventually("local approval of the provider-verified plan", async () => {
+    try { return await postAs("/api/subscription-billing-admin", { action: "approve_plan", planCode }, founder); }
+    catch { return null; }
+  }, 60_000).catch(async error => {
+    const local = await one("SELECT provider_plan_id,charge_amount_paise,currency,interval_period,interval_count,status FROM subscription_billing_plans WHERE plan_code=?", [planCode]);
+    const remote = await razor(`/v1/plans/${encodeURIComponent(providerPlan.id)}`);
+    throw new Error(`${error.message}; sanitized local=${JSON.stringify(local)} remote=${JSON.stringify({ id: remote.id, amount: remote.item?.amount, currency: remote.item?.currency, period: remote.period, interval: remote.interval })}`);
+  });
   const started = await postAs("/api/subscription-billing", { action: "start", customerId: customer.customerId, sourceBookingId: bookingId, entitlementSubscriptionId: entitlementId, planCode }, customer.cookie);
   const authorizationUrl = String(started.authorizationUrl || "");
   assert(/^https:\/\/(?:rzp\.io|(?:[^/]+\.)?razorpay\.com)\//.test(authorizationUrl), "validated Razorpay authorization URL was not returned");
