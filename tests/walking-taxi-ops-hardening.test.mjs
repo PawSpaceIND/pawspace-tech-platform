@@ -51,6 +51,7 @@ const taxiProof = await import("../lib/taxi-proof-governance.ts");
 const taxiRecovery = await import("../lib/taxi-recovery-governance.ts");
 const commercialTerms = await import("../lib/provider-commercial-terms.ts");
 const capacity = await import("../lib/provider-capacity-governance.ts");
+const providerDailyTravel = await import("../lib/provider-daily-travel.ts");
 const walkingBookingsRoute = await import("../app/api/walking-bookings/route.ts");
 const partnerFeedRoute = await import("../app/api/partner-job-feed/route.ts");
 
@@ -98,6 +99,11 @@ const DAY = 86_400_000;
 const NOW = Date.now();
 const iso = (offsetMs) => new Date(NOW + offsetMs).toISOString();
 const SHA = "a".repeat(64);
+const FIXTURE_DOORSTEP = Object.freeze({
+  address: "Bengaluru, Karnataka",
+  latitude: 12.9716,
+  longitude: 77.5946,
+});
 
 async function rejects(promise, status, pattern) {
   try {
@@ -124,6 +130,7 @@ async function opsStack() {
   await auth.ensureSecurityTables(db);
   for (const sql of [...schedulingDDL, ...canonicalDDL]) sqlite.exec(sql);
   await capacity.seedProviderCapacityDefaults(db);
+  await providerDailyTravel.ensureProviderDailyTravelTables(db);
   await walkingOps.ensureWalkingOpsTables(db);
   await walkingProof.ensureWalkingProofTables(db);
   await taxiOps.ensureTaxiOpsTables(db);
@@ -136,6 +143,10 @@ async function opsStack() {
   const seedVehicle = (vehicleId, providerId) =>
     sqlite.prepare("INSERT INTO taxi_vehicle_profiles (id,provider_id,label,vehicle_type,pet_restraint,inspection_status,active,updated_at) VALUES (?,?,?,?,?,'uat_verified',1,?)")
       .run(vehicleId, providerId, `${providerId} vehicle`, "hatchback", "rear-seat harness", NOW);
+
+  const seedServiceAddress = (bookingId) =>
+    sqlite.prepare("INSERT INTO booking_service_addresses (booking_id,address,latitude,longitude,source,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
+      .run(bookingId, FIXTURE_DOORSTEP.address, FIXTURE_DOORSTEP.latitude, FIXTURE_DOORSTEP.longitude, "test_fixture", NOW, NOW);
 
   async function seedActiveCommercialTerm({ serviceCode, providerId }) {
     const draft = await commercialTerms.saveCommercialTerm(db, {
@@ -204,6 +215,7 @@ async function opsStack() {
     }
     const payload = JSON.parse(errText || "{}");
     assert.equal(response.status, 201, `walking booking route failed: ${errText}`);
+    seedServiceAddress(payload.data.bookingId);
     return { bookingId: payload.data.bookingId, groupId, customerId, sessions: payload.data.sessions, quote, payload };
   }
 
@@ -222,6 +234,7 @@ async function opsStack() {
       .run(groupId, "governed", "[]", providerId, "assigned", "test", "test", NOW);
     sqlite.prepare("INSERT INTO taxi_trips (id,booking_id,schedule_group_id,reservation_id,provider_id,origin_label,destination_label,route_code,synthetic_distance_km,estimated_duration_minutes,scheduled_start,scheduled_end,status,vehicle_id,pickup_verification_status,dropoff_verification_status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'scheduled',NULL,'pending','pending',?,?)")
       .run(tripId, bookingId, groupId, reservationId, providerId, "Home", "Vet clinic", "TST-R1", 8.4, 45, start, end, NOW, NOW);
+    seedServiceAddress(bookingId);
     return { bookingId, groupId, tripId, reservationId, customerId, amount };
   }
 
@@ -229,7 +242,14 @@ async function opsStack() {
 }
 
 const wMutate = (stack, bookingId, action, extra = {}) =>
-  walkingLifecycle.mutateWalkingBooking(stack.db, { bookingId, action, actorId: extra.actorId ?? "walker1@test", idempotencyKey: extra.idempotencyKey ?? crypto.randomUUID(), ...extra });
+  walkingLifecycle.mutateWalkingBooking(stack.db, {
+    bookingId,
+    action,
+    actorId: extra.actorId ?? "walker1@test",
+    idempotencyKey: extra.idempotencyKey ?? crypto.randomUUID(),
+    ...(action === "start_walk" ? { latitude: FIXTURE_DOORSTEP.latitude, longitude: FIXTURE_DOORSTEP.longitude } : {}),
+    ...extra,
+  });
 const tMutate = (stack, bookingId, action, extra = {}) =>
   taxiLifecycle.mutateTaxiBooking(stack.db, { bookingId, action, actorId: extra.actorId ?? "driver1@test", idempotencyKey: extra.idempotencyKey ?? crypto.randomUUID(), ...extra });
 const wProof = (stack, bookingId, action, extra = {}) =>
@@ -261,6 +281,7 @@ test("full chain: walking-flow booking path -> walking_sessions -> partner job f
   const stack = await opsStack();
   const { sqlite } = stack;
   stack.seedProvider("walker_one");
+  await stack.seedActiveCommercialTerm({ serviceCode: "dog_walking", providerId: "walker_one" });
   const { bookingId, sessions } = await stack.createWalkingBooking({ tag: "CHAIN", providerId: "walker_one", walkCount: 2 });
 
   // Session rows exist with the canonical shape the route promised.
@@ -327,6 +348,7 @@ test("regression: mid-programme replacement resets handover state so the replace
   const { sqlite } = stack;
   stack.seedProvider("walker_one");
   stack.seedProvider("walker_two");
+  await stack.seedActiveCommercialTerm({ serviceCode: "dog_walking", providerId: "walker_two" });
   const { bookingId } = await stack.createWalkingBooking({ tag: "RECOV", providerId: "walker_one", walkCount: 2 });
   await wMutate(stack, bookingId, "accept");
   const [first, second] = sqlite.prepare("SELECT id FROM walking_sessions WHERE booking_id=? ORDER BY occurrence_number").all(bookingId).map((row) => String(row.id));
