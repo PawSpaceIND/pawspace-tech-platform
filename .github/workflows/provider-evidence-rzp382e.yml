@@ -30,39 +30,26 @@ jobs:
           case "$RAZORPAY_KEY_ID_SANDBOX" in rzp_test_*) ;; *) echo "Refusing non-test Razorpay key" >&2; exit 1;; esac
           node --input-type=module <<'NODE'
           import { writeFileSync } from 'node:fs';
-          const certKey = 'rzp382-20260901e';
-          const expectedSha = '6c7603fa61fa12bf35dfa61a9ab648838e13c084';
-          const expectedSubscriptionId = 'sub_TWg9yixMBHpX2w';
-          const cf = async (sql, params=[]) => {
-            const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID)}/d1/database/${encodeURIComponent(process.env.STAGING_D1_ID)}/query`, {method:'POST',headers:{authorization:`Bearer ${process.env.CLOUDFLARE_API_TOKEN}`,'content-type':'application/json'},body:JSON.stringify({sql,params})});
-            const b = await r.json();
-            if(!r.ok || b?.success!==true || b?.result?.[0]?.success!==true) throw new Error('D1 evidence query failed');
-            return b.result[0].results||[];
-          };
-          const auth = `Basic ${Buffer.from(`${process.env.RAZORPAY_KEY_ID_SANDBOX}:${process.env.RAZORPAY_KEY_SECRET_SANDBOX}`).toString('base64')}`;
-          const get = async path => {
-            const r=await fetch(`https://api.razorpay.com${path}`,{headers:{authorization:auth},redirect:'manual'});
-            const b=await r.json();
-            if(!r.ok) throw new Error(`Razorpay Test verify failed ${r.status}`);
-            return b;
-          };
-          const rows = await cf(`SELECT cert_key,status,provider_subscription_id,contract_id FROM provider_certification_runs WHERE cert_key=?`,[certKey]);
-          const state = rows[0];
-          if(!state) throw new Error('provider certification row missing');
-          if(state.provider_subscription_id!==expectedSubscriptionId) throw new Error('provider subscription identity mismatch');
-          const sub = await get(`/v1/subscriptions/${encodeURIComponent(expectedSubscriptionId)}`);
-          if(sub.status!=='active') throw new Error(`expected active Razorpay Test subscription, got ${sub.status}`);
-          const paymentList = await get('/v1/payments?count=100');
-          const matches = (paymentList.items||[]).filter(p=>p.subscription_id===expectedSubscriptionId).sort((a,b)=>Number(b.created_at||0)-Number(a.created_at||0));
-          const payment = matches[0]||null;
-          if(!payment) throw new Error('no Razorpay Test payment found for active subscription');
-          if(payment.status!=='captured') throw new Error(`expected captured Test payment, got ${payment.status}`);
-          if(Number(payment.amount)!==11800) throw new Error(`unexpected Test payment amount ${payment.amount}`);
-          if(!/^pay_[A-Za-z0-9]+$/.test(String(payment.id||''))) throw new Error('real pay_ id missing');
-          if(!/^order_[A-Za-z0-9]+$/.test(String(payment.order_id||''))) throw new Error('real order_ id missing');
-          const cycles = await cf(`SELECT id,provider_payment_id,provider_invoice_id,provider_event_id,amount_paise,currency,status,accounting_status FROM subscription_billing_cycles WHERE contract_id=? ORDER BY created_at DESC LIMIT 3`,[state.contract_id]);
-          const inbox = await cf(`SELECT event_id,event_type,processing_status,received_at,processed_at FROM gateway_webhook_events WHERE provider='razorpay' AND raw_payload LIKE ? ORDER BY received_at DESC LIMIT 10`,[`%${expectedSubscriptionId}%`]).catch(()=>[]);
-          const evidence={ok:true,phase:'pre-finalize',certKey,expectedSha,mode:'Razorpay Test Mode',subscription:{id:sub.id,status:sub.status,planId:sub.plan_id,paidCount:sub.paid_count},payment:{id:payment.id,orderId:payment.order_id,status:payment.status,amountPaise:Number(payment.amount),currency:payment.currency,createdAt:payment.created_at},staging:{contractId:state.contract_id,certStatus:state.status,billingCycles:cycles,webhookInbox:inbox},finalizeEligible:true};
+          const certKey='rzp382-20260901e';
+          const expectedSha='6c7603fa61fa12bf35dfa61a9ab648838e13c084';
+          const sid='sub_TWg9yixMBHpX2w';
+          const cf=async(sql,params=[])=>{const r=await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID)}/d1/database/${encodeURIComponent(process.env.STAGING_D1_ID)}/query`,{method:'POST',headers:{authorization:`Bearer ${process.env.CLOUDFLARE_API_TOKEN}`,'content-type':'application/json'},body:JSON.stringify({sql,params})});const b=await r.json();if(!r.ok||b?.success!==true||b?.result?.[0]?.success!==true)throw new Error('D1 evidence query failed');return b.result[0].results||[]};
+          const auth=`Basic ${Buffer.from(`${process.env.RAZORPAY_KEY_ID_SANDBOX}:${process.env.RAZORPAY_KEY_SECRET_SANDBOX}`).toString('base64')}`;
+          const get=async path=>{const r=await fetch(`https://api.razorpay.com${path}`,{headers:{authorization:auth},redirect:'manual'});const b=await r.json();if(!r.ok)throw new Error(`Razorpay Test verify failed ${r.status}`);return b};
+          const state=(await cf(`SELECT cert_key,status,provider_subscription_id,contract_id FROM provider_certification_runs WHERE cert_key=?`,[certKey]))[0];
+          if(!state||state.provider_subscription_id!==sid)throw new Error('provider certification identity mismatch');
+          const sub=await get(`/v1/subscriptions/${encodeURIComponent(sid)}`);
+          if(sub.status!=='active')throw new Error(`expected active Razorpay Test subscription, got ${sub.status}`);
+          const invoices=await get(`/v1/invoices?subscription_id=${encodeURIComponent(sid)}`);
+          const items=(invoices.items||[]).sort((a,b)=>Number(b.created_at||0)-Number(a.created_at||0));
+          const paid=items.find(i=>/^pay_[A-Za-z0-9]+$/.test(String(i.payment_id||''))&&/^order_[A-Za-z0-9]+$/.test(String(i.order_id||'')))||null;
+          if(!paid)throw new Error('active Test subscription has no invoice exposing pay_/order_ ids');
+          const payment=await get(`/v1/payments/${encodeURIComponent(paid.payment_id)}`);
+          if(payment.status!=='captured')throw new Error(`expected captured Test payment, got ${payment.status}`);
+          if(Number(payment.amount)!==11800)throw new Error(`unexpected Test payment amount ${payment.amount}`);
+          const cycles=await cf(`SELECT id,provider_payment_id,provider_invoice_id,provider_event_id,amount_paise,currency,status,accounting_status FROM subscription_billing_cycles WHERE contract_id=? ORDER BY created_at DESC LIMIT 3`,[state.contract_id]);
+          const inbox=await cf(`SELECT event_id,event_type,processing_status,received_at,processed_at FROM gateway_webhook_events WHERE provider='razorpay' AND raw_payload LIKE ? ORDER BY received_at DESC LIMIT 10`,[`%${sid}%`]).catch(()=>[]);
+          const evidence={ok:true,phase:'pre-finalize',certKey,expectedSha,mode:'Razorpay Test Mode',subscription:{id:sub.id,status:sub.status,planId:sub.plan_id,paidCount:sub.paid_count},providerInvoice:{id:paid.id,status:paid.status,paymentId:paid.payment_id,orderId:paid.order_id},payment:{id:payment.id,orderId:payment.order_id,status:payment.status,amountPaise:Number(payment.amount),currency:payment.currency},staging:{contractId:state.contract_id,certStatus:state.status,billingCycles:cycles,webhookInbox:inbox},finalizeEligible:true};
           writeFileSync('provider-active-evidence-rzp382-20260901e.json',JSON.stringify(evidence,null,2));
           console.log(JSON.stringify(evidence));
           NODE
