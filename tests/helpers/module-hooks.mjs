@@ -2,30 +2,21 @@
  * Installs the resolver every real-execution suite needs: `cloudflare:workers` resolves to a stub that
  * reads a per-suite global, and lib modules that import each other extensionlessly resolve to `.ts`.
  *
- * `module.registerHooks` only exists from Node 22.15. CI pins 22.13.0, where calling it throws
- * `TypeError: nodeModule.registerHooks is not a function` and takes the whole file down before a single
- * test runs - which is exactly what it did. On that version the same resolver is registered as an
- * out-of-thread loader hook instead. Several suites already carried both branches inline; this is that
- * pattern in one place so a new suite cannot pick only the half that works on a newer laptop.
+ * Node's public customization-hook API is `module.register()`. The normal Node >= 22.15 path uses the
+ * named public export with this module's URL as its parent, while PAWSPACE_FORCE_LOADER_HOOK keeps the
+ * namespace-export invocation exercised as the compatibility path. Both registrations install the exact
+ * same resolver/loader source so TypeScript and CSS handling cannot drift between CI paths.
  */
 import * as nodeModule from "node:module";
-import { createRequire } from "node:module";
-import { readFileSync } from "node:fs";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { createRequire, register } from "node:module";
+import { pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
 
-// Loaded lazily and cached: only a suite that actually imports a .tsx pays for TypeScript's compiler.
-let cachedTs = null;
-function typescript() {
-  if (!cachedTs) cachedTs = require("typescript");
-  return cachedTs;
-}
 /*
  * The out-of-thread hook is handed to Node as a data: URL, and a data: URL module has no base path -
- * so `import "typescript"` inside it fails with ERR_UNSUPPORTED_RESOLVE_REQUEST, no matter what
- * parentURL register() is given. Resolving the absolute path here and interpolating it is what makes
- * that branch work, and that branch is the one CI's Node 22.13 pin actually takes.
+ * so `import "typescript"` inside it fails with ERR_UNSUPPORTED_RESOLVE_REQUEST. Resolving the absolute
+ * TypeScript path here and interpolating it keeps the registered hook independent of the data: URL base.
  */
 const typescriptUrl = pathToFileURL(require.resolve("typescript")).href;
 
@@ -39,8 +30,8 @@ const typescriptUrl = pathToFileURL(require.resolve("typescript")).href;
 // authorization refusal into a fixture-dependent 500. Fail immediately instead of allowing that alias.
 const installedWorkersDbGlobals = new Set();
 
-// Both hook branches below need the same two things, so they are written once, as source text, because
-// the out-of-thread branch can only receive its hook as a string.
+// Both registration paths below need the same TypeScript transform and CSS stub, so they are written once
+// as source text for the out-of-thread loader module registered through node:module.register().
 const TSX_TRANSFORM = `
   function transpileTsx(source, fileName) {
     const ts = tsModule.default ?? tsModule;
@@ -61,21 +52,6 @@ const TSX_TRANSFORM = `
   const CSS_STUB = "const handler={get:(_,key)=>typeof key===\\"string\\"?key:undefined};export default new Proxy({},handler);";
 `;
 
-function transpileTsx(source, fileName) {
-  const ts = typescript();
-  return ts.transpileModule(source, {
-    fileName,
-    compilerOptions: {
-      target: ts.ScriptTarget.ESNext,
-      module: ts.ModuleKind.ESNext,
-      jsx: ts.JsxEmit.ReactJSX,
-      jsxImportSource: "react",
-      verbatimModuleSyntax: false,
-    },
-  }).outputText;
-}
-const cssStub = () => 'const handler={get:(_,key)=>typeof key==="string"?key:undefined};export default new Proxy({},handler);';
-
 export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
   process.env.NODE_ENV = "test";
   process.env.PAWSPACE_LOCAL_PREVIEW = "on";
@@ -87,44 +63,10 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
   const shim = `export const env = new Proxy({}, { get: (_, key) => key === "DB" ? globalThis[${JSON.stringify(globalName)}] : (globalThis[${JSON.stringify(envName)}] ?? {})[key] });`;
   const workersUrl = `data:text/javascript,${encodeURIComponent(shim)}`;
 
-  // The fallback below only runs on the Node CI pins, so on a newer machine it is never exercised -
-  // which is how it came to be missing at all. PAWSPACE_FORCE_LOADER_HOOK=1 takes that path on any
-  // version, so the suite can prove both branches work.
-  const forceLoader = process.env.PAWSPACE_FORCE_LOADER_HOOK === "1";
-  if (!forceLoader && typeof nodeModule.registerHooks === "function") {
-    nodeModule.registerHooks({
-      resolve(specifier, context, nextResolve) {
-        if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
-        try {
-          return nextResolve(specifier, context);
-        } catch (error) {
-          // .ts first, because that is what every lib module means by an extensionless import; .tsx only
-          // when .ts is not there either, so a component's sibling import resolves too.
-          if (specifier.startsWith(".") && !specifier.endsWith(".ts") && !specifier.endsWith(".tsx")) {
-            try { return nextResolve(`${specifier}.ts`, context); }
-            catch { return nextResolve(`${specifier}.tsx`, context); }
-          }
-          // A bare specifier into a package with no exports map - `next/link` is the one that matters -
-          // resolves only with its extension. Reached ONLY after the real resolution has already failed,
-          // so it can never change an import that works.
-          if (!specifier.startsWith(".") && !specifier.endsWith(".js")) return nextResolve(`${specifier}.js`, context);
-          throw error;
-        }
-      },
-      load(url, context, nextLoad) {
-        if (url.endsWith(".css")) return { format: "module", source: cssStub(), shortCircuit: true };
-        if (!url.endsWith(".tsx")) return nextLoad(url, context);
-        const path = fileURLToPath(url);
-        return { format: "module", source: transpileTsx(readFileSync(path, "utf8"), path), shortCircuit: true };
-      },
-    });
-    return workersUrl;
-  }
-
   const hook = `const workersUrl=${JSON.stringify(workersUrl)};
   import * as tsModule from ${JSON.stringify(typescriptUrl)};
   import { readFile } from "node:fs/promises";
-  import { fileURLToPath, pathToFileURL } from "node:url";
+  import { fileURLToPath } from "node:url";
   ${TSX_TRANSFORM}
   export async function resolve(specifier, context, nextResolve) {
     if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
@@ -144,6 +86,23 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
     const path = fileURLToPath(url);
     return { format: "module", source: transpileTsx(await readFile(path, "utf8"), path), shortCircuit: true };
   }`;
-  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
+  const hookUrl = new URL(`data:text/javascript,${encodeURIComponent(hook)}`);
+
+  // The primary Node >= 22.15 path must use the public named register() export. The forced compatibility
+  // path keeps the namespace export exercised, but both are the same public API and both receive an
+  // explicit parent URL so relative/custom specifier resolution is anchored to this module.
+  const forceLoader = process.env.PAWSPACE_FORCE_LOADER_HOOK === "1";
+  if (!forceLoader) {
+    if (typeof register !== "function") {
+      throw new TypeError("node:module.register is not available in this Node runtime");
+    }
+    register(hookUrl, import.meta.url);
+    return workersUrl;
+  }
+
+  if (typeof nodeModule.register !== "function") {
+    throw new TypeError("node:module.register is not available in this Node runtime");
+  }
+  nodeModule.register(hookUrl, import.meta.url);
   return workersUrl;
 }
