@@ -1,0 +1,65 @@
+name: Provider cert diagnostic push
+
+on:
+  push:
+    branches:
+      - ops/razorpay-provider-cert-20260901
+    paths:
+      - .github/workflows/provider-cert-diagnose-push.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Capture handled staging provider exception
+        env:
+          PROVIDER_CERT_PHASE: diagnose
+          PROVIDER_CERT_KEY: rzp382-20260901c
+          STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          set -euo pipefail
+          npx wrangler --version >/dev/null
+          TAIL_LOG="$RUNNER_TEMP/provider-certification-tail.log"
+          timeout 35s npx wrangler tail pawspace-staging --format pretty --method POST --search "[api] unexpected error" >"$TAIL_LOG" 2>&1 &
+          TAIL_PID=$!
+          for _ in $(seq 1 20); do
+            grep -q "Connected to pawspace-staging" "$TAIL_LOG" && break
+            sleep 1
+          done
+          if ! grep -q "Connected to pawspace-staging" "$TAIL_LOG"; then
+            cat "$TAIL_LOG"
+            kill "$TAIL_PID" 2>/dev/null || true
+            wait "$TAIL_PID" || true
+            exit 1
+          fi
+          set +e
+          node scripts/razorpay-provider-certification.mjs
+          STATUS=$?
+          set -e
+          wait "$TAIL_PID" || true
+          echo "Sanitized staging handled-error tail:"
+          cat "$TAIL_LOG"
+          rm -f "$TAIL_LOG"
+          exit "$STATUS"
+      - name: Upload sanitized provider evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-certification-rzp382-20260901c-diagnose
+          path: provider-certification-rzp382-20260901c-diagnose.json
+          if-no-files-found: warn
