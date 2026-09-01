@@ -162,7 +162,7 @@ test("seeded DB: people surfaces (manager dashboard, reports, payroll, attendanc
   assert.ok(dashboard.data.employeeCount >= 4, "demo employees are visible");
   assert.ok(dashboard.data.verticals.sales.length >= 2, "the governed sales registry classifies the demo sellers");
 
-  const reports = await body(await GET(peopleReportsRoute, `/api/people-reports?start=${Date.UTC(2026,7,1)}&end=${Date.UTC(2026,7,31,23,59,59,999)}`));
+  const reports = await body(await GET(peopleReportsRoute, "/api/people-reports?start=1785542400000&end=1788220799999"));
   assert.ok(reports.data.headcount.active >= 4);
   assert.ok(reports.data.payroll.register.length >= 4, "payroll register is populated");
   assert.ok(reports.data.teamRollups.length >= 2, "team rollups are populated");
