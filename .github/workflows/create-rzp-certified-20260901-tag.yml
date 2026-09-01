@@ -1,0 +1,41 @@
+name: Create PR 382 Razorpay certification tag
+
+on:
+  push:
+    branches:
+      - ops/razorpay-provider-cert-20260901
+    paths:
+      - .github/workflows/create-rzp-certified-20260901-tag.yml
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create annotated certification tag on PR 382 squash merge
+        env:
+          TARGET_SHA: e4b2b74dea7cd668dbd1a1fa9c49457c3ea0b70a
+          TAG_NAME: rzp-certified-20260901
+          TAG_MESSAGE: Razorpay test provider lifecycle certified on PR 382
+        run: |
+          set -euo pipefail
+          git fetch origin main --tags
+          git cat-file -e "${TARGET_SHA}^{commit}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG_NAME}" >/dev/null 2>&1; then
+            echo "Tag already exists; refusing to overwrite" >&2
+            exit 1
+          fi
+          git config user.name "PawSpaceIND Certification"
+          git config user.email "karthik@pawspace.in"
+          git tag -a "$TAG_NAME" "$TARGET_SHA" -m "$TAG_MESSAGE"
+          git push origin "refs/tags/${TAG_NAME}"
+          peeled="$(git ls-remote --tags origin "refs/tags/${TAG_NAME}^{}" | awk '{print $1}')"
+          test "$peeled" = "$TARGET_SHA"
+          echo "TAG_CREATED=${TAG_NAME}"
+          echo "TAG_TARGET=${peeled}"
