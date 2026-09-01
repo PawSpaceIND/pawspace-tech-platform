@@ -1,0 +1,239 @@
+name: Staging Track 3 and Track 5 runner
+
+on:
+  push:
+    branches:
+      - ops/nontrack2-closure-20260901
+    paths:
+      - ops/run-staging-closure.txt
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pawspace-staging-track3-track5
+  cancel-in-progress: false
+
+env:
+  STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+
+jobs:
+  track3-performance:
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: D1 capacity preflight
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          if ! npx wrangler d1 execute pawspace-staging --remote --json --command "SELECT code FROM role_definitions LIMIT 1" > d1-capacity-preflight.json 2> d1-capacity-preflight.err; then
+            cat d1-capacity-preflight.err >&2
+            echo "Staging D1 capacity preflight failed. Track 3 is not runnable until D1 query capacity is restored." >&2
+            exit 1
+          fi
+          cat d1-capacity-preflight.json
+      - run: npm run build
+      - name: Configure staging for corrected pre-392 descendant
+        env:
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+        run: node scripts/stage-config.mjs
+      - name: Deploy corrected isolated staging SHA
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+        run: |
+          set -euo pipefail
+          SECRETS_FILE="$RUNNER_TEMP/staging-secrets.json"
+          export SECRETS_FILE
+          trap 'rm -f "$SECRETS_FILE"' EXIT
+          node --input-type=module <<'NODE'
+          import {writeFileSync} from 'node:fs';
+          const names=['PAWSPACE_UAT_ACCESS_CODE','PAWSPACE_UAT_SIGNING_KEY','PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT','RAZORPAY_WEBHOOK_SECRET_SANDBOX'];
+          const values=Object.fromEntries(names.map(n=>[n,process.env[n]||'']));
+          if(Object.values(values).some(v=>!v)) throw new Error('required staging secret missing');
+          values.PAWSPACE_STAGING_LIVE_CUSTOMER_OTP='false';
+          writeFileSync(process.env.SECRETS_FILE,JSON.stringify(values),{mode:0o600});
+          NODE
+          npx wrangler deploy --message "staging $GITHUB_SHA" --secrets-file "$SECRETS_FILE"
+      - name: Certify isolation and exact SHA before load
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          EXPECTED_SHA: ${{ github.sha }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
+        run: node tests/e2e/staging-certification.mjs --isolation-only
+      - name: Seed staging staff
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --file=scripts/employee-seed.sql
+      - name: Run exact Track 3 workload
+        env:
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          PERF_RUN_ID: perf-${{ github.run_id }}-${{ github.run_attempt }}
+        run: node scripts/ops/staging-performance-gate.mjs
+      - name: Verify Track 3 D1 invariants
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          RUN_ID="$(node -e "const r=require('./staging-performance.json');process.stdout.write(r.runId)")"
+          SQL="SELECT (SELECT COUNT(*) FROM canonical_bookings WHERE idempotency_key LIKE '${RUN_ID}:booking:%') bookings,(SELECT COUNT(*) FROM booking_payments WHERE booking_id IN (SELECT id FROM canonical_bookings WHERE idempotency_key LIKE '${RUN_ID}:booking:%')) payments,(SELECT COUNT(*) FROM scheduling_assignment_decisions WHERE group_id LIKE '${RUN_ID}:grp:%') assignments,(SELECT COUNT(*) FROM payment_gateway_events WHERE event_id='${RUN_ID}:evt:replay') webhook_events,(SELECT ROUND(COALESCE(SUM(debit),0)-COALESCE(SUM(credit),0),2) FROM finance_journal_entries) ledger_drift;"
+          npx wrangler d1 execute pawspace-staging --remote --json --command "$SQL" > staging-performance-d1.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const raw=JSON.parse(fs.readFileSync('staging-performance-d1.json','utf8'));
+          const row=(Array.isArray(raw)?raw[0]:raw)?.results?.[0]||{};
+          const n=k=>Number(row[k]??NaN);
+          if(n('bookings')!==100) throw new Error(`expected 100 bookings, got ${row.bookings}`);
+          if(n('payments')!==100) throw new Error(`expected exactly 100 payment rows, got ${row.payments}`);
+          if(n('assignments')!==100) throw new Error(`expected 100 assignments, got ${row.assignments}`);
+          if(n('webhook_events')!==1) throw new Error(`expected one persisted webhook event, got ${row.webhook_events}`);
+          if(Math.abs(n('ledger_drift'))>0.000001) throw new Error(`ledger drift ${row.ledger_drift} is not INR 0.00`);
+          console.log(JSON.stringify(row,null,2));
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: track3-evidence-${{ github.sha }}
+          path: |
+            d1-capacity-preflight.json
+            d1-capacity-preflight.err
+            staging-performance.json
+            staging-performance-d1.json
+          if-no-files-found: warn
+
+  track5-dr:
+    needs: track3-performance
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Backup and restore isolated D1 copy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          START="$(date +%s)"
+          RESTORE_DB="pawspace-dr-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup(){ npx wrangler d1 delete "$RESTORE_DB" --skip-confirmation >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          SQL="SELECT (SELECT COUNT(*) FROM canonical_bookings) canonical_bookings,(SELECT COUNT(*) FROM booking_payments) booking_payments,(SELECT COUNT(*) FROM finance_journal_entries) finance_journal_entries,(SELECT ROUND(COALESCE(SUM(debit),0)-COALESCE(SUM(credit),0),2) FROM finance_journal_entries) ledger_drift;"
+          npx wrangler d1 execute pawspace-staging --remote --json --command "$SQL" > dr-source.json
+          npx wrangler d1 export pawspace-staging --remote --skip-confirmation --output=staging-backup.sql
+          npx wrangler d1 create "$RESTORE_DB" --location apac > dr-create.txt
+          npx wrangler d1 execute "$RESTORE_DB" --remote --yes --file=staging-backup.sql
+          npx wrangler d1 execute "$RESTORE_DB" --remote --json --command "$SQL" > dr-restored.json
+          END="$(date +%s)"
+          RPO="$((END-START))"
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const pick=p=>{const x=JSON.parse(fs.readFileSync(p,'utf8'));return (Array.isArray(x)?x[0]:x)?.results?.[0]||{}};
+          const a=pick('dr-source.json'),b=pick('dr-restored.json');
+          for(const f of ['canonical_bookings','booking_payments','finance_journal_entries']) if(Number(a[f])!==Number(b[f])) throw new Error(`${f} mismatch source=${a[f]} restored=${b[f]}`);
+          if(Math.abs(Number(a.ledger_drift||0))>0.000001||Math.abs(Number(b.ledger_drift||0))>0.000001) throw new Error(`ledger drift source=${a.ledger_drift} restored=${b.ledger_drift}`);
+          NODE
+          if [ "$RPO" -ge 900 ]; then echo "restore drill ${RPO}s is not < 900s" >&2; exit 1; fi
+          printf '{"restoreValidationSeconds":%s,"targetSeconds":900}\n' "$RPO" > dr-rpo.json
+      - name: Rollback drill and recovery smoke
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: |
+          set -euo pipefail
+          npx wrangler deployments status --name pawspace-staging --json > dr-before-status.json
+          PREDECESSOR="$(node --input-type=module -e "import fs from 'node:fs';const x=JSON.parse(fs.readFileSync('dr-before-status.json','utf8'));const v=(x.versions||[]).find(v=>Number(v.percentage)===100);if(!v?.version_id)process.exit(2);process.stdout.write(v.version_id)")"
+          npm run build
+          STAGING_D1_ID='${{ vars.STAGING_D1_ID }}' STAGING_R2_BUCKET_NAME='${{ vars.STAGING_R2_BUCKET_NAME }}' PAWSPACE_UAT_ACCESS_CODE='${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}' PAWSPACE_UAT_SIGNING_KEY='${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}' PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT='${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}' node scripts/stage-config.mjs
+          npx wrangler deploy --message "dr-candidate $GITHUB_SHA"
+          START="$(date +%s)"
+          npx wrangler rollback "$PREDECESSOR" --name pawspace-staging --message "DR drill rollback"
+          node --input-type=module <<'NODE'
+          const base=process.env.STAGING_URL,code=process.env.PAWSPACE_UAT_ACCESS_CODE;
+          for(let i=0;i<30;i++){
+            try{
+              const r=await fetch(base+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'login',code,email:'founder@pawspace.in'})});
+              if(r.ok) process.exit(0);
+            }catch{}
+            await new Promise(r=>setTimeout(r,2000));
+          }
+          throw new Error('rollback smoke did not recover');
+          NODE
+          RTO="$(( $(date +%s)-START ))"
+          if [ "$RTO" -ge 1800 ]; then echo "rollback RTO ${RTO}s is not < 1800s" >&2; exit 1; fi
+          printf '{"rollbackRecoverySeconds":%s,"targetSeconds":1800}\n' "$RTO" > dr-rto.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: track5-dr-evidence-${{ github.sha }}
+          path: |
+            dr-source.json
+            dr-restored.json
+            dr-rpo.json
+            dr-rto.json
+            dr-before-status.json
+          if-no-files-found: warn
+
+  track6-automated-ui:
+    needs: track5-dr
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Automated responsive and role journey sweep
+        env:
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: |
+          node scripts/release-ui-closure.mjs --base="$STAGING_URL" --json=release-ui-closure-report.json
+          node scripts/customer-ui-acceptance-v2.mjs --base="$STAGING_URL" --json=customer-ui-acceptance-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: track6-automated-ui-${{ github.sha }}
+          path: |
+            release-ui-closure-report.json
+            customer-ui-acceptance-report.json
+          if-no-files-found: warn
