@@ -10,12 +10,18 @@
  */
 import * as nodeModule from "node:module";
 import { readFileSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+// createRequire accepts a file URL on supported Node versions, but the test matrix deliberately spans
+// the registerHooks boundary. Give every version the same unambiguous absolute filename instead of
+// relying on URL argument coercion in the module loader.
+const moduleRequire = nodeModule.createRequire(fileURLToPath(import.meta.url));
 
 // Loaded lazily and cached: only a suite that actually imports a .tsx pays for TypeScript's compiler.
 let cachedTs = null;
 function typescript() {
-  if (!cachedTs) cachedTs = nodeModule.createRequire(import.meta.url)("typescript");
+  if (!cachedTs) cachedTs = moduleRequire("typescript");
   return cachedTs;
 }
 /*
@@ -24,7 +30,7 @@ function typescript() {
  * parentURL register() is given. Resolving the absolute path here and interpolating it is what makes
  * that branch work, and that branch is the one CI's Node 22.13 pin actually takes.
  */
-const typescriptUrl = pathToFileURL(nodeModule.createRequire(import.meta.url).resolve("typescript")).href;
+const typescriptUrl = pathToFileURL(moduleRequire.resolve("typescript")).href;
 
 // envName defaults to `${globalName}_ENV`, which is what the suites written before it existed use. The
 // two call sites that pass a name of their own (__FANOUT_ENV__, __SEED_ENV__) were setting a global the
@@ -81,6 +87,13 @@ function normalizedFileUrl(url) {
   return { pathname, parsed };
 }
 
+function fileSpecifier(specifier, parentURL, suffix = "") {
+  const candidate = `${specifier}${suffix}`;
+  if (isAbsolute(candidate)) return pathToFileURL(candidate).href;
+  if (candidate.startsWith(".")) return new URL(candidate, parentURL ?? import.meta.url).href;
+  return candidate;
+}
+
 export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
   process.env.NODE_ENV = "test";
   process.env.PAWSPACE_LOCAL_PREVIEW = "on";
@@ -101,18 +114,18 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
       resolve(specifier, context, nextResolve) {
         if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
         try {
-          return nextResolve(specifier, context);
+          return nextResolve(fileSpecifier(specifier, context.parentURL), context);
         } catch (error) {
           // .ts first, because that is what every lib module means by an extensionless import; .tsx only
           // when .ts is not there either, so a component's sibling import resolves too.
-          if (specifier.startsWith(".") && !specifier.endsWith(".ts") && !specifier.endsWith(".tsx")) {
-            try { return nextResolve(`${specifier}.ts`, context); }
-            catch { return nextResolve(`${specifier}.tsx`, context); }
+          if ((specifier.startsWith(".") || isAbsolute(specifier)) && !specifier.endsWith(".ts") && !specifier.endsWith(".tsx")) {
+            try { return nextResolve(fileSpecifier(specifier, context.parentURL, ".ts"), context); }
+            catch { return nextResolve(fileSpecifier(specifier, context.parentURL, ".tsx"), context); }
           }
           // A bare specifier into a package with no exports map - `next/link` is the one that matters -
           // resolves only with its extension. Reached ONLY after the real resolution has already failed,
           // so it can never change an import that works.
-          if (!specifier.startsWith(".") && !specifier.endsWith(".js")) return nextResolve(`${specifier}.js`, context);
+          if (!specifier.startsWith(".") && !isAbsolute(specifier) && !specifier.endsWith(".js")) return nextResolve(`${specifier}.js`, context);
           throw error;
         }
       },
@@ -130,17 +143,24 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
   const hook = `const workersUrl=${JSON.stringify(workersUrl)};
   import * as tsModule from ${JSON.stringify(typescriptUrl)};
   import { readFile } from "node:fs/promises";
-  import { fileURLToPath } from "node:url";
+  import { isAbsolute } from "node:path";
+  import { fileURLToPath, pathToFileURL } from "node:url";
   ${TSX_TRANSFORM}
+  function fileSpecifier(specifier, parentURL, suffix = "") {
+    const candidate = specifier + suffix;
+    if (isAbsolute(candidate)) return pathToFileURL(candidate).href;
+    if (candidate.startsWith(".")) return new URL(candidate, parentURL).href;
+    return candidate;
+  }
   export async function resolve(specifier, context, nextResolve) {
     if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
-    try { return await nextResolve(specifier, context); }
+    try { return await nextResolve(fileSpecifier(specifier, context.parentURL), context); }
     catch (error) {
-      if (specifier.startsWith(".") && !specifier.endsWith(".ts") && !specifier.endsWith(".tsx")) {
-        try { return await nextResolve(specifier + ".ts", context); }
-        catch { return await nextResolve(specifier + ".tsx", context); }
+      if ((specifier.startsWith(".") || isAbsolute(specifier)) && !specifier.endsWith(".ts") && !specifier.endsWith(".tsx")) {
+        try { return await nextResolve(fileSpecifier(specifier, context.parentURL, ".ts"), context); }
+        catch { return await nextResolve(fileSpecifier(specifier, context.parentURL, ".tsx"), context); }
       }
-      if (!specifier.startsWith(".") && !specifier.endsWith(".js")) return await nextResolve(specifier + ".js", context);
+      if (!specifier.startsWith(".") && !isAbsolute(specifier) && !specifier.endsWith(".js")) return await nextResolve(specifier + ".js", context);
       throw error;
     }
   }
