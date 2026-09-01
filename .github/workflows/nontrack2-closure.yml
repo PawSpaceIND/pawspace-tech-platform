@@ -1,0 +1,234 @@
+name: Non-Track-2 operational closure
+
+on:
+  pull_request:
+    branches: [ops/nontrack2-certified-base-94cdd]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pawspace-nontrack2-closure
+  cancel-in-progress: false
+
+env:
+  STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+  CERTIFIED_MAIN_SHA: 94cddc063297796f24ea1a2a0975b62a2fdbe1b2
+
+jobs:
+  hosted-performance:
+    if: ${{ github.head_ref == 'ops/nontrack2-closure-20260901' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Run exact hosted performance workload
+        env:
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          PERF_RUN_ID: perf-${{ github.run_id }}-${{ github.run_attempt }}
+        run: node scripts/ops/staging-performance-gate.mjs
+      - name: Verify D1 cardinality, idempotency and exact ledger balance
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          RUN_ID="$(node -e "const r=require('./staging-performance.json');process.stdout.write(r.runId)")"
+          SQL="SELECT
+            (SELECT COUNT(*) FROM canonical_bookings WHERE idempotency_key LIKE '${RUN_ID}:booking:%') AS bookings,
+            (SELECT COUNT(*) FROM booking_payments WHERE booking_id IN (SELECT id FROM canonical_bookings WHERE idempotency_key LIKE '${RUN_ID}:booking:%')) AS payments,
+            (SELECT COUNT(*) FROM scheduling_assignment_decisions WHERE group_id LIKE '${RUN_ID}:grp:%') AS assignments,
+            (SELECT COUNT(*) FROM payment_gateway_events WHERE event_id='${RUN_ID}:evt:replay') AS webhook_events,
+            (SELECT COUNT(*) FROM collection_ledger_postings WHERE payment_id IN (SELECT id FROM booking_payments WHERE booking_id IN (SELECT id FROM canonical_bookings WHERE idempotency_key LIKE '${RUN_ID}:booking:%'))) AS collection_postings,
+            (SELECT ROUND(COALESCE(SUM(debit),0)-COALESCE(SUM(credit),0),2) FROM finance_journal_entries) AS ledger_drift;"
+          npx wrangler d1 execute pawspace-staging --remote --json --command "$SQL" > staging-performance-d1.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const raw=JSON.parse(fs.readFileSync('staging-performance-d1.json','utf8'));
+          const row=(Array.isArray(raw)?raw[0]:raw)?.results?.[0]||{};
+          const n=k=>Number(row[k]??NaN);
+          console.log(JSON.stringify(row,null,2));
+          if(n('bookings')!==100) throw new Error(`expected 100 bookings, got ${row.bookings}`);
+          if(n('payments')!==100) throw new Error(`expected exactly 100 payment rows after 100 duplicate attempts, got ${row.payments}`);
+          if(n('assignments')!==100) throw new Error(`expected 100 provider assignments, got ${row.assignments}`);
+          if(n('webhook_events')!==1) throw new Error(`500 identical signed webhook replays produced ${row.webhook_events} gateway event rows`);
+          if(n('collection_postings')!==100) throw new Error(`expected one collection posting per booking/payment, got ${row.collection_postings}`);
+          if(Math.abs(n('ledger_drift'))>0.000001) throw new Error(`ledger drift is ${row.ledger_drift}, not INR 0.00`);
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hosted-performance-evidence
+          path: |
+            staging-performance.json
+            staging-performance-d1.json
+          if-no-files-found: warn
+
+  backup-restore-rollback:
+    if: ${{ github.head_ref == 'ops/nontrack2-closure-20260901' }}
+    needs: hosted-performance
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Export staging D1 and restore to disposable isolated D1
+        id: restore
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          START="$(date +%s)"
+          RESTORE_DB="pawspace-dr-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "restore_db=$RESTORE_DB" >> "$GITHUB_OUTPUT"
+          cleanup(){ npx wrangler d1 delete "$RESTORE_DB" --skip-confirmation >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          SOURCE_SQL="SELECT
+            (SELECT COUNT(*) FROM canonical_customers) canonical_customers,
+            (SELECT COUNT(*) FROM canonical_pets) canonical_pets,
+            (SELECT COUNT(*) FROM canonical_bookings) canonical_bookings,
+            (SELECT COUNT(*) FROM booking_payments) booking_payments,
+            (SELECT COUNT(*) FROM finance_journal_entries) finance_journal_entries,
+            (SELECT COUNT(*) FROM collection_ledger_postings) collection_ledger_postings,
+            (SELECT ROUND(COALESCE(SUM(debit),0)-COALESCE(SUM(credit),0),2) FROM finance_journal_entries) ledger_drift;"
+          npx wrangler d1 execute pawspace-staging --remote --json --command "$SOURCE_SQL" > dr-source-counts.json
+          npx wrangler d1 export pawspace-staging --remote --skip-confirmation --output=staging-backup.sql
+          npx wrangler d1 create "$RESTORE_DB" --location apac > dr-create.txt
+          npx wrangler d1 execute "$RESTORE_DB" --remote --yes --file=staging-backup.sql
+          npx wrangler d1 execute "$RESTORE_DB" --remote --json --command "$SOURCE_SQL" > dr-restored-counts.json
+          END="$(date +%s)"
+          RPO="$((END-START))"
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const pick=p=>{const x=JSON.parse(fs.readFileSync(p,'utf8'));return (Array.isArray(x)?x[0]:x)?.results?.[0]||{}};
+          const a=pick('dr-source-counts.json'), b=pick('dr-restored-counts.json');
+          const fields=['canonical_customers','canonical_pets','canonical_bookings','booking_payments','finance_journal_entries','collection_ledger_postings'];
+          for(const f of fields) if(Number(a[f])!==Number(b[f])) throw new Error(`restore row-count mismatch for ${f}: source=${a[f]} restored=${b[f]}`);
+          if(Math.abs(Number(a.ledger_drift||0))>0.000001 || Math.abs(Number(b.ledger_drift||0))>0.000001) throw new Error(`ledger drift source=${a.ledger_drift} restored=${b.ledger_drift}`);
+          console.log(JSON.stringify({source:a,restored:b},null,2));
+          NODE
+          if [ "$RPO" -ge 900 ]; then echo "RPO drill window ${RPO}s is not < 900s" >&2; exit 1; fi
+          printf '{"rpoSeconds":%s,"targetSeconds":900}\n' "$RPO" > dr-rpo.json
+          cleanup
+          trap - EXIT
+      - name: Capture certified predecessor version
+        id: predecessor
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npx wrangler deployments status --name pawspace-staging --json > dr-before-status.json
+          VERSION="$(node --input-type=module -e "import fs from 'node:fs';const x=JSON.parse(fs.readFileSync('dr-before-status.json','utf8'));const v=(x.versions||[]).find(v=>Number(v.percentage)===100);if(!v?.version_id)process.exit(2);process.stdout.write(v.version_id)")"
+          npx wrangler versions view "$VERSION" --name pawspace-staging --json > dr-predecessor-version.json
+          MESSAGE="$(node --input-type=module -e "import fs from 'node:fs';const x=JSON.parse(fs.readFileSync('dr-predecessor-version.json','utf8'));process.stdout.write(String(x.annotations?.['workers/message']||''))")"
+          test "$MESSAGE" = "staging $CERTIFIED_MAIN_SHA" || { echo "active staging predecessor is not certified main: $MESSAGE" >&2; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Build and deploy staging-only DR candidate
+        env:
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          npm run build
+          node scripts/stage-config.mjs
+          npx wrangler deploy --message "dr-candidate ${{ github.event.pull_request.head.sha }}"
+      - name: Candidate smoke and rollback to certified predecessor
+        env:
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PREDECESSOR: ${{ steps.predecessor.outputs.version }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const base=process.env.STAGING_URL,code=process.env.PAWSPACE_UAT_ACCESS_CODE;
+          const login=await fetch(base+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'login',code,email:'founder@pawspace.in'})});
+          if(!login.ok) throw new Error(`candidate login ${login.status}`);
+          const cookie=(login.headers.get('set-cookie')||'').split(';')[0]; if(!cookie) throw new Error('candidate login issued no cookie');
+          const finance=await fetch(base+'/api/grooming-finance',{headers:{cookie}}); if(!finance.ok) throw new Error(`candidate finance ${finance.status}`);
+          NODE
+          ROLLBACK_START="$(date +%s)"
+          npx wrangler rollback "$PREDECESSOR" --name pawspace-staging --message "DR drill rollback to certified predecessor"
+          node --input-type=module <<'NODE'
+          const base=process.env.STAGING_URL,code=process.env.PAWSPACE_UAT_ACCESS_CODE;
+          let last='';
+          for(let i=0;i<30;i++){
+            try{
+              const login=await fetch(base+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'login',code,email:'founder@pawspace.in'})});
+              last=`login ${login.status}`;
+              if(login.ok){const cookie=(login.headers.get('set-cookie')||'').split(';')[0];const finance=await fetch(base+'/api/grooming-finance',{headers:{cookie}});last+=`, finance ${finance.status}`;if(finance.ok)process.exit(0);}
+            }catch(e){last=String(e)}
+            await new Promise(r=>setTimeout(r,2000));
+          }
+          throw new Error(`rollback smoke did not recover: ${last}`);
+          NODE
+          RTO="$(( $(date +%s)-ROLLBACK_START ))"
+          if [ "$RTO" -ge 1800 ]; then echo "RTO ${RTO}s is not < 1800s" >&2; exit 1; fi
+          printf '{"rtoSeconds":%s,"targetSeconds":1800}\n' "$RTO" > dr-rto.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backup-restore-rollback-evidence
+          path: |
+            dr-source-counts.json
+            dr-restored-counts.json
+            dr-rpo.json
+            dr-rto.json
+            dr-before-status.json
+            dr-predecessor-version.json
+          if-no-files-found: warn
+
+  automated-cross-device:
+    if: ${{ github.head_ref == 'ops/nontrack2-closure-20260901' }}
+    needs: backup-restore-rollback
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Role and responsive browser closure
+        env:
+          PREVIEW_URL: ${{ env.STAGING_URL }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: node scripts/release-ui-closure.mjs --base="$STAGING_URL" --json=release-ui-closure-report.json
+      - name: Signed-in customer acceptance
+        run: node scripts/customer-ui-acceptance-v2.mjs --base="$STAGING_URL" --json=customer-ui-acceptance-report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: automated-cross-device-evidence
+          path: |
+            release-ui-closure-report.json
+            customer-ui-acceptance-report.json
+          if-no-files-found: warn
