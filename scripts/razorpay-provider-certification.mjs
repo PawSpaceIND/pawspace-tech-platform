@@ -160,10 +160,9 @@ async function prepare() {
 
   await postAs("/api/subscription-billing-admin", { action: "save_plan", planCode, providerPlanId: providerPlan.id, serviceCode: "grooming", financeEntityId: entityId, chargeAmountPaise: amountPaise, invoiceTaxablePaise: taxablePaise, currency: "INR", totalCycles: 2, trialDays: 0, graceDays: 3, cityId: "blr", intervalPeriod: "monthly", intervalCount: 1 }, founder);
   await eventually("local approval of the provider-verified plan", async () => {
-    try { return await postAs("/api/subscription-billing-admin", { action: "approve_plan", planCode }, founder); }
-    catch { return null; }
+    return postAs("/api/subscription-billing-admin", { action: "approve_plan", planCode }, founder);
   }, 60_000).catch(async error => {
-    const local = await one("SELECT provider_plan_id,charge_amount_paise,currency,interval_period,interval_count,status FROM subscription_billing_plans WHERE plan_code=?", [planCode]);
+    const local = await one("SELECT provider_plan_id,charge_amount_paise,currency,interval_period,interval_count,status,provider_verified_at,CASE WHEN provider_plan_snapshot_json IS NULL THEN 0 ELSE 1 END provider_snapshot_present FROM subscription_billing_plans WHERE plan_code=?", [planCode]);
     const remote = await razor(`/v1/plans/${encodeURIComponent(providerPlan.id)}`);
     throw new Error(`${error.message}; sanitized local=${JSON.stringify(local)} remote=${JSON.stringify({ id: remote.id, amount: remote.item?.amount, currency: remote.item?.currency, period: remote.period, interval: remote.interval })}`);
   });
