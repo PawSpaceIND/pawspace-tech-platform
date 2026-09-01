@@ -1,0 +1,25 @@
+name: UAT Fixture Source Artifact
+
+on:
+  push:
+    branches:
+      - fix/uat-test-fixture-convergence-20260901
+
+permissions:
+  contents: read
+
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Upload PR source for focused test validation
+        uses: actions/upload-artifact@v4
+        with:
+          name: uat-fixture-source
+          path: |
+            .
+            !.git/**
+            !node_modules/**
+          include-hidden-files: true
+          retention-days: 1
