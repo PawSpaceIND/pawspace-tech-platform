@@ -1,4 +1,4 @@
-triggered_at=2026-09-01T17:39:30Z
+triggered_at=2026-09-01T17:44:30Z
 baseline=94cddc063297796f24ea1a2a0975b62a2fdbe1b2
 scope=track3-track5-track6-automated
-reason=read-only-staging-login-runtime-fix
+reason=deterministic-uat-role-and-identity-bootstrap
