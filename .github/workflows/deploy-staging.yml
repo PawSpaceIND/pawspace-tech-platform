@@ -96,9 +96,13 @@ jobs:
           fi
           npx wrangler --version >/dev/null
           TAIL_LOG="$RUNNER_TEMP/provider-certification-tail.log"
-          timeout 25s npx wrangler tail pawspace-staging --format pretty --status error >"$TAIL_LOG" 2>&1 &
+          timeout 35s npx wrangler tail pawspace-staging --format pretty --method POST --search "[api] unexpected error" >"$TAIL_LOG" 2>&1 &
           TAIL_PID=$!
-          sleep 4
+          for _ in $(seq 1 20); do
+            grep -q "Connected to pawspace-staging" "$TAIL_LOG" && break
+            sleep 1
+          done
+          grep -q "Connected to pawspace-staging" "$TAIL_LOG" || { cat "$TAIL_LOG"; exit 1; }
           set +e
           node scripts/razorpay-provider-certification.mjs
           STATUS=$?
