@@ -52,6 +52,9 @@ function makeD1(sqlite) {
 const DAY = 86_400_000;
 const NOW = Date.now();
 const iso = (offsetMs) => new Date(NOW + offsetMs).toISOString();
+// Mirrors istDate() in lib/boarding-stay-lifecycle.ts: #388 requires every boarding care milestone
+// to name the stay day it belongs to, and that day must fall inside the stay window.
+const istDay = (offsetMs) => new Date(NOW + offsetMs + 330 * 60_000).toISOString().slice(0, 10);
 
 async function stayStack() {
   const sqlite = new DatabaseSync(":memory:");
@@ -60,6 +63,9 @@ async function stayStack() {
   for (const source of [read("app/api/grooming-lifecycle/route.ts"), read("app/api/uat-scheduling/route.ts"), read("lib/provider-capacity-governance.ts")]) {
     for (const sql of statementsOf(source)) if (/^\s*CREATE (TABLE|INDEX|UNIQUE INDEX)/i.test(sql)) sqlite.exec(sql);
   }
+  // Sitting's real geofence reads this canonical doorstep surface. Keep it explicit in this isolated
+  // SQLite harness instead of depending on the unrelated service-location fixture tables.
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_service_addresses (booking_id TEXT PRIMARY KEY,address TEXT NOT NULL,latitude REAL,longitude REAL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
   const boardingProof = await import("../lib/boarding-proof-governance.ts");
   const sittingProof = await import("../lib/sitting-proof-governance.ts");
   await boardingProof.ensureBoardingProofTables(db);
@@ -67,14 +73,20 @@ async function stayStack() {
   const lifecycle = await import("../lib/boarding-stay-lifecycle.ts");
   const sitting = await import("../lib/sitting-lifecycle.ts");
   const payments = await import("../lib/stay-split-payments.ts");
+  const commercial = await import("../lib/provider-commercial-terms.ts");
   const finalizer = await import("../lib/sitting-recovery-finalizer.ts");
   await payments.ensureStayPaymentTables(db);
+  await commercial.ensureCommercialTermsTables(db);
 
   const seedHost = (providerId, { maxGuestPets = 2, oneFamilyOnly = 0 } = {}) => {
     sqlite.prepare("INSERT OR IGNORE INTO boarding_host_profiles (provider_id,city_id,zone_id,area,species_json,max_guest_pets,one_family_only,medication_support,resident_pets,home_verified,kyc_status,background_check_status,active,version,updated_by,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
       .run(providerId, "blr", "blr-east", "Indiranagar", '["dog","cat"]', maxGuestPets, oneFamilyOnly, 1, "none", 1, "verified", "verified", 1, 1, "test", NOW);
     sqlite.prepare("INSERT OR IGNORE INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
       .run(providerId, "blr", providerId, "commission", '["boarding","pet_sitting"]', '["blr-east"]', 1, 4.9, 95, 4, 30, 6, 3, "active", 1, "2026-01-01", null, "test", NOW);
+  };
+  const seedCommercialTerm = (serviceCode, providerId) => {
+    sqlite.prepare("INSERT OR REPLACE INTO provider_commercial_terms (id,service_code,provider_id,version,status,engagement_model,provider_share_pct,gst_mode,platform_gst_rate,cash_allowed,onboarding_fee,renewal_fee,renewal_months,effective_from,reason,created_by,approved_by,approval_reference,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(`PCT-${serviceCode}-${providerId}`, serviceCode, providerId, 1, "active", "commission_standard", 0.70, "provider_gst_on_behalf", 0.18, 0, 0, 0, 12, "2026-01-01", "Deterministic stay lifecycle test fixture", "fixture-maker", "fixture-checker", "TEST-APPROVED", NOW, NOW);
   };
   const seedBooking = ({ bookingId, customerId = "CUS-STAY-1", providerId, service = "boarding", groupId, start, end, status = "confirmed", amount = 4500 }) => {
     sqlite.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
@@ -88,7 +100,7 @@ async function stayStack() {
     sqlite.prepare("INSERT OR REPLACE INTO provider_assignment_offers (group_id,booking_id,provider_id,status,offered_at,expires_at,responded_at,response_reason,attempt_no,updated_at) VALUES (?,?,?,?,?,?,NULL,NULL,1,?)")
       .run(groupId, null, providerId, status, NOW, expiresAt, NOW);
   };
-  return { sqlite, db, lifecycle, sitting, payments, finalizer, boardingProof, sittingProof, seedHost, seedBooking, seedStay, seedOffer };
+  return { sqlite, db, lifecycle, sitting, payments, finalizer, boardingProof, sittingProof, seedHost, seedCommercialTerm, seedBooking, seedStay, seedOffer };
 }
 
 const rejects = async (promise, status, pattern) => {
@@ -109,6 +121,7 @@ test("real execution: awaiting_host_acceptance -> accept -> care plan -> check-i
   const stack = await stayStack();
   const { sqlite } = stack;
   stack.seedHost("host_maya");
+  stack.seedCommercialTerm("boarding", "host_maya");
   stack.seedBooking({ bookingId: "BK-S1", providerId: "host_maya", groupId: "GRP-S1", start: iso(2 * DAY), end: iso(5 * DAY) });
   stack.seedStay({ stayId: "STAY-1", bookingId: "BK-S1", providerId: "host_maya", start: iso(2 * DAY), end: iso(5 * DAY) });
   stack.seedOffer("GRP-S1", "host_maya");
@@ -132,8 +145,23 @@ test("real execution: awaiting_host_acceptance -> accept -> care plan -> check-i
   assert.equal(checkedIn.status, "in_progress");
   assert.equal(sqlite.prepare("SELECT status FROM canonical_bookings WHERE id='BK-S1'").get().status, "in_progress");
 
-  const care = await mutate(stack, "STAY-1", "care_event", { careEventType: "walk", detail: { minutes: 30 } });
+  const care = await mutate(stack, "STAY-1", "care_event", { careEventType: "walk", detail: { minutes: 30, stayDate: istDay(2 * DAY) } });
   assert.equal(care.status, "logged");
+
+  // Checkout requires meal + play + approved photo/video proof for every billed stay day. Those facts
+  // are already governed in their dedicated proof tests below; here we seed their persisted event shape
+  // so this state-machine test can reach and verify the terminal transition without weakening the gate.
+  for (const offset of [2, 3, 4]) {
+    const stayDate = istDay(offset * DAY);
+    for (const [eventType, detail] of [
+      ["care_meal", { stayDate, meal: "scheduled meal complete" }],
+      ["care_play", { stayDate, minutes: 30 }],
+      ["proof_daily_update", { stayDate, mimeType: "image/jpeg", mediaRef: `media://asset/day-${offset}` }],
+    ]) {
+      sqlite.prepare("INSERT INTO boarding_stay_events (id,stay_id,booking_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?)")
+        .run(crypto.randomUUID(), "STAY-1", "BK-S1", eventType, "fixture@test", JSON.stringify(detail), NOW + offset * DAY);
+    }
+  }
 
   // Extension: must extend beyond current checkout, never changes the stay window itself.
   await rejects(mutate(stack, "STAY-1", "request_extension", { requestedEnd: iso(4 * DAY) }), 400, /later than the current checkout/);
@@ -258,6 +286,8 @@ test("real execution: the same balance guard protects Sitting check-in", async (
   stack.seedBooking({ bookingId: "BK-SIT", providerId: "sitter_neha", service: "pet_sitting", groupId: "GRP-SIT", start: iso(3 * DAY), end: iso(5 * DAY), status: "assigned", amount: 2400 });
   sqlite.prepare("INSERT INTO provider_work_orders (id,booking_id,schedule_group_id,provider_id,provider_name,provider_model,service_code,scheduled_start,scheduled_end,occurrence_count,status,assignment_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
     .run("WO-SIT", "BK-SIT", "GRP-SIT", "sitter_neha", "Neha", "commission", "pet_sitting", iso(3 * DAY), iso(5 * DAY), 1, "assigned", "{}", NOW, NOW);
+  sqlite.prepare("INSERT OR REPLACE INTO booking_service_addresses (booking_id,address,latitude,longitude,created_at,updated_at) VALUES (?,?,?,?,?,?)")
+    .run("BK-SIT", "Indiranagar, Bengaluru", 12.9784, 77.6408, NOW, NOW);
   await stack.sitting.mutateSittingBooking(stack.db, { bookingId: "BK-SIT", action: "submit_care_plan", actorId: "customer@test", idempotencyKey: "sit-plan-1", carePlan: { emergencyContact: "9999900703", vet: "Dr Rao", homeAccess: "Lockbox 4321" } });
 
   const plan = stack.payments.splitPaymentPlan({ totalAmount: 2400, scheduledStart: iso(3 * DAY) });
@@ -265,8 +295,10 @@ test("real execution: the same balance guard protects Sitting check-in", async (
 
   await rejects(stack.sitting.mutateSittingBooking(stack.db, { bookingId: "BK-SIT", action: "check_in", actorId: "sitter@test", idempotencyKey: "sit-ci-1" }), 409, /balance must be paid before check-in/);
   await stack.payments.payStayBalance(stack.db, { bookingId: "BK-SIT", actorId: "customer@test", idempotencyKey: "sit-bal-1" });
-  const checkedIn = await stack.sitting.mutateSittingBooking(stack.db, { bookingId: "BK-SIT", action: "check_in", actorId: "sitter@test", idempotencyKey: "sit-ci-2" });
+  const checkedIn = await stack.sitting.mutateSittingBooking(stack.db, { bookingId: "BK-SIT", action: "check_in", actorId: "sitter@test", idempotencyKey: "sit-ci-2", latitude: 12.9784, longitude: 77.6408 });
   assert.equal(checkedIn.status, "in_progress");
+  assert.equal(checkedIn.geofence.simulated, false);
+  assert.equal(checkedIn.geofence.distanceMeters, 0);
 });
 
 test("split plan purity: within-24h stays cannot split; halves are exact", async () => {

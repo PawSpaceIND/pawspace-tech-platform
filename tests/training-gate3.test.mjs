@@ -63,9 +63,10 @@ test("Training Ops uses canonical programme session recovery and payment records
  assert.match(lifecycle,/training_session_recovery_cases/);
 });
 
-test("Training Finance blocks invented tax and trainer rates and keeps payout sandbox-only",async()=>{
+test("Training Finance uses governed tax, trainer rates and sandbox-only payout execution",async()=>{
  const[finance,api,providerApi,sessionGateway,trainerPage,financePage]=await Promise.all([read("lib/training-finance.ts"),read("app/api/training-finance/route.ts"),read("app/api/training-provider-earnings/route.ts"),read("lib/session-api-gateway.ts"),read("app/trainer/page.tsx"),read("app/team/finance/training/page.tsx")]);
- assert.match(finance,/configuration_required/);
+ assert.match(finance,/Published Training tax policy is required/);
+ assert.match(finance,/Canonical Bengaluru GST rate for deterministic UAT invoice calculation/);
  assert.match(finance,/pending_rate_configuration/);
  assert.match(finance,/held_payment/);
  assert.match(finance,/sandbox_not_connected/);
@@ -75,10 +76,10 @@ test("Training Finance blocks invented tax and trainer rates and keeps payout sa
  assert.match(finance,/issueTrainingInvoice/);
  assert.match(finance,/issued_uat/);
  assert.match(finance,/liveTaxFiling:false/);
- assert.match(finance,/captured_amount/);
  assert.match(finance,/requiredCoverage/);
- assert.match(finance,/captured\+0\.01>=requiredCoverage/);
+ assert.match(finance,/paid\+0\.01>=requiredCoverage/);
  assert.match(finance,/does not yet cover delivered Training value/);
+ assert.match(finance,/resolveServiceCompletionFinance/);
  assert.doesNotMatch(finance,/founder_seed/);
  assert.doesNotMatch(finance,/booking_status\)!==\"cancelled\"\?\"earned\"/);
  assert.match(api,/finance\.manage/);
@@ -125,7 +126,7 @@ test("Training cancellation refund and credit-note flow is policy governed and c
  assert.match(financePage,/Configure cancellation policy/);
  assert.match(financePage,/Training cancellation & refund cases/);
  assert.match(financePage,/Issue UAT credit note/);
- assert.match(finance,/captured\+0\.01>=requiredCoverage/);
+ assert.match(finance,/paid\+0\.01>=requiredCoverage/);
  assert.doesNotMatch(finance,/booking_status\)!==\"cancelled\"\?\"earned\"/);
 });
 
