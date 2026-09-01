@@ -9,13 +9,16 @@
  * pattern in one place so a new suite cannot pick only the half that works on a newer laptop.
  */
 import * as nodeModule from "node:module";
+import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+const require = createRequire(import.meta.url);
 
 // Loaded lazily and cached: only a suite that actually imports a .tsx pays for TypeScript's compiler.
 let cachedTs = null;
 function typescript() {
-  if (!cachedTs) cachedTs = nodeModule.createRequire(import.meta.url)("typescript");
+  if (!cachedTs) cachedTs = require("typescript");
   return cachedTs;
 }
 /*
@@ -24,7 +27,7 @@ function typescript() {
  * parentURL register() is given. Resolving the absolute path here and interpolating it is what makes
  * that branch work, and that branch is the one CI's Node 22.13 pin actually takes.
  */
-const typescriptUrl = pathToFileURL(nodeModule.createRequire(import.meta.url).resolve("typescript")).href;
+const typescriptUrl = pathToFileURL(require.resolve("typescript")).href;
 
 // envName defaults to `${globalName}_ENV`, which is what the suites written before it existed use. The
 // two call sites that pass a name of their own (__FANOUT_ENV__, __SEED_ENV__) were setting a global the
