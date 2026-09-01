@@ -34,7 +34,7 @@ jobs:
           if (b.id !== id) throw new Error('Subscription identity mismatch');
           console.log(JSON.stringify({ mode:'test', id:b.id, status:b.status, planId:b.plan_id, shortUrlPresent:Boolean(b.short_url) }));
           NODE
-      - name: Inspect hosted authorization controls
+      - name: Advance hosted authorization to payment options
         shell: bash
         run: |
           set -euo pipefail
@@ -50,29 +50,26 @@ jobs:
           const page = await browser.newPage({viewport:{width:1280,height:900}});
           page.on('console', m => console.log(`[browser-console:${m.type()}] ${m.text().slice(0,300)}`));
           await page.goto(process.env.AUTH_URL, {waitUntil:'domcontentloaded', timeout:60000});
-          await page.waitForTimeout(7000);
-          const controls = await page.locator('input,button,[role="button"],select,a').evaluateAll(els => els.slice(0,100).map((e,i) => ({
-            i,
-            tag:e.tagName,
-            type:e.getAttribute('type'),
-            name:e.getAttribute('name'),
-            placeholder:e.getAttribute('placeholder'),
-            aria:e.getAttribute('aria-label'),
-            text:(e.innerText||e.textContent||'').trim().replace(/\s+/g,' ').slice(0,180),
-            valuePresent:Boolean(e.value),
-            disabled:Boolean(e.disabled)
-          })));
-          console.log(JSON.stringify({url:page.url(),title:await page.title(),controls},null,2));
-          await page.screenshot({path:'mandate-inspect.png',fullPage:true});
+          await page.waitForTimeout(5000);
+          const start = page.getByRole('button',{name:'Start Subscription'});
+          if (await start.count() !== 1) throw new Error('Expected single Start Subscription button');
+          await start.click();
+          await page.waitForTimeout(8000);
+          const frames = page.frames().map(f => ({url:f.url(),name:f.name()}));
+          const collect = async (ctx,label) => ({label,url:ctx.url?.() || '',controls:await ctx.locator('input,button,[role="button"],select,a,[data-value]').evaluateAll(els => els.slice(0,120).map((e,i)=>({i,tag:e.tagName,type:e.getAttribute('type'),name:e.getAttribute('name'),placeholder:e.getAttribute('placeholder'),aria:e.getAttribute('aria-label'),text:(e.innerText||e.textContent||'').trim().replace(/\s+/g,' ').slice(0,180),disabled:Boolean(e.disabled)}))).catch(()=>[])});
+          const contexts=[await collect(page,'page')];
+          for (const [i,f] of page.frames().entries()) if (f!==page.mainFrame()) contexts.push(await collect(f,`frame-${i}`));
+          console.log(JSON.stringify({url:page.url(),title:await page.title(),frames,contexts},null,2));
+          await page.screenshot({path:'mandate-options.png',fullPage:true});
           await browser.close();
           NODE
-          node inspect.mjs | tee mandate-inspect.json.log
-          cp mandate-inspect.png "$GITHUB_WORKSPACE/mandate-inspect.png"
-          cp mandate-inspect.json.log "$GITHUB_WORKSPACE/mandate-inspect.json.log"
+          node inspect.mjs | tee mandate-options.json.log
+          cp mandate-options.png "$GITHUB_WORKSPACE/mandate-options.png"
+          cp mandate-options.json.log "$GITHUB_WORKSPACE/mandate-options.json.log"
       - name: Upload inspection evidence
         uses: actions/upload-artifact@v4
         with:
-          name: mandate-inspect-rzp382-20260901e
+          name: mandate-options-rzp382-20260901e
           path: |
-            mandate-inspect.png
-            mandate-inspect.json.log
+            mandate-options.png
+            mandate-options.json.log
