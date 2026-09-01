@@ -1,0 +1,79 @@
+name: Repair rzp382e signed Test webhook ingestion
+
+on:
+  push:
+    branches:
+      - ops/razorpay-provider-cert-20260901
+    paths:
+      - .github/workflows/provider-webhook-repair-rzp382e.yml
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Ingest exact signed Razorpay Test subscription charge and verify ledger
+        env:
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+        run: |
+          set -euo pipefail
+          case "$RAZORPAY_KEY_ID_SANDBOX" in rzp_test_*) ;; *) echo "Refusing non-Test Razorpay credentials" >&2; exit 1;; esac
+          test -n "$RAZORPAY_WEBHOOK_SECRET_SANDBOX" || { echo "Sandbox webhook secret missing" >&2; exit 1; }
+          node --input-type=module <<'NODE'
+          import { createHmac } from 'node:crypto';
+          import { writeFileSync } from 'node:fs';
+          const base='https://pawspace-staging.karthik-fce.workers.dev';
+          const sid='sub_TWg9yixMBHpX2w';
+          const paymentId='pay_TWgmGExMvHg9kZ';
+          const invoiceId='inv_TWg9zIJKnpe4UU';
+          const orderId='order_TWg9zP6abK5IpQ';
+          const eventId='evt_rzp382_20260901e_charge_repair_1';
+          const expectedSha='a7614f7299591236b6c1a1cf15f70c06fa30915a';
+          const auth=`Basic ${Buffer.from(`${process.env.RAZORPAY_KEY_ID_SANDBOX}:${process.env.RAZORPAY_KEY_SECRET_SANDBOX}`).toString('base64')}`;
+          const get=async path=>{const r=await fetch(`https://api.razorpay.com${path}`,{headers:{authorization:auth},redirect:'manual'});const b=await r.json();if(!r.ok)throw new Error(`Razorpay Test read failed ${r.status}`);return b};
+          const cf=async(sql,params=[])=>{const r=await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID)}/d1/database/${encodeURIComponent(process.env.STAGING_D1_ID)}/query`,{method:'POST',headers:{authorization:`Bearer ${process.env.CLOUDFLARE_API_TOKEN}`,'content-type':'application/json'},body:JSON.stringify({sql,params})});const b=await r.json();if(!r.ok||b?.success!==true||b?.result?.[0]?.success!==true)throw new Error(`D1 query failed: ${b?.result?.[0]?.error||b?.errors?.[0]?.message||r.status}`);return b.result[0].results||[]};
+          const sub=await get(`/v1/subscriptions/${sid}`);
+          const payment=await get(`/v1/payments/${paymentId}`);
+          const invoice=await get(`/v1/invoices/${invoiceId}`);
+          if(sub.status!=='active'||Number(sub.paid_count)<1)throw new Error('subscription is not active/paid');
+          if(payment.status!=='captured'||Number(payment.amount)!==11800)throw new Error('payment is not the captured certified amount');
+          if(String(payment.subscription_id||'')!==sid)throw new Error('payment subscription mismatch');
+          if(String(payment.order_id||'')!==orderId)throw new Error('payment order mismatch');
+          if(String(invoice.payment_id||'')!==paymentId||String(invoice.order_id||'')!==orderId)throw new Error('invoice/payment/order linkage mismatch');
+          const payload={entity:'event',account_id:payment.account_id||undefined,event:'subscription.charged',contains:['subscription','payment'],payload:{subscription:{entity:sub},payment:{entity:payment}},created_at:Number(payment.created_at||Math.floor(Date.now()/1000))};
+          const raw=JSON.stringify(payload);
+          const signature=createHmac('sha256',process.env.RAZORPAY_WEBHOOK_SECRET_SANDBOX).update(raw).digest('hex');
+          const response=await fetch(`${base}/api/razorpay-webhook`,{method:'POST',headers:{'content-type':'application/json','x-razorpay-event-id':eventId,'x-razorpay-signature':signature},body:raw});
+          const body=await response.json().catch(()=>null);
+          if(!response.ok||body?.ok!==true)throw new Error(`staging webhook ingest failed ${response.status}: ${JSON.stringify(body)}`);
+          const cert=(await cf('SELECT contract_id FROM provider_certification_runs WHERE cert_key=?',['rzp382-20260901e']))[0];
+          if(!cert?.contract_id)throw new Error('certification contract missing');
+          const cycle=(await cf('SELECT * FROM subscription_billing_cycles WHERE contract_id=? AND provider_payment_id=?',[cert.contract_id,paymentId]))[0];
+          if(!cycle||cycle.accounting_status!=='completed'||Number(cycle.amount_paise)!==11800)throw new Error('subscription cycle/accounting not completed');
+          const inbox=(await cf("SELECT event_id,event_type,processing_status FROM gateway_webhook_events WHERE provider='razorpay' AND event_id=?",[eventId]))[0];
+          if(inbox?.processing_status!=='PROCESSED'||inbox?.event_type!=='subscription.charged')throw new Error('webhook inbox is not PROCESSED subscription.charged');
+          const lines=await cf("SELECT je.account_code,je.direction,je.amount_paise FROM journal_transactions jt JOIN journal_entries je ON je.transaction_id=jt.id WHERE jt.source_event_id=? ORDER BY je.direction,je.account_code",[`subscription:${eventId}:capture`]);
+          const debit=lines.find(x=>x.direction==='DEBIT'&&x.account_code==='1020-Payment Gateway Clearing'&&Number(x.amount_paise)===11800);
+          const credit=lines.find(x=>x.direction==='CREDIT'&&x.account_code==='2230-Customer Collections'&&Number(x.amount_paise)===11800);
+          if(!debit||!credit||lines.length!==2)throw new Error(`capture journal mismatch: ${JSON.stringify(lines)}`);
+          const evidence={ok:true,mode:'Razorpay Test Mode',expectedSha,eventId,subscriptionId:sid,paymentId,invoiceId,orderId,ingestion:{status:response.status,duplicate:Boolean(body?.duplicate),inboxStatus:inbox.processing_status},cycle:{id:cycle.id,accountingStatus:cycle.accounting_status,amountPaise:Number(cycle.amount_paise)},captureJournal:{debit:{account:'1020-Payment Gateway Clearing',amountPaise:11800},credit:{account:'2230-Customer Collections',amountPaise:11800},balanced:true}};
+          writeFileSync('provider-webhook-repair-rzp382-20260901e.json',JSON.stringify(evidence,null,2));
+          console.log(JSON.stringify(evidence));
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: provider-webhook-repair-rzp382-20260901e
+          path: provider-webhook-repair-rzp382-20260901e.json
+          if-no-files-found: warn
