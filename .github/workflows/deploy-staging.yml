@@ -94,6 +94,7 @@ jobs:
             node scripts/razorpay-provider-certification.mjs
             exit
           fi
+          npx wrangler --version >/dev/null
           TAIL_LOG="$RUNNER_TEMP/provider-certification-tail.log"
           timeout 25s npx wrangler tail pawspace-staging --format pretty --status error >"$TAIL_LOG" 2>&1 &
           TAIL_PID=$!
