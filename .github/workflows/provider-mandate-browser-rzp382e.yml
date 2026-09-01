@@ -32,9 +32,10 @@ jobs:
           const b = await r.json();
           if (!r.ok) throw new Error(`Razorpay Test subscription lookup failed ${r.status}`);
           if (b.id !== id) throw new Error('Subscription identity mismatch');
+          if (b.status !== 'created') throw new Error(`Expected created subscription before mandate, got ${b.status}`);
           console.log(JSON.stringify({ mode:'test', id:b.id, status:b.status, planId:b.plan_id, shortUrlPresent:Boolean(b.short_url) }));
           NODE
-      - name: Advance hosted authorization to payment options
+      - name: Inspect Test card mandate form without submitting
         shell: bash
         run: |
           set -euo pipefail
@@ -48,28 +49,38 @@ jobs:
           import { chromium } from 'playwright';
           const browser = await chromium.launch({headless:true});
           const page = await browser.newPage({viewport:{width:1280,height:900}});
-          page.on('console', m => console.log(`[browser-console:${m.type()}] ${m.text().slice(0,300)}`));
+          page.on('console', m => { const t=m.text(); if (!/Mixed Content|preloaded|WebGL|unsafe header/.test(t)) console.log(`[browser-console:${m.type()}] ${t.slice(0,300)}`); });
           await page.goto(process.env.AUTH_URL, {waitUntil:'domcontentloaded', timeout:60000});
-          await page.waitForTimeout(5000);
+          await page.waitForTimeout(4000);
           const start = page.getByRole('button',{name:'Start Subscription'});
           if (await start.count() !== 1) throw new Error('Expected single Start Subscription button');
           await start.click();
-          await page.waitForTimeout(8000);
-          const frames = page.frames().map(f => ({url:f.url(),name:f.name()}));
-          const collect = async (ctx,label) => ({label,url:ctx.url?.() || '',controls:await ctx.locator('input,button,[role="button"],select,a,[data-value]').evaluateAll(els => els.slice(0,120).map((e,i)=>({i,tag:e.tagName,type:e.getAttribute('type'),name:e.getAttribute('name'),placeholder:e.getAttribute('placeholder'),aria:e.getAttribute('aria-label'),text:(e.innerText||e.textContent||'').trim().replace(/\s+/g,' ').slice(0,180),disabled:Boolean(e.disabled)}))).catch(()=>[])});
-          const contexts=[await collect(page,'page')];
-          for (const [i,f] of page.frames().entries()) if (f!==page.mainFrame()) contexts.push(await collect(f,`frame-${i}`));
-          console.log(JSON.stringify({url:page.url(),title:await page.title(),frames,contexts},null,2));
-          await page.screenshot({path:'mandate-options.png',fullPage:true});
+          await page.waitForTimeout(7000);
+          const checkout = page.frames().find(f => f.url().includes('/v1/checkout/public'));
+          if (!checkout) throw new Error('Razorpay checkout frame missing');
+          const contact = checkout.locator('input[name="contact"]');
+          const email = checkout.locator('input[name="email"]');
+          if (await contact.count()) await contact.fill('9999999999');
+          if (await email.count()) await email.fill('provider-cert-e@example.com');
+          const cardsText = checkout.getByText('Cards',{exact:true});
+          if (await cardsText.count() !== 1) throw new Error('Cards payment option not uniquely available');
+          await cardsText.click();
+          await page.waitForTimeout(5000);
+          const captchaVisible = page.frames().some(f => f.url().includes('hcaptcha.com') && !f.url().includes('checkbox-invisible'));
+          const controls = await checkout.locator('input,button,[role="button"],select,[data-value]').evaluateAll(els => els.slice(0,120).map((e,i)=>({
+            i,tag:e.tagName,type:e.getAttribute('type'),name:e.getAttribute('name'),placeholder:e.getAttribute('placeholder'),aria:e.getAttribute('aria-label'),autocomplete:e.getAttribute('autocomplete'),text:(e.innerText||e.textContent||'').trim().replace(/\s+/g,' ').slice(0,180),disabled:Boolean(e.disabled)
+          })));
+          console.log(JSON.stringify({mode:'test',subscriptionId:process.env.SUBSCRIPTION_ID,checkoutVisible:true,cardsSelected:true,captchaChallengePresent:captchaVisible,controls},null,2));
+          await page.screenshot({path:'mandate-card-form.png',fullPage:true});
           await browser.close();
           NODE
-          node inspect.mjs | tee mandate-options.json.log
-          cp mandate-options.png "$GITHUB_WORKSPACE/mandate-options.png"
-          cp mandate-options.json.log "$GITHUB_WORKSPACE/mandate-options.json.log"
+          node inspect.mjs | tee mandate-card-form.json.log
+          cp mandate-card-form.png "$GITHUB_WORKSPACE/mandate-card-form.png"
+          cp mandate-card-form.json.log "$GITHUB_WORKSPACE/mandate-card-form.json.log"
       - name: Upload inspection evidence
         uses: actions/upload-artifact@v4
         with:
-          name: mandate-options-rzp382-20260901e
+          name: mandate-card-form-rzp382-20260901e
           path: |
-            mandate-options.png
-            mandate-options.json.log
+            mandate-card-form.png
+            mandate-card-form.json.log
