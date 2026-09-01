@@ -20,7 +20,8 @@ test("credential discovery records presence only and never exposes secret values
  // have forced a duplicate copy back into the registry. What matters is unchanged: every detector name
  // is discoverable, and no VALUE is.
  const detectorSources=registry+read("lib/voice-call-gate.ts");
- for(const name of ["RAZORPAY_KEY_ID_SANDBOX","RAZORPAY_KEY_SECRET_SANDBOX","RAZORPAY_WEBHOOK_SECRET_SANDBOX","WATI_API_TOKEN","SMS_API_KEY","EXOTEL_API_TOKEN","GOOGLE_MAPS_SERVER_API_KEY_UAT","AUTOMATION_CRON_SECRET"])assert.match(detectorSources,new RegExp(name));
+ for(const name of ["RAZORPAY_KEY_ID_SANDBOX","RAZORPAY_KEY_SECRET_SANDBOX","RAZORPAY_WEBHOOK_SECRET_SANDBOX","META_WHATSAPP_UAT_ACCESS_TOKEN","META_WHATSAPP_PHONE_NUMBER_ID","META_WHATSAPP_WABA_ID","META_WHATSAPP_APP_SECRET","META_WHATSAPP_VERIFY_TOKEN","META_WHATSAPP_UAT_ALLOWLIST","META_WHATSAPP_TEMPLATE_ALLOWLIST","SMS_API_KEY","EXOTEL_API_TOKEN","GOOGLE_MAPS_SERVER_API_KEY_UAT","AUTOMATION_CRON_SECRET"])assert.match(detectorSources,new RegExp(name));
+ assert.match(registry,/credentialDetector:"meta_whatsapp_uat"/);assert.doesNotMatch(registry,/credentialDetector:"wati"|WATI_API_TOKEN|WATI_TENANT_URL/);
  assert.match(registry,/secret_reference/);assert.match(registry,/Secret reference must be a reference only/);assert.match(registry,/env\|vault\|secret-manager\|platform/);
 });
 
@@ -47,7 +48,7 @@ test("registry covers required launch dependency classes",()=>{
 });
 
 test("control integrations page uses the canonical register without exposing secrets",()=>{
- assert.match(page,/Integration Readiness Register/);assert.match(page,/\/api\/integration-readiness/);assert.match(page,/No secret values displayed/);assert.match(page,/Credential presence alone never satisfies this gate/);assert.doesNotMatch(page,/RAZORPAY_KEY_SECRET_SANDBOX|WATI_API_TOKEN|EXOTEL_API_TOKEN/);
+ assert.match(page,/Integration Readiness Register/);assert.match(page,/\/api\/integration-readiness/);assert.match(page,/No secret values displayed/);assert.match(page,/Credential presence alone never satisfies this gate/);assert.doesNotMatch(page,/RAZORPAY_KEY_SECRET_SANDBOX|META_WHATSAPP_UAT_ACCESS_TOKEN|EXOTEL_API_TOKEN/);
 });
 
 test("strict UAT sandbox readiness separates key presence from matched provider evidence",()=>{
