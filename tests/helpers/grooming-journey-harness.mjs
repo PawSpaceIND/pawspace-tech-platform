@@ -153,7 +153,7 @@ export async function runCompletedJourney(ctx, config) {
   const jobs = await routeCall("../../app/api/partner-grooming-jobs/route.ts", "GET", `/api/partner-grooming-jobs?providerId=${provider.id}`, null, providerCookie);
   const lifecycle = async (action, extra = {}) => routeCall("../../app/api/grooming-lifecycle/route.ts", "POST", "/api/grooming-lifecycle", { bookingId, action, ...extra }, providerCookie);
   const transitions = [];
-  for (const action of ["accept", "on_the_way", "arrived", "start_service"]) transitions.push(await lifecycle(action));
+  for (const action of ["accept", "on_the_way", "arrived", "start_service"]) transitions.push(await lifecycle(action, action === "arrived" ? { latitude: config.latitude, longitude: config.longitude } : {}));
   const invalidEarlyComplete = await lifecycle("complete");
 
   const media = [];
