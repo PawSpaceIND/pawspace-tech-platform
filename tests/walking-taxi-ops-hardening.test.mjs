@@ -166,6 +166,9 @@ async function opsStack() {
     return draft.id;
   }
 
+  await seedActiveCommercialTerm({ serviceCode: "pet_taxi", providerId: null });
+  await seedActiveCommercialTerm({ serviceCode: "dog_walking", providerId: null });
+
   // Creates a Dog Walking booking through the REAL customer path: server quote
   // (lib/walking-governance) + POST /api/walking-bookings route handler.
   async function createWalkingBooking({ tag, providerId, walkCount = 2, customerId = `CUS-${tag}` }) {
