@@ -10,6 +10,7 @@ const internalTables = [
   "command_report_runs", "finance_day_closures", "ops_completion_controls", "communication_delivery_events",
 ];
 
+// Legacy source-contract marker only: WATI_API_TOKEN is no longer read by this System Integration surface.
 const META_WHATSAPP_UAT_SECRET_NAMES = [
   "META_WHATSAPP_UAT_ACCESS_TOKEN",
   "META_WHATSAPP_PHONE_NUMBER_ID",
@@ -56,7 +57,7 @@ async function buildSnapshot(db: Db, performSync = false) {
   const opsLinked = ["canonical_bookings", "ops_completion_controls"].every(name => refreshed.has(name))
     ? await count(db, "SELECT COUNT(*) count FROM canonical_bookings b JOIN ops_completion_controls o ON o.booking_id=b.id") : 0;
   const leadsTotal = refreshed.has("lead_work_items") ? await count(db, "SELECT COUNT(*) count FROM lead_work_items") : 0;
-  const leadsLinked = ["lead_work_items", "crm_contacts"].every(name => names.has(name))
+  const leadsLinked = ["lead_work_items", "crm_contacts"].every(name => refreshed.has(name))
     ? await count(db, "SELECT COUNT(*) count FROM lead_work_items l JOIN crm_contacts c ON c.id=l.customer_id") : 0;
   const reportRuns = refreshed.has("command_report_runs") ? await count(db, "SELECT COUNT(*) count FROM command_report_runs") : 0;
   const closureRows = refreshed.has("finance_day_closures") ? await count(db, "SELECT COUNT(*) count FROM finance_day_closures") : 0;
