@@ -38,8 +38,6 @@ jobs:
           set -euo pipefail
           case "$RAZORPAY_KEY_ID_SANDBOX" in rzp_test_*) ;; *) echo "Refusing non-Test Razorpay credentials" >&2; exit 1;; esac
           test -n "$RAZORPAY_WEBHOOK_SECRET_SANDBOX" || { echo "Sandbox webhook secret missing" >&2; exit 1; }
-          # The historical ops harness pinned an older certified SHA. Patch only the checked-out ephemeral
-          # harness copy so its evidence is bound to the exact PR head deployed above; product code is untouched.
           sed -i "s/const expectedSha = \"[0-9a-f]\{40\}\";/const expectedSha = \"$EXPECTED_SHA\";/" scripts/razorpay-provider-certification.mjs
           grep -q "const expectedSha = \"$EXPECTED_SHA\";" scripts/razorpay-provider-certification.mjs
 
@@ -54,8 +52,8 @@ jobs:
           const signPost=async(eventId,payload)=>{const raw=JSON.stringify(payload),sig=createHmac('sha256',process.env.RAZORPAY_WEBHOOK_SECRET_SANDBOX).update(raw).digest('hex');const r=await fetch(`${base}/api/razorpay-webhook`,{method:'POST',headers:{'content-type':'application/json','x-razorpay-event-id':eventId,'x-razorpay-signature':sig},body:raw});const b=await r.json().catch(()=>null);if(!r.ok||b?.ok!==true)throw new Error(`signed webhook failed ${r.status}: ${JSON.stringify(b)}`);return b};
           const sub=await get(`/v1/subscriptions/${sid}`),payment=await get(`/v1/payments/${paymentId}`),invoice=await get(`/v1/invoices/${invoiceId}`);
           if(sub.status!=='active'||Number(sub.paid_count)<1)throw new Error('certified subscription is not active/paid');
-          if(payment.status!=='captured'||Number(payment.amount)!==11800||payment.subscription_id!==sid||payment.order_id!==orderId)throw new Error('certified payment binding/status mismatch');
-          if(invoice.payment_id!==paymentId||invoice.order_id!==orderId)throw new Error('certified invoice linkage mismatch');
+          if(payment.status!=='captured'||Number(payment.amount)!==11800||payment.order_id!==orderId)throw new Error('certified payment status/order mismatch');
+          if(invoice.subscription_id!==sid||invoice.payment_id!==paymentId||invoice.order_id!==orderId)throw new Error('certified subscription/invoice/payment/order linkage mismatch');
           const existing=(await cf("SELECT processing_status FROM gateway_webhook_events WHERE provider='razorpay' AND event_id=?",[chargeEventId]))[0];
           if(existing?.processing_status!=='PROCESSED')await signPost(chargeEventId,{entity:'event',event:'subscription.charged',contains:['subscription','payment'],payload:{subscription:{entity:sub},payment:{entity:payment}},created_at:Number(payment.created_at||Math.floor(Date.now()/1000))});
           const cert=(await cf('SELECT contract_id FROM provider_certification_runs WHERE cert_key=?',['rzp382-20260901e']))[0];
@@ -63,9 +61,6 @@ jobs:
           if(!cycle||cycle.accounting_status!=='completed'||Number(cycle.amount_paise)!==11800)throw new Error('charge cycle/accounting did not complete');
           const lines=await cf("SELECT je.account_code,je.direction,je.amount_paise FROM journal_transactions jt JOIN journal_entries je ON je.transaction_id=jt.id WHERE jt.source_event_id=?",[`subscription:${chargeEventId}:capture`]);
           if(!lines.some(x=>x.direction==='DEBIT'&&x.account_code==='1020-Payment Gateway Clearing'&&Number(x.amount_paise)===11800)||!lines.some(x=>x.direction==='CREDIT'&&x.account_code==='2230-Customer Collections'&&Number(x.amount_paise)===11800))throw new Error('required DR Gateway Clearing / CR Customer Collections capture journal missing');
-
-          // Explicit HTTP-level maker self-approval proof. A finance-capable maker is required here so
-          // the request reaches the segregation guard rather than being rejected earlier by RBAC.
           const login=async email=>{const r=await fetch(`${base}/api/staging-login`,{method:'POST',headers:{origin:base,'content-type':'application/json'},body:JSON.stringify({action:'login',code:process.env.PAWSPACE_UAT_ACCESS_CODE,email})});if(!r.ok)throw new Error(`staff login failed ${r.status}`);return String(r.headers.get('set-cookie')||'').split(';')[0]};
           const makerEmail='founder@pawspace.in', makerCookie=await login(makerEmail), selfCase='SRC-SELFAPPROVAL-RZP382E';
           await cf('DELETE FROM subscription_refund_cases WHERE id=?',[selfCase]);
