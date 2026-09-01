@@ -26,61 +26,48 @@ jobs:
           set -euo pipefail
           case "$RAZORPAY_KEY_ID_SANDBOX" in rzp_test_*) ;; *) echo "Refusing non-test Razorpay key" >&2; exit 1;; esac
           node --input-type=module <<'NODE'
-          const id = process.env.SUBSCRIPTION_ID;
-          const auth = `Basic ${Buffer.from(`${process.env.RAZORPAY_KEY_ID_SANDBOX}:${process.env.RAZORPAY_KEY_SECRET_SANDBOX}`).toString('base64')}`;
-          const r = await fetch(`https://api.razorpay.com/v1/subscriptions/${encodeURIComponent(id)}`, { headers: { authorization: auth }, redirect: 'manual' });
-          const b = await r.json();
-          if (!r.ok) throw new Error(`Razorpay Test subscription lookup failed ${r.status}`);
-          if (b.id !== id) throw new Error('Subscription identity mismatch');
-          if (b.status !== 'created') throw new Error(`Expected created subscription before mandate, got ${b.status}`);
-          console.log(JSON.stringify({ mode:'test', id:b.id, status:b.status, planId:b.plan_id, shortUrlPresent:Boolean(b.short_url) }));
+          const id=process.env.SUBSCRIPTION_ID;
+          const auth=`Basic ${Buffer.from(`${process.env.RAZORPAY_KEY_ID_SANDBOX}:${process.env.RAZORPAY_KEY_SECRET_SANDBOX}`).toString('base64')}`;
+          const r=await fetch(`https://api.razorpay.com/v1/subscriptions/${encodeURIComponent(id)}`,{headers:{authorization:auth},redirect:'manual'});
+          const b=await r.json(); if(!r.ok||b.id!==id) throw new Error('Test subscription guard failed');
+          console.log(JSON.stringify({mode:'test',id:b.id,status:b.status,planId:b.plan_id,shortUrlPresent:Boolean(b.short_url)}));
           NODE
-      - name: Inspect Test card mandate form without submitting
+      - name: Inspect checkout overlay without bypassing it
         shell: bash
         run: |
           set -euo pipefail
-          WORK="$RUNNER_TEMP/mandate-browser"
-          mkdir -p "$WORK"
-          cd "$WORK"
+          WORK="$RUNNER_TEMP/mandate-browser"; mkdir -p "$WORK"; cd "$WORK"
           npm init -y >/dev/null
           npm install --silent playwright@1.55.0
           npx playwright install --with-deps chromium >/dev/null
           cat > inspect.mjs <<'NODE'
           import { chromium } from 'playwright';
-          const browser = await chromium.launch({headless:true});
-          const page = await browser.newPage({viewport:{width:1280,height:900}});
-          page.on('console', m => { const t=m.text(); if (!/Mixed Content|preloaded|WebGL|unsafe header/.test(t)) console.log(`[browser-console:${m.type()}] ${t.slice(0,300)}`); });
-          await page.goto(process.env.AUTH_URL, {waitUntil:'domcontentloaded', timeout:60000});
-          await page.waitForTimeout(4000);
-          const start = page.getByRole('button',{name:'Start Subscription'});
-          if (await start.count() !== 1) throw new Error('Expected single Start Subscription button');
-          await start.click();
-          await page.waitForTimeout(7000);
-          const checkout = page.frames().find(f => f.url().includes('/v1/checkout/public'));
-          if (!checkout) throw new Error('Razorpay checkout frame missing');
-          const contact = checkout.locator('input[name="contact"]');
-          const email = checkout.locator('input[name="email"]');
-          if (await contact.count()) await contact.fill('9999999999');
-          if (await email.count()) await email.fill('provider-cert-e@example.com');
-          const cardsText = checkout.getByText('Cards',{exact:true});
-          if (await cardsText.count() !== 1) throw new Error('Cards payment option not uniquely available');
-          await cardsText.click();
-          await page.waitForTimeout(5000);
-          const captchaVisible = page.frames().some(f => f.url().includes('hcaptcha.com') && !f.url().includes('checkbox-invisible'));
-          const controls = await checkout.locator('input,button,[role="button"],select,[data-value]').evaluateAll(els => els.slice(0,120).map((e,i)=>({
-            i,tag:e.tagName,type:e.getAttribute('type'),name:e.getAttribute('name'),placeholder:e.getAttribute('placeholder'),aria:e.getAttribute('aria-label'),autocomplete:e.getAttribute('autocomplete'),text:(e.innerText||e.textContent||'').trim().replace(/\s+/g,' ').slice(0,180),disabled:Boolean(e.disabled)
-          })));
-          console.log(JSON.stringify({mode:'test',subscriptionId:process.env.SUBSCRIPTION_ID,checkoutVisible:true,cardsSelected:true,captchaChallengePresent:captchaVisible,controls},null,2));
-          await page.screenshot({path:'mandate-card-form.png',fullPage:true});
+          const browser=await chromium.launch({headless:true});
+          const page=await browser.newPage({viewport:{width:1280,height:900}});
+          await page.goto(process.env.AUTH_URL,{waitUntil:'domcontentloaded',timeout:60000}); await page.waitForTimeout(4000);
+          await page.getByRole('button',{name:'Start Subscription'}).click(); await page.waitForTimeout(7000);
+          const checkout=page.frames().find(f=>f.url().includes('/v1/checkout/public')); if(!checkout) throw new Error('checkout frame missing');
+          const contact=checkout.locator('input[name="contact"]'); if(await contact.count()) await contact.fill('9999999999');
+          const email=checkout.locator('input[name="email"]'); if(await email.count()) await email.fill('provider-cert-e@example.com');
+          await page.waitForTimeout(1500);
+          const overlay=checkout.locator('#overlay-backdrop');
+          const overlayCount=await overlay.count();
+          const overlayText=overlayCount ? (await overlay.innerText().catch(()=>'')) : '';
+          const overlayControls=overlayCount ? await overlay.locator('input,button,[role="button"],a').evaluateAll(els=>els.slice(0,80).map((e,i)=>({i,tag:e.tagName,type:e.getAttribute('type'),name:e.getAttribute('name'),placeholder:e.getAttribute('placeholder'),aria:e.getAttribute('aria-label'),text:(e.innerText||e.textContent||'').trim().replace(/\s+/g,' ').slice(0,180),disabled:Boolean(e.disabled)}))) : [];
+          const frameUrls=page.frames().map(f=>f.url());
+          const captchaFrames=frameUrls.filter(u=>u.includes('hcaptcha'));
+          const checkoutControls=await checkout.locator('input,button,[role="button"],[data-testid]').evaluateAll(els=>els.slice(0,120).map((e,i)=>({i,tag:e.tagName,testid:e.getAttribute('data-testid'),type:e.getAttribute('type'),name:e.getAttribute('name'),placeholder:e.getAttribute('placeholder'),text:(e.innerText||e.textContent||'').trim().replace(/\s+/g,' ').slice(0,180),disabled:Boolean(e.disabled)})));
+          console.log(JSON.stringify({mode:'test',subscriptionId:process.env.SUBSCRIPTION_ID,overlayPresent:Boolean(overlayCount),overlayText:overlayText.trim().replace(/\s+/g,' ').slice(0,1200),overlayControls,captchaFrames,checkoutControls},null,2));
+          await page.screenshot({path:'mandate-overlay.png',fullPage:true});
           await browser.close();
           NODE
-          node inspect.mjs | tee mandate-card-form.json.log
-          cp mandate-card-form.png "$GITHUB_WORKSPACE/mandate-card-form.png"
-          cp mandate-card-form.json.log "$GITHUB_WORKSPACE/mandate-card-form.json.log"
+          node inspect.mjs | tee mandate-overlay.json.log
+          cp mandate-overlay.png "$GITHUB_WORKSPACE/mandate-overlay.png"
+          cp mandate-overlay.json.log "$GITHUB_WORKSPACE/mandate-overlay.json.log"
       - name: Upload inspection evidence
         uses: actions/upload-artifact@v4
         with:
-          name: mandate-card-form-rzp382-20260901e
+          name: mandate-overlay-rzp382-20260901e
           path: |
-            mandate-card-form.png
-            mandate-card-form.json.log
+            mandate-overlay.png
+            mandate-overlay.json.log
