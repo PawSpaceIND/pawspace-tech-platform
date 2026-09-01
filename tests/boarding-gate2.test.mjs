@@ -46,13 +46,16 @@ test("Boarding Gate 2 escalates decline unavailable and no show without losing t
   assert.match(source,/booking_customer_notifications/);
 });
 
-test("Boarding Gate 2 checkout closes capacity but leaves tax and payout policy un-invented",()=>{
+test("Boarding Gate 2 checkout closes capacity and resolves governed completion finance",()=>{
   const source=read("lib/boarding-stay-lifecycle.ts");
   assert.match(source,/check_out/);
   assert.match(source,/status='completed'/);
   assert.match(source,/UPDATE scheduling_reservations SET status='completed'/);
-  assert.match(source,/payout:\"rule_pending\"/);
-  assert.match(source,/tax:\"configuration_required\"/);
+  assert.match(source,/resolveServiceCompletionFinance/);
+  assert.match(source,/payout:finance\?\.payoutStatus\?\?null/);
+  assert.match(source,/tax:finance\?\.taxStatus\?\?null/);
+  assert.doesNotMatch(source,/payout:\"rule_pending\"/);
+  assert.doesNotMatch(source,/tax:\"configuration_required\"/);
 });
 
 test("Boarding stay API enforces provider customer and staff ownership boundaries",()=>{
