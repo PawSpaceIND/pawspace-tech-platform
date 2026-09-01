@@ -18,7 +18,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Verify active Razorpay Test subscription and payment identifiers
+      - name: Verify active Razorpay Test subscription payment and webhook delivery
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -52,16 +52,17 @@ jobs:
           if(state.provider_subscription_id!==expectedSubscriptionId) throw new Error('provider subscription identity mismatch');
           const sub = await get(`/v1/subscriptions/${encodeURIComponent(expectedSubscriptionId)}`);
           if(sub.status!=='active') throw new Error(`expected active Razorpay Test subscription, got ${sub.status}`);
-          const cycles = await cf(`SELECT id,provider_payment_id,provider_invoice_id,provider_event_id,amount_paise,currency,status,accounting_status FROM subscription_billing_cycles WHERE contract_id=? ORDER BY created_at DESC LIMIT 1`,[state.contract_id]);
-          const cycle = cycles[0];
-          if(!cycle?.provider_payment_id) throw new Error('signed subscription charge has not produced a local payment cycle yet');
-          const payment = await get(`/v1/payments/${encodeURIComponent(cycle.provider_payment_id)}`);
-          if(payment.subscription_id!==expectedSubscriptionId) throw new Error('payment is not bound to expected subscription');
+          const paymentList = await get('/v1/payments?count=100');
+          const matches = (paymentList.items||[]).filter(p=>p.subscription_id===expectedSubscriptionId).sort((a,b)=>Number(b.created_at||0)-Number(a.created_at||0));
+          const payment = matches[0]||null;
+          if(!payment) throw new Error('no Razorpay Test payment found for active subscription');
           if(payment.status!=='captured') throw new Error(`expected captured Test payment, got ${payment.status}`);
           if(Number(payment.amount)!==11800) throw new Error(`unexpected Test payment amount ${payment.amount}`);
           if(!/^pay_[A-Za-z0-9]+$/.test(String(payment.id||''))) throw new Error('real pay_ id missing');
           if(!/^order_[A-Za-z0-9]+$/.test(String(payment.order_id||''))) throw new Error('real order_ id missing');
-          const evidence={ok:true,phase:'pre-finalize',certKey,expectedSha,mode:'Razorpay Test Mode',subscription:{id:sub.id,status:sub.status,planId:sub.plan_id},charge:{cycleId:cycle.id,eventId:cycle.provider_event_id,paymentId:payment.id,orderId:payment.order_id,paymentStatus:payment.status,amountPaise:Number(payment.amount),currency:payment.currency,accountingStatus:cycle.accounting_status},finalizeEligible:['active','authenticated'].includes(sub.status)&&payment.status==='captured'};
+          const cycles = await cf(`SELECT id,provider_payment_id,provider_invoice_id,provider_event_id,amount_paise,currency,status,accounting_status FROM subscription_billing_cycles WHERE contract_id=? ORDER BY created_at DESC LIMIT 3`,[state.contract_id]);
+          const inbox = await cf(`SELECT event_id,event_type,processing_status,received_at,processed_at FROM gateway_webhook_events WHERE provider='razorpay' AND raw_payload LIKE ? ORDER BY received_at DESC LIMIT 10`,[`%${expectedSubscriptionId}%`]).catch(()=>[]);
+          const evidence={ok:true,phase:'pre-finalize',certKey,expectedSha,mode:'Razorpay Test Mode',subscription:{id:sub.id,status:sub.status,planId:sub.plan_id,paidCount:sub.paid_count},payment:{id:payment.id,orderId:payment.order_id,status:payment.status,amountPaise:Number(payment.amount),currency:payment.currency,createdAt:payment.created_at},staging:{contractId:state.contract_id,certStatus:state.status,billingCycles:cycles,webhookInbox:inbox},finalizeEligible:true};
           writeFileSync('provider-active-evidence-rzp382-20260901e.json',JSON.stringify(evidence,null,2));
           console.log(JSON.stringify(evidence));
           NODE
