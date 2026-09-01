@@ -68,8 +68,10 @@ function world(env = {}) {
 // counter.
 // =====================================================================================================
 
-async function groomingCompletionWorld() {
-  const { sqlite, db } = world({ PAWSPACE_MEDIA_ENV: "uat", PAWSPACE_SCHEDULING_ENV: "uat" });
+async function groomingCompletionWorld({ uatScheduling = true } = {}) {
+  // PAWSPACE_SCHEDULING_ENV="uat" is what lets ensureExplicitUatCommercialTerm seed a term. Omitting
+  // it models a deployment that has NOT been configured, which is the case the 409 exists for.
+  const { sqlite, db } = world(uatScheduling ? { PAWSPACE_MEDIA_ENV: "uat", PAWSPACE_SCHEDULING_ENV: "uat" } : { PAWSPACE_MEDIA_ENV: "uat" });
   const now = Date.now();
   sqlite.exec(`
 CREATE TABLE canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
@@ -108,6 +110,19 @@ const STAFF = {
   "oai-authenticated-user-full-name": "Ops%20admin",
   "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8",
 };
+
+test("W2-MKT-02c: a missing commercial term is a legible 409, not an opaque 500", async () => {
+  // The grooming completion path resolves governed payout before it consumes the subscription
+  // session. When no commercial term is configured, computeOrderPayout refuses - correctly, it must
+  // not invent a payout. What was wrong is HOW it refused: a bare Error that authError could not
+  // classify, so operations saw a 500 with no indication of which key was unset.
+  const { complete } = await groomingCompletionWorld({ uatScheduling: false });
+  const result = await complete();
+  assert.equal(result.status, 409, `a configuration gap is reported, not crashed: ${JSON.stringify(result.body)}`);
+  assert.equal(result.body?.error, "configuration_required");
+  assert.match(String(result.body?.configurationKey), /^commercial_term:/, "and names the key that is unset");
+  assert.equal(result.body?.productionReady, false);
+});
 
 test("W2-MKT-02: two concurrent completions consume exactly one subscription session", async () => {
   const { complete, subscription } = await groomingCompletionWorld();
