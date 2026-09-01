@@ -15,9 +15,9 @@ async function canonicalOtpCustomerId(phone:string){
  return `CUS-OTP-${suffix}`;
 }
 
-/** The OTP identity adapter is sandbox-first in local development. The generated code is returned to
- * the caller only through a route that has already established explicit UAT or local-development
- * sandbox authority. No live SMS delivery is claimed here. */
+/** The OTP identity adapter is sandbox-first in local development. Delivery policy belongs to the
+ * route: sandbox authority may receive sandboxCode, while isolated staging live mode must send the
+ * code out-of-band and strip it from the HTTP response. */
 export async function ensureCustomerOtpTables(db:Db){await db.batch([
  db.prepare("CREATE TABLE IF NOT EXISTS customer_otp_challenges (id TEXT PRIMARY KEY,phone TEXT NOT NULL,code TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,consumed INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL)"),
  db.prepare("CREATE INDEX IF NOT EXISTS idx_customer_otp_phone ON customer_otp_challenges(phone,created_at)"),
@@ -32,12 +32,14 @@ export async function requestCustomerOtp(db:Db,input:{phone:string}){
  return{challengeId:id,phone,expiresInSeconds:300,sandboxDelivery:true,sandboxCode:code,liveSmsDelivered:false};
 }
 
+export async function discardCustomerOtpChallenge(db:Db,challengeId:string){
+ await db.prepare("DELETE FROM customer_otp_challenges WHERE id=?").bind(challengeId).run();
+}
+
 export async function resolveOtpCustomer(db:D1Database,phone:string){return db.prepare("SELECT id,name,primary_phone,city_id FROM canonical_customers WHERE primary_phone=? ORDER BY created_at ASC LIMIT 1").bind(phone).first<Row>();}
 
 export async function verifyCustomerOtp(db:Db,input:{challengeId:string;code:string;name?:string;cityId?:string;installId?:string}){
  await ensureCustomerOtpTables(db);
- // OTP verification can be the first customer-account write on a fresh local/UAT database.
- // Reuse the canonical account owner's initializer instead of assuming another route seeded it first.
  await ensureCustomerAccountTables(db);
  const row=await db.prepare("SELECT * FROM customer_otp_challenges WHERE id=?").bind(input.challengeId).first<Row>();
  if(!row)throw new Error("OTP challenge not found");
