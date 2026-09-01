@@ -239,14 +239,22 @@ export async function POST(request: Request) {
     if (input.action === "refund_status") {
       const refund = await db.prepare("SELECT * FROM booking_refund_cases WHERE id=? AND booking_id=?").bind(input.refundCaseId,input.bookingId).first<Record<string,unknown>>();
       if (!refund) return json({ error: "Refund case not found" }, 404);
-      const transitions:Record<string,string[]>={requested:["approved","rejected"],approved:["processing"],processing:["completed"]};
+      const transitions:Record<string,string[]>={requested:["approved","rejected"],approved:["processing"],processing:["completed"],processed:["completed"]};
       if (!(transitions[String(refund.status)]??[]).includes(String(input.refundStatus))) return json({ error: `Refund cannot move from ${String(refund.status)} to ${String(input.refundStatus)}` },409);
+      if (input.refundStatus === "approved" && String(refund.requested_by) === actor.email) return json({ error: "Segregation of duties: the refund requester cannot approve their own refund" }, 409);
+      const gatewayReference=String(refund.gateway_reference||"").trim();
+      if (input.refundStatus === "completed") {
+        if (!gatewayReference) return json({ error: "Refund completion requires an authoritative gateway reference" }, 409);
+        if (input.gatewayReference && input.gatewayReference !== gatewayReference) return json({ error: "Refund gateway reference is immutable after reconciliation" }, 409);
+        const gatewayProof=await db.prepare("SELECT id FROM payment_gateway_events WHERE booking_id=? AND payment_id=? AND gateway_refund_id=? AND event_type='refund.processed' AND signature_verified=1 AND processing_status='processed' LIMIT 1").bind(input.bookingId,refund.payment_id??null,gatewayReference).first<Record<string,unknown>>().catch(()=>null);
+        if (!gatewayProof) return json({ error: "Refund completion requires signature-verified gateway reconciliation evidence" }, 409);
+      }
       const eventId=crypto.randomUUID();
       const message=input.refundStatus==="approved"?"Your refund is approved and will now be sent to the original payment method.":input.refundStatus==="processing"?"Your refund has been sent to the payment gateway for processing.":input.refundStatus==="completed"?"Your refund is complete. The gateway reference is available in this order.":"Your refund request was not approved. Open the order to see the reason or contact support.";
       await db.batch([
-        db.prepare("UPDATE booking_refund_cases SET status=?,approved_by=CASE WHEN ?='approved' THEN ? ELSE approved_by END,gateway_reference=COALESCE(?,gateway_reference),updated_at=? WHERE id=?").bind(input.refundStatus,input.refundStatus,input.providerId,input.gatewayReference??null,now,input.refundCaseId),
-        db.prepare("INSERT INTO booking_operational_events (id,booking_id,provider_id,event_type,reason,impact_minutes,detail_json,actor_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(eventId,input.bookingId,input.providerId,`refund.${input.refundStatus}`,input.reason,0,JSON.stringify({refundCaseId:input.refundCaseId,gatewayReference:input.gatewayReference}),input.providerId,now),
-        db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.bookingId,`refund.${input.refundStatus}`,"refund",input.refundCaseId,input.providerId,JSON.stringify({gatewayReference:input.gatewayReference}),now),
+        db.prepare("UPDATE booking_refund_cases SET status=?,approved_by=CASE WHEN ?='approved' THEN ? ELSE approved_by END,updated_at=? WHERE id=?").bind(input.refundStatus,input.refundStatus,actor.email,now,input.refundCaseId),
+        db.prepare("INSERT INTO booking_operational_events (id,booking_id,provider_id,event_type,reason,impact_minutes,detail_json,actor_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(eventId,input.bookingId,input.providerId,`refund.${input.refundStatus}`,input.reason,0,JSON.stringify({refundCaseId:input.refundCaseId,gatewayReference:gatewayReference||null}),actor.email,now),
+        db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.bookingId,`refund.${input.refundStatus}`,"refund",input.refundCaseId,actor.email,JSON.stringify({gatewayReference:gatewayReference||null}),now),
         db.prepare("INSERT INTO booking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) SELECT ?,b.id,b.customer_id,'whatsapp',?,?, 'queued',?,? FROM canonical_bookings b WHERE b.id=?").bind(crypto.randomUUID(),`refund_${input.refundStatus}`,message,eventId,now,input.bookingId),
       ]);
       return json({data:{eventId,bookingId:input.bookingId,action:input.action,impactMinutes:0,impactedBookings:[],notificationsQueued:1,rebookingAvailable:false,refundCaseId:input.refundCaseId}},200);
@@ -260,9 +268,10 @@ export async function POST(request: Request) {
       : { results: [] as Record<string, unknown>[] };
     const impactedBookings = impacted.results.map((row) => ({ bookingId: String(row.id), customerId: String(row.customer_id), scheduledStart: String(row.scheduled_start) }));
     const detail = { impactMinutes, upgradedPackageName: input.upgradedPackageName, upgradedAmount: input.upgradedAmount, impactedBookingIds: impactedBookings.map((item) => item.bookingId), rebookingAvailable };
+    const eventActorId = input.action === "refund_requested" ? actor.email : input.providerId;
     const statements = [
-      db.prepare("INSERT INTO booking_operational_events (id,booking_id,provider_id,event_type,reason,impact_minutes,detail_json,actor_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(eventId,input.bookingId,input.providerId,input.action,input.reason.trim(),impactMinutes,JSON.stringify(detail),input.providerId,now),
-      db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.bookingId,`operation.${input.action}`,"booking",input.bookingId,input.providerId,JSON.stringify(detail),now),
+      db.prepare("INSERT INTO booking_operational_events (id,booking_id,provider_id,event_type,reason,impact_minutes,detail_json,actor_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(eventId,input.bookingId,input.providerId,input.action,input.reason.trim(),impactMinutes,JSON.stringify(detail),eventActorId,now),
+      db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),input.bookingId,`operation.${input.action}`,"booking",input.bookingId,eventActorId,JSON.stringify(detail),now),
     ];
     // A provider reporting an agreed upgrade records a REQUEST. It used to write the new price
     // straight into canonical_bookings.total_amount and booking_payments.amount from the request
@@ -291,7 +300,7 @@ export async function POST(request: Request) {
     if (input.action === "refund_requested") {
       refundCaseId = crypto.randomUUID();
       const payment = await db.prepare("SELECT id,amount FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Record<string, unknown>>();
-      statements.push(db.prepare("INSERT INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(refundCaseId,input.bookingId,payment?.id ?? null,Number(payment?.amount ?? 0),input.reason,"requested",input.providerId,now,now));
+      statements.push(db.prepare("INSERT INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(refundCaseId,input.bookingId,payment?.id ?? null,Number(payment?.amount ?? 0),input.reason,"requested",actor.email,now,now));
     }
     await db.batch(statements);
     return json({ data: { eventId, bookingId: input.bookingId, action: input.action, impactMinutes, impactedBookings, notificationsQueued: allRecipients.length * 2, rebookingAvailable, rebookingCaseId, refundCaseId, upgradeRequestId } }, 201);
