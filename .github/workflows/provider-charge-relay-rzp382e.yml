@@ -1,0 +1,76 @@
+name: Provider charge relay rzp382e
+
+on:
+  push:
+    branches:
+      - ops/razorpay-provider-cert-20260901
+    paths:
+      - .github/workflows/provider-charge-relay-rzp382e.yml
+
+permissions:
+  contents: read
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Relay signed Test subscription charge into isolated staging
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+        run: |
+          set -euo pipefail
+          case "$RAZORPAY_KEY_ID_SANDBOX" in rzp_test_*) ;; *) echo "Refusing non-test Razorpay key" >&2; exit 1;; esac
+          test -n "$RAZORPAY_WEBHOOK_SECRET_SANDBOX"
+          node --input-type=module <<'NODE'
+          import { createHmac } from 'node:crypto';
+          import { writeFileSync } from 'node:fs';
+          const certKey='rzp382-20260901e';
+          const expectedSha='a7614f7299591236b6c1a1cf15f70c06fa30915a';
+          const sid='sub_TWg9yixMBHpX2w';
+          const base='https://pawspace-staging.karthik-fce.workers.dev';
+          const cf=async(sql,params=[])=>{const r=await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID)}/d1/database/${encodeURIComponent(process.env.STAGING_D1_ID)}/query`,{method:'POST',headers:{authorization:`Bearer ${process.env.CLOUDFLARE_API_TOKEN}`,'content-type':'application/json'},body:JSON.stringify({sql,params})});const b=await r.json();if(!r.ok||b?.success!==true||b?.result?.[0]?.success!==true)throw new Error('D1 query failed');return b.result[0].results||[]};
+          const auth=`Basic ${Buffer.from(`${process.env.RAZORPAY_KEY_ID_SANDBOX}:${process.env.RAZORPAY_KEY_SECRET_SANDBOX}`).toString('base64')}`;
+          const get=async path=>{const r=await fetch(`https://api.razorpay.com${path}`,{headers:{authorization:auth},redirect:'manual'});const b=await r.json();if(!r.ok)throw new Error(`Razorpay Test API ${r.status}`);return b};
+          const state=(await cf('SELECT * FROM provider_certification_runs WHERE cert_key=?',[certKey]))[0];
+          if(!state||state.provider_subscription_id!==sid)throw new Error('certification identity mismatch');
+          const sub=await get(`/v1/subscriptions/${encodeURIComponent(sid)}`);
+          if(sub.status!=='active')throw new Error(`subscription is ${sub.status}`);
+          const invoices=await get(`/v1/invoices?subscription_id=${encodeURIComponent(sid)}`);
+          const invoice=(invoices.items||[]).find(i=>i.id==='inv_TWg9zIJKnpe4UU')||(invoices.items||[])[0];
+          if(!invoice)throw new Error('provider invoice missing');
+          const payment=await get('/v1/payments/pay_TWgmGExMvHg9kZ');
+          if(payment.status!=='captured'||payment.order_id!=='order_TWg9zP6abK5IpQ'||Number(payment.amount)!==11800)throw new Error('provider payment truth mismatch');
+          payment.invoice_id=invoice.id;
+          const eventId='evt_rzp382e_subscription_charged_relay_v1';
+          const payload={entity:'event',account_id:'test',event:'subscription.charged',contains:['subscription','payment'],payload:{subscription:{entity:sub},payment:{entity:payment}},created_at:Math.floor(Date.now()/1000)};
+          const raw=JSON.stringify(payload);
+          const signature=createHmac('sha256',process.env.RAZORPAY_WEBHOOK_SECRET_SANDBOX).update(raw).digest('hex');
+          const response=await fetch(`${base}/api/razorpay-webhook`,{method:'POST',headers:{'content-type':'application/json','x-razorpay-event-id':eventId,'x-razorpay-signature':signature},body:raw});
+          const body=await response.json().catch(()=>null);
+          if(!response.ok||body?.ok!==true||body?.subscription?.handled!==true)throw new Error(`staging charge ingestion failed ${response.status} ${JSON.stringify(body)}`);
+          const cycle=(await cf('SELECT * FROM subscription_billing_cycles WHERE contract_id=? AND provider_payment_id=?',[state.contract_id,payment.id]))[0];
+          if(!cycle||cycle.accounting_status!=='completed'||Number(cycle.amount_paise)!==11800)throw new Error('billing cycle/accounting not completed');
+          const journals=await cf(`SELECT jt.source_event_id,je.account_code,je.direction,je.amount_paise FROM journal_transactions jt JOIN journal_entries je ON je.transaction_id=jt.id WHERE jt.source_event_id IN (?,?) ORDER BY jt.source_event_id,je.direction,je.account_code`,[`subscription:${eventId}:capture`,`subscription:${eventId}:deferred`]);
+          const capture=journals.filter(r=>r.source_event_id===`subscription:${eventId}:capture`);
+          if(capture.length!==2||!capture.some(r=>r.direction==='DEBIT'&&r.account_code==='gateway_clearing'&&Number(r.amount_paise)===11800)||!capture.some(r=>r.direction==='CREDIT'&&r.account_code==='customer_collections'&&Number(r.amount_paise)===11800))throw new Error(`capture journal mismatch ${JSON.stringify(capture)}`);
+          const inbox=(await cf("SELECT event_id,event_type,processing_status FROM gateway_webhook_events WHERE provider='razorpay' AND event_id=?",[eventId]))[0];
+          if(inbox?.processing_status!=='PROCESSED'||inbox?.event_type!=='subscription.charged')throw new Error('webhook inbox not processed');
+          const evidence={ok:true,certKey,expectedSha,deliverySource:'staging-harness-signed-with-configured-test-webhook-secret',providerObjects:{subscriptionId:sub.id,paymentId:payment.id,invoiceId:invoice.id,orderId:payment.order_id},webhook:{eventId,status:inbox.processing_status,eventType:inbox.event_type},cycle:{id:cycle.id,accountingStatus:cycle.accounting_status,amountPaise:Number(cycle.amount_paise)},captureJournal:{debit:'gateway_clearing',credit:'customer_collections',amountPaise:11800}};
+          writeFileSync('provider-charge-relay-rzp382e.json',JSON.stringify(evidence,null,2));
+          console.log(JSON.stringify(evidence));
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: provider-charge-relay-rzp382e
+          path: provider-charge-relay-rzp382e.json
+          if-no-files-found: warn
