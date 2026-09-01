@@ -113,7 +113,7 @@ const sessionStart = (dayOffset) => new Date(Date.UTC(2026, 8, 1 + dayOffset, 5,
 const sessionEnd = (dayOffset) => new Date(Date.UTC(2026, 8, 1 + dayOffset, 6, 30, 0)).toISOString();
 
 // Seeds one canonical dog_training booking: N reservations, captured payment, customer.
-function seedBooking({ id, group, customer = "cus_t1", sessions = 4, total = 8000, dueNow = 4000, dayBase = 0, provider = TRAINER }) {
+function seedBooking({ id, group, customer = "cus_t1", sessions = 4, total = 8000, dueNow = 4000, dayBase = 0, provider = TRAINER, governedPayment = true }) {
   sqlite.prepare("INSERT OR IGNORE INTO canonical_customers (id,city_id,name,primary_phone,created_at,updated_at) VALUES (?,?,?,?,?,?)")
     .run(customer, "blr", "Trisha Kumar", "+91-9000000001", NOW, NOW);
   sqlite.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,'[\"pet_1\"]','[\"pet_1\"]','blr','blr-east','dog_training','obedience-starter','Obedience Starter',?,?,?,?,'confirmed','customer_app',?,'INR','{}','uat',?,?)")
@@ -122,10 +122,36 @@ function seedBooking({ id, group, customer = "cus_t1", sessions = 4, total = 800
     .run(`PAY-${id}`, id, customer, total, dueNow, `payk-${id}`, NOW, NOW);
   sqlite.prepare("INSERT OR IGNORE INTO booking_service_addresses (booking_id,address,latitude,longitude,created_at,updated_at) VALUES (?,?,?,?,?,?)")
     .run(id, "12 MG Road, Bengaluru", DOORSTEP.latitude, DOORSTEP.longitude, NOW, NOW);
+  // Reconciliation tests write their own canonical quote linkage to exercise the real commercial
+  // engine's shape; they opt out so this fixture does not occupy the UNIQUE booking_id first.
+  if (governedPayment) seedGovernedPayment({ bookingId: id, total, captured: dueNow, sessions });
   for (let i = 0; i < sessions; i++) {
     sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES (?,?,?,?,'blr','blr-east',?,'[\"pet_1\"]',?,?,1,?,NULL,'assigned','{}',?)")
       .run(`R-${id}-${i + 1}`, group, provider, "dog_training", customer, sessionStart(dayBase + i), sessionEnd(dayBase + i), i + 1, NOW);
   }
+}
+
+// #388 stopped trusting booking_payments for "how much has the customer actually paid" and reads a
+// governed quote + payment attestation instead - the same correction as PTJA-P1-F32, a client-declared
+// capture is not an obtained one. A seeded booking therefore needs its commercial quote, the link that
+// binds it to the booking, and the attestation carrying the captured figure. Without these the governed
+// paid amount is 0, every trainer earning is held, and the final session refuses for a missing quote.
+function seedGovernedPayment({ bookingId, total, captured, sessions, mode = "deposit" }) {
+  // Real DDL, copied from the modules that own these tables - seeded here because the fixture
+  // writes them before any lib call has had a chance to ensure them.
+  sqlite.exec("CREATE TABLE IF NOT EXISTS training_commercial_quotes (id TEXT PRIMARY KEY,package_code TEXT NOT NULL,package_version INTEGER NOT NULL,pet_count INTEGER NOT NULL,scheduled_start TEXT NOT NULL,payment_mode TEXT NOT NULL,coupon_code TEXT,discount REAL NOT NULL DEFAULT 0,total_amount REAL NOT NULL,amount_due_now REAL NOT NULL,minutes_per_session INTEGER NOT NULL,sessions INTEGER NOT NULL,validity_days INTEGER NOT NULL,expires_at INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'open',created_at INTEGER NOT NULL,used_at INTEGER,used_booking_id TEXT)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS training_booking_quote_links (quote_id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,created_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS training_quote_payment_attestations (quote_id TEXT PRIMARY KEY,status TEXT NOT NULL,amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',environment TEXT NOT NULL DEFAULT 'sandbox',reference TEXT NOT NULL,bound_payment_key TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  const quoteId = `TQ-${bookingId}`;
+  sqlite.prepare("INSERT OR IGNORE INTO training_commercial_quotes (id,package_code,package_version,pet_count,scheduled_start,payment_mode,discount,total_amount,amount_due_now,minutes_per_session,sessions,validity_days,expires_at,status,created_at) VALUES (?,?,?,?,?,?,0,?,?,?,?,?,?,'open',?)")
+    .run(quoteId, "dog_training_basic", 1, 1, sessionStart(0), mode, total, captured, 60, sessions, 30, NOW + 30 * 86_400_000, NOW);
+  sqlite.prepare("INSERT OR IGNORE INTO training_booking_quote_links (quote_id,booking_id,created_at) VALUES (?,?,?)")
+    .run(quoteId, bookingId, NOW);
+  sqlite.prepare("INSERT OR IGNORE INTO training_quote_payment_attestations (quote_id,status,amount,reference,bound_payment_key,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
+    // The real vocabulary is PARTIALLY_PAID | FULLY_PAID, derived from what has actually been
+    // attested against the quote total - not asserted. A deposit stays PARTIALLY_PAID, which is
+    // exactly what blocks the final session until the balance is settled.
+    .run(quoteId, captured >= total ? "FULLY_PAID" : "PARTIALLY_PAID", captured, `att-${bookingId}`, `payk-${bookingId}`, NOW, NOW);
 }
 
 function seedRoster(provider, dateIso, windows = ["09:00-19:00"], zone = "blr-east") {
@@ -232,20 +258,29 @@ test("real execution: no_show respects the 15-minute grace for providers; progra
   assert.equal(ns.status, "no_show");
   assert.equal(ns.consumption, "pending_policy", "no_show must never auto-consume a session");
   const prog = sqlite.prepare("SELECT status,completed_sessions,no_show_sessions FROM training_programmes").get();
-  assert.equal(prog.status, "completed_with_exceptions", "terminal programme with a no_show is completed_with_exceptions, not completed");
+  // #388 deliberately streamlined the terminal programme vocabulary to a single CLOSED state.
+  // Recorded as a decision, not a discovery: the clean/no-show distinction is no longer carried by
+  // the status, so the assertions below carry it instead - the no_show session outcome itself is
+  // what must survive, and that is what is checked.
+  assert.equal(prog.status, "CLOSED", "a terminal programme is CLOSED");
   assert.equal(prog.completed_sessions, 1);
   assert.equal(prog.no_show_sessions, 1);
 });
 
 test("real execution: a programme whose every session completes cleanly ends status=completed", async () => {
-  freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", sessions: 2 });
+  freshDb(); baseTables(); // completing the FINAL session requires the balance settled, so this programme is paid in full
+  seedBooking({ id: "B1", group: "G1", sessions: 2, dueNow: 8000 });
   const db = globalThis.__TRN_DB__;
   const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   await completeSession(db, sessions[0], "c1");
   await completeSession(db, sessions[1], "c2");
-  const prog = sqlite.prepare("SELECT status,completed_sessions FROM training_programmes").get();
-  assert.equal(prog.status, "completed");
+  const prog = sqlite.prepare("SELECT status,completed_sessions,no_show_sessions FROM training_programmes").get();
+  // Terminal programmes are all CLOSED since #388, so the status alone no longer separates a clean
+  // programme from one that ended with exceptions. The counters do, and are asserted here so that
+  // distinction is still pinned by a test: this one closed with two clean sessions and NO no-shows.
+  assert.equal(prog.status, "CLOSED");
   assert.equal(prog.completed_sessions, 2);
+  assert.equal(prog.no_show_sessions, 0, "a cleanly completed programme carries no exceptions");
 });
 
 // ---- 3. THE ROSTER DEFECT: reschedule/replace must respect trainer roster availability ---------
@@ -487,7 +522,7 @@ test("real execution: earnings are held when captured money does not yet cover d
 // ---- 7. Reconciliation cross-check: read model equals canonical booking pricing ----------------
 
 test("real execution: a pristine quote-linked programme reconciles with ZERO issues; every tampered total surfaces as an exception", async () => {
-  freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", total: 8000, dueNow: 4000 });
+  freshDb(); baseTables(); seedBooking({ governedPayment: false, id: "B1", group: "G1", total: 8000, dueNow: 4000 });
   const db = globalThis.__TRN_DB__;
   await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   // Canonical server-quote linkage exactly as the commercial engine writes it
@@ -527,7 +562,7 @@ test("real execution: a pristine quote-linked programme reconciles with ZERO iss
 });
 
 test("real execution: reconciliation totals still agree after real completions and the finance read model refresh", async () => {
-  freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", total: 8000, dueNow: 4000, sessions: 2 });
+  freshDb(); baseTables(); seedBooking({ governedPayment: false, id: "B1", group: "G1", total: 8000, dueNow: 4000, sessions: 2 });
   const db = globalThis.__TRN_DB__;
   const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   await completeSession(db, sessions[0], "c1");
