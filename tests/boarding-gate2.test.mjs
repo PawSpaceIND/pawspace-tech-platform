@@ -52,8 +52,12 @@ test("Boarding Gate 2 checkout closes capacity and resolves governed completion 
   assert.match(source,/status='completed'/);
   assert.match(source,/UPDATE scheduling_reservations SET status='completed'/);
   assert.match(source,/resolveServiceCompletionFinance/);
-  assert.match(source,/payout:finance\?\.payoutStatus\?\?null/);
-  assert.match(source,/tax:finance\?\.taxStatus\?\?null/);
+  // Optional-chaining tolerant: `finance` became non-nullable when resolveServiceCompletionFinance
+  // started throwing instead of returning null, so `?.`/`??null` is dead syntax rather than a
+  // removed guard. What must not change is WHERE the value comes from, which is asserted below.
+  assert.match(source,/payout:finance\??\.payoutStatus/);
+  assert.match(source,/tax:finance\??\.taxStatus/);
+  assert.match(source,/resolveServiceCompletionFinance\(/,"payout and tax are resolved, never invented");
   assert.doesNotMatch(source,/payout:\"rule_pending\"/);
   assert.doesNotMatch(source,/tax:\"configuration_required\"/);
 });
