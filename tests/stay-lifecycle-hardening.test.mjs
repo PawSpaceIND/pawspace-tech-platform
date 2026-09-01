@@ -52,6 +52,9 @@ function makeD1(sqlite) {
 const DAY = 86_400_000;
 const NOW = Date.now();
 const iso = (offsetMs) => new Date(NOW + offsetMs).toISOString();
+// Mirrors istDate() in lib/boarding-stay-lifecycle.ts: #388 requires every boarding care milestone
+// to name the stay day it belongs to, and that day must fall inside the stay window.
+const istDay = (offsetMs) => new Date(NOW + offsetMs + 330 * 60_000).toISOString().slice(0, 10);
 
 async function stayStack() {
   const sqlite = new DatabaseSync(":memory:");
@@ -132,7 +135,7 @@ test("real execution: awaiting_host_acceptance -> accept -> care plan -> check-i
   assert.equal(checkedIn.status, "in_progress");
   assert.equal(sqlite.prepare("SELECT status FROM canonical_bookings WHERE id='BK-S1'").get().status, "in_progress");
 
-  const care = await mutate(stack, "STAY-1", "care_event", { careEventType: "walk", detail: { minutes: 30 } });
+  const care = await mutate(stack, "STAY-1", "care_event", { careEventType: "walk", detail: { minutes: 30, stayDate: istDay(2 * DAY) } });
   assert.equal(care.status, "logged");
 
   // Extension: must extend beyond current checkout, never changes the stay window itself.
