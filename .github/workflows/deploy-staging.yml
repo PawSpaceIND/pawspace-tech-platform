@@ -51,8 +51,51 @@ on:
         options:
           - disabled
           - approved
+      provider_cert_phase:
+        description: 'Secret-safe Razorpay Test provider certification phase; does not deploy'
+        required: true
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - prepare
+          - finalize
+      provider_cert_key:
+        description: 'Unique non-secret key for one provider certification lifecycle'
+        required: false
+        default: ''
 
 jobs:
+  provider_cert:
+    if: ${{ github.event.inputs.confirm == 'provider-cert' && github.event.inputs.provider_cert_phase != 'none' }}
+    runs-on: ubuntu-latest
+    concurrency: pawspace-staging-provider-certification
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run isolated Razorpay Test provider certification phase
+        env:
+          PROVIDER_CERT_PHASE: ${{ github.event.inputs.provider_cert_phase }}
+          PROVIDER_CERT_KEY: ${{ github.event.inputs.provider_cert_key }}
+          STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+        run: node scripts/razorpay-provider-certification.mjs
+      - name: Upload sanitized provider evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provider-certification-${{ github.event.inputs.provider_cert_key }}-${{ github.event.inputs.provider_cert_phase }}
+          path: provider-certification-${{ github.event.inputs.provider_cert_key }}-${{ github.event.inputs.provider_cert_phase }}.json
+          if-no-files-found: warn
+
   deploy:
     if: ${{ github.event.inputs.confirm == 'staging' }}
     runs-on: ubuntu-latest
