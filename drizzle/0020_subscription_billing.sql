@@ -64,3 +64,9 @@ CREATE INDEX IF NOT EXISTS idx_subscription_entitlement_grants_subscription ON s
 CREATE TABLE IF NOT EXISTS subscription_refund_entitlement_allocations (
   id TEXT PRIMARY KEY,allocation_key TEXT NOT NULL UNIQUE,cycle_id TEXT NOT NULL,refund_case_id TEXT UNIQUE,gateway_refund_id TEXT UNIQUE,amount_paise INTEGER NOT NULL CHECK(amount_paise>0),credits INTEGER NOT NULL CHECK(credits>0),kind TEXT NOT NULL CHECK(kind IN ('maker_checker','provider_proration')),status TEXT NOT NULL DEFAULT 'reserved' CHECK(status IN ('reserved','processed')),created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS subscription_refund_entitlement_claims (
+  id TEXT PRIMARY KEY,cycle_id TEXT NOT NULL,allocation_key TEXT NOT NULL UNIQUE,claim_token TEXT NOT NULL UNIQUE,
+  expected_reserved_credits INTEGER NOT NULL,expected_refunded_credits INTEGER NOT NULL,expected_refunded_paise INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'claimed' CHECK(status IN ('claimed','reserved')),created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,
+  UNIQUE(cycle_id,expected_reserved_credits,expected_refunded_credits,expected_refunded_paise)
+);

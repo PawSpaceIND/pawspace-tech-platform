@@ -55,8 +55,13 @@ test("renewal entitlement is cycle-keyed, idempotent and repairable",()=>{
 test("refunds are capped by unused entitlement before deferred-revenue reversal",()=>{
   const entitlement=read("lib/subscription-entitlement-renewal.ts"),customer=read("app/api/subscription-billing/route.ts"),admin=read("app/api/subscription-billing-admin/route.ts"),webhook=after(read("app/api/razorpay-webhook/route.ts"),"export async function POST"),refund=read("lib/subscription-refund-reconciliation.ts");
   assert.match(entitlement,/subscription_refund_exceeds_unused_entitlement/);
-  assert.match(entitlement,/sessions_reserved\)\+n\(target\.sessions_consumed/);
+  assert.match(entitlement,/sessions_reserved\)\+n\(target\.sessions_consumed\)/);
   assert.match(entitlement,/total_sessions=\?/);
+  assert.match(entitlement,/subscription_refund_entitlement_claims/);
+  assert.match(entitlement,/UNIQUE\(cycle_id,expected_reserved_credits,expected_refunded_credits,expected_refunded_paise\)/);
+  assert.match(entitlement,/refund_reserved_credits=\? AND refunded_credits=\? AND refunded_paise=\?/);
+  assert.match(entitlement,/CHECK\(status IN \('claimed','reserved'\)\)/);
+  assert.match(entitlement,/THEN 'reserved' ELSE 'invalid' END/);
   assert.match(customer,/validateSubscriptionRefundAgainstUnusedEntitlement/);
   assert.match(admin,/approveSubscriptionRefundAgainstUnusedEntitlement/);
   assert.ok(webhook.indexOf("prepareSubscriptionRefundEntitlementForWebhook")<webhook.indexOf("processSubscriptionRefundEvent"));
