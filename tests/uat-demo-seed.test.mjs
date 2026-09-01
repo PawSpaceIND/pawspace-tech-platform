@@ -240,6 +240,7 @@ test("seeded DB: the assistant grounding is activated, so knowledge retrieval an
   assert.ok(active.promptPolicy.systemPrompt.includes("PawSpace assistant"), "the activated system policy is the real grounding");
   assert.equal(active.killSwitches.length, 0, "nothing is disabled");
 
+  // Every activated version carries a genuine SHA-256 of its own snapshot, not a placeholder.
   const profiles = await db.prepare("SELECT immutable_hash FROM ai_assistant_profile_versions").all();
   for (const row of profiles.results) assert.match(String(row.immutable_hash), /^[0-9a-f]{64}$/, "immutable hashes are real digests");
 
@@ -260,11 +261,13 @@ test("seeded DB: CRM contacts exist and their lifetime value derives from real b
   assert.equal(contacts.results.length, 6, "/api/crm reads crm_contacts directly — without these rows the CRM engine screen is empty");
   for (const row of contacts.results) assert.equal(Number(row.lifetime_value), 0, "no stored figure may compete with the computed one");
 
+  // The recognition rule is the platform's single rule: cancelled and draft are not revenue.
   const derived = await db.prepare(`SELECT c.id, (SELECT COALESCE(SUM(b.total_amount),0) FROM canonical_bookings b
       JOIN canonical_customers cc ON cc.id=b.customer_id
      WHERE cc.primary_phone=c.primary_phone AND b.status NOT IN ('cancelled','draft')) value
      FROM crm_contacts c ORDER BY c.id`).all();
   assert.ok(derived.results.every((row) => Number(row.value) > 0), "every demo contact must have bookings behind it, or its lifetime value can never display");
+  // UATD-CUS-4 holds a cancelled ₹3999 training booking and a completed ₹698 walk: only the walk counts.
   const vikram = derived.results.find((row) => String(row.id) === "UATD-CUS-4-CRM");
   assert.equal(Number(vikram.value), 698, "the cancelled booking must be excluded, exactly as /api/crm and Customer 360 exclude it");
 });
@@ -319,10 +322,14 @@ test("seeded DB: partner workspace resolves a linked provider with real earnings
   const sqlite = seededDb();
   const response = await providerWorkspaceRoute.GET(new Request("http://localhost/api/provider-workspace"));
   const { data } = await body(response);
+  // The preview/founder identity is not provider-linked, so this proves the graceful path;
+  // the seeded link (uat.demo.groomer@tkpetcare.in → groom_arun) is asserted directly below.
   assert.ok("linked" in data);
   const { providerWorkspace } = await import("../lib/provider-workspace.ts");
   const workspace = await providerWorkspace(globalThis.__PAWSPACE_TEST_ENV.DB, { providerId: "groom_arun" });
   assert.ok(workspace.bookings.past.length + workspace.bookings.upcoming.length >= 2, "the groomer has real jobs");
+  // The immutable demo offer has a real expiry. Once wall-clock time passes it, preserving the seed
+  // must not turn that stale row into a live assignment merely to keep the demo tile populated.
   const staleOffer = sqlite.prepare("SELECT status,expires_at FROM provider_job_offers WHERE id='UATD-OFFER-1'").get();
   assert.equal(staleOffer.status, "offered", "the existing demo seed row is preserved");
   assert.ok(Number(staleOffer.expires_at) <= Date.now(), "the preserved offer is now past its stored expiry");
@@ -343,6 +350,7 @@ test("seeded DB: employee self-service is populated for a demo employee identity
   assert.ok(view.incentives.list.length >= 1, "approved incentive is visible");
   assert.equal(view.performance.appears, true, "the employee appears in the performance facts");
 
+  // and the route itself never accepts a caller-supplied identity
   const meResponse = await meRoute.GET(new Request("http://localhost/api/me"));
   assert.equal(meResponse.status, 200);
 });
