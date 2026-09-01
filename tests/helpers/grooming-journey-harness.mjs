@@ -138,6 +138,11 @@ export async function runCompletedJourney(ctx, config) {
   const bookingReplay = await routeCall("../../app/api/canonical-bookings/route.ts", "POST", "/api/canonical-bookings", bookingPayload, customerCookie);
   const bookingId = booked.body.data?.bookingId;
   const location = await routeCall("../../app/api/grooming-service-location/route.ts", "POST", "/api/grooming-service-location", { bookingId, customerId: config.customerId, address: `${config.customerName} service address`, pincode: config.pincode, latitude: config.latitude, longitude: config.longitude }, customerCookie);
+  // Arrival geofencing reads the canonical doorstep surface shared by Grooming and Training.
+  // The customer-location route intentionally owns customer addresses, so the journey fixture also
+  // mirrors the resolved service coordinates into the provider-travel doorstep row.
+  const { setBookingServiceAddress } = await import("../../lib/provider-daily-travel.ts");
+  await setBookingServiceAddress(db, { bookingId, address: `${config.customerName} service address`, latitude: config.latitude, longitude: config.longitude, actorId: "grooming-golden-journey" });
 
   const linked = await routeCall("../../app/api/grooming-payment-sandbox/route.ts", "POST", "/api/grooming-payment-sandbox", { action: "link_order", bookingId, gatewayOrderId: `order_${config.groupId}` });
   const capture = { action: "simulate_event", bookingId, eventType: "payment.captured", eventId: `evt_${config.groupId}`, gatewayPaymentId: `pay_${config.groupId}`, amount: total, currency: "INR" };
