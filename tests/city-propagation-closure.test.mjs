@@ -58,3 +58,5 @@ test("scheduler stores, filters and reassigns by request city", async () => {
   assert.match(route, /cityId:cityIdFor\(original\)/);
   assert.match(route, /requestInput:ScheduleRequest=\{[\s\S]*?cityId:cityIdFor\(input\)/);
 });
+
+// Exact-head CI synchronization marker; no runtime or assertion behavior changes.
