@@ -141,6 +141,6 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
     const path = fileURLToPath(url);
     return { format: "module", source: transpileTsx(await readFile(path, "utf8"), path), shortCircuit: true };
   }`;
-  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
+  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`), import.meta.url);
   return workersUrl;
 }
