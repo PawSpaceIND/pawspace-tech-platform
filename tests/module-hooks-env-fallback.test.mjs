@@ -16,3 +16,9 @@ test("Workers shim keeps suite env precedence and falls back to process env", ()
   assert.equal(env.PAWSPACE_LOCAL_PREVIEW, "on");
   assert.equal(env.NODE_ENV, "test");
 });
+
+test.after(() => {
+  delete process.env.PAWSPACE_HOOK_PROCESS_FALLBACK;
+  delete globalThis.__HOOK_ENV_DB__;
+  delete globalThis.__HOOK_ENV__;
+});
