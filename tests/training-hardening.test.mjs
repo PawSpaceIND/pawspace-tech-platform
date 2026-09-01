@@ -2,33 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import * as nodeModule from "node:module";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
-// Test-only resolve hooks: "cloudflare:workers" resolves to a stub whose env.DB is the current
-// per-test SQLite-backed D1 shim, so the REAL training routes and libs execute unmodified.
-const CF_STUB = "data:text/javascript,export const env={get DB(){return globalThis.__TRN_DB__;},get FOUNDER_EMAIL(){return undefined;},get PAWSPACE_UAT_LOGIN(){return undefined;},get PAWSPACE_SCHEDULING_ENV(){return 'uat';}};";
-if (typeof nodeModule.registerHooks === "function") {
-  nodeModule.registerHooks({
-    resolve(specifier, context, nextResolve) {
-      if (specifier === "cloudflare:workers") return { url: CF_STUB, shortCircuit: true };
-      try { return nextResolve(specifier, context); }
-      catch (error) {
-        if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
-        throw error;
-      }
-    },
-  });
-} else {
-  const hook = `export async function resolve(specifier, context, nextResolve) {
-    if (specifier === "cloudflare:workers") return { url: ${JSON.stringify(CF_STUB)}, shortCircuit: true };
-    try { return await nextResolve(specifier, context); }
-    catch (error) {
-      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(specifier + ".ts", context);
-      throw error;
-    }
-  }`;
-  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
-}
+// Shared hook exercises both Node 22.15+ registerHooks and the forced module.register fallback path.
+installWorkersHooks("__TRN_DB__", "__TRN_ENV__");
 
 function makeD1(sqlite) {
   function statement(sql, args) {
@@ -47,7 +24,11 @@ function makeD1(sqlite) {
 }
 
 let sqlite;
-function freshDb() { sqlite = new DatabaseSync(":memory:"); globalThis.__TRN_DB__ = makeD1(sqlite); }
+function freshDb() {
+  sqlite = new DatabaseSync(":memory:");
+  globalThis.__TRN_DB__ = makeD1(sqlite);
+  globalThis.__TRN_ENV__ = { PAWSPACE_SCHEDULING_ENV: "uat", PAWSPACE_MEDIA_ENV: "uat", NODE_ENV: "test", PAWSPACE_LOCAL_PREVIEW: "on" };
+}
 
 const sessionsRoute = await import("../app/api/training-sessions/route.ts");
 const customerChangeRoute = await import("../app/api/training-customer-session-change/route.ts");
@@ -97,6 +78,11 @@ function baseTables() {
   sqlite.exec("CREATE TABLE IF NOT EXISTS scheduling_availability (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,date TEXT NOT NULL,windows_json TEXT NOT NULL,source TEXT NOT NULL,updated_at INTEGER NOT NULL)");
   sqlite.exec("CREATE TABLE IF NOT EXISTS provider_work_orders (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,schedule_group_id TEXT NOT NULL,provider_id TEXT NOT NULL,provider_name TEXT NOT NULL,provider_model TEXT NOT NULL,service_code TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,occurrence_count INTEGER NOT NULL DEFAULT 1,status TEXT NOT NULL DEFAULT 'assigned',assignment_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
   sqlite.exec("CREATE TABLE IF NOT EXISTS service_media_assets (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,purpose TEXT NOT NULL,storage_key TEXT NOT NULL,mime_type TEXT NOT NULL,size_bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,scan_status TEXT NOT NULL DEFAULT 'pending',access_status TEXT NOT NULL DEFAULT 'pending_upload',retention_status TEXT NOT NULL DEFAULT 'active',synthetic INTEGER NOT NULL DEFAULT 1,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_service_addresses (booking_id TEXT PRIMARY KEY,address TEXT NOT NULL,latitude REAL,longitude REAL,source TEXT NOT NULL DEFAULT 'test_fixture',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS training_commercial_quotes (id TEXT PRIMARY KEY,package_code TEXT NOT NULL,package_version INTEGER NOT NULL,pet_count INTEGER NOT NULL,scheduled_start TEXT NOT NULL,payment_mode TEXT NOT NULL,coupon_code TEXT,discount REAL NOT NULL DEFAULT 0,total_amount REAL NOT NULL,amount_due_now REAL NOT NULL,minutes_per_session INTEGER NOT NULL,sessions INTEGER NOT NULL,validity_days INTEGER NOT NULL,expires_at INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'open',created_at INTEGER NOT NULL,used_at INTEGER,used_booking_id TEXT)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS training_booking_quote_links (quote_id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,created_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS training_quote_payment_attestations (quote_id TEXT PRIMARY KEY,status TEXT NOT NULL,amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',environment TEXT NOT NULL DEFAULT 'sandbox',reference TEXT NOT NULL,bound_payment_key TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS training_balance_payment_events (id TEXT PRIMARY KEY,quote_id TEXT NOT NULL UNIQUE,amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',environment TEXT NOT NULL DEFAULT 'sandbox',reference TEXT NOT NULL UNIQUE,bound_payment_key TEXT NOT NULL UNIQUE,created_at INTEGER NOT NULL)");
 }
 
 const NOW = Date.now();
@@ -107,13 +93,23 @@ const sessionStart = (dayOffset) => new Date(Date.UTC(2026, 8, 1 + dayOffset, 5,
 const sessionEnd = (dayOffset) => new Date(Date.UTC(2026, 8, 1 + dayOffset, 6, 30, 0)).toISOString();
 
 // Seeds one canonical dog_training booking: N reservations, captured payment, customer.
-function seedBooking({ id, group, customer = "cus_t1", sessions = 4, total = 8000, dueNow = 4000, dayBase = 0, provider = TRAINER }) {
+function seedBooking({ id, group, customer = "cus_t1", sessions = 4, total = 8000, dueNow = 4000, dayBase = 0, provider = TRAINER, commercial = true }) {
   sqlite.prepare("INSERT OR IGNORE INTO canonical_customers (id,city_id,name,primary_phone,created_at,updated_at) VALUES (?,?,?,?,?,?)")
     .run(customer, "blr", "Trisha Kumar", "+91-9000000001", NOW, NOW);
   sqlite.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,'[\"pet_1\"]','[\"pet_1\"]','blr','blr-east','dog_training','obedience-starter','Obedience Starter',?,?,?,?,'confirmed','customer_app',?,'INR','{}','uat',?,?)")
     .run(id, `idem-${id}`, customer, group, provider, sessionStart(dayBase), sessionEnd(dayBase + sessions - 1), total, NOW, NOW);
   sqlite.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,amount_due_now,method,mode,status,idempotency_key,created_at,updated_at) VALUES (?,?,?,?,?,'upi','deposit','captured',?,?,?)")
     .run(`PAY-${id}`, id, customer, total, dueNow, `payk-${id}`, NOW, NOW);
+  sqlite.prepare("INSERT OR REPLACE INTO booking_service_addresses (booking_id,address,latitude,longitude,source,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
+    .run(id, "Training doorstep", 12.9784, 77.6408, "test_fixture", NOW, NOW);
+  if (commercial) {
+    const quoteId = `Q-${id}`;
+    sqlite.prepare("INSERT INTO training_commercial_quotes (id,package_code,package_version,pet_count,scheduled_start,payment_mode,coupon_code,discount,total_amount,amount_due_now,minutes_per_session,sessions,validity_days,expires_at,status,created_at,used_at,used_booking_id) VALUES (?,'obedience-starter',1,1,?,'split',NULL,0,?,?,60,?,31,?,'used',?,?,?)")
+      .run(quoteId, sessionStart(dayBase), total, dueNow, sessions, NOW + 31 * 86_400_000, NOW, NOW, id);
+    sqlite.prepare("INSERT INTO training_booking_quote_links (quote_id,booking_id,created_at) VALUES (?,?,?)").run(quoteId, id, NOW);
+    sqlite.prepare("INSERT INTO training_quote_payment_attestations (quote_id,status,amount,currency,environment,reference,bound_payment_key,created_at,updated_at) VALUES (?,?,?,'INR','sandbox',?,?,?,?)")
+      .run(quoteId, dueNow >= total ? "FULLY_PAID" : "PARTIALLY_PAID", dueNow, `TRN-UAT-${id}`, `fixture-${id}`, NOW, NOW);
+  }
   for (let i = 0; i < sessions; i++) {
     sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES (?,?,?,?,'blr','blr-east',?,'[\"pet_1\"]',?,?,1,?,NULL,'assigned','{}',?)")
       .run(`R-${id}-${i + 1}`, group, provider, "dog_training", customer, sessionStart(dayBase + i), sessionEnd(dayBase + i), i + 1, NOW);
@@ -128,21 +124,33 @@ function seedRoster(provider, dateIso, windows = ["09:00-19:00"], zone = "blr-ea
 // Secure evidence pipeline: clean/ready/active non-synthetic asset + session link, per the exact
 // requirements in secureEvidenceReady (lib/training-session-lifecycle.ts).
 function seedEvidence(mediaId, sessionRow) {
-  sqlite.prepare("INSERT INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'clean','ready','active',0,'uat',?,?)")
-    .run(mediaId, sessionRow.booking_id, sessionRow.provider_id, "training_homework", `media/${mediaId}`, "image/jpeg", 2048, `sha-${mediaId}`, NOW, NOW);
-  sqlite.prepare("INSERT INTO training_session_media_links (media_id,session_id,programme_id,booking_id,provider_id,created_at) VALUES (?,?,?,?,?,?)")
-    .run(mediaId, sessionRow.id, sessionRow.programme_id, sessionRow.booking_id, sessionRow.provider_id, NOW);
+  const refs = [];
+  for (const [suffix, purpose] of [["BEFORE", "before_service"], ["AFTER", "after_service"]]) {
+    const id = `${mediaId}-${suffix}`;
+    sqlite.prepare("INSERT INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'clean','ready','active',0,'uat',?,?)")
+      .run(id, sessionRow.booking_id, sessionRow.provider_id, purpose, `media/${id}`, "image/jpeg", 2048, `sha-${id}`, NOW, NOW);
+    sqlite.prepare("INSERT INTO training_session_media_links (media_id,session_id,programme_id,booking_id,provider_id,created_at) VALUES (?,?,?,?,?,?)")
+      .run(id, sessionRow.id, sessionRow.programme_id, sessionRow.booking_id, sessionRow.provider_id, NOW);
+    refs.push(`media://asset/${id}`);
+  }
+  return refs;
 }
 
 const REPORT = { attendance: { mode: "parent", safeAreaConfirmed: true, parentOrCaretakerConfirmed: true }, homework: "Practise loose-leash walking 10 minutes daily", progress: { obedience: 6 } };
 
 async function completeSession(db, sessionRow, key) {
-  let seeded = false;
-  for (const [action, extra] of [["accept", {}], ["on_the_way", {}], ["arrive", {}], ["start", {}], ["complete", { report: { ...REPORT, evidenceRefs: [`media://asset/MA-${key}`] } }]]) {
-    await mutateTrainingSession(db, { sessionId: sessionRow.id, action, actorId: `trainer:${sessionRow.provider_id}`, idempotencyKey: `${key}-${action}`, ...extra });
-    // The first mutation ensures the lifecycle tables (incl. training_session_media_links) exist.
-    if (!seeded) { seedEvidence(`MA-${key}`, sessionRow); seeded = true; }
+  await mutateTrainingSession(db, { sessionId: sessionRow.id, action: "accept", actorId: `trainer:${sessionRow.provider_id}`, idempotencyKey: `${key}-accept` });
+  const evidenceRefs = seedEvidence(`MA-${key}`, sessionRow);
+  await mutateTrainingSession(db, { sessionId: sessionRow.id, action: "on_the_way", actorId: `trainer:${sessionRow.provider_id}`, idempotencyKey: `${key}-on_the_way` });
+  await mutateTrainingSession(db, { sessionId: sessionRow.id, action: "arrive", actorId: `trainer:${sessionRow.provider_id}`, idempotencyKey: `${key}-arrive`, latitude: 12.9784, longitude: 77.6408 });
+  await mutateTrainingSession(db, { sessionId: sessionRow.id, action: "start", actorId: `trainer:${sessionRow.provider_id}`, idempotencyKey: `${key}-start` });
+  await mutateTrainingSession(db, { sessionId: sessionRow.id, action: "owner_handover", actorId: `trainer:${sessionRow.provider_id}`, idempotencyKey: `${key}-handover`, ownerHandoverMinutes: 15 });
+  const programme = sqlite.prepare("SELECT total_sessions FROM training_programmes WHERE id=?").get(sessionRow.programme_id);
+  if (Number(sessionRow.sequence_no) === Number(programme.total_sessions)) {
+    sqlite.prepare("UPDATE training_quote_payment_attestations SET status='FULLY_PAID',amount=(SELECT total_amount FROM training_commercial_quotes WHERE id=training_quote_payment_attestations.quote_id),updated_at=? WHERE quote_id=(SELECT quote_id FROM training_booking_quote_links WHERE booking_id=?)")
+      .run(NOW, sessionRow.booking_id);
   }
+  await mutateTrainingSession(db, { sessionId: sessionRow.id, action: "complete", actorId: `trainer:${sessionRow.provider_id}`, idempotencyKey: `${key}-complete`, report: { ...REPORT, evidenceRefs } });
 }
 
 // Non-preview identities for ownership tests: role "customer" = pricing.view + scheduling.book only.
@@ -162,7 +170,9 @@ test("real execution: dog_training booking materializes exactly N sessions and r
   assert.equal(first.duplicatePrevented, false);
   assert.equal(first.sessions.length, 4);
   assert.deepEqual(first.sessions.map(s => Number(s.sequence_no)), [1, 2, 3, 4]);
-  assert.ok(first.sessions.every(s => s.status === "scheduled" && s.provider_id === TRAINER));
+  assert.equal(first.sessions[0].status, "scheduled");
+  assert.ok(first.sessions.slice(1).every(s => s.status === "locked"), "future Training sessions remain locked until the prior session closes");
+  assert.ok(first.sessions.every(s => s.provider_id === TRAINER));
   assert.equal(Number(first.programme.total_sessions), 4);
   const replay = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   assert.equal(replay.duplicatePrevented, true);
@@ -177,14 +187,15 @@ test("real execution: complete demands validated report + clean evidence, consum
   const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   const s1 = sessions[0];
   for (const action of ["accept", "on_the_way", "arrive", "start"]) {
-    await mutateTrainingSession(db, { sessionId: s1.id, action, actorId: "trainer:t", idempotencyKey: `s1-${action}` });
+    await mutateTrainingSession(db, { sessionId: s1.id, action, actorId: "trainer:t", idempotencyKey: `s1-${action}`, ...(action === "arrive" ? { latitude: 12.9784, longitude: 77.6408 } : {}) });
   }
   // Without evidence -> 409 (money consequence: a completed session is chargeable value)
   await assert.rejects(
     mutateTrainingSession(db, { sessionId: s1.id, action: "complete", actorId: "trainer:t", idempotencyKey: "s1-complete-bad", report: { ...REPORT, evidenceRefs: ["media://asset/GHOST"] } }),
     (e) => e instanceof Response && e.status === 409);
-  seedEvidence("MA-1", s1);
-  const done = await mutateTrainingSession(db, { sessionId: s1.id, action: "complete", actorId: "trainer:t", idempotencyKey: "s1-complete", report: { ...REPORT, evidenceRefs: ["media://asset/MA-1"] } });
+  const evidenceRefs = seedEvidence("MA-1", s1);
+  await mutateTrainingSession(db, { sessionId: s1.id, action: "owner_handover", actorId: "trainer:t", idempotencyKey: "s1-handover", ownerHandoverMinutes: 15 });
+  const done = await mutateTrainingSession(db, { sessionId: s1.id, action: "complete", actorId: "trainer:t", idempotencyKey: "s1-complete", report: { ...REPORT, evidenceRefs } });
   assert.equal(done.status, "completed");
   assert.equal(done.consumedExactlyOnce, true);
   assert.equal(done.programme.completed, 1);
@@ -209,7 +220,7 @@ test("real execution: no_show respects the 15-minute grace for providers; progra
   assert.equal(ns.status, "no_show");
   assert.equal(ns.consumption, "pending_policy", "no_show must never auto-consume a session");
   const prog = sqlite.prepare("SELECT status,completed_sessions,no_show_sessions FROM training_programmes").get();
-  assert.equal(prog.status, "completed_with_exceptions", "terminal programme with a no_show is completed_with_exceptions, not completed");
+  assert.equal(prog.status, "CLOSED", "terminal programme closes after all sessions reach a terminal state");
   assert.equal(prog.completed_sessions, 1);
   assert.equal(prog.no_show_sessions, 1);
 });
@@ -221,7 +232,7 @@ test("real execution: a programme whose every session completes cleanly ends sta
   await completeSession(db, sessions[0], "c1");
   await completeSession(db, sessions[1], "c2");
   const prog = sqlite.prepare("SELECT status,completed_sessions FROM training_programmes").get();
-  assert.equal(prog.status, "completed");
+  assert.equal(prog.status, "CLOSED");
   assert.equal(prog.completed_sessions, 2);
 });
 
@@ -464,7 +475,7 @@ test("real execution: earnings are held when captured money does not yet cover d
 // ---- 7. Reconciliation cross-check: read model equals canonical booking pricing ----------------
 
 test("real execution: a pristine quote-linked programme reconciles with ZERO issues; every tampered total surfaces as an exception", async () => {
-  freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", total: 8000, dueNow: 4000 });
+  freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", total: 8000, dueNow: 4000, commercial: false });
   const db = globalThis.__TRN_DB__;
   await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   // Canonical server-quote linkage exactly as the commercial engine writes it

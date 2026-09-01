@@ -2,28 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import * as nodeModule from "node:module";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
-// Test-only resolve hook (same pattern as tests/customer-offers.test.mjs).
-if (typeof nodeModule.registerHooks === "function") {
-  nodeModule.registerHooks({
-    resolve(specifier, context, nextResolve) {
-      try { return nextResolve(specifier, context); } catch (error) {
-        if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(`${specifier}.ts`, context);
-        throw error;
-      }
-    },
-  });
-} else {
-  const hook = `export async function resolve(specifier, context, nextResolve) {
-    try { return await nextResolve(specifier, context); }
-    catch (error) {
-      if (specifier.startsWith(".") && !specifier.endsWith(".ts")) return nextResolve(specifier + ".ts", context);
-      throw error;
-    }
-  }`;
-  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`));
-}
+installWorkersHooks("__STAY_DB__", "__STAY_ENV__");
 
 const read = (path) => fs.readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const staysRoute = read("app/api/boarding-stays/route.ts");
@@ -56,6 +37,8 @@ const iso = (offsetMs) => new Date(NOW + offsetMs).toISOString();
 async function stayStack() {
   const sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
+  globalThis.__STAY_DB__ = db;
+  globalThis.__STAY_ENV__ = { PAWSPACE_SCHEDULING_ENV: "uat", PAWSPACE_MEDIA_ENV: "uat", NODE_ENV: "test", PAWSPACE_LOCAL_PREVIEW: "on" };
   // Real DDL through the real ensure chains + extraction for cross-module tables.
   for (const source of [read("app/api/grooming-lifecycle/route.ts"), read("app/api/uat-scheduling/route.ts"), read("lib/provider-capacity-governance.ts")]) {
     for (const sql of statementsOf(source)) if (/^\s*CREATE (TABLE|INDEX|UNIQUE INDEX)/i.test(sql)) sqlite.exec(sql);
@@ -141,6 +124,21 @@ test("real execution: awaiting_host_acceptance -> accept -> care plan -> check-i
   assert.equal(extension.status, "commercial_quote_required", "extension always goes through a server commercial quote");
   assert.equal(extension.stayWindowUnchanged, true);
   assert.equal(sqlite.prepare("SELECT check_out_at FROM boarding_stays WHERE id='STAY-1'").get().check_out_at, iso(5 * DAY), "requesting an extension never moves the paid window");
+
+  // Checkout now requires meal + play + photo/video evidence on every billed stay day. This lifecycle
+  // test seeds those governed event facts explicitly; the Boarding proof suite separately validates the
+  // signed-upload/scan path that produces proof_daily_update.
+  const stay = sqlite.prepare("SELECT check_in_at,check_out_at FROM boarding_stays WHERE id='STAY-1'").get();
+  const dateKey = (value) => new Date(new Date(value).getTime() + 330 * 60_000).toISOString().slice(0, 10);
+  const firstDay = new Date(`${dateKey(stay.check_in_at)}T00:00:00Z`);
+  const lastDay = new Date(`${dateKey(stay.check_out_at)}T00:00:00Z`);
+  for (let cursor = firstDay; cursor < lastDay; cursor = new Date(cursor.getTime() + DAY)) {
+    const stayDate = cursor.toISOString().slice(0, 10);
+    await mutate(stack, "STAY-1", "care_event", { careEventType: "meal", detail: { stayDate, feeding: "completed" } });
+    await mutate(stack, "STAY-1", "care_event", { careEventType: "play", detail: { stayDate, minutes: 20 } });
+    sqlite.prepare("INSERT INTO boarding_stay_events (id,stay_id,booking_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?)")
+      .run(`PROOF-${stayDate}`, "STAY-1", "BK-S1", "proof_daily_update", "host@test", JSON.stringify({ stayDate, mimeType: "image/jpeg", mediaRef: `media://asset/uat-${stayDate}` }), cursor.getTime());
+  }
 
   const done = await mutate(stack, "STAY-1", "check_out", { idempotencyKey: "STAY-1-check-out-key" });
   assert.equal(done.status, "completed");
