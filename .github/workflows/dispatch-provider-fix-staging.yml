@@ -21,6 +21,7 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          echo "Dispatching protected finalize for rzp382-20260901e"
           curl --fail-with-body -sS -X POST \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
