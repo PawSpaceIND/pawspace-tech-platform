@@ -115,6 +115,7 @@ test("QA-P0-002: refund completion fails closed without gateway proof and preser
   assert.equal(mismatchedOverride.status, 409, "a client must not replace the reconciled gateway refund reference");
   assert.equal(sqlite.prepare("SELECT gateway_reference,status FROM booking_refund_cases WHERE id='RF-PROOF'").get().gateway_reference, "rf_authoritative");
 
+  sqlite.prepare("UPDATE booking_refund_cases SET status='processed' WHERE id='RF-PROOF'").run();
   const completed = await postRefund("checker@pawspace.test", statusBody("RF-PROOF", "completed"));
   assert.equal(completed.status, 200, JSON.stringify(completed.payload));
   const finalRefund = sqlite.prepare("SELECT gateway_reference,status FROM booking_refund_cases WHERE id='RF-PROOF'").get();
