@@ -43,13 +43,18 @@ test("Walking completion commits payment, audit, notification, idempotency and g
    * walk could never be completed through the API again. The key, the payment row, the audit event and
    * both notifications must therefore land together, and none of them may be a separate awaited call.
    */
-  assert.match(block, /walking_action_keys/);
-  assert.match(block, /walking_customer_notifications/);
   assert.match(block, /CASE WHEN EXISTS \(SELECT 1 FROM walking_sessions/);
   assert.doesNotMatch(block, /await event\(/);
   assert.doesNotMatch(block, /await notify\(/);
   assert.doesNotMatch(block, /return remember\(/);
-  assert.equal(block.match(/await db\.batch\(\[/g)?.length, 1, "exactly one batch commits the completion");
+  // The invariant is not "one batch exists" but that the idempotency key is committed together with the
+  // payment row it describes - that pairing is what makes a lost worker replayable instead of wedged on
+  // the UNIQUE session_id. Checked on the completion batch itself, not on the whole block, so the
+  // post-commit ledger reconciliation below it cannot satisfy this by accident.
+  const commitBatch = block.slice(block.indexOf("await db.batch(["), block.indexOf("]);"));
+  assert.match(commitBatch, /walking_session_payment_events/);
+  assert.match(commitBatch, /walking_action_keys/);
+  assert.match(commitBatch, /walking_customer_notifications/);
   assert.match(block, /gpsConnected:true/);
   assert.match(block, /payout:finance\?\.payoutStatus/);
   assert.match(block, /tax:finance\?\.taxStatus/);

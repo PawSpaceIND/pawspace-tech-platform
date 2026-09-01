@@ -72,6 +72,25 @@ export async function mutateWalkingBooking(db:D1Database,input:WalkingMutation){
    db.prepare("INSERT INTO walking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) VALUES (?,?,?,?,?,?,'queued',?,?)").bind(whatsappNotificationId,booking.id,booking.customer_id,"whatsapp","walking_update",message,eventId,now),
    db.prepare("INSERT INTO walking_action_keys (idempotency_key,booking_id,action,result_json,created_at) VALUES (?,?,?,?,?)").bind(input.idempotencyKey,input.bookingId,input.action,JSON.stringify(result),now),
   ]);
+  /*
+   * The pre-batch check above cannot see a sibling session completing at the same instant: each would
+   * read the other as still outstanding, neither would resolve the ledger, and the CASE WHEN expressions
+   * would still land the booking on 'completed' once both commits are in. Re-read here, after this
+   * session's own update is visible, and resolve then. resolveServiceCompletionFinance posts its journal
+   * under a per-booking group key, so the other completer resolving it too is idempotent rather than
+   * duplicated, and the remembered result is corrected so a replay reports the settled figures.
+   */
+  if(!allComplete){
+   const stillOutstanding=await db.prepare("SELECT COUNT(*) count FROM walking_sessions WHERE booking_id=? AND status!='completed'").bind(booking.id).first<{count:number}>();
+   if(Number(stillOutstanding?.count||0)===0){
+    const settledFinance=await resolveServiceCompletionFinance(db,{bookingId:String(booking.id),actorId:input.actorId,completedAt:now});
+    const settled={...result,allComplete:true,payout:settledFinance.payoutStatus,tax:settledFinance.taxStatus,finance:settledFinance};
+    await db.batch([
+     db.prepare("UPDATE walking_action_keys SET result_json=? WHERE idempotency_key=?").bind(JSON.stringify(settled),input.idempotencyKey),
+     db.prepare("UPDATE walking_session_events SET detail_json=? WHERE id=?").bind(JSON.stringify(settled),eventId),
+    ]);
+   }
+  }
   const stored=await prior(db,input.idempotencyKey,input.bookingId,input.action);if(!stored)throw new Response("Dog Walking completion idempotency record is missing",{status:500});return stored
  }
  

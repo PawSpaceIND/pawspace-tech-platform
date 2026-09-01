@@ -31,8 +31,17 @@ export async function resolveBookingDoorstep(db:Db,bookingId:string):Promise<Boo
  if(await tableExists(db,"booking_service_locations")){
   // status='active' because a superseded location row must not keep geofencing arrivals at an old address.
   const row=await db.prepare("SELECT latitude,longitude FROM booking_service_locations WHERE booking_id=? AND status='active'").bind(bookingId).first<Row>().catch(()=>null);
-  const latitude=coordinate(row?.latitude),longitude=coordinate(row?.longitude);
-  if(latitude!==null&&longitude!==null)return{latitude,longitude,source:"booking_service_locations"};
+  if(row){
+   /*
+    * An active customer location DECIDES, coordinates or not. Falling through to the travel table when
+    * this row exists but has no coordinates would geofence the arrival against a different, older
+    * address the customer has already replaced - the provider would be marked "at the doorstep" while
+    * standing somewhere else. Refusing is the safe answer; the travel table is only consulted when the
+    * customer has set no active location at all.
+    */
+   const latitude=coordinate(row.latitude),longitude=coordinate(row.longitude);
+   return latitude!==null&&longitude!==null?{latitude,longitude,source:"booking_service_locations"}:null;
+  }
  }
  if(await tableExists(db,"booking_service_addresses")){
   const row=await db.prepare("SELECT latitude,longitude FROM booking_service_addresses WHERE booking_id=?").bind(bookingId).first<Row>().catch(()=>null);
