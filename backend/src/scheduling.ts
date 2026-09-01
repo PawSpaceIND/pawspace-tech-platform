@@ -11,6 +11,9 @@ export interface ScheduleRequest {
   petIds: string[];
   scheduledStart: string;
   scheduledEnd: string;
+  latitude?: number;
+  longitude?: number;
+  serviceRadiusKm?: number;
   occurrences?: number;
   cadenceDays?: number;
   weekdays?: number[];
@@ -58,6 +61,14 @@ const minutesOfDay = (value:string,cityId:string) => { const d=localDate(value,c
 const overlaps = (aStart:number,aEnd:number,bStart:number,bEnd:number) => aStart < bEnd && bStart < aEnd;
 const windowCovers=(window:string,start:number,end:number)=>{const match=/^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/.exec(window);if(!match)return false;const from=Number(match[1])*60+Number(match[2]);const to=Number(match[3])*60+Number(match[4]);return start>=from&&end<=to;};
 
+export function haversineDistanceKm(a:{latitude:number;longitude:number},b:{latitude:number;longitude:number}){
+  const valid=(lat:number,lng:number)=>Number.isFinite(lat)&&Number.isFinite(lng)&&lat>=-90&&lat<=90&&lng>=-180&&lng<=180;
+  if(!valid(a.latitude,a.longitude)||!valid(b.latitude,b.longitude))return Number.POSITIVE_INFINITY;
+  const rad=(value:number)=>value*Math.PI/180,R=6371,dLat=rad(b.latitude-a.latitude),dLng=rad(b.longitude-a.longitude),lat1=rad(a.latitude),lat2=rad(b.latitude);
+  const h=Math.sin(dLat/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h));
+}
+
 function buildOccurrences(input:ScheduleRequest):ScheduleOccurrence[] {
   const rule=scheduleRules[input.serviceCode],recurring=input.serviceCode==="dog_training"||input.serviceCode==="dog_walking";
   const requested=recurring?(input.occurrences??1):1;
@@ -66,6 +77,8 @@ function buildOccurrences(input:ScheduleRequest):ScheduleOccurrence[] {
   if(input.weekdays&&(input.weekdays.length<1||input.weekdays.some(day=>day<0||day>6)))throw Object.assign(new Error("Recurring weekdays must use values 0–6"),{statusCode:422});
   const startMs=new Date(input.scheduledStart).getTime(); const endMs=new Date(input.scheduledEnd).getTime();
   if(!Number.isFinite(startMs)||!Number.isFinite(endMs)||endMs<=startMs)throw Object.assign(new Error("Scheduled end must be after start"),{statusCode:422});
+  const hasAnyGeo=input.latitude!==undefined||input.longitude!==undefined||input.serviceRadiusKm!==undefined;
+  if(hasAnyGeo){if(!Number.isFinite(input.latitude)||Number(input.latitude)<-90||Number(input.latitude)>90||!Number.isFinite(input.longitude)||Number(input.longitude)<-180||Number(input.longitude)>180||!Number.isFinite(input.serviceRadiusKm)||Number(input.serviceRadiusKm)<=0)throw Object.assign(new Error("Scheduling geofence requires valid latitude, longitude and a positive serviceRadiusKm"),{statusCode:422});}
   if(input.serviceCode!=="boarding"&&!(input.serviceCode==="pet_sitting"&&input.careMode==="overnight")){
     const duration=(endMs-startMs)/msMinute;
     const required=input.serviceCode==="grooming"?(input.petIds.length>=4?240:input.petIds.length===3?150:120):input.serviceCode==="dog_training"?Math.max(60,input.petIds.length*60):rule.durationMinutes;
@@ -89,6 +102,7 @@ async function evaluateProvider(repository:PlatformRepository,provider:Provider,
   const overnight=input.serviceCode==="boarding"||(input.serviceCode==="pet_sitting"&&input.careMode==="overnight");
   if(input.excludeProviderIds?.includes(provider.id)){eligible=false;reasons.push("Provider excluded after decline or Ops action");}
   if(input.manualProviderId&&provider.id!==input.manualProviderId){eligible=false;reasons.push("Another provider selected by Ops override");}
+  if(input.serviceRadiusKm!==undefined){const located=provider as Provider&{latitude?:number;longitude?:number};const distance=haversineDistanceKm({latitude:Number(input.latitude),longitude:Number(input.longitude)},{latitude:Number(located.latitude),longitude:Number(located.longitude)});if(!Number.isFinite(distance)){eligible=false;reasons.push("Provider has no active geocoded home base for radius verification");}else if(distance>Number(input.serviceRadiusKm)){eligible=false;reasons.push(`Provider is ${distance.toFixed(2)} km from booking, outside ${Number(input.serviceRadiusKm).toFixed(2)} km service radius`);}else reasons.push(`Provider is ${distance.toFixed(2)} km from booking, inside service radius`);}
   for(const rule of input.customRules??[]){const actual=rule.field==="zone"?input.zoneId:rule.field==="capacity"?(provider.capacity??1):rule.field==="providerId"?provider.id:provider[rule.field];const expected=rule.value;const values=Array.isArray(expected)?expected:[expected];const passed=rule.operator==="eq"?actual===expected:rule.operator==="neq"?actual!==expected:rule.operator==="gte"?Number(actual)>=Number(expected):rule.operator==="lte"?Number(actual)<=Number(expected):rule.operator==="in"?values.includes(String(actual)):!values.includes(String(actual));if(!passed){eligible=false;reasons.push(`Custom rule ${rule.code} rejected provider (${rule.field} ${rule.operator} ${String(expected)})`);}}
   if(input.serviceCode==="boarding"&&pets.some(p=>p.vaccinationStatus!=="verified")){eligible=false;reasons.push("Boarding requires verified vaccination");}
   for(const occurrence of occurrences){
@@ -133,7 +147,7 @@ export async function listScheduleSlots(repository:PlatformRepository,input:Omit
   for(let hour=9;hour<19;hour+=input.serviceCode==="grooming"?2:1){
     const localStart=new Date(`${input.date}T${String(hour).padStart(2,"0")}:00:00.000Z`); const start=new Date(localStart.getTime()-cityOffsetMinutes(input.cityId)*msMinute).toISOString(); const end=new Date(new Date(start).getTime()+duration*msMinute).toISOString();
     const decision=await schedule(repository,{...input,petIds:input.petIds??[],scheduledStart:start,scheduledEnd:end}); const eligible=decision.evaluations.filter(e=>e.eligible).length;
-    slots.push({start,end,available:eligible>0,eligibleProviders:eligible,reason:eligible?undefined:"Roster, conflict or capacity unavailable"});
+    slots.push({start,end,available:eligible>0,eligibleProviders:eligible,reason:eligible?undefined:"Roster, conflict, radius or capacity unavailable"});
   }
   return slots;
 }

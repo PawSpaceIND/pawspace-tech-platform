@@ -1,10 +1,23 @@
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
-export async function ensureProviderHomeBaseTables(db:Db){await db.batch([
- db.prepare("CREATE TABLE IF NOT EXISTS provider_home_base (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,address TEXT NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,effective_from INTEGER NOT NULL,effective_until INTEGER,reason TEXT NOT NULL,updated_by TEXT NOT NULL,created_at INTEGER NOT NULL)"),
- db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_home_base_provider ON provider_home_base(provider_id,effective_from)"),
-]);}
+// Home-base reads are fanned out for the provider shortlist. The local D1 harness implements each
+// db.batch() as a real SQLite transaction, so concurrent currentHomeBase() calls must not each start
+// their own setup transaction on the same connection. Share one in-flight setup and run the idempotent
+// DDL statements directly; callers already execute against the active database connection.
+const homeBaseTablesReady=new WeakMap<Db,Promise<void>>();
+
+export async function ensureProviderHomeBaseTables(db:Db){
+ let ready=homeBaseTablesReady.get(db);
+ if(!ready){
+  ready=(async()=>{
+   await db.prepare("CREATE TABLE IF NOT EXISTS provider_home_base (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,address TEXT NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,effective_from INTEGER NOT NULL,effective_until INTEGER,reason TEXT NOT NULL,updated_by TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
+   await db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_home_base_provider ON provider_home_base(provider_id,effective_from)").run();
+  })();
+  homeBaseTablesReady.set(db,ready);
+ }
+ try{await ready;}catch(error){homeBaseTablesReady.delete(db);throw error;}
+}
 
 function text(v:unknown){return String(v??"").trim();}
 
