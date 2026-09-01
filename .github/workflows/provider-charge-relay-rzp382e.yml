@@ -18,7 +18,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Inspect failed signed Test subscription charge
+      - name: Inspect staging webhook inbox schema and failed event
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -26,11 +26,11 @@ jobs:
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
-          const cf=async(sql,params=[])=>{const r=await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID)}/d1/database/${encodeURIComponent(process.env.STAGING_D1_ID)}/query`,{method:'POST',headers:{authorization:`Bearer ${process.env.CLOUDFLARE_API_TOKEN}`,'content-type':'application/json'},body:JSON.stringify({sql,params})});const b=await r.json();if(!r.ok||b?.success!==true||b?.result?.[0]?.success!==true)throw new Error('D1 query failed');return b.result[0].results||[]};
+          const cf=async(sql,params=[])=>{const r=await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID)}/d1/database/${encodeURIComponent(process.env.STAGING_D1_ID)}/query`,{method:'POST',headers:{authorization:`Bearer ${process.env.CLOUDFLARE_API_TOKEN}`,'content-type':'application/json'},body:JSON.stringify({sql,params})});const b=await r.json();if(!r.ok||b?.success!==true||b?.result?.[0]?.success!==true)throw new Error(`D1 query failed ${JSON.stringify(b?.errors||b?.result?.[0]?.error||b)}`);return b.result[0].results||[]};
           const eventId='evt_rzp382e_subscription_charged_relay_v1';
-          const inbox=(await cf("SELECT event_id,event_type,processing_status,failure_reason,received_at,processed_at FROM gateway_webhook_events WHERE provider='razorpay' AND event_id=?",[eventId]))[0]||null;
+          const schema=await cf('PRAGMA table_info(gateway_webhook_events)');
+          const inbox=(await cf("SELECT * FROM gateway_webhook_events WHERE provider='razorpay' AND event_id=?",[eventId]))[0]||null;
           const cycles=await cf("SELECT id,provider_payment_id,provider_event_id,amount_paise,status,accounting_status,accounting_error FROM subscription_billing_cycles WHERE provider_payment_id='pay_TWgmGExMvHg9kZ'");
           const billingEvents=await cf("SELECT provider_event_id,event_type,provider_status,detail_json FROM subscription_billing_events WHERE provider_event_id=?",[eventId]);
-          console.log(JSON.stringify({inbox,cycles,billingEvents}));
-          if(!inbox)throw new Error('failed webhook inbox row missing');
+          console.log(JSON.stringify({schema:schema.map(r=>r.name),inbox,cycles,billingEvents}));
           NODE
