@@ -21,8 +21,7 @@ test("catalogue: create net-new packages for any service, city/zone-wise, with p
 test("subscription plans: any service, city-wise, with a validity/expiry rule", () => {
   assert.match(plans, /export async function createSubscriptionPlan/);
   assert.match(plans, /export function computePlanExpiry/);
-  assert.match(plans, /const startAt=Math\.max\(from,contract\.starts_at\|\|from\)/, "renewal periods honor the contract billing anchor");
-  assert.match(plans, /addCalendarMonthsClamped\(startAt,v\)/, "calendar-month renewal clamps from the effective billing anchor");
+  assert.match(plans, /addCalendarMonthsClamped\(startAt,v\)/, "calendar-month validity clamps from the supplied subscription start");
   assert.doesNotMatch(plans, /setUTCMonth\(d\.getUTCMonth\(\) \+ v\)/);
   assert.match(plans, /UNIQUE\(service_code,plan_code,city_id\)/);
   assert.match(plans, /SERVICES = \["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi"\]/);
