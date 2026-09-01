@@ -17,22 +17,31 @@ jobs:
     env:
       AUTH_URL: https://rzp.io/rzp/4QgT6Lh
       SUBSCRIPTION_ID: sub_TWg9yixMBHpX2w
+      CERT_KEY: rzp382-20260901e
+      STAGING_D1_ID: 1b879a28-c8a9-40b0-830d-1ce439061a00
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
       RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
     steps:
-      - name: Guard Test Mode subscription
+      - name: Guard Test Mode subscription and load disposable UAT contact
         shell: bash
         run: |
           set -euo pipefail
           case "$RAZORPAY_KEY_ID_SANDBOX" in rzp_test_*) ;; *) echo "Refusing non-test Razorpay key" >&2; exit 1;; esac
           node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
           const id=process.env.SUBSCRIPTION_ID;
           const auth=`Basic ${Buffer.from(`${process.env.RAZORPAY_KEY_ID_SANDBOX}:${process.env.RAZORPAY_KEY_SECRET_SANDBOX}`).toString('base64')}`;
           const r=await fetch(`https://api.razorpay.com/v1/subscriptions/${encodeURIComponent(id)}`,{headers:{authorization:auth},redirect:'manual'});
           const b=await r.json(); if(!r.ok||b.id!==id) throw new Error('Test subscription guard failed');
-          console.log(JSON.stringify({mode:'test',id:b.id,status:b.status,planId:b.plan_id,shortUrlPresent:Boolean(b.short_url)}));
+          const q=await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID)}/d1/database/${encodeURIComponent(process.env.STAGING_D1_ID)}/query`,{method:'POST',headers:{authorization:`Bearer ${process.env.CLOUDFLARE_API_TOKEN}`,'content-type':'application/json'},body:JSON.stringify({sql:'SELECT phone FROM provider_certification_runs WHERE cert_key=? AND provider_subscription_id=?',params:[process.env.CERT_KEY,id]})});
+          const qb=await q.json(); const phone=String(qb?.result?.[0]?.results?.[0]?.phone||'');
+          if(!/^[6-9][0-9]{9}$/.test(phone)) throw new Error('Disposable UAT certification phone is invalid or missing');
+          appendFileSync(process.env.GITHUB_ENV,`CERT_PHONE=${phone}\n`);
+          console.log(JSON.stringify({mode:'test',id:b.id,status:b.status,planId:b.plan_id,uatContactLoaded:true}));
           NODE
-      - name: Inspect payment form after valid synthetic contact
+      - name: Inspect card mandate form using lifecycle contact
         shell: bash
         run: |
           set -euo pipefail
@@ -47,31 +56,25 @@ jobs:
           await page.goto(process.env.AUTH_URL,{waitUntil:'domcontentloaded',timeout:60000}); await page.waitForTimeout(4000);
           await page.getByRole('button',{name:'Start Subscription'}).click(); await page.waitForTimeout(7000);
           const checkout=page.frames().find(f=>f.url().includes('/v1/checkout/public')); if(!checkout) throw new Error('checkout frame missing');
-          const contact=checkout.locator('input[name="contact"]'); if(await contact.count()) await contact.fill('9876543210');
-          const email=checkout.locator('input[name="email"]'); if(await email.count()) await email.fill('provider-cert-e@example.com');
+          const contact=checkout.locator('input[name="contact"]');
+          await contact.click(); await contact.press('Control+A'); await contact.type(process.env.CERT_PHONE,{delay:80});
+          const email=checkout.locator('input[name="email"]'); await email.click(); await email.type('provider-cert-e@example.com',{delay:40});
           const cont=checkout.getByRole('button',{name:'Continue'}); if(await cont.count()!==1) throw new Error('Contact Continue button missing');
           await cont.click(); await page.waitForTimeout(4000);
-          const overlay=checkout.locator('#overlay-backdrop');
-          const overlayVisible=await overlay.isVisible().catch(()=>false);
-          const overlayText=overlayVisible ? (await overlay.innerText().catch(()=>'')) : '';
+          const overlay=checkout.locator('#overlay-backdrop'); const overlayVisible=await overlay.isVisible().catch(()=>false);
           let selected='none';
-          if(!overlayVisible){
-            const card=checkout.locator('[data-testid="card"]');
-            if(await card.count()){await card.click(); selected='card'; await page.waitForTimeout(3500);}
-          }
+          if(!overlayVisible){const card=checkout.locator('[data-testid="card"]'); if(await card.count()){await card.click(); selected='card'; await page.waitForTimeout(3500);}}
           const controls=await checkout.locator('input,button,[role="button"],[data-testid]').evaluateAll(els=>els.slice(0,160).map((e,i)=>({i,tag:e.tagName,testid:e.getAttribute('data-testid'),type:e.getAttribute('type'),name:e.getAttribute('name'),placeholder:e.getAttribute('placeholder'),autocomplete:e.getAttribute('autocomplete'),text:(e.innerText||e.textContent||'').trim().replace(/\s+/g,' ').slice(0,180),disabled:Boolean(e.disabled)})));
-          const captchaFrames=page.frames().filter(f=>f.url().includes('hcaptcha')).map(f=>f.url());
-          console.log(JSON.stringify({mode:'test',subscriptionId:process.env.SUBSCRIPTION_ID,contactAccepted:!overlayVisible,overlayText:overlayText.trim().replace(/\s+/g,' ').slice(0,500),selected,captchaFrameCount:captchaFrames.length,controls},null,2));
-          await page.screenshot({path:'mandate-valid-contact-form.png',fullPage:true});
-          await browser.close();
+          console.log(JSON.stringify({mode:'test',subscriptionId:process.env.SUBSCRIPTION_ID,contactAccepted:!overlayVisible,selected,controls},null,2));
+          await page.screenshot({path:'mandate-lifecycle-contact-form.png',fullPage:true}); await browser.close();
           NODE
-          node inspect.mjs | tee mandate-valid-contact-form.json.log
-          cp mandate-valid-contact-form.png "$GITHUB_WORKSPACE/mandate-valid-contact-form.png"
-          cp mandate-valid-contact-form.json.log "$GITHUB_WORKSPACE/mandate-valid-contact-form.json.log"
+          node inspect.mjs | tee mandate-lifecycle-contact-form.json.log
+          cp mandate-lifecycle-contact-form.png "$GITHUB_WORKSPACE/mandate-lifecycle-contact-form.png"
+          cp mandate-lifecycle-contact-form.json.log "$GITHUB_WORKSPACE/mandate-lifecycle-contact-form.json.log"
       - name: Upload inspection evidence
         uses: actions/upload-artifact@v4
         with:
-          name: mandate-valid-contact-form-rzp382-20260901e
+          name: mandate-lifecycle-contact-form-rzp382-20260901e
           path: |
-            mandate-valid-contact-form.png
-            mandate-valid-contact-form.json.log
+            mandate-lifecycle-contact-form.png
+            mandate-lifecycle-contact-form.json.log
