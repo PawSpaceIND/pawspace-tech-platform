@@ -21,6 +21,14 @@ test("Razorpay recurring adapter exposes governed lifecycle operations and fail-
   assert.match(source,/reconciliation_required|Razorpay provider request timed out/);
 });
 
+test("subscription start exposes only a validated Razorpay authorisation URL for created mandates",()=>{
+  const route=read("app/api/subscription-billing/route.ts");
+  assert.match(route,/fetchRazorpaySubscription/);
+  assert.match(route,/host==="rzp\.io"\|\|host==="razorpay\.com"\|\|host\.endsWith\("\.razorpay\.com"\)/);
+  assert.match(route,/subscription_authorization_url_missing_or_invalid/);
+  assert.match(route,/authorizationUrl:url/);
+});
+
 test("billing state machine maps provider dunning and terminal states",()=>{
   const source=read("lib/subscription-billing.ts");
   assert.match(source,/case"pending":return"past_due"/);
