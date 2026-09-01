@@ -1,0 +1,1 @@
+Non-production closure trigger pinned to certified pre-#392 base 94cddc063297796f24ea1a2a0975b62a2fdbe1b2.
