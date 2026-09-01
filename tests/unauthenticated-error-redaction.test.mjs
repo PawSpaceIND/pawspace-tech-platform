@@ -197,14 +197,13 @@ test("the success path is unchanged: a healthy database still returns data", asy
   }
 });
 
-test("the governed boundary logs the original fault exactly once per failure", async () => {
+test("the governed boundary logs one sanitized event without the original fault detail", async () => {
   useFailingDb();
   const route = await import("../app/api/service-availability/route.ts");
   const { logged } = await withCapturedLog(() => route.GET(new Request("https://pawspace.example/api/service-availability")));
-  // Asserted on the fault text, not on any helper's prefix: the requirement is that the original
-  // reaches the server log once, whichever governed helper carries it there.
-  const relevant = logged.filter((line) => line.includes("SQLITE_ERROR"));
-  assert.equal(relevant.length, 1, `expected exactly one server-side log line carrying the fault, saw ${JSON.stringify(logged)}`);
+  assert.equal(logged.length, 1, `expected exactly one sanitized server-side event, saw ${JSON.stringify(logged)}`);
+  assert.match(logged[0], /\[api\] request failed/);
+  assert.doesNotMatch(logged[0], /SQLITE_ERROR|secret_customer_table|sentinel-42/);
 });
 
 // ---------------------------------------------------------------------------

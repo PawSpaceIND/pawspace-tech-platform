@@ -7,7 +7,7 @@ installWorkersHooks("__LEAK1_DB__", "__LEAK1_ENV__");
 const { authError, authFailure } = await import("../lib/server-auth.ts");
 const schedulingRoute = await import("../app/api/uat-scheduling/route.ts");
 
-test("unexpected API exceptions are logged internally but return only the generic fallback", async () => {
+test("unexpected API exceptions emit sanitized metadata and return only the generic fallback", async () => {
   const internalDetail = "SQLITE_CONSTRAINT secret_table.customer_email";
   const originalError = console.error;
   const logged = [];
@@ -19,9 +19,29 @@ test("unexpected API exceptions are logged internally but return only the generi
     const body = await response.json();
     assert.deepEqual(body, { error: "Scheduling failed" });
     assert.doesNotMatch(JSON.stringify(body), /SQLITE_CONSTRAINT|secret_table|customer_email/);
-    assert.equal(logged.length, 1, "the original exception must still be available to server-side logs");
-    assert.match(String(logged[0][0]), /unexpected error/i);
-    assert.equal(logged[0][1] instanceof Error, true);
+    assert.equal(logged.length, 1, "one structured failure event must be emitted");
+    assert.equal(logged[0][0], "[api] request failed");
+    assert.deepEqual(logged[0][1], { event: "api_request_failed", classification: "unexpected", errorType: "Error" });
+    assert.doesNotMatch(JSON.stringify(logged), /SQLITE_CONSTRAINT|secret_table|customer_email/);
+  } finally {
+    console.error = originalError;
+  }
+});
+
+test("ungoverned client responses never write response bodies or headers to logs", async () => {
+  const unsafe = Response.json(
+    { error: "customer cus_secret and bearer token_secret" },
+    { status: 409, headers: { authorization: "Bearer token_secret", "x-customer-id": "cus_secret" } },
+  );
+  const originalError = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args);
+  try {
+    const response = authError(unsafe, "Request failed");
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: "Request failed" });
+    assert.deepEqual(logged, [["[api] request failed", { event: "api_request_failed", classification: "ungoverned_client", errorType: "Response", status: 409 }]]);
+    assert.doesNotMatch(JSON.stringify(logged), /cus_secret|token_secret|authorization|x-customer-id/i);
   } finally {
     console.error = originalError;
   }
