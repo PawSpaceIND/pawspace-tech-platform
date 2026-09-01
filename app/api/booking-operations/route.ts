@@ -239,7 +239,7 @@ export async function POST(request: Request) {
     if (input.action === "refund_status") {
       const refund = await db.prepare("SELECT * FROM booking_refund_cases WHERE id=? AND booking_id=?").bind(input.refundCaseId,input.bookingId).first<Record<string,unknown>>();
       if (!refund) return json({ error: "Refund case not found" }, 404);
-      const transitions:Record<string,string[]>={requested:["approved","rejected"],approved:["processing"],processing:["completed"]};
+      const transitions:Record<string,string[]>={requested:["approved","rejected"],approved:["processing"],processing:["completed"],processed:["completed"]};
       if (!(transitions[String(refund.status)]??[]).includes(String(input.refundStatus))) return json({ error: `Refund cannot move from ${String(refund.status)} to ${String(input.refundStatus)}` },409);
       if (input.refundStatus === "approved" && String(refund.requested_by) === actor.email) return json({ error: "Segregation of duties: the refund requester cannot approve their own refund" }, 409);
       if (input.refundStatus === "completed") {
