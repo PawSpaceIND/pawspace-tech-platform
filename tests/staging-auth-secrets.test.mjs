@@ -78,10 +78,10 @@ test("no authentication secret has a committed usable fallback", () => {
 });
 
 /** Run the real script in a throwaway directory with a stub build output. */
-function runStageConfig(env) {
+function runStageConfig(env, buildVars = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "stage-config-"));
   fs.mkdirSync(path.join(dir, "dist", "server"), { recursive: true });
-  fs.writeFileSync(path.join(dir, "dist", "server", "wrangler.json"), JSON.stringify({ name: "x", vars: {} }));
+  fs.writeFileSync(path.join(dir, "dist", "server", "wrangler.json"), JSON.stringify({ name: "x", vars: buildVars }));
   const script = new URL("../scripts/stage-config.mjs", import.meta.url).pathname;
   try {
     const stdout = execFileSync(process.execPath, [script], { cwd: dir, env: { PATH: process.env.PATH, ...env }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -452,4 +452,38 @@ test("NO file in the repository gives any UAT credential a committed fallback", 
   };
   walk(".");
   assert.deepEqual([...new Set(offenders)].sort(), [], "these give a UAT credential a usable committed value");
+});
+
+// --- the build output must not decide what a deployment runs -------------------------------------
+// vite.config.ts writes vars {PAWSPACE_LOCAL_PREVIEW:"on", PAWSPACE_SCHEDULING_ENV:"uat"} into
+// dist/server/wrangler.json. stage-config.mjs used to spread those into the staging config, so
+// deployed staging shipped PAWSPACE_LOCAL_PREVIEW:"on" - two thirds of the local-preview gate, with
+// only an unset NODE_ENV refusing an authentication-free actor.
+const BUILD_VARS = { PAWSPACE_LOCAL_PREVIEW: "on", PAWSPACE_SCHEDULING_ENV: "uat" };
+
+test("real execution: development-only vars in the build output never reach the staging config", () => {
+  const result = runStageConfig(GOOD, BUILD_VARS);
+  assert.equal(result.code, 0, `the deploy still configures: ${result.stderr || ""}`);
+  assert.ok(!("PAWSPACE_LOCAL_PREVIEW" in result.config.vars),
+    `PAWSPACE_LOCAL_PREVIEW must not be deployed: ${JSON.stringify(result.config.vars)}`);
+  assert.doesNotMatch(result.raw, /PAWSPACE_LOCAL_PREVIEW/, "and must not survive anywhere in the written config");
+});
+
+test("real execution: staging still DECLARES the environment values it genuinely needs", () => {
+  // Non-vacuity, and the reason this is a declaration rather than a deletion. Dropping
+  // PAWSPACE_SCHEDULING_ENV would stop governed commercial terms being seeded and break staging
+  // completions; it is present because staging asked for it, not because the build leaked it.
+  const result = runStageConfig(GOOD, BUILD_VARS);
+  assert.equal(result.config.vars.PAWSPACE_SCHEDULING_ENV, "uat");
+  assert.equal(result.config.vars.PAWSPACE_DEPLOYMENT_ENV, "staging");
+  assert.equal(result.config.vars.PAWSPACE_PAYMENT_ENV, "sandbox");
+});
+
+test("real execution: an unseen build var cannot ride in either", () => {
+  // The build output is not trusted as a source of deployment configuration at all, so a var nobody
+  // has thought about yet is dropped rather than inherited.
+  const result = runStageConfig(GOOD, { ...BUILD_VARS, SOME_FUTURE_DEV_VAR: "on" });
+  assert.equal(result.code, 0);
+  assert.ok(!("SOME_FUTURE_DEV_VAR" in result.config.vars),
+    `staging declares its vars; it does not inherit them: ${JSON.stringify(result.config.vars)}`);
 });
