@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   apply-fixtures:
-    if: github.event.head_commit.message != 'test: converge remaining UAT fixture contracts'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,6 +19,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [ "$(git log -1 --pretty=%s)" = "test: converge remaining UAT fixture contracts" ]; then
+            exit 0
+          fi
           cat .github/uat-fixture-chunks/chunk-* > /tmp/payload.b64
           base64 -d /tmp/payload.b64 > /tmp/payload.tgz
           echo 'acf67973f01a28d0db3140b62d01a437170011e3198aad054c512486dd0518aa  /tmp/payload.tgz' | sha256sum -c -
