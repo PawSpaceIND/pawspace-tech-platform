@@ -25,18 +25,23 @@ test("Walking pricing parser tolerates null pricing", () => {
   assert.match(walkingSource, /pricing\?\.perWalkAmount/);
 });
 
-test("Walking completion commits state, payment, audit, notifications and idempotency in one batch", () => {
+test("Walking completion records payment, audit, notification, idempotency and governed final finance", () => {
   const start = walkingSource.indexOf('if(input.action==="complete_walk")');
   const end = walkingSource.indexOf('throw new Response("Unsupported Dog Walking lifecycle action"');
   const block = walkingSource.slice(start, end);
   assert.ok(start >= 0 && end > start);
   assert.match(block, /await db\.batch\(\[/);
   assert.match(block, /walking_session_payment_events/);
-  assert.match(block, /walking_session_events/);
-  assert.match(block, /const eventId=await event\(db,booking,sessionId,"walk_completed"/);
-  assert.match(block, /await notify\(db,booking,eventId,allComplete\?/);
-  assert.match(block, /return remember\(db,input,\{/);
-  assert.match(block, /SELECT COUNT\(\*\) count FROM walking_sessions WHERE booking_id=\? AND status!='completed'/);
+  assert.match(block, /walk_completed/);
+  assert.match(block, /resolveServiceCompletionFinance/);
+  assert.match(block, /Your PawSpace Walking programme is complete/);
+  assert.match(block, /Your PawSpace walk is complete/);
+  assert.match(block, /await event\(/);
+  assert.match(block, /await notify\(/);
+  assert.match(block, /return remember\(/);
+  assert.match(block, /gpsConnected:true/);
+  assert.match(block, /payout:finance\?\.payoutStatus/);
+  assert.match(block, /tax:finance\?\.taxStatus/);
 });
 
 test("Walking client rejects parsed null or non-object JSON safely", () => {
