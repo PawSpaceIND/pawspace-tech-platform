@@ -1,6 +1,9 @@
 import test from"node:test";
 import assert from"node:assert/strict";
 import{readFile}from"node:fs/promises";
+import{installWorkersHooks}from"./helpers/module-hooks.mjs";
+
+installWorkersHooks("__PILOT_API_READINESS_DB__","__PILOT_API_READINESS_ENV__");
 
 const read=(path)=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
 
