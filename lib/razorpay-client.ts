@@ -2,9 +2,10 @@
  * Environment-aware, fail-closed Razorpay order/refund adapter for the CUSTOMER verify-first payment
  * path. All provider-bound money is converted to integer paise before the HTTP boundary.
  */
+import { paymentEnvironment, type PaymentEnvironment } from "./payment-environment";
 
 type RazorEnv = Record<string, unknown>;
-export type PaymentEnvironment = "sandbox" | "live";
+export type { PaymentEnvironment } from "./payment-environment";
 export type OrderResult =
   | { connected: true; environment: PaymentEnvironment; order: Record<string, unknown> }
   | { connected: false; environment: PaymentEnvironment; reason: string };
@@ -12,9 +13,7 @@ export type PaymentLinkResult =
   | { connected: true; environment: "sandbox"; paymentLink: Record<string, unknown> }
   | { connected: false; environment: PaymentEnvironment; reason: string };
 
-export function paymentEnvironment(env: RazorEnv): PaymentEnvironment {
-  return String(env?.PAWSPACE_PAYMENT_ENV || "sandbox").toLowerCase() === "sandbox" ? "sandbox" : "live";
-}
+export { paymentEnvironment } from "./payment-environment";
 
 function credentials(env: RazorEnv): { environment: PaymentEnvironment; keyId: string; keySecret: string } {
   const environment = paymentEnvironment(env);
@@ -89,6 +88,12 @@ export function publicKeyId(env: RazorEnv): string {
 /** Paise-native order creation used by the durable financial outbox worker. */
 export async function createPaymentOrderPaise(env: RazorEnv, input: { bookingId: string; paymentId: string; amountPaise: number; currency: string }): Promise<OrderResult> {
   const { environment, keyId, keySecret } = credentials(env);
+  try { providerBase(env, environment); } catch (error) {
+    return { connected: false, environment, reason: `Razorpay request failed: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  if (environment === "live" && env?.PAWSPACE_PAYMENT_LIVE_APPROVED !== "true") {
+    return { connected: false, environment, reason: "Live Razorpay order creation is blocked until PAWSPACE_PAYMENT_LIVE_APPROVED is exactly 'true'" };
+  }
   if (!keyId || !keySecret) return { connected: false, environment, reason: `Razorpay ${environment} API credentials are not configured - online payment is not connected yet` };
   let amountPaise: number;
   try { amountPaise = assertPositivePaise(input.amountPaise); } catch (error) { return { connected: false, environment, reason: error instanceof Error ? error.message : String(error) }; }
@@ -108,9 +113,10 @@ export async function createPaymentOrderPaise(env: RazorEnv, input: { bookingId:
 
 /** Compatibility boundary: convert decimal rupees exactly, never with floating-point multiplication. */
 export async function createPaymentOrder(env: RazorEnv, input: { bookingId: string; paymentId: string; amount: number; currency: string }): Promise<OrderResult> {
+  const environment = paymentEnvironment(env);
   let amountPaise: number;
   try { amountPaise = exactRupeesToPaise(input.amount); } catch (error) {
-    return { connected: false, environment: paymentEnvironment(env), reason: error instanceof Error ? error.message : String(error) };
+    return { connected: false, environment, reason: error instanceof Error ? error.message : String(error) };
   }
   return createPaymentOrderPaise(env, { bookingId: input.bookingId, paymentId: input.paymentId, amountPaise, currency: input.currency });
 }
