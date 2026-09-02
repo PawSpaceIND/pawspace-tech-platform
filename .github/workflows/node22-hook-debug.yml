@@ -1,0 +1,64 @@
+name: Node 22 Hook Debug
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: node22-hook-debug-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  node22-hook-debug:
+    name: Node 22.16 hook debug artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Collect shared-hook suites
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t suites < <(grep -l "helpers/module-hooks.mjs" tests/*.test.mjs | sort)
+          test "${#suites[@]}" -gt 0
+          printf '%s\n' "${suites[@]}" > hook_debug_suites.txt
+      - name: Capture untruncated registerHooks stdout and stderr
+        shell: bash
+        run: |
+          set -uo pipefail
+          node -e "const m=require('node:module');if(typeof m.registerHooks!=='function'){console.error('this runner has no registerHooks - cannot diagnose Node >= 22.15 path');process.exit(1)}" > hook_debug_output.log 2>&1
+          preflight_status=$?
+          if [ "$preflight_status" -eq 0 ]; then
+            mapfile -t suites < hook_debug_suites.txt
+            PAWSPACE_LOCAL_PREVIEW=on NODE_ENV=test node --experimental-strip-types --test "${suites[@]}" >> hook_debug_output.log 2>&1
+            test_status=$?
+          else
+            test_status=$preflight_status
+          fi
+          printf '%s\n' "$test_status" > hook_debug_status.txt
+          cat hook_debug_output.log
+          exit 0
+      - name: Upload raw Node 22 hook debug output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: node22-hook-debug
+          path: |
+            hook_debug_output.log
+            hook_debug_status.txt
+            hook_debug_suites.txt
+          if-no-files-found: error
+      - name: Propagate hook test result
+        if: always()
+        shell: bash
+        run: |
+          test -f hook_debug_status.txt
+          exit "$(cat hook_debug_status.txt)"
