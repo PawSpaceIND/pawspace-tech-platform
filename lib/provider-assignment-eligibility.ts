@@ -106,7 +106,12 @@ export async function assertProviderAssignable(db:Db,providerId:string,at=Date.n
 
 /** Providers from a candidate list whose verification is currently valid. Used by the matching read. */
 export async function filterAssignableProviders<T extends{id:string}>(db:Db,providers:T[],at=Date.now()){
-  const verdicts=await Promise.all(providers.map(provider=>providerAssignmentBlock(db,provider.id,at).catch(()=>null)));
+  // D1 batches are transactions. Evaluating candidates with Promise.all used to let every candidate
+  // enter verification-schema initialization concurrently on the same request/connection, which can
+  // surface as a nested/concurrent transaction 500 before scheduling reaches reservation insertion.
+  // Preserve the exact eligibility policy while serializing these read-side checks.
+  const verdicts:Array<AssignmentBlock|null>=[];
+  for(const provider of providers)verdicts.push(await providerAssignmentBlock(db,provider.id,at).catch(()=>null));
   return providers.filter((_,index)=>!verdicts[index]?.blocked);
 }
 
