@@ -19,6 +19,7 @@ import {ensureProviderBookingGuard,providerUnavailableForWindow} from "../../../
 import {cleanupExpiredReservationLeases,ensureSchedulingReservationLeaseGovernance} from "../../../lib/scheduling-reservation-leases";
 import {postCollectionEvent} from "../../../lib/collection-ledger";
 import {cityBookingVerdict} from "../../../lib/city-status-authority";
+import {withRetryingD1Writes} from "../../../lib/d1-write-retry";
 
 type LifecycleInput={
   idempotencyKey:string;scheduleGroupId:string;customer:{id:string;name:string;primaryPhone:string;secondaryPhone?:string;email?:string};
@@ -35,7 +36,7 @@ type LifecycleInput={
 type SubscriptionPlan={planCode:string;sessions:number;validityValue:number;validityUnit:"days"|"months";reserveSessions:number;servicePackageCode:string;cityId:string;zoneId?:string|null;familyWallet:boolean;pauseDays:number;graceDays:number;renewalWindowDays:number;benefits:unknown[];terms:Record<string,unknown>};
 const services=new Set(["grooming","dog_training","boarding","pet_sitting"]);
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
-async function database(){const {env}=await import("cloudflare:workers");return env.DB;}
+async function database(){const {env}=await import("cloudflare:workers");return withRetryingD1Writes(env.DB);}
 // Live UNLESS sandbox is explicitly declared. The verify-first exemption - recording a client-asserted
 // {status:"captured"} as collected money - is a sandbox CAPABILITY, and an absent variable is not a
 // declaration. Credential and webhook-secret selection keep their documented "unset -> sandbox" default
@@ -160,7 +161,7 @@ const petFills=(column:string)=>`(${blank(`canonical_pets.${column}`)}='' AND ${
 const petKeep=(column:string)=>`${column}=CASE WHEN ${petFills(column)} THEN excluded.${column} ELSE canonical_pets.${column} END`;
 const VACCINATION_FILLS=`(LOWER(${blank("canonical_pets.vaccination_status")}) IN ('','not_provided') AND LOWER(${blank("excluded.vaccination_status")}) NOT IN ('','not_provided'))`;
 const PET_UPSERT=`INSERT INTO canonical_pets (id,customer_id,name,species,breed,vaccination_status,source_pet_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET ${PET_FIELDS.map(petKeep).join(",")},vaccination_status=CASE WHEN ${VACCINATION_FILLS} THEN excluded.vaccination_status ELSE canonical_pets.vaccination_status END,updated_at=CASE WHEN ${[...PET_FIELDS.map(petFills),VACCINATION_FILLS].join(" OR ")} THEN excluded.updated_at ELSE canonical_pets.updated_at END WHERE canonical_pets.customer_id=excluded.customer_id`;
-async function ensureTables(db:Awaited<ReturnType<typeof database>>){await db.batch([
+async function ensureTablesUncached(db:Awaited<ReturnType<typeof database>>){const required=["canonical_customers","canonical_pets","canonical_bookings","provider_work_orders","booking_payments","booking_lifecycle_events","booking_subscription_usage","customer_grooming_subscriptions","grooming_subscription_purchase_snapshots","idx_booking_lifecycle_events_booking","idx_canonical_pets_customer"];const existing=await db.prepare(`SELECT name FROM sqlite_master WHERE name IN (${required.map(()=>"?").join(",")})`).bind(...required).all<Record<string,unknown>>();if(new Set(existing.results.map(row=>String(row.name))).size===required.length)return;await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'uat_customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS canonical_pets (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,name TEXT NOT NULL,species TEXT NOT NULL,breed TEXT,vaccination_status TEXT NOT NULL DEFAULT 'not_provided',source_pet_id TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,pet_ids_json TEXT NOT NULL,source_pet_ids_json TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,service_code TEXT NOT NULL,package_code TEXT NOT NULL,package_name TEXT NOT NULL,schedule_group_id TEXT NOT NULL UNIQUE,provider_id TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'confirmed',channel TEXT NOT NULL DEFAULT 'customer_app',total_amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',pricing_json TEXT NOT NULL DEFAULT '{}',created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
@@ -175,6 +176,9 @@ async function ensureTables(db:Awaited<ReturnType<typeof database>>){await db.ba
   db.prepare("CREATE INDEX IF NOT EXISTS idx_booking_lifecycle_events_booking ON booking_lifecycle_events(booking_id,occurred_at)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_canonical_pets_customer ON canonical_pets(customer_id)"),
 ]);}
+const canonicalTablesReady=new WeakMap<object,Promise<void>>();
+async function ensureTables(db:Awaited<ReturnType<typeof database>>){const key=db as object;let pending=canonicalTablesReady.get(key);if(!pending){pending=ensureTablesUncached(db);canonicalTablesReady.set(key,pending);pending.catch(()=>{if(canonicalTablesReady.get(key)===pending)canonicalTablesReady.delete(key);});}return pending;}
+
 /*
  * The service-wide window guard, and the three verticals that re-state it, all ask ONE question: is the
  * booking window the window that was reserved? A window is an instant, not a string - see

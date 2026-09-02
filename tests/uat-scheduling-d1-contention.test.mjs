@@ -9,12 +9,12 @@ test("D1 scheduling write retry uses bounded exponential backoff for transient S
   const delays=[];
   const result=await retry.withD1WriteRetry(async()=>{
     attempts+=1;
-    if(attempts<4){const error=new Error("database is locked");error.code="SQLITE_BUSY";throw error;}
+    if(attempts<3){const error=new Error("database is locked");error.code="SQLITE_BUSY";throw error;}
     return "ok";
   },{attempts:6,baseDelayMs:10,maxDelayMs:160,random:()=>0,sleep:async delay=>{delays.push(delay);}});
   assert.equal(result,"ok");
-  assert.equal(attempts,4);
-  assert.deepEqual(delays,[10,20,40]);
+  assert.equal(attempts,3);
+  assert.deepEqual(delays,[5,10]);
 });
 
 test("D1 scheduling write retry never retries SQLITE_CONSTRAINT",async()=>{
@@ -58,3 +58,8 @@ test("POST /api/uat-scheduling wires retrying D1 and converts database conflicts
   const post=source.slice(source.indexOf("export async function POST"),source.indexOf("export async function GET"));
   assert.doesNotMatch(post,/isSqliteConstraintError\(error\)[\s\S]*?authError\(error,"Scheduling failed"\)[\s\S]*?isSqliteConstraintError/);
 });
+
+
+test("D1 retry policy hard-caps caller retry storms",async()=>{let attempts=0;const delays=[];await assert.rejects(()=>retry.withD1WriteRetry(async()=>{attempts+=1;const error=new Error("database is busy");error.code="SQLITE_BUSY";throw error;},{attempts:99,baseDelayMs:100,maxDelayMs:1000,maxTotalDelayMs:1000,random:()=>0.999999,sleep:async delay=>{delays.push(delay);}}),error=>retry.isSqliteBusyError(error));assert.equal(attempts,3);assert.deepEqual(delays,[50,50]);});
+
+test("Track 3 write hot paths are bounded and atomic",()=>{const scheduling=fs.readFileSync(new URL("../app/api/uat-scheduling/route.ts",import.meta.url),"utf8");const leases=fs.readFileSync(new URL("../lib/scheduling-reservation-leases.ts",import.meta.url),"utf8");const canonical=fs.readFileSync(new URL("../app/api/canonical-bookings/route.ts",import.meta.url),"utf8");assert.match(scheduling,/schedulingTablesReady=new WeakMap/);assert.match(scheduling,/SELECT provider_id,date,zone_id FROM scheduling_availability/);assert.match(scheduling,/statements\.length===1\?\[await statements\[0\]!\.run\(\)\]/);assert.match(scheduling,/ON CONFLICT\(provider_id,scheduled_start,scheduled_end\)/);assert.match(leases,/cleanupRunning=new WeakMap/);assert.match(leases,/SELECT DISTINCT r\.group_id/);assert.doesNotMatch(leases,/for\(const row of rows\.results\)/);assert.match(canonical,/withRetryingD1Writes\(env\.DB\)/);assert.match(canonical,/canonicalTablesReady=new WeakMap/);});
