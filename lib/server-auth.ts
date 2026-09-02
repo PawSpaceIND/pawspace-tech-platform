@@ -122,5 +122,6 @@ export function authError(error:unknown,fallback="Request failed"){
     }
   }
   console.error("[api] unexpected error",error);
-  return Response.json({error:fallback},{status:500,headers:{"cache-control":"no-store"}});
+  const diagnostic=error instanceof Error?`${error.name}: ${error.message}`:String(error);
+  return Response.json({error:`${fallback} [isolated-diagnostic: ${diagnostic}]`},{status:500,headers:{"cache-control":"no-store"}});
 }
