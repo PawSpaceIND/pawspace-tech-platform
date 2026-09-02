@@ -4,7 +4,7 @@ import {createAssignmentOffer,ensureProviderCapacityTables,getGovernedProvider,l
 import {authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit,type AuthenticatedActor} from "../../../lib/server-auth";
 import{assertBookingWindow}from"../../../lib/booking-time-policy";
 import{repairSchemaDrift}from"../../../lib/schema-drift-repair";
-import {cleanupExpiredReservationLeases,ensureSchedulingReservationLeaseGovernance,reservationLeaseForRequest,SCHEDULING_RESERVATION_LEASE_MS} from "../../../lib/scheduling-reservation-leases";
+import {cleanupExpiredReservationLeases,ensureSchedulingReservationLeaseGovernance,reservationLeaseForRequest,SCHEDULING_RESERVATION_ACTIVE_SLOT_PREDICATE,SCHEDULING_RESERVATION_LEASE_MS} from "../../../lib/scheduling-reservation-leases";
 import {uatRosterSeedingEnabled} from "../../../lib/scheduling-roster-authority";
 import {assertProviderAssignable} from "../../../lib/provider-assignment-eligibility";
 import {sameInstant} from "../../../lib/booking-window-instant";
@@ -30,7 +30,7 @@ async function ensureSchedulingTablesUncached(db:Awaited<ReturnType<typeof datab
    * first call and costs the fanout improvement nothing.
    */
   try{await ensureProviderCapacityTables(db);}catch(error){schedulingDiagnostic("ensureProviderCapacityTables",error);throw error;}
-  const required=["scheduling_assignment_decisions","scheduling_rules","scheduling_availability","scheduling_reservations","idx_scheduling_availability_provider_date","idx_scheduling_availability_date_provider_source","idx_scheduling_reservations_provider","idx_scheduling_reservations_city_status_provider_window","idx_scheduling_reservations_city_active_window","idx_scheduling_reservations_group","idx_scheduling_reservations_attempt"];
+  const required=["scheduling_assignment_decisions","scheduling_rules","scheduling_availability","scheduling_reservations","idx_scheduling_availability_provider_date","idx_scheduling_availability_date_provider_source","idx_scheduling_reservations_provider","idx_scheduling_reservations_city_status_provider_window","idx_scheduling_reservations_city_active_window","idx_scheduling_reservations_active_slot_unique","idx_scheduling_reservations_group","idx_scheduling_reservations_attempt"];
   const existing=await db.prepare(`SELECT name FROM sqlite_master WHERE name IN (${required.map(()=>"?").join(",")})`).bind(...required).all<Record<string,unknown>>();
   const schemaReady=new Set(existing.results.map(row=>String(row.name))).size===required.length;
   if(!schemaReady)await db.batch([
@@ -43,6 +43,7 @@ async function ensureSchedulingTablesUncached(db:Awaited<ReturnType<typeof datab
   db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_provider ON scheduling_reservations(city_id,provider_id,status)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_city_status_provider_window ON scheduling_reservations(city_id,status,provider_id,scheduled_start,scheduled_end)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_city_active_window ON scheduling_reservations(city_id,status,scheduled_start,scheduled_end,provider_id)"),
+  db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduling_reservations_active_slot_unique ON scheduling_reservations(provider_id,scheduled_start,scheduled_end) WHERE ${SCHEDULING_RESERVATION_ACTIVE_SLOT_PREDICATE}`),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_group ON scheduling_reservations(group_id)"),
 ]);
   /*
