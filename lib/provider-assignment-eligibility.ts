@@ -53,7 +53,6 @@ const ok=(providerId:string,reason:string):AssignmentBlock=>({blocked:false,prov
 export async function providerAssignmentBlock(db:Db,providerId:string,at=Date.now()):Promise<AssignmentBlock>{
   const id=text(providerId);
   if(!id)return ok(id,"no_provider");
-  await ensureVerificationMandateTables(db);
   const application=await db.prepare("SELECT id,vertical_key FROM provider_onboarding_applications WHERE provider_id=? ORDER BY updated_at DESC LIMIT 1").bind(id).first<Row>().catch(()=>null);
   /*
    * THE ONE PERMISSIVE ANSWER IN THIS MODULE, and it is deliberate and visible rather than silent.
@@ -72,6 +71,10 @@ export async function providerAssignmentBlock(db:Db,providerId:string,at=Date.no
     }
     return ok(id,"no_onboarding_verification_record");
   }
+  // Only providers that actually have verification records to evaluate need verification-schema
+  // governance. Seeded UAT capacity profiles intentionally have no onboarding application, so making
+  // their read path execute DDL under concurrent scheduling created avoidable D1 transaction contention.
+  await ensureVerificationMandateTables(db);
   const profile=await db.prepare("SELECT city_id FROM provider_capacity_profiles WHERE id=?").bind(id).first<Row>().catch(()=>null);
   await seedApprovedVerificationPolicies(db);
   const policy=await resolveProviderVerificationPolicy(db,text(application.vertical_key),text(profile?.city_id)||null).catch(()=>null);
