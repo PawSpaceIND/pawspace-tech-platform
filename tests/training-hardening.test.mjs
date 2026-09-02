@@ -109,8 +109,23 @@ const TRAINER = "train_kiran";
 const DOORSTEP = { latitude: 12.9716, longitude: 77.5946 };
 // Session times: far enough in the future to reschedule, spread across days.
 // 05:30Z == 11:00 IST, 06:30Z == 12:00 IST — inside a 09:00-19:00 IST roster window.
-const sessionStart = (dayOffset) => new Date(Date.UTC(2026, 8, 1 + dayOffset, 5, 30, 0)).toISOString();
-const sessionEnd = (dayOffset) => new Date(Date.UTC(2026, 8, 1 + dayOffset, 6, 30, 0)).toISOString();
+//
+// The base day is anchored a fortnight ahead of the run, NOT to a literal calendar date. It used to
+// be Date.UTC(2026, 8, 1 + dayOffset, ...), which made this suite expire during the day it was
+// written for: on 2026-09-02 the reschedule targets at 05:30Z were still in the future at 03:45Z
+// and in the PAST by 09:00Z, so the route rejected them as past-dated with 400 before the roster
+// and travel-buffer checks could return the 409 these tests assert. Deriving every window from the
+// run time keeps the intent ("far enough in the future") true whenever the suite runs.
+const BASE_DAY = (() => {
+  const d = new Date(NOW + 14 * 86_400_000);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+})();
+const dayAt = (dayOffset, hour, minute = 0) =>
+  new Date(BASE_DAY + dayOffset * 86_400_000 + hour * 3_600_000 + minute * 60_000).toISOString();
+const sessionStart = (dayOffset) => dayAt(dayOffset, 5, 30);
+const sessionEnd = (dayOffset) => dayAt(dayOffset, 6, 30);
+/** The roster date (YYYY-MM-DD) that a 05:30Z session on this offset falls on. */
+const sessionDate = (dayOffset) => dayAt(dayOffset, 0).slice(0, 10);
 
 // Seeds one canonical dog_training booking: N reservations, captured payment, customer.
 function seedBooking({ id, group, customer = "cus_t1", sessions = 4, total = 8000, dueNow = 4000, dayBase = 0, provider = TRAINER, governedPayment = true }) {
@@ -310,16 +325,16 @@ test("REGRESSION lib/training-session-lifecycle.ts: staff reschedule is rejected
   const db = globalThis.__TRN_DB__;
   const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   const s1 = sessions[0];
-  // Target window: 2026-09-20 11:00-12:00 IST. NO scheduling_availability row exists.
-  const newStart = new Date(Date.UTC(2026, 8, 20, 5, 30)).toISOString(), newEnd = new Date(Date.UTC(2026, 8, 20, 6, 30)).toISOString();
+  // Target window: 11:00-12:00 IST on base day + 19. NO scheduling_availability row exists.
+  const newStart = sessionStart(19), newEnd = sessionEnd(19);
   const denied = await call(sessionsRoute.POST, "POST", { sessionId: s1.id, action: "reschedule", idempotencyKey: "rs-noroster", newStart, newEnd });
   assert.equal(denied.status, 409, JSON.stringify(denied.body));
   assert.match(String(denied.body.error), /roster/i, "the rejection must name the roster gap");
   assert.equal(sqlite.prepare("SELECT scheduled_start FROM training_sessions WHERE id=?").get(s1.id).scheduled_start, s1.scheduled_start, "session window must be unchanged");
 
   // 03:00 IST on a rostered day is still OUTSIDE the 09:00-19:00 window -> rejected
-  seedRoster(TRAINER, "2026-09-20");
-  const night = await call(sessionsRoute.POST, "POST", { sessionId: s1.id, action: "reschedule", idempotencyKey: "rs-night", newStart: new Date(Date.UTC(2026, 8, 19, 21, 30)).toISOString(), newEnd: new Date(Date.UTC(2026, 8, 19, 22, 30)).toISOString() });
+  seedRoster(TRAINER, sessionDate(19));
+  const night = await call(sessionsRoute.POST, "POST", { sessionId: s1.id, action: "reschedule", idempotencyKey: "rs-night", newStart: dayAt(18, 21, 30), newEnd: dayAt(18, 22, 30) });
   assert.equal(night.status, 409, "a 03:00 IST session must not pass the roster check");
 
   // Same request inside the roster window now succeeds and moves session + reservation together
@@ -333,8 +348,8 @@ test("REGRESSION: reschedule inside roster still rejects a travel-buffer collisi
   freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1" });
   const db = globalThis.__TRN_DB__;
   const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
-  seedRoster(TRAINER, "2026-09-02");
-  // Session 2 already occupies 2026-09-02 05:30-06:30Z; move session 1 right on top of it.
+  seedRoster(TRAINER, sessionDate(1));
+  // Session 2 already occupies base day + 1 at 05:30-06:30Z; move session 1 right on top of it.
   const clash = await call(sessionsRoute.POST, "POST", { sessionId: sessions[0].id, action: "reschedule", idempotencyKey: "rs-clash", newStart: sessionStart(1), newEnd: sessionEnd(1) });
   assert.equal(clash.status, 409);
   assert.match(String(clash.body.error), /travel buffer|conflicts/i);
@@ -348,7 +363,7 @@ test("REGRESSION: replace_provider requires the replacement trainer to be roster
   const denied = await call(sessionsRoute.POST, "POST", { sessionId: s1.id, action: "replace_provider", idempotencyKey: "rp-noroster", newProviderId: "train_ramesh", reason: "original trainer unavailable" });
   assert.equal(denied.status, 409, JSON.stringify(denied.body));
   assert.match(String(denied.body.error), /roster/i);
-  seedRoster("train_ramesh", "2026-09-01");
+  seedRoster("train_ramesh", sessionDate(0));
   const ok = await call(sessionsRoute.POST, "POST", { sessionId: s1.id, action: "replace_provider", idempotencyKey: "rp-ok", newProviderId: "train_ramesh", reason: "original trainer unavailable" });
   assert.equal(ok.status, 200, JSON.stringify(ok.body));
   assert.equal(sqlite.prepare("SELECT provider_id FROM training_sessions WHERE id=?").get(s1.id).provider_id, "train_ramesh");
