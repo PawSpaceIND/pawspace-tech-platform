@@ -1,3 +1,4 @@
+// Phase 2 combined-branch certification marker: validates this contract against the active Phase 1 communications base.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
