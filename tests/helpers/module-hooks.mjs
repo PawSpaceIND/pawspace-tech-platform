@@ -12,7 +12,7 @@
  * pattern in one place so a new suite cannot pick only the half that works on a newer laptop.
  */
 import * as nodeModule from "node:module";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 // Loaded lazily and cached: only a suite that actually imports a .tsx pays for TypeScript's compiler.
@@ -84,6 +84,35 @@ function normalizedFileUrl(url) {
   return { pathname, parsed };
 }
 
+function existingFileUrl(url) {
+  const parsed = new URL(url);
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.protocol === "file:" && existsSync(fileURLToPath(parsed));
+}
+
+function resolveAbsoluteRelativeSpecifier(specifier, parentURL) {
+  if (!parentURL || !specifier.startsWith(".")) return null;
+
+  const direct = new URL(specifier, parentURL);
+  if (existingFileUrl(direct)) return direct.href;
+
+  const queryIndex = specifier.indexOf("?");
+  const hashIndex = specifier.indexOf("#");
+  const suffixIndex = [queryIndex, hashIndex]
+    .filter((index) => index >= 0)
+    .reduce((lowest, index) => Math.min(lowest, index), specifier.length);
+  const pathSpecifier = specifier.slice(0, suffixIndex);
+  const suffix = specifier.slice(suffixIndex);
+
+  if (/\.[A-Za-z0-9]+$/.test(pathSpecifier)) return null;
+  for (const extension of [".ts", ".tsx"]) {
+    const candidate = new URL(`${pathSpecifier}${extension}${suffix}`, parentURL);
+    if (existingFileUrl(candidate)) return candidate.href;
+  }
+  return null;
+}
+
 export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
   process.env.NODE_ENV = "test";
   process.env.PAWSPACE_LOCAL_PREVIEW = "on";
@@ -106,12 +135,11 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
         try {
           return nextResolve(specifier, context);
         } catch (error) {
-          // .ts first, because that is what every lib module means by an extensionless import; .tsx only
-          // when .ts is not there either, so a component's sibling import resolves too.
-          if (specifier.startsWith(".") && !specifier.endsWith(".ts") && !specifier.endsWith(".tsx")) {
-            try { return nextResolve(`${specifier}.ts`, context); }
-            catch { return nextResolve(`${specifier}.tsx`, context); }
-          }
+          // Synchronous registerHooks must resolve custom fallbacks to an absolute URL. Resolve against
+          // the importing module so query/hash-suffixed specifiers and sibling .ts/.tsx imports retain
+          // their real file base instead of being re-submitted as unresolved relative strings.
+          const absoluteSpecifier = resolveAbsoluteRelativeSpecifier(specifier, context?.parentURL);
+          if (absoluteSpecifier) return { url: absoluteSpecifier, shortCircuit: true };
           // A bare specifier into a package with no exports map - `next/link` is the one that matters -
           // resolves only with its extension. Reached ONLY after the real resolution has already failed,
           // so it can never change an import that works.
