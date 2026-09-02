@@ -10,6 +10,8 @@ import {runServiceRecoveryAudioBotSweep} from "../lib/service-recovery-audio-bot
 import {processDueWhatsAppNoResponseSequences} from "../lib/whatsapp-no-response-sequence";
 import {runWhatsAppOutboxDispatcher,syncSubmittedMetaTemplateStatuses} from "../lib/whatsapp-production-runtime";
 import {cleanupExpiredReservationLeases} from "../lib/scheduling-reservation-leases";
+import {executeRazorpayOrderOutbox} from "../lib/financial-lifecycle";
+import {paymentEnvironment} from "../lib/payment-environment";
 import {runRazorpaySettlementReconciliationSweep} from "../lib/razorpay-settlement-reconciliation";
 import {runSubscriptionBillingSweep} from "../lib/subscription-billing";
 import {runSubscriptionScheduledMaintenance} from "../lib/subscription-scheduled";
@@ -41,6 +43,24 @@ interface ScheduledControllerLike {
 }
 
 function secureApiResponse(response:Response){const secured=new Response(response.body,response);secured.headers.set("cache-control","no-store");secured.headers.set("x-content-type-options","nosniff");secured.headers.set("referrer-policy","same-origin");return secured;}
+
+async function drainRazorpayOrderOutbox(db:D1Database,env:Record<string,unknown>,asOf:number){
+  paymentEnvironment(env);
+  const table=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='financial_outbox'").first<Record<string,unknown>>();
+  if(!table)return{processed:0,dispatched:0,reconciliationRequired:0,failed:0,skipped:true};
+  const due=await db.prepare(`SELECT id FROM financial_outbox WHERE event_type='CREATE_RAZORPAY_ORDER' AND ((status IN ('PENDING','RETRY') AND next_attempt_at<=?) OR (status='PROCESSING' AND lease_expires_at IS NOT NULL AND lease_expires_at<?)) ORDER BY created_at ASC LIMIT 50`).bind(asOf,asOf).all<Record<string,unknown>>();
+  let processed=0,dispatched=0,reconciliationRequired=0,failed=0;
+  for(const row of due.results){
+    processed++;
+    try{
+      const result=await executeRazorpayOrderOutbox(db,env,{outboxId:String(row.id),workerId:`scheduled:${crypto.randomUUID()}`});
+      if(result.claimed&&result.connected)dispatched++;
+      else if(result.claimed&&"reconciliationRequired" in result&&result.reconciliationRequired)reconciliationRequired++;
+      else if(result.claimed)failed++;
+    }catch{failed++;}
+  }
+  return{processed,dispatched,reconciliationRequired,failed,skipped:false};
+}
 
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -75,7 +95,7 @@ const worker = {
   },
   async scheduled(controller:ScheduledControllerLike,env:Env,ctx:ExecutionContext){
     ctx.waitUntil((async()=>{
-      const [cleanup,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,templateSync,settlementRecon,subscriptionMaintenance]=await Promise.allSettled([
+      const [cleanup,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,templateSync,razorpayOrderOutbox,settlementRecon,subscriptionMaintenance]=await Promise.allSettled([
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
         runCommunicationOutboxDispatcher(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
@@ -83,6 +103,7 @@ const worker = {
         processDueWhatsAppNoResponseSequences(env.DB,{now:controller.scheduledTime,actorEmail:"system:scheduled-worker"}),
         runWhatsAppOutboxDispatcher(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50}),
         syncSubmittedMetaTemplateStatuses(env.DB,env as unknown as Record<string,unknown>,{actorId:"system:scheduled-worker",limit:50}),
+        drainRazorpayOrderOutbox(env.DB,env as unknown as Record<string,unknown>,controller.scheduledTime),
         runRazorpaySettlementReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
         runSubscriptionScheduledMaintenance(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,billingSweep:(db,input)=>runSubscriptionBillingSweep(db,input)}),
       ]);
@@ -94,6 +115,7 @@ const worker = {
       if(whatsappRecovery.status==="rejected")errors.push(`whatsapp recovery: ${whatsappRecovery.reason instanceof Error?whatsappRecovery.reason.message:String(whatsappRecovery.reason)}`);
       if(whatsappOutbox.status==="rejected")errors.push(`whatsapp outbox: ${whatsappOutbox.reason instanceof Error?whatsappOutbox.reason.message:String(whatsappOutbox.reason)}`);else if(whatsappOutbox.value.failed)errors.push(`whatsapp outbox: ${whatsappOutbox.value.failed} dispatch exception(s)`);
       if(templateSync.status==="rejected")errors.push(`whatsapp template sync: ${templateSync.reason instanceof Error?templateSync.reason.message:String(templateSync.reason)}`);else if(templateSync.value.failed&&templateSync.value.processed)errors.push(`whatsapp template sync: ${templateSync.value.failed} verification exception(s)`);
+      if(razorpayOrderOutbox.status==="rejected")errors.push(`razorpay order outbox: ${razorpayOrderOutbox.reason instanceof Error?razorpayOrderOutbox.reason.message:String(razorpayOrderOutbox.reason)}`);else if(razorpayOrderOutbox.value.failed)errors.push(`razorpay order outbox: ${razorpayOrderOutbox.value.failed} dispatch exception(s)`);
       if(settlementRecon.status==="rejected")errors.push(`razorpay settlement reconciliation: ${settlementRecon.reason instanceof Error?settlementRecon.reason.message:String(settlementRecon.reason)}`);
       if(subscriptionMaintenance.status==="rejected")errors.push(`subscription maintenance: ${subscriptionMaintenance.reason instanceof Error?subscriptionMaintenance.reason.message:String(subscriptionMaintenance.reason)}`);else if(Number(subscriptionMaintenance.value.errors||0)>0)errors.push(`subscription maintenance: ${subscriptionMaintenance.value.errors} exception(s)`);
       if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);
