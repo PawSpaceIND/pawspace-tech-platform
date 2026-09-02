@@ -82,6 +82,12 @@ route.write_text(s)
 
 tests = Path("tests/uat-scheduling-d1-contention.test.mjs")
 s = tests.read_text()
+s = replace_once(
+    s,
+    'assert.match(scheduling,/SELECT provider_id,date,zone_id FROM scheduling_availability/);',
+    'assert.match(scheduling,/const availabilityRows=\\(date:string\\)=>/);assert.match(scheduling,/SELECT \\* FROM scheduling_availability WHERE date=\\?/);',
+    "cached availability assertion",
+)
 s += r'''
 
 test("Track 3 UAT assignment discovery is read-only before the atomic reservation claim",()=>{
