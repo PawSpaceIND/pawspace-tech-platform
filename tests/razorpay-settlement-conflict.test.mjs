@@ -49,6 +49,8 @@ async function loadModules() {
   const transpile = (source) => ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, moduleResolution: ts.ModuleResolutionKind.Bundler },
   }).outputText;
+  const paymentEnvironmentSource = await readFile(new URL("lib/payment-environment.ts", repoRoot), "utf8");
+  await writeFile(path.join(tempDir, "payment-environment"), transpile(paymentEnvironmentSource));
   const razorSource = await readFile(new URL("lib/razorpay-client.ts", repoRoot), "utf8");
   await writeFile(path.join(tempDir, "razorpay-client.mjs"), transpile(razorSource));
   const financeSource = (await readFile(new URL("lib/financial-lifecycle.ts", repoRoot), "utf8"))

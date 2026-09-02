@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import {installWorkersHooks} from "./helpers/module-hooks.mjs";
 
+installWorkersHooks("__PAYMENT_PROVIDER_CONTRACT_DB__", "__PAYMENT_PROVIDER_CONTRACT_ENV__");
 const client = await import("../lib/razorpay-client.ts");
 
 async function contractServer() {
