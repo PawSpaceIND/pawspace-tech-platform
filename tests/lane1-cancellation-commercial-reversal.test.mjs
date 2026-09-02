@@ -45,7 +45,6 @@ function makeD1(sqlite) {
 }
 
 const { materializeTrainingProgramme } = await import("../lib/training-programme.ts");
-const { ensureTrainingCommercialTables } = await import("../lib/training-commercial-governance.ts");
 const {
   saveTrainingCancellationPolicy,
   requestTrainingCancellation,
@@ -107,7 +106,9 @@ test("confirmed Training cancellation releases work/capacity, caps cash refund, 
   globalThis.__LANE1_CANCEL_ENV__ = { DB: db, PAWSPACE_PAYMENT_ENV: "sandbox" };
   baseTables(sqlite);
   seedBooking(sqlite);
-  await ensureTrainingCommercialTables(db);
+  // Deliberately NOT calling ensureTrainingCommercialTables here. approveTrainingCancellation reaches
+  // the commercial quote link through ensureTrainingCancellationTables -> ensureTrainingFinanceTables,
+  // and creating the table from the test instead is what hid the fact that production never did.
 
   await materializeTrainingProgramme(db, { bookingId: BOOKING, actorId: "system:lane1-test" });
 

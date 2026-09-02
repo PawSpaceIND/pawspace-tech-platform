@@ -139,9 +139,10 @@ export async function runCompletedJourney(ctx, config) {
   const bookingReplay = await routeCall("../../app/api/canonical-bookings/route.ts", "POST", "/api/canonical-bookings", bookingPayload, customerCookie);
   const bookingId = booked.body.data?.bookingId;
   const location = await routeCall("../../app/api/grooming-service-location/route.ts", "POST", "/api/grooming-service-location", { bookingId, customerId: config.customerId, address: `${config.customerName} service address`, pincode: config.pincode, latitude: config.latitude, longitude: config.longitude }, customerCookie);
-  const fixtureNow = Date.now();
-  sqlite.prepare("INSERT OR REPLACE INTO booking_service_addresses (booking_id,address,latitude,longitude,source,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
-    .run(bookingId, `${config.customerName} service address`, config.latitude, config.longitude, "test_fixture", fixtureNow, fixtureNow);
+  // No booking_service_addresses fixture here on purpose. ARRIVED resolves the doorstep through
+  // lib/booking-doorstep.ts, which reads booking_service_locations - the table the real
+  // /api/grooming-service-location call above actually writes. Seeding the travel table instead was what
+  // let the geofence pass in tests while it was unreachable for every real customer.
 
   const linked = await routeCall("../../app/api/grooming-payment-sandbox/route.ts", "POST", "/api/grooming-payment-sandbox", { action: "link_order", bookingId, gatewayOrderId: `order_${config.groupId}` });
   const capture = { action: "simulate_event", bookingId, eventType: "payment.captured", eventId: `evt_${config.groupId}`, gatewayPaymentId: `pay_${config.groupId}`, amount: total, currency: "INR" };
