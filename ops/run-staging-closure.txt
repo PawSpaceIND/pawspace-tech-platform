@@ -1,4 +1,4 @@
-triggered_at=2026-09-02T03:24:00Z
+triggered_at=2026-09-02T03:26:30Z
 baseline=94cddc063297796f24ea1a2a0975b62a2fdbe1b2
 scope=track3-track5-track6-automated
-reason=uat-direct-readback-and-bounded-hosted-auth-retry
+reason=track3-valid-180-day-booking-horizon
