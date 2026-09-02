@@ -47,4 +47,4 @@ jobs:
           git commit -m "perf(scheduling): remove UAT assignment write storms"
           git push origin HEAD:fix/staging-performance-remediation
 
-# Triggered for the second-stage Track 3 write-contention certification.
+# Retriggered after aligning the cached availability regression assertion.
