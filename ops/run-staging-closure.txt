@@ -1,7 +1,7 @@
-triggered_at=2026-09-02T09:30:12Z
+triggered_at=2026-09-02T09:34:30Z
 baseline=94cddc063297796f24ea1a2a0975b62a2fdbe1b2
 scope=track3-track5-track6-automated
-reason=uat-roster-concurrency-idempotency-fix
-probe_run_id=33614354773
-probe_job_id=100196642605
-probe_sha=a52bc7ff0003bb66e486639316e54cb4e5f54ebb
+reason=booking-policy-write-free-read-path
+probe_run_id=33614804872
+probe_job_id=100198059554
+probe_sha=52f12a7c4a9fab149a1be757f7deaf2c7afc7f14
