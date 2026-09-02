@@ -1,0 +1,48 @@
+name: Apply staging write contention remediation v6
+
+on:
+  push:
+    branches:
+      - fix/staging-performance-remediation
+    paths:
+      - .github/workflows/apply-staging-write-remediation-v6.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-staging-write-contention-remediation-v6
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/staging-performance-remediation
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm run install:ci
+      - name: Apply deterministic remediation
+        run: python3 scripts/ops/remediate-staging-write-storms.py
+      - name: Focused contention tests
+        run: node --experimental-strip-types --test tests/uat-scheduling-d1-contention.test.mjs
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Commit validated application changes
+        run: |
+          set -euo pipefail
+          git fetch origin fix/staging-performance-remediation
+          test "$(git rev-parse origin/fix/staging-performance-remediation)" = "$GITHUB_SHA"
+          git config user.name "PawSpaceIND"
+          git config user.email "karthik@pawspace.in"
+          git rm scripts/ops/remediate-staging-write-storms.py
+          git add lib/scheduling-reservation-leases.ts app/api/uat-scheduling/route.ts tests/uat-scheduling-d1-contention.test.mjs
+          git diff --cached --check
+          git commit -m "perf(scheduling): remove UAT assignment write storms"
+          git push origin HEAD:fix/staging-performance-remediation
