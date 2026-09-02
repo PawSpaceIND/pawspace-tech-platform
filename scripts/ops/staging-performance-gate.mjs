@@ -158,16 +158,31 @@ const replayResults = await Promise.all(bookingResults.map(({item}) => measured(
   return payload.data;
 })));
 
+// Prime one real, fully processable Razorpay capture against the first canonical booking. The required
+// 500 calls below are then genuine byte-identical replays of an already accepted event, not 500 retries
+// of an intentionally unmatched/FAILED synthetic event. That is the idempotency behavior Track 3 means
+// to certify: one durable webhook event and zero repeated money effects under concurrent redelivery.
+const webhookBookingId = bookingResults[0]?.bookingId;
+if (!webhookBookingId) throw new Error('Track 3 webhook seed requires at least one canonical booking');
 const rawWebhook = JSON.stringify({
   event:'payment.captured', created_at:Math.floor(Date.now()/1000),
-  payload:{payment:{entity:{id:`pay_${RUN_ID.replace(/[^A-Za-z0-9]/g,'').slice(-24)}`,order_id:`order_${RUN_ID.replace(/[^A-Za-z0-9]/g,'').slice(-20)}`,amount:134900,currency:'INR',notes:{booking_id:`${RUN_ID}:webhook-sink`}}}}
+  payload:{payment:{entity:{id:`pay_${RUN_ID.replace(/[^A-Za-z0-9]/g,'').slice(-24)}`,order_id:`order_${RUN_ID.replace(/[^A-Za-z0-9]/g,'').slice(-20)}`,amount:134900,currency:'INR',notes:{booking_id:webhookBookingId}}}}
 });
 const signature = createHmac('sha256', WEBHOOK_SECRET).update(rawWebhook).digest('hex');
 const eventId = `${RUN_ID}:evt:replay`;
+const firstWebhook = await measured('webhook-first-delivery', async () => {
+  const {payload} = await request('/api/razorpay-webhook', {method:'POST',body:rawWebhook,headers:{'x-razorpay-signature':signature,'x-razorpay-event-id':eventId}});
+  if (payload?.duplicate === true) throw new Error('First webhook delivery was unexpectedly classified as duplicate');
+  if (String(payload?.status || '') === 'exception') throw new Error(`First webhook delivery did not reconcile: ${payload?.reason || 'exception'}`);
+  return payload;
+});
+if (!firstWebhook?.ok) throw new Error('First webhook delivery was not acknowledged');
+
 const webhookResults = [];
 for (let offset=0; offset<500; offset+=50) {
   const chunk = await Promise.all(Array.from({length:Math.min(50,500-offset)}, () => measured('webhook-replay', async () => {
     const {payload} = await request('/api/razorpay-webhook', {method:'POST',body:rawWebhook,headers:{'x-razorpay-signature':signature,'x-razorpay-event-id':eventId}});
+    if (payload?.duplicate !== true) throw new Error('Webhook replay was not classified as duplicate');
     return payload;
   })));
   webhookResults.push(...chunk);
