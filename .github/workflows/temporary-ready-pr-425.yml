@@ -1,0 +1,19 @@
+name: Temporary ready PR 425
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  ready:
+    if: github.event.pull_request.head.ref == 'ops/ready-pr-425-20260902'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark PR 425 ready
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr ready 425 --repo "$GITHUB_REPOSITORY"
