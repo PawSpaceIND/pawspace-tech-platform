@@ -1,6 +1,6 @@
-triggered_at=2026-09-02T10:23:00Z
+triggered_at=2026-09-02T10:33:00Z
 baseline=94cddc063297796f24ea1a2a0975b62a2fdbe1b2
 scope=track3-track5-track6-automated
-reason=provider-bootstrap-single-flight
-probe_run_id=33619061732
-probe_sha=335cf975e1dc6df5cb44bedda930298b5ee31326
+reason=coalesced-reservation-lease-cleanup
+probe_run_id=33619822416
+probe_sha=60827a21762dbc01c7afd4d6825900a115afca81
