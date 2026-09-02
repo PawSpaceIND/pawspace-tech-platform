@@ -1,0 +1,18 @@
+import test from"node:test";
+import assert from"node:assert/strict";
+import{readFileSync}from"node:fs";
+const read=path=>readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
+
+test("LOE closure keeps the canonical ten CRM inquiry categories",()=>{const source=read("lib/crm-inquiry-classification.ts");const expected=["grooming","training","dog_walking","pet_sitting","pet_boarding","pet_taxi","pet_relocation","pet_funeral_memorial","pet_food","subscription_membership"];for(const code of expected)assert.match(source,new RegExp(`\\"${code}\\"`));const array=source.match(/CRM_INQUIRY_CATEGORIES=\[([\s\S]*?)\]as const/)?.[1]||"";assert.equal((array.match(/"[^"]+"/g)||[]).length,10);assert.match(source,/recommendGroomingPackage/);});
+
+test("Haptik outbound exposes twelve governed campaigns including nine closure audiences",()=>{const source=read("lib/haptik-outbound-governance.ts");const expected=["new_lead_followup","reactivation","subscription_pitch","grooming_due","training_cross_sell","walking_cross_sell","boarding_cross_sell","sitting_cross_sell","taxi_cross_sell","relocation_cross_sell","food_cross_sell","high_value_loyalty"];for(const code of expected)assert.match(source,new RegExp(`code:\\"${code}\\"`));assert.equal((source.match(/code:"[a-z_]+",label:/g)||[]).length,12);assert.match(source,/p\.marketing_consent=1 AND p\.opt_out=0/);});
+
+test("Interakt inbound is signed, canonical-customer owned and consent guarded",()=>{const provider=read("lib/interakt-whatsapp.ts"),route=read("app/api/communication-provider-callback/route.ts");assert.match(provider,/INTERAKT_WEBHOOK_SECRET/);assert.match(provider,/canonical_customers/);assert.match(provider,/customer ownership mismatch/i);assert.match(provider,/marketingConsentInferred:false/);assert.match(provider,/interaktOutboundConsentGuard/);assert.match(route,/processInteraktInbound/);assert.match(route,/provider===INTERAKT_WHATSAPP_PROVIDER\|\|provider===\"interakt\"/);});
+
+test("Haptik actions include inquiry classification and grooming recommendation",()=>{const route=read("app/api/haptik/route.ts");assert.match(route,/action===\"classify_inquiry\"/);assert.match(route,/action===\"recommend_grooming_package\"/);assert.match(route,/handoffQueue/);});
+
+test("operator surfaces consume the governed APIs",()=>{const haptik=read("app/team/haptik/page.tsx"),outcomes=read("app/team/bot-call-outcomes/page.tsx");assert.match(haptik,/\/api\/haptik-outbound\?mode=readiness/);assert.match(haptik,/mode=audience/);assert.match(outcomes,/scope=pending_claims/);assert.match(outcomes,/action:\"reconcile\"/);assert.match(outcomes,/method:\"POST\"/);});
+
+test("readiness control plane registers Haptik and Interakt without treating credentials as live proof",()=>{const registry=read("lib/integration-readiness-loe.ts"),route=read("app/api/integration-readiness/route.ts");assert.match(registry,/INT-HAPTIK-01/);assert.match(registry,/INT-INTERAKT-01/);assert.match(registry,/sandbox_setup_required/);assert.match(registry,/readiness_state!='controlled_live_verified'/);assert.match(route,/ensureLoeIntegrationReadiness/);});
+
+test("official Drizzle migration owns communication AI and Haptik persistence",()=>{const migration=read("drizzle/0021_loe_communications_ai_haptik.sql");for(const table of["communication_threads","communication_messages","communication_outbox","communication_dead_letters","customer_contact_preferences","ai_conversation_sessions","ai_conversation_turns","ai_turn_reservations","ai_handoffs","ai_handoff_events","haptik_lead_captures","haptik_callback_requests","haptik_booking_requests","haptik_outbound_calls","haptik_outbound_readiness"])assert.match(migration,new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));});
