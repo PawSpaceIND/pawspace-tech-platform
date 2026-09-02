@@ -1,4 +1,4 @@
-name: Inspect staging reservation slot uniqueness
+name: Apply scheduling claim constraint fix
 
 on:
   push:
@@ -8,23 +8,53 @@ on:
       - .github/workflows/apply-try-prepare-assignment-optimization.yml
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  inspect:
+  fix:
     runs-on: ubuntu-latest
-    environment: pawspace-staging
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
           ref: fix/staging-performance-remediation
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Inspect duplicate exact active slots
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          cache: npm
+      - run: npm run install:ci
+      - name: Add matching partial unique reservation constraint
         run: |
-          npx wrangler d1 execute pawspace-staging --remote --json --command "SELECT provider_id,scheduled_start,scheduled_end,COUNT(*) AS n FROM scheduling_reservations WHERE status!='cancelled' AND service_code!='boarding' AND care_mode IS NOT 'overnight' GROUP BY provider_id,scheduled_start,scheduled_end HAVING COUNT(*)>1 ORDER BY n DESC LIMIT 20;"
-          npx wrangler d1 execute pawspace-staging --remote --json --command "SELECT name,sql FROM sqlite_master WHERE type='index' AND tbl_name='scheduling_reservations' ORDER BY name;"
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('app/api/uat-scheduling/route.ts')
+          s=p.read_text()
+          old='import {cleanupExpiredReservationLeases,ensureSchedulingReservationLeaseGovernance,reservationLeaseForRequest,SCHEDULING_RESERVATION_LEASE_MS} from "../../../lib/scheduling-reservation-leases";'
+          new='import {cleanupExpiredReservationLeases,ensureSchedulingReservationLeaseGovernance,reservationLeaseForRequest,SCHEDULING_RESERVATION_ACTIVE_SLOT_PREDICATE,SCHEDULING_RESERVATION_LEASE_MS} from "../../../lib/scheduling-reservation-leases";'
+          assert old in s
+          s=s.replace(old,new,1)
+          old='"idx_scheduling_reservations_city_active_window","idx_scheduling_reservations_group","idx_scheduling_reservations_attempt"]'
+          new='"idx_scheduling_reservations_city_active_window","idx_scheduling_reservations_active_slot_unique","idx_scheduling_reservations_group","idx_scheduling_reservations_attempt"]'
+          assert old in s
+          s=s.replace(old,new,1)
+          old='  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_city_active_window ON scheduling_reservations(city_id,status,scheduled_start,scheduled_end,provider_id)"),\n  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_group ON scheduling_reservations(group_id)"),'
+          new='  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_city_active_window ON scheduling_reservations(city_id,status,scheduled_start,scheduled_end,provider_id)"),\n  db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduling_reservations_active_slot_unique ON scheduling_reservations(provider_id,scheduled_start,scheduled_end) WHERE ${SCHEDULING_RESERVATION_ACTIVE_SLOT_PREDICATE}`),\n  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_group ON scheduling_reservations(group_id)"),'
+          assert old in s
+          s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+      - name: Validate targeted fix
+        run: |
+          node --experimental-strip-types --test tests/uat-scheduling-d1-contention.test.mjs tests/scheduling-reservation-leases.test.mjs tests/provider-assignment-verification-validity.test.mjs
+          npm run typecheck
+          npm run build
+          git diff --check
+          test "$(git diff --name-only)" = "app/api/uat-scheduling/route.ts"
+      - name: Commit targeted fix
+        run: |
+          git config user.name "PawSpace Release Bot"
+          git config user.email "release-bot@pawspace.in"
+          git add -u app/api/uat-scheduling/route.ts
+          git commit -m "fix(scheduling): resolve concurrent HTTP 500 exception in assignment discovery"
+          git push origin HEAD:fix/staging-performance-remediation
