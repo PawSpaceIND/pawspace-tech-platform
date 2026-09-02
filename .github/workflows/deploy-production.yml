@@ -111,6 +111,38 @@ jobs:
       - name: Install
         run: npm run install:ci
 
+      # HARD, UNSKIPPABLE production-readiness gate — run BEFORE bundling. It refuses the deploy (non-zero
+      # exit) if any critical subsystem would run on a sandbox/simulator/mock/fallback driver, is missing a
+      # required live binding, or carries a forbidden UAT/preview flag. Live-credential checks only bite
+      # when the corresponding mode input is "live", so an explicit sandbox pilot still deploys; a "live"
+      # deploy without the live secrets configured is stopped here rather than after real money can move.
+      # --require-production makes the gate refuse to run silently inert. Secrets referenced here that are
+      # not yet configured resolve to empty and fail the gate closed in live mode, which is the point.
+      - name: Assert production readiness (hard gate, before bundling)
+        env:
+          PAWSPACE_DEPLOYMENT_ENV: production
+          PAWSPACE_PAYMENT_ENV: ${{ github.event.inputs.payment_env }}
+          PAWSPACE_COMMUNICATION_ENV: ${{ github.event.inputs.communication_env }}
+          PAWSPACE_MAPS_ENV: ${{ github.event.inputs.maps_env }}
+          PRODUCTION_R2_BUCKET_NAME: ${{ vars.PRODUCTION_R2_BUCKET_NAME }}
+          PAWSPACE_IDENTITY_ENV: ${{ vars.PAWSPACE_IDENTITY_ENV }}
+          RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+          RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+          RAZORPAY_WEBHOOK_SECRET_LIVE: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_LIVE }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          PAWSPACE_PAYMENT_LIVE_APPROVED: ${{ secrets.PAWSPACE_PAYMENT_LIVE_APPROVED || vars.PAWSPACE_PAYMENT_LIVE_APPROVED }}
+          IDFY_API_KEY: ${{ secrets.IDFY_API_KEY }}
+          IDFY_ACCOUNT_ID: ${{ secrets.IDFY_ACCOUNT_ID || vars.IDFY_ACCOUNT_ID }}
+          IDFY_URL: ${{ secrets.IDFY_URL || vars.IDFY_URL }}
+          IDFY_WEBHOOK_SECRET: ${{ secrets.IDFY_WEBHOOK_SECRET }}
+          META_WHATSAPP_APP_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET }}
+          META_WHATSAPP_VERIFY_TOKEN: ${{ secrets.META_WHATSAPP_VERIFY_TOKEN || vars.META_WHATSAPP_VERIFY_TOKEN }}
+          PAWSPACE_VOICE_ENV: ${{ vars.PAWSPACE_VOICE_ENV }}
+          PAWSPACE_VOICE_TRANSPORT: ${{ vars.PAWSPACE_VOICE_TRANSPORT }}
+        run: node scripts/assert-production-readiness.mjs --require-production
+
       - name: Build (vinext)
         run: npm run build
 

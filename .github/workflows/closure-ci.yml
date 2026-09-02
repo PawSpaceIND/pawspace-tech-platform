@@ -218,6 +218,34 @@ jobs:
             exit 1
           fi
           echo "No hardcoded productionReady:true literal found."
+      # The build/deploy hard gate (scripts/assert-production-readiness.mjs) must be REAL and fail-closed,
+      # not a script that always exits 0. This proves, on every run, that it (1) stays inert outside a
+      # production profile, (2) REFUSES a production profile whose live bindings are missing, and (3)
+      # accepts a complete live production environment. Each case uses an isolated env so a stray runner
+      # variable cannot change the outcome. If the gate ever stops enforcing, this job goes red.
+      - name: The production-readiness build gate is real and fail-closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 1) Inert when the profile is not production.
+          env -i PATH="$PATH" node scripts/assert-production-readiness.mjs
+          # 2) A production profile missing live bindings MUST be refused (non-zero exit).
+          if env -i PATH="$PATH" PAWSPACE_DEPLOYMENT_ENV=production PAWSPACE_PAYMENT_ENV=live \
+               node scripts/assert-production-readiness.mjs; then
+            echo "GATE DID NOT FAIL on an incomplete production environment - it is not enforcing." >&2
+            exit 1
+          fi
+          echo "Gate correctly refused an incomplete production environment."
+          # 3) A complete live production environment MUST pass (zero exit).
+          env -i PATH="$PATH" \
+            PAWSPACE_DEPLOYMENT_ENV=production PAWSPACE_IDENTITY_ENV=live \
+            PAWSPACE_PAYMENT_ENV=live RAZORPAY_KEY_ID=rzp_live_ci RAZORPAY_KEY_SECRET=ci_live_secret \
+            RAZORPAY_WEBHOOK_SECRET_LIVE=ci_whsec_live PAWSPACE_PAYMENT_LIVE_APPROVED=true \
+            IDFY_API_KEY=ci_idfy IDFY_ACCOUNT_ID=ci_acct IDFY_URL=https://eve.idfy.com/v3/tasks \
+            IDFY_WEBHOOK_SECRET=ci_idfy_whsec PRODUCTION_R2_BUCKET_NAME=ci-media \
+            PAWSPACE_COMMUNICATION_ENV=sandbox \
+            node scripts/assert-production-readiness.mjs
+          echo "Gate correctly accepted a complete live production environment."
       - name: Verify the Production Readiness registry's own safety enforcement cannot be bypassed
         shell: bash
         run: |

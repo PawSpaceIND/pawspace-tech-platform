@@ -16,6 +16,7 @@
 // Refused if present:
 //   STAGING_D1_ID / RELEASE_PREVIEW_D1_ID equal to PRODUCTION_D1_ID (isolation)
 import { readFileSync, writeFileSync } from "node:fs";
+import { FORBIDDEN_IN_PRODUCTION } from "../lib/production-readiness-enforcement.mjs";
 
 const path = "dist/server/wrangler.json";
 let cfg;
@@ -27,14 +28,11 @@ export const PRODUCTION_WORKER_NAME = "pawspace-prod-bengaluru";
 /* Vars that only ever make sense on a developer's machine or in a UAT environment. PAWSPACE_LOCAL_PREVIEW
  * is the runtime switch for an AUTHENTICATION-FREE actor; PAWSPACE_UAT_LOGIN grants staff access via a
  * shared access code. Neither belongs anywhere near production. Listed and enforced rather than assumed
- * absent, because vite.config.ts writes some of these into the build output. */
-export const FORBIDDEN_IN_PRODUCTION = [
-  "PAWSPACE_LOCAL_PREVIEW",
-  "PAWSPACE_UAT_LOGIN",
-  "PAWSPACE_SCHEDULING_ENV",
-  "META_WHATSAPP_UAT_DELIVERY_ENABLED",
-  "PAWSPACE_MEDIA_ENV",
-];
+ * absent, because vite.config.ts writes some of these into the build output.
+ *
+ * The canonical list now lives in lib/production-readiness-enforcement.mjs and is imported here, so the
+ * deploy-time var check (this script) and the runtime/secret gate (that module) can never drift apart. */
+export { FORBIDDEN_IN_PRODUCTION };
 
 /* Values that decide real-world consequences. Each must be stated; none is defaulted. */
 export const REQUIRED_EXPLICIT = [
