@@ -3,6 +3,7 @@ import { cityOffsetMinutes, schedule, scheduleRules, type CustomScheduleRule, ty
 import {createAssignmentOffer,ensureProviderCapacityTables,getGovernedProvider,loadGovernedProviders,seedProviderCapacityDefaults} from "../../../lib/provider-capacity-governance";
 import {authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit,type AuthenticatedActor} from "../../../lib/server-auth";
 import{assertBookingWindow}from"../../../lib/booking-time-policy";
+import{repairSchemaDrift}from"../../../lib/schema-drift-repair";
 import {cleanupExpiredReservationLeases,ensureSchedulingReservationLeaseGovernance,reservationLeaseForRequest,SCHEDULING_RESERVATION_LEASE_MS} from "../../../lib/scheduling-reservation-leases";
 import {uatRosterSeedingEnabled} from "../../../lib/scheduling-roster-authority";
 import {assertProviderAssignable} from "../../../lib/provider-assignment-eligibility";
@@ -15,6 +16,7 @@ async function database(){const {env}=await import("cloudflare:workers");return 
 async function tableExists(db:Awaited<ReturnType<typeof database>>,name:string){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Record<string,unknown>>());}
 const dateRange=(start:string,days=100)=>Array.from({length:days},(_,i)=>{const d=new Date(start);d.setUTCDate(d.getUTCDate()+i);return d.toISOString().slice(0,10);});
 function cityIdFor(input:Pick<RequestBody,"cityId"|"zoneId">){const explicit=String(input.cityId||"").trim().toLowerCase();if(explicit)return explicit;const derived=String(input.zoneId||"").trim().split("-")[0]?.toLowerCase()||"";if(!/^[a-z0-9]{2,16}$/.test(derived))throw new Error("A valid cityId is required for scheduling");return derived;}
+const schemaDriftRepaired=new WeakSet<object>();
 async function ensureSchedulingTables(db:Awaited<ReturnType<typeof database>>){
   /*
    * provider_unavailability is owned by lib/provider-capacity-governance.ts, and the read-fanout
@@ -36,6 +38,29 @@ async function ensureSchedulingTables(db:Awaited<ReturnType<typeof database>>){
   db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_provider ON scheduling_reservations(city_id,provider_id,status)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_city_status_provider_window ON scheduling_reservations(city_id,status,provider_id,scheduled_start,scheduled_end)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_group ON scheduling_reservations(group_id)"),
+]);
+  /*
+   * attempt_id must exist as a COLUMN before anything names it, and a CREATE TABLE IF NOT EXISTS
+   * above cannot put it there: scheduling_reservations is declared in more than one module, so on
+   * any database where the table already exists the declaration is a no-op and the real shape is
+   * whatever the first writer chose. Every live database is in exactly that state - the table
+   * predates attempt_id - so indexing or inserting the column raised
+   *
+   *   D1_ERROR: no such column: attempt_id at offset 90: SQLITE_ERROR
+   *
+   * from ensureSchedulingTables, i.e. a 500 on EVERY scheduling request, not a degraded one. The
+   * runtime-D1 regression harness caught it because it is the only suite that runs against real D1
+   * with the table already created; the node:sqlite suites each build the table from this route's
+   * own declaration and so never see the drifted shape.
+   *
+   * repairSchemaDrift is the codebase's mechanism for this and already registers the column. It
+   * only ever ADDs genuinely-absent columns to tables that already exist, so it is a no-op on a
+   * cold database that just got the full declaration above. The per-isolate guard keeps it off the
+   * hot path after the first call - this is the booking write path - and records only success, so a
+   * failed repair is retried rather than latched.
+   */
+  if(!schemaDriftRepaired.has(db)){await repairSchemaDrift(db);schemaDriftRepaired.add(db);}
+  await db.batch([
   db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_attempt ON scheduling_reservations(attempt_id)"),
 ]);await ensureSchedulingReservationLeaseGovernance(db);}
 

@@ -93,6 +93,16 @@ test("verification counts this request's own writes, and rollback cancels only t
   assert.match(route, /attempt_id TEXT\)/, "the column backing it is declared");
   assert.match(route, /idx_scheduling_reservations_attempt ON scheduling_reservations\(attempt_id\)/, "and indexed");
 
+  // The column must be repaired onto an already-existing table before any statement names it, via
+  // the shared repair rather than the route's own ALTER (tests/package-upgrade-schema-drift.test.mjs
+  // pins that convention). Without this the route 500s on every scheduling request against any live
+  // database, because CREATE TABLE IF NOT EXISTS cannot add a column to a table that already exists.
+  assert.match(route, /repairSchemaDrift\(db\)/, "the route must run the shared drift repair");
+  assert.ok(
+    route.indexOf("repairSchemaDrift(db)") < route.indexOf("idx_scheduling_reservations_attempt"),
+    "and must run it BEFORE anything names attempt_id",
+  );
+
   // The database-level backstop from the branch this merged with stays in place.
   assert.match(route, /ON CONFLICT\(provider_id,scheduled_start,scheduled_end\)/, "the exact-slot unique conflict target survives the merge");
 });
@@ -102,4 +112,46 @@ test("a live database missing attempt_id is repaired in place, not left to fail 
   // database that already exists never gains the column from the declaration alone.
   const repair = fs.readFileSync("lib/schema-drift-repair.ts", "utf8");
   assert.match(repair, /table: "scheduling_reservations", column: "attempt_id"/);
+});
+
+/*
+ * The shape every live database is actually in, i.e. the production table before this change:
+ * everything the route declares today except attempt_id. scheduling_reservations is declared with
+ * CREATE TABLE IF NOT EXISTS in app/api/uat-scheduling, app/api/provider-capacity-control and two
+ * runtime workers, so once the table exists the declaration is a no-op and the first writer's shape
+ * is the real one forever.
+ */
+const PRE_ATTEMPT_SHAPE = `CREATE TABLE scheduling_reservations (id TEXT PRIMARY KEY,group_id TEXT NOT NULL,\
+provider_id TEXT NOT NULL,service_code TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,\
+customer_id TEXT NOT NULL,pet_ids_json TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,\
+capacity_units INTEGER NOT NULL DEFAULT 1,occurrence_number INTEGER NOT NULL DEFAULT 1,care_mode TEXT,\
+status TEXT NOT NULL,explanation_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,\
+lease_expires_at INTEGER,customer_session_id TEXT)`;
+
+test("a database whose scheduling_reservations predates attempt_id is repaired in place, not 500ed", async (t) => {
+  const ctx = await setupJourney();
+  t.after(ctx.close);
+
+  // Drop the fixture's table and put back the drifted shape. Without this the suite proves nothing:
+  // every node:sqlite harness builds the table from the route's OWN declaration, which already has
+  // the column, so none of them can see the state a real deploy lands in. That blind spot is why
+  // this shipped - only the runtime-D1 regression, which runs against real D1 with the table already
+  // created, failed, and it failed with a 500 on every scheduling request:
+  //   D1_ERROR: no such column: attempt_id at offset 90: SQLITE_ERROR
+  ctx.sqlite.exec("DROP TABLE IF EXISTS scheduling_reservations");
+  ctx.sqlite.exec(PRE_ATTEMPT_SHAPE);
+  const columns = () => ctx.sqlite.prepare("PRAGMA table_info(scheduling_reservations)").all().map((row) => row.name);
+  assert.ok(!columns().includes("attempt_id"), "the fixture must start drifted or this test is vacuous");
+
+  const customerId = "CUST-ATTEMPT-DRIFT";
+  const cookie = await sessionCookie(ctx.db, "customer", customerId, `customer:${customerId}`);
+  const response = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", {
+    clientRequestId: "ATTEMPT-DRIFT-A", customerId, petIds: ["PET-ATTEMPT-DRIFT"], serviceCode: "grooming",
+    cityId: "blr", zoneId: "blr-east", ...slot(13), preferredProviderId: "groom_arun",
+  }, cookie);
+
+  assert.equal(response.status, 200, `a drifted live table must not fail the reserve: ${JSON.stringify(response.body)}`);
+  assert.ok(columns().includes("attempt_id"), "the shared repair added the column in place");
+  const stamped = rows(ctx.sqlite, "ATTEMPT-DRIFT-A");
+  assert.ok(stamped.length > 0 && stamped.every((row) => row.attempt_id), "and the reserve stamped it");
 });
