@@ -8,47 +8,56 @@ on:
       - .github/workflows/profile-try-prepare-assignment.yml
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   profile:
     runs-on: ubuntu-latest
-    environment: pawspace-staging
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           ref: fix/staging-performance-remediation
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
       - run: npm run install:ci
-      - name: Profile scheduler D1 reads
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Apply optimized scheduling reads
         run: |
-          set -euo pipefail
-          SQL=$(cat <<'SQL'
-          SELECT 'reservations_blr' probe, COUNT(*) total, SUM(CASE WHEN status!='cancelled' THEN 1 ELSE 0 END) active FROM scheduling_reservations WHERE city_id='blr';
-          SELECT 'reservations_target_day' probe, COUNT(*) total FROM scheduling_reservations WHERE city_id='blr' AND status!='cancelled' AND scheduled_start<'2026-09-15T00:00:00.000Z' AND scheduled_end>'2026-09-13T18:30:00.000Z';
-          SELECT 'availability_target_day' probe, COUNT(*) total FROM scheduling_availability WHERE date='2026-09-14';
-          SELECT 'capacity_profiles_blr' probe, COUNT(*) total FROM provider_capacity_profiles WHERE city_id='blr' AND live=1 AND status='active';
-          SELECT 'home_bases' probe, COUNT(*) total FROM provider_home_base;
-          SELECT 'provider_unavailability' probe, COUNT(*) total FROM provider_unavailability WHERE status='active';
-          SELECT 'grooming_onboarding' probe, COUNT(*) total FROM provider_onboarding_applications WHERE provider_id IN ('groom_arun','groom_kiran','groom_sanjay');
-          EXPLAIN QUERY PLAN SELECT * FROM scheduling_reservations WHERE city_id='blr' AND status!='cancelled';
-          EXPLAIN QUERY PLAN SELECT * FROM scheduling_reservations WHERE city_id='blr' AND status!='cancelled' AND scheduled_start<'2026-09-15T00:00:00.000Z' AND scheduled_end>'2026-09-13T18:30:00.000Z';
-          EXPLAIN QUERY PLAN SELECT * FROM scheduling_availability WHERE date='2026-09-14';
-          EXPLAIN QUERY PLAN SELECT * FROM provider_capacity_profiles WHERE city_id='blr' AND live=1 AND status='active' AND effective_from<='2026-09-14' AND (effective_to IS NULL OR effective_to>='2026-09-14');
-          EXPLAIN QUERY PLAN SELECT * FROM provider_home_base WHERE provider_id='groom_arun' AND effective_from<=1789362000000 AND (effective_until IS NULL OR effective_until>1789362000000) ORDER BY effective_from DESC LIMIT 1;
-          EXPLAIN QUERY PLAN SELECT id FROM provider_unavailability WHERE provider_id='groom_arun' AND status='active' AND starts_at<='2026-09-14T05:00:00.000Z' AND ends_at>'2026-09-14T05:00:00.000Z' LIMIT 1;
-          EXPLAIN QUERY PLAN SELECT id,vertical_key FROM provider_onboarding_applications WHERE provider_id='groom_arun' ORDER BY updated_at DESC LIMIT 1;
-          SQL
-          )
-          npx wrangler d1 execute pawspace-staging --remote --json --command "$SQL" | tee try-prepare-profile.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: try-prepare-assignment-profile
-          path: try-prepare-profile.json
+          python3 - <<'PY'
+          from pathlib import Path
+          route=Path('app/api/uat-scheduling/route.ts'); s=route.read_text()
+          a='const required=["scheduling_assignment_decisions","scheduling_rules","scheduling_availability","scheduling_reservations","idx_scheduling_availability_provider_date","idx_scheduling_availability_date_provider_source","idx_scheduling_reservations_provider","idx_scheduling_reservations_city_status_provider_window","idx_scheduling_reservations_group","idx_scheduling_reservations_attempt"];'
+          b='const required=["scheduling_assignment_decisions","scheduling_rules","scheduling_availability","scheduling_reservations","idx_scheduling_availability_provider_date","idx_scheduling_availability_date_provider_source","idx_scheduling_reservations_provider","idx_scheduling_reservations_city_status_provider_window","idx_scheduling_reservations_city_active_window","idx_scheduling_reservations_group","idx_scheduling_reservations_attempt"];'
+          assert a in s; s=s.replace(a,b,1)
+          a='  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_city_status_provider_window ON scheduling_reservations(city_id,status,provider_id,scheduled_start,scheduled_end)"),\n  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_group ON scheduling_reservations(group_id)"),'
+          b='  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_city_status_provider_window ON scheduling_reservations(city_id,status,provider_id,scheduled_start,scheduled_end)"),\n  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_city_active_window ON scheduling_reservations(city_id,status,scheduled_start,scheduled_end,provider_id)"),\n  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_group ON scheduling_reservations(group_id)"),'
+          assert a in s; s=s.replace(a,b,1)
+          a='function repository(db:Awaited<ReturnType<typeof database>>,input?:RequestBody,syntheticUatRoster=false):PlatformRepository{'
+          b='''function reservationReadWindow(input?:RequestBody){if(!input)return null;const occurrences=Math.max(1,Number(input.occurrences??1)),recurring=input.serviceCode==="dog_training"||input.serviceCode==="dog_walking",maxOffsetDays=input.weekdays?.length?180:recurring?Math.max(0,occurrences-1)*Math.max(1,Number(input.cadenceDays??7)):0,dayMs=86_400_000;return{start:new Date(new Date(input.scheduledStart).getTime()-dayMs).toISOString(),end:new Date(new Date(input.scheduledEnd).getTime()+(maxOffsetDays+1)*dayMs).toISOString()};}\nfunction repository(db:Awaited<ReturnType<typeof database>>,input?:RequestBody,syntheticUatRoster=false):PlatformRepository{'''
+          assert a in s; s=s.replace(a,b,1)
+          a='  const bookingRows=(cityId:string)=>{let pending=bookingsByCity.get(cityId);if(!pending){pending=db.prepare("SELECT * FROM scheduling_reservations WHERE city_id=? AND status!=\'cancelled\'").bind(cityId).all<Record<string,unknown>>().then(rows=>rows.results);bookingsByCity.set(cityId,pending);}return pending;};'
+          b='  const bookingRows=(cityId:string)=>{let pending=bookingsByCity.get(cityId);if(!pending){const window=reservationReadWindow(input);pending=(window?db.prepare("SELECT * FROM scheduling_reservations WHERE city_id=? AND status IN (\'confirmed\',\'assigned\',\'on_the_way\',\'arrived\',\'in_service\') AND scheduled_start<? AND scheduled_end>?").bind(cityId,window.end,window.start):db.prepare("SELECT * FROM scheduling_reservations WHERE city_id=? AND status IN (\'confirmed\',\'assigned\',\'on_the_way\',\'arrived\',\'in_service\')").bind(cityId)).all<Record<string,unknown>>().then(rows=>rows.results);bookingsByCity.set(cityId,pending);}return pending;};'
+          assert a in s; s=s.replace(a,b,1); route.write_text(s)
+
+          p=Path('lib/provider-verification-mandate.ts'); s=p.read_text(); a='export async function ensureVerificationMandateTables(db: Db) {'; b='async function ensureVerificationMandateTablesUncached(db: Db) {'; assert a in s; s=s.replace(a,b,1)
+          a='''  await db.prepare("ALTER TABLE provider_verifications ADD COLUMN expires_at INTEGER").run()\n    .catch((error: unknown) => { if (!/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) throw error; });\n}\n\n/** The statuses that mean a check is NOT currently satisfied.'''
+          b='''  await db.prepare("ALTER TABLE provider_verifications ADD COLUMN expires_at INTEGER").run()\n    .catch((error: unknown) => { if (!/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) throw error; });\n  await db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_onboarding_provider_updated ON provider_onboarding_applications(provider_id,updated_at DESC)").run().catch((error: unknown) => { if (!/no such table/i.test(error instanceof Error ? error.message : String(error))) throw error; });\n}\nconst verificationMandateTablesReady=new WeakSet<Db>();\nconst verificationMandateTablesRunning=new WeakMap<Db,Promise<void>>();\nexport async function ensureVerificationMandateTables(db: Db) {if(verificationMandateTablesReady.has(db))return;const running=verificationMandateTablesRunning.get(db);if(running)return running;const pending=ensureVerificationMandateTablesUncached(db).then(()=>{verificationMandateTablesReady.add(db);});verificationMandateTablesRunning.set(db,pending);try{await pending;}finally{if(verificationMandateTablesRunning.get(db)===pending)verificationMandateTablesRunning.delete(db);}}\n\n/** The statuses that mean a check is NOT currently satisfied.'''
+          assert a in s; s=s.replace(a,b,1); p.write_text(s)
+
+          p=Path('lib/provider-capacity-governance.ts'); s=p.read_text(); a='export async function loadGovernedProviders(db:Db,cityId:string,zoneId:string,serviceCode:string,at=new Date()){await seedProviderCapacityDefaults(db);const date=at.toISOString().slice(0,10);const rows=await db.prepare("SELECT * FROM provider_capacity_profiles WHERE city_id=? AND live=1 AND status=\'active\' AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)").bind(cityId,date,date).all<Row>();const baseProviders=rows.results.map(rowToProvider).filter(p=>p.services.includes(serviceCode)&&p.zones.includes(zoneId));const providers=await Promise.all(baseProviders.map(provider=>attachHomeBase(db,provider,at.getTime())));const nowIso=at.toISOString();const blocks=await Promise.all(providers.map(provider=>db.prepare("SELECT id FROM provider_unavailability WHERE provider_id=? AND status=\'active\' AND starts_at<=? AND ends_at>? LIMIT 1").bind(provider.id,nowIso,nowIso).first<Row>()));const available=providers.filter((_,index)=>!blocks[index]);return filterAssignableProviders(db,available,at.getTime());}'
+          b='''async function loadGovernedProvidersUncached(db:Db,cityId:string,zoneId:string,serviceCode:string,at:Date){await seedProviderCapacityDefaults(db);const date=at.toISOString().slice(0,10);const rows=await db.prepare("SELECT * FROM provider_capacity_profiles WHERE city_id=? AND live=1 AND status='active' AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)").bind(cityId,date,date).all<Row>();const baseProviders=rows.results.map(rowToProvider).filter(p=>p.services.includes(serviceCode)&&p.zones.includes(zoneId));const providers=await Promise.all(baseProviders.map(provider=>attachHomeBase(db,provider,at.getTime())));const nowIso=at.toISOString();const blocks=await Promise.all(providers.map(provider=>db.prepare("SELECT id FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<=? AND ends_at>? LIMIT 1").bind(provider.id,nowIso,nowIso).first<Row>()));const available=providers.filter((_,index)=>!blocks[index]);return filterAssignableProviders(db,available,at.getTime());}\nconst governedProviderLoads=new WeakMap<Db,Map<string,Promise<LocatedProvider[]>>>();\nexport async function loadGovernedProviders(db:Db,cityId:string,zoneId:string,serviceCode:string,at?:Date){const resolvedAt=at??new Date(),timeKey=at?resolvedAt.getTime():Math.floor(resolvedAt.getTime()/1000)*1000,key=`${cityId}|${zoneId}|${serviceCode}|${timeKey}`;let loads=governedProviderLoads.get(db);if(!loads){loads=new Map();governedProviderLoads.set(db,loads);}let pending=loads.get(key);if(!pending){pending=loadGovernedProvidersUncached(db,cityId,zoneId,serviceCode,resolvedAt);loads.set(key,pending);pending.finally(()=>{if(loads?.get(key)===pending)loads.delete(key);}).catch(()=>{});}return pending;}'''
+          assert a in s; s=s.replace(a,b,1); p.write_text(s)
+          PY
+      - run: node --experimental-strip-types --test tests/uat-scheduling-d1-contention.test.mjs tests/provider-assignment-verification-validity.test.mjs
+      - run: npm run typecheck
+      - run: |
+          git diff --check
+          test "$(git diff --name-only | grep -Ev '^(app/api/uat-scheduling/route.ts|lib/provider-capacity-governance.ts|lib/provider-verification-mandate.ts)$' | wc -l)" -eq 0
+          git config user.name "PawSpace Release Bot"
+          git config user.email "release-bot@pawspace.in"
+          git add -u
+          git commit -m "perf(scheduling): optimize tryPrepareAssignment query execution and indexing"
+          git push origin HEAD:fix/staging-performance-remediation
