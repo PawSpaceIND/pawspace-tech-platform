@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import fs from "node:fs";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+await installWorkersHooks();
 
 const locale=await import("../lib/voice-locale.ts");
 const telephony=await import("../lib/voice-telephony-provider.ts");
