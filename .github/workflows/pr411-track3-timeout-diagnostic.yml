@@ -1,0 +1,65 @@
+name: PR411 Track3 timeout diagnostic
+
+on:
+  push:
+    branches:
+      - ops/pr411-staging-track3-20260902
+    paths:
+      - .github/workflows/pr411-track3-timeout-diagnostic.yml
+
+permissions:
+  contents: read
+
+env:
+  STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+  FAILED_RUN_ID: pr411-33630420528-1
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dd1e4194c9e9bdad08eaccf771167c18f327b4b9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Query partial scheduling state from failed gate
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          SQL="SELECT COUNT(*) decisions FROM scheduling_assignment_decisions WHERE group_id LIKE '${FAILED_RUN_ID}:grp:%'; SELECT COUNT(*) reservations FROM scheduling_reservations WHERE group_id LIKE '${FAILED_RUN_ID}:grp:%';"
+          npx wrangler d1 execute pawspace-staging --remote --json --command "$SQL" | tee timeout-d1-state.json
+      - name: Probe one fresh scheduling request with 30s observation window
+        env:
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: |
+          node --input-type=module <<'NODE'
+          const base=process.env.STAGING_URL;
+          const login=await fetch(base+'/api/staging-login',{method:'POST',headers:{'content-type':'application/json',origin:base},body:JSON.stringify({action:'login',code:process.env.PAWSPACE_UAT_ACCESS_CODE,email:'founder@pawspace.in'}),signal:AbortSignal.timeout(15000)});
+          const cookie=(login.headers.get('set-cookie')||'').split(';')[0];
+          if(!login.ok||!cookie) throw new Error(`login ${login.status}`);
+          const d=new Date(Date.now()+170*86400000);d.setUTCHours(5,0,0,0);
+          const end=new Date(d.getTime()+120*60*1000);
+          const body={clientRequestId:`pr411-diagnostic-${Date.now()}`,customerId:`pr411-diag-cust-${Date.now()}`,petIds:[`pr411-diag-pet-${Date.now()}`],serviceCode:'grooming',cityId:'blr',zoneId:'blr-east',scheduledStart:d.toISOString(),scheduledEnd:end.toISOString(),occurrences:1,assignmentStrategy:'auto'};
+          const start=performance.now();
+          try {
+            const r=await fetch(base+'/api/uat-scheduling',{method:'POST',headers:{'content-type':'application/json',origin:base,cookie},body:JSON.stringify(body),signal:AbortSignal.timeout(30000)});
+            const text=await r.text();
+            console.log(JSON.stringify({status:r.status,elapsedMs:Number((performance.now()-start).toFixed(2)),body:text.slice(0,1200)},null,2));
+            if(r.status>=500) process.exitCode=2;
+          } catch(e) {
+            console.log(JSON.stringify({transportError:String(e?.name||'Error'),message:String(e?.message||e),elapsedMs:Number((performance.now()-start).toFixed(2))},null,2));
+            process.exitCode=3;
+          }
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr411-track3-timeout-diagnostic
+          path: timeout-d1-state.json
+          if-no-files-found: warn
