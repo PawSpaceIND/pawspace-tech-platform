@@ -23,6 +23,10 @@ type Row = Record<string, unknown>;
 /** Columns a table must have, with the DDL fragment used to add each one if it is missing. */
 const REQUIRED_COLUMNS: Array<{ table: string; column: string; definition: string; why: string }> = [
   {
+    table: "scheduling_reservations", column: "attempt_id", definition: "text",
+    why: "app/api/uat-scheduling verifies and rolls back a reservation attempt by this column; keyed on (group_id, created_at) it could delete a concurrent request's committed rows",
+  },
+  {
     table: "finance_close_periods", column: "checklist_json", definition: "text NOT NULL DEFAULT '[]'",
     why: "lib/gst-accounting.ts created this table without the column that app/api/finance-control/route.ts writes",
   },
