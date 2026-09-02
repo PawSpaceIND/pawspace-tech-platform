@@ -1,4 +1,4 @@
-name: Apply scheduling HTTP 500 instrumentation
+name: Inspect active canonical booking profile state
 
 on:
   push:
@@ -8,80 +8,33 @@ on:
       - .github/workflows/profile-try-prepare-assignment.yml
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  instrument:
+  inspect:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    environment: pawspace-staging
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: fix/staging-performance-remediation
-          fetch-depth: 0
+          ref: 71b092d9b8045163a30d64bf8243036d8b8512a6
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
       - run: npm run install:ci
-      - name: Add structured scheduling diagnostics
+      - run: npm run build
+      - name: Configure isolated staging
+        env:
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+        run: node scripts/stage-config.mjs
+      - name: Query active profile state
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          route=Path('app/api/uat-scheduling/route.ts')
-          s=route.read_text()
-          old='const json=(data:unknown,status=200)=>Response.json(data,{status});'
-          new='''const json=(data:unknown,status=200)=>Response.json(data,{status});
-function schedulingDiagnostic(stage:string,error:unknown,context:Record<string,unknown>={}){const resolved=error instanceof Error?error:new Error(String(error));console.error(JSON.stringify({event:"uat_scheduling_error",stage,...context,errorName:resolved.name,errorMessage:resolved.message,stack:resolved.stack??null}));}'''
-          assert old in s and 'function schedulingDiagnostic(' not in s
-          s=s.replace(old,new,1)
-
-          old='  await ensureProviderCapacityTables(db);'
-          new='  try{await ensureProviderCapacityTables(db);}catch(error){schedulingDiagnostic("ensureProviderCapacityTables",error);throw error;}'
-          assert old in s
-          s=s.replace(old,new,1)
-
-          old='const results=statements.length===1?[await statements[0]!.run()]:await db.batch(statements);const inserted=results.reduce((sum,result)=>sum+Number(result?.meta?.changes||0),0);'
-          new='const results=await(async()=>{try{return statements.length===1?[await statements[0]!.run()]:await db.batch(statements);}catch(error){schedulingDiagnostic("reservation_claim",error,{groupId,providerId:decision.provider!.id,serviceCode:input.serviceCode,occurrences:decision.occurrences.length});throw error;}})();const inserted=results.reduce((sum,result)=>sum+Number(result?.meta?.changes||0),0);'
-          assert old in s
-          s=s.replace(old,new,1)
-
-          old='export async function POST(request:Request){try{const db=await database(),input=await request.json() as RequestBody,actor=await resolveActor(request);'
-          new='export async function POST(request:Request){let diagnosticContext:Record<string,unknown>={};try{const db=await database(),input=await request.json() as RequestBody;diagnosticContext={clientRequestId:String(input.clientRequestId||""),serviceCode:String(input.serviceCode||""),cityId:String(input.cityId||""),zoneId:String(input.zoneId||"")};const actor=await resolveActor(request);'
-          assert old in s
-          s=s.replace(old,new,1)
-
-          old='if(isSqliteBusyError(error))return json({error:"SCHEDULING_BUSY",message:"Scheduling is temporarily busy after bounded retries; retry shortly."},503);return authError(error,"Scheduling failed");}}'
-          new='if(isSqliteBusyError(error))return json({error:"SCHEDULING_BUSY",message:"Scheduling is temporarily busy after bounded retries; retry shortly."},503);schedulingDiagnostic("post_unhandled",error,diagnosticContext);return authError(error,"Scheduling failed");}}'
-          assert old in s
-          s=s.replace(old,new,1)
-          route.write_text(s)
-
-          capacity=Path('lib/provider-capacity-governance.ts')
-          s=capacity.read_text()
-          old='export async function ensureProviderCapacityTables(db:Db){if(capacityTablesEnsured.has(db))return;const running=capacityTablesEnsuring.get(db);if(running)return running;const pending=(async()=>{const required='
-          new='export async function ensureProviderCapacityTables(db:Db){if(capacityTablesEnsured.has(db))return;const running=capacityTablesEnsuring.get(db);if(running)return running;const pending=(async()=>{try{const required='
-          assert old in s
-          s=s.replace(old,new,1)
-          old=']);capacityTablesEnsured.add(db);})();capacityTablesEnsuring.set(db,pending);try{return await pending;}finally{if(capacityTablesEnsuring.get(db)===pending)capacityTablesEnsuring.delete(db);}}'
-          new=']);capacityTablesEnsured.add(db);}catch(error){const resolved=error instanceof Error?error:new Error(String(error));console.error(JSON.stringify({event:"uat_scheduling_error",stage:"ensureProviderCapacityTables.internal",errorName:resolved.name,errorMessage:resolved.message,stack:resolved.stack??null}));throw error;}})();capacityTablesEnsuring.set(db,pending);try{return await pending;}finally{if(capacityTablesEnsuring.get(db)===pending)capacityTablesEnsuring.delete(db);}}'
-          assert old in s
-          s=s.replace(old,new,1)
-          capacity.write_text(s)
-          PY
-      - name: Validate instrumentation
-        run: |
-          node --experimental-strip-types --test tests/uat-scheduling-d1-contention.test.mjs tests/provider-assignment-verification-validity.test.mjs
-          npm run typecheck
-          git diff --check
-          changed="$(git diff --name-only)"
-          printf '%s\n' "$changed"
-          test "$(printf '%s\n' "$changed" | grep -Ev '^(app/api/uat-scheduling/route.ts|lib/provider-capacity-governance.ts)$' | sed '/^$/d' | wc -l)" -eq 0
-      - name: Commit instrumentation
-        run: |
-          git config user.name "PawSpace Release Bot"
-          git config user.email "release-bot@pawspace.in"
-          git add -u app/api/uat-scheduling/route.ts lib/provider-capacity-governance.ts
-          git commit -m "chore(scheduling): instrument tryPrepareAssignment to isolate HTTP 500 root cause"
-          git push origin HEAD:fix/staging-performance-remediation
+          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --json --command "SELECT (SELECT COUNT(*) FROM scheduling_assignment_decisions WHERE group_id LIKE 'booking-profile-33673782979-1:grp:%') assignments,(SELECT COUNT(*) FROM canonical_bookings WHERE idempotency_key LIKE 'booking-profile-33673782979-1:booking:%') bookings,(SELECT COUNT(*) FROM booking_payments WHERE booking_id IN (SELECT id FROM canonical_bookings WHERE idempotency_key LIKE 'booking-profile-33673782979-1:booking:%')) payments,(SELECT COUNT(*) FROM payment_gateway_events WHERE event_id='booking-profile-33673782979-1:evt:replay') webhook_events;" | tee profile-state.json
