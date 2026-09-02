@@ -56,11 +56,13 @@ const cookie = setCookie.split(';')[0];
 if (!cookie) throw new Error('Founder staging login returned no session cookie');
 
 // Keep every deterministic booking comfortably inside the product's 180-day booking horizon.
+// Grooming requires a minimum 120-minute service window for one pet, so the load harness must exercise
+// a valid production-shaped booking rather than turn a domain validation into a false concurrency 500.
 function windowFor(i) {
   const d = new Date(Date.now() + (12 + i) * 86400000);
   d.setUTCHours(9, 0, 0, 0);
   const start = d.toISOString();
-  const end = new Date(d.getTime() + 60 * 60 * 1000).toISOString();
+  const end = new Date(d.getTime() + 120 * 60 * 1000).toISOString();
   return {start,end};
 }
 
