@@ -38,6 +38,23 @@ export type TelephonyCallIntent = {
   simulatedOutcome?: TelephonyEventKind | null;
 };
 
+/**
+ * Peer-to-peer two-leg connect: dial the first leg, and on answer bridge it to the second, presenting the
+ * masking CallerId (the ExoPhone) to BOTH so neither party sees the other's real number. The two numbers
+ * are resolved server-side by the governance layer; a caller never supplies them.
+ */
+export type TelephonyBridgeIntent = {
+  callRef: string;
+  firstLegNumber: string;
+  secondLegNumber: string;
+  statusCallbackUrl: string;
+  /** Only ever true when PAWSPACE_VOICE_RECORDING_APPROVED is set; the caller does not get to decide. */
+  recordingAllowed: boolean;
+  timeoutSeconds?: number;
+  /** Deterministic behaviour selector, honoured by the local simulator ONLY. */
+  simulatedOutcome?: TelephonyEventKind | null;
+};
+
 export type TelephonyCallHandle = {
   accepted: boolean;
   providerCallId: string;
@@ -65,6 +82,8 @@ export type TelephonyProvider = {
   /** True only for an adapter that can actually reach the public telephone network. */
   productionCapable: boolean;
   createCall(intent: TelephonyCallIntent): Promise<TelephonyCallHandle>;
+  /** Optional: not every transport can bridge two legs. Absent => the bridge governance refuses (503). */
+  connectTwoNumbers?(intent: TelephonyBridgeIntent): Promise<TelephonyCallHandle>;
   verifyWebhook(input: { rawBody: string; headers: Headers }): Promise<TelephonyWebhookVerification>;
   parseEvent(rawBody: string): TelephonyProviderEvent;
 };
@@ -80,6 +99,7 @@ export const disconnectedTelephony: TelephonyProvider = {
   status: "not_connected",
   productionCapable: false,
   async createCall() { throw new TelephonyProviderUnavailable("Telephony provider is not connected"); },
+  async connectTwoNumbers() { throw new TelephonyProviderUnavailable("Telephony provider is not connected"); },
   async verifyWebhook() { return { verified: false, mechanism: null, reason: "Telephony provider is not connected" }; },
   parseEvent() { throw new TelephonyProviderUnavailable("Telephony provider is not connected"); },
 };
@@ -232,27 +252,52 @@ export function exotelTelephony(env: Env): TelephonyProvider {
   // caller must not be able to reach fetch() with an incomplete configuration either.
   const missing = VOICE_TELEPHONY_SECRET_NAMES.filter(name => !val(env, name));
   if (missing.length) return disconnectedTelephony;
+  // The single POST to Exotel's Connect API, shared by the one-leg dial and the two-leg bridge so the
+  // timeout, byte cap, error mapping and Call.Sid extraction cannot drift between the two call shapes.
+  async function placeExotelCall(body: URLSearchParams): Promise<TelephonyCallHandle> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), EXOTEL_TIMEOUT_MS);
+    try {
+      let response: Response;
+      let text: string;
+      try {
+        response = await fetch(`https://${subdomain}/v1/Accounts/${encodeURIComponent(sid)}/Calls/connect.json`, {
+          method: "POST", signal: controller.signal,
+          headers: { authorization: `Basic ${btoa(`${key}:${token}`)}`, "content-type": "application/x-www-form-urlencoded" },
+          body: body.toString(),
+        });
+        text = await readBoundedText(response, MAX_PROVIDER_RESPONSE_BYTES);
+      } catch (error) {
+        throw new TelephonyProviderUnavailable(controller.signal.aborted ? `Telephony provider did not respond within ${EXOTEL_TIMEOUT_MS}ms` : `Telephony provider request failed: ${String((error as Error)?.message || error).slice(0, 120)}`);
+      }
+      if (!response.ok) throw new TelephonyProviderUnavailable(`Telephony provider rejected the call request (${response.status})`);
+      let parsed: { Call?: { Sid?: string; Status?: string } } = {};
+      try { parsed = JSON.parse(text) as { Call?: { Sid?: string; Status?: string } }; } catch { throw new TelephonyProviderUnavailable("Telephony provider returned a malformed response"); }
+      const providerCallId = String(parsed.Call?.Sid || "").trim();
+      if (!providerCallId) throw new TelephonyProviderUnavailable("Telephony provider returned no call identifier");
+      return { accepted: true, providerCallId, providerStatus: String(parsed.Call?.Status || "queued"), productionCall: true };
+    } finally { clearTimeout(timer); }
+  }
+  // Both entry points enforce the exact-approved status callback and the environment recording approval
+  // before any dial body is built, so neither a direct createCall nor a direct connectTwoNumbers can
+  // redirect call progress or start recording that the environment has not approved.
+  function assertCallbackAndRecording(intent: { statusCallbackUrl: string; recordingAllowed: boolean }) {
+    const approved = statusCallbackUrl(env);
+    if (!approved) throw new TelephonyProviderUnavailable("A https status callback URL is required before a call may be placed (PAWSPACE_VOICE_STATUS_CALLBACK_URL)");
+    if (intent.statusCallbackUrl !== approved) throw new TelephonyProviderUnavailable("The status callback does not match the approved environment callback");
+    if (intent.recordingAllowed && !callRecordingApproved(env)) throw new TelephonyProviderUnavailable("Call recording is not approved for this environment (PAWSPACE_VOICE_RECORDING_APPROVED)");
+  }
   return {
     provider: "exotel",
     status: "connected",
     productionCapable: true,
     async createCall(intent) {
-      // Defence in depth behind the environment gate. Two things are checked, not one:
-      //   - a reachable https callback exists at all, because without it the carrier accepts the dial and
-      //     we never learn the outcome, leaving the call stuck in `dialing`;
-      //   - it is EXACTLY the approved environment value. The governance layer no longer accepts a
-      //     per-call override, and this makes that structural: a callback destination reaching here from
-      //     anywhere but PAWSPACE_VOICE_STATUS_CALLBACK_URL is refused, so no future caller can quietly
-      //     redirect call progress and recording references somewhere else.
-      const approved = statusCallbackUrl(env);
-      if (!approved) throw new TelephonyProviderUnavailable("A https status callback URL is required before a call may be placed (PAWSPACE_VOICE_STATUS_CALLBACK_URL)");
-      if (intent.statusCallbackUrl !== approved) throw new TelephonyProviderUnavailable("The status callback does not match the approved environment callback");
-      // Recording is a consent and compliance decision, so the environment approval is checked HERE and
-      // not only by the caller that set the flag. Sending Record=true on a caller's word alone would let
-      // a direct provider caller start carrier-side recording while
-      // PAWSPACE_VOICE_RECORDING_APPROVED is false.
-      if (intent.recordingAllowed && !callRecordingApproved(env)) throw new TelephonyProviderUnavailable("Call recording is not approved for this environment (PAWSPACE_VOICE_RECORDING_APPROVED)");
-      const body = new URLSearchParams({
+      // Defence in depth behind the environment gate: an exactly-approved https callback (or the carrier
+      // accepts the dial and we never learn the outcome), and the environment recording approval checked
+      // HERE, not only on the caller's word. Both live in assertCallbackAndRecording, shared with the
+      // two-leg bridge so neither entry point can drift.
+      assertCallbackAndRecording(intent);
+      return placeExotelCall(new URLSearchParams({
         From: intent.toNumber,
         CallerId: callerId,
         Url: `http://my.exotel.com/${sid}/exoml/start_voice/${appId}`,
@@ -261,33 +306,22 @@ export function exotelTelephony(env: Env): TelephonyProvider {
         CustomField: intent.callRef,
         TimeOut: String(Math.max(15, Math.min(intent.timeoutSeconds ?? 45, 120))),
         Record: intent.recordingAllowed ? "true" : "false",
-      });
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), EXOTEL_TIMEOUT_MS);
-      try {
-        let response: Response;
-        let text: string;
-        try {
-          response = await fetch(`https://${subdomain}/v1/Accounts/${encodeURIComponent(sid)}/Calls/connect.json`, {
-            method: "POST", signal: controller.signal,
-            headers: { authorization: `Basic ${btoa(`${key}:${token}`)}`, "content-type": "application/x-www-form-urlencoded" },
-            body: body.toString(),
-          });
-          // Inside the deadline: a carrier that sends headers and then stalls the body is the same hang
-          // as one that never answers, and this is the request that decides whether a call goes out.
-          // Also bounded in size - a provider handing back an unbounded body is not a reason to
-          // exhaust this isolate.
-          text = await readBoundedText(response, MAX_PROVIDER_RESPONSE_BYTES);
-        } catch (error) {
-          throw new TelephonyProviderUnavailable(controller.signal.aborted ? `Telephony provider did not respond within ${EXOTEL_TIMEOUT_MS}ms` : `Telephony provider request failed: ${String((error as Error)?.message || error).slice(0, 120)}`);
-        }
-        if (!response.ok) throw new TelephonyProviderUnavailable(`Telephony provider rejected the call request (${response.status})`);
-        let parsed: { Call?: { Sid?: string; Status?: string } } = {};
-        try { parsed = JSON.parse(text) as { Call?: { Sid?: string; Status?: string } }; } catch { throw new TelephonyProviderUnavailable("Telephony provider returned a malformed response"); }
-        const providerCallId = String(parsed.Call?.Sid || "").trim();
-        if (!providerCallId) throw new TelephonyProviderUnavailable("Telephony provider returned no call identifier");
-        return { accepted: true, providerCallId, providerStatus: String(parsed.Call?.Status || "queued"), productionCall: true };
-      } finally { clearTimeout(timer); }
+      }));
+    },
+    async connectTwoNumbers(intent) {
+      assertCallbackAndRecording(intent);
+      // Two-number connect: From is dialed first, To is bridged on answer, CallerId (the ExoPhone) masks
+      // BOTH legs. No ExoML Url - the second leg is the destination, not an applet.
+      return placeExotelCall(new URLSearchParams({
+        From: intent.firstLegNumber,
+        To: intent.secondLegNumber,
+        CallerId: callerId,
+        CallType: "trans",
+        StatusCallback: intent.statusCallbackUrl,
+        CustomField: intent.callRef,
+        TimeOut: String(Math.max(15, Math.min(intent.timeoutSeconds ?? 45, 120))),
+        Record: intent.recordingAllowed ? "true" : "false",
+      }));
     },
     async verifyWebhook({ rawBody, headers }) { return verifyVoiceWebhookSignature(secret, rawBody, headers); },
     parseEvent(rawBody) { return normaliseTelephonyEvent(rawBody, "exotel"); },
@@ -316,6 +350,10 @@ export function localSimulatorTelephony(env: Env): TelephonyProvider {
     async createCall(intent) {
       if (intent.simulatedOutcome === "failed") throw new TelephonyProviderUnavailable("Simulated telephony dial failure");
       return { accepted: true, providerCallId: `SIMCALL-${intent.callRef}`, providerStatus: intent.simulatedOutcome || "queued", productionCall: false };
+    },
+    async connectTwoNumbers(intent) {
+      if (intent.simulatedOutcome === "failed") throw new TelephonyProviderUnavailable("Simulated telephony bridge failure");
+      return { accepted: true, providerCallId: `SIMBRIDGE-${intent.callRef}`, providerStatus: intent.simulatedOutcome || "queued", productionCall: false };
     },
     async verifyWebhook({ rawBody, headers }) { return verifyVoiceWebhookSignature(secret, rawBody, headers); },
     parseEvent(rawBody) { return normaliseTelephonyEvent(rawBody, LOCAL_SIMULATOR_PROVIDER); },

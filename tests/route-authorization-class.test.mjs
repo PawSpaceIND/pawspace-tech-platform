@@ -356,7 +356,13 @@ const VALIDATES_BEFORE_AUTHORIZING = [
   "walking-lifecycle.POST",
   "walking-proof.GET",
   "walking-proof.POST",
-  "walking-recovery.POST"
+  "walking-recovery.POST",
+  // Ownership by booking party (pet parent OR assigned provider): the bookingId must be read from the
+  // payload and the booking loaded to know its party ids before requireCustomerOwnership /
+  // requireProviderOwnership can run - identical to boarding-proof.POST. No single permission is held by
+  // both a customer and a provider session, so a permission-first gate is not possible. No data leaks and
+  // the gateway refuses these callers in production.
+  "voice-bridge.POST"
 ];
 
 test("no new route validates before it authorizes", async () => {
