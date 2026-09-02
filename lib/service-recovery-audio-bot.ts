@@ -3,7 +3,6 @@ import { ensureCommunicationTables } from "./communication-engine";
 import { ensureAiVoiceUatTables } from "./ai-voice-uat";
 import { createUnifiedCase } from "./unified-case-center";
 import { selectVoiceTts, voiceProvidersStatus } from "./voice-provider-adapter";
-import { VOICE_RETRYABLE_STATES, type VoiceCallState } from "./voice-call-state";
 import {
   ensureVoiceCallTables,
   recordVoiceSpeechFailure,
@@ -293,7 +292,7 @@ export async function runServiceRecoveryAudioBotSweep(db: Db, input: { actorId?:
 
   const due = await db.prepare("SELECT * FROM service_recovery_voice_jobs WHERE status IN ('queued','retry_pending') AND next_attempt_at<=? ORDER BY next_attempt_at,id LIMIT ?")
     .bind(asOf,Math.max(1,Math.min(input.limit??25,100))).all<Row>();
-  let dialled=0,productionDials=0,blocked=0,failed=0;
+  let dialled=0,productionDials=0,failed=0;
   for (const original of due.results) {
     if (!(await claimJob(db,original,asOf))) continue;
     const job = await db.prepare("SELECT * FROM service_recovery_voice_jobs WHERE id=?").bind(text(original.id)).first<Row>() as Row;
@@ -309,7 +308,7 @@ export async function runServiceRecoveryAudioBotSweep(db: Db, input: { actorId?:
       });
     }
   }
-  return { staged, dialled, productionDials, completed, escalated, retryPending, audioSessions, blocked, failed, maxAutomatedAttempts:SERVICE_RECOVERY_AUDIO_MAX_ATTEMPTS };
+  return { staged, dialled, productionDials, completed, escalated, retryPending, audioSessions, failed, maxAutomatedAttempts:SERVICE_RECOVERY_AUDIO_MAX_ATTEMPTS };
 }
 
 export async function serviceRecoveryAudioBotStatus(db: Db, input: { bookingId?:string; limit?:number } = {}) {

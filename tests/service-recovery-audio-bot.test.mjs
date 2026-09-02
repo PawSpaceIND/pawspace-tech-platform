@@ -6,6 +6,7 @@ import { makeD1, freshSqlite, uatVoiceEnv, ALLOWLISTED_PHONE, DAYTIME } from "./
 installWorkersHooks("__SRAB_DB__", "__SRAB_ENV__");
 const bot = await import("../lib/service-recovery-audio-bot.ts");
 const voice = await import("../lib/voice-outbound-governance.ts");
+const cases = await import("../lib/unified-case-center.ts");
 
 const fakeAi = {
   async run(model, input) {
@@ -21,6 +22,10 @@ async function fresh({ speech = true } = {}) {
   globalThis.__SRAB_DB__ = db;
   globalThis.__SRAB_ENV__ = env;
   await bot.ensureServiceRecoveryAudioBotTables(db);
+  // createUnifiedCase() ensures these itself in production, so they only exist once an escalation
+  // has actually happened. Create them up front so the "no human case was manufactured" assertion
+  // reads zero rows rather than throwing on a missing table and proving nothing.
+  await cases.ensureUnifiedCaseTables(db);
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS canonical_customers (
       id TEXT PRIMARY KEY, primary_phone TEXT, consent_json TEXT
