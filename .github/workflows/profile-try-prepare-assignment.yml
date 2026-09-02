@@ -1,4 +1,4 @@
-name: Inspect active canonical booking profile state
+name: Close canonical profile after booking evidence captured
 
 on:
   push:
@@ -8,33 +8,14 @@ on:
       - .github/workflows/profile-try-prepare-assignment.yml
 
 permissions:
+  actions: write
   contents: read
 
 jobs:
-  inspect:
+  close:
     runs-on: ubuntu-latest
-    environment: pawspace-staging
-    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: 71b092d9b8045163a30d64bf8243036d8b8512a6
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-      - run: npm run install:ci
-      - run: npm run build
-      - name: Configure isolated staging
+      - name: Cancel extended diagnostic after canonical evidence checkpoint
         env:
-          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
-          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
-          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
-          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
-        run: node scripts/stage-config.mjs
-      - name: Query active profile state
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --json --command "SELECT (SELECT COUNT(*) FROM scheduling_assignment_decisions WHERE group_id LIKE 'booking-profile-33673782979-1:grp:%') assignments,(SELECT COUNT(*) FROM canonical_bookings WHERE idempotency_key LIKE 'booking-profile-33673782979-1:booking:%') bookings,(SELECT COUNT(*) FROM booking_payments WHERE booking_id IN (SELECT id FROM canonical_bookings WHERE idempotency_key LIKE 'booking-profile-33673782979-1:booking:%')) payments,(SELECT COUNT(*) FROM payment_gateway_events WHERE event_id='booking-profile-33673782979-1:evt:replay') webhook_events;" | tee profile-state.json
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --method POST repos/PawSpaceIND/pawspace-tech-platform/actions/runs/33673782979/cancel
