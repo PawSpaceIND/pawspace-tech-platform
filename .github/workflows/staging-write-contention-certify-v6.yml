@@ -18,7 +18,7 @@ concurrency:
 
 env:
   STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
-  TARGET_SHA: cc406765f6086602703498c03849a5052bc2d7b8
+  TARGET_SHA: 8e6cb14beeeb836f6f61cd34a73f2f2c3498bff1
 
 jobs:
   certify:
@@ -155,3 +155,4 @@ jobs:
             staging-performance.json
             staging-performance-d1.json
           if-no-files-found: warn
+# exact-sha recertification for tryPrepareAssignment optimization
