@@ -1,0 +1,162 @@
+name: PR411 staging Track 3 certification
+
+on:
+  push:
+    branches:
+      - ops/pr411-staging-track3-20260902
+    paths:
+      - .github/workflows/pr411-staging-track3.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pawspace-pr411-staging-track3
+  cancel-in-progress: false
+
+env:
+  EXPECTED_SHA: dd1e4194c9e9bdad08eaccf771167c18f327b4b9
+  STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+
+jobs:
+  staging-track3:
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          fetch-depth: 0
+      - name: Verify exact merged main SHA
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install
+        run: npm run install:ci
+      - name: Build merged main
+        run: npm run build
+      - name: Configure isolated staging
+        env:
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+        run: node scripts/stage-config.mjs
+      - name: Deploy exact merged main SHA to staging
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+          EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
+          EXOTEL_VOICE_APP_ID: ${{ secrets.EXOTEL_VOICE_APP_ID }}
+          EXOTEL_WEBHOOK_SECRET: ${{ secrets.EXOTEL_WEBHOOK_SECRET }}
+        run: |
+          set -euo pipefail
+          SECRETS_FILE="$RUNNER_TEMP/pr411-staging-secrets.json"
+          export SECRETS_FILE
+          trap 'rm -f "$SECRETS_FILE"' EXIT
+          node --input-type=module <<'NODE'
+          import {writeFileSync} from 'node:fs';
+          const required=['PAWSPACE_UAT_ACCESS_CODE','PAWSPACE_UAT_SIGNING_KEY','PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT','EXOTEL_API_KEY','EXOTEL_API_TOKEN','EXOTEL_SID','EXOTEL_CALLER_ID','EXOTEL_VOICE_APP_ID','EXOTEL_WEBHOOK_SECRET'];
+          const optional=['RAZORPAY_KEY_ID_SANDBOX','RAZORPAY_KEY_SECRET_SANDBOX','RAZORPAY_WEBHOOK_SECRET_SANDBOX'];
+          const values=Object.fromEntries(required.map(n=>[n,process.env[n]||'']));
+          if(Object.values(values).some(v=>!v)) throw new Error('required staging secret missing');
+          for(const n of optional) if(process.env[n]) values[n]=process.env[n];
+          values.PAWSPACE_STAGING_LIVE_CUSTOMER_OTP='false';
+          writeFileSync(process.env.SECRETS_FILE,JSON.stringify(values),{mode:0o600});
+          NODE
+          npx wrangler deploy --message "staging $EXPECTED_SHA" --secrets-file "$SECRETS_FILE" 2>&1 | tee deployment.txt
+      - name: Certify staging isolation and exact SHA
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
+        run: node tests/e2e/staging-certification.mjs --isolation-only
+      - name: Seed deterministic staging identities
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          git show origin/ops/nontrack2-closure-20260901:scripts/ops/staging-role-seed.mjs > "$RUNNER_TEMP/staging-role-seed.mjs"
+          node --experimental-strip-types "$RUNNER_TEMP/staging-role-seed.mjs" "$RUNNER_TEMP/staging-role-seed.sql"
+          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --yes --file="$RUNNER_TEMP/staging-role-seed.sql"
+          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --file=scripts/employee-seed.sql
+      - name: Verify staging health
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const url=process.env.STAGING_URL+'/healthz';
+          const r=await fetch(url,{signal:AbortSignal.timeout(15000)});
+          const body=await r.text();
+          console.log(JSON.stringify({url,status:r.status,ok:r.ok,body:body.slice(0,500)},null,2));
+          if(!r.ok) process.exit(1);
+          NODE
+      - name: Materialize existing Track 3 gate
+        run: |
+          set -euo pipefail
+          mkdir -p scripts/ops
+          git show origin/ops/nontrack2-closure-20260901:scripts/ops/staging-performance-gate.mjs > scripts/ops/staging-performance-gate.mjs
+      - name: Run hosted Track 3 workload
+        env:
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          PERF_RUN_ID: pr411-${{ github.run_id }}-${{ github.run_attempt }}
+        run: node scripts/ops/staging-performance-gate.mjs
+      - name: Verify D1 Track 3 invariants
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          RUN_ID="$(node -e "const r=require('./staging-performance.json');process.stdout.write(r.runId)")"
+          SQL="SELECT (SELECT COUNT(*) FROM canonical_bookings WHERE idempotency_key LIKE '${RUN_ID}:booking:%') bookings,(SELECT COUNT(*) FROM booking_payments WHERE booking_id IN (SELECT id FROM canonical_bookings WHERE idempotency_key LIKE '${RUN_ID}:booking:%')) payments,(SELECT COUNT(*) FROM scheduling_assignment_decisions WHERE group_id LIKE '${RUN_ID}:grp:%') assignments,(SELECT COUNT(*) FROM payment_gateway_events WHERE event_id='${RUN_ID}:evt:replay') webhook_events,(SELECT ROUND(COALESCE(SUM(debit),0)-COALESCE(SUM(credit),0),2) FROM finance_journal_entries) ledger_drift;"
+          npx wrangler d1 execute pawspace-staging --remote --json --command "$SQL" > staging-performance-d1.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const raw=JSON.parse(fs.readFileSync('staging-performance-d1.json','utf8'));
+          const row=(Array.isArray(raw)?raw[0]:raw)?.results?.[0]||{};
+          const n=k=>Number(row[k]??NaN);
+          console.log(JSON.stringify(row,null,2));
+          if(n('bookings')!==100) throw new Error(`expected 100 bookings, got ${row.bookings}`);
+          if(n('payments')!==100) throw new Error(`expected 100 payments, got ${row.payments}`);
+          if(n('assignments')!==100) throw new Error(`expected 100 assignments, got ${row.assignments}`);
+          if(n('webhook_events')!==1) throw new Error(`expected one webhook event, got ${row.webhook_events}`);
+          if(Math.abs(n('ledger_drift'))>0.000001) throw new Error(`ledger drift ${row.ledger_drift}`);
+          NODE
+      - name: Scan evidence for 500s and lock errors
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const p=JSON.parse(fs.readFileSync('staging-performance.json','utf8'));
+          const failures=p.failures||[];
+          const bad=failures.filter(x=>/\b500\b|SQLITE_BUSY|database (?:table )?is locked|cannot start a transaction within a transaction/i.test(String(x.error||'')));
+          console.log(JSON.stringify({failureCount:failures.length,lockOr500Failures:bad,metrics:p.metrics,counts:p.counts,thresholds:p.thresholds},null,2));
+          if(bad.length||failures.length) process.exit(1);
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr411-track3-evidence-${{ env.EXPECTED_SHA }}
+          path: |
+            deployment.txt
+            staging-performance.json
+            staging-performance-d1.json
+          if-no-files-found: warn
