@@ -52,12 +52,26 @@ export function uatRosterSeedingEnabled(env:SchedulingEnv){return declaredSchedu
 /**
  * Every availability row the eligibility engine is entitled to believe for one provider on one date.
  *
- * If the provider or Ops authored anything for that date, ONLY those rows are returned - a synthetic
- * row cannot widen a window a human deliberately narrowed. If nobody authored anything, whatever is
- * there is returned unchanged, so a runtime that legitimately declared UAT seeding behaves as before.
+ * This is intentionally one D1 round trip. The older implementation first queried authored rows and,
+ * when none existed, issued a second query for synthetic UAT rows. Provider evaluation fans this call
+ * out across the shortlist, so that fallback doubled remote D1 latency on the hottest scheduling read.
+ * The EXISTS predicate preserves the exact authority rule: authored rows win; otherwise all rows for
+ * the provider/date are eligible evidence.
  */
 export async function listAuthoritativeAvailability(db:RosterDb,providerId:string,date:string){
-  const authored=await db.prepare(`SELECT * FROM scheduling_availability WHERE provider_id=? AND date=? AND source IN ${AUTHORED_SOURCE_SQL}`).bind(providerId,date).all<AvailabilityRow>();
-  if(authored.results.length)return authored.results;
-  return (await db.prepare("SELECT * FROM scheduling_availability WHERE provider_id=? AND date=?").bind(providerId,date).all<AvailabilityRow>()).results;
+  return (await db.prepare(`
+    SELECT *
+    FROM scheduling_availability a
+    WHERE a.provider_id=? AND a.date=?
+      AND (
+        a.source IN ${AUTHORED_SOURCE_SQL}
+        OR NOT EXISTS (
+          SELECT 1
+          FROM scheduling_availability authored
+          WHERE authored.provider_id=a.provider_id
+            AND authored.date=a.date
+            AND authored.source IN ${AUTHORED_SOURCE_SQL}
+        )
+      )
+  `).bind(providerId,date).all<AvailabilityRow>()).results;
 }
