@@ -84,6 +84,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
+          mkdir -p scripts/ops
           git show origin/ops/nontrack2-closure-20260901:scripts/ops/staging-role-seed.mjs > scripts/ops/staging-role-seed.mjs
           node --experimental-strip-types scripts/ops/staging-role-seed.mjs "$RUNNER_TEMP/staging-role-seed.sql"
           npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --yes --file="$RUNNER_TEMP/staging-role-seed.sql"
@@ -98,7 +99,9 @@ jobs:
           if(!r.ok) process.exit(1);
           NODE
       - name: Materialize existing Track 3 gate
-        run: git show origin/ops/nontrack2-closure-20260901:scripts/ops/staging-performance-gate.mjs > scripts/ops/staging-performance-gate.mjs
+        run: |
+          mkdir -p scripts/ops
+          git show origin/ops/nontrack2-closure-20260901:scripts/ops/staging-performance-gate.mjs > scripts/ops/staging-performance-gate.mjs
       - name: Run hosted Track 3 workload
         env:
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
