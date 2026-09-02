@@ -80,12 +80,43 @@ async function throughGateway(request) {
   return { access };
 }
 
+/*
+ * This suite has failed intermittently in CI - once, on PR #334, with `expected 403, got 500` at the
+ * cross-customer ownership assertion. All that survived was the status code, so there was nothing to
+ * root-cause from: no body, no exception, no stack. It has never reproduced locally or been explained.
+ *
+ * Every request in this file goes through here, so this is the one place that can capture evidence for
+ * whichever assertion fires next. A 5xx from this route is ALWAYS unexpected - the route's own refusals
+ * are 4xx - so an unexpected 5xx, or a handler that throws outright, prints what it actually was.
+ *
+ * Deliberately does not assert or swallow: the test still sees exactly the response it would have seen,
+ * and still fails on its own terms. This only makes the next failure legible. The body is read from a
+ * clone so the caller's own .json() is untouched.
+ */
+async function captureUnexpectedFailure(request, response) {
+  if (response.status < 500) return response;
+  let body = "<unreadable>";
+  try { body = (await response.clone().text()).slice(0, 2000); } catch (error) { body = `<clone failed: ${error?.message}>`; }
+  console.error(`[ai-web-chat-gateway] UNEXPECTED ${response.status} on ${request.method} ${request.url}`);
+  console.error(`[ai-web-chat-gateway] body: ${body}`);
+  return response;
+}
+
 async function callEndpoint(request) {
   const gate = await throughGateway(request);
   if (gate.refused) return { reachedRoute: false, response: gate.refused };
   const route = await import("../app/api/ai-web-chat/route.ts");
   const handler = request.method === "GET" ? route.GET : route.POST;
-  return { reachedRoute: true, response: await handler(request) };
+  let response;
+  try {
+    response = await handler(request);
+  } catch (error) {
+    // A throw that escapes the route entirely: the one case where no response exists to inspect.
+    console.error(`[ai-web-chat-gateway] handler THREW on ${request.method} ${request.url}: ${error?.name}: ${error?.message}`);
+    if (error?.stack) console.error(`[ai-web-chat-gateway] stack: ${String(error.stack).split("\n").slice(0, 6).join(" | ")}`);
+    throw error;
+  }
+  return { reachedRoute: true, response: await captureUnexpectedFailure(request, response) };
 }
 
 function post(body, headers = {}) {
