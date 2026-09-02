@@ -7,6 +7,7 @@ on:
     paths:
       - lib/scheduling-reservation-leases.ts
       - app/api/uat-scheduling/route.ts
+      - .github/workflows/staging-write-contention-certify-v6.yml
 
 permissions:
   contents: read
@@ -17,6 +18,7 @@ concurrency:
 
 env:
   STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+  TARGET_SHA: cc406765f6086602703498c03849a5052bc2d7b8
 
 jobs:
   certify:
@@ -26,10 +28,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ env.TARGET_SHA }}
           fetch-depth: 0
-      - name: Verify exact pushed SHA
-        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Verify exact remediation SHA
+        run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -74,7 +76,7 @@ jobs:
           values.PAWSPACE_STAGING_LIVE_CUSTOMER_OTP='false';
           writeFileSync(process.env.SECRETS_FILE,JSON.stringify(values),{mode:0o600});
           NODE
-          npx wrangler deploy --message "staging $GITHUB_SHA" --secrets-file "$SECRETS_FILE" 2>&1 | tee deployment.txt
+          npx wrangler deploy --message "staging $TARGET_SHA" --secrets-file "$SECRETS_FILE" 2>&1 | tee deployment.txt
       - name: Certify staging isolation and exact SHA
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -140,12 +142,12 @@ jobs:
           const p95=Number(p.metrics?.p95Ms ?? p.metrics?.p95 ?? NaN);
           const errorRate=Number(p.metrics?.errorRate ?? NaN);
           console.log(JSON.stringify({failureCount:failures.length,lockOr500Failures:lockOr500,p95Ms:p95,errorRate,metrics:p.metrics,counts:p.counts,thresholds:p.thresholds},null,2));
-          if(!Number.isFinite(p95)||p95>=750||!Number.isFinite(errorRate)||errorRate>=0.01||lockOr500.length||failures.length) process.exit(1);
+          if(!Number.isFinite(p95)||p95>=750||!Number.isFinite(errorRate)||errorRate!==0||lockOr500.length||failures.length) process.exit(1);
           NODE
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: staging-track3-write-contention-v6-${{ github.sha }}
+          name: staging-track3-write-contention-v6-${{ env.TARGET_SHA }}
           path: |
             deployment.txt
             healthz-evidence.json
