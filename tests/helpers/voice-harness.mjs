@@ -65,14 +65,18 @@ export function freshSqlite() {
   return sqlite;
 }
 
-/** A CRM contact + open lead + booking the gate can resolve, so a refusal is never "no such recipient". */
-export function seedRecipient(sqlite, { contactId = "CON-V1", leadId = "LEAD-V1", phone = ALLOWLISTED_PHONE, optOut = 0 } = {}) {
+/** A CRM contact + canonical customer/booking + open lead the gate can resolve without fixture drift. */
+export function seedRecipient(sqlite, { contactId = "CON-V1", leadId = "LEAD-V1", bookingId = "BKG-V1", phone = ALLOWLISTED_PHONE, optOut = 0 } = {}) {
   const now = Date.now();
   sqlite.exec("CREATE TABLE IF NOT EXISTS crm_contacts (id TEXT PRIMARY KEY,name TEXT,primary_phone TEXT,stage TEXT,next_action TEXT,updated_at INTEGER)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,primary_phone TEXT,secondary_phone TEXT,consent_json TEXT)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL)");
   sqlite.exec("CREATE TABLE IF NOT EXISTS lead_work_items (id TEXT PRIMARY KEY,customer_id TEXT,owner TEXT,service TEXT,status TEXT,last_outcome TEXT,call_attempts INTEGER DEFAULT 0,whatsapp_attempts INTEGER DEFAULT 0,first_action_at INTEGER,next_action_at INTEGER,opt_out INTEGER DEFAULT 0,assigned_at INTEGER,updated_at INTEGER)");
   sqlite.prepare("INSERT OR REPLACE INTO crm_contacts (id,name,primary_phone,stage,next_action,updated_at) VALUES (?,?,?,?,?,?)").run(contactId, "Voice UAT contact", phone, "New", "Call", now);
+  sqlite.prepare("INSERT OR REPLACE INTO canonical_customers (id,primary_phone,secondary_phone,consent_json) VALUES (?,?,NULL,NULL)").run(contactId, phone);
+  sqlite.prepare("INSERT OR REPLACE INTO canonical_bookings (id,customer_id) VALUES (?,?)").run(bookingId, contactId);
   sqlite.prepare("INSERT OR REPLACE INTO lead_work_items (id,customer_id,owner,service,status,call_attempts,whatsapp_attempts,opt_out,assigned_at,updated_at) VALUES (?,?,?,?,?,0,0,?,?,?)").run(leadId, contactId, "rep@pawspace.in", "grooming", "open", optOut, now, now);
-  return { contactId, leadId, phone };
+  return { contactId, leadId, bookingId, phone };
 }
 
 export const FOUNDER_PERMISSIONS = ["*"];
