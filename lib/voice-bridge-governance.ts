@@ -1,5 +1,5 @@
 import { authFailure, requireCustomerOwnership, requireProviderOwnership, type AuthenticatedActor } from "./server-auth";
-import { callRecordingApproved, canonicalDialNumber, isVoiceAllowlisted, resolveVoiceCallGate } from "./voice-call-gate";
+import { callRecordingApproved, canonicalDialNumber, isVoiceAllowlisted, normalisedDialKey, resolveVoiceCallGate } from "./voice-call-gate";
 import { ProviderResponseTooLarge, readBoundedText } from "./provider-response-bounds";
 import { normaliseTelephonyEvent, sha256Hex, verifyVoiceWebhookSignature } from "./voice-telephony-provider";
 
@@ -40,6 +40,26 @@ function bridgeCallbackUrl(env: Env) {
   try { return new URL(raw).protocol === "https:" ? raw : null; } catch { return null; }
 }
 
+/**
+ * Whether THIS call may be recorded - which is not the same question as whether the automated dialler
+ * may record.
+ *
+ * PAWSPACE_VOICE_RECORDING_APPROVED was written for a call where one party is a bot and
+ * seedVoiceCallScripts() plays an opening disclosure that says so out loud ("This call may be handled
+ * by an automated system"). A masked bridge has no script and no disclosure: it connects two real
+ * people who were told nothing. So the moment bot-call recording was switched on, provider-to-customer
+ * conversations would have started being recorded on the strength of a consent notice neither party
+ * ever heard.
+ *
+ * Both flags are therefore required, and the second one exists purely so that turning on the first
+ * cannot have this side effect. Same per-capability shape as salesOutboundApproved and the live-payment
+ * gate, and it fails closed: with the bridge flag unset nothing is recorded and no carrier recording
+ * URL is retained, whatever the platform-wide flag says.
+ */
+export function bridgeRecordingApproved(env: Env) {
+  return callRecordingApproved(env) && text(env.PAWSPACE_VOICE_BRIDGE_RECORDING_APPROVED).toLowerCase() === "true";
+}
+
 function safeFailureDetail(error: unknown) {
   const message = text((error as { message?: unknown })?.message || error);
   return message.replace(/\+?\d[\d\s().-]{7,}/g, "[redacted-phone]").slice(0, 240) || "Voice bridge failed";
@@ -53,7 +73,42 @@ export async function ensureVoiceBridgeTables(db: Db) {
     db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS ux_voice_call_sessions_active_booking ON voice_call_sessions(booking_id) WHERE status IN ('initiated','bridged')"),
     db.prepare("CREATE TABLE IF NOT EXISTS voice_call_session_events (id TEXT PRIMARY KEY,session_id TEXT,provider_event_id TEXT NOT NULL UNIQUE,event_kind TEXT NOT NULL,provider_status TEXT,payload_sha256 TEXT NOT NULL,recording_ref TEXT,duration_seconds INTEGER,applied INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_voice_call_session_events_session ON voice_call_session_events(session_id,created_at)"),
+    // The do-not-call register, declared here byte-identically to lib/voice-outbound-governance.ts
+    // rather than depended upon from it.
+    //
+    // A compliance check whose table might be missing is worse than no check: the read would throw on a
+    // cold database and the obvious fix - catching it - turns "we cannot tell whether this person opted
+    // out" into "they did not". That is the absent-treated-as-a-value class this repo keeps finding.
+    // Declaring it makes the register always present, so assertNeitherPartyOptedOut can never pass
+    // because the register was unavailable.
+    db.prepare("CREATE TABLE IF NOT EXISTS voice_call_opt_outs (phone_key TEXT PRIMARY KEY,source TEXT NOT NULL,reason TEXT,recorded_by TEXT NOT NULL,recorded_at INTEGER NOT NULL)"),
   ]);
+}
+
+/**
+ * The do-not-call register, consulted for BOTH legs before either is dialled.
+ *
+ * The bridge gated on the environment, the allow-list, the service window and booking ownership, but
+ * never on whether either person had asked not to be called. recordVoiceOptOut() writes this register
+ * from an IVR "do not call", from the CRM and from a mid-call opt-out, and the automated dialler
+ * refuses on it - so the same number was simultaneously undialable by the bot and dialable by a bridge.
+ * An opt-out is a standing instruction from a person, not a property of one calling mechanism.
+ *
+ * Both legs matter: a provider who opted out of platform calling must not be rung either, and the
+ * initiator's own opt-out is checked too - it is a request not to be connected, not merely not to be
+ * called first.
+ *
+ * Keyed on the last ten digits via normalisedDialKey, which is exactly what recordVoiceOptOut stores.
+ * Deriving the key any other way here would read a register that is never hit.
+ */
+async function assertNeitherPartyOptedOut(db: Db, input: { customerDial: string; providerDial: string }) {
+  for (const [party, dial] of [["customer", input.customerDial], ["provider", input.providerDial]] as const) {
+    const phoneKey = normalisedDialKey(dial);
+    if (!phoneKey) throw authFailure("Masked-call phone data could not be canonicalised", 409);
+    const optOut = await db.prepare("SELECT source FROM voice_call_opt_outs WHERE phone_key=?").bind(phoneKey).first<Row>();
+    // The source is named but the number never is - a refusal must not leak the digits it protects.
+    if (optOut) throw authFailure(`Masked calling is refused: this ${party} number is on the do-not-call register (${text(optOut.source) || "recorded"})`, 403);
+  }
 }
 
 async function resolveBridgeBooking(db: Db, bookingId: string): Promise<BridgeBooking> {
@@ -102,7 +157,7 @@ async function dialExotelBridge(env: Env, input: { sessionId: string; from: stri
     StatusCallback: callback,
     CustomField: input.sessionId,
     TimeOut: "45",
-    Record: callRecordingApproved(env) ? "true" : "false",
+    Record: bridgeRecordingApproved(env) ? "true" : "false",
   });
   body.append("StatusCallbackEvents[0]", "terminal");
   body.append("StatusCallbackEvents[1]", "answered");
@@ -148,6 +203,9 @@ export async function requestVoiceBridge(db: Db, env: Env, actor: AuthenticatedA
 
   const customerDial = canonicalDialNumber(env, booking.customer_phone), providerDial = canonicalDialNumber(env, booking.provider_phone);
   if (!customerDial || !providerDial) throw authFailure("Masked-call phone data could not be canonicalised", 409);
+  // Before a session row exists, so a refused request leaves nothing behind - the same shape the
+  // window refusal already has.
+  await assertNeitherPartyOptedOut(db, { customerDial, providerDial });
   const sessionId = uid("VBRIDGE"), now = Date.now();
   try {
     await db.prepare("INSERT INTO voice_call_sessions (id,idempotency_key,booking_id,customer_id,provider_id,initiated_by_type,initiated_by_key,service_status,status,provider,customer_phone_hash,customer_phone_last4,provider_phone_hash,provider_phone_last4,initiated_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,'exotel',?,?,?,?,?,?)")
@@ -158,6 +216,18 @@ export async function requestVoiceBridge(db: Db, env: Env, actor: AuthenticatedA
   }
 
   try {
+    // Re-read immediately before the dial. The check above is a snapshot and either party can record a
+    // do-not-call in the gap; a refusal recorded seconds ago must win over a slightly older pass. The
+    // session already exists by now, so the refusal closes it out rather than leaving it open - and it
+    // is deliberately NOT caught as a provider failure below, because nothing was dialled.
+    try {
+      await assertNeitherPartyOptedOut(db, { customerDial, providerDial });
+    } catch (optOut) {
+      const refusedAt = Date.now();
+      await db.prepare("UPDATE voice_call_sessions SET status='failed',failure_code='opt_out_recorded',failure_detail=?,failed_at=?,updated_at=? WHERE id=? AND status='initiated'")
+        .bind("Refused before dialling: a party is on the do-not-call register", refusedAt, refusedAt, sessionId).run();
+      throw optOut;
+    }
     const first = who === "customer" ? customerDial : providerDial;
     const second = who === "customer" ? providerDial : customerDial;
     const handle = await dialExotelBridge(env, { sessionId, from: first, to: second });
@@ -215,7 +285,7 @@ export async function recordVoiceBridgeEvent(db: Db, env: Env, input: { rawBody:
   if (!session) return { accepted: false as const, status: 404, reason: "Masked-call session was not found" };
 
   const now = Date.now();
-  const recordingRef = event.recordingRef && callRecordingApproved(env) ? event.recordingRef : null;
+  const recordingRef = event.recordingRef && bridgeRecordingApproved(env) ? event.recordingRef : null;
   const target = eventTargetState(event.kind, input.rawBody), current = text(session.status) as VoiceBridgeSessionStatus;
   let applied = false;
   const statements = [
