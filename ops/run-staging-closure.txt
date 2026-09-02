@@ -1,6 +1,6 @@
-triggered_at=2026-09-02T10:41:30Z
+triggered_at=2026-09-02T10:54:30Z
 baseline=94cddc063297796f24ea1a2a0975b62a2fdbe1b2
 scope=track3-track5-track6-automated
-reason=provider-capacity-window-allocation
-probe_run_id=33620675614
-probe_sha=8acf9267bf75d0a62696150238fdd429e2a31fb8
+reason=authoritative-scheduler-capacity-discovery
+probe_run_id=33621668112
+probe_sha=ffd408aae1b98eb89cee32a33d33e42b49b34aef
