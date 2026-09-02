@@ -65,7 +65,7 @@ function makeD1(sqlite) {
 
 function groomingDb() {
   const sqlite = new DatabaseSync(":memory:");
-  for (const source of [lifecycleRoute, partnerJobsRoute, changeRoute, read("app/api/uat-scheduling/route.ts"), walletLib, read("lib/customer-account.ts"), read("lib/grooming-policy-governance.ts")]) {
+  for (const source of [lifecycleRoute, partnerJobsRoute, changeRoute, read("app/api/uat-scheduling/route.ts"), read("lib/provider-capacity-governance.ts"), walletLib, read("lib/customer-account.ts"), read("lib/grooming-policy-governance.ts")]) {
     for (const sql of statementsOf(source)) if (/^\s*CREATE (TABLE|INDEX|UNIQUE INDEX)/i.test(sql)) sqlite.exec(sql);
   }
   return { sqlite, db: makeD1(sqlite) };

@@ -36,7 +36,6 @@ async function ensureSchedulingTables(db:Awaited<ReturnType<typeof database>>){
   db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_provider ON scheduling_reservations(city_id,provider_id,status)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_city_status_provider_window ON scheduling_reservations(city_id,status,provider_id,scheduled_start,scheduled_end)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_group ON scheduling_reservations(group_id)"),
-  db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_unavailability_window ON provider_unavailability(status,starts_at,ends_at,provider_id)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_attempt ON scheduling_reservations(attempt_id)"),
 ]);await ensureSchedulingReservationLeaseGovernance(db);}
 
