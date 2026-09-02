@@ -1,0 +1,251 @@
+name: Apply staging D1 contention remediation v2
+
+on:
+  push:
+    branches:
+      - fix/staging-performance-remediation
+    paths:
+      - .github/workflows/staging-performance-remediation-apply-v2.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: staging-performance-remediation-apply-v2
+  cancel-in-progress: false
+
+jobs:
+  remediate-and-certify:
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 60
+    env:
+      STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/staging-performance-remediation
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm run install:ci
+      - name: Apply contention fixes on current branch shape
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          # Retry policy: hard ceilings, decorrelated jitter, fail-fast total budget.
+          Path('lib/d1-write-retry.ts').write_text(r'''const SQLITE_BUSY_PATTERN=/\bSQLITE_BUSY(?:_[A-Z_]+)?\b|database (?:table )?is locked|database is busy/i;
+          const SQLITE_CONSTRAINT_PATTERN=/\bSQLITE_CONSTRAINT(?:_[A-Z_]+)?\b|(?:UNIQUE|FOREIGN KEY|CHECK|NOT NULL) constraint failed/i;
+
+          export type D1WriteRetryOptions={attempts?:number;baseDelayMs?:number;maxDelayMs?:number;maxTotalDelayMs?:number;sleep?:(delayMs:number)=>Promise<void>;random?:()=>number;};
+          const HARD_MAX_ATTEMPTS=3;
+          const HARD_MAX_BACKOFF_MS=50;
+          const HARD_MAX_TOTAL_DELAY_MS=100;
+
+          function errorDetails(error:unknown){const parts:string[]=[];const seen=new Set<unknown>();let current:unknown=error;for(let depth=0;current!==null&&current!==undefined&&depth<6&&!seen.has(current);depth+=1){seen.add(current);if(typeof current==="object"){const record=current as {code?:unknown;name?:unknown;message?:unknown;cause?:unknown};for(const value of [record.code,record.name,record.message])if(value!==undefined&&value!==null)parts.push(String(value));current=record.cause;continue;}parts.push(String(current));break;}return parts.join(" ");}
+          export function isSqliteBusyError(error:unknown){return SQLITE_BUSY_PATTERN.test(errorDetails(error));}
+          export function isSqliteConstraintError(error:unknown){return SQLITE_CONSTRAINT_PATTERN.test(errorDetails(error));}
+
+          export async function withD1WriteRetry<T>(work:()=>Promise<T>,options:D1WriteRetryOptions={}):Promise<T>{
+            const attempts=Math.min(HARD_MAX_ATTEMPTS,Math.max(1,Math.floor(options.attempts??3)));
+            const baseDelayMs=Math.min(HARD_MAX_BACKOFF_MS,Math.max(1,Math.floor(options.baseDelayMs??5)));
+            const maxDelayMs=Math.min(HARD_MAX_BACKOFF_MS,Math.max(baseDelayMs,Math.floor(options.maxDelayMs??40)));
+            const maxTotalDelayMs=Math.min(HARD_MAX_TOTAL_DELAY_MS,Math.max(0,Math.floor(options.maxTotalDelayMs??75)));
+            const sleep=options.sleep??((delayMs:number)=>new Promise<void>(resolve=>setTimeout(resolve,delayMs)));
+            const random=options.random??Math.random;
+            let totalDelayMs=0;
+            for(let attempt=0;attempt<attempts;attempt+=1){try{return await work();}catch(error){if(!isSqliteBusyError(error)||attempt===attempts-1)throw error;const exponential=Math.min(maxDelayMs,baseDelayMs*(2**attempt));const floor=Math.max(1,Math.ceil(exponential/2));const unit=Math.max(0,Math.min(0.999999,random()));const delay=Math.min(maxDelayMs,floor+Math.floor(unit*(exponential-floor+1)));if(totalDelayMs+delay>maxTotalDelayMs)throw error;totalDelayMs+=delay;await sleep(delay);}}
+            throw new Error("D1 write retry loop exhausted unexpectedly");
+          }
+
+          const rawStatements=new WeakMap<object,D1PreparedStatement>();
+          function retryingStatement(statement:D1PreparedStatement):D1PreparedStatement{const proxy=new Proxy(statement,{get(target,property,receiver){if(property==="bind")return(...values:unknown[])=>retryingStatement(target.bind(...values));if(property==="run")return()=>withD1WriteRetry(()=>target.run());const value=Reflect.get(target,property,receiver);return typeof value==="function"?value.bind(target):value;}}) as D1PreparedStatement;rawStatements.set(proxy as object,statement);return proxy;}
+          const retryingDatabases=new WeakMap<object,D1Database>();
+          export function withRetryingD1Writes(db:D1Database):D1Database{const existing=retryingDatabases.get(db as object);if(existing)return existing;const proxy=new Proxy(db,{get(target,property,receiver){if(property==="prepare")return(query:string)=>retryingStatement(target.prepare(query));if(property==="batch")return(statements:D1PreparedStatement[])=>withD1WriteRetry(()=>target.batch(statements.map(statement=>rawStatements.get(statement as object)??statement));if(property==="exec")return(query:string)=>withD1WriteRetry(()=>target.exec(query));const value=Reflect.get(target,property,receiver);return typeof value==="function"?value.bind(target):value;}}) as D1Database;retryingDatabases.set(db as object,proxy);return proxy;}
+          '''.replace('\n          ','\n').lstrip())
+
+          # Reservation lease governance: coalesce schema work and collapse N per-group cleanup batches into one set-based batch.
+          leases=Path('lib/scheduling-reservation-leases.ts'); s=leases.read_text()
+          s=s.replace('const leaseTablesEnsured=new WeakSet<Db>();','const leaseTablesEnsured=new WeakSet<Db>();\nconst leaseTablesEnsuring=new WeakMap<Db,Promise<boolean>>();\nconst cleanupRunning=new WeakMap<Db,Promise<{groups:number;reservations:number}>>();',1)
+          start=s.index('export async function ensureSchedulingReservationLeaseGovernance')
+          end=s.index('export async function reservationLeaseForRequest',start)
+          original=s[start:end]
+          body=original[original.index('{')+1:original.rfind('}')]
+          wrapped='export async function ensureSchedulingReservationLeaseGovernance(db:Db){if(leaseTablesEnsured.has(db))return true;const running=leaseTablesEnsuring.get(db);if(running)return running;const pending=(async()=>{'+body.replace('if(leaseTablesEnsured.has(db))return true;','')+'})();leaseTablesEnsuring.set(db,pending);try{return await pending;}finally{if(leaseTablesEnsuring.get(db)===pending)leaseTablesEnsuring.delete(db);}}\n\n'
+          s=s[:start]+wrapped+s[end:]
+          start=s.index('export async function cleanupExpiredReservationLeases')
+          replacement=r'''export async function cleanupExpiredReservationLeases(db:Db,now=Date.now()){
+            const running=cleanupRunning.get(db);if(running)return running;
+            const pending=(async()=>{
+              if(!(await ensureSchedulingReservationLeaseGovernance(db)))return{groups:0,reservations:0};
+              const hasCanonical=await tableExists(db,"canonical_bookings");
+              const confirmedClause=hasCanonical?"AND NOT EXISTS (SELECT 1 FROM canonical_bookings b WHERE b.schedule_group_id=r.group_id)":"";
+              const expiredLease="((r.lease_expires_at IS NOT NULL AND r.lease_expires_at<=?) OR (r.customer_session_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM platform_identity_sessions s WHERE s.id=r.customer_session_id AND s.status IN ('active','superseded') AND s.expires_at>?)))";
+              const candidate=await db.prepare(`SELECT r.group_id FROM scheduling_reservations r WHERE r.status='assigned' AND ${expiredLease} ${confirmedClause} LIMIT 1`).bind(now,now).first<Row>();
+              if(!candidate)return{groups:0,reservations:0};
+              const reason="reservation_lease_expired",hasOffers=await tableExists(db,"provider_assignment_offers");
+              const statements=[
+                db.prepare(`INSERT OR REPLACE INTO scheduling_reservation_lease_cleanup (group_id,reason,released_at) SELECT DISTINCT r.group_id,?,? FROM scheduling_reservations r WHERE r.status='assigned' AND ${expiredLease} ${confirmedClause}`).bind(reason,now,now,now),
+                db.prepare(`UPDATE scheduling_reservations AS r SET status='cancelled' WHERE r.status='assigned' ${confirmedClause} AND EXISTS (SELECT 1 FROM scheduling_reservation_lease_cleanup c WHERE c.group_id=r.group_id AND c.reason=? AND c.released_at=?)`).bind(reason,now),
+                db.prepare(`UPDATE scheduling_assignment_decisions SET status='expired',actor_id='system:reservation-lease-cleanup',reason=?,updated_at=? WHERE status IN ('assigned','awaiting_admin') AND EXISTS (SELECT 1 FROM scheduling_reservation_lease_cleanup c WHERE c.group_id=scheduling_assignment_decisions.group_id AND c.reason=? AND c.released_at=?) ${hasCanonical?"AND NOT EXISTS (SELECT 1 FROM canonical_bookings b WHERE b.schedule_group_id=scheduling_assignment_decisions.group_id)":""}`).bind(reason,now,reason,now),
+              ];
+              if(hasOffers)statements.push(db.prepare(`UPDATE provider_assignment_offers SET status='cancelled',responded_at=?,response_reason=?,updated_at=? WHERE status='pending' AND EXISTS (SELECT 1 FROM scheduling_reservation_lease_cleanup c WHERE c.group_id=provider_assignment_offers.group_id AND c.reason=? AND c.released_at=?) ${hasCanonical?"AND NOT EXISTS (SELECT 1 FROM canonical_bookings b WHERE b.schedule_group_id=provider_assignment_offers.group_id)":""}`).bind(now,reason,now,reason,now));
+              const result=await db.batch(statements);return{groups:Number(result[0]?.meta?.changes||0),reservations:Number(result[1]?.meta?.changes||0)};
+            })();cleanupRunning.set(db,pending);try{return await pending;}finally{if(cleanupRunning.get(db)===pending)cleanupRunning.delete(db);}
+          }
+          '''.replace('\n          ','\n')
+          s=s[:start]+replacement; leases.write_text(s)
+
+          # Provider capacity defaults/DDL: serialize first-use initialization inside an isolate.
+          p=Path('lib/provider-capacity-governance.ts'); s=p.read_text()
+          s=s.replace('const capacityTablesEnsured=new WeakSet<Db>();\nconst capacityDefaultsSeeded=new WeakSet<Db>();','const capacityTablesEnsured=new WeakSet<Db>();\nconst capacityDefaultsSeeded=new WeakSet<Db>();\nconst capacityTablesEnsuring=new WeakMap<Db,Promise<void>>();\nconst capacityDefaultsSeeding=new WeakMap<Db,Promise<void>>();\nconst providerBookingGuardEnsured=new WeakSet<Db>();\nconst providerBookingGuardEnsuring=new WeakMap<Db,Promise<void>>();',1)
+          start=s.index('export async function ensureProviderCapacityTables'); end=s.index('export async function seedProviderCapacityDefaults',start)
+          fn=s[start:end]; body=fn[fn.index('{')+1:fn.rfind('}')]
+          body=body.replace('if(capacityTablesEnsured.has(db))return;','',1)
+          s=s[:start]+'export async function ensureProviderCapacityTables(db:Db){if(capacityTablesEnsured.has(db))return;const running=capacityTablesEnsuring.get(db);if(running)return running;const pending=(async()=>{'+body+'})();capacityTablesEnsuring.set(db,pending);try{return await pending;}finally{if(capacityTablesEnsuring.get(db)===pending)capacityTablesEnsuring.delete(db);}}\n\n'+s[end:]
+          start=s.index('export async function seedProviderCapacityDefaults'); end=s.index('function parse<T>',start)
+          fn=s[start:end]; body=fn[fn.index('{')+1:fn.rfind('}')]; body=body.replace('if(capacityDefaultsSeeded.has(db))return;','',1)
+          s=s[:start]+'export async function seedProviderCapacityDefaults(db:Db){if(capacityDefaultsSeeded.has(db))return;const running=capacityDefaultsSeeding.get(db);if(running)return running;const pending=(async()=>{'+body+'})();capacityDefaultsSeeding.set(db,pending);try{return await pending;}finally{if(capacityDefaultsSeeding.get(db)===pending)capacityDefaultsSeeding.delete(db);}}\n\n'+s[end:]
+          start=s.index('export async function ensureProviderBookingGuard'); end=s.index('export async function getProviderAcceptanceTimeout',start)
+          fn=s[start:end]; body=fn[fn.index('{')+1:fn.rfind('}')]
+          s=s[:start]+'export async function ensureProviderBookingGuard(db:Db){if(providerBookingGuardEnsured.has(db))return;const running=providerBookingGuardEnsuring.get(db);if(running)return running;const pending=(async()=>{'+body+'providerBookingGuardEnsured.add(db);})();providerBookingGuardEnsuring.set(db,pending);try{return await pending;}finally{if(providerBookingGuardEnsuring.get(db)===pending)providerBookingGuardEnsuring.delete(db);}}\n'+s[end:]
+          p.write_text(s)
+
+          # Scheduling: preserve current attempt_id/unique-conflict safety; coalesce setup, skip no-op UAT roster writes, single-statement atomic claim.
+          p=Path('app/api/uat-scheduling/route.ts'); s=p.read_text()
+          s=s.replace('const schemaDriftRepaired=new WeakSet<object>();\nasync function ensureSchedulingTables(','const schemaDriftRepaired=new WeakSet<object>();\nconst schedulingTablesReady=new WeakMap<object,Promise<void>>();\nasync function ensureSchedulingTablesUncached(',1)
+          marker=']);await ensureSchedulingReservationLeaseGovernance(db);}\n\nasync function seedUatRoster'
+          assert marker in s
+          wrapper=']);await ensureSchedulingReservationLeaseGovernance(db);}\nasync function ensureSchedulingTables(db:Awaited<ReturnType<typeof database>>){const key=db as object;let pending=schedulingTablesReady.get(key);if(!pending){pending=ensureSchedulingTablesUncached(db);schedulingTablesReady.set(key,pending);pending.catch(()=>{if(schedulingTablesReady.get(key)===pending)schedulingTablesReady.delete(key);});}return pending;}\n\nasync function seedUatRoster'
+          s=s.replace(marker,wrapper,1)
+          old="authoredRows=await db.prepare(\"SELECT provider_id,date FROM scheduling_availability WHERE date>=? AND date<=? AND source IN ('partner_app','operations','roster')\").bind(sorted[0]??\"\",sorted[sorted.length-1]??\"\").all<Record<string,unknown>>(),authored=new Set(authoredRows.results.map(row=>`${String(row.provider_id)}|${String(row.date)}`));"
+          new='existingRows=await db.prepare("SELECT provider_id,date,zone_id FROM scheduling_availability WHERE date>=? AND date<=?").bind(sorted[0]??"",sorted[sorted.length-1]??"").all<Record<string,unknown>>(),existing=new Set(existingRows.results.map(row=>`${String(row.provider_id)}|${String(row.date)}|${String(row.zone_id)}`));'
+          assert old in s; s=s.replace(old,new,1); s=s.replace('if(authored.has(`${provider.id}|${date}`))continue;','if(existing.has(`${provider.id}|${date}|${input.zoneId}`))continue;',1)
+          old='const results=await db.batch(statements);const inserted=results.reduce((sum,result)=>sum+Number(result?.meta?.changes||0),0);'
+          new='const results=statements.length===1?[await statements[0]!.run()]:await db.batch(statements);const inserted=results.reduce((sum,result)=>sum+Number(result?.meta?.changes||0),0);'
+          assert old in s; s=s.replace(old,new,1); p.write_text(s)
+
+          # Canonical booking hot path: same fail-fast write wrapper and coalesced schema initialization.
+          p=Path('app/api/canonical-bookings/route.ts'); s=p.read_text()
+          anchor='import {cityBookingVerdict} from "../../../lib/city-status-authority";'
+          if 'withRetryingD1Writes' not in s:s=s.replace(anchor,anchor+'\nimport {withRetryingD1Writes} from "../../../lib/d1-write-retry";',1)
+          s=s.replace('async function database(){const {env}=await import("cloudflare:workers");return env.DB;}','async function database(){const {env}=await import("cloudflare:workers");return withRetryingD1Writes(env.DB);}',1)
+          s=s.replace('async function ensureTables(db:Awaited<ReturnType<typeof database>>){await db.batch([','async function ensureTablesUncached(db:Awaited<ReturnType<typeof database>>){await db.batch([',1)
+          marker='\n/*\n * The service-wide window guard'; assert marker in s
+          wrapper='\nconst canonicalTablesReady=new WeakMap<object,Promise<void>>();\nasync function ensureTables(db:Awaited<ReturnType<typeof database>>){const key=db as object;let pending=canonicalTablesReady.get(key);if(!pending){pending=ensureTablesUncached(db);canonicalTablesReady.set(key,pending);pending.catch(()=>{if(canonicalTablesReady.get(key)===pending)canonicalTablesReady.delete(key);});}return pending;}\n'
+          s=s.replace(marker,wrapper+marker,1); p.write_text(s)
+
+          # Tests pin the hard limits and source-level hot-path contracts.
+          p=Path('tests/uat-scheduling-d1-contention.test.mjs'); s=p.read_text()
+          s=s.replace('if(attempts<4)','if(attempts<3)',1).replace('assert.equal(attempts,4);','assert.equal(attempts,3);',1).replace('assert.deepEqual(delays,[10,20,40]);','assert.deepEqual(delays,[5,10]);',1)
+          s+=r'''
+          test("D1 retry policy hard-caps caller retry storms",async()=>{let attempts=0;const delays=[];await assert.rejects(()=>retry.withD1WriteRetry(async()=>{attempts+=1;const error=new Error("database is busy");error.code="SQLITE_BUSY";throw error;},{attempts:99,baseDelayMs:100,maxDelayMs:1000,maxTotalDelayMs:1000,random:()=>0.999999,sleep:async delay=>{delays.push(delay);}}),error=>retry.isSqliteBusyError(error));assert.equal(attempts,3);assert.deepEqual(delays,[50,50]);});
+          test("Track 3 hot paths coalesce setup and use atomic mutation results",()=>{const scheduling=fs.readFileSync(new URL("../app/api/uat-scheduling/route.ts",import.meta.url),"utf8");const leases=fs.readFileSync(new URL("../lib/scheduling-reservation-leases.ts",import.meta.url),"utf8");const canonical=fs.readFileSync(new URL("../app/api/canonical-bookings/route.ts",import.meta.url),"utf8");assert.match(scheduling,/schedulingTablesReady=new WeakMap/);assert.match(scheduling,/statements\.length===1\?\[await statements\[0\]!\.run\(\)\]/);assert.match(scheduling,/SELECT provider_id,date,zone_id FROM scheduling_availability/);assert.match(leases,/cleanupRunning=new WeakMap/);assert.doesNotMatch(leases,/for\(const row of rows\.results\)/);assert.match(canonical,/withRetryingD1Writes\(env\.DB\)/);assert.match(canonical,/canonicalTablesReady=new WeakMap/);});
+          '''
+          p.write_text(s)
+          PY
+      - name: Focused contention tests
+        run: node --experimental-strip-types --test tests/uat-scheduling-d1-contention.test.mjs
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Commit isolated concurrency remediation
+        run: |
+          set -euo pipefail
+          git fetch origin fix/staging-performance-remediation
+          test "$(git rev-parse origin/fix/staging-performance-remediation)" = "$GITHUB_SHA"
+          rm -f .github/workflows/staging-performance-remediation-apply.yml .github/workflows/staging-performance-remediation-apply-v2.yml
+          git config user.name "PawSpaceIND"
+          git config user.email "karthik@pawspace.in"
+          git add lib/d1-write-retry.ts lib/scheduling-reservation-leases.ts lib/provider-capacity-governance.ts app/api/uat-scheduling/route.ts app/api/canonical-bookings/route.ts tests/uat-scheduling-d1-contention.test.mjs .github/workflows/staging-performance-remediation-apply.yml .github/workflows/staging-performance-remediation-apply-v2.yml
+          git diff --cached --check
+          git commit -m "perf(scheduling): bound D1 write contention"
+          git push origin HEAD:fix/staging-performance-remediation
+          echo "EXPECTED_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Build remediation SHA
+        run: npm run build
+      - name: Configure isolated staging
+        env:
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+        run: node scripts/stage-config.mjs
+      - name: Deploy remediation SHA to staging
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+        run: |
+          set -euo pipefail
+          SECRETS_FILE="$RUNNER_TEMP/staging-remediation-secrets.json"; export SECRETS_FILE
+          trap 'rm -f "$SECRETS_FILE"' EXIT
+          node --input-type=module <<'NODE'
+          import {writeFileSync} from 'node:fs';const required=['PAWSPACE_UAT_ACCESS_CODE','PAWSPACE_UAT_SIGNING_KEY','PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT','RAZORPAY_WEBHOOK_SECRET_SANDBOX'];const optional=['RAZORPAY_KEY_ID_SANDBOX','RAZORPAY_KEY_SECRET_SANDBOX'];const values=Object.fromEntries(required.map(n=>[n,process.env[n]||'']));if(Object.values(values).some(v=>!v))throw new Error('required Track 3 staging secret missing');for(const n of optional)if(process.env[n])values[n]=process.env[n];values.PAWSPACE_STAGING_LIVE_CUSTOMER_OTP='false';writeFileSync(process.env.SECRETS_FILE,JSON.stringify(values),{mode:0o600});
+          NODE
+          npx wrangler deploy --message "staging $EXPECTED_SHA" --secrets-file "$SECRETS_FILE" 2>&1 | tee deployment.txt
+      - name: Certify staging isolation and exact SHA
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
+        run: node tests/e2e/staging-certification.mjs --isolation-only
+      - name: Seed deterministic staging identities
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          mkdir -p scripts/ops
+          git show origin/ops/nontrack2-closure-20260901:scripts/ops/staging-role-seed.mjs > scripts/ops/staging-role-seed.mjs
+          node --experimental-strip-types scripts/ops/staging-role-seed.mjs "$RUNNER_TEMP/staging-role-seed.sql"
+          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --yes --file="$RUNNER_TEMP/staging-role-seed.sql"
+          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --file=scripts/employee-seed.sql
+      - name: Verify healthz
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';const response=await fetch(process.env.STAGING_URL+'/healthz',{signal:AbortSignal.timeout(15000)});const text=await response.text();let body=null;try{body=JSON.parse(text)}catch{}const evidence={url:process.env.STAGING_URL+'/healthz',status:response.status,ok:response.ok,body};fs.writeFileSync('healthz-evidence.json',JSON.stringify(evidence,null,2));console.log(JSON.stringify(evidence,null,2));if(response.status!==200||body?.status!=='ok')process.exit(1);
+          NODE
+      - name: Run hosted Track 3 workload
+        env:
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          PERF_RUN_ID: remediation-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          git show origin/ops/nontrack2-closure-20260901:scripts/ops/staging-performance-gate.mjs > scripts/ops/staging-performance-gate.mjs
+          node scripts/ops/staging-performance-gate.mjs
+      - name: Verify D1 Track 3 invariants
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          RUN_ID="$(node -e "const r=require('./staging-performance.json');process.stdout.write(r.runId)")"
+          SQL="SELECT (SELECT COUNT(*) FROM canonical_bookings WHERE idempotency_key LIKE '${RUN_ID}:booking:%') bookings,(SELECT COUNT(*) FROM booking_payments WHERE booking_id IN (SELECT id FROM canonical_bookings WHERE idempotency_key LIKE '${RUN_ID}:booking:%')) payments,(SELECT COUNT(*) FROM scheduling_assignment_decisions WHERE group_id LIKE '${RUN_ID}:grp:%') assignments,(SELECT COUNT(*) FROM payment_gateway_events WHERE event_id='${RUN_ID}:evt:replay') webhook_events,(SELECT ROUND(COALESCE(SUM(debit),0)-COALESCE(SUM(credit),0),2) FROM finance_journal_entries) ledger_drift;"
+          npx wrangler d1 execute pawspace-staging --remote --json --command "$SQL" > staging-performance-d1.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';const raw=JSON.parse(fs.readFileSync('staging-performance-d1.json','utf8'));const row=(Array.isArray(raw)?raw[0]:raw)?.results?.[0]||{};const n=k=>Number(row[k]??NaN);console.log(JSON.stringify(row,null,2));if(n('bookings')!==100||n('payments')!==100||n('assignments')!==100||n('webhook_events')!==1||Math.abs(n('ledger_drift'))>0.000001)process.exit(1);
+          NODE
+      - name: Enforce Track 3 thresholds and scan failures
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';const p=JSON.parse(fs.readFileSync('staging-performance.json','utf8'));const failures=p.failures||[];const lockOr500=failures.filter(x=>/\b500\b|SQLITE_BUSY|database (?:table )?is locked|cannot start a transaction within a transaction/i.test(String(x.error||'')));const p95=Number(p.metrics?.p95Ms??p.metrics?.p95??NaN);const errorRate=Number(p.metrics?.errorRate??NaN);console.log(JSON.stringify({failureCount:failures.length,lockOr500Failures:lockOr500,p95Ms:p95,errorRate,metrics:p.metrics,counts:p.counts,thresholds:p.thresholds},null,2));if(!Number.isFinite(p95)||p95>=750||!Number.isFinite(errorRate)||errorRate>=0.01||lockOr500.length||failures.length)process.exit(1);
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: staging-track3-write-contention-remediation-v2
+          path: |
+            deployment.txt
+            healthz-evidence.json
+            staging-performance.json
+            staging-performance-d1.json
+          if-no-files-found: warn
