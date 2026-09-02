@@ -161,7 +161,12 @@ test("real execution: webhook refuses unsigned/badly-signed/unconfigured request
 
 test("real execution: verify-first — a 'created' payment is only captured by a correctly signed webhook, reconciliation matches booking_payments exactly, duplicates ignored", async () => {
   freshDb(); baseTables(); seedBooking({ id: "B1", total: 2000, payStatus: "created" });
-  const ok = await postWebhook("evt_10", capturedEvent("B1", 200000));
+  /* One event, posted twice. capturedEvent() stamps created_at from the live clock on EVERY call, and
+   * gateway_webhook_events correctly rejects an event id replayed with a DIFFERENT payload hash - so
+   * building the replay separately made this assertion pass only when both posts landed inside the same
+   * wall-clock second. Reusing the identical body is what actually exercises duplicate detection. */
+  const captured = capturedEvent("B1", 200000);
+  const ok = await postWebhook("evt_10", captured);
   assert.equal(ok.status, 200, JSON.stringify(ok.body));
   assert.equal(ok.body.environment, "sandbox");
   assert.equal(ok.body.status, "processed");
@@ -172,7 +177,7 @@ test("real execution: verify-first — a 'created' payment is only captured by a
   assert.equal(recon.reconciliation_status, "matched");
   assert.equal(recon.variance_amount, 0);
   // Same gateway event id replayed -> duplicate, no second effect
-  const dup = await postWebhook("evt_10", capturedEvent("B1", 200000));
+  const dup = await postWebhook("evt_10", captured);
   assert.equal(dup.body.duplicate, true);
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM payment_gateway_events").get().n, 1);
 });

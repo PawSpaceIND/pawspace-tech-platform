@@ -21,6 +21,8 @@ name: Deploy production
 #   vars.RELEASE_PREVIEW_D1_ID                supplied ONLY so the job can refuse to match it
 #   secrets.CLOUDFLARE_API_TOKEN
 #   secrets.CLOUDFLARE_ACCOUNT_ID
+#   secrets.EXOTEL_API_KEY, secrets.EXOTEL_API_TOKEN, secrets.EXOTEL_SID
+#   secrets.EXOTEL_CALLER_ID, secrets.EXOTEL_VOICE_APP_ID, secrets.EXOTEL_WEBHOOK_SECRET
 
 on:
   workflow_dispatch:
@@ -155,9 +157,28 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+          EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
+          EXOTEL_VOICE_APP_ID: ${{ secrets.EXOTEL_VOICE_APP_ID }}
+          EXOTEL_WEBHOOK_SECRET: ${{ secrets.EXOTEL_WEBHOOK_SECRET }}
         run: |
           set -euo pipefail
-          npx wrangler deploy --message "production ${{ github.event.inputs.expected_sha }}"
+          SECRETS_FILE="$RUNNER_TEMP/pawspace-production-secrets.json"
+          export SECRETS_FILE
+          trap 'rm -f "$SECRETS_FILE"' EXIT
+          node --input-type=module -e '
+            import { writeFileSync } from "node:fs";
+            const requiredNames = [
+              "EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_SID", "EXOTEL_CALLER_ID",
+              "EXOTEL_VOICE_APP_ID", "EXOTEL_WEBHOOK_SECRET"
+            ];
+            const values = Object.fromEntries(requiredNames.map(name => [name, process.env[name] || ""]));
+            if (Object.values(values).some(value => !value)) throw new Error("a required production Exotel secret is missing");
+            writeFileSync(process.env.SECRETS_FILE, JSON.stringify(values), { mode: 0o600 });
+          '
+          npx wrangler deploy --message "production ${{ github.event.inputs.expected_sha }}" --secrets-file "$SECRETS_FILE"
 
       # The deployed worker must be the production one, bound to the production database, with no
       # preview or UAT authority. Asserted against what was actually written, not what was intended.
