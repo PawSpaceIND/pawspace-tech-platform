@@ -3,8 +3,10 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
+import { D1_DATABASE_ID } from "./d1-identity.mjs";
 
-const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// One shared definition: these two scripts each held their own copy and they drifted.
+const UUID=D1_DATABASE_ID;
 const text=v=>String(v??"").trim();
 export const sha256File=path=>createHash("sha256").update(readFileSync(path)).digest("hex");
 export function assertBackupTarget({environment,databaseName,databaseId,productionId,stagingId}){

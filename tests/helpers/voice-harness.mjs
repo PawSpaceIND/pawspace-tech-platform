@@ -70,7 +70,24 @@ export function seedRecipient(sqlite, { contactId = "CON-V1", leadId = "LEAD-V1"
   const now = Date.now();
   sqlite.exec("CREATE TABLE IF NOT EXISTS crm_contacts (id TEXT PRIMARY KEY,name TEXT,primary_phone TEXT,stage TEXT,next_action TEXT,updated_at INTEGER)");
   sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,primary_phone TEXT,secondary_phone TEXT,consent_json TEXT)");
-  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL)");
+  /*
+   * canonical_bookings is declared ONCE, here, for every suite that seeds a recipient.
+   *
+   * This used to be just (id, customer_id) - the two columns the canonical recipient-ownership
+   * resolution reads. A suite needing more (tests/voice-authority-boundary.test.mjs snapshots the
+   * money tables, so it needs the booking's service, status and amount) then wrote its own
+   * `CREATE TABLE IF NOT EXISTS canonical_bookings (...)` with the wider column list AFTER calling
+   * seedRecipient. That is a silent no-op: the table already exists, so the wider declaration is
+   * discarded without error and the mismatch surfaces later as
+   * "table canonical_bookings has no column named service_code" on the INSERT - an error that names
+   * the symptom and not the cause.
+   *
+   * So the columns any voice suite asserts on live here, spelled and typed as
+   * lib/canonical-booking-read-model.ts (the owning module) spells them. Everything beyond the
+   * original two is nullable, so the minimal `INSERT (id,customer_id)` every other consumer of this
+   * harness already does keeps working unchanged.
+   */
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,city_id TEXT,zone_id TEXT,service_code TEXT,package_code TEXT,package_name TEXT,provider_id TEXT,scheduled_start TEXT,scheduled_end TEXT,status TEXT,total_amount REAL,currency TEXT)");
   sqlite.exec("CREATE TABLE IF NOT EXISTS lead_work_items (id TEXT PRIMARY KEY,customer_id TEXT,owner TEXT,service TEXT,status TEXT,last_outcome TEXT,call_attempts INTEGER DEFAULT 0,whatsapp_attempts INTEGER DEFAULT 0,first_action_at INTEGER,next_action_at INTEGER,opt_out INTEGER DEFAULT 0,assigned_at INTEGER,updated_at INTEGER)");
   sqlite.prepare("INSERT OR REPLACE INTO crm_contacts (id,name,primary_phone,stage,next_action,updated_at) VALUES (?,?,?,?,?,?)").run(contactId, "Voice UAT contact", phone, "New", "Call", now);
   sqlite.prepare("INSERT OR REPLACE INTO canonical_customers (id,primary_phone,secondary_phone,consent_json) VALUES (?,?,NULL,NULL)").run(contactId, phone);

@@ -2,6 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+/*
+ * Mostly a source-contract suite, but one test below really imports lib/interakt-whatsapp.ts to
+ * exercise signInteraktWebhook. That module imports its siblings extensionlessly, so without the
+ * harness resolver the import fails with "Cannot find module .../lib/canonical-recipient-ownership".
+ * The import there is already dynamic (inside the test), so registering the hooks here is enough.
+ */
+installWorkersHooks("__INTERAKT_PROVIDER_DB__", "__INTERAKT_PROVIDER_ENV__");
 
 const read=(path)=>readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
 

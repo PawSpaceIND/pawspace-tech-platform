@@ -2,9 +2,23 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { makeD1 } from "./helpers/voice-harness.mjs";
-import { ensureCommunicationTables } from "../lib/communication-engine.ts";
-import { ensureWhatsAppTemplateLifecycle } from "../lib/whatsapp-template-lifecycle.ts";
-import { dispatchInteraktWhatsApp, recordInteraktWebhook, signInteraktWebhook } from "../lib/interakt-whatsapp.ts";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+/*
+ * The lib modules below are imported DYNAMICALLY, after installWorkersHooks, and that ordering is the
+ * whole point.
+ *
+ * lib/interakt-whatsapp.ts imports its siblings extensionlessly ("./canonical-recipient-ownership"),
+ * which is what every lib module in this repo does and what the harness resolver exists to support.
+ * Static `import` specifiers are hoisted and resolved before any statement in this file runs, so a
+ * static import of the module resolved with no hook registered and failed the whole file at load time
+ * with "Cannot find module .../lib/canonical-recipient-ownership". Installing the hooks first and then
+ * importing is the pattern the other real-execution suites already use.
+ */
+installWorkersHooks("__INTERAKT_WA_DB__", "__INTERAKT_WA_ENV__");
+const { ensureCommunicationTables } = await import("../lib/communication-engine.ts");
+const { ensureWhatsAppTemplateLifecycle } = await import("../lib/whatsapp-template-lifecycle.ts");
+const { dispatchInteraktWhatsApp, recordInteraktWebhook, signInteraktWebhook } = await import("../lib/interakt-whatsapp.ts");
 
 const ENV = { PAWSPACE_DEPLOYMENT_ENV: "production", PAWSPACE_COMMUNICATION_ENV: "live", INTERAKT_API_KEY: "test-interakt-key", INTERAKT_WEBHOOK_SECRET: "test-webhook-secret" };
 
