@@ -1,4 +1,4 @@
-name: Instrument canonical booking write bottleneck
+name: Apply canonical booking schema contention fix
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  instrument:
+  fix:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -24,97 +24,36 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm run install:ci
-      - name: Instrument canonical booking phases
+      - name: Eliminate repeated finance schema writes from booking hot path
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('app/api/canonical-bookings/route.ts')
-          s=p.read_text()
-          marker='const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});'
-          assert marker in s
-          helper='''const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});\nconst BOOKING_TRACE_THRESHOLD_MS=50;\nfunction bookingTrace(stage:string,status:"start"|"complete"|"error",startedAt:number,context:Record<string,unknown>={},error?:unknown){const now=Date.now(),resolved=error instanceof Error?error:error===undefined?null:new Error(String(error));const record={event:"canonical_booking_stage",stage,status,durationMs:now-startedAt,...context,...(resolved?{errorName:resolved.name,errorMessage:resolved.message,stack:resolved.stack??null}:{})};const line=JSON.stringify(record);if(status==="error")console.error(line);else console.log(line);}\nasync function timedBookingStage<T>(stage:string,context:Record<string,unknown>,run:()=>Promise<T>,announce=false){const started=Date.now();if(announce)bookingTrace(stage,"start",started,context);try{const result=await run(),duration=Date.now()-started;if(announce||duration>=BOOKING_TRACE_THRESHOLD_MS)bookingTrace(stage,"complete",started,context);return result;}catch(error){bookingTrace(stage,"error",started,context,error);throw error;}}'''
-          s=s.replace(marker,helper,1)
 
-          old='export async function POST(request:Request){try{const db=await database();await ensureSchedulingReservationLeaseGovernance(db);await cleanupExpiredReservationLeases(db);const actor=await resolveActor(request);requirePermission(actor,"scheduling.book");const input=await request.json() as LifecycleInput;'
-          new='''export async function POST(request:Request){const requestStarted=Date.now();let traceContext:Record<string,unknown>={};try{const db=await timedBookingStage("database",traceContext,()=>database());await timedBookingStage("lease_governance",traceContext,()=>ensureSchedulingReservationLeaseGovernance(db));await timedBookingStage("lease_cleanup",traceContext,()=>cleanupExpiredReservationLeases(db));const actor=await timedBookingStage("actor_resolution",traceContext,()=>resolveActor(request));requirePermission(actor,"scheduling.book");const input=await request.json() as LifecycleInput;traceContext={serviceCode:String(input.serviceCode||""),cityId:String(input.cityId||""),bookingKey:String(input.idempotencyKey||input.scheduleGroupId||"").slice(-24)};'''
-          assert old in s
-          s=s.replace(old,new,1)
+          finance=Path('lib/finance-accounts.ts')
+          s=finance.read_text()
+          old='''export async function ensureFinanceJournalTable(db: Db) {\n  await db.prepare("CREATE TABLE IF NOT EXISTS finance_journal_entries (id text PRIMARY KEY NOT NULL,entry_date text NOT NULL,source_type text NOT NULL,source_id text NOT NULL,account_code text NOT NULL,cost_centre text,vertical text,debit real DEFAULT 0 NOT NULL,credit real DEFAULT 0 NOT NULL,narration text NOT NULL,period_code text NOT NULL,posted integer DEFAULT 0 NOT NULL,created_at integer NOT NULL)").run();\n  for (const [column, type] of COLLECTION_COLUMNS) {\n    await db.prepare(`ALTER TABLE finance_journal_entries ADD COLUMN ${column} ${type}`).run()\n      .catch((error: unknown) => { if (!/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) throw error; });\n  }\n}\n'''
+          new='''const FINANCE_JOURNAL_BASE_COLUMNS=["id","entry_date","source_type","source_id","account_code","debit","credit","narration","period_code","posted","created_at"] as const;\nconst financeJournalReady=new WeakSet<Db>();\nconst financeJournalEnsuring=new WeakMap<Db,Promise<void>>();\n\nasync function financeJournalSchemaReady(db:Db){\n  try{\n    const info=await db.prepare("PRAGMA table_info(finance_journal_entries)").all<Row>();\n    const names=new Set(info.results.map(row=>String(row.name??"")));\n    if(!names.size)return false;\n    return FINANCE_JOURNAL_BASE_COLUMNS.every(column=>names.has(column))&&COLLECTION_COLUMNS.every(([column])=>names.has(column));\n  }catch{return false;}\n}\n\nasync function ensureFinanceJournalTableUncached(db:Db){\n  // Steady-state requests must not replay schema writes. Under 100-way booking concurrency the old\n  // CREATE + fourteen ALTER attempts serialized D1 even though every column already existed, and\n  // postCollectionEvent called this path twice per request. A single read-only PRAGMA proves the\n  // deployed schema is complete; DDL is reserved for an actually missing/old schema.\n  if(await financeJournalSchemaReady(db))return;\n  await db.prepare("CREATE TABLE IF NOT EXISTS finance_journal_entries (id text PRIMARY KEY NOT NULL,entry_date text NOT NULL,source_type text NOT NULL,source_id text NOT NULL,account_code text NOT NULL,cost_centre text,vertical text,debit real DEFAULT 0 NOT NULL,credit real DEFAULT 0 NOT NULL,narration text NOT NULL,period_code text NOT NULL,posted integer DEFAULT 0 NOT NULL,created_at integer NOT NULL)").run();\n  for (const [column, type] of COLLECTION_COLUMNS) {\n    await db.prepare(`ALTER TABLE finance_journal_entries ADD COLUMN ${column} ${type}`).run()\n      .catch((error: unknown) => { if (!/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) throw error; });\n  }\n}\n\nexport async function ensureFinanceJournalTable(db:Db){\n  if(financeJournalReady.has(db))return;\n  const inFlight=financeJournalEnsuring.get(db);\n  if(inFlight)return inFlight;\n  const work=ensureFinanceJournalTableUncached(db)\n    .then(()=>{financeJournalReady.add(db);})\n    .finally(()=>{financeJournalEnsuring.delete(db);});\n  financeJournalEnsuring.set(db,work);\n  return work;\n}\n'''
+          assert old in s, 'finance ensure block not found'
+          finance.write_text(s.replace(old,new,1))
 
-          old='const problem=validate(input);if(problem)return json({error:problem},400);await ensureTables(db);await requireCustomerOwnership(db,actor,input.customer.id);const replayInput={customerId:input.customer.id,serviceCode:input.serviceCode,idempotencyKey:input.idempotencyKey,scheduleGroupId:input.scheduleGroupId};const prior=await findCustomerReplay(db,replayInput);if(prior)return json({data:await readBundle(db,prior,true)});if(await hasForeignReplayConflict(db,replayInput))return json({error:BOOKING_REPLAY_CONFLICT},409);'
-          new='const problem=validate(input);if(problem)return json({error:problem},400);await timedBookingStage("canonical_schema",traceContext,()=>ensureTables(db),true);await timedBookingStage("customer_ownership",traceContext,()=>requireCustomerOwnership(db,actor,input.customer.id));const replayInput={customerId:input.customer.id,serviceCode:input.serviceCode,idempotencyKey:input.idempotencyKey,scheduleGroupId:input.scheduleGroupId};const prior=await timedBookingStage("replay_lookup",traceContext,()=>findCustomerReplay(db,replayInput));if(prior)return json({data:await readBundle(db,prior,true)});if(await timedBookingStage("foreign_replay_check",traceContext,()=>hasForeignReplayConflict(db,replayInput)))return json({error:BOOKING_REPLAY_CONFLICT},409);'
-          assert old in s
-          s=s.replace(old,new,1)
-
-          old='const cityVerdict=await cityBookingVerdict(db,{cityId:input.cityId,serviceCode:input.serviceCode,pincode:(input as{pincode?:string}).pincode??null,channel:(input as{channel?:string}).channel??"customer_app"});'
-          new='const cityVerdict=await timedBookingStage("city_booking_verdict",traceContext,()=>cityBookingVerdict(db,{cityId:input.cityId,serviceCode:input.serviceCode,pincode:(input as{pincode?:string}).pincode??null,channel:(input as{channel?:string}).channel??"customer_app"}));'
-          assert old in s
-          s=s.replace(old,new,1)
-          old='if(!cityVerdict.allowed)return json({error:"PawSpace is not taking new bookings in this city right now",code:cityVerdict.reason,cityId:cityVerdict.cityId,cityStatus:cityVerdict.status,existingBookingsUnaffected:cityVerdict.existingWorkHandling==="continue"},409);if(await hasReplayConflict(db,replayInput))return json({error:BOOKING_WRITE_CONFLICT},409);'
-          new='if(!cityVerdict.allowed)return json({error:"PawSpace is not taking new bookings in this city right now",code:cityVerdict.reason,cityId:cityVerdict.cityId,cityStatus:cityVerdict.status,existingBookingsUnaffected:cityVerdict.existingWorkHandling==="continue"},409);if(await timedBookingStage("replay_conflict_check",traceContext,()=>hasReplayConflict(db,replayInput)))return json({error:BOOKING_WRITE_CONFLICT},409);'
-          assert old in s
-          s=s.replace(old,new,1)
-
-          old='const commercialPolicy=input.serviceCode==="grooming"?await resolveGroomingPolicy(db,input.cityId,input.zoneId):null;'
-          new='const commercialPolicy=input.serviceCode==="grooming"?await timedBookingStage("grooming_policy",traceContext,()=>resolveGroomingPolicy(db,input.cityId,input.zoneId)):null;'
-          assert old in s
-          s=s.replace(old,new,1)
-          old='    await ensureProviderBookingGuard(db);'
-          new='    await timedBookingStage("provider_booking_guard",traceContext,()=>ensureProviderBookingGuard(db),true);'
-          assert old in s
-          s=s.replace(old,new,1)
-          old='try{governed=await governGroomingBookingWithLiveMultiPet(db,{packageCode:input.packageCode,packageName:input.packageName,pets:input.pets.map(pet=>({species:(pet.species??"other") as "dog"|"cat"|"other"})),submittedTotal:governedGross-groomingAddOnTotal,submittedAmountDueNow:input.payment.mode==="prepaid"?governedGross-groomingAddOnTotal:0,paymentMode:input.payment.mode,cityId:input.cityId,zoneId:input.zoneId,scheduledStart:input.scheduledStart});}'
-          new='try{governed=await timedBookingStage("grooming_governance",traceContext,()=>governGroomingBookingWithLiveMultiPet(db,{packageCode:input.packageCode,packageName:input.packageName,pets:input.pets.map(pet=>({species:(pet.species??"other") as "dog"|"cat"|"other"})),submittedTotal:governedGross-groomingAddOnTotal,submittedAmountDueNow:input.payment.mode==="prepaid"?governedGross-groomingAddOnTotal:0,paymentMode:input.payment.mode,cityId:input.cityId,zoneId:input.zoneId,scheduledStart:input.scheduledStart}));}'
-          assert old in s
-          s=s.replace(old,new,1)
-
-          old='const assignment=await db.prepare("SELECT selected_provider_id,status,shortlist_json FROM scheduling_assignment_decisions WHERE group_id=?").bind(input.scheduleGroupId).first<Record<string,unknown>>();'
-          new='const assignment=await timedBookingStage("assignment_read",traceContext,()=>db.prepare("SELECT selected_provider_id,status,shortlist_json FROM scheduling_assignment_decisions WHERE group_id=?").bind(input.scheduleGroupId).first<Record<string,unknown>>());'
-          assert old in s
-          s=s.replace(old,new,1)
-          old='const reservations=await db.prepare("SELECT id,provider_id,customer_id,service_code,city_id,zone_id,scheduled_start,scheduled_end,occurrence_number,status FROM scheduling_reservations WHERE group_id=? AND status!=\'cancelled\' ORDER BY occurrence_number").bind(input.scheduleGroupId).all<Record<string,unknown>>();'
-          new='const reservations=await timedBookingStage("reservation_read",traceContext,()=>db.prepare("SELECT id,provider_id,customer_id,service_code,city_id,zone_id,scheduled_start,scheduled_end,occurrence_number,status FROM scheduling_reservations WHERE group_id=? AND status!=\'cancelled\' ORDER BY occurrence_number").bind(input.scheduleGroupId).all<Record<string,unknown>>());'
-          assert old in s
-          s=s.replace(old,new,1)
-          old='const unavailable=(await Promise.all(reservations.results.map(row=>providerUnavailableForWindow(db,{providerId:String(row.provider_id),scheduledStart:String(row.scheduled_start),scheduledEnd:String(row.scheduled_end)})))).some(Boolean);'
-          new='const unavailable=(await timedBookingStage("provider_unavailability",traceContext,()=>Promise.all(reservations.results.map(row=>providerUnavailableForWindow(db,{providerId:String(row.provider_id),scheduledStart:String(row.scheduled_start),scheduledEnd:String(row.scheduled_end)})))).then(rows=>rows)).some(Boolean);'
-          assert old in s
-          s=s.replace(old,new,1)
-
-          old='try{await db.batch(statements)}catch(error){'
-          new='try{await timedBookingStage("atomic_booking_batch",traceContext,()=>db.batch(statements),true)}catch(error){'
-          assert old in s
-          s=s.replace(old,new,1)
-
-          old='    await postCollectionEvent(db,{'
-          new='    await timedBookingStage("collection_ledger",traceContext,()=>postCollectionEvent(db,{'
-          assert old in s
-          s=s.replace(old,new,1)
-          old='    }).catch(error=>{console.warn("[collection-ledger] posting deferred",error instanceof Error?error.message:String(error));});'
-          new='    }),true).catch(error=>{console.warn("[collection-ledger] posting deferred",error instanceof Error?error.message:String(error));});'
-          assert old in s
-          s=s.replace(old,new,1)
-
-          old='await attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId});const booking=await db.prepare("SELECT * FROM canonical_bookings WHERE id=?").bind(bookingId).first<Record<string,unknown>>();return json({data:await readBundle(db,booking!,false)},201);'
-          new='await timedBookingStage("lead_attribution",traceContext,()=>attributeBookingToOpenLead(db,{customerId:input.customer.id,bookingId}),true);const booking=await timedBookingStage("booking_readback",traceContext,()=>db.prepare("SELECT * FROM canonical_bookings WHERE id=?").bind(bookingId).first<Record<string,unknown>>());const responseData=await timedBookingStage("bundle_readback",traceContext,()=>readBundle(db,booking!,false));bookingTrace("request","complete",requestStarted,traceContext);return json({data:responseData},201);'
-          assert old in s
-          s=s.replace(old,new,1)
-          old='}catch(error){if(error instanceof Response){const body=await governedRefusalBody(error);return json(body??{error:"Canonical booking validation failed"},error.status||409);}return json({error:error instanceof Error?error.message:"Unable to create shared booking lifecycle"},500);}}'
-          new='}catch(error){if(error instanceof Response){const body=await governedRefusalBody(error);return json(body??{error:"Canonical booking validation failed"},error.status||409);}bookingTrace("request","error",requestStarted,traceContext,error);return json({error:error instanceof Error?error.message:"Unable to create shared booking lifecycle"},500);}}'
-          assert old in s
-          s=s.replace(old,new,1)
-          p.write_text(s)
+          ledger=Path('lib/collection-ledger.ts')
+          s=ledger.read_text()
+          old='''const ledgerReady=new WeakSet<Db>();\nexport async function ensureCollectionLedgerTables(db:Db){\n  if(ledgerReady.has(db))return;\n  const{ensureFinanceJournalTable}=await import("./finance-accounts");\n  await ensureFinanceJournalTable(db);\n  await db.prepare("CREATE TABLE IF NOT EXISTS collection_ledger_postings (group_key TEXT PRIMARY KEY,event TEXT NOT NULL,payment_id TEXT,settlement_id TEXT,reversal_reference TEXT,amount REAL NOT NULL,period_code TEXT NOT NULL,manual_entry INTEGER NOT NULL DEFAULT 0,verification_status TEXT NOT NULL DEFAULT 'posted',verified_by TEXT,verified_at INTEGER,verification_reason TEXT,created_by TEXT NOT NULL,created_at INTEGER NOT NULL)").run();\n  await db.prepare("CREATE INDEX IF NOT EXISTS idx_collection_postings_period ON collection_ledger_postings(period_code,verification_status)").run();\n  ledgerReady.add(db);\n}\n'''
+          new='''const ledgerReady=new WeakSet<Db>();\nconst ledgerEnsuring=new WeakMap<Db,Promise<void>>();\nasync function collectionLedgerSchemaReady(db:Db){\n  try{\n    const rows=await db.prepare("SELECT name FROM sqlite_master WHERE name IN ('collection_ledger_postings','idx_collection_postings_period')").all<Row>();\n    const names=new Set(rows.results.map(row=>text(row.name)));\n    return names.has("collection_ledger_postings")&&names.has("idx_collection_postings_period");\n  }catch{return false;}\n}\nasync function ensureCollectionLedgerTablesUncached(db:Db){\n  const{ensureFinanceJournalTable}=await import("./finance-accounts");\n  await ensureFinanceJournalTable(db);\n  // Avoid issuing idempotent DDL on every captured booking. The finance schema readiness check above\n  // and this sqlite_master probe are reads, so steady-state booking requests no longer contend on\n  // schema locks before posting their real journal rows.\n  if(await collectionLedgerSchemaReady(db))return;\n  await db.prepare("CREATE TABLE IF NOT EXISTS collection_ledger_postings (group_key TEXT PRIMARY KEY,event TEXT NOT NULL,payment_id TEXT,settlement_id TEXT,reversal_reference TEXT,amount REAL NOT NULL,period_code TEXT NOT NULL,manual_entry INTEGER NOT NULL DEFAULT 0,verification_status TEXT NOT NULL DEFAULT 'posted',verified_by TEXT,verified_at INTEGER,verification_reason TEXT,created_by TEXT NOT NULL,created_at INTEGER NOT NULL)").run();\n  await db.prepare("CREATE INDEX IF NOT EXISTS idx_collection_postings_period ON collection_ledger_postings(period_code,verification_status)").run();\n}\nexport async function ensureCollectionLedgerTables(db:Db){\n  if(ledgerReady.has(db))return;\n  const inFlight=ledgerEnsuring.get(db);\n  if(inFlight)return inFlight;\n  const work=ensureCollectionLedgerTablesUncached(db)\n    .then(()=>{ledgerReady.add(db);})\n    .finally(()=>{ledgerEnsuring.delete(db);});\n  ledgerEnsuring.set(db,work);\n  return work;\n}\n'''
+          assert old in s, 'ledger ensure block not found'
+          ledger.write_text(s.replace(old,new,1))
           PY
-      - name: Validate instrumentation
+      - name: Validate financial and booking invariants
         run: |
-          node --experimental-strip-types --test tests/uat-scheduling-d1-contention.test.mjs tests/scheduling-reservation-leases.test.mjs
+          node --experimental-strip-types --test tests/ptja-w2-b2-collection-ledger.test.mjs tests/ptja-w2-08-revenue-reconciliation.test.mjs tests/uat-scheduling-d1-contention.test.mjs tests/scheduling-reservation-leases.test.mjs
           npm run typecheck
           npm run build
           git diff --check
-          test "$(git diff --name-only)" = "app/api/canonical-bookings/route.ts"
-      - name: Commit instrumentation
+          printf '%s\n' "$(git diff --name-only)"
+          test "$(git diff --name-only | sort | tr '\n' ' ')" = "lib/collection-ledger.ts lib/finance-accounts.ts "
+      - name: Commit and push exact remediation
         run: |
           git config user.name "PawSpace Release Bot"
           git config user.email "release-bot@pawspace.in"
-          git add -u app/api/canonical-bookings/route.ts
-          git commit -m "chore(bookings): instrument canonical booking write path to isolate 20s wall-time bottleneck"
+          git commit -am "fix(bookings): eliminate synchronous write contention in canonical booking phase"
           git push origin HEAD:fix/staging-performance-remediation
