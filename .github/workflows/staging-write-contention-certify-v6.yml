@@ -1,24 +1,22 @@
-name: Certify staging write contention remediation v6
+name: Certify canonical booking contention remediation
 
 on:
   push:
     branches:
       - fix/staging-performance-remediation
     paths:
-      - lib/scheduling-reservation-leases.ts
-      - app/api/uat-scheduling/route.ts
       - .github/workflows/staging-write-contention-certify-v6.yml
 
 permissions:
   contents: read
 
 concurrency:
-  group: staging-write-contention-certify-v6
+  group: staging-track3-final-certification
   cancel-in-progress: false
 
 env:
   STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
-  TARGET_SHA: f7229ededc04c298b3507399c156da14bfb635b0
+  TARGET_SHA: d1a358152e244bcfb19db88684da0991f663965c
 
 jobs:
   certify:
@@ -31,18 +29,19 @@ jobs:
           ref: ${{ env.TARGET_SHA }}
           fetch-depth: 0
       - name: Verify exact remediation SHA
-        run: test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+        run: |
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          git log -1 --pretty=%s | grep -Fx "fix(bookings): eliminate synchronous write contention in canonical booking phase"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
       - run: npm run install:ci
-      - name: Focused contention tests
-        run: node --experimental-strip-types --test tests/uat-scheduling-d1-contention.test.mjs
-      - name: Typecheck
-        run: npm run typecheck
-      - name: Build exact remediation SHA
-        run: npm run build
+      - name: Validate remediation and financial invariants
+        run: |
+          node --experimental-strip-types --test tests/ptja-w2-b2-collection-ledger.test.mjs tests/ptja-w2-08-revenue-reconciliation.test.mjs tests/uat-scheduling-d1-contention.test.mjs tests/scheduling-reservation-leases.test.mjs
+          npm run typecheck
+          npm run build
       - name: Configure isolated staging
         env:
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
@@ -51,6 +50,20 @@ jobs:
           PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
           PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
         run: node scripts/stage-config.mjs
+      - name: Verify direct staging config and binding isolation
+        env:
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const config=JSON.parse(fs.readFileSync('dist/server/wrangler.json','utf8'));
+          const binding=(config.d1_databases||[]).find(x=>x.binding==='DB');
+          const vars=config.vars||{};
+          const evidence={name:config.name,databaseId:binding?.database_id,deploymentEnv:vars.PAWSPACE_DEPLOYMENT_ENV,schedulingEnv:vars.PAWSPACE_SCHEDULING_ENV,paymentEnv:vars.PAWSPACE_PAYMENT_ENV,communicationEnv:vars.PAWSPACE_COMMUNICATION_ENV,targetSha:process.env.TARGET_SHA};
+          console.log(JSON.stringify(evidence,null,2));
+          if(config.name!=='pawspace-staging'||binding?.database_id!==process.env.STAGING_D1_ID||vars.PAWSPACE_DEPLOYMENT_ENV!=='staging'||vars.PAWSPACE_SCHEDULING_ENV!=='uat'||vars.PAWSPACE_PAYMENT_ENV!=='sandbox'||vars.PAWSPACE_COMMUNICATION_ENV!=='uat') process.exit(1);
+          fs.writeFileSync('staging-isolation-evidence.json',JSON.stringify(evidence,null,2));
+          NODE
       - name: Deploy exact remediation SHA to staging
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -63,8 +76,7 @@ jobs:
           RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
         run: |
           set -euo pipefail
-          SECRETS_FILE="$RUNNER_TEMP/staging-v6-secrets.json"
-          export SECRETS_FILE
+          SECRETS_FILE="$RUNNER_TEMP/staging-track3-secrets.json"; export SECRETS_FILE
           trap 'rm -f "$SECRETS_FILE"' EXIT
           node --input-type=module <<'NODE'
           import {writeFileSync} from 'node:fs';
@@ -76,16 +88,7 @@ jobs:
           values.PAWSPACE_STAGING_LIVE_CUSTOMER_OTP='false';
           writeFileSync(process.env.SECRETS_FILE,JSON.stringify(values),{mode:0o600});
           NODE
-          npx wrangler deploy --message "staging $TARGET_SHA" --secrets-file "$SECRETS_FILE" 2>&1 | tee deployment.txt
-      - name: Certify staging isolation and exact SHA
-        env:
-          EXPECTED_SHA: ${{ env.TARGET_SHA }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
-          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
-          PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
-        run: node tests/e2e/staging-certification.mjs --isolation-only
+          npx wrangler deploy --message "staging track3 $TARGET_SHA" --secrets-file "$SECRETS_FILE" 2>&1 | tee deployment.txt
       - name: Seed deterministic staging identities
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -101,14 +104,12 @@ jobs:
           node --input-type=module <<'NODE'
           import fs from 'node:fs';
           const response=await fetch(process.env.STAGING_URL+'/healthz',{signal:AbortSignal.timeout(15000)});
-          const text=await response.text();
-          let body=null; try{body=JSON.parse(text)}catch{}
+          const text=await response.text();let body=null;try{body=JSON.parse(text)}catch{}
           const evidence={url:process.env.STAGING_URL+'/healthz',status:response.status,ok:response.ok,body};
-          fs.writeFileSync('healthz-evidence.json',JSON.stringify(evidence,null,2));
-          console.log(JSON.stringify(evidence,null,2));
-          if(response.status!==200||body?.status!=='ok') process.exit(1);
+          fs.writeFileSync('healthz-evidence.json',JSON.stringify(evidence,null,2));console.log(JSON.stringify(evidence,null,2));
+          if(response.status!==200||body?.status!=='ok')process.exit(1);
           NODE
-      - name: Run hosted Track 3 workload with Worker tail
+      - name: Run original 20-second Track 3 gate with Worker tail
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -119,11 +120,13 @@ jobs:
           set +e
           mkdir -p scripts/ops
           git show origin/ops/nontrack2-closure-20260901:scripts/ops/staging-performance-gate.mjs > scripts/ops/staging-performance-gate.mjs
+          if grep -F 'AbortSignal.timeout(60000)' scripts/ops/staging-performance-gate.mjs; then echo 'diagnostic timeout mutation detected'; exit 2; fi
+          grep -F 'AbortSignal.timeout(20000)' scripts/ops/staging-performance-gate.mjs
           timeout 900s npx wrangler tail pawspace-staging --format json > worker-tail.log 2>&1 &
           TAIL_PID=$!
           sleep 5
-          node scripts/ops/staging-performance-gate.mjs
-          STATUS=$?
+          node scripts/ops/staging-performance-gate.mjs 2>&1 | tee gate.log
+          STATUS=${PIPESTATUS[0]}
           sleep 5
           kill "$TAIL_PID" 2>/dev/null || true
           wait "$TAIL_PID" 2>/dev/null || true
@@ -137,34 +140,23 @@ jobs:
           SQL="SELECT (SELECT COUNT(*) FROM canonical_bookings WHERE idempotency_key LIKE '${RUN_ID}:booking:%') bookings,(SELECT COUNT(*) FROM booking_payments WHERE booking_id IN (SELECT id FROM canonical_bookings WHERE idempotency_key LIKE '${RUN_ID}:booking:%')) payments,(SELECT COUNT(*) FROM scheduling_assignment_decisions WHERE group_id LIKE '${RUN_ID}:grp:%') assignments,(SELECT COUNT(*) FROM payment_gateway_events WHERE event_id='${RUN_ID}:evt:replay') webhook_events,(SELECT ROUND(COALESCE(SUM(debit),0)-COALESCE(SUM(credit),0),2) FROM finance_journal_entries) ledger_drift;"
           npx wrangler d1 execute pawspace-staging --remote --json --command "$SQL" > staging-performance-d1.json
           node --input-type=module <<'NODE'
-          import fs from 'node:fs';
-          const raw=JSON.parse(fs.readFileSync('staging-performance-d1.json','utf8'));
-          const row=(Array.isArray(raw)?raw[0]:raw)?.results?.[0]||{};
-          const n=k=>Number(row[k]??NaN);
-          console.log(JSON.stringify(row,null,2));
-          if(n('bookings')!==100||n('payments')!==100||n('assignments')!==100||n('webhook_events')!==1||Math.abs(n('ledger_drift'))>0.000001) process.exit(1);
+          import fs from 'node:fs';const raw=JSON.parse(fs.readFileSync('staging-performance-d1.json','utf8'));const row=(Array.isArray(raw)?raw[0]:raw)?.results?.[0]||{};const n=k=>Number(row[k]??NaN);console.log(JSON.stringify(row,null,2));if(n('bookings')!==100||n('payments')!==100||n('assignments')!==100||n('webhook_events')!==1||Math.abs(n('ledger_drift'))>0.000001)process.exit(1);
           NODE
       - name: Enforce Track 3 thresholds and scan failures
         run: |
           node --input-type=module <<'NODE'
-          import fs from 'node:fs';
-          const p=JSON.parse(fs.readFileSync('staging-performance.json','utf8'));
-          const failures=p.failures||[];
-          const lockOr500=failures.filter(x=>/\b500\b|SQLITE_BUSY|database (?:table )?is locked|cannot start a transaction within a transaction/i.test(String(x.error||'')));
-          const p95=Number(p.metrics?.p95Ms ?? p.metrics?.p95 ?? NaN);
-          const errorRate=Number(p.metrics?.errorRate ?? NaN);
-          console.log(JSON.stringify({failureCount:failures.length,lockOr500Failures:lockOr500,p95Ms:p95,errorRate,metrics:p.metrics,counts:p.counts,thresholds:p.thresholds},null,2));
-          if(!Number.isFinite(p95)||p95>=750||!Number.isFinite(errorRate)||errorRate!==0||lockOr500.length||failures.length) process.exit(1);
+          import fs from 'node:fs';const p=JSON.parse(fs.readFileSync('staging-performance.json','utf8'));const failures=p.failures||[];const lockOr500=failures.filter(x=>/\b500\b|SQLITE_BUSY|database (?:table )?is locked|cannot start a transaction within a transaction|TimeoutError|cancell?ed/i.test(String(x.error||x)));const p95=Number(p.metrics?.p95Ms??p.metrics?.p95??NaN);const errorRate=Number(p.metrics?.errorRate??NaN);console.log(JSON.stringify({failureCount:failures.length,lockOr500Failures:lockOr500,p95Ms:p95,errorRate,metrics:p.metrics,counts:p.counts,thresholds:p.thresholds},null,2));if(!Number.isFinite(p95)||p95>=750||!Number.isFinite(errorRate)||errorRate!==0||lockOr500.length||failures.length)process.exit(1);
           NODE
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: staging-track3-write-contention-v6-${{ env.TARGET_SHA }}
+          name: staging-track3-final-${{ env.TARGET_SHA }}
           path: |
             deployment.txt
+            staging-isolation-evidence.json
             healthz-evidence.json
+            gate.log
             staging-performance.json
             staging-performance-d1.json
             worker-tail.log
           if-no-files-found: warn
-# exact-sha scheduling claim-fix certification
