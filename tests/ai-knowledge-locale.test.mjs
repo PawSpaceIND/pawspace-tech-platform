@@ -1,81 +1,119 @@
 import assert from "node:assert/strict";
-import test from "node:test";
 import fs from "node:fs";
-import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import path from "node:path";
+import test from "node:test";
 
-await installWorkersHooks();
+import {
+  DEFAULT_AI_LOCALE,
+  isLocale,
+  normalizeLocale,
+  speechLanguageCode,
+  supportedLocales,
+} from "../lib/ai-locale.ts";
+import { buildBleuAiWorkerRequest, buildExotelAiRequest } from "../lib/voice-provider-adapter.ts";
 
-const locale=await import("../lib/voice-locale.ts");
-const telephony=await import("../lib/voice-telephony-provider.ts");
-const read=(path)=>fs.readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
+const ROOT = process.cwd();
+const read = (relativePath) => fs.readFileSync(path.join(ROOT, relativePath), "utf8");
 
-test("Bengaluru voice locale mapping is canonical and provider-safe",()=>{
-  assert.equal(locale.canonicalVoiceLocale("English"),"en-IN");
-  assert.equal(locale.canonicalVoiceLocale("hi"),"hi-IN");
-  assert.equal(locale.canonicalVoiceLocale("kn_IN"),"kn-IN");
-  assert.equal(locale.canonicalVoiceLocale("unsupported"),"en-IN");
-  assert.equal(locale.speechLanguageCode("en-IN"),"en");
-  assert.equal(locale.speechLanguageCode("hi-IN"),"hi");
-  assert.equal(locale.speechLanguageCode("kn-IN"),"kn");
+test("locale registry is canonical and deterministic", () => {
+  assert.equal(DEFAULT_AI_LOCALE, "en-IN");
+  assert.deepEqual(supportedLocales, ["en-IN", "hi-IN", "kn-IN"]);
+  assert.equal(normalizeLocale("EN_in"), "en-IN");
+  assert.equal(normalizeLocale("hi"), "hi-IN");
+  assert.equal(normalizeLocale("kn-in"), "kn-IN");
+  assert.equal(normalizeLocale("fr-FR"), null);
+  assert.equal(isLocale("en-IN"), true);
+  assert.equal(isLocale("en-us"), false);
+  assert.equal(speechLanguageCode("en-IN"), "en-IN");
+  assert.equal(speechLanguageCode("hi-IN"), "hi-IN");
+  assert.equal(speechLanguageCode("kn-IN"), "kn-IN");
 });
 
-test("telephony context round-trips locale and remains backward compatible",()=>{
-  const encoded=locale.encodeTelephonyCallContext("VCALL-123","Kannada");
-  assert.deepEqual(locale.decodeTelephonyCallContext(encoded),{callRef:"VCALL-123",locale:"kn-IN"});
-  assert.deepEqual(locale.decodeTelephonyCallContext("VCALL-OLD"),{callRef:"VCALL-OLD",locale:"en-IN"});
+test("knowledge retrieval only returns approved Bengaluru provider context", () => {
+  const source = read("lib/ai-knowledge.ts");
+
+  assert.match(source, /city: "Bengaluru"/);
+  assert.match(source, /\.retrieval_approved\s*===\s*true/);
+  assert.match(source, /\.content_approved\s*===\s*true/);
+  assert.match(source, /vet_onboarding_status !== "onboarded"/);
+  assert.match(source, /preferred_locale === locale/);
+  assert.match(source, /provider\.locales\.includes\(locale\)/);
+  assert.match(source, /PawSpace Bengaluru knowledge base/);
 });
 
-test("Exotel callback restores structured CustomField call and locale context",()=>{
-  const custom=locale.encodeTelephonyCallContext("VCALL-456","Kannada");
-  const body=new URLSearchParams({CallSid:"EXO-1",CallStatus:"completed",CustomField:custom}).toString();
-  const event=telephony.normaliseTelephonyEvent(body,"exotel");
-  assert.equal(event.callRef,"VCALL-456");
-  assert.equal(event.locale,"kn-IN");
+test("triage and after-hours helpers default to en-IN and stay non-diagnostic", () => {
+  const triage = read("lib/ai-triage.ts");
+  const afterHours = read("lib/ai-after-hours.ts");
+
+  assert.match(triage, /locale: Locale = DEFAULT_AI_LOCALE/);
+  assert.match(triage, /safe_next_steps/);
+  assert.doesNotMatch(triage, /diagnos(?:e|is)/i);
+
+  assert.match(afterHours, /locale: Locale = DEFAULT_AI_LOCALE/);
+  assert.match(afterHours, /AI_AFTER_HOURS_ENABLED/);
+  assert.match(afterHours, /content_approved/);
+  assert.match(afterHours, /vet_onboarding_status/);
 });
 
-test("AI knowledge center reads governed package, subscription and active knowledge sources",()=>{
-  const source=read("lib/ai-knowledge-center.ts");
-  assert.match(source,/catalogue_packages/);
-  assert.match(source,/grooming_subscription_plans/);
-  assert.match(source,/ai_knowledge_source_versions/);
-  assert.match(source,/status='active'/);
-  assert.match(source,/effective_from/);
-  assert.match(source,/visibility_scope_json/);
-  assert.match(source,/groomingCatalogue\.filter/);
+test("routing validation enforces locale and speech adapters propagate it", () => {
+  const route = read("app/api/ai-routing/route.ts");
+  const speechRoute = read("app/api/voice-speech/route.ts");
+  const adapter = read("lib/voice-provider-adapter.ts");
+
+  assert.match(route, /normalizeLocale\(body\.locale\)/);
+  assert.match(route, /supportedLocales/);
+  assert.match(route, /LOCALE_INVALID/);
+
+  assert.match(speechRoute, /normalizeLocale\(body\.language\)/);
+  assert.match(speechRoute, /VOICE_LANGUAGE_UNSUPPORTED/);
+  assert.match(speechRoute, /language: locale/);
+  assert.match(speechRoute, /locale/);
+  assert.match(adapter, /\{ audioRef: input\.audioRef, locale, language \}/);
 });
 
-test("shared AI context and Haptik consume the governed knowledge center",()=>{
-  const governance=read("lib/ai-governance.ts"),haptik=read("app/api/haptik/route.ts");
-  assert.match(governance,/loadAiKnowledgeCenter/);
-  assert.match(governance,/Object\.assign\(input\.context,\{knowledgeCenter\}\)/);
-  assert.match(haptik,/action==="knowledge_context"/);
-  assert.match(haptik,/canonicalVoiceLocale/);
-});
+test("outbound voice provider payloads propagate canonical locale", () => {
+  const bleu = buildBleuAiWorkerRequest({
+    bookingReference: "BLR-AI-1",
+    callDirection: "outbound",
+    recipient: {
+      phone: "+919999999999",
+      locale: "en-IN",
+      customerName: "Ananya",
+    },
+    workerAccessKey: "bleu-key",
+    exotelApiKey: "not-used",
+  });
 
-test("speech routing maps BCP-47 locales to provider language codes",()=>{
-  const workers=read("lib/voice-workers-ai.ts"),route=read("app/api/voice-speech/route.ts"),adapter=read("lib/voice-provider-adapter.ts");
-  assert.match(workers,/whisper-large-v3-turbo/);
-  assert.match(workers,/speechLanguageCode/);
-  assert.match(workers,/request\.language=language/);
-  assert.match(workers,/lang \}/);
-  assert.match(route,/canonicalVoiceLocale/);
-  assert.match(route,/supportedLocales/);
-  assert.match(adapter,/\{ audioRef: input\.audioRef, locale, language \}/);
-  assert.match(adapter,/\{ text: input\.text, locale, language \}/);
-});
+  assert.deepEqual(
+    {
+      language: bleu.language,
+      locale: bleu.locale,
+    },
+    {
+      language: "en-IN",
+      locale: "en-IN",
+    },
+  );
 
-test("outbound ledger, Exotel and service recovery preserve the canonical locale",()=>{
-  const provider=read("lib/voice-telephony-provider.ts");
-  const governance=read("lib/voice-outbound-governance.ts");
-  const recovery=read("lib/service-recovery-audio-bot.ts");
-  assert.match(provider,/CustomField: encodeTelephonyCallContext\(intent\.callRef, intent\.locale\)/);
-  assert.match(provider,/decodeTelephonyCallContext/);
-  assert.match(governance,/locale TEXT NOT NULL DEFAULT 'en-IN'/);
-  assert.match(governance,/callRef: id, locale/);
-  assert.match(governance,/locale: canonicalVoiceLocale\(original\.locale\)/);
-  assert.match(governance,/event\.locale !== callLocale/);
-  assert.match(recovery,/getUserLocale/);
-  assert.match(recovery,/locale:canonicalVoiceLocale\(preferredLocale\)/);
-  assert.match(recovery,/language:locale/);
-  assert.match(recovery,/locale:recipient\.locale/);
+  const exotel = buildExotelAiRequest({
+    bookingReference: "BLR-AI-2",
+    callDirection: "outbound",
+    recipient: {
+      phone: "+918888888888",
+      locale: "en-IN",
+    },
+    workerAccessKey: "not-used",
+    exotelApiKey: "exotel-key",
+  });
+
+  assert.deepEqual(
+    {
+      language: exotel.voiceResponse.language,
+      locale: exotel.voiceResponse.locale,
+    },
+    {
+      language: "en-IN",
+      locale: "en-IN",
+    },
+  );
 });
