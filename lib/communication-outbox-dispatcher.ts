@@ -1,0 +1,9 @@
+import{failOutboxAttempt}from"./communication-engine";
+import{dispatchInteraktWhatsApp}from"./interakt-whatsapp";
+import{dispatchMetaWhatsApp}from"./meta-whatsapp-dispatch";
+type Row=Record<string,unknown>;const text=(v:unknown)=>String(v??"").trim();
+export async function drainCommunicationOutbox(db:D1Database,env:Record<string,unknown>,input:{asOf?:number;limit?:number}={}){
+ const asOf=input.asOf??Date.now(),limit=Math.max(1,Math.min(100,input.limit??25));const rows=await db.prepare("SELECT o.message_id,m.provider,m.customer_id,c.primary_phone FROM communication_outbox o JOIN communication_messages m ON m.id=o.message_id LEFT JOIN canonical_customers c ON c.id=m.customer_id WHERE m.channel='whatsapp' AND o.status IN ('queued','retry_pending','scheduled') AND o.next_attempt_at<=? ORDER BY o.next_attempt_at ASC LIMIT ?").bind(asOf,limit).all<Row>();const results:Array<Record<string,unknown>>=[];let errors=0;
+ for(const row of rows.results){const provider=text(row.provider),recipient=text(row.primary_phone),messageId=text(row.message_id);try{if(!recipient){errors++;results.push({messageId,...await failOutboxAttempt(db,messageId,"canonical_recipient_missing"),provider,reason:"canonical_recipient_missing"});continue}if(provider==="interakt"||provider==="interakt_whatsapp")results.push(await dispatchInteraktWhatsApp(db,env,{messageId,recipient}));else if(provider==="meta_whatsapp"||!provider)results.push(await dispatchMetaWhatsApp(db,env,{messageId,recipient}));else{errors++;results.push({messageId,...await failOutboxAttempt(db,messageId,"unsupported_whatsapp_provider"),provider,reason:"unsupported_whatsapp_provider"})}}catch(error){errors++;results.push({messageId,status:"dispatch_error",provider,error:error instanceof Error?error.message:String(error)})}}
+ return{processed:rows.results.length,errors,results};
+}
