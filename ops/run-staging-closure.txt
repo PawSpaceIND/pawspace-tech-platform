@@ -1,7 +1,7 @@
-triggered_at=2026-09-02T09:40:30Z
+triggered_at=2026-09-02T09:44:25Z
 baseline=94cddc063297796f24ea1a2a0975b62a2fdbe1b2
-scope=track3-diagnostic
-reason=surface-scheduling-exception-class-message
-probe_run_id=33615274994
-probe_job_id=100199542763
-probe_sha=4b4f16d82cc2ec7d2648482258d11f5005520b82
+scope=track3-track5-track6-automated
+reason=valid-grooming-120-minute-performance-window
+probe_run_id=33615656039
+probe_job_id=100200768423
+probe_sha=0987cb135125236aecae5cd07fa4044474efcb66
