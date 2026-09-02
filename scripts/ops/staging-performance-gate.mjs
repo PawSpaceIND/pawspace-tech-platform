@@ -56,15 +56,52 @@ const cookie = setCookie.split(';')[0];
 if (!cookie) throw new Error('Founder staging login returned no session cookie');
 
 // Keep every deterministic booking comfortably inside the product's 180-day booking horizon.
-// Grooming requires a minimum 120-minute service window for one pet, so the load harness must exercise
-// a valid production-shaped booking rather than turn a domain validation into a false concurrency 500.
-function windowFor(i) {
+// Grooming needs 120 minutes for one pet and the seeded providers carry a 30-minute travel buffer.
+// Repeated hosted certification runs intentionally preserve earlier UAT bookings, so reusing one fixed
+// clock time would make a later run collide with evidence from an earlier one. Read the day board before
+// measurements and choose a genuinely free lane; these read-only probes are setup, not Track 3 latency.
+const GROOMING_DURATION_MS = 120 * 60 * 1000;
+const GROOMING_BUFFER_MS = 30 * 60 * 1000;
+// 05:00 UTC = 10:30 IST and 09:00 UTC = 14:30 IST. Both 120-minute windows are inside the 09:00-19:00
+// UAT roster and are separated enough that their 30-minute travel buffers do not overlap.
+const SLOT_HOURS_UTC = [5, 9];
+function baseDayFor(i) {
   const d = new Date(Date.now() + (12 + i) * 86400000);
-  d.setUTCHours(9, 0, 0, 0);
-  const start = d.toISOString();
-  const end = new Date(d.getTime() + 120 * 60 * 1000).toISOString();
-  return {start,end};
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
 }
+function overlapsBuffered(startMs, endMs, reservation) {
+  const reservedStart = new Date(String(reservation?.scheduledStart || '')).getTime();
+  const reservedEnd = new Date(String(reservation?.scheduledEnd || '')).getTime();
+  if (!Number.isFinite(reservedStart) || !Number.isFinite(reservedEnd)) return false;
+  return reservedStart < endMs + GROOMING_BUFFER_MS && reservedEnd > startMs - GROOMING_BUFFER_MS;
+}
+async function findFreeWindow(i) {
+  const day = baseDayFor(i);
+  const date = day.toISOString().slice(0,10);
+  const {payload} = await request(`/api/uat-scheduling?date=${encodeURIComponent(date)}`, {cookie});
+  const reservations = (payload?.data?.providers || [])
+    .flatMap(provider => Array.isArray(provider?.reservations) ? provider.reservations : [])
+    .filter(reservation => String(reservation?.status || '') !== 'cancelled');
+  for (const hour of SLOT_HOURS_UTC) {
+    const start = new Date(day); start.setUTCHours(hour, 0, 0, 0);
+    const end = new Date(start.getTime() + GROOMING_DURATION_MS);
+    if (!reservations.some(reservation => overlapsBuffered(start.getTime(), end.getTime(), reservation))) {
+      return {start:start.toISOString(), end:end.toISOString(), slotHourUtc:hour};
+    }
+  }
+  throw new Error(`No collision-free grooming performance lane remains on ${date}; preserve prior evidence and choose a fresh staging date range`);
+}
+
+const windows = new Array(100);
+const WINDOW_PROBE_CONCURRENCY = 10;
+for (let offset = 0; offset < 100; offset += WINDOW_PROBE_CONCURRENCY) {
+  const chunk = await Promise.all(
+    Array.from({length:Math.min(WINDOW_PROBE_CONCURRENCY, 100-offset)}, (_,j) => findFreeWindow(offset+j))
+  );
+  chunk.forEach((window,j) => { windows[offset+j] = window; });
+}
+console.log(JSON.stringify({runId:RUN_ID,windowProbe:{count:windows.length,slotHoursUtc:[...new Set(windows.map(window=>window.slotHourUtc))]}},null,2));
 
 async function prepareAssignment(i) {
   return measured('assignment', async () => {
@@ -72,7 +109,7 @@ async function prepareAssignment(i) {
     const groupId = `${RUN_ID}:grp:${String(n).padStart(3,'0')}`;
     const customerId = `${RUN_ID}:cust:${String(n).padStart(3,'0')}`;
     const petId = `${RUN_ID}:pet:${String(n).padStart(3,'0')}`;
-    const {start,end} = windowFor(i);
+    const {start,end} = windows[i];
     const {payload} = await request('/api/uat-scheduling', {method:'POST', cookie, body:{
       clientRequestId:groupId, customerId, petIds:[petId], serviceCode:'grooming', cityId:'blr', zoneId:'blr-east',
       scheduledStart:start, scheduledEnd:end, occurrences:1, assignmentStrategy:'auto'
