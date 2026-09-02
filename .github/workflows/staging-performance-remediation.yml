@@ -1,0 +1,61 @@
+name: Staging performance remediation validation
+
+on:
+  push:
+    branches: [fix/staging-performance-remediation]
+    paths: [.github/workflows/staging-performance-remediation.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/staging-performance-remediation
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Apply scheduler hot-path remediation
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('app/api/uat-scheduling/route.ts')
+          s=p.read_text()
+          s=s.replace('import {listAuthoritativeAvailability,uatRosterSeedingEnabled} from "../../../lib/scheduling-roster-authority";','import {uatRosterSeedingEnabled} from "../../../lib/scheduling-roster-authority";')
+          old='''  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_availability_provider_date ON scheduling_availability(provider_id,date)"),\n  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_provider ON scheduling_reservations(city_id,provider_id,status)"),\n  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_group ON scheduling_reservations(group_id)"),'''
+          new='''  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_availability_provider_date ON scheduling_availability(provider_id,date)"),\n  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_availability_date_provider_source ON scheduling_availability(date,provider_id,source)"),\n  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_provider ON scheduling_reservations(city_id,provider_id,status)"),\n  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_city_status_provider_window ON scheduling_reservations(city_id,status,provider_id,scheduled_start,scheduled_end)"),\n  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_group ON scheduling_reservations(group_id)"),\n  db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_unavailability_window ON provider_unavailability(status,starts_at,ends_at,provider_id)"),'''
+          if old not in s: raise SystemExit('index anchor not found')
+          s=s.replace(old,new,1)
+          old='''const matching=await loadGovernedProviders(db,cityIdFor(input),input.zoneId,input.serviceCode,new Date(input.scheduledStart));'''
+          new='''const cityId=cityIdFor(input),scheduledDate=new Date(input.scheduledStart).toISOString().slice(0,10),profileRows=await db.prepare("SELECT id,services_json,zones_json FROM provider_capacity_profiles WHERE city_id=? AND live=1 AND status='active' AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)").bind(cityId,scheduledDate,scheduledDate).all<Record<string,unknown>>(),matching=profileRows.results.filter(row=>{try{return (JSON.parse(String(row.services_json||"[]")) as string[]).includes(input.serviceCode)&&(JSON.parse(String(row.zones_json||"[]")) as string[]).includes(input.zoneId);}catch{return false;}}).map(row=>({id:String(row.id)}));'''
+          if old not in s: raise SystemExit('seed anchor not found')
+          s=s.replace(old,new,1)
+          start=s.index('function repository(db:Awaited<ReturnType<typeof database>>):PlatformRepository{return {')
+          end=s.index('\n\nasync function activeRules',start)
+          replacement='''function repository(db:Awaited<ReturnType<typeof database>>):PlatformRepository{\n  const bookingsByCity=new Map<string,Promise<Record<string,unknown>[]>>();\n  const availabilityByDate=new Map<string,Promise<Record<string,unknown>[]>>();\n  const unavailabilityByDate=new Map<string,Promise<Set<string>>>();\n  let canonicalPetsTable:Promise<boolean>|undefined;\n  const petCache=new Map<string,Promise<Record<string,unknown>|null>>();\n  const bookingRows=(cityId:string)=>{let pending=bookingsByCity.get(cityId);if(!pending){pending=db.prepare("SELECT * FROM scheduling_reservations WHERE city_id=? AND status!='cancelled'").bind(cityId).all<Record<string,unknown>>().then(rows=>rows.results);bookingsByCity.set(cityId,pending);}return pending;};\n  const availabilityRows=(date:string)=>{let pending=availabilityByDate.get(date);if(!pending){pending=db.prepare("SELECT * FROM scheduling_availability WHERE date=?").bind(date).all<Record<string,unknown>>().then(rows=>rows.results);availabilityByDate.set(date,pending);}return pending;};\n  const blockedProviders=(date:string)=>{let pending=unavailabilityByDate.get(date);if(!pending){const dayStart=new Date(`${date}T00:00:00+05:30`).toISOString(),dayEnd=new Date(new Date(dayStart).getTime()+86_400_000).toISOString();pending=db.prepare("SELECT provider_id FROM provider_unavailability WHERE status='active' AND starts_at<? AND ends_at>?").bind(dayEnd,dayStart).all<Record<string,unknown>>().then(rows=>new Set(rows.results.map(row=>String(row.provider_id))));unavailabilityByDate.set(date,pending);}return pending;};\n  return {\n    async listEligibleProviders(cityId:string,zoneId:string,serviceCode:string){return loadGovernedProviders(db,cityId,zoneId,serviceCode);},\n    async listBookings(cityId:string,providerId?:string){const rows=(await bookingRows(cityId)).filter(row=>!providerId||String(row.provider_id)===providerId);return rows.map(row=>({id:String(row.id),legacyIds:[],idempotencyKey:String(row.id),cityId:String(row.city_id),zoneId:String(row.zone_id),customerId:String(row.customer_id),petIds:JSON.parse(String(row.pet_ids_json)),serviceCode:String(row.service_code),packageCode:"uat",addonCodes:[],scheduledStart:String(row.scheduled_start),scheduledEnd:String(row.scheduled_end),status:String(row.status) as Booking["status"],channel:"customer_app",totalAmount:0,providerId:String(row.provider_id),assignmentMode:"automatic",scheduleGroupId:String(row.group_id),occurrenceNumber:Number(row.occurrence_number),capacityUnits:Number(row.capacity_units),careMode:row.care_mode as Booking["careMode"],createdBy:String(row.customer_id),createdAt:new Date(Number(row.created_at)).toISOString(),updatedAt:new Date(Number(row.created_at)).toISOString()}));},\n    async listAvailability(providerId:string,date:string){if((await blockedProviders(date)).has(providerId))return [];const providerRows=(await availabilityRows(date)).filter(row=>String(row.provider_id)===providerId),authored=providerRows.filter(row=>["partner_app","operations","roster"].includes(String(row.source))),results=authored.length?authored:providerRows;return results.map(row=>({id:String(row.id),providerId:String(row.provider_id),cityId:String(row.city_id),zoneId:String(row.zone_id),date:String(row.date),windows:JSON.parse(String(row.windows_json)),source:String(row.source) as ProviderAvailability["source"],updatedAt:new Date(Number(row.updated_at)).toISOString()}));},\n    async getPet(id:string){canonicalPetsTable??=tableExists(db,"canonical_pets");if(!await canonicalPetsTable)return null;let pending=petCache.get(id);if(!pending){pending=db.prepare("SELECT id,customer_id,name,species,breed,vaccination_status,created_at,updated_at FROM canonical_pets WHERE id=?").bind(id).first<Record<string,unknown>>().then(row=>row??null);petCache.set(id,pending);}const row=await pending;if(!row)return null;return{id:String(row.id),customerId:String(row.customer_id),legacyIds:[],name:String(row.name||id),species:String(row.species||"other") as Pet["species"],breed:row.breed?String(row.breed):undefined,allergies:[],vaccinationStatus:String(row.vaccination_status||"not_provided") as Pet["vaccinationStatus"],createdAt:new Date(Number(row.created_at||Date.now())).toISOString(),updatedAt:new Date(Number(row.updated_at||row.created_at||Date.now())).toISOString()} as Pet;},\n    async close(){},\n  } as unknown as PlatformRepository;\n}'''
+          s=s[:start]+replacement+s[end:]
+          p.write_text(s)
+          PY
+      - name: Install
+        run: npm run install:ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Focused scheduling tests
+        env:
+          PAWSPACE_LOCAL_PREVIEW: on
+          NODE_ENV: test
+        run: node --experimental-strip-types --test tests/scheduling-hardening.test.mjs tests/uat-scheduling-d1-contention.test.mjs tests/uat-scheduling-reservation-ownership.test.mjs tests/ptja-w1-f30-commit-guard.test.mjs
+      - name: Commit validated remediation
+        run: |
+          rm .github/workflows/staging-performance-remediation.yml
+          git config user.name PawSpaceIND
+          git config user.email karthik@pawspace.in
+          git add app/api/uat-scheduling/route.ts .github/workflows/staging-performance-remediation.yml
+          git commit -m "perf(scheduling): collapse D1 read fanout"
+          git push origin HEAD:fix/staging-performance-remediation
