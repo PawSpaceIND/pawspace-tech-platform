@@ -55,8 +55,12 @@ const setCookie = login.response.headers.get('set-cookie') || '';
 const cookie = setCookie.split(';')[0];
 if (!cookie) throw new Error('Founder staging login returned no session cookie');
 
+// Keep every deterministic booking comfortably inside the product's 180-day booking horizon.
+// The previous two-day spacing made cases 85-100 exceed that policy and tested invalid fixture dates
+// rather than hosted concurrency. One-day spacing still gives 100 distinct provider windows while the
+// 100 scheduling requests themselves are issued concurrently by Promise.all below.
 function windowFor(i) {
-  const d = new Date(Date.now() + (12 + i * 2) * 86400000);
+  const d = new Date(Date.now() + (12 + i) * 86400000);
   d.setUTCHours(9, 0, 0, 0);
   const start = d.toISOString();
   const end = new Date(d.getTime() + 60 * 60 * 1000).toISOString();
