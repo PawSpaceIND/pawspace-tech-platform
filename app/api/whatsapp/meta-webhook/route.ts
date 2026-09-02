@@ -1,5 +1,6 @@
 import{processMetaWhatsAppEvents,parseMetaWhatsAppWebhook,verifyMetaWebhookChallenge,verifyMetaWhatsAppSignature}from"../../../../lib/meta-whatsapp-webhook";
-import{ingestMetaInboundMedia,processMetaStatusEventAtomic}from"../../../../lib/whatsapp-production-runtime";
+import{processMetaStatusEventAtomic}from"../../../../lib/whatsapp-production-runtime";
+import{ingestMetaInboundMediaRetrySafe}from"../../../../lib/meta-whatsapp-media-ingestion";
 
 async function bindings(){const{env}=await import("cloudflare:workers");return env as unknown as{DB:D1Database;META_WHATSAPP_APP_SECRET?:string;META_WHATSAPP_VERIFY_TOKEN?:string;META_WHATSAPP_ACCESS_TOKEN?:string;META_WHATSAPP_UAT_ACCESS_TOKEN?:string;META_WHATSAPP_GRAPH_VERSION?:string;PAWSPACE_MEDIA_BUCKET?:unknown};}
 const noStore={"cache-control":"no-store"};
@@ -24,7 +25,7 @@ export async function POST(request:Request){
   if(standard.length)results.push(...await processMetaWhatsAppEvents(env.DB,standard,rawBody));
   for(const event of events){
    if(event.kind==="status"){results.push(await processMetaStatusEventAtomic(env.DB,event,rawBody));continue;}
-   if(mediaTypes.has(event.messageType)){const media=await ingestMetaInboundMedia(env.DB,env as unknown as Record<string,unknown>,event,rawBody);results.push({eventId:event.eventId,...media});}
+   if(mediaTypes.has(event.messageType)){const media=await ingestMetaInboundMediaRetrySafe(env.DB,env as unknown as Record<string,unknown>,event,rawBody);results.push({eventId:event.eventId,...media});}
   }
   return Response.json({ok:true,accepted:events.length,results,externalDelivery:false},{status:200,headers:noStore});
  }catch(error){
