@@ -56,9 +56,6 @@ const cookie = setCookie.split(';')[0];
 if (!cookie) throw new Error('Founder staging login returned no session cookie');
 
 // Keep every deterministic booking comfortably inside the product's 180-day booking horizon.
-// The previous two-day spacing made cases 85-100 exceed that policy and tested invalid fixture dates
-// rather than hosted concurrency. One-day spacing still gives 100 distinct provider windows while the
-// 100 scheduling requests themselves are issued concurrently by Promise.all below.
 function windowFor(i) {
   const d = new Date(Date.now() + (12 + i) * 86400000);
   d.setUTCHours(9, 0, 0, 0);
@@ -67,39 +64,55 @@ function windowFor(i) {
   return {start,end};
 }
 
-const prepared = await Promise.all(Array.from({length:100}, (_,i) => measured('assignment', async () => {
-  const n = i + 1;
-  const groupId = `${RUN_ID}:grp:${String(n).padStart(3,'0')}`;
-  const customerId = `${RUN_ID}:cust:${String(n).padStart(3,'0')}`;
-  const petId = `${RUN_ID}:pet:${String(n).padStart(3,'0')}`;
-  const {start,end} = windowFor(i);
-  const {payload} = await request('/api/uat-scheduling', {method:'POST', cookie, body:{
-    clientRequestId:groupId, customerId, petIds:[petId], serviceCode:'grooming', cityId:'blr', zoneId:'blr-east',
-    scheduledStart:start, scheduledEnd:end, occurrences:1, assignmentStrategy:'auto'
-  }});
-  const data = payload?.data || {};
-  if (!data.provider?.id) throw new Error(`No provider returned for ${groupId}`);
-  const provider = {id:String(data.provider.id), name:String(data.provider.name || data.provider.id), model:data.provider.model === 'commission' ? 'commission' : 'full_time'};
-  return {
-    groupId, customerId, petId, start, end, provider,
-    body:{
-      idempotencyKey:`${RUN_ID}:booking:${String(n).padStart(3,'0')}`, scheduleGroupId:groupId,
-      customer:{id:customerId,name:`Perf Customer ${n}`,primaryPhone:`+9198${String(10000000+n).slice(-8)}`,email:`${RUN_ID}-${n}@example.invalid`},
-      pets:[{sourceId:petId,name:`Perf Pet ${n}`,species:'dog',breed:'UAT',vaccinationStatus:'verified'}],
-      cityId:'blr',zoneId:'blr-east',serviceCode:'grooming',packageCode:'dog-bath',packageName:'Essential Bath',
-      scheduledStart:start,scheduledEnd:end,provider,totalAmount:1349,amountDueNow:1349,
-      payment:{method:'uat_sandbox',mode:'prepaid',status:'captured',detail:'Hosted performance gate; isolated staging only'},
-      pricing:{discount:0}
-    }
-  };
-})));
+async function prepareAssignment(i) {
+  return measured('assignment', async () => {
+    const n = i + 1;
+    const groupId = `${RUN_ID}:grp:${String(n).padStart(3,'0')}`;
+    const customerId = `${RUN_ID}:cust:${String(n).padStart(3,'0')}`;
+    const petId = `${RUN_ID}:pet:${String(n).padStart(3,'0')}`;
+    const {start,end} = windowFor(i);
+    const {payload} = await request('/api/uat-scheduling', {method:'POST', cookie, body:{
+      clientRequestId:groupId, customerId, petIds:[petId], serviceCode:'grooming', cityId:'blr', zoneId:'blr-east',
+      scheduledStart:start, scheduledEnd:end, occurrences:1, assignmentStrategy:'auto'
+    }});
+    const data = payload?.data || {};
+    if (!data.provider?.id) throw new Error(`No provider returned for ${groupId}`);
+    const provider = {id:String(data.provider.id), name:String(data.provider.name || data.provider.id), model:data.provider.model === 'commission' ? 'commission' : 'full_time'};
+    return {
+      groupId, customerId, petId, start, end, provider,
+      body:{
+        idempotencyKey:`${RUN_ID}:booking:${String(n).padStart(3,'0')}`, scheduleGroupId:groupId,
+        customer:{id:customerId,name:`Perf Customer ${n}`,primaryPhone:`+9198${String(10000000+n).slice(-8)}`,email:`${RUN_ID}-${n}@example.invalid`},
+        pets:[{sourceId:petId,name:`Perf Pet ${n}`,species:'dog',breed:'UAT',vaccinationStatus:'verified'}],
+        cityId:'blr',zoneId:'blr-east',serviceCode:'grooming',packageCode:'dog-bath',packageName:'Essential Bath',
+        scheduledStart:start,scheduledEnd:end,provider,totalAmount:1349,amountDueNow:1349,
+        payment:{method:'uat_sandbox',mode:'prepaid',status:'captured',detail:'Hosted performance gate; isolated staging only'},
+        pricing:{discount:0}
+      }
+    };
+  });
+}
 
+// Provider assignment is a preparation dependency, not the 100-simultaneous-booking gate itself.
+// Exercise it concurrently in bounded groups so the test proves concurrent assignment without turning
+// this setup phase into an unintended 100-way D1 write-storm. The booking stage below remains 100-way.
+const prepared = [];
+const ASSIGNMENT_CONCURRENCY = 10;
+for (let offset = 0; offset < 100; offset += ASSIGNMENT_CONCURRENCY) {
+  const chunk = await Promise.all(
+    Array.from({length:Math.min(ASSIGNMENT_CONCURRENCY, 100-offset)}, (_,j) => prepareAssignment(offset+j))
+  );
+  prepared.push(...chunk);
+}
+
+// Required gate: 100 simultaneous canonical bookings.
 const bookingResults = await Promise.all(prepared.map(item => measured('booking', async () => {
   const {payload} = await request('/api/canonical-bookings', {method:'POST',cookie,body:item.body});
   if (!payload?.data?.bookingId) throw new Error(`No bookingId for ${item.body.idempotencyKey}`);
   return {bookingId:String(payload.data.bookingId), item};
 })));
 
+// Required gate: 100 simultaneous duplicate/idempotency payment attempts against the same bookings.
 const replayResults = await Promise.all(bookingResults.map(({item}) => measured('duplicate-payment-booking-replay', async () => {
   const {payload} = await request('/api/canonical-bookings', {method:'POST',cookie,body:item.body});
   if (payload?.data?.duplicatePrevented !== true) throw new Error(`Replay was not marked duplicatePrevented for ${item.body.idempotencyKey}`);
