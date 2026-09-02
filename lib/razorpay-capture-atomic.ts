@@ -144,7 +144,7 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
     db.prepare("SELECT id,status FROM journal_transactions WHERE source_event_id=?").bind(journalEventId).first<Row>(),
     db.prepare("SELECT id,status FROM financial_outbox WHERE dedupe_key=?").bind(effectsDedupe).first<Row>(),
   ]);
-  if ((input.intentId && text(persistedIntent?.state) !== "CAPTURED") || text(persistedPayment?.status) !== "captured" || text(persistedInbox?.processing_status) !== "PROCESSED" || text(postedJournal?.status) !== "POSTED" || !persistedEffects) {
+  if ((input.intentId && text(persistedIntent?.state) !== "CAPTURED") || text(persistedPayment?.status) !== "captured" || text(persistedInbox?.processing_status) !== "PROCESSED" || !postedJournal || text(postedJournal.status) !== "POSTED" || !persistedEffects) {
     throw new Error("Atomic Razorpay capture commit verification failed");
   }
   return { duplicateCapture: false, effectsOutboxId: text(persistedEffects.id), effectsStatus: text(persistedEffects.status), journalId: text(postedJournal.id), capturedTotal, collectedInFull };
