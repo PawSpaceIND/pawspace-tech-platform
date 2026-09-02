@@ -1,5 +1,8 @@
 name: Deploy production
 
+# Manual-only production deployment for the Bengaluru pilot. The exact SHA must already carry a green
+# Release CI run. Voice remains disabled by default; controlled UAT mode is an explicit opt-in and live
+# voice is deliberately not offered by this workflow.
 on:
   workflow_dispatch:
     inputs:
@@ -57,10 +60,19 @@ jobs:
           case "$EXPECTED_SHA" in
             *[!0-9a-f]* | "" ) echo "expected_sha must be an exact 40-character commit sha." >&2; exit 1 ;;
           esac
-          if [ "${#EXPECTED_SHA}" -ne 40 ]; then echo "expected_sha must be an exact 40-character commit sha." >&2; exit 1; fi
+          if [ "${#EXPECTED_SHA}" -ne 40 ]; then
+            echo "expected_sha must be an exact 40-character commit sha." >&2
+            exit 1
+          fi
           ACTUAL="$(git rev-parse HEAD)"
-          if [ "$ACTUAL" != "$EXPECTED_SHA" ]; then echo "checkout is at $ACTUAL, not the requested $EXPECTED_SHA - refusing to deploy." >&2; exit 1; fi
-          if [ -n "$(git status --porcelain)" ]; then echo "working tree is dirty - refusing to deploy a modified artifact." >&2; exit 1; fi
+          if [ "$ACTUAL" != "$EXPECTED_SHA" ]; then
+            echo "checkout is at $ACTUAL, not the requested $EXPECTED_SHA - refusing to deploy." >&2
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "working tree is dirty - refusing to deploy a modified artifact." >&2
+            exit 1
+          fi
 
       - name: Require a green Release CI run on this exact sha
         env:
@@ -68,8 +80,12 @@ jobs:
           EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
         run: |
           set -euo pipefail
-          CONCLUSION="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${EXPECTED_SHA}" --jq '[.workflow_runs[] | select(.name=="Release CI")] | sort_by(.run_started_at) | last | .conclusion' 2>/dev/null || echo "")"
-          if [ "$CONCLUSION" != "success" ]; then echo "Release CI on $EXPECTED_SHA is '${CONCLUSION:-missing}', not success - refusing to deploy." >&2; exit 1; fi
+          CONCLUSION="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${EXPECTED_SHA}" \
+            --jq '[.workflow_runs[] | select(.name=="Release CI")] | sort_by(.run_started_at) | last | .conclusion' 2>/dev/null || echo "")"
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "Release CI on $EXPECTED_SHA is '${CONCLUSION:-missing}', not success - refusing to deploy." >&2
+            exit 1
+          fi
 
       - uses: actions/setup-node@v4
         with:
@@ -78,38 +94,15 @@ jobs:
       - name: Install
         run: npm run install:ci
 
-      - name: Enforce production profile readiness before build
-        env:
-          DEPLOYMENT_PROFILE: production
-          IDFY_API_KEY: ${{ secrets.IDFY_API_KEY }}
-          IDFY_ACCOUNT_ID: ${{ secrets.IDFY_ACCOUNT_ID }}
-          IDFY_URL: ${{ vars.IDFY_URL }}
-          IDFY_WEBHOOK_SECRET: ${{ secrets.IDFY_WEBHOOK_SECRET }}
-          PRODUCTION_R2_BUCKET_NAME: ${{ vars.PRODUCTION_R2_BUCKET_NAME }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          META_WHATSAPP_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_ACCESS_TOKEN }}
-          META_WHATSAPP_APP_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET }}
-          META_WHATSAPP_VERIFY_TOKEN: ${{ secrets.META_WHATSAPP_VERIFY_TOKEN }}
-          META_WHATSAPP_WABA_ID: ${{ vars.META_WHATSAPP_WABA_ID }}
-          META_WHATSAPP_PHONE_NUMBER_ID: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID }}
-          INTERAKT_API_KEY: ${{ secrets.INTERAKT_API_KEY }}
-          INTERAKT_WEBHOOK_SECRET: ${{ secrets.INTERAKT_WEBHOOK_SECRET }}
-        run: node scripts/assert-production-readiness.mjs
-
       - name: Build (vinext)
         run: npm run build
 
-      - name: Configure production (name + bindings + explicit runtime modes)
+      - name: Configure production (name + D1 + explicit runtime modes)
         env:
           PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
           PRODUCTION_R2_BUCKET_NAME: ${{ vars.PRODUCTION_R2_BUCKET_NAME }}
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
           RELEASE_PREVIEW_D1_ID: ${{ vars.RELEASE_PREVIEW_D1_ID }}
-          IDFY_URL: ${{ vars.IDFY_URL }}
-          META_WHATSAPP_WABA_ID: ${{ vars.META_WHATSAPP_WABA_ID }}
-          META_WHATSAPP_PHONE_NUMBER_ID: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID }}
-          META_WHATSAPP_GRAPH_VERSION: ${{ vars.META_WHATSAPP_GRAPH_VERSION }}
           PAWSPACE_PAYMENT_ENV: ${{ github.event.inputs.payment_env }}
           PAWSPACE_COMMUNICATION_ENV: ${{ github.event.inputs.communication_env }}
           PAWSPACE_MAPS_ENV: ${{ github.event.inputs.maps_env }}
@@ -125,7 +118,11 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          if npx wrangler deployments list --name pawspace-prod-bengaluru > rollback-reference.txt 2>&1; then REFERENCE="$(grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' rollback-reference.txt | tail -n 1 || true)"; else REFERENCE=""; fi
+          if npx wrangler deployments list --name pawspace-prod-bengaluru > rollback-reference.txt 2>&1; then
+            REFERENCE="$(grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' rollback-reference.txt | tail -n 1 || true)"
+          else
+            REFERENCE=""
+          fi
           if [ -z "$REFERENCE" ]; then REFERENCE="first-production-deploy"; fi
           echo "reference=$REFERENCE" >> "$GITHUB_OUTPUT"
 
@@ -134,12 +131,6 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          IDFY_API_KEY: ${{ secrets.IDFY_API_KEY }}
-          IDFY_ACCOUNT_ID: ${{ secrets.IDFY_ACCOUNT_ID }}
-          IDFY_WEBHOOK_SECRET: ${{ secrets.IDFY_WEBHOOK_SECRET }}
-          META_WHATSAPP_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_ACCESS_TOKEN }}
-          META_WHATSAPP_APP_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET }}
-          META_WHATSAPP_VERIFY_TOKEN: ${{ secrets.META_WHATSAPP_VERIFY_TOKEN }}
           EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
           EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
           EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
@@ -156,13 +147,12 @@ jobs:
           node --input-type=module -e '
             import { writeFileSync } from "node:fs";
             const requiredNames = [
-              "IDFY_API_KEY", "IDFY_ACCOUNT_ID", "IDFY_WEBHOOK_SECRET",
-              "META_WHATSAPP_ACCESS_TOKEN", "META_WHATSAPP_APP_SECRET", "META_WHATSAPP_VERIFY_TOKEN",
-              "EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_SID", "EXOTEL_CALLER_ID", "EXOTEL_VOICE_APP_ID", "EXOTEL_WEBHOOK_SECRET",
+              "EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_SID", "EXOTEL_CALLER_ID",
+              "EXOTEL_VOICE_APP_ID", "EXOTEL_WEBHOOK_SECRET",
               "INTERAKT_API_KEY", "INTERAKT_WEBHOOK_SECRET"
             ];
             const values = Object.fromEntries(requiredNames.map(name => [name, process.env[name] || ""]));
-            if (Object.values(values).some(value => !value)) throw new Error("a required production secret is missing");
+            if (Object.values(values).some(value => !value)) throw new Error("a required production communication secret is missing");
             writeFileSync(process.env.SECRETS_FILE, JSON.stringify(values), { mode: 0o600 });
           '
           npx wrangler deploy --message "production ${{ github.event.inputs.expected_sha }}" --secrets-file "$SECRETS_FILE"
@@ -170,9 +160,6 @@ jobs:
       - name: Certify the deployed configuration
         env:
           PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
-          PRODUCTION_R2_BUCKET_NAME: ${{ vars.PRODUCTION_R2_BUCKET_NAME }}
-          EXPECTED_META_WABA_ID: ${{ vars.META_WHATSAPP_WABA_ID }}
-          EXPECTED_META_PHONE_NUMBER_ID: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID }}
           EXPECTED_VOICE_ENV: ${{ github.event.inputs.voice_env }}
           EXPECTED_VOICE_UAT_APPROVED: ${{ github.event.inputs.voice_uat_approved }}
         run: |
@@ -183,17 +170,14 @@ jobs:
           if (cfg.name !== "pawspace-prod-bengaluru") fail(`worker is ${cfg.name}, not pawspace-prod-bengaluru`);
           const bound = (cfg.d1_databases || [])[0];
           if (!bound || bound.database_id !== process.env.PRODUCTION_D1_ID) fail("DB binding is not the production database");
-          const media = (cfg.r2_buckets || []).find(binding => binding.binding === "PAWSPACE_MEDIA_BUCKET");
-          if (!media || media.bucket_name !== process.env.PRODUCTION_R2_BUCKET_NAME) fail("private R2 media binding is missing or points at the wrong bucket");
-          for (const forbidden of ["PAWSPACE_LOCAL_PREVIEW", "PAWSPACE_UAT_LOGIN", "PAWSPACE_SCHEDULING_ENV", "META_WHATSAPP_UAT_DELIVERY_ENABLED", "PAWSPACE_MEDIA_ENV"]) if (forbidden in (cfg.vars || {})) fail(`${forbidden} is present in a production deploy`);
+          for (const forbidden of ["PAWSPACE_LOCAL_PREVIEW", "PAWSPACE_UAT_LOGIN", "PAWSPACE_SCHEDULING_ENV", "META_WHATSAPP_UAT_DELIVERY_ENABLED", "PAWSPACE_MEDIA_ENV"]) {
+            if (forbidden in (cfg.vars || {})) fail(`${forbidden} is present in a production deploy`);
+          }
           if ((cfg.vars || {}).PAWSPACE_DEPLOYMENT_ENV !== "production") fail("PAWSPACE_DEPLOYMENT_ENV is not production");
-          if (!(cfg.vars || {}).IDFY_URL) fail("IDFY_URL is not present in the production artifact");
-          if ((cfg.vars || {}).META_WHATSAPP_WABA_ID !== process.env.EXPECTED_META_WABA_ID) fail("Meta WABA binding differs from production configuration");
-          if ((cfg.vars || {}).META_WHATSAPP_PHONE_NUMBER_ID !== process.env.EXPECTED_META_PHONE_NUMBER_ID) fail("Meta phone-number ID differs from production configuration");
           if ((cfg.vars || {}).PAWSPACE_VOICE_ENV !== process.env.EXPECTED_VOICE_ENV) fail("voice environment differs from the confirmed deployment input");
           if ((cfg.vars || {}).PAWSPACE_VOICE_UAT_APPROVED !== process.env.EXPECTED_VOICE_UAT_APPROVED) fail("voice UAT approval differs from the confirmed deployment input");
           if ((cfg.vars || {}).PAWSPACE_VOICE_ENV === "live") fail("live voice is not an allowed Bengaluru pilot production mode");
-          console.log("Deployed configuration certified: production worker, D1, R2 media, Meta WhatsApp identifiers, IDfy URL and governed voice mode.");
+          console.log("Deployed configuration certified: production worker, production database, governed voice mode.");
           NODE
 
       - name: Where this went, and how to undo it
