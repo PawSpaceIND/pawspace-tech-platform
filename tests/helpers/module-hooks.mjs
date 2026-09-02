@@ -15,6 +15,10 @@ import * as nodeModule from "node:module";
 import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+// The payment parser is deliberately fail-closed. Test harnesses must opt into sandbox explicitly.
+process.env.PAWSPACE_PAYMENT_ENV ??= "sandbox";
+process.env.PAWSPACE_PAYMENT_ENVIRONMENT ??= "sandbox";
+
 // Loaded lazily and cached: only a suite that actually imports a .tsx pays for TypeScript's compiler.
 let cachedTs = null;
 function typescript() {
