@@ -51,15 +51,19 @@ jobs:
             throw new Error(`probe did not prove a real table-row read: rows=${JSON.stringify(rows)} rows_read=${rowsRead}`);
           }
           NODE
-      - name: Read-only scheduling failure forensics
+      - name: Read-only canonical booking timeout forensics
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          SQL="SELECT 'decisions' AS kind,COUNT(*) AS n FROM scheduling_assignment_decisions WHERE group_id LIKE 'perf-33613186871-1:grp:%' UNION ALL SELECT 'reservations',COUNT(*) FROM scheduling_reservations WHERE group_id LIKE 'perf-33613186871-1:grp:%' UNION ALL SELECT 'offers',COUNT(*) FROM provider_assignment_offers WHERE group_id LIKE 'perf-33613186871-1:grp:%' UNION ALL SELECT 'uat_roster_rows',COUNT(*) FROM scheduling_availability WHERE source='uat_roster' AND date>=date('now','+11 day') AND date<=date('now','+23 day');"
-          npx wrangler d1 execute pawspace-staging --remote --json --command "$SQL" > scheduling-failure-forensics.json
-          cat scheduling-failure-forensics.json
+          PREFIX="perf-33615780135-1"
+          SQL="SELECT 'decisions' AS kind,COUNT(*) AS n FROM scheduling_assignment_decisions WHERE group_id LIKE '${PREFIX}:grp:%' UNION ALL SELECT 'reservations',COUNT(*) FROM scheduling_reservations WHERE group_id LIKE '${PREFIX}:grp:%' UNION ALL SELECT 'bookings',COUNT(*) FROM canonical_bookings WHERE idempotency_key LIKE '${PREFIX}:booking:%' UNION ALL SELECT 'work_orders',COUNT(*) FROM provider_work_orders WHERE booking_id IN (SELECT id FROM canonical_bookings WHERE idempotency_key LIKE '${PREFIX}:booking:%') UNION ALL SELECT 'payments',COUNT(*) FROM booking_payments WHERE booking_id IN (SELECT id FROM canonical_bookings WHERE idempotency_key LIKE '${PREFIX}:booking:%');"
+          npx wrangler d1 execute pawspace-staging --remote --json --command "$SQL" > canonical-booking-timeout-forensics.json
+          cat canonical-booking-timeout-forensics.json
+          DETAIL="SELECT idempotency_key,id,created_at FROM canonical_bookings WHERE idempotency_key LIKE '${PREFIX}:booking:%' ORDER BY idempotency_key;"
+          npx wrangler d1 execute pawspace-staging --remote --json --command "$DETAIL" > canonical-booking-timeout-detail.json
+          cat canonical-booking-timeout-detail.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -67,5 +71,6 @@ jobs:
           path: |
             d1-capacity-probe.json
             d1-capacity-probe.err
-            scheduling-failure-forensics.json
+            canonical-booking-timeout-forensics.json
+            canonical-booking-timeout-detail.json
           if-no-files-found: warn
