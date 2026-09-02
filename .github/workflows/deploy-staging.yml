@@ -10,6 +10,8 @@ name: Deploy staging
 #              PAWSPACE_UAT_ACCESS_CODE                (>=32 chars) tester code for /staging-login
 #              PAWSPACE_UAT_SIGNING_KEY                (>=32 chars) signs the UAT session cookie
 #              PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT  (>=32 chars) signs OTP identity assertions
+#              EXOTEL_API_KEY, EXOTEL_API_TOKEN, EXOTEL_SID, EXOTEL_CALLER_ID,
+#              EXOTEL_VOICE_APP_ID, EXOTEL_WEBHOOK_SECRET
 #              FAST2SMS_API_KEY                         optional; required only for approved SMS/live-OTP staging
 #              PAWSPACE_SMS_TEST_NUMBERS                optional; comma-separated approved Indian test numbers
 #   Variables: STAGING_D1_ID           (from `npx wrangler d1 create pawspace-staging`)
@@ -142,6 +144,12 @@ jobs:
           RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
           GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
           PAWSPACE_AI_PROVIDER_API_KEY: ${{ secrets.PAWSPACE_AI_PROVIDER_API_KEY }}
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+          EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
+          EXOTEL_VOICE_APP_ID: ${{ secrets.EXOTEL_VOICE_APP_ID }}
+          EXOTEL_WEBHOOK_SECRET: ${{ secrets.EXOTEL_WEBHOOK_SECRET }}
           META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
           META_WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.META_WHATSAPP_PHONE_NUMBER_ID }}
           META_WHATSAPP_WABA_ID: ${{ secrets.META_WHATSAPP_WABA_ID }}
@@ -166,7 +174,11 @@ jobs:
           trap 'rm -f "$SECRETS_FILE"' EXIT
           node --input-type=module -e '
             import { writeFileSync } from "node:fs";
-            const requiredNames = ["PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"];
+            const requiredNames = [
+              "PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT",
+              "EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_SID", "EXOTEL_CALLER_ID",
+              "EXOTEL_VOICE_APP_ID", "EXOTEL_WEBHOOK_SECRET"
+            ];
             const optionalNames = [
               "RAZORPAY_KEY_ID_SANDBOX", "RAZORPAY_KEY_SECRET_SANDBOX", "RAZORPAY_WEBHOOK_SECRET_SANDBOX",
               "GOOGLE_MAPS_SERVER_API_KEY_UAT", "PAWSPACE_AI_PROVIDER_API_KEY",
@@ -178,7 +190,7 @@ jobs:
               "PAWSPACE_SMS_TEST_NUMBERS", "FAST2SMS_API_KEY"
             ];
             const required = Object.fromEntries(requiredNames.map(name => [name, process.env[name] || ""]));
-            if (Object.values(required).some(value => !value)) throw new Error("a required UAT secret is missing");
+            if (Object.values(required).some(value => !value)) throw new Error("a required staging secret is missing");
             const optional = Object.fromEntries(optionalNames.filter(name => process.env[name]).map(name => [name, process.env[name]]));
             const values = { ...required, ...optional, PAWSPACE_STAGING_LIVE_CUSTOMER_OTP: "false" };
             writeFileSync(process.env.SECRETS_FILE, JSON.stringify(values), { mode: 0o600 });
