@@ -275,8 +275,15 @@ test("canonical Pet Sitting derives money and package truth from the governed qu
   assert.deepEqual(bookingState(sqlite), beforeReplay, "idempotent replay must not create a second booking or quote link");
 
   const secondGroup = "SIT-QUOTE-REUSE";
-  seedSchedule(sqlite, { groupId: secondGroup, start, end });
-  const reused = await book(cookie, payload({ groupId: secondGroup, start, end, quote, key: "BOOK-SIT-QUOTE-REUSE" }));
+  // A distinct window for this group's reservation. It only has to be a DIFFERENT booking trying to
+  // spend the same quote; seeding it on the same sitter and the same hours as the group above made
+  // the fixture assert a double-booking, which the active-provider-window unique index now refuses
+  // outright - the constraint fired before the route could return the "already linked" refusal this
+  // test is about.
+  const reuseStart = new Date(new Date(start).getTime() + 2 * 86_400_000).toISOString();
+  const reuseEnd = new Date(new Date(end).getTime() + 2 * 86_400_000).toISOString();
+  seedSchedule(sqlite, { groupId: secondGroup, start: reuseStart, end: reuseEnd });
+  const reused = await book(cookie, payload({ groupId: secondGroup, start: reuseStart, end: reuseEnd, quote, key: "BOOK-SIT-QUOTE-REUSE" }));
   assert.equal(reused.response.status, 409, JSON.stringify(reused.data));
   assert.match(reused.data.error, /already linked|already been used|booking write conflict/i);
   assert.deepEqual(bookingState(sqlite), beforeReplay, "the same quote cannot fund a second canonical bundle");
