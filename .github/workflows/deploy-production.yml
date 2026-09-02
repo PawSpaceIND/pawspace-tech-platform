@@ -1,29 +1,8 @@
 name: Deploy production
 
-# PRODUCTION deploy for the Bengaluru pilot. Manual only (workflow_dispatch) — never auto-runs on a
-# push, never on a schedule, never on a merge. Modelled on deploy-staging.yml, which is the workflow
-# this repository has already proven, with three differences that matter:
-#
-#   1. it deploys to pawspace-prod-bengaluru, and REFUSES if that database is shared with staging
-#      or release-preview;
-#   2. it carries no UAT or sandbox flags. scripts/prod-config.mjs declares production's complete var
-#      set and refuses the deploy if a forbidden one (local preview, UAT login, UAT delivery) appears;
-#   3. payment, communication and maps modes are REQUIRED inputs with no default. A pilot that quietly
-#      runs on sandbox payments, or quietly charges real cards, is the same class of accident.
-#
-# It deliberately does NOT seed a staff directory, does NOT enable a shared UAT access code, and does
-# NOT send a smoke message. Production is not a test environment.
-#
-# Required repository configuration:
-#   vars.PRODUCTION_D1_ID                     the production database (create it first; this never does)
-#   vars.PRODUCTION_R2_BUCKET_NAME            optional private media bucket
-#   vars.STAGING_D1_ID                        supplied ONLY so the job can refuse to match it
-#   vars.RELEASE_PREVIEW_D1_ID                supplied ONLY so the job can refuse to match it
-#   secrets.CLOUDFLARE_API_TOKEN
-#   secrets.CLOUDFLARE_ACCOUNT_ID
-#   secrets.EXOTEL_API_KEY, secrets.EXOTEL_API_TOKEN, secrets.EXOTEL_SID
-#   secrets.EXOTEL_CALLER_ID, secrets.EXOTEL_VOICE_APP_ID, secrets.EXOTEL_WEBHOOK_SECRET
-
+# Manual-only production deployment for the Bengaluru pilot. The exact SHA must already carry a green
+# Release CI run. Voice remains disabled by default; controlled UAT mode is an explicit opt-in and live
+# voice is deliberately not offered by this workflow.
 on:
   workflow_dispatch:
     inputs:
@@ -32,7 +11,7 @@ on:
         required: true
         default: ''
       expected_sha:
-        description: 'Exact 40-character commit sha to deploy (a branch name does not identify a build)'
+        description: 'Exact 40-character commit sha to deploy'
         required: true
         default: ''
       payment_env:
@@ -50,17 +29,25 @@ on:
         required: true
         type: choice
         options: [sandbox, live]
+      voice_env:
+        description: 'Voice runtime: disabled (default) or controlled UAT. Live is intentionally unavailable.'
+        required: true
+        type: choice
+        default: disabled
+        options: [disabled, uat]
+      voice_uat_approved:
+        description: 'Explicitly approve controlled voice UAT. Keep false unless the UAT allow-list/callback gate is ready.'
+        required: true
+        type: choice
+        default: 'false'
+        options: ['false', 'true']
 
 jobs:
   deploy:
-    # A typo in the confirmation string is a no-op, not a production deploy.
     if: ${{ github.event.inputs.confirm == 'deploy-production-bengaluru' }}
     runs-on: ubuntu-latest
     concurrency: pawspace-production-deploy
     steps:
-      # Checked out AT the requested sha, so "the production deploy of <sha>" is a fact that can be
-      # checked afterwards rather than an assumption, and a merge landing mid-run cannot change what
-      # was shipped.
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.expected_sha }}
@@ -74,7 +61,7 @@ jobs:
             *[!0-9a-f]* | "" ) echo "expected_sha must be an exact 40-character commit sha." >&2; exit 1 ;;
           esac
           if [ "${#EXPECTED_SHA}" -ne 40 ]; then
-            echo "expected_sha must be an exact 40-character commit sha (a branch name or short sha does not identify a build)." >&2
+            echo "expected_sha must be an exact 40-character commit sha." >&2
             exit 1
           fi
           ACTUAL="$(git rev-parse HEAD)"
@@ -87,9 +74,6 @@ jobs:
             exit 1
           fi
 
-      # A production deploy of an uncertified tree is how a regression reaches customers. The sha must
-      # carry a green Release CI run of its own; this does not re-run the suite, it requires that one
-      # already passed on exactly this commit.
       - name: Require a green Release CI run on this exact sha
         env:
           GH_TOKEN: ${{ github.token }}
@@ -99,10 +83,9 @@ jobs:
           CONCLUSION="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${EXPECTED_SHA}" \
             --jq '[.workflow_runs[] | select(.name=="Release CI")] | sort_by(.run_started_at) | last | .conclusion' 2>/dev/null || echo "")"
           if [ "$CONCLUSION" != "success" ]; then
-            echo "Release CI on $EXPECTED_SHA is '${CONCLUSION:-missing}', not success - refusing to deploy an uncertified tree." >&2
+            echo "Release CI on $EXPECTED_SHA is '${CONCLUSION:-missing}', not success - refusing to deploy." >&2
             exit 1
           fi
-          echo "Release CI is green on this exact sha."
 
       - uses: actions/setup-node@v4
         with:
@@ -114,9 +97,6 @@ jobs:
       - name: Build (vinext)
         run: npm run build
 
-      # Refuses on a missing database id, on a database shared with staging or release-preview, on an
-      # unstated payment/communication/maps mode, and on any forbidden UAT var surviving into the
-      # production var set.
       - name: Configure production (name + D1 + explicit runtime modes)
         env:
           PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
@@ -126,10 +106,10 @@ jobs:
           PAWSPACE_PAYMENT_ENV: ${{ github.event.inputs.payment_env }}
           PAWSPACE_COMMUNICATION_ENV: ${{ github.event.inputs.communication_env }}
           PAWSPACE_MAPS_ENV: ${{ github.event.inputs.maps_env }}
+          PAWSPACE_VOICE_ENV: ${{ github.event.inputs.voice_env }}
+          PAWSPACE_VOICE_UAT_APPROVED: ${{ github.event.inputs.voice_uat_approved }}
         run: node scripts/prod-config.mjs
 
-      # Captured BEFORE the deploy, so a rollback target exists even when this deploy is the bad one.
-      # The moment a rollback reference matters is after it has already gone wrong.
       - name: Record the currently deployed production version (rollback reference)
         id: rollback
         continue-on-error: true
@@ -144,14 +124,8 @@ jobs:
             REFERENCE=""
           fi
           if [ -z "$REFERENCE" ]; then REFERENCE="first-production-deploy"; fi
-          # Only the marker is exported. The listing itself can carry account detail and is not uploaded.
           echo "reference=$REFERENCE" >> "$GITHUB_OUTPUT"
-          echo "Rollback target recorded."
 
-      # Deploy from the repo ROOT: the @cloudflare/vite-plugin build writes a redirect at
-      # .wrangler/deploy/config.json pointing wrangler to dist/server/wrangler.json. Running from
-      # dist/server instead makes wrangler find BOTH that redirect and the local wrangler.json and
-      # refuse ("Found both a user configuration file ... and a deploy configuration file").
       - name: Deploy to production
         id: deploy
         env:
@@ -163,6 +137,8 @@ jobs:
           EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
           EXOTEL_VOICE_APP_ID: ${{ secrets.EXOTEL_VOICE_APP_ID }}
           EXOTEL_WEBHOOK_SECRET: ${{ secrets.EXOTEL_WEBHOOK_SECRET }}
+          INTERAKT_API_KEY: ${{ secrets.INTERAKT_API_KEY }}
+          INTERAKT_WEBHOOK_SECRET: ${{ secrets.INTERAKT_WEBHOOK_SECRET }}
         run: |
           set -euo pipefail
           SECRETS_FILE="$RUNNER_TEMP/pawspace-production-secrets.json"
@@ -172,19 +148,20 @@ jobs:
             import { writeFileSync } from "node:fs";
             const requiredNames = [
               "EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_SID", "EXOTEL_CALLER_ID",
-              "EXOTEL_VOICE_APP_ID", "EXOTEL_WEBHOOK_SECRET"
+              "EXOTEL_VOICE_APP_ID", "EXOTEL_WEBHOOK_SECRET",
+              "INTERAKT_API_KEY", "INTERAKT_WEBHOOK_SECRET"
             ];
             const values = Object.fromEntries(requiredNames.map(name => [name, process.env[name] || ""]));
-            if (Object.values(values).some(value => !value)) throw new Error("a required production Exotel secret is missing");
+            if (Object.values(values).some(value => !value)) throw new Error("a required production communication secret is missing");
             writeFileSync(process.env.SECRETS_FILE, JSON.stringify(values), { mode: 0o600 });
           '
           npx wrangler deploy --message "production ${{ github.event.inputs.expected_sha }}" --secrets-file "$SECRETS_FILE"
 
-      # The deployed worker must be the production one, bound to the production database, with no
-      # preview or UAT authority. Asserted against what was actually written, not what was intended.
       - name: Certify the deployed configuration
         env:
           PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          EXPECTED_VOICE_ENV: ${{ github.event.inputs.voice_env }}
+          EXPECTED_VOICE_UAT_APPROVED: ${{ github.event.inputs.voice_uat_approved }}
         run: |
           set -euo pipefail
           node - <<'NODE'
@@ -197,7 +174,10 @@ jobs:
             if (forbidden in (cfg.vars || {})) fail(`${forbidden} is present in a production deploy`);
           }
           if ((cfg.vars || {}).PAWSPACE_DEPLOYMENT_ENV !== "production") fail("PAWSPACE_DEPLOYMENT_ENV is not production");
-          console.log("Deployed configuration certified: production worker, production database, no preview or UAT authority.");
+          if ((cfg.vars || {}).PAWSPACE_VOICE_ENV !== process.env.EXPECTED_VOICE_ENV) fail("voice environment differs from the confirmed deployment input");
+          if ((cfg.vars || {}).PAWSPACE_VOICE_UAT_APPROVED !== process.env.EXPECTED_VOICE_UAT_APPROVED) fail("voice UAT approval differs from the confirmed deployment input");
+          if ((cfg.vars || {}).PAWSPACE_VOICE_ENV === "live") fail("live voice is not an allowed Bengaluru pilot production mode");
+          console.log("Deployed configuration certified: production worker, production database, governed voice mode.");
           NODE
 
       - name: Where this went, and how to undo it
@@ -207,6 +187,7 @@ jobs:
           echo "Payment mode:        ${{ github.event.inputs.payment_env }}"
           echo "Communication mode:  ${{ github.event.inputs.communication_env }}"
           echo "Maps mode:           ${{ github.event.inputs.maps_env }}"
+          echo "Voice mode:          ${{ github.event.inputs.voice_env }}"
+          echo "Voice UAT approved:  ${{ github.event.inputs.voice_uat_approved }}"
           echo "Rollback reference:  ${{ steps.rollback.outputs.reference }}"
-          echo ""
-          echo "To roll back:  npx wrangler rollback --name pawspace-prod-bengaluru <reference>"
+          echo "To roll back: npx wrangler rollback --name pawspace-prod-bengaluru <reference>"
