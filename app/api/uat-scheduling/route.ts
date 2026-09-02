@@ -29,7 +29,7 @@ async function ensureSchedulingTablesUncached(db:Awaited<ReturnType<typeof datab
    * first call and costs the fanout improvement nothing.
    */
   await ensureProviderCapacityTables(db);
-  const required=["scheduling_assignment_decisions","scheduling_rules","scheduling_availability","scheduling_reservations","idx_scheduling_availability_provider_date","idx_scheduling_availability_date_provider_source","idx_scheduling_reservations_provider","idx_scheduling_reservations_city_status_provider_window","idx_scheduling_reservations_group","idx_scheduling_reservations_attempt"];
+  const required=["scheduling_assignment_decisions","scheduling_rules","scheduling_availability","scheduling_reservations","idx_scheduling_availability_provider_date","idx_scheduling_availability_date_provider_source","idx_scheduling_reservations_provider","idx_scheduling_reservations_city_status_provider_window","idx_scheduling_reservations_city_active_window","idx_scheduling_reservations_group","idx_scheduling_reservations_attempt"];
   const existing=await db.prepare(`SELECT name FROM sqlite_master WHERE name IN (${required.map(()=>"?").join(",")})`).bind(...required).all<Record<string,unknown>>();
   const schemaReady=new Set(existing.results.map(row=>String(row.name))).size===required.length;
   if(!schemaReady)await db.batch([
@@ -41,6 +41,7 @@ async function ensureSchedulingTablesUncached(db:Awaited<ReturnType<typeof datab
   db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_availability_date_provider_source ON scheduling_availability(date,provider_id,source)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_provider ON scheduling_reservations(city_id,provider_id,status)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_city_status_provider_window ON scheduling_reservations(city_id,status,provider_id,scheduled_start,scheduled_end)"),
+  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_city_active_window ON scheduling_reservations(city_id,status,scheduled_start,scheduled_end,provider_id)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_group ON scheduling_reservations(group_id)"),
 ]);
   /*
@@ -72,13 +73,14 @@ async function ensureSchedulingTables(db:Awaited<ReturnType<typeof database>>){c
 async function syntheticUatRosterEnabled(){const {env}=await import("cloudflare:workers");return uatRosterSeedingEnabled(env);}
 function syntheticUatWindow(input:RequestBody){return input.serviceCode==="boarding"||input.careMode==="overnight"?"00:00-23:59":input.serviceCode==="pet_taxi"?"06:00-22:00":input.serviceCode==="dog_walking"?"06:00-21:00":"09:00-19:00";}
 
+function reservationReadWindow(input?:RequestBody){if(!input)return null;const occurrences=Math.max(1,Number(input.occurrences??1)),recurring=input.serviceCode==="dog_training"||input.serviceCode==="dog_walking",maxOffsetDays=input.weekdays?.length?180:recurring?Math.max(0,occurrences-1)*Math.max(1,Number(input.cadenceDays??7)):0,dayMs=86_400_000;return{start:new Date(new Date(input.scheduledStart).getTime()-dayMs).toISOString(),end:new Date(new Date(input.scheduledEnd).getTime()+(maxOffsetDays+1)*dayMs).toISOString()};}
 function repository(db:Awaited<ReturnType<typeof database>>,input?:RequestBody,syntheticUatRoster=false):PlatformRepository{
   const bookingsByCity=new Map<string,Promise<Record<string,unknown>[]>>();
   const availabilityByDate=new Map<string,Promise<Record<string,unknown>[]>>();
   const unavailabilityByDate=new Map<string,Promise<Set<string>>>();
   let canonicalPetsTable:Promise<boolean>|undefined;
   const petCache=new Map<string,Promise<Record<string,unknown>|null>>();
-  const bookingRows=(cityId:string)=>{let pending=bookingsByCity.get(cityId);if(!pending){pending=db.prepare("SELECT * FROM scheduling_reservations WHERE city_id=? AND status!='cancelled'").bind(cityId).all<Record<string,unknown>>().then(rows=>rows.results);bookingsByCity.set(cityId,pending);}return pending;};
+  const bookingRows=(cityId:string)=>{let pending=bookingsByCity.get(cityId);if(!pending){const window=reservationReadWindow(input);pending=(window?db.prepare("SELECT * FROM scheduling_reservations WHERE city_id=? AND status IN ('confirmed','assigned','on_the_way','arrived','in_service') AND scheduled_start<? AND scheduled_end>?").bind(cityId,window.end,window.start):db.prepare("SELECT * FROM scheduling_reservations WHERE city_id=? AND status IN ('confirmed','assigned','on_the_way','arrived','in_service')").bind(cityId)).all<Record<string,unknown>>().then(rows=>rows.results);bookingsByCity.set(cityId,pending);}return pending;};
   const availabilityRows=(date:string)=>{let pending=availabilityByDate.get(date);if(!pending){pending=db.prepare("SELECT * FROM scheduling_availability WHERE date=?").bind(date).all<Record<string,unknown>>().then(rows=>rows.results);availabilityByDate.set(date,pending);}return pending;};
   const blockedProviders=(date:string)=>{let pending=unavailabilityByDate.get(date);if(!pending){const dayStart=new Date(`${date}T00:00:00+05:30`).toISOString(),dayEnd=new Date(new Date(dayStart).getTime()+86_400_000).toISOString();pending=db.prepare("SELECT provider_id FROM provider_unavailability WHERE status='active' AND starts_at<? AND ends_at>?").bind(dayEnd,dayStart).all<Record<string,unknown>>().then(rows=>new Set(rows.results.map(row=>String(row.provider_id))));unavailabilityByDate.set(date,pending);}return pending;};
   return {
