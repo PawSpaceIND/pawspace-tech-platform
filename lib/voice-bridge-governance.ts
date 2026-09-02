@@ -85,6 +85,11 @@ async function dialExotelBridge(env: Env, input: { sessionId: string; from: stri
     TimeOut: "45",
     Record: callRecordingApproved(env) ? "true" : "false",
   });
+  // Exotel can emit answered/ringing callbacks for each leg. We subscribe explicitly so the session can
+  // become bridged while the call is active; terminal remains authoritative for final disposition.
+  body.append("StatusCallbackEvents[0]", "terminal");
+  body.append("StatusCallbackEvents[1]", "answered");
+  body.append("StatusCallbackEvents[2]", "ringing");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), EXOTEL_TIMEOUT_MS);
   try {
@@ -149,8 +154,25 @@ export async function requestVoiceBridge(db: Db, env: Env, actor: AuthenticatedA
   }
 }
 
-function eventTargetState(kind: string): VoiceBridgeSessionStatus | null {
-  if (kind === "connected") return "bridged";
+function exotelBothLegsConnected(rawBody: string) {
+  let legs: unknown = null;
+  const trimmed = text(rawBody);
+  try {
+    if (trimmed.startsWith("{")) legs = (JSON.parse(trimmed) as { Legs?: unknown }).Legs;
+    else {
+      const encoded = new URLSearchParams(trimmed).get("Legs") || new URLSearchParams(trimmed).get("legs");
+      if (encoded) legs = JSON.parse(encoded);
+    }
+  } catch { return false; }
+  if (!Array.isArray(legs) || legs.length < 2) return false;
+  return legs.slice(0, 2).every(leg => {
+    const status = text((leg as { Status?: unknown })?.Status).toLowerCase();
+    return ["in-progress", "in_progress", "connected", "answered", "completed"].includes(status);
+  });
+}
+
+function eventTargetState(kind: string, rawBody: string): VoiceBridgeSessionStatus | null {
+  if (kind === "connected") return exotelBothLegsConnected(rawBody) ? "bridged" : null;
   if (kind === "completed") return "completed";
   if (["failed", "busy", "no_answer"].includes(kind)) return "failed";
   return null;
@@ -164,7 +186,11 @@ export async function recordVoiceBridgeEvent(db: Db, env: Env, input: { rawBody:
   let event;
   try { event = normaliseTelephonyEvent(input.rawBody, "exotel"); }
   catch { return { accepted: false as const, status: 400, reason: "Exotel call event is malformed" }; }
-  const existing = await db.prepare("SELECT id,session_id,applied FROM voice_call_session_events WHERE provider_event_id=?").bind(event.providerEventId).first<Row>();
+  const payloadHash = await sha256Hex(input.rawBody);
+  // `answered` is emitted once per leg with the same CallSid/EventType. Include a payload digest so the
+  // two distinct leg-state payloads are not collapsed, while an exact provider retry still deduplicates.
+  const bridgeEventId = `${event.providerEventId}:${payloadHash.slice(0, 16)}`;
+  const existing = await db.prepare("SELECT id,session_id,applied FROM voice_call_session_events WHERE provider_event_id=?").bind(bridgeEventId).first<Row>();
   if (existing) return { accepted: true as const, status: 200, duplicate: true, applied: Boolean(existing.applied), sessionId: text(existing.session_id) || null };
 
   let session: Row | null = null;
@@ -172,20 +198,21 @@ export async function recordVoiceBridgeEvent(db: Db, env: Env, input: { rawBody:
   if (!session && event.providerCallId) session = await db.prepare("SELECT * FROM voice_call_sessions WHERE exotel_call_id=? ORDER BY initiated_at DESC LIMIT 1").bind(event.providerCallId).first<Row>();
   if (!session) return { accepted: false as const, status: 404, reason: "Masked-call session was not found" };
 
-  const now = Date.now(), payloadHash = await sha256Hex(input.rawBody);
+  const now = Date.now();
   const recordingRef = event.recordingRef && callRecordingApproved(env) ? event.recordingRef : null;
-  const target = eventTargetState(event.kind), current = text(session.status) as VoiceBridgeSessionStatus;
+  const target = eventTargetState(event.kind, input.rawBody), current = text(session.status) as VoiceBridgeSessionStatus;
   let applied = false;
   const statements = [
     db.prepare("INSERT INTO voice_call_session_events (id,session_id,provider_event_id,event_kind,provider_status,payload_sha256,recording_ref,duration_seconds,applied,created_at) VALUES (?,?,?,?,?,?,?,?,0,?)")
-      .bind(uid("VBEVT"),text(session.id),event.providerEventId,event.kind,event.providerStatus,payloadHash,recordingRef,event.durationSeconds,now),
+      .bind(uid("VBEVT"),text(session.id),bridgeEventId,event.kind,event.providerStatus,payloadHash,recordingRef,event.durationSeconds,now),
   ];
   if (recordingRef) statements.push(db.prepare("UPDATE voice_call_sessions SET recording_ref=?,updated_at=? WHERE id=?").bind(recordingRef,now,text(session.id)));
   if (target === "bridged" && current === "initiated") {
     statements.push(db.prepare("UPDATE voice_call_sessions SET status='bridged',bridged_at=?,updated_at=? WHERE id=? AND status='initiated'").bind(now,now,text(session.id)));
     applied = true;
   } else if (target === "completed" && current === "initiated") {
-    // Exotel may send only a terminal callback. Preserve the legal state path by recording both timestamps.
+    // Exotel may send only a terminal completed callback. Preserve the legal lifecycle by recording the
+    // inferred bridge timestamp at the same instant before closing the session.
     statements.push(db.prepare("UPDATE voice_call_sessions SET status='completed',bridged_at=COALESCE(bridged_at,?),completed_at=?,updated_at=? WHERE id=? AND status='initiated'").bind(now,now,now,text(session.id)));
     applied = true;
   } else if (target === "completed" && current === "bridged") {
@@ -196,6 +223,6 @@ export async function recordVoiceBridgeEvent(db: Db, env: Env, input: { rawBody:
     applied = true;
   }
   await db.batch(statements);
-  if (applied) await db.prepare("UPDATE voice_call_session_events SET applied=1 WHERE provider_event_id=?").bind(event.providerEventId).run();
+  if (applied) await db.prepare("UPDATE voice_call_session_events SET applied=1 WHERE provider_event_id=?").bind(bridgeEventId).run();
   return { accepted: true as const, status: 200, duplicate: false, applied, sessionId: text(session.id), from: current, to: target, eventKind: event.kind, recordingStored: Boolean(recordingRef) };
 }
