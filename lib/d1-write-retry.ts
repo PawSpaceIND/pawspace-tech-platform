@@ -62,13 +62,21 @@ function retryingStatement(statement:D1PreparedStatement):D1PreparedStatement{
   return proxy;
 }
 
+const retryingDatabases=new WeakMap<object,D1Database>();
+
 /**
  * Wrap a D1 binding so every route-owned or helper-owned write using run(), batch(), or exec()
  * gets the same bounded SQLITE_BUSY retry policy. Read operations are passed through unchanged.
  * D1 batches are transactional, so retrying a batch after SQLITE_BUSY does not replay a partial commit.
+ *
+ * The wrapper is stable per raw D1 binding. Several scheduling helpers memoize idempotent schema/setup
+ * work with WeakMap/WeakSet keyed by the database object; returning a fresh Proxy on every request made
+ * those caches miss and repeated CREATE TABLE/INDEX + seed work on the hot scheduling path.
  */
 export function withRetryingD1Writes(db:D1Database):D1Database{
-  return new Proxy(db,{
+  const existing=retryingDatabases.get(db as object);
+  if(existing)return existing;
+  const proxy=new Proxy(db,{
     get(target,property,receiver){
       if(property==="prepare")return(query:string)=>retryingStatement(target.prepare(query));
       if(property==="batch")return(statements:D1PreparedStatement[])=>withD1WriteRetry(()=>target.batch(statements.map(statement=>rawStatements.get(statement as object)??statement)));
@@ -77,4 +85,6 @@ export function withRetryingD1Writes(db:D1Database):D1Database{
       return typeof value==="function"?value.bind(target):value;
     },
   }) as D1Database;
+  retryingDatabases.set(db as object,proxy);
+  return proxy;
 }
