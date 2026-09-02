@@ -102,6 +102,35 @@ test("W3C-02b non-vacuity: explicit local preview runtime still works", async ()
   });
 });
 
+test("W3C-02d: a DEPLOYED environment refuses preview even with every other gate satisfied", async () => {
+  // Models the real staging deployment, not a hypothetical. scripts/stage-config.mjs spreads the
+  // built worker's vars into the staging config, and vite.config.ts puts PAWSPACE_LOCAL_PREVIEW:"on"
+  // among them - so a deployed staging Worker genuinely ships with that gate already satisfied, and a
+  // forged `Host: localhost` satisfies the hostname gate. Before PAWSPACE_DEPLOYMENT_ENV was consulted,
+  // the ONLY thing refusing an authentication-free actor there was NODE_ENV happening to be unset.
+  await world();
+  const { resolveActor } = await import("../lib/server-auth.ts");
+  await withEnv({ PAWSPACE_DEPLOYMENT_ENV: "staging", NODE_ENV: "development", PAWSPACE_LOCAL_PREVIEW: "on" }, async () => {
+    for (const host of ["localhost", "127.0.0.1", "terminal.local"]) {
+      await assert.rejects(() => resolveActor(new Request(`http://${host}/api/crm`)),
+        `a forged ${host} Host must not grant preview authority in a declared deployment`);
+    }
+  });
+});
+
+test("W3C-02e non-vacuity: the deployment guard is what refuses, not a broken world", async () => {
+  // Same three hosts, same NODE_ENV and PAWSPACE_LOCAL_PREVIEW - only the deployment declaration is
+  // removed. If these did not succeed, W3C-02d would be passing for the wrong reason.
+  await world();
+  const { resolveActor } = await import("../lib/server-auth.ts");
+  await withEnv({ PAWSPACE_DEPLOYMENT_ENV: undefined, NODE_ENV: "development", PAWSPACE_LOCAL_PREVIEW: "on" }, async () => {
+    for (const host of ["localhost", "127.0.0.1", "terminal.local"]) {
+      const actor = await resolveActor(new Request(`http://${host}/api/crm`));
+      assert.equal(actor.developmentPreview, true, `${host} is still a working local preview`);
+    }
+  });
+});
+
 test("W3C-02c: runtime opt-in cannot turn a real remote host into preview authority", async () => {
   await world();
   const { resolveActor } = await import("../lib/server-auth.ts");

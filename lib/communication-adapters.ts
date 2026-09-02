@@ -2,7 +2,7 @@ import{ensureCommunicationTables,recordDeliveryEvent,type CommunicationChannel}f
 type Row=Record<string,unknown>;
 
 export const communicationAdapterCatalog={
- whatsapp:["limechat","meta_whatsapp"],sms:["exotel_sms","sms_provider"],email:["email_provider"],push:["push_provider"],chat:["limechat"],voice:["exotel_voice","autodialer"],
+ whatsapp:["limechat","meta_whatsapp","interakt"],sms:["exotel_sms","sms_provider"],email:["email_provider"],push:["push_provider"],chat:["limechat"],voice:["exotel_voice","autodialer"],
 } satisfies Record<CommunicationChannel,string[]>;
 
 export async function ensureCommunicationAdapterTables(db:D1Database){await ensureCommunicationTables(db);await db.prepare("CREATE TABLE IF NOT EXISTS communication_adapter_configs (id TEXT PRIMARY KEY,channel TEXT NOT NULL,adapter_name TEXT NOT NULL,environment TEXT NOT NULL DEFAULT 'sandbox',status TEXT NOT NULL DEFAULT 'configuration_required',credentials_status TEXT NOT NULL DEFAULT 'missing',webhook_status TEXT NOT NULL DEFAULT 'not_tested',priority INTEGER NOT NULL DEFAULT 100,detail_json TEXT NOT NULL DEFAULT '{}',updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(channel,adapter_name,environment))").run();}

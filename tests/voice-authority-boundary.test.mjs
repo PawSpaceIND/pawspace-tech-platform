@@ -35,10 +35,17 @@ async function fresh() {
   await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
 
   // A real, paid booking for this customer, so "nothing moved" is a claim about actual rows.
-  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY, customer_id TEXT, service_code TEXT, status TEXT, total_amount REAL, scheduled_start TEXT, scheduled_end TEXT)");
+  //
+  // canonical_bookings is deliberately NOT redeclared here. seedRecipient above already created it,
+  // so a second `CREATE TABLE IF NOT EXISTS` is silently discarded and the columns this suite needs
+  // would never exist - which is exactly how this file came to fail with "no column named
+  // service_code". The columns live in tests/helpers/voice-harness.mjs, spelled as the owning module
+  // spells them, and are seeded through the UPDATE below.
   sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY, booking_id TEXT, customer_id TEXT, amount REAL, status TEXT, method TEXT)");
   sqlite.exec("CREATE TABLE IF NOT EXISTS provider_work_orders (id TEXT PRIMARY KEY, booking_id TEXT, provider_name TEXT, status TEXT, payout_amount REAL)");
-  sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,status,total_amount,scheduled_start,scheduled_end) VALUES ('BKG-V1','CON-V1','grooming','confirmed',1899,'2026-09-20T04:30:00.000Z','2026-09-20T06:30:00.000Z')").run();
+  // seedRecipient already wrote BKG-V1 for the ownership resolution, so this fills in the money and
+  // schedule columns on that same row rather than inserting a second, conflicting booking.
+  sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,service_code,status,total_amount,scheduled_start,scheduled_end) VALUES ('BKG-V1','CON-V1','grooming','confirmed',1899,'2026-09-20T04:30:00.000Z','2026-09-20T06:30:00.000Z') ON CONFLICT(id) DO UPDATE SET customer_id=excluded.customer_id,service_code=excluded.service_code,status=excluded.status,total_amount=excluded.total_amount,scheduled_start=excluded.scheduled_start,scheduled_end=excluded.scheduled_end").run();
   sqlite.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,status,method) VALUES ('PAY-V1','BKG-V1','CON-V1',1899,'captured','upi')").run();
   sqlite.prepare("INSERT INTO provider_work_orders (id,booking_id,provider_name,status,payout_amount) VALUES ('WO-V1','BKG-V1','Meena R.','assigned',1200)").run();
   return { sqlite, db, env: globalThis.__VAB_ENV__ };

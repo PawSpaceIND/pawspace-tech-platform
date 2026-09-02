@@ -18,12 +18,12 @@ test("Haptik outbound client is a fail-closed adapter (dials nothing until keys 
 
 test("Haptik outbound governance: campaigns, consent + responsible-outbound guardrails", () => {
   assert.match(gov, /export const HAPTIK_CAMPAIGNS/);
-  for (const c of ["new_lead_followup", "reactivation", "subscription_pitch"]) assert.match(gov, new RegExp(`code: "${c}"`));
+  for (const c of ["new_lead_followup", "reactivation", "subscription_pitch"]) assert.match(gov, new RegExp(`code\\s*:\\s*"${c}"`));
   // marketing campaigns require marketing consent
-  assert.match(gov, /requiresMarketingConsent: true/);
+  assert.match(gov, /requiresMarketingConsent\s*:\s*true/);
   assert.match(gov, /p\.marketing_consent=1/);
   // guardrails: fail-closed, quiet hours, frequency cap, idempotency
-  assert.match(gov, /if \(!haptikOutboundConfigured\(env\)\) return/);
+  assert.match(gov, /if\s*\(!haptikOutboundConfigured\(env\)\)\s*return/);
   assert.match(gov, /isQuietHours/);
   assert.match(gov, /FREQUENCY_CAP_DAYS/);
   assert.match(gov, /status='dialled' AND created_at>\?/);   // frequency cap query
@@ -33,7 +33,7 @@ test("Haptik outbound governance: campaigns, consent + responsible-outbound guar
 
 test("the scheduler sweep NEVER autonomously dials (outreach is human-launched only)", () => {
   assert.match(gov, /export async function runHaptikOutboundSweep/);
-  assert.match(gov, /dialled: 0/);
+  assert.match(gov, /dialled\s*:\s*0/);
   assert.match(gov, /human-launched/i);
   // the sweep must not call the dialer
   assert.doesNotMatch(gov.split("runHaptikOutboundSweep")[1] || "", /triggerHaptikCall\(/);
