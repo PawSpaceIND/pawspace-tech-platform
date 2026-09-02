@@ -31,12 +31,16 @@ test("API gateway explicitly maps inquiries public and Haptik outbound marketing
  assert.match(source,/url\.pathname==="\/api\/haptik-outbound"\)return method==="GET"\?"marketing\.view":"marketing\.manage"/);
 });
 
-test("bot-call-outcomes has a controlled required-binding failure and optional KV/R2 readiness",async()=>{
+test("bot-call-outcomes preserves authorization before controlled binding readiness",async()=>{
  const source=await read("app/api/bot-call-outcomes/route.ts");
  assert.match(source,/BOT_CALL_BINDINGS_MISSING/);
  assert.match(source,/missingRequired:runtime\.DB\?\[\]:\["DB"\]/);
  assert.match(source,/IDEMPOTENCY_KV:Boolean\(runtime\.IDEMPOTENCY_KV\)/);
  assert.match(source,/CALL_ARTIFACTS:Boolean\(runtime\.CALL_ARTIFACTS\)/);
+ const getBody=source.slice(source.indexOf("export async function GET"),source.indexOf("export async function POST"));
+ assert.ok(getBody.indexOf("authorize(request,\"customers.view\")")<getBody.indexOf("requireBotCallBindings()"),"GET must authenticate before exposing binding readiness");
+ const postBody=source.slice(source.indexOf("export async function POST"));
+ assert.ok(postBody.indexOf("authorize(request,\"customers.manage\")")<postBody.indexOf("requireBotCallBindings()"),"POST must authenticate before exposing binding readiness");
 });
 
 test("test voice transport is pinned to the explicit non-production simulator",async()=>{
