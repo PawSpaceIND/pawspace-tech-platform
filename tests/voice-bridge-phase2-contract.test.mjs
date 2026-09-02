@@ -9,7 +9,12 @@ const webhookRoute = await readFile(new URL("../app/api/webhooks/exotel/call-eve
 const gateway = await readFile(new URL("../lib/api-gateway.ts", import.meta.url), "utf8");
 
 test("masked voice is restricted to explicit active service states", () => {
-  assert.match(governance, /ACTIVE_VOICE_SERVICE_STATES\s*=\s*\["assigned",\s*"en_route",\s*"in_progress"\]/);
+  // This used to pin the literal list ["assigned","en_route","in_progress"] as the contract. That list
+  // refused the normal case - a provider whose work order reads 'accepted' - and matching its TEXT is
+  // what let the defect sit behind a green test. The window's EFFECT is now asserted by execution in
+  // tests/voice-bridge-service-window.test.mjs; what stays here is only that a window is enforced at
+  // all, in the work-order vocabulary, which is a source-level property.
+  assert.match(governance, /ACTIVE_VOICE_SERVICE_STATES\s*=\s*\[[^\]]+\]/);
   assert.match(governance, /provider_work_orders/);
   assert.match(governance, /Masked calling is available only during an active service window/);
 });

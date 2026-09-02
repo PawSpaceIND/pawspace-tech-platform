@@ -9,7 +9,25 @@ type Row = Record<string, unknown>;
 type BridgeBooking = { customer_id: unknown; provider_id: unknown; customer_phone: unknown; provider_phone: unknown; serviceStatus: string };
 
 export type VoiceBridgeSessionStatus = "initiated" | "bridged" | "completed" | "failed";
-export const ACTIVE_VOICE_SERVICE_STATES = ["assigned", "en_route", "in_progress"] as const;
+/**
+ * The service window masked calling is allowed in, stated in the vocabulary resolveBridgeBooking
+ * actually reads: provider_work_orders.status, falling back to canonical_bookings.status.
+ *
+ * Two corrections against the statuses this codebase really writes:
+ *
+ *   "accepted" was MISSING, and it is the normal case. Every vertical's accept path sets the booking to
+ *   'assigned' and the work order to 'accepted' in the same batch (walking-lifecycle.ts and its peers,
+ *   7 write sites). Since the work-order status wins the COALESCE, a provider who had just accepted a
+ *   job read as 'accepted' and was refused with 409 - masked calling was closed for the entire normal
+ *   window between acceptance and start.
+ *
+ *   "en_route" was DEAD. Nothing in lib/ or app/ ever writes it to a work order or a booking, so it
+ *   admitted nothing and only made the list look more complete than it was.
+ *
+ * The post-service dispute period is deliberately still excluded: whether a completed booking may be
+ * called, and for how long, is a product decision nobody has made. It is not assumed here.
+ */
+export const ACTIVE_VOICE_SERVICE_STATES = ["assigned", "accepted", "in_progress"] as const;
 
 const text = (value: unknown) => String(value ?? "").trim();
 const uid = (prefix: string) => `${prefix}-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
