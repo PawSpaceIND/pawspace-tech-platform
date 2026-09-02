@@ -1,3 +1,4 @@
 Non-production closure trigger pinned to certified pre-#392 base 94cddc063297796f24ea1a2a0975b62a2fdbe1b2.
 Certified staging bootstrap enabled before hosted load.
 Fresh PR synchronization after base workflow correction.
+Paid-tier D1 capacity verification requested 2026-09-02T08:47:00Z.
