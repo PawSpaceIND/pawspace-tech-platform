@@ -2,9 +2,10 @@
  * Environment-aware, fail-closed Razorpay order/refund adapter for the CUSTOMER verify-first payment
  * path. All provider-bound money is converted to integer paise before the HTTP boundary.
  */
+import{parsePaymentEnvironment,type PaymentEnvironment as StrictPaymentEnvironment}from"./payment-environment";
 
 type RazorEnv = Record<string, unknown>;
-export type PaymentEnvironment = "sandbox" | "live";
+export type PaymentEnvironment = StrictPaymentEnvironment;
 export type OrderResult =
   | { connected: true; environment: PaymentEnvironment; order: Record<string, unknown> }
   | { connected: false; environment: PaymentEnvironment; reason: string };
@@ -12,6 +13,10 @@ export type PaymentLinkResult =
   | { connected: true; environment: "sandbox"; paymentLink: Record<string, unknown> }
   | { connected: false; environment: PaymentEnvironment; reason: string };
 
+/**
+ * Legacy read-only environment helper retained for existing diagnostic/UI callers. Provider-bound order
+ * creation does NOT use this default: createPaymentOrderPaise() calls the strict parser first.
+ */
 export function paymentEnvironment(env: RazorEnv): PaymentEnvironment {
   return String(env?.PAWSPACE_PAYMENT_ENV || "sandbox").toLowerCase() === "sandbox" ? "sandbox" : "live";
 }
@@ -88,7 +93,14 @@ export function publicKeyId(env: RazorEnv): string {
 
 /** Paise-native order creation used by the durable financial outbox worker. */
 export async function createPaymentOrderPaise(env: RazorEnv, input: { bookingId: string; paymentId: string; amountPaise: number; currency: string }): Promise<OrderResult> {
+  // Provider-bound order creation has no implicit environment. Typos/unset values fail before credentials
+  // or fetch are considered, so a malformed deployment can never fall through to live money.
+  const strictEnvironment = parsePaymentEnvironment(env);
   const { environment, keyId, keySecret } = credentials(env);
+  if (environment !== strictEnvironment) throw new Error("Payment environment resolution mismatch");
+  // Exact, case-sensitive approval. This check deliberately happens before providerRequest(), guaranteeing
+  // that no live /v1/orders network call is possible without the explicit production approval flag.
+  if (environment === "live" && env?.PAWSPACE_PAYMENT_LIVE_APPROVED !== "true") return { connected: false, environment, reason: "Razorpay live order creation is not approved (PAWSPACE_PAYMENT_LIVE_APPROVED must equal exactly \"true\")" };
   if (!keyId || !keySecret) return { connected: false, environment, reason: `Razorpay ${environment} API credentials are not configured - online payment is not connected yet` };
   let amountPaise: number;
   try { amountPaise = assertPositivePaise(input.amountPaise); } catch (error) { return { connected: false, environment, reason: error instanceof Error ? error.message : String(error) }; }

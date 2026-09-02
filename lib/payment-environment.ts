@@ -1,35 +1,30 @@
 /**
- * Which payment environment the runtime has been DECLARED to be in.
+ * Canonical payment-environment handling.
  *
- * Two questions live behind one variable, and they must not share an answer:
+ * Provider-bound payment operations must use parsePaymentEnvironment(). It accepts only the two
+ * deliberately supported runtime values and throws for missing, misspelled, cased, padded, or otherwise
+ * invalid declarations. That makes an invalid deployment configuration fail closed before money can
+ * cross a provider boundary.
  *
- *   which CREDENTIALS to use     - an unset PAWSPACE_PAYMENT_ENV resolving to sandbox is the documented,
- *                                  deliberate rollback (docs/payments-staging-setup.md: "unset
- *                                  PAWSPACE_PAYMENT_ENV (-> defaults to sandbox)"). That default stays
- *                                  exactly as documented, in lib/razorpay-client.ts and
- *                                  lib/payment-webhook-gate.ts. Unsetting still takes live money OFF.
- *
- *   which CAPABILITIES to unlock - sandbox mode also unlocks the staff gateway-event simulators, which
- *                                  write signatureVerified:true captures with zero gateway contact, and
- *                                  it exempts a booking from verify-first so a client-asserted
- *                                  'captured' is recorded as collected money. Those are capabilities,
- *                                  and an ABSENT variable must never unlock one: a deployment that
- *                                  simply forgot to set PAWSPACE_PAYMENT_ENV=live would otherwise carry
- *                                  a staff endpoint that records a full-value capture for any booking
- *                                  at any caller-supplied amount, with no money received.
- *
- * So capabilities require an EXPLICIT declaration. This is not a new default: every documented
- * deployment - staging setup, release evidence, human-test readiness - already sets the variable
- * explicitly to `sandbox`. The only case whose behaviour changes is the one nobody declared.
+ * declaredPaymentEnvironment() and sandboxCapabilitiesUnlocked() remain the declaration/introspection
+ * helpers used by sandbox-only capability gates. They do not authorize provider-bound money movement.
  */
+export type PaymentEnvironment="sandbox"|"live";
 type PaymentEnv=Record<string,unknown>|null|undefined;
 
-/** The declared environment, lowercased and trimmed. Empty string when nothing was declared. */
+export class PaymentEnvironmentConfigurationError extends Error{
+ constructor(value:unknown){super(`PAWSPACE_PAYMENT_ENV must be exactly "sandbox" or "live"; received ${value===undefined||value===null||value===""?"an unset/empty value":JSON.stringify(value)}`);this.name="PaymentEnvironmentConfigurationError";}
+}
+
+/** Strict provider-bound parser: no default, aliases, trimming, or case folding. */
+export function parsePaymentEnvironment(env:PaymentEnv):PaymentEnvironment{
+ const value=env?.PAWSPACE_PAYMENT_ENV;
+ if(value==="sandbox"||value==="live")return value;
+ throw new PaymentEnvironmentConfigurationError(value);
+}
+
+/** The declared environment for non-authorizing diagnostics/capability checks. */
 export function declaredPaymentEnvironment(env:PaymentEnv){return String(env?.PAWSPACE_PAYMENT_ENV??"").trim().toLowerCase();}
 
-/**
- * Whether sandbox-only CAPABILITIES are unlocked - the staff event simulators and the verify-first
- * exemption. True only for an explicit `sandbox` declaration; an absent or empty variable is not a
- * declaration and unlocks nothing.
- */
+/** Sandbox-only capabilities require an explicit sandbox declaration. */
 export function sandboxCapabilitiesUnlocked(env:PaymentEnv){return declaredPaymentEnvironment(env)==="sandbox";}
