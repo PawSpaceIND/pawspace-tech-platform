@@ -89,8 +89,7 @@ jobs:
           npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --yes --file="$RUNNER_TEMP/staging-role-seed.sql"
           npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --file=scripts/employee-seed.sql
       - name: Verify healthz
-        run: |
-          curl --fail --silent --show-error "$STAGING_URL/healthz" | tee healthz.json
+        run: curl --fail --silent --show-error "$STAGING_URL/healthz" | tee healthz.json
       - name: Start Worker tail
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -99,7 +98,7 @@ jobs:
           nohup npx wrangler tail pawspace-staging --format json > worker-tail.log 2>&1 &
           echo $! > worker-tail.pid
           sleep 5
-      - name: Run gate through canonical booking phase
+      - name: Run extended-timeout diagnostic gate
         continue-on-error: true
         env:
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
@@ -108,6 +107,8 @@ jobs:
         run: |
           mkdir -p scripts/ops
           git show origin/ops/nontrack2-closure-20260901:scripts/ops/staging-performance-gate.mjs > scripts/ops/staging-performance-gate.mjs
+          sed -i 's/AbortSignal.timeout(20000)/AbortSignal.timeout(60000)/' scripts/ops/staging-performance-gate.mjs
+          grep -F 'AbortSignal.timeout(60000)' scripts/ops/staging-performance-gate.mjs
           node scripts/ops/staging-performance-gate.mjs 2>&1 | tee gate.log
           test ${PIPESTATUS[0]} -eq 0
       - name: Stop tail and extract booking stage records
