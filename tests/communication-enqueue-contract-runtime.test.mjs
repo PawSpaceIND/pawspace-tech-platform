@@ -79,12 +79,12 @@ const send = (comms, db, purpose, customerId) => comms.enqueueCommunication(db, 
 
 const EXPLICIT_CASES = [
   { purpose: "transactional", preference: { serviceUpdates: false }, expect: "suppressed", why: "service updates opted out" },
-  { purpose: "transactional", preference: { serviceUpdates: true }, expect: "queued", why: "service updates allowed" },
+  { purpose: "transactional", preference: { serviceUpdates: true }, expect: "scheduled", why: "service updates allowed" },
   { purpose: "service_recovery", preference: { serviceUpdates: false }, expect: "suppressed", why: "recovery follows the service-update choice" },
-  { purpose: "service_recovery", preference: { serviceUpdates: true }, expect: "queued", why: "recovery allowed" },
+  { purpose: "service_recovery", preference: { serviceUpdates: true }, expect: "scheduled", why: "recovery allowed" },
   { purpose: "lifecycle", preference: { serviceUpdates: false }, expect: "suppressed", why: "lifecycle follows the service-update choice" },
-  { purpose: "lifecycle", preference: { serviceUpdates: true }, expect: "queued", why: "lifecycle allowed" },
-  { purpose: "marketing", preference: { marketing: true }, expect: "queued", why: "marketing explicitly consented" },
+  { purpose: "lifecycle", preference: { serviceUpdates: true }, expect: "scheduled", why: "lifecycle allowed" },
+  { purpose: "marketing", preference: { marketing: true }, expect: "scheduled", why: "marketing explicitly consented" },
   { purpose: "marketing", preference: { marketing: false }, expect: "suppressed", why: "marketing opted out" },
   { purpose: "marketing", preference: { serviceUpdates: true }, expect: "suppressed", why: "service consent is not marketing consent" },
 ];
@@ -103,7 +103,7 @@ test("lifecycle with no stated service-update choice is allowed, marketing is no
   const { sqlite, db, comms } = await world();
   seedCustomer(sqlite, "CU-Q");
   setPreference(sqlite, "CU-Q", {}); // a row exists but says nothing either way
-  assert.equal((await send(comms, db, "lifecycle", "CU-Q")).status, "queued");
+  assert.equal((await send(comms, db, "lifecycle", "CU-Q")).status, "scheduled");
   assert.equal((await send(comms, db, "marketing", "CU-Q")).status, "suppressed", "marketing needs an explicit yes");
 });
 
@@ -113,15 +113,15 @@ test("with no preference row, consent is read from the canonical customer record
   const { sqlite, db, comms } = await world();
   seedCustomer(sqlite, "CU-R", { serviceUpdates: false, marketing: true });
   assert.equal((await send(comms, db, "transactional", "CU-R")).status, "suppressed", "the record's opt-out is honoured");
-  assert.equal((await send(comms, db, "marketing", "CU-R")).status, "queued", "and so is its marketing consent");
+  assert.equal((await send(comms, db, "marketing", "CU-R")).status, "scheduled", "and so is its marketing consent");
 });
 
 test("an explicit preference row overrides the canonical customer record", async () => {
   const { sqlite, db, comms } = await world();
   seedCustomer(sqlite, "CU-S", { serviceUpdates: false, marketing: false });
   setPreference(sqlite, "CU-S", { serviceUpdates: true, marketing: true });
-  assert.equal((await send(comms, db, "transactional", "CU-S")).status, "queued");
-  assert.equal((await send(comms, db, "marketing", "CU-S")).status, "queued");
+  assert.equal((await send(comms, db, "transactional", "CU-S")).status, "scheduled");
+  assert.equal((await send(comms, db, "marketing", "CU-S")).status, "scheduled");
 });
 
 // --- R1: the same decisions on a cold database ---------------------------
@@ -142,7 +142,7 @@ test("R1: a cold database fails safe for a customer with no preference at all", 
   assert.ok(marketing.policy.reasons.includes("marketing_consent_unknown"));
   for (const purpose of ["transactional", "service_recovery", "lifecycle"]) {
     const result = await send(comms, db, purpose, "CU-UNKNOWN");
-    assert.equal(result.status, "queued", `${purpose} must still reach a customer who never opted out`);
+    assert.equal(result.status, "scheduled", `${purpose} must still reach a customer who never opted out`);
   }
 });
 
