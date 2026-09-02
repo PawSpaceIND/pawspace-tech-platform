@@ -1,7 +1,7 @@
-triggered_at=2026-09-02T09:16:08Z
+triggered_at=2026-09-02T09:24:30Z
 baseline=94cddc063297796f24ea1a2a0975b62a2fdbe1b2
 scope=track3-track5-track6-automated
-reason=scheduling-concurrency-bootstrap-fix
-probe_run_id=33613092410
-probe_job_id=100192604256
-probe_sha=129339d65cfd617ac234b9a3750f0bab234d0980
+reason=provider-verification-eligibility-concurrency-fix
+probe_run_id=33613856942
+probe_job_id=100195060243
+probe_sha=cd206452186692fedf1a07b0f6cb06f94e40ca94
