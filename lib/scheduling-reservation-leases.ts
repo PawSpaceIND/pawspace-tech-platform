@@ -5,6 +5,11 @@ type Row=Record<string,unknown>;
 
 export const SCHEDULING_RESERVATION_LEASE_MS=15*60_000;
 const leaseTablesReady=new WeakMap<Db,Promise<boolean>>();
+type CleanupResult={groups:number;reservations:number};
+type CleanupState={inFlight?:Promise<CleanupResult>;lastFinishedAt:number};
+const cleanupStates=new WeakMap<Db,CleanupState>();
+const CLEANUP_COOLDOWN_MS=5_000;
+const CLEANUP_GROUP_CHUNK=100;
 
 async function tableExists(db:Db,name:string){
   const row=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>();
@@ -54,7 +59,7 @@ export async function reservationLeaseForRequest(db:Db,request:Request,customerI
   };
 }
 
-export async function cleanupExpiredReservationLeases(db:Db,now=Date.now()){
+async function runExpiredReservationLeaseCleanup(db:Db,now:number):Promise<CleanupResult>{
   if(!(await ensureSchedulingReservationLeaseGovernance(db)))return{groups:0,reservations:0};
   const hasCanonical=await tableExists(db,"canonical_bookings");
   const confirmedClause=hasCanonical?"AND NOT EXISTS (SELECT 1 FROM canonical_bookings b WHERE b.schedule_group_id=r.group_id)":"";
@@ -62,22 +67,59 @@ export async function cleanupExpiredReservationLeases(db:Db,now=Date.now()){
   // until the server-owned lease ends: issuing a replacement login must not silently discard checkout.
   const expiredLease="((r.lease_expires_at IS NOT NULL AND r.lease_expires_at<=?) OR (r.customer_session_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM platform_identity_sessions s WHERE s.id=r.customer_session_id AND s.status IN ('active','superseded') AND s.expires_at>?)))";
   const rows=await db.prepare(`SELECT DISTINCT r.group_id FROM scheduling_reservations r WHERE r.status='assigned' AND ${expiredLease} ${confirmedClause}`).bind(now,now).all<{group_id:string}>();
-  let groups=0,reservations=0;
+  if(!rows.results.length)return{groups:0,reservations:0};
   const hasOffers=await tableExists(db,"provider_assignment_offers");
-  for(const row of rows.results){
-    const groupId=String(row.group_id),reason="reservation_lease_expired";
+  let groups=0,reservations=0;
+
+  // Cleanup used to run one D1 write transaction PER expired group. A booking burst invokes cleanup on
+  // every request, so 100 simultaneous bookings multiplied a stale staging backlog into thousands of
+  // serialized write transactions before any booking could start. Preserve the same eligibility and
+  // booking-first/cleanup-first predicates, but clean bounded sets in one transaction per chunk.
+  for(let offset=0;offset<rows.results.length;offset+=CLEANUP_GROUP_CHUNK){
+    const groupIds=rows.results.slice(offset,offset+CLEANUP_GROUP_CHUNK).map(row=>String(row.group_id));
+    const marks=groupIds.map(()=>"?").join(",");
+    const reason="reservation_lease_expired";
     const statements=[
-      db.prepare(`INSERT OR IGNORE INTO scheduling_reservation_lease_cleanup (group_id,reason,released_at) SELECT ?,?,? WHERE EXISTS (SELECT 1 FROM scheduling_reservations r WHERE r.group_id=? AND r.status='assigned' AND ${expiredLease} ${confirmedClause})`).bind(groupId,reason,now,groupId,now,now),
-      // Once any occurrence makes the still-unbooked group eligible, release every assigned occurrence.
-      // Filtering each row by its own expiry left recurring groups half-active and still consuming
-      // capacity when their lease metadata drifted.
-      db.prepare(`UPDATE scheduling_reservations AS r SET status='cancelled' WHERE r.group_id=? AND r.status='assigned' ${confirmedClause} AND EXISTS (SELECT 1 FROM scheduling_reservations expired WHERE expired.group_id=r.group_id AND expired.status='assigned' AND ((expired.lease_expires_at IS NOT NULL AND expired.lease_expires_at<=?) OR (expired.customer_session_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM platform_identity_sessions s WHERE s.id=expired.customer_session_id AND s.status IN ('active','superseded') AND s.expires_at>?))))`).bind(groupId,now,now),
-      db.prepare(`UPDATE scheduling_assignment_decisions SET status='expired',actor_id='system:reservation-lease-cleanup',reason=?,updated_at=? WHERE group_id=? AND status IN ('assigned','awaiting_admin') AND EXISTS (SELECT 1 FROM scheduling_reservation_lease_cleanup c WHERE c.group_id=? AND c.released_at=?) ${hasCanonical?"AND NOT EXISTS (SELECT 1 FROM canonical_bookings b WHERE b.schedule_group_id=scheduling_assignment_decisions.group_id)":""}`).bind(reason,now,groupId,groupId,now),
+      db.prepare(`INSERT OR IGNORE INTO scheduling_reservation_lease_cleanup (group_id,reason,released_at)
+        SELECT DISTINCT r.group_id,?,? FROM scheduling_reservations r
+        WHERE r.group_id IN (${marks}) AND r.status='assigned' AND ${expiredLease} ${confirmedClause}`)
+        .bind(reason,now,...groupIds,now,now),
+      db.prepare(`UPDATE scheduling_reservations AS r SET status='cancelled'
+        WHERE r.group_id IN (${marks}) AND r.status='assigned' ${confirmedClause}
+        AND EXISTS (SELECT 1 FROM scheduling_reservations expired WHERE expired.group_id=r.group_id AND expired.status='assigned'
+          AND ((expired.lease_expires_at IS NOT NULL AND expired.lease_expires_at<=?) OR
+               (expired.customer_session_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM platform_identity_sessions s WHERE s.id=expired.customer_session_id AND s.status IN ('active','superseded') AND s.expires_at>?))))`)
+        .bind(...groupIds,now,now),
+      db.prepare(`UPDATE scheduling_assignment_decisions SET status='expired',actor_id='system:reservation-lease-cleanup',reason=?,updated_at=?
+        WHERE group_id IN (${marks}) AND status IN ('assigned','awaiting_admin')
+        AND EXISTS (SELECT 1 FROM scheduling_reservation_lease_cleanup c WHERE c.group_id=scheduling_assignment_decisions.group_id AND c.released_at=?)
+        ${hasCanonical?"AND NOT EXISTS (SELECT 1 FROM canonical_bookings b WHERE b.schedule_group_id=scheduling_assignment_decisions.group_id)":""}`)
+        .bind(reason,now,...groupIds,now),
     ];
-    if(hasOffers)statements.push(db.prepare(`UPDATE provider_assignment_offers SET status='cancelled',responded_at=?,response_reason=?,updated_at=? WHERE group_id=? AND status='pending' AND EXISTS (SELECT 1 FROM scheduling_reservation_lease_cleanup c WHERE c.group_id=? AND c.released_at=?) ${hasCanonical?"AND NOT EXISTS (SELECT 1 FROM canonical_bookings b WHERE b.schedule_group_id=provider_assignment_offers.group_id)":""}`).bind(now,reason,now,groupId,groupId,now));
+    if(hasOffers)statements.push(db.prepare(`UPDATE provider_assignment_offers SET status='cancelled',responded_at=?,response_reason=?,updated_at=?
+      WHERE group_id IN (${marks}) AND status='pending'
+      AND EXISTS (SELECT 1 FROM scheduling_reservation_lease_cleanup c WHERE c.group_id=provider_assignment_offers.group_id AND c.released_at=?)
+      ${hasCanonical?"AND NOT EXISTS (SELECT 1 FROM canonical_bookings b WHERE b.schedule_group_id=provider_assignment_offers.group_id)":""}`)
+      .bind(now,reason,now,...groupIds,now));
     const result=await db.batch(statements);
-    const changed=Number(result[1]?.meta?.changes||0);
-    if(changed>0){groups+=1;reservations+=changed;}
+    groups+=Number(result[0]?.meta?.changes||0);
+    reservations+=Number(result[1]?.meta?.changes||0);
   }
   return{groups,reservations};
+}
+
+export async function cleanupExpiredReservationLeases(db:Db,now=Date.now()){
+  const existing=cleanupStates.get(db);
+  if(existing?.inFlight)return existing.inFlight;
+  if(existing&&Date.now()-existing.lastFinishedAt<CLEANUP_COOLDOWN_MS)return{groups:0,reservations:0};
+  const work=runExpiredReservationLeaseCleanup(db,now);
+  cleanupStates.set(db,{inFlight:work,lastFinishedAt:existing?.lastFinishedAt??0});
+  try{
+    const result=await work;
+    cleanupStates.set(db,{lastFinishedAt:Date.now()});
+    return result;
+  }catch(error){
+    cleanupStates.delete(db);
+    throw error;
+  }
 }
