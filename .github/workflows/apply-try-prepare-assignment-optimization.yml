@@ -1,4 +1,4 @@
-name: Pin instrumented scheduling SHA
+name: Inspect staging reservation slot uniqueness
 
 on:
   push:
@@ -8,25 +8,23 @@ on:
       - .github/workflows/apply-try-prepare-assignment-optimization.yml
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  pin:
+  inspect:
     runs-on: ubuntu-latest
+    environment: pawspace-staging
     steps:
       - uses: actions/checkout@v4
         with:
           ref: fix/staging-performance-remediation
-          fetch-depth: 0
-      - name: Pin certification target
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Inspect duplicate exact active slots
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          sed -i 's/TARGET_SHA: 8e6cb14beeeb836f6f61cd34a73f2f2c3498bff1/TARGET_SHA: e1f028f1be6bd2570d6c0ceca7b27562f23cff5a/' .github/workflows/staging-write-contention-certify-v6.yml
-          grep 'TARGET_SHA:' .github/workflows/staging-write-contention-certify-v6.yml
-          git diff --check
-      - name: Commit target pin
-        run: |
-          git config user.name "PawSpace Release Bot"
-          git config user.email "release-bot@pawspace.in"
-          git add .github/workflows/staging-write-contention-certify-v6.yml
-          git commit -m "ci: certify instrumented scheduling SHA"
-          git push origin HEAD:fix/staging-performance-remediation
+          npx wrangler d1 execute pawspace-staging --remote --json --command "SELECT provider_id,scheduled_start,scheduled_end,COUNT(*) AS n FROM scheduling_reservations WHERE status!='cancelled' AND service_code!='boarding' AND care_mode IS NOT 'overnight' GROUP BY provider_id,scheduled_start,scheduled_end HAVING COUNT(*)>1 ORDER BY n DESC LIMIT 20;"
+          npx wrangler d1 execute pawspace-staging --remote --json --command "SELECT name,sql FROM sqlite_master WHERE type='index' AND tbl_name='scheduling_reservations' ORDER BY name;"
