@@ -74,13 +74,22 @@ async function loadFinanceModule() {
       moduleResolution: ts.ModuleResolutionKind.Bundler,
     },
   }).outputText;
-  const razorSource = await readFile(new URL("lib/razorpay-client.ts", repoRoot), "utf8");
+  const paymentEnvironmentSource = await readFile(new URL("lib/payment-environment.ts", repoRoot), "utf8");
+  await writeFile(path.join(tempDir, "payment-environment.mjs"), transpile(paymentEnvironmentSource));
+  const razorSource = (await readFile(new URL("lib/razorpay-client.ts", repoRoot), "utf8"))
+    .replace('from"./payment-environment"', 'from"./payment-environment.mjs"')
+    .replace('from "./payment-environment"', 'from "./payment-environment.mjs"');
   await writeFile(path.join(tempDir, "razorpay-client.mjs"), transpile(razorSource));
   const financeSource = (await readFile(new URL("lib/financial-lifecycle.ts", repoRoot), "utf8"))
     .replace('from "./razorpay-client"', 'from "./razorpay-client.mjs"');
   await writeFile(path.join(tempDir, "financial-lifecycle.mjs"), transpile(financeSource));
-  const loadedModule = await import(`${pathToFileURL(path.join(tempDir, "financial-lifecycle.mjs")).href}?v=${Date.now()}`);
-  return { module: loadedModule, cleanup: () => rm(tempDir, { recursive: true, force: true }) };
+  const moduleUrl = pathToFileURL(path.join(tempDir, "financial-lifecycle.mjs")).href;
+  const razorUrl = pathToFileURL(path.join(tempDir, "razorpay-client.mjs")).href;
+  const [loadedModule, razorpay] = await Promise.all([
+    import(`${moduleUrl}?v=${Date.now()}`),
+    import(`${razorUrl}?v=${Date.now()}`),
+  ]);
+  return { module: loadedModule, razorpay, cleanup: () => rm(tempDir, { recursive: true, force: true }) };
 }
 
 async function createFinanceDb() {
@@ -127,6 +136,56 @@ const twenty = () => Array.from({ length: 20 }, (_, index) => index);
 let loaded;
 test.before(async () => { loaded = await loadFinanceModule(); });
 test.after(async () => { await loaded?.cleanup(); });
+
+test("executable payment boundary: strict environment parsing and exact live approval prevent outbound calls", async () => {
+  const { paymentEnvironment, createPaymentOrderPaise } = loaded.razorpay;
+  assert.throws(() => paymentEnvironment({}), /PAWSPACE_PAYMENT_ENV must be exactly/);
+  assert.throws(() => paymentEnvironment({ PAWSPACE_PAYMENT_ENV: "production" }), /PAWSPACE_PAYMENT_ENV must be exactly/);
+  assert.equal(paymentEnvironment({ PAWSPACE_PAYMENT_ENV: "sandbox" }), "sandbox");
+  assert.equal(paymentEnvironment({ PAWSPACE_PAYMENT_ENV: "live" }), "live");
+
+  await withLoopbackRazorpay(async ({ baseUrl, providerCalls }) => {
+    const liveBase = {
+      PAWSPACE_PAYMENT_ENV: "live",
+      PAWSPACE_RAZORPAY_API_BASE_URL: baseUrl,
+      RAZORPAY_KEY_ID: "rzp_live_contract",
+      RAZORPAY_KEY_SECRET: "contract-secret",
+    };
+    for (const approval of [undefined, true, "TRUE", " true "]) {
+      const result = await createPaymentOrderPaise({ ...liveBase, PAWSPACE_PAYMENT_LIVE_APPROVED: approval }, {
+        bookingId: "BOOK-LIVE-GATE",
+        paymentId: "PAY-LIVE-GATE",
+        amountPaise: 10000,
+        currency: "INR",
+      });
+      assert.equal(result.connected, false, `approval ${String(approval)} must remain blocked`);
+      assert.match(result.reason, /Live Razorpay order creation is not approved/);
+      assert.equal(providerCalls(), 0, "blocked live orders must not reach fetch");
+    }
+  });
+
+  const realFetch = globalThis.fetch;
+  let approvedCalls = 0;
+  globalThis.fetch = async (url) => {
+    approvedCalls += 1;
+    assert.equal(String(url), "https://api.razorpay.com/v1/orders");
+    return new Response(JSON.stringify({ id: "order_live_approved", status: "created" }), {
+      status: 200, headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    const approved = await createPaymentOrderPaise({
+      PAWSPACE_PAYMENT_ENV: "live",
+      PAWSPACE_PAYMENT_LIVE_APPROVED: "true",
+      RAZORPAY_KEY_ID: "rzp_live_contract",
+      RAZORPAY_KEY_SECRET: "contract-secret",
+    }, { bookingId: "BOOK-LIVE-GATE", paymentId: "PAY-LIVE-GATE", amountPaise: 10000, currency: "INR" });
+    assert.equal(approved.connected, true, JSON.stringify(approved));
+    assert.equal(approvedCalls, 1, "the exact approval string permits exactly one outbound order request");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
 
 test("executable finance acceptance: 20 concurrent checkout requests create one durable intent/outbox and exactly one provider order", async () => {
   const db = await createFinanceDb();
