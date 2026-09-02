@@ -62,4 +62,20 @@ test("POST /api/uat-scheduling wires retrying D1 and converts database conflicts
 
 test("D1 retry policy hard-caps caller retry storms",async()=>{let attempts=0;const delays=[];await assert.rejects(()=>retry.withD1WriteRetry(async()=>{attempts+=1;const error=new Error("database is busy");error.code="SQLITE_BUSY";throw error;},{attempts:99,baseDelayMs:100,maxDelayMs:1000,maxTotalDelayMs:1000,random:()=>0.999999,sleep:async delay=>{delays.push(delay);}}),error=>retry.isSqliteBusyError(error));assert.equal(attempts,3);assert.deepEqual(delays,[50,50]);});
 
-test("Track 3 write hot paths are bounded and atomic",()=>{const scheduling=fs.readFileSync(new URL("../app/api/uat-scheduling/route.ts",import.meta.url),"utf8");const leases=fs.readFileSync(new URL("../lib/scheduling-reservation-leases.ts",import.meta.url),"utf8");const canonical=fs.readFileSync(new URL("../app/api/canonical-bookings/route.ts",import.meta.url),"utf8");assert.match(scheduling,/schedulingTablesReady=new WeakMap/);assert.match(scheduling,/SELECT provider_id,date,zone_id FROM scheduling_availability/);assert.match(scheduling,/statements\.length===1\?\[await statements\[0\]!\.run\(\)\]/);assert.match(scheduling,/ON CONFLICT\(provider_id,scheduled_start,scheduled_end\)/);assert.match(leases,/cleanupRunning=new WeakMap/);assert.match(leases,/SELECT DISTINCT r\.group_id/);assert.doesNotMatch(leases,/for\(const row of rows\.results\)/);assert.match(canonical,/withRetryingD1Writes\(env\.DB\)/);assert.match(canonical,/canonicalTablesReady=new WeakMap/);});
+test("Track 3 write hot paths are bounded and atomic",()=>{const scheduling=fs.readFileSync(new URL("../app/api/uat-scheduling/route.ts",import.meta.url),"utf8");const leases=fs.readFileSync(new URL("../lib/scheduling-reservation-leases.ts",import.meta.url),"utf8");const canonical=fs.readFileSync(new URL("../app/api/canonical-bookings/route.ts",import.meta.url),"utf8");assert.match(scheduling,/schedulingTablesReady=new WeakMap/);assert.match(scheduling,/const availabilityRows=\(date:string\)=>/);assert.match(scheduling,/SELECT \* FROM scheduling_availability WHERE date=\?/);assert.match(scheduling,/statements\.length===1\?\[await statements\[0\]!\.run\(\)\]/);assert.match(scheduling,/ON CONFLICT\(provider_id,scheduled_start,scheduled_end\)/);assert.match(leases,/cleanupRunning=new WeakMap/);assert.match(leases,/SELECT DISTINCT r\.group_id/);assert.doesNotMatch(leases,/for\(const row of rows\.results\)/);assert.match(canonical,/withRetryingD1Writes\(env\.DB\)/);assert.match(canonical,/canonicalTablesReady=new WeakMap/);});
+
+
+test("Track 3 UAT assignment discovery is read-only before the atomic reservation claim",()=>{
+  const scheduling=fs.readFileSync(new URL("../app/api/uat-scheduling/route.ts",import.meta.url),"utf8");
+  assert.doesNotMatch(scheduling,/async function seedUatRoster/);
+  assert.doesNotMatch(scheduling,/await seedUatRoster\(input,db\)/);
+  assert.match(scheduling,/syntheticUatRosterEnabled/);
+  assert.match(scheduling,/uat_synthetic_/);
+});
+
+test("expired reservation maintenance is bounded per foreground request",()=>{
+  const leases=fs.readFileSync(new URL("../lib/scheduling-reservation-leases.ts",import.meta.url),"utf8");
+  assert.match(leases,/LIMIT 8/);
+  assert.match(leases,/groupIds\.map\(\(\)=>"\?"\)/);
+  assert.match(leases,/scheduling_reservation_lease_cleanup[\s\S]*?released_at=\?/);
+});

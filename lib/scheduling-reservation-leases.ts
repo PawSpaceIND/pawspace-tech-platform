@@ -51,18 +51,22 @@ export async function cleanupExpiredReservationLeases(db:Db,now=Date.now()){
   const pending=(async()=>{
     if(!(await ensureSchedulingReservationLeaseGovernance(db)))return{groups:0,reservations:0};
     const hasCanonical=await tableExists(db,"canonical_bookings");
-    const reservationConfirmed=hasCanonical?"AND NOT EXISTS (SELECT 1 FROM canonical_bookings b WHERE b.schedule_group_id=r.group_id)":"";
+    const confirmedClause=hasCanonical?"AND NOT EXISTS (SELECT 1 FROM canonical_bookings b WHERE b.schedule_group_id=r.group_id)":"";
     const expiredLease="((r.lease_expires_at IS NOT NULL AND r.lease_expires_at<=?) OR (r.customer_session_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM platform_identity_sessions s WHERE s.id=r.customer_session_id AND s.status IN ('active','superseded') AND s.expires_at>?)))";
-    const candidate=await db.prepare(`SELECT r.group_id FROM scheduling_reservations r WHERE r.status='assigned' AND ${expiredLease} ${reservationConfirmed} LIMIT 1`).bind(now,now).first<Row>();if(!candidate)return{groups:0,reservations:0};
-    const reason="reservation_lease_expired",hasOffers=await tableExists(db,"provider_assignment_offers");
-    const decisionConfirmed=hasCanonical?"AND NOT EXISTS (SELECT 1 FROM canonical_bookings b WHERE b.schedule_group_id=scheduling_assignment_decisions.group_id)":"";
-    const offerConfirmed=hasCanonical?"AND NOT EXISTS (SELECT 1 FROM canonical_bookings b WHERE b.schedule_group_id=provider_assignment_offers.group_id)":"";
+    const expired=await db.prepare(`SELECT DISTINCT r.group_id FROM scheduling_reservations r WHERE r.status='assigned' AND ${expiredLease} ${confirmedClause} LIMIT 8`).bind(now,now).all<{group_id:string}>();
+    const groupIds=expired.results.map(row=>String(row.group_id));
+    if(!groupIds.length)return{groups:0,reservations:0};
+    const placeholders=groupIds.map(()=>"?").join(","),reason="reservation_lease_expired";
+    const hasOffers=await tableExists(db,"provider_assignment_offers");
+    const marker=`EXISTS (SELECT 1 FROM scheduling_reservation_lease_cleanup c WHERE c.group_id=r.group_id AND c.reason=? AND c.released_at=?)`;
     const statements=[
-      db.prepare(`INSERT OR REPLACE INTO scheduling_reservation_lease_cleanup (group_id,reason,released_at) SELECT DISTINCT r.group_id,?,? FROM scheduling_reservations r WHERE r.status='assigned' AND ${expiredLease} ${reservationConfirmed}`).bind(reason,now,now,now),
-      db.prepare(`UPDATE scheduling_reservations AS r SET status='cancelled' WHERE r.status='assigned' ${reservationConfirmed} AND EXISTS (SELECT 1 FROM scheduling_reservation_lease_cleanup c WHERE c.group_id=r.group_id AND c.reason=? AND c.released_at=?)`).bind(reason,now),
-      db.prepare(`UPDATE scheduling_assignment_decisions SET status='expired',actor_id='system:reservation-lease-cleanup',reason=?,updated_at=? WHERE status IN ('assigned','awaiting_admin') AND EXISTS (SELECT 1 FROM scheduling_reservation_lease_cleanup c WHERE c.group_id=scheduling_assignment_decisions.group_id AND c.reason=? AND c.released_at=?) ${decisionConfirmed}`).bind(reason,now,reason,now),
+      db.prepare(`INSERT OR REPLACE INTO scheduling_reservation_lease_cleanup (group_id,reason,released_at) SELECT DISTINCT r.group_id,?,? FROM scheduling_reservations r WHERE r.group_id IN (${placeholders}) AND r.status='assigned' AND ${expiredLease} ${confirmedClause}`).bind(reason,now,...groupIds,now,now),
+      db.prepare(`UPDATE scheduling_reservations AS r SET status='cancelled' WHERE r.status='assigned' AND r.group_id IN (${placeholders}) AND ${marker}`).bind(...groupIds,reason,now),
+      db.prepare(`UPDATE scheduling_assignment_decisions AS r SET status='expired',actor_id='system:reservation-lease-cleanup',reason=?,updated_at=? WHERE r.status IN ('assigned','awaiting_admin') AND r.group_id IN (${placeholders}) AND ${marker}`).bind(reason,now,...groupIds,reason,now),
     ];
-    if(hasOffers)statements.push(db.prepare(`UPDATE provider_assignment_offers SET status='cancelled',responded_at=?,response_reason=?,updated_at=? WHERE status='pending' AND EXISTS (SELECT 1 FROM scheduling_reservation_lease_cleanup c WHERE c.group_id=provider_assignment_offers.group_id AND c.reason=? AND c.released_at=?) ${offerConfirmed}`).bind(now,reason,now,reason,now));
-    const result=await db.batch(statements);return{groups:Number(result[0]?.meta?.changes||0),reservations:Number(result[1]?.meta?.changes||0)};
-  })();cleanupRunning.set(db,pending);try{return await pending;}finally{if(cleanupRunning.get(db)===pending)cleanupRunning.delete(db);}
+    if(hasOffers)statements.push(db.prepare(`UPDATE provider_assignment_offers AS r SET status='cancelled',responded_at=?,response_reason=?,updated_at=? WHERE r.status='pending' AND r.group_id IN (${placeholders}) AND ${marker}`).bind(now,reason,now,...groupIds,reason,now));
+    const result=await db.batch(statements);
+    return{groups:Number(result[0]?.meta?.changes||0),reservations:Number(result[1]?.meta?.changes||0)};
+  })();
+  cleanupRunning.set(db,pending);try{return await pending;}finally{if(cleanupRunning.get(db)===pending)cleanupRunning.delete(db);}
 }
