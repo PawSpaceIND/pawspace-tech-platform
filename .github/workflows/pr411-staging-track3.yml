@@ -89,14 +89,17 @@ jobs:
           node --experimental-strip-types scripts/ops/staging-role-seed.mjs "$RUNNER_TEMP/staging-role-seed.sql"
           npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --yes --file="$RUNNER_TEMP/staging-role-seed.sql"
           npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --file=scripts/employee-seed.sql
-      - name: Verify staging health
+      - name: Probe staging health and require live worker response
         run: |
           node --input-type=module <<'NODE'
-          const url=process.env.STAGING_URL+'/healthz';
-          const r=await fetch(url,{signal:AbortSignal.timeout(15000)});
-          const body=await r.text();
-          console.log(JSON.stringify({url,status:r.status,ok:r.ok,body:body.slice(0,500)},null,2));
-          if(!r.ok) process.exit(1);
+          const base=process.env.STAGING_URL;
+          const health=await fetch(base+'/healthz',{signal:AbortSignal.timeout(15000)});
+          const healthBody=await health.text();
+          const root=await fetch(base+'/',{signal:AbortSignal.timeout(15000)});
+          const rootBody=await root.text();
+          const evidence={healthz:{url:base+'/healthz',status:health.status,ok:health.ok,body:healthBody.slice(0,500)},root:{url:base+'/',status:root.status,ok:root.ok,bodyLength:rootBody.length}};
+          console.log(JSON.stringify(evidence,null,2));
+          if(!root.ok) process.exit(1);
           NODE
       - name: Materialize existing Track 3 gate
         run: |
