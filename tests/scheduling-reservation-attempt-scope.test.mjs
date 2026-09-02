@@ -67,23 +67,34 @@ test("every committed reservation carries the attempt that inserted it, and sepa
   assert.equal(Number(scoped), first.length, "counting by attempt_id returns exactly that attempt's rows");
 });
 
-test("the verify-and-rollback step is keyed on the attempt, not on client-supplied identifiers", () => {
+test("verification counts this request's own writes, and rollback cancels only this attempt", () => {
   const route = fs.readFileSync("app/api/uat-scheduling/route.ts", "utf8");
 
-  assert.match(route, /SELECT COUNT\(\*\) count FROM scheduling_reservations WHERE attempt_id=\?/);
-  assert.match(route, /DELETE FROM scheduling_reservations WHERE attempt_id=\?/);
+  // Verification is the sum of meta.changes across the statements this request ran, so it cannot
+  // read a colliding invocation's rows as its own.
+  assert.match(route, /results\.reduce\(\(sum,result\)=>sum\+Number\(result\?\.meta\?\.changes\|\|0\),0\)/);
+
+  // Rollback names the attempt. Keyed on (group_id, created_at) it could cancel reservations a
+  // colliding invocation had committed: group_id is `input.groupId ?? input.clientRequestId`, so it
+  // is client-supplied and stable across every request touching a group, and created_at is
+  // Date.now().
+  assert.match(route, /UPDATE scheduling_reservations SET status='cancelled' WHERE attempt_id=\?/);
+  assert.doesNotMatch(
+    route, /SET status='cancelled' WHERE group_id=\? AND created_at=\?/,
+    "rolling back by (group_id, created_at) cancels a colliding request's committed reservations",
+  );
   assert.doesNotMatch(
     route, /FROM scheduling_reservations WHERE group_id=\? AND created_at=\?/,
-    "counting an attempt by (group_id, created_at) reads a colliding request's rows as its own",
+    "and counting by it reads their rows as this request's",
   );
-  assert.doesNotMatch(
-    route, /DELETE FROM scheduling_reservations WHERE group_id=\? AND created_at=\?/,
-    "rolling back by (group_id, created_at) deletes a colliding request's committed rows",
-  );
+
   // The attempt token must be per-request and never derived from anything a caller controls.
   assert.match(route, /attemptId=crypto\.randomUUID\(\)/);
   assert.match(route, /attempt_id TEXT\)/, "the column backing it is declared");
   assert.match(route, /idx_scheduling_reservations_attempt ON scheduling_reservations\(attempt_id\)/, "and indexed");
+
+  // The database-level backstop from the branch this merged with stays in place.
+  assert.match(route, /ON CONFLICT\(provider_id,scheduled_start,scheduled_end\)/, "the exact-slot unique conflict target survives the merge");
 });
 
 test("a live database missing attempt_id is repaired in place, not left to fail writes", () => {

@@ -1,6 +1,6 @@
 import type { Booking, Pet, PlatformRepository, Provider, ProviderAvailability } from "../../../backend/src/domain";
 import { cityOffsetMinutes, schedule, scheduleRules, type CustomScheduleRule, type ScheduleDecision, type ScheduleRequest, type SchedulingService } from "../../../backend/src/scheduling";
-import {createAssignmentOffer,getGovernedProvider,loadGovernedProviders,seedProviderCapacityDefaults} from "../../../lib/provider-capacity-governance";
+import {createAssignmentOffer,ensureProviderCapacityTables,getGovernedProvider,loadGovernedProviders,seedProviderCapacityDefaults} from "../../../lib/provider-capacity-governance";
 import {authError,requireCustomerOwnership,requirePermission,resolveActor,securityAudit,type AuthenticatedActor} from "../../../lib/server-auth";
 import{assertBookingWindow}from"../../../lib/booking-time-policy";
 import {cleanupExpiredReservationLeases,ensureSchedulingReservationLeaseGovernance,reservationLeaseForRequest,SCHEDULING_RESERVATION_LEASE_MS} from "../../../lib/scheduling-reservation-leases";
@@ -15,7 +15,18 @@ async function database(){const {env}=await import("cloudflare:workers");return 
 async function tableExists(db:Awaited<ReturnType<typeof database>>,name:string){return Boolean(await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Record<string,unknown>>());}
 const dateRange=(start:string,days=100)=>Array.from({length:days},(_,i)=>{const d=new Date(start);d.setUTCDate(d.getUTCDate()+i);return d.toISOString().slice(0,10);});
 function cityIdFor(input:Pick<RequestBody,"cityId"|"zoneId">){const explicit=String(input.cityId||"").trim().toLowerCase();if(explicit)return explicit;const derived=String(input.zoneId||"").trim().split("-")[0]?.toLowerCase()||"";if(!/^[a-z0-9]{2,16}$/.test(derived))throw new Error("A valid cityId is required for scheduling");return derived;}
-async function ensureSchedulingTables(db:Awaited<ReturnType<typeof database>>){await db.batch([
+async function ensureSchedulingTables(db:Awaited<ReturnType<typeof database>>){
+  /*
+   * provider_unavailability is owned by lib/provider-capacity-governance.ts, and the read-fanout
+   * collapse below both indexes and queries it. Indexing or selecting a table this route never
+   * created fails with "no such table: main.provider_unavailability" on any database where the
+   * capacity module has not run first - which is every scheduling test that seeds only its own
+   * tables, and any cold environment where a scheduling request arrives before a capacity one.
+   * ensureProviderCapacityTables carries a per-isolate WeakSet guard, so this is a no-op after the
+   * first call and costs the fanout improvement nothing.
+   */
+  await ensureProviderCapacityTables(db);
+  await db.batch([
   db.prepare("CREATE TABLE IF NOT EXISTS scheduling_assignment_decisions (group_id TEXT PRIMARY KEY,strategy TEXT NOT NULL,shortlist_json TEXT NOT NULL,selected_provider_id TEXT,status TEXT NOT NULL,actor_id TEXT,reason TEXT,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS scheduling_rules (id TEXT PRIMARY KEY,name TEXT NOT NULL,service_code TEXT,city_id TEXT,zone_id TEXT,priority INTEGER NOT NULL DEFAULT 100,condition_json TEXT NOT NULL,active INTEGER NOT NULL DEFAULT 1,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS scheduling_availability (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,date TEXT NOT NULL,windows_json TEXT NOT NULL,source TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
