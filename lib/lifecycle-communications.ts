@@ -141,7 +141,17 @@ export async function bridgeLifecycleCommunications(db:Db,input:{bookingId:strin
   const booking=await db.prepare("SELECT customer_id,city_id,service_code FROM canonical_bookings WHERE id=?").bind(bookingId).first<Row>();
   for(const row of rows.results){
    const notificationId=text(row.id),channel=text(row.channel) as CommunicationChannel,templateCode=text(row.template_code);
-   if(!BRIDGED_CHANNELS.has(channel)){report.skipped++;continue;}
+   if(!BRIDGED_CHANNELS.has(channel)){
+    /*
+     * Record the skip. Without a link row an unbridgeable channel is re-read by every later
+     * bridge for the same booking, so the scan grows with the booking's notification history
+     * instead of staying proportional to what is new.
+     */
+    report.skipped++;
+    await db.prepare("INSERT OR IGNORE INTO lifecycle_communication_links (notification_id,source_table,booking_id,channel,template_code,message_id,outcome,created_at) VALUES (?,?,?,?,?,NULL,'skipped_channel',?)")
+     .bind(notificationId,input.source,bookingId,channel,templateCode,Date.now()).run().catch(()=>null);
+    continue;
+   }
    const customerId=text(row.customer_id)||text(booking?.customer_id);
    const cityId=text(booking?.city_id);
    if(!customerId||!cityId){

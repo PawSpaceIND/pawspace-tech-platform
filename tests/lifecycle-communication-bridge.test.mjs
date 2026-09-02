@@ -150,6 +150,23 @@ test("REGRESSION an unseeded city cannot turn a committed lifecycle event into a
   assert.ok(String(failures[0].error_stack || "").length > 0, "the stack is captured, not discarded");
 });
 
+test("REGRESSION an unbridgeable channel is linked once, not rescanned by every later bridge", async () => {
+  // A skipped row used to get no link row, so each later bridge for the same booking re-read the
+  // whole notification history for that booking. Record the skip so the scan stays proportional
+  // to what is new.
+  const { sqlite, db } = await world();
+  const first = await bridge.bridgeLifecycleCommunications(db, { bookingId: "BK-1", source: "walking_customer_notifications" });
+  assert.equal(first.skipped, 1, "the push row is skipped on the first pass");
+
+  const links = rows(sqlite, "SELECT * FROM lifecycle_communication_links ORDER BY channel");
+  assert.deepEqual(links.map((r) => [r.channel, r.outcome]), [["push", "skipped_channel"], ["whatsapp", "enqueued"]]);
+  assert.equal(links.find((r) => r.channel === "push").message_id, null, "a skipped row has no message");
+
+  const second = await bridge.bridgeLifecycleCommunications(db, { bookingId: "BK-1", source: "walking_customer_notifications" });
+  assert.equal(second.skipped, 0, "the push row is not re-read once it is linked");
+  assert.equal(second.enqueued, 0);
+});
+
 test("bridging twice enqueues once", async () => {
   const { sqlite, db } = await world();
   const first = await bridge.bridgeLifecycleCommunications(db, { bookingId: "BK-1", source: "walking_customer_notifications" });

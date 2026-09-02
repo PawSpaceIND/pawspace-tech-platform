@@ -263,10 +263,12 @@ export async function POST(request: Request) {
         db.prepare(`INSERT INTO booking_customer_notifications (id,booking_id,customer_id,channel,template_code,message,status,event_id,created_at) SELECT ?,b.id,b.customer_id,'whatsapp',?,?, 'queued',?,? FROM canonical_bookings b WHERE b.id=? AND ${guard}`).bind(crypto.randomUUID(),`refund_${toStatus}`,message,eventId,now,input.bookingId,input.refundCaseId,fromStatus,toStatus,claim),
         db.prepare(`INSERT INTO security_audit_events (id,actor_email,actor_role,action,resource_type,resource_id,outcome,detail_json,created_at) SELECT ?,?,?,?,?,?,?,?,? WHERE ${guard}`).bind(crypto.randomUUID(),actor.email,actor.roleCode,`booking_operations.refund_${toStatus}`,"refund",String(input.refundCaseId),"completed",JSON.stringify({bookingId:input.bookingId,fromStatus,toStatus,gatewayReference:gatewayReference||null}),now,input.refundCaseId,fromStatus,toStatus,claim),
       ]);
-      // The refund transition is committed. Hand the notification row it just wrote to the
-      // canonical outbox; this never throws, so a messaging failure cannot undo the transition.
-      await bridgeLifecycleCommunications(db,{bookingId:input.bookingId,source:"booking_customer_notifications",actorId:actor.email});
       if(Number(applied[0]?.meta?.changes||0)!==1||Number(applied[1]?.meta?.changes||0)!==1)return json({error:"Refund status was already changed by another request",code:"refund_transition_already_claimed"},409);
+      // Only now is this request the one that actually moved the refund. Running the hand-off above
+      // the guard meant a LOSING concurrent request enqueued the winner's notification and then
+      // returned 409 - a side effect on a request it rejects. The bridge never throws, so a
+      // messaging failure still cannot undo the transition.
+      await bridgeLifecycleCommunications(db,{bookingId:input.bookingId,source:"booking_customer_notifications",actorId:actor.email});
       return json({data:{eventId,bookingId:input.bookingId,action:input.action,impactMinutes:0,impactedBookings:[],notificationsQueued:1,rebookingAvailable:false,refundCaseId:input.refundCaseId}},200);
     }
     const eventId = crypto.randomUUID();
