@@ -37,7 +37,7 @@ async function whatsappConsentHolds(db: D1Database, customerId: string) {
   const row = await db.prepare("SELECT whatsapp_consent,opt_out FROM customer_contact_preferences WHERE customer_id=?")
     .bind(customerId).first<Row>().catch(() => null);
   // Exact fail-closed semantics: NULL/unknown opt_out is not silently treated as zero.
-  return Boolean(row && Number(row.whatsapp_consent) === 1 && Number(row.opt_out) === 0);
+  return Boolean(row && Number(row.whatsapp_consent) === 1 && row.opt_out != null && Number(row.opt_out) === 0);
 }
 
 async function templateApproved(db: D1Database, env: Env, templateKey: string, language: string) {
@@ -75,6 +75,12 @@ export async function dispatchInteraktMessage(
     await failOutboxAttempt(db, messageId, "interakt_not_configured").catch(() => {});
     return { provider: INTERAKT_PROVIDER, messageId, status: "refused", providerMessageId: null, reason: "interakt_not_configured" };
   }
+  const queuedMessage = await db.prepare("SELECT customer_id FROM communication_messages WHERE id=?")
+    .bind(messageId).first<Row>().catch(() => null);
+  if (!queuedMessage || text(queuedMessage.customer_id) !== customerId) {
+    await failOutboxAttempt(db, messageId, "message_customer_mismatch").catch(() => {});
+    throw clientError(403, "Queued WhatsApp message does not belong to this canonical customer");
+  }
   if (!(await customerOwnsRecipient(db, customerId, input.recipient))) {
     await failOutboxAttempt(db, messageId, "recipient_not_owned_by_customer").catch(() => {});
     throw clientError(403, "That WhatsApp number does not belong to this canonical customer");
@@ -101,8 +107,10 @@ export async function dispatchInteraktMessage(
   const payload = await response.json().catch(() => ({} as Row)) as Row;
   if (!response.ok || payload.result === false) {
     const reason = text(payload.message) || `interakt_http_${response.status}`;
-    await failOutboxAttempt(db, messageId, reason).catch(() => {});
-    await recordDeliveryEvent(db, { messageId, provider: INTERAKT_PROVIDER, eventId: `${messageId}:failed`, eventType: "failed", detail: { status: response.status, reason } }).catch(() => {});
+    const outbox = await db.prepare("SELECT attempt_count FROM communication_outbox WHERE message_id=?")
+      .bind(messageId).first<Row>().catch(() => null);
+    const attempt = Number(outbox?.attempt_count || 0) + 1;
+    await recordDeliveryEvent(db, { messageId, provider: INTERAKT_PROVIDER, eventId: `${messageId}:failed:${attempt}`, eventType: "failed", detail: { status: response.status, reason } }).catch(() => {});
     return { provider: INTERAKT_PROVIDER, messageId, status: "refused", providerMessageId: null, reason };
   }
   const providerMessageId = text(payload.id || payload.messageId) || null;

@@ -21,7 +21,7 @@ test("Interakt adapter fails closed when API key is missing", () => {
 
 test("Interakt production boundary requires exact consent, approved templates and canonical ownership", () => {
   const source = readFileSync(new URL("../lib/interakt-whatsapp.ts", import.meta.url), "utf8");
-  assert.match(source, /Number\(row\.whatsapp_consent\) === 1 && Number\(row\.opt_out\) === 0/);
+  assert.match(source, /Number\(row\.whatsapp_consent\) === 1 && row\.opt_out != null && Number\(row\.opt_out\) === 0/);
   assert.match(source, /SELECT primary_phone,secondary_phone FROM canonical_customers WHERE id=\?/);
   assert.match(source, /text\(registry\.status\) === "approved"/);
   assert.match(source, /interakt_template_not_verified/);
