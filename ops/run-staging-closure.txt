@@ -1,7 +1,7 @@
-triggered_at=2026-09-02T09:44:25Z
+triggered_at=2026-09-02T09:55:02Z
 baseline=94cddc063297796f24ea1a2a0975b62a2fdbe1b2
 scope=track3-track5-track6-automated
-reason=valid-grooming-120-minute-performance-window
-probe_run_id=33615656039
-probe_job_id=100200768423
-probe_sha=0987cb135125236aecae5cd07fa4044474efcb66
+reason=canonical-booking-lease-bootstrap-contention-fix
+probe_run_id=33616617140
+probe_job_id=100203810528
+probe_sha=dccada43e34aade92abbcfe6c98f612c443f09ea
