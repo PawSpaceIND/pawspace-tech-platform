@@ -55,18 +55,16 @@ const setCookie = login.response.headers.get('set-cookie') || '';
 const cookie = setCookie.split(';')[0];
 if (!cookie) throw new Error('Founder staging login returned no session cookie');
 
-// Keep every deterministic booking comfortably inside the product's 180-day booking horizon.
-// Grooming needs 120 minutes for one pet and the seeded providers carry a 30-minute travel buffer.
-// Repeated hosted certification runs intentionally preserve earlier UAT bookings, so reusing one fixed
-// clock time would make a later run collide with evidence from an earlier one. Read the day board before
-// measurements and choose a genuinely free lane; these read-only probes are setup, not Track 3 latency.
+// Keep every deterministic booking inside the product's 180-day horizon while preserving old UAT evidence.
+// Rather than binding booking N to one fixed date forever, scan the safe horizon and collect 100 actually
+// free lanes. These read-only board probes are setup and are deliberately excluded from Track 3 latency.
 const GROOMING_DURATION_MS = 120 * 60 * 1000;
 const GROOMING_BUFFER_MS = 30 * 60 * 1000;
 // 05:00 UTC = 10:30 IST and 09:00 UTC = 14:30 IST. Both 120-minute windows are inside the 09:00-19:00
-// UAT roster and are separated enough that their 30-minute travel buffers do not overlap.
+// UAT roster and their 30-minute travel buffers do not overlap.
 const SLOT_HOURS_UTC = [5, 9];
-function baseDayFor(i) {
-  const d = new Date(Date.now() + (12 + i) * 86400000);
+function dayAtOffset(dayOffset) {
+  const d = new Date(Date.now() + dayOffset * 86400000);
   d.setUTCHours(0, 0, 0, 0);
   return d;
 }
@@ -76,32 +74,30 @@ function overlapsBuffered(startMs, endMs, reservation) {
   if (!Number.isFinite(reservedStart) || !Number.isFinite(reservedEnd)) return false;
   return reservedStart < endMs + GROOMING_BUFFER_MS && reservedEnd > startMs - GROOMING_BUFFER_MS;
 }
-async function findFreeWindow(i) {
-  const day = baseDayFor(i);
-  const date = day.toISOString().slice(0,10);
-  const {payload} = await request(`/api/uat-scheduling?date=${encodeURIComponent(date)}`, {cookie});
-  const reservations = (payload?.data?.providers || [])
-    .flatMap(provider => Array.isArray(provider?.reservations) ? provider.reservations : [])
-    .filter(reservation => String(reservation?.status || '') !== 'cancelled');
-  for (const hour of SLOT_HOURS_UTC) {
-    const start = new Date(day); start.setUTCHours(hour, 0, 0, 0);
-    const end = new Date(start.getTime() + GROOMING_DURATION_MS);
-    if (!reservations.some(reservation => overlapsBuffered(start.getTime(), end.getTime(), reservation))) {
-      return {start:start.toISOString(), end:end.toISOString(), slotHourUtc:hour};
+async function allocateFreeWindows(required=100) {
+  const selected = [];
+  for (let dayOffset=12; dayOffset<=179 && selected.length<required; dayOffset++) {
+    const day = dayAtOffset(dayOffset);
+    const date = day.toISOString().slice(0,10);
+    const {payload} = await request(`/api/uat-scheduling?date=${encodeURIComponent(date)}`, {cookie});
+    const reservations = (payload?.data?.providers || [])
+      .flatMap(provider => Array.isArray(provider?.reservations) ? provider.reservations : [])
+      .filter(reservation => String(reservation?.status || '') !== 'cancelled');
+    for (const hour of SLOT_HOURS_UTC) {
+      const start = new Date(day); start.setUTCHours(hour, 0, 0, 0);
+      const end = new Date(start.getTime() + GROOMING_DURATION_MS);
+      if (!reservations.some(reservation => overlapsBuffered(start.getTime(), end.getTime(), reservation))) {
+        selected.push({start:start.toISOString(), end:end.toISOString(), slotHourUtc:hour, dayOffset});
+        if (selected.length===required) break;
+      }
     }
   }
-  throw new Error(`No collision-free grooming performance lane remains on ${date}; preserve prior evidence and choose a fresh staging date range`);
+  if (selected.length!==required) throw new Error(`Only ${selected.length} collision-free grooming performance lanes remain inside the safe 180-day horizon; need ${required}`);
+  return selected;
 }
 
-const windows = new Array(100);
-const WINDOW_PROBE_CONCURRENCY = 10;
-for (let offset = 0; offset < 100; offset += WINDOW_PROBE_CONCURRENCY) {
-  const chunk = await Promise.all(
-    Array.from({length:Math.min(WINDOW_PROBE_CONCURRENCY, 100-offset)}, (_,j) => findFreeWindow(offset+j))
-  );
-  chunk.forEach((window,j) => { windows[offset+j] = window; });
-}
-console.log(JSON.stringify({runId:RUN_ID,windowProbe:{count:windows.length,slotHoursUtc:[...new Set(windows.map(window=>window.slotHourUtc))]}},null,2));
+const windows = await allocateFreeWindows(100);
+console.log(JSON.stringify({runId:RUN_ID,windowProbe:{count:windows.length,firstDayOffset:windows[0]?.dayOffset,lastDayOffset:windows.at(-1)?.dayOffset,slotHoursUtc:[...new Set(windows.map(window=>window.slotHourUtc))]}},null,2));
 
 async function prepareAssignment(i) {
   return measured('assignment', async () => {
