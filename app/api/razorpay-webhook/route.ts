@@ -1,7 +1,7 @@
 import{authError,database}from"../../../lib/server-auth";
 import{processGatewayEvent,type GatewayEvent}from"../../../lib/grooming-payment-reconciliation";
 import{resolvePaymentWebhookGate}from"../../../lib/payment-webhook-gate";
-import{acceptRazorpayWebhook,advancePaymentState,postBalancedJournal,type PaymentState}from"../../../lib/financial-lifecycle";
+import{acceptRazorpayWebhook,advancePaymentState,postBalancedJournal,sha256Hex,verifyRazorpayRawBody,type PaymentState}from"../../../lib/financial-lifecycle";
 import{ACCT}from"../../../lib/finance-accounts";
 import{isPawSpaceSubscriptionPayload,processSubscriptionProviderEvent}from"../../../lib/subscription-billing";
 import{processSubscriptionRefundEvent}from"../../../lib/subscription-refund-reconciliation";
@@ -69,12 +69,24 @@ async function ensureCaptureJournal(db:D1Database,event:GatewayEvent,intent:Row)
   });
 }
 
+const replayWithoutClaim=new Set(["PROCESSED","REJECTED","PROCESSING"]);
+
 export async function POST(request:Request){
   try{
     const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;
     const gate=resolvePaymentWebhookGate(runtime);if(!gate.ok)return json({error:gate.reason},gate.status);
     const signature=(request.headers.get("x-razorpay-signature")||"").trim().toLowerCase(),eventId=(request.headers.get("x-razorpay-event-id")||"").trim();if(!signature||!eventId)return json({error:"Razorpay signature and event ID are required"},400);
     const raw=await request.text();const db=await database();
+    // A byte-identical redelivery of an inbox row that is already terminal (or currently owned by the
+    // first delivery) is a read, not another write contender. Verify the signature and payload hash
+    // before returning so this fast path preserves the same authentication and event-id integrity rules
+    // as acceptRazorpayWebhook. FAILED/DEFERRED/RECEIVED deliberately fall through so a retry can claim.
+    const prior=await db.prepare("SELECT payload_sha256,processing_status FROM gateway_webhook_events WHERE provider='razorpay' AND event_id=?").bind(eventId).first<Row>().catch(()=>null);
+    if(prior&&replayWithoutClaim.has(String(prior.processing_status||""))){
+      if(!(await verifyRazorpayRawBody(raw,signature,gate.secret)))return json({error:"Invalid Razorpay webhook signature"},401);
+      if(String(prior.payload_sha256||"")!==await sha256Hex(raw))return json({error:"Razorpay event ID payload mismatch"},409);
+      return json({ok:true,environment:gate.environment,duplicate:true,status:String(prior.processing_status)});
+    }
     let accepted:Awaited<ReturnType<typeof acceptRazorpayWebhook>>;
     try{
       accepted=await acceptRazorpayWebhook(db,{rawBody:raw,signature,webhookSecret:gate.secret,eventId,environment:gate.environment});
@@ -88,6 +100,9 @@ export async function POST(request:Request){
     const payload=(accepted.duplicate?JSON.parse(String(accepted.row.raw_payload||"{}")):accepted.event) as RazorPayload;
     const eventType=String(payload.event||"").trim();
     if(!eventType){await markInbox(db,accepted.row,"REJECTED",undefined,"missing_event_type");return json({error:"Webhook event type is required"},400);}
+    // A concurrent request may have completed between the pre-read and the unique insert/select above.
+    // Do not issue a no-op UPDATE against the same hot inbox row once that winner is terminal/processing.
+    if(accepted.duplicate&&replayWithoutClaim.has(String(accepted.row.processing_status||"")))return json({ok:true,environment:gate.environment,duplicate:true,status:String(accepted.row.processing_status)});
     if(!(await claimInbox(db,accepted.row,eventType)))return json({ok:true,environment:gate.environment,duplicate:true,status:String(accepted.row.processing_status)});
     try{
       // Refunds are checked first because a provider-generated proration refund may not carry a
