@@ -12,12 +12,24 @@ const STAGE="22222222-2222-4222-8222-222222222222";
 
 function noMutation(fn){let mutated=false;const mutate=()=>{mutated=true;};return Promise.resolve().then(()=>fn(mutate)).then(()=>{assert.equal(mutated,false,"guard completed before any mutation");},error=>{assert.equal(mutated,false,"failure happened before any mutation");throw error;});}
 
+test("backup rejects an unknown environment before export", async()=>{
+ await assert.rejects(()=>noMutation(()=>assertBackupTarget({environment:"preview",databaseName:"pawspace-staging",databaseId:STAGE,productionId:PROD,stagingId:STAGE})),/environment must be production or staging/);
+});
+
+test("backup rejects a staging database id that does not match STAGING_D1_ID before export", async()=>{
+ await assert.rejects(()=>noMutation(()=>assertBackupTarget({environment:"staging",databaseName:"pawspace-staging",databaseId:PROD,productionId:PROD,stagingId:STAGE})),/does not match STAGING_D1_ID/);
+});
+
 test("backup rejects a production database id that does not match PRODUCTION_D1_ID before export", async()=>{
  await assert.rejects(()=>noMutation(()=>assertBackupTarget({environment:"production",databaseName:"pawspace-prod-bengaluru",databaseId:STAGE,productionId:PROD,stagingId:STAGE})),/does not match PRODUCTION_D1_ID/);
 });
 
 test("backup rejects environment isolation collapse before export", async()=>{
  await assert.rejects(()=>noMutation(()=>assertBackupTarget({environment:"production",databaseName:"pawspace-prod-bengaluru",databaseId:PROD,productionId:PROD,stagingId:PROD})),/must be isolated/);
+});
+
+test("restore rejects an unknown environment before import", async()=>{
+ await assert.rejects(()=>noMutation(()=>assertRestoreTarget({environment:"preview",databaseName:"pawspace-staging",databaseId:STAGE,productionId:PROD,stagingId:STAGE,confirm:"anything"})),/environment must be staging or production/);
 });
 
 test("staging restore refuses the production D1 id before import", async()=>{
