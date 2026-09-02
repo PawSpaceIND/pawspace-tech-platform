@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,7 +41,6 @@ test("checksum mismatch fails before any restore mutation", async()=>{
 test("valid staging target and checksum guards pass",()=>{
  assert.equal(assertRestoreTarget({environment:"staging",databaseName:"pawspace-staging",databaseId:STAGE,productionId:PROD,stagingId:STAGE,confirm:`RESTORE-STAGING:pawspace-staging:${STAGE}`}),true);
  const dir=mkdtempSync(join(tmpdir(),"pawspace-d1-")),sql=join(dir,"snapshot.sql");writeFileSync(sql,"CREATE TABLE x(id TEXT);\n");
- const {createHash}=require("node:crypto");
  const hash=createHash("sha256").update(Buffer.from("CREATE TABLE x(id TEXT);\n")).digest("hex");
  assert.equal(assertManifestChecksum({version:1,immutable:true,sha256:hash},sql),hash);
 });
