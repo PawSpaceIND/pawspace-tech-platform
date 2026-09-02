@@ -29,17 +29,13 @@ jobs:
           ref: ${{ env.EXPECTED_SHA }}
           fetch-depth: 0
       - name: Verify exact merged main SHA
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
-      - name: Install
-        run: npm run install:ci
-      - name: Build merged main
-        run: npm run build
+      - run: npm run install:ci
+      - run: npm run build
       - name: Configure isolated staging
         env:
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
@@ -58,12 +54,6 @@ jobs:
           RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
           RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
           RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
-          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
-          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
-          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
-          EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
-          EXOTEL_VOICE_APP_ID: ${{ secrets.EXOTEL_VOICE_APP_ID }}
-          EXOTEL_WEBHOOK_SECRET: ${{ secrets.EXOTEL_WEBHOOK_SECRET }}
         run: |
           set -euo pipefail
           SECRETS_FILE="$RUNNER_TEMP/pr411-staging-secrets.json"
@@ -71,10 +61,10 @@ jobs:
           trap 'rm -f "$SECRETS_FILE"' EXIT
           node --input-type=module <<'NODE'
           import {writeFileSync} from 'node:fs';
-          const required=['PAWSPACE_UAT_ACCESS_CODE','PAWSPACE_UAT_SIGNING_KEY','PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT','EXOTEL_API_KEY','EXOTEL_API_TOKEN','EXOTEL_SID','EXOTEL_CALLER_ID','EXOTEL_VOICE_APP_ID','EXOTEL_WEBHOOK_SECRET'];
-          const optional=['RAZORPAY_KEY_ID_SANDBOX','RAZORPAY_KEY_SECRET_SANDBOX','RAZORPAY_WEBHOOK_SECRET_SANDBOX'];
+          const required=['PAWSPACE_UAT_ACCESS_CODE','PAWSPACE_UAT_SIGNING_KEY','PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT','RAZORPAY_WEBHOOK_SECRET_SANDBOX'];
+          const optional=['RAZORPAY_KEY_ID_SANDBOX','RAZORPAY_KEY_SECRET_SANDBOX'];
           const values=Object.fromEntries(required.map(n=>[n,process.env[n]||'']));
-          if(Object.values(values).some(v=>!v)) throw new Error('required staging secret missing');
+          if(Object.values(values).some(v=>!v)) throw new Error('required Track 3 staging secret missing');
           for(const n of optional) if(process.env[n]) values[n]=process.env[n];
           values.PAWSPACE_STAGING_LIVE_CUSTOMER_OTP='false';
           writeFileSync(process.env.SECRETS_FILE,JSON.stringify(values),{mode:0o600});
@@ -100,7 +90,6 @@ jobs:
           npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --file=scripts/employee-seed.sql
       - name: Verify staging health
         run: |
-          set -euo pipefail
           node --input-type=module <<'NODE'
           const url=process.env.STAGING_URL+'/healthz';
           const r=await fetch(url,{signal:AbortSignal.timeout(15000)});
@@ -109,10 +98,7 @@ jobs:
           if(!r.ok) process.exit(1);
           NODE
       - name: Materialize existing Track 3 gate
-        run: |
-          set -euo pipefail
-          mkdir -p scripts/ops
-          git show origin/ops/nontrack2-closure-20260901:scripts/ops/staging-performance-gate.mjs > scripts/ops/staging-performance-gate.mjs
+        run: git show origin/ops/nontrack2-closure-20260901:scripts/ops/staging-performance-gate.mjs > scripts/ops/staging-performance-gate.mjs
       - name: Run hosted Track 3 workload
         env:
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
@@ -134,15 +120,10 @@ jobs:
           const row=(Array.isArray(raw)?raw[0]:raw)?.results?.[0]||{};
           const n=k=>Number(row[k]??NaN);
           console.log(JSON.stringify(row,null,2));
-          if(n('bookings')!==100) throw new Error(`expected 100 bookings, got ${row.bookings}`);
-          if(n('payments')!==100) throw new Error(`expected 100 payments, got ${row.payments}`);
-          if(n('assignments')!==100) throw new Error(`expected 100 assignments, got ${row.assignments}`);
-          if(n('webhook_events')!==1) throw new Error(`expected one webhook event, got ${row.webhook_events}`);
-          if(Math.abs(n('ledger_drift'))>0.000001) throw new Error(`ledger drift ${row.ledger_drift}`);
+          if(n('bookings')!==100||n('payments')!==100||n('assignments')!==100||n('webhook_events')!==1||Math.abs(n('ledger_drift'))>0.000001) process.exit(1);
           NODE
       - name: Scan evidence for 500s and lock errors
         run: |
-          set -euo pipefail
           node --input-type=module <<'NODE'
           import fs from 'node:fs';
           const p=JSON.parse(fs.readFileSync('staging-performance.json','utf8'));
