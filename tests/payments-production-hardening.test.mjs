@@ -20,7 +20,7 @@ test("webhook gate fails closed when the payment environment is absent or malfor
 
 test("live Razorpay order creation is gated before the outbound /v1/orders request",()=>{
  const source=read("lib/razorpay-client.ts"),fn=source.slice(source.indexOf("export async function createPaymentOrderPaise"),source.indexOf("/** Compatibility boundary"));
- assert.match(fn,/parsePaymentEnvironment\(env\)/);
+ assert.match(fn,/providerPaymentEnvironment\(env\)/);
  assert.match(fn,/environment === "live" && env\?\.PAWSPACE_PAYMENT_LIVE_APPROVED !== "true"/);
  const gate=fn.indexOf("PAWSPACE_PAYMENT_LIVE_APPROVED"),request=fn.indexOf('providerRequest(env, environment, "/v1/orders"');
  assert.ok(gate>=0&&request>gate,"live approval must be checked before providerRequest reaches /v1/orders");
