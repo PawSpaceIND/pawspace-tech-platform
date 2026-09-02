@@ -1,4 +1,7 @@
-triggered_at=2026-09-02T03:36:30Z
+triggered_at=2026-09-02T07:22:15Z
 baseline=94cddc063297796f24ea1a2a0975b62a2fdbe1b2
 scope=track3-track5-track6-automated
-reason=track3-bounded-assignment-preparation-concurrency
+reason=d1-capacity-read-restored
+probe_run_id=33603173486
+probe_job_id=100161196988
+probe_sha=089cd76d12e73b9556b5fec55d66c96f32849441
