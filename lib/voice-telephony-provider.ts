@@ -18,6 +18,7 @@
 
 import { callRecordingApproved, statusCallbackUrl, telephonyCredentialsConfigured, voiceMode, VOICE_TELEPHONY_SECRET_NAMES } from "./voice-call-gate";
 import { ProviderResponseTooLarge, readBoundedText as readBoundedResponseText } from "./provider-response-bounds";
+import { decodeTelephonyCallContext, encodeTelephonyCallContext, type BengaluruVoiceLocale } from "./voice-locale";
 
 type Env = Record<string, unknown>;
 const val = (env: Env, key: string) => String(env?.[key] ?? "").trim();
@@ -29,6 +30,8 @@ export type TelephonyEventKind =
 export type TelephonyCallIntent = {
   /** Our own call id. Round-trips through the provider so a callback can be matched to a call. */
   callRef: string;
+  /** Canonical Bengaluru speech locale carried through Exotel CustomField for callback recovery. */
+  locale?: BengaluruVoiceLocale | string | null;
   toNumber: string;
   statusCallbackUrl: string;
   /** Only ever true when PAWSPACE_VOICE_RECORDING_APPROVED is set; the caller does not get to decide. */
@@ -50,6 +53,7 @@ export type TelephonyProviderEvent = {
   providerEventId: string;
   kind: TelephonyEventKind;
   callRef: string | null;
+  locale: BengaluruVoiceLocale;
   providerCallId: string | null;
   providerStatus: string | null;
   dtmfDigits: string | null;
@@ -186,10 +190,12 @@ export function normaliseTelephonyEvent(rawBody: string, provider: string): Tele
   const event = pick("eventtype", "event_type", "event");
   const digits = pick("digits", "dtmf", "dtmfdigits");
   const duration = Number(pick("callduration", "duration", "conversationduration") || 0);
+  const context = decodeTelephonyCallContext(pick("customfield", "custom_field", "callref", "call_ref"));
   return {
     providerEventId: `${provider}:${providerEventId}:${event || status || "event"}`,
     kind: mapProviderStatus(status, event),
-    callRef: pick("customfield", "custom_field", "callref", "call_ref") || null,
+    callRef: context.callRef || null,
+    locale: context.locale,
     providerCallId: pick("callsid", "call_sid", "sid") || null,
     providerStatus: status || event || null,
     dtmfDigits: digits ? digits.replace(/[^0-9*#]/g, "").slice(0, 32) : null,
@@ -258,7 +264,7 @@ export function exotelTelephony(env: Env): TelephonyProvider {
         Url: `http://my.exotel.com/${sid}/exoml/start_voice/${appId}`,
         CallType: "trans",
         StatusCallback: intent.statusCallbackUrl,
-        CustomField: intent.callRef,
+        CustomField: encodeTelephonyCallContext(intent.callRef, intent.locale),
         TimeOut: String(Math.max(15, Math.min(intent.timeoutSeconds ?? 45, 120))),
         Record: intent.recordingAllowed ? "true" : "false",
       });

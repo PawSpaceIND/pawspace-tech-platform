@@ -3,6 +3,7 @@ import test from "node:test";
 import fs from "node:fs";
 
 const locale=await import("../lib/voice-locale.ts");
+const telephony=await import("../lib/voice-telephony-provider.ts");
 const read=(path)=>fs.readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
 
 test("Bengaluru voice locale mapping is canonical and provider-safe",()=>{
@@ -19,6 +20,14 @@ test("telephony context round-trips locale and remains backward compatible",()=>
   const encoded=locale.encodeTelephonyCallContext("VCALL-123","Kannada");
   assert.deepEqual(locale.decodeTelephonyCallContext(encoded),{callRef:"VCALL-123",locale:"kn-IN"});
   assert.deepEqual(locale.decodeTelephonyCallContext("VCALL-OLD"),{callRef:"VCALL-OLD",locale:"en-IN"});
+});
+
+test("Exotel callback restores structured CustomField call and locale context",()=>{
+  const custom=locale.encodeTelephonyCallContext("VCALL-456","Kannada");
+  const body=new URLSearchParams({CallSid:"EXO-1",CallStatus:"completed",CustomField:custom}).toString();
+  const event=telephony.normaliseTelephonyEvent(body,"exotel");
+  assert.equal(event.callRef,"VCALL-456");
+  assert.equal(event.locale,"kn-IN");
 });
 
 test("AI knowledge center reads governed package, subscription and active knowledge sources",()=>{
@@ -50,4 +59,20 @@ test("speech routing maps BCP-47 locales to provider language codes",()=>{
   assert.match(route,/supportedLocales/);
   assert.match(adapter,/\{ audioRef: input\.audioRef, locale, language \}/);
   assert.match(adapter,/\{ text: input\.text, locale, language \}/);
+});
+
+test("outbound ledger, Exotel and service recovery preserve the canonical locale",()=>{
+  const provider=read("lib/voice-telephony-provider.ts");
+  const governance=read("lib/voice-outbound-governance.ts");
+  const recovery=read("lib/service-recovery-audio-bot.ts");
+  assert.match(provider,/CustomField: encodeTelephonyCallContext\(intent\.callRef, intent\.locale\)/);
+  assert.match(provider,/decodeTelephonyCallContext/);
+  assert.match(governance,/locale TEXT NOT NULL DEFAULT 'en-IN'/);
+  assert.match(governance,/callRef: id, locale/);
+  assert.match(governance,/locale: canonicalVoiceLocale\(original\.locale\)/);
+  assert.match(governance,/event\.locale !== callLocale/);
+  assert.match(recovery,/getUserLocale/);
+  assert.match(recovery,/locale:canonicalVoiceLocale\(preferredLocale\)/);
+  assert.match(recovery,/language:locale/);
+  assert.match(recovery,/locale:recipient\.locale/);
 });

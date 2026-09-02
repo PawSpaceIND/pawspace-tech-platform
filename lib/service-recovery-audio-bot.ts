@@ -2,7 +2,9 @@ import { BOT_CALL_TAG_CODES } from "./bot-call-disposition";
 import { ensureCommunicationTables } from "./communication-engine";
 import { ensureAiVoiceUatTables } from "./ai-voice-uat";
 import { createUnifiedCase } from "./unified-case-center";
+import { getUserLocale } from "./i18n-governance";
 import { selectVoiceTts, voiceProvidersStatus } from "./voice-provider-adapter";
+import { canonicalVoiceLocale } from "./voice-locale";
 import {
   ensureVoiceCallTables,
   recordVoiceSpeechFailure,
@@ -93,7 +95,8 @@ async function recipientForJob(db: Db, job: Row) {
   if (!row) throw new Error("Recovery booking/customer relationship is unavailable");
   if (!text(row.primary_phone)) throw new Error("Recovery customer has no dialable phone on record");
   if (!text(row.city_id)) throw new Error("Recovery booking has no city for voice policy resolution");
-  return { customerId:text(row.customer_id), bookingId:text(row.id), cityId:text(row.city_id), phone:text(row.primary_phone) };
+  const preferredLocale = await getUserLocale(db,text(row.customer_id)).catch(()=>null);
+  return { customerId:text(row.customer_id), bookingId:text(row.id), cityId:text(row.city_id), phone:text(row.primary_phone), locale:canonicalVoiceLocale(preferredLocale) };
 }
 
 function canonicalBotTag(code: string | null) {
@@ -155,9 +158,9 @@ async function activateAiSession(db: Db, env: Env, job: Row, call: Row, attemptN
   if (priorId) return { activated:false, aiCallId:priorId, reason:"already_bound" };
   const source = await db.prepare("SELECT thread_id,customer_id FROM communication_messages WHERE id=?").bind(text(job.source_message_id)).first<Row>();
   if (!source || text(source.customer_id)!==text(job.customer_id)) throw new Error("Recovery source message/customer relationship is unavailable");
-  const aiCallId = uid("AIVCALL"), now = asOf;
-  await db.prepare("INSERT INTO ai_voice_calls (id,thread_id,customer_id,transport_provider,direction,status,consent_status,language,started_at,created_by) VALUES (?,?,?,?, 'outbound','active','verified',NULL,?,?)")
-    .bind(aiCallId,text(source.thread_id),text(job.customer_id),text(call.provider)==="exotel"?"exotel":"sandbox_simulator",now,actorId).run();
+  const aiCallId = uid("AIVCALL"), now = asOf, locale = canonicalVoiceLocale(call.locale);
+  await db.prepare("INSERT INTO ai_voice_calls (id,thread_id,customer_id,transport_provider,direction,status,consent_status,language,started_at,created_by) VALUES (?,?,?,?, 'outbound','active','verified',?,?,?)")
+    .bind(aiCallId,text(source.thread_id),text(job.customer_id),text(call.provider)==="exotel"?"exotel":"sandbox_simulator",locale,now,actorId).run();
   await db.prepare("UPDATE voice_call_orders SET ai_call_id=?,updated_at=? WHERE id=? AND ai_call_id IS NULL").bind(aiCallId,now,text(call.id)).run();
 
   const script = await db.prepare("SELECT opening_disclosure FROM voice_call_scripts WHERE use_case='service_recovery' AND active=1").first<Row>();
@@ -165,12 +168,12 @@ async function activateAiSession(db: Db, env: Env, job: Row, call: Row, attemptN
   if (!opening) throw new Error("No active service recovery voice disclosure is configured");
   const tts = selectVoiceTts(env);
   if (tts.status!=="connected") throw new Error("Voice TTS became unavailable after call connection");
-  const audio = await tts.synthesize({text:opening,language:null});
+  const audio = await tts.synthesize({text:opening,language:locale});
   const audioHash = await sha256Hex(audio.audioRef);
   await db.prepare("INSERT INTO ai_voice_events (id,call_id,event_type,detail_json,created_at) VALUES (?,?,?,?,?)")
-    .bind(uid("AIVEVT"),aiCallId,"recovery_opening_prepared",JSON.stringify({sourceMessageId:text(job.source_message_id),voiceCallId:text(call.id),speechProvider:tts.provider,latencyMs:audio.latencyMs,audioSha256:audioHash,productionTelephony:Number(call.production_call)===1}),now).run();
-  await updateAttempt(db,{jobId:text(job.id),attemptNo,voiceCallId:text(call.id),aiCallId,callState:text(call.state),speechProvider:tts.provider,openingAudioSha256:audioHash,detail:{openingPrepared:true,productionTelephony:Number(call.production_call)===1}});
-  return { activated:true, aiCallId, speechProvider:tts.provider, openingAudioSha256:audioHash };
+    .bind(uid("AIVEVT"),aiCallId,"recovery_opening_prepared",JSON.stringify({sourceMessageId:text(job.source_message_id),voiceCallId:text(call.id),locale,speechProvider:tts.provider,latencyMs:audio.latencyMs,audioSha256:audioHash,productionTelephony:Number(call.production_call)===1}),now).run();
+  await updateAttempt(db,{jobId:text(job.id),attemptNo,voiceCallId:text(call.id),aiCallId,callState:text(call.state),speechProvider:tts.provider,openingAudioSha256:audioHash,detail:{openingPrepared:true,locale,productionTelephony:Number(call.production_call)===1}});
+  return { activated:true, aiCallId, locale, speechProvider:tts.provider, openingAudioSha256:audioHash };
 }
 
 async function observeAwaitingJob(db: Db, env: Env, job: Row, actorId: string, asOf: number) {
@@ -179,7 +182,7 @@ async function observeAwaitingJob(db: Db, env: Env, job: Row, actorId: string, a
   const call = await db.prepare("SELECT * FROM voice_call_orders WHERE id=?").bind(callId).first<Row>();
   if (!call) return escalateJob(db,job,{reason:"Recovery voice call ledger row is missing",asOf,actorId,callId});
   const attemptNo = Number(job.attempt_count||0);
-  await updateAttempt(db,{jobId:text(job.id),attemptNo,voiceCallId:callId,callState:text(call.state),detail:{observedAt:asOf}});
+  await updateAttempt(db,{jobId:text(job.id),attemptNo,voiceCallId:callId,callState:text(call.state),detail:{observedAt:asOf,locale:canonicalVoiceLocale(call.locale)}});
 
   if (["connected","speaking","listening"].includes(text(call.state))) {
     try {
@@ -196,7 +199,7 @@ async function observeAwaitingJob(db: Db, env: Env, job: Row, actorId: string, a
   const optedOut = Boolean(await db.prepare("SELECT phone_key FROM voice_call_opt_outs WHERE phone_key=? AND recorded_at>=?").bind(text(call.phone_key),Number(call.requested_at||0)).first<Row>());
   const outcome = stateDisposition(text(call.state),text(call.previous_state),optedOut);
   if (outcome.disposition==="info_shared" || outcome.disposition==="do_not_call") {
-    await updateAttempt(db,{jobId:text(job.id),attemptNo,voiceCallId:callId,callState:text(call.state),disposition:outcome.disposition,botTag:outcome.botTag,retryable:false,detail:{previousState:text(call.previous_state)},finishedAt:asOf});
+    await updateAttempt(db,{jobId:text(job.id),attemptNo,voiceCallId:callId,callState:text(call.state),disposition:outcome.disposition,botTag:outcome.botTag,retryable:false,detail:{previousState:text(call.previous_state),locale:canonicalVoiceLocale(call.locale)},finishedAt:asOf});
     await db.prepare("UPDATE service_recovery_voice_jobs SET status='completed',last_disposition=?,last_detail=?,updated_at=? WHERE id=?")
       .bind(outcome.disposition,outcome.disposition==="do_not_call"?"Customer opted out during the recovery call":"Recovery information was delivered by the audio bot",asOf,text(job.id)).run();
     return { completed:true, disposition:outcome.disposition };
@@ -211,7 +214,7 @@ async function observeAwaitingJob(db: Db, env: Env, job: Row, actorId: string, a
   }
 
   if (outcome.retryable) {
-    await updateAttempt(db,{jobId:text(job.id),attemptNo,voiceCallId:callId,callState:text(call.state),disposition:outcome.disposition,botTag:outcome.botTag,retryable:true,detail:{previousState:text(call.previous_state)},finishedAt:asOf});
+    await updateAttempt(db,{jobId:text(job.id),attemptNo,voiceCallId:callId,callState:text(call.state),disposition:outcome.disposition,botTag:outcome.botTag,retryable:true,detail:{previousState:text(call.previous_state),locale:canonicalVoiceLocale(call.locale)},finishedAt:asOf});
     if (attemptNo < Number(job.max_attempts||SERVICE_RECOVERY_AUDIO_MAX_ATTEMPTS)) {
       await db.prepare("UPDATE service_recovery_voice_jobs SET status='retry_pending',last_disposition=?,last_detail=?,next_attempt_at=?,updated_at=? WHERE id=?")
         .bind(outcome.disposition,`Retryable recovery call outcome: ${text(call.state)}`,asOf+RETRY_DELAY_MS,asOf,text(job.id)).run();
@@ -221,7 +224,7 @@ async function observeAwaitingJob(db: Db, env: Env, job: Row, actorId: string, a
   }
 
   if (outcome.disposition==="policy_blocked" || outcome.disposition==="cancelled") {
-    await updateAttempt(db,{jobId:text(job.id),attemptNo,voiceCallId:callId,callState:text(call.state),disposition:outcome.disposition,retryable:false,detail:{previousState:text(call.previous_state)},finishedAt:asOf});
+    await updateAttempt(db,{jobId:text(job.id),attemptNo,voiceCallId:callId,callState:text(call.state),disposition:outcome.disposition,retryable:false,detail:{previousState:text(call.previous_state),locale:canonicalVoiceLocale(call.locale)},finishedAt:asOf});
     await db.prepare("UPDATE service_recovery_voice_jobs SET status='blocked',last_disposition=?,last_detail=?,updated_at=? WHERE id=?")
       .bind(outcome.disposition,`Automated recovery stopped in ${text(call.state)}`,asOf,text(job.id)).run();
     return escalateJob(db,{...job,attempt_count:attemptNo},{reason:`Automated recovery was ${outcome.disposition}: ${text(call.state)}`,disposition:outcome.disposition,asOf,actorId,callId});
@@ -249,7 +252,7 @@ async function dialClaimedJob(db: Db, env: Env, job: Row, actorId: string, asOf:
   } else {
     result = await requestOutboundVoiceCall(db,env,{
       idempotencyKey:`service-recovery-audio:${text(job.id)}:${attemptNo}`,
-      useCase:"service_recovery",phone:recipient.phone,cityId:recipient.cityId,customerId:recipient.customerId,bookingId:recipient.bookingId,
+      useCase:"service_recovery",phone:recipient.phone,cityId:recipient.cityId,locale:recipient.locale,customerId:recipient.customerId,bookingId:recipient.bookingId,
       actorId,actorPermissions:["communications.call","customers.manage"],asOf,
     }) as Row;
   }
@@ -258,13 +261,14 @@ async function dialClaimedJob(db: Db, env: Env, job: Row, actorId: string, asOf:
   if (!call) return escalateJob(db,job,{reason:"Voice governance returned no call ledger row",asOf,actorId});
   const dialled = call.dialed_at!=null;
   const productionCall = Number(call.production_call)===1;
-  await updateAttempt(db,{jobId:text(job.id),attemptNo,voiceCallId:callId,callState:text(call.state),detail:{dialled,productionCall,blockedBy:text((result as Row).blockedBy)||null}});
+  const locale = canonicalVoiceLocale(call.locale);
+  await updateAttempt(db,{jobId:text(job.id),attemptNo,voiceCallId:callId,callState:text(call.state),detail:{dialled,productionCall,locale,blockedBy:text((result as Row).blockedBy)||null}});
   await db.prepare("UPDATE service_recovery_voice_jobs SET attempt_count=?,last_call_id=?,last_disposition=NULL,last_detail=?,updated_at=? WHERE id=?")
-    .bind(attemptNo,callId,dialled?"Governed recovery call accepted by transport":`Recovery call did not dial (${text(call.state)})`,asOf,text(job.id)).run();
+    .bind(attemptNo,callId,dialled?`Governed recovery call accepted by transport (${locale})`:`Recovery call did not dial (${text(call.state)})`,asOf,text(job.id)).run();
   const freshJob = await db.prepare("SELECT * FROM service_recovery_voice_jobs WHERE id=?").bind(text(job.id)).first<Row>() as Row;
   if (!dialled) return observeAwaitingJob(db,env,freshJob,actorId,asOf);
   await db.prepare("UPDATE service_recovery_voice_jobs SET status='awaiting_outcome',next_attempt_at=?,updated_at=? WHERE id=?").bind(asOf,asOf,text(job.id)).run();
-  return { dialled:true, productionCall, callId, attemptNo };
+  return { dialled:true, productionCall, callId, locale, attemptNo };
 }
 
 async function claimJob(db: Db, job: Row, asOf: number) {
