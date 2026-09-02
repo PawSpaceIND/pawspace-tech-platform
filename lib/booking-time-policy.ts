@@ -31,6 +31,7 @@
 import{registerServicePolicyDomain,resolveServicePolicy}from"./service-policy-governance";
 
 type Db=D1Database;
+type Row=Record<string,unknown>;
 
 /** The services that are booked as scheduled occurrences. Food and Relocation are deliberately absent. */
 export const SCHEDULABLE_SERVICES=["grooming","dog_walking","pet_taxi","dog_training","pet_sitting","boarding"] as const;
@@ -128,7 +129,65 @@ export async function seedBookingTimePolicies(db:Db){
   }
 }
 
+function parsePolicyConfig(value:unknown):BookingTimePolicy{
+  let stored:Record<string,unknown>={};
+  try{stored=JSON.parse(String(value??"{}")) as Record<string,unknown>;}catch{}
+  return {...APPROVED_BOOKING_TIME_DEFAULT,...stored} as BookingTimePolicy;
+}
+
+/**
+ * Fast read path for already-bootstrapped databases.
+ *
+ * Scheduling is a high-concurrency request path. The generic policy resolver intentionally self-seeds,
+ * which is useful for a cold database but means every request otherwise performs INSERT OR IGNORE writes
+ * (and may enter table-creation batches) before it can merely read the policy. Under concurrent hosted
+ * scheduling this creates avoidable D1 transaction contention. Established staging/production databases
+ * already have these governed rows, so resolve them read-only first; fall back to the existing bootstrap
+ * path only when the table/row genuinely does not exist.
+ */
 export async function resolveBookingTimePolicy(db:Db,scope:{serviceCode?:string|null;cityId?:string|null}){
+  const serviceCode=String(scope.serviceCode??"*").trim().toLowerCase()||"*";
+  const cityId=String(scope.cityId??"*").trim().toLowerCase()||"*";
+  const date=new Date().toISOString().slice(0,10);
+  try{
+    const row=await db.prepare(
+      `SELECT *, CASE WHEN service_code=? AND city_id=? THEN 0 WHEN service_code=? AND city_id='*' THEN 1 WHEN service_code='*' AND city_id=? THEN 2 ELSE 3 END rank
+       FROM service_policy_configs
+       WHERE policy_domain=? AND active=1 AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)
+         AND (service_code=? OR service_code='*') AND (city_id=? OR city_id='*')
+       ORDER BY rank ASC, version DESC, updated_at DESC LIMIT 1`)
+      .bind(serviceCode,cityId,serviceCode,cityId,BOOKING_TIME_POLICY_DOMAIN,date,date,serviceCode,cityId).first<Row>();
+    if(row){
+      const config=parsePolicyConfig(row.config_json);
+      const problem=(()=>{
+        const lead=Number(config.minimumLeadMinutes);
+        if(!Number.isFinite(lead)||lead<0)return"The minimum lead time must be zero minutes or more";
+        if(lead>30*24*60)return"A minimum lead time longer than thirty days is not a booking rule, it is a closure";
+        const horizon=Number(config.maximumHorizonDays);
+        if(!Number.isFinite(horizon)||horizon<1)return"The advance-booking horizon must be at least one day";
+        if(horizon>APPROVED_BOOKING_TIME_DEFAULT.maximumHorizonDays)return`The advance-booking horizon cannot exceed ${APPROVED_BOOKING_TIME_DEFAULT.maximumHorizonDays} days`;
+        const stay=Number(config.maximumStayDays);
+        if(!Number.isFinite(stay)||stay<1)return"The maximum stay must be at least one day";
+        if(stay>90)return"The maximum stay cannot exceed the approved ninety-day Boarding ceiling";
+        if(stay>horizon)return"A stay cannot be longer than the advance-booking horizon";
+        if(config.rejectPastStart!==true)return"A booking in the past is always refused; this cannot be switched off";
+        if(config.trustClientTimestamp!==false)return"Booking times are validated against server time; the client timestamp is never authoritative";
+        return null;
+      })();
+      if(problem)throw Response.json({error:`Booking time rules configuration is invalid: ${problem}`,code:"service_policy_configuration_invalid",domain:BOOKING_TIME_POLICY_DOMAIN,policyId:String(row.id)},{status:409});
+      const matchedBy=["service_and_city","service_any_city","any_service_and_city","platform_default"][Number(row.rank??3)]??"platform_default";
+      return{
+        id:String(row.id),domain:String(row.policy_domain),serviceCode:String(row.service_code),cityId:String(row.city_id),
+        config,notes:String(row.notes||""),active:Number(row.active)===1,version:Number(row.version||1),
+        effectiveFrom:String(row.effective_from),effectiveTo:row.effective_to?String(row.effective_to):null,
+        updatedBy:String(row.updated_by||""),updatedAt:Number(row.updated_at||0),matchedBy,
+        policyVersion:`${BOOKING_TIME_POLICY_DOMAIN}:${String(row.service_code)}:${String(row.city_id)}:v${Number(row.version||1)}`,
+      };
+    }
+  }catch(error){
+    if(error instanceof Response)throw error;
+    // Missing table/legacy database: preserve the original cold-start bootstrap contract below.
+  }
   await seedBookingTimePolicies(db);
   return resolveServicePolicy<BookingTimePolicy&Record<string,unknown>>(db,BOOKING_TIME_POLICY_DOMAIN,scope);
 }
