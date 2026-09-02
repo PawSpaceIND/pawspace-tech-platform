@@ -41,11 +41,31 @@ Latest gates (on `main` after the open activation PR merges): **typecheck 0 · f
 | **Exotel (telephony)** | Real phone-call line | In-app voice works without it; phone calls need a carrier line | Configure Exotel API key / token / SID for the line only |
 | **Workers AI (voice)** | First-party STT/TTS | Disconnected stubs until bound | Bind `env.AI`; optional model overrides |
 | **AI provider key** | LLM responses | Fail-closed → human handoff | Set `PAWSPACE_AI_PROVIDER_API_KEY` in staging, staff-first |
-| **Haptik (optional)** | External voice/WhatsApp bot | Inbound + outbound built, fail-closed | Set `HAPTIK_API_KEY` / outbound keys — only if you choose to use it |
+| **Haptik (optional)** | External voice AI agents | All 12 outbound journeys + the inbound agent built, fail-closed | Set `HAPTIK_API_KEY` (inbound webhook) and `HAPTIK_OUTBOUND_API_KEY` + `HAPTIK_OUTBOUND_URL` (dialling) — only if you choose to use it |
+| **Interakt (WhatsApp)** | The "we'll WhatsApp you the details" step in every voice journey | Queued through the governed comms engine, dispatch fail-closed | Set `INTERAKT_API_KEY` + `INTERAKT_BASE_URL`, then configure each link and approve its template at `/team/haptik` |
 
 Readiness of each can be checked live, without exposing any secret, via:
-`GET /api/payment-readiness`, `GET /api/voice-providers`, `GET /api/ai-rollout`, and the system
-integration readiness register (`docs/INTEGRATION_READINESS_REGISTER.md`).
+`GET /api/payment-readiness`, `GET /api/voice-providers`, `GET /api/ai-rollout`, `GET /api/interakt`,
+`GET /api/haptik-outbound`, `GET /api/haptik-config`, and the system integration readiness register
+(`docs/INTEGRATION_READINESS_REGISTER.md`).
+
+### Haptik voice agents — what still needs a human before a customer is called
+
+The code is complete and fail-closed; four things are configuration, not development, and the
+`/team/haptik` console names each one until it is done:
+
+1. **Credentials.** Nothing dials or messages until the Haptik and Interakt keys above are set.
+2. **WhatsApp links.** Each of the six static links in the solution document (package booking,
+   subscription, renewal, resume checkout, pending session, website) is set per environment. An
+   unconfigured link refuses the send rather than messaging a broken URL.
+3. **Approved templates.** WhatsApp only delivers approved templates, so each link needs its template
+   registered as approved in the language being sent.
+4. **Package recommendation rules.** The bot recommends only what `grooming_package_rules` maps to a
+   package the catalogue still sells. With no rules it says so and hands the call to a human; it never
+   improvises a package or a price.
+
+A transfer queue (`/api/haptik-config`, `set_transfer_target`) is optional: without one the inbound
+agent offers a callback instead of transferring, and the request still opens a case.
 
 ---
 

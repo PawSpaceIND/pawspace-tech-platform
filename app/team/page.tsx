@@ -31,6 +31,11 @@ const workspaces = [
   // to hand-craft HTTP requests. The metric leads with the environment gate because that, not this
   // page, is what decides whether a customer's phone can ring.
   { group: "Operations", title: "Voice operations", detail: "Automated outbound calling: the environment gate, the consent and opt-out record, quiet hours, the recipient allow-list, the call ledger and the per-call audit trail. Nothing on the page can switch calling on.", href: "/team/voice", permission: "communications.call" as Permission, metric: "Environment gated", tone: "orange", live: () => null },
+  // The Haptik integration shipped the same way voice operations did - twelve campaigns, an Interakt
+  // WhatsApp path and an inbound agent, all API-only and unreachable from Team. The metric leads with
+  // the connection state because, as with voice, the environment and not this page decides whether a
+  // customer's phone rings.
+  { group: "AI", title: "Haptik voice agents", detail: "The twelve outbound voice journeys, the inbound enquiry agent, the Interakt WhatsApp sends and the grooming package rules the bot recommends from. Calling is always human-launched.", href: "/team/haptik", permission: "marketing.view" as Permission, metric: "Environment gated", tone: "blue", live: () => null },
   { group: "Marketing", title: "Segments & campaigns", detail: "Consent-safe audiences, WATI and SMS queues, promotions and campaign performance.", href: "/team/marketing", permission: "marketing.view" as Permission, metric: "Live delivery locked", tone: "gold", live: () => null },
 ] as const;
 

@@ -59,6 +59,18 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/voice-outbound")return "customers.manage";
   if(url.pathname==="/api/ai-voice-uat"||url.pathname==="/api/voice-speech")return "communications.call";
   if(url.pathname==="/api/voice-providers")return "settings.manage";
+  // The Haptik staff surfaces. Both routes enforce these permissions themselves; registering them
+  // here as well means the gateway does not silently fall through to dashboard.view, the weakest
+  // staff permission, for a write that configures what customers are messaged and quoted.
+  if(url.pathname==="/api/interakt"){if(method==="GET")return "marketing.view";return "communications.manage";}
+  if(url.pathname==="/api/haptik-config"){
+    if(method==="GET")return "marketing.view";
+    const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;
+    // A recommendation rule decides what a customer is offered and therefore charged, so it sits with
+    // the rest of grooming commercial policy; a transfer target decides where a live call is routed.
+    return String(body.action||"")==="upsert_rule"?"grooming.manage":"communications.manage";
+  }
+  if(url.pathname==="/api/haptik-outbound")return method==="GET"?"marketing.view":"marketing.manage";
   if(url.pathname==="/api/bot-call-outcomes"){if(method==="GET")return "customers.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;// PTJA W2-B4-M03: a `record` writes a permanent do-not-call and closes the lead - the same rows the
     // HUMAN path writes through /api/revenue-crm, which requires customers.manage. This asked only for
     // communications.call, a default service_provider permission, so a provider with no relationship to

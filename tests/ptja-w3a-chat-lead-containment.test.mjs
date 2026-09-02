@@ -50,7 +50,11 @@ function chatWorld() {
   return globalThis.__W3A_CHAT_DB__;
 }
 
-const CAMPAIGNS = ["new_lead_followup", "reactivation", "subscription_pitch"];
+// EVERY outbound campaign, read from the module rather than listed here: the containment property is
+// that an anonymous chat lead reaches no dialler audience at all, so adding a thirteenth campaign must
+// extend this test automatically instead of quietly escaping it.
+const { HAPTIK_CAMPAIGNS } = await import("../lib/haptik-outbound-governance.ts");
+const CAMPAIGNS = HAPTIK_CAMPAIGNS.map(campaign => campaign.code);
 const VICTIM_PHONE = "+919812345678";
 
 async function anonymousChat(body) {

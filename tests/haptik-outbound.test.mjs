@@ -18,7 +18,14 @@ test("Haptik outbound client is a fail-closed adapter (dials nothing until keys 
 
 test("Haptik outbound governance: campaigns, consent + responsible-outbound guardrails", () => {
   assert.match(gov, /export const HAPTIK_CAMPAIGNS/);
-  for (const c of ["new_lead_followup", "reactivation", "subscription_pitch"]) assert.match(gov, new RegExp(`code: "${c}"`));
+  // All twelve outbound journeys in the solution document, not just the three that shipped first.
+  // tests/haptik-campaign-audiences.test.mjs executes each audience; this pins the set itself.
+  for (const c of ["new_lead_followup", "reactivation", "subscription_pitch", "abandoned_checkout", "offer_pitch",
+    "subscription_renewal", "pending_session_followup", "dog_training_leads", "winback",
+    "boarding_daycare_leads", "dog_walking_leads", "pet_taxi_leads"]) assert.match(gov, new RegExp(`code: "${c}"`));
+  // A campaign with no audience builder must throw rather than fall through to another campaign's
+  // audience - the shape this file's earlier version allowed.
+  assert.match(gov, /throw new Error\(`No audience builder for outbound campaign/);
   // marketing campaigns require marketing consent
   assert.match(gov, /requiresMarketingConsent: true/);
   assert.match(gov, /p\.marketing_consent=1/);

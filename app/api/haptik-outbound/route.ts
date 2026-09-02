@@ -1,6 +1,7 @@
 import{requestQuietHoursOverride}from"../../../lib/quiet-hours-override";
 import{authError,database,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
-import{HAPTIK_CAMPAIGNS,buildOutboundAudience,triggerOutboundCampaign,listOutboundCalls,outboundReadiness}from"../../../lib/haptik-outbound-governance";
+import{HAPTIK_CAMPAIGNS,buildOutboundAudience,triggerOutboundCampaign,listOutboundCalls,outboundReadiness,isQuietHours}from"../../../lib/haptik-outbound-governance";
+import{haptikOutboundConfigured}from"../../../lib/haptik-outbound-client";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin outbound write blocked",{status:403});}
@@ -10,12 +11,20 @@ async function runtime(){const {env}=await import("cloudflare:workers");return e
 // guardrailed - fail-closed on keys, consent-filtered, quiet-hours + frequency-cap enforced.
 export async function GET(request:Request){
   try{
-    const url=new URL(request.url),db=await database(),actor=await resolveActor(request);requirePermission(actor,"marketing.view");
+    const url=new URL(request.url),db=await database(),env=await runtime(),actor=await resolveActor(request);requirePermission(actor,"marketing.view");
     const mode=url.searchParams.get("mode")||"campaigns";
     if(mode==="calls")return json({data:await listOutboundCalls(db,{campaign:url.searchParams.get("campaign")||undefined,limit:Number(url.searchParams.get("limit"))||undefined})});
     if(mode==="readiness")return json({data:await outboundReadiness(db)});
-    if(mode==="audience"){const campaign=url.searchParams.get("campaign")||"";return json({data:{campaign,audience:await buildOutboundAudience(db,{campaign,limit:Number(url.searchParams.get("limit"))||undefined})}});}
-    return json({data:{campaigns:HAPTIK_CAMPAIGNS,readiness:await outboundReadiness(db)}});
+    if(mode==="audience"){
+      const campaign=url.searchParams.get("campaign")||"",limit=Number(url.searchParams.get("limit"))||undefined;
+      // A preview reads the audience and returns its SIZE plus masked rows. The console needs to know
+      // how many people a launch would call; it does not need, and must not display, their numbers.
+      const audience=await buildOutboundAudience(db,{campaign,limit});
+      return json({data:{campaign,size:audience.length,audience:audience.map(c=>({contactId:c.contactId,phoneLast4:c.phone.replace(/\D/g,"").slice(-4),name:c.name,context:c.context}))}});
+    }
+    // The console must be able to state why it cannot dial rather than offering a button that does
+    // nothing, so the connection and quiet-hours decisions are returned with the campaign list.
+    return json({data:{campaigns:HAPTIK_CAMPAIGNS,readiness:await outboundReadiness(db),connected:haptikOutboundConfigured(env),quietHours:isQuietHours(Date.now())}});
   }catch(error){return authError(error,"Unable to load outbound campaigns");}
 }
 

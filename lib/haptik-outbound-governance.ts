@@ -26,16 +26,43 @@ const text = (v: unknown) => String(v ?? "").trim();
 const empty = () => ({ results: [] as Row[] });
 
 export const FREQUENCY_CAP_DAYS = 7;
+/** Matches lib/app-to-revenue-funnel.ts's DEFAULT_ABANDON_MINUTES so both agree what "abandoned" means. */
+const ABANDONED_CHECKOUT_MINUTES = 60;
+const RENEWAL_WINDOW_DAYS = 30;
+const WINBACK_DORMANT_DAYS = 180;
 const QUIET_START_HOUR = 21; // 21:00 IST
 const QUIET_END_HOUR = 9;    //  09:00 IST
 const IST_OFFSET_MS = 5.5 * 3600_000;
 
-export type OutboundCampaign = { code: string; label: string; requiresMarketingConsent: boolean; description: string };
+/**
+ * The twelve outbound voice journeys in Haptik's solution document, in its order, each with the
+ * audience PawSpace has to supply. `requiresMarketingConsent` is the line that matters: a campaign that
+ * pitches something needs express marketing consent, while calling someone back about an enquiry they
+ * themselves raised, or about a subscription they already bought, does not. Every campaign still
+ * honours opt_out, quiet hours and the frequency cap regardless of which side of that line it sits on.
+ */
+export type OutboundCampaign = { code: string; label: string; requiresMarketingConsent: boolean; description: string; useCase: number };
 export const HAPTIK_CAMPAIGNS: OutboundCampaign[] = [
-  { code: "new_lead_followup", label: "New grooming lead follow-up", requiresMarketingConsent: false, description: "Call back a fresh inbound lead that hasn't been actioned yet (they reached out to us)." },
-  { code: "reactivation", label: "Lapsed customer reactivation", requiresMarketingConsent: true, description: "Win back a customer whose last service was over 60 days ago." },
-  { code: "subscription_pitch", label: "Grooming subscription pitch", requiresMarketingConsent: true, description: "Offer a grooming subscription to an active customer who doesn't have one yet." },
+  { code: "new_lead_followup", label: "New grooming lead follow-up", requiresMarketingConsent: false, description: "Call back a fresh inbound lead that hasn't been actioned yet (they reached out to us).", useCase: 1 },
+  { code: "reactivation", label: "Lapsed customer reactivation", requiresMarketingConsent: true, description: "Win back a customer whose last service was over 60 days ago.", useCase: 2 },
+  { code: "subscription_pitch", label: "Grooming subscription pitch", requiresMarketingConsent: true, description: "Offer a grooming subscription to an active customer who doesn't have one yet.", useCase: 3 },
+  { code: "abandoned_checkout", label: "Abandoned checkout recovery", requiresMarketingConsent: false, description: "Recover a booking the customer started and did not pay for - their own unfinished checkout, not a pitch.", useCase: 4 },
+  { code: "offer_pitch", label: "Grooming offer / seasonal pitch", requiresMarketingConsent: true, description: "Promote a live offer to a customer serviced within the last 180 days.", useCase: 5 },
+  { code: "subscription_renewal", label: "Subscription renewal reminder", requiresMarketingConsent: false, description: "Remind a subscriber whose plan expires inside the renewal window.", useCase: 6 },
+  { code: "pending_session_followup", label: "Pending grooming session follow-up", requiresMarketingConsent: false, description: "Chase the unused sessions on a live subscription before it expires.", useCase: 7 },
+  { code: "dog_training_leads", label: "Dog training lead conversion", requiresMarketingConsent: false, description: "Qualify an open dog-training enquiry for the training team.", useCase: 8 },
+  { code: "winback", label: "Dormant customer winback", requiresMarketingConsent: true, description: "Reconnect with a customer dormant for over 180 days across every service.", useCase: 9 },
+  { code: "boarding_daycare_leads", label: "Boarding / sitting / daycare qualification", requiresMarketingConsent: false, description: "Qualify an open boarding, sitting or daycare enquiry. Never confirms a booking on the call.", useCase: 10 },
+  { code: "dog_walking_leads", label: "Dog walking qualification", requiresMarketingConsent: false, description: "Qualify an open dog-walking enquiry for a trial walk or a monthly plan.", useCase: 11 },
+  { code: "pet_taxi_leads", label: "Pet taxi trip capture", requiresMarketingConsent: false, description: "Capture trip details for an open pet-taxi enquiry. Quotes no price on the call.", useCase: 12 },
 ];
+/** Open service enquiries the service-qualification campaigns dial, keyed by campaign code. */
+const LEAD_CAMPAIGN_SERVICES: Record<string, string[]> = {
+  dog_training_leads: ["dog_training", "training"],
+  boarding_daycare_leads: ["boarding", "pet_sitting", "daycare", "sitting"],
+  dog_walking_leads: ["dog_walking", "walking"],
+  pet_taxi_leads: ["pet_taxi", "taxi"],
+};
 const campaignByCode = (code: string) => HAPTIK_CAMPAIGNS.find(c => c.code === code) || null;
 
 /** True when the local wall-clock in IST falls inside the quiet window (21:00-09:00). */
@@ -78,9 +105,69 @@ export async function buildOutboundAudience(db: Db, input: { campaign: string; l
     return dedupe(rows.results.map(r => ({ contactId: String(r.contact_id), phone: String(r.phone || ""), name: text(r.name) || "there", context: { lastServiceAt: text(r.last_end), pastBookings: Number(r.done), reason: "reactivation" } }))).slice(0, limit);
   }
 
-  // subscription_pitch: active grooming customers without an active/paused grooming subscription.
-  const rows = await db.prepare("SELECT b.customer_id contact_id,cu.name name,cu.primary_phone phone,COUNT(*) grooms FROM canonical_bookings b JOIN canonical_customers cu ON cu.id=b.customer_id JOIN customer_contact_preferences p ON p.customer_id=b.customer_id WHERE b.service_code='grooming' AND b.status NOT IN ('cancelled','refunded') AND p.marketing_consent=1 AND p.opt_out=0 AND NOT EXISTS (SELECT 1 FROM customer_grooming_subscriptions s WHERE s.customer_id=b.customer_id AND s.status IN ('active','paused')) GROUP BY b.customer_id HAVING COUNT(*)>=2 ORDER BY grooms DESC LIMIT ?").bind(limit * 2).all<Row>().catch(empty);
-  return dedupe(rows.results.map(r => ({ contactId: String(r.contact_id), phone: String(r.phone || ""), name: text(r.name) || "there", context: { groomingBookings: Number(r.grooms), reason: "subscription_pitch" } }))).slice(0, limit);
+  if (campaign.code === "subscription_pitch") {
+    // subscription_pitch: active grooming customers without an active/paused grooming subscription.
+    const rows = await db.prepare("SELECT b.customer_id contact_id,cu.name name,cu.primary_phone phone,COUNT(*) grooms FROM canonical_bookings b JOIN canonical_customers cu ON cu.id=b.customer_id JOIN customer_contact_preferences p ON p.customer_id=b.customer_id WHERE b.service_code='grooming' AND b.status NOT IN ('cancelled','refunded') AND p.marketing_consent=1 AND p.opt_out=0 AND NOT EXISTS (SELECT 1 FROM customer_grooming_subscriptions s WHERE s.customer_id=b.customer_id AND s.status IN ('active','paused')) GROUP BY b.customer_id HAVING COUNT(*)>=2 ORDER BY grooms DESC LIMIT ?").bind(limit * 2).all<Row>().catch(empty);
+    return dedupe(rows.results.map(r => ({ contactId: String(r.contact_id), phone: String(r.phone || ""), name: text(r.name) || "there", context: { groomingBookings: Number(r.grooms), reason: "subscription_pitch" } }))).slice(0, limit);
+  }
+
+  if (campaign.code === "abandoned_checkout") {
+    // The platform already has one definition of an abandoned checkout - a payment created/failed past
+    // the window with no captured payment on that booking (lib/app-to-revenue-funnel.ts). It is reused
+    // verbatim rather than restated, so recovery calls and recovery tasks can never disagree about who
+    // abandoned a booking. Consent: this is the customer's own unfinished purchase, so no marketing
+    // consent is required, but opt_out still bars the call (LEFT JOIN, so a customer with no
+    // preferences row is not silently excluded).
+    const rows = await db.prepare("SELECT bp.customer_id contact_id,cu.name name,cu.primary_phone phone,bp.booking_id booking_id,bp.amount amount,b.service_code svc,b.package_name pkg FROM booking_payments bp JOIN canonical_bookings b ON b.id=bp.booking_id JOIN canonical_customers cu ON cu.id=bp.customer_id LEFT JOIN customer_contact_preferences p ON p.customer_id=bp.customer_id WHERE bp.status IN ('created','failed','awaiting_payment') AND bp.created_at<=? AND b.status<>'cancelled' AND COALESCE(p.opt_out,0)=0 AND NOT EXISTS (SELECT 1 FROM booking_payments c WHERE c.booking_id=bp.booking_id AND c.status='captured') ORDER BY bp.created_at DESC LIMIT ?").bind(at - ABANDONED_CHECKOUT_MINUTES * 60_000, limit * 2).all<Row>().catch(empty);
+    return dedupe(rows.results.map(r => ({ contactId: String(r.contact_id), phone: String(r.phone || ""), name: text(r.name) || "there", context: { bookingId: text(r.booking_id), service: text(r.svc), packageName: text(r.pkg), amount: Number(r.amount), reason: "abandoned_checkout" } }))).slice(0, limit);
+  }
+
+  if (campaign.code === "offer_pitch") {
+    // Customers serviced INSIDE the last 180 days - still warm. Deliberately the complement of
+    // winback: a promotional offer and a "we miss you" call are different conversations and a customer
+    // must not be in both audiences on the same day.
+    const rows = await db.prepare("SELECT b.customer_id contact_id,cu.name name,cu.primary_phone phone,MAX(b.scheduled_end) last_end,COUNT(*) done FROM canonical_bookings b JOIN canonical_customers cu ON cu.id=b.customer_id JOIN customer_contact_preferences p ON p.customer_id=b.customer_id WHERE b.status='completed' AND p.marketing_consent=1 AND p.opt_out=0 GROUP BY b.customer_id HAVING MAX(b.scheduled_end)>=? ORDER BY done DESC LIMIT ?").bind(new Date(at - WINBACK_DORMANT_DAYS * DAY).toISOString(), limit * 2).all<Row>().catch(empty);
+    return dedupe(rows.results.map(r => ({ contactId: String(r.contact_id), phone: String(r.phone || ""), name: text(r.name) || "there", context: { lastServiceAt: text(r.last_end), pastBookings: Number(r.done), reason: "offer_pitch" } }))).slice(0, limit);
+  }
+
+  if (campaign.code === "subscription_renewal") {
+    // Live subscriptions expiring inside the renewal window. About a plan the customer already paid
+    // for, so no marketing consent is required - but an expired plan is not a renewal conversation, so
+    // the window is bounded on both sides rather than "anything expiring soon or already gone".
+    const rows = await db.prepare("SELECT s.customer_id contact_id,cu.name name,cu.primary_phone phone,s.plan_code plan,s.expires_at expires_at,(s.total_sessions-s.sessions_consumed-s.sessions_reserved) sessions_left FROM customer_grooming_subscriptions s JOIN canonical_customers cu ON cu.id=s.customer_id LEFT JOIN customer_contact_preferences p ON p.customer_id=s.customer_id WHERE s.status IN ('active','paused') AND s.expires_at>? AND s.expires_at<=? AND COALESCE(p.opt_out,0)=0 ORDER BY s.expires_at ASC LIMIT ?").bind(at, at + RENEWAL_WINDOW_DAYS * DAY, limit * 2).all<Row>().catch(empty);
+    return dedupe(rows.results.map(r => ({ contactId: String(r.contact_id), phone: String(r.phone || ""), name: text(r.name) || "there", context: { planCode: text(r.plan), expiresAt: Number(r.expires_at), sessionsLeft: Number(r.sessions_left), reason: "subscription_renewal" } }))).slice(0, limit);
+  }
+
+  if (campaign.code === "pending_session_followup") {
+    // Sessions bought and not used, on a subscription that has not expired yet. Reserved sessions are
+    // subtracted as well as consumed ones, so a customer with a booking already in the calendar is not
+    // chased about a session they have in fact scheduled.
+    const rows = await db.prepare("SELECT s.customer_id contact_id,cu.name name,cu.primary_phone phone,s.plan_code plan,s.expires_at expires_at,(s.total_sessions-s.sessions_consumed-s.sessions_reserved) sessions_left FROM customer_grooming_subscriptions s JOIN canonical_customers cu ON cu.id=s.customer_id LEFT JOIN customer_contact_preferences p ON p.customer_id=s.customer_id WHERE s.status='active' AND s.expires_at>? AND (s.total_sessions-s.sessions_consumed-s.sessions_reserved)>0 AND COALESCE(p.opt_out,0)=0 ORDER BY s.expires_at ASC LIMIT ?").bind(at, limit * 2).all<Row>().catch(empty);
+    return dedupe(rows.results.map(r => ({ contactId: String(r.contact_id), phone: String(r.phone || ""), name: text(r.name) || "there", context: { planCode: text(r.plan), expiresAt: Number(r.expires_at), sessionsLeft: Number(r.sessions_left), reason: "pending_session_followup" } }))).slice(0, limit);
+  }
+
+  if (campaign.code === "winback") {
+    // Dormant across EVERY service for over 180 days, and never yet won back by this campaign. Unlike
+    // reactivation (grooming-shaped, 60 days) this call asks whether they still have a pet at all.
+    const rows = await db.prepare("SELECT b.customer_id contact_id,cu.name name,cu.primary_phone phone,MAX(b.scheduled_end) last_end,COUNT(*) done FROM canonical_bookings b JOIN canonical_customers cu ON cu.id=b.customer_id JOIN customer_contact_preferences p ON p.customer_id=b.customer_id WHERE b.status='completed' AND p.marketing_consent=1 AND p.opt_out=0 GROUP BY b.customer_id HAVING MAX(b.scheduled_end)<? ORDER BY done DESC LIMIT ?").bind(new Date(at - WINBACK_DORMANT_DAYS * DAY).toISOString(), limit * 2).all<Row>().catch(empty);
+    return dedupe(rows.results.map(r => ({ contactId: String(r.contact_id), phone: String(r.phone || ""), name: text(r.name) || "there", context: { lastServiceAt: text(r.last_end), pastBookings: Number(r.done), reason: "winback" } }))).slice(0, limit);
+  }
+
+  const services = LEAD_CAMPAIGN_SERVICES[campaign.code];
+  if (services) {
+    // The service-qualification campaigns (training, boarding/sitting, walking, taxi): open enquiries
+    // for that service which nobody has actioned. Same shape as new_lead_followup, scoped by service,
+    // and the service list carries both the canonical code and the older short form so a lead created
+    // before the vocabulary settled is still dialled.
+    const placeholders = services.map(() => "?").join(",");
+    const rows = await db.prepare(`SELECT l.id lead_id,l.customer_id contact_id,l.service service,c.name name,c.primary_phone phone FROM lead_work_items l JOIN crm_contacts c ON c.id=l.customer_id WHERE l.service IN (${placeholders}) AND l.status IN ('active','sla_breached') AND l.first_action_at IS NULL AND l.opt_out=0 AND l.converted_booking_id IS NULL ORDER BY l.assigned_at ASC LIMIT ?`).bind(...services, limit * 3).all<Row>().catch(empty);
+    return dedupe(rows.results.map(r => ({ contactId: String(r.contact_id), phone: String(r.phone || ""), name: text(r.name) || "there", context: { leadId: String(r.lead_id), service: text(r.service), reason: campaign.code } }))).slice(0, limit);
+  }
+
+  // No silent fallback. A campaign added to HAPTIK_CAMPAIGNS without an audience builder must fail
+  // loudly here: the previous shape let any unhandled code fall through to the subscription-pitch
+  // audience, which would have dialled the wrong people under a new campaign's name.
+  throw new Error(`No audience builder for outbound campaign: ${campaign.code}`);
 }
 
 export type OutboundResult = { connected: boolean; campaign: string; dialled: number; skipped: number; failed: number; audience: number; reason?: string; calls: Array<{ contactId: string; phone: string; status: string; callRef?: string; reason?: string }> };
@@ -144,7 +231,10 @@ export async function listOutboundCalls(db: Db, input: { campaign?: string; limi
   const limit = Math.max(1, Math.min(Number(input.limit) || 200, 1000));
   const campaign = text(input.campaign);
   const rows = await db.prepare(`SELECT id,campaign,contact_id,phone,status,call_ref,reason,requested_by,created_at FROM haptik_outbound_calls WHERE (?='' OR campaign=?) ORDER BY created_at DESC LIMIT ${limit}`).bind(campaign, campaign).all<Row>().catch(empty);
-  return rows.results.map((r: Row) => ({ id: String(r.id), campaign: String(r.campaign), contactId: String(r.contact_id), phone: String(r.phone), status: String(r.status), callRef: r.call_ref ? String(r.call_ref) : null, reason: r.reason ? String(r.reason) : null, requestedBy: String(r.requested_by), createdAt: Number(r.created_at) }));
+  // Only the last four digits leave this function. The ops console is a wide-access surface and does
+  // not need a dialled customer's number to identify a row against a call recording - the voice
+  // operator console holds the same line for the same reason.
+  return rows.results.map((r: Row) => ({ id: String(r.id), campaign: String(r.campaign), contactId: String(r.contact_id), phoneLast4: digits(String(r.phone)).slice(-4), status: String(r.status), callRef: r.call_ref ? String(r.call_ref) : null, reason: r.reason ? String(r.reason) : null, requestedBy: String(r.requested_by), createdAt: Number(r.created_at) }));
 }
 
 /** Readiness snapshot for the ops dashboard - how many contacts are ready per campaign right now. */
