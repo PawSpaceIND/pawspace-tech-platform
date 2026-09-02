@@ -35,7 +35,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          if ! npx wrangler d1 execute pawspace-staging --remote --json --command "SELECT 1 AS capacity_ok" > d1-capacity-probe.json 2> d1-capacity-probe.err; then
+          if ! npx wrangler d1 execute pawspace-staging --remote --json --command "SELECT code AS capacity_code FROM role_definitions LIMIT 1" > d1-capacity-probe.json 2> d1-capacity-probe.err; then
             cat d1-capacity-probe.err >&2
             test -s d1-capacity-probe.json && cat d1-capacity-probe.json >&2 || true
             exit 1
@@ -44,8 +44,12 @@ jobs:
           node --input-type=module <<'NODE'
           import fs from 'node:fs';
           const raw=JSON.parse(fs.readFileSync('d1-capacity-probe.json','utf8'));
-          const rows=(Array.isArray(raw)?raw[0]:raw)?.results||[];
-          if(rows.length!==1 || Number(rows[0].capacity_ok)!==1) throw new Error(`unexpected D1 capacity probe result: ${JSON.stringify(rows)}`);
+          const result=Array.isArray(raw)?raw[0]:raw;
+          const rows=result?.results||[];
+          const rowsRead=Number(result?.meta?.rows_read||0);
+          if(rows.length!==1 || !String(rows[0].capacity_code||'').trim() || rowsRead<1) {
+            throw new Error(`probe did not prove a real table-row read: rows=${JSON.stringify(rows)} rows_read=${rowsRead}`);
+          }
           NODE
       - uses: actions/upload-artifact@v4
         if: always()
