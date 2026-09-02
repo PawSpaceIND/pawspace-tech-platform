@@ -84,8 +84,8 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          git show origin/ops/nontrack2-closure-20260901:scripts/ops/staging-role-seed.mjs > "$RUNNER_TEMP/staging-role-seed.mjs"
-          node --experimental-strip-types "$RUNNER_TEMP/staging-role-seed.mjs" "$RUNNER_TEMP/staging-role-seed.sql"
+          git show origin/ops/nontrack2-closure-20260901:scripts/ops/staging-role-seed.mjs > scripts/ops/staging-role-seed.mjs
+          node --experimental-strip-types scripts/ops/staging-role-seed.mjs "$RUNNER_TEMP/staging-role-seed.sql"
           npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --yes --file="$RUNNER_TEMP/staging-role-seed.sql"
           npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --file=scripts/employee-seed.sql
       - name: Verify staging health
