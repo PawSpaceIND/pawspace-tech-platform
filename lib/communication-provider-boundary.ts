@@ -6,6 +6,17 @@ type Row=Record<string,unknown>;
 type Env=Record<string,unknown>;
 type DeliveryEvent="accepted"|"sent"|"delivered"|"read"|"failed";
 
+// PAWSPACE_COMMUNICATION_ENV decides which adapter environment (and readiness) a message may deliver
+// through. "uat" is the allow-listed sandbox loop; "live" is production — real recipients, NO allow-list
+// (recipient-ownership + consent are the gates); "sandbox" is a production Worker pointed at the sandbox
+// provider. Any other value is unknown and fails closed. Mirrors scripts/prod-config.mjs, which accepts
+// only live|sandbox in production. HTTPS is enforced for every non-uat value by providerUrl().
+const COMMUNICATION_ENV_MODES:Record<string,{adapterEnv:string;readyStatus:string;enforceAllowlist:boolean}>={
+ uat:{adapterEnv:"sandbox",readyStatus:"sandbox_ready",enforceAllowlist:true},
+ sandbox:{adapterEnv:"sandbox",readyStatus:"sandbox_ready",enforceAllowlist:false},
+ live:{adapterEnv:"live",readyStatus:"live_ready",enforceAllowlist:false},
+};
+
 const text=(value:unknown)=>String(value??"").trim();
 const list=(value:unknown)=>text(value).split(",").map(item=>item.trim()).filter(Boolean);
 const safeEqual=(left:string,right:string)=>{if(left.length!==right.length)return false;let diff=0;for(let index=0;index<left.length;index++)diff|=left.charCodeAt(index)^right.charCodeAt(index);return diff===0;};
@@ -21,9 +32,10 @@ export async function dispatchExternalCommunication(db:Db,env:Env,input:{message
  await ensureCommunicationAdapterTables(db);const message=await db.prepare("SELECT m.*,o.status outbox_status,o.next_attempt_at FROM communication_messages m JOIN communication_outbox o ON o.message_id=m.id WHERE m.id=?").bind(input.messageId).first<Row>();if(!message)throw new Error("Queued communication message not found");
  if(!["queued","retry_pending","scheduled"].includes(text(message.outbox_status)))return{status:"already_dispatched",outboxStatus:text(message.outbox_status),externalDelivery:false};
  if(Number(message.next_attempt_at)>Date.now())return{status:"scheduled",nextAttemptAt:Number(message.next_attempt_at),externalDelivery:false};
- const config=await db.prepare("SELECT * FROM communication_adapter_configs WHERE channel=? AND adapter_name=? AND environment='sandbox'").bind(message.channel,input.adapterName).first<Row>();const url=providerUrl(env),token=text(env.PAWSPACE_COMMUNICATION_PROVIDER_TOKEN);
- if(text(env.PAWSPACE_COMMUNICATION_ENV).toLowerCase()!=="uat"||!config||text(config.status)!=="sandbox_ready"||text(config.credentials_status)!=="configured"||!url||!token)return{status:"not_configured",provider:input.adapterName,externalDelivery:false};
- if(!allowlisted(env,input.recipient))return{status:"recipient_not_allowlisted",provider:input.adapterName,externalDelivery:false};
+ const mode=COMMUNICATION_ENV_MODES[text(env.PAWSPACE_COMMUNICATION_ENV).toLowerCase()];
+ const config=mode?await db.prepare("SELECT * FROM communication_adapter_configs WHERE channel=? AND adapter_name=? AND environment=?").bind(message.channel,input.adapterName,mode.adapterEnv).first<Row>():null;const url=providerUrl(env),token=text(env.PAWSPACE_COMMUNICATION_PROVIDER_TOKEN);
+ if(!mode||!config||text(config.status)!==mode.readyStatus||text(config.credentials_status)!=="configured"||!url||!token)return{status:"not_configured",provider:input.adapterName,externalDelivery:false};
+ if(mode.enforceAllowlist&&!allowlisted(env,input.recipient))return{status:"recipient_not_allowlisted",provider:input.adapterName,externalDelivery:false};
  if(!await recipientBelongsToCustomer(db,text(message.customer_id),text(message.channel),input.recipient))return{status:"recipient_customer_mismatch",provider:input.adapterName,externalDelivery:false};
  if(!await dispatchConsent(db,text(message.customer_id),text(message.purpose)))return{status:"consent_refused",provider:input.adapterName,externalDelivery:false};
  const now=Date.now();await db.prepare("UPDATE communication_outbox SET status='dispatching',locked_at=?,updated_at=? WHERE message_id=? AND status IN ('queued','retry_pending','scheduled')").bind(now,now,input.messageId).run();
