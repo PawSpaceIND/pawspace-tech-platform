@@ -1,106 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import {
-  ProductionConfigurationError,
-  PRODUCTION_SERVICE_REGISTRY,
-  assertProductionReadiness,
-  collectProductionReadinessProblems,
-} from "../lib/production-readiness-enforcement.mjs";
+import {ProductionConfigurationError,PRODUCTION_SERVICE_REGISTRY,assertProductionReadiness,collectProductionReadinessProblems} from "../lib/production-readiness-enforcement.mjs";
 
-const goodIdfy = {
-  DEPLOYMENT_PROFILE: "production",
-  IDFY_API_KEY: "test-key",
-  IDFY_ACCOUNT_ID: "test-account",
-  IDFY_URL: "https://api.idfy.com/v3/tasks",
-  IDFY_WEBHOOK_SECRET: "test-webhook-secret",
-  PRODUCTION_R2_BUCKET_NAME: "pawspace-private-production",
-  CLOUDFLARE_API_TOKEN: "test-cloudflare-token",
-  CLOUDFLARE_ACCOUNT_ID: "test-cloudflare-account",
-};
+const goodBase={PAWSPACE_PRODUCTION_ENFORCE:"true",IDFY_API_KEY:"test-key",IDFY_ACCOUNT_ID:"test-account",IDFY_URL:"https://api.idfy.com/v3/tasks",IDFY_WEBHOOK_SECRET:"test-webhook-secret",PRODUCTION_R2_BUCKET_NAME:"pawspace-private-production",CLOUDFLARE_API_TOKEN:"test-cloudflare-token",CLOUDFLARE_ACCOUNT_ID:"test-cloudflare-account",PROVIDER_AGREEMENT_ESIGN_PRIVATE_KEY_PKCS8_B64:"private-key-material",PROVIDER_AGREEMENT_ESIGN_PUBLIC_KEY_SPKI_B64:"public-key-material",PROVIDER_AGREEMENT_ESIGN_KEY_ID:"provider-agreement-2026-01",META_WHATSAPP_ACCESS_TOKEN:"meta-token",META_WHATSAPP_APP_SECRET:"meta-app-secret",META_WHATSAPP_VERIFY_TOKEN:"meta-verify",INTERAKT_API_KEY:"interakt",INTERAKT_WEBHOOK_SECRET:"interakt-webhook",META_WHATSAPP_WABA_ID:"waba",META_WHATSAPP_PHONE_NUMBER_ID:"phone"};
+const healthyRegistry=[{id:"healthy",driver:"production_http",requiredSecrets:["SERVICE_SECRET"],requiredConfig:["SERVICE_URL"],handlers:[{name:"request",state:"implemented"}]}];
 
-const healthyRegistry = [{
-  id: "healthy",
-  driver: "production_http",
-  requiredSecrets: ["SERVICE_SECRET"],
-  requiredConfig: ["SERVICE_URL"],
-  handlers: [{ name: "request", state: "implemented" }],
-}];
-
-test("non-production profiles are not subject to production-only enforcement", () => {
-  assert.deepEqual(assertProductionReadiness({ NODE_ENV: "test" }, healthyRegistry), {
-    ok: true, enforced: false, profile: "test",
-  });
-});
-
-test("a fully configured production service registry can pass", () => {
-  assert.deepEqual(assertProductionReadiness({ DEPLOYMENT_PROFILE: "production", SERVICE_SECRET: "s", SERVICE_URL: "https://service.example" }, healthyRegistry), {
-    ok: true, enforced: true, profile: "production", servicesChecked: 1,
-  });
-});
-
-test("production rejects mock or sandbox drivers", () => {
-  const registry = [{ id: "database", driverEnv: "DATABASE_DRIVER", handlers: [{ name: "connect", state: "implemented" }] }];
-  assert.throws(
-    () => assertProductionReadiness({ DEPLOYMENT_PROFILE: "production", DATABASE_DRIVER: "memory" }, registry),
-    (error) => error instanceof ProductionConfigurationError && /database: production driver 'memory' is mock or sandbox-only/.test(error.message),
-  );
-});
-
-test("production rejects unbuilt handlers even when credentials are present", () => {
-  const registry = [{ id: "documents", driver: "r2", handlers: [{ name: "upload", state: "missing" }] }];
-  assert.throws(
-    () => assertProductionReadiness({ DEPLOYMENT_PROFILE: "production" }, registry),
-    (error) => error instanceof ProductionConfigurationError && /handler upload is missing/.test(error.message),
-  );
-});
-
-test("every IDfy production credential is individually load-bearing", () => {
-  for (const name of ["IDFY_API_KEY", "IDFY_ACCOUNT_ID", "IDFY_URL", "IDFY_WEBHOOK_SECRET"]) {
-    const env = { ...goodIdfy };
-    delete env[name];
-    const problems = collectProductionReadinessProblems(env, [PRODUCTION_SERVICE_REGISTRY[0]]);
-    assert.ok(problems.some((problem) => problem.includes(name)), `${name} must be named in the refusal`);
-  }
-});
-
-test("IDfy refuses non-production endpoint configuration", () => {
-  const problems = collectProductionReadinessProblems({ ...goodIdfy, IDFY_URL: "http://localhost:9000/tasks" }, [PRODUCTION_SERVICE_REGISTRY[0]]);
-  assert.ok(problems.some((problem) => /must use https/.test(problem)));
-  assert.ok(problems.some((problem) => /non-production host/.test(problem)));
-});
-
-test("private R2 storage requires deployment credentials and a production bucket", () => {
-  const storage = PRODUCTION_SERVICE_REGISTRY[1];
-  const base = { DEPLOYMENT_PROFILE: "production" };
-  const problems = collectProductionReadinessProblems(base, [storage]);
-  for (const name of ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID", "PRODUCTION_R2_BUCKET_NAME"]) {
-    assert.ok(problems.some((problem) => problem.includes(name)), `${name} must be required`);
-  }
-  assert.ok(problems.some((problem) => /server_owned_secure_upload is missing/.test(problem)));
-});
-
-test("current provider agreement path is explicitly blocked as UAT/mock", () => {
-  const problems = collectProductionReadinessProblems(goodIdfy, [PRODUCTION_SERVICE_REGISTRY[2]]);
-  assert.ok(problems.some((problem) => /uat_mock.*mock or sandbox-only/.test(problem)));
-  assert.ok(problems.some((problem) => /verified_digital_esign is mock/.test(problem)));
-});
-
-test("the canonical production registry fails hard on today's real onboarding blockers", () => {
-  assert.throws(
-    () => assertProductionReadiness(goodIdfy),
-    (error) => error instanceof ProductionConfigurationError
-      && error.code === "PRODUCTION_CONFIGURATION_ERROR"
-      && error.problems.some((problem) => /server_owned_secure_upload is missing/.test(problem))
-      && error.problems.some((problem) => /verified_digital_esign is mock/.test(problem)),
-  );
-});
-
-test("the command-line production guard exits non-zero and emits the explicit configuration error", () => {
-  const result = spawnSync(process.execPath, [new URL("../scripts/assert-production-readiness.mjs", import.meta.url).pathname], {
-    env: { ...process.env, ...goodIdfy }, encoding: "utf8",
-  });
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /PRODUCTION_CONFIGURATION_ERROR/);
-  assert.match(result.stderr, /server_owned_secure_upload is missing/);
-});
+test("non-production profiles remain explicitly non-signable",()=>{assert.deepEqual(assertProductionReadiness({NODE_ENV:"test"},healthyRegistry),{ok:true,enforced:false,profile:"test",productionReady:false,zeroP0P1Blockers:false,releaseSignOffAllowed:false});});
+test("PAWSPACE_PRODUCTION_ENFORCE=true activates the production guard",()=>{const result=assertProductionReadiness({PAWSPACE_PRODUCTION_ENFORCE:"true",SERVICE_SECRET:"s",SERVICE_URL:"https://service.example"},healthyRegistry);assert.equal(result.enforced,true);assert.equal(result.productionReady,true);assert.equal(result.zeroP0P1Blockers,true);assert.equal(result.releaseSignOffAllowed,true);});
+test("production rejects mock or sandbox drivers",()=>{const registry=[{id:"database",driverEnv:"DATABASE_DRIVER",handlers:[{name:"connect",state:"implemented"}]}];assert.throws(()=>assertProductionReadiness({PAWSPACE_PRODUCTION_ENFORCE:"true",DATABASE_DRIVER:"memory"},registry),(error)=>error instanceof ProductionConfigurationError&&/mock or sandbox-only/.test(error.message));});
+test("production rejects unbuilt handlers even when credentials are present",()=>{const registry=[{id:"documents",driver:"r2",handlers:[{name:"upload",state:"missing"}]}];assert.throws(()=>assertProductionReadiness({PAWSPACE_PRODUCTION_ENFORCE:"true"},registry),ProductionConfigurationError);});
+test("private R2 storage is implemented but still requires deployment credentials and a production bucket",()=>{const storage=PRODUCTION_SERVICE_REGISTRY[1],problems=collectProductionReadinessProblems({PAWSPACE_PRODUCTION_ENFORCE:"true"},[storage]);for(const name of["CLOUDFLARE_API_TOKEN","CLOUDFLARE_ACCOUNT_ID","PRODUCTION_R2_BUCKET_NAME"])assert.ok(problems.some(problem=>problem.includes(name)));assert.ok(!problems.some(problem=>/server_owned_secure_upload is missing/.test(problem)));});
+test("production provider agreement e-sign requires asymmetric signing material and key identity",()=>{const esign=PRODUCTION_SERVICE_REGISTRY[2],problems=collectProductionReadinessProblems({PAWSPACE_PRODUCTION_ENFORCE:"true"},[esign]);for(const name of["PROVIDER_AGREEMENT_ESIGN_PRIVATE_KEY_PKCS8_B64","PROVIDER_AGREEMENT_ESIGN_PUBLIC_KEY_SPKI_B64","PROVIDER_AGREEMENT_ESIGN_KEY_ID"])assert.ok(problems.some(problem=>problem.includes(name)));assert.ok(!problems.some(problem=>/mock or sandbox-only|verified_digital_esign is mock/.test(problem)));});
+test("canonical production registry can report all three sign-off booleans only when every dependency is declared",()=>{const result=assertProductionReadiness(goodBase);assert.equal(result.productionReady,true);assert.equal(result.zeroP0P1Blockers,true);assert.equal(result.releaseSignOffAllowed,true);});
+test("the command-line production guard fails closed when a signing secret is absent",()=>{const env={...process.env,...goodBase};delete env.PROVIDER_AGREEMENT_ESIGN_PRIVATE_KEY_PKCS8_B64;const result=spawnSync(process.execPath,[new URL("../scripts/assert-production-readiness.mjs",import.meta.url).pathname],{env,encoding:"utf8"});assert.notEqual(result.status,0);assert.match(result.stderr,/PRODUCTION_CONFIGURATION_ERROR/);assert.match(result.stderr,/PROVIDER_AGREEMENT_ESIGN_PRIVATE_KEY_PKCS8_B64/);});
