@@ -4,7 +4,7 @@ type Db=D1Database;
 type Row=Record<string,unknown>;
 
 export const SCHEDULING_RESERVATION_LEASE_MS=15*60_000;
-const leaseTablesEnsured=new WeakSet<Db>();
+const leaseTablesReady=new WeakMap<Db,Promise<boolean>>();
 
 async function tableExists(db:Db,name:string){
   const row=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").bind(name).first<Row>();
@@ -12,23 +12,36 @@ async function tableExists(db:Db,name:string){
 }
 
 export async function ensureSchedulingReservationLeaseGovernance(db:Db){
-  if(leaseTablesEnsured.has(db))return true;
-  if(!(await tableExists(db,"scheduling_reservations")))return false;
-  await ensurePlatformSessionTables(db);
-  const columns=await db.prepare("PRAGMA table_info(scheduling_reservations)").all<Row>();
-  if(!columns.results.some(row=>String(row.name)==="lease_expires_at"))await db.prepare("ALTER TABLE scheduling_reservations ADD COLUMN lease_expires_at INTEGER").run().catch(error=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
-  if(!columns.results.some(row=>String(row.name)==="customer_session_id"))await db.prepare("ALTER TABLE scheduling_reservations ADD COLUMN customer_session_id TEXT").run().catch(error=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
-  await db.batch([
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_lease ON scheduling_reservations(status,lease_expires_at,customer_session_id)"),
-    db.prepare("CREATE TABLE IF NOT EXISTS scheduling_reservation_lease_cleanup (group_id TEXT PRIMARY KEY,reason TEXT NOT NULL,released_at INTEGER NOT NULL)"),
-    db.prepare("CREATE TABLE IF NOT EXISTS booking_reservation_confirmation_guards (group_id TEXT PRIMARY KEY,checked_at INTEGER NOT NULL)"),
-    // The guard runs inside the same D1 transaction as canonical booking/payment/work-order writes.
-    // Cleanup and confirmation therefore serialize: cleanup-first cancels the lease and aborts booking;
-    // booking-first creates canonical truth and makes the cleanup predicate ineligible.
-    db.prepare("CREATE TRIGGER IF NOT EXISTS block_expired_reservation_booking BEFORE INSERT ON booking_reservation_confirmation_guards WHEN NOT EXISTS (SELECT 1 FROM scheduling_reservations r WHERE r.group_id=NEW.group_id AND r.status!='cancelled') OR EXISTS (SELECT 1 FROM scheduling_reservations r WHERE r.group_id=NEW.group_id AND r.status!='cancelled' AND ((r.lease_expires_at IS NOT NULL AND r.lease_expires_at<=NEW.checked_at) OR (r.customer_session_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM platform_identity_sessions s WHERE s.id=r.customer_session_id AND s.status IN ('active','superseded') AND s.expires_at>NEW.checked_at)))) BEGIN SELECT RAISE(ABORT,'reservation_lease_expired_before_booking'); END"),
-  ]);
-  leaseTablesEnsured.add(db);
-  return true;
+  let ready=leaseTablesReady.get(db);
+  if(!ready){
+    ready=(async()=>{
+      if(!(await tableExists(db,"scheduling_reservations")))return false;
+      const columns=await db.prepare("PRAGMA table_info(scheduling_reservations)").all<Row>();
+      const hasLease=columns.results.some(row=>String(row.name)==="lease_expires_at");
+      const hasSession=columns.results.some(row=>String(row.name)==="customer_session_id");
+      const cleanupTable=await tableExists(db,"scheduling_reservation_lease_cleanup");
+      const guardTable=await tableExists(db,"booking_reservation_confirmation_guards");
+      // Established staging/production databases take a read-only fast path. Under high concurrency,
+      // rerunning idempotent DDL on every booking request serialized D1 transactions before the actual
+      // booking write. Cold or partially migrated databases still execute the full bootstrap below.
+      if(hasLease&&hasSession&&cleanupTable&&guardTable)return true;
+      await ensurePlatformSessionTables(db);
+      if(!hasLease)await db.prepare("ALTER TABLE scheduling_reservations ADD COLUMN lease_expires_at INTEGER").run().catch(error=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
+      if(!hasSession)await db.prepare("ALTER TABLE scheduling_reservations ADD COLUMN customer_session_id TEXT").run().catch(error=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
+      await db.batch([
+        db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_lease ON scheduling_reservations(status,lease_expires_at,customer_session_id)"),
+        db.prepare("CREATE TABLE IF NOT EXISTS scheduling_reservation_lease_cleanup (group_id TEXT PRIMARY KEY,reason TEXT NOT NULL,released_at INTEGER NOT NULL)"),
+        db.prepare("CREATE TABLE IF NOT EXISTS booking_reservation_confirmation_guards (group_id TEXT PRIMARY KEY,checked_at INTEGER NOT NULL)"),
+        // The guard runs inside the same D1 transaction as canonical booking/payment/work-order writes.
+        // Cleanup and confirmation therefore serialize: cleanup-first cancels the lease and aborts booking;
+        // booking-first creates canonical truth and makes the cleanup predicate ineligible.
+        db.prepare("CREATE TRIGGER IF NOT EXISTS block_expired_reservation_booking BEFORE INSERT ON booking_reservation_confirmation_guards WHEN NOT EXISTS (SELECT 1 FROM scheduling_reservations r WHERE r.group_id=NEW.group_id AND r.status!='cancelled') OR EXISTS (SELECT 1 FROM scheduling_reservations r WHERE r.group_id=NEW.group_id AND status!='cancelled' AND ((r.lease_expires_at IS NOT NULL AND r.lease_expires_at<=NEW.checked_at) OR (r.customer_session_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM platform_identity_sessions s WHERE s.id=r.customer_session_id AND s.status IN ('active','superseded') AND s.expires_at>NEW.checked_at)))) BEGIN SELECT RAISE(ABORT,'reservation_lease_expired_before_booking'); END"),
+      ]);
+      return true;
+    })();
+    leaseTablesReady.set(db,ready);
+  }
+  try{return await ready;}catch(error){leaseTablesReady.delete(db);throw error;}
 }
 
 export async function reservationLeaseForRequest(db:Db,request:Request,customerId:string,now=Date.now()){
