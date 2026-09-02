@@ -107,7 +107,7 @@ test("payment-link expiry, webhook mapping and refund-required payment ID stay c
   assert.equal(sqlite.prepare("SELECT gateway_payment_link_id FROM payment_gateway_links WHERE booking_id='BK-LINK'").get().gateway_payment_link_id, "plink_lane3_replacement");
 
   globalThis.__POST_SERVICE_LINK_DB__ = db;
-  globalThis.__POST_SERVICE_LINK_ENV__ = { RAZORPAY_WEBHOOK_SECRET_SANDBOX: "lane3-webhook-secret" };
+  globalThis.__POST_SERVICE_LINK_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox", RAZORPAY_WEBHOOK_SECRET_SANDBOX: "lane3-webhook-secret" };
   const webhook = await import("../app/api/razorpay-webhook/route.ts");
   const payload = { event: "payment_link.paid", created_at: Math.floor(Date.now() / 1000), payload: { payment_link: { entity: { id: "plink_lane3_replacement", status: "paid", amount: 114900, amount_paid: 114900, notes: {} } }, payment: { entity: { id: "pay_lane3_map", amount: 114900, currency: "INR" } }, order: { entity: {} } } };
   const raw = JSON.stringify(payload), key = await crypto.subtle.importKey("raw", new TextEncoder().encode("lane3-webhook-secret"), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]), signature = Array.from(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(raw)))).map(value => value.toString(16).padStart(2, "0")).join("");

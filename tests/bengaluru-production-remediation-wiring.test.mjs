@@ -80,7 +80,7 @@ test("production communication surface exposes the Interakt adapter and signed c
   assert.match(adapters, /whatsapp:\["limechat","meta_whatsapp","interakt"\]/);
   assert.match(communications, /dispatchInteraktWhatsApp/);
   assert.match(communications, /action==="dispatch_interakt"/);
-  assert.match(callback, /recordInteraktWebhook/);
+  assert.match(callback, /recordInteraktDeliveryWebhookAtomic/);
   assert.match(callback, /provider==="interakt"/);
 });
 
