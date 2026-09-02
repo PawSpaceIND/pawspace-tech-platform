@@ -97,6 +97,35 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --file=scripts/employee-seed.sql
+      - name: Verify deterministic UAT identities directly in D1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          SQL="SELECT u.email,u.status,u.role_code,r.code AS role_exists FROM app_users u LEFT JOIN role_definitions r ON r.code=u.role_code WHERE u.email IN ('founder@pawspace.in','anjali.finance33@tkpetcare.in','jyoti.manager39@tkpetcare.in','asha.groomer1@tkpetcare.in','anita.associate17@tkpetcare.in') ORDER BY u.email;"
+          npx wrangler d1 execute pawspace-staging --remote --json --command "$SQL" > staging-uat-identities.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const raw=JSON.parse(fs.readFileSync('staging-uat-identities.json','utf8'));
+          const rows=(Array.isArray(raw)?raw[0]:raw)?.results||[];
+          const expected=new Map([
+            ['founder@pawspace.in','founder'],
+            ['anjali.finance33@tkpetcare.in','finance'],
+            ['jyoti.manager39@tkpetcare.in','manager'],
+            ['asha.groomer1@tkpetcare.in','service_provider'],
+            ['anita.associate17@tkpetcare.in','associate'],
+          ]);
+          if(rows.length!==expected.size) throw new Error(`expected ${expected.size} UAT identities, got ${rows.length}`);
+          for(const row of rows){
+            const role=expected.get(String(row.email));
+            if(!role) throw new Error(`unexpected UAT identity ${row.email}`);
+            if(String(row.status)!=='active') throw new Error(`${row.email} is not active`);
+            if(String(row.role_code)!==role) throw new Error(`${row.email} role mismatch: ${row.role_code}`);
+            if(String(row.role_exists)!==role) throw new Error(`${row.email} role definition missing`);
+          }
+          console.log(JSON.stringify(rows,null,2));
+          NODE
       - name: Verify all seeded UAT personas can establish sessions
         env:
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
@@ -135,6 +164,7 @@ jobs:
           path: |
             d1-capacity-preflight.json
             d1-capacity-preflight.err
+            staging-uat-identities.json
             staging-performance.json
             staging-performance-d1.json
           if-no-files-found: warn
