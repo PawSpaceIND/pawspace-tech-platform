@@ -12,7 +12,7 @@ async function ensureGatewayTables(env:GatewayEnv){const now=Date.now();await en
   env.DB.prepare("CREATE TABLE IF NOT EXISTS security_audit_events (id TEXT PRIMARY KEY, actor_email TEXT NOT NULL, actor_role TEXT NOT NULL, action TEXT NOT NULL, resource_type TEXT NOT NULL, resource_id TEXT, outcome TEXT NOT NULL, detail_json TEXT NOT NULL, created_at INTEGER NOT NULL)"),
 ]);for(const role of defaultRoles)await env.DB.prepare("INSERT OR IGNORE INTO role_definitions (code,name,description,permissions_json,system_role,updated_at) VALUES (?,?,?,?,?,?)").bind(role.code,role.name,role.description,JSON.stringify(role.permissions),1,now).run();}
 
-async function requiredPermission(request:Request):Promise<Permission|null>{const url=new URL(request.url),method=request.method.toUpperCase();if(url.pathname==="/api/pricing-quote"||url.pathname==="/api/training-commercial"||url.pathname==="/api/training-trainers"||url.pathname==="/api/boarding-commercial"||url.pathname==="/api/sitting-commercial"||url.pathname==="/api/taxi-commercial"||url.pathname==="/api/food-commercial"||url.pathname==="/api/walking-commercial"||url.pathname==="/api/razorpay-webhook"||url.pathname==="/api/voice-provider-webhook"||url.pathname==="/api/provider-verification-callback"||url.pathname==="/api/communication-provider-callback"||url.pathname==="/api/haptik"||url.pathname==="/api/whatsapp-uat-webhook"||url.pathname==="/api/identity-session"||url.pathname==="/api/service-availability"||url.pathname==="/api/public-contact"||url.pathname==="/api/provider-public-profile"||url.pathname==="/api/staging-login"||url.pathname==="/api/partner-otp"||url.pathname==="/api/pet-passport-public"
+async function requiredPermission(request:Request):Promise<Permission|null>{const url=new URL(request.url),method=request.method.toUpperCase();if(url.pathname==="/api/pricing-quote"||url.pathname==="/api/training-commercial"||url.pathname==="/api/training-trainers"||url.pathname==="/api/boarding-commercial"||url.pathname==="/api/sitting-commercial"||url.pathname==="/api/taxi-commercial"||url.pathname==="/api/food-commercial"||url.pathname==="/api/walking-commercial"||url.pathname==="/api/razorpay-webhook"||url.pathname==="/api/voice-provider-webhook"||url.pathname==="/api/webhooks/exotel/call-event"||url.pathname==="/api/provider-verification-callback"||url.pathname==="/api/communication-provider-callback"||url.pathname==="/api/haptik"||url.pathname==="/api/whatsapp-uat-webhook"||url.pathname==="/api/identity-session"||url.pathname==="/api/service-availability"||url.pathname==="/api/public-contact"||url.pathname==="/api/inquiries"||url.pathname==="/api/provider-public-profile"||url.pathname==="/api/staging-login"||url.pathname==="/api/partner-otp"||url.pathname==="/api/pet-passport-public"
     ||url.pathname==="/api/host-profile"||url.pathname==="/api/customer-otp"||url.pathname==="/api/customer-profile"||url.pathname==="/api/customer-account"||url.pathname==="/api/booking-rating"||url.pathname==="/api/customer-support-case"||url.pathname==="/api/live-price-quote"||url.pathname==="/api/training-requirements"||url.pathname==="/api/host-trust"||url.pathname==="/api/service-zone")return null;
   if(url.pathname==="/api/customer-offers")return "scheduling.book";
   if(url.pathname==="/api/pawspace-wallet"){if(method==="GET")return "scheduling.book";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="credit"?"finance.manage":"scheduling.book";}
@@ -37,6 +37,10 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/funeral-manual-order")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/platform-governance"){if(method==="GET")return "dashboard.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="save_role"?"roles.manage":"users.manage";}
   if(url.pathname==="/api/identity-bindings")return "users.manage";
+  // This route serves two narrowly scoped principal types with different role permissions: customer and
+  // service_provider. The route resolves a real session and enforces booking ownership itself; mapping it
+  // to a broad gateway permission would either lock customers out or admit unrelated staff identities.
+  if(url.pathname==="/api/communications/voice/bridge")return null;
   // communications.message is deliberately narrow: it lets providers report/contact through routes
   // that enforce booking/provider ownership. The system-wide ledger, queue, dispatch and assignment
   // surfaces require communications.manage so a service provider cannot read or mutate another customer.
@@ -59,6 +63,9 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/voice-outbound")return "customers.manage";
   if(url.pathname==="/api/ai-voice-uat"||url.pathname==="/api/voice-speech")return "communications.call";
   if(url.pathname==="/api/voice-providers")return "settings.manage";
+  // Haptik outbound is an internal marketing surface. Reads expose campaign/audience readiness and
+  // writes can launch governed outreach, so do not let the generic dashboard.view fallback decide it.
+  if(url.pathname==="/api/haptik-outbound")return method==="GET"?"marketing.view":"marketing.manage";
   if(url.pathname==="/api/bot-call-outcomes"){if(method==="GET")return "customers.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;// PTJA W2-B4-M03: a `record` writes a permanent do-not-call and closes the lead - the same rows the
     // HUMAN path writes through /api/revenue-crm, which requires customers.manage. This asked only for
     // communications.call, a default service_provider permission, so a provider with no relationship to
@@ -70,6 +77,11 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/customer-contact")return "communications.manage";
   if(url.pathname==="/api/subscription-customers")return method==="GET"?"customers.view":"data.import";
   if(url.pathname==="/api/subscription-wallet"){if(method==="GET")return url.searchParams.get("customerId")?"customers.view":"scheduling.book";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["reserve","pause","resume"].includes(String(body.action))?"scheduling.book":"bookings.manage";}
+  // Subscription billing belongs in the gateway's canonical permission map. The worker must not alias
+  // these requests onto unrelated routes: ownership stays in the customer route, while pricing/finance
+  // role separation remains duplicated at the admin route as a second gate.
+  if(url.pathname==="/api/subscription-billing")return "scheduling.book";
+  if(url.pathname==="/api/subscription-billing-admin"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");return ["save_plan","approve_plan"].includes(action)?"pricing.manage":"finance.manage";}
   if(url.pathname==="/api/crm")return method==="GET"?"customers.view":"customers.manage";
   if(url.pathname==="/api/customer-360")return method==="GET"?"customers.view":"customers.manage";
   if(url.pathname==="/api/revenue-crm")return method==="GET"?"customers.view":"customers.manage";

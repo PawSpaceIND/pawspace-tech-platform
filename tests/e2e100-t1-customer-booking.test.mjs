@@ -114,6 +114,7 @@ function runBehaviour({ file, pattern }) {
   const result = spawnSync(process.execPath, [
     "--experimental-strip-types",
     "--test",
+    "--test-reporter=tap",
     "--test-name-pattern",
     pattern,
     file,
@@ -121,10 +122,10 @@ function runBehaviour({ file, pattern }) {
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
   assert.equal(result.error, undefined, `${file} could not execute: ${result.error?.message ?? "unknown error"}`);
   assert.equal(result.status, 0, `${file} failed for /${pattern}/\n${output.slice(-8_000)}`);
-  // Node 22 renders the TAP aggregate as `ℹ pass N`; Node 24 emits `# pass N`.
-  // Require a non-zero aggregate under either valid renderer so a fully skipped
-  // name pattern can never make an objective appear exercised.
-  assert.match(output, /(?:^|\n)(?:ℹ|#) pass [1-9]\d*(?:\r?\n|$)/m, `${file} pattern /${pattern}/ did not execute any matching behaviour`);
+  // The child reporter is pinned to TAP so this gate is independent of the
+  // parent process's Node-version-specific default reporter. A non-zero pass
+  // aggregate proves the name pattern exercised at least one real behaviour.
+  assert.match(output, /(?:^|\n)# pass [1-9]\d*(?:\r?\n|$)/m, `${file} pattern /${pattern}/ did not execute any matching behaviour`);
 }
 
 for (const [id, objective, jobs] of cases) {

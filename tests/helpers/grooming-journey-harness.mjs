@@ -58,6 +58,7 @@ export async function setupJourney() {
   sqlite.exec("PRAGMA foreign_keys=ON; PRAGMA journal_mode=MEMORY;");
   const db = makeD1(sqlite);
   installFinancialLifecycleSchema(sqlite);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_service_addresses (booking_id TEXT PRIMARY KEY,address TEXT NOT NULL,latitude REAL,longitude REAL,source TEXT NOT NULL DEFAULT 'test_fixture',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
   globalThis.__GROOM_GOLDEN_DB__ = db;
   // PAWSPACE_SCHEDULING_ENV declared, as every UAT harness must now: /api/uat-scheduling no longer
   // fabricates provider roster unless the runtime says it is a UAT runtime (PTJA W1-F27). This harness
@@ -88,7 +89,7 @@ export async function setupJourney() {
 async function routeCall(modulePath, method, path, body, cookie = "", origin = "https://uat.pawspace.in") {
   const route = await import(modulePath);
   const request = new Request(`${origin}${path}`, {
-    method, headers: { ...(body ? { "content-type": "application/json" } : {}), ...(cookie ? { cookie } : { "oai-authenticated-user-email": "closure-admin@pawspace.test", "oai-authenticated-user-full-name": "Grooming%20closure%20operator", "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8" }) },
+    method, headers: { "x-pawspace-role": "admin", "x-internal-service": "true",  ...(body ? { "content-type": "application/json"  } : {}), ...(cookie ? { cookie } : { "oai-authenticated-user-email": "closure-admin@pawspace.test", "oai-authenticated-user-full-name": "Grooming%20closure%20operator", "oai-authenticated-user-full-name-encoding": "percent-encoded-utf-8" }) },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
   const response = await route[method](request);
@@ -112,7 +113,11 @@ export async function runCompletedJourney(ctx, config) {
   const scheduled = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", schedulePayload, customerCookie);
   const scheduleReplay = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", schedulePayload, customerCookie);
   const provider = scheduled.body.data?.provider;
-  if (!provider) throw new Error(`Scheduling failed: ${scheduled.status} ${JSON.stringify(scheduled.body)}`);
+  if (!provider) {
+  console.error(">>> FAILED PAYLOAD:", JSON.stringify(schedulePayload, null, 2));
+  console.error(">>> RESPONSE BODY:", JSON.stringify(scheduled, null, 2));
+  throw new Error(`Scheduling failed: ${scheduled.status} ${JSON.stringify(scheduled.body)}`);
+}
 
   let coupon = null;
   if (config.couponCode) {
@@ -134,6 +139,10 @@ export async function runCompletedJourney(ctx, config) {
   const bookingReplay = await routeCall("../../app/api/canonical-bookings/route.ts", "POST", "/api/canonical-bookings", bookingPayload, customerCookie);
   const bookingId = booked.body.data?.bookingId;
   const location = await routeCall("../../app/api/grooming-service-location/route.ts", "POST", "/api/grooming-service-location", { bookingId, customerId: config.customerId, address: `${config.customerName} service address`, pincode: config.pincode, latitude: config.latitude, longitude: config.longitude }, customerCookie);
+  // No booking_service_addresses fixture here on purpose. ARRIVED resolves the doorstep through
+  // lib/booking-doorstep.ts, which reads booking_service_locations - the table the real
+  // /api/grooming-service-location call above actually writes. Seeding the travel table instead was what
+  // let the geofence pass in tests while it was unreachable for every real customer.
 
   const linked = await routeCall("../../app/api/grooming-payment-sandbox/route.ts", "POST", "/api/grooming-payment-sandbox", { action: "link_order", bookingId, gatewayOrderId: `order_${config.groupId}` });
   const capture = { action: "simulate_event", bookingId, eventType: "payment.captured", eventId: `evt_${config.groupId}`, gatewayPaymentId: `pay_${config.groupId}`, amount: total, currency: "INR" };
@@ -149,7 +158,7 @@ export async function runCompletedJourney(ctx, config) {
   const jobs = await routeCall("../../app/api/partner-grooming-jobs/route.ts", "GET", `/api/partner-grooming-jobs?providerId=${provider.id}`, null, providerCookie);
   const lifecycle = async (action, extra = {}) => routeCall("../../app/api/grooming-lifecycle/route.ts", "POST", "/api/grooming-lifecycle", { bookingId, action, ...extra }, providerCookie);
   const transitions = [];
-  for (const action of ["accept", "on_the_way", "arrived", "start_service"]) transitions.push(await lifecycle(action));
+  for (const action of ["accept", "on_the_way", "arrived", "start_service"]) transitions.push(await lifecycle(action, action === "arrived" ? { latitude: config.latitude, longitude: config.longitude } : {}));
   const invalidEarlyComplete = await lifecycle("complete");
 
   const media = [];

@@ -43,7 +43,6 @@ export default function WhatsAppTemplatesPage() {
   const [data, setData] = useState<TemplateData>({});
   const [draft, setDraft] = useState(emptyDraft);
   const [reason, setReason] = useState("Verified WhatsApp template lifecycle change");
-  const [metaReference, setMetaReference] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -71,10 +70,11 @@ export default function WhatsAppTemplatesPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ action, ...payload }),
       });
-      const body = await response.json().catch(() => ({})) as { error?: string };
+      const body = await response.json().catch(() => ({})) as { error?: string; data?: Row };
       if (!response.ok) throw new Error(body.error || `Template action failed (HTTP ${response.status})`);
       await load();
-      setNotice(action === "save_draft" ? "Draft saved to the governed template registry." : `Template ${pretty(action)} recorded.`);
+      if (action === "verify_meta") setNotice(`Meta status verified: ${pretty(body.data?.remoteStatus || body.data?.status || "updated")}.`);
+      else setNotice(action === "save_draft" ? "Draft saved to the governed template registry." : `Template ${pretty(action)} recorded.`);
       return true;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -116,15 +116,15 @@ export default function WhatsAppTemplatesPage() {
     <OpsShell
       eyebrow="PawSpace team · WhatsApp"
       title="Templates & lifecycle control"
-      description="Create, validate, submit and reconcile WhatsApp templates against PawSpace's governed UAT registry. Provider approval is recorded only after independent Meta verification; this screen never performs a live Meta mutation."
-      actions={<><Badge tone="info">UAT sandbox</Badge><Badge tone="warning">Production delivery disabled</Badge><Badge tone="neutral">No live Meta mutation</Badge></>}
+      description="Create and submit WhatsApp templates, then verify approval directly against the connected Meta WABA. PawSpace never trusts an operator-entered approval outcome."
+      actions={<><Badge tone="info">Governed registry</Badge><Badge tone="neutral">Meta status verified</Badge><Badge tone="warning">No live Meta mutation</Badge></>}
     >
       {error ? <div className={`${teamStyles.panel} ${teamStyles.panelError}`}><b>{error}</b></div> : null}
       {notice ? <div className={teamStyles.panel}><b>{notice}</b></div> : null}
 
       <section className={teamStyles.panel}>
-        <div className={teamStyles.panelHead}><h2>Template editor</h2><span>Draft → Submit → Meta reconciliation → Approved / Rejected → Pause</span></div>
-        <p className={teamStyles.panelNote}>Use numeric variables such as {"{{1}}"}, {"{{2}}"} in sequence. Put one sample value per line. Outside the 24-hour service window, the canonical WhatsApp outbox accepts only an approved template with the matching language.</p>
+        <div className={teamStyles.panelHead}><h2>Template editor</h2><span>Draft → Submit → Meta verification → Approved / Rejected / Paused</span></div>
+        <p className={teamStyles.panelNote}>Use numeric variables such as {"{{1}}"}, {"{{2}}"} in sequence. Put one sample value per line. Outside the 24-hour service window, the canonical WhatsApp outbox accepts only a template that Meta currently reports as approved with the matching language.</p>
         <div className={teamStyles.fieldRow}>
           <label className={teamStyles.field}>Template key<input value={draft.templateKey} onChange={(event) => setDraft((current) => ({ ...current, templateKey: event.target.value.toLowerCase() }))} placeholder="booking_followup_v1" maxLength={64} /></label>
           <label className={teamStyles.field}>Display name<input value={draft.displayName} onChange={(event) => setDraft((current) => ({ ...current, displayName: event.target.value }))} placeholder="Booking follow-up" maxLength={100} /></label>
@@ -141,10 +141,9 @@ export default function WhatsAppTemplatesPage() {
       <section className={teamStyles.panel}>
         <div className={teamStyles.panelHead}><h2>Lifecycle controls</h2><span>Every transition is audited</span></div>
         <div className={teamStyles.fieldRow}>
-          <label className={teamStyles.field}>Change / reconciliation reason<input value={reason} onChange={(event) => setReason(event.target.value)} maxLength={240} /></label>
-          <label className={teamStyles.field}>Verified Meta reference<input value={metaReference} onChange={(event) => setMetaReference(event.target.value)} placeholder="Meta template ID / review reference" maxLength={160} /></label>
+          <label className={teamStyles.field}>Change reason<input value={reason} onChange={(event) => setReason(event.target.value)} maxLength={240} /></label>
         </div>
-        <p className={teamStyles.panelNote}>“Submit” marks the PawSpace template as awaiting Meta reconciliation; it does not call or mutate Meta. Approve or reject only after checking the provider status independently and recording its reference here.</p>
+        <p className={teamStyles.panelNote}>“Submit” records the local draft as awaiting provider review. “Verify with Meta” performs a live Graph API status read for this template and applies only the provider-returned status, language, category and template ID. There is no manual approve/reject control.</p>
       </section>
 
       <div className={teamStyles.controls}>
@@ -153,7 +152,7 @@ export default function WhatsAppTemplatesPage() {
 
       {visible.length === 0 ? <EmptyState title="No templates in this view." body="Create a governed draft above to start the lifecycle." /> : <div className={teamStyles.tableWrap}>
         <table className={teamStyles.table}>
-          <thead><tr><th>Template</th><th>Status</th><th>Preview</th><th>Meta reconciliation</th><th>Usage</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Template</th><th>Status</th><th>Preview</th><th>Meta verification</th><th>Usage</th><th>Actions</th></tr></thead>
           <tbody>{visible.map((row) => {
             const key = text(row.template_key);
             const status = text(row.status, "draft");
@@ -162,21 +161,20 @@ export default function WhatsAppTemplatesPage() {
               <td><div className={teamStyles.stack}><b>{text(row.display_name, key)}</b><small>{key}</small><small>{pretty(row.category)} · {text(row.approved_language)}</small><small>Updated {dateTime(row.updated_at)} · {text(row.updated_by, "system")}</small></div></td>
               <td><Badge tone={status === "approved" ? "success" : status === "rejected" || status === "paused" ? "warning" : "info"}>{pretty(status)}</Badge></td>
               <td><div className={teamStyles.stack}><span>{text(row.samplePayload?.renderedBody || row.body, "No body")}</span><small>{(row.sampleValues || []).length} sample variable(s)</small></div></td>
-              <td><div className={teamStyles.stack}><b>{pretty(row.meta_reconciliation_status || "not submitted")}</b><small>{text(row.meta_reference, "No Meta reference")}</small><small>{text(row.reconciliation_note, "No reconciliation note")}</small></div></td>
+              <td><div className={teamStyles.stack}><b>{pretty(row.meta_reconciliation_status || "not submitted")}</b><small>{text(row.meta_reference, "No Meta template ID")}</small><small>{text(row.reconciliation_note, "Not verified yet")}</small></div></td>
               <td><div className={teamStyles.stack}><span>Sends {Number(usage.sends || 0)} · Delivered {Number(usage.delivered || 0)}</span><small>Replies {Number(usage.replies || 0)} · Bookings {Number(usage.bookings || 0)}</small></div></td>
               <td><div className={teamStyles.actions}>
                 {(status === "draft" || status === "rejected") ? <Button size="sm" variant="secondary" disabled={busy} onClick={() => edit(row)}>Edit</Button> : null}
                 {(status === "draft" || status === "rejected") ? <Button size="sm" disabled={busy} onClick={() => { void act("submit", { templateKey: key, reason }); }}>Submit</Button> : null}
-                {status === "submitted" ? <Button size="sm" disabled={busy || !metaReference.trim()} onClick={() => { void act("reconcile", { templateKey: key, outcome: "approved", metaReference, reason }); }}>Approve verified</Button> : null}
-                {status === "submitted" ? <Button size="sm" variant="secondary" disabled={busy || !metaReference.trim()} onClick={() => { void act("reconcile", { templateKey: key, outcome: "rejected", metaReference, reason }); }}>Reject verified</Button> : null}
-                {status === "approved" ? <Button size="sm" variant="secondary" disabled={busy} onClick={() => { void act("pause", { templateKey: key, reason }); }}>Pause</Button> : null}
+                {(status === "submitted" || status === "approved" || status === "paused") ? <Button size="sm" disabled={busy} onClick={() => { void act("verify_meta", { templateKey: key }); }}>Verify with Meta</Button> : null}
+                {status === "approved" ? <Button size="sm" variant="secondary" disabled={busy} onClick={() => { void act("pause", { templateKey: key, reason }); }}>Pause locally</Button> : null}
               </div></td>
             </tr>;
           })}</tbody>
         </table>
       </div>}
 
-      <p className={teamStyles.footnote}>Safety state: environment {text(data.environment, "uat")} · production WhatsApp delivery {data.productionDelivery ? "enabled" : "disabled"} · external Meta mutation {data.externalMetaMutation ? "enabled" : "disabled"}. Lifecycle approval changes only PawSpace&apos;s governed registry after a verified provider decision.</p>
+      <p className={teamStyles.footnote}>Safety state: environment {text(data.environment, "uat")} · production WhatsApp delivery {data.productionDelivery ? "enabled" : "disabled"} · external Meta mutation {data.externalMetaMutation ? "enabled" : "disabled"}. Approval is sourced from Meta Graph API; this screen can submit or pause PawSpace state but cannot fabricate provider approval.</p>
     </OpsShell>
   );
 }

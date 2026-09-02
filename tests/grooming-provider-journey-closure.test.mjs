@@ -5,6 +5,8 @@ import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
 installWorkersHooks("__GROOM_PROVIDER_DB__", "__GROOM_PROVIDER_ENV__");
 
+const DOORSTEP = { latitude: 12.9716, longitude: 77.5946 };
+
 function makeD1(sqlite) {
   const statement = (sql, args) => ({
     bind: (...bound) => statement(sql, bound),
@@ -99,6 +101,10 @@ async function setup() {
       gateway TEXT NOT NULL DEFAULT 'uat_sandbox', idempotency_key TEXT NOT NULL UNIQUE,
       detail_json TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
     );
+    CREATE TABLE booking_service_addresses (
+      booking_id TEXT PRIMARY KEY, address TEXT NOT NULL, latitude REAL NOT NULL, longitude REAL NOT NULL,
+      source TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+    );
   `);
 
   sqlite.prepare("INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
@@ -109,6 +115,8 @@ async function setup() {
   const insertBooking = sqlite.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
   insertBooking.run("BK-GROOM-JOURNEY", "ik-groom-journey", "CUS-GROOM-1", JSON.stringify(["PET-GROOM-1"]), JSON.stringify(["SRC-MILO"]), "blr", "blr-east", "grooming", "dog-basic", "Bath & Basic", "GRP-GROOM-JOURNEY", "PRV-GROOM-A", "2026-08-22T04:30:00.000Z", "2026-08-22T06:30:00.000Z", "confirmed", "customer_app", 1899, "INR", "{}", "customer:CUS-GROOM-1", now, now);
   insertBooking.run("BK-GROOM-OTHER", "ik-groom-other", "CUS-GROOM-1", JSON.stringify(["PET-GROOM-1"]), JSON.stringify(["SRC-MILO"]), "blr", "blr-east", "grooming", "dog-basic", "Bath & Basic", "GRP-GROOM-OTHER", "PRV-GROOM-B", "2026-08-22T07:30:00.000Z", "2026-08-22T09:30:00.000Z", "confirmed", "customer_app", 1899, "INR", "{}", "customer:CUS-GROOM-1", now, now);
+  sqlite.prepare("INSERT INTO booking_service_addresses (booking_id,address,latitude,longitude,source,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
+    .run("BK-GROOM-JOURNEY", "Indiranagar test doorstep", DOORSTEP.latitude, DOORSTEP.longitude, "test_fixture", now, now);
 
   const insertWork = sqlite.prepare("INSERT INTO provider_work_orders (id,booking_id,schedule_group_id,provider_id,provider_name,provider_model,service_code,scheduled_start,scheduled_end,occurrence_count,status,assignment_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
   insertWork.run("WO-GROOM-JOURNEY", "BK-GROOM-JOURNEY", "GRP-GROOM-JOURNEY", "PRV-GROOM-A", "Arun Groomer", "full_time", "grooming", "2026-08-22T04:30:00.000Z", "2026-08-22T06:30:00.000Z", 1, "assigned", "{}", now, now);
@@ -132,7 +140,7 @@ async function lifecycle(cookie, action) {
   const response = await POST(new Request("https://uat.pawspace.in/api/grooming-lifecycle", {
     method: "POST",
     headers: { "content-type": "application/json", cookie },
-    body: JSON.stringify({ bookingId: "BK-GROOM-JOURNEY", action }),
+    body: JSON.stringify({ bookingId: "BK-GROOM-JOURNEY", action, ...(action === "arrived" ? DOORSTEP : {}) }),
   }));
   return { status: response.status, body: await response.json() };
 }

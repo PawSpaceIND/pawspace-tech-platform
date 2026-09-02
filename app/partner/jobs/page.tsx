@@ -2,13 +2,14 @@
 import{useEffect,useState}from"react";
 import Link from"next/link";
 
-type Job={bookingId:string;serviceCode:string;packageName:string;scheduledStart:string;scheduledEnd:string;petCount:number;status:string;customerFirstName:string;group:string;needsActionReason:string|null;stayId:string|null;carePlanStatus:string|null;nextSlotStart:string|null};
+type Job={bookingId:string;serviceCode:string;packageName:string;scheduledStart:string;scheduledEnd:string;petCount:number;status:string;customerFirstName:string;group:string;needsActionReason:string|null;stayId:string|null;carePlanStatus:string|null;nextSlotStart:string|null;addOns:string[];safetyRequirements:string[]};
 type Counts={needsAction:number;today:number;upcoming:number;completed:number;total:number};
 type Feed={providerId:string;needsAction:Job[];today:Job[];upcoming:Job[];completed:Job[];counts:Counts};
 
 const C={ink:"#FDF3E1",dim:"#b8c6c0",ground:"#01261F",panel:"#0b2b24",line:"#123c33",orange:"#F6920A",gold:"#E6B34E",green:"#3ecf8e",red:"#ff9a9a"};
 const when=(v:string)=>v?v.slice(0,16).replace("T"," "):"—";
 const statusColor=(s:string)=>s==="completed"?C.green:s==="awaiting_host_acceptance"?C.orange:["cancelled","host_unavailable"].includes(s)?C.red:C.gold;
+const safetyLabel=(value:string)=>value.startsWith("grooming_safety:")?value.slice("grooming_safety:".length).replace(/_/g," "):value.replace(/_/g," ");
 
 async function load(){const r=await fetch("/api/partner-job-feed",{cache:"no-store"});const p=await r.json();if(!r.ok)throw new Error(p.error||"Load failed");return p.data as Feed;}
 
@@ -47,6 +48,8 @@ export default function PartnerJobsPage(){
       {job.nextSlotStart?<span>next slot {when(job.nextSlotStart)}</span>:null}
       {job.needsActionReason==="care_plan_required"?<span style={{color:C.orange}}>care plan pending from customer</span>:null}
     </div>
+    {job.serviceCode==="grooming"&&job.safetyRequirements.length?<div style={{fontSize:13,color:C.orange}}><b>Safety:</b> {job.safetyRequirements.map(safetyLabel).join(" · ")}</div>:null}
+    {job.serviceCode==="grooming"&&job.addOns.length?<div style={{fontSize:13,color:C.dim}}><b style={{color:C.ink}}>Add-ons:</b> {job.addOns.join(" · ")}</div>:null}
     {job.serviceCode==="boarding"&&job.status==="awaiting_host_acceptance"&&job.stayId?<div style={{display:"flex",gap:8}}>
       <button disabled={busy} style={btn} onClick={()=>void stayAction(job.stayId as string,"accept")}>Accept</button>
       <button disabled={busy} style={{...btn,background:"transparent",color:C.dim,border:`1px solid ${C.line}`}} onClick={()=>void stayAction(job.stayId as string,"decline")}>Decline</button>

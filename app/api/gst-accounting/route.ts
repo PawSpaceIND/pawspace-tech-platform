@@ -1,11 +1,12 @@
 import{authError,database,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{acknowledgeAccountingExport,approveStatutoryPackage,ConfigurationRequired,getGstAccountingSnapshot,issueAdjustment,recordCloseEvidence,reviewVendorTax,saveConfiguration}from"../../../lib/gst-accounting";
 import{approveAnnualReturnSafe,generateAccountingExportSafe,generateAnnualReturnSafe,generateStatutoryPackageSafe,issueInvoiceSafe}from"../../../lib/finance-filing-closeout";
+import{approveGstReturn,generateGstr1,generateGstr3b,generateGstr9c,getGstReturnsSnapshot}from"../../../lib/gst-returns";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin write blocked",{status:403});}
 
-export async function GET(request:Request){try{const actor=await resolveActor(request);requirePermission(actor,"finance.view");const db=await database();return json({data:await getGstAccountingSnapshot(db),actor:{email:actor.email,roleCode:actor.roleCode},productionReady:false});}catch(error){return authError(error,"Unable to load GST/accounting control");}}
+export async function GET(request:Request){try{const actor=await resolveActor(request);requirePermission(actor,"finance.view");const db=await database();const url=new URL(request.url);const returnsFilter={returnType:url.searchParams.get("returnType")||undefined,period:url.searchParams.get("period")||undefined};return json({data:await getGstAccountingSnapshot(db),returns:await getGstReturnsSnapshot(db,returnsFilter),actor:{email:actor.email,roleCode:actor.roleCode},productionReady:false});}catch(error){return authError(error,"Unable to load GST/accounting control");}}
 
 export async function POST(request:Request){try{sameOrigin(request);const actor=await resolveActor(request);requirePermission(actor,"finance.manage");const db=await database(),body=await request.json() as Record<string,unknown>,action=String(body.action||"");let data:unknown;
  if(action==="issue_invoice")data=await issueInvoiceSafe(db,body,actor.email);
@@ -18,6 +19,10 @@ export async function POST(request:Request){try{sameOrigin(request);const actor=
  else if(action==="generate_accounting_export")data=await generateAccountingExportSafe(db,body,actor.email);
  else if(action==="acknowledge_accounting_export")data=await acknowledgeAccountingExport(db,body,actor.email);
  else if(action==="record_close_evidence")data=await recordCloseEvidence(db,body,actor.email);
+ else if(action==="generate_gstr1")data=await generateGstr1(db,body,actor.email);
+ else if(action==="generate_gstr3b")data=await generateGstr3b(db,body,actor.email);
+ else if(action==="generate_gstr9c")data=await generateGstr9c(db,body,actor.email);
+ else if(action==="approve_gst_return")data=await approveGstReturn(db,body,actor.email);
  else data=await saveConfiguration(db,body,actor.email);
  await securityAudit(db,actor,`gst.accounting.${action||"configuration"}`,"gst_accounting",String((data as Record<string,unknown>)?.id||(data as Record<string,unknown>)?.entityId||"configuration"),"completed",{productionReady:false,liveFiling:false,liveAccountingPost:false});
  return json({data,productionReady:false,liveFilingEnabled:false,liveAccountingPostEnabled:false});

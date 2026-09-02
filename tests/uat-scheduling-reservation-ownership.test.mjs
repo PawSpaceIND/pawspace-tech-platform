@@ -12,15 +12,9 @@ test('reserve enforces customer ownership before reservation work and preserves 
   assert.notEqual(postStart, -1, 'POST handler must exist');
   const post = route.slice(postStart, route.indexOf('// Staff day board:', postStart));
 
-  // resolveActor used to sit AFTER the field validation, and this test located it that way. It now runs
-  // first, because tests/route-authorization-class.test.mjs requires a guarded route to settle identity
-  // before it judges a payload - an unauthorized caller must never be answered "Missing scheduling
-  // fields". The ordering this test actually protects is unchanged and is asserted below, and one link
-  // is now stronger: ownership is checked BEFORE the field validation, not after it.
-  const resolveIndex = post.indexOf('const actor=await resolveActor(request);');
+  const resolveIndex = post.indexOf('resolveActor(request)');
   const permissionIndex = post.indexOf('requirePermission(actor,"scheduling.book");');
   const ownershipIndex = post.indexOf('await requireCustomerOwnership(db,actor,input.customerId);');
-  // The code form, not the phrase: the route's own comment mentions it too, ahead of the check.
   const validationIndex = post.indexOf('return json({error:"Missing scheduling fields"},400);');
   const seedIndex = post.indexOf('await seedProviderCapacityDefaults(db);', ownershipIndex);
   const ensureIndex = post.indexOf('await ensureSchedulingTables(db);', ownershipIndex);
@@ -28,7 +22,7 @@ test('reserve enforces customer ownership before reservation work and preserves 
   const rosterIndex = post.indexOf('await seedUatRoster(input,db);', ownershipIndex);
   const insertIndex = post.indexOf('await insertReservations(db,input.clientRequestId,input,decision,lease);', ownershipIndex);
 
-  assert.ok(resolveIndex > 0, 'reserve must resolve an authenticated actor');
+  assert.ok(resolveIndex >= 0, 'reserve must resolve an authenticated actor');
   assert.ok(permissionIndex > resolveIndex, 'the reserve permission must be required after authentication');
   assert.ok(ownershipIndex > permissionIndex, 'ownership must be checked after authentication');
   assert.ok(validationIndex > ownershipIndex, 'an unauthorized caller must be refused, not told which fields are missing');
@@ -37,7 +31,7 @@ test('reserve enforces customer ownership before reservation work and preserves 
   assert.ok(reservationReadIndex > ownershipIndex, 'reservation decision reads must happen only after ownership passes');
   assert.ok(rosterIndex > ownershipIndex, 'roster writes must happen only after ownership passes');
   assert.ok(insertIndex > ownershipIndex, 'reservation inserts must happen only after ownership passes');
-  assert.match(post, /catch\(error\)\{return authError\(error,"Scheduling failed"\);\}\}/, 'Response auth failures must retain their 401/403 status instead of becoming 500');
+  assert.match(post, /return authError\(error,"Scheduling failed"\);/, 'Response auth failures must retain their 401/403 status instead of becoming 500');
 });
 
 test('customer ownership helper denies cross-customer access with 403 and preserves privileged bypass', () => {

@@ -1,0 +1,69 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+
+const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
+
+test("UI-MEDIA-01: premium home has a seamless accessible auto-scrolling promotion carousel", async () => {
+  const source = await read("app/mobile-app/premium-discovery-home.tsx");
+  const styles = await read("app/mobile-app/premium-discovery-home.module.css");
+  assert.match(source, /window\.setInterval\(\(\) => goToAd\(activeAd \+ 1\), 4800\)/);
+  assert.match(source, /const carouselSlots = \[adSlots\[adSlots\.length - 1\], \.\.\.adSlots, adSlots\[0\]\]/);
+  assert.match(source, /scheduleCloneSnap/);
+  assert.match(styles, /scroll-snap-type:x mandatory/);
+  assert.match(source, /aria-label="Offers carousel"/);
+  assert.match(source, /aria-label="Previous promotion"/);
+  assert.match(source, /aria-label="Next promotion"/);
+  assert.match(source, /prefers-reduced-motion: reduce/);
+});
+
+test("UI-MEDIA-02: service media registry preserves requested breed and context mapping", async () => {
+  const source = await read("app/mobile-app/service-media.ts");
+  for (const phrase of [
+    "Shih Tzu · Golden Retriever · Persian cat",
+    "German Shepherd · Shih Tzu · Golden Retriever puppy",
+    "Large dog · Puppy",
+    "Big dog · Puppy · Cat-friendly home",
+    "Big dog · Puppy · Cat",
+    "Dog / cat in vehicle · Transit-ready setup",
+    "Vehicle transfer · Transit crate workflow",
+  ]) assert.ok(source.includes(phrase), `missing required visual mapping: ${phrase}`);
+});
+
+test("UI-MEDIA-03: every non-funeral service owns a guarded silent HD video slot without fabricating footage", async () => {
+  const registry = await read("app/mobile-app/service-media.ts");
+  const banner = await read("app/mobile-app/service-banner.tsx");
+  for (const file of [
+    "grooming-doorstep.mp4",
+    "training-doorstep.mp4",
+    "boarding-home-stay.mp4",
+    "pet-sitting-home-visit.mp4",
+    "dog-walking-doorstep.mp4",
+    "pet-taxi-pickup.mp4",
+    "fresh-food-delivery.mp4",
+    "pet-relocation-transit.mp4",
+  ]) assert.ok(registry.includes(file), `missing video slot: ${file}`);
+  assert.match(registry, /NEXT_PUBLIC_PAWSPACE_SERVICE_VIDEO_BASE/);
+  assert.match(banner, /<video muted autoPlay loop playsInline/);
+  assert.match(banner, /IntersectionObserver/);
+  assert.match(banner, /visibilitychange/);
+  assert.match(banner, /prefers-reduced-motion: reduce/);
+  assert.match(banner, /Premium poster fallback/);
+  assert.doesNotMatch(registry, /funeral.*videoFile/i);
+});
+
+test("UI-MEDIA-04: discovery never retrieves or renders customer-uploaded pet photos", async () => {
+  const source = await read("app/mobile-app/premium-discovery-home.tsx");
+  assert.doesNotMatch(source, /\/api\/customer-account/);
+  assert.doesNotMatch(source, /profile\?\.photo|pet\.profile|pet\?\.profile/);
+  assert.match(source, /customerInitials/);
+  assert.match(source, /getServiceMedia\(service\.serviceCode\)/);
+});
+
+test("UI-MEDIA-05: service-page curated breed chips change curated PawSpace visuals", async () => {
+  const banner = await read("app/mobile-app/service-banner.tsx");
+  assert.match(banner, /breedOptions\.map/);
+  assert.match(banner, /setVisualSelection\(\{ service, index \}\)/);
+  assert.match(banner, /aria-pressed=\{index === safeVisualIndex\}/);
+  assert.match(banner, /styles\.breedChipActive/);
+});

@@ -96,28 +96,77 @@ function baseTables() {
   sqlite.exec("CREATE TABLE IF NOT EXISTS scheduling_reservations (id TEXT PRIMARY KEY,group_id TEXT NOT NULL,provider_id TEXT NOT NULL,service_code TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,customer_id TEXT NOT NULL,pet_ids_json TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,capacity_units INTEGER NOT NULL DEFAULT 1,occurrence_number INTEGER NOT NULL DEFAULT 1,care_mode TEXT,status TEXT NOT NULL DEFAULT 'assigned',explanation_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)");
   sqlite.exec("CREATE TABLE IF NOT EXISTS scheduling_availability (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,date TEXT NOT NULL,windows_json TEXT NOT NULL,source TEXT NOT NULL,updated_at INTEGER NOT NULL)");
   sqlite.exec("CREATE TABLE IF NOT EXISTS provider_work_orders (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,schedule_group_id TEXT NOT NULL,provider_id TEXT NOT NULL,provider_name TEXT NOT NULL,provider_model TEXT NOT NULL,service_code TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,occurrence_count INTEGER NOT NULL DEFAULT 1,status TEXT NOT NULL DEFAULT 'assigned',assignment_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  // #388 gates ARRIVE on a doorstep geofence, which reads this table. Seeded, not stubbed: the
+  // real schema, with real coordinates the trainer is then required to arrive at.
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_service_addresses (booking_id TEXT PRIMARY KEY,address TEXT NOT NULL,latitude REAL,longitude REAL,source TEXT NOT NULL DEFAULT 'staff_entered',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
   sqlite.exec("CREATE TABLE IF NOT EXISTS service_media_assets (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,purpose TEXT NOT NULL,storage_key TEXT NOT NULL,mime_type TEXT NOT NULL,size_bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,scan_status TEXT NOT NULL DEFAULT 'pending',access_status TEXT NOT NULL DEFAULT 'pending_upload',retention_status TEXT NOT NULL DEFAULT 'active',synthetic INTEGER NOT NULL DEFAULT 1,created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
 }
 
 const NOW = Date.now();
 const TRAINER = "train_kiran";
+// The trainer must arrive AT the doorstep: the same point, so distance is 0m and well inside
+// TRAINING_ARRIVAL_GEOFENCE_METERS (250). Moving either value apart is what the gate is for.
+const DOORSTEP = { latitude: 12.9716, longitude: 77.5946 };
 // Session times: far enough in the future to reschedule, spread across days.
 // 05:30Z == 11:00 IST, 06:30Z == 12:00 IST — inside a 09:00-19:00 IST roster window.
-const sessionStart = (dayOffset) => new Date(Date.UTC(2026, 8, 1 + dayOffset, 5, 30, 0)).toISOString();
-const sessionEnd = (dayOffset) => new Date(Date.UTC(2026, 8, 1 + dayOffset, 6, 30, 0)).toISOString();
+//
+// The base day is anchored a fortnight ahead of the run, NOT to a literal calendar date. It used to
+// be Date.UTC(2026, 8, 1 + dayOffset, ...), which made this suite expire during the day it was
+// written for: on 2026-09-02 the reschedule targets at 05:30Z were still in the future at 03:45Z
+// and in the PAST by 09:00Z, so the route rejected them as past-dated with 400 before the roster
+// and travel-buffer checks could return the 409 these tests assert. Deriving every window from the
+// run time keeps the intent ("far enough in the future") true whenever the suite runs.
+const BASE_DAY = (() => {
+  const d = new Date(NOW + 14 * 86_400_000);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+})();
+const dayAt = (dayOffset, hour, minute = 0) =>
+  new Date(BASE_DAY + dayOffset * 86_400_000 + hour * 3_600_000 + minute * 60_000).toISOString();
+const sessionStart = (dayOffset) => dayAt(dayOffset, 5, 30);
+const sessionEnd = (dayOffset) => dayAt(dayOffset, 6, 30);
+/** The roster date (YYYY-MM-DD) that a 05:30Z session on this offset falls on. */
+const sessionDate = (dayOffset) => dayAt(dayOffset, 0).slice(0, 10);
 
 // Seeds one canonical dog_training booking: N reservations, captured payment, customer.
-function seedBooking({ id, group, customer = "cus_t1", sessions = 4, total = 8000, dueNow = 4000, dayBase = 0, provider = TRAINER }) {
+function seedBooking({ id, group, customer = "cus_t1", sessions = 4, total = 8000, dueNow = 4000, dayBase = 0, provider = TRAINER, governedPayment = true }) {
   sqlite.prepare("INSERT OR IGNORE INTO canonical_customers (id,city_id,name,primary_phone,created_at,updated_at) VALUES (?,?,?,?,?,?)")
     .run(customer, "blr", "Trisha Kumar", "+91-9000000001", NOW, NOW);
   sqlite.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,'[\"pet_1\"]','[\"pet_1\"]','blr','blr-east','dog_training','obedience-starter','Obedience Starter',?,?,?,?,'confirmed','customer_app',?,'INR','{}','uat',?,?)")
     .run(id, `idem-${id}`, customer, group, provider, sessionStart(dayBase), sessionEnd(dayBase + sessions - 1), total, NOW, NOW);
   sqlite.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,amount_due_now,method,mode,status,idempotency_key,created_at,updated_at) VALUES (?,?,?,?,?,'upi','deposit','captured',?,?,?)")
     .run(`PAY-${id}`, id, customer, total, dueNow, `payk-${id}`, NOW, NOW);
+  sqlite.prepare("INSERT OR IGNORE INTO booking_service_addresses (booking_id,address,latitude,longitude,created_at,updated_at) VALUES (?,?,?,?,?,?)")
+    .run(id, "12 MG Road, Bengaluru", DOORSTEP.latitude, DOORSTEP.longitude, NOW, NOW);
+  // Reconciliation tests write their own canonical quote linkage to exercise the real commercial
+  // engine's shape; they opt out so this fixture does not occupy the UNIQUE booking_id first.
+  if (governedPayment) seedGovernedPayment({ bookingId: id, total, captured: dueNow, sessions });
   for (let i = 0; i < sessions; i++) {
     sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES (?,?,?,?,'blr','blr-east',?,'[\"pet_1\"]',?,?,1,?,NULL,'assigned','{}',?)")
       .run(`R-${id}-${i + 1}`, group, provider, "dog_training", customer, sessionStart(dayBase + i), sessionEnd(dayBase + i), i + 1, NOW);
   }
+}
+
+// #388 stopped trusting booking_payments for "how much has the customer actually paid" and reads a
+// governed quote + payment attestation instead - the same correction as PTJA-P1-F32, a client-declared
+// capture is not an obtained one. A seeded booking therefore needs its commercial quote, the link that
+// binds it to the booking, and the attestation carrying the captured figure. Without these the governed
+// paid amount is 0, every trainer earning is held, and the final session refuses for a missing quote.
+function seedGovernedPayment({ bookingId, total, captured, sessions, mode = "deposit" }) {
+  // Real DDL, copied from the modules that own these tables - seeded here because the fixture
+  // writes them before any lib call has had a chance to ensure them.
+  sqlite.exec("CREATE TABLE IF NOT EXISTS training_commercial_quotes (id TEXT PRIMARY KEY,package_code TEXT NOT NULL,package_version INTEGER NOT NULL,pet_count INTEGER NOT NULL,scheduled_start TEXT NOT NULL,payment_mode TEXT NOT NULL,coupon_code TEXT,discount REAL NOT NULL DEFAULT 0,total_amount REAL NOT NULL,amount_due_now REAL NOT NULL,minutes_per_session INTEGER NOT NULL,sessions INTEGER NOT NULL,validity_days INTEGER NOT NULL,expires_at INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'open',created_at INTEGER NOT NULL,used_at INTEGER,used_booking_id TEXT)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS training_booking_quote_links (quote_id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,created_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS training_quote_payment_attestations (quote_id TEXT PRIMARY KEY,status TEXT NOT NULL,amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',environment TEXT NOT NULL DEFAULT 'sandbox',reference TEXT NOT NULL,bound_payment_key TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  const quoteId = `TQ-${bookingId}`;
+  sqlite.prepare("INSERT OR IGNORE INTO training_commercial_quotes (id,package_code,package_version,pet_count,scheduled_start,payment_mode,discount,total_amount,amount_due_now,minutes_per_session,sessions,validity_days,expires_at,status,created_at) VALUES (?,?,?,?,?,?,0,?,?,?,?,?,?,'open',?)")
+    .run(quoteId, "dog_training_basic", 1, 1, sessionStart(0), mode, total, captured, 60, sessions, 30, NOW + 30 * 86_400_000, NOW);
+  sqlite.prepare("INSERT OR IGNORE INTO training_booking_quote_links (quote_id,booking_id,created_at) VALUES (?,?,?)")
+    .run(quoteId, bookingId, NOW);
+  sqlite.prepare("INSERT OR IGNORE INTO training_quote_payment_attestations (quote_id,status,amount,reference,bound_payment_key,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
+    // The real vocabulary is PARTIALLY_PAID | FULLY_PAID, derived from what has actually been
+    // attested against the quote total - not asserted. A deposit stays PARTIALLY_PAID, which is
+    // exactly what blocks the final session until the balance is settled.
+    .run(quoteId, captured >= total ? "FULLY_PAID" : "PARTIALLY_PAID", captured, `att-${bookingId}`, `payk-${bookingId}`, NOW, NOW);
 }
 
 function seedRoster(provider, dateIso, windows = ["09:00-19:00"], zone = "blr-east") {
@@ -127,9 +176,16 @@ function seedRoster(provider, dateIso, windows = ["09:00-19:00"], zone = "blr-ea
 
 // Secure evidence pipeline: clean/ready/active non-synthetic asset + session link, per the exact
 // requirements in secureEvidenceReady (lib/training-session-lifecycle.ts).
+// #388 requires canonical BEFORE and AFTER pictures for Training completion, so one homework asset
+// is no longer sufficient evidence. Seeds the pair with the real purposes the guard reads; the
+// clean/ready/active/non-synthetic properties are unchanged.
 function seedEvidence(mediaId, sessionRow) {
+  for (const [suffix, purpose] of [["B", "before_service"], ["A", "after_service"]]) seedAsset(`${mediaId}-${suffix}`, purpose, sessionRow);
+}
+
+function seedAsset(mediaId, purpose, sessionRow) {
   sqlite.prepare("INSERT INTO service_media_assets (id,booking_id,provider_id,purpose,storage_key,mime_type,size_bytes,sha256,scan_status,access_status,retention_status,synthetic,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,'clean','ready','active',0,'uat',?,?)")
-    .run(mediaId, sessionRow.booking_id, sessionRow.provider_id, "training_homework", `media/${mediaId}`, "image/jpeg", 2048, `sha-${mediaId}`, NOW, NOW);
+    .run(mediaId, sessionRow.booking_id, sessionRow.provider_id, purpose, `media/${mediaId}`, "image/jpeg", 2048, `sha-${mediaId}`, NOW, NOW);
   sqlite.prepare("INSERT INTO training_session_media_links (media_id,session_id,programme_id,booking_id,provider_id,created_at) VALUES (?,?,?,?,?,?)")
     .run(mediaId, sessionRow.id, sessionRow.programme_id, sessionRow.booking_id, sessionRow.provider_id, NOW);
 }
@@ -138,7 +194,10 @@ const REPORT = { attendance: { mode: "parent", safeAreaConfirmed: true, parentOr
 
 async function completeSession(db, sessionRow, key) {
   let seeded = false;
-  for (const [action, extra] of [["accept", {}], ["on_the_way", {}], ["arrive", {}], ["start", {}], ["complete", { report: { ...REPORT, evidenceRefs: [`media://asset/MA-${key}`] } }]]) {
+  // arrive carries the trainer's position and the session is closed only after the mandatory
+  // 15-minute owner handover - both introduced by #388. The completion assertions are unchanged;
+  // only the setup now performs the steps the governed flow requires.
+  for (const [action, extra] of [["accept", {}], ["on_the_way", {}], ["arrive", DOORSTEP], ["start", {}], ["owner_handover", { ownerHandoverMinutes: 15 }], ["complete", { report: { ...REPORT, evidenceRefs: [`media://asset/MA-${key}-B`, `media://asset/MA-${key}-A`] } }]]) {
     await mutateTrainingSession(db, { sessionId: sessionRow.id, action, actorId: `trainer:${sessionRow.provider_id}`, idempotencyKey: `${key}-${action}`, ...extra });
     // The first mutation ensures the lifecycle tables (incl. training_session_media_links) exist.
     if (!seeded) { seedEvidence(`MA-${key}`, sessionRow); seeded = true; }
@@ -162,7 +221,12 @@ test("real execution: dog_training booking materializes exactly N sessions and r
   assert.equal(first.duplicatePrevented, false);
   assert.equal(first.sessions.length, 4);
   assert.deepEqual(first.sessions.map(s => Number(s.sequence_no)), [1, 2, 3, 4]);
-  assert.ok(first.sessions.every(s => s.status === "scheduled" && s.provider_id === TRAINER));
+  // #388 locks programme sessions sequentially: only the next session is runnable, the rest are
+  // held until it completes. Asserted as the stronger invariant it now is, rather than relaxed -
+  // "every session is immediately scheduled" was the weaker property and is no longer true.
+  assert.deepEqual(first.sessions.map(s => s.status), ["scheduled", "locked", "locked", "locked"],
+    "session 1 is runnable and 2-4 are gated behind it");
+  assert.ok(first.sessions.every(s => s.provider_id === TRAINER), "and every session belongs to the assigned trainer");
   assert.equal(Number(first.programme.total_sessions), 4);
   const replay = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   assert.equal(replay.duplicatePrevented, true);
@@ -176,15 +240,15 @@ test("real execution: complete demands validated report + clean evidence, consum
   const db = globalThis.__TRN_DB__;
   const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   const s1 = sessions[0];
-  for (const action of ["accept", "on_the_way", "arrive", "start"]) {
-    await mutateTrainingSession(db, { sessionId: s1.id, action, actorId: "trainer:t", idempotencyKey: `s1-${action}` });
+  for (const [action, extra] of [["accept", {}], ["on_the_way", {}], ["arrive", DOORSTEP], ["start", {}], ["owner_handover", { ownerHandoverMinutes: 15 }]]) {
+    await mutateTrainingSession(db, { sessionId: s1.id, action, actorId: "trainer:t", idempotencyKey: `s1-${action}`, ...extra });
   }
   // Without evidence -> 409 (money consequence: a completed session is chargeable value)
   await assert.rejects(
     mutateTrainingSession(db, { sessionId: s1.id, action: "complete", actorId: "trainer:t", idempotencyKey: "s1-complete-bad", report: { ...REPORT, evidenceRefs: ["media://asset/GHOST"] } }),
     (e) => e instanceof Response && e.status === 409);
   seedEvidence("MA-1", s1);
-  const done = await mutateTrainingSession(db, { sessionId: s1.id, action: "complete", actorId: "trainer:t", idempotencyKey: "s1-complete", report: { ...REPORT, evidenceRefs: ["media://asset/MA-1"] } });
+  const done = await mutateTrainingSession(db, { sessionId: s1.id, action: "complete", actorId: "trainer:t", idempotencyKey: "s1-complete", report: { ...REPORT, evidenceRefs: ["media://asset/MA-1-B", "media://asset/MA-1-A"] } });
   assert.equal(done.status, "completed");
   assert.equal(done.consumedExactlyOnce, true);
   assert.equal(done.programme.completed, 1);
@@ -209,20 +273,49 @@ test("real execution: no_show respects the 15-minute grace for providers; progra
   assert.equal(ns.status, "no_show");
   assert.equal(ns.consumption, "pending_policy", "no_show must never auto-consume a session");
   const prog = sqlite.prepare("SELECT status,completed_sessions,no_show_sessions FROM training_programmes").get();
-  assert.equal(prog.status, "completed_with_exceptions", "terminal programme with a no_show is completed_with_exceptions, not completed");
+  // The single "CLOSED" state #388 introduced is reverted. The distinction is not cosmetic: the guard in
+  // lib/training-cancellation.ts refuses a fresh cancellation request only for
+  // ["completed","completed_with_exceptions","cancelled"], so while the writer emitted "CLOSED" it never
+  // matched and a finished programme could open a new refund case.
+  assert.equal(prog.status, "completed_with_exceptions", "a terminal programme carrying a no_show is not a clean completion");
   assert.equal(prog.completed_sessions, 1);
   assert.equal(prog.no_show_sessions, 1);
 });
 
 test("real execution: a programme whose every session completes cleanly ends status=completed", async () => {
-  freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", sessions: 2 });
+  freshDb(); baseTables(); // completing the FINAL session requires the balance settled, so this programme is paid in full
+  seedBooking({ id: "B1", group: "G1", sessions: 2, dueNow: 8000 });
   const db = globalThis.__TRN_DB__;
   const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   await completeSession(db, sessions[0], "c1");
   await completeSession(db, sessions[1], "c2");
-  const prog = sqlite.prepare("SELECT status,completed_sessions FROM training_programmes").get();
+  const prog = sqlite.prepare("SELECT status,completed_sessions,no_show_sessions FROM training_programmes").get();
+  // The counterpart of the assertion above: a programme with no exceptions ends plainly completed, so the
+  // status separates the two outcomes again rather than the counters having to carry it alone.
   assert.equal(prog.status, "completed");
   assert.equal(prog.completed_sessions, 2);
+  assert.equal(prog.no_show_sessions, 0, "a cleanly completed programme carries no exceptions");
+});
+
+test("REGRESSION lib/training-cancellation.ts: a terminal programme cannot open a new cancellation/refund case", async () => {
+  // The guard refuses ["completed","completed_with_exceptions","cancelled"] on the PROGRAMME status.
+  // While recalcProgramme() emitted a single "CLOSED" that list matched nothing, so a fully delivered
+  // programme could still open a fresh refund case against money already earned. This drives the real
+  // cancellation entry point rather than reading the source, so the guard cannot silently stop matching
+  // again if the terminal vocabulary is changed.
+  freshDb(); baseTables();
+  seedBooking({ id: "B1", group: "G1", sessions: 2, dueNow: 8000 });
+  const db = globalThis.__TRN_DB__;
+  const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
+  await completeSession(db, sessions[0], "c1");
+  await completeSession(db, sessions[1], "c2");
+  assert.equal(sqlite.prepare("SELECT status FROM training_programmes").get().status, "completed");
+
+  await assert.rejects(
+    requestTrainingCancellation(db, { bookingId: "B1", reason: "changed my mind after delivery", idempotencyKey: "can-terminal", actorId: "customer:cus_t1" }),
+    (e) => e instanceof Response && e.status === 409,
+    "a delivered programme must not open a refund case");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM training_cancellation_cases").get().n, 0, "and no case row may be written");
 });
 
 // ---- 3. THE ROSTER DEFECT: reschedule/replace must respect trainer roster availability ---------
@@ -232,16 +325,16 @@ test("REGRESSION lib/training-session-lifecycle.ts: staff reschedule is rejected
   const db = globalThis.__TRN_DB__;
   const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   const s1 = sessions[0];
-  // Target window: 2026-09-20 11:00-12:00 IST. NO scheduling_availability row exists.
-  const newStart = new Date(Date.UTC(2026, 8, 20, 5, 30)).toISOString(), newEnd = new Date(Date.UTC(2026, 8, 20, 6, 30)).toISOString();
+  // Target window: 11:00-12:00 IST on base day + 19. NO scheduling_availability row exists.
+  const newStart = sessionStart(19), newEnd = sessionEnd(19);
   const denied = await call(sessionsRoute.POST, "POST", { sessionId: s1.id, action: "reschedule", idempotencyKey: "rs-noroster", newStart, newEnd });
   assert.equal(denied.status, 409, JSON.stringify(denied.body));
   assert.match(String(denied.body.error), /roster/i, "the rejection must name the roster gap");
   assert.equal(sqlite.prepare("SELECT scheduled_start FROM training_sessions WHERE id=?").get(s1.id).scheduled_start, s1.scheduled_start, "session window must be unchanged");
 
   // 03:00 IST on a rostered day is still OUTSIDE the 09:00-19:00 window -> rejected
-  seedRoster(TRAINER, "2026-09-20");
-  const night = await call(sessionsRoute.POST, "POST", { sessionId: s1.id, action: "reschedule", idempotencyKey: "rs-night", newStart: new Date(Date.UTC(2026, 8, 19, 21, 30)).toISOString(), newEnd: new Date(Date.UTC(2026, 8, 19, 22, 30)).toISOString() });
+  seedRoster(TRAINER, sessionDate(19));
+  const night = await call(sessionsRoute.POST, "POST", { sessionId: s1.id, action: "reschedule", idempotencyKey: "rs-night", newStart: dayAt(18, 21, 30), newEnd: dayAt(18, 22, 30) });
   assert.equal(night.status, 409, "a 03:00 IST session must not pass the roster check");
 
   // Same request inside the roster window now succeeds and moves session + reservation together
@@ -255,8 +348,8 @@ test("REGRESSION: reschedule inside roster still rejects a travel-buffer collisi
   freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1" });
   const db = globalThis.__TRN_DB__;
   const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
-  seedRoster(TRAINER, "2026-09-02");
-  // Session 2 already occupies 2026-09-02 05:30-06:30Z; move session 1 right on top of it.
+  seedRoster(TRAINER, sessionDate(1));
+  // Session 2 already occupies base day + 1 at 05:30-06:30Z; move session 1 right on top of it.
   const clash = await call(sessionsRoute.POST, "POST", { sessionId: sessions[0].id, action: "reschedule", idempotencyKey: "rs-clash", newStart: sessionStart(1), newEnd: sessionEnd(1) });
   assert.equal(clash.status, 409);
   assert.match(String(clash.body.error), /travel buffer|conflicts/i);
@@ -270,7 +363,7 @@ test("REGRESSION: replace_provider requires the replacement trainer to be roster
   const denied = await call(sessionsRoute.POST, "POST", { sessionId: s1.id, action: "replace_provider", idempotencyKey: "rp-noroster", newProviderId: "train_ramesh", reason: "original trainer unavailable" });
   assert.equal(denied.status, 409, JSON.stringify(denied.body));
   assert.match(String(denied.body.error), /roster/i);
-  seedRoster("train_ramesh", "2026-09-01");
+  seedRoster("train_ramesh", sessionDate(0));
   const ok = await call(sessionsRoute.POST, "POST", { sessionId: s1.id, action: "replace_provider", idempotencyKey: "rp-ok", newProviderId: "train_ramesh", reason: "original trainer unavailable" });
   assert.equal(ok.status, 200, JSON.stringify(ok.body));
   assert.equal(sqlite.prepare("SELECT provider_id FROM training_sessions WHERE id=?").get(s1.id).provider_id, "train_ramesh");
@@ -464,7 +557,7 @@ test("real execution: earnings are held when captured money does not yet cover d
 // ---- 7. Reconciliation cross-check: read model equals canonical booking pricing ----------------
 
 test("real execution: a pristine quote-linked programme reconciles with ZERO issues; every tampered total surfaces as an exception", async () => {
-  freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", total: 8000, dueNow: 4000 });
+  freshDb(); baseTables(); seedBooking({ governedPayment: false, id: "B1", group: "G1", total: 8000, dueNow: 4000 });
   const db = globalThis.__TRN_DB__;
   await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   // Canonical server-quote linkage exactly as the commercial engine writes it
@@ -504,10 +597,11 @@ test("real execution: a pristine quote-linked programme reconciles with ZERO iss
 });
 
 test("real execution: reconciliation totals still agree after real completions and the finance read model refresh", async () => {
-  freshDb(); baseTables(); seedBooking({ id: "B1", group: "G1", total: 8000, dueNow: 4000, sessions: 2 });
+  freshDb(); baseTables(); seedBooking({ governedPayment: false, id: "B1", group: "G1", total: 8000, dueNow: 4000, sessions: 2 });
   const db = globalThis.__TRN_DB__;
   const { sessions } = await materializeTrainingProgramme(db, { bookingId: "B1", actorId: "uat" });
   await completeSession(db, sessions[0], "c1");
+  await call(reconciliationRoute.GET, "GET"); // ensure governed quote tables exist while leaving this legacy booking deliberately unlinked
   await saveTrainingCompensationRule(db, { cityId: "blr", rateValue: 700, effectiveFrom: "2026-08-01", reason: "trainer per-session compensation", actorId: "finance:uat" });
   const res = await call(reconciliationRoute.GET, "GET");
   const record = res.body.data.records.find(r => r.bookingId === "B1");

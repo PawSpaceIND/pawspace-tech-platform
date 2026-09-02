@@ -26,9 +26,6 @@ function makeD1(sqlite) {
   return {
     prepare: (sql) => statement(sql, []),
     batch: async (statements) => {
-      // node:sqlite is used as the D1-compatible execution surface throughout the
-      // repository. Use a real SQLite transaction here so this test also proves a
-      // failing cancellation leg cannot leave only part of the state transition.
       sqlite.exec("BEGIN IMMEDIATE");
       try {
         const results = [];
@@ -88,8 +85,6 @@ function seedBooking(sqlite) {
     .run(CUSTOMER, "blr", "Lane One Customer", "+919000000111", NOW, NOW);
   sqlite.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,'[\"pet-lane1\"]','[\"pet-lane1\"]','blr','blr-east','dog_training','obedience-starter','Obedience Starter',?,?,?,?,'confirmed','customer_app',8000,'INR','{}','customer',?,?)")
     .run(BOOKING, `idem-${BOOKING}`, CUSTOMER, GROUP, PROVIDER, sessionStart(0), sessionEnd(3), NOW, NOW);
-  // Only Rs.3,000 is cash captured. Wallet/PawPoints are separate customer credits,
-  // so a cancellation may never turn those credits into an extra cash refund.
   sqlite.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,amount_due_now,currency,method,mode,status,gateway,idempotency_key,detail_json,created_at,updated_at) VALUES (?,?,?,?,?,'INR','upi','deposit','captured','uat_sandbox',?,'{}',?,?)")
     .run(`PAY-${BOOKING}`, BOOKING, CUSTOMER, 8000, 3000, `pay-${BOOKING}`, NOW, NOW);
   for (let index = 0; index < 4; index++) {
@@ -111,6 +106,9 @@ test("confirmed Training cancellation releases work/capacity, caps cash refund, 
   globalThis.__LANE1_CANCEL_ENV__ = { DB: db, PAWSPACE_PAYMENT_ENV: "sandbox" };
   baseTables(sqlite);
   seedBooking(sqlite);
+  // Deliberately NOT calling ensureTrainingCommercialTables here. approveTrainingCancellation reaches
+  // the commercial quote link through ensureTrainingCancellationTables -> ensureTrainingFinanceTables,
+  // and creating the table from the test instead is what hid the fact that production never did.
 
   await materializeTrainingProgramme(db, { bookingId: BOOKING, actorId: "system:lane1-test" });
 
@@ -179,8 +177,6 @@ test("confirmed Training cancellation releases work/capacity, caps cash refund, 
   assert.equal(count(sqlite, "training_refund_instructions"), 1);
   assert.equal(sqlite.prepare("SELECT amount FROM training_refund_instructions WHERE case_id=?").get(request.caseId).amount, 3000);
 
-  // THE LANE-1 REGRESSION: these credits were customer property before checkout.
-  // A cancelled booking must not strand them on the cancelled booking.
   assert.equal(await walletBalance(db, CUSTOMER), WALLET_SEED, "wallet principal is restored after cancellation");
   assert.equal(await pawPointsBalance(db, CUSTOMER), POINTS_SEED, "redeemed PawPoints are restored after cancellation");
   assert.equal(count(sqlite, "pawspace_wallet_ledger", `idempotency_key='wallet-cancellation-restore:${BOOKING}'`), 1);
