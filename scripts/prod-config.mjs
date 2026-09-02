@@ -36,6 +36,21 @@ for (const [name, allowed, why] of REQUIRED_EXPLICIT) {
   else explicit[name] = value;
 }
 
+const idfyUrl = String(process.env.IDFY_URL || "").trim();
+if (!idfyUrl) problems.push("IDFY_URL is not set. Production provider verification must not fall back to an unconfigured adapter.");
+else {
+  try {
+    const parsed = new URL(idfyUrl);
+    if (parsed.protocol !== "https:") problems.push("IDFY_URL must use https in production.");
+    if (!parsed.hostname || parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1" || parsed.hostname.endsWith(".invalid")) problems.push("IDFY_URL points to a non-production host.");
+  } catch {
+    problems.push("IDFY_URL is not a valid URL.");
+  }
+}
+
+const r2BucketName = String(process.env.PRODUCTION_R2_BUCKET_NAME || "").trim();
+if (!r2BucketName) problems.push("PRODUCTION_R2_BUCKET_NAME is not set. Private provider documents require a real R2 binding; there is deliberately no storage fallback.");
+
 // Voice defaults are intentionally different from the real-world modes above: an omitted voice input
 // means disabled, never live. During controlled validation the production artifact may be configured as
 // UAT, but the existing voice gate still additionally requires the UAT approval flag, allow-list,
@@ -62,9 +77,9 @@ cfg.vars = {
   PAWSPACE_MAPS_ENV: explicit.PAWSPACE_MAPS_ENV,
   PAWSPACE_VOICE_ENV: voiceEnv,
   PAWSPACE_VOICE_UAT_APPROVED: voiceUatApproved,
+  IDFY_URL: idfyUrl,
 };
-
-if (String(process.env.PRODUCTION_R2_BUCKET_NAME || "").trim()) cfg.r2_buckets = [{ binding: "PAWSPACE_MEDIA_BUCKET", bucket_name: String(process.env.PRODUCTION_R2_BUCKET_NAME).trim() }];
+cfg.r2_buckets = [{ binding: "PAWSPACE_MEDIA_BUCKET", bucket_name: r2BucketName }];
 const forbidden = FORBIDDEN_IN_PRODUCTION.filter((name) => name in cfg.vars);
 if (forbidden.length) {
   console.error(`Refusing to configure the production deploy: forbidden vars present: ${forbidden.join(", ")}`);
@@ -74,4 +89,4 @@ writeFileSync(path, JSON.stringify(cfg));
 console.log(`Production config written → name=${PRODUCTION_WORKER_NAME}`);
 console.log(`  payment=${explicit.PAWSPACE_PAYMENT_ENV} communication=${explicit.PAWSPACE_COMMUNICATION_ENV} maps=${explicit.PAWSPACE_MAPS_ENV}`);
 console.log(`  voice=${voiceEnv} voiceUatApproved=${voiceUatApproved}`);
-console.log("Database id and credentials are NOT logged. Credentials are uploaded as Worker secrets.");
+console.log("Database id, bucket name and credentials are NOT logged. Credentials are uploaded as Worker secrets/bindings.");
