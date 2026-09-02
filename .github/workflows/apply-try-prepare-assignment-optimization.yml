@@ -1,4 +1,4 @@
-name: Apply tryPrepareAssignment query optimization
+name: Apply scheduling HTTP 500 instrumentation
 
 on:
   push:
@@ -11,9 +11,9 @@ permissions:
   contents: write
 
 jobs:
-  apply:
+  instrument:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,94 +24,60 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm run install:ci
-      - name: Apply bounded read and fanout optimizations
+      - name: Add structured scheduling diagnostics
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
           route=Path('app/api/uat-scheduling/route.ts')
           s=route.read_text()
-          old='const required=["scheduling_assignment_decisions","scheduling_rules","scheduling_availability","scheduling_reservations","idx_scheduling_availability_provider_date","idx_scheduling_availability_date_provider_source","idx_scheduling_reservations_provider","idx_scheduling_reservations_city_status_provider_window","idx_scheduling_reservations_group","idx_scheduling_reservations_attempt"];'
-          new='const required=["scheduling_assignment_decisions","scheduling_rules","scheduling_availability","scheduling_reservations","idx_scheduling_availability_provider_date","idx_scheduling_availability_date_provider_source","idx_scheduling_reservations_provider","idx_scheduling_reservations_city_status_provider_window","idx_scheduling_reservations_city_active_window","idx_scheduling_reservations_group","idx_scheduling_reservations_attempt"];'
+          old='const json=(data:unknown,status=200)=>Response.json(data,{status});'
+          new='''const json=(data:unknown,status=200)=>Response.json(data,{status});
+function schedulingDiagnostic(stage:string,error:unknown,context:Record<string,unknown>={}){const resolved=error instanceof Error?error:new Error(String(error));console.error(JSON.stringify({event:"uat_scheduling_error",stage,...context,errorName:resolved.name,errorMessage:resolved.message,stack:resolved.stack??null}));}'''
+          assert old in s and 'function schedulingDiagnostic(' not in s
+          s=s.replace(old,new,1)
+          old='  await ensureProviderCapacityTables(db);'
+          new='  try{await ensureProviderCapacityTables(db);}catch(error){schedulingDiagnostic("ensureProviderCapacityTables",error);throw error;}'
           assert old in s
           s=s.replace(old,new,1)
-          old='  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_city_status_provider_window ON scheduling_reservations(city_id,status,provider_id,scheduled_start,scheduled_end)"),\n  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_group ON scheduling_reservations(group_id)"),'
-          new='  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_city_status_provider_window ON scheduling_reservations(city_id,status,provider_id,scheduled_start,scheduled_end)"),\n  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_city_active_window ON scheduling_reservations(city_id,status,scheduled_start,scheduled_end,provider_id)"),\n  db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_group ON scheduling_reservations(group_id)"),'
+          old='const results=statements.length===1?[await statements[0]!.run()]:await db.batch(statements);const inserted=results.reduce((sum,result)=>sum+Number(result?.meta?.changes||0),0);'
+          new='const results=await(async()=>{try{return statements.length===1?[await statements[0]!.run()]:await db.batch(statements);}catch(error){schedulingDiagnostic("reservation_claim",error,{groupId,providerId:decision.provider!.id,serviceCode:input.serviceCode,occurrences:decision.occurrences.length});throw error;}})();const inserted=results.reduce((sum,result)=>sum+Number(result?.meta?.changes||0),0);'
           assert old in s
           s=s.replace(old,new,1)
-          old='function repository(db:Awaited<ReturnType<typeof database>>,input?:RequestBody,syntheticUatRoster=false):PlatformRepository{'
-          new='''function reservationReadWindow(input?:RequestBody){
-  if(!input)return null;
-  const occurrences=Math.max(1,Number(input.occurrences??1));
-  const recurring=input.serviceCode==="dog_training"||input.serviceCode==="dog_walking";
-  const maxOffsetDays=input.weekdays?.length?180:recurring?Math.max(0,occurrences-1)*Math.max(1,Number(input.cadenceDays??7)):0;
-  const dayMs=86_400_000;
-  return{start:new Date(new Date(input.scheduledStart).getTime()-dayMs).toISOString(),end:new Date(new Date(input.scheduledEnd).getTime()+(maxOffsetDays+1)*dayMs).toISOString()};
-}
-function repository(db:Awaited<ReturnType<typeof database>>,input?:RequestBody,syntheticUatRoster=false):PlatformRepository{'''
+          old='export async function POST(request:Request){try{const db=await database(),input=await request.json() as RequestBody,actor=await resolveActor(request);'
+          new='export async function POST(request:Request){let diagnosticContext:Record<string,unknown>={};try{const db=await database(),input=await request.json() as RequestBody;diagnosticContext={clientRequestId:String(input.clientRequestId||""),serviceCode:String(input.serviceCode||""),cityId:String(input.cityId||""),zoneId:String(input.zoneId||"")};const actor=await resolveActor(request);'
           assert old in s
           s=s.replace(old,new,1)
-          old='  const bookingRows=(cityId:string)=>{let pending=bookingsByCity.get(cityId);if(!pending){pending=db.prepare("SELECT * FROM scheduling_reservations WHERE city_id=? AND status!=\'cancelled\'").bind(cityId).all<Record<string,unknown>>().then(rows=>rows.results);bookingsByCity.set(cityId,pending);}return pending;};'
-          new='  const bookingRows=(cityId:string)=>{let pending=bookingsByCity.get(cityId);if(!pending){const window=reservationReadWindow(input);pending=(window?db.prepare("SELECT * FROM scheduling_reservations WHERE city_id=? AND status IN (\'confirmed\',\'assigned\',\'on_the_way\',\'arrived\',\'in_service\') AND scheduled_start<? AND scheduled_end>?").bind(cityId,window.end,window.start):db.prepare("SELECT * FROM scheduling_reservations WHERE city_id=? AND status IN (\'confirmed\',\'assigned\',\'on_the_way\',\'arrived\',\'in_service\')").bind(cityId)).all<Record<string,unknown>>().then(rows=>rows.results);bookingsByCity.set(cityId,pending);}return pending;};'
+          old='if(isSqliteBusyError(error))return json({error:"SCHEDULING_BUSY",message:"Scheduling is temporarily busy after bounded retries; retry shortly."},503);return authError(error,"Scheduling failed");}}'
+          new='if(isSqliteBusyError(error))return json({error:"SCHEDULING_BUSY",message:"Scheduling is temporarily busy after bounded retries; retry shortly."},503);schedulingDiagnostic("post_unhandled",error,diagnosticContext);return authError(error,"Scheduling failed");}}'
           assert old in s
           s=s.replace(old,new,1)
           route.write_text(s)
 
-          mandate=Path('lib/provider-verification-mandate.ts')
-          s=mandate.read_text()
-          old='export async function ensureVerificationMandateTables(db: Db) {'
-          new='async function ensureVerificationMandateTablesUncached(db: Db) {'
-          assert old in s
-          s=s.replace(old,new,1)
-          marker='''  await db.prepare("ALTER TABLE provider_verifications ADD COLUMN expires_at INTEGER").run()
-    .catch((error: unknown) => { if (!/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) throw error; });
-}
-
-/** The statuses that mean a check is NOT currently satisfied.'''
-          replacement='''  await db.prepare("ALTER TABLE provider_verifications ADD COLUMN expires_at INTEGER").run()
-    .catch((error: unknown) => { if (!/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) throw error; });
-  await db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_onboarding_provider_updated ON provider_onboarding_applications(provider_id,updated_at DESC)").run()
-    .catch((error: unknown) => { if (!/no such table/i.test(error instanceof Error ? error.message : String(error))) throw error; });
-}
-const verificationMandateTablesReady=new WeakSet<Db>();
-const verificationMandateTablesRunning=new WeakMap<Db,Promise<void>>();
-export async function ensureVerificationMandateTables(db: Db) {
-  if(verificationMandateTablesReady.has(db))return;
-  const running=verificationMandateTablesRunning.get(db);if(running)return running;
-  const pending=ensureVerificationMandateTablesUncached(db).then(()=>{verificationMandateTablesReady.add(db);});
-  verificationMandateTablesRunning.set(db,pending);
-  try{await pending;}finally{if(verificationMandateTablesRunning.get(db)===pending)verificationMandateTablesRunning.delete(db);}
-}
-
-/** The statuses that mean a check is NOT currently satisfied.'''
-          assert marker in s
-          s=s.replace(marker,replacement,1)
-          mandate.write_text(s)
-
           cap=Path('lib/provider-capacity-governance.ts')
           s=cap.read_text()
-          old='export async function loadGovernedProviders(db:Db,cityId:string,zoneId:string,serviceCode:string,at=new Date()){await seedProviderCapacityDefaults(db);const date=at.toISOString().slice(0,10);const rows=await db.prepare("SELECT * FROM provider_capacity_profiles WHERE city_id=? AND live=1 AND status=\'active\' AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)").bind(cityId,date,date).all<Row>();const baseProviders=rows.results.map(rowToProvider).filter(p=>p.services.includes(serviceCode)&&p.zones.includes(zoneId));const providers=await Promise.all(baseProviders.map(provider=>attachHomeBase(db,provider,at.getTime())));const nowIso=at.toISOString();const blocks=await Promise.all(providers.map(provider=>db.prepare("SELECT id FROM provider_unavailability WHERE provider_id=? AND status=\'active\' AND starts_at<=? AND ends_at>? LIMIT 1").bind(provider.id,nowIso,nowIso).first<Row>()));const available=providers.filter((_,index)=>!blocks[index]);return filterAssignableProviders(db,available,at.getTime());}'
-          new='''async function loadGovernedProvidersUncached(db:Db,cityId:string,zoneId:string,serviceCode:string,at:Date){await seedProviderCapacityDefaults(db);const date=at.toISOString().slice(0,10);const rows=await db.prepare("SELECT * FROM provider_capacity_profiles WHERE city_id=? AND live=1 AND status='active' AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)").bind(cityId,date,date).all<Row>();const baseProviders=rows.results.map(rowToProvider).filter(p=>p.services.includes(serviceCode)&&p.zones.includes(zoneId));const providers=await Promise.all(baseProviders.map(provider=>attachHomeBase(db,provider,at.getTime())));const nowIso=at.toISOString();const blocks=await Promise.all(providers.map(provider=>db.prepare("SELECT id FROM provider_unavailability WHERE provider_id=? AND status='active' AND starts_at<=? AND ends_at>? LIMIT 1").bind(provider.id,nowIso,nowIso).first<Row>()));const available=providers.filter((_,index)=>!blocks[index]);return filterAssignableProviders(db,available,at.getTime());}
-const governedProviderLoads=new WeakMap<Db,Map<string,Promise<LocatedProvider[]>>>();
-export async function loadGovernedProviders(db:Db,cityId:string,zoneId:string,serviceCode:string,at?:Date){const resolvedAt=at??new Date(),timeKey=at?resolvedAt.getTime():Math.floor(resolvedAt.getTime()/1000)*1000,key=`${cityId}|${zoneId}|${serviceCode}|${timeKey}`;let loads=governedProviderLoads.get(db);if(!loads){loads=new Map();governedProviderLoads.set(db,loads);}let pending=loads.get(key);if(!pending){pending=loadGovernedProvidersUncached(db,cityId,zoneId,serviceCode,resolvedAt);loads.set(key,pending);pending.finally(()=>{if(loads?.get(key)===pending)loads.delete(key);}).catch(()=>{});}return pending;}'''
+          old='export async function ensureProviderCapacityTables(db:Db){if(capacityTablesEnsured.has(db))return;const running=capacityTablesEnsuring.get(db);if(running)return running;const pending=(async()=>{const required='
+          new='export async function ensureProviderCapacityTables(db:Db){if(capacityTablesEnsured.has(db))return;const running=capacityTablesEnsuring.get(db);if(running)return running;const pending=(async()=>{try{const required='
+          assert old in s
+          s=s.replace(old,new,1)
+          old=']);capacityTablesEnsured.add(db);})();capacityTablesEnsuring.set(db,pending);try{return await pending;}finally{if(capacityTablesEnsuring.get(db)===pending)capacityTablesEnsuring.delete(db);}}'
+          new=']);capacityTablesEnsured.add(db);}catch(error){const resolved=error instanceof Error?error:new Error(String(error));console.error(JSON.stringify({event:"uat_scheduling_error",stage:"ensureProviderCapacityTables.internal",errorName:resolved.name,errorMessage:resolved.message,stack:resolved.stack??null}));throw error;}})();capacityTablesEnsuring.set(db,pending);try{return await pending;}finally{if(capacityTablesEnsuring.get(db)===pending)capacityTablesEnsuring.delete(db);}}'
           assert old in s
           s=s.replace(old,new,1)
           cap.write_text(s)
           PY
-      - name: Focused scheduling contention tests
-        run: node --experimental-strip-types --test tests/uat-scheduling-d1-contention.test.mjs tests/provider-assignment-verification-validity.test.mjs
-      - run: npm run typecheck
-      - name: Verify intended application diff
+      - name: Validate instrumentation
         run: |
+          node --experimental-strip-types --test tests/uat-scheduling-d1-contention.test.mjs tests/provider-assignment-verification-validity.test.mjs
+          npm run typecheck
           git diff --check
-          git diff --name-only
-          test -n "$(git diff --name-only)"
-          test "$(git diff --name-only | grep -Ev '^(app/api/uat-scheduling/route.ts|lib/provider-capacity-governance.ts|lib/provider-verification-mandate.ts)$' | wc -l)" -eq 0
-      - name: Commit and push application patch
+          changed="$(git diff --name-only)"
+          printf '%s\n' "$changed"
+          test "$(printf '%s\n' "$changed" | grep -Ev '^(app/api/uat-scheduling/route.ts|lib/provider-capacity-governance.ts)$' | sed '/^$/d' | wc -l)" -eq 0
+      - name: Commit instrumentation
         run: |
           git config user.name "PawSpace Release Bot"
           git config user.email "release-bot@pawspace.in"
-          git add -u
-          git commit -m "perf(scheduling): optimize tryPrepareAssignment query execution and indexing"
+          git add -u app/api/uat-scheduling/route.ts lib/provider-capacity-governance.ts
+          git commit -m "chore(scheduling): instrument tryPrepareAssignment to isolate HTTP 500 root cause"
           git push origin HEAD:fix/staging-performance-remediation
-# retrigger 2
