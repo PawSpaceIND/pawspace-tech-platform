@@ -1,4 +1,4 @@
-name: Scheduling diagnostic runner
+name: Apply scheduling HTTP 500 instrumentation
 
 on:
   push:
@@ -11,11 +11,47 @@ permissions:
   contents: write
 
 jobs:
-  diagnostic-runner:
+  instrument:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
           ref: fix/staging-performance-remediation
           fetch-depth: 0
-      - run: echo diagnostic-runner-ready
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm run install:ci
+      - name: Instrument scheduling boundaries
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('app/api/uat-scheduling/route.ts')
+          s=p.read_text()
+          pairs=[
+            ('const json=(data:unknown,status=200)=>Response.json(data,{status});','const json=(data:unknown,status=200)=>Response.json(data,{status});\nfunction schedulingDiagnostic(stage:string,error:unknown,context:Record<string,unknown>={}){const resolved=error instanceof Error?error:new Error(String(error));console.error(JSON.stringify({event:"uat_scheduling_error",stage,...context,errorName:resolved.name,errorMessage:resolved.message,stack:resolved.stack??null}));}'),
+            ('  await ensureProviderCapacityTables(db);','  try{await ensureProviderCapacityTables(db);}catch(error){schedulingDiagnostic("ensureProviderCapacityTables",error);throw error;}'),
+            ('const results=statements.length===1?[await statements[0]!.run()]:await db.batch(statements);const inserted=results.reduce((sum,result)=>sum+Number(result?.meta?.changes||0),0);','const results=await(async()=>{try{return statements.length===1?[await statements[0]!.run()]:await db.batch(statements);}catch(error){schedulingDiagnostic("reservation_claim",error,{groupId,providerId:decision.provider!.id,serviceCode:input.serviceCode,occurrences:decision.occurrences.length});throw error;}})();const inserted=results.reduce((sum,result)=>sum+Number(result?.meta?.changes||0),0);'),
+            ('export async function POST(request:Request){try{const db=await database(),input=await request.json() as RequestBody,actor=await resolveActor(request);','export async function POST(request:Request){let diagnosticContext:Record<string,unknown>={};try{const db=await database(),input=await request.json() as RequestBody;diagnosticContext={clientRequestId:String(input.clientRequestId||""),serviceCode:String(input.serviceCode||""),cityId:String(input.cityId||""),zoneId:String(input.zoneId||"")};const actor=await resolveActor(request);'),
+            ('if(isSqliteBusyError(error))return json({error:"SCHEDULING_BUSY",message:"Scheduling is temporarily busy after bounded retries; retry shortly."},503);return authError(error,"Scheduling failed");}}','if(isSqliteBusyError(error))return json({error:"SCHEDULING_BUSY",message:"Scheduling is temporarily busy after bounded retries; retry shortly."},503);schedulingDiagnostic("post_unhandled",error,diagnosticContext);return authError(error,"Scheduling failed");}}')
+          ]
+          for old,new in pairs:
+            if old not in s: raise SystemExit(f'missing instrumentation anchor: {old[:80]}')
+            s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+      - name: Validate instrumentation
+        run: |
+          node --experimental-strip-types --test tests/uat-scheduling-d1-contention.test.mjs tests/provider-assignment-verification-validity.test.mjs
+          npm run typecheck
+          git diff --check
+          test "$(git diff --name-only)" = "app/api/uat-scheduling/route.ts"
+      - name: Commit instrumentation
+        run: |
+          git config user.name "PawSpace Release Bot"
+          git config user.email "release-bot@pawspace.in"
+          git add -u app/api/uat-scheduling/route.ts
+          git commit -m "chore(scheduling): instrument tryPrepareAssignment to isolate HTTP 500 root cause"
+          git push origin HEAD:fix/staging-performance-remediation
