@@ -57,7 +57,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          SQL="SELECT d.group_id,d.status AS decision_status,d.selected_provider_id,(SELECT COUNT(*) FROM scheduling_reservations r WHERE r.group_id=d.group_id) AS reservations,(SELECT COUNT(*) FROM provider_assignment_offers o WHERE o.group_id=d.group_id) AS offers FROM scheduling_assignment_decisions d WHERE d.group_id LIKE 'perf-33613186871-1:grp:%' ORDER BY d.group_id;"
+          SQL="SELECT 'decisions' AS kind,COUNT(*) AS n FROM scheduling_assignment_decisions WHERE group_id LIKE 'perf-33613186871-1:grp:%' UNION ALL SELECT 'reservations',COUNT(*) FROM scheduling_reservations WHERE group_id LIKE 'perf-33613186871-1:grp:%' UNION ALL SELECT 'offers',COUNT(*) FROM provider_assignment_offers WHERE group_id LIKE 'perf-33613186871-1:grp:%' UNION ALL SELECT 'uat_roster_rows',COUNT(*) FROM scheduling_availability WHERE source='uat_roster' AND date>=date('now','+11 day') AND date<=date('now','+23 day');"
           npx wrangler d1 execute pawspace-staging --remote --json --command "$SQL" > scheduling-failure-forensics.json
           cat scheduling-failure-forensics.json
       - uses: actions/upload-artifact@v4
