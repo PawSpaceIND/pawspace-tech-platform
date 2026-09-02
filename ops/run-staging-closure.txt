@@ -1,7 +1,7 @@
-triggered_at=2026-09-02T07:57:17Z
+triggered_at=2026-09-02T08:49:30Z
 baseline=94cddc063297796f24ea1a2a0975b62a2fdbe1b2
 scope=track3-track5-track6-automated
-reason=real-d1-table-row-read-restored
-probe_run_id=33606082440
-probe_job_id=100170258350
-probe_sha=844d5dc1d5eb92492795e1a978bda7c68ea1b328
+reason=paid-tier-real-d1-table-row-read-restored
+probe_run_id=33610717536
+probe_job_id=100184937664
+probe_sha=32c96e75ac15817e8b0039889bb76c23522c1329
