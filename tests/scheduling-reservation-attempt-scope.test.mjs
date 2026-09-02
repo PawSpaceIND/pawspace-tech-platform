@@ -20,14 +20,26 @@ import { setupJourney, routeCall, sessionCookie } from "./helpers/grooming-journ
  * Each attempt now stamps its rows with attempt_id = crypto.randomUUID() and scopes both the count
  * and the rollback to it, so a rollback can only ever remove what its own request inserted.
  *
- * WHAT IS AND IS NOT PROVEN HERE. The guarded inserts were always sound: a single
+ * WHAT IS PROVEN HERE. The guarded inserts were always sound: a single
  * `INSERT ... SELECT ... WHERE NOT EXISTS` is atomic under the write lock, and it enforces interval
  * overlap plus a travel buffer plus a daily-job cap - an invariant no unique index can express. Only
- * the verify-and-rollback step was mis-keyed. Reaching that step's failure needs a row to appear
- * between provider selection and the insert, in the window where the guard's buffered check is
- * stricter than selection's. That is a genuine interleaving, not something this suite can stage
- * synchronously through the route, so the tests below prove the mechanism and pin the key rather
- * than reproducing the interleaving. Recorded plainly so nobody mistakes the contract for a repro.
+ * the verify-and-rollback step was mis-keyed.
+ *
+ * The last test reproduces the interleaving rather than merely describing it, using the harness's
+ * beforeBatch hook to commit a competing reservation in the exact window between provider selection
+ * and the insert. Two things make that reachable, and both are easy to get wrong:
+ *
+ *   - it must be a PARTIAL insert. The rollback is guarded by `if(inserted>0)`, so a request that
+ *     commits nothing never rolls anything back. An earlier version of that test blocked the only
+ *     occurrence, so the branch never ran and it passed against the mis-keyed code - vacuous.
+ *   - it must be a RECURRING service. buildOccurrences only honours `occurrences` for dog_walking
+ *     and dog_training; grooming is always one occurrence, so no partial insert is possible there.
+ *
+ * The clock is frozen for that test so created_at is a value the test can forge a collision on -
+ * without it, "same millisecond" is a race the test would only sometimes win. All four tests are
+ * sabotage-verified: restoring `WHERE group_id=? AND created_at=?` fails the source contract AND
+ * the behavioural test, and removing the drift repair fails the drifted-database test with the exact
+ * production error.
  */
 
 const rows = (sqlite, groupId) =>
@@ -154,4 +166,67 @@ test("a database whose scheduling_reservations predates attempt_id is repaired i
   assert.ok(columns().includes("attempt_id"), "the shared repair added the column in place");
   const stamped = rows(ctx.sqlite, "ATTEMPT-DRIFT-A");
   assert.ok(stamped.length > 0 && stamped.every((row) => row.attempt_id), "and the reserve stamped it");
+});
+test("a partial insert rolls back only its own attempt, even when a colliding request shares the group and the millisecond", async (t) => {
+  const ctx = await setupJourney();
+  t.after(ctx.close);
+
+  // Freeze the clock. The route stamps created_at = Date.now(), so freezing it is what lets this test
+  // forge the exact collision the old key was vulnerable to: a DIFFERENT request whose committed row
+  // shares BOTH group_id and created_at. Frozen at the real current instant rather than shifted, so
+  // lease expiry and booking-window checks behave normally.
+  const FIXED = Date.now();
+  const realNow = Date.now;
+  Date.now = () => FIXED;
+  t.after(() => { Date.now = realNow; });
+
+  // dog_walking, not grooming: buildOccurrences only honours `occurrences` for the recurring services
+  // (dog_walking, dog_training), and a PARTIAL insert is the only way to reach the rollback at all -
+  // the branch is guarded by `if(inserted>0)`, so a request that commits nothing never rolls back.
+  const customerId = "CUST-ATTEMPT-RACE";
+  const cookie = await sessionCookie(ctx.db, "customer", customerId, `customer:${customerId}`);
+  const groupId = "ATTEMPT-RACE-A";
+  const first = slot(21), second = slot(28); // cadenceDays 7 puts occurrence 2 exactly a week on
+
+  // Land a competing committed reservation in the window between provider selection and the insert -
+  // the TOCTOU gap the guarded insert exists to close. It takes occurrence 2's slot, so this request
+  // commits occurrence 1, fails occurrence 2, and must roll its own attempt back.
+  //
+  // group_id is shared legitimately: it is `input.groupId ?? input.clientRequestId`, so every request
+  // touching a group carries the same one, and on the reassign path several do.
+  let injected = false;
+  ctx.db.beforeBatch = async (items) => {
+    if (!items.some((item) => String(item._sql).includes("INSERT INTO scheduling_reservations"))) return;
+    ctx.db.beforeBatch = null;
+    injected = true;
+    ctx.sqlite.prepare(
+      "INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id," +
+      "pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status," +
+      "explanation_json,created_at,attempt_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    ).run(
+      "RES-COLLIDER", groupId, "walk_asha", "dog_walking", "blr", "blr-east", "CUS-OTHER", "[]",
+      second.scheduledStart, second.scheduledEnd, 1, 9, null, "assigned", "{}",
+      FIXED, "attempt-of-a-different-request",
+    );
+  };
+
+  const response = await routeCall("../../app/api/uat-scheduling/route.ts", "POST", "/api/uat-scheduling", {
+    clientRequestId: groupId, customerId, petIds: ["PET-ATTEMPT-RACE"], serviceCode: "dog_walking",
+    cityId: "blr", zoneId: "blr-east", ...first, preferredProviderId: "walk_asha",
+    occurrences: 2, cadenceDays: 7,
+  }, cookie);
+
+  assert.equal(injected, true, "the competing reservation must land inside the insert window or this test proves nothing");
+  assert.equal(response.status, 409, `a partial insert must be refused: ${JSON.stringify(response.body)}`);
+
+  const collider = ctx.sqlite.prepare("SELECT status,attempt_id FROM scheduling_reservations WHERE id='RES-COLLIDER'").get();
+  // THE DISCRIMINATOR. Keyed on (group_id, created_at) this row matches the rolling-back request on
+  // BOTH columns, so the rollback cancels a reservation another request had committed. Keyed on
+  // attempt_id it cannot be reached. Sabotage-verified: restoring the old key fails this assertion.
+  assert.equal(collider.status, "assigned", "a rollback must not cancel a colliding request's committed reservation");
+  assert.equal(collider.attempt_id, "attempt-of-a-different-request", "and must not restamp it");
+
+  const own = ctx.sqlite.prepare("SELECT id,status FROM scheduling_reservations WHERE group_id=? AND id!='RES-COLLIDER'").all(groupId);
+  assert.ok(own.length > 0, "the attempt must have committed a row, or the rollback branch was never reached");
+  assert.ok(own.every((row) => row.status === "cancelled"), `the attempt's own rows are rolled back: ${JSON.stringify(own)}`);
 });
