@@ -1,7 +1,7 @@
-triggered_at=2026-09-02T07:22:15Z
+triggered_at=2026-09-02T07:54:29Z
 baseline=94cddc063297796f24ea1a2a0975b62a2fdbe1b2
 scope=track3-track5-track6-automated
 reason=d1-capacity-read-restored
-probe_run_id=33603173486
-probe_job_id=100161196988
-probe_sha=089cd76d12e73b9556b5fec55d66c96f32849441
+probe_run_id=33603272217
+probe_job_id=100169536272
+probe_sha=83b74169eff6cb10884af5aeaa4ce33f8ab4cb13
