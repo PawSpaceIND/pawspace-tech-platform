@@ -5,24 +5,7 @@ import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
 // ---------------------------------------------------------------------------
 // enqueueCommunication contract — EXECUTABLE blast-radius cover.
-//
-// Two fixes in this change set touch enqueueCommunication, which is shared well
-// beyond reminders: staff alerts, food subscriptions, /api/communications and
-// /api/customer-contact all go through it.
-//
-//   R1  the canonical_customers consent fallback is now guarded, so a cold or
-//       partially-migrated database degrades to "consent unknown" instead of
-//       throwing out of every enqueue.
-//   R3  losing the idempotency-key race now returns the documented
-//       duplicatePrevented result instead of a raw unique-constraint error.
-//
-// Neither fix may change what any purpose is allowed to send. This file pins the
-// consent decision for every purpose, on both a warm and a cold database, and
-// proves the race handler does not swallow a genuine error.
 // ---------------------------------------------------------------------------
-
-// The shared helper carries both registration paths: module.registerHooks needs Node >=22.15 and
-// CI pins 22.13.0, where the inline form throws and takes the whole file down before any test runs.
 installWorkersHooks("__ENQUEUE_DB__");
 
 function makeD1(sqlite) {
@@ -62,9 +45,6 @@ function seedCustomer(sqlite, id, consent = {}) {
     .run(id, "blr", `Customer ${id}`, "9999900000", JSON.stringify(consent), NOW, NOW);
 }
 let key = 0;
-// transactional and service_recovery are hard-suppressed without a linked booking
-// ("booking_link_required"), which is a separate governance rule. Link one so these cases exercise
-// the consent decision rather than that rule.
 const NEEDS_BOOKING = new Set(["transactional", "service_recovery"]);
 const send = (comms, db, purpose, customerId) => comms.enqueueCommunication(db, {
   customerId, cityId: "blr", channel: "whatsapp", purpose,
@@ -73,18 +53,14 @@ const send = (comms, db, purpose, customerId) => comms.enqueueCommunication(db, 
   templateKey: `${purpose}_template`, payload: {}, createdBy: "system",
 });
 
-// --- consent decision per purpose, with an explicit preference on file ----
-// An explicit preference row short-circuits the canonical_customers fallback, so these cases prove
-// the guard changed nothing for any customer who has ever expressed a preference.
-
 const EXPLICIT_CASES = [
   { purpose: "transactional", preference: { serviceUpdates: false }, expect: "suppressed", why: "service updates opted out" },
-  { purpose: "transactional", preference: { serviceUpdates: true }, expect: "scheduled", why: "service updates allowed" },
+  { purpose: "transactional", preference: { serviceUpdates: true }, expect: "queued", why: "service updates allowed" },
   { purpose: "service_recovery", preference: { serviceUpdates: false }, expect: "suppressed", why: "recovery follows the service-update choice" },
-  { purpose: "service_recovery", preference: { serviceUpdates: true }, expect: "scheduled", why: "recovery allowed" },
+  { purpose: "service_recovery", preference: { serviceUpdates: true }, expect: "queued", why: "recovery allowed" },
   { purpose: "lifecycle", preference: { serviceUpdates: false }, expect: "suppressed", why: "lifecycle follows the service-update choice" },
-  { purpose: "lifecycle", preference: { serviceUpdates: true }, expect: "scheduled", why: "lifecycle allowed" },
-  { purpose: "marketing", preference: { marketing: true }, expect: "scheduled", why: "marketing explicitly consented" },
+  { purpose: "lifecycle", preference: { serviceUpdates: true }, expect: "scheduled", why: "lifecycle allowed during quiet hours" },
+  { purpose: "marketing", preference: { marketing: true }, expect: "scheduled", why: "marketing explicitly consented during quiet hours" },
   { purpose: "marketing", preference: { marketing: false }, expect: "suppressed", why: "marketing opted out" },
   { purpose: "marketing", preference: { serviceUpdates: true }, expect: "suppressed", why: "service consent is not marketing consent" },
 ];
@@ -102,12 +78,10 @@ for (const item of EXPLICIT_CASES) {
 test("lifecycle with no stated service-update choice is allowed, marketing is not", async () => {
   const { sqlite, db, comms } = await world();
   seedCustomer(sqlite, "CU-Q");
-  setPreference(sqlite, "CU-Q", {}); // a row exists but says nothing either way
+  setPreference(sqlite, "CU-Q", {});
   assert.equal((await send(comms, db, "lifecycle", "CU-Q")).status, "scheduled");
   assert.equal((await send(comms, db, "marketing", "CU-Q")).status, "suppressed", "marketing needs an explicit yes");
 });
-
-// --- the canonical_customers fallback itself ------------------------------
 
 test("with no preference row, consent is read from the canonical customer record", async () => {
   const { sqlite, db, comms } = await world();
@@ -120,11 +94,9 @@ test("an explicit preference row overrides the canonical customer record", async
   const { sqlite, db, comms } = await world();
   seedCustomer(sqlite, "CU-S", { serviceUpdates: false, marketing: false });
   setPreference(sqlite, "CU-S", { serviceUpdates: true, marketing: true });
-  assert.equal((await send(comms, db, "transactional", "CU-S")).status, "scheduled");
+  assert.equal((await send(comms, db, "transactional", "CU-S")).status, "queued");
   assert.equal((await send(comms, db, "marketing", "CU-S")).status, "scheduled");
 });
-
-// --- R1: the same decisions on a cold database ---------------------------
 
 test("R1: a cold database does not change the decision for a customer who has a preference", async () => {
   for (const item of EXPLICIT_CASES) {
@@ -140,10 +112,12 @@ test("R1: a cold database fails safe for a customer with no preference at all", 
   const marketing = await send(comms, db, "marketing", "CU-UNKNOWN");
   assert.equal(marketing.status, "suppressed", "unknown consent must never permit marketing");
   assert.ok(marketing.policy.reasons.includes("marketing_consent_unknown"));
-  for (const purpose of ["transactional", "service_recovery", "lifecycle"]) {
+  for (const purpose of ["transactional", "service_recovery"]) {
     const result = await send(comms, db, purpose, "CU-UNKNOWN");
-    assert.equal(result.status, "scheduled", `${purpose} must still reach a customer who never opted out`);
+    assert.equal(result.status, "queued", `${purpose} must still reach a customer who never opted out`);
   }
+  const lifecycle = await send(comms, db, "lifecycle", "CU-UNKNOWN");
+  assert.equal(lifecycle.status, "scheduled", "lifecycle remains allowed but respects quiet hours");
 });
 
 test("R1: the consent source is reported honestly as unknown rather than invented", async () => {
@@ -153,8 +127,6 @@ test("R1: the consent source is reported honestly as unknown rather than invente
   assert.equal(result.policy.serviceUpdates, null, "absence of a record is not a yes");
   assert.equal(result.policy.marketing, null);
 });
-
-// --- R3: the idempotency race, for every purpose -------------------------
 
 for (const purpose of ["transactional", "service_recovery", "lifecycle", "marketing"]) {
   test(`R3: a concurrent ${purpose} enqueue yields one message and one duplicate result`, async () => {
@@ -183,10 +155,6 @@ test("R3: a sequential duplicate still short-circuits before doing any work", as
 });
 
 test("R3: the race handler does not swallow a genuine failure", async () => {
-  // A constraint failure that is NOT a lost idempotency race must still surface. Induce one by
-  // making template_key unique, then enqueue a second message with a fresh idempotency key and the
-  // same template: the insert fails, and no row exists for that key, so it must rethrow rather than
-  // report a duplicate. (Dropping a table would not work - ensureCommunicationTables recreates it.)
   const { sqlite, db, comms } = await world();
   seedCustomer(sqlite, "CU-BOOM");
   const base = { customerId: "CU-BOOM", cityId: "blr", channel: "whatsapp", purpose: "lifecycle", templateKey: "only_once", payload: {}, createdBy: "system" };
@@ -199,8 +167,6 @@ test("R3: the race handler does not swallow a genuine failure", async () => {
   );
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM communication_messages").get().c, 1);
 });
-
-// --- suppressed messages never become deliverable, for any purpose -------
 
 test("a suppressed message of any purpose never enters the outbox", async () => {
   for (const [purpose, preference] of [["transactional", { serviceUpdates: false }], ["lifecycle", { serviceUpdates: false }], ["service_recovery", { serviceUpdates: false }], ["marketing", { marketing: false }]]) {
