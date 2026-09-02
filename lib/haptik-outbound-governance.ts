@@ -15,6 +15,9 @@
  */
 
 import { haptikOutboundConfigured, triggerHaptikCall } from "./haptik-outbound-client";
+import { audienceBuilderFor, AUDIENCE_BUILDERS } from "./haptik-outbound-audiences";
+import { dispatchInteraktMessage, interaktEnabled } from "./interakt-whatsapp";
+import { enqueueCommunication } from "./communication-engine";
 
 type Db = D1Database;
 type HEnv = Record<string, unknown>;
@@ -30,12 +33,48 @@ const QUIET_START_HOUR = 21; // 21:00 IST
 const QUIET_END_HOUR = 9;    //  09:00 IST
 const IST_OFFSET_MS = 5.5 * 3600_000;
 
-export type OutboundCampaign = { code: string; label: string; requiresMarketingConsent: boolean; description: string };
+/**
+ * A campaign declares its channels explicitly.
+ *
+ * `whatsappTemplate` is what makes 8 of the LOE's 12 use cases possible: those need a link delivered
+ * (package, subscription, renewal, website), which a voice call cannot do. A campaign with no template
+ * is voice-only, and a campaign with one sends BOTH - the call opens the conversation, the message
+ * carries the link. The template name is the Meta-approved template, required because these sends are
+ * outside the 24-hour customer-service window by construction.
+ */
+export type OutboundCampaign = { code: string; label: string; requiresMarketingConsent: boolean; description: string; whatsappTemplate?: string };
 export const HAPTIK_CAMPAIGNS: OutboundCampaign[] = [
-  { code: "new_lead_followup", label: "New grooming lead follow-up", requiresMarketingConsent: false, description: "Call back a fresh inbound lead that hasn't been actioned yet (they reached out to us)." },
-  { code: "reactivation", label: "Lapsed customer reactivation", requiresMarketingConsent: true, description: "Win back a customer whose last service was over 60 days ago." },
-  { code: "subscription_pitch", label: "Grooming subscription pitch", requiresMarketingConsent: true, description: "Offer a grooming subscription to an active customer who doesn't have one yet." },
+  // --- the three that already existed ---
+  { code: "new_lead_followup", label: "New grooming lead follow-up", requiresMarketingConsent: false, description: "Call back a fresh inbound lead that hasn't been actioned yet (they reached out to us).", whatsappTemplate: "ps_lead_followup_v1" },
+  { code: "reactivation", label: "Lapsed customer reactivation", requiresMarketingConsent: true, description: "Win back a customer whose last service was over 60 days ago.", whatsappTemplate: "ps_reactivation_v1" },
+  { code: "subscription_pitch", label: "Grooming subscription pitch", requiresMarketingConsent: true, description: "Offer a grooming subscription to an active customer who doesn't have one yet.", whatsappTemplate: "ps_subscription_link_v1" },
+  // --- the nine the LOE requires ---
+  { code: "abandoned_checkout", label: "Abandoned checkout recovery", requiresMarketingConsent: true, description: "A booking left in draft/pending, or a held slot with no booking behind it, in the last 7 days.", whatsappTemplate: "ps_resume_booking_v1" },
+  { code: "seasonal_offer", label: "Seasonal / promotional offer", requiresMarketingConsent: true, description: "Customers holding an unredeemed, unexpired reward code (birthday or review).", whatsappTemplate: "ps_offer_link_v1" },
+  { code: "renewal_reminder", label: "Subscription renewal reminder", requiresMarketingConsent: false, description: "An active/paused grooming subscription expiring within 10 days, or down to its last session.", whatsappTemplate: "ps_renewal_link_v1" },
+  { code: "pending_session_followup", label: "Pending session follow-up", requiresMarketingConsent: false, description: "A paid training programme with sessions still unused - a delivery debt we owe.", whatsappTemplate: "ps_pending_session_v1" },
+  { code: "training_lead_conversion", label: "Dog training lead conversion", requiresMarketingConsent: false, description: "An unconverted dog-training enquiry, oldest first.", whatsappTemplate: "ps_training_info_v1" },
+  { code: "winback", label: "Deep winback", requiresMarketingConsent: true, description: "A customer quiet for over 180 days, highest lifetime spend first.", whatsappTemplate: "ps_winback_v1" },
+  { code: "boarding_sitting_cross_sell", label: "Boarding / sitting cross-sell", requiresMarketingConsent: true, description: "Uses grooming or walking, has never booked boarding.", whatsappTemplate: "ps_boarding_info_v1" },
+  { code: "walking_cross_sell", label: "Dog walking cross-sell", requiresMarketingConsent: true, description: "Uses grooming or boarding, has never booked dog walking.", whatsappTemplate: "ps_walking_info_v1" },
+  { code: "taxi_cross_sell", label: "Pet taxi cross-sell", requiresMarketingConsent: true, description: "Uses grooming, boarding or sitting, has never booked pet taxi.", whatsappTemplate: "ps_taxi_info_v1" },
 ];
+
+/**
+ * The campaign list and the audience registry must agree exactly.
+ *
+ * This is asserted at module load, not just in a test, because the failure it prevents is a campaign
+ * that dials a real audience it was never scoped for. A mismatch is a coding error, and it should stop
+ * the module rather than quietly ship.
+ */
+const CAMPAIGN_CODES = HAPTIK_CAMPAIGNS.map(c => c.code);
+{
+  const missingBuilder = CAMPAIGN_CODES.filter(code => !AUDIENCE_BUILDERS[code]);
+  const orphanBuilder = Object.keys(AUDIENCE_BUILDERS).filter(code => !CAMPAIGN_CODES.includes(code));
+  if (missingBuilder.length) throw new Error(`Outbound campaigns with no audience builder: ${missingBuilder.join(", ")}`);
+  if (orphanBuilder.length) throw new Error(`Audience builders with no campaign: ${orphanBuilder.join(", ")}`);
+}
+
 const campaignByCode = (code: string) => HAPTIK_CAMPAIGNS.find(c => c.code === code) || null;
 
 /** True when the local wall-clock in IST falls inside the quiet window (21:00-09:00). */
@@ -55,35 +94,86 @@ export async function ensureHaptikOutboundTables(db: Db) {
 
 export type OutboundContact = { contactId: string; phone: string; name: string; context: Record<string, unknown> };
 
-/** Build the outbound audience for a campaign from the real book of record. Consent-filtered. Cold-DB safe. */
+/**
+ * Build the outbound audience for a campaign. Consent-filtered, cold-DB safe, and FAIL-CLOSED.
+ *
+ * The builder is looked up by code in an explicit registry. There is no fallthrough: a campaign with no
+ * builder throws instead of borrowing another campaign's audience, which is what the previous if-chain
+ * did silently (see lib/haptik-outbound-audiences.ts for the full account).
+ */
 export async function buildOutboundAudience(db: Db, input: { campaign: string; limit?: number; at?: number }): Promise<OutboundContact[]> {
   const campaign = campaignByCode(input.campaign);
   if (!campaign) throw new Error(`Unknown outbound campaign: ${input.campaign}`);
+  const builder = audienceBuilderFor(campaign.code);
+  if (!builder) throw new Error(`Outbound campaign ${campaign.code} has no audience builder`);
   const at = input.at ?? Date.now();
   const limit = Math.max(1, Math.min(Number(input.limit) || 100, 5000));
+  const rows = await builder(db, { limit, at });
+  // Dedupe on the phone number, not the contact id: the same handset can appear under two contact rows
+  // (a crm_contact and a canonical_customer), and dialling it twice for one campaign is the visible
+  // failure. Applied here rather than per-builder so every campaign gets it for free.
   const seen = new Set<string>();
-  const dedupe = (rows: OutboundContact[]) => rows.filter(r => { const k = digits(r.phone); if (!k || k.length < 8 || seen.has(k)) return false; seen.add(k); return true; });
-
-  if (campaign.code === "new_lead_followup") {
-    // Fresh inbound leads that are still active and have never been actioned, and haven't opted out.
-    const rows = await db.prepare("SELECT l.id lead_id,l.customer_id contact_id,l.service service,c.name name,c.primary_phone phone FROM lead_work_items l JOIN crm_contacts c ON c.id=l.customer_id WHERE l.status IN ('active','sla_breached') AND l.first_action_at IS NULL AND l.opt_out=0 AND l.converted_booking_id IS NULL ORDER BY l.assigned_at ASC LIMIT ?").bind(limit * 3).all<Row>().catch(empty);
-    return dedupe(rows.results.map(r => ({ contactId: String(r.contact_id), phone: String(r.phone || ""), name: text(r.name) || "there", context: { leadId: String(r.lead_id), service: text(r.service) || "grooming", reason: "new_lead_followup" } }))).slice(0, limit);
-  }
-
-  if (campaign.code === "reactivation") {
-    // Customers whose last completed service was > 60 days ago - with marketing consent, not opted out.
-    // p.opt_out=0 is a separate, stronger flag than marketing_consent: a contact who explicitly opted
-    // out of all contact while an old marketing_consent=1 row remained was still being dialled here.
-    const rows = await db.prepare("SELECT b.customer_id contact_id,cu.name name,cu.primary_phone phone,MAX(b.scheduled_end) last_end,COUNT(*) done FROM canonical_bookings b JOIN canonical_customers cu ON cu.id=b.customer_id JOIN customer_contact_preferences p ON p.customer_id=b.customer_id WHERE b.status='completed' AND p.marketing_consent=1 AND p.opt_out=0 GROUP BY b.customer_id HAVING MAX(b.scheduled_end)<? ORDER BY done DESC LIMIT ?").bind(new Date(at - 60 * DAY).toISOString(), limit * 2).all<Row>().catch(empty);
-    return dedupe(rows.results.map(r => ({ contactId: String(r.contact_id), phone: String(r.phone || ""), name: text(r.name) || "there", context: { lastServiceAt: text(r.last_end), pastBookings: Number(r.done), reason: "reactivation" } }))).slice(0, limit);
-  }
-
-  // subscription_pitch: active grooming customers without an active/paused grooming subscription.
-  const rows = await db.prepare("SELECT b.customer_id contact_id,cu.name name,cu.primary_phone phone,COUNT(*) grooms FROM canonical_bookings b JOIN canonical_customers cu ON cu.id=b.customer_id JOIN customer_contact_preferences p ON p.customer_id=b.customer_id WHERE b.service_code='grooming' AND b.status NOT IN ('cancelled','refunded') AND p.marketing_consent=1 AND p.opt_out=0 AND NOT EXISTS (SELECT 1 FROM customer_grooming_subscriptions s WHERE s.customer_id=b.customer_id AND s.status IN ('active','paused')) GROUP BY b.customer_id HAVING COUNT(*)>=2 ORDER BY grooms DESC LIMIT ?").bind(limit * 2).all<Row>().catch(empty);
-  return dedupe(rows.results.map(r => ({ contactId: String(r.contact_id), phone: String(r.phone || ""), name: text(r.name) || "there", context: { groomingBookings: Number(r.grooms), reason: "subscription_pitch" } }))).slice(0, limit);
+  return rows.filter(r => { const k = digits(r.phone); if (!k || k.length < 8 || seen.has(k)) return false; seen.add(k); return true; }).slice(0, limit);
 }
 
-export type OutboundResult = { connected: boolean; campaign: string; dialled: number; skipped: number; failed: number; audience: number; reason?: string; calls: Array<{ contactId: string; phone: string; status: string; callRef?: string; reason?: string }> };
+export type WhatsAppOutcome = { status: "sent" | "skipped" | "refused"; reason?: string; messageId?: string; providerMessageId?: string | null };
+export type OutboundResult = { connected: boolean; campaign: string; dialled: number; skipped: number; failed: number; audience: number; whatsappSent: number; whatsappSkipped: number; reason?: string; calls: Array<{ contactId: string; phone: string; status: string; callRef?: string; reason?: string; whatsapp?: WhatsAppOutcome }> };
+
+/**
+ * Send the campaign's WhatsApp message for one contact, through Interakt.
+ *
+ * Returns an outcome instead of throwing, because one contact's consent problem must not abort the
+ * batch - a campaign of 500 where contact 3 has opted out has to keep going for the other 497.
+ *
+ * It does NOT weaken the Interakt ownership guard to make lead-based campaigns work. That guard needs
+ * the contact to be a canonical customer (it verifies the phone against canonical_customers), and a
+ * fresh CRM lead is not one yet. Rather than relax it - which would let a caller-supplied phone plus a
+ * real id deliver somebody else's link - those contacts are skipped with an explicit reason. Voice
+ * still reaches them; only the link-carrying message waits until they are a customer.
+ */
+async function sendCampaignWhatsApp(db: Db, env: HEnv, campaign: OutboundCampaign, contact: OutboundContact, actorId: string, at: number): Promise<WhatsAppOutcome> {
+  const template = text(campaign.whatsappTemplate);
+  if (!template) return { status: "skipped", reason: "campaign_is_voice_only" };
+  if (!interaktEnabled(env)) return { status: "skipped", reason: "interakt_not_configured" };
+
+  const canonical = await db.prepare("SELECT id FROM canonical_customers WHERE id=?").bind(contact.contactId).first<Row>().catch(() => null);
+  if (!canonical) return { status: "skipped", reason: "contact_is_not_a_canonical_customer" };
+
+  // The message is enqueued first so the send is traceable to a governed request, and so the outbox -
+  // not this function - owns retry. The idempotency key is the same (campaign, contact, IST day) triple
+  // the voice cap uses, so re-running the trigger cannot double-message either.
+  const dayKey = new Date(at + IST_OFFSET_MS).toISOString().slice(0, 10);
+  const idempotencyKey = `wa:${campaign.code}:${contact.contactId}:${dayKey}`;
+  let messageId: string;
+  try {
+    const queued = await enqueueCommunication(db, {
+      customerId: contact.contactId, cityId: text(contact.context.cityId) || "blr",
+      channel: "whatsapp", purpose: campaign.requiresMarketingConsent ? "marketing" : "lifecycle",
+      idempotencyKey, templateKey: template,
+      payload: { campaign: campaign.code, name: contact.name, ...contact.context },
+      createdBy: actorId,
+    }) as { duplicatePrevented: boolean; messageId?: string; message?: Row };
+    if (queued.duplicatePrevented) return { status: "skipped", reason: "already_messaged_today" };
+    messageId = String(queued.messageId ?? "");
+    if (!messageId) return { status: "skipped", reason: "enqueue_returned_no_message_id" };
+  } catch (error) {
+    return { status: "skipped", reason: `enqueue_failed: ${error instanceof Error ? error.message : "unknown"}` };
+  }
+
+  try {
+    const sent = await dispatchInteraktMessage(db, env, {
+      messageId, customerId: contact.contactId, recipient: contact.phone,
+      // Outside the 24-hour window by construction, so an approved template is mandatory. bodyValues
+      // carry only the customer's own name - never another customer's data.
+      send: { withinSession: false, templateKey: template, language: "en", bodyValues: [contact.name] },
+    });
+    return { status: sent.status === "sent" ? "sent" : "refused", reason: sent.reason, messageId, providerMessageId: sent.providerMessageId };
+  } catch (error) {
+    // A 403 (wrong number) or 409 (no consent) from the dispatcher is a per-contact refusal, recorded
+    // and stepped over.
+    return { status: "refused", reason: error instanceof Error ? error.message : "whatsapp_refused", messageId };
+  }
+}
 
 /** Place outbound voice calls for a campaign - the human-launched action. Fail-closed + fully guardrailed. */
 export async function triggerOutboundCampaign(db: Db, env: HEnv, input: { campaign: string; limit?: number; actorId: string; at?: number; force?: boolean }): Promise<OutboundResult> {
@@ -91,7 +181,7 @@ export async function triggerOutboundCampaign(db: Db, env: HEnv, input: { campai
   const campaign = campaignByCode(input.campaign);
   if (!campaign) throw new Error(`Unknown outbound campaign: ${input.campaign}`);
   const at = input.at ?? Date.now();
-  const base: OutboundResult = { connected: false, campaign: campaign.code, dialled: 0, skipped: 0, failed: 0, audience: 0, calls: [] };
+  const base: OutboundResult = { connected: false, campaign: campaign.code, dialled: 0, skipped: 0, failed: 0, audience: 0, whatsappSent: 0, whatsappSkipped: 0, calls: [] };
   if (!haptikOutboundConfigured(env)) return { ...base, reason: "Haptik outbound is not connected (HAPTIK_OUTBOUND_API_KEY / HAPTIK_OUTBOUND_URL not configured). No calls placed." };
   if (!input.force && isQuietHours(at)) return { ...base, connected: true, reason: "Quiet hours (21:00-09:00 IST): no outbound calls placed. Pass force to override for an urgent callback." };
   const audience = await buildOutboundAudience(db, { campaign: campaign.code, limit: input.limit, at });
@@ -99,7 +189,7 @@ export async function triggerOutboundCampaign(db: Db, env: HEnv, input: { campai
   const dayKey = new Date(at + IST_OFFSET_MS).toISOString().slice(0, 10);
   const capBefore = at - FREQUENCY_CAP_DAYS * DAY;
   const calls: OutboundResult["calls"] = [];
-  let dialled = 0, skipped = 0, failed = 0;
+  let dialled = 0, skipped = 0, failed = 0, whatsappSent = 0, whatsappSkipped = 0;
   for (const c of audience) {
     const phone = digits(c.phone);
     // idempotency - one attempt per (campaign, contact, IST day). Catches same-day repeats even when the
@@ -114,10 +204,15 @@ export async function triggerOutboundCampaign(db: Db, env: HEnv, input: { campai
     const claim = await db.prepare("INSERT OR IGNORE INTO haptik_outbound_calls (id,idempotency_key,campaign,contact_id,phone,status,context_json,requested_by,created_at,updated_at) VALUES (?,?,?,?,?, 'pending',?,?,?,?)").bind(id, key, campaign.code, c.contactId, phone, JSON.stringify(c.context), input.actorId, at, at).run();
     if (Number(claim.meta?.changes || 0) === 0) { skipped++; calls.push({ contactId: c.contactId, phone, status: "skipped", reason: "already_dialled_today" }); continue; }
     const outcome = await triggerHaptikCall(env, { phone: c.phone, campaign: campaign.code, context: { ...c.context, name: c.name } });
-    if (outcome.connected) { dialled++; await db.prepare("UPDATE haptik_outbound_calls SET status='dialled',call_ref=?,updated_at=? WHERE id=?").bind(outcome.callRef, at, id).run(); calls.push({ contactId: c.contactId, phone, status: "dialled", callRef: outcome.callRef }); }
-    else { failed++; await db.prepare("UPDATE haptik_outbound_calls SET status='failed',reason=?,updated_at=? WHERE id=?").bind(outcome.reason, at, id).run(); calls.push({ contactId: c.contactId, phone, status: "failed", reason: outcome.reason }); }
+    // The WhatsApp message is attempted whether or not the call connected. The two channels carry
+    // different things - the call opens a conversation, the message carries the link the LOE needs - so
+    // a failed dial must not also cost the customer their package/renewal link.
+    const whatsapp = await sendCampaignWhatsApp(db, env, campaign, c, input.actorId, at);
+    if (whatsapp.status === "sent") whatsappSent++; else whatsappSkipped++;
+    if (outcome.connected) { dialled++; await db.prepare("UPDATE haptik_outbound_calls SET status='dialled',call_ref=?,updated_at=? WHERE id=?").bind(outcome.callRef, at, id).run(); calls.push({ contactId: c.contactId, phone, status: "dialled", callRef: outcome.callRef, whatsapp }); }
+    else { failed++; await db.prepare("UPDATE haptik_outbound_calls SET status='failed',reason=?,updated_at=? WHERE id=?").bind(outcome.reason, at, id).run(); calls.push({ contactId: c.contactId, phone, status: "failed", reason: outcome.reason, whatsapp }); }
   }
-  return { ...base, connected: true, dialled, skipped, failed, calls };
+  return { ...base, connected: true, dialled, skipped, failed, whatsappSent, whatsappSkipped, calls };
 }
 
 /** Scheduler sweep - refreshes audience READINESS counts only. It NEVER places a call (outreach is

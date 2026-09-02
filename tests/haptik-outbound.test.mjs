@@ -3,7 +3,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 const read = (p) => readFile(new URL(p, import.meta.url), "utf8");
 const client = await read("../lib/haptik-outbound-client.ts");
-const gov = await read("../lib/haptik-outbound-governance.ts");
+// The audience SQL moved into lib/haptik-outbound-audiences.ts when the campaign if-chain (which had
+// an unguarded fallthrough to subscription_pitch) was replaced by an explicit registry. The guarantees
+// asserted below now span both files, so both are read - narrowing this to one file again would let a
+// consent join disappear from the other unnoticed.
+const gov = [
+  await read("../lib/haptik-outbound-governance.ts"),
+  await read("../lib/haptik-outbound-audiences.ts"),
+].join("\n");
 const route = await read("../app/api/haptik-outbound/route.ts");
 const scheduler = await read("../lib/background-scheduler.ts");
 

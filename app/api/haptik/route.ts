@@ -1,6 +1,7 @@
 import{authError}from"../../../lib/server-auth";
 import{captureHaptikLead,captureHaptikCallback,fetchHaptikTimeSlots,requestHaptikBooking}from"../../../lib/haptik-integration-governance";
 import{recordBotCallDisposition}from"../../../lib/bot-call-disposition";
+import{createHaptikInquiry,transferHaptikToAgent}from"../../../lib/haptik-inbound-inquiry";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 async function runtime(){const {env}=await import("cloudflare:workers");return env as unknown as Record<string,unknown>;}
@@ -34,7 +35,14 @@ export async function POST(request:Request){
     // What happened on the call. Haptik posts this once the bot call ends; it lands in the real CRM
     // (attempt + activity + lead state) using the same vocabulary a human rep's call uses.
     if(action==="record_call_outcome")return json({data:await recordBotCallDisposition(db,{idempotencyKey:String(body.idempotencyKey||""),leadId:body.leadId as string,phone:String(body.phone||""),channel:body.channel==="whatsapp"?"whatsapp":"voice",botProvider:"haptik",callRef:body.callRef as string,primaryTag:String(body.primaryTag||body.outcome||""),secondaryTags:Array.isArray(body.tags)?body.tags as string[]:[],crossSellServices:Array.isArray(body.crossSellServices)?body.crossSellServices as string[]:[],callbackAt:body.callbackAt as number,talkTimeSeconds:body.talkTimeSeconds as number,sentiment:body.sentiment as string,notes:body.notes as string,transcriptRef:body.transcriptRef as string,actorId})},201);
-    return json({error:"Unsupported Haptik action. Use capture_lead | capture_callback | fetch_slots | request_booking | record_call_outcome"},400);
+    // "Create an Inquiry in CRM" - the LOE's inbound classification endpoint. Distinct from
+    // capture_lead: only the six SERVICE categories create pipeline; pricing/availability/general are
+    // logged, and complaints/veterinary are routed to a human instead of a sales queue.
+    if(action==="create_inquiry")return json({data:await createHaptikInquiry(db,{idempotencyKey:String(body.idempotencyKey||""),phone:String(body.phone||""),name:body.name as string,category:String(body.category||body.intent||""),message:body.message as string,channel:body.channel as string,cityId:body.city as string,actorId})},201);
+    // "Transfer to an agent" - reuses the existing ai_handoffs queue agents already watch, rather than
+    // opening a second queue that nobody is looking at.
+    if(action==="transfer_to_agent")return json({data:await transferHaptikToAgent(db,{phone:String(body.phone||""),reason:body.reason as string,name:body.name as string,inquiryId:body.inquiryId as string,sessionId:body.sessionId as string,actorId})},201);
+    return json({error:"Unsupported Haptik action. Use capture_lead | capture_callback | fetch_slots | request_booking | record_call_outcome | create_inquiry | transfer_to_agent"},400);
   }catch(error){
     if(error instanceof Response){const t=await error.text().catch(()=>"" );return json(t?JSON.parse(t):{error:"Haptik request rejected"},error.status);}
     return authError(error,"Unable to process Haptik request");

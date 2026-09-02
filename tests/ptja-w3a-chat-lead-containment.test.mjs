@@ -132,7 +132,12 @@ test("MR04-05: ai_web_leads has exactly ONE module touching it, and it is the ad
 });
 
 test("MR04-06: the dialler's audience queries read CRM tables, never the anonymous chat table", async () => {
-  const source = await readFile(new URL("../lib/haptik-outbound-governance.ts", import.meta.url), "utf8");
+  // Both halves of the dialler: the trigger/guardrail file and the audience SQL it now delegates to.
+  // Reading only the first would leave every audience query unchecked for the anonymous chat table.
+  const source = [
+    await readFile(new URL("../lib/haptik-outbound-governance.ts", import.meta.url), "utf8"),
+    await readFile(new URL("../lib/haptik-outbound-audiences.ts", import.meta.url), "utf8"),
+  ].join("\n");
   assert.doesNotMatch(source, /ai_web_leads/, "the outbound audience builder must not read the anonymous capture table");
   assert.match(source, /lead_work_items/, "and must read the CRM lead table - if this stops matching, the detector broke, not the code");
 });
