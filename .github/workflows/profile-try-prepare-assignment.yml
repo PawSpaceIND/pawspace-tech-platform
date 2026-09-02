@@ -1,0 +1,54 @@
+name: Profile tryPrepareAssignment staging queries
+
+on:
+  push:
+    branches:
+      - fix/staging-performance-remediation
+    paths:
+      - .github/workflows/profile-try-prepare-assignment.yml
+
+permissions:
+  contents: read
+
+jobs:
+  profile:
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/staging-performance-remediation
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm run install:ci
+      - name: Profile scheduler D1 reads
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          SQL=$(cat <<'SQL'
+          SELECT 'reservations_blr' probe, COUNT(*) total, SUM(CASE WHEN status!='cancelled' THEN 1 ELSE 0 END) active FROM scheduling_reservations WHERE city_id='blr';
+          SELECT 'reservations_target_day' probe, COUNT(*) total FROM scheduling_reservations WHERE city_id='blr' AND status!='cancelled' AND scheduled_start<'2026-09-15T00:00:00.000Z' AND scheduled_end>'2026-09-13T18:30:00.000Z';
+          SELECT 'availability_target_day' probe, COUNT(*) total FROM scheduling_availability WHERE date='2026-09-14';
+          SELECT 'capacity_profiles_blr' probe, COUNT(*) total FROM provider_capacity_profiles WHERE city_id='blr' AND live=1 AND status='active';
+          SELECT 'home_bases' probe, COUNT(*) total FROM provider_home_base;
+          SELECT 'provider_unavailability' probe, COUNT(*) total FROM provider_unavailability WHERE status='active';
+          SELECT 'grooming_onboarding' probe, COUNT(*) total FROM provider_onboarding_applications WHERE provider_id IN ('groom_arun','groom_kiran','groom_sanjay');
+          EXPLAIN QUERY PLAN SELECT * FROM scheduling_reservations WHERE city_id='blr' AND status!='cancelled';
+          EXPLAIN QUERY PLAN SELECT * FROM scheduling_reservations WHERE city_id='blr' AND status!='cancelled' AND scheduled_start<'2026-09-15T00:00:00.000Z' AND scheduled_end>'2026-09-13T18:30:00.000Z';
+          EXPLAIN QUERY PLAN SELECT * FROM scheduling_availability WHERE date='2026-09-14';
+          EXPLAIN QUERY PLAN SELECT * FROM provider_capacity_profiles WHERE city_id='blr' AND live=1 AND status='active' AND effective_from<='2026-09-14' AND (effective_to IS NULL OR effective_to>='2026-09-14');
+          EXPLAIN QUERY PLAN SELECT * FROM provider_home_base WHERE provider_id='groom_arun' AND effective_from<=1789362000000 AND (effective_until IS NULL OR effective_until>1789362000000) ORDER BY effective_from DESC LIMIT 1;
+          EXPLAIN QUERY PLAN SELECT id FROM provider_unavailability WHERE provider_id='groom_arun' AND status='active' AND starts_at<='2026-09-14T05:00:00.000Z' AND ends_at>'2026-09-14T05:00:00.000Z' LIMIT 1;
+          EXPLAIN QUERY PLAN SELECT id,vertical_key FROM provider_onboarding_applications WHERE provider_id='groom_arun' ORDER BY updated_at DESC LIMIT 1;
+          SQL
+          )
+          npx wrangler d1 execute pawspace-staging --remote --json --command "$SQL" | tee try-prepare-profile.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: try-prepare-assignment-profile
+          path: try-prepare-profile.json
