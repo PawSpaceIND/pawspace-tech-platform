@@ -79,6 +79,7 @@ jobs:
           npx wrangler deploy --message "staging $TARGET_SHA" --secrets-file "$SECRETS_FILE" 2>&1 | tee deployment.txt
       - name: Certify staging isolation and exact SHA
         env:
+          EXPECTED_SHA: ${{ env.TARGET_SHA }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
