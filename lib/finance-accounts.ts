@@ -64,12 +64,41 @@ const COLLECTION_COLUMNS: Array<[string, string]> = [
   ["verification_status", "text"], ["verified_by", "text"], ["verified_at", "integer"],
 ];
 
-export async function ensureFinanceJournalTable(db: Db) {
+const FINANCE_JOURNAL_BASE_COLUMNS=["id","entry_date","source_type","source_id","account_code","debit","credit","narration","period_code","posted","created_at"] as const;
+const financeJournalReady=new WeakSet<Db>();
+const financeJournalEnsuring=new WeakMap<Db,Promise<void>>();
+
+async function financeJournalSchemaReady(db:Db){
+  try{
+    const info=await db.prepare("PRAGMA table_info(finance_journal_entries)").all<Row>();
+    const names=new Set(info.results.map(row=>String(row.name??"")));
+    if(!names.size)return false;
+    return FINANCE_JOURNAL_BASE_COLUMNS.every(column=>names.has(column))&&COLLECTION_COLUMNS.every(([column])=>names.has(column));
+  }catch{return false;}
+}
+
+async function ensureFinanceJournalTableUncached(db:Db){
+  // Steady-state requests must not replay schema writes. Under 100-way booking concurrency the old
+  // CREATE + fourteen ALTER attempts serialized D1 even though every column already existed, and
+  // postCollectionEvent called this path twice per request. A single read-only PRAGMA proves the
+  // deployed schema is complete; DDL is reserved for an actually missing/old schema.
+  if(await financeJournalSchemaReady(db))return;
   await db.prepare("CREATE TABLE IF NOT EXISTS finance_journal_entries (id text PRIMARY KEY NOT NULL,entry_date text NOT NULL,source_type text NOT NULL,source_id text NOT NULL,account_code text NOT NULL,cost_centre text,vertical text,debit real DEFAULT 0 NOT NULL,credit real DEFAULT 0 NOT NULL,narration text NOT NULL,period_code text NOT NULL,posted integer DEFAULT 0 NOT NULL,created_at integer NOT NULL)").run();
   for (const [column, type] of COLLECTION_COLUMNS) {
     await db.prepare(`ALTER TABLE finance_journal_entries ADD COLUMN ${column} ${type}`).run()
       .catch((error: unknown) => { if (!/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) throw error; });
   }
+}
+
+export async function ensureFinanceJournalTable(db:Db){
+  if(financeJournalReady.has(db))return;
+  const inFlight=financeJournalEnsuring.get(db);
+  if(inFlight)return inFlight;
+  const work=ensureFinanceJournalTableUncached(db)
+    .then(()=>{financeJournalReady.add(db);})
+    .finally(()=>{financeJournalEnsuring.delete(db);});
+  financeJournalEnsuring.set(db,work);
+  return work;
 }
 
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
