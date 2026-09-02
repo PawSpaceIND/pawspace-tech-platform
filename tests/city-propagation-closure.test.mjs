@@ -52,7 +52,21 @@ test("all customer booking flows propagate resolved city instead of hard-coding 
 test("scheduler stores, filters and reassigns by request city", async () => {
   const route = await read("app/api/uat-scheduling/route.ts");
   assert.doesNotMatch(route, /["']blr["']/);
-  assert.match(route, /loadGovernedProviders\(db,cityIdFor\(input\),input\.zoneId/);
+  /*
+   * The eligible-provider read used to be called inline as
+   * loadGovernedProviders(db,cityIdFor(input),input.zoneId,...). The read-fanout collapse moved it
+   * behind the scheduling service's listEligibleProviders(cityId,zoneId,serviceCode), where `input`
+   * is deliberately out of scope, so the old literal became unsatisfiable without undoing that
+   * refactor. What this test exists to prove is unchanged and still proven: the read is driven by
+   * the REQUEST's city and zone and can never be a constant. That is pinned in two halves now -
+   * the read takes its city and zone as parameters rather than closing over anything, and the
+   * assertion further down shows those parameters originate from cityIdFor(input).
+   */
+  assert.match(
+    route,
+    /listEligibleProviders\(cityId:string,zoneId:string,serviceCode:string\)\{return loadGovernedProviders\(db,cityId,zoneId,serviceCode\)/,
+    "the eligible-provider read must take the request's city and zone as parameters",
+  );
   assert.match(route, /city_id IS NULL OR city_id=\?/);
   assert.match(route, /input\.serviceCode,cityIdFor\(input\),input\.zoneId/);
   assert.match(route, /cityId:cityIdFor\(original\)/);
