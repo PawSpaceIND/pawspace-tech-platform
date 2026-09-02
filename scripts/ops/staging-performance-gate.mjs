@@ -80,19 +80,27 @@ async function allocateFreeWindows(required=100) {
     const day = dayAtOffset(dayOffset);
     const date = day.toISOString().slice(0,10);
     const {payload} = await request(`/api/uat-scheduling?date=${encodeURIComponent(date)}`, {cookie});
-    const reservations = (payload?.data?.providers || [])
-      .flatMap(provider => Array.isArray(provider?.reservations) ? provider.reservations : [])
-      .filter(reservation => String(reservation?.status || '') !== 'cancelled');
+    const providers = Array.isArray(payload?.data?.providers) ? payload.data.providers : [];
     for (const hour of SLOT_HOURS_UTC) {
       const start = new Date(day); start.setUTCHours(hour, 0, 0, 0);
       const end = new Date(start.getTime() + GROOMING_DURATION_MS);
-      if (!reservations.some(reservation => overlapsBuffered(start.getTime(), end.getTime(), reservation))) {
+      // Auto-assignment needs one eligible provider to be free, not every provider. The previous
+      // allocator flattened all provider reservations and rejected a lane when any one provider was
+      // busy, which exhausted preserved staging evidence long before actual capacity was exhausted.
+      // Each date/time is selected at most once, and the two candidate windows are buffer-separated,
+      // so the assignments created below remain mutually non-overlapping even if one provider wins both.
+      const hasFreeProvider = providers.some(provider => {
+        const reservations = (Array.isArray(provider?.reservations) ? provider.reservations : [])
+          .filter(reservation => String(reservation?.status || '') !== 'cancelled');
+        return !reservations.some(reservation => overlapsBuffered(start.getTime(), end.getTime(), reservation));
+      });
+      if (hasFreeProvider) {
         selected.push({start:start.toISOString(), end:end.toISOString(), slotHourUtc:hour, dayOffset});
         if (selected.length===required) break;
       }
     }
   }
-  if (selected.length!==required) throw new Error(`Only ${selected.length} collision-free grooming performance lanes remain inside the safe 180-day horizon; need ${required}`);
+  if (selected.length!==required) throw new Error(`Only ${selected.length} provider-capacity grooming performance lanes remain inside the safe 180-day horizon; need ${required}`);
   return selected;
 }
 
