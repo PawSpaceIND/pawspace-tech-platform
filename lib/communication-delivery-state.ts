@@ -3,7 +3,7 @@ const text=(v:unknown)=>String(v??"").trim();
 const parse=<T>(value:unknown,fallback:T):T=>{try{return JSON.parse(String(value??""))as T}catch{return fallback}};
 export type DeliveryEventType="accepted"|"sent"|"delivered"|"read"|"failed";
 const rank:Record<string,number>={queued:0,scheduled:0,retry_pending:0,dispatching:1,provider_accepted:2,sent:3,delivered:4,read:5,dead_letter:6,suppressed:6};
-const nextStatus:Record<Exclude<DeliveryEventType,"failed">,string>={accepted:"provider_accepted",sent:"sent",delivered:"delivered",read:"read"};
+const nextStatus:Record<"accepted"|"sent"|"delivered"|"read"|"failed",string>={accepted:"provider_accepted",sent:"sent",delivered:"delivered",read:"read",failed:"retry_pending"};
 export function deliveryRank(status:unknown){return rank[text(status)]??0;}
 export function shouldApplyDeliveryTransition(current:unknown,event:DeliveryEventType){
  if(event==="failed")return deliveryRank(current)<deliveryRank("delivered");
