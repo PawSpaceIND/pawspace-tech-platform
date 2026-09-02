@@ -74,7 +74,10 @@ async function loadFinanceModule() {
       moduleResolution: ts.ModuleResolutionKind.Bundler,
     },
   }).outputText;
-  const razorSource = await readFile(new URL("lib/razorpay-client.ts", repoRoot), "utf8");
+  const paymentEnvironmentSource = await readFile(new URL("lib/payment-environment.ts", repoRoot), "utf8");
+  await writeFile(path.join(tempDir, "payment-environment.mjs"), transpile(paymentEnvironmentSource));
+  const razorSource = (await readFile(new URL("lib/razorpay-client.ts", repoRoot), "utf8"))
+    .replaceAll('from"./payment-environment"', 'from"./payment-environment.mjs"');
   await writeFile(path.join(tempDir, "razorpay-client.mjs"), transpile(razorSource));
   const financeSource = (await readFile(new URL("lib/financial-lifecycle.ts", repoRoot), "utf8"))
     .replace('from "./razorpay-client"', 'from "./razorpay-client.mjs"');
