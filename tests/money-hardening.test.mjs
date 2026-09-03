@@ -49,7 +49,7 @@ function makeD1(sqlite) {
 }
 
 let sqlite;
-function freshDb(env = { RAZORPAY_WEBHOOK_SECRET_SANDBOX: "uat-test-secret" }) {
+function freshDb(env = { PAWSPACE_PAYMENT_ENV: "sandbox", RAZORPAY_WEBHOOK_SECRET_SANDBOX: "uat-test-secret" }) {
   sqlite = new DatabaseSync(":memory:");
   globalThis.__MONEY_DB__ = makeD1(sqlite);
   globalThis.__MONEY_ENV__ = env;
@@ -143,7 +143,7 @@ function seedCustomerIdentity(email, customerId) {
 // ---- 1. Webhook: signature-first, verify-first capture, idempotent, exact reconciliation -------
 
 test("real execution: webhook refuses unsigned/badly-signed/unconfigured requests before touching any state", async () => {
-  freshDb({}); baseTables();
+  freshDb({ PAWSPACE_PAYMENT_ENV: "sandbox" }); baseTables();
   // No sandbox secret configured -> 503 fail-closed
   const unconfigured = await postWebhook("evt_1", capturedEvent("B1", 200000), { secret: "anything" });
   assert.equal(unconfigured.status, 503);
