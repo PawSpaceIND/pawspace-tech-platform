@@ -1,5 +1,6 @@
 name: Certify combined staging Audio AI
 
+# Staging-only certification for the combined WhatsApp + Audio AI build.
 on:
   push:
     branches:
