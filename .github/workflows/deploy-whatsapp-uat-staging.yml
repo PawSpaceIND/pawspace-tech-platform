@@ -32,6 +32,7 @@ jobs:
     env:
       TARGET_SHA: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.expected_sha || '939620de0b7b904a4720f41a9ba301e03747b6c4' }}
       STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+      WRANGLER_CONFIG: dist/server/wrangler.json
 
     steps:
       - name: Check isolated workflow contract
@@ -140,13 +141,14 @@ jobs:
             if(binding?.type!=="plain_text")continue;
             const name=String(binding?.name||"").trim();
             if(!/^[A-Z0-9_]+$/.test(name))continue;
-            const value=String(binding?.text??binding?.value??"");
-            remoteVars[name]=value;
+            remoteVars[name]=String(binding?.text??binding?.value??"");
           }
-          const config=JSON.parse(readFileSync("wrangler.json","utf8"));
+          const path=String(process.env.WRANGLER_CONFIG||"");
+          if(path!=="dist/server/wrangler.json")throw new Error("Unexpected generated Wrangler config path");
+          const config=JSON.parse(readFileSync(path,"utf8"));
           config.vars={...remoteVars,...(config.vars||{})};
           config.keep_vars=true;
-          writeFileSync("wrangler.json",JSON.stringify(config,null,2));
+          writeFileSync(path,JSON.stringify(config,null,2));
           console.log(`Preserved ${Object.keys(remoteVars).length} existing plain staging binding(s); names and values withheld.`);
           NODE
 
@@ -170,7 +172,7 @@ jobs:
           values.PAWSPACE_STAGING_LIVE_CUSTOMER_OTP="false";const token=String(process.env.META_WHATSAPP_UAT_ACCESS_TOKEN||"").trim();if(token)values.META_WHATSAPP_UAT_ACCESS_TOKEN=token;
           writeFileSync(process.env.SECRETS_FILE,JSON.stringify(values),{mode:0o600});
           NODE
-          if ! npx wrangler deploy --keep-vars --message "staging $TARGET_SHA" --secrets-file "$SECRETS_FILE" > "$DEPLOY_LOG" 2>&1; then echo "Wrangler staging deploy failed; raw output withheld." >&2; exit 1; fi
+          if ! npx wrangler deploy --config "$WRANGLER_CONFIG" --keep-vars --message "staging $TARGET_SHA" --secrets-file "$SECRETS_FILE" > "$DEPLOY_LOG" 2>&1; then echo "Wrangler staging deploy failed; raw output withheld." >&2; exit 1; fi
           URL="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' "$DEPLOY_LOG" | tail -n 1 || true)"; [ "$URL" = "$STAGING_URL" ] || { echo "Unexpected deployment origin; raw output withheld." >&2; exit 1; }
           echo "staging_url=$URL" >> "$GITHUB_OUTPUT"; echo "Exact gateway SHA deployed to pawspace-staging with prior plain bindings explicitly preserved."
 
