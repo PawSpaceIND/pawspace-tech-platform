@@ -66,7 +66,7 @@ async function ensureSchedulingTablesUncached(db:Awaited<ReturnType<typeof datab
    * hot path after the first call - this is the booking write path - and records only success, so a
    * failed repair is retried rather than latched.
    */
-  if(!schemaDriftRepaired.has(db)){await repairSchemaDrift(db);schemaDriftRepaired.add(db);}
+  if(!schemaReady&&!schemaDriftRepaired.has(db)){await repairSchemaDrift(db);schemaDriftRepaired.add(db);}
   if(!schemaReady)await db.batch([
   db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_attempt ON scheduling_reservations(attempt_id)"),
 ]);await ensureSchedulingReservationLeaseGovernance(db);}

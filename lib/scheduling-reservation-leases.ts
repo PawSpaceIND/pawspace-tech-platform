@@ -19,11 +19,12 @@ export async function ensureSchedulingReservationLeaseGovernance(db:Db){
   if(leaseTablesEnsured.has(db))return true;
   const running=leaseTablesEnsuring.get(db);if(running)return running;
   const pending=(async()=>{
-    if(!(await tableExists(db,"scheduling_reservations")))return false;
+    const schema=await db.prepare("SELECT name FROM sqlite_master WHERE name IN ('scheduling_reservations','idx_scheduling_reservations_lease','scheduling_reservation_lease_cleanup','booking_reservation_confirmation_guards','block_expired_reservation_booking')").all<Row>();
+    const names=new Set(schema.results.map(row=>String(row.name)));
+    if(!names.has("scheduling_reservations"))return false;
+    if(names.has("idx_scheduling_reservations_lease")&&names.has("scheduling_reservation_lease_cleanup")&&names.has("booking_reservation_confirmation_guards")&&names.has("block_expired_reservation_booking")){leaseTablesEnsured.add(db);return true;}
     const columns=await db.prepare("PRAGMA table_info(scheduling_reservations)").all<Row>();
     const hasLease=columns.results.some(row=>String(row.name)==="lease_expires_at"),hasSession=columns.results.some(row=>String(row.name)==="customer_session_id");
-    const schema=await db.prepare("SELECT name FROM sqlite_master WHERE name IN ('idx_scheduling_reservations_lease','scheduling_reservation_lease_cleanup','booking_reservation_confirmation_guards','block_expired_reservation_booking')").all<Row>();
-    if(hasLease&&hasSession&&new Set(schema.results.map(row=>String(row.name))).size===4){leaseTablesEnsured.add(db);return true;}
     await ensurePlatformSessionTables(db);
     if(!hasLease)await db.prepare("ALTER TABLE scheduling_reservations ADD COLUMN lease_expires_at INTEGER").run().catch(error=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
     if(!hasSession)await db.prepare("ALTER TABLE scheduling_reservations ADD COLUMN customer_session_id TEXT").run().catch(error=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});

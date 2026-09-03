@@ -45,7 +45,8 @@ const worker = {
 
     if (url.pathname.startsWith("/api/")) {
       if(url.pathname==="/api/identity-session")return secureApiResponse(await handler.fetch(request,env,ctx));
-      if(request.method==="POST"&&(url.pathname==="/api/uat-scheduling"||url.pathname==="/api/canonical-bookings"))await cleanupExpiredReservationLeases(env.DB);
+      // Both write routes clean reservation leases inside their governed write path.
+      // Avoid the duplicate awaited Worker-level pass; scheduled maintenance still performs its sweep.
       const sessionAccess=await authorizePlatformSessionRequest(request,env.DB);
       if(sessionAccess instanceof Response)return sessionAccess;
       const access=sessionAccess??await authorizeApiRequest(request, env);
