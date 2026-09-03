@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import {readFileSync} from "node:fs";
 
 const read=path=>readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
 const isolated=read(".github/workflows/deploy-whatsapp-uat-staging.yml");
@@ -12,25 +12,23 @@ test("WhatsApp-only staging deploy has no Exotel dependency",()=>{
  assert.match(isolated,/META_WHATSAPP_UAT_ACCESS_TOKEN:\s*\$\{\{\s*secrets\.META_WHATSAPP_UAT_ACCESS_TOKEN\s*\}\}/);
 });
 
-test("WhatsApp-only workflow deploys one exact application SHA to isolated staging only",()=>{
+test("isolated workflow pins one exact application SHA to pawspace-staging",()=>{
  assert.match(isolated,/TARGET_SHA:/);
  assert.match(isolated,/git rev-parse HEAD/);
  assert.match(isolated,/npx wrangler deploy --keep-vars --message "staging \$TARGET_SHA"/);
- assert.match(isolated,/EXPECTED_STAGING_ORIGIN: https:\/\/pawspace-staging\.karthik-fce\.workers\.dev/);
+ assert.match(isolated,/STAGING_URL: https:\/\/pawspace-staging\.karthik-fce\.workers\.dev/);
  assert.match(isolated,/node tests\/e2e\/staging-certification\.mjs --isolation-only/);
  assert.match(isolated,/PRODUCTION_D1_ID/);
  assert.match(isolated,/PRODUCTION_WORKER_NAME/);
  assert.doesNotMatch(isolated,/deploy-production|pawspace-prod-bengaluru|PAWSPACE_PAYMENT_LIVE_APPROVED\s*:\s*['"]?true/i);
 });
 
-test("missing Meta identifiers are recovered from staging version history without printing values",()=>{
- assert.match(isolated,/wrangler versions list --name pawspace-staging --json/);
- assert.match(isolated,/wrangler versions view "\$VERSION_ID" --name pawspace-staging --json/);
- assert.match(isolated,/META_WHATSAPP_PHONE_NUMBER_ID:phoneId/);
- assert.match(isolated,/META_WHATSAPP_WABA_ID:wabaId/);
- assert.match(isolated,/wrangler secret bulk "\$RECOVERED" --name pawspace-staging/);
- assert.match(isolated,/stored them as encrypted Worker secrets; values withheld/);
- assert.doesNotMatch(isolated,/cat\s+"?\$?(?:VIEW|RECOVERED|LIST)/);
+test("deployment fails closed unless live staging Meta readiness is complete",()=>{
+ assert.match(isolated,/api\/integration-readiness/);
+ assert.match(isolated,/meta\?\.configuredForExternalTest===true/);
+ assert.match(isolated,/Meta WhatsApp staging configuration incomplete/);
+ assert.doesNotMatch(isolated,/wrangler versions (?:list|view)/);
+ assert.doesNotMatch(isolated,/wrangler secret bulk/);
 });
 
 test("dashboard vars are preserved and raw Wrangler deploy output is contained",()=>{
@@ -40,13 +38,12 @@ test("dashboard vars are preserved and raw Wrangler deploy output is contained",
  assert.match(isolated,/raw output withheld/);
 });
 
-test("WhatsApp-only staging configuration stays UAT sandbox and proves public webhook boundary",()=>{
+test("WhatsApp-only staging remains UAT sandbox and proves public webhook boundary",()=>{
  assert.match(isolated,/node scripts\/stage-config\.mjs/);
  assert.match(isolated,/PAWSPACE_STAGING_LIVE_CUSTOMER_OTP="false"/);
  assert.match(isolated,/healthz=200/);
  assert.match(isolated,/webhook bypasses staging-login/);
  assert.match(isolated,/invalid signature rejected/);
- assert.match(isolated,/configuredForExternalTest===true/);
  assert.match(isolated,/action:"sync_templates"/);
  assert.match(isolated,/approved\.length<1/);
 });
