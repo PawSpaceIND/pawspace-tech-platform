@@ -1,5 +1,5 @@
 import { defaultRoles, hasPermission, isFullAccessRole, parsePermissions, permissionCatalog, type Permission } from "../../../lib/platform-security";
-import { authError, resolveActor, securityAudit } from "../../../lib/server-auth";
+import { authError, resolveActor, securityAudit, securityAuditStatement } from "../../../lib/server-auth";
 
 async function database(){const {env}=await import("cloudflare:workers");return env.DB;}
 async function ensureTables(){
@@ -144,7 +144,21 @@ export async function POST(request:Request){
       // founder's, whose record it would rewrite. Create now creates: an existing email is a conflict.
       const existing=await db.prepare("SELECT role_code FROM app_users WHERE email=?").bind(email).first<{role_code:string}>();
       if(existing)return denyAndAudit(db,current,"create_user","identity",email,"email_already_exists",{},"An account with that email already exists. Change its role from the user directory instead — create never edits an existing identity.",409);
-      await db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),email,name,roleCode,"active",now,now).run(); await securityAudit(db,current,"create_user","identity",email,"completed",{roleCode});
+      /*
+       * The mutation and its audit row go in ONE batch, and that is the point.
+       *
+       * These were two sequential awaits: the INSERT committed, then the audit row was written. A
+       * Worker that died between them - or an audit insert that failed on its own - left a new account
+       * carrying a role with nothing in security_audit_events saying who created it. An audit trail
+       * that is usually complete is worse than one that is known to be partial, because it gets read as
+       * complete. D1 applies a batch atomically, so either the account and its audit row both exist or
+       * neither does.
+       */
+      const createdId=crypto.randomUUID();
+      await db.batch([
+        db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(createdId,email,name,roleCode,"active",now,now),
+        securityAuditStatement(db,current,"create_user","identity",email,"completed",{roleCode}),
+      ]);
       return Response.json({ok:true});
     }
     if(action==="update_user"){
@@ -152,6 +166,10 @@ export async function POST(request:Request){
       // is NOT what the clearance rule turns on - see unheldGrants for why a self-check would be the
       // wrong guard - but it is the single most useful fact when reading the trail afterwards.
       requirePermission(current,"users.manage"); const id=String(body.id||""); const target=await db.prepare("SELECT role_code,email FROM app_users WHERE id=?").bind(id).first<{role_code:string;email:string}>();
+      // An id matching no account used to fall through every guard - normaliseCode(undefined) is "",
+      // which is in no protected set - and reach an UPDATE that changed zero rows and still answered
+      // ok:true. That reads to a caller as "the change was applied". It is a refusal, and a 404.
+      if(!target)return denyAndAudit(db,current,"update_user","identity",id,"target_not_found",{},"User not found",404);
       const protectedCodes=await protectedRoleCodes(db);
       // A holder of a full-access role cannot be edited from here, and a full-access role cannot be
       // handed out from here. The first half existed; the second was missing entirely.
@@ -165,7 +183,13 @@ export async function POST(request:Request){
       // into a role carrying authority the actor cannot exercise itself.
       const unheld=unheldGrants(current,await roleGrants(db,assigned)??[]);
       if(unheld.length)return denyAndAudit(db,current,"update_user","identity",id,"insufficient_clearance",{requestedRoleCode:assigned,unheldGrants:unheld,selfDirected:normaliseCode(target?.email)===normaliseCode(current.email)},`'${assigned}' carries ${unheld.join(", ")}, which you do not hold — you cannot assign authority you do not have`);
-      await db.prepare("UPDATE app_users SET role_code=?,status=?,updated_at=? WHERE id=?").bind(String(body.roleCode||"associate"),String(body.status||"active"),now,id).run(); await securityAudit(db,current,"update_user","identity",id,"completed",{roleCode:body.roleCode,status:body.status});
+      // One batch, for the reason given on create_user above: a role change without its audit row is
+      // exactly the event this surface exists to record.
+      const nextStatus=String(body.status||"active");
+      await db.batch([
+        db.prepare("UPDATE app_users SET role_code=?,status=?,updated_at=? WHERE id=?").bind(assigned,nextStatus,now,id),
+        securityAuditStatement(db,current,"update_user","identity",id,"completed",{roleCode:assigned,status:nextStatus}),
+      ]);
       return Response.json({ok:true});
     }
     if(action==="save_role"){
@@ -192,7 +216,12 @@ export async function POST(request:Request){
       // somebody wear it. Two steps from a state a founder can legitimately create.
       const roleUnheld=unheldGrants(current,permissions);
       if(roleUnheld.length)return denyAndAudit(db,current,"save_role","role",code,"insufficient_clearance",{unheldGrants:roleUnheld},`You cannot grant ${roleUnheld.join(", ")} — that is authority you do not hold yourself`);
-      await db.prepare("UPDATE role_definitions SET permissions_json=?,updated_at=? WHERE code=?").bind(JSON.stringify(permissions),now,code).run(); await securityAudit(db,current,"save_role","role",code,"completed",{permissions}); return Response.json({ok:true});
+      // One batch, as above. A permission set changing with no audit row is the same class of gap.
+      await db.batch([
+        db.prepare("UPDATE role_definitions SET permissions_json=?,updated_at=? WHERE code=?").bind(JSON.stringify(permissions),now,code),
+        securityAuditStatement(db,current,"save_role","role",code,"completed",{permissions}),
+      ]);
+      return Response.json({ok:true});
     }
     return Response.json({error:"Unknown action"},{status:400});
   }catch(error){if(error instanceof Response)return error;return Response.json({error:"Unable to update governance controls"},{status:500});}
