@@ -37,7 +37,7 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
 
   const [intent, payment, current, schedule] = await Promise.all([
     input.intentId ? db.prepare("SELECT id,booking_id,payment_id,state,version,amount_paise,currency,gateway_order_id,gateway_payment_id FROM payment_intents WHERE id=?").bind(input.intentId).first<Row>() : Promise.resolve(null),
-    db.prepare("SELECT id,booking_id,status,customer_id,amount,currency,method FROM booking_payments WHERE id=? AND booking_id=?").bind(input.paymentId, input.bookingId).first<Row>(),
+    db.prepare("SELECT id,booking_id,status,customer_id,amount,currency FROM booking_payments WHERE id=? AND booking_id=?").bind(input.paymentId, input.bookingId).first<Row>(),
     db.prepare("SELECT expected_amount,captured_amount,refunded_amount FROM payment_reconciliation_records WHERE payment_id=?").bind(input.paymentId).first<Row>(),
     db.prepare("SELECT paid_now_amount,balance_amount,status FROM stay_payment_schedules WHERE booking_id=?").bind(input.bookingId).first<Row>().catch(() => null),
   ]);
@@ -166,7 +166,7 @@ export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId
   const payload = JSON.parse(text(work.payload_json) || "{}") as Record<string, unknown>;
   try {
     const bookingId = text(payload.bookingId), paymentId = text(payload.paymentId), eventId = text(payload.eventId), captureReference = text(payload.gatewayPaymentId) || text(payload.gatewayOrderId) || text(payload.captureKey) || eventId;
-    const payment = await db.prepare("SELECT customer_id,method FROM booking_payments WHERE id=? AND booking_id=?").bind(paymentId, bookingId).first<Row>();
+    const payment = await db.prepare("SELECT customer_id FROM booking_payments WHERE id=? AND booking_id=?").bind(paymentId, bookingId).first<Row>();
     if (!payment) throw new Error("Capture post-commit payment is missing");
     const booking = await db.prepare("SELECT city_id,service_code FROM canonical_bookings WHERE id=?").bind(bookingId).first<Row>().catch(() => null);
     await postCollectionEvent(db, {
@@ -178,7 +178,7 @@ export async function executeRazorpayCapturePostCommit(db: Db, input: { outboxId
       paymentId,
       settlementId: captureReference,
       amount: Number(payload.amountPaise || 0) / 100,
-      paymentMethod: text(payment.method) || "razorpay",
+      paymentMethod: "razorpay",
       entryDate: new Date().toISOString().slice(0, 10),
       transactionAt: now,
       actorId: "razorpay_capture_saga",
