@@ -14,44 +14,34 @@ jobs:
   diagnose:
     runs-on: ubuntu-latest
     steps:
-      - name: Report only aggregate Meta UAT readiness
+      - name: Report only Meta configuration names and aggregate template state
         env:
           STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
         run: |
           node --input-type=module <<'NODE'
+          const allowedNames=new Set([
+            "PAWSPACE_COMMUNICATION_ENV","META_WHATSAPP_UAT_DELIVERY_ENABLED","META_WHATSAPP_UAT_ACCESS_TOKEN",
+            "META_WHATSAPP_PHONE_NUMBER_ID","META_WHATSAPP_WABA_ID","META_WHATSAPP_APP_SECRET",
+            "META_WHATSAPP_VERIFY_TOKEN","META_WHATSAPP_UAT_ALLOWLIST","META_WHATSAPP_TEMPLATE_ALLOWLIST"
+          ]);
           const base=String(process.env.STAGING_URL||"").replace(/\/$/,"");
-          const login=await fetch(`${base}/api/staging-login`,{
-            method:"POST",redirect:"manual",headers:{"content-type":"application/json",origin:base},
-            body:JSON.stringify({action:"login",code:String(process.env.PAWSPACE_UAT_ACCESS_CODE||""),email:"founder@pawspace.in"}),
-            signal:AbortSignal.timeout(15000)
-          });
+          const login=await fetch(`${base}/api/staging-login`,{method:"POST",redirect:"manual",headers:{"content-type":"application/json",origin:base},body:JSON.stringify({action:"login",code:String(process.env.PAWSPACE_UAT_ACCESS_CODE||""),email:"founder@pawspace.in"}),signal:AbortSignal.timeout(15000)});
           const cookie=String(login.headers.get("set-cookie")||"").split(";")[0];
           if(!(login.status>=200&&login.status<400&&cookie))throw new Error(`staging founder sign-in failed (HTTP ${login.status})`);
-
-          const readiness=await fetch(`${base}/api/integration-readiness`,{headers:{cookie},signal:AbortSignal.timeout(15000)});
-          let rp=null;try{rp=await readiness.json()}catch{}
-          const modules=rp?.uatSandbox?.modules||rp?.data?.uatSandbox?.modules||[];
-          const meta=Array.isArray(modules)?modules.find(module=>module?.code==="meta_whatsapp"):null;
+          const readiness=await fetch(`${base}/api/integration-readiness`,{headers:{cookie},signal:AbortSignal.timeout(15000)});let rp=null;try{rp=await readiness.json()}catch{}
+          const modules=rp?.uatSandbox?.modules||rp?.data?.uatSandbox?.modules||[];const meta=Array.isArray(modules)?modules.find(module=>module?.code==="meta_whatsapp"):null;
+          const missing=[];
+          for(const blocker of Array.isArray(meta?.blockers)?meta.blockers:[]){
+            const text=String(blocker||"");const match=text.match(/^(?:Missing )?([A-Z0-9_]+)(?: must be .+)?$/);
+            if(!match||!allowedNames.has(match[1]))throw new Error("Unexpected blocker format; refusing to print it");
+            missing.push(match[1]);
+          }
           console.log(`Meta configuredForExternalTest=${Boolean(readiness.ok&&meta?.configuredForExternalTest===true)}`);
-          console.log(`Meta blockerCount=${Array.isArray(meta?.blockers)?meta.blockers.length:-1}`);
-
-          const sync=await fetch(`${base}/api/whatsapp/meta-admin`,{
-            method:"POST",headers:{"content-type":"application/json",origin:base,cookie},
-            body:JSON.stringify({action:"sync_templates"}),signal:AbortSignal.timeout(30000)
-          });
-          let sp=null;try{sp=await sync.json()}catch{}
-          const result=sp?.data||{};
+          console.log(`Missing Meta configuration names only: ${missing.length?missing.join(", "):"none"}`);
+          const sync=await fetch(`${base}/api/whatsapp/meta-admin`,{method:"POST",headers:{"content-type":"application/json",origin:base,cookie},body:JSON.stringify({action:"sync_templates"}),signal:AbortSignal.timeout(30000)});let sp=null;try{sp=await sync.json()}catch{};const result=sp?.data||{};
           console.log(`Template sync HTTP=${sync.status}`);
           console.log(`Template sync status=${String(result.status||"unknown")}`);
           console.log(`Template considered=${Number.isFinite(Number(result.considered))?Number(result.considered):-1}`);
           console.log(`Template allowlistMatches=${Number.isFinite(Number(result.synced))?Number(result.synced):-1}`);
-
-          const admin=await fetch(`${base}/api/whatsapp/meta-admin`,{headers:{cookie},signal:AbortSignal.timeout(15000)});
-          let ap=null;try{ap=await admin.json()}catch{}
-          const templates=Array.isArray(ap?.data?.templates)?ap.data.templates:[];
-          const counts={approved:0,pending_approval:0,rejected:0,paused:0,disabled:0,other:0};
-          for(const row of templates){const status=String(row?.status||"");if(status in counts)counts[status]++;else counts.other++;}
-          console.log(`Stored allowlisted template count=${templates.length}`);
-          console.log(`Stored approved allowlisted template count=${counts.approved}`);
           NODE
