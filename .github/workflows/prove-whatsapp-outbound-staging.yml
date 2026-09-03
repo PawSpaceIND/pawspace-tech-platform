@@ -1,0 +1,61 @@
+name: Prove WhatsApp outbound staging
+
+on:
+  push:
+    branches:
+      - fix/whatsapp-uat-staging-deploy-isolation
+    paths:
+      - .github/workflows/prove-whatsapp-outbound-staging.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prove-outbound:
+    runs-on: ubuntu-latest
+    concurrency: pawspace-staging-deploy
+    env:
+      STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Select governed UAT recipient without exposing PII
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          SETTINGS="$RUNNER_TEMP/settings.json"; CANDIDATES="$RUNNER_TEMP/candidates.json"; SELECTED="$RUNNER_TEMP/selected.json"; export SETTINGS CANDIDATES SELECTED
+          trap 'rm -f "$SETTINGS" "$CANDIDATES" "$SELECTED"' EXIT
+          HTTP="$(curl --silent --show-error --output "$SETTINGS" --write-out '%{http_code}' --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" --header 'Accept: application/json' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/pawspace-staging/settings")"
+          [ "$HTTP" = "200" ] || { echo "Unable to read staging settings; response withheld." >&2; exit 1; }
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --command "SELECT c.id AS customer_id,c.city_id,c.primary_phone,c.secondary_phone,b.id AS booking_id FROM canonical_customers c JOIN customer_contact_preferences p ON p.customer_id=c.id JOIN canonical_bookings b ON b.customer_id=c.id WHERE p.whatsapp_consent=1 AND COALESCE(p.opt_out,0)=0 LIMIT 500;" --json > "$CANDIDATES"
+          node --input-type=module <<'NODE'
+          import{readFileSync,writeFileSync}from'node:fs';
+          const settings=JSON.parse(readFileSync(process.env.SETTINGS,'utf8'));const bindings=Array.isArray(settings?.result?.bindings)?settings.result.bindings:[];const plain=Object.fromEntries(bindings.filter(b=>b?.type==='plain_text').map(b=>[String(b?.name||''),String(b?.text??b?.value??'')]));
+          if(String(plain.PAWSPACE_PRODUCTION_ENFORCE||'')!=='false')throw new Error('Production enforcement is not explicitly false on staging');
+          const digits=v=>String(v??'').replace(/\D/g,'');const allow=String(plain.META_WHATSAPP_UAT_ALLOWLIST||plain.PAWSPACE_COMMUNICATION_UAT_ALLOWLIST||'').split(',').map(digits).filter(Boolean);if(!allow.length)throw new Error('No staging UAT recipient allowlist is configured');
+          const parsed=JSON.parse(readFileSync(process.env.CANDIDATES,'utf8'));const rows=(Array.isArray(parsed)?parsed:[]).flatMap(b=>Array.isArray(b?.results)?b.results:[]);let selected=null;for(const row of rows){for(const key of ['primary_phone','secondary_phone']){const phone=digits(row?.[key]);if(phone&&allow.includes(phone)){selected={customerId:String(row.customer_id),cityId:String(row.city_id||'blr'),bookingId:String(row.booking_id),recipient:phone};break;}}if(selected)break;}
+          if(!selected)throw new Error('No allowlisted, consented staging customer with a booking is available for governed UAT dispatch');
+          writeFileSync(process.env.SELECTED,JSON.stringify(selected),{mode:0o600});
+          console.log('Governed staging UAT recipient selected: allowlist match=true, canonical ownership candidate=true, WhatsApp consent=true, opt_out=false, booking linked=true; PII withheld.');
+          NODE
+          echo "SELECTED_FILE=$SELECTED" >> "$GITHUB_ENV"
+      - name: Enqueue and dispatch real Meta UAT message
+        env:
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import{readFileSync}from'node:fs';import{createHash}from'node:crypto';
+          const selected=JSON.parse(readFileSync(process.env.SELECTED_FILE,'utf8'));const base=String(process.env.STAGING_URL||'').replace(/\/$/,'');
+          const login=await fetch(`${base}/api/staging-login`,{method:'POST',headers:{'content-type':'application/json',origin:base},body:JSON.stringify({action:'login',code:String(process.env.PAWSPACE_UAT_ACCESS_CODE||''),email:'founder@pawspace.in'}),redirect:'manual',signal:AbortSignal.timeout(20000)});const cookie=String(login.headers.get('set-cookie')||'').split(';')[0];if(!cookie)throw new Error('Staging sign-in failed');
+          const metaState=await fetch(`${base}/api/whatsapp/meta-admin`,{headers:{cookie},signal:AbortSignal.timeout(20000)});const ms=await metaState.json();const approved=(Array.isArray(ms?.data?.templates)?ms.data.templates:[]).find(t=>String(t?.status||'')==='approved');if(!metaState.ok||!approved)throw new Error('No approved synced Meta template is available in staging');
+          const idem=`meta-uat-proof-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`;
+          const enqueue=await fetch(`${base}/api/communications`,{method:'POST',headers:{'content-type':'application/json',origin:base,cookie},body:JSON.stringify({action:'enqueue',customerId:selected.customerId,cityId:selected.cityId,channel:'whatsapp',purpose:'transactional',idempotencyKey:idem,templateKey:String(approved.template_key),bookingId:selected.bookingId,payload:{language:String(approved.approved_language||'en')}}),signal:AbortSignal.timeout(20000)});const eq=await enqueue.json();const messageId=String(eq?.data?.messageId||eq?.data?.message?.id||'');const enqueueStatus=String(eq?.data?.status||eq?.data?.message?.status||'unknown');console.log(`Governed enqueue HTTP=${enqueue.status}; status=${enqueueStatus}; messageCreated=${Boolean(messageId)}`);if(!enqueue.ok||!messageId)throw new Error('Unable to enqueue governed Meta UAT proof message');if(!['queued','retry_pending'].includes(enqueueStatus))throw new Error(`UAT proof message is not immediately dispatchable: ${enqueueStatus}`);
+          const dispatch=await fetch(`${base}/api/whatsapp/meta-admin`,{method:'POST',headers:{'content-type':'application/json',origin:base,cookie},body:JSON.stringify({action:'dispatch_uat',messageId,recipient:selected.recipient}),signal:AbortSignal.timeout(30000)});const dp=await dispatch.json();const result=dp?.data||{};const ref=String(result.providerReference||'');const hash=ref?createHash('sha256').update(ref).digest('hex').slice(0,16):'none';console.log(`Meta dispatch HTTP=${dispatch.status}; status=${String(result.status||'unknown')}; externalDelivery=${Boolean(result.externalDelivery)}; productionDelivery=${Boolean(result.productionDelivery)}; providerRefHash=${hash}`);if(!dispatch.ok||String(result.status)!=='provider_accepted'||result.externalDelivery!==true||result.productionDelivery!==false||!ref)throw new Error('Meta did not genuinely accept the governed UAT message');
+          let finalStatus='provider_accepted';for(let i=0;i<18;i++){await new Promise(r=>setTimeout(r,5000));const state=await fetch(`${base}/api/communications?customerId=${encodeURIComponent(selected.customerId)}`,{headers:{cookie},signal:AbortSignal.timeout(20000)});let body=null;try{body=await state.json()}catch{};const messages=Array.isArray(body?.data?.messages)?body.data.messages:[];const msg=messages.find(m=>String(m?.id||'')===messageId);finalStatus=String(msg?.status||finalStatus);if(['sent','delivered','read','failed'].includes(finalStatus))break;}
+          console.log(`Meta callback-observed message status=${finalStatus}; providerRefHash=${hash}`);if(!['sent','delivered','read'].includes(finalStatus))throw new Error(`No genuine Meta status callback observed within proof window; final status=${finalStatus}`);
+          NODE
