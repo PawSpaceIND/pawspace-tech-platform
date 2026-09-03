@@ -1,5 +1,5 @@
 import { defaultRoles, hasPermission, isFullAccessRole, parsePermissions, permissionCatalog, type Permission } from "../../../lib/platform-security";
-import { authError, resolveActor, securityAudit } from "../../../lib/server-auth";
+import { authError, resolveActor, securityAudit, securityAuditStatement } from "../../../lib/server-auth";
 
 async function database(){const {env}=await import("cloudflare:workers");return env.DB;}
 async function ensureTables(){
@@ -45,10 +45,52 @@ async function protectedRoleCodes(db:D1Database){
  * returned silently. The audit trail therefore showed some attempts to escalate and not others, which is
  * worse than none - it reads as a complete record. None of these paths touch business state; the audit
  * row is the only write.
+ *
+ * DEFAULTS TO 403, and that default is the point. Every refusal on this surface except one is an
+ * AUTHORIZATION refusal - "you may not do this" - and they all used to answer 400 Bad Request, which
+ * says "you sent something malformed" about a request that was well-formed and deliberate. A client
+ * could not distinguish a deliberate escalation attempt from a typo, and the ordinary way an
+ * authorization probe gets spotted - an alert on 403 volume - never fired. The one genuine bad-input
+ * case, an unknown role code, still passes 400 explicitly.
  */
-async function denyAndAudit(db:D1Database,current:Awaited<ReturnType<typeof resolveActor>>,action:string,resourceType:string,resourceId:string|null,reason:string,detail:Record<string,unknown>,message:string,status=400){
+async function denyAndAudit(db:D1Database,current:Awaited<ReturnType<typeof resolveActor>>,action:string,resourceType:string,resourceId:string|null,reason:string,detail:Record<string,unknown>,message:string,status=403){
  await securityAudit(db,current,action,resourceType,resourceId,"denied",{reason,...detail});
  return Response.json({error:message},{status});
+}
+
+/**
+ * The permissions a role actually carries, read from the DATABASE definition rather than from the
+ * compiled defaults, so a role edited after deploy is measured as it currently is.
+ */
+async function roleGrants(db:D1Database,code:string){
+ const row=await db.prepare("SELECT permissions_json FROM role_definitions WHERE lower(code)=?").bind(normaliseCode(code)).first<{permissions_json:string}>().catch(()=>null);
+ return row?parsePermissions(row.permissions_json):null;
+}
+
+/**
+ * Grants in `requested` that the actor does not itself hold. Empty means the actor has the clearance.
+ *
+ * THE RULE THIS IMPLEMENTS: you cannot hand out authority you do not have, to anyone, including
+ * yourself. It is what closes the gap the protected-role set could never cover.
+ *
+ * The protected set is derived from the wildcard, so it stops escalation UPWARDS to founder/superuser.
+ * It says nothing about SIDEWAYS: `admin` holds users.manage and not finance.manage, `finance` is not a
+ * wildcard role, and update_user compared nothing against the acting identity - so an admin could PUT
+ * its own row to roleCode:"finance" and come out of the request holding finance.manage,
+ * payments.manage, payroll.manage and compensation.view. Neither role is "higher" than the other, which
+ * is exactly why a rank-based guard would not have caught it.
+ *
+ * Deliberately NOT a self-check. Blocking only self-directed changes would leave the same escalation
+ * available through a second account the actor also controls, and would wrongly permit handing a
+ * colleague authority the actor cannot exercise. The question is about the GRANT, not about who is
+ * receiving it - so it holds for self, for a colleague, and for a brand-new account alike.
+ *
+ * A wildcard actor (founder, superuser, the development preview) holds everything and is unaffected.
+ */
+function unheldGrants(current:Awaited<ReturnType<typeof resolveActor>>,requested:readonly string[]){
+ if(current.permissions.includes("*"))return [] as string[];
+ const held=new Set(current.permissions);
+ return requested.filter(grant=>!held.has(grant));
 }
 
 export async function GET(request:Request){
@@ -91,17 +133,43 @@ export async function POST(request:Request){
       // row written for it; the guard is applied on the normalised code so it cannot be dodged by case
       // or padding. Refused BEFORE any INSERT, so no app_users row exists for a rejected role.
       const definedRole=await db.prepare("SELECT code FROM role_definitions WHERE lower(code)=?").bind(roleCode).first();
-      if(!definedRole)return denyAndAudit(db,current,"create_user","identity",email,"unknown_role",{requestedRoleCode:roleCode},`Unknown role '${roleCode}'`);
+      if(!definedRole)return denyAndAudit(db,current,"create_user","identity",email,"unknown_role",{requestedRoleCode:roleCode},`Unknown role '${roleCode}'`,400);
+      // create_user is the OTHER writer of role_code. A clearance rule applied only to update_user would
+      // leave this door open: create the account already carrying the grant instead of promoting one
+      // into it. Same rule, same wording, both actions.
+      const createUnheld=unheldGrants(current,await roleGrants(db,roleCode)??[]);
+      if(createUnheld.length)return denyAndAudit(db,current,"create_user","identity",email,"insufficient_clearance",{requestedRoleCode:roleCode,unheldGrants:createUnheld},`You cannot create an account holding ${createUnheld.join(", ")} — that is authority you do not hold yourself`);
       // This used to INSERT ... ON CONFLICT(email) DO UPDATE SET role_code=excluded.role_code, so
       // "create" silently behaved as "update" for any address that already existed - including a
       // founder's, whose record it would rewrite. Create now creates: an existing email is a conflict.
       const existing=await db.prepare("SELECT role_code FROM app_users WHERE email=?").bind(email).first<{role_code:string}>();
       if(existing)return denyAndAudit(db,current,"create_user","identity",email,"email_already_exists",{},"An account with that email already exists. Change its role from the user directory instead — create never edits an existing identity.",409);
-      await db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),email,name,roleCode,"active",now,now).run(); await securityAudit(db,current,"create_user","identity",email,"completed",{roleCode});
+      /*
+       * The mutation and its audit row go in ONE batch, and that is the point.
+       *
+       * These were two sequential awaits: the INSERT committed, then the audit row was written. A
+       * Worker that died between them - or an audit insert that failed on its own - left a new account
+       * carrying a role with nothing in security_audit_events saying who created it. An audit trail
+       * that is usually complete is worse than one that is known to be partial, because it gets read as
+       * complete. D1 applies a batch atomically, so either the account and its audit row both exist or
+       * neither does.
+       */
+      const createdId=crypto.randomUUID();
+      await db.batch([
+        db.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(createdId,email,name,roleCode,"active",now,now),
+        securityAuditStatement(db,current,"create_user","identity",email,"completed",{roleCode}),
+      ]);
       return Response.json({ok:true});
     }
     if(action==="update_user"){
-      requirePermission(current,"users.manage"); const id=String(body.id||""); const target=await db.prepare("SELECT role_code FROM app_users WHERE id=?").bind(id).first<{role_code:string}>();
+      // `email` is selected purely so the audit row can say whether the attempt was self-directed. It
+      // is NOT what the clearance rule turns on - see unheldGrants for why a self-check would be the
+      // wrong guard - but it is the single most useful fact when reading the trail afterwards.
+      requirePermission(current,"users.manage"); const id=String(body.id||""); const target=await db.prepare("SELECT role_code,email FROM app_users WHERE id=?").bind(id).first<{role_code:string;email:string}>();
+      // An id matching no account used to fall through every guard - normaliseCode(undefined) is "",
+      // which is in no protected set - and reach an UPDATE that changed zero rows and still answered
+      // ok:true. That reads to a caller as "the change was applied". It is a refusal, and a 404.
+      if(!target)return denyAndAudit(db,current,"update_user","identity",id,"target_not_found",{},"User not found",404);
       const protectedCodes=await protectedRoleCodes(db);
       // A holder of a full-access role cannot be edited from here, and a full-access role cannot be
       // handed out from here. The first half existed; the second was missing entirely.
@@ -110,8 +178,18 @@ export async function POST(request:Request){
       // An unvalidated role_code produced an account that authenticates and then authorises nothing.
       const assigned=String(body.roleCode||"associate");
       const known=await db.prepare("SELECT code FROM role_definitions WHERE code=?").bind(assigned).first();
-      if(!known)return denyAndAudit(db,current,"update_user","identity",id,"unknown_role",{requestedRoleCode:assigned},`Unknown role '${assigned}'`);
-      await db.prepare("UPDATE app_users SET role_code=?,status=?,updated_at=? WHERE id=?").bind(String(body.roleCode||"associate"),String(body.status||"active"),now,id).run(); await securityAudit(db,current,"update_user","identity",id,"completed",{roleCode:body.roleCode,status:body.status});
+      if(!known)return denyAndAudit(db,current,"update_user","identity",id,"unknown_role",{requestedRoleCode:assigned},`Unknown role '${assigned}'`,400);
+      // The clearance rule. See unheldGrants: an actor may not move any account - its own included -
+      // into a role carrying authority the actor cannot exercise itself.
+      const unheld=unheldGrants(current,await roleGrants(db,assigned)??[]);
+      if(unheld.length)return denyAndAudit(db,current,"update_user","identity",id,"insufficient_clearance",{requestedRoleCode:assigned,unheldGrants:unheld,selfDirected:normaliseCode(target?.email)===normaliseCode(current.email)},`'${assigned}' carries ${unheld.join(", ")}, which you do not hold — you cannot assign authority you do not have`);
+      // One batch, for the reason given on create_user above: a role change without its audit row is
+      // exactly the event this surface exists to record.
+      const nextStatus=String(body.status||"active");
+      await db.batch([
+        db.prepare("UPDATE app_users SET role_code=?,status=?,updated_at=? WHERE id=?").bind(assigned,nextStatus,now,id),
+        securityAuditStatement(db,current,"update_user","identity",id,"completed",{roleCode:assigned,status:nextStatus}),
+      ]);
       return Response.json({ok:true});
     }
     if(action==="save_role"){
@@ -122,11 +200,28 @@ export async function POST(request:Request){
       // UI appeared to accept a change that did not survive. They are now refused explicitly rather
       // than accepted and quietly undone.
       const definition=await db.prepare("SELECT system_role,permissions_json FROM role_definitions WHERE code=?").bind(code).first<{system_role:number;permissions_json:string}>();
-      if(!definition)return denyAndAudit(db,current,"save_role","role",code,"unknown_role",{requestedRoleCode:code},`Unknown role '${code}'`);
+      if(!definition)return denyAndAudit(db,current,"save_role","role",code,"unknown_role",{requestedRoleCode:code},`Unknown role '${code}'`,400);
       if(isFullAccessRole(definition.permissions_json))return denyAndAudit(db,current,"save_role","role",code,"full_access_role_edit_blocked",{},"Founder and Superuser permissions are protected");
       if(Number(definition.system_role)===1)return denyAndAudit(db,current,"save_role","role",code,"built_in_role_edit_blocked",{},"Built-in role permissions are immutable: they are restored from the platform definition on every deploy, so a change here would not survive. Create a custom role instead.");
+      // TWO filters, in this order, and the order matters.
+      //
+      // First the catalogue, which drops anything the platform does not define - including "*", which
+      // is deliberately absent from permissionCatalog. That is what stops the wildcard being smuggled
+      // into a role definition, and it must run first so a caller submitting ["*"] gets a sanitised
+      // empty role rather than a clearance refusal naming a permission that does not exist.
       const permissions=parsePermissions(body.permissions).filter(p=>permissionCatalog.includes(p as Permission));
-      await db.prepare("UPDATE role_definitions SET permissions_json=?,updated_at=? WHERE code=?").bind(JSON.stringify(permissions),now,code).run(); await securityAudit(db,current,"save_role","role",code,"completed",{permissions}); return Response.json({ok:true});
+      // Then clearance, against the ACTOR'S OWN grants rather than the global catalogue. Filtering only
+      // against the catalogue meant "is this a real permission", never "may YOU give it away" - so a
+      // custom role holding nothing but roles.manage could mint a role carrying finance.manage and have
+      // somebody wear it. Two steps from a state a founder can legitimately create.
+      const roleUnheld=unheldGrants(current,permissions);
+      if(roleUnheld.length)return denyAndAudit(db,current,"save_role","role",code,"insufficient_clearance",{unheldGrants:roleUnheld},`You cannot grant ${roleUnheld.join(", ")} — that is authority you do not hold yourself`);
+      // One batch, as above. A permission set changing with no audit row is the same class of gap.
+      await db.batch([
+        db.prepare("UPDATE role_definitions SET permissions_json=?,updated_at=? WHERE code=?").bind(JSON.stringify(permissions),now,code),
+        securityAuditStatement(db,current,"save_role","role",code,"completed",{permissions}),
+      ]);
+      return Response.json({ok:true});
     }
     return Response.json({error:"Unknown action"},{status:400});
   }catch(error){if(error instanceof Response)return error;return Response.json({error:"Unable to update governance controls"},{status:500});}

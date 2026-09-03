@@ -11,9 +11,8 @@ test("UAT sign-in is production-safe: flag-gated and dead unless enabled", () =>
   assert.match(lib, /PAWSPACE_UAT_LOGIN.*==="on".*PAWSPACE_UAT_SIGNING_KEY/s);
   assert.match(lib, /if\(!uatLoginEnabled\(env\)\)return null/);       // resolve is a no-op when disabled
   assert.match(lib, /crypto\.subtle\.sign\("HMAC"/);                    // signed cookie
-  // resolveActor wires it in AFTER dev-preview, gated
-  assert.match(auth, /resolveUatStaffActor/);
-  assert.match(auth, /a no-op in production where PAWSPACE_UAT_LOGIN is unset/);
+  // resolveActor wires the flag-gated helper in after development preview.
+  assert.match(auth, /resolveUatStaffActor\(db,request,uatEnv/);
 });
 
 test("stage-config turns UAT login ON for staging only, with an access code + signing key", () => {
