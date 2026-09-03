@@ -40,7 +40,6 @@ jobs:
             LOG="$RUNNER_TEMP/rollback.log"
             if ! npx wrangler rollback --name pawspace-staging --message "restore staging before Meta version diagnosis" > "$LOG" 2>&1; then rm -f "$LOG"; echo "Rollback failed; raw output withheld." >&2; exit 1; fi
             rm -f "$LOG"
-            echo "Previous staging version restored; values withheld."
           fi
           node --input-type=module <<'NODE'
           const base=String(process.env.STAGING_URL||"").replace(/\/$/,"");
@@ -52,7 +51,7 @@ jobs:
           }
           throw new Error("Meta runtime readiness is incomplete");
           NODE
-      - name: Inspect active version Meta binding types only
+      - name: Inspect active version Meta binding recoverability only
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -60,21 +59,14 @@ jobs:
           set -euo pipefail
           STATUS_FILE="$RUNNER_TEMP/deployment-status.json"; VIEW_FILE="$RUNNER_TEMP/version-view.json"; export STATUS_FILE VIEW_FILE
           trap 'rm -f "$STATUS_FILE" "$VIEW_FILE"' EXIT
-          if ! npx wrangler deployments status --name pawspace-staging --json > "$STATUS_FILE" 2>/dev/null; then echo "Unable to read active deployment metadata; raw output withheld." >&2; exit 1; fi
+          npx wrangler deployments status --name pawspace-staging --json > "$STATUS_FILE" 2>/dev/null
           VERSION_ID="$(node --input-type=module <<'NODE'
-          import{readFileSync}from"node:fs";
-          const root=JSON.parse(readFileSync(process.env.STATUS_FILE,"utf8"));
-          const candidates=[];
-          const walk=v=>{if(!v||typeof v!=="object")return;if(typeof v.version_id==="string")candidates.push(v.version_id);if(typeof v.versionId==="string")candidates.push(v.versionId);if(typeof v.id==="string"&&/^[0-9a-f-]{36}$/i.test(v.id)&&("percentage"in v||"traffic"in v))candidates.push(v.id);for(const child of Object.values(v))walk(child)};walk(root);
-          const id=candidates.find(v=>/^[0-9a-f-]{36}$/i.test(v));if(!id)process.exit(2);process.stdout.write(id);
+          import{readFileSync}from"node:fs";const root=JSON.parse(readFileSync(process.env.STATUS_FILE,"utf8"));const c=[];const walk=v=>{if(!v||typeof v!=="object")return;if(typeof v.version_id==="string")c.push(v.version_id);if(typeof v.versionId==="string")c.push(v.versionId);if(typeof v.id==="string"&&/^[0-9a-f-]{36}$/i.test(v.id)&&("percentage"in v||"traffic"in v))c.push(v.id);for(const child of Object.values(v))walk(child)};walk(root);const id=c.find(v=>/^[0-9a-f-]{36}$/i.test(v));if(!id)process.exit(2);process.stdout.write(id);
           NODE
           )"
-          [ -n "$VERSION_ID" ] || { echo "Unable to resolve active staging version ID." >&2; exit 1; }
-          if ! npx wrangler versions view "$VERSION_ID" --name pawspace-staging --json > "$VIEW_FILE" 2>/dev/null; then echo "Unable to inspect active staging version; raw output withheld." >&2; exit 1; fi
+          npx wrangler versions view "$VERSION_ID" --name pawspace-staging --json > "$VIEW_FILE" 2>/dev/null
           node --input-type=module <<'NODE'
-          import{readFileSync}from"node:fs";
-          const root=JSON.parse(readFileSync(process.env.VIEW_FILE,"utf8"));
-          const wanted=new Set(["META_WHATSAPP_PHONE_NUMBER_ID","META_WHATSAPP_WABA_ID"]);const found=new Map();
-          const walk=v=>{if(!v||typeof v!=="object")return;if(typeof v.name==="string"&&wanted.has(v.name)){const type=String(v.type||"unknown").replace(/[^a-z0-9_-]/gi,"")||"unknown";found.set(v.name,type)}for(const child of Object.values(v))walk(child)};walk(root);
-          for(const name of wanted)console.log(`${name}: activeVersionBindingType=${found.get(name)||"absent"}`);
+          import{readFileSync}from"node:fs";const root=JSON.parse(readFileSync(process.env.VIEW_FILE,"utf8"));const wanted=new Set(["META_WHATSAPP_PHONE_NUMBER_ID","META_WHATSAPP_WABA_ID"]);const found=new Map();
+          const walk=v=>{if(!v||typeof v!=="object")return;if(typeof v.name==="string"&&wanted.has(v.name)){const type=String(v.type||"unknown").replace(/[^a-z0-9_-]/gi,"")||"unknown";const value=typeof v.text==="string"?v.text:typeof v.value==="string"?v.value:"";found.set(v.name,{type,readable:Boolean(value)})}for(const child of Object.values(v))walk(child)};walk(root);
+          for(const name of wanted){const row=found.get(name);console.log(`${name}: activeVersionBindingType=${row?.type||"absent"}; recoverableWithoutLogging=${row?.readable===true}`)}
           NODE
