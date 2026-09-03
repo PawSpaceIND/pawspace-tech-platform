@@ -1,0 +1,38 @@
+name: Check WhatsApp UAT outbound eligibility
+
+on:
+  push:
+    branches:
+      - fix/whatsapp-uat-staging-deploy-isolation
+    paths:
+      - .github/workflows/check-whatsapp-uat-outbound-eligibility.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-eligibility:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Count eligible existing staging paths only
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          SETTINGS="$RUNNER_TEMP/settings.json"; SQL="$RUNNER_TEMP/eligibility.sql"; OUT="$RUNNER_TEMP/out.json"; export SETTINGS SQL OUT
+          trap 'rm -f "$SETTINGS" "$SQL" "$OUT"' EXIT
+          HTTP="$(curl --silent --show-error --output "$SETTINGS" --write-out '%{http_code}' --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" --header 'Accept: application/json' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/pawspace-staging/settings")"
+          [ "$HTTP" = "200" ] || exit 1
+          node --input-type=module <<'NODE'
+          import{readFileSync,writeFileSync}from'node:fs';const p=JSON.parse(readFileSync(process.env.SETTINGS,'utf8'));const vars=Object.fromEntries((p?.result?.bindings||[]).filter(x=>x?.type==='plain_text').map(x=>[String(x.name||''),String(x.text??x.value??'')]));const raw=vars.META_WHATSAPP_UAT_ALLOWLIST||vars.PAWSPACE_COMMUNICATION_UAT_ALLOWLIST||'';const phones=raw.split(',').map(x=>x.replace(/\D/g,'').slice(-10)).filter(x=>/^\d{10}$/.test(x));if(!phones.length){console.log('allowlistedRecipients=0; eligibleSessionThreads=0; eligibleQueuedMessages=0');process.exit(0)}const quoted=phones.map(x=>`'${x}'`).join(',');const sql=`SELECT COUNT(DISTINCT t.id) AS eligible_session_threads FROM communication_threads t JOIN whatsapp_uat_sessions s ON s.customer_id=t.customer_id AND s.provider='meta_whatsapp' JOIN canonical_customers c ON c.id=t.customer_id JOIN customer_contact_preferences p ON p.customer_id=t.customer_id WHERE t.status='open' AND s.last_inbound_at >= ${Date.now()-24*60*60_000} AND p.whatsapp_consent=1 AND COALESCE(p.opt_out,0)<>1 AND (substr(replace(replace(replace(replace(c.primary_phone,'+',''),' ',''),'-',''),'(',''),-10) IN (${quoted}) OR substr(replace(replace(replace(replace(COALESCE(c.secondary_phone,''),'+',''),' ',''),'-',''),'(',''),-10) IN (${quoted}));\nSELECT COUNT(DISTINCT m.id) AS eligible_queued_messages FROM communication_messages m JOIN communication_outbox o ON o.message_id=m.id JOIN canonical_customers c ON c.id=m.customer_id JOIN customer_contact_preferences p ON p.customer_id=m.customer_id LEFT JOIN whatsapp_uat_templates wt ON wt.template_key=m.template_key WHERE m.channel='whatsapp' AND m.provider='meta_whatsapp' AND m.direction='outbound' AND o.status IN ('queued','retry_pending','scheduled') AND p.whatsapp_consent=1 AND COALESCE(p.opt_out,0)<>1 AND (substr(replace(replace(replace(replace(c.primary_phone,'+',''),' ',''),'-',''),'(',''),-10) IN (${quoted}) OR substr(replace(replace(replace(replace(COALESCE(c.secondary_phone,''),'+',''),' ',''),'-',''),'(',''),-10) IN (${quoted})) AND (EXISTS(SELECT 1 FROM whatsapp_uat_sessions ss WHERE ss.customer_id=m.customer_id AND ss.provider='meta_whatsapp' AND ss.last_inbound_at >= ${Date.now()-24*60*60_000}) OR wt.status='approved');`;writeFileSync(process.env.SQL,sql,{mode:0o600});console.log(`allowlistedRecipients=${phones.length}; values withheld`);
+          NODE
+          [ -s "$SQL" ] || exit 0
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --file "$SQL" --json > "$OUT"
+          node --input-type=module <<'NODE'
+          import{readFileSync}from'node:fs';const p=JSON.parse(readFileSync(process.env.OUT,'utf8'));const rows=(Array.isArray(p)?p:[]).flatMap(b=>Array.isArray(b?.results)?b.results:[]);const a=rows.find(x=>x?.eligible_session_threads!==undefined),b=rows.find(x=>x?.eligible_queued_messages!==undefined);console.log(`eligibleSessionThreads=${Number(a?.eligible_session_threads??0)}; eligibleQueuedMessages=${Number(b?.eligible_queued_messages??0)}; identifiers withheld`);
+          NODE
