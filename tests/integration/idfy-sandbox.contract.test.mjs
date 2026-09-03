@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { installWorkersHooks } from "../helpers/module-hooks.mjs";
 import { makeD1 } from "../helpers/voice-harness.mjs";
-import { preflight } from "./sandbox-preflight.mjs";
+import { preflight, tamperHex } from "./sandbox-preflight.mjs";
 
 // ---------------------------------------------------------------------------
 // IDfy SANDBOX contract — real HTTP to the configured IDfy endpoint, real credentials.
@@ -80,7 +80,14 @@ test("IDFY-03: the callback boundary refuses a tampered signature and admits a c
   await boundary.ensureIdfyCallbackTables(db);
   const secret = String(process.env[WEBHOOK_SECRET] || "");
 
-  const rawBody = JSON.stringify({ task_id: ref("KYC"), status: "completed", result: { verification_status: "verified" } });
+  // event_id and request_id are what applyIdfyCallback correlates on: it reads
+  // `body.event_id || body.id` and `body.request_id || body.reference_id`, and 400s when either is
+  // absent. An earlier fixture carried only task_id, so the signed case stopped at that 400. Signature
+  // verification runs BEFORE those checks, so the assertion below was sound rather than vacuous - but it
+  // proved only "not 401" and never reached anything past verification. With the fields the provider
+  // actually sends, the signed callback clears the id gate too and the assertion can be stronger.
+  const eventId = ref("EVT");
+  const rawBody = JSON.stringify({ event_id: eventId, request_id: ref("REQ"), task_id: ref("KYC"), status: "completed", result: { verification_status: "verified" } });
   const timestamp = String(Date.now());
   const signature = await boundary.idfyHmacHex(secret, `${timestamp}.${rawBody}`);
   const headers = (sig) => new Headers({
@@ -89,15 +96,17 @@ test("IDFY-03: the callback boundary refuses a tampered signature and admits a c
     [boundary.IDFY_TIMESTAMP_HEADER]: timestamp,
   });
 
-  const tampered = await boundary.applyIdfyCallback(db, env(), { rawBody, headers: headers(signature.replace(/.$/, "0")) });
+  const tampered = await boundary.applyIdfyCallback(db, env(), { rawBody, headers: headers(tamperHex(signature)) });
   assert.equal(tampered.accepted, false, "a tampered signature must never be accepted");
   assert.equal(tampered.status, 401, `expected 401 for a bad signature, got ${tampered.status}: ${tampered.reason ?? ""}`);
 
   const signed = await boundary.applyIdfyCallback(db, env(), { rawBody, headers: headers(signature) });
-  // Narrow on purpose: what is proven is that real key material passes verification. Anything after
-  // that is correlation, which needs a seeded case and is covered by the local executed suites.
+  // Real key material passes verification AND the payload clears the id gate behind it. Still narrow on
+  // purpose: what happens after that is correlation against a seeded verification case, which needs
+  // fixture state this suite does not own and is covered by the local executed suites.
   assert.notEqual(signed.status, 401, `a correctly signed callback must get past verification, got 401: ${signed.reason ?? ""}`);
-  console.log(`IDFY-03 signed callback passed verification (status ${signed.status}), tampered refused 401`);
+  assert.notEqual(signed.status, 400, `the fixture must carry what the boundary correlates on, got 400: ${signed.reason ?? ""}`);
+  console.log(`IDFY-03 signed callback cleared verification and correlation gates (status ${signed.status}), tampered refused 401`);
 });
 
 test("IDFY-04: a stale signature is refused even though it verifies", { ...state.gate(), ...(process.env[WEBHOOK_SECRET] ? {} : { skip: `${WEBHOOK_SECRET} is not configured — the inbound leg cannot be exercised` }) }, async () => {

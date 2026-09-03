@@ -6,10 +6,11 @@ import assert from "node:assert/strict";
  *
  * tests/integration/ deliberately sits outside the blocking Release CI glob so a third-party sandbox
  * outage can never turn CI red - which also means nothing in CI would notice if the harness's own
- * logic broke. These are the two decisions it makes that must not rot, and neither needs a network or
- * a credential, so they belong here in the blocking suite rather than beside the suites they gate.
+ * logic broke. These are the decisions it makes that must not rot, none of which needs a network or a
+ * credential, so they belong here in the blocking suite rather than beside the suites they gate.
  *
- * Both cases came out of review on the PR that introduced the harness:
+ * Every case below came out of review on the PR that introduced the harness, and each was a defect CI
+ * could not have seen:
  *
  *   1. The probe timeout was `Number(process.env.PAWSPACE_SANDBOX_PROBE_TIMEOUT_MS || 12_000)`, so a
  *      malformed value ("soon", "-1") became NaN or non-positive, setTimeout fired immediately, every
@@ -17,6 +18,12 @@ import assert from "node:assert/strict";
  *      working endpoint as broken is the one diagnosis this harness exists to get right.
  *   2. Variables only SOME tests need were listed as suite-wide `required`, so an environment holding
  *      the API keys but not an inbound webhook secret skipped the outbound tests too.
+ *   3. Tampering with a signature by forcing its last character to "0" is a no-op when the digest
+ *      already ends in "0" - a one-in-sixteen flake that would only ever appear once someone supplied
+ *      real credentials, in the assertion that proves forged signatures are refused.
+ *
+ * The fingerprint case is not from review: it is the property that lets these suites report WHICH
+ * credential is loaded without ever printing one, and it is worth pinning for its own sake.
  */
 
 const preflightModule = () => import("./integration/sandbox-preflight.mjs");
@@ -72,4 +79,23 @@ test("guard: no secret VALUE can reach the diagnostics", async () => {
   } finally {
     delete process.env[NAME];
   }
+});
+
+test("guard: tamperHex always returns a DIFFERENT digest", async () => {
+  const { tamperHex } = await preflightModule();
+  // The bug this replaced: `signature.replace(/.$/, "0")` leaves a digest ending in "0" unchanged, so
+  // the "tampered" value verifies and the tampering assertion fails - one run in sixteen, at random,
+  // and only once someone supplied sandbox credentials. Every hex last character must move.
+  for (const digest of ["abc0", "abc1", "0", "f", "deadbeef0", "00000000", "ffffffff"]) {
+    const tampered = tamperHex(digest);
+    assert.notEqual(tampered, digest, `tamperHex left ${digest} unchanged`);
+    assert.equal(tampered.length, digest.length, "only one character may change, not the length");
+    assert.equal(tampered.slice(0, -1), digest.slice(0, -1), "and it must be the last character");
+  }
+  // A prefixed signature (Meta sends sha256=<hex>) keeps its prefix, so the header stays well-formed
+  // and the refusal under test is the digest, not the shape.
+  const prefixed = "sha256=abc0";
+  assert.equal(tamperHex(prefixed).startsWith("sha256="), true, "the scheme prefix must survive tampering");
+  assert.notEqual(tamperHex(prefixed), prefixed);
+  assert.throws(() => tamperHex(""), /non-empty/, "an empty digest is a mistake, not something to tamper with");
 });

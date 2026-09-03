@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { installWorkersHooks } from "../helpers/module-hooks.mjs";
-import { preflight } from "./sandbox-preflight.mjs";
+import { preflight, tamperHex } from "./sandbox-preflight.mjs";
 
 // The lib modules import their siblings extensionlessly and some reach for `cloudflare:workers`, so the
 // repo's shared resolver is required before any of them is imported. No DB global is ever set: every
@@ -114,7 +114,7 @@ test("RZP-05: a payload signed with the real sandbox secret verifies, and any ta
   // Three ways it must not: a changed body, a changed signature, a different secret. Each is a distinct
   // real-world failure — a MITM, a replay with edits, and a live/sandbox secret mix-up.
   assert.equal(await lifecycle.verifyRazorpayRawBody(`${payload} `, signature, secret), false, "a tampered body must not verify");
-  assert.equal(await lifecycle.verifyRazorpayRawBody(payload, signature.replace(/.$/, "0"), secret), false, "a tampered signature must not verify");
+  assert.equal(await lifecycle.verifyRazorpayRawBody(payload, tamperHex(signature), secret), false, "a tampered signature must not verify");
   assert.equal(await lifecycle.verifyRazorpayRawBody(payload, signature, `${secret}x`), false, "the wrong secret must not verify");
   console.log("RZP-05 inbound signature contract holds against the real sandbox secret");
 });

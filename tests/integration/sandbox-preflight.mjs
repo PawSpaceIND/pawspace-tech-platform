@@ -34,6 +34,23 @@ export const __probeTimeoutMs = probeTimeoutMs; // exported for the guard's own 
 
 const present = (name) => String(process.env[name] || "").trim().length > 0;
 
+/**
+ * A hex digest with exactly one character changed, guaranteed different from the input.
+ *
+ * `signature.replace(/.$/, "0")` was used for this and is a 1-in-16 flake: when the digest already ends
+ * in "0" the "tampered" value is IDENTICAL, so it verifies and the tampering assertion fails. The
+ * payloads here embed a timestamp and a random reference, so the digest differs every run - meaning the
+ * failure would appear at random, and only once someone finally supplied sandbox credentials.
+ */
+export function tamperHex(digest) {
+  const value = String(digest);
+  if (!value) throw new Error("tamperHex needs a non-empty digest to tamper with");
+  const last = value.at(-1);
+  const swapped = `${value.slice(0, -1)}${last === "0" ? "1" : "0"}`;
+  if (swapped === value) throw new Error("tamperHex failed to change the digest");
+  return swapped;
+}
+
 /** First 8 hex of SHA-256. Identifies which secret is loaded without disclosing any of it. */
 export function fingerprint(name) {
   const value = String(process.env[name] || "");

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { installWorkersHooks } from "../helpers/module-hooks.mjs";
-import { preflight } from "./sandbox-preflight.mjs";
+import { preflight, tamperHex } from "./sandbox-preflight.mjs";
 
 // ---------------------------------------------------------------------------
 // Meta Graph API contract — real HTTP to graph.facebook.com with the UAT credential set.
@@ -101,7 +101,7 @@ test("META-03: an inbound payload signed with the real app secret verifies, and 
 
   assert.equal(await webhook.verifyMetaWhatsAppSignature(rawBody, signature, secret), true, "a correctly signed body must verify");
   assert.equal(await webhook.verifyMetaWhatsAppSignature(`${rawBody} `, signature, secret), false, "a tampered body must not verify");
-  assert.equal(await webhook.verifyMetaWhatsAppSignature(rawBody, signature.replace(/.$/, "0"), secret), false, "a tampered signature must not verify");
+  assert.equal(await webhook.verifyMetaWhatsAppSignature(rawBody, tamperHex(signature), secret), false, "a tampered signature must not verify");
   assert.equal(await webhook.verifyMetaWhatsAppSignature(rawBody, signature, `${secret}x`), false, "the wrong app secret must not verify");
   assert.equal(await webhook.verifyMetaWhatsAppSignature(rawBody, signature.replace(/^sha256=/, ""), secret), false, "an unprefixed digest must not verify");
 
