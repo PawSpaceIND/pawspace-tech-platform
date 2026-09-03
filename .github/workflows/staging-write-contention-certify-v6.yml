@@ -1,4 +1,4 @@
-name: Certify final Track 3 finance read remediation
+name: Certify final Track 3 concurrent read remediation
 
 on:
   push:
@@ -16,7 +16,8 @@ concurrency:
 
 env:
   STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
-  TARGET_SHA: 97fcd657214f1e2ea0039fd7392a11652f488b10
+  TARGET_SHA: 96422d8728fea9c88fb014a5b29519df08bc99e4
+  FINANCE_FAST_PATH_SHA: 97fcd657214f1e2ea0039fd7392a11652f488b10
   CANONICAL_BATCH_SHA: 65af1a317c457d21cd5520bb273b48a066a0ee2f
   SCHEDULING_FIX_SHA: 7289063beadff7c39ee75a5e95d8e515356b9afb
   CANONICAL_BASE_FIX_SHA: d1a358152e244bcfb19db88684da0991f663965c
@@ -35,10 +36,12 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
-          git log -1 --pretty=%s | grep -Fx "perf(staging): remove finance read and webhook replay D1 contention"
+          git log -1 --pretty=%s | grep -Fx "perf(staging): coalesce concurrent finance and actor reads"
+          git merge-base --is-ancestor "$FINANCE_FAST_PATH_SHA" HEAD
           git merge-base --is-ancestor "$CANONICAL_BATCH_SHA" HEAD
           git merge-base --is-ancestor "$SCHEDULING_FIX_SHA" HEAD
           git merge-base --is-ancestor "$CANONICAL_BASE_FIX_SHA" HEAD
+          git show -s --pretty=%s "$FINANCE_FAST_PATH_SHA" | grep -Fx "perf(staging): remove finance read and webhook replay D1 contention"
           git show -s --pretty=%s "$CANONICAL_BATCH_SHA" | grep -Fx "fix(canonical): batch ledger and verdict D1 transactions to resolve staging gate timeout"
           git show -s --pretty=%s "$SCHEDULING_FIX_SHA" | grep -Fx "fix(scheduling): optimize reservation-claim concurrency and eliminate cleanup race"
           git show -s --pretty=%s "$CANONICAL_BASE_FIX_SHA" | grep -Fx "fix(bookings): eliminate synchronous write contention in canonical booking phase"
