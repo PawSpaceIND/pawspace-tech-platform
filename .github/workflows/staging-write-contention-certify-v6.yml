@@ -1,4 +1,4 @@
-name: Certify final Track 3 canonical remediation
+name: Certify final Track 3 scheduling remediation
 
 on:
   push:
@@ -16,8 +16,8 @@ concurrency:
 
 env:
   STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
-  TARGET_SHA: 30c321bb9865aecda9d0163bb707ea3015acc4c4
-  SCHEDULING_FIX_SHA: 4ef551ef24762e7c689e84de67dc46b6fb649e9f
+  TARGET_SHA: 7289063beadff7c39ee75a5e95d8e515356b9afb
+  PRIOR_SCHEDULING_FIX_SHA: 4ef551ef24762e7c689e84de67dc46b6fb649e9f
   CANONICAL_FIX_SHA: d1a358152e244bcfb19db88684da0991f663965c
 
 jobs:
@@ -32,11 +32,12 @@ jobs:
           fetch-depth: 0
       - name: Verify exact remediation lineage
         run: |
+          set -euo pipefail
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
-          git log -1 --pretty=%s | grep -Fx "perf(bookings): remove static governance writes from canonical hot path"
-          git merge-base --is-ancestor "$SCHEDULING_FIX_SHA" HEAD
+          git log -1 --pretty=%s | grep -Fx "fix(scheduling): optimize reservation-claim concurrency and eliminate cleanup race"
+          git merge-base --is-ancestor "$PRIOR_SCHEDULING_FIX_SHA" HEAD
           git merge-base --is-ancestor "$CANONICAL_FIX_SHA" HEAD
-          git show -s --pretty=%s "$SCHEDULING_FIX_SHA" | grep -Fx "perf(scheduling): remove redundant schema work from assignment path"
+          git show -s --pretty=%s "$PRIOR_SCHEDULING_FIX_SHA" | grep -Fx "perf(scheduling): remove redundant schema work from assignment path"
           git show -s --pretty=%s "$CANONICAL_FIX_SHA" | grep -Fx "fix(bookings): eliminate synchronous write contention in canonical booking phase"
       - uses: actions/setup-node@v4
         with:
@@ -105,6 +106,22 @@ jobs:
           node --experimental-strip-types scripts/ops/staging-role-seed.mjs "$RUNNER_TEMP/staging-role-seed.sql"
           npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --yes --file="$RUNNER_TEMP/staging-role-seed.sql"
           npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --file=scripts/employee-seed.sql
+      - name: Clear prior Track 3 synthetic reservation capacity only
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          SQL="SELECT COUNT(*) AS active_before FROM scheduling_reservations WHERE status!='cancelled' AND group_id LIKE 'remediation-%:grp:%'; UPDATE scheduling_reservations SET status='cancelled' WHERE status!='cancelled' AND group_id LIKE 'remediation-%:grp:%'; SELECT COUNT(*) AS active_after FROM scheduling_reservations WHERE status!='cancelled' AND group_id LIKE 'remediation-%:grp:%';"
+          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --yes --json --command "$SQL" > staging-track3-hygiene.json
+          cat staging-track3-hygiene.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const raw=JSON.parse(fs.readFileSync('staging-track3-hygiene.json','utf8'));
+          const batches=Array.isArray(raw)?raw:[raw];
+          const last=batches.at(-1)?.results?.[0]||{};
+          if(Number(last.active_after??NaN)!==0) process.exit(1);
+          NODE
       - name: Verify healthz
         run: |
           node --input-type=module <<'NODE'
@@ -115,7 +132,7 @@ jobs:
           fs.writeFileSync('healthz-evidence.json',JSON.stringify(evidence,null,2));console.log(JSON.stringify(evidence,null,2));
           if(response.status!==200||body?.status!=='ok')process.exit(1);
           NODE
-      - name: Run original 20-second Track 3 gate with Worker tail
+      - name: Run frozen original 20-second Track 3 gate with Worker tail
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -144,7 +161,7 @@ jobs:
         run: |
           RUN_ID="$(node -e "const r=require('./staging-performance.json');process.stdout.write(r.runId)")"
           SQL="SELECT (SELECT COUNT(*) FROM canonical_bookings WHERE idempotency_key LIKE '${RUN_ID}:booking:%') bookings,(SELECT COUNT(*) FROM booking_payments WHERE booking_id IN (SELECT id FROM canonical_bookings WHERE idempotency_key LIKE '${RUN_ID}:booking:%')) payments,(SELECT COUNT(*) FROM scheduling_assignment_decisions WHERE group_id LIKE '${RUN_ID}:grp:%') assignments,(SELECT COUNT(*) FROM payment_gateway_events WHERE event_id='${RUN_ID}:evt:replay') webhook_events,(SELECT ROUND(COALESCE(SUM(debit),0)-COALESCE(SUM(credit),0),2) FROM finance_journal_entries) ledger_drift;"
-          npx wrangler d1 execute pawspace-staging --remote --json --command "$SQL" > staging-performance-d1.json
+          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --yes --json --command "$SQL" > staging-performance-d1.json
           node --input-type=module <<'NODE'
           import fs from 'node:fs';const raw=JSON.parse(fs.readFileSync('staging-performance-d1.json','utf8'));const row=(Array.isArray(raw)?raw[0]:raw)?.results?.[0]||{};const n=k=>Number(row[k]??NaN);console.log(JSON.stringify(row,null,2));if(n('bookings')!==100||n('payments')!==100||n('assignments')!==100||n('webhook_events')!==1||Math.abs(n('ledger_drift'))>0.000001)process.exit(1);
           NODE
@@ -160,6 +177,7 @@ jobs:
           path: |
             deployment.txt
             staging-isolation-evidence.json
+            staging-track3-hygiene.json
             healthz-evidence.json
             gate.log
             staging-performance.json
