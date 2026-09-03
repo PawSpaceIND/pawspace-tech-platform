@@ -1,7 +1,7 @@
 name: Deploy WhatsApp UAT staging
 
-# Narrow, staging-only deployment path for Meta WhatsApp UAT. The full staging deploy remains
-# unchanged and continues to fail closed on the complete Exotel voice credential set.
+# Narrow, staging-only deployment path for Meta WhatsApp UAT.
+# The full staging workflow is intentionally unchanged and still fails closed on Exotel.
 
 on:
   workflow_dispatch:
@@ -23,7 +23,6 @@ on:
 
 permissions:
   contents: read
-  actions: write
 
 jobs:
   deploy-whatsapp-uat:
@@ -45,24 +44,6 @@ jobs:
       - name: Prove WhatsApp isolation and full-stage Exotel fail-closed contract
         run: node --test tests/whatsapp-uat-staging-deploy-isolation.test.mjs tests/exotel-deployment-wiring.test.mjs
 
-      - name: Delete contaminated prior workflow logs
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          status="$(curl --silent --show-error --output "$RUNNER_TEMP/delete-run-logs.out" --write-out '%{http_code}' \
-            --request DELETE \
-            --header "Authorization: Bearer $GH_TOKEN" \
-            --header 'Accept: application/vnd.github+json' \
-            --header 'X-GitHub-Api-Version: 2022-11-28' \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/33747290999/logs")"
-          if [ "$status" != "204" ]; then
-            echo "Prior workflow log deletion failed closed (HTTP $status)." >&2
-            exit 1
-          fi
-          rm -f "$RUNNER_TEMP/delete-run-logs.out"
-          echo "Prior workflow logs deleted; exposed values are not reproduced."
-
       - name: Check out exact WhatsApp gateway application SHA
         uses: actions/checkout@v4
         with:
@@ -70,22 +51,11 @@ jobs:
       - name: Verify exact application checkout and clean tree
         run: |
           set -euo pipefail
-          case "$TARGET_SHA" in
-            *[!0-9a-f]* | "" ) echo "TARGET_SHA must be an exact 40-character commit sha." >&2; exit 1 ;;
-          esac
-          if [ "${#TARGET_SHA}" -ne 40 ]; then
-            echo "TARGET_SHA must be an exact 40-character commit sha." >&2
-            exit 1
-          fi
-          ACTUAL="$(git rev-parse HEAD)"
-          if [ "$ACTUAL" != "$TARGET_SHA" ]; then
-            echo "checkout does not match TARGET_SHA; refusing to deploy." >&2
-            exit 1
-          fi
-          if [ -n "$(git status --porcelain)" ]; then
-            echo "working tree is dirty; refusing to deploy." >&2
-            exit 1
-          fi
+          case "$TARGET_SHA" in *[!0-9a-f]* | "" ) exit 1 ;; esac
+          [ "${#TARGET_SHA}" -eq 40 ]
+          [ "$(git rev-parse HEAD)" = "$TARGET_SHA" ]
+          [ -z "$(git status --porcelain)" ]
+          echo "Exact application SHA verified."
       - name: Install
         run: npm run install:ci
       - name: Re-run focused external webhook regression
@@ -102,60 +72,85 @@ jobs:
           PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
         run: node scripts/stage-config.mjs
 
-      - name: Verify current staging is the isolated deploy before restoration
-        timeout-minutes: 3
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          EXPECTED_SHA: ${{ env.TARGET_SHA }}
-          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
-          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
-          PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
-        run: node tests/e2e/staging-certification.mjs --isolation-only
-
-      - name: Restore immediately previous staging version and dashboard bindings
+      - name: Recover Meta UAT identifiers from staging version history without printing values
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          restore_log="$RUNNER_TEMP/wrangler-rollback.log"
-          if ! npx wrangler rollback --name pawspace-staging --message "restore pre-whatsapp-UAT staging bindings" > "$restore_log" 2>&1; then
-            rm -f "$restore_log"
-            echo "Staging binding restoration failed; raw Wrangler output withheld." >&2
+          LIST="$RUNNER_TEMP/versions.json"
+          IDS="$RUNNER_TEMP/version-ids.txt"
+          RECOVERED="$RUNNER_TEMP/recovered-meta-identifiers.json"
+          VIEW="$RUNNER_TEMP/version-view.json"
+          BULK_LOG="$RUNNER_TEMP/secret-bulk.log"
+          export LIST IDS RECOVERED VIEW
+          trap 'rm -f "$LIST" "$IDS" "$RECOVERED" "$VIEW" "$BULK_LOG"' EXIT
+          if ! npx wrangler versions list --name pawspace-staging --json > "$LIST" 2>/dev/null; then
+            echo "Unable to enumerate staging version history; raw output withheld." >&2
             exit 1
           fi
-          rm -f "$restore_log"
-          echo "Immediately previous pawspace-staging version restored; raw binding values withheld."
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from "node:fs";
+          const payload=JSON.parse(readFileSync(process.env.LIST,"utf8"));
+          const rows=Array.isArray(payload)?payload:Array.isArray(payload?.versions)?payload.versions:Array.isArray(payload?.items)?payload.items:[];
+          const ids=rows.map(row=>String(row?.id||row?.version_id||"").trim()).filter(id=>/^[0-9a-f-]{32,36}$/i.test(id)).slice(0,40);
+          if(!ids.length)throw new Error("No staging version IDs were returned");
+          writeFileSync(process.env.IDS,ids.join("\n"),{mode:0o600});
+          NODE
+          while IFS= read -r VERSION_ID; do
+            [ -n "$VERSION_ID" ] || continue
+            if ! npx wrangler versions view "$VERSION_ID" --name pawspace-staging --json > "$VIEW" 2>/dev/null; then continue; fi
+            if VERSION_ID="$VERSION_ID" node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync, existsSync } from "node:fs";
+          if(existsSync(process.env.RECOVERED))process.exit(0);
+          const root=JSON.parse(readFileSync(process.env.VIEW,"utf8"));
+          const findBindings=value=>{
+            if(!value||typeof value!=="object")return null;
+            if(Array.isArray(value.bindings))return value.bindings;
+            for(const child of Object.values(value)){const found=findBindings(child);if(found)return found;}
+            return null;
+          };
+          const bindings=findBindings(root)||[];
+          const get=name=>{
+            const row=bindings.find(item=>item&&item.name===name&&item.type==="plain_text");
+            return String(row?.text??row?.value??"").trim();
+          };
+          const phoneId=get("META_WHATSAPP_PHONE_NUMBER_ID"),wabaId=get("META_WHATSAPP_WABA_ID");
+          if(!/^\d{5,}$/.test(phoneId)||!/^\d{5,}$/.test(wabaId))process.exit(0);
+          writeFileSync(process.env.RECOVERED,JSON.stringify({META_WHATSAPP_PHONE_NUMBER_ID:phoneId,META_WHATSAPP_WABA_ID:wabaId}),{mode:0o600});
+          NODE
+            then :; fi
+            [ -f "$RECOVERED" ] && break
+          done < "$IDS"
+          if [ ! -s "$RECOVERED" ]; then
+            echo "Historical staging versions do not contain both recoverable Meta identifiers; values were not exposed." >&2
+            exit 1
+          fi
+          if ! npx wrangler secret bulk "$RECOVERED" --name pawspace-staging > "$BULK_LOG" 2>&1; then
+            echo "Recovered Meta identifier installation failed; raw output withheld." >&2
+            exit 1
+          fi
+          echo "Recovered both Meta staging identifiers and stored them as encrypted Worker secrets; values withheld."
 
-      - name: Confirm restored Meta UAT configuration before redeploy
+      - name: Confirm complete Meta UAT configuration before gateway redeploy
         env:
           STAGING_URL: ${{ env.EXPECTED_STAGING_ORIGIN }}
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
         run: |
           node --input-type=module <<'NODE'
-          const base = String(process.env.STAGING_URL || "").replace(/\/$/, "");
-          const code = String(process.env.PAWSPACE_UAT_ACCESS_CODE || "");
-          const login = await fetch(`${base}/api/staging-login`, {
-            method: "POST", redirect: "manual",
-            headers: { "content-type": "application/json", origin: base },
-            body: JSON.stringify({ action: "login", code, email: "founder@pawspace.in" }),
-            signal: AbortSignal.timeout(15000),
-          });
-          const cookie = String(login.headers.get("set-cookie") || "").split(";")[0];
-          if (!(login.status >= 200 && login.status < 400 && cookie)) throw new Error(`staging founder sign-in failed after restoration (HTTP ${login.status})`);
-          const readiness = await fetch(`${base}/api/integration-readiness`, { headers: { cookie }, signal: AbortSignal.timeout(15000) });
-          let payload = null; try { payload = await readiness.json(); } catch {}
-          const modules = payload?.uatSandbox?.modules || payload?.data?.uatSandbox?.modules || [];
-          const meta = Array.isArray(modules) ? modules.find(module => module?.code === "meta_whatsapp") : null;
-          if (!(readiness.ok && meta?.configuredForExternalTest === true)) {
-            const blockerCount = Array.isArray(meta?.blockers) ? meta.blockers.length : -1;
-            throw new Error(`restored Meta WhatsApp configuration is incomplete (blocker count ${blockerCount}); values withheld`);
-          }
-          console.log("Pre-deploy Meta UAT configuration is complete after rollback; values withheld.");
+          const base=String(process.env.STAGING_URL||"").replace(/\/$/,"");
+          const login=await fetch(`${base}/api/staging-login`,{method:"POST",redirect:"manual",headers:{"content-type":"application/json",origin:base},body:JSON.stringify({action:"login",code:String(process.env.PAWSPACE_UAT_ACCESS_CODE||""),email:"founder@pawspace.in"}),signal:AbortSignal.timeout(15000)});
+          const cookie=String(login.headers.get("set-cookie")||"").split(";")[0];
+          if(!(login.status>=200&&login.status<400&&cookie))throw new Error(`staging founder sign-in failed (HTTP ${login.status})`);
+          const readiness=await fetch(`${base}/api/integration-readiness`,{headers:{cookie},signal:AbortSignal.timeout(15000)});
+          let payload=null;try{payload=await readiness.json()}catch{}
+          const modules=payload?.uatSandbox?.modules||payload?.data?.uatSandbox?.modules||[];
+          const meta=Array.isArray(modules)?modules.find(module=>module?.code==="meta_whatsapp"):null;
+          if(!(readiness.ok&&meta?.configuredForExternalTest===true))throw new Error(`Meta WhatsApp Worker configuration is incomplete (blocker count ${Array.isArray(meta?.blockers)?meta.blockers.length:-1}); values withheld`);
+          console.log("Meta WhatsApp UAT Worker configuration is complete; values withheld.");
           NODE
 
-      - name: Record restored staging rollback reference
+      - name: Record current staging rollback reference
         id: rollback
         continue-on-error: true
         env:
@@ -163,15 +158,12 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          if npx wrangler deployments list --name pawspace-staging > "$RUNNER_TEMP/rollback-reference.txt" 2>&1; then
-            REFERENCE="$(grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' "$RUNNER_TEMP/rollback-reference.txt" | tail -n 1 || true)"
-          else
-            REFERENCE=""
-          fi
+          npx wrangler deployments list --name pawspace-staging > "$RUNNER_TEMP/rollback-reference.txt" 2>&1 || true
+          REFERENCE="$(grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' "$RUNNER_TEMP/rollback-reference.txt" | tail -n 1 || true)"
           rm -f "$RUNNER_TEMP/rollback-reference.txt"
-          if [ -z "$REFERENCE" ]; then REFERENCE="restored-staging-version"; fi
+          [ -n "$REFERENCE" ] || REFERENCE="pre-whatsapp-uat-redeploy"
           echo "reference=$REFERENCE" >> "$GITHUB_OUTPUT"
-          echo "Rollback target recorded; account and binding details withheld."
+          echo "Rollback reference recorded; binding details withheld."
 
       - name: Deploy exact SHA to pawspace-staging for WhatsApp UAT
         id: deploy
@@ -190,29 +182,22 @@ jobs:
           trap 'rm -f "$SECRETS_FILE" "$DEPLOY_LOG"' EXIT
           node --input-type=module <<'NODE'
           import { writeFileSync } from "node:fs";
-          const requiredNames = ["PAWSPACE_UAT_ACCESS_CODE","PAWSPACE_UAT_SIGNING_KEY","PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"];
-          const required = Object.fromEntries(requiredNames.map(name => [name, String(process.env[name] || "")]));
-          if (Object.values(required).some(value => !value)) throw new Error("a required core staging UAT secret is missing");
-          const values = { ...required, PAWSPACE_STAGING_LIVE_CUSTOMER_OTP: "false" };
-          const metaToken = String(process.env.META_WHATSAPP_UAT_ACCESS_TOKEN || "").trim();
-          if (metaToken) values.META_WHATSAPP_UAT_ACCESS_TOKEN = metaToken;
-          writeFileSync(process.env.SECRETS_FILE, JSON.stringify(values), { mode: 0o600 });
+          const names=["PAWSPACE_UAT_ACCESS_CODE","PAWSPACE_UAT_SIGNING_KEY","PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"];
+          const values=Object.fromEntries(names.map(name=>[name,String(process.env[name]||"")]));
+          if(Object.values(values).some(value=>!value))throw new Error("a required core staging UAT secret is missing");
+          values.PAWSPACE_STAGING_LIVE_CUSTOMER_OTP="false";
+          const token=String(process.env.META_WHATSAPP_UAT_ACCESS_TOKEN||"").trim();if(token)values.META_WHATSAPP_UAT_ACCESS_TOKEN=token;
+          writeFileSync(process.env.SECRETS_FILE,JSON.stringify(values),{mode:0o600});
           NODE
-          # --keep-vars is mandatory here: dashboard-managed staging values are preserved rather than
-          # diffed/deleted. Raw Wrangler output is never streamed to CI because it may enumerate plain vars.
           if ! npx wrangler deploy --keep-vars --message "staging $TARGET_SHA" --secrets-file "$SECRETS_FILE" > "$DEPLOY_LOG" 2>&1; then
-            echo "Wrangler staging deploy failed; raw output withheld to protect configuration values." >&2
-            exit 1
+            echo "Wrangler staging deploy failed; raw output withheld." >&2; exit 1
           fi
           URL="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' "$DEPLOY_LOG" | tail -n 1 || true)"
-          if [ -z "$URL" ] || [ "$URL" != "$EXPECTED_STAGING_ORIGIN" ]; then
-            echo "deployment did not resolve to the certified pawspace-staging origin; raw output withheld." >&2
-            exit 1
-          fi
+          if [ "$URL" != "$EXPECTED_STAGING_ORIGIN" ]; then echo "Unexpected staging origin; raw output withheld." >&2; exit 1; fi
           echo "staging_url=$URL" >> "$GITHUB_OUTPUT"
-          echo "pawspace-staging deployed with dashboard vars preserved; raw binding values withheld."
+          echo "Exact gateway SHA deployed to pawspace-staging with existing bindings preserved."
 
-      - name: Certify exact live SHA, worker and isolated D1 before runtime UAT probes
+      - name: Certify exact live SHA, worker and isolated D1
         timeout-minutes: 3
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -229,69 +214,30 @@ jobs:
         run: |
           node --input-type=module <<'NODE'
           import { writeFileSync } from "node:fs";
-          const base = String(process.env.STAGING_URL || "").replace(/\/$/, "");
-          if (!base) throw new Error("staging URL is unavailable");
-          const health = await fetch(`${base}/healthz`, { redirect: "manual", signal: AbortSignal.timeout(15000) });
-          if (health.status !== 200) throw new Error(`healthz failed with HTTP ${health.status}`);
-          const noChallenge = await fetch(`${base}/api/whatsapp/meta-webhook`, { redirect: "manual", signal: AbortSignal.timeout(15000) });
-          if (noChallenge.status !== 403) throw new Error(`Meta webhook did not reach its own GET verifier (HTTP ${noChallenge.status})`);
-          const invalidSignature = await fetch(`${base}/api/whatsapp/meta-webhook`, {
-            method: "POST", redirect: "manual",
-            headers: { "content-type": "application/json", "x-hub-signature-256": "sha256=invalid-uat-probe" },
-            body: JSON.stringify({ object: "whatsapp_business_account", entry: [] }),
-            signal: AbortSignal.timeout(15000),
-          });
-          if (invalidSignature.status !== 401) throw new Error(`invalid Meta signature was not rejected (HTTP ${invalidSignature.status})`);
-          writeFileSync("whatsapp-uat-deploy-evidence.json", JSON.stringify({
-            targetSha: process.env.TARGET_SHA, worker: "pawspace-staging", healthz: 200,
-            webhookReachedRouteVerifier: true, invalidSignatureRejected: true, productionTouched: false,
-          }, null, 2));
-          console.log("Staging health is 200; Meta webhook bypasses staging-login and rejects an invalid signature at the route boundary.");
+          const base=String(process.env.STAGING_URL||"").replace(/\/$/,"");
+          const health=await fetch(`${base}/healthz`,{redirect:"manual",signal:AbortSignal.timeout(15000)});if(health.status!==200)throw new Error(`healthz failed with HTTP ${health.status}`);
+          const noChallenge=await fetch(`${base}/api/whatsapp/meta-webhook`,{redirect:"manual",signal:AbortSignal.timeout(15000)});if(noChallenge.status!==403)throw new Error(`Meta webhook did not reach its own GET verifier (HTTP ${noChallenge.status})`);
+          const invalid=await fetch(`${base}/api/whatsapp/meta-webhook`,{method:"POST",redirect:"manual",headers:{"content-type":"application/json","x-hub-signature-256":"sha256=invalid-uat-probe"},body:JSON.stringify({object:"whatsapp_business_account",entry:[]}),signal:AbortSignal.timeout(15000)});if(invalid.status!==401)throw new Error(`invalid Meta signature was not rejected (HTTP ${invalid.status})`);
+          writeFileSync("whatsapp-uat-deploy-evidence.json",JSON.stringify({targetSha:process.env.TARGET_SHA,worker:"pawspace-staging",healthz:200,webhookReachedRouteVerifier:true,invalidSignatureRejected:true,productionTouched:false},null,2));
+          console.log("healthz=200; Meta webhook bypasses staging-login; invalid signature rejected.");
           NODE
 
-      - name: Verify Meta Worker configuration presence and synchronize only allow-listed templates
+      - name: Verify Meta configuration and synchronize only allow-listed templates
         env:
           STAGING_URL: ${{ steps.deploy.outputs.staging_url }}
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
         run: |
           node --input-type=module <<'NODE'
-          import { readFileSync, writeFileSync } from "node:fs";
-          const base = String(process.env.STAGING_URL || "").replace(/\/$/, "");
-          const code = String(process.env.PAWSPACE_UAT_ACCESS_CODE || "");
-          const login = await fetch(`${base}/api/staging-login`, {
-            method: "POST", redirect: "manual",
-            headers: { "content-type": "application/json", origin: base },
-            body: JSON.stringify({ action: "login", code, email: "founder@pawspace.in" }),
-            signal: AbortSignal.timeout(15000),
-          });
-          const cookie = String(login.headers.get("set-cookie") || "").split(";")[0];
-          if (!(login.status >= 200 && login.status < 400 && cookie)) throw new Error(`staging founder sign-in failed (HTTP ${login.status})`);
-          const readiness = await fetch(`${base}/api/integration-readiness`, { headers: { cookie }, signal: AbortSignal.timeout(15000) });
-          let readinessPayload = null; try { readinessPayload = await readiness.json(); } catch {}
-          const modules = readinessPayload?.uatSandbox?.modules || readinessPayload?.data?.uatSandbox?.modules || [];
-          const meta = Array.isArray(modules) ? modules.find(module => module?.code === "meta_whatsapp") : null;
-          if (!(readiness.ok && meta?.configuredForExternalTest === true)) {
-            const blockerCount = Array.isArray(meta?.blockers) ? meta.blockers.length : -1;
-            throw new Error(`Meta WhatsApp Worker configuration is incomplete (blocker count ${blockerCount}); values withheld`);
-          }
-          const sync = await fetch(`${base}/api/whatsapp/meta-admin`, {
-            method: "POST", headers: { "content-type": "application/json", origin: base, cookie },
-            body: JSON.stringify({ action: "sync_templates" }), signal: AbortSignal.timeout(30000),
-          });
-          let syncPayload = null; try { syncPayload = await sync.json(); } catch {}
-          const result = syncPayload?.data;
-          if (!(sync.ok && result?.status === "synced" && Number(result?.synced || 0) > 0)) throw new Error(`Meta template synchronization did not produce an allow-listed template (HTTP ${sync.status}); values withheld`);
-          const admin = await fetch(`${base}/api/whatsapp/meta-admin`, { headers: { cookie }, signal: AbortSignal.timeout(15000) });
-          let adminPayload = null; try { adminPayload = await admin.json(); } catch {}
-          const approved = Array.isArray(adminPayload?.data?.templates) ? adminPayload.data.templates.filter(item => item?.status === "approved") : [];
-          if (!admin.ok || approved.length < 1) throw new Error("no allow-listed Meta template is currently approved");
-          const path = "whatsapp-uat-deploy-evidence.json";
-          const evidence = JSON.parse(readFileSync(path, "utf8"));
-          evidence.metaWorkerConfigurationPresent = true;
-          evidence.allowlistedTemplateSyncSucceeded = true;
-          evidence.approvedTemplateCount = approved.length;
-          writeFileSync(path, JSON.stringify(evidence, null, 2));
-          console.log(`Meta Worker configuration is present and ${approved.length} allow-listed template(s) are approved; credential and template values withheld.`);
+          import { readFileSync,writeFileSync } from "node:fs";
+          const base=String(process.env.STAGING_URL||"").replace(/\/$/,"");
+          const login=await fetch(`${base}/api/staging-login`,{method:"POST",redirect:"manual",headers:{"content-type":"application/json",origin:base},body:JSON.stringify({action:"login",code:String(process.env.PAWSPACE_UAT_ACCESS_CODE||""),email:"founder@pawspace.in"}),signal:AbortSignal.timeout(15000)});
+          const cookie=String(login.headers.get("set-cookie")||"").split(";")[0];if(!(login.status>=200&&login.status<400&&cookie))throw new Error(`staging sign-in failed (HTTP ${login.status})`);
+          const readiness=await fetch(`${base}/api/integration-readiness`,{headers:{cookie},signal:AbortSignal.timeout(15000)});let rp=null;try{rp=await readiness.json()}catch{};
+          const modules=rp?.uatSandbox?.modules||rp?.data?.uatSandbox?.modules||[];const meta=Array.isArray(modules)?modules.find(m=>m?.code==="meta_whatsapp"):null;if(!(readiness.ok&&meta?.configuredForExternalTest===true))throw new Error("Meta Worker configuration became incomplete");
+          const sync=await fetch(`${base}/api/whatsapp/meta-admin`,{method:"POST",headers:{"content-type":"application/json",origin:base,cookie},body:JSON.stringify({action:"sync_templates"}),signal:AbortSignal.timeout(30000)});let sp=null;try{sp=await sync.json()}catch{};if(!(sync.ok&&sp?.data?.status==="synced"&&Number(sp?.data?.synced||0)>0))throw new Error(`Meta template sync failed closed (HTTP ${sync.status})`);
+          const admin=await fetch(`${base}/api/whatsapp/meta-admin`,{headers:{cookie},signal:AbortSignal.timeout(15000)});let ap=null;try{ap=await admin.json()}catch{};const approved=Array.isArray(ap?.data?.templates)?ap.data.templates.filter(t=>t?.status==="approved"):[];if(!admin.ok||approved.length<1)throw new Error("no allow-listed Meta template is approved");
+          const path="whatsapp-uat-deploy-evidence.json",e=JSON.parse(readFileSync(path,"utf8"));e.metaWorkerConfigurationPresent=true;e.allowlistedTemplateSyncSucceeded=true;e.approvedTemplateCount=approved.length;writeFileSync(path,JSON.stringify(e,null,2));
+          console.log(`Meta configuration complete; ${approved.length} allow-listed approved template(s) validated; names withheld.`);
           NODE
 
       - name: Upload sanitized WhatsApp UAT deployment evidence
