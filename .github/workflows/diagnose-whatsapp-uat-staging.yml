@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Restore previous staging version if exact-SHA deploy displaced Meta identifiers
+      - name: Ensure restored Meta runtime is complete
         env:
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -38,64 +38,43 @@ jobs:
           )"
           if [ "$READY" != "true" ]; then
             LOG="$RUNNER_TEMP/rollback.log"
-            if ! npx wrangler rollback --name pawspace-staging --message "restore staging before Meta binding diagnosis" > "$LOG" 2>&1; then rm -f "$LOG"; echo "Rollback failed; raw output withheld." >&2; exit 1; fi
+            if ! npx wrangler rollback --name pawspace-staging --message "restore staging before Meta version diagnosis" > "$LOG" 2>&1; then rm -f "$LOG"; echo "Rollback failed; raw output withheld." >&2; exit 1; fi
             rm -f "$LOG"
             echo "Previous staging version restored; values withheld."
-          else
-            echo "Meta readiness already complete; rollback not required."
           fi
-      - name: Wait for restored Meta readiness
-        env:
-          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
-        run: |
           node --input-type=module <<'NODE'
           const base=String(process.env.STAGING_URL||"").replace(/\/$/,"");
           for(let i=0;i<10;i++){
             const login=await fetch(`${base}/api/staging-login`,{method:"POST",redirect:"manual",headers:{"content-type":"application/json",origin:base},body:JSON.stringify({action:"login",code:String(process.env.PAWSPACE_UAT_ACCESS_CODE||""),email:"founder@pawspace.in"}),signal:AbortSignal.timeout(15000)});
             const cookie=String(login.headers.get("set-cookie")||"").split(";")[0];
-            if(cookie){const response=await fetch(`${base}/api/integration-readiness`,{headers:{cookie},signal:AbortSignal.timeout(15000)});let payload=null;try{payload=await response.json()}catch{};const modules=payload?.uatSandbox?.modules||payload?.data?.uatSandbox?.modules||[];const meta=Array.isArray(modules)?modules.find(m=>m?.code==="meta_whatsapp"):null;if(response.ok&&meta?.configuredForExternalTest===true){console.log("Restored Meta readiness is complete; values withheld.");process.exit(0)}}
+            if(cookie){const response=await fetch(`${base}/api/integration-readiness`,{headers:{cookie},signal:AbortSignal.timeout(15000)});let payload=null;try{payload=await response.json()}catch{};const modules=payload?.uatSandbox?.modules||payload?.data?.uatSandbox?.modules||[];const meta=Array.isArray(modules)?modules.find(m=>m?.code==="meta_whatsapp"):null;if(response.ok&&meta?.configuredForExternalTest===true){console.log("Meta runtime readiness complete; values withheld.");process.exit(0)}}
             await new Promise(r=>setTimeout(r,3000));
           }
-          throw new Error("Meta readiness did not recover after rollback");
+          throw new Error("Meta runtime readiness is incomplete");
           NODE
-      - name: Inspect required Meta binding names and types only
+      - name: Inspect active version Meta binding types only
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          SETTINGS="$RUNNER_TEMP/settings.json"; export SETTINGS; trap 'rm -f "$SETTINGS"' EXIT
-          STATUS="$(curl --silent --show-error --output "$SETTINGS" --write-out '%{http_code}' --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" --header 'Accept: application/json' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/pawspace-staging/settings")"
-          [ "$STATUS" = "200" ] || { echo "Settings probe failed (HTTP $STATUS); body withheld." >&2; exit 1; }
-          node --input-type=module <<'NODE'
-          import {readFileSync} from "node:fs";
-          const response=JSON.parse(readFileSync(process.env.SETTINGS,"utf8"));
-          const bindings=Array.isArray(response?.result?.bindings)?response.result.bindings:[];
-          const required=["META_WHATSAPP_PHONE_NUMBER_ID","META_WHATSAPP_WABA_ID"];
-          for(const name of required){
-            const row=bindings.find(binding=>String(binding?.name||"")===name);
-            const type=String(row?.type||"missing").replace(/[^a-z0-9_-]/gi,"");
-            const readable=typeof row?.text==="string"&&row.text.length>0||typeof row?.value==="string"&&row.value.length>0;
-            console.log(`${name}: type=${type||"unknown"}; readableValue=${readable}`);
-          }
+          STATUS_FILE="$RUNNER_TEMP/deployment-status.json"; VIEW_FILE="$RUNNER_TEMP/version-view.json"; export STATUS_FILE VIEW_FILE
+          trap 'rm -f "$STATUS_FILE" "$VIEW_FILE"' EXIT
+          if ! npx wrangler deployments status --name pawspace-staging --json > "$STATUS_FILE" 2>/dev/null; then echo "Unable to read active deployment metadata; raw output withheld." >&2; exit 1; fi
+          VERSION_ID="$(node --input-type=module <<'NODE'
+          import{readFileSync}from"node:fs";
+          const root=JSON.parse(readFileSync(process.env.STATUS_FILE,"utf8"));
+          const candidates=[];
+          const walk=v=>{if(!v||typeof v!=="object")return;if(typeof v.version_id==="string")candidates.push(v.version_id);if(typeof v.versionId==="string")candidates.push(v.versionId);if(typeof v.id==="string"&&/^[0-9a-f-]{36}$/i.test(v.id)&&("percentage"in v||"traffic"in v))candidates.push(v.id);for(const child of Object.values(v))walk(child)};walk(root);
+          const id=candidates.find(v=>/^[0-9a-f-]{36}$/i.test(v));if(!id)process.exit(2);process.stdout.write(id);
           NODE
-      - name: Inspect required Meta secret names only
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -euo pipefail
-          OUT="$RUNNER_TEMP/secret-list.json"; export OUT; trap 'rm -f "$OUT"' EXIT
-          if ! npx wrangler secret list --name pawspace-staging --format json > "$OUT" 2>/dev/null; then
-            echo "Unable to list staging secret names; raw output withheld." >&2; exit 1
-          fi
+          )"
+          [ -n "$VERSION_ID" ] || { echo "Unable to resolve active staging version ID." >&2; exit 1; }
+          if ! npx wrangler versions view "$VERSION_ID" --name pawspace-staging --json > "$VIEW_FILE" 2>/dev/null; then echo "Unable to inspect active staging version; raw output withheld." >&2; exit 1; fi
           node --input-type=module <<'NODE'
-          import {readFileSync} from "node:fs";
-          const payload=JSON.parse(readFileSync(process.env.OUT,"utf8"));
-          const rows=Array.isArray(payload)?payload:Array.isArray(payload?.secrets)?payload.secrets:[];
-          const names=new Set(rows.map(row=>String(row?.name||row?.key||"").trim()).filter(Boolean));
-          for(const name of ["META_WHATSAPP_PHONE_NUMBER_ID","META_WHATSAPP_WABA_ID"]){
-            console.log(`${name}: encryptedSecretPresent=${names.has(name)}`);
-          }
-          console.log(`Total encrypted staging secrets=${names.size}`);
+          import{readFileSync}from"node:fs";
+          const root=JSON.parse(readFileSync(process.env.VIEW_FILE,"utf8"));
+          const wanted=new Set(["META_WHATSAPP_PHONE_NUMBER_ID","META_WHATSAPP_WABA_ID"]);const found=new Map();
+          const walk=v=>{if(!v||typeof v!=="object")return;if(typeof v.name==="string"&&wanted.has(v.name)){const type=String(v.type||"unknown").replace(/[^a-z0-9_-]/gi,"")||"unknown";found.set(v.name,type)}for(const child of Object.values(v))walk(child)};walk(root);
+          for(const name of wanted)console.log(`${name}: activeVersionBindingType=${found.get(name)||"absent"}`);
           NODE
