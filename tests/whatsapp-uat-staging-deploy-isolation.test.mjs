@@ -14,7 +14,8 @@ test("WhatsApp-only staging deploy has no Exotel dependency",()=>{
 
 test("isolated workflow pins one exact application SHA to pawspace-staging",()=>{
  assert.match(isolated,/TARGET_SHA:/);assert.match(isolated,/git rev-parse HEAD/);
- assert.match(isolated,/npx wrangler deploy --keep-vars --message "staging \$TARGET_SHA"/);
+ assert.match(isolated,/WRANGLER_CONFIG: dist\/server\/wrangler\.json/);
+ assert.match(isolated,/npx wrangler deploy --config "\$WRANGLER_CONFIG" --keep-vars --message "staging \$TARGET_SHA"/);
  assert.match(isolated,/STAGING_URL: https:\/\/pawspace-staging\.karthik-fce\.workers\.dev/);
  assert.match(isolated,/node tests\/e2e\/staging-certification\.mjs --isolation-only/);
  assert.match(isolated,/PRODUCTION_D1_ID/);assert.match(isolated,/PRODUCTION_WORKER_NAME/);
@@ -27,9 +28,10 @@ test("staging restores only when Meta readiness is incomplete",()=>{
  assert.match(isolated,/rollback not required/);
 });
 
-test("all existing plain staging bindings are snapshotted without logging values",()=>{
+test("all existing plain staging bindings are snapshotted into the generated config without logging values",()=>{
  assert.match(isolated,/workers\/scripts\/pawspace-staging\/settings/);
  assert.match(isolated,/binding\?\.type!=="plain_text"/);
+ assert.match(isolated,/path!=="dist\/server\/wrangler\.json"/);
  assert.match(isolated,/config\.vars=\{\.\.\.remoteVars,\.\.\.\(config\.vars\|\|\{\}\)\}/);
  assert.match(isolated,/config\.keep_vars=true/);
  assert.match(isolated,/names and values withheld/);
