@@ -53,6 +53,15 @@ function sandboxGatewayEnv() {
   };
 }
 
+function persistedGatewayLinkCount(sqlite) {
+  try {
+    return Number(sqlite.prepare("SELECT COUNT(*) c FROM payment_gateway_links").get()?.c || 0);
+  } catch (error) {
+    if (/no such table:\s*payment_gateway_links/i.test(String(error?.message || error))) return 0;
+    throw error;
+  }
+}
+
 test("real execution: a split booking creates a gateway order for amount_due_now, not the total", async () => {
   const { sqlite, db } = paymentsDb({ amount: 3600, amountDueNow: 1800 });
   const realFetch = globalThis.fetch;
@@ -106,7 +115,7 @@ test("real execution: missing provider credentials fail closed without persistin
     assert.equal(result.environment, "sandbox");
     assert.match(String(result.reason || ""), /credential|key/i);
     assert.equal(sqlite.prepare("SELECT status FROM booking_payments WHERE id='PAY-1'").get().status, "created");
-    assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM payment_gateway_links").get().c, 0);
+    assert.equal(persistedGatewayLinkCount(sqlite), 0);
   } finally {
     sqlite.close();
   }
