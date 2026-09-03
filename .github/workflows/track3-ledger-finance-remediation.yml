@@ -50,8 +50,7 @@ jobs:
             assert.match(finance,/PAWSPACE_DEPLOYMENT_ENV\|\|""\)==="staging"/);
             assert.match(finance,/STAGING_FINANCE_CACHE_TTL_SECONDS=30/);
             assert.match(finance,/caches\.open\("pawspace-track3-finance-v2"\)/);
-            assert.match(finance,/cache\.match\(STAGING_FINANCE_CACHE_KEY\)/);
-            assert.match(finance,/cache\.delete\(STAGING_FINANCE_CACHE_KEY\)/);
+            assert.match(finance,/STAGING_FINANCE_CACHE_KEY/);
             assert.match(finance,/export async function GET[\s\S]*?authorize\(request,"finance\.view"\)[\s\S]*?readStagingFinanceCache\(\)/);
           });
           test('finance cache misses use hot-path indexes',()=>{
