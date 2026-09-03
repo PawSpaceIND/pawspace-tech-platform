@@ -1239,7 +1239,7 @@ test("W2-PAY-04: replaying a REFUSED capture does not grant the entitlement it w
   const { deliver, capture, subscription, sqlite } = await subscriptionWebhookWorld();
 
   const first = await deliver(capture(100), "evt_rz_1"); // Rs 1 against a Rs 24,000 subscription
-  assert.notEqual(String(first.body?.status || ""), "processed", `the Rs 1 capture must be refused: ${JSON.stringify(first)}`);
+  assert.equal(String(first.body?.status), "exception", `the Rs 1 capture must be refused: ${JSON.stringify(first)}`);
   assert.equal(String(subscription().status), "pending_payment", "and must not activate anything");
 
   const retry = await deliver(capture(100), "evt_rz_1"); // byte-identical gateway redelivery

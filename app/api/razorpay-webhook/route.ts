@@ -2,7 +2,7 @@ import{authError,database}from"../../../lib/server-auth";
 import{ensurePaymentReconciliationTables,processGatewayEvent,type GatewayEvent}from"../../../lib/grooming-payment-reconciliation";
 import{resolvePaymentWebhookGate}from"../../../lib/payment-webhook-gate";
 import{acceptRazorpayWebhook,advancePaymentState,type PaymentState}from"../../../lib/financial-lifecycle";
-import{captureEffectsOutboxForEvent,commitRazorpayCaptureAtomic,executeRazorpayCapturePostCommit}from"../../../lib/razorpay-capture-atomic";
+import{captureEffectsOutboxForEvent,commitRazorpayCaptureAtomic,executeRazorpayCapturePostCommit,RazorpayCaptureAmountMismatchError}from"../../../lib/razorpay-capture-atomic";
 import{isPawSpaceSubscriptionPayload,processSubscriptionProviderEvent}from"../../../lib/subscription-billing";
 import{processSubscriptionRefundEvent}from"../../../lib/subscription-refund-reconciliation";
 import{finalizeSubscriptionRefundEntitlement,grantSubscriptionRenewalEntitlement,prepareSubscriptionRefundEntitlementForWebhook}from"../../../lib/subscription-entitlement-renewal";
@@ -120,11 +120,25 @@ export async function POST(request:Request){
         if(!linked){await markInbox(db,accepted.row,"FAILED",eventType,"capture_has_no_canonical_payment_link");return json({error:"Razorpay capture has no canonical payment link",code:"capture_atomic_link_missing"},409);}
         if(event.bookingId&&event.bookingId!==linked.bookingId){await markInbox(db,accepted.row,"FAILED",eventType,"gateway_order_booking_mismatch");return json({error:"Razorpay capture booking does not own its gateway reference",code:"gateway_order_booking_mismatch"},409);}
         const amountPaise=Number(event.amountSubunits||0);if(!Number.isSafeInteger(amountPaise)||amountPaise<=0){await markInbox(db,accepted.row,"FAILED",eventType,"invalid_capture_amount");return json({error:"Captured Razorpay amount must be positive integer paise"},400);}
-        const atomic=await commitRazorpayCaptureAtomic(db,{
-          inboxId:String(accepted.row.id),eventId,environment:gate.environment,intentId:intent?String(intent.id):null,
-          bookingId:linked.bookingId,paymentId:linked.paymentId,gatewayOrderId:event.gatewayOrderId||null,gatewayPaymentId:event.gatewayPaymentId||null,
-          amountPaise,currency:event.currency||String(intent?.currency||"INR"),payloadHash:String(accepted.row.payload_sha256),detail:event.detail,
-        });
+        let atomic;
+        try{
+          atomic=await commitRazorpayCaptureAtomic(db,{
+            inboxId:String(accepted.row.id),eventId,environment:gate.environment,intentId:intent?String(intent.id):null,
+            bookingId:linked.bookingId,paymentId:linked.paymentId,gatewayOrderId:event.gatewayOrderId||null,gatewayPaymentId:event.gatewayPaymentId||null,
+            amountPaise,currency:event.currency||String(intent?.currency||"INR"),payloadHash:String(accepted.row.payload_sha256),detail:event.detail,
+          });
+        }catch(error){
+          // A capture amount that does not match what the order was opened for is a governed refusal,
+          // and processGatewayEvent owns it: it writes the ("captured","amount_mismatch") record with
+          // the variance, raises the capture_amount_mismatch exception the finance console triages,
+          // and answers {status:"exception",reason:"capture_amount_mismatch"}. The atomic committer
+          // signals the mismatch before it writes anything, so this hands over a clean slate. Anything
+          // else is a real fault and still propagates.
+          if(!(error instanceof RazorpayCaptureAmountMismatchError))throw error;
+          const governed=await processGatewayEvent(db,event);
+          await markInbox(db,accepted.row,"FAILED",eventType,String(governed.reason||"capture_amount_mismatch"));
+          return json({ok:true,environment:gate.environment,...governed});
+        }
         const effects=atomic.effectsOutboxId?await executeRazorpayCapturePostCommit(db,{outboxId:atomic.effectsOutboxId,workerId:`razorpay-webhook:${crypto.randomUUID()}`}):null;
         if(effects&&!effects.completed)return json({ok:false,environment:gate.environment,status:"processed",atomicCapture:true,coreCommitted:true,captureEffectsRetry:true,reason:effects.reason||"capture_post_commit_pending"},503);
         return json({ok:true,environment:gate.environment,status:"processed",atomicCapture:true,duplicateCapture:atomic.duplicateCapture,paymentState:intent?{changed:!atomic.duplicateCapture,state:"CAPTURED"}:null,journal:atomic.journalId?{transactionId:atomic.journalId,duplicate:false}:null,captureEffects:effects?effects.status:"none"});

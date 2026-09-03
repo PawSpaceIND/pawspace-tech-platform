@@ -23,6 +23,32 @@ export type AtomicRazorpayCaptureInput = {
   detail?: Record<string, unknown>;
 };
 
+/**
+ * A capture whose amount does not match what the order was opened for is a GOVERNED outcome, not an
+ * internal failure. lib/grooming-payment-reconciliation.ts already owns the whole answer: a
+ * `("captured","amount_mismatch")` reconciliation record carrying the variance, a
+ * `capture_amount_mismatch` exception for the finance console to triage, and a
+ * `{status:"exception"}` envelope for the caller.
+ *
+ * Throwing a bare Error here pre-empted all of it. The webhook route's outer catch turned it into
+ * `500 {"error":"Unable to process Razorpay webhook"}`, so a gateway retried it as a server fault,
+ * ops never saw an exception to triage, and the reconciliation ledger recorded nothing at all - the
+ * one case where a shortfall MUST be visible was the one case that left no trace.
+ *
+ * This is raised instead so the route can hand the event to that handler. Nothing is written before
+ * the checks that raise it, so delegation starts from a clean slate.
+ */
+export class RazorpayCaptureAmountMismatchError extends Error {
+  readonly expectedPaise: number;
+  readonly receivedPaise: number;
+  constructor(message: string, expectedPaise: number, receivedPaise: number) {
+    super(message);
+    this.name = "RazorpayCaptureAmountMismatchError";
+    this.expectedPaise = expectedPaise;
+    this.receivedPaise = receivedPaise;
+  }
+}
+
 const CAPTURE_TYPES = "('payment.captured','order.paid','payment_link.paid')";
 const text = (value: unknown) => String(value ?? "").trim();
 const round2 = (value: number) => Math.round(value * 100) / 100;
@@ -45,12 +71,12 @@ export async function commitRazorpayCaptureAtomic(db: Db, input: AtomicRazorpayC
   if (intent) {
     if (text(intent.booking_id) !== input.bookingId || text(intent.payment_id) !== input.paymentId) throw new Error("Payment intent does not own the capture booking/payment");
     if (input.gatewayOrderId && text(intent.gateway_order_id) && text(intent.gateway_order_id) !== text(input.gatewayOrderId)) throw new Error("Razorpay order does not belong to the payment intent");
-    if (Number(intent.amount_paise) !== input.amountPaise) throw new Error("Captured Razorpay amount does not match the payment intent");
+    if (Number(intent.amount_paise) !== input.amountPaise) throw new RazorpayCaptureAmountMismatchError("Captured Razorpay amount does not match the payment intent", Number(intent.amount_paise), input.amountPaise);
     if (text(intent.currency || "INR") !== text(input.currency || "INR")) throw new Error("Captured Razorpay currency does not match the payment intent");
     if (!["AUTHORIZED", "CAPTURED"].includes(text(intent.state))) throw new Error(`Payment intent state ${text(intent.state)} cannot be captured atomically`);
   } else {
     const expectedPaise = Math.round(Number(current?.expected_amount ?? payment.amount ?? 0) * 100);
-    if (expectedPaise !== input.amountPaise) throw new Error("Captured Razorpay amount does not match the linked payment expectation");
+    if (expectedPaise !== input.amountPaise) throw new RazorpayCaptureAmountMismatchError("Captured Razorpay amount does not match the linked payment expectation", expectedPaise, input.amountPaise);
     if (text(payment.currency || "INR") !== text(input.currency || "INR")) throw new Error("Captured Razorpay currency does not match the linked payment");
   }
 

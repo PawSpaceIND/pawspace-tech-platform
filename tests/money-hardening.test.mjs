@@ -186,11 +186,14 @@ test("real execution: verify-first — a 'created' payment is only captured by a
 
 test("real execution: capture amount mismatch and refund flow both land in the exact reconciliation truth", async () => {
   freshDb(); baseTables(); seedBooking({ id: "B1", total: 2000, payStatus: "created" });
-  // The hardened capture parser commits atomically: an amount that does not match the linked
-  // payment throws before any money write, so the booking stays 'created' instead of landing in
-  // the older processGatewayEvent exception ledger.
+  // Gateway says 1500 for a 2000 booking -> exception, never silently matched
   const mismatch = await postWebhook("evt_20", capturedEvent("B1", 150000));
-  assert.equal(mismatch.status, 500, JSON.stringify(mismatch.body));
+  assert.equal(mismatch.body.status, "exception");
+  assert.equal(mismatch.body.reason, "capture_amount_mismatch");
+  const record = sqlite.prepare("SELECT reconciliation_status,variance_amount FROM payment_reconciliation_records WHERE booking_id='B1'").get();
+  assert.equal(record.reconciliation_status, "amount_mismatch");
+  assert.equal(record.variance_amount, -500);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM payment_reconciliation_exceptions WHERE exception_type='capture_amount_mismatch'").get().n, 1);
   assert.equal(sqlite.prepare("SELECT status FROM booking_payments WHERE booking_id='B1'").get().status, "created", "a mismatched capture must NOT flip the canonical payment");
   // Correct capture then a full refund via internal refund case
   const captured = await postWebhook("evt_21", capturedEvent("B1", 200000));
@@ -562,10 +565,8 @@ test("REGRESSION lib/revenue-mission-control.ts: stay balance captures now appea
 
 test("real execution: payment-reconciliation console lists webhook exceptions and dismisses them with a governed note", async () => {
   freshDb(); baseTables(); seedBooking({ id: "B1", total: 2000, payStatus: "created" });
-  const mismatch = await postWebhook("evt_30", capturedEvent("B1", 150000)); // amount mismatch fail-closed
-  assert.equal(mismatch.status, 500, JSON.stringify(mismatch.body));
-  sqlite.exec("CREATE TABLE IF NOT EXISTS payment_reconciliation_exceptions (id TEXT PRIMARY KEY,booking_id TEXT,payment_id TEXT,event_id TEXT,exception_type TEXT NOT NULL,severity TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,resolved_at INTEGER,resolved_by TEXT)");
-  sqlite.prepare("INSERT INTO payment_reconciliation_exceptions (id,booking_id,payment_id,event_id,exception_type,severity,status,detail_json,created_at) VALUES ('PAYEX-TEST1','B1','PAY-B1','evt_30','capture_amount_mismatch','critical','open','{}',?)").run(NOW);
+  const mismatch = await postWebhook("evt_30", capturedEvent("B1", 150000)); // amount mismatch -> exception
+  assert.equal(mismatch.body.reason, "capture_amount_mismatch", JSON.stringify(mismatch.body));
   const list = await call(reconciliationRoute.GET, "GET", "status=open");
   assert.equal(list.status, 200, JSON.stringify(list.body));
   assert.equal(list.body.data.exceptions.length, 1);

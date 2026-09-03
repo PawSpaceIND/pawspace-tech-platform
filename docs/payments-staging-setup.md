@@ -128,9 +128,16 @@ environment.
 
 ## 6. Safety / rollback
 
-- **Rollback is instant and fail-closed:** unset `PAWSPACE_PAYMENT_ENV` (→ defaults to `sandbox`) or
-  remove the keys → the adapter returns `connected:false` and no money can move. No code deploy
-  needed.
+- **Rollback is instant and fail-closed:** unset `PAWSPACE_PAYMENT_ENV` or remove the keys → no money
+  can move. No code deploy needed.
+  - Unsetting `PAWSPACE_PAYMENT_ENV` **no longer defaults to `sandbox`**. An absent or empty value is a
+    configuration error: `parsePaymentEnvironment` raises `PaymentEnvironmentConfigurationError`, the
+    payment webhook gate answers `503`, and the order/payment-link adapters return
+    `connected:false, environment:"unconfigured"`. Nothing runs in sandbox by omission, because an
+    absent variable is not a declaration. Only the exact values `sandbox` and `live` are accepted —
+    aliases, padding and different casing are refused too.
+  - So this is the switch that takes **live money off**, not a switch that moves traffic to sandbox. To
+    actually run in sandbox afterwards, set `PAWSPACE_PAYMENT_ENV=sandbox` explicitly.
 - Production and staging never share a database or secrets, so a staging test can never affect a
   real customer, a real charge, or the live app.
 
