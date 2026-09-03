@@ -1,4 +1,4 @@
-name: Certify final Track 3 scheduling remediation
+name: Certify final Track 3 canonical remediation
 
 on:
   push:
@@ -16,7 +16,8 @@ concurrency:
 
 env:
   STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
-  TARGET_SHA: 4ef551ef24762e7c689e84de67dc46b6fb649e9f
+  TARGET_SHA: 30c321bb9865aecda9d0163bb707ea3015acc4c4
+  SCHEDULING_FIX_SHA: 4ef551ef24762e7c689e84de67dc46b6fb649e9f
   CANONICAL_FIX_SHA: d1a358152e244bcfb19db88684da0991f663965c
 
 jobs:
@@ -32,8 +33,10 @@ jobs:
       - name: Verify exact remediation lineage
         run: |
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
-          git log -1 --pretty=%s | grep -Fx "perf(scheduling): remove redundant schema work from assignment path"
+          git log -1 --pretty=%s | grep -Fx "perf(bookings): remove static governance writes from canonical hot path"
+          git merge-base --is-ancestor "$SCHEDULING_FIX_SHA" HEAD
           git merge-base --is-ancestor "$CANONICAL_FIX_SHA" HEAD
+          git show -s --pretty=%s "$SCHEDULING_FIX_SHA" | grep -Fx "perf(scheduling): remove redundant schema work from assignment path"
           git show -s --pretty=%s "$CANONICAL_FIX_SHA" | grep -Fx "fix(bookings): eliminate synchronous write contention in canonical booking phase"
       - uses: actions/setup-node@v4
         with:
