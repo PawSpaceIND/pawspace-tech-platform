@@ -102,5 +102,6 @@ test("template API and console preserve permission, audit and no-live-Meta bound
   assert.match(page, /No live Meta mutation/);
   assert.match(page, /Verify with Meta/);
   assert.match(page, /There is no manual approve\/reject control/);
-  assert.match(page, /Production delivery disabled/);
+  assert.match(page, /production WhatsApp delivery/);
+  assert.match(page, /data\.productionDelivery \? "enabled" : "disabled"/);
 });
