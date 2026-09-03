@@ -1,0 +1,57 @@
+name: Staging Voice Auth UAT
+
+on:
+  push:
+    branches:
+      - fix/audio-bot-workers-ai-binding-uat
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install
+        run: npm run install:ci
+      - name: Retrieve temporary UAT staff session token in memory
+        shell: bash
+        env:
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: |
+          set -euo pipefail
+          SESSION_COOKIE="$(node --input-type=module <<'NODE'
+          const base = String(process.env.STAGING_URL || "").replace(/\/$/, "");
+          const accessCode = String(process.env.PAWSPACE_UAT_ACCESS_CODE || "");
+          if (!base || !accessCode) throw new Error("staging URL or UAT access code is unavailable");
+          const response = await fetch(`${base}/api/staging-login`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ action: "login", code: accessCode, email: "founder@pawspace.in" }),
+            signal: AbortSignal.timeout(20_000),
+          });
+          if (!response.ok) throw new Error(`staging-login failed (${response.status})`);
+          const setCookie = response.headers.get("set-cookie") || "";
+          const cookie = setCookie.split(";")[0].trim();
+          if (!cookie || !cookie.includes("=")) throw new Error("staging-login did not issue a session cookie");
+          process.stdout.write(cookie);
+          NODE
+          )"
+          echo "::add-mask::$SESSION_COOKIE"
+          umask 077
+          printf '%s' "$SESSION_COOKIE" > "$RUNNER_TEMP/staging-uat-session"
+          echo "Temporary UAT staff session issued and masked."
+      - name: Execute authenticated staging voice inference
+        shell: bash
+        run: |
+          set -euo pipefail
+          SESSION_COOKIE="$(cat "$RUNNER_TEMP/staging-uat-session")"
+          npm run test:staging-voice-auth -- --token "$SESSION_COOKIE" --base-url "$STAGING_URL"
+          rm -f "$RUNNER_TEMP/staging-uat-session"
