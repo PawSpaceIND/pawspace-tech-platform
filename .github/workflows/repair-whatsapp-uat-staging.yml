@@ -68,12 +68,12 @@ jobs:
           for(const b of bindings){if(b?.type!=="plain_text")continue;const n=String(b?.name||"").trim();if(/^[A-Z0-9_]+$/.test(n))remoteVars[n]=String(b?.text??b?.value??"")}
           const config=JSON.parse(readFileSync(process.env.WRANGLER_CONFIG,"utf8"));
           if(config.name!=="pawspace-staging")throw new Error("Refusing to modify a non-staging Worker config");
-          config.vars={...remoteVars,META_WHATSAPP_PHONE_NUMBER_ID:"1334980146365492",META_WHATSAPP_WABA_ID:"1647621440064984",...(config.vars||{})};
+          config.vars={...remoteVars,META_WHATSAPP_PHONE_NUMBER_ID:"1334980146365492",META_WHATSAPP_WABA_ID:"1647621440064984",...(config.vars||{}),PAWSPACE_PRODUCTION_ENFORCE:"false"};
           config.keep_vars=true;
           const aiPresent=bindings.some(b=>String(b?.name||"")==="AI"&&/ai/i.test(String(b?.type||"")));
           if(aiPresent)config.ai={binding:"AI"};
           writeFileSync(process.env.WRANGLER_CONFIG,JSON.stringify(config,null,2),{mode:0o600});
-          console.log(`Prepared staging-only config with both Meta identifiers; values withheld. Preserved plain vars=${Object.keys(remoteVars).length}; Workers AI preserved=${aiPresent}.`);
+          console.log(`Prepared staging-only config with both Meta identifiers; PAWSPACE_PRODUCTION_ENFORCE=false pinned; preserved plain vars=${Object.keys(remoteVars).length}; Workers AI preserved=${aiPresent}.`);
           NODE
 
       - name: Deploy exact WhatsApp gateway SHA to staging only
@@ -100,6 +100,26 @@ jobs:
           URL="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' "$LOG" | tail -n 1 || true)"
           [ "$URL" = "$STAGING_URL" ] || { echo "Unexpected Worker origin; deployment output withheld." >&2; exit 1; }
           echo "Exact WhatsApp gateway SHA deployed to pawspace-staging; sensitive values withheld."
+
+      - name: Verify staging production lockdown flag
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          SETTINGS="$RUNNER_TEMP/lockdown-settings.json"; export SETTINGS
+          trap 'rm -f "$SETTINGS"' EXIT
+          HTTP="$(curl --silent --show-error --output "$SETTINGS" --write-out '%{http_code}' --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" --header 'Accept: application/json' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/pawspace-staging/settings")"
+          [ "$HTTP" = "200" ] || { echo "Unable to verify staging lockdown flag (HTTP $HTTP); response withheld." >&2; exit 1; }
+          node --input-type=module <<'NODE'
+          import{readFileSync}from"node:fs";
+          const settings=JSON.parse(readFileSync(process.env.SETTINGS,"utf8"));
+          const bindings=Array.isArray(settings?.result?.bindings)?settings.result.bindings:[];
+          const binding=bindings.find(b=>b?.type==="plain_text"&&String(b?.name||"")==="PAWSPACE_PRODUCTION_ENFORCE");
+          const value=String(binding?.text??binding?.value??"");
+          if(value!=="false")throw new Error("pawspace-staging does not explicitly enforce PAWSPACE_PRODUCTION_ENFORCE=false");
+          console.log("PAWSPACE_PRODUCTION_ENFORCE=false verified on pawspace-staging.");
+          NODE
 
       - name: Certify isolated staging target
         env:
