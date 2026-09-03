@@ -84,7 +84,8 @@ jobs:
           node --input-type=module <<'NODE'
           import {execFileSync} from 'node:child_process';
           const allowed=new Set(['app/api/grooming-finance/route.ts','lib/grooming-payment-reconciliation.ts','lib/uat-staging-auth.ts','scripts/uat-demo-seed-gen.mjs','scripts/uat-demo-seed.sql','tests/track3-finance-performance-remediation.test.mjs']);
-          const changed=execFileSync('git',['status','--short'],{encoding:'utf8'}).trim().split(/\n/).filter(Boolean).map(line=>line.slice(3));
+          const status=execFileSync('git',['status','--short'],{encoding:'utf8'}).trimEnd();
+          const changed=status.split(/\n/).filter(Boolean).map(line=>line.slice(3));
           const bad=changed.filter(path=>!allowed.has(path));
           if(bad.length)throw new Error('out-of-scope application changes: '+bad.join(', '));
           NODE
