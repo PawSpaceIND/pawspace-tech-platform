@@ -8,6 +8,7 @@ installWorkersHooks("__CANONICAL_SITTING_DB__", "__CANONICAL_SITTING_ENV__");
 const ORIGIN = "https://app.pawspace.in";
 const CUSTOMER = "CUS-CANONICAL-SITTING-1";
 const PROVIDER = "PRV-CANONICAL-SITTING-1";
+const SECOND_PROVIDER = "PRV-CANONICAL-SITTING-2";
 
 function makeD1(sqlite) {
   const statement = (sql, args) => ({
@@ -98,12 +99,12 @@ async function world() {
   return { sqlite, db, cookie, start: start.toISOString(), end: end.toISOString() };
 }
 
-function seedSchedule(sqlite, { groupId, start, end }) {
+function seedSchedule(sqlite, { groupId, start, end, providerId = PROVIDER }) {
   const now = Date.now();
   sqlite.prepare("INSERT INTO scheduling_assignment_decisions (group_id,selected_provider_id,status,updated_at) VALUES (?,?, 'assigned',?)")
-    .run(groupId, PROVIDER, now);
+    .run(groupId, providerId, now);
   sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,scheduled_start,scheduled_end,status,created_at) VALUES (?,?,?,?,?,?,?,?,?,'assigned',?)")
-    .run(`RES-${groupId}`, groupId, PROVIDER, "pet_sitting", "blr", "blr-east", CUSTOMER, start, end, now);
+    .run(`RES-${groupId}`, groupId, providerId, "pet_sitting", "blr", "blr-east", CUSTOMER, start, end, now);
 }
 
 async function commercial(db, { start, end, paymentMode = "prepaid", paymentKey = crypto.randomUUID() }) {
@@ -275,15 +276,15 @@ test("canonical Pet Sitting derives money and package truth from the governed qu
   assert.deepEqual(bookingState(sqlite), beforeReplay, "idempotent replay must not create a second booking or quote link");
 
   const secondGroup = "SIT-QUOTE-REUSE";
-  // A distinct window for this group's reservation. It only has to be a DIFFERENT booking trying to
-  // spend the same quote; seeding it on the same sitter and the same hours as the group above made
-  // the fixture assert a double-booking, which the active-provider-window unique index now refuses
-  // outright - the constraint fired before the route could return the "already linked" refusal this
-  // test is about.
-  const reuseStart = new Date(new Date(start).getTime() + 2 * 86_400_000).toISOString();
-  const reuseEnd = new Date(new Date(end).getTime() + 2 * 86_400_000).toISOString();
-  seedSchedule(sqlite, { groupId: secondGroup, start: reuseStart, end: reuseEnd });
-  const reused = await book(cookie, payload({ groupId: secondGroup, start: reuseStart, end: reuseEnd, quote, key: "BOOK-SIT-QUOTE-REUSE" }));
+  seedSchedule(sqlite, { groupId: secondGroup, start, end, providerId: SECOND_PROVIDER });
+  const reused = await book(cookie, payload({
+    groupId: secondGroup,
+    start,
+    end,
+    quote,
+    key: "BOOK-SIT-QUOTE-REUSE",
+    overrides: { provider: { id: SECOND_PROVIDER, name: "Canonical Sitter Two", model: "full_time" } },
+  }));
   assert.equal(reused.response.status, 409, JSON.stringify(reused.data));
   assert.match(reused.data.error, /already linked|already been used|booking write conflict/i);
   assert.deepEqual(bookingState(sqlite), beforeReplay, "the same quote cannot fund a second canonical bundle");

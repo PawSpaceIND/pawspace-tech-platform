@@ -154,7 +154,6 @@ test("a redelivered callback is answered 200 and applies exactly once", async ()
   const steps = stepCount(sqlite, call.callId);
 
   for (let attempt = 0; attempt < 3; attempt++) {
-    // A provider retrying with a fresh signature over the same event is still the same event.
     const replay = await gov.recordVoiceProviderEvent(db, env, { rawBody: body, headers: await signedHeaders(body) });
     assert.equal(replay.accepted, true, "answered 200 so the provider stops retrying");
     assert.equal(replay.status, 200);
@@ -198,19 +197,12 @@ test("a body that is not a parseable event is refused 400, verified or not", asy
 test("a lone terminal callback completes the call by inferring the hop the carrier did not report", async () => {
   const { sqlite, db, env } = await fresh();
   const call = await dial(db, env);
-  // This is the NORMAL carrier shape, not an edge case: Exotel's StatusCallback commonly fires once, at
-  // the end, with CallStatus=completed - so the ledger is still at `dialing` when it arrives. Refusing
-  // it left an answered-and-ended call stuck in `dialing` forever, because the event is then
-  // deduplicated and never reconsidered.
   const body = eventBody(call.callId, { CallStatus: "completed", CallDuration: "42" });
   const result = await gov.recordVoiceProviderEvent(db, env, { rawBody: body, headers: await signedHeaders(body) });
   assert.equal(result.accepted, true);
   assert.equal(result.applied, true);
   assert.equal(result.inferred, "connected", "the missing hop is named, not silently skipped");
   assert.equal(state(sqlite, call.callId), "completed");
-
-  // The graph stayed strict - the hop was applied, not bypassed - and the audit says which step was
-  // deduced rather than observed.
   const trail = sqlite.prepare("SELECT to_state,reason,detail_json FROM voice_call_state_transitions WHERE call_id=? ORDER BY sequence").all(call.callId);
   assert.deepEqual(trail.map(step => step.to_state), ["policy_check", "queued", "dialing", "connected", "completed"]);
   const inferredStep = trail.find(step => step.to_state === "connected");
@@ -234,8 +226,6 @@ test("an event with no unambiguous path is still refused rather than forced", as
   const call = await dial(db, env);
   await gov.transitionVoiceCall(db, { callId: call.callId, to: "no_answer", reason: "provider", actor: "test" });
   await gov.transitionVoiceCall(db, { callId: call.callId, to: "ended", reason: "closed", actor: "test" });
-  // A terminal call is terminal: a late 'completed' must not rewrite the outcome, and there is no
-  // one-hop path that would make it legal.
   const body = eventBody(call.callId, { CallStatus: "completed", CallDuration: "42" });
   const result = await gov.recordVoiceProviderEvent(db, env, { rawBody: body, headers: await signedHeaders(body) });
   assert.equal(result.accepted, true, "the provider is not made to retry forever");
@@ -243,13 +233,11 @@ test("an event with no unambiguous path is still refused rather than forced", as
   assert.match(result.reason, /Illegal voice call transition ended -> completed/);
   assert.equal(state(sqlite, call.callId), "ended", "the outcome was not rewritten");
   assert.equal(events(sqlite).find(row => row.event_kind === "completed").applied, 0, "but it is on the record");
-  // And a stuck/unapplied event is surfaced rather than left to be found by reading the table.
   const readiness = await gov.voiceOutboundReadiness(db, env);
   assert.equal(readiness.unappliedProviderEvents, 1);
 });
 
 test("the bridge only ever infers one unambiguous hop", () => {
-  // Asserted directly on the rule, so a future state added to the graph cannot quietly widen it.
   assert.equal(gov.inferredBridgeState("dialing", "completed"), "connected");
   assert.equal(gov.inferredBridgeState("ringing", "completed"), "connected");
   assert.equal(gov.inferredBridgeState("queued", "connected"), "dialing");
@@ -292,7 +280,7 @@ test("only curated fields and a digest of the body are stored - never the provid
   for (const leak of ["an-internal-vendor-token-we-never-asked-for", "+918000000000", "secret-recording.mp3"]) {
     assert.ok(!serialised.includes(leak), `${leak} must not be persisted`);
   }
-  assert.deepEqual(Object.keys(JSON.parse(stored.curated_json)).sort(), ["dtmfDigits", "durationSeconds", "hasRecording", "kind", "providerStatus"]);
+  assert.deepEqual(Object.keys(JSON.parse(stored.curated_json)).sort(), ["dtmfDigits", "durationSeconds", "hasRecording", "kind", "locale", "providerStatus"]);
 });
 
 test("a recording reference is only retained when recording was approved for that call", async () => {
@@ -302,7 +290,6 @@ test("a recording reference is only retained when recording was approved for tha
   const bodyA = eventBody(denied.callId, { EventType: "recording", RecordingUrl: recordingUrl });
   await gov.recordVoiceProviderEvent(withoutApproval.db, withoutApproval.env, { rawBody: bodyA, headers: await signedHeaders(bodyA) });
   assert.equal(withoutApproval.sqlite.prepare("SELECT recording_ref FROM voice_call_orders WHERE id=?").get(denied.callId).recording_ref, null, "an unapproved recording URL is discarded");
-
   const approved = await fresh({ PAWSPACE_VOICE_RECORDING_APPROVED: "true" });
   const allowed = await dial(approved.db, approved.env);
   assert.equal(approved.sqlite.prepare("SELECT recording_allowed FROM voice_call_orders WHERE id=?").get(allowed.callId).recording_allowed, 1);
@@ -342,7 +329,6 @@ test("the disconnected provider refuses every callback and every dial", async ()
 test("provider selection is fail-closed and never picks the simulator in live mode", () => {
   assert.equal(telephony.selectTelephonyProvider({}).provider, "not_connected");
   assert.equal(telephony.selectTelephonyProvider(uatVoiceEnv()).provider, telephony.LOCAL_SIMULATOR_PROVIDER);
-  // Only the explicit transport name selects it, and never when the environment claims to be live.
   assert.equal(telephony.selectTelephonyProvider(uatVoiceEnv({ PAWSPACE_VOICE_TRANSPORT: "" })).provider, "exotel");
   assert.equal(telephony.selectTelephonyProvider(uatVoiceEnv({ PAWSPACE_VOICE_ENV: "live" })).provider, "exotel");
   const partial = uatVoiceEnv({ PAWSPACE_VOICE_TRANSPORT: "", EXOTEL_WEBHOOK_SECRET: "" });
@@ -365,9 +351,6 @@ test("the signature verifier is not fooled by a length-matched wrong signature",
 });
 
 test("the stale INT-VOICE-01 seed is advanced on an already-seeded database, but operator edits are not", async () => {
-  // Seeds insert with INSERT OR IGNORE, so correcting one only reaches fresh databases: an environment
-  // that already held INT-VOICE-01 would keep code_boundary_status='partial' and report stale telephony
-  // information on the readiness surface.
   const registry = await import("../lib/integration-readiness.ts");
   const untouched = await fresh();
   await registry.ensureIntegrationReadinessTables(untouched.db);
@@ -377,8 +360,6 @@ test("the stale INT-VOICE-01 seed is advanced on an already-seeded database, but
   assert.equal(advanced.code_boundary_status, "code_ready");
   assert.match(advanced.notes, /No credentials in any environment/);
   assert.equal(advanced.readiness_state, "sandbox_setup_required", "the operational state is NOT advanced - there are still no credentials");
-
-  // An operator edit through updateIntegrationReadiness stamps updated_by, and must survive.
   const edited = await fresh();
   await registry.ensureIntegrationReadinessTables(edited.db);
   edited.sqlite.prepare("UPDATE integration_registry SET code_boundary_status='partial',notes='ops reviewed: do not change',updated_by='ops@pawspace.in' WHERE integration_code='INT-VOICE-01'").run();
@@ -389,7 +370,6 @@ test("the stale INT-VOICE-01 seed is advanced on an already-seeded database, but
 });
 
 test("the telephony credential list has exactly one definition", async () => {
-  // Held separately, one surface reported telephony as configured while the dial gate still refused.
   const gate = await import("../lib/voice-call-gate.ts");
   const { readFile } = await import("node:fs/promises");
   assert.deepEqual([...gate.VOICE_TELEPHONY_SECRET_NAMES], ["EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_SID", "EXOTEL_CALLER_ID", "EXOTEL_VOICE_APP_ID", "EXOTEL_WEBHOOK_SECRET"]);
@@ -399,7 +379,6 @@ test("the telephony credential list has exactly one definition", async () => {
     const inlineNames = (source.match(/EXOTEL_[A-Z_]+/g) || []).filter(name => name !== "EXOTEL_SUBDOMAIN");
     assert.deepEqual(inlineNames, [], `${path} must not re-declare credential names: ${inlineNames.join(", ")}`);
   }
-  // Both consumers agree with the gate, on the same env, for every partial configuration.
   const registry = await import("../lib/integration-readiness.ts");
   void registry;
   const full = uatVoiceEnv();
@@ -410,19 +389,13 @@ test("the telephony credential list has exactly one definition", async () => {
 });
 
 test("a negative provider status is never classified as connected", async () => {
-  // Substring matching on the positive words is the trap: "disconnected" and "not_connected" both
-  // contain "connected", and "not_answered" contains "answered" - so a terminal or failed callback was
-  // classified as `connected` and moved the call into an ACTIVE lifecycle state.
   for (const [status, expected] of [
     ["disconnected", "provider_error"], ["not_connected", "provider_error"], ["Disconnected", "provider_error"],
     ["not_answered", "no_answer"], ["not-answered", "no_answer"], ["unanswered", "no_answer"], ["no-answer", "no_answer"],
     ["failed", "provider_error"], ["canceled", "provider_error"], ["rejected", "provider_error"], ["declined", "provider_error"],
     ["busy", "busy"],
-    // Genuinely positive statuses must still work - this is a bound, not a blanket refusal.
     ["in-progress", "connected"], ["answered", "connected"], ["connected", "connected"],
   ]) {
-    // A fresh database per case: the frequency cap legitimately refuses a third dial to one number, and
-    // that would otherwise mask what this test is about.
     const { sqlite, db, env } = await fresh();
     const call = await dial(db, env, `neg-${status}`);
     assert.equal(call.dialled, true, status);
@@ -434,8 +407,6 @@ test("a negative provider status is never classified as connected", async () => 
 });
 
 test("the Exotel adapter refuses to exist on an incomplete configuration", async () => {
-  // Reporting "connected" without checking is how a half-configured provider comes to look ready. The
-  // selector already guards this, but a direct caller must not reach fetch() either.
   const gate = await import("../lib/voice-call-gate.ts");
   const full = uatVoiceEnv({ PAWSPACE_VOICE_TRANSPORT: "" });
   assert.equal(telephony.exotelTelephony(full).status, "connected");
@@ -448,24 +419,17 @@ test("the Exotel adapter refuses to exist on an incomplete configuration", async
 });
 
 test("a caller cannot redirect the carrier's callbacks to an endpoint of their choosing", async () => {
-  // The carrier posts call progress and recording references to this URL. A per-call override let a
-  // caller point it anywhere https while this ledger received nothing.
   const { db, env } = await fresh();
   await gov.requestOutboundVoiceCall(db, { ...env, PAWSPACE_VOICE_TRANSPORT: telephony.LOCAL_SIMULATOR_PROVIDER }, {
     idempotencyKey: "cb-override", useCase: "booking_confirmation", phone: ALLOWLISTED_PHONE, cityId: "blr",
     customerId: "CON-V1", leadId: "LEAD-V1", bookingId: "BKG-V1",
     actorId: "operator@pawspace.in", actorPermissions: FOUNDER_PERMISSIONS, asOf: DAYTIME,
-    // Every shape a caller might use to smuggle a destination in.
     statusCallbackUrl: "https://exfil.example/collect", callbackUrl: "https://exfil.example/collect",
     PAWSPACE_VOICE_STATUS_CALLBACK_URL: "https://exfil.example/collect",
   });
-  // The request type no longer carries a callback field at all, so the env value is the only source.
   const source = await import("node:fs/promises").then(fs => fs.readFile(new URL("../lib/voice-outbound-governance.ts", import.meta.url), "utf8"));
   assert.doesNotMatch(source, /input\.statusCallbackUrl/, "there must be no per-call callback override");
   assert.match(source, /const callbackUrl = statusCallbackUrl\(env\)/);
-
-  // And the adapter pins it structurally: a callback that is not the approved environment value is
-  // refused before any network request, so a future caller cannot reintroduce an override.
   const exotelEnv = uatVoiceEnv({ PAWSPACE_VOICE_TRANSPORT: "" });
   const provider = telephony.exotelTelephony(exotelEnv);
   const base = { callRef: "VCALL-X", toNumber: "+919876543210", recordingAllowed: false };
@@ -480,10 +444,8 @@ test("an oversized or stalled provider response does not hang or exhaust the dia
   const intent = { callRef: "VCALL-X", toNumber: "+919876543210", statusCallbackUrl: env.PAWSPACE_VOICE_STATUS_CALLBACK_URL, recordingAllowed: false };
   const original = globalThis.fetch;
   try {
-    // Oversized body: refused rather than buffered whole.
     globalThis.fetch = async () => new Response("x".repeat(200_000), { status: 200, headers: { "content-type": "application/json" } });
     await assert.rejects(() => provider.createCall(intent), /exceeded the size limit/);
-    // Headers then a stalled stream: the deadline still bites, so no dial hangs forever.
     globalThis.fetch = async (_url, init) => new Response(
       new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('{"Call":')); init.signal.addEventListener("abort", () => controller.error(Object.assign(new Error("aborted"), { name: "AbortError" }))); } }),
       { status: 200, headers: { "content-type": "application/json" } },
@@ -495,9 +457,6 @@ test("an oversized or stalled provider response does not hang or exhaust the dia
 });
 
 test("the readiness migration survives the runtime credential sync", async () => {
-  // syncIntegrationCredentialPresence stamps updated_by='runtime_presence_check' whenever a credential's
-  // presence changes. Keying the migration on 'system_seed' alone meant any database where that had ever
-  // run kept the stale status forever - which is most of them, and defeats the migration entirely.
   const registry = await import("../lib/integration-readiness.ts");
   for (const writer of ["system_seed", "runtime_presence_check"]) {
     const ctx = await fresh();
@@ -508,7 +467,6 @@ test("the readiness migration survives the runtime credential sync", async () =>
     assert.equal(row.code_boundary_status, "code_ready", `a row last written by ${writer} must advance`);
     assert.equal(row.readiness_state, "sandbox_setup_required", "but the operational state never advances");
   }
-  // A human's edit still wins.
   const edited = await fresh();
   await registry.ensureIntegrationReadinessTables(edited.db);
   edited.sqlite.prepare("UPDATE integration_registry SET code_boundary_status='partial',updated_by='karthik@pawspace.in' WHERE integration_code='INT-VOICE-01'").run();
@@ -517,8 +475,6 @@ test("the readiness migration survives the runtime credential sync", async () =>
 });
 
 test("a whitespace-only credential is not reported as configured anywhere", async () => {
-  // The dial gate trims; a readiness surface that does not would report a configured line the gate
-  // refuses - the same disagreement the shared constant was meant to end, one layer down.
   const gate = await import("../lib/voice-call-gate.ts");
   const blank = uatVoiceEnv({ EXOTEL_API_TOKEN: "   " });
   assert.equal(gate.telephonyCredentialsConfigured(blank), false);

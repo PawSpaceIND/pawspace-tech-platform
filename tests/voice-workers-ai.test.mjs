@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 const read = (p) => readFile(new URL(p, import.meta.url), "utf8");
 const wai = await read("../lib/voice-workers-ai.ts");
+const safeFetch = await read("../lib/voice-safe-fetch.ts");
 const adapter = await read("../lib/voice-provider-adapter.ts");
 const route = await read("../app/api/voice-speech/route.ts");
 
@@ -18,9 +19,12 @@ test("first-party voice runs on Cloudflare Workers AI, fail-closed on the env.AI
   assert.match(wai, /ai\.run\(model,/);
   // no external voice-vendor endpoints hard-coded in the first-party engine
   assert.doesNotMatch(wai, /https?:\/\/api\.(deepgram|elevenlabs|openai|assemblyai)\./);
-  // SSRF guard: caller-supplied audioRef URLs are host-allowlisted and private/link-local blocked
+  // SSRF guard: Workers AI delegates caller-supplied audio URLs to the shared safe fetcher,
+  // where private/link-local hosts (including cloud metadata ranges) are blocked.
   assert.match(wai, /assertFetchableAudioUrl/);
-  assert.match(wai, /169\\\.254\\\.|169\.254\./);
+  assert.match(wai, /safeVoiceFetch/);
+  assert.match(safeFetch, /a === 169 && b === 254/);
+  assert.match(safeFetch, /169\.254\.169\.254/);
   assert.match(wai, /VOICE_AUDIO_ALLOWED_HOSTS/);
 });
 
