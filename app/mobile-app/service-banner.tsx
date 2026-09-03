@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import styles from "./service-banner.module.css";
 import { getServiceMediaByName, getServiceVideoUrl } from "./service-media";
+import ServiceHero from "./service-hero";
 
 const HOME_BANNER = {
   image: "/assets/banners/sitter-hug-golden.jpg",
@@ -57,6 +58,8 @@ export default function ServiceBanner({ service, compact }: { service?: string; 
     document.addEventListener("visibilitychange", sync);
     return () => document.removeEventListener("visibilitychange", sync);
   }, []);
+
+  if (compact && service) return <ServiceHero service={service} />;
 
   return (
     <section className={`${styles.banner} ${compact ? styles.compact : ""}`} aria-label={`${service ?? "PawSpace"} highlights`}>
