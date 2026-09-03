@@ -29,6 +29,7 @@ const squash = (value) => value.replace(/\s+/g, "");
  */
 export const BOUNDED_IN_LISTS = {
   "boarding-ops-governance.ts": [{ expression: 'petIds.map(()=>"?")', why: "pet ids of a single stay" }],
+  "communication-engine.ts": [{ expression: 'allowed.map(()=>"?")', why: "the literal delivery statuses for one provider event" }],
   "lead-assignment-governance.ts": [{ expression: 'services.map(()=>"?")', why: "the service codes on one policy" }],
   "meet-and-greet.ts": [{ expression: 'rule.from.map(()=>"?")', why: "the literal statuses a transition may come from" }],
   "ops-work-queue.ts": [{ expression: 'allowedFrom.map(()=>"?")', why: "the literal statuses a task may be claimed from" }],
