@@ -29,10 +29,12 @@ const request = async (method, path, body) => {
   });
   const text = await response.text();
   let parsed;
-  try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = { raw: text.slice(0, 500) }; }
+  try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = {}; }
   if (!response.ok) {
     const message = String(parsed?.error || parsed?.message || `HTTP ${response.status}`);
-    throw new Error(`${method} ${path} failed: ${message}`);
+    const stage = String(parsed?.diagnostic?.stage || "unknown");
+    const code = String(parsed?.diagnostic?.code || "unknown");
+    throw new Error(`${method} ${path} failed: ${message}; diagnosticStage=${stage}; diagnosticCode=${code}`);
   }
   return parsed;
 };
