@@ -4,17 +4,20 @@ import { readFile } from "node:fs/promises";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("UI-MEDIA-01: customer home keeps the approved Premium Design 2 composition", async () => {
+test("UI-MEDIA-01: customer home keeps assigned Option 5 Premium & Visual as its one global design", async () => {
   const source = await read("app/mobile-app/premium-discovery-home.tsx");
   const styles = await read("app/mobile-app/premium-discovery-home.module.css");
-  assert.match(source, /What does <em>\{pet\?\.name \|\| "your pet"\}<\/em> need today\?/);
+  assert.match(source, /data-home-design="option-5-premium-visual"/);
+  assert.match(source, />Premium care for your loved ones</);
   assert.match(source, />Everything they need</);
-  assert.match(source, /className=\{styles\.serviceGrid\}/);
-  assert.match(source, /className=\{styles\.reminder\}/);
+  assert.match(source, /className=\{styles\.cards\}/);
+  assert.match(source, /className=\{styles\.cardPhoto\}/);
   assert.match(source, /aria-label="PawSpace trust standards"/);
   assert.match(source, /aria-label="Quick service guides"/);
-  assert.match(styles, /grid-template-columns:repeat\(3,1fr\)/);
+  assert.match(source, /PawSpace Media slot · service education and clearly labelled approved campaigns/);
+  assert.match(styles, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
   assert.doesNotMatch(source, /Offers carousel|carouselSlots|goToAd|adSlots/);
+  assert.doesNotMatch(source, /HomeDesignSwitcher|HOME_DESIGN_STORAGE_KEY|design === "calm"/);
 });
 
 test("UI-MEDIA-02: service media registry preserves requested breed and context mapping", async () => {
@@ -57,7 +60,7 @@ test("UI-MEDIA-04: approved Premium Design 2 personalises only after customer id
   assert.match(source, /if \(!customerId\) return/);
   assert.match(source, /\/api\/customer-account\?customerId=/);
   assert.match(source, /pet\?\.profile\?\.photo/);
-  assert.match(source, /pet\?\.name \|\| "your pet"/);
+  assert.match(source, /customerName\?\.trim\(\)\.slice\(0, 1\)/);
 });
 
 test("UI-MEDIA-05: service-page curated breed chips change curated PawSpace visuals", async () => {

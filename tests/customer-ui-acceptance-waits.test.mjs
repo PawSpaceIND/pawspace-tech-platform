@@ -20,7 +20,8 @@ test("approved premium Home exposes stable labelled discovery regions", () => {
   assert.match(discoverySource, /aria-label="Care services"/);
   assert.match(discoverySource, /aria-label="Quick service guides"/);
   assert.match(discoverySource, />Everything they need</);
-  assert.match(discoverySource, /What does <em>\{pet\?\.name \|\| "your pet"\}<\/em> need today\?/);
+  assert.match(discoverySource, /data-home-design="option-5-premium-visual"/);
+  assert.match(discoverySource, />Premium care for your loved ones</);
   assert.doesNotMatch(discoverySource, /Care for every kind of day/);
   assert.doesNotMatch(discoverySource, /Offers carousel/);
 });
