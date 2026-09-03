@@ -84,6 +84,17 @@ function normalizedFileUrl(url) {
   return { pathname, parsed };
 }
 
+function splitSpecifierSuffix(specifier) {
+  const queryIndex = specifier.indexOf("?");
+  const hashIndex = specifier.indexOf("#");
+  const suffixIndexes = [queryIndex, hashIndex].filter((index) => index >= 0);
+  const suffixIndex = suffixIndexes.length ? Math.min(...suffixIndexes) : specifier.length;
+  return {
+    pathname: specifier.slice(0, suffixIndex),
+    suffix: specifier.slice(suffixIndex),
+  };
+}
+
 export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
   process.env.NODE_ENV = "test";
   process.env.PAWSPACE_LOCAL_PREVIEW = "on";
@@ -106,16 +117,18 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
         try {
           return nextResolve(specifier, context);
         } catch (error) {
+          const { pathname, suffix } = splitSpecifierSuffix(specifier);
           // .ts first, because that is what every lib module means by an extensionless import; .tsx only
-          // when .ts is not there either, so a component's sibling import resolves too.
-          if (specifier.startsWith(".") && !specifier.endsWith(".ts") && !specifier.endsWith(".tsx")) {
-            try { return nextResolve(`${specifier}.ts`, context); }
-            catch { return nextResolve(`${specifier}.tsx`, context); }
+          // when .ts is not there either, so a component's sibling import resolves too. Keep any query/hash
+          // suffix after the extension so Node receives ./module.ts?register rather than ./module?register.ts.
+          if (pathname.startsWith(".") && !pathname.endsWith(".ts") && !pathname.endsWith(".tsx")) {
+            try { return nextResolve(`${pathname}.ts${suffix}`, context); }
+            catch { return nextResolve(`${pathname}.tsx${suffix}`, context); }
           }
           // A bare specifier into a package with no exports map - `next/link` is the one that matters -
           // resolves only with its extension. Reached ONLY after the real resolution has already failed,
           // so it can never change an import that works.
-          if (!specifier.startsWith(".") && !specifier.endsWith(".js")) return nextResolve(`${specifier}.js`, context);
+          if (!pathname.startsWith(".") && !pathname.endsWith(".js")) return nextResolve(`${pathname}.js${suffix}`, context);
           throw error;
         }
       },
@@ -135,15 +148,23 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
   import { readFile } from "node:fs/promises";
   import { fileURLToPath } from "node:url";
   ${TSX_TRANSFORM}
+  function splitSpecifierSuffix(specifier) {
+    const queryIndex = specifier.indexOf("?");
+    const hashIndex = specifier.indexOf("#");
+    const suffixIndexes = [queryIndex, hashIndex].filter((index) => index >= 0);
+    const suffixIndex = suffixIndexes.length ? Math.min(...suffixIndexes) : specifier.length;
+    return { pathname: specifier.slice(0, suffixIndex), suffix: specifier.slice(suffixIndex) };
+  }
   export async function resolve(specifier, context, nextResolve) {
     if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
     try { return await nextResolve(specifier, context); }
     catch (error) {
-      if (specifier.startsWith(".") && !specifier.endsWith(".ts") && !specifier.endsWith(".tsx")) {
-        try { return await nextResolve(specifier + ".ts", context); }
-        catch { return await nextResolve(specifier + ".tsx", context); }
+      const { pathname, suffix } = splitSpecifierSuffix(specifier);
+      if (pathname.startsWith(".") && !pathname.endsWith(".ts") && !pathname.endsWith(".tsx")) {
+        try { return await nextResolve(pathname + ".ts" + suffix, context); }
+        catch { return await nextResolve(pathname + ".tsx" + suffix, context); }
       }
-      if (!specifier.startsWith(".") && !specifier.endsWith(".js")) return await nextResolve(specifier + ".js", context);
+      if (!pathname.startsWith(".") && !pathname.endsWith(".js")) return await nextResolve(pathname + ".js" + suffix, context);
       throw error;
     }
   }
