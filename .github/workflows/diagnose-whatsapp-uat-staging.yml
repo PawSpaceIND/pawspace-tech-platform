@@ -79,3 +79,23 @@ jobs:
             console.log(`${name}: type=${type||"unknown"}; readableValue=${readable}`);
           }
           NODE
+      - name: Inspect required Meta secret names only
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/secret-list.json"; export OUT; trap 'rm -f "$OUT"' EXIT
+          if ! npx wrangler secret list --name pawspace-staging --format json > "$OUT" 2>/dev/null; then
+            echo "Unable to list staging secret names; raw output withheld." >&2; exit 1
+          fi
+          node --input-type=module <<'NODE'
+          import {readFileSync} from "node:fs";
+          const payload=JSON.parse(readFileSync(process.env.OUT,"utf8"));
+          const rows=Array.isArray(payload)?payload:Array.isArray(payload?.secrets)?payload.secrets:[];
+          const names=new Set(rows.map(row=>String(row?.name||row?.key||"").trim()).filter(Boolean));
+          for(const name of ["META_WHATSAPP_PHONE_NUMBER_ID","META_WHATSAPP_WABA_ID"]){
+            console.log(`${name}: encryptedSecretPresent=${names.has(name)}`);
+          }
+          console.log(`Total encrypted staging secrets=${names.size}`);
+          NODE
