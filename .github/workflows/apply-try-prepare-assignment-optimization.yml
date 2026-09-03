@@ -1,4 +1,4 @@
-name: Apply narrow scheduling contention fix
+name: Prove verification race baseline
 
 on:
   push:
@@ -8,79 +8,21 @@ on:
       - .github/workflows/apply-try-prepare-assignment-optimization.yml
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  fix:
+  baseline:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: fix/staging-performance-remediation
+          ref: d1a358152e244bcfb19db88684da0991f663965c
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
       - run: npm run install:ci
-      - name: Remove only non-authority scheduling overhead
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          # Provider home-base schema is static infrastructure. Replace per-request CREATE/INDEX writes
-          # with a read-only readiness probe; no provider eligibility or verification truth is cached.
-          p=Path('lib/provider-home-base.ts')
-          s=p.read_text()
-          old='''// Home-base reads are fanned out for the provider shortlist. The local D1 harness implements each\n// db.batch() as a real SQLite transaction, so concurrent currentHomeBase() calls must not each start\n// their own setup transaction on the same connection. Share one in-flight setup and run the idempotent\n// DDL statements directly; callers already execute against the active database connection.\nconst homeBaseTablesReady=new WeakMap<Db,Promise<void>>();\n\nexport async function ensureProviderHomeBaseTables(db:Db){\n let ready=homeBaseTablesReady.get(db);\n if(!ready){\n  ready=(async()=>{\n   await db.prepare("CREATE TABLE IF NOT EXISTS provider_home_base (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,address TEXT NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,effective_from INTEGER NOT NULL,effective_until INTEGER,reason TEXT NOT NULL,updated_by TEXT NOT NULL,created_at INTEGER NOT NULL)").run();\n   await db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_home_base_provider ON provider_home_base(provider_id,effective_from)").run();\n  })();\n  homeBaseTablesReady.set(db,ready);\n }\n try{await ready;}catch(error){homeBaseTablesReady.delete(db);throw error;}\n}\n'''
-          new='''// Home-base reads are fanned out for the provider shortlist. Steady-state matching must not issue\n// idempotent schema writes: under concurrent D1 traffic those writes serialize otherwise independent\n// assignments. The probe is schema-only; provider location data is still read fresh for every match.\nconst homeBaseTablesReady=new WeakSet<Db>();\nconst homeBaseTablesRunning=new WeakMap<Db,Promise<void>>();\nasync function homeBaseSchemaReady(db:Db){\n try{const rows=await db.prepare("SELECT name FROM sqlite_master WHERE name IN ('provider_home_base','idx_provider_home_base_provider')").all<Row>();return new Set(rows.results.map(row=>String(row.name))).size===2;}catch{return false;}\n}\nexport async function ensureProviderHomeBaseTables(db:Db){\n if(homeBaseTablesReady.has(db))return;\n const running=homeBaseTablesRunning.get(db);if(running)return running;\n const pending=(async()=>{\n  if(await homeBaseSchemaReady(db))return;\n  await db.prepare("CREATE TABLE IF NOT EXISTS provider_home_base (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,address TEXT NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,effective_from INTEGER NOT NULL,effective_until INTEGER,reason TEXT NOT NULL,updated_by TEXT NOT NULL,created_at INTEGER NOT NULL)").run();\n  await db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_home_base_provider ON provider_home_base(provider_id,effective_from)").run();\n })().then(()=>{homeBaseTablesReady.add(db);});\n homeBaseTablesRunning.set(db,pending);\n try{await pending;}finally{if(homeBaseTablesRunning.get(db)===pending)homeBaseTablesRunning.delete(db);}\n}\n'''
-          assert old in s, 'home base ensure block not found'
-          p.write_text(s.replace(old,new,1))
-
-          # A complete scheduling schema already proves attempt_id exists because its required index names
-          # that column. Skip the global four-table drift sweep only in that already-complete case.
-          p=Path('app/api/uat-scheduling/route.ts')
-          s=p.read_text()
-          old='''  if(!schemaDriftRepaired.has(db)){await repairSchemaDrift(db);schemaDriftRepaired.add(db);}\n'''
-          new='''  if(!schemaReady&&!schemaDriftRepaired.has(db)){await repairSchemaDrift(db);schemaDriftRepaired.add(db);}\n'''
-          assert old in s, 'schema drift hot-path guard not found'
-          p.write_text(s.replace(old,new,1))
-
-          # Lease-governance steady state can be established with one sqlite_master read because the
-          # trigger/index/table objects cannot exist without the lease columns they reference. Cold or
-          # drifted databases still fall through to PRAGMA + repair exactly as before.
-          p=Path('lib/scheduling-reservation-leases.ts')
-          s=p.read_text()
-          old='''  const pending=(async()=>{\n    if(!(await tableExists(db,"scheduling_reservations")))return false;\n    const columns=await db.prepare("PRAGMA table_info(scheduling_reservations)").all<Row>();\n    const hasLease=columns.results.some(row=>String(row.name)==="lease_expires_at"),hasSession=columns.results.some(row=>String(row.name)==="customer_session_id");\n    const schema=await db.prepare("SELECT name FROM sqlite_master WHERE name IN ('idx_scheduling_reservations_lease','scheduling_reservation_lease_cleanup','booking_reservation_confirmation_guards','block_expired_reservation_booking')").all<Row>();\n    if(hasLease&&hasSession&&new Set(schema.results.map(row=>String(row.name))).size===4){leaseTablesEnsured.add(db);return true;}\n'''
-          new='''  const pending=(async()=>{\n    const schema=await db.prepare("SELECT name FROM sqlite_master WHERE name IN ('scheduling_reservations','idx_scheduling_reservations_lease','scheduling_reservation_lease_cleanup','booking_reservation_confirmation_guards','block_expired_reservation_booking')").all<Row>();\n    const names=new Set(schema.results.map(row=>String(row.name)));\n    if(!names.has("scheduling_reservations"))return false;\n    if(names.has("idx_scheduling_reservations_lease")&&names.has("scheduling_reservation_lease_cleanup")&&names.has("booking_reservation_confirmation_guards")&&names.has("block_expired_reservation_booking")){leaseTablesEnsured.add(db);return true;}\n    const columns=await db.prepare("PRAGMA table_info(scheduling_reservations)").all<Row>();\n    const hasLease=columns.results.some(row=>String(row.name)==="lease_expires_at"),hasSession=columns.results.some(row=>String(row.name)==="customer_session_id");\n'''
-          assert old in s, 'lease governance readiness block not found'
-          p.write_text(s.replace(old,new,1))
-
-          # Both routes already perform synchronous lease cleanup immediately before their governed write.
-          # Remove only the duplicate Worker pre-route pass; scheduled maintenance remains unchanged.
-          p=Path('worker/index.ts')
-          s=p.read_text()
-          old='''      if(request.method==="POST"&&(url.pathname==="/api/uat-scheduling"||url.pathname==="/api/canonical-bookings"))await cleanupExpiredReservationLeases(env.DB);\n'''
-          new='''      // /api/uat-scheduling and /api/canonical-bookings enforce lease cleanup inside their\n      // governed write paths. Avoid a duplicate awaited pass here; scheduled maintenance still sweeps.\n'''
-          assert old in s, 'duplicate worker lease cleanup not found'
-          p.write_text(s.replace(old,new,1))
-          PY
-      - name: Validate race safety and scheduling invariants
-        run: |
-          node --experimental-strip-types --test \
-            tests/ptja-w1-f53-verification-expiry-gate.test.mjs \
-            tests/uat-scheduling-d1-contention.test.mjs \
-            tests/scheduling-reservation-leases.test.mjs \
-            tests/schema-declaration-consistency.test.mjs \
-            tests/uat-convergence-source-contract.test.mjs
-          npm run typecheck
-          npm run build
-          git diff --check
-          test "$(git diff --name-only | sort | tr '\n' ' ')" = "app/api/uat-scheduling/route.ts lib/provider-home-base.ts lib/scheduling-reservation-leases.ts worker/index.ts "
-      - name: Commit and push narrow remediation
-        run: |
-          git config user.name "PawSpace Release Bot"
-          git config user.email "release-bot@pawspace.in"
-          git commit -am "perf(scheduling): remove redundant schema work from assignment path"
-          git push origin HEAD:fix/staging-performance-remediation
+      - name: Run verification revocation race on unmodified application baseline
+        run: node --experimental-strip-types --test tests/ptja-w1-f53-verification-expiry-gate.test.mjs
