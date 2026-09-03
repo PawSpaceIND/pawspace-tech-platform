@@ -88,7 +88,9 @@ export async function POST(request:Request){
     const payload=(accepted.duplicate?JSON.parse(String(accepted.row.raw_payload||"{}")):accepted.event) as RazorPayload;
     const eventType=String(payload.event||"").trim();
     if(!eventType){await markInbox(db,accepted.row,"REJECTED",undefined,"missing_event_type");return json({error:"Webhook event type is required"},400);}
-    if(!(await claimInbox(db,accepted.row,eventType)))return json({ok:true,environment:gate.environment,duplicate:true,status:String(accepted.row.processing_status)});
+    const duplicateStatus=String(accepted.row.processing_status||"");
+    if(accepted.duplicate&&!['RECEIVED','DEFERRED','FAILED'].includes(duplicateStatus))return json({ok:true,environment:gate.environment,duplicate:true,status:duplicateStatus});
+    if(!(await claimInbox(db,accepted.row,eventType)))return json({ok:true,environment:gate.environment,duplicate:true,status:duplicateStatus});
     try{
       // Refunds are checked first because a provider-generated proration refund may not carry a
       // subscription entity. Matching by the original recurring payment id keeps it out of booking refunds.

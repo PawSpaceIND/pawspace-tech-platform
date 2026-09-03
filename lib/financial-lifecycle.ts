@@ -166,7 +166,13 @@ export async function acceptRazorpayWebhook(db: Db, input: {
   if (!(await verifyRazorpayRawBody(input.rawBody, input.signature, input.webhookSecret))) throw new Error("Invalid Razorpay webhook signature");
   const eventId = input.eventId.trim();
   if (!eventId) throw new Error("Razorpay webhook event id is required");
-  const payloadHash = await sha256Hex(input.rawBody), id = `GWE-${crypto.randomUUID()}`, now = Date.now();
+  const payloadHash = await sha256Hex(input.rawBody), now = Date.now();
+  // Replays dominate the Track 3 webhook workload. Once an event exists, signature + payload hash are
+  // sufficient to prove this delivery is the same event; do not join D1's writer queue just to lose an
+  // INSERT ... DO NOTHING race that was already settled by the first delivery.
+  const prior=await db.prepare("SELECT * FROM gateway_webhook_events WHERE provider='razorpay' AND event_id=?").bind(eventId).first<Row>();
+  if(prior){if(String(prior.payload_sha256)!==payloadHash)throw new Error("Razorpay event id was replayed with a different payload");return{duplicate:true as const,row:prior};}
+  const id = `GWE-${crypto.randomUUID()}`;
   const result = await db.prepare(`INSERT INTO gateway_webhook_events
     (id,provider,environment,event_id,raw_payload,payload_sha256,signature,processing_status,received_at)
     VALUES (?,'razorpay',?,?,?,?,?,'RECEIVED',?) ON CONFLICT(provider,event_id) DO NOTHING`)

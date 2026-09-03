@@ -110,3 +110,24 @@ test("canonical downstream batching removes redundant new-booking D1 waits",()=>
   assert.match(finance,/const\[period,existing\]=await Promise\.all/);
   assert.match(leads,/const\[schema,columns\]=await Promise\.all/);
 });
+
+
+test("Track 3 finance reads avoid steady-state DDL and batch the grooming ledger",()=>{
+  const route=fs.readFileSync(new URL("../app/api/grooming-finance/route.ts",import.meta.url),"utf8");
+  const reconciliation=fs.readFileSync(new URL("../lib/grooming-payment-reconciliation.ts",import.meta.url),"utf8");
+  assert.match(route,/groomingFinanceTablesEnsuring=new WeakMap/);
+  assert.match(route,/await db\.batch\(\[ledgerStatement,exceptionsStatement\]\)/);
+  assert.match(route,/LEFT JOIN \(SELECT payment_id,COUNT\(\*\) open_reconciliation_exceptions/);
+  assert.doesNotMatch(route,/const recentExceptions=await db\.prepare/);
+  assert.match(reconciliation,/reconciliationTablesEnsuring=new WeakMap/);
+  assert.match(reconciliation,/reconciliationSchemaReady/);
+});
+
+test("Track 3 staging auth and webhook replays remove redundant D1 round trips",()=>{
+  const auth=fs.readFileSync(new URL("../lib/uat-staging-auth.ts",import.meta.url),"utf8");
+  const lifecycle=fs.readFileSync(new URL("../lib/financial-lifecycle.ts",import.meta.url),"utf8");
+  const webhook=fs.readFileSync(new URL("../app/api/razorpay-webhook/route.ts",import.meta.url),"utf8");
+  assert.match(auth,/SELECT u\.name,u\.role_code,u\.status,r\.permissions_json FROM app_users u LEFT JOIN role_definitions/);
+  assert.match(lifecycle,/const prior=await db\.prepare\("SELECT \* FROM gateway_webhook_events WHERE provider='razorpay' AND event_id=\?"\)/);
+  assert.match(webhook,/accepted\.duplicate&&!\['RECEIVED','DEFERRED','FAILED'\]\.includes\(duplicateStatus\)/);
+});

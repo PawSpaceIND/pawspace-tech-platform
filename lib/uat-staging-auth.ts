@@ -86,15 +86,13 @@ export async function resolveUatStaffActor(db:Db,request:Request,env:UatEnv){
  if(!token)return null;
  const email=await verifyUatToken(env,token);
  if(!email)return null;
- const user=await db.prepare("SELECT name,role_code,status FROM app_users WHERE email=?").bind(email).first<Row>().catch(()=>null);
- // No synthesised identity. A cookie proves someone knew the access code; it does not decide who they
- // are or what they may do — the staff directory does.
+ const user=await db.prepare("SELECT u.name,u.role_code,u.status,r.permissions_json FROM app_users u LEFT JOIN role_definitions r ON r.code=u.role_code WHERE u.email=?").bind(email).first<Row>().catch(()=>null);
+ // One authoritative read keeps the fail-closed identity + role contract while avoiding a second D1
+ // round-trip on every authenticated staging request. A missing role remains NULL and grants nothing.
  if(!user||String(user.status)!=="active")return null;
  const roleCode=String(user.role_code||"").trim();
- if(!roleCode)return null;
- const role=await db.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(roleCode).first<Row>().catch(()=>null);
- if(!role)return null; // a role with no definition grants nothing, rather than everything
- const permissions=parsePermissions(role.permissions_json);
+ if(!roleCode||user.permissions_json===null||user.permissions_json===undefined)return null;
+ const permissions=parsePermissions(user.permissions_json);
  return{email,name:String(user.name||email),roleCode,permissions,developmentPreview:false,identitySource:"workspace" as const,principalType:"email" as const,principalKey:email};
 }
 
