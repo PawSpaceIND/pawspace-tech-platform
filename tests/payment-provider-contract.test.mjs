@@ -24,7 +24,7 @@ async function contractServer() {
       const match = scenario.match(/HTTP_(400|401|429|500|503)/);
       if (match) {
         response.writeHead(Number(match[1]), { "content-type": "application/json" });
-        response.end(JSON.stringify({ error: { description: `contract-test-${match[1]}` } }));
+        response.end(JSON.stringify({ error: { description: `contract-test-${match[1]}` }));
         return;
       }
       if (scenario.includes("INVALID")) {
@@ -118,7 +118,7 @@ test("external Razorpay contract: override is sandbox contract-test only", async
     const noContractFlag = await client.createPaymentOrder(environment(server.url, { PAWSPACE_PAYMENT_CONTRACT_TEST: "false" }), { bookingId: "BK-CONTRACT", paymentId: "PAY-BLOCKED", amount: 500, currency: "INR" });
     assert.equal(noContractFlag.connected, false);
     assert.match(noContractFlag.reason, /contract-test override/i);
-    const live = await client.createPaymentOrder({ ...environment(server.url), PAWSPACE_PAYMENT_ENV: "live", RAZORPAY_KEY_ID: "rzp_live_never_contacted", RAZORPAY_KEY_SECRET: "never-contacted" }, { bookingId: "BK-CONTRACT", paymentId: "PAY-LIVE-BLOCKED", amount: 500, currency: "INR" });
+    const live = await client.createPaymentOrder({ ...environment(server.url), PAWSPACE_PAYMENT_ENV: "live", PAWSPACE_PAYMENT_LIVE_APPROVED: "true", RAZORPAY_KEY_ID: "rzp_live_never_contacted", RAZORPAY_KEY_SECRET: "never-contacted" }, { bookingId: "BK-CONTRACT", paymentId: "PAY-LIVE-BLOCKED", amount: 500, currency: "INR" });
     assert.equal(live.connected, false);
     assert.match(live.reason, /contract-test override/i);
     assert.equal(server.requests.length, 0);
