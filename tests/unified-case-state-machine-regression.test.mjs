@@ -26,7 +26,7 @@ test("SLA event helper reports whether the idempotent event was newly inserted",
 });
 
 test("unified case escalation is part of the five-minute scheduler exactly once", () => {
-  assert.match(scheduler, /import\{runUnifiedCaseEscalations\}from"\.\/unified-case-center"/);
+  assert.match(scheduler, /import\("\.\/unified-case-center"\)\.then\(\(\{runUnifiedCaseEscalations\}\)=>runUnifiedCaseEscalations\(db,\{actorId,asOf\}\)\)/);
   const calls = scheduler.match(/runUnifiedCaseEscalations\(db,\{actorId,asOf\}\)/g) ?? [];
   assert.equal(calls.length, 1);
   assert.match(scheduler, /"unifiedCaseEscalations"/);
