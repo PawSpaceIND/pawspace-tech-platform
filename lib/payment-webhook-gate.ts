@@ -31,6 +31,23 @@ export function resolvePaymentWebhookGate(env: Env): WebhookGate {
   return { ok: true, environment: "live", secret };
 }
 
+/*
+ * NO FRESHNESS WINDOW LIVES HERE, AND THAT IS DELIBERATE.
+ *
+ * An earlier version of this file rejected any signed body whose own created_at was more than five
+ * minutes old. It closed the replay exposure and it was the wrong instrument for a payments receiver:
+ * Razorpay retries a failed delivery for up to 24 hours, so a single 500 on our side during a capture
+ * would have turned every subsequent retry into a 400 and lost the money event permanently. Trading a
+ * dropped payment for a bounded replay window is the wrong trade in this pipeline.
+ *
+ * The replay exposure is closed by IDENTITY instead of by time, in acceptRazorpayWebhook: the inbox now
+ * also recognises a body it has already accepted, by the SHA-256 of the signature-verified payload. A
+ * genuine 20-hour-late retry carries a byte-identical body, is recognised as a redelivery of the
+ * original event and is acknowledged; a replay carries the same byte-identical body and is recognised
+ * the same way, whatever event id the caller puts in the header. Both are handled correctly, with no
+ * clock involved and nothing to tune. See lib/financial-lifecycle.ts.
+ */
+
 /** Readiness for the ops/payments dashboard - reports what's configured WITHOUT exposing any secret. */
 export function paymentWebhookReadiness(env: Env) {
   const gate = resolvePaymentWebhookGate(env);

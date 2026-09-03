@@ -91,8 +91,24 @@ export async function POST(request:Request){
     const payload=(accepted.duplicate?JSON.parse(String(accepted.row.raw_payload||"{}")):accepted.event) as RazorPayload;
     const eventType=String(payload.event||"").trim();
     if(!eventType){await markInbox(db,accepted.row,"REJECTED",undefined,"missing_event_type");return json({error:"Webhook event type is required"},400);}
+    /*
+     * NO TIMESTAMP CHECK HERE. Replay is bounded by IDENTITY, not by age: acceptRazorpayWebhook
+     * recognises a body it has already accepted by the digest of the signature-verified payload, so a
+     * forged event-id header can no longer manufacture a second event out of one captured body - and a
+     * genuine Razorpay retry arriving twenty hours late is recognised as the redelivery it is rather
+     * than refused. A clock-based window would have had to choose between those two.
+     */
     if(!(await claimInbox(db,accepted.row,eventType))){
-      const effects=await retryCaptureEffects(db,eventId);
+      /*
+       * `accepted.row.event_id`, NOT the header's eventId, and that distinction is new.
+       *
+       * The post-commit capture effects are keyed on the event id they were enqueued under, which is the
+       * id of the event as RECORDED. Since the inbox now dedupes on the payload digest, a redelivery can
+       * arrive carrying a different id in the header - a gateway retry, or a replay - and resolve to the
+       * original row. Looking the outbox up by the header id would then find nothing, silently answer
+       * 200, and strand a pending capture effect that the retry existed to finish.
+       */
+      const effects=await retryCaptureEffects(db,String(accepted.row.event_id||eventId));
       if(effects&&!effects.completed)return json({ok:false,environment:gate.environment,duplicate:true,status:String(accepted.row.processing_status),captureEffectsRetry:true,reason:effects.reason||"capture_post_commit_pending"},503);
       return json({ok:true,environment:gate.environment,duplicate:true,status:String(accepted.row.processing_status),captureEffectsRecovered:Boolean(effects?.completed)});
     }
