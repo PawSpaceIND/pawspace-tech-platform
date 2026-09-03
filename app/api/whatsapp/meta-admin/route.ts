@@ -4,7 +4,7 @@ import{dispatchMetaWhatsAppUat,syncMetaWhatsAppTemplates}from"../../../../lib/me
 
 type Row=Record<string,unknown>;
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
-function uatDiagnosticCode(error:unknown){if(!(error instanceof Error))return"unknown";const message=String(error.message||"");if(/Meta template sync failed with HTTP/i.test(message))return"meta_http";if(/D1|SQL|database|constraint|column|table/i.test(message))return"database";if(/fetch|network|timeout|socket/i.test(message))return"network";if(/json|parse/i.test(message))return"provider_payload";return"application";}
+function uatDiagnosticCode(error:unknown){if(!(error instanceof Error))return"unknown";const message=String(error.message||"");const stage=/^uat_sync_(ensure_tables|template_fetch|template_payload|template_upsert)(?::|$)/.exec(message)?.[1];if(stage)return`sync_${stage}`;if(/Meta template sync failed with HTTP/i.test(message))return"meta_http";if(/D1|SQL|database|constraint|column|table/i.test(message))return"database";if(/fetch|network|timeout|socket/i.test(message))return"network";if(/json|parse/i.test(message))return"provider_payload";return"application";}
 
 export async function GET(request:Request){
  try{const actor=await resolveActor(request);requirePermission(actor,"communications.manage");const db=await database();await ensureWhatsAppUatTables(db);
