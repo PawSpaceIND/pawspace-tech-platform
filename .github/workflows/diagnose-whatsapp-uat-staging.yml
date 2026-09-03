@@ -1,0 +1,59 @@
+name: Diagnose WhatsApp UAT staging configuration
+
+on:
+  push:
+    branches:
+      - fix/whatsapp-uat-staging-deploy-isolation
+    paths:
+      - .github/workflows/diagnose-whatsapp-uat-staging.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report only missing Meta configuration names
+        env:
+          STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: |
+          node --input-type=module <<'NODE'
+          const allowedNames = new Set([
+            "PAWSPACE_COMMUNICATION_ENV",
+            "META_WHATSAPP_UAT_DELIVERY_ENABLED",
+            "META_WHATSAPP_UAT_ACCESS_TOKEN",
+            "META_WHATSAPP_PHONE_NUMBER_ID",
+            "META_WHATSAPP_WABA_ID",
+            "META_WHATSAPP_APP_SECRET",
+            "META_WHATSAPP_VERIFY_TOKEN",
+            "META_WHATSAPP_UAT_ALLOWLIST",
+            "META_WHATSAPP_TEMPLATE_ALLOWLIST",
+          ]);
+          const base = String(process.env.STAGING_URL || "").replace(/\/$/, "");
+          const code = String(process.env.PAWSPACE_UAT_ACCESS_CODE || "");
+          const login = await fetch(`${base}/api/staging-login`, {
+            method: "POST", redirect: "manual",
+            headers: { "content-type": "application/json", origin: base },
+            body: JSON.stringify({ action: "login", code, email: "founder@pawspace.in" }),
+            signal: AbortSignal.timeout(15000),
+          });
+          const cookie = String(login.headers.get("set-cookie") || "").split(";")[0];
+          if (!(login.status >= 200 && login.status < 400 && cookie)) throw new Error(`staging founder sign-in failed (HTTP ${login.status})`);
+          const readiness = await fetch(`${base}/api/integration-readiness`, { headers: { cookie }, signal: AbortSignal.timeout(15000) });
+          let payload = null; try { payload = await readiness.json(); } catch {}
+          const modules = payload?.uatSandbox?.modules || payload?.data?.uatSandbox?.modules || [];
+          const meta = Array.isArray(modules) ? modules.find(module => module?.code === "meta_whatsapp") : null;
+          if (!readiness.ok || !meta) throw new Error(`Meta readiness probe failed (HTTP ${readiness.status})`);
+          const names = [];
+          for (const blocker of Array.isArray(meta.blockers) ? meta.blockers : []) {
+            const raw = String(blocker || "");
+            const match = raw.match(/^(?:Missing )?([A-Z0-9_]+)(?: must be .+)?$/);
+            if (!match || !allowedNames.has(match[1])) throw new Error("unexpected Meta blocker shape; refusing to print it");
+            names.push(match[1]);
+          }
+          if (!names.length) console.log("Meta UAT configuration has no missing names.");
+          else console.log(`Missing Meta UAT configuration names only: ${names.join(", ")}`);
+          console.log(`Meta configuredForExternalTest=${meta.configuredForExternalTest === true}`);
+          NODE
