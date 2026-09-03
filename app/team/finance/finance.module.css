@@ -47,11 +47,12 @@
   -webkit-overflow-scrolling: touch;
 }
 
-.ledgerTable {
-  width: 100%;
-  min-width: 980px;
+.tableScroller .ledgerTable {
+  width: 100% !important;
+  min-width: 980px !important;
+  max-width: none !important;
   border-collapse: collapse;
-  table-layout: auto;
+  table-layout: auto !important;
   font-size: 13px;
 }
 
