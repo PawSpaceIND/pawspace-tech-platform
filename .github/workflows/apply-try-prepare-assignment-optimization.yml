@@ -30,6 +30,7 @@ jobs:
         run: |
           printf '%s' "$PATCH_B64" | base64 --decode > "$RUNNER_TEMP/track3_patch.py"
           python3 "$RUNNER_TEMP/track3_patch.py"
+          if [ "$(tail -n 1 tests/scheduling-reservation-leases.test.mjs)" = "#" ]; then sed -i '$d' tests/scheduling-reservation-leases.test.mjs; fi
       - name: Validate scheduling concurrency and lease invariants
         run: |
           node --experimental-strip-types --test tests/uat-scheduling-d1-contention.test.mjs tests/scheduling-reservation-leases.test.mjs tests/schema-declaration-consistency.test.mjs tests/uat-convergence-source-contract.test.mjs
