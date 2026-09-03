@@ -50,7 +50,7 @@ jobs:
             assert.match(finance,/STAGING_FINANCE_CACHE_TTL_SECONDS=30/);
             assert.match(finance,/caches\.default\.match\(STAGING_FINANCE_CACHE_KEY\)/);
             assert.match(finance,/caches\.default\.delete\(STAGING_FINANCE_CACHE_KEY\)/);
-            assert.ok(finance.indexOf('authorize(request,"finance.view")')<finance.indexOf('readStagingFinanceCache()'));
+            assert.match(finance,/export async function GET[\s\S]*?authorize\(request,"finance\.view"\)[\s\S]*?readStagingFinanceCache\(\)/);
           });
           test('finance cache misses use hot-path indexes',()=>{
             assert.match(finance,/idx_grooming_finance_bookings_service_updated ON canonical_bookings\(service_code,updated_at DESC\)/);
@@ -59,7 +59,7 @@ jobs:
           });
           test('UAT actor cache remains downstream of signed-cookie verification',()=>{
             assert.match(auth,/UAT_ACTOR_EDGE_CACHE_TTL_SECONDS=30/);
-            assert.ok(auth.indexOf('verifyUatToken(env,token)')<auth.indexOf('readUatActorRow(db,email)'));
+            assert.match(auth,/resolveUatStaffActor[\s\S]*?verifyUatToken\(env,token\)[\s\S]*?readUatActorRow\(db,email\)/);
             assert.match(auth,/if\(!uatLoginEnabled\(env\)\)return null/);
           });
           test('UAT demo seed remains globally balanced',()=>{
@@ -72,7 +72,7 @@ jobs:
       - name: Validate focused tests typecheck and build
         run: |
           set -euo pipefail
-          node --experimental-strip-types --test tests/track3-finance-performance-remediation.test.mjs tests/grooming-payment-reconciliation.test.mjs tests/ptja-w2-b2-collection-ledger.test.mjs tests/ptja-w2-08-revenue-reconciliation.test.mjs tests/uat-staging-auth.test.mjs tests/uat-demo-seed-sales-marketing.test.mjs tests/uat-demo-seed.test.mjs
+          node --experimental-strip-types --test tests/track3-finance-performance-remediation.test.mjs tests/grooming-payment-reconciliation.test.mjs tests/ptja-w2-b2-collection-ledger.test.mjs tests/ptja-w2-08-revenue-reconciliation.test.mjs tests/uat-staging-auth.test.mjs tests/uat-demo-seed-sales-marketing.test.mjs
           npm run typecheck
           npm run build
       - name: Verify diff scope and push application commit
