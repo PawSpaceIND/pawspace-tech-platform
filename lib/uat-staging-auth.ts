@@ -75,14 +75,18 @@ async function verifyUatToken(env:UatEnv,token:string):Promise<string|null>{
  return obj.email;
 }
 
-// Coalesce only simultaneously in-flight identity reads. Nothing is cached after the read settles, so a
-// role/status change is visible to the next request while a 100-way staging burst does not send 100
-// byte-identical staff/role lookups to D1.
+// Cookie HMAC verification still runs on every request. Only after it succeeds may staging UAT reuse
+// the active actor/role row for a bounded 30 seconds across isolates. Production cannot enter this path
+// because PAWSPACE_UAT_LOGIN is absent there.
+const UAT_ACTOR_EDGE_CACHE_TTL_SECONDS=30;
 const uatActorReads=new WeakMap<Db,Map<string,Promise<Row|null>>>();
+function uatActorCacheKey(email:string){return `https://pawspace.internal/__cache/uat-actor/v1/${encodeURIComponent(email)}`;}
+async function readCachedUatActor(email:string):Promise<Row|null>{try{const hit=await (await caches.open("pawspace-uat-actor-v1")).match(uatActorCacheKey(email));return hit?await hit.json() as Row:null;}catch{return null;}}
+async function writeCachedUatActor(email:string,row:Row){try{await (await caches.open("pawspace-uat-actor-v1")).put(uatActorCacheKey(email),new Response(JSON.stringify(row),{headers:{"content-type":"application/json","cache-control":`max-age=${UAT_ACTOR_EDGE_CACHE_TTL_SECONDS}`}}));}catch{}}
 async function readUatActorRow(db:Db,email:string){
  let byEmail=uatActorReads.get(db);if(!byEmail){byEmail=new Map();uatActorReads.set(db,byEmail);}
  const running=byEmail.get(email);if(running)return running;
- const pending=db.prepare("SELECT u.name,u.role_code,u.status,r.permissions_json FROM app_users u LEFT JOIN role_definitions r ON r.code=u.role_code WHERE u.email=?").bind(email).first<Row>().catch(()=>null)
+ const pending=(async()=>{const cached=await readCachedUatActor(email);if(cached)return cached;const row=await db.prepare("SELECT u.name,u.role_code,u.status,r.permissions_json FROM app_users u LEFT JOIN role_definitions r ON r.code=u.role_code WHERE u.email=?").bind(email).first<Row>().catch(()=>null);if(row&&String(row.status)==="active"&&row.permissions_json!==null&&row.permissions_json!==undefined)await writeCachedUatActor(email,row);return row;})()
   .finally(()=>{if(byEmail!.get(email)===pending)byEmail!.delete(email);});
  byEmail.set(email,pending);return pending;
 }

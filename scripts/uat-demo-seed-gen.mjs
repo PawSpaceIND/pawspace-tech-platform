@@ -376,9 +376,9 @@ for (const j of journals) {
   insert("finance_journal_entries", { id: `${j.g}-1`, entry_date: j.date, source_type: "collection", source_id: j.g, account_code: j.cash, cost_centre: "CC-OPS", vertical: "grooming", debit: inflow ? j.amount : 0, credit: inflow ? 0 : -j.amount, narration: j.narration, period_code: j.period, posted: 1, created_at: at(-15) });
   insert("finance_journal_entries", { id: `${j.g}-2`, entry_date: j.date, source_type: "collection", source_id: j.g, account_code: j.counter, cost_centre: "CC-OPS", vertical: "grooming", debit: inflow ? 0 : -j.amount, credit: inflow ? j.amount : 0, narration: j.narration, period_code: j.period, posted: 1, created_at: at(-15) });
 }
-// one deliberately UNBALANCED journal so Finance intelligence has a real anomaly to show
-insert("finance_journal_entries", { id: "UATD-JRN-BAD-1", entry_date: `${MONTH}-09`, source_type: "manual", source_id: "UATD-JRN-BAD", account_code: EXPENSE, cost_centre: "CC-OPS", vertical: "grooming", debit: 5000, credit: 0, narration: "Demo seed: deliberately unbalanced journal (anomaly demo)", period_code: MONTH, posted: 1, created_at: at(-4) });
-insert("finance_journal_entries", { id: "UATD-JRN-BAD-2", entry_date: `${MONTH}-09`, source_type: "manual", source_id: "UATD-JRN-BAD", account_code: CASH, cost_centre: "CC-OPS", vertical: "grooming", debit: 0, credit: 4500, narration: "Demo seed: deliberately unbalanced journal (anomaly demo)", period_code: MONTH, posted: 1, created_at: at(-4) });
+// balanced manual control journal; duplicate/outlier bills below provide anomaly-demo data without corrupting global books
+insert("finance_journal_entries", { id: "UATD-JRN-BAD-1", entry_date: `${MONTH}-09`, source_type: "manual", source_id: "UATD-JRN-BAD", account_code: EXPENSE, cost_centre: "CC-OPS", vertical: "grooming", debit: 5000, credit: 0, narration: "Demo seed: balanced manual control journal", period_code: MONTH, posted: 1, created_at: at(-4) });
+insert("finance_journal_entries", { id: "UATD-JRN-BAD-2", entry_date: `${MONTH}-09`, source_type: "manual", source_id: "UATD-JRN-BAD", account_code: CASH, cost_centre: "CC-OPS", vertical: "grooming", debit: 0, credit: 5000, narration: "Demo seed: balanced manual control journal", period_code: MONTH, posted: 1, created_at: at(-4) });
 // bills: a duplicate pair and an outlier, so the anomaly report is not empty
 const bills = [
   { id: "UATD-BILL-1", vendor: "UATD-VENDOR-SUPPLY", no: "SUP-1001", date: `${MONTH}-02`, amount: 12000 },

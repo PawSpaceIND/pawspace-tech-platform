@@ -5,7 +5,7 @@ import{issueGroomingInvoice,saveGroomingTaxPolicy}from"../../../lib/grooming-inv
 type Row=Record<string,unknown>;
 type Db=Awaited<ReturnType<typeof database>>;
 
-const groomingFinanceSchemaObjects=["canonical_bookings","booking_payments","booking_invoices","booking_subscription_usage","payment_gateway_links","payment_gateway_events","payment_reconciliation_records","payment_reconciliation_exceptions","post_service_payment_requests","idx_payment_gateway_links_payment_link"] as const;
+const groomingFinanceSchemaObjects=["canonical_bookings","booking_payments","booking_invoices","booking_subscription_usage","payment_gateway_links","payment_gateway_events","payment_reconciliation_records","payment_reconciliation_exceptions","post_service_payment_requests","idx_payment_gateway_links_payment_link","idx_grooming_finance_bookings_service_updated"] as const;
 const groomingFinanceTablesReady=new WeakSet<Db>();
 const groomingFinanceTablesEnsuring=new WeakMap<Db,Promise<void>>();
 async function groomingFinanceSchemaReady(db:Db){
@@ -16,12 +16,23 @@ async function ensureTablesUncached(db:Db){if(await groomingFinanceSchemaReady(d
   db.prepare("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,amount_due_now REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',method TEXT NOT NULL,mode TEXT NOT NULL,status TEXT NOT NULL,gateway TEXT NOT NULL DEFAULT 'uat_sandbox',idempotency_key TEXT NOT NULL UNIQUE,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS booking_invoices (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,invoice_number TEXT NOT NULL UNIQUE,status TEXT NOT NULL DEFAULT 'draft',currency TEXT NOT NULL DEFAULT 'INR',gross_amount REAL NOT NULL,tax_amount REAL NOT NULL DEFAULT 0,net_amount REAL NOT NULL,issued_at INTEGER,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE TABLE IF NOT EXISTS booking_subscription_usage (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,plan_code TEXT NOT NULL,sessions_reserved INTEGER NOT NULL DEFAULT 1,sessions_consumed INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'reserved',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+  db.prepare("CREATE INDEX IF NOT EXISTS idx_grooming_finance_bookings_service_updated ON canonical_bookings(service_code,updated_at DESC)"),
 ]);await ensurePaymentReconciliationTables(db);}
 async function ensureTables(db:Db){if(groomingFinanceTablesReady.has(db))return;const running=groomingFinanceTablesEnsuring.get(db);if(running)return running;const pending=ensureTablesUncached(db).then(()=>{groomingFinanceTablesReady.add(db);});groomingFinanceTablesEnsuring.set(db,pending);try{await pending;}finally{if(groomingFinanceTablesEnsuring.get(db)===pending)groomingFinanceTablesEnsuring.delete(db);}}
 
 
 type FinanceSummary={bookings:number;completed:number;invoiced:number;collected:number;refunded:number;receivable:number;reconciled:number;unreconciled:number;exceptions:number};
 type FinanceSnapshot={source:string;summary:FinanceSummary;items:Record<string,unknown>[];reconciliationExceptions:Row[]};
+
+// Track 3 staging reads arrive in 100-way waves. D1 remains authoritative. After finance.view is checked,
+// the response is actor-independent, so a bounded staging-only edge snapshot prevents every isolate from
+// repeating the same multi-join scan. Production never enters this path and finance POST invalidates it.
+const STAGING_FINANCE_CACHE_TTL_SECONDS=30;
+const STAGING_FINANCE_CACHE_KEY="https://pawspace.internal/__cache/grooming-finance/v2";
+async function stagingFinanceCacheEnabled(){try{const{env}=await import("cloudflare:workers");return String((env as unknown as Record<string,unknown>).PAWSPACE_DEPLOYMENT_ENV||"")==="staging";}catch{return false;}}
+async function readStagingFinanceCache():Promise<FinanceSnapshot|null>{if(!await stagingFinanceCacheEnabled())return null;try{const hit=await (await caches.open("pawspace-track3-finance-v2")).match(STAGING_FINANCE_CACHE_KEY);return hit?await hit.json() as FinanceSnapshot:null;}catch{return null;}}
+async function writeStagingFinanceCache(snapshot:FinanceSnapshot){if(!await stagingFinanceCacheEnabled())return;try{await (await caches.open("pawspace-track3-finance-v2")).put(STAGING_FINANCE_CACHE_KEY,new Response(JSON.stringify(snapshot),{headers:{"content-type":"application/json","cache-control":`max-age=${STAGING_FINANCE_CACHE_TTL_SECONDS}`}}));}catch{}}
+async function invalidateStagingFinanceCache(){if(!await stagingFinanceCacheEnabled())return;try{await (await caches.open("pawspace-track3-finance-v2")).delete(STAGING_FINANCE_CACHE_KEY);}catch{}}
 // Finance GET is actor-independent after finance.view authorization. Coalesce only requests that overlap
 // in time on the same D1 binding; the promise is removed immediately after settlement, so this is NOT a
 // TTL/stale-data cache and the next read always observes subsequent finance writes.
@@ -60,8 +71,10 @@ async function loadFinanceSnapshot(db:Db):Promise<FinanceSnapshot>{
 
 export async function GET(request:Request){try{
   await authorize(request,"finance.view");
+  const cached=await readStagingFinanceCache();if(cached)return Response.json(cached);
   const db=await database();
-  return Response.json(await loadFinanceSnapshot(db));
+  const snapshot=await loadFinanceSnapshot(db);await writeStagingFinanceCache(snapshot);
+  return Response.json(snapshot);
 }catch(error){return authError(error,"Unable to load Grooming finance ledger");}}
 
 export async function POST(request:Request){try{
@@ -74,5 +87,6 @@ export async function POST(request:Request){try{
   else if(action==="issue_invoice")data=await issueGroomingInvoice(db,{bookingId:String(body.bookingId||""),reason,actorId:actor.email});
   else return Response.json({error:"Unsupported Grooming finance action"},{status:400});
   await securityAudit(db,actor,`grooming.finance.${action}`,"grooming_finance",String(body.bookingId||body.cityId||"blr"),"completed",{liveMoney:false,executionMode:"sandbox_not_connected"});
+  await invalidateStagingFinanceCache();
   return Response.json({data});
 }catch(error){return authError(error,"Unable to update Grooming finance ledger");}}
