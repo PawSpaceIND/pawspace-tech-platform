@@ -1,0 +1,74 @@
+name: Diagnose WhatsApp UAT template sync
+
+on:
+  push:
+    branches:
+      - fix/whatsapp-uat-staging-deploy-isolation
+    paths:
+      - .github/workflows/whatsapp-uat-sync-diagnostic.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose-sync:
+    runs-on: ubuntu-latest
+    concurrency: pawspace-staging-deploy
+    env:
+      TARGET_SHA: 994c4a0d403bb63d864ee1f20d2889e81c518410
+      STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+      WRANGLER_CONFIG: dist/server/wrangler.json
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build diagnostic SHA
+        run: |
+          npm run install:ci
+          npm run build
+      - name: Generate staging config
+        env:
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+        run: node scripts/stage-config.mjs
+      - name: Preserve staging vars and deploy diagnostic SHA
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          SETTINGS="$RUNNER_TEMP/settings.json"; SECRETS="$RUNNER_TEMP/secrets.json"; export SETTINGS SECRETS
+          trap 'rm -f "$SETTINGS" "$SECRETS"' EXIT
+          HTTP="$(curl --silent --show-error --output "$SETTINGS" --write-out '%{http_code}' --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" --header 'Accept: application/json' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/pawspace-staging/settings")"
+          [ "$HTTP" = "200" ] || exit 1
+          node --input-type=module <<'NODE'
+          import{readFileSync,writeFileSync}from'node:fs';
+          const settings=JSON.parse(readFileSync(process.env.SETTINGS,'utf8'));const bindings=Array.isArray(settings?.result?.bindings)?settings.result.bindings:[];const remoteVars={};for(const b of bindings){if(b?.type==='plain_text'){const n=String(b?.name||'').trim();if(/^[A-Z0-9_]+$/.test(n))remoteVars[n]=String(b?.text??b?.value??'')}}const config=JSON.parse(readFileSync(process.env.WRANGLER_CONFIG,'utf8'));if(config.name!=='pawspace-staging')throw new Error('non-staging config');config.vars={...remoteVars,META_WHATSAPP_PHONE_NUMBER_ID:'1334980146365492',META_WHATSAPP_WABA_ID:'1647621440064984',...(config.vars||{}),PAWSPACE_PRODUCTION_ENFORCE:'false'};config.keep_vars=true;if(bindings.some(b=>String(b?.name||'')==='AI'&&/ai/i.test(String(b?.type||''))))config.ai={binding:'AI'};writeFileSync(process.env.WRANGLER_CONFIG,JSON.stringify(config),{mode:0o600});
+          const names=['PAWSPACE_UAT_ACCESS_CODE','PAWSPACE_UAT_SIGNING_KEY','PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT','META_WHATSAPP_UAT_ACCESS_TOKEN'];const values=Object.fromEntries(names.map(n=>[n,String(process.env[n]||'').trim()]));if(Object.values(values).some(v=>!v))throw new Error('missing UAT secret');values.PAWSPACE_STAGING_LIVE_CUSTOMER_OTP='false';writeFileSync(process.env.SECRETS,JSON.stringify(values),{mode:0o600});
+          NODE
+          npx wrangler deploy --config "$WRANGLER_CONFIG" --keep-vars --message "staging $TARGET_SHA" --secrets-file "$SECRETS" >/dev/null
+          echo "Diagnostic SHA deployed to pawspace-staging; sensitive values withheld."
+      - name: Verify lockdown and classify sync failure
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const base=String(process.env.STAGING_URL||'').replace(/\/$/,'');
+          const login=await fetch(`${base}/api/staging-login`,{method:'POST',headers:{'content-type':'application/json',origin:base},body:JSON.stringify({action:'login',code:String(process.env.PAWSPACE_UAT_ACCESS_CODE||''),email:'founder@pawspace.in'})});const cookie=String(login.headers.get('set-cookie')||'').split(';')[0];if(!cookie)throw new Error('staging sign-in failed');
+          const sync=await fetch(`${base}/api/whatsapp/meta-admin`,{method:'POST',headers:{'content-type':'application/json',origin:base,cookie},body:JSON.stringify({action:'sync_templates'}),signal:AbortSignal.timeout(30000)});let body=null;try{body=await sync.json()}catch{};console.log(`sync HTTP=${sync.status}; diagnosticCode=${String(body?.diagnosticCode||'none')}; status=${String(body?.data?.status||'unknown')}; synced=${Number(body?.data?.synced??-1)}`);
+          if(sync.ok)process.exit(0);if(!body?.diagnosticCode)throw new Error('No safe diagnostic code returned');
+          NODE
