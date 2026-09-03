@@ -59,9 +59,31 @@ test("aggregate settlement.processed cannot advance a single payment intent to S
   try {
     const now = Date.now();
     sqlite.prepare(`INSERT INTO payment_intents
-      (id,booking_id,customer_id,payment_id,provider,environment,idempotency_key,amount_paise,currency,state,order_request_state,gateway_order_id,created_at,updated_at)
-      VALUES (?,?,?,?, 'razorpay','sandbox',?,?,?,'CAPTURED','ORDER_CREATED',?,?,?)`)
-      .run("PI-SETTLEMENT-1", "BOOK-SETTLEMENT-1", "CUS-SETTLEMENT-1", "PAY-SETTLEMENT-1", "settlement-boundary", 25000, "INR", "order_settlement_boundary", now, now);
+      (id,booking_id,customer_id,payment_id,provider,environment,idempotency_key,amount_paise,currency,state,order_request_state,
+       gross_service_value_paise,platform_fee_paise,partner_earning_paise,tds_paise,gst_paise,commission_rate_bps,
+       commission_rate_version,tax_rule_version,commercial_snapshot_json,gateway_order_id,created_at,updated_at)
+      VALUES (?,?,?,?,'razorpay','sandbox',?,?,?,'CAPTURED','ORDER_CREATED',?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(
+        "PI-SETTLEMENT-1",
+        "BOOK-SETTLEMENT-1",
+        "CUS-SETTLEMENT-1",
+        "PAY-SETTLEMENT-1",
+        "settlement-boundary",
+        25000,
+        "INR",
+        25000,
+        0,
+        25000,
+        0,
+        0,
+        0,
+        "settlement-boundary-v1",
+        "settlement-boundary-tax-v1",
+        "{}",
+        "order_settlement_boundary",
+        now,
+        now,
+      );
 
     const payload = {
       event: "settlement.processed",
