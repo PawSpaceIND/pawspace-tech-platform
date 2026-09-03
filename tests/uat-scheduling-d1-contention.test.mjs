@@ -131,3 +131,16 @@ test("Track 3 staging auth and webhook replays remove redundant D1 round trips",
   assert.match(lifecycle,/const prior=await db\.prepare\("SELECT \* FROM gateway_webhook_events WHERE provider='razorpay' AND event_id=\?"\)/);
   assert.match(webhook,/accepted\.duplicate&&!\['RECEIVED','DEFERRED','FAILED'\]\.includes\(duplicateStatus\)/);
 });
+
+
+test("Track 3 coalesces concurrent finance snapshots and staging actor reads without stale TTL caching",()=>{
+  const finance=fs.readFileSync(new URL("../app/api/grooming-finance/route.ts",import.meta.url),"utf8");
+  const auth=fs.readFileSync(new URL("../lib/uat-staging-auth.ts",import.meta.url),"utf8");
+  assert.match(finance,/const financeReads=new WeakMap<Db,Promise<FinanceSnapshot>>\(\)/);
+  assert.match(finance,/const running=financeReads\.get\(db\);if\(running\)return running/);
+  assert.match(finance,/finally\(\(\)=>\{if\(financeReads\.get\(db\)===pending\)financeReads\.delete\(db\);\}\)/);
+  assert.doesNotMatch(finance,/setTimeout|expiresAt|cacheTtl/i);
+  assert.match(auth,/const uatActorReads=new WeakMap<Db,Map<string,Promise<Row\|null>>>\(\)/);
+  assert.match(auth,/const running=byEmail\.get\(email\);if\(running\)return running/);
+  assert.match(auth,/finally\(\(\)=>\{if\(byEmail!\.get\(email\)===pending\)byEmail!\.delete\(email\);\}\)/);
+});
