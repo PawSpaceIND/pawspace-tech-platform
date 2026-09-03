@@ -120,9 +120,20 @@ export function resolveWorkersAiTts(env: Env): VoiceTtsProvider {
     provider: "workers_ai", status: "connected",
     async synthesize(input: { text: string; language?: string | null }) {
       const startedAt = Date.now();
-      if (!String(input.text ?? "").trim()) throw new VoiceSpeechError("tts", "malformed_output", "Nothing to synthesise");
+      const prompt = String(input.text ?? "").trim();
+      if (!prompt) throw new VoiceSpeechError("tts", "malformed_output", "Nothing to synthesise");
+
+      // Cloudflare MeloTTS requires `prompt`; `lang` is optional and defaults to English. Keep the
+      // binding payload minimal for English, and only send a documented two-letter language code.
+      const requestedLanguage = String(input.language ?? "").trim().toLowerCase();
+      const payload: Record<string, unknown> = { prompt };
+      if (requestedLanguage && requestedLanguage !== "en") {
+        if (!/^[a-z]{2}$/.test(requestedLanguage)) throw new VoiceSpeechError("tts", "malformed_output", "MeloTTS language must be a two-letter code");
+        payload.lang = requestedLanguage;
+      }
+
       let result: unknown;
-      try { result = await withSpeechDeadline("tts", ai.run(model, { prompt: input.text, lang: input.language || "en" }), timeoutMs); }
+      try { result = await withSpeechDeadline("tts", ai.run(model, payload), timeoutMs); }
       catch (error) { throw asSpeechFailure("tts", error); }
       const base64 = await workersAiTtsBase64(result);
       const audioRef = `data:audio/mpeg;base64,${base64}`;
