@@ -26,8 +26,8 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          GH_META_UAT_ALLOWLIST: ${{ vars.META_WHATSAPP_UAT_ALLOWLIST }}
-          GH_COMM_UAT_ALLOWLIST: ${{ vars.PAWSPACE_COMMUNICATION_UAT_ALLOWLIST }}
+          GH_META_UAT_ALLOWLIST: ${{ secrets.META_WHATSAPP_UAT_ALLOWLIST }}
+          GH_COMM_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_COMMUNICATION_UAT_ALLOWLIST }}
         run: |
           set -euo pipefail
           SETTINGS="$RUNNER_TEMP/settings.json"; CANDIDATES="$RUNNER_TEMP/candidates.json"; export SETTINGS CANDIDATES
@@ -38,18 +38,17 @@ jobs:
           import{readFileSync,appendFileSync}from'node:fs';import{spawnSync}from'node:child_process';
           const settings=JSON.parse(readFileSync(process.env.SETTINGS,'utf8'));const bindings=Array.isArray(settings?.result?.bindings)?settings.result.bindings:[];const plain=Object.fromEntries(bindings.filter(b=>b?.type==='plain_text').map(b=>[String(b.name||''),String(b.text??b.value??'')]));
           if(String(plain.PAWSPACE_PRODUCTION_ENFORCE||'')!=='false')throw new Error('pawspace-staging production enforcement is not explicitly false');
-          const remoteMeta=String(plain.META_WHATSAPP_UAT_ALLOWLIST||'').trim(),remoteComm=String(plain.PAWSPACE_COMMUNICATION_UAT_ALLOWLIST||'').trim(),ghMeta=String(process.env.GH_META_UAT_ALLOWLIST||'').trim(),ghComm=String(process.env.GH_COMM_UAT_ALLOWLIST||'').trim();
-          const raw=remoteMeta||remoteComm||ghMeta||ghComm;const binding=remoteMeta||ghMeta?'META_WHATSAPP_UAT_ALLOWLIST':'PAWSPACE_COMMUNICATION_UAT_ALLOWLIST';const source=remoteMeta||remoteComm?'worker':'github_var';
-          if(!raw)throw new Error('No staging UAT allowlisted recipient configured in Worker or existing GitHub Actions variables');
+          const ghMeta=String(process.env.GH_META_UAT_ALLOWLIST||'').trim(),ghComm=String(process.env.GH_COMM_UAT_ALLOWLIST||'').trim();
+          const raw=ghMeta||ghComm;const binding=ghMeta?'META_WHATSAPP_UAT_ALLOWLIST':'PAWSPACE_COMMUNICATION_UAT_ALLOWLIST';
+          if(!raw)throw new Error('No UAT recipient allowlist configured in the existing GitHub Actions secret slots');
           for(const v of raw.split(',').map(v=>v.trim()).filter(Boolean))console.log(`::add-mask::${v}`);const recipient=raw.split(',').map(v=>v.trim()).filter(Boolean)[0];
-          if(source==='github_var'){
-            const r=spawnSync('npx',['--yes','wrangler@4','secret','put',binding,'--name','pawspace-staging'],{input:raw,encoding:'utf8',stdio:['pipe','ignore','inherit'],env:process.env});if(r.status!==0)throw new Error('Unable to restore existing GitHub Actions UAT allowlist onto pawspace-staging');console.log('Restored existing GitHub Actions UAT allowlist onto pawspace-staging as a secret binding; value withheld.');
-          }
-          appendFileSync(process.env.GITHUB_ENV,`UAT_RECIPIENT=${recipient}\n`);console.log(`Staging lockdown verified and one UAT recipient selected from ${source}; value withheld.`);
+          const workerBinding=bindings.find(b=>String(b?.name||'')===binding),bindingPresent=Boolean(workerBinding&&/secret/i.test(String(workerBinding?.type||'')));
+          if(!bindingPresent){const r=spawnSync('npx',['--yes','wrangler@4','secret','put',binding,'--name','pawspace-staging'],{input:raw,encoding:'utf8',stdio:['pipe','ignore','inherit'],env:process.env});if(r.status!==0)throw new Error('Unable to restore existing GitHub Actions UAT allowlist onto pawspace-staging');console.log('Restored existing GitHub Actions UAT allowlist onto pawspace-staging as a secret binding; value withheld.');}
+          appendFileSync(process.env.GITHUB_ENV,`UAT_RECIPIENT=${recipient}\n`);console.log(`Staging lockdown verified; one UAT recipient selected from Actions secrets; Worker secret binding present=${bindingPresent}; value withheld.`);
           NODE
           npx --yes wrangler@4 d1 execute pawspace-staging --remote --command "SELECT c.id AS customer_id,c.primary_phone,c.secondary_phone,b.id AS booking_id,p.whatsapp_consent,p.opt_out FROM canonical_customers c JOIN customer_contact_preferences p ON p.customer_id=c.id JOIN canonical_bookings b ON b.customer_id=c.id WHERE p.whatsapp_consent=1 AND COALESCE(p.opt_out,0)<>1 ORDER BY b.id DESC LIMIT 500;" --json > "$CANDIDATES"
           node --input-type=module <<'NODE'
-          import{readFileSync,appendFileSync}from'node:fs';const settings=JSON.parse(readFileSync(process.env.SETTINGS,'utf8'));const bindings=Array.isArray(settings?.result?.bindings)?settings.result.bindings:[];const plain=Object.fromEntries(bindings.filter(b=>b?.type==='plain_text').map(b=>[String(b.name||''),String(b.text??b.value??'')]));const raw=String(plain.META_WHATSAPP_UAT_ALLOWLIST||plain.PAWSPACE_COMMUNICATION_UAT_ALLOWLIST||process.env.GH_META_UAT_ALLOWLIST||process.env.GH_COMM_UAT_ALLOWLIST||'').trim();const recipient=raw.split(',').map(v=>v.trim()).filter(Boolean)[0];const digits=v=>String(v??'').replace(/\D/g,'');const target=digits(recipient);const payload=JSON.parse(readFileSync(process.env.CANDIDATES,'utf8'));const rows=(Array.isArray(payload)?payload:[]).flatMap(b=>Array.isArray(b?.results)?b.results:[]);const match=rows.find(r=>[r.primary_phone,r.secondary_phone].some(v=>digits(v)===target));if(!match?.customer_id||!match?.booking_id)throw new Error('No existing allowlisted WhatsApp-consented staging customer with booking exists; refusing to fabricate certification data');appendFileSync(process.env.GITHUB_ENV,`UAT_CUSTOMER_ID=${String(match.customer_id)}\nUAT_BOOKING_ID=${String(match.booking_id)}\n`);console.log('Existing canonical customer + booking + WhatsApp consent match verified; identifiers withheld.');
+          import{readFileSync,appendFileSync}from'node:fs';const digits=v=>String(v??'').replace(/\D/g,'');const target=digits(process.env.UAT_RECIPIENT);const payload=JSON.parse(readFileSync(process.env.CANDIDATES,'utf8'));const rows=(Array.isArray(payload)?payload:[]).flatMap(b=>Array.isArray(b?.results)?b.results:[]);const match=rows.find(r=>[r.primary_phone,r.secondary_phone].some(v=>digits(v)===target));if(!match?.customer_id||!match?.booking_id)throw new Error('No existing allowlisted WhatsApp-consented staging customer with booking exists; refusing to fabricate certification data');appendFileSync(process.env.GITHUB_ENV,`UAT_CUSTOMER_ID=${String(match.customer_id)}\nUAT_BOOKING_ID=${String(match.booking_id)}\n`);console.log('Existing canonical customer + booking + WhatsApp consent match verified; identifiers withheld.');
           NODE
 
       - name: Enqueue and dispatch through normal UAT APIs
