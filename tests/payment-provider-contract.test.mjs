@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+// lib/razorpay-client.ts imports its siblings extensionlessly, as every lib module here does.
+// Without the shared resolver this file dies at load with
+//   ERR_MODULE_NOT_FOUND: Cannot find module .../lib/payment-environment
+// and reports as a single file-level failure rather than as its own tests.
+installWorkersHooks("__PAYMENT_CONTRACT_DB__");
 
 const client = await import("../lib/razorpay-client.ts");
 
@@ -111,7 +118,7 @@ test("external Razorpay contract: override is sandbox contract-test only", async
     const noContractFlag = await client.createPaymentOrder(environment(server.url, { PAWSPACE_PAYMENT_CONTRACT_TEST: "false" }), { bookingId: "BK-CONTRACT", paymentId: "PAY-BLOCKED", amount: 500, currency: "INR" });
     assert.equal(noContractFlag.connected, false);
     assert.match(noContractFlag.reason, /contract-test override/i);
-    const live = await client.createPaymentOrder({ ...environment(server.url), PAWSPACE_PAYMENT_ENV: "live", RAZORPAY_KEY_ID: "rzp_live_never_contacted", RAZORPAY_KEY_SECRET: "never-contacted" }, { bookingId: "BK-CONTRACT", paymentId: "PAY-LIVE-BLOCKED", amount: 500, currency: "INR" });
+    const live = await client.createPaymentOrder({ ...environment(server.url), PAWSPACE_PAYMENT_ENV: "live", PAWSPACE_PAYMENT_LIVE_APPROVED: "true", RAZORPAY_KEY_ID: "rzp_live_never_contacted", RAZORPAY_KEY_SECRET: "never-contacted" }, { bookingId: "BK-CONTRACT", paymentId: "PAY-LIVE-BLOCKED", amount: 500, currency: "INR" });
     assert.equal(live.connected, false);
     assert.match(live.reason, /contract-test override/i);
     assert.equal(server.requests.length, 0);

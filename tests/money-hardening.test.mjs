@@ -49,7 +49,7 @@ function makeD1(sqlite) {
 }
 
 let sqlite;
-function freshDb(env = { RAZORPAY_WEBHOOK_SECRET_SANDBOX: "uat-test-secret" }) {
+function freshDb(env = { PAWSPACE_PAYMENT_ENV: "sandbox", RAZORPAY_WEBHOOK_SECRET_SANDBOX: "uat-test-secret" }) {
   sqlite = new DatabaseSync(":memory:");
   globalThis.__MONEY_DB__ = makeD1(sqlite);
   globalThis.__MONEY_ENV__ = env;
@@ -108,12 +108,14 @@ async function postWebhook(eventId, payload, { secret = "uat-test-secret", signa
   }));
   return { status: response.status, body: await parseBody(response) };
 }
+const NOW = 1_800_000_000_000;
+const realNow = Date.now;
+test.before(() => { Date.now = () => NOW; });
+test.after(() => { Date.now = realNow; });
 const capturedEvent = (bookingId, amountSubunits, paymentId = "pay_TEST1") => ({
-  event: "payment.captured", created_at: Math.floor(Date.now() / 1000),
+  event: "payment.captured", created_at: Math.floor(NOW / 1000),
   payload: { payment: { entity: { id: paymentId, order_id: "order_TEST1", amount: amountSubunits, currency: "INR", notes: { booking_id: bookingId } } } },
 });
-
-const NOW = Date.now();
 const DAY = 86_400_000;
 // Exact DDL copied verbatim from the owning sources: app/api/canonical-bookings/route.ts
 // (canonical_customers/canonical_bookings/booking_payments) and the grooming refund surface
@@ -143,7 +145,7 @@ function seedCustomerIdentity(email, customerId) {
 // ---- 1. Webhook: signature-first, verify-first capture, idempotent, exact reconciliation -------
 
 test("real execution: webhook refuses unsigned/badly-signed/unconfigured requests before touching any state", async () => {
-  freshDb({}); baseTables();
+  freshDb({ PAWSPACE_PAYMENT_ENV: "sandbox" }); baseTables();
   // No sandbox secret configured -> 503 fail-closed
   const unconfigured = await postWebhook("evt_1", capturedEvent("B1", 200000), { secret: "anything" });
   assert.equal(unconfigured.status, 503);
@@ -194,10 +196,11 @@ test("real execution: capture amount mismatch and refund flow both land in the e
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM payment_reconciliation_exceptions WHERE exception_type='capture_amount_mismatch'").get().n, 1);
   assert.equal(sqlite.prepare("SELECT status FROM booking_payments WHERE booking_id='B1'").get().status, "created", "a mismatched capture must NOT flip the canonical payment");
   // Correct capture then a full refund via internal refund case
-  await postWebhook("evt_21", capturedEvent("B1", 200000));
+  const captured = await postWebhook("evt_21", capturedEvent("B1", 200000));
+  assert.equal(captured.status, 200, JSON.stringify(captured.body));
   sqlite.prepare("INSERT INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,created_at,updated_at) VALUES ('RC1','B1','PAY-B1',2000,'customer cancellation','approved','finance:uat',?,?)").run(NOW, NOW);
   const refunded = await postWebhook("evt_22", {
-    event: "refund.processed", created_at: Math.floor(Date.now() / 1000),
+    event: "refund.processed", created_at: Math.floor(NOW / 1000),
     payload: { refund: { entity: { id: "rfnd_1", payment_id: "pay_TEST1", order_id: "order_TEST1", amount: 200000, currency: "INR" } }, payment: { entity: { id: "pay_TEST1", notes: { booking_id: "B1" } } } },
   });
   assert.equal(refunded.body.status, "processed", JSON.stringify(refunded.body));
@@ -562,7 +565,8 @@ test("REGRESSION lib/revenue-mission-control.ts: stay balance captures now appea
 
 test("real execution: payment-reconciliation console lists webhook exceptions and dismisses them with a governed note", async () => {
   freshDb(); baseTables(); seedBooking({ id: "B1", total: 2000, payStatus: "created" });
-  await postWebhook("evt_30", capturedEvent("B1", 150000)); // amount mismatch -> exception
+  const mismatch = await postWebhook("evt_30", capturedEvent("B1", 150000)); // amount mismatch -> exception
+  assert.equal(mismatch.body.reason, "capture_amount_mismatch", JSON.stringify(mismatch.body));
   const list = await call(reconciliationRoute.GET, "GET", "status=open");
   assert.equal(list.status, 200, JSON.stringify(list.body));
   assert.equal(list.body.data.exceptions.length, 1);
