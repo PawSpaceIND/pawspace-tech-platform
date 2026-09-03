@@ -209,13 +209,18 @@ test("WH-02: an event id reused with a DIFFERENT signed payload is a conflict, a
   assert.equal(Number(money("PAY-bkg_adv_swap")?.captured_amount), 2000, "and the money must not move");
 });
 
-test("WH-03: the SAME signed capture replayed under a FORGED event id does not collect the money twice", async () => {
-  // The dedupe key is `x-razorpay-event-id`, a header outside the HMAC. Both idempotency layers key on
-  // it, so a captured (body, signature) pair plus a fresh header walks straight past both. What stops
-  // double collection is NOT the event id: it is captureRefs/collectedCaptures matching on the gateway
-  // payment id and order id — the money's own identity, which IS inside the signed body. This test is
-  // the proof of that, and the reason WH-16's missing replay window is a hardening gap rather than a
-  // money bug.
+test("WH-03: the SAME signed capture replayed under a FORGED event id creates NO second event", async () => {
+  // THE CENTRAL TEST OF THIS FILE. The dedupe key used to be `x-razorpay-event-id` alone — a header
+  // outside the HMAC — so a captured (body, signature) pair plus a fresh header walked straight past
+  // both idempotency layers and minted a genuinely new event: a second inbox row, a second
+  // payment_gateway_events row, and a re-run of every side effect keyed on the event id.
+  //
+  // The money was never at risk even then, and that is asserted here too: captureRefs/collectedCaptures
+  // match on the gateway payment id and order id, which ARE inside the signed body. But "the money
+  // survived" is not the same as "the replay was rejected", and the inbox is the evidence log.
+  //
+  // The inbox now recognises the BODY, by the digest of the signature-verified payload, so a forged
+  // header cannot manufacture anything. One event in, one row, whatever the caller labels it.
   freshDb();
   seedBooking({ id: "bkg_adv_replay" });
   const raw = JSON.stringify(captureEvent("bkg_adv_replay", 200_000));
@@ -225,19 +230,41 @@ test("WH-03: the SAME signed capture replayed under a FORGED event id does not c
   assert.equal(Number(money("PAY-bkg_adv_replay")?.captured_amount), 2000, "Rs 2,000 collected once");
 
   const second = await post(raw, { signature, eventId: "evt_replay_2" });
-  assert.equal(second.status, 200, "the forged id is accepted as a new event — that is the finding");
-  assert.equal(second.body?.ignored, true, `and must be ignored as already-collected money: ${JSON.stringify(second.body).slice(0, 300)}`);
-  assert.equal(second.body?.reason, "capture_already_collected", "named explicitly, so a future change to this path is visible");
-  assert.equal(Number(money("PAY-bkg_adv_replay")?.captured_amount), 2000, "and captured_amount must NOT double");
-  // Recorded for what it is: the replay DID create a second inbox row and a second event row. The
-  // money is safe; the event log is inflatable by anyone holding one signed body.
-  assert.equal(count("gateway_webhook_events"), 2, "two inbox rows, because the dedupe key was forged");
-  assert.equal(count("payment_gateway_events"), 2, "and two gateway event rows");
+  assert.equal(second.status, 200, "acknowledged, because a redelivery is not an error");
+  assert.equal(second.body?.duplicate, true, `and recognised as a duplicate: ${JSON.stringify(second.body).slice(0, 300)}`);
+  assert.equal(Number(money("PAY-bkg_adv_replay")?.captured_amount), 2000, "captured_amount must NOT double");
+  // The assertions that changed when the guard landed: one signed body is one event, full stop.
+  assert.equal(count("gateway_webhook_events"), 1, "a forged event id must NOT create a second inbox row");
+  assert.equal(count("payment_gateway_events"), 1, "nor a second gateway event row");
+  assert.equal(sqlite.prepare("SELECT event_id FROM gateway_webhook_events").get().event_id, "evt_replay_1",
+    "and the row keeps the id it was first accepted under");
+});
+
+test("WH-03b: a genuine LATE retry of the same body is acknowledged, not dropped", async () => {
+  // The other half of the same guard, and the reason it is identity-based rather than clock-based.
+  // Razorpay retries a failed delivery for up to 24 hours. A five-minute freshness window — which is
+  // what this receiver briefly had — would refuse that retry and lose the money event permanently.
+  //
+  // Here the body is 90 days old AND the header event id differs, i.e. it is indistinguishable from the
+  // replay in WH-03. Both are handled the same way and correctly: acknowledged as a redelivery, money
+  // unchanged. There is no version of this test that a timestamp window passes.
+  freshDb();
+  seedBooking({ id: "bkg_adv_retry" });
+  const raw = JSON.stringify(captureEvent("bkg_adv_retry", 200_000, { createdAt: Math.floor((NOW - 90 * DAY) / 1000) }));
+  const signature = await sign(SANDBOX_SECRET, raw);
+  const first = await post(raw, { signature, eventId: "evt_retry_1" });
+  assert.equal(first.status, 200, `an old-but-unseen event must still be processed: ${JSON.stringify(first).slice(0, 300)}`);
+  assert.equal(Number(money("PAY-bkg_adv_retry")?.captured_amount), 2000, "the money is collected — age alone must never refuse a payment");
+  const retry = await post(raw, { signature, eventId: "evt_retry_2" });
+  assert.equal(retry.status, 200, "and the retry is acknowledged rather than refused");
+  assert.equal(retry.body?.duplicate, true, `recognised as a redelivery: ${JSON.stringify(retry.body).slice(0, 300)}`);
+  assert.equal(Number(money("PAY-bkg_adv_retry")?.captured_amount), 2000, "without recounting it");
 });
 
 test("WH-04: the SAME signed refund replayed under a FORGED event id does not refund twice", async () => {
-  // The money-out direction, which is where a successful replay would be an actual loss. Protected by
-  // the same principle: the gateway refund id is inside the signed body, and the refund case carries it.
+  // The money-out direction, where a successful replay would be an actual loss. Two independent guards
+  // now stand here — the inbox digest, and the refund case's gateway_reference — and this asserts the
+  // outcome rather than which one fired.
   freshDb();
   seedBooking({ id: "bkg_adv_rfnd", payStatus: "captured" });
   seedRefundCase("bkg_adv_rfnd", 2000);
@@ -250,23 +277,51 @@ test("WH-04: the SAME signed refund replayed under a FORGED event id does not re
   assert.equal(refundStatus("bkg_adv_rfnd"), "processed", "and the case is closed");
 
   const second = await post(raw, { signature, eventId: "evt_rfnd_2" });
-  assert.equal(second.body?.reason, "refund_already_processed", `the replay must be recognised: ${JSON.stringify(second.body).slice(0, 300)}`);
+  assert.equal(second.status, 200, `the replay is acknowledged: ${JSON.stringify(second.body).slice(0, 300)}`);
   assert.equal(Number(money("PAY-bkg_adv_rfnd")?.refunded_amount), 2000, "refunded_amount must NOT double");
+  assert.equal(count("gateway_webhook_events"), 1, "and no second inbox row exists to be replayed again");
 });
 
-test("[OPEN] WH-16: a validly signed body from 90 days ago must not still be accepted", async () => {
-  // No replay window exists: created_at is parsed into the event and never compared to now. Combined
-  // with WH-03 — a caller-chosen dedupe key — one captured signed body stays replayable indefinitely.
-  // The money paths hold (WH-03/WH-04), so what a replay buys today is event-log and audit inflation
-  // plus every side effect keyed on the event id rather than the money: lifecycle rows, subscription
-  // repair attempts, referral qualification. A timestamp window is the standard, cheap bound on that,
-  // and it is the one control this receiver has no version of.
+test("WH-16: a DIFFERENT event with the same event id is still refused, and the digest guard does not mask it", async () => {
+  // Guards against the failure mode the new digest lookup could introduce: it returns early on a known
+  // body, so the event-id/payload binding below it must still fire for an UNKNOWN body arriving under a
+  // used id. Without this, adding the digest check could have silently retired WH-02's 409.
   freshDb();
-  seedBooking({ id: "bkg_adv_stale" });
-  const stale = captureEvent("bkg_adv_stale", 200_000, { createdAt: Math.floor((NOW - 90 * DAY) / 1000) });
-  const result = await postSigned(stale, { eventId: "evt_stale" });
-  assert.notEqual(result.status, 200, `a 90-day-old event must be refused: ${JSON.stringify(result).slice(0, 300)}`);
-  assert.equal(Number(money("PAY-bkg_adv_stale")?.captured_amount ?? 0), 0, "and must not record any collection");
+  seedBooking({ id: "bkg_adv_bind", total: 2000 });
+  const first = await postSigned(captureEvent("bkg_adv_bind", 200_000), { eventId: "evt_bind" });
+  assert.equal(first.status, 200, `the first delivery lands: ${JSON.stringify(first).slice(0, 200)}`);
+  // Same id, genuinely different content — the digest lookup finds nothing, so the binding check runs.
+  const conflicting = await postSigned(captureEvent("bkg_adv_bind", 200_000, { paymentId: "pay_DIFFERENT" }), { eventId: "evt_bind" });
+  assert.equal(conflicting.status, 409, `must still conflict: ${JSON.stringify(conflicting).slice(0, 300)}`);
+  assert.equal(count("gateway_webhook_events"), 1, "and no row is added for the refused payload");
+  assert.equal(Number(money("PAY-bkg_adv_bind")?.captured_amount), 2000, "with the money untouched");
+});
+
+test("WH-16b: a body already seen in SANDBOX does not suppress the same body in LIVE", async () => {
+  // The failure mode a global digest lookup would introduce, and the reason the lookup is scoped by
+  // environment. Sandbox and live are separate ledgers with separate secrets; if one digest table were
+  // shared, a live capture could be silently swallowed for having been rehearsed in sandbox — a
+  // suppressed real payment, which is exactly the class of bug this whole pivot exists to avoid.
+  //
+  // Behavioural, not a source match: the SAME bytes are posted twice, signed with the two different
+  // secrets, and the live delivery must be processed on its own merits.
+  const LIVE_SECRET = "adv-webhook-live-secret";
+  freshDb();
+  seedBooking({ id: "bkg_adv_env" });
+  const raw = JSON.stringify(captureEvent("bkg_adv_env", 200_000));
+  const sandbox = await post(raw, { signature: await sign(SANDBOX_SECRET, raw), eventId: "evt_env_sandbox" });
+  assert.equal(sandbox.status, 200, `the sandbox delivery lands: ${JSON.stringify(sandbox).slice(0, 250)}`);
+  assert.equal(sandbox.body?.environment, "sandbox", "stamped sandbox");
+
+  // Same database, same bytes, live mode — double-gated exactly as production requires.
+  globalThis.__ADV_WH_ENV__ = { PAWSPACE_PAYMENT_ENV: "live", PAWSPACE_PAYMENT_LIVE_APPROVED: "true", RAZORPAY_WEBHOOK_SECRET_LIVE: LIVE_SECRET };
+  const live = await post(raw, { signature: await sign(LIVE_SECRET, raw), eventId: "evt_env_live" });
+  assert.equal(live.status, 200, `the live delivery must be processed on its own merits: ${JSON.stringify(live).slice(0, 300)}`);
+  assert.equal(live.body?.environment, "live", "and stamped live");
+  assert.notEqual(live.body?.duplicate, true, "a sandbox rehearsal must never mark a live event a duplicate");
+  const rows = sqlite.prepare("SELECT environment,event_id FROM gateway_webhook_events ORDER BY environment").all().map((row) => ({ ...row }));
+  assert.deepEqual(rows, [{ environment: "live", event_id: "evt_env_live" }, { environment: "sandbox", event_id: "evt_env_sandbox" }],
+    "two ledgers, one row each");
 });
 
 // =============================================================================================

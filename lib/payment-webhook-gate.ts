@@ -39,42 +39,22 @@ export function resolvePaymentWebhookGate(env: Env): WebhookGate {
   return { ok: true, environment: "live", secret };
 }
 
-/**
- * How far from now a signed webhook's own timestamp may sit before the receiver refuses it.
+/*
+ * NO FRESHNESS WINDOW LIVES HERE, AND THAT IS DELIBERATE.
  *
- * WHY A WINDOW IS NEEDED AT ALL. The HMAC covers the request BODY. The replay key is the
- * `x-razorpay-event-id` HEADER, which both idempotency layers key on and which the signature does not
- * cover - so anyone holding one captured (body, signature) pair mints unlimited "new" events from it by
- * changing a header. The money paths survive that (capture and refund idempotency match on the gateway
- * payment/order/refund ids, which ARE inside the signed body), but nothing bounded the AGE of a replay:
- * created_at was parsed into the event and never compared to now, so a body captured once stayed
- * replayable forever, inflating the event log and re-running every side effect keyed on the event id.
- * A timestamp window is the standard bound, and it was the one control this receiver had no version of.
+ * An earlier version of this file rejected any signed body whose own created_at was more than five
+ * minutes old. It closed the replay exposure and it was the wrong instrument for a payments receiver:
+ * Razorpay retries a failed delivery for up to 24 hours, so a single 500 on our side during a capture
+ * would have turned every subsequent retry into a 400 and lost the money event permanently. Trading a
+ * dropped payment for a bounded replay window is the wrong trade in this pipeline.
  *
- * Symmetric, because a clock ahead of ours is as unverifiable as one behind, and a far-future timestamp
- * would otherwise park an event that never expires.
+ * The replay exposure is closed by IDENTITY instead of by time, in acceptRazorpayWebhook: the inbox now
+ * also recognises a body it has already accepted, by the SHA-256 of the signature-verified payload. A
+ * genuine 20-hour-late retry carries a byte-identical body, is recognised as a redelivery of the
+ * original event and is acknowledged; a replay carries the same byte-identical body and is recognised
+ * the same way, whatever event id the caller puts in the header. Both are handled correctly, with no
+ * clock involved and nothing to tune. See lib/financial-lifecycle.ts.
  */
-export const WEBHOOK_FRESHNESS_TOLERANCE_MS = 5 * 60_000;
-
-export type WebhookFreshness = { fresh: true } | { fresh: false; reason: string; skewSeconds: number | null };
-
-/**
- * Is this signed payload recent enough to act on?
- *
- * FAILS CLOSED ON AN ABSENT OR UNREADABLE TIMESTAMP, deliberately. Treating "no timestamp" as fresh
- * would make the window opt-out: a body with the field missing would be replayable forever, which is
- * the exact exposure being closed. Razorpay always sends created_at, so in practice this rejects only
- * a malformed delivery - and a malformed delivery is not something to act on either.
- *
- * `createdAtSeconds` is SECONDS since the epoch, which is what Razorpay sends.
- */
-export function webhookEventFreshness(createdAtSeconds: unknown, now = Date.now()): WebhookFreshness {
-  const seconds = Number(createdAtSeconds);
-  if (!Number.isFinite(seconds) || seconds <= 0) return { fresh: false, reason: "missing_event_timestamp", skewSeconds: null };
-  const skew = now - seconds * 1000;
-  if (Math.abs(skew) <= WEBHOOK_FRESHNESS_TOLERANCE_MS) return { fresh: true };
-  return { fresh: false, reason: skew > 0 ? "stale_event_timestamp" : "future_event_timestamp", skewSeconds: Math.round(skew / 1000) };
-}
 
 /** Readiness for the ops/payments dashboard - reports what's configured WITHOUT exposing any secret. */
 export function paymentWebhookReadiness(env: Env) {
