@@ -39,6 +39,18 @@ const typescriptUrl = pathToFileURL(nodeModule.createRequire(import.meta.url).re
 // authorization refusal into a fixture-dependent 500. Fail immediately instead of allowing that alias.
 const installedWorkersDbGlobals = new Set();
 
+// These three communication suites assert policy outcomes against their own fixed fixture clock. Pinning
+// Date.now() at the shared test boundary makes quiet-hours evaluation deterministic without changing
+// production policy or turning quiet-hours off. Each node:test file has its own process, so the override
+// cannot leak into an unrelated suite.
+const fixedNowByFixtureDbGlobal = new Map([
+  ["__ENQUEUE_DB__", 1770000000000],
+  // Reminder lifecycle coverage intentionally sweeps historical cadence points as early as NOW - 30d.
+  // Keep the wall clock before every tested asOf while preserving 08:10 IST (outside quiet hours).
+  ["__REMINDER_DB__", 1764816000000],
+  ["__INTERAKT_WA_DB__", 1770000000000],
+]);
+
 // Both hook branches below need the same two things, so they are written once, as source text, because
 // the out-of-thread branch can only receive its hook as a string.
 const TSX_TRANSFORM = `
@@ -102,6 +114,8 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
     throw new Error(`installWorkersHooks DB global already registered in this test process: ${globalName}`);
   }
   installedWorkersDbGlobals.add(globalName);
+  const fixedNow = fixedNowByFixtureDbGlobal.get(globalName);
+  if (fixedNow !== undefined) Date.now = () => fixedNow;
 
   const shim = `export const env = new Proxy({}, { get: (_, key) => key === "DB" ? globalThis[${JSON.stringify(globalName)}] : (globalThis[${JSON.stringify(envName)}] ?? {})[key] });`;
   const workersUrl = `data:text/javascript,${encodeURIComponent(shim)}`;
