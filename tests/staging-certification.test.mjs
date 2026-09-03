@@ -29,6 +29,7 @@ const PRODUCTION_D1_ID = "99999999-8888-4777-8666-555555555555";
 const goodConfig = () => ({
   name: "pawspace-staging",
   d1_databases: [{ binding: "DB", database_name: "pawspace-staging", database_id: STAGING_D1_ID }],
+  ai: [{ binding: "AI" }],
   vars: { PAWSPACE_PAYMENT_ENV: "sandbox", PAWSPACE_UAT_LOGIN: "on" },
 });
 const goodEnv = () => ({ EXPECTED_SHA: SHA, WORKER_NAME: "pawspace-staging", STAGING_D1_ID, PRODUCTION_D1_ID, PRODUCTION_WORKER_NAME: "pawspace-production", ACCESS_CODE });
@@ -108,6 +109,9 @@ test("every way of pointing at something that is not isolated staging is refused
     ["a second D1 binding", { deployedConfig: { ...goodConfig(), d1_databases: [{ binding: "DB", database_name: "pawspace-staging", database_id: STAGING_D1_ID }, { binding: "OTHER", database_name: "pawspace-shared", database_id: PRODUCTION_D1_ID }] } }, /declares 2 D1 bindings/],
     ["no D1 binding at all", { deployedConfig: { ...goodConfig(), d1_databases: [] } }, /declares 0 D1 bindings/],
     ["a binding under another name", { deployedConfig: { ...goodConfig(), d1_databases: [{ binding: "SHARED_DB", database_name: "pawspace-staging", database_id: STAGING_D1_ID }] } }, /not DB/],
+    ["no Workers AI binding", { deployedConfig: { ...goodConfig(), ai: [] } }, /declares 0 Workers AI bindings/],
+    ["a second Workers AI binding", { deployedConfig: { ...goodConfig(), ai: [{ binding: "AI" }, { binding: "OTHER_AI" }] } }, /declares 2 Workers AI bindings/],
+    ["a Workers AI binding under another name", { deployedConfig: { ...goodConfig(), ai: [{ binding: "WRONG_AI" }] } }, /not AI/],
   ];
   for (const [label, over, expected] of cases) {
     assert.throws(
@@ -143,12 +147,14 @@ test("the deployed config and SHA come from the same active version resource", a
     id: "v1", annotations: { "workers/message": `staging ${SHA}` },
     resources: { bindings: [
       { type: "d1", name: "DB", id: STAGING_D1_ID },
+      { type: "ai", name: "AI" },
       { type: "plain_text", name: "PAWSPACE_PAYMENT_ENV", text: "sandbox" },
       { type: "plain_text", name: "PAWSPACE_UAT_LOGIN", text: "on" },
     ] },
   };
   const config = deployedConfigFromVersion(version);
   assert.equal(config.d1_databases[0].database_id, STAGING_D1_ID);
+  assert.deepEqual(config.ai, [{ binding: "AI" }]);
   assert.equal(versionMessage(version), `staging ${SHA}`);
   await assert.doesNotReject(runStagingIsolationPreflight({ deployedConfig: async () => config, liveVersionMessage: async () => versionMessage(version), env: goodEnv() }));
 });

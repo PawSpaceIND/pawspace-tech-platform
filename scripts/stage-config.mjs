@@ -56,6 +56,7 @@ if (problems.length) {
 cfg.name = "pawspace-staging";
 cfg.topLevelName = "pawspace-staging";
 cfg.d1_databases = [{ binding: "DB", database_name: "pawspace-staging", database_id: d1Id }];
+cfg.ai = { binding: "AI" };
 
 /* Vars that only ever make sense on a developer's machine. PAWSPACE_LOCAL_PREVIEW is the runtime
  * switch for an AUTHENTICATION-FREE actor: combined with a forged `Host: localhost` it is two thirds

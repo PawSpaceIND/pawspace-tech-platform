@@ -110,8 +110,11 @@ export function deployedConfigFromVersion(version) {
   const d1_databases = bindings.filter(binding => binding?.type === "d1").map(binding => ({
     binding: String(binding.name ?? ""), database_id: String(binding.id ?? binding.database_id ?? ""),
   }));
+  const ai = bindings.filter(binding => binding?.type === "ai").map(binding => ({
+    binding: String(binding.name ?? ""),
+  }));
   const vars = Object.fromEntries(bindings.filter(binding => binding?.type === "plain_text").map(binding => [String(binding.name ?? ""), String(binding.text ?? binding.value ?? "")]));
-  return { d1_databases, vars };
+  return { d1_databases, ai, vars };
 }
 
 export function versionMessage(version) { return String(version?.annotations?.["workers/message"] ?? "").trim(); }
@@ -137,6 +140,11 @@ export function assertStagingIsolation({ workerName, deployedConfig, env }) {
   if (!boundId) problems.push("the D1 binding carries no database id");
   if (val(env, "STAGING_D1_ID") && boundId && boundId !== val(env, "STAGING_D1_ID")) problems.push("the bound database id is not the configured staging database id");
   if (val(env, "PRODUCTION_D1_ID") && boundId && boundId === val(env, "PRODUCTION_D1_ID")) problems.push("the bound database is the production database");
+
+  const aiBindings = Array.isArray(deployedConfig?.ai) ? deployedConfig.ai : [];
+  if (aiBindings.length !== 1) problems.push(`the deployed config declares ${aiBindings.length} Workers AI bindings; staging must declare exactly one`);
+  const aiBinding = aiBindings[0] ?? {};
+  if (val(aiBinding, "binding") !== "AI") problems.push(`the Workers AI binding is "${val(aiBinding, "binding")}", not AI`);
 
   if (problems.length) throw new StagingIsolationRefused(`Refusing to certify: ${problems.join("; ")}`);
   return { workerName, databaseName: STAGING_D1_NAME };
