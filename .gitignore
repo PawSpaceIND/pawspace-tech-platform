@@ -63,3 +63,9 @@ dist/
 .pricing-control-d1/
 .scheduler-d1/
 .production-readiness-d1/
+
+# D1 database dumps. These are FULL COPIES of customer data - names, phone numbers,
+# addresses, payment records. scripts/d1-backup.mjs writes here by default, and a dump
+# committed to a repository is a data breach that survives in history forever.
+backups/
+*.sql.manifest.json
