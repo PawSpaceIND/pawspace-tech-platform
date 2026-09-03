@@ -1,7 +1,17 @@
 type Row=Record<string,unknown>;
 export type CommunicationChannel="whatsapp"|"sms"|"email"|"push"|"chat"|"voice";
 export type CommunicationPurpose="auth"|"transactional"|"service_recovery"|"marketing"|"lifecycle";
-export type CommunicationInput={customerId:string;cityId:string;channel:CommunicationChannel;purpose:CommunicationPurpose;idempotencyKey:string;templateKey:string;payload:Record<string,unknown>;createdBy:string;bookingId?:string;leadId?:string;ticketId?:string;assignedTo?:string;scheduledAt?:number};
+/**
+ * `asOf` is the CALLER'S clock. It is not `scheduledAt`, which is when the message may go out.
+ *
+ * nextAttempt is floored at "now" so nothing is ever scheduled before the caller's own clock. With
+ * Date.now() standing in for that floor, a sweep that runs on an `asOf` of its own - a replay, a
+ * backfill, or any run whose due-ness was decided against a fixed instant - had its `scheduledAt`
+ * silently raised to the wall clock: the row it had just queued was invisible to its own delivery
+ * pass, and the queue timestamp was non-deterministic. Callers with no clock of their own omit it and
+ * keep the previous behaviour exactly.
+ */
+export type CommunicationInput={customerId:string;cityId:string;channel:CommunicationChannel;purpose:CommunicationPurpose;idempotencyKey:string;templateKey:string;payload:Record<string,unknown>;createdBy:string;bookingId?:string;leadId?:string;ticketId?:string;assignedTo?:string;scheduledAt?:number;asOf?:number};
 
 const DAY=86_400_000;
 const MARKETING_WINDOW_MS=7*DAY;
@@ -42,7 +52,7 @@ async function marketingWindowState(db:D1Database,customerId:string,capValue:num
 async function thread(db:D1Database,input:CommunicationInput){const existing=await db.prepare("SELECT * FROM communication_threads WHERE customer_id=? AND COALESCE(booking_id,'')=? AND COALESCE(lead_id,'')=? AND COALESCE(ticket_id,'')=? AND status='open' ORDER BY updated_at DESC LIMIT 1").bind(input.customerId,input.bookingId??"",input.leadId??"",input.ticketId??"").first<Row>();if(existing)return String(existing.id);const now=Date.now(),id=`THREAD-${crypto.randomUUID().slice(0,12).toUpperCase()}`;await db.prepare("INSERT INTO communication_threads (id,customer_id,booking_id,lead_id,ticket_id,status,assigned_to,sla_due_at,created_at,updated_at) VALUES (?,?,?,?,?,'open',?,?,?,?)").bind(id,input.customerId,input.bookingId??null,input.leadId??null,input.ticketId??null,input.assignedTo??null,input.purpose==="service_recovery"?now+15*60_000:null,now,now).run();await db.prepare("INSERT OR IGNORE INTO communication_participants (id,thread_id,participant_type,participant_id,display_ref,role,created_at) VALUES (?,?,?,?,?,'customer',?)").bind(crypto.randomUUID(),id,"customer",input.customerId,input.customerId,now).run();return id;}
 
 export async function enqueueCommunication(db:D1Database,input:CommunicationInput){await ensureCommunicationTables(db);if(!input.customerId||!input.idempotencyKey||!input.templateKey)throw new Error("Customer, idempotency key and template are required");const prior=await db.prepare("SELECT * FROM communication_messages WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();if(prior)return{duplicatePrevented:true,message:prior};
- const p=await policy(db,input.cityId),c=await consent(db,input.customerId),now=Date.now();const reasons:string[]=[];let hardSuppressed=false;
+ const p=await policy(db,input.cityId),c=await consent(db,input.customerId),now=Number.isFinite(Number(input.asOf))?Number(input.asOf):Date.now();const reasons:string[]=[];let hardSuppressed=false;
  if(input.purpose==="marketing"&&c.marketing!==true){hardSuppressed=true;reasons.push(c.marketing===false?"marketing_opt_out":"marketing_consent_unknown");}
  if(["transactional","service_recovery"].includes(input.purpose)&&c.serviceUpdates===false){hardSuppressed=true;reasons.push("service_updates_opt_out");}
  if(["transactional","service_recovery"].includes(input.purpose)&&!input.bookingId){hardSuppressed=true;reasons.push("booking_link_required");}
