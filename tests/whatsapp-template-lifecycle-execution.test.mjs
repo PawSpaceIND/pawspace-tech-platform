@@ -100,7 +100,9 @@ test("template API and console preserve permission, audit and no-live-Meta bound
   assert.match(route, /externalMetaMutation: false/);
   assert.match(page, /\/api\/whatsapp\/templates/);
   assert.match(page, /No live Meta mutation/);
-  assert.match(page, /Approve verified/);
-  assert.match(page, /Reject verified/);
-  assert.match(page, /Production delivery disabled/);
+  assert.match(page, /Meta status verified/);
+  assert.match(page, /Verify with Meta/);
+  assert.doesNotMatch(page, /Approve verified/);
+  assert.doesNotMatch(page, /Reject verified/);
+  assert.match(page, /There is no manual approve\/reject control/);
 });

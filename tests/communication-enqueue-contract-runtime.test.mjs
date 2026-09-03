@@ -53,7 +53,9 @@ const NOW = 1770000000000;
 //
 // Pin a fixed instant instead: 12:00 IST, nine hours clear of either quiet boundary, on a date after
 // effective_from. Fixed rather than offset from the wall clock, so it cannot drift or expire.
-Date.now = () => NOW;
+const realNow = Date.now;
+test.before(() => { Date.now = () => NOW; });
+test.after(() => { Date.now = realNow; });
 const CANONICAL_CUSTOMERS = "CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)";
 
 async function world({ withCustomers = true } = {}) {

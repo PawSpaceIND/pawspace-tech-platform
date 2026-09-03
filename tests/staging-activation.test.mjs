@@ -38,7 +38,9 @@ test("payment webhook unlock is double-gated (approval flag + distinct live secr
   assert.match(gate, /RAZORPAY_WEBHOOK_SECRET_LIVE/);
   assert.match(gate, /RAZORPAY_WEBHOOK_SECRET_SANDBOX/);
   // live requires BOTH: approval AND a live secret; either missing => not ok
-  assert.match(gate, /if \(!isTrue\(env\?\.PAWSPACE_PAYMENT_LIVE_APPROVED\)\) return \{ ok: false/);
+  assert.match(gate, /parsePaymentEnvironment/);
+  assert.match(gate, /PAWSPACE_PAYMENT_LIVE_APPROVED === "true"/);
+  assert.match(gate, /if \(!liveApproved\(env\)\) return \{ ok: false/);
   assert.match(gate, /if \(!secret\) return \{ ok: false, status: 503, reason: "Razorpay LIVE webhook secret/);
   // the route uses the gate (no more hard sandbox-only lock) and stamps the resolved environment
   assert.match(webhook, /resolvePaymentWebhookGate/);

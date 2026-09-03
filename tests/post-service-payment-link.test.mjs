@@ -11,7 +11,8 @@ const client = await import("../lib/razorpay-client.ts");
 const originalFetch = globalThis.fetch;
 test.afterEach(() => { globalThis.fetch = originalFetch; });
 
-const input = { bookingId: "BK-900", paymentId: "PAY-900", referenceId: "PAY-900-attempt-1", customerId: "CUS-900", amount: 1149, currency: "INR", expiresAt: Date.now() + 24 * 60 * 60 * 1000 };
+const NOW = 1_800_000_000_000;
+const input = { bookingId: "BK-900", paymentId: "PAY-900", referenceId: "PAY-900-attempt-1", customerId: "CUS-900", amount: 1149, currency: "INR", expiresAt: NOW + 24 * 60 * 60 * 1000 };
 const env = { PAWSPACE_PAYMENT_ENV: "sandbox", RAZORPAY_KEY_ID_SANDBOX: "rzp_test_lane3", RAZORPAY_KEY_SECRET_SANDBOX: "sandbox-secret" };
 
 test("post-service collection refuses missing credentials and every live environment", async () => {
@@ -53,7 +54,11 @@ test("post-service collection preserves network failure as not connected", async
 
 function makeD1(sqlite) {
   function statement(sql, args = []) { return { bind: (...bound) => statement(sql, bound), first: async () => sqlite.prepare(sql).get(...args) ?? null, run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes) } }; }, all: async () => ({ results: sqlite.prepare(sql).all(...args) }) }; }
-  return { prepare: sql => statement(sql), batch: async statements => { sqlite.exec("BEGIN"); try { const results = []; for (const statement of statements) results.push(await statement.run()); sqlite.exec("COMMIT"); return results; } catch (error) { sqlite.exec("ROLLBACK"); throw error; } } };
+  return {
+    prepare: sql => statement(sql),
+    batch: async statements => { sqlite.exec("BEGIN"); try { const results = []; for (const statement of statements) results.push(await statement.run()); sqlite.exec("COMMIT"); return results; } catch (error) { sqlite.exec("ROLLBACK"); throw error; } },
+    exec: async sql => { sqlite.exec(sql); return { count: 0, duration: 0 }; },
+  };
 }
 
 test("legacy payment-link mappings cannot bypass canonical provider-reference uniqueness", async () => {
@@ -66,10 +71,10 @@ test("legacy payment-link mappings cannot bypass canonical provider-reference un
 test("payment-link expiry, webhook mapping and refund-required payment ID stay canonical", async () => {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec(`
-    CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY,status TEXT NOT NULL,provider_id TEXT NOT NULL,customer_id TEXT NOT NULL);
-    CREATE TABLE booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,currency TEXT NOT NULL,status TEXT NOT NULL,mode TEXT NOT NULL,gateway TEXT NOT NULL DEFAULT 'uat_sandbox',detail_json TEXT NOT NULL DEFAULT '{}',updated_at INTEGER NOT NULL);
-    INSERT INTO canonical_bookings VALUES ('BK-LINK','completed','PROVIDER-1','CUS-1');
-    INSERT INTO booking_payments VALUES ('PAY-LINK','BK-LINK','CUS-1',1149,'INR','created','pay_after_service','uat_sandbox','{}',0);
+    CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY,status TEXT NOT NULL,provider_id TEXT NOT NULL,customer_id TEXT NOT NULL,city_id TEXT NOT NULL DEFAULT 'blr',service_code TEXT NOT NULL DEFAULT 'grooming');
+    CREATE TABLE booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,amount REAL NOT NULL,currency TEXT NOT NULL,status TEXT NOT NULL,mode TEXT NOT NULL,method TEXT NOT NULL DEFAULT 'upi',gateway TEXT NOT NULL DEFAULT 'uat_sandbox',detail_json TEXT NOT NULL DEFAULT '{}',updated_at INTEGER NOT NULL);
+    INSERT INTO canonical_bookings VALUES ('BK-LINK','completed','PROVIDER-1','CUS-1','blr','grooming');
+    INSERT INTO booking_payments VALUES ('PAY-LINK','BK-LINK','CUS-1',1149,'INR','created','pay_after_service','upi','uat_sandbox','{}',0);
   `);
   installFinancialLifecycleSchema(sqlite);
   const db = makeD1(sqlite), reconciliation = await import("../lib/grooming-payment-reconciliation.ts");
@@ -109,7 +114,7 @@ test("payment-link expiry, webhook mapping and refund-required payment ID stay c
   globalThis.__POST_SERVICE_LINK_DB__ = db;
   globalThis.__POST_SERVICE_LINK_ENV__ = { PAWSPACE_PAYMENT_ENV: "sandbox", RAZORPAY_WEBHOOK_SECRET_SANDBOX: "lane3-webhook-secret" };
   const webhook = await import("../app/api/razorpay-webhook/route.ts");
-  const payload = { event: "payment_link.paid", created_at: Math.floor(Date.now() / 1000), payload: { payment_link: { entity: { id: "plink_lane3_replacement", status: "paid", amount: 114900, amount_paid: 114900, notes: {} } }, payment: { entity: { id: "pay_lane3_map", amount: 114900, currency: "INR" } }, order: { entity: {} } } };
+  const payload = { event: "payment_link.paid", created_at: Math.floor(NOW / 1000), payload: { payment_link: { entity: { id: "plink_lane3_replacement", status: "paid", amount: 114900, amount_paid: 114900, notes: { booking_id: "BK-LINK" } } }, payment: { entity: { id: "pay_lane3_map", order_id: "order_lane3_map", amount: 114900, currency: "INR", notes: { booking_id: "BK-LINK" } } }, order: { entity: { id: "order_lane3_map" } } } };
   const raw = JSON.stringify(payload), key = await crypto.subtle.importKey("raw", new TextEncoder().encode("lane3-webhook-secret"), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]), signature = Array.from(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(raw)))).map(value => value.toString(16).padStart(2, "0")).join("");
   const webhookResponse = await webhook.POST(new Request("http://localhost/api/razorpay-webhook", { method: "POST", headers: { "content-type": "application/json", "x-razorpay-event-id": "evt_link_capture", "x-razorpay-signature": signature }, body: raw }));
   assert.equal(webhookResponse.status, 200, await webhookResponse.text());

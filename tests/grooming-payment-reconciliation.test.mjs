@@ -65,6 +65,8 @@ test("Grooming payment code embeds no production secrets; live mode is a double-
   const gate=files[3];
   assert.match(gate,/PAWSPACE_PAYMENT_LIVE_APPROVED/);
   assert.match(gate,/RAZORPAY_WEBHOOK_SECRET_LIVE/);
-  assert.match(gate,/if \(!isTrue\(env\?\.PAWSPACE_PAYMENT_LIVE_APPROVED\)\) return \{ ok: false/);
+  assert.match(gate,/parsePaymentEnvironment/);
+  assert.match(gate,/PAWSPACE_PAYMENT_LIVE_APPROVED === "true"/);
+  assert.match(gate,/if \(!liveApproved\(env\)\) return \{ ok: false/);
   assert.match(gate,/if \(!secret\) return \{ ok: false, status: 503, reason: "Razorpay LIVE webhook secret/);
 });

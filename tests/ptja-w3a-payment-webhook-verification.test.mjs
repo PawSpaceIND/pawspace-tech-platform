@@ -41,7 +41,7 @@ function makeD1(sqlite) {
 }
 
 const SANDBOX_SECRET = "w3a-sandbox-secret";
-const NOW = Date.now();
+const NOW = 1_800_000_000_000;
 const DAY = 86_400_000;
 let sqlite;
 

@@ -120,7 +120,7 @@ test("external Razorpay contract: override is sandbox contract-test only", async
     assert.match(noContractFlag.reason, /contract-test override/i);
     const live = await client.createPaymentOrder({ ...environment(server.url), PAWSPACE_PAYMENT_ENV: "live", RAZORPAY_KEY_ID: "rzp_live_never_contacted", RAZORPAY_KEY_SECRET: "never-contacted" }, { bookingId: "BK-CONTRACT", paymentId: "PAY-LIVE-BLOCKED", amount: 500, currency: "INR" });
     assert.equal(live.connected, false);
-    assert.match(live.reason, /contract-test override/i);
+    assert.match(live.reason, /not approved \(PAWSPACE_PAYMENT_LIVE_APPROVED must equal "true"\)/);
     assert.equal(server.requests.length, 0);
   } finally { await server.close(); }
 });

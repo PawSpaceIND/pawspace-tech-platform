@@ -59,7 +59,9 @@ const NOW = 1770000000000;
 //
 // The suite passed by day and failed by night. Pinning the decision clock to the fixture's own NOW
 // puts the seeds and the decision on one instant and makes it deterministic year-round.
-Date.now = () => NOW;
+const realNow = Date.now;
+test.before(() => { Date.now = () => NOW; });
+test.after(() => { Date.now = realNow; });
 const iso = (ms) => new Date(ms).toISOString();
 
 // Tables the reminder engine reads but does not own. Real DDL, taken from the owning modules.
