@@ -1,0 +1,105 @@
+.page {
+  min-height: 100vh;
+  background: #f7f4fb;
+  padding: 32px;
+  font-family: Arial, sans-serif;
+  color: #24133f;
+}
+
+.shell {
+  max-width: 1420px;
+  margin: 0 auto;
+  min-width: 0;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.moneyGrid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
+.tableScroller {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.ledgerTable {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+  table-layout: auto;
+  font-size: 13px;
+}
+
+@media (max-width: 900px) {
+  .summaryGrid,
+  .moneyGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .page {
+    padding: 18px 14px 28px;
+  }
+
+  .header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .header h1 {
+    font-size: clamp(28px, 9vw, 36px) !important;
+    line-height: 1.08;
+  }
+
+  .actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .actions > * {
+    flex: 1 1 140px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+
+  .summaryGrid,
+  .moneyGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tableScroller {
+    margin-inline: -2px;
+    padding-bottom: 4px;
+    overscroll-behavior-inline: contain;
+  }
+}
