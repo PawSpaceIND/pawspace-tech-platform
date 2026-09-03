@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+
+// lib/razorpay-client.ts imports its siblings extensionlessly, as every lib module here does.
+// Without the shared resolver this file dies at load with
+//   ERR_MODULE_NOT_FOUND: Cannot find module .../lib/payment-environment
+// and reports as a single file-level failure rather than as its own tests.
+installWorkersHooks("__PAYMENT_CONTRACT_DB__");
 
 const client = await import("../lib/razorpay-client.ts");
 
