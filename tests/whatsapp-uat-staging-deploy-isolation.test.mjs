@@ -13,46 +13,42 @@ test("WhatsApp-only staging deploy has no Exotel dependency",()=>{
 });
 
 test("isolated workflow pins one exact application SHA to pawspace-staging",()=>{
- assert.match(isolated,/TARGET_SHA:/);
- assert.match(isolated,/git rev-parse HEAD/);
+ assert.match(isolated,/TARGET_SHA:/);assert.match(isolated,/git rev-parse HEAD/);
  assert.match(isolated,/npx wrangler deploy --keep-vars --message "staging \$TARGET_SHA"/);
  assert.match(isolated,/STAGING_URL: https:\/\/pawspace-staging\.karthik-fce\.workers\.dev/);
  assert.match(isolated,/node tests\/e2e\/staging-certification\.mjs --isolation-only/);
- assert.match(isolated,/PRODUCTION_D1_ID/);
- assert.match(isolated,/PRODUCTION_WORKER_NAME/);
+ assert.match(isolated,/PRODUCTION_D1_ID/);assert.match(isolated,/PRODUCTION_WORKER_NAME/);
  assert.doesNotMatch(isolated,/deploy-production|pawspace-prod-bengaluru|PAWSPACE_PAYMENT_LIVE_APPROVED\s*:\s*['"]?true/i);
 });
 
-test("deployment fails closed unless live staging Meta readiness is complete",()=>{
- assert.match(isolated,/api\/integration-readiness/);
- assert.match(isolated,/meta\?\.configuredForExternalTest===true/);
- assert.match(isolated,/Meta WhatsApp staging configuration incomplete/);
- assert.doesNotMatch(isolated,/wrangler versions (?:list|view)/);
- assert.doesNotMatch(isolated,/wrangler secret bulk/);
+test("staging restores only when Meta readiness is incomplete",()=>{
+ assert.match(isolated,/configuredForExternalTest===true/);
+ assert.match(isolated,/wrangler rollback --name pawspace-staging/);
+ assert.match(isolated,/rollback not required/);
 });
 
-test("dashboard vars are preserved and raw Wrangler deploy output is contained",()=>{
- assert.match(isolated,/--keep-vars/);
- assert.match(isolated,/> "\$DEPLOY_LOG" 2>&1/);
- assert.doesNotMatch(isolated,/wrangler deploy[^\n]*\|\s*tee/);
+test("all existing plain staging bindings are snapshotted without logging values",()=>{
+ assert.match(isolated,/workers\/scripts\/pawspace-staging\/settings/);
+ assert.match(isolated,/binding\?\.type!=="plain_text"/);
+ assert.match(isolated,/config\.vars=\{\.\.\.remoteVars,\.\.\.\(config\.vars\|\|\{\}\)\}/);
+ assert.match(isolated,/config\.keep_vars=true/);
+ assert.match(isolated,/names and values withheld/);
+ assert.doesNotMatch(isolated,/console\.log\([^\n]*(?:binding\?\.text|binding\?\.value|remoteVars\[)/);
+});
+
+test("raw Cloudflare and Wrangler deployment output is contained",()=>{
+ assert.match(isolated,/> "\$DEPLOY_LOG" 2>&1/);assert.doesNotMatch(isolated,/wrangler deploy[^\n]*\|\s*tee/);
  assert.match(isolated,/raw output withheld/);
 });
 
 test("WhatsApp-only staging remains UAT sandbox and proves public webhook boundary",()=>{
- assert.match(isolated,/node scripts\/stage-config\.mjs/);
- assert.match(isolated,/PAWSPACE_STAGING_LIVE_CUSTOMER_OTP="false"/);
- assert.match(isolated,/healthz=200/);
- assert.match(isolated,/webhook bypasses staging-login/);
- assert.match(isolated,/invalid signature rejected/);
- assert.match(isolated,/action:"sync_templates"/);
- assert.match(isolated,/approved\.length<1/);
+ assert.match(isolated,/node scripts\/stage-config\.mjs/);assert.match(isolated,/PAWSPACE_STAGING_LIVE_CUSTOMER_OTP="false"/);
+ assert.match(isolated,/healthz=200/);assert.match(isolated,/webhook bypasses staging-login/);assert.match(isolated,/invalid signature rejected/);
+ assert.match(isolated,/action:"sync_templates"/);assert.match(isolated,/approvedAllowlistedTemplateCount/);
 });
 
 test("full staging voice mode remains fail-closed on every Exotel credential",()=>{
  const requiredBlock=full.match(/const requiredNames = \[([\s\S]*?)\];/)?.[1]||"";
- for(const name of exotel){
-  assert.match(full,new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`),`${name} must still be sourced from GitHub Secrets`);
-  assert.match(requiredBlock,new RegExp(`["']${name}["']`),`${name} must remain required by full staging`);
- }
+ for(const name of exotel){assert.match(full,new RegExp(`${name}:\\s*\\$\\{\\{\\s*secrets\\.${name}\\s*\\}\\}`),`${name} must still be sourced from GitHub Secrets`);assert.match(requiredBlock,new RegExp(`["']${name}["']`),`${name} must remain required by full staging`);}
  assert.match(full,/if \(Object\.values\(required\)\.some\(value => !value\)\) throw new Error\("a required staging secret is missing"\)/);
 });
