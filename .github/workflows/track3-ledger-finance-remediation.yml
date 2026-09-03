@@ -33,6 +33,7 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/ops/apply-track3-ledger-finance-remediation.mjs
+          node scripts/ops/fix-track3-cache-api.mjs
           node --experimental-strip-types scripts/uat-demo-seed-gen.mjs
       - name: Add remediation regression contract
         run: |
@@ -48,8 +49,9 @@ jobs:
           test('finance edge snapshot is staging-only and downstream of authorization',()=>{
             assert.match(finance,/PAWSPACE_DEPLOYMENT_ENV\|\|""\)==="staging"/);
             assert.match(finance,/STAGING_FINANCE_CACHE_TTL_SECONDS=30/);
-            assert.match(finance,/caches\.default\.match\(STAGING_FINANCE_CACHE_KEY\)/);
-            assert.match(finance,/caches\.default\.delete\(STAGING_FINANCE_CACHE_KEY\)/);
+            assert.match(finance,/caches\.open\("pawspace-track3-finance-v2"\)/);
+            assert.match(finance,/cache\.match\(STAGING_FINANCE_CACHE_KEY\)/);
+            assert.match(finance,/cache\.delete\(STAGING_FINANCE_CACHE_KEY\)/);
             assert.match(finance,/export async function GET[\s\S]*?authorize\(request,"finance\.view"\)[\s\S]*?readStagingFinanceCache\(\)/);
           });
           test('finance cache misses use hot-path indexes',()=>{
@@ -59,6 +61,7 @@ jobs:
           });
           test('UAT actor cache remains downstream of signed-cookie verification',()=>{
             assert.match(auth,/UAT_ACTOR_EDGE_CACHE_TTL_SECONDS=30/);
+            assert.match(auth,/caches\.open\("pawspace-uat-actor-v1"\)/);
             assert.match(auth,/resolveUatStaffActor[\s\S]*?verifyUatToken\(env,token\)[\s\S]*?readUatActorRow\(db,email\)/);
             assert.match(auth,/if\(!uatLoginEnabled\(env\)\)return null/);
           });
