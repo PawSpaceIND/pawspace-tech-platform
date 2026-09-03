@@ -63,10 +63,6 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-/**
- * MeloTTS has two valid Workers AI response shapes: JSON containing a base64 `audio` field and raw
- * `audio/mpeg` binary. Normalize both into the in-app data URL contract.
- */
 async function workersAiTtsBase64(result: unknown): Promise<string> {
   if (result && typeof result === "object" && !ArrayBuffer.isView(result) && !(result instanceof ArrayBuffer) && !(result instanceof ReadableStream) && !(result instanceof Response)) {
     const audio = (result as Record<string, unknown>).audio;
@@ -84,7 +80,6 @@ async function workersAiTtsBase64(result: unknown): Promise<string> {
   return bytesToBase64(bytes);
 }
 
-/** Cloudflare Workers AI STT (Whisper). Returns the disconnected stub when the AI binding is absent. */
 export function resolveWorkersAiStt(env: Env): VoiceSttProvider {
   if (!workersAiConfigured(env)) return disconnectedStt;
   const ai = env.AI as AiBinding, model = val(env, "VOICE_STT_MODEL") || "@cf/openai/whisper";
@@ -111,7 +106,6 @@ export function resolveWorkersAiStt(env: Env): VoiceSttProvider {
   };
 }
 
-/** Cloudflare Workers AI TTS. Returns the disconnected stub when the AI binding is absent. */
 export function resolveWorkersAiTts(env: Env): VoiceTtsProvider {
   if (!workersAiConfigured(env)) return disconnectedTts;
   const ai = env.AI as AiBinding, model = val(env, "VOICE_TTS_MODEL") || "@cf/myshell-ai/melotts";
@@ -123,8 +117,6 @@ export function resolveWorkersAiTts(env: Env): VoiceTtsProvider {
       const prompt = String(input.text ?? "").trim();
       if (!prompt) throw new VoiceSpeechError("tts", "malformed_output", "Nothing to synthesise");
 
-      // Cloudflare MeloTTS requires `prompt`; `lang` is optional and defaults to English. Keep the
-      // binding payload minimal for English, and only send a documented two-letter language code.
       const requestedLanguage = String(input.language ?? "").trim().toLowerCase();
       const payload: Record<string, unknown> = { prompt };
       if (requestedLanguage && requestedLanguage !== "en") {
@@ -132,9 +124,18 @@ export function resolveWorkersAiTts(env: Env): VoiceTtsProvider {
         payload.lang = requestedLanguage;
       }
 
+      const runOnce = async () => withSpeechDeadline("tts", ai.run(model, payload), timeoutMs);
       let result: unknown;
-      try { result = await withSpeechDeadline("tts", ai.run(model, payload), timeoutMs); }
-      catch (error) { throw asSpeechFailure("tts", error); }
+      try {
+        result = await runOnce();
+      } catch (error) {
+        const failure = asSpeechFailure("tts", error);
+        if (failure.code !== "provider_failure") throw failure;
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        try { result = await runOnce(); }
+        catch (retryError) { throw asSpeechFailure("tts", retryError); }
+      }
+
       const base64 = await workersAiTtsBase64(result);
       const audioRef = `data:audio/mpeg;base64,${base64}`;
       try { decodeInlineAudio(audioRef); }
