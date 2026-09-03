@@ -25,10 +25,12 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          META_WHATSAPP_UAT_ALLOWLIST: ${{ secrets.META_WHATSAPP_UAT_ALLOWLIST }}
+          PAWSPACE_COMMUNICATION_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_COMMUNICATION_UAT_ALLOWLIST }}
         run: |
           set -euo pipefail
           SETTINGS="$RUNNER_TEMP/settings.json"; CANDIDATES="$RUNNER_TEMP/candidates.json"; SELECTED="$RUNNER_TEMP/selected.json"; export SETTINGS CANDIDATES SELECTED
-          trap 'rm -f "$SETTINGS" "$CANDIDATES" "$SELECTED"' EXIT
+          trap 'rm -f "$SETTINGS" "$CANDIDATES"' EXIT
           HTTP="$(curl --silent --show-error --output "$SETTINGS" --write-out '%{http_code}' --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" --header 'Accept: application/json' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/pawspace-staging/settings")"
           [ "$HTTP" = "200" ] || { echo "Unable to read staging settings; response withheld." >&2; exit 1; }
           npx --yes wrangler@4 d1 execute pawspace-staging --remote --command "SELECT c.id AS customer_id,c.city_id,c.primary_phone,c.secondary_phone,b.id AS booking_id FROM canonical_customers c JOIN customer_contact_preferences p ON p.customer_id=c.id JOIN canonical_bookings b ON b.customer_id=c.id WHERE p.whatsapp_consent=1 AND COALESCE(p.opt_out,0)=0 LIMIT 500;" --json > "$CANDIDATES"
@@ -36,11 +38,11 @@ jobs:
           import{readFileSync,writeFileSync}from'node:fs';
           const settings=JSON.parse(readFileSync(process.env.SETTINGS,'utf8'));const bindings=Array.isArray(settings?.result?.bindings)?settings.result.bindings:[];const plain=Object.fromEntries(bindings.filter(b=>b?.type==='plain_text').map(b=>[String(b?.name||''),String(b?.text??b?.value??'')]));
           if(String(plain.PAWSPACE_PRODUCTION_ENFORCE||'')!=='false')throw new Error('Production enforcement is not explicitly false on staging');
-          const digits=v=>String(v??'').replace(/\D/g,'');const allow=String(plain.META_WHATSAPP_UAT_ALLOWLIST||plain.PAWSPACE_COMMUNICATION_UAT_ALLOWLIST||'').split(',').map(digits).filter(Boolean);if(!allow.length)throw new Error('No staging UAT recipient allowlist is configured');
+          const digits=v=>String(v??'').replace(/\D/g,'');const allow=String(process.env.META_WHATSAPP_UAT_ALLOWLIST||process.env.PAWSPACE_COMMUNICATION_UAT_ALLOWLIST||'').split(',').map(digits).filter(Boolean);if(!allow.length)throw new Error('Protected staging UAT recipient allowlist secret is missing');
           const parsed=JSON.parse(readFileSync(process.env.CANDIDATES,'utf8'));const rows=(Array.isArray(parsed)?parsed:[]).flatMap(b=>Array.isArray(b?.results)?b.results:[]);let selected=null;for(const row of rows){for(const key of ['primary_phone','secondary_phone']){const phone=digits(row?.[key]);if(phone&&allow.includes(phone)){selected={customerId:String(row.customer_id),cityId:String(row.city_id||'blr'),bookingId:String(row.booking_id),recipient:phone};break;}}if(selected)break;}
           if(!selected)throw new Error('No allowlisted, consented staging customer with a booking is available for governed UAT dispatch');
           writeFileSync(process.env.SELECTED,JSON.stringify(selected),{mode:0o600});
-          console.log('Governed staging UAT recipient selected: allowlist match=true, canonical ownership candidate=true, WhatsApp consent=true, opt_out=false, booking linked=true; PII withheld.');
+          console.log('Governed staging UAT recipient selected: protected allowlist match=true, canonical ownership candidate=true, WhatsApp consent=true, opt_out=false, booking linked=true; PII withheld.');
           NODE
           echo "SELECTED_FILE=$SELECTED" >> "$GITHUB_ENV"
       - name: Enqueue and dispatch real Meta UAT message
@@ -48,6 +50,7 @@ jobs:
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
         run: |
           set -euo pipefail
+          trap 'rm -f "$SELECTED_FILE"' EXIT
           node --input-type=module <<'NODE'
           import{readFileSync}from'node:fs';import{createHash}from'node:crypto';
           const selected=JSON.parse(readFileSync(process.env.SELECTED_FILE,'utf8'));const base=String(process.env.STAGING_URL||'').replace(/\/$/,'');
