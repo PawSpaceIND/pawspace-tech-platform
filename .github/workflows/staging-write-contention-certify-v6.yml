@@ -1,4 +1,4 @@
-name: Certify final Track 3 canonical batching remediation
+name: Certify final Track 3 finance read remediation
 
 on:
   push:
@@ -16,7 +16,8 @@ concurrency:
 
 env:
   STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
-  TARGET_SHA: 65af1a317c457d21cd5520bb273b48a066a0ee2f
+  TARGET_SHA: 97fcd657214f1e2ea0039fd7392a11652f488b10
+  CANONICAL_BATCH_SHA: 65af1a317c457d21cd5520bb273b48a066a0ee2f
   SCHEDULING_FIX_SHA: 7289063beadff7c39ee75a5e95d8e515356b9afb
   CANONICAL_BASE_FIX_SHA: d1a358152e244bcfb19db88684da0991f663965c
 
@@ -34,9 +35,11 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
-          git log -1 --pretty=%s | grep -Fx "fix(canonical): batch ledger and verdict D1 transactions to resolve staging gate timeout"
+          git log -1 --pretty=%s | grep -Fx "perf(staging): remove finance read and webhook replay D1 contention"
+          git merge-base --is-ancestor "$CANONICAL_BATCH_SHA" HEAD
           git merge-base --is-ancestor "$SCHEDULING_FIX_SHA" HEAD
           git merge-base --is-ancestor "$CANONICAL_BASE_FIX_SHA" HEAD
+          git show -s --pretty=%s "$CANONICAL_BATCH_SHA" | grep -Fx "fix(canonical): batch ledger and verdict D1 transactions to resolve staging gate timeout"
           git show -s --pretty=%s "$SCHEDULING_FIX_SHA" | grep -Fx "fix(scheduling): optimize reservation-claim concurrency and eliminate cleanup race"
           git show -s --pretty=%s "$CANONICAL_BASE_FIX_SHA" | grep -Fx "fix(bookings): eliminate synchronous write contention in canonical booking phase"
       - uses: actions/setup-node@v4
@@ -46,7 +49,7 @@ jobs:
       - run: npm run install:ci
       - name: Validate remediation and financial invariants
         run: |
-          node --experimental-strip-types --test tests/ptja-w2-b2-collection-ledger.test.mjs tests/ptja-w2-08-revenue-reconciliation.test.mjs tests/ptja-w3-lead-attribution.test.mjs tests/lead-engine-hardening.test.mjs tests/ptja-w1-f38-city-status-matrix.test.mjs tests/ptja-w3-waitlist-channel.test.mjs tests/ptja-p0-regressions.test.mjs tests/uat-scheduling-d1-contention.test.mjs tests/scheduling-reservation-leases.test.mjs tests/schema-declaration-consistency.test.mjs tests/uat-convergence-source-contract.test.mjs
+          node --experimental-strip-types --test tests/uat-scheduling-d1-contention.test.mjs tests/grooming-closure.test.mjs tests/ptja-p1-regressions.test.mjs tests/financial-lifecycle-concurrency.test.mjs tests/financial-lifecycle-executable-concurrency.test.mjs tests/uat-staging-auth.test.mjs tests/staging-auth-secrets.test.mjs tests/staging-login-identities.test.mjs tests/post-service-payment-link.test.mjs tests/ptja-w2-b2-collection-ledger.test.mjs tests/ptja-w2-08-revenue-reconciliation.test.mjs tests/ptja-w3-lead-attribution.test.mjs tests/lead-engine-hardening.test.mjs tests/ptja-w1-f38-city-status-matrix.test.mjs tests/ptja-w3-waitlist-channel.test.mjs tests/ptja-p0-regressions.test.mjs tests/scheduling-reservation-leases.test.mjs tests/schema-declaration-consistency.test.mjs tests/uat-convergence-source-contract.test.mjs
           npm run typecheck
           npm run build
       - name: Configure isolated staging
