@@ -116,7 +116,10 @@ export async function POST(request:Request){
     const accessActor={email:actor.email,roleCode:actor.roleCode,permissions:actor.permissions};
 
     if(!mayReveal(accessActor,purpose,assignment)){
-      await securityAudit(db,actor,"customer.data.reveal","customer",customerId,"denied",{purpose,reason});
+      // The RESOLVED assignment is recorded, not the claimed one, so the trail says which record the
+      // policy actually weighed. A refusal where this reads null is a caller whose pointer verified to
+      // nothing - a different event from one where a real assignment simply did not justify the field.
+      await securityAudit(db,actor,"customer.data.reveal","customer",customerId,"denied",{purpose,reason,assignmentType:assignment?.type??null,assignmentId:assignment?.id??null});
       return json({error:"This record is not assigned to you and you do not hold a reveal grant",code:"reveal_not_permitted"},403);
     }
 
@@ -128,7 +131,7 @@ export async function POST(request:Request){
       // Which fields the caller asked for. Absent means all of them, which is what a screen with a
       // single "reveal contact" control sends. [PTJA-W3-RU]
       reveal:{requested:true,reason,fields:Array.isArray(body.fields)?body.fields.filter((field):field is "phone"|"email"|"address"=>field==="phone"||field==="email"||field==="address"):null}});
-    await securityAudit(db,actor,"customer.data.reveal","customer",customerId,"completed",{purpose,reason,revealed:view.revealed,fields:view.revealedFields??[],revealExpiresAt:view.revealExpiresAt??null,addressPrecision:view.address.precision,policyVersion:view.policyVersion});
+    await securityAudit(db,actor,"customer.data.reveal","customer",customerId,"completed",{purpose,reason,revealed:view.revealed,fields:view.revealedFields??[],revealExpiresAt:view.revealExpiresAt??null,addressPrecision:view.address.precision,policyVersion:view.policyVersion,assignmentType:assignment?.type??null,assignmentId:assignment?.id??null});
     return json({data:{...view,source:found.source}});
   }catch(error){return authError(error,"Unable to reveal customer data");}
 }

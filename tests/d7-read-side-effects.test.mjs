@@ -48,7 +48,7 @@ async function json(response){return {status:response.status,body:await response
 // So the invariant this test protects is stated as what it always meant: a READ must not create or seed
 // DOMAIN tables. Anything outside the identity substrate below still fails here, and the two explicit
 // checks that no scheduling_* table and no provider_capacity_profiles appear are unchanged.
-const IDENTITY_SUBSTRATE=["app_users","customer_identity_links","identity_binding_audit","identity_bindings","provider_identity_links","role_definitions","security_audit_events"];
+const IDENTITY_SUBSTRATE=["app_users","customer_identity_links","identity_binding_audit","identity_bindings","provider_identity_links","role_definitions","security_audit_events","security_audit_outbox"];
 
 test("D7 runtime: scheduling GET on a cold DB returns an empty board without creating or seeding domain tables", async()=>{
   freshDb();

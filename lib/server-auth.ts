@@ -1,12 +1,13 @@
 import { defaultRoles, hasPermission, parsePermissions, type Permission } from "./platform-security";
-import {ensureIdentityBindingTables,findIdentityBinding,type IdentitySource,type PrincipalType} from "./identity-binding";
+import {ensureIdentityBindingTables,findIdentityBinding,type IdentitySource,type IdentitySubjectType,type PrincipalType} from "./identity-binding";
 import {resolvePlatformSession} from "./platform-session";
 import {isDevelopmentPreviewRequest} from "./development-preview";
 import {resolveUatStaffActor,signInRequiredResponse} from "./uat-staging-auth";
 import {governedJsonError,isGovernedHttpError,markGovernedHttpError} from "./governed-http-error";
 
 type Db = Awaited<ReturnType<typeof database>>;
-export type AuthenticatedActor = { email:string; name:string; roleCode:string; permissions:string[]; developmentPreview:boolean; identitySource:IdentitySource; principalType:PrincipalType; principalKey:string };
+export type AuthenticatedActor = { email:string; name:string; roleCode:string; permissions:string[]; developmentPreview:boolean; identitySource:IdentitySource; principalType:PrincipalType; principalKey:string; subjectType?:IdentitySubjectType };
+export type SecurityAuditOutcome="allowed"|"denied"|"completed"|"rejected"|"blocked";
 
 export async function database(){const {env}=await import("cloudflare:workers");return env.DB;}
 
@@ -18,14 +19,7 @@ function forwardedIdentity(request:Request){
   return {email,name};
 }
 
-// One definition, in lib/development-preview.ts. This copy read an ABSENT NODE_ENV as "not
-// production", and two sibling copies of the same rule carried no environment guard at all. [PTJA-W3C]
 const isDevelopmentPreview=(request:Request)=>isDevelopmentPreviewRequest(request);
-
-// Per-isolate memoization: security DDL, identity-binding DDL and the fixed role catalogue are
-// idempotent. resolveActor() runs this on every authenticated request; before this it also issued 9
-// sequential role upserts each time. Batching + the WeakSet keep it to a single round-trip once, then
-// a no-op for the rest of the isolate's life.
 const securityTablesEnsured=new WeakSet<Db>();
 
 export async function ensureSecurityTables(db:Db){
@@ -35,6 +29,8 @@ export async function ensureSecurityTables(db:Db){
     db.prepare("CREATE TABLE IF NOT EXISTS app_users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL, role_code TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS role_definitions (code TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL, permissions_json TEXT NOT NULL, system_role INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS security_audit_events (id TEXT PRIMARY KEY, actor_email TEXT NOT NULL, actor_role TEXT NOT NULL, action TEXT NOT NULL, resource_type TEXT NOT NULL, resource_id TEXT, outcome TEXT NOT NULL, detail_json TEXT NOT NULL, created_at INTEGER NOT NULL)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS security_audit_outbox (id TEXT PRIMARY KEY, actor_email TEXT NOT NULL, actor_role TEXT NOT NULL, action TEXT NOT NULL, resource_type TEXT NOT NULL, resource_id TEXT, detail_json TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'reserved', created_at INTEGER NOT NULL, completed_at INTEGER)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS security_audit_outbox_status_idx ON security_audit_outbox(status,created_at)"),
     db.prepare("CREATE TABLE IF NOT EXISTS customer_identity_links (email TEXT PRIMARY KEY, customer_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', verified_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS provider_identity_links (email TEXT PRIMARY KEY, provider_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', verified_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)"),
   ]);
@@ -44,18 +40,16 @@ export async function ensureSecurityTables(db:Db){
   securityTablesEnsured.add(db);
 }
 
-/** Every governed API failure is JSON, caller-safe, marked, and non-cacheable. */
 export function authFailure(message:string,status:number){return governedJsonError({error:message},status);}
 
 export async function resolveActor(request:Request):Promise<AuthenticatedActor>{
   const db=await database(); await ensureSecurityTables(db);
   if(isDevelopmentPreview(request))return {email:"preview@pawspace.test",name:"Preview operator",roleCode:"superuser",permissions:["*"],developmentPreview:true,identitySource:"workspace",principalType:"email",principalKey:"preview@pawspace.test"};
-  // Staging-only UAT sign-in (flag-gated; a no-op in production where PAWSPACE_UAT_LOGIN is unset).
   const {env:uatEnv}=await import("cloudflare:workers");
   const uatActor=await resolveUatStaffActor(db,request,uatEnv as Record<string,unknown>);
   if(uatActor)return uatActor;
   const session=await resolvePlatformSession(db,request);
-  if(session)return {email:session.auditId,name:`${session.subjectType==="customer"?"Customer":"Provider"} ${session.subjectId}`,roleCode:session.roleCode,permissions:session.permissions,developmentPreview:false,identitySource:session.identitySource,principalType:session.principalType,principalKey:session.principalKey};
+  if(session)return {email:session.auditId,name:`${session.subjectType==="customer"?"Customer":"Provider"} ${session.subjectId}`,roleCode:session.roleCode,permissions:session.permissions,developmentPreview:false,identitySource:session.identitySource,principalType:session.principalType,principalKey:session.principalKey,subjectType:session.subjectType};
   const identity=forwardedIdentity(request);
   if(!identity.email)throw markGovernedHttpError(signInRequiredResponse(uatEnv as unknown as Record<string,unknown>));
   let user=await db.prepare("SELECT email,name,role_code,status FROM app_users WHERE email=?").bind(identity.email).first<Record<string,unknown>>();
@@ -87,13 +81,6 @@ export async function requireCustomerOwnership(db:Db,actor:AuthenticatedActor,cu
   return actor;
 }
 
-/**
- * Whether this actor is acting as STAFF over providers, rather than as a provider acting on itself.
- *
- * This is the exact predicate requireProviderOwnership already used to let an operator through, lifted
- * out so callers can tell the two cases apart. Ownership alone does not imply authority: a provider
- * owns its own record and must still not be able to lift a restriction that staff placed on it.
- */
 export function actorManagesProviders(actor:AuthenticatedActor){
   return Boolean(actor.developmentPreview)||hasPermission(actor.permissions,"providers.manage")||hasPermission(actor.permissions,"grooming.manage")||hasPermission(actor.permissions,"bookings.manage");
 }
@@ -107,12 +94,42 @@ export async function requireProviderOwnership(db:Db,actor:AuthenticatedActor,pr
   return actor;
 }
 
-export async function securityAudit(db:Db,actor:AuthenticatedActor,action:string,resourceType:string,resourceId:string|null,outcome:"allowed"|"denied"|"completed"|"rejected"|"blocked",detail:unknown={}){
-  await db.prepare("INSERT INTO security_audit_events (id,actor_email,actor_role,action,resource_type,resource_id,outcome,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
-    .bind(crypto.randomUUID(),actor.email,actor.roleCode,action,resourceType,resourceId,outcome,JSON.stringify(detail),Date.now()).run();
+function securityAuditDetailJson(detail:unknown){return JSON.stringify(detail)??"null";}
+
+export function securityAuditStatement(db:Db,actor:AuthenticatedActor,action:string,resourceType:string,resourceId:string|null,outcome:SecurityAuditOutcome,detail:unknown={}){
+  return db.prepare("INSERT INTO security_audit_events (id,actor_email,actor_role,action,resource_type,resource_id,outcome,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
+    .bind(crypto.randomUUID(),actor.email,actor.roleCode,action,resourceType,resourceId,outcome,securityAuditDetailJson(detail),Date.now());
 }
 
-/** Preserve factory-marked 4xx responses exactly. For legacy unmarked 4xx control responses, preserve only the status and redact the body. */
+export async function securityAudit(db:Db,actor:AuthenticatedActor,action:string,resourceType:string,resourceId:string|null,outcome:SecurityAuditOutcome,detail:unknown={}){
+  await securityAuditStatement(db,actor,action,resourceType,resourceId,outcome,detail).run();
+}
+
+/**
+ * Reserve a durable audit operation BEFORE calling a helper that encapsulates its own D1 writes.
+ * If the Worker dies after the state change but before completion, the reserved outbox row remains as
+ * evidence of an in-flight privileged operation instead of leaving an unaudited transition.
+ */
+export async function reserveSecurityAudit(db:Db,actor:AuthenticatedActor,action:string,resourceType:string,resourceId:string|null,detail:unknown={}){
+  const id=crypto.randomUUID(),now=Date.now();
+  await db.batch([
+    db.prepare("INSERT INTO security_audit_outbox (id,actor_email,actor_role,action,resource_type,resource_id,detail_json,status,created_at,completed_at) VALUES (?,?,?,?,?,?,?,'reserved',?,NULL)")
+      .bind(id,actor.email,actor.roleCode,action,resourceType,resourceId,securityAuditDetailJson(detail),now),
+    securityAuditStatement(db,actor,`${action}.reserved`,resourceType,resourceId,"allowed",{operationId:id,...(detail&&typeof detail==="object"?detail as Record<string,unknown>:{detail})}),
+  ]);
+  return id;
+}
+
+/** Complete the reserved operation atomically with its final central audit event. */
+export async function completeReservedSecurityAudit(db:Db,actor:AuthenticatedActor,operationId:string,action:string,resourceType:string,resourceId:string|null,outcome:SecurityAuditOutcome,detail:unknown={}){
+  const now=Date.now();
+  await db.batch([
+    securityAuditStatement(db,actor,action,resourceType,resourceId,outcome,{operationId,...(detail&&typeof detail==="object"?detail as Record<string,unknown>:{detail})}),
+    db.prepare("UPDATE security_audit_outbox SET status=?,detail_json=?,completed_at=? WHERE id=? AND status='reserved'")
+      .bind(outcome,securityAuditDetailJson(detail),now,operationId),
+  ]);
+}
+
 export function authError(error:unknown,fallback="Request failed"){
   if(error instanceof Response){
     if(isGovernedHttpError(error))return error;
