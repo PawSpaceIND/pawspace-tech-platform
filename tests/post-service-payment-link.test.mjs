@@ -71,6 +71,7 @@ test("payment-link expiry, webhook mapping and refund-required payment ID stay c
     INSERT INTO canonical_bookings VALUES ('BK-LINK','completed','PROVIDER-1','CUS-1');
     INSERT INTO booking_payments VALUES ('PAY-LINK','BK-LINK','CUS-1',1149,'INR','created','pay_after_service','uat_sandbox','{}',0);
   `);
+  sqlite.exec("ALTER TABLE booking_payments ADD COLUMN method TEXT NOT NULL DEFAULT 'upi'");
   installFinancialLifecycleSchema(sqlite);
   const db = makeD1(sqlite), reconciliation = await import("../lib/grooming-payment-reconciliation.ts");
   const expectedExpirySeconds = Math.floor((Date.now() + 24 * 60 * 60 * 1000) / 1000);
