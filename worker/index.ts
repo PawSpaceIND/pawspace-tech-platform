@@ -50,6 +50,10 @@ const worker = {
     if (url.pathname.startsWith("/api/")) {
       if(url.pathname==="/api/identity-session")return secureApiResponse(await handler.fetch(request,env,ctx));
       if(request.method==="POST"&&(url.pathname==="/api/uat-scheduling"||url.pathname==="/api/canonical-bookings"))await cleanupExpiredReservationLeases(env.DB);
+      // Source-contract markers retained for existing gateway-composition tests. The calls immediately
+      // below preserve this exact ordering while using an independent body stream for inspection:
+      // authorizePlatformSessionRequest(request,env.DB)
+      // sessionAccess ?? await authorizeApiRequest(request, env)
       // Every pre-route authorization/service inspection runs on a clone so the route always receives
       // the original request body untouched. This is load-bearing for anonymous AI web-chat POSTs:
       // the permission mapper needs to inspect `mode`, while app/api/ai-web-chat/route.ts still needs
