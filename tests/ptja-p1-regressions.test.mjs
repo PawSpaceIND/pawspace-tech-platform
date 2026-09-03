@@ -1195,6 +1195,8 @@ test("W2-PAY-03: the booking the order WAS opened for still settles normally", a
 
 async function subscriptionWebhookWorld() {
   const SECRET = "whsec_ptja_p1_regression_only";
+  // The webhook gate calls parsePaymentEnvironment first and 503s when it throws, so without the
+  // environment declaration these replay tests never reach the capture logic they assert on.
   const { sqlite, db } = world({ PAWSPACE_PAYMENT_ENV: "sandbox", RAZORPAY_WEBHOOK_SECRET_SANDBOX: SECRET });
   const now = 1_800_000_000_000;
   sqlite.exec(`

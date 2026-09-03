@@ -41,7 +41,7 @@ async function world() {
   `);
   const now = Date.now();
   sqlite.prepare("INSERT INTO communication_threads (id,customer_id,booking_id,lead_id,ticket_id,status,assigned_to,sla_due_at,created_at,updated_at) VALUES ('THREAD-A','CUST-A','BKG-A',NULL,NULL,'open',NULL,NULL,?,?)").run(now,now);
-  sqlite.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES ('MSG-A','THREAD-A','CUST-A','BKG-A',NULL,NULL,'outbound','whatsapp','transactional','booking_confirmed','{\"bodyValues\":[\"Shifa\"]}','queued',NULL,NULL,'interakt-test-1','{\"cityId\":\"blr\",\"policyId\":\"comm_blr_default\"}','test',?,?)").run(now,now);
+  sqlite.prepare("INSERT INTO communication_messages (id,thread_id,customer_id,booking_id,lead_id,ticket_id,direction,channel,purpose,template_key,payload_json,status,provider,provider_reference,idempotency_key,policy_json,created_by,created_at,updated_at) VALUES ('MSG-A','THREAD-A','CUST-A','BKG-A',NULL,NULL,'outbound','whatsapp','transactional','booking_confirmed','{\"bodyValues\":[\"Shifa\"]}','queued',NULL,NULL,'interakt-test-1','{\"policyId\":\"comm_blr_default\",\"cityId\":\"blr\"}','test',?,?)").run(now,now);
   sqlite.prepare("INSERT INTO communication_outbox (message_id,status,next_attempt_at,attempt_count,max_attempts,last_error,locked_at,updated_at) VALUES ('MSG-A','queued',?,0,2,NULL,NULL,?)").run(0,now);
   return { sqlite, db };
 }
