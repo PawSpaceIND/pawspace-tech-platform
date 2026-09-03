@@ -1,6 +1,6 @@
 import{authError,database}from"../../../lib/server-auth";
 import{processGatewayEvent,type GatewayEvent}from"../../../lib/grooming-payment-reconciliation";
-import{resolvePaymentWebhookGate}from"../../../lib/payment-webhook-gate";
+import{resolvePaymentWebhookGate,webhookEventFreshness}from"../../../lib/payment-webhook-gate";
 import{acceptRazorpayWebhook,advancePaymentState,postBalancedJournal,type PaymentState}from"../../../lib/financial-lifecycle";
 import{ACCT}from"../../../lib/finance-accounts";
 import{isPawSpaceSubscriptionPayload,processSubscriptionProviderEvent}from"../../../lib/subscription-billing";
@@ -88,6 +88,23 @@ export async function POST(request:Request){
     const payload=(accepted.duplicate?JSON.parse(String(accepted.row.raw_payload||"{}")):accepted.event) as RazorPayload;
     const eventType=String(payload.event||"").trim();
     if(!eventType){await markInbox(db,accepted.row,"REJECTED",undefined,"missing_event_type");return json({error:"Webhook event type is required"},400);}
+    /*
+     * FRESHNESS, after verification and before any processing.
+     *
+     * It has to run after acceptRazorpayWebhook because created_at lives inside the body, and reading
+     * the body for an authority decision before the signature is checked would be acting on unverified
+     * input. It has to run before claimInbox because a stale event is not work to be claimed - it is
+     * refused, marked terminally REJECTED so no retry sweep picks it up, and never reaches the money
+     * path or any of the side effects keyed on the event id.
+     *
+     * The replayed and the genuine delivery of one body are byte-identical, so the receiver cannot tell
+     * them apart by content. Age is the only thing that separates them, and this is where it is read.
+     */
+    const freshness=webhookEventFreshness((payload as RazorPayload).created_at);
+    if(!freshness.fresh){
+      await markInbox(db,accepted.row,"REJECTED",eventType,freshness.reason);
+      return json({error:"Webhook timestamp is outside the accepted window",code:freshness.reason},400);
+    }
     if(!(await claimInbox(db,accepted.row,eventType)))return json({ok:true,environment:gate.environment,duplicate:true,status:String(accepted.row.processing_status)});
     try{
       // Refunds are checked first because a provider-generated proration refund may not carry a

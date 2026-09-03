@@ -140,9 +140,15 @@ const refundEvent = (bookingId, amountSubunits, { refundId = "rfnd_ADV1", type =
   payload: { refund: { entity: { id: refundId, payment_id: "pay_ADV1", order_id: "order_ADV1", amount: amountSubunits, currency: "INR", notes: { booking_id: bookingId } } } },
 });
 
+// Returns null when the reconciliation table does not exist AT ALL — which is itself the strongest
+// form of "no money moved", because ensurePaymentReconciliationTables only runs once an event reaches
+// processGatewayEvent. A refusal upstream of that leaves no table, and a helper that threw there would
+// report a working guard as a broken test.
 const money = (paymentId) => {
-  const row = sqlite.prepare("SELECT captured_amount,refunded_amount,gateway_status,reconciliation_status FROM payment_reconciliation_records WHERE payment_id=?").get(paymentId);
-  return row ? { ...row } : null;
+  try {
+    const row = sqlite.prepare("SELECT captured_amount,refunded_amount,gateway_status,reconciliation_status FROM payment_reconciliation_records WHERE payment_id=?").get(paymentId);
+    return row ? { ...row } : null;
+  } catch { return null; }
 };
 const payStatus = (paymentId) => sqlite.prepare("SELECT status FROM booking_payments WHERE id=?").get(paymentId)?.status;
 const refundStatus = (bookingId) => sqlite.prepare("SELECT status FROM booking_refund_cases WHERE booking_id=?").get(bookingId)?.status;

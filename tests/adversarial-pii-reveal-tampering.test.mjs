@@ -311,6 +311,33 @@ test("[OPEN] PII-09: a reveal granted on a self-asserted assignment must not be 
 // 2. Boundaries that already hold. Regression locks.
 // =============================================================================================
 
+test("PII-09b: a booking id belonging to a DIFFERENT customer cannot justify this customer's reveal", async () => {
+  // The composed case, and the one a naive server-side lookup still gets wrong. The actor IS genuinely
+  // the assignee on a thread, and the booking it names IS genuinely confirmed and imminent - the two
+  // records simply describe different customers. Reading assignment from one and the schedule from the
+  // other stitches a justification out of two halves that were never about the same person.
+  //
+  // Written after a mutation survived: deleting the booking-belongs-to-subject check changed nothing,
+  // because every other test's booking id resolves to no canonical_bookings row at all. This is the
+  // fixture that makes that check load-bearing.
+  const { sqlite, db, headers, now, email } = await staffWorld("associate");
+  seedSubject(sqlite, now);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,idempotency_key TEXT NOT NULL UNIQUE,customer_id TEXT NOT NULL,pet_ids_json TEXT NOT NULL DEFAULT '[]',source_pet_ids_json TEXT NOT NULL DEFAULT '[]',city_id TEXT NOT NULL,zone_id TEXT NOT NULL,service_code TEXT NOT NULL,package_code TEXT NOT NULL,package_name TEXT NOT NULL,schedule_group_id TEXT NOT NULL UNIQUE,provider_id TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'confirmed',channel TEXT NOT NULL DEFAULT 'customer_app',total_amount REAL NOT NULL,currency TEXT NOT NULL DEFAULT 'INR',pricing_json TEXT NOT NULL DEFAULT '{}',created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  // A real, confirmed, imminent booking — for SOMEBODY ELSE.
+  sqlite.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,total_amount,created_by,created_at,updated_at) VALUES ('BK-OTHERS','k-BK-OTHERS','CUST-SOMEONE-ELSE','blr','blr-east','grooming','pkg','Pkg','g-BK-OTHERS','prov_1',?,?,'confirmed',2000,'seed',?,?)")
+    .run(new Date(now + HOUR).toISOString(), new Date(now + 2 * HOUR).toISOString(), now, now);
+  // …and a thread on that same booking id that really is assigned to the caller, filed under OUR subject.
+  await seedAssignedBooking(db, { threadId: "THREAD-X", bookingId: "BK-OTHERS", assignedTo: email });
+  const result = await reveal(headers, {
+    customerId: "CUST-PII", purpose: "operations", reason: REASON,
+    assignment: { type: "booking", id: "BK-OTHERS" },
+  });
+  assert.notEqual(result.body?.data?.address?.precision, "full",
+    `a booking belonging to another customer must not open this one's address: ${JSON.stringify(result).slice(0, 400)}`);
+  assert.equal(exposes(result.body, RAW_LINE1), false, "line 1 must not be served");
+  assert.equal(exposes(result.body, RAW_PHONE), false, "nor the phone");
+});
+
 test("PII-10: a role without customers.view cannot reach the surface at all, tampered body or not", async () => {
   const { sqlite, headers, now, email } = await staffWorld("finance");
   seedSubject(sqlite, now);
