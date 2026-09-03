@@ -21,19 +21,26 @@ export type CityLaunchConfigInput={id?:string;cityCode:string;city:string;state:
 const serviceNames:CityLaunchService[]=["Grooming","Training","Boarding","Pet Sitting"];
 const parse=<T,>(value:unknown,fallback:T):T=>{try{return JSON.parse(String(value??""))as T;}catch{return fallback;}};
 
-export async function ensureCityLaunchTables(db:Db){await db.batch([
-  db.prepare("CREATE TABLE IF NOT EXISTS city_launch_configs (id TEXT PRIMARY KEY,city_code TEXT NOT NULL UNIQUE,city TEXT NOT NULL,state TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'Draft',centre TEXT NOT NULL DEFAULT '',radius_km REAL NOT NULL DEFAULT 15,pincodes TEXT NOT NULL DEFAULT '',gst_included INTEGER NOT NULL DEFAULT 1,services_json TEXT NOT NULL DEFAULT '{}',version INTEGER NOT NULL DEFAULT 1,updated_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
-  db.prepare("CREATE INDEX IF NOT EXISTS idx_city_launch_status ON city_launch_configs(status)"),
-  db.prepare("CREATE TABLE IF NOT EXISTS city_launch_config_audit (id TEXT PRIMARY KEY,city_config_id TEXT NOT NULL,city TEXT NOT NULL,action TEXT NOT NULL,before_json TEXT,after_json TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
-]);}
+const cityLaunchTablesReady=new WeakSet<Db>();
+const cityLaunchSeedReady=new WeakSet<Db>();
+export async function ensureCityLaunchTables(db:Db){
+  if(cityLaunchTablesReady.has(db))return;
+  const rows=await db.prepare("SELECT name FROM sqlite_master WHERE name IN ('city_launch_configs','idx_city_launch_status','city_launch_config_audit')").all<Row>().catch(()=>({results:[] as Row[]}));
+  if(new Set(rows.results.map(row=>String(row.name))).size!==3)await db.batch([
+    db.prepare("CREATE TABLE IF NOT EXISTS city_launch_configs (id TEXT PRIMARY KEY,city_code TEXT NOT NULL UNIQUE,city TEXT NOT NULL,state TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'Draft',centre TEXT NOT NULL DEFAULT '',radius_km REAL NOT NULL DEFAULT 15,pincodes TEXT NOT NULL DEFAULT '',gst_included INTEGER NOT NULL DEFAULT 1,services_json TEXT NOT NULL DEFAULT '{}',version INTEGER NOT NULL DEFAULT 1,updated_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_city_launch_status ON city_launch_configs(status)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS city_launch_config_audit (id TEXT PRIMARY KEY,city_config_id TEXT NOT NULL,city TEXT NOT NULL,action TEXT NOT NULL,before_json TEXT,after_json TEXT NOT NULL,actor_id TEXT NOT NULL,created_at INTEGER NOT NULL)"),
+  ]);
+  cityLaunchTablesReady.add(db);
+}
 
-export async function seedDefaultCityLaunchConfigs(db:Db){await ensureCityLaunchTables(db);const now=Date.now();
-  const services:Record<CityLaunchService,CityServicePrice>={Grooming:{enabled:true,price:1349},Training:{enabled:true,price:3500},Boarding:{enabled:true,price:899},"Pet Sitting":{enabled:true,price:699}};
+export async function seedDefaultCityLaunchConfigs(db:Db){
+  if(cityLaunchSeedReady.has(db))return;await ensureCityLaunchTables(db);
+  const existing=await db.prepare("SELECT id,pincodes,updated_by FROM city_launch_configs WHERE id='bengaluru'").first<Row>();
   const exactPincodes=BENGALURU_SUPPORTED_PINCODES.join(",");
-  await db.prepare("INSERT OR IGNORE INTO city_launch_configs (id,city_code,city,state,status,centre,radius_km,pincodes,gst_included,services_json,version,updated_by,created_at,updated_at) VALUES ('bengaluru','blr','Bengaluru','Karnataka','Live','12.9716, 77.5946',35,?,1,?,1,'founder_seed',?,?)").bind(exactPincodes,JSON.stringify(services),now,now).run();
-  // Correct the previous seed which advertised every pincode from 560001-560110 even though only
-  // explicitly mapped zones are fulfilment-ready. Never overwrite an operator-managed config.
-  await db.prepare("UPDATE city_launch_configs SET pincodes=?,version=version+1,updated_at=? WHERE id='bengaluru' AND updated_by='founder_seed' AND REPLACE(pincodes,'–','-')='560001-560110'").bind(exactPincodes,now).run();
+  if(!existing){const now=Date.now();const services:Record<CityLaunchService,CityServicePrice>={Grooming:{enabled:true,price:1349},Training:{enabled:true,price:3500},Boarding:{enabled:true,price:899},"Pet Sitting":{enabled:true,price:699}};await db.prepare("INSERT OR IGNORE INTO city_launch_configs (id,city_code,city,state,status,centre,radius_km,pincodes,gst_included,services_json,version,updated_by,created_at,updated_at) VALUES ('bengaluru','blr','Bengaluru','Karnataka','Live','12.9716, 77.5946',35,?,1,?,1,'founder_seed',?,?)").bind(exactPincodes,JSON.stringify(services),now,now).run();}
+  else if(String(existing.updated_by)==='founder_seed'&&String(existing.pincodes).replace('–','-')==='560001-560110'){const now=Date.now();await db.prepare("UPDATE city_launch_configs SET pincodes=?,version=version+1,updated_at=? WHERE id='bengaluru' AND updated_by='founder_seed' AND REPLACE(pincodes,'–','-')='560001-560110'").bind(exactPincodes,now).run();}
+  cityLaunchSeedReady.add(db);
 }
 
 function rowToConfig(row:Row):CityLaunchConfig{return{

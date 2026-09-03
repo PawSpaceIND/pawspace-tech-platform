@@ -16,28 +16,19 @@ type Row=Record<string,unknown>;
 const leadWorkItemsEnsured=new WeakSet<Db>();
 export async function ensureLeadWorkItemsTable(db:Db){
   if(leadWorkItemsEnsured.has(db))return;
-  await db.batch([
-    db.prepare("CREATE TABLE IF NOT EXISTS lead_work_items (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, source TEXT NOT NULL, service TEXT NOT NULL, owner TEXT NOT NULL, manager TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', stage TEXT NOT NULL DEFAULT 'day_1', work_day INTEGER NOT NULL DEFAULT 1, assigned_at INTEGER NOT NULL, first_action_due_at INTEGER NOT NULL, manager_alert_at INTEGER NOT NULL, first_action_at INTEGER, call_attempts INTEGER NOT NULL DEFAULT 0, whatsapp_attempts INTEGER NOT NULL DEFAULT 0, last_outcome TEXT, next_action_at INTEGER, recycle_at INTEGER, recycle_cycle INTEGER NOT NULL DEFAULT 0, opt_out INTEGER NOT NULL DEFAULT 0, converted_booking_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)"),
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_lead_work_items_customer ON lead_work_items(customer_id,status,assigned_at)"),
-  ]);
-  // initiated_booking_id records WHICH booking a lead was linked to before payment, so the later
-  // payment-capture conversion credits that exact lead. Without it, a customer with two open leads
-  // could have the wrong one marked converted (attribution went to whichever was newest).
-  // The table is created inline by several routes with a fixed column list, so migrate additively.
+  const schema=await db.prepare("SELECT name FROM sqlite_master WHERE name IN ('lead_work_items','idx_lead_work_items_customer','booking_attribution','idx_booking_attribution_type')").all<Row>().catch(()=>({results:[] as Row[]}));
   const columns=await db.prepare("PRAGMA table_info(lead_work_items)").all<Row>().catch(()=>({results:[] as Row[]}));
-  if(columns.results.length&&!columns.results.some(column=>String(column.name)==="initiated_booking_id")){
-    await db.prepare("ALTER TABLE lead_work_items ADD COLUMN initiated_booking_id TEXT").run().catch(()=>{});
+  const ready=new Set(schema.results.map(row=>String(row.name))).size===4&&columns.results.some(column=>String(column.name)==="initiated_booking_id");
+  if(!ready){
+    await db.batch([
+      db.prepare("CREATE TABLE IF NOT EXISTS lead_work_items (id TEXT PRIMARY KEY, customer_id TEXT NOT NULL, source TEXT NOT NULL, service TEXT NOT NULL, owner TEXT NOT NULL, manager TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active', stage TEXT NOT NULL DEFAULT 'day_1', work_day INTEGER NOT NULL DEFAULT 1, assigned_at INTEGER NOT NULL, first_action_due_at INTEGER NOT NULL, manager_alert_at INTEGER NOT NULL, first_action_at INTEGER, call_attempts INTEGER NOT NULL DEFAULT 0, whatsapp_attempts INTEGER NOT NULL DEFAULT 0, last_outcome TEXT, next_action_at INTEGER, recycle_at INTEGER, recycle_cycle INTEGER NOT NULL DEFAULT 0, opt_out INTEGER NOT NULL DEFAULT 0, converted_booking_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)"),
+      db.prepare("CREATE INDEX IF NOT EXISTS idx_lead_work_items_customer ON lead_work_items(customer_id,status,assigned_at)"),
+    ]);
+    const repairedColumns=columns.results.length?columns:await db.prepare("PRAGMA table_info(lead_work_items)").all<Row>().catch(()=>({results:[] as Row[]}));
+    if(repairedColumns.results.length&&!repairedColumns.results.some(column=>String(column.name)==="initiated_booking_id"))await db.prepare("ALTER TABLE lead_work_items ADD COLUMN initiated_booking_id TEXT").run().catch(()=>{});
+    await db.prepare("CREATE TABLE IF NOT EXISTS booking_attribution (booking_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,service_code TEXT NOT NULL,attribution_type TEXT NOT NULL,lead_id TEXT,source TEXT NOT NULL DEFAULT 'system',detail_json TEXT NOT NULL DEFAULT '{}',recorded_at INTEGER NOT NULL)").run();
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_booking_attribution_type ON booking_attribution(attribution_type,recorded_at)").run().catch(()=>{});
   }
-  /*
-   * The booking's ORIGIN, recorded once per booking. [PTJA-W3-LA]
-   *
-   * The approved rule says a booking with no matching lead credits nobody and is recorded as a direct
-   * booking - and that if the Identity Spine needs an originating record, it gets a clearly labelled
-   * system one rather than an unrelated marketing lead being modified. This is that record. PRIMARY KEY
-   * on booking_id, so a replayed hook cannot inflate either figure.
-   */
-  await db.prepare("CREATE TABLE IF NOT EXISTS booking_attribution (booking_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,service_code TEXT NOT NULL,attribution_type TEXT NOT NULL,lead_id TEXT,source TEXT NOT NULL DEFAULT 'system',detail_json TEXT NOT NULL DEFAULT '{}',recorded_at INTEGER NOT NULL)").run();
-  await db.prepare("CREATE INDEX IF NOT EXISTS idx_booking_attribution_type ON booking_attribution(attribution_type,recorded_at)").run().catch(()=>{});
   leadWorkItemsEnsured.add(db);
 }
 
