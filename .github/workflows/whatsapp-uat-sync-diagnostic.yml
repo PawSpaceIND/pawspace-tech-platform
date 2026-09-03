@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     concurrency: pawspace-staging-deploy
     env:
-      TARGET_SHA: 994c4a0d403bb63d864ee1f20d2889e81c518410
+      TARGET_SHA: d581786c638ee8b28e7834a5dacd68c343f8b401
       STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
       WRANGLER_CONFIG: dist/server/wrangler.json
     steps:
