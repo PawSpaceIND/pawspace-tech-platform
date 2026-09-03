@@ -67,61 +67,32 @@ jobs:
           for(const blocker of blockers)console.log(`Meta blocker: ${blocker.replace(/[\r\n]/g," ")}`);
           NODE
 
-      - name: Recover non-secret Meta identifiers from staging version history
+      - name: Restore known non-secret Meta UAT identifiers and preserve staging bindings
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
           SETTINGS="$RUNNER_TEMP/settings.json"
-          VERSIONS="$RUNNER_TEMP/versions.json"
-          VERSION_IDS="$RUNNER_TEMP/version-ids.txt"
-          VIEW="$RUNNER_TEMP/version-view.json"
-          FOUND="$RUNNER_TEMP/meta-identifiers.json"
-          export SETTINGS VERSIONS VERSION_IDS VIEW FOUND
-          trap 'rm -f "$SETTINGS" "$VERSIONS" "$VERSION_IDS" "$VIEW" "$FOUND"' EXIT
-
+          export SETTINGS
+          trap 'rm -f "$SETTINGS"' EXIT
           HTTP="$(curl --silent --show-error --output "$SETTINGS" --write-out '%{http_code}' --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" --header 'Accept: application/json' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/pawspace-staging/settings")"
           [ "$HTTP" = "200" ] || { echo "Unable to snapshot staging settings (HTTP $HTTP); response withheld." >&2; exit 1; }
-
-          npx wrangler versions list --name pawspace-staging --json > "$VERSIONS" 2>/dev/null
           node --input-type=module <<'NODE'
           import{readFileSync,writeFileSync}from"node:fs";
-          const root=JSON.parse(readFileSync(process.env.VERSIONS,"utf8"));const ids=[];
-          const walk=v=>{if(!v||typeof v!=="object")return;if(typeof v.id==="string"&&/^[0-9a-f-]{36}$/i.test(v.id)&&!ids.includes(v.id))ids.push(v.id);for(const child of Object.values(v))walk(child)};walk(root);
-          if(!ids.length)throw new Error("No staging Worker versions available for safe Meta identifier recovery");
-          writeFileSync(process.env.VERSION_IDS,ids.slice(0,50).join("\n")+"\n");writeFileSync(process.env.FOUND,"{}");
-          console.log(`Scanning ${Math.min(ids.length,50)} staging version(s); values withheld.`);
-          NODE
-
-          while IFS= read -r VERSION_ID; do
-            [ -n "$VERSION_ID" ] || continue
-            if ! npx wrangler versions view "$VERSION_ID" --name pawspace-staging --json > "$VIEW" 2>/dev/null; then continue; fi
-            node --input-type=module <<'NODE'
-          import{readFileSync,writeFileSync}from"node:fs";
-          const view=JSON.parse(readFileSync(process.env.VIEW,"utf8"));const found=JSON.parse(readFileSync(process.env.FOUND,"utf8"));
-          const wanted=new Set(["META_WHATSAPP_PHONE_NUMBER_ID","META_WHATSAPP_WABA_ID"]);
-          const walk=v=>{if(!v||typeof v!=="object")return;if(typeof v.name==="string"&&wanted.has(v.name)&&String(v.type||"")==="plain_text"){const value=typeof v.text==="string"?v.text:typeof v.value==="string"?v.value:"";if(value&&!found[v.name])found[v.name]=value}for(const child of Object.values(v))walk(child)};walk(view);
-          writeFileSync(process.env.FOUND,JSON.stringify(found),{mode:0o600});
-          NODE
-            COUNT="$(node --input-type=module -e 'import{readFileSync}from"node:fs";const v=JSON.parse(readFileSync(process.env.FOUND,"utf8"));process.stdout.write(String(Object.keys(v).length))')"
-            [ "$COUNT" = "2" ] && break
-          done < "$VERSION_IDS"
-
-          node --input-type=module <<'NODE'
-          import{readFileSync,writeFileSync}from"node:fs";
-          const found=JSON.parse(readFileSync(process.env.FOUND,"utf8"));
-          const required=["META_WHATSAPP_PHONE_NUMBER_ID","META_WHATSAPP_WABA_ID"];
-          if(required.some(name=>!String(found[name]||"").trim()))throw new Error("Historical staging versions do not contain both required Meta identifiers");
-          const settings=JSON.parse(readFileSync(process.env.SETTINGS,"utf8"));const bindings=Array.isArray(settings?.result?.bindings)?settings.result.bindings:[];
-          const remoteVars={};for(const b of bindings){if(b?.type!=="plain_text")continue;const n=String(b?.name||"").trim();if(/^[A-Z0-9_]+$/.test(n))remoteVars[n]=String(b?.text??b?.value??"")}
+          const settings=JSON.parse(readFileSync(process.env.SETTINGS,"utf8"));
+          const bindings=Array.isArray(settings?.result?.bindings)?settings.result.bindings:[];
+          const remoteVars={};
+          for(const b of bindings){if(b?.type!=="plain_text")continue;const n=String(b?.name||"").trim();if(/^[A-Z0-9_]+$/.test(n))remoteVars[n]=String(b?.text??b?.value??"")}
+          const knownUatIds={META_WHATSAPP_PHONE_NUMBER_ID:"1334980146365492",META_WHATSAPP_WABA_ID:"1647621440064984"};
           const config=JSON.parse(readFileSync(process.env.WRANGLER_CONFIG,"utf8"));
-          config.vars={...remoteVars,...found,...(config.vars||{})};config.keep_vars=true;
+          if(config.name!=="pawspace-staging")throw new Error("Refusing to modify a non-staging Worker config");
+          config.vars={...remoteVars,...knownUatIds,...(config.vars||{})};
+          config.keep_vars=true;
           const aiPresent=bindings.some(b=>String(b?.name||"")==="AI"&&/ai/i.test(String(b?.type||"")));
           if(aiPresent)config.ai={binding:"AI"};
-          if(config.name!=="pawspace-staging")throw new Error("Refusing to modify a non-staging Worker config");
           writeFileSync(process.env.WRANGLER_CONFIG,JSON.stringify(config,null,2),{mode:0o600});
-          console.log(`Recovered both Meta identifier bindings; values withheld. Existing plain vars preserved=${Object.keys(remoteVars).length}; Workers AI preserved=${aiPresent}.`);
+          console.log(`Restored both known Meta UAT identifier bindings; values withheld. Existing plain vars preserved=${Object.keys(remoteVars).length}; Workers AI preserved=${aiPresent}.`);
           NODE
 
       - name: Deploy exact WhatsApp gateway SHA to staging only
