@@ -50,31 +50,13 @@ jobs:
           PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
         run: node scripts/stage-config.mjs
 
-      - name: Diagnose current Meta blockers without values
-        env:
-          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
-        run: |
-          set -euo pipefail
-          node --input-type=module <<'NODE'
-          const base=String(process.env.STAGING_URL||"").replace(/\/$/,"");
-          const login=await fetch(`${base}/api/staging-login`,{method:"POST",headers:{"content-type":"application/json",origin:base},body:JSON.stringify({action:"login",code:String(process.env.PAWSPACE_UAT_ACCESS_CODE||""),email:"founder@pawspace.in"}),redirect:"manual",signal:AbortSignal.timeout(15000)});
-          const cookie=String(login.headers.get("set-cookie")||"").split(";")[0];if(!cookie)throw new Error("staging sign-in failed");
-          const r=await fetch(`${base}/api/integration-readiness`,{headers:{cookie},signal:AbortSignal.timeout(15000)});let p=null;try{p=await r.json()}catch{};
-          const modules=p?.uatSandbox?.modules||p?.data?.uatSandbox?.modules||[];const m=Array.isArray(modules)?modules.find(x=>x?.code==="meta_whatsapp"):null;
-          const blockers=Array.isArray(m?.blockers)?m.blockers.map(String):[];
-          console.log(`Meta configuredForExternalTest=${Boolean(r.ok&&m?.configuredForExternalTest===true)}`);
-          console.log(`Meta blockerCount=${blockers.length}`);
-          for(const blocker of blockers)console.log(`Meta blocker: ${blocker.replace(/[\r\n]/g," ")}`);
-          NODE
-
       - name: Restore known non-secret Meta UAT identifiers and preserve staging bindings
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
-          SETTINGS="$RUNNER_TEMP/settings.json"
-          export SETTINGS
+          SETTINGS="$RUNNER_TEMP/settings.json"; export SETTINGS
           trap 'rm -f "$SETTINGS"' EXIT
           HTTP="$(curl --silent --show-error --output "$SETTINGS" --write-out '%{http_code}' --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" --header 'Accept: application/json' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/pawspace-staging/settings")"
           [ "$HTTP" = "200" ] || { echo "Unable to snapshot staging settings (HTTP $HTTP); response withheld." >&2; exit 1; }
@@ -84,15 +66,14 @@ jobs:
           const bindings=Array.isArray(settings?.result?.bindings)?settings.result.bindings:[];
           const remoteVars={};
           for(const b of bindings){if(b?.type!=="plain_text")continue;const n=String(b?.name||"").trim();if(/^[A-Z0-9_]+$/.test(n))remoteVars[n]=String(b?.text??b?.value??"")}
-          const knownUatIds={META_WHATSAPP_PHONE_NUMBER_ID:"1334980146365492",META_WHATSAPP_WABA_ID:"1647621440064984"};
           const config=JSON.parse(readFileSync(process.env.WRANGLER_CONFIG,"utf8"));
           if(config.name!=="pawspace-staging")throw new Error("Refusing to modify a non-staging Worker config");
-          config.vars={...remoteVars,...knownUatIds,...(config.vars||{})};
+          config.vars={...remoteVars,META_WHATSAPP_PHONE_NUMBER_ID:"1334980146365492",META_WHATSAPP_WABA_ID:"1647621440064984",...(config.vars||{})};
           config.keep_vars=true;
           const aiPresent=bindings.some(b=>String(b?.name||"")==="AI"&&/ai/i.test(String(b?.type||"")));
           if(aiPresent)config.ai={binding:"AI"};
           writeFileSync(process.env.WRANGLER_CONFIG,JSON.stringify(config,null,2),{mode:0o600});
-          console.log(`Restored both known Meta UAT identifier bindings; values withheld. Existing plain vars preserved=${Object.keys(remoteVars).length}; Workers AI preserved=${aiPresent}.`);
+          console.log(`Prepared staging-only config with both Meta identifiers; values withheld. Preserved plain vars=${Object.keys(remoteVars).length}; Workers AI preserved=${aiPresent}.`);
           NODE
 
       - name: Deploy exact WhatsApp gateway SHA to staging only
@@ -110,8 +91,10 @@ jobs:
           node --input-type=module <<'NODE'
           import{writeFileSync}from"node:fs";
           const names=["PAWSPACE_UAT_ACCESS_CODE","PAWSPACE_UAT_SIGNING_KEY","PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT","META_WHATSAPP_UAT_ACCESS_TOKEN"];
-          const values=Object.fromEntries(names.map(name=>[name,String(process.env[name]||"").trim()]));if(Object.values(values).some(v=>!v))throw new Error("A required UAT-only deployment secret is missing");
-          values.PAWSPACE_STAGING_LIVE_CUSTOMER_OTP="false";writeFileSync(process.env.SECRETS,JSON.stringify(values),{mode:0o600});
+          const values=Object.fromEntries(names.map(name=>[name,String(process.env[name]||"").trim()]));
+          if(Object.values(values).some(v=>!v))throw new Error("A required UAT-only deployment secret is missing");
+          values.PAWSPACE_STAGING_LIVE_CUSTOMER_OTP="false";
+          writeFileSync(process.env.SECRETS,JSON.stringify(values),{mode:0o600});
           NODE
           if ! npx wrangler deploy --config "$WRANGLER_CONFIG" --keep-vars --message "staging $TARGET_SHA whatsapp-uat-repair" --secrets-file "$SECRETS" > "$LOG" 2>&1; then echo "Staging-only Wrangler deploy failed; raw output withheld." >&2; exit 1; fi
           URL="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' "$LOG" | tail -n 1 || true)"
@@ -135,14 +118,19 @@ jobs:
           set -euo pipefail
           node --input-type=module <<'NODE'
           const base=String(process.env.STAGING_URL||"").replace(/\/$/,"");
-          const health=await fetch(`${base}/healthz`,{redirect:"manual",signal:AbortSignal.timeout(15000)});if(health.status!==200)throw new Error(`healthz HTTP ${health.status}`);
-          const getProbe=await fetch(`${base}/api/whatsapp/meta-webhook`,{redirect:"manual",signal:AbortSignal.timeout(15000)});if(getProbe.status!==403)throw new Error(`Meta GET verifier boundary HTTP ${getProbe.status}`);
-          const invalid=await fetch(`${base}/api/whatsapp/meta-webhook`,{method:"POST",headers:{"content-type":"application/json","x-hub-signature-256":"sha256=invalid-uat-probe"},body:JSON.stringify({object:"whatsapp_business_account",entry:[]}),redirect:"manual",signal:AbortSignal.timeout(15000)});if(invalid.status!==401)throw new Error(`invalid signature HTTP ${invalid.status}`);
-          const login=await fetch(`${base}/api/staging-login`,{method:"POST",headers:{"content-type":"application/json",origin:base},body:JSON.stringify({action:"login",code:String(process.env.PAWSPACE_UAT_ACCESS_CODE||""),email:"founder@pawspace.in"}),redirect:"manual",signal:AbortSignal.timeout(15000)});const cookie=String(login.headers.get("set-cookie")||"").split(";")[0];if(!cookie)throw new Error("staging sign-in failed");
-          const r=await fetch(`${base}/api/integration-readiness`,{headers:{cookie},signal:AbortSignal.timeout(15000)});let p=null;try{p=await r.json()}catch{};const modules=p?.uatSandbox?.modules||p?.data?.uatSandbox?.modules||[];const m=Array.isArray(modules)?modules.find(x=>x?.code==="meta_whatsapp"):null;const blockers=Array.isArray(m?.blockers)?m.blockers:[];
-          console.log(`Meta configuredForExternalTest=${Boolean(r.ok&&m?.configuredForExternalTest===true)}; blockerCount=${blockers.length}`);
-          if(!(r.ok&&m?.configuredForExternalTest===true))throw new Error(`Meta runtime readiness incomplete: ${blockers.map(String).join("; ")}`);
-          console.log("healthz=200; webhook is public but verifier-guarded; invalid signature rejected.");
+          let lastError="";
+          for(let i=0;i<6;i++){
+            try{
+              const health=await fetch(`${base}/healthz`,{redirect:"manual",signal:AbortSignal.timeout(20000)});if(health.status!==200)throw new Error(`healthz HTTP ${health.status}`);
+              const getProbe=await fetch(`${base}/api/whatsapp/meta-webhook`,{redirect:"manual",signal:AbortSignal.timeout(20000)});if(getProbe.status!==403)throw new Error(`Meta GET verifier boundary HTTP ${getProbe.status}`);
+              const invalid=await fetch(`${base}/api/whatsapp/meta-webhook`,{method:"POST",headers:{"content-type":"application/json","x-hub-signature-256":"sha256=invalid-uat-probe"},body:JSON.stringify({object:"whatsapp_business_account",entry:[]}),redirect:"manual",signal:AbortSignal.timeout(20000)});if(invalid.status!==401)throw new Error(`invalid signature HTTP ${invalid.status}`);
+              const login=await fetch(`${base}/api/staging-login`,{method:"POST",headers:{"content-type":"application/json",origin:base},body:JSON.stringify({action:"login",code:String(process.env.PAWSPACE_UAT_ACCESS_CODE||""),email:"founder@pawspace.in"}),redirect:"manual",signal:AbortSignal.timeout(20000)});const cookie=String(login.headers.get("set-cookie")||"").split(";")[0];if(!cookie)throw new Error("staging sign-in failed");
+              const r=await fetch(`${base}/api/integration-readiness`,{headers:{cookie},signal:AbortSignal.timeout(20000)});let p=null;try{p=await r.json()}catch{};const modules=p?.uatSandbox?.modules||p?.data?.uatSandbox?.modules||[];const m=Array.isArray(modules)?modules.find(x=>x?.code==="meta_whatsapp"):null;const blockers=Array.isArray(m?.blockers)?m.blockers:[];
+              if(!(r.ok&&m?.configuredForExternalTest===true))throw new Error(`Meta runtime readiness incomplete: ${blockers.map(String).join("; ")}`);
+              console.log("Meta configuredForExternalTest=true; healthz=200; webhook public verifier boundary active; invalid signature rejected.");process.exit(0);
+            }catch(e){lastError=e instanceof Error?e.message:String(e);await new Promise(r=>setTimeout(r,3000));}
+          }
+          throw new Error(lastError||"Meta staging verification failed");
           NODE
 
       - name: Synchronize allow-listed Meta templates and prove access token wiring
@@ -152,10 +140,10 @@ jobs:
           set -euo pipefail
           node --input-type=module <<'NODE'
           const base=String(process.env.STAGING_URL||"").replace(/\/$/,"");
-          const login=await fetch(`${base}/api/staging-login`,{method:"POST",headers:{"content-type":"application/json",origin:base},body:JSON.stringify({action:"login",code:String(process.env.PAWSPACE_UAT_ACCESS_CODE||""),email:"founder@pawspace.in"}),redirect:"manual",signal:AbortSignal.timeout(15000)});const cookie=String(login.headers.get("set-cookie")||"").split(";")[0];if(!cookie)throw new Error("staging sign-in failed");
+          const login=await fetch(`${base}/api/staging-login`,{method:"POST",headers:{"content-type":"application/json",origin:base},body:JSON.stringify({action:"login",code:String(process.env.PAWSPACE_UAT_ACCESS_CODE||""),email:"founder@pawspace.in"}),redirect:"manual",signal:AbortSignal.timeout(20000)});const cookie=String(login.headers.get("set-cookie")||"").split(";")[0];if(!cookie)throw new Error("staging sign-in failed");
           const sync=await fetch(`${base}/api/whatsapp/meta-admin`,{method:"POST",headers:{"content-type":"application/json",origin:base,cookie},body:JSON.stringify({action:"sync_templates"}),signal:AbortSignal.timeout(30000)});let sp=null;try{sp=await sync.json()}catch{};const result=sp?.data||{};
           console.log(`Template sync HTTP=${sync.status}; status=${String(result.status||"unknown")}; considered=${Number(result.considered??-1)}; allowlistMatches=${Number(result.synced??-1)}`);
           if(!sync.ok||String(result.status||"")!=="synced"||Number(result.synced||0)<1)throw new Error("Meta template synchronization did not produce an allow-listed match");
-          const state=await fetch(`${base}/api/whatsapp/meta-admin`,{headers:{cookie},signal:AbortSignal.timeout(15000)});let body=null;try{body=await state.json()}catch{};const templates=Array.isArray(body?.data?.templates)?body.data.templates:[];const approved=templates.filter(t=>String(t?.status||"")==="approved");
+          const state=await fetch(`${base}/api/whatsapp/meta-admin`,{headers:{cookie},signal:AbortSignal.timeout(20000)});let body=null;try{body=await state.json()}catch{};const templates=Array.isArray(body?.data?.templates)?body.data.templates:[];const approved=templates.filter(t=>String(t?.status||"")==="approved");
           console.log(`Approved allow-listed templates=${approved.length}`);if(!state.ok||approved.length<1)throw new Error("No approved allow-listed Meta template is available for outbound UAT");
           NODE
