@@ -36,13 +36,18 @@ function setup(state={failAudit:false}){
 const post=(body)=>route.POST(new Request("https://control.pawspace.in/api/platform-governance",{method:"POST",headers:{"content-type":"application/json","oai-authenticated-user-email":ADMIN_EMAIL},body:JSON.stringify(body)}));
 const roleOf=(sqlite,id)=>sqlite.prepare("SELECT role_code FROM app_users WHERE id=?").get(id)?.role_code;
 
+// The OUTCOME asserted here is unchanged - 403, role untouched, refusal audited. Only the reason
+// differs: main closes this through unheldGrants (insufficient_clearance), which refuses the grant
+// whoever the recipient is, rather than through a dedicated self-check. The self-directed fact is
+// still carried in the audit detail, and that is asserted too, so the trail has not got weaker.
 test("admin cannot switch its own role to another non-wildcard privilege domain",async()=>{
   const sqlite=setup();
   const response=await post({action:"update_user",id:"U-ADMIN",roleCode:"finance",status:"active"});
   assert.equal(response.status,403);
   assert.equal(roleOf(sqlite,"U-ADMIN"),"admin");
   const denial=sqlite.prepare("SELECT detail_json FROM security_audit_events WHERE action='update_user' AND outcome='denied' ORDER BY created_at DESC LIMIT 1").get();
-  assert.match(String(denial?.detail_json),/self_role_change_blocked/);
+  assert.match(String(denial?.detail_json),/insufficient_clearance/);
+  assert.match(String(denial?.detail_json),/"selfDirected":true/,"the trail must still identify a self-directed attempt");
 });
 
 test("admin cannot delegate a role containing grants outside the admin active grant set",async()=>{
@@ -51,7 +56,9 @@ test("admin cannot delegate a role containing grants outside the admin active gr
   assert.equal(response.status,403);
   assert.equal(roleOf(sqlite,"U-STAFF"),"associate");
   const denial=sqlite.prepare("SELECT detail_json FROM security_audit_events WHERE action='update_user' AND outcome='denied' ORDER BY created_at DESC LIMIT 1").get();
-  assert.match(String(denial?.detail_json),/delegation_exceeds_actor_grants/);
+  assert.match(String(denial?.detail_json),/insufficient_clearance/);
+  // Same rule, different recipient - which is the point of not making it a self-check.
+  assert.match(String(denial?.detail_json),/"selfDirected":false/);
 });
 
 test("audit insert failure rolls back the user role mutation",async()=>{

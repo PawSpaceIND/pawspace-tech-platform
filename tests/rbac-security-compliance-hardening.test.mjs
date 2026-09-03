@@ -10,22 +10,61 @@ const onboarding=read("app/api/provider-onboarding/route.ts");
 const reconciliation=read("app/api/payment-reconciliation/route.ts");
 const subscriptionAdmin=read("app/api/subscription-billing-admin/route.ts");
 
+/*
+ * The PROPERTY under test is unchanged: nothing the caller says may decide its own reveal. The
+ * MECHANISM is #448's, which landed first (main 64cc52a) and is the stricter of the two.
+ *
+ * This PR originally kept assignedTo/status/scheduledStart/completedAt on RevealInput and rejected a
+ * body carrying them at runtime (client_assignment_not_accepted). #448 instead DELETES those four
+ * fields from the type, so there is no code path that can read them even if a caller sends them - a
+ * removed field cannot be forgotten about, where a runtime rejection has to be maintained. The
+ * assertions below therefore pin the absence, which is what actually makes the guarantee.
+ */
 test("PII reveal authority is resolved from canonical D1 state, not request assignment fields",()=>{
-  assert.match(reveal,/client_assignment_not_accepted/);
-  assert.match(reveal,/Object\.prototype\.hasOwnProperty\.call\(body,"assignment"\)/);
-  assert.match(reveal,/Object\.prototype\.hasOwnProperty\.call\(body,"assignedTo"\)/);
-  assert.match(reveal,/SELECT id,customer_id,owner,status FROM lead_work_items WHERE id=\?/);
-  assert.match(reveal,/SELECT id,customer_id,provider_id,status,scheduled_start,scheduled_end FROM canonical_bookings WHERE id=\?/);
-  assert.match(reveal,/Assignment does not belong to this customer/);
-  assert.ok(reveal.indexOf("canonicalAssignment(db")<reveal.indexOf("mayReveal(accessActor"),"server assignment must be resolved before mayReveal");
+  // The four deciding attributes are absent from the wire type entirely.
+  const revealInput=reveal.match(/type RevealInput=\{[^}]*\}[^;]*;/)?.[0]??"";
+  assert.ok(revealInput,"RevealInput type must be declared");
+  for(const field of ["assignedTo","status","scheduledStart","completedAt"]){
+    assert.doesNotMatch(revealInput,new RegExp(field),`RevealInput must not accept ${field} from the caller`);
+  }
+  // `assignment` survives only as a pointer: which record, nothing more.
+  assert.match(revealInput,/assignment\?:\{type\?:"lead"\|"booking";id\?:string\}\|null/);
+  // Every deciding attribute is read from the database instead.
+  assert.match(reveal,/SELECT id,owner,stage FROM crm_contacts WHERE id=\?/);
+  assert.match(reveal,/FROM communication_threads WHERE booking_id=\? AND customer_id=\?/);
+  assert.match(reveal,/SELECT customer_id,status,scheduled_start,scheduled_end FROM canonical_bookings WHERE id=\?/);
+  // A record belonging to a different customer justifies nothing.
+  assert.match(reveal,/if\(booking&&String\(booking\.customer_id\?\?""\)!==customerId\)return null/);
+  assert.ok(reveal.indexOf("resolvedAssignment(db")<reveal.indexOf("mayReveal(accessActor"),"server assignment must be resolved before mayReveal");
+  // And the resolved assignment is what the audit trail records, not the claimed one.
+  assert.match(reveal,/assignmentType:assignment\?\.type\?\?null,assignmentId:assignment\?\.id\?\?null/);
 });
 
-test("administrators cannot self-switch roles or delegate grants they do not hold",()=>{
-  assert.match(governance,/self_role_change_blocked/);
-  assert.match(governance,/delegation_exceeds_actor_grants/);
-  assert.match(governance,/actorMayGrantPermissions/);
+/*
+ * Same property, #448's mechanism again, and here the difference is substantive rather than stylistic.
+ *
+ * This PR blocked the self-directed case explicitly (self_role_change_blocked) on top of a delegation
+ * check. #448 argues - persuasively, and it landed first - that a self-check is the wrong guard: it
+ * leaves the identical escalation available through a second account the same actor controls, and it
+ * wrongly permits handing a COLLEAGUE authority the actor cannot exercise. unheldGrants() asks about
+ * the grant rather than the recipient, so it holds for self, colleague and new account alike, which
+ * SUBSUMES the self case rather than dropping it. That is why there is no self_role_change_blocked
+ * assertion here any more: the escalation it named is closed by a broader rule.
+ */
+test("administrators cannot delegate grants they do not hold, to anyone including themselves",()=>{
+  assert.match(governance,/function unheldGrants\(/);
+  assert.match(governance,/insufficient_clearance/);
   assert.match(governance,/current\.permissions\.includes\("\*"\)/);
-  assert.match(governance,/permissions\.every\(permission=>held\.has\(permission\)\)/);
+  assert.match(governance,/requested\.filter\(grant=>!held\.has\(grant\)\)/);
+  // Applied to every writer of authority, not just the one the report happened to name.
+  for(const action of ["create_user","update_user","save_role"]){
+    const at=governance.indexOf(`action==="${action}"`);
+    assert.ok(at>=0,`${action} branch must exist`);
+    const branch=governance.slice(at,governance.indexOf("return Response.json({ok:true})",at));
+    assert.match(branch,/unheldGrants\(current,/,`${action} must apply the clearance rule`);
+  }
+  // The self-directed case is still identifiable in the trail even though it is not the guard.
+  assert.match(governance,/selfDirected:normaliseCode\(target\?\.email\)===normaliseCode\(current\.email\)/);
 });
 
 test("user and custom-role mutations batch state and central audit together",()=>{
