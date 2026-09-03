@@ -227,3 +227,48 @@ test("a suppressed message of any purpose never enters the outbox", async () => 
     assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM communication_outbox").get().c, 0, `${purpose} suppression must not be deliverable`);
   }
 });
+
+// --- the caller's clock reaches the queue ---------------------------------
+//
+// nextAttempt is floored at "now" so nothing is scheduled before the caller's own clock. That floor
+// read Date.now(), so a sweep running on an `asOf` of its own - a replay, a backfill, or any run whose
+// due-ness was decided against a fixed instant - had its scheduledAt silently raised to the wall
+// clock. The row it had just queued was then invisible to its own delivery pass (which selects
+// next_attempt_at <= asOf) and the queue timestamp was non-deterministic.
+//
+// Both directions are asserted, so neither can pass by accident: with `asOf` the queue is stamped at
+// the caller's instant, and without it the wall clock is still used. The pinned Date.now() above is
+// what makes that contrast observable - the backfill instant is 30 days before it.
+
+const BACKFILL = NOW - 30 * 86_400_000;
+
+test("a backfilled sweep queues on its own clock, not the wall clock", async () => {
+  const { sqlite, db, comms } = await world();
+  seedCustomer(sqlite, "CU-BACKFILL");
+  setPreference(sqlite, "CU-BACKFILL", { serviceUpdates: true });
+  const result = await comms.enqueueCommunication(db, {
+    customerId: "CU-BACKFILL", cityId: "blr", channel: "whatsapp", purpose: "lifecycle",
+    idempotencyKey: "contract-backfill-1", templateKey: "lifecycle_template", payload: {},
+    createdBy: "system", scheduledAt: BACKFILL, asOf: BACKFILL,
+  });
+  assert.equal(result.status, "queued", "a backfilled lifecycle message is due, not deferred");
+  assert.equal(result.nextAttempt, BACKFILL, "the returned attempt time is the caller's clock");
+  const row = sqlite.prepare("SELECT next_attempt_at,status FROM communication_outbox WHERE message_id=?").get(result.messageId);
+  assert.equal(Number(row.next_attempt_at), BACKFILL, "and so is the row the delivery pass reads");
+  assert.equal(row.status, "queued");
+});
+
+test("without a caller clock the wall clock is still the floor", async () => {
+  // Non-vacuity for the test above: the same backfilled scheduledAt, with no asOf, must NOT be
+  // honoured - it is raised to the engine's own now, which is exactly the old behaviour.
+  const { sqlite, db, comms } = await world();
+  seedCustomer(sqlite, "CU-NOCLOCK");
+  setPreference(sqlite, "CU-NOCLOCK", { serviceUpdates: true });
+  const result = await comms.enqueueCommunication(db, {
+    customerId: "CU-NOCLOCK", cityId: "blr", channel: "whatsapp", purpose: "lifecycle",
+    idempotencyKey: "contract-backfill-2", templateKey: "lifecycle_template", payload: {},
+    createdBy: "system", scheduledAt: BACKFILL,
+  });
+  assert.equal(result.nextAttempt, NOW, "an omitted asOf changes nothing about the previous behaviour");
+  assert.notEqual(result.nextAttempt, BACKFILL);
+});
