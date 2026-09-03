@@ -1,0 +1,43 @@
+name: Subscribe WhatsApp UAT app to test WABA
+
+on:
+  push:
+    branches:
+      - fix/whatsapp-uat-staging-deploy-isolation
+    paths:
+      - .github/workflows/subscribe-whatsapp-uat-app-to-waba.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  subscribe:
+    runs-on: ubuntu-latest
+    env:
+      META_APP_ID: '922882727551525'
+      META_WABA_ID: '1647621440064984'
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Subscribe current UAT app and verify
+        env:
+          META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const token=String(process.env.META_WHATSAPP_UAT_ACCESS_TOKEN||'').trim();
+          const waba=String(process.env.META_WABA_ID||'').trim();
+          const app=String(process.env.META_APP_ID||'').trim();
+          if(!token||!waba||!app)throw new Error('Required UAT Meta configuration unavailable');
+          const safeJson=async r=>{try{return await r.json()}catch{return{}}};
+          const post=await fetch(`https://graph.facebook.com/v23.0/${waba}/subscribed_apps`,{method:'POST',headers:{authorization:`Bearer ${token}`},signal:AbortSignal.timeout(30000)});
+          const pp=await safeJson(post);
+          if(!post.ok){const e=pp?.error||{};console.log(`WABA subscribe failed: HTTP=${post.status}; code=${Number(e.code||0)}; subcode=${Number(e.error_subcode||0)}.`);process.exit(2);}
+          console.log(`WABA subscribe request accepted=${pp?.success===true}.`);
+          const get=await fetch(`https://graph.facebook.com/v23.0/${waba}/subscribed_apps`,{headers:{authorization:`Bearer ${token}`},signal:AbortSignal.timeout(30000)});
+          const gp=await safeJson(get);if(!get.ok){const e=gp?.error||{};console.log(`WABA verification failed: HTTP=${get.status}; code=${Number(e.code||0)}; subcode=${Number(e.error_subcode||0)}.`);process.exit(3);}
+          const rows=Array.isArray(gp?.data)?gp.data:[];const yes=rows.some(x=>String(x?.id||'')===app);
+          console.log(`currentUatAppSubscribed=${yes}; subscribedAppCount=${rows.length}`);if(!yes)process.exit(4);
+          NODE
