@@ -21,13 +21,13 @@ test("Interakt adapter is production-gated, canonical-owned, consent-gated and t
  assert.match(source,/INTERAKT_API_KEY/);
  assert.match(source,/resolveCanonicalRecipientOwnership/);
  assert.match(source,/SELECT whatsapp_consent,opt_out FROM customer_contact_preferences/);
- assert.match(source,/whatsapp_consent\) === 1/);
- assert.match(source,/opt_out \|\| 0\) === 0/);
- assert.match(source,/status\) !== "approved"/);
+ assert.match(source,/Number\(row!\.whatsapp_consent\)===1/);
+ assert.match(source,/Number\(row!\.opt_out\|\|0\)===0/);
+ assert.match(source,/text\(row\.status\)!=="approved"/);
  assert.match(source,/failOutboxAttempt/);
- assert.match(source,/recordDeliveryEvent/);
+ assert.match(source,/recordAtomicDeliveryEvent/);
  assert.match(source,/https:\/\/api\.interakt\.ai\/v1\/public\/message\//);
- assert.match(source,/authorization: `Basic \$\{apiKey\}`/);
+ assert.match(source,/authorization:`Basic \$\{apiKey\}`/);
 });
 
 test("Interakt webhook signature matches the vendor sha256=HMAC-SHA256 contract",async()=>{
@@ -35,9 +35,9 @@ test("Interakt webhook signature matches the vendor sha256=HMAC-SHA256 contract"
  const secret="test-only-interakt-webhook-secret",raw='{"foo":1,"bar":2}';
  const expected=`sha256=${createHmac("sha256",secret).update(raw).digest("hex")}`;
  assert.equal(await adapter.signInteraktWebhook(secret,raw),expected);
- const source=read("lib/interakt-whatsapp.ts");
- assert.match(source,/interakt-signature/);
- assert.match(source,/invalid_interakt_signature/);
+ const verifier=read("lib/interakt-whatsapp-base.ts");
+ assert.match(verifier,/interakt-signature/);
+ assert.match(verifier,/invalid_interakt_signature/);
 });
 
 test("production workflow binds Interakt secrets through the 0600 secrets file and keeps live voice unavailable",()=>{
