@@ -1,10 +1,9 @@
-import{authError,database,requirePermission,resolveActor,securityAudit}from"../../../lib/server-auth";
+import{authError,completeReservedSecurityAudit,database,requirePermission,reserveSecurityAudit,resolveActor}from"../../../lib/server-auth";
 import{listPaymentExceptions,resolvePaymentException}from"../../../lib/grooming-payment-reconciliation";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin reconciliation write blocked",{status:403});}
 
-// Finance payment-reconciliation console: view exceptions; manually attach / refund / investigate / dismiss.
 export async function GET(request:Request){
   try{
     const url=new URL(request.url),db=await database(),actor=await resolveActor(request);requirePermission(actor,"finance.view");
@@ -18,8 +17,15 @@ export async function POST(request:Request){
     const db=await database(),actor=await resolveActor(request);requirePermission(actor,"finance.manage");
     const body=await request.json() as {exceptionId?:string;action?:string;bookingId?:string;note?:string};
     if(!body.exceptionId||!body.action||!body.note)return json({error:"An exception, action and note are required"},400);
-    const data=await resolvePaymentException(db,{exceptionId:body.exceptionId,action:body.action,bookingId:body.bookingId,actorId:actor.email,note:body.note});
-    await securityAudit(db,actor,"payment.exception.resolve","payment_exception",body.exceptionId,"completed",{action:body.action,bookingId:body.bookingId});
-    return json({data},200);
+    const auditAction="payment.exception.resolve",resourceId=body.exceptionId;
+    const operationId=await reserveSecurityAudit(db,actor,auditAction,"payment_exception",resourceId,{action:body.action,bookingId:body.bookingId});
+    try{
+      const data=await resolvePaymentException(db,{exceptionId:body.exceptionId,action:body.action,bookingId:body.bookingId,actorId:actor.email,note:body.note});
+      await completeReservedSecurityAudit(db,actor,operationId,auditAction,"payment_exception",resourceId,"completed",{action:body.action,bookingId:body.bookingId});
+      return json({data},200);
+    }catch(error){
+      await completeReservedSecurityAudit(db,actor,operationId,auditAction,"payment_exception",resourceId,"rejected",{action:body.action,bookingId:body.bookingId,error:error instanceof Error?error.message:"payment_exception_resolution_failed"}).catch(()=>{});
+      throw error;
+    }
   }catch(error){return authError(error,"Unable to resolve payment exception");}
 }
