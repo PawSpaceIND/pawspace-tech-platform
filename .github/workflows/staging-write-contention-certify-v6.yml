@@ -1,4 +1,4 @@
-name: Certify canonical booking contention remediation
+name: Certify final Track 3 scheduling remediation
 
 on:
   push:
@@ -16,7 +16,8 @@ concurrency:
 
 env:
   STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
-  TARGET_SHA: d1a358152e244bcfb19db88684da0991f663965c
+  TARGET_SHA: 4ef551ef24762e7c689e84de67dc46b6fb649e9f
+  CANONICAL_FIX_SHA: d1a358152e244bcfb19db88684da0991f663965c
 
 jobs:
   certify:
@@ -28,10 +29,12 @@ jobs:
         with:
           ref: ${{ env.TARGET_SHA }}
           fetch-depth: 0
-      - name: Verify exact remediation SHA
+      - name: Verify exact remediation lineage
         run: |
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
-          git log -1 --pretty=%s | grep -Fx "fix(bookings): eliminate synchronous write contention in canonical booking phase"
+          git log -1 --pretty=%s | grep -Fx "perf(scheduling): remove redundant schema work from assignment path"
+          git merge-base --is-ancestor "$CANONICAL_FIX_SHA" HEAD
+          git show -s --pretty=%s "$CANONICAL_FIX_SHA" | grep -Fx "fix(bookings): eliminate synchronous write contention in canonical booking phase"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -39,7 +42,7 @@ jobs:
       - run: npm run install:ci
       - name: Validate remediation and financial invariants
         run: |
-          node --experimental-strip-types --test tests/ptja-w2-b2-collection-ledger.test.mjs tests/ptja-w2-08-revenue-reconciliation.test.mjs tests/uat-scheduling-d1-contention.test.mjs tests/scheduling-reservation-leases.test.mjs
+          node --experimental-strip-types --test tests/ptja-w2-b2-collection-ledger.test.mjs tests/ptja-w2-08-revenue-reconciliation.test.mjs tests/uat-scheduling-d1-contention.test.mjs tests/scheduling-reservation-leases.test.mjs tests/schema-declaration-consistency.test.mjs tests/uat-convergence-source-contract.test.mjs
           npm run typecheck
           npm run build
       - name: Configure isolated staging
