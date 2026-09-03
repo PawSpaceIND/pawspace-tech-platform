@@ -24,7 +24,7 @@ async function contractServer() {
       const match = scenario.match(/HTTP_(400|401|429|500|503)/);
       if (match) {
         response.writeHead(Number(match[1]), { "content-type": "application/json" });
-        response.end(JSON.stringify({ error: { description: `contract-test-${match[1]}` }));
+        response.end(JSON.stringify({ error: { description: `contract-test-${match[1]}` } }));
         return;
       }
       if (scenario.includes("INVALID")) {
