@@ -11,7 +11,7 @@ export type OrderResult =
   | { connected: false; environment: PaymentEnvironment; reason: string };
 export type PaymentLinkResult =
   | { connected: true; environment: "sandbox"; paymentLink: Record<string, unknown> }
-  | { connected: false; environment: PaymentEnvironment; reason: string };
+  | { connected: false; environment: PaymentEnvironment | "unconfigured"; reason: string };
 
 export function paymentEnvironment(env: RazorEnv): PaymentEnvironment {
   return parsePaymentEnvironment(env);
@@ -118,7 +118,11 @@ export async function createPaymentOrder(env: RazorEnv, input: { bookingId: stri
 }
 
 export async function createSandboxPaymentLink(env: RazorEnv, input: { bookingId: string; paymentId: string; referenceId: string; customerId: string; amount: number; currency: string; expiresAt: number }): Promise<PaymentLinkResult> {
-  const { environment, keyId, keySecret } = credentials(env);
+  let resolved: { environment: PaymentEnvironment; keyId: string; keySecret: string };
+  try { resolved = credentials(env); } catch (error) {
+    return { connected: false, environment: "unconfigured", reason: error instanceof Error ? error.message : String(error) };
+  }
+  const { environment, keyId, keySecret } = resolved;
   if (environment !== "sandbox") return { connected: false, environment, reason: "Post-service payment links are locked to Razorpay sandbox" };
   if (!keyId || !keySecret) return { connected: false, environment, reason: "Razorpay sandbox API credentials are not configured - payment link was not created" };
   let amountPaise: number;
