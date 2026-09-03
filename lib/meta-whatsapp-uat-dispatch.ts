@@ -8,6 +8,7 @@ const text=(value:unknown)=>String(value??"").trim();
 const digits=(value:unknown)=>text(value).replace(/\D/g,"");
 const list=(value:unknown)=>text(value).split(",").map(item=>item.trim()).filter(Boolean);
 const json=<T>(value:unknown,fallback:T):T=>{try{return JSON.parse(String(value??""))as T}catch{return fallback}};
+const syncStageError=(stage:string,error:unknown)=>new Error(`uat_sync_${stage}${error instanceof Error?`:${error.name}`:""}`);
 
 export type MetaTemplateStatus="approved"|"pending_approval"|"rejected"|"paused"|"disabled";
 export function normalizeMetaTemplateStatus(value:unknown):MetaTemplateStatus{
@@ -66,10 +67,13 @@ export async function dispatchMetaWhatsAppUat(db:D1Database,env:Env,input:{messa
 }
 
 export async function syncMetaWhatsAppTemplates(db:D1Database,env:Env,input:{actorId:string;fetcher?:Fetcher}){
- await ensureWhatsAppUatTables(db);const token=text(env.META_WHATSAPP_UAT_ACCESS_TOKEN),wabaId=text(env.META_WHATSAPP_WABA_ID);if(text(env.PAWSPACE_COMMUNICATION_ENV).toLowerCase()!=="uat"||!token||!wabaId)return{status:"not_configured",synced:0,externalDelivery:false};
+ try{await ensureWhatsAppUatTables(db);}catch(error){throw syncStageError("ensure_tables",error);}
+ const token=text(env.META_WHATSAPP_UAT_ACCESS_TOKEN),wabaId=text(env.META_WHATSAPP_WABA_ID);if(text(env.PAWSPACE_COMMUNICATION_ENV).toLowerCase()!=="uat"||!token||!wabaId)return{status:"not_configured",synced:0,externalDelivery:false};
  const allowed=new Set(list(env.META_WHATSAPP_TEMPLATE_ALLOWLIST));if(!allowed.size)return{status:"allowlist_required",synced:0,externalDelivery:false};
- const response=await(input.fetcher??fetch)(`${graphUrl(env,`${wabaId}/message_templates`)}?fields=name,status,category,language&limit=100`,{headers:{authorization:`Bearer ${token}`},redirect:"error"});if(!response.ok)throw new Error(`Meta template sync failed with HTTP ${response.status}`);
- const payload=await response.json()as Record<string,unknown>,rows=Array.isArray(payload.data)?payload.data as Array<Record<string,unknown>>:[],now=Date.now();let synced=0;
- for(const row of rows){const name=text(row.name);if(!name||!allowed.has(name))continue;await db.prepare("INSERT INTO whatsapp_uat_templates (template_key,status,category,approved_language,updated_by,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(template_key) DO UPDATE SET status=excluded.status,category=excluded.category,approved_language=excluded.approved_language,updated_by=excluded.updated_by,updated_at=excluded.updated_at").bind(name,normalizeMetaTemplateStatus(row.status),text(row.category).toLowerCase()||"utility",text(row.language)||"en",input.actorId,now).run();synced++;}
+ let response:Response;try{response=await(input.fetcher??fetch)(`${graphUrl(env,`${wabaId}/message_templates`)}?fields=name,status,category,language&limit=100`,{headers:{authorization:`Bearer ${token}`},redirect:"error"});}catch(error){throw syncStageError("template_fetch",error);}
+ if(!response.ok)throw new Error(`Meta template sync failed with HTTP ${response.status}`);
+ let payload:Record<string,unknown>;try{payload=await response.json()as Record<string,unknown>;}catch(error){throw syncStageError("template_payload",error);}
+ const rows=Array.isArray(payload.data)?payload.data as Array<Record<string,unknown>>:[],now=Date.now();let synced=0;
+ for(const row of rows){const name=text(row.name);if(!name||!allowed.has(name))continue;try{await db.prepare("INSERT INTO whatsapp_uat_templates (template_key,status,category,approved_language,updated_by,updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(template_key) DO UPDATE SET status=excluded.status,category=excluded.category,approved_language=excluded.approved_language,updated_by=excluded.updated_by,updated_at=excluded.updated_at").bind(name,normalizeMetaTemplateStatus(row.status),text(row.category).toLowerCase()||"utility",text(row.language)||"en",input.actorId,now).run();}catch(error){throw syncStageError("template_upsert",error);}synced++;}
  return{status:"synced",synced,considered:rows.length,externalDelivery:false};
 }
