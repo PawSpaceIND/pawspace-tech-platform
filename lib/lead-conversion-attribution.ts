@@ -16,8 +16,7 @@ type Row=Record<string,unknown>;
 const leadWorkItemsEnsured=new WeakSet<Db>();
 export async function ensureLeadWorkItemsTable(db:Db){
   if(leadWorkItemsEnsured.has(db))return;
-  const schema=await db.prepare("SELECT name FROM sqlite_master WHERE name IN ('lead_work_items','idx_lead_work_items_customer','booking_attribution','idx_booking_attribution_type')").all<Row>().catch(()=>({results:[] as Row[]}));
-  const columns=await db.prepare("PRAGMA table_info(lead_work_items)").all<Row>().catch(()=>({results:[] as Row[]}));
+  const[schema,columns]=await Promise.all([db.prepare("SELECT name FROM sqlite_master WHERE name IN ('lead_work_items','idx_lead_work_items_customer','booking_attribution','idx_booking_attribution_type')").all<Row>().catch(()=>({results:[] as Row[]})),db.prepare("PRAGMA table_info(lead_work_items)").all<Row>().catch(()=>({results:[] as Row[]}))]);
   const ready=new Set(schema.results.map(row=>String(row.name))).size===4&&columns.results.some(column=>String(column.name)==="initiated_booking_id");
   if(!ready){
     await db.batch([
@@ -59,7 +58,7 @@ export async function bookingAttributionSummary(db:Db,input:{from?:number;to?:nu
  * through the payment-recovery flow (this closes the "booked-but-unpaid ≠ converted" requirement).
  * convertLeadOnPaymentCaptured() finishes the conversion when the payment webhook confirms capture.
  */
-export async function attributeBookingToOpenLead(db:Db,input:{customerId:string;bookingId:string}):Promise<{leadId:string|null;converted:boolean;attribution:BookingAttributionType}>{
+export async function attributeBookingToOpenLead(db:Db,input:{customerId:string;bookingId:string;serviceCode?:string|null;paymentStatus?:string|null}):Promise<{leadId:string|null;converted:boolean;attribution:BookingAttributionType}>{
   await ensureLeadWorkItemsTable(db);
   // WHICH lead converted. This used to be "the customer's newest open lead" with no reference to what was
   // booked, so a customer with an older Grooming enquiry and a newer Boarding enquiry who booked GROOMING
@@ -71,8 +70,8 @@ export async function attributeBookingToOpenLead(db:Db,input:{customerId:string;
   // the lead for the service that was actually booked is preferred, newest first within that service.
   // When NO open lead matches, the newest-open-lead behaviour is unchanged: crediting nobody would be a
   // product decision about what an unmatched conversion means. [PTJA-P1-F1]
-  const booked=await db.prepare("SELECT service_code FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>().catch(()=>null);
-  const bookedService=String(booked?.service_code||"").trim().toLowerCase();
+  const booked=input.serviceCode==null?await db.prepare("SELECT service_code FROM canonical_bookings WHERE id=?").bind(input.bookingId).first<Row>().catch(()=>null):null;
+  const bookedService=String(input.serviceCode??booked?.service_code??"").trim().toLowerCase();
   const openLead=bookedService?await db.prepare(
     "SELECT id FROM lead_work_items WHERE customer_id=? AND converted_booking_id IS NULL AND status NOT IN ('closed','converted') AND lower(trim(service))=? ORDER BY assigned_at DESC LIMIT 1"
   ).bind(input.customerId,bookedService).first<Row>().catch(()=>null):null;
@@ -91,8 +90,8 @@ export async function attributeBookingToOpenLead(db:Db,input:{customerId:string;
     return{leadId:null,converted:false,attribution:"direct_booking"};
   }
   const leadId=String(openLead.id),now=Date.now();
-  const payment=await db.prepare("SELECT status FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Row>().catch(()=>null);
-  const captured=String(payment?.status||"")==="captured";
+  const payment=input.paymentStatus==null?await db.prepare("SELECT status FROM booking_payments WHERE booking_id=?").bind(input.bookingId).first<Row>().catch(()=>null):null;
+  const captured=String(input.paymentStatus??payment?.status??"")==="captured";
   await recordAttribution(db,{bookingId:input.bookingId,customerId:input.customerId,serviceCode:bookedService,type:"lead",leadId,detail:{matchedOn:"customer_and_service"}});
   if(captured){
     await db.prepare("UPDATE lead_work_items SET converted_booking_id=?,status='converted',updated_at=? WHERE id=? AND converted_booking_id IS NULL").bind(input.bookingId,now,leadId).run();

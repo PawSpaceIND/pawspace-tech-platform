@@ -95,3 +95,18 @@ test("lease cleanup uses a non-destructive generation-aware marker claim",()=>{
   assert.match(leases,/ON CONFLICT\(group_id\) DO UPDATE SET reason=excluded\.reason,released_at=excluded\.released_at WHERE scheduling_reservation_lease_cleanup\.released_at<excluded\.released_at/);
   assert.match(leases,/released_at=\?/);
 });
+
+
+test("canonical downstream batching removes redundant new-booking D1 waits",()=>{
+  const canonical=fs.readFileSync(new URL("../app/api/canonical-bookings/route.ts",import.meta.url),"utf8");
+  const ledger=fs.readFileSync(new URL("../lib/collection-ledger.ts",import.meta.url),"utf8");
+  const finance=fs.readFileSync(new URL("../lib/finance-accounts.ts",import.meta.url),"utf8");
+  const leads=fs.readFileSync(new URL("../lib/lead-conversion-attribution.ts",import.meta.url),"utf8");
+  assert.match(canonical,/const\[cityVerdict,replayConflict\]=await Promise\.all/);
+  assert.match(canonical,/const\[assignment,reservations\]=await Promise\.all/);
+  assert.match(canonical,/serviceCode:input\.serviceCode,paymentStatus:paymentStatusPersisted/);
+  assert.doesNotMatch(canonical,/const booking=await timedBookingStage\("booking_readback"/);
+  assert.match(ledger,/const\[,policy\]=await Promise\.all/);
+  assert.match(finance,/const\[period,existing\]=await Promise\.all/);
+  assert.match(leads,/const\[schema,columns\]=await Promise\.all/);
+});

@@ -129,11 +129,13 @@ export async function postJournal(db: Db, input: { groupKey: string; entryDate: 
   if (datedPeriod !== input.periodCode) throw new Error(`period_mismatch: this journal is dated ${datedPeriod}; it cannot be posted as ${input.periodCode}`);
   // A missing finance_close_periods table means no period has ever been closed, so there is nothing to
   // violate - but a row that says 'locked' is decisive.
-  const period = await db.prepare("SELECT status FROM finance_close_periods WHERE period_code=?").bind(datedPeriod).first<Row>().catch(() => null);
-  if (String(period?.status ?? "") === "locked") throw new Error(`period_locked: ${datedPeriod} is closed and locked; post corrections in the next open period`);
   const journalGroup = `JRN-${input.groupKey}`;
+  const[period,existing]=await Promise.all([
+    db.prepare("SELECT status FROM finance_close_periods WHERE period_code=?").bind(datedPeriod).first<Row>().catch(() => null),
+    db.prepare("SELECT id FROM finance_journal_entries WHERE id=?").bind(`${journalGroup}-1`).first<Row>(),
+  ]);
+  if (String(period?.status ?? "") === "locked") throw new Error(`period_locked: ${datedPeriod} is closed and locked; post corrections in the next open period`);
   // every group always writes its first line as `${journalGroup}-1`, so an exact hit means already posted
-  const existing = await db.prepare("SELECT id FROM finance_journal_entries WHERE id=?").bind(`${journalGroup}-1`).first<Row>();
   if (existing) return { journalGroup, posted: false, duplicatePrevented: true };
   const now = Date.now();
   const meta = input.metadata ?? {};
