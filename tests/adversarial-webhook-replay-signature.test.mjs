@@ -9,29 +9,34 @@
  *
  * WHAT THIS FILE ATTACKS INSTEAD. Three things that verification of the body cannot answer:
  *
- *   1. THE DEDUPE KEY IS NOT SIGNED. The HMAC covers the request body. The replay key does not come
- *      from the body — it is the `x-razorpay-event-id` HEADER, and it is what both idempotency layers
- *      key on: gateway_webhook_events UNIQUE(provider,event_id) and payment_gateway_events
- *      UNIQUE(provider,event_id). So anyone holding one captured (body, signature) pair can mint
+ *   1. THE DEDUPE KEY WAS NOT SIGNED. The HMAC covers the request body. The replay key was the
+ *      `x-razorpay-event-id` HEADER, and it is what both idempotency layers key on:
+ *      gateway_webhook_events UNIQUE(provider,event_id) and payment_gateway_events
+ *      UNIQUE(provider,event_id). So anyone holding one captured (body, signature) pair could mint
  *      unlimited "new" events from it by changing a header the signature does not cover. Every
  *      event-id-based replay test in the existing suite reuses the same id and therefore never
- *      exercises this. WH-03 and WH-04 do, and they are the most important tests in the file: they
- *      measure whether MONEY moves, because that is the only question that matters here.
+ *      exercises this. WH-03 and WH-04 do.
+ *
+ *      CLOSED by acceptRazorpayWebhook recognising a body it has already accepted, via the digest of
+ *      the signature-verified payload, scoped to provider + environment. WH-03 asserts one signed body
+ *      is one event whatever the header says; WH-16 asserts the digest lookup does not mask the
+ *      event-id/payload binding underneath it; WH-16b asserts the environment scoping.
  *
  *   2. ORDERING. A gateway does not promise order, and an attacker holding old signed bodies chooses it.
  *      An authorization arriving after settlement, a failure after a capture, a refund failure after a
  *      processed refund — each would, if applied, rewrite a settled financial fact.
  *
- *   3. FRESHNESS. Nothing anywhere reads `payload.created_at` for age. extract() parses it into the
- *      event and the receiver never compares it to now, so a validly signed body is replayable forever,
- *      bounded only by the dedupe key — which, per (1), the caller controls. WH-16 states the missing
- *      window as an assertion.
+ *   3. AGE — AND WHY THERE IS DELIBERATELY NO FRESHNESS WINDOW. An earlier revision of this receiver
+ *      refused any signed body whose own created_at was more than five minutes old. It closed the replay
+ *      exposure and it was the wrong instrument: Razorpay retries a failed delivery for up to 24 hours,
+ *      so one 500 on our side during a capture would have turned every retry into a 400 and lost the
+ *      money event permanently. The replay and the retry are the SAME observable case — a byte-identical
+ *      body arriving again — so a clock cannot separate them without getting one of them wrong.
+ *      Identity can, and does. WH-03b is the test no timestamp window passes: a 90-day-old body under a
+ *      fresh header id, which must be acknowledged rather than dropped.
  *
  * EVERY REFUSAL IS ASSERTED TWICE: the status, and that no durable state was written. A status alone is
  * not the claim — the failure mode being hunted is a receiver that answers 4xx and writes anyway.
- *
- * Tests prefixed [OPEN] are expected to fail against the current receiver and are the finding stated as
- * an executable assertion.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -86,7 +91,11 @@ function seedRefundCase(bookingId, amount = 2000) {
     .run(`RFC-${bookingId}`, bookingId, `PAY-${bookingId}`, amount, "customer cancelled", NOW - 3_600_000, NOW - 3_600_000);
 }
 
-function freshDb(env = { RAZORPAY_WEBHOOK_SECRET_SANDBOX: SANDBOX_SECRET }) {
+// PAWSPACE_PAYMENT_ENV is declared EXPLICITLY. lib/payment-environment.ts parses it fail-closed and
+// raises PaymentEnvironmentConfigurationError when it is absent, so an omitted declaration resolves the
+// gate to 503 rather than defaulting to sandbox — every webhook test in the repo names it for that
+// reason.
+function freshDb(env = { PAWSPACE_PAYMENT_ENV: "sandbox", RAZORPAY_WEBHOOK_SECRET_SANDBOX: SANDBOX_SECRET }) {
   sqlite = new DatabaseSync(":memory:");
   db = makeD1(sqlite);
   globalThis.__ADV_WH_DB__ = db;
@@ -508,7 +517,12 @@ test("WH-18: a signed capture claiming a booking that does not own the gateway o
   seedBooking({ id: "bkg_adv_thief", customer: "cus_adv2" });
   await linkGatewayOrder(db, { bookingId: "bkg_adv_owner", gatewayOrderId: "order_ADV1", environment: "sandbox", actorId: "adv" });
   const result = await postSigned(captureEvent("bkg_adv_thief", 200_000, { orderId: "order_ADV1" }), { eventId: "evt_owner" });
-  assert.equal(result.body?.reason, "gateway_order_booking_mismatch", `must be refused as a mismatch: ${JSON.stringify(result.body).slice(0, 250)}`);
+  // `code` or `reason`: the atomic-capture path reports the mismatch as an error envelope carrying
+  // `code`, the reconciliation path as a 200 envelope carrying `reason`. Both are correct refusals and
+  // which one fires depends on whether the booking has a payment intent, so the assertion is on the
+  // identified cause rather than on the envelope that carried it.
+  assert.equal(result.body?.code ?? result.body?.reason, "gateway_order_booking_mismatch",
+    `must be refused as a mismatch: ${JSON.stringify(result.body).slice(0, 250)}`);
   assert.equal(Number(money("PAY-bkg_adv_thief")?.captured_amount ?? 0), 0, "no money may land on the claiming booking");
   assert.equal(payStatus("PAY-bkg_adv_thief"), "created", "and its payment must stay unpaid");
 });
