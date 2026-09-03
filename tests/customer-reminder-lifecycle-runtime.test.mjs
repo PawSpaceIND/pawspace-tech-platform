@@ -48,6 +48,20 @@ function makeD1(sqlite) {
 
 const DAY = 86_400_000;
 const NOW = 1770000000000;
+
+// QUIET HOURS. This suite computes its expectations against NOW, but enqueueCommunication takes no
+// asOf and reads Date.now() itself, and lib/communication-engine.ts turns a message whose policy
+// release is in the future into `scheduled` rather than `queued`. comm_blr_default declares quiet
+// hours 21:00-08:00 IST, so between those hours the reminders land as `scheduled` and their queue
+// timestamps are stamped at nextQuietEnd - which is exactly what "R2 regression: queue timestamps
+// are stamped from the sweep clock, not the wall clock" was reporting: the observed 1788402600000 is
+// 08:00 IST, the quiet-hours release, not a wall clock.
+//
+// The suite passed by day and failed by night. Pinning the decision clock to the fixture's own NOW
+// puts the seeds and the decision on one instant and makes it deterministic year-round.
+const realNow = Date.now;
+test.before(() => { Date.now = () => NOW; });
+test.after(() => { Date.now = realNow; });
 const iso = (ms) => new Date(ms).toISOString();
 
 // Tables the reminder engine reads but does not own. Real DDL, taken from the owning modules.

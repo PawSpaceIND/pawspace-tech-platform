@@ -1,5 +1,6 @@
 import { authError, requirePermission, requireProviderOwnership, resolveActor } from "../../../lib/server-auth";
 import { repairSchemaDrift } from "../../../lib/schema-drift-repair";
+import { bridgeLifecycleCommunications } from "../../../lib/lifecycle-communications";
 
 /** Per-isolate guard so the in-place column repair runs once, not on every request. */
 /** One in-flight repair per isolate, so concurrent cold requests wait for it instead of racing past. */
@@ -263,6 +264,11 @@ export async function POST(request: Request) {
         db.prepare(`INSERT INTO security_audit_events (id,actor_email,actor_role,action,resource_type,resource_id,outcome,detail_json,created_at) SELECT ?,?,?,?,?,?,?,?,? WHERE ${guard}`).bind(crypto.randomUUID(),actor.email,actor.roleCode,`booking_operations.refund_${toStatus}`,"refund",String(input.refundCaseId),"completed",JSON.stringify({bookingId:input.bookingId,fromStatus,toStatus,gatewayReference:gatewayReference||null}),now,input.refundCaseId,fromStatus,toStatus,claim),
       ]);
       if(Number(applied[0]?.meta?.changes||0)!==1||Number(applied[1]?.meta?.changes||0)!==1)return json({error:"Refund status was already changed by another request",code:"refund_transition_already_claimed"},409);
+      // Only now is this request the one that actually moved the refund. Running the hand-off above
+      // the guard meant a LOSING concurrent request enqueued the winner's notification and then
+      // returned 409 - a side effect on a request it rejects. The bridge never throws, so a
+      // messaging failure still cannot undo the transition.
+      await bridgeLifecycleCommunications(db,{bookingId:input.bookingId,source:"booking_customer_notifications",actorId:actor.email});
       return json({data:{eventId,bookingId:input.bookingId,action:input.action,impactMinutes:0,impactedBookings:[],notificationsQueued:1,rebookingAvailable:false,refundCaseId:input.refundCaseId}},200);
     }
     const eventId = crypto.randomUUID();
@@ -309,6 +315,8 @@ export async function POST(request: Request) {
       statements.push(db.prepare("INSERT INTO booking_refund_cases (id,booking_id,payment_id,amount,reason,status,requested_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(refundCaseId,input.bookingId,payment?.id ?? null,Number(payment?.amount ?? 0),input.reason,"requested",actor.email,now,now));
     }
     await db.batch(statements);
+    // Committed. Same hand-off, same guarantee: bridgeLifecycleCommunications never throws.
+    await bridgeLifecycleCommunications(db, { bookingId: input.bookingId, source: "booking_customer_notifications", actorId: actor.email });
     return json({ data: { eventId, bookingId: input.bookingId, action: input.action, impactMinutes, impactedBookings, notificationsQueued: allRecipients.length * 2, rebookingAvailable, rebookingCaseId, refundCaseId, upgradeRequestId } }, 201);
   } catch (error) {
     return authError(error, "Unable to save order operation");

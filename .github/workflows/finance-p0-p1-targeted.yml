@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   finance-targeted:
-    name: Finance concurrency + typecheck
+    name: Finance payments + concurrency + typecheck + lint
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -28,6 +28,8 @@ jobs:
           cache: npm
       - name: Install verified dependencies
         run: npm run install:ci
+      - name: Payment environment + live gate + outbox hardening
+        run: node --experimental-strip-types --test tests/payments-production-hardening.test.mjs
       - name: Finance P0/P1 source contracts
         run: node --test tests/financial-lifecycle-concurrency.test.mjs
       - name: Finance P0/P1 executable concurrency and duplicate acceptance
@@ -38,3 +40,5 @@ jobs:
         run: node --test tests/razorpay-settlement-conflict.test.mjs
       - name: Typecheck
         run: npm run typecheck
+      - name: Lint
+        run: npm run lint

@@ -25,7 +25,7 @@ test("Grooming payment integration is sandbox-locked signed idempotent and recon
   const lifecycle=await source("lib/financial-lifecycle.ts");
   assert.match(lifecycle,/name: "HMAC", hash: "SHA-256"/);
   assert.ok(lifecycle.indexOf("verifyRazorpayRawBody(input.rawBody")<lifecycle.indexOf("JSON.parse(input.rawBody)"));
-  // the webhook delegates its env/secret decision to the fail-closed gate; sandbox is the default there
+  // the webhook delegates its env/secret decision to the fail-closed gate; sandbox is explicit there
   assert.match(webhook,/resolvePaymentWebhookGate/);
   assert.match(gate,/RAZORPAY_WEBHOOK_SECRET_SANDBOX/);
   assert.match(gate,/return \{ ok: true, environment: "sandbox"/);
@@ -61,10 +61,12 @@ test("Grooming payment code embeds no production secrets; live mode is a double-
   // no hard-coded live credentials anywhere
   for(const text of files){assert.doesNotMatch(text,/rzp_live_[A-Za-z0-9]+/);assert.doesNotMatch(text,/whsec_[A-Za-z0-9]+/);}
   assert.match(files[1],/PAWSPACE_PAYMENT_ENV/);assert.match(files[2],/locked to sandbox until production launch approval/);
-  // live is not hard-blocked, but requires BOTH an explicit approval flag AND a distinct live secret
+  // live is not hard-blocked, but requires BOTH an exact approval flag AND a distinct live secret
   const gate=files[3];
   assert.match(gate,/PAWSPACE_PAYMENT_LIVE_APPROVED/);
   assert.match(gate,/RAZORPAY_WEBHOOK_SECRET_LIVE/);
-  assert.match(gate,/if \(!isTrue\(env\?\.PAWSPACE_PAYMENT_LIVE_APPROVED\)\) return \{ ok: false/);
+  assert.match(gate,/parsePaymentEnvironment/);
+  assert.match(gate,/const liveApproved = \(env: Env\) => env\?\.PAWSPACE_PAYMENT_LIVE_APPROVED === "true"/);
+  assert.match(gate,/if \(!liveApproved\(env\)\) return \{ ok: false/);
   assert.match(gate,/if \(!secret\) return \{ ok: false, status: 503, reason: "Razorpay LIVE webhook secret/);
 });

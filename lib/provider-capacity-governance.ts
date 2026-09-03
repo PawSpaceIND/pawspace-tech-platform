@@ -40,6 +40,7 @@ export async function ensureProviderCapacityTables(db:Db){if(capacityTablesEnsur
   db.prepare("CREATE TABLE IF NOT EXISTS provider_unavailability (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,starts_at TEXT NOT NULL,ends_at TEXT NOT NULL,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'active',created_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_capacity_profiles_lookup ON provider_capacity_profiles(city_id,live,status,effective_from,effective_to)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_unavailability_active ON provider_unavailability(provider_id,status,starts_at,ends_at)"),
+  db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_unavailability_window ON provider_unavailability(status,starts_at,ends_at,provider_id)"),
   db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_assignment_offers_group ON provider_assignment_offers(group_id)"),
 ]);capacityTablesEnsured.add(db);}
 
