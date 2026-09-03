@@ -1,4 +1,4 @@
-name: Certify final Track 3 scheduling remediation
+name: Certify final Track 3 canonical batching remediation
 
 on:
   push:
@@ -16,9 +16,9 @@ concurrency:
 
 env:
   STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
-  TARGET_SHA: 7289063beadff7c39ee75a5e95d8e515356b9afb
-  PRIOR_SCHEDULING_FIX_SHA: 4ef551ef24762e7c689e84de67dc46b6fb649e9f
-  CANONICAL_FIX_SHA: d1a358152e244bcfb19db88684da0991f663965c
+  TARGET_SHA: 65af1a317c457d21cd5520bb273b48a066a0ee2f
+  SCHEDULING_FIX_SHA: 7289063beadff7c39ee75a5e95d8e515356b9afb
+  CANONICAL_BASE_FIX_SHA: d1a358152e244bcfb19db88684da0991f663965c
 
 jobs:
   certify:
@@ -34,11 +34,11 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
-          git log -1 --pretty=%s | grep -Fx "fix(scheduling): optimize reservation-claim concurrency and eliminate cleanup race"
-          git merge-base --is-ancestor "$PRIOR_SCHEDULING_FIX_SHA" HEAD
-          git merge-base --is-ancestor "$CANONICAL_FIX_SHA" HEAD
-          git show -s --pretty=%s "$PRIOR_SCHEDULING_FIX_SHA" | grep -Fx "perf(scheduling): remove redundant schema work from assignment path"
-          git show -s --pretty=%s "$CANONICAL_FIX_SHA" | grep -Fx "fix(bookings): eliminate synchronous write contention in canonical booking phase"
+          git log -1 --pretty=%s | grep -Fx "fix(canonical): batch ledger and verdict D1 transactions to resolve staging gate timeout"
+          git merge-base --is-ancestor "$SCHEDULING_FIX_SHA" HEAD
+          git merge-base --is-ancestor "$CANONICAL_BASE_FIX_SHA" HEAD
+          git show -s --pretty=%s "$SCHEDULING_FIX_SHA" | grep -Fx "fix(scheduling): optimize reservation-claim concurrency and eliminate cleanup race"
+          git show -s --pretty=%s "$CANONICAL_BASE_FIX_SHA" | grep -Fx "fix(bookings): eliminate synchronous write contention in canonical booking phase"
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -46,7 +46,7 @@ jobs:
       - run: npm run install:ci
       - name: Validate remediation and financial invariants
         run: |
-          node --experimental-strip-types --test tests/ptja-w2-b2-collection-ledger.test.mjs tests/ptja-w2-08-revenue-reconciliation.test.mjs tests/uat-scheduling-d1-contention.test.mjs tests/scheduling-reservation-leases.test.mjs tests/schema-declaration-consistency.test.mjs tests/uat-convergence-source-contract.test.mjs
+          node --experimental-strip-types --test tests/ptja-w2-b2-collection-ledger.test.mjs tests/ptja-w2-08-revenue-reconciliation.test.mjs tests/ptja-w3-lead-attribution.test.mjs tests/lead-engine-hardening.test.mjs tests/ptja-w1-f38-city-status-matrix.test.mjs tests/ptja-w3-waitlist-channel.test.mjs tests/ptja-p0-regressions.test.mjs tests/uat-scheduling-d1-contention.test.mjs tests/scheduling-reservation-leases.test.mjs tests/schema-declaration-consistency.test.mjs tests/uat-convergence-source-contract.test.mjs
           npm run typecheck
           npm run build
       - name: Configure isolated staging
