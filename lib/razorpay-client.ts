@@ -6,9 +6,12 @@ import{parsePaymentEnvironment,type PaymentEnvironment}from"./payment-environmen
 export type{PaymentEnvironment}from"./payment-environment";
 
 type RazorEnv = Record<string, unknown>;
+// An undeclared environment is reported as "unconfigured" rather than being named sandbox or live,
+// because nothing was declared and inventing one would be a lie. PaymentLinkResult already said this;
+// OrderResult now says it too, for the same reason and on the same code path.
 export type OrderResult =
   | { connected: true; environment: PaymentEnvironment; order: Record<string, unknown> }
-  | { connected: false; environment: PaymentEnvironment; reason: string };
+  | { connected: false; environment: PaymentEnvironment | "unconfigured"; reason: string };
 export type PaymentLinkResult =
   | { connected: true; environment: "sandbox"; paymentLink: Record<string, unknown> }
   | { connected: false; environment: PaymentEnvironment | "unconfigured"; reason: string };
@@ -17,11 +20,30 @@ export function paymentEnvironment(env: RazorEnv): PaymentEnvironment {
   return parsePaymentEnvironment(env);
 }
 
-function credentials(env: RazorEnv): { environment: PaymentEnvironment; keyId: string; keySecret: string } {
-  const environment = paymentEnvironment(env);
+type CredentialResolution =
+  | { declared: true; environment: PaymentEnvironment; keyId: string; keySecret: string }
+  | { declared: false; reason: string };
+
+/**
+ * Credentials for the declared environment, or the reason no environment was declared.
+ *
+ * parsePaymentEnvironment fails closed by throwing, which is right for a configuration read and wrong
+ * at a money boundary whose entire contract is a `connected:false` refusal its caller RECORDS. This
+ * resolves the declaration without throwing, so an undeclared deployment is refused, recorded and
+ * retryable instead of raising past the caller.
+ */
+function resolveCredentials(env: RazorEnv): CredentialResolution {
+  let environment: PaymentEnvironment;
+  try { environment = paymentEnvironment(env); } catch (error) { return { declared: false, reason: error instanceof Error ? error.message : String(error) }; }
   const keyId = String((environment === "sandbox" ? env?.RAZORPAY_KEY_ID_SANDBOX : env?.RAZORPAY_KEY_ID) || "").trim();
   const keySecret = String((environment === "sandbox" ? env?.RAZORPAY_KEY_SECRET_SANDBOX : env?.RAZORPAY_KEY_SECRET) || "").trim();
-  return { environment, keyId, keySecret };
+  return { declared: true, environment, keyId, keySecret };
+}
+
+function credentials(env: RazorEnv): { environment: PaymentEnvironment; keyId: string; keySecret: string } {
+  const resolved = resolveCredentials(env);
+  if (!resolved.declared) throw new Error(resolved.reason);
+  return { environment: resolved.environment, keyId: resolved.keyId, keySecret: resolved.keySecret };
 }
 
 const RAZORPAY_API = "https://api.razorpay.com";
@@ -89,7 +111,14 @@ export function publicKeyId(env: RazorEnv): string {
 
 /** Paise-native order creation used by the durable financial outbox worker. */
 export async function createPaymentOrderPaise(env: RazorEnv, input: { bookingId: string; paymentId: string; amountPaise: number; currency: string }): Promise<OrderResult> {
-  const { environment, keyId, keySecret } = credentials(env);
+  // Refuse an undeclared environment in the governed shape. Throwing here escaped past
+  // lib/financial-lifecycle.ts and lib/razorpay-order-outbox-saga.ts, both of which read
+  // `connected:false` to move financial_outbox to RETRY / RECONCILIATION_REQUIRED with a last_error
+  // and release the lease - so an unset PAWSPACE_PAYMENT_ENV left the outbox row leased, silent and
+  // stuck instead of retryable. #447 closed the same hole in createSandboxPaymentLink.
+  const resolved = resolveCredentials(env);
+  if (!resolved.declared) return { connected: false, environment: "unconfigured", reason: resolved.reason };
+  const { environment, keyId, keySecret } = resolved;
   if (environment === "live" && env?.PAWSPACE_PAYMENT_LIVE_APPROVED !== "true") return { connected: false, environment, reason: "Live Razorpay order creation is not approved (PAWSPACE_PAYMENT_LIVE_APPROVED must equal \"true\")" };
   if (!keyId || !keySecret) return { connected: false, environment, reason: `Razorpay ${environment} API credentials are not configured - online payment is not connected yet` };
   let amountPaise: number;
