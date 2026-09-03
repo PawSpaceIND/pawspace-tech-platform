@@ -80,6 +80,7 @@
 }
 .field select {
   width: 100%;
+  min-height: 44px;
   border: 1px solid #e1d9e6;
   background: white;
   color: #2b1d35;
@@ -130,7 +131,7 @@
   padding: 11px;
   font-size: 9px;
   font-weight: 900;
-  min-height: 40px;
+  min-height: 44px;
 }
 .add {
   width: 100%;
@@ -330,10 +331,12 @@
 }
 .subs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
 }
 .subs button {
+  min-width: 0;
+  min-height: 44px;
   border: 1px solid #d6e4de;
   background: white;
   color: #0b2b24;
@@ -341,6 +344,7 @@
   padding: 8px;
   text-align: left;
   display: grid;
+  overflow-wrap: anywhere;
 }
 .subs button em {
   margin: 5px 0 2px;
@@ -365,7 +369,11 @@
   gap: 6px;
 }
 .addons button {
+  min-width: 0;
+  min-height: 44px;
   display: flex;
+  align-items: center;
+  gap: 8px;
   justify-content: space-between;
   border: 1px solid #e2dae7;
   background: white;
@@ -373,6 +381,7 @@
   border-radius: 10px;
   padding: 9px;
   font-size: 8px;
+  overflow-wrap: anywhere;
 }
 .addons b {
   color: #01261F;
@@ -381,11 +390,14 @@
   display: flex;
   gap: 6px;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   margin-top: 10px;
   padding-bottom: 3px;
+  overscroll-behavior-inline: contain;
 }
 .dates button {
   min-width: 88px;
+  min-height: 44px;
   border: 1px solid #e2dbe6;
   background: white;
   color: #0b2b24;
@@ -395,11 +407,12 @@
 }
 .slots {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
   margin-top: 8px;
 }
 .slots button {
+  min-width: 0;
   border: 1px solid #e2dbe7;
   background: white;
   color: #0b2b24;
@@ -440,16 +453,18 @@
 }
 .review {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
   background: white;
   border-radius: 13px;
   padding: 11px;
 }
 .review span {
+  min-width: 0;
   display: grid;
   font-size: 6px;
   color: #82778a;
+  overflow-wrap: anywhere;
 }
 .review b {
   font-size: 7px;
@@ -458,11 +473,13 @@
 }
 .pay {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
   margin-top: 9px;
 }
 .pay button {
+  min-width: 0;
+  min-height: 44px;
   border: 1px solid #d6e4de;
   background: white;
   color: #0b2b24;
@@ -470,6 +487,7 @@
   padding: 10px;
   text-align: left;
   display: grid;
+  overflow-wrap: anywhere;
 }
 .pay b {
   font-size: 8px;
@@ -488,6 +506,7 @@
 .total span {
   display: flex;
   justify-content: space-between;
+  gap: 8px;
   font-size: 8px;
 }
 .total b {
@@ -549,7 +568,7 @@
 }
 .tabs {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
   background: #e9e3ed;
   padding: 4px;
@@ -557,18 +576,21 @@
   margin: 10px 0;
 }
 .tabs button {
+  min-width: 0;
+  min-height: 44px;
   border: 0;
   background: transparent;
   padding: 8px;
   border-radius: 8px;
   font-size: 8px;
+  overflow-wrap: anywhere;
 }
 .tabs .selected {
   background: white !important;
 }
 .person {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 9px;
   background: white;
@@ -587,6 +609,7 @@
   font-size: 9px;
 }
 .person div {
+  min-width: 0;
   display: grid;
 }
 .person span {
@@ -602,6 +625,7 @@
   color: #7d7384;
 }
 .person button {
+  min-height: 44px;
   border: 0;
   background: #f0e6fa;
   color: #01261F;
@@ -626,11 +650,12 @@
 }
 .photos {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 9px;
 }
 .photos button {
+  min-width: 0;
   min-height: 110px;
   border: 1px dashed #9d86af;
   background: white;
@@ -676,7 +701,10 @@
 @media (max-width: 340px) {
   .packs,
   .subs,
-  .slots {
+  .slots,
+  .pay,
+  .review,
+  .photos {
     grid-template-columns: 1fr;
   }
   .types {
@@ -684,6 +712,13 @@
   }
   .coverage {
     grid-template-columns: 1fr;
+  }
+  .person {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .person button {
+    grid-column: 1 / -1;
+    width: 100%;
   }
 }
 .toast{position:fixed;top:18px;left:50%;transform:translateX(-50%);z-index:9;background:#012a22;color:#fff;padding:11px 16px;border-radius:10px;font-size:10px;box-shadow:0 10px 28px #0005;max-width:320px;text-align:center}
