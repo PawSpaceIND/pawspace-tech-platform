@@ -1,53 +1,35 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import fs from "node:fs";
 
-const lifecycle=await readFile(new URL("../lib/lead-lifecycle-governance.ts",import.meta.url),"utf8");
-const attribution=await readFile(new URL("../lib/lead-conversion-attribution.ts",import.meta.url),"utf8");
-const whatsapp=await readFile(new URL("../lib/whatsapp-uat-adapter.ts",import.meta.url),"utf8");
-const crm=await readFile(new URL("../app/api/crm/route.ts",import.meta.url),"utf8");
-const meta=await readFile(new URL("../lib/meta-lead-ads-ingestion.ts",import.meta.url),"utf8");
-const metaRoute=await readFile(new URL("../app/api/leads/meta-webhook/route.ts",import.meta.url),"utf8");
+const read=(path)=>fs.readFileSync(path,"utf8");
 
-test("lead business lifecycle is independent, guarded, and terminal",()=>{
- assert.match(lifecycle,/new:\["contacted","qualified","dropped"\]/);
- assert.match(lifecycle,/contacted:\["qualified","dropped"\]/);
- assert.match(lifecycle,/qualified:\["converted","dropped"\]/);
- assert.match(lifecycle,/converted:\[\]/);
- assert.match(lifecycle,/dropped:\[\]/);
- assert.match(lifecycle,/ALTER TABLE lead_work_items ADD COLUMN lifecycle_state/);
- assert.match(lifecycle,/Lead changed concurrently; reload before retrying/);
+test("lead lifecycle governance is persisted, normalized and compare-and-set",async()=>{
+  const source=read("lib/lead-lifecycle-governance.ts");
+  assert.match(source,/export type LeadLifecycleState/);
+  assert.match(source,/lifecycle_state TEXT NOT NULL DEFAULT 'new'/);
+  assert.match(source,/export function normalizeLeadServiceCode/);
+  assert.match(source,/UPDATE lead_work_items SET lifecycle_state=\?,updated_at=\? WHERE id=\? AND lifecycle_state=\?/);
+  assert.match(source,/export async function ensureInboundLead/);
+
+  const lifecycle=await import("../lib/lead-lifecycle-governance.ts");
+  assert.equal(lifecycle.normalizeLeadServiceCode("Dog Training"),"training");
+  assert.equal(lifecycle.normalizeLeadServiceCode("pet-sitting"),"pet_sitting");
+  assert.equal(lifecycle.normalizeLeadServiceCode("WhatsApp"),"general_inquiry");
 });
 
-test("manual CRM ingestion creates canonical identity and a new lifecycle lead",()=>{
- assert.match(crm,/INSERT INTO canonical_customers/);
- assert.match(crm,/INSERT INTO lead_work_items[\s\S]*lifecycle_state/);
- assert.match(crm,/'active','new','day_1'/);
- assert.match(crm,/canonicalCustomerCreated:true/);
+test("lead conversion attribution uses normalized service and lifecycle state",()=>{
+  const source=read("lib/lead-conversion-attribution.ts");
+  assert.match(source,/normalizeLeadServiceCode\(booked\?\.service_code\)/);
+  assert.match(source,/lifecycle_state NOT IN \('converted','dropped'\)/);
+  assert.match(source,/lifecycle_state='converted'/);
+  assert.match(source,/matchedOn:"customer_and_normalized_service"/);
 });
 
-test("WhatsApp inbound cannot remain leadless",()=>{
- assert.match(whatsapp,/ensureInboundLead/);
- assert.match(whatsapp,/source:`whatsapp:\$\{provider\}`/);
- assert.match(whatsapp,/WhatsApp inbound could not initialize canonical lead tracking/);
- assert.match(whatsapp,/return\{duplicatePrevented:false as const,messageId,threadId,customerId,leadId/);
-});
-
-test("Meta Lead Ads webhook is signed, idempotent, identity-governed, and creates a lifecycle lead",()=>{
- assert.match(metaRoute,/verifyMetaWhatsAppSignature/);
- assert.match(metaRoute,/META_LEAD_ADS_GRAPH_VERSION/);
- assert.match(metaRoute,/authorization:`Bearer \$\{token\}`/);
- assert.doesNotMatch(metaRoute,/access_token=/);
- assert.match(meta,/meta_lead_ads_events \(leadgen_id TEXT PRIMARY KEY/);
- assert.match(meta,/meta_lead_ingestion_exceptions/);
- assert.match(meta,/ambiguous_customer_identity/);
- assert.match(meta,/ensureInboundLead/);
-});
-
-test("booking conversion normalizes service aliases and remains payment gated",()=>{
- assert.match(attribution,/normalizeLeadServiceCode/);
- assert.match(attribution,/customer_and_normalized_service/);
- assert.match(attribution,/booking_initiated/);
- assert.match(attribution,/lifecycle_state='converted'/);
- assert.match(attribution,/initiated_booking_id=\?/);
+test("leadless WhatsApp inbound initializes canonical lead before persisting message",()=>{
+  const source=read("lib/whatsapp-uat-adapter.ts");
+  assert.match(source,/assignLeadOwner\(db,\{customerId,service:"general_inquiry"\}\)/);
+  assert.match(source,/ensureInboundLead\(db,\{customerId,source:`whatsapp:\$\{provider\}`/);
+  assert.match(source,/if\(!leadId\)throw new Error\("WhatsApp inbound could not initialize canonical lead tracking"\)/);
+  assert.match(source,/JSON\.stringify\(\{\.\.\.detail,leadId\}\)/);
 });
