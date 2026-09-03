@@ -37,7 +37,12 @@ const state = await preflight({
   required: [
     { name: KEY_ID, hint: "sandbox key id from the Razorpay dashboard (Settings → API Keys, Test Mode)" },
     { name: KEY_SECRET, hint: "the matching sandbox key secret; shown once at generation" },
-    { name: WEBHOOK_SECRET, hint: "the secret configured on the sandbox webhook, needed for the inbound leg (RZP-04/05)" },
+  ],
+  // Only the inbound leg needs this. Gating the whole suite on it skipped the outbound order and
+  // payment-link tests in the common partial state where the dashboard API keys exist but the webhook
+  // secret has not been configured yet.
+  optional: [
+    { name: WEBHOOK_SECRET, hint: "the secret configured on the sandbox webhook; needed only by RZP-04/05" },
   ],
   probe: { url: "https://api.razorpay.com/v1/payments?count=1", authenticated: true, headers: { authorization: `Basic ${basic()}` } },
   ownerAction: 'docs/KARTHIK_PENDING_CLOSEOUT.md Batch A — "Razorpay test mode"',
@@ -89,13 +94,13 @@ test("RZP-03: the provider's real rejection is surfaced as a governed reason, no
   console.log(`RZP-03 governed reason: ${result.reason}`);
 });
 
-test("RZP-04: the webhook gate resolves sandbox and finds the configured secret", state.gate(), async () => {
+test("RZP-04: the webhook gate resolves sandbox and finds the configured secret", state.gateOn(WEBHOOK_SECRET), async () => {
   const gate = gateway.resolvePaymentWebhookGate(env());
   assert.equal(gate.ok, true, `webhook gate refused: ${gate.ok === false ? gate.reason : ""}`);
   assert.equal(gate.environment, "sandbox", "a sandbox run must never resolve the live webhook secret");
 });
 
-test("RZP-05: a payload signed with the real sandbox secret verifies, and any tampering does not", state.gate(), async () => {
+test("RZP-05: a payload signed with the real sandbox secret verifies, and any tampering does not", state.gateOn(WEBHOOK_SECRET), async () => {
   const secret = String(process.env[WEBHOOK_SECRET] || "");
   // The exact payload shape lib/financial-lifecycle.ts parses, carrying the notes correlation from RZP-01.
   const payload = JSON.stringify({

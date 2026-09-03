@@ -19,7 +19,18 @@
 import { createHash } from "node:crypto";
 
 export const STRICT = String(process.env.PAWSPACE_SANDBOX_TESTS_STRICT || "").toLowerCase() === "true";
-const DEFAULT_TIMEOUT_MS = Number(process.env.PAWSPACE_SANDBOX_PROBE_TIMEOUT_MS || 12_000);
+// Clamped, because this value decides whether a sandbox is called unreachable. Left raw, a malformed
+// PAWSPACE_SANDBOX_PROBE_TIMEOUT_MS ("soon", "", "-1") became NaN or a non-positive number, setTimeout
+// fired immediately, and every probe aborted - reporting endpoint_unreachable for endpoints that were
+// perfectly healthy. That is the one misdiagnosis this harness must never make.
+const FALLBACK_TIMEOUT_MS = 12_000;
+function probeTimeoutMs(raw = process.env.PAWSPACE_SANDBOX_PROBE_TIMEOUT_MS) {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return FALLBACK_TIMEOUT_MS;
+  return Math.min(Math.max(parsed, 1_000), 60_000);
+}
+export const DEFAULT_TIMEOUT_MS = probeTimeoutMs();
+export const __probeTimeoutMs = probeTimeoutMs; // exported for the guard's own test
 
 const present = (name) => String(process.env[name] || "").trim().length > 0;
 
@@ -70,19 +81,25 @@ export async function probeEndpoint({ url, method = "GET", headers = {}, authent
  * with no credential, and doing so would report `credentials_rejected` for what is really
  * `credentials_absent`.
  */
-export async function preflight({ suite, required = [], probe = null, ownerAction = null }) {
+/**
+ * `required` gates the whole suite. `optional` does not: each entry names a variable only some tests
+ * need, so an environment holding the API keys but not, say, an inbound webhook secret still runs
+ * every outbound test and skips only the ones that genuinely cannot run.
+ */
+export async function preflight({ suite, required = [], optional = [], probe = null, ownerAction = null }) {
   const missing = required.filter(entry => !present(entry.name));
+  const missingOptional = optional.filter(entry => !present(entry.name));
   if (missing.length) {
-    return finalise({ suite, ready: false, kind: "credentials_absent", detail: null, required, missing, ownerAction });
+    return finalise({ suite, ready: false, kind: "credentials_absent", detail: null, required, optional, missingOptional, missing, ownerAction });
   }
   if (probe) {
     const result = await probeEndpoint(probe);
     if (result.kind !== "ok") {
-      return finalise({ suite, ready: false, kind: result.kind, detail: result.detail, required, missing: [], ownerAction, probe });
+      return finalise({ suite, ready: false, kind: result.kind, detail: result.detail, required, optional, missingOptional, missing: [], ownerAction, probe });
     }
-    return finalise({ suite, ready: true, kind: "ready", detail: result.detail, required, missing: [], ownerAction, probe });
+    return finalise({ suite, ready: true, kind: "ready", detail: result.detail, required, optional, missingOptional, missing: [], ownerAction, probe });
   }
-  return finalise({ suite, ready: true, kind: "ready", detail: "no probe configured", required, missing: [], ownerAction });
+  return finalise({ suite, ready: true, kind: "ready", detail: "no probe configured", required, optional, missingOptional, missing: [], ownerAction });
 }
 
 const REASONS = {
@@ -99,6 +116,10 @@ function finalise(state) {
   if (state.ready) {
     rows.push(`  endpoint:      ${state.probe?.url ?? "(none)"} — ${state.detail}`);
     rows.push(`  credentials:   ${state.required.map(entry => `${entry.name}=${fingerprint(entry.name)}`).join("  ") || "(none required)"}`);
+    if (state.missingOptional?.length) {
+      rows.push(`  partial:       ${state.missingOptional.map(entry => entry.name).join(", ")} absent - the tests needing those skip, the rest run`);
+      for (const entry of state.missingOptional) if (entry.hint) rows.push(`    ${entry.name}: ${entry.hint}`);
+    }
   } else {
     rows.push(`  reason:        ${state.kind} — ${REASONS[state.kind] ?? "unknown"}`);
     if (state.detail) rows.push(`  detail:        ${state.detail}`);
@@ -130,5 +151,16 @@ function finalise(state) {
      * "the sandbox is fine".
      */
     gate() { return state.ready || STRICT ? {} : { skip: this.reason }; },
+    /**
+     * Gate for a test that additionally needs specific variables from `optional`. The suite gate still
+     * applies first, so this only ever narrows.
+     */
+    gateOn(...names) {
+      const suiteGate = this.gate();
+      if (suiteGate.skip) return suiteGate;
+      const absent = names.filter(name => !present(name));
+      if (!absent.length || STRICT) return {};
+      return { skip: `credentials_absent: ${absent.join(", ")} not configured - this test needs it, the rest of the suite does not` };
+    },
   };
 }
