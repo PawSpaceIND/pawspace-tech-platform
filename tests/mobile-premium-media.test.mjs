@@ -4,17 +4,17 @@ import { readFile } from "node:fs/promises";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("UI-MEDIA-01: premium home has a seamless accessible auto-scrolling promotion carousel", async () => {
+test("UI-MEDIA-01: customer home keeps the approved Premium Design 2 composition", async () => {
   const source = await read("app/mobile-app/premium-discovery-home.tsx");
   const styles = await read("app/mobile-app/premium-discovery-home.module.css");
-  assert.match(source, /window\.setInterval\(\(\) => goToAd\(activeAd \+ 1\), 4800\)/);
-  assert.match(source, /const carouselSlots = \[adSlots\[adSlots\.length - 1\], \.\.\.adSlots, adSlots\[0\]\]/);
-  assert.match(source, /scheduleCloneSnap/);
-  assert.match(styles, /scroll-snap-type:x mandatory/);
-  assert.match(source, /aria-label="Offers carousel"/);
-  assert.match(source, /aria-label="Previous promotion"/);
-  assert.match(source, /aria-label="Next promotion"/);
-  assert.match(source, /prefers-reduced-motion: reduce/);
+  assert.match(source, /What does <em>\{pet\?\.name \|\| "your pet"\}<\/em> need today\?/);
+  assert.match(source, />Everything they need</);
+  assert.match(source, /className=\{styles\.serviceGrid\}/);
+  assert.match(source, /className=\{styles\.reminder\}/);
+  assert.match(source, /aria-label="PawSpace trust standards"/);
+  assert.match(source, /aria-label="Quick service guides"/);
+  assert.match(styles, /grid-template-columns:repeat\(3,1fr\)/);
+  assert.doesNotMatch(source, /Offers carousel|carouselSlots|goToAd|adSlots/);
 });
 
 test("UI-MEDIA-02: service media registry preserves requested breed and context mapping", async () => {
@@ -52,12 +52,12 @@ test("UI-MEDIA-03: every non-funeral service owns a guarded silent HD video slot
   assert.doesNotMatch(registry, /funeral.*videoFile/i);
 });
 
-test("UI-MEDIA-04: discovery never retrieves or renders customer-uploaded pet photos", async () => {
+test("UI-MEDIA-04: approved Premium Design 2 personalises only after customer identity is available", async () => {
   const source = await read("app/mobile-app/premium-discovery-home.tsx");
-  assert.doesNotMatch(source, /\/api\/customer-account/);
-  assert.doesNotMatch(source, /profile\?\.photo|pet\.profile|pet\?\.profile/);
-  assert.match(source, /customerInitials/);
-  assert.match(source, /getServiceMedia\(service\.serviceCode\)/);
+  assert.match(source, /if \(!customerId\) return/);
+  assert.match(source, /\/api\/customer-account\?customerId=/);
+  assert.match(source, /pet\?\.profile\?\.photo/);
+  assert.match(source, /pet\?\.name \|\| "your pet"/);
 });
 
 test("UI-MEDIA-05: service-page curated breed chips change curated PawSpace visuals", async () => {

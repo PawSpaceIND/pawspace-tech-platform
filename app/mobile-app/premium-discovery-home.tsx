@@ -1,8 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import styles from "./premium-discovery-home.module.css";
-import { getServiceMedia } from "./service-media";
 
 export type DiscoveryService = {
   name: string;
@@ -13,8 +12,7 @@ export type DiscoveryService = {
   imageAlt: string;
 };
 
-const VIDEO_SERVICE_CODES = ["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi"] as const;
-const VIDEO_SERVICE_CODE_SET = new Set<string>(VIDEO_SERVICE_CODES);
+const VIDEO_SERVICE_CODES = ["grooming", "dog_training", "boarding", "pet_sitting", "dog_walking", "pet_taxi"];
 
 const serviceShortCopy: Record<string, string> = {
   grooming: "Clean & fresh",
@@ -27,51 +25,11 @@ const serviceShortCopy: Record<string, string> = {
   relocation: "Travel support",
 };
 
-const adSlots = [
-  {
-    eyebrow: "SEASONAL CARE",
-    title: "Grooming days, made easier",
-    copy: "Compare inclusions and choose a doorstep grooming slot in a few taps.",
-    cta: "Book grooming",
-    serviceCode: "grooming",
-    image: "/assets/banners/grooming-bag-shihtzu.jpg",
-    tone: "gold",
-  },
-  {
-    eyebrow: "TRAINING SPOTLIGHT",
-    title: "Build calmer everyday habits",
-    copy: "Explore puppy foundations, leash work and parent-led progress.",
-    cta: "Explore training",
-    serviceCode: "dog_training",
-    image: "/assets/breeds/german-shepherd-hero.jpg",
-    tone: "emerald",
-  },
-  {
-    eyebrow: "HOME-STYLE CARE",
-    title: "Boarding that feels familiar",
-    copy: "See home-style care for big dogs, puppies and cat-friendly stays.",
-    cta: "Find a stay",
-    serviceCode: "boarding",
-    image: "/assets/banners/boarding-puppy-hug.jpg",
-    tone: "ivory",
-  },
-  {
-    eyebrow: "FLASH DEAL SLOT",
-    title: "Approved offers appear here",
-    copy: "A governed placement for seasonal offers and time-limited PawSpace campaigns.",
-    cta: "Browse services",
-    serviceCode: "grooming",
-    image: "/assets/banners/sitter-hug-golden.jpg",
-    tone: "night",
-  },
-] as const;
-
-const carouselSlots = [adSlots[adSlots.length - 1], ...adSlots, adSlots[0]] as const;
-
 export default function PremiumDiscoveryHome({
   services,
   disabledServices,
   customerName,
+  customerId,
   onOpen,
   onShowBookings,
   onShowPets,
@@ -89,10 +47,7 @@ export default function PremiumDiscoveryHome({
   const [location, setLocation] = useState("HSR Layout, Bengaluru");
   const [draft, setDraft] = useState("");
   const [locationNote, setLocationNote] = useState("");
-  const [activeAd, setActiveAd] = useState(0);
-  const [adPaused, setAdPaused] = useState(false);
-  const adRailRef = useRef<HTMLDivElement>(null);
-  const adSettleTimerRef = useRef<number | null>(null);
+  const [pet, setPet] = useState<{ name: string; profile?: { photo?: string } } | null>(null);
 
   useEffect(() => {
     const stored = window.localStorage.getItem("pawspace_discovery_location");
@@ -101,73 +56,27 @@ export default function PremiumDiscoveryHome({
     return () => window.clearTimeout(timer);
   }, []);
 
-  const scrollToPhysicalAd = useCallback((physicalIndex: number, behavior: ScrollBehavior) => {
-    const rail = adRailRef.current;
-    const target = rail?.children.item(physicalIndex) as HTMLElement | null;
-    if (rail && target) rail.scrollTo({ left: target.offsetLeft - rail.offsetLeft, behavior });
-  }, []);
-
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => scrollToPhysicalAd(1, "auto"));
-    return () => window.cancelAnimationFrame(frame);
-  }, [scrollToPhysicalAd]);
-
-  useEffect(() => () => {
-    if (adSettleTimerRef.current !== null) window.clearTimeout(adSettleTimerRef.current);
-  }, []);
-
-  const scheduleCloneSnap = useCallback((physicalIndex: number) => {
-    if (adSettleTimerRef.current !== null) window.clearTimeout(adSettleTimerRef.current);
-    adSettleTimerRef.current = window.setTimeout(() => {
-      if (physicalIndex === 0) scrollToPhysicalAd(adSlots.length, "auto");
-      if (physicalIndex === adSlots.length + 1) scrollToPhysicalAd(1, "auto");
-      adSettleTimerRef.current = null;
-    }, 460);
-  }, [scrollToPhysicalAd]);
-
-  const goToAd = useCallback((index: number, behavior: ScrollBehavior = "smooth") => {
-    const next = (index + adSlots.length) % adSlots.length;
-    const crossesForwardBoundary = activeAd === adSlots.length - 1 && index >= adSlots.length;
-    const crossesBackwardBoundary = activeAd === 0 && index < 0;
-    const physicalIndex = crossesForwardBoundary ? adSlots.length + 1 : crossesBackwardBoundary ? 0 : next + 1;
-    setActiveAd(next);
-    scrollToPhysicalAd(physicalIndex, behavior);
-    if (physicalIndex === 0 || physicalIndex === adSlots.length + 1) scheduleCloneSnap(physicalIndex);
-  }, [activeAd, scheduleCloneSnap, scrollToPhysicalAd]);
-
-  useEffect(() => {
-    if (adPaused || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const timer = window.setInterval(() => goToAd(activeAd + 1), 4800);
-    return () => window.clearInterval(timer);
-  }, [activeAd, adPaused, goToAd]);
-
-  const handleAdScroll = useCallback(() => {
-    const rail = adRailRef.current;
-    if (!rail) return;
-    let closest = 1;
-    let distance = Number.POSITIVE_INFINITY;
-    Array.from(rail.children).forEach((child, index) => {
-      const nextDistance = Math.abs((child as HTMLElement).offsetLeft - rail.scrollLeft);
-      if (nextDistance < distance) {
-        distance = nextDistance;
-        closest = index;
-      }
-    });
-    const logicalIndex = closest === 0 ? adSlots.length - 1 : closest === adSlots.length + 1 ? 0 : closest - 1;
-    if (logicalIndex !== activeAd) setActiveAd(logicalIndex);
-    if (closest === 0 || closest === adSlots.length + 1) scheduleCloneSnap(closest);
-  }, [activeAd, scheduleCloneSnap]);
+    if (!customerId) return;
+    let active = true;
+    void fetch(`/api/customer-account?customerId=${encodeURIComponent(customerId)}`, { cache: "no-store" })
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((body: { data?: { pets?: Array<{ name: string; profile?: { photo?: string } }> } }) => {
+        if (active) setPet(body.data?.pets?.[0] ?? null);
+      })
+      .catch(() => { if (active) setPet(null); });
+    return () => { active = false; };
+  }, [customerId]);
 
   const visible = useMemo(
     () => services.filter((service) => `${service.name} ${service.subtitle}`.toLowerCase().includes(query.trim().toLowerCase())),
     [query, services],
   );
   const careServices = visible;
-  const videoServices = careServices.filter((service) => VIDEO_SERVICE_CODE_SET.has(service.serviceCode));
-  const firstName = customerName?.trim().split(/\s+/)[0];
-  const customerInitials = customerName?.trim()
-    ? customerName.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("")
-    : "PS";
+  const videoServices = services.filter((service) => VIDEO_SERVICE_CODES.includes(service.serviceCode));
+  const heroService = services.find((service) => service.serviceCode === "grooming") ?? services[0];
+  const petName = pet?.name || "your pet";
+  const firstName = customerName?.split(" ")[0];
 
   const saveLocation = (value: string) => {
     const next = value.trim();
@@ -196,16 +105,13 @@ export default function PremiumDiscoveryHome({
       <div className={styles.brandRow}>
         <img className={styles.brandLogo} src="/assets/pawspace-logo.jpeg" alt="PawSpace" />
         <button className={styles.profile} onClick={onShowPets} aria-label="Open pet profiles">
-          <span>{customerInitials}</span>
+          {pet?.profile?.photo ? <img src={pet.profile.photo} alt={`${pet.name}'s profile`} /> : <span>PS</span>}
         </button>
       </div>
 
-      <div className={styles.utilityRow}>
-        <button className={styles.location} onClick={() => setLocationOpen(true)} aria-label="Choose your service location">
-          <span className={styles.pin}>●</span><b>{location}</b><i>⌄</i>
-        </button>
-        <button className={styles.bookingsMini} onClick={onShowBookings}>Bookings</button>
-      </div>
+      <button className={styles.location} onClick={() => setLocationOpen(true)} aria-label="Choose your service location">
+        <span className={styles.pin}>●</span><b>{location}</b><i>⌄</i>
+      </button>
 
       <label className={styles.search}>
         <span>⌕</span>
@@ -213,74 +119,29 @@ export default function PremiumDiscoveryHome({
       </label>
     </section>
 
-    <section className={styles.carouselShell} aria-label="Offers carousel">
-      <div
-        className={styles.adRail}
-        ref={adRailRef}
-        onMouseEnter={() => setAdPaused(true)}
-        onMouseLeave={() => setAdPaused(false)}
-        onFocusCapture={() => setAdPaused(true)}
-        onBlurCapture={() => setAdPaused(false)}
-        onScroll={handleAdScroll}
-      >
-        {carouselSlots.map((slot, physicalIndex) => {
-          const isClone = physicalIndex === 0 || physicalIndex === carouselSlots.length - 1;
-          return <article
-            key={`${slot.title}-${physicalIndex}`}
-            className={`${styles.promoCard} ${styles[slot.tone]}`}
-            aria-hidden={isClone || undefined}
-            style={{ backgroundImage: `linear-gradient(90deg, rgba(2,35,28,.92), rgba(2,35,28,.34)), url(${slot.image})` }}
-          >
-            <small>{slot.eyebrow}</small>
-            <b>{slot.title}</b>
-            <span>{slot.copy}</span>
-            <button tabIndex={isClone ? -1 : 0} onClick={() => onOpen(slot.serviceCode)}>{slot.cta} <i>→</i></button>
-          </article>;
-        })}
-      </div>
-      <div className={`${styles.carouselControls} ${styles.segmented}`}>
-        <button onClick={() => goToAd(activeAd - 1)} aria-label="Previous promotion">←</button>
-        <div className={styles.railDots}>{adSlots.map((slot, index) => <button key={slot.title} className={index === activeAd ? styles.dotActive : ""} onClick={() => goToAd(index)} aria-label={`Show promotion ${index + 1}`} />)}</div>
-        <button onClick={() => goToAd(activeAd + 1)} aria-label="Next promotion">→</button>
-      </div>
-    </section>
-
     <section className={styles.hero}>
       <div className={styles.heroCopy}>
         {firstName && <small>GOOD TO SEE YOU, {firstName.toUpperCase()}</small>}
-        <h1>Premium care, <em>happy pets.</em></h1>
-        <p>One trusted place for grooming, training, stays, sitting, walks and pet travel.</p>
-        <button onClick={() => onOpen("grooming")}>Book a service <span>→</span></button>
+        <h1>What does <em>{pet?.name || "your pet"}</em> need today?</h1>
       </div>
-      <img src="/assets/banners/sitter-hug-golden.jpg" alt="PawSpace caregiver sharing a warm moment with a Golden Retriever" />
-      <span className={styles.heroPaw} aria-hidden="true">🐾</span>
+      {heroService && <img src={heroService.image} alt={heroService.imageAlt} />}
+      <span className={styles.heroPaw}>🐾</span>
     </section>
 
     <section className={styles.servicesSection} aria-label="Care services">
       <div className={styles.sectionHead}>
-        <div><small>PAWSPACE CARE</small><h2>What do they need today?</h2></div>
-        {query && <button onClick={() => setQuery("")}>Clear</button>}
+        <div><small>PAWSPACE CARE</small><h2>Everything they need</h2></div>
+        <button onClick={() => setQuery("")}>View all</button>
       </div>
 
       <div className={styles.serviceGrid}>
         {careServices.map((service) => {
           const paused = disabledServices.has(service.serviceCode);
-          const media = getServiceMedia(service.serviceCode);
-          const visuals = media?.visuals ?? [{ image: service.image, alt: service.imageAlt }];
           return <button key={service.serviceCode} className={styles.serviceCard} onClick={() => onOpen(service.serviceCode)} disabled={paused}>
-            <div className={styles.serviceVisual}>
-              <img className={styles.visualPrimary} src={visuals[0].image} alt={visuals[0].alt} />
-              {visuals.length > 1 && <div className={styles.visualThumbs} aria-hidden="true">
-                {visuals.slice(1, 3).map((visual) => <img key={visual.image} src={visual.image} alt="" />)}
-              </div>}
-              {media?.breedLine && <span className={styles.visualLabel}>{media.breedLine}</span>}
-            </div>
-            <div className={styles.serviceCopy}>
-              <span className={styles.serviceIcon} aria-hidden="true">✦</span>
-              <strong>{service.name}</strong>
-              <small>{paused ? "Temporarily paused" : serviceShortCopy[service.serviceCode] || service.subtitle}</small>
-            </div>
-            <i>→</i>
+            <div className={styles.serviceVisual}><img src={service.image} alt={service.imageAlt} /></div>
+            <span className={styles.serviceIcon}>✦</span>
+            <strong>{service.name}</strong>
+            <small>{paused ? "Temporarily paused" : serviceShortCopy[service.serviceCode] || service.subtitle}</small>
           </button>;
         })}
       </div>
@@ -288,49 +149,37 @@ export default function PremiumDiscoveryHome({
       {visible.length === 0 && <p className={styles.empty}>No PawSpace service matches “{query}”.</p>}
     </section>
 
-    {!query && <section className={styles.trustStrip} aria-label="PawSpace trust standards">
-      <span><i>✓</i><b>Verified</b></span>
-      <span><i>◇</i><b>Background checked</b></span>
-      <span><i>⌂</i><b>Safe care</b></span>
-      <span><i>◌</i><b>24/7 support</b></span>
-    </section>}
-
-    {!query && <section className={styles.reminder}>
+    <section className={styles.reminder}>
       <div className={styles.reminderCopy}>
-        <span className={styles.reminderPaw}>♥</span>
-        <div><small>PERSONALISED CARE</small><h3>Real care. Real people.</h3><p>Your uploaded pet photos stay inside booking and repeat-booking contexts.</p></div>
+        <span className={styles.reminderPaw}>🐾</span>
+        <div><h3>{pet?.name ? `${pet.name} is due for grooming` : "A fresh grooming day"}</h3><p>Regular grooming keeps {petName} comfortable, healthy and happy.</p></div>
       </div>
-      <button onClick={() => onOpen("grooming")}>Book now <span>→</span></button>
-    </section>}
+      {heroService && <img src={heroService.image} alt="" />}
+      <button onClick={() => onOpen("grooming")}>Book now</button>
+    </section>
 
-    {!query && <section className={styles.reviewSummary} aria-label="PawSpace customer reviews">
-      <div><small>GOOGLE REVIEWS</small><h2>Loved by pet parents</h2></div>
-      <strong>4.9 ★</strong>
-      <span>Verified customer review feed placement</span>
-    </section>}
+    <section className={styles.trustStrip} aria-label="PawSpace trust standards">
+      <span><i>✓</i><b>Verified<br/>experts</b></span>
+      <span><i>◇</i><b>Background<br/>checked</b></span>
+      <span><i>✦</i><b>Hygiene<br/>assured</b></span>
+      <span><i>◌</i><b>24/7<br/>support</b></span>
+    </section>
 
-    {!query && <section className={styles.secondarySection} aria-label="Quick service guides">
-      <div className={styles.sectionHead}><div><small>CURATED SERVICE VISUALS</small><h2>Everything they need</h2></div></div>
+    <section className={styles.servicesSection} aria-label="Quick service guides">
+      <div className={styles.sectionHead}>
+        <div><small>KNOW BEFORE YOU BOOK</small><h2>Quick service guides</h2></div>
+      </div>
       <div className={styles.moreRail}>
         {videoServices.map((service) => {
-          const media = getServiceMedia(service.serviceCode);
-          const visual = media?.visuals[0] ?? { image: service.image, alt: service.imageAlt };
-          return <button key={service.serviceCode} onClick={() => onOpen(service.serviceCode)} disabled={disabledServices.has(service.serviceCode)}>
-            <span className={styles.mediaFrame}>
-              <img className={styles.feedImage} src={visual.image} alt={visual.alt} />
-              <span className={styles.serviceIcon} aria-hidden="true">▶</span>
-            </span>
-            <span><b>{service.name}</b><small>{serviceShortCopy[service.serviceCode]}</small></span><i>→</i>
+          const paused = disabledServices.has(service.serviceCode);
+          return <button key={`guide-${service.serviceCode}`} onClick={() => onOpen(service.serviceCode)} disabled={paused}>
+            <span><img src={service.image} alt="" /></span>
+            <div><b>{service.name}</b><small>{paused ? "Temporarily paused" : "1-min service guide"}</small></div>
+            <i>▶</i>
           </button>;
         })}
       </div>
-    </section>}
-
-    {!query && <section className={styles.specialCare} aria-label="Sensitive care">
-      <div className={styles.memorialVisual}><img src="/assets/banners/sitter-handshake-bw.jpg" alt="A quiet monochrome moment of care and remembrance" /><span aria-hidden="true">🕯</span></div>
-      <div><small>SPECIAL CARE</small><h2>Funeral & Memorial</h2><p>Respectful, compassionate support when a family needs us most.</p></div>
-      <button onClick={() => window.location.assign("/funeral-memorial")} aria-label="Open Funeral and Memorial support">→</button>
-    </section>}
+    </section>
 
     <button className={styles.bookingShortcut} onClick={onShowBookings}>View your bookings <span>→</span></button>
 

@@ -44,8 +44,10 @@ test("premium discovery stays on the approved rebuilt Home style contract", () =
     assert.match(css, new RegExp(`\\.${className}(?:[,{:.\\s>]|$)`), `CSS should define .${className}`);
   }
   assert.match(component, />Everything they need</);
+  assert.match(component, /What does <em>\{pet\?\.name \|\| "your pet"\}<\/em> need today\?/);
   assert.match(component, /aria-label="Care services"/);
   assert.match(component, /aria-label="Quick service guides"/);
   assert.doesNotMatch(component, /Care for every kind of day/);
   assert.doesNotMatch(component, /sponsoredOffers/);
+  assert.doesNotMatch(component, /Offers carousel|carouselSlots|goToAd|adSlots/);
 });
