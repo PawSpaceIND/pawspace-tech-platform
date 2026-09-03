@@ -4,6 +4,8 @@ type Db=D1Database;
 type Row=Record<string,unknown>;
 
 export const SCHEDULING_RESERVATION_LEASE_MS=15*60_000;
+export const SCHEDULING_RESERVATION_ACTIVE_SLOT_PREDICATE="status!='cancelled' AND service_code!='boarding' AND care_mode IS NOT 'overnight'";
+export const SCHEDULING_RESERVATION_ACTIVE_SLOT_CONFLICT_TARGET=`(provider_id,scheduled_start,scheduled_end) WHERE ${SCHEDULING_RESERVATION_ACTIVE_SLOT_PREDICATE}`;
 const leaseTablesEnsured=new WeakSet<Db>();
 
 async function tableExists(db:Db,name:string){
@@ -19,6 +21,7 @@ export async function ensureSchedulingReservationLeaseGovernance(db:Db){
   if(!columns.results.some(row=>String(row.name)==="lease_expires_at"))await db.prepare("ALTER TABLE scheduling_reservations ADD COLUMN lease_expires_at INTEGER").run().catch(error=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
   if(!columns.results.some(row=>String(row.name)==="customer_session_id"))await db.prepare("ALTER TABLE scheduling_reservations ADD COLUMN customer_session_id TEXT").run().catch(error=>{if(!/duplicate column name/i.test(error instanceof Error?error.message:String(error)))throw error;});
   await db.batch([
+    db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS uq_scheduling_reservations_active_provider_window ON scheduling_reservations(provider_id,scheduled_start,scheduled_end) WHERE ${SCHEDULING_RESERVATION_ACTIVE_SLOT_PREDICATE}`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_scheduling_reservations_lease ON scheduling_reservations(status,lease_expires_at,customer_session_id)"),
     db.prepare("CREATE TABLE IF NOT EXISTS scheduling_reservation_lease_cleanup (group_id TEXT PRIMARY KEY,reason TEXT NOT NULL,released_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS booking_reservation_confirmation_guards (group_id TEXT PRIMARY KEY,checked_at INTEGER NOT NULL)"),

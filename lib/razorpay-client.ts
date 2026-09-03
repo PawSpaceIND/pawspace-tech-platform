@@ -2,18 +2,19 @@
  * Environment-aware, fail-closed Razorpay order/refund adapter for the CUSTOMER verify-first payment
  * path. All provider-bound money is converted to integer paise before the HTTP boundary.
  */
+import{parsePaymentEnvironment,type PaymentEnvironment}from"./payment-environment";
+export type{PaymentEnvironment}from"./payment-environment";
 
 type RazorEnv = Record<string, unknown>;
-export type PaymentEnvironment = "sandbox" | "live";
 export type OrderResult =
   | { connected: true; environment: PaymentEnvironment; order: Record<string, unknown> }
   | { connected: false; environment: PaymentEnvironment; reason: string };
 export type PaymentLinkResult =
   | { connected: true; environment: "sandbox"; paymentLink: Record<string, unknown> }
-  | { connected: false; environment: PaymentEnvironment; reason: string };
+  | { connected: false; environment: PaymentEnvironment | "unconfigured"; reason: string };
 
 export function paymentEnvironment(env: RazorEnv): PaymentEnvironment {
-  return String(env?.PAWSPACE_PAYMENT_ENV || "sandbox").toLowerCase() === "sandbox" ? "sandbox" : "live";
+  return parsePaymentEnvironment(env);
 }
 
 function credentials(env: RazorEnv): { environment: PaymentEnvironment; keyId: string; keySecret: string } {
@@ -89,6 +90,7 @@ export function publicKeyId(env: RazorEnv): string {
 /** Paise-native order creation used by the durable financial outbox worker. */
 export async function createPaymentOrderPaise(env: RazorEnv, input: { bookingId: string; paymentId: string; amountPaise: number; currency: string }): Promise<OrderResult> {
   const { environment, keyId, keySecret } = credentials(env);
+  if (environment === "live" && env?.PAWSPACE_PAYMENT_LIVE_APPROVED !== "true") return { connected: false, environment, reason: "Live Razorpay order creation is not approved (PAWSPACE_PAYMENT_LIVE_APPROVED must equal \"true\")" };
   if (!keyId || !keySecret) return { connected: false, environment, reason: `Razorpay ${environment} API credentials are not configured - online payment is not connected yet` };
   let amountPaise: number;
   try { amountPaise = assertPositivePaise(input.amountPaise); } catch (error) { return { connected: false, environment, reason: error instanceof Error ? error.message : String(error) }; }
@@ -116,7 +118,15 @@ export async function createPaymentOrder(env: RazorEnv, input: { bookingId: stri
 }
 
 export async function createSandboxPaymentLink(env: RazorEnv, input: { bookingId: string; paymentId: string; referenceId: string; customerId: string; amount: number; currency: string; expiresAt: number }): Promise<PaymentLinkResult> {
-  const { environment, keyId, keySecret } = credentials(env);
+  let environment: PaymentEnvironment, keyId: string, keySecret: string;
+  try {
+    ({ environment, keyId, keySecret } = credentials(env));
+  } catch (error) {
+    // parsePaymentEnvironment throws when PAWSPACE_PAYMENT_ENV is unset or not exactly
+    // "sandbox"/"live". Report it the same way as every other refusal here rather than escaping
+    // this function as an exception: the environment is genuinely unknown, so say so.
+    return { connected: false, environment: "unconfigured", reason: error instanceof Error ? error.message : String(error) };
+  }
   if (environment !== "sandbox") return { connected: false, environment, reason: "Post-service payment links are locked to Razorpay sandbox" };
   if (!keyId || !keySecret) return { connected: false, environment, reason: "Razorpay sandbox API credentials are not configured - payment link was not created" };
   let amountPaise: number;

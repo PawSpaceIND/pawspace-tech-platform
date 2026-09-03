@@ -41,7 +41,7 @@ function makeD1(sqlite) {
 }
 
 const SANDBOX_SECRET = "w3a-sandbox-secret";
-const NOW = Date.now();
+const NOW = 1_800_000_000_000;
 const DAY = 86_400_000;
 let sqlite;
 
@@ -72,7 +72,7 @@ function seedRefundCase(bookingId, amount = 2000) {
     .run(`RFC-${bookingId}`, bookingId, `PAY-${bookingId}`, amount, "customer cancelled", NOW - 3_600_000, NOW - 3_600_000);
 }
 
-function freshDb(env = { RAZORPAY_WEBHOOK_SECRET_SANDBOX: SANDBOX_SECRET }) {
+function freshDb(env = { PAWSPACE_PAYMENT_ENV: "sandbox", RAZORPAY_WEBHOOK_SECRET_SANDBOX: SANDBOX_SECRET }) {
   sqlite = new DatabaseSync(":memory:");
   globalThis.__W3A_PAY_DB__ = makeD1(sqlite);
   globalThis.__W3A_PAY_ENV__ = env;
@@ -176,7 +176,7 @@ test("A1-03: a signature valid for a DIFFERENT body does not carry over to a swa
 });
 
 test("A1-04: with NO webhook secret configured the receiver refuses 503 and writes nothing", async () => {
-  freshDb({});
+  freshDb({ PAWSPACE_PAYMENT_ENV: "sandbox" });
   seedBooking({ id: "bkg_w3a_4", total: 2000, dueNow: 2000 });
   const res = await postSigned(captureEvent("bkg_w3a_4", 200_000), { eventId: "evt_nosecret" });
   assert.equal(res.status, 503, "an unconfigured secret must fail closed, never open");
@@ -186,7 +186,7 @@ test("A1-04: with NO webhook secret configured the receiver refuses 503 and writ
 test("A1-05: a WHITESPACE-ONLY webhook secret fails closed, not open", async () => {
   // The named claim. A secret of "   " must not be treated as configured, and must never validate a
   // signature computed over the same whitespace string.
-  freshDb({ RAZORPAY_WEBHOOK_SECRET_SANDBOX: "   " });
+  freshDb({ PAWSPACE_PAYMENT_ENV: "sandbox", RAZORPAY_WEBHOOK_SECRET_SANDBOX: "   " });
   seedBooking({ id: "bkg_w3a_5", total: 2000, dueNow: 2000 });
   const res = await postSigned(captureEvent("bkg_w3a_5", 200_000), { secret: "   ", eventId: "evt_ws" });
   assert.equal(res.status, 503, "a whitespace-only secret must read as absent");

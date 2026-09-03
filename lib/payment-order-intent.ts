@@ -10,7 +10,8 @@ import { publicKeyId, paymentEnvironment } from "./razorpay-client";
 import { paymentStageAmount } from "./payment-stage-amount";
 import { ensurePaymentReconciliationTables } from "./grooming-payment-reconciliation";
 import { governedJsonError } from "./governed-http-error";
-import { claimPaymentIntent, executeRazorpayOrderOutbox, rupeesToPaiseExact } from "./financial-lifecycle";
+import { claimPaymentIntent, rupeesToPaiseExact } from "./financial-lifecycle";
+import { executeRazorpayOrderOutbox } from "./razorpay-order-outbox-saga";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
@@ -93,7 +94,12 @@ export async function createBookingPaymentOrder(db: Db, env: Record<string, unkn
     if (execution.claimed && !execution.connected) {
       return { connected: false, environment, reason: execution.reason, reconciliationRequired: Boolean(execution.reconciliationRequired) };
     }
-    if (execution.claimed && execution.connected) orderId = execution.orderId;
+    if (execution.claimed && execution.connected) {
+      if (execution.reconciliationRequired) {
+        return { connected: false, environment, reason: execution.reason || "Razorpay order requires reconciliation before checkout may continue", reconciliationRequired: true };
+      }
+      orderId = execution.orderId;
+    }
     if (!execution.claimed) {
       const winner = await db.prepare("SELECT gateway_order_id,order_request_state FROM payment_intents WHERE id=?").bind(intentId).first<Row>();
       orderId = String(winner?.gateway_order_id || "");

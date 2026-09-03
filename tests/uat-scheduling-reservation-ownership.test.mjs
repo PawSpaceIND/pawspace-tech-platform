@@ -31,7 +31,7 @@ test('reserve enforces customer ownership before reservation work and preserves 
   assert.ok(reservationReadIndex > ownershipIndex, 'reservation decision reads must happen only after ownership passes');
   assert.ok(rosterIndex > ownershipIndex, 'roster writes must happen only after ownership passes');
   assert.ok(insertIndex > ownershipIndex, 'reservation inserts must happen only after ownership passes');
-  assert.match(post, /catch\(error\)\{return authError\(error,"Scheduling failed"\);\}\}/, 'Response auth failures must retain their 401/403 status instead of becoming 500');
+  assert.match(post, /return authError\(error,"Scheduling failed"\);/, 'Response auth failures must retain their 401/403 status instead of becoming 500');
 });
 
 test('customer ownership helper denies cross-customer access with 403 and preserves privileged bypass', () => {
