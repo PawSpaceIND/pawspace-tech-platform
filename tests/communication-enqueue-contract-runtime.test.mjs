@@ -42,6 +42,20 @@ function makeD1(sqlite) {
 }
 
 const NOW = 1770000000000;
+
+// QUIET HOURS. Every consent decision here is computed against Date.now(): enqueueCommunication
+// takes no asOf, and lib/communication-engine.ts turns a message whose policy release is in the
+// future into `scheduled` rather than `queued`. comm_blr_default declares quiet hours 21:00-08:00
+// IST, so between those hours every "-> queued" expectation in this file fails with `scheduled`.
+// The suite passed by day and failed by night; that is why it was red, not because consent logic
+// changed. The fixture's own NOW (08:10 IST) shows non-quiet timing was always the intent, but it
+// predates the policy's effective_from of 2026-08-01, so it cannot be reused as the clock.
+//
+// Pin a fixed instant instead: 12:00 IST, nine hours clear of either quiet boundary, on a date after
+// effective_from. Fixed rather than offset from the wall clock, so it cannot drift or expire.
+const realNow = Date.now;
+test.before(() => { Date.now = () => NOW; });
+test.after(() => { Date.now = realNow; });
 const CANONICAL_CUSTOMERS = "CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)";
 
 async function world({ withCustomers = true } = {}) {

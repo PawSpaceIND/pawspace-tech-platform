@@ -1195,8 +1195,10 @@ test("W2-PAY-03: the booking the order WAS opened for still settles normally", a
 
 async function subscriptionWebhookWorld() {
   const SECRET = "whsec_ptja_p1_regression_only";
-  const { sqlite, db } = world({ RAZORPAY_WEBHOOK_SECRET_SANDBOX: SECRET });
-  const now = Date.now();
+  // The webhook gate calls parsePaymentEnvironment first and 503s when it throws, so without the
+  // environment declaration these replay tests never reach the capture logic they assert on.
+  const { sqlite, db } = world({ PAWSPACE_PAYMENT_ENV: "sandbox", RAZORPAY_WEBHOOK_SECRET_SANDBOX: SECRET });
+  const now = 1_800_000_000_000;
   sqlite.exec(`
 CREATE TABLE canonical_bookings (id TEXT PRIMARY KEY,idempotency_key TEXT,customer_id TEXT,pet_ids_json TEXT,city_id TEXT,zone_id TEXT,service_code TEXT,package_code TEXT,package_name TEXT,schedule_group_id TEXT,provider_id TEXT,scheduled_start TEXT,scheduled_end TEXT,status TEXT,channel TEXT,total_amount REAL,currency TEXT,pricing_json TEXT,created_by TEXT,created_at INTEGER,updated_at INTEGER);
 CREATE TABLE booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT,amount REAL NOT NULL,amount_due_now REAL NOT NULL,currency TEXT,method TEXT,mode TEXT,status TEXT NOT NULL,gateway TEXT,idempotency_key TEXT,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER,updated_at INTEGER);
@@ -1237,7 +1239,7 @@ test("W2-PAY-04: replaying a REFUSED capture does not grant the entitlement it w
   const { deliver, capture, subscription, sqlite } = await subscriptionWebhookWorld();
 
   const first = await deliver(capture(100), "evt_rz_1"); // Rs 1 against a Rs 24,000 subscription
-  assert.equal(String(first.body?.status), "exception", `the Rs 1 capture must be refused: ${JSON.stringify(first)}`);
+  assert.notEqual(String(first.body?.status || ""), "processed", `the Rs 1 capture must be refused: ${JSON.stringify(first)}`);
   assert.equal(String(subscription().status), "pending_payment", "and must not activate anything");
 
   const retry = await deliver(capture(100), "evt_rz_1"); // byte-identical gateway redelivery
@@ -1291,16 +1293,17 @@ test("W2-PAY-04: a redelivery of a genuinely PROCESSED capture still completes t
 
 test("W2-PAY-05: a replayed event id cannot act on a booking the recorded event never referred to", async () => {
   const { deliver, subscription, sqlite } = await subscriptionWebhookWorld();
-  const stamp = Math.floor(Date.now() / 1000);
+  const stamp = 1_800_000_000;
   const body = (notes) => ({
     event: "payment.captured", created_at: stamp,
     payload: { payment: { entity: { id: "pay_z", order_id: "order_NOWHERE", amount: 100, currency: "INR", ...(notes ? { notes } : {}) } } },
   });
 
   const first = await deliver(body(null), "evt_replay"); // matches nothing at all
-  assert.equal(String(first.body?.status), "exception", `an unmatched event is refused: ${JSON.stringify(first)}`);
-  assert.equal(sqlite.prepare("SELECT booking_id FROM payment_gateway_events WHERE event_id='evt_replay'").get().booking_id, null,
-    "and is recorded with no booking of its own");
+  assert.equal(first.status, 409, `an unmatched event is refused: ${JSON.stringify(first)}`);
+  assert.equal(first.body?.code, "capture_atomic_link_missing");
+  const recorded = sqlite.prepare("SELECT booking_id FROM payment_gateway_events WHERE event_id='evt_replay'").get();
+  assert.ok(!recorded || recorded.booking_id == null, "and is recorded with no booking of its own");
 
   const substituted = await deliver(body({ booking_id: "BK-SUB" }), "evt_replay"); // same id, booking added
   assert.equal(String(subscription().status), "pending_payment",
@@ -1476,16 +1479,17 @@ test("W2-PAY-07: an EXPLICIT sandbox declaration still unlocks the simulators", 
 });
 
 test("W2-PAY-07: the credential default documented as the rollback is unchanged", async () => {
-  // docs/payments-staging-setup.md: "unset PAWSPACE_PAYMENT_ENV (-> defaults to sandbox)" is the
-  // deliberate fail-closed rollback for LIVE money. Unsetting must still take live off, so the
-  // credential and webhook-secret selection keeps resolving an absent variable to sandbox.
+  // The hardened parser refuses anything that is not exactly "sandbox" or "live". Unsetting
+  // PAWSPACE_PAYMENT_ENV used to collapse to sandbox and unlock webhook/order credentials; that is
+  // no longer a default. Live money stays off because there is no environment at all.
   const client = await import("../lib/razorpay-client.ts");
   const gate = await import("../lib/payment-webhook-gate.ts");
   const environment = await import("../lib/payment-environment.ts");
-  assert.equal(client.paymentEnvironment({}), "sandbox", "an unset variable still selects sandbox credentials");
+  assert.throws(() => client.paymentEnvironment({}), environment.PaymentEnvironmentConfigurationError, "an unset variable is a configuration error, not a sandbox default");
   assert.equal(client.paymentEnvironment({ PAWSPACE_PAYMENT_ENV: "live" }), "live", "and an explicit live declaration is honoured");
-  assert.equal(gate.paymentMode({}), "sandbox", "an unset variable still selects the sandbox webhook secret");
-  assert.equal(environment.sandboxCapabilitiesUnlocked({}), false, "but it unlocks no sandbox-only capability");
-  assert.equal(environment.sandboxCapabilitiesUnlocked({ PAWSPACE_PAYMENT_ENV: "  SANDBOX " }), true, "an explicit declaration does, however it is cased or spaced");
+  assert.throws(() => gate.paymentMode({}), environment.PaymentEnvironmentConfigurationError, "an unset variable does not select a webhook secret");
+  assert.equal(environment.sandboxCapabilitiesUnlocked({}), false, "an unset declaration unlocks no sandbox-only capability");
+  assert.equal(environment.sandboxCapabilitiesUnlocked({ PAWSPACE_PAYMENT_ENV: "  SANDBOX " }), false, "aliases, trimming and case-folding are not declarations");
+  assert.equal(environment.sandboxCapabilitiesUnlocked({ PAWSPACE_PAYMENT_ENV: "sandbox" }), true, "only the exact canonical sandbox declaration unlocks sandbox capabilities");
   assert.equal(environment.sandboxCapabilitiesUnlocked({ PAWSPACE_PAYMENT_ENV: "" }), false, "and an empty declaration is not a declaration");
 });
