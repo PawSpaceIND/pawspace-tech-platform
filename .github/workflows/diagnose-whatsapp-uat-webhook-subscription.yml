@@ -1,0 +1,57 @@
+name: Diagnose WhatsApp UAT webhook subscription
+
+on:
+  push:
+    branches:
+      - fix/whatsapp-uat-staging-deploy-isolation
+    paths:
+      - .github/workflows/diagnose-whatsapp-uat-webhook-subscription.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    env:
+      META_APP_ID: '922882727551525'
+      META_WABA_ID: '1647621440064984'
+      EXPECTED_CALLBACK: 'https://pawspace-staging.karthik-fce.workers.dev/api/whatsapp/meta-webhook'
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Inspect Meta app webhook and WABA subscription safely
+        env:
+          META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
+          META_WHATSAPP_APP_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const userToken=String(process.env.META_WHATSAPP_UAT_ACCESS_TOKEN||'').trim();
+          const appSecret=String(process.env.META_WHATSAPP_APP_SECRET||'').trim();
+          const appId=String(process.env.META_APP_ID||'').trim();
+          const wabaId=String(process.env.META_WABA_ID||'').trim();
+          const expected=String(process.env.EXPECTED_CALLBACK||'').trim();
+          if(!userToken||!appSecret||!appId||!wabaId||!expected)throw new Error('Required UAT Meta configuration unavailable');
+          const appToken=`${appId}|${appSecret}`;
+          const safeJson=async r=>{try{return await r.json()}catch{return{}}};
+          const subs=await fetch(`https://graph.facebook.com/v23.0/${appId}/subscriptions`,{headers:{authorization:`Bearer ${appToken}`},signal:AbortSignal.timeout(30000)});
+          const sp=await safeJson(subs);
+          if(!subs.ok){const e=sp?.error||{};console.log(`App subscription query failed: HTTP=${subs.status}; code=${Number(e.code||0)}; subcode=${Number(e.error_subcode||0)}.`);process.exit(2);}
+          const rows=Array.isArray(sp?.data)?sp.data:[];
+          const wa=rows.find(x=>String(x?.object||'')==='whatsapp_business_account');
+          const fields=Array.isArray(wa?.fields)?wa.fields.map(x=>typeof x==='string'?x:String(x?.name||'')):[];
+          const callback=String(wa?.callback_url||'');
+          const callbackMatches=callback===expected;
+          const messagesSubscribed=fields.includes('messages');
+          const waba=await fetch(`https://graph.facebook.com/v23.0/${wabaId}/subscribed_apps`,{headers:{authorization:`Bearer ${userToken}`},signal:AbortSignal.timeout(30000)});
+          const wp=await safeJson(waba);
+          if(!waba.ok){const e=wp?.error||{};console.log(`WABA subscribed-app query failed: HTTP=${waba.status}; code=${Number(e.code||0)}; subcode=${Number(e.error_subcode||0)}.`);process.exit(3);}
+          const apps=Array.isArray(wp?.data)?wp.data:[];
+          const appSubscribed=apps.some(x=>String(x?.id||'')===appId);
+          console.log(`whatsappWebhookConfigured=${Boolean(wa)}; callbackMatchesStaging=${callbackMatches}; messagesSubscribed=${messagesSubscribed}; wabaAppSubscribed=${appSubscribed}; appSubscriptionCount=${rows.length}; wabaSubscribedAppCount=${apps.length}`);
+          if(Boolean(wa)&&callbackMatches&&messagesSubscribed&&appSubscribed)process.exit(0);
+          process.exit(4);
+          NODE
