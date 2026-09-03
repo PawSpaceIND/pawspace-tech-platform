@@ -50,14 +50,19 @@ const worker = {
     if (url.pathname.startsWith("/api/")) {
       if(url.pathname==="/api/identity-session")return secureApiResponse(await handler.fetch(request,env,ctx));
       if(request.method==="POST"&&(url.pathname==="/api/uat-scheduling"||url.pathname==="/api/canonical-bookings"))await cleanupExpiredReservationLeases(env.DB);
-      const sessionAccess=await authorizePlatformSessionRequest(request,env.DB);
+      // Every pre-route authorization/service inspection runs on a clone so the route always receives
+      // the original request body untouched. This is load-bearing for anonymous AI web-chat POSTs:
+      // the permission mapper needs to inspect `mode`, while app/api/ai-web-chat/route.ts still needs
+      // to consume the same JSON body afterwards. Cross-origin and ownership checks remain unchanged.
+      const inspectionRequest=request.clone();
+      const sessionAccess=await authorizePlatformSessionRequest(inspectionRequest,env.DB);
       if(sessionAccess instanceof Response)return sessionAccess;
-      const access=sessionAccess??await authorizeApiRequest(request, env);
+      const access=sessionAccess??await authorizeApiRequest(inspectionRequest, env);
       if (access instanceof Response) return access;
-      const serviceBlock=await blockDisabledServiceRequest(request,env.DB);
-      if(serviceBlock){ctx.waitUntil(auditApiResponse(env,access.actor,access.permission,request,serviceBlock.clone()));return secureApiResponse(serviceBlock);}
+      const serviceBlock=await blockDisabledServiceRequest(inspectionRequest,env.DB);
+      if(serviceBlock){ctx.waitUntil(auditApiResponse(env,access.actor,access.permission,inspectionRequest,serviceBlock.clone()));return secureApiResponse(serviceBlock);}
       const response = await handler.fetch(request, env, ctx);
-      ctx.waitUntil(auditApiResponse(env, access.actor, access.permission, request, response.clone()));
+      ctx.waitUntil(auditApiResponse(env, access.actor, access.permission, inspectionRequest, response.clone()));
       return secureApiResponse(response);
     }
 
