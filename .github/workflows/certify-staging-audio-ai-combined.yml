@@ -1,6 +1,7 @@
 name: Certify combined staging Audio AI
 
 # Staging-only certification for the combined WhatsApp + Audio AI build.
+# Re-run after MeloTTS payload hardening.
 on:
   push:
     branches:
