@@ -61,7 +61,11 @@ export async function cleanupExpiredReservationLeases(db:Db,now=Date.now()){
     const hasOffers=await tableExists(db,"provider_assignment_offers");
     const marker=`EXISTS (SELECT 1 FROM scheduling_reservation_lease_cleanup c WHERE c.group_id=r.group_id AND c.reason=? AND c.released_at=?)`;
     const statements=[
-      db.prepare(`INSERT OR REPLACE INTO scheduling_reservation_lease_cleanup (group_id,reason,released_at) SELECT DISTINCT r.group_id,?,? FROM scheduling_reservations r WHERE r.group_id IN (${placeholders}) AND r.status='assigned' AND ${expiredLease} ${confirmedClause}`).bind(reason,now,...groupIds,now,now),
+      // Advance the durable marker without REPLACE's delete/reinsert race. A later legitimate lease
+      // expiry for the same group is allowed to advance released_at; once one cleanup batch advances it
+      // to this generation, a same-generation contender cannot overwrite ownership. Marker + guarded
+      // state transitions stay in the same D1 batch.
+      db.prepare(`INSERT INTO scheduling_reservation_lease_cleanup (group_id,reason,released_at) SELECT DISTINCT r.group_id,?,? FROM scheduling_reservations r WHERE r.group_id IN (${placeholders}) AND r.status='assigned' AND ${expiredLease} ${confirmedClause} ON CONFLICT(group_id) DO UPDATE SET reason=excluded.reason,released_at=excluded.released_at WHERE scheduling_reservation_lease_cleanup.released_at<excluded.released_at`).bind(reason,now,...groupIds,now,now),
       db.prepare(`UPDATE scheduling_reservations AS r SET status='cancelled' WHERE r.status='assigned' AND r.group_id IN (${placeholders}) AND ${marker}`).bind(...groupIds,reason,now),
       db.prepare(`UPDATE scheduling_assignment_decisions AS r SET status='expired',actor_id='system:reservation-lease-cleanup',reason=?,updated_at=? WHERE r.status IN ('assigned','awaiting_admin') AND r.group_id IN (${placeholders}) AND ${marker}`).bind(reason,now,...groupIds,reason,now),
     ];

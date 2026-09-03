@@ -79,3 +79,19 @@ test("expired reservation maintenance is bounded per foreground request",()=>{
   assert.match(leases,/groupIds\.map\(\(\)=>"\?"\)/);
   assert.match(leases,/scheduling_reservation_lease_cleanup[\s\S]*?released_at=\?/);
 });
+
+
+test("reservation claim filters obvious same-provider/day losers before the atomic write",()=>{
+  const scheduling=fs.readFileSync(new URL("../app/api/uat-scheduling/route.ts",import.meta.url),"utf8");
+  assert.match(scheduling,/reservationClaimTails=new Map<string,Promise<void>>/);
+  assert.match(scheduling,/withReservationClaimLane\(claimKey,executeAtomicClaim\)/);
+  assert.match(scheduling,/SELECT EXISTS\(SELECT 1 FROM scheduling_reservations[\s\S]*?daily_jobs/);
+  assert.match(scheduling,/ON CONFLICT\(provider_id,scheduled_start,scheduled_end\)/,"optimistic preflight must not replace the authoritative atomic cross-isolate claim");
+});
+
+test("lease cleanup uses a non-destructive generation-aware marker claim",()=>{
+  const leases=fs.readFileSync(new URL("../lib/scheduling-reservation-leases.ts",import.meta.url),"utf8");
+  assert.doesNotMatch(leases,/INSERT OR REPLACE INTO scheduling_reservation_lease_cleanup/);
+  assert.match(leases,/ON CONFLICT\(group_id\) DO UPDATE SET reason=excluded\.reason,released_at=excluded\.released_at WHERE scheduling_reservation_lease_cleanup\.released_at<excluded\.released_at/);
+  assert.match(leases,/released_at=\?/);
+});
