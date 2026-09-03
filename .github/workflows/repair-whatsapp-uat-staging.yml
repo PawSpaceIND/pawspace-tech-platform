@@ -96,7 +96,7 @@ jobs:
           values.PAWSPACE_STAGING_LIVE_CUSTOMER_OTP="false";
           writeFileSync(process.env.SECRETS,JSON.stringify(values),{mode:0o600});
           NODE
-          if ! npx wrangler deploy --config "$WRANGLER_CONFIG" --keep-vars --message "staging $TARGET_SHA whatsapp-uat-repair" --secrets-file "$SECRETS" > "$LOG" 2>&1; then echo "Staging-only Wrangler deploy failed; raw output withheld." >&2; exit 1; fi
+          if ! npx wrangler deploy --config "$WRANGLER_CONFIG" --keep-vars --message "staging $TARGET_SHA" --secrets-file "$SECRETS" > "$LOG" 2>&1; then echo "Staging-only Wrangler deploy failed; raw output withheld." >&2; exit 1; fi
           URL="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' "$LOG" | tail -n 1 || true)"
           [ "$URL" = "$STAGING_URL" ] || { echo "Unexpected Worker origin; deployment output withheld." >&2; exit 1; }
           echo "Exact WhatsApp gateway SHA deployed to pawspace-staging; sensitive values withheld."
