@@ -1,0 +1,92 @@
+name: Audit Track 3 ledger drift 33725580590
+
+on:
+  push:
+    branches:
+      - fix/track3-ledger-finance-certification
+    paths:
+      - .github/workflows/staging-track3-ledger-audit-33725580590.yml
+
+permissions:
+  contents: read
+
+env:
+  TARGET_SHA: 96422d8728fea9c88fb014a5b29519df08bc99e4
+  PERF_RUN_ID: remediation-33725580590-1
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 0
+      - name: Verify exact application baseline
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          git log -1 --pretty=%s | grep -Fx "perf(staging): coalesce concurrent finance and actor reads"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm run install:ci
+      - run: npm run build
+      - name: Configure isolated staging binding
+        env:
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+        run: node scripts/stage-config.mjs
+      - name: Verify staging-only D1 binding
+        env:
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const config=JSON.parse(fs.readFileSync('dist/server/wrangler.json','utf8'));
+          const binding=(config.d1_databases||[]).find(x=>x.binding==='DB');
+          const vars=config.vars||{};
+          const evidence={name:config.name,databaseId:binding?.database_id,deploymentEnv:vars.PAWSPACE_DEPLOYMENT_ENV,schedulingEnv:vars.PAWSPACE_SCHEDULING_ENV,paymentEnv:vars.PAWSPACE_PAYMENT_ENV,communicationEnv:vars.PAWSPACE_COMMUNICATION_ENV,targetSha:process.env.TARGET_SHA,runId:process.env.PERF_RUN_ID};
+          fs.writeFileSync('ledger-audit-isolation.json',JSON.stringify(evidence,null,2));
+          if(config.name!=='pawspace-staging'||binding?.database_id!==process.env.STAGING_D1_ID||vars.PAWSPACE_DEPLOYMENT_ENV!=='staging'||vars.PAWSPACE_SCHEDULING_ENV!=='uat'||vars.PAWSPACE_PAYMENT_ENV!=='sandbox'||vars.PAWSPACE_COMMUNICATION_ENV!=='uat') process.exit(1);
+          NODE
+      - name: Read-only ledger drift audit
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          RUN_ID="$PERF_RUN_ID"
+          run_query(){ npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --yes --json --command "$2" > "$1"; }
+          run_query ledger-schema.json "PRAGMA table_info(finance_journal_entries);"
+          run_query ledger-global.json "SELECT COUNT(*) rows,ROUND(COALESCE(SUM(debit),0),2) debit,ROUND(COALESCE(SUM(credit),0),2) credit,ROUND(COALESCE(SUM(debit),0)-COALESCE(SUM(credit),0),2) drift FROM finance_journal_entries;"
+          run_query ledger-unbalanced-references.json "SELECT reference,booking_id,source,COUNT(*) lines,ROUND(SUM(debit),2) debit,ROUND(SUM(credit),2) credit,ROUND(SUM(debit)-SUM(credit),2) drift FROM finance_journal_entries GROUP BY reference,booking_id,source HAVING ABS(ROUND(SUM(debit)-SUM(credit),2))>0 ORDER BY ABS(ROUND(SUM(debit)-SUM(credit),2)) DESC,reference LIMIT 200;"
+          run_query ledger-unbalanced-bookings.json "SELECT booking_id,COUNT(*) lines,ROUND(SUM(debit),2) debit,ROUND(SUM(credit),2) credit,ROUND(SUM(debit)-SUM(credit),2) drift FROM finance_journal_entries GROUP BY booking_id HAVING ABS(ROUND(SUM(debit)-SUM(credit),2))>0 ORDER BY ABS(ROUND(SUM(debit)-SUM(credit),2)) DESC,booking_id LIMIT 200;"
+          run_query track3-bookings.json "SELECT b.id,b.idempotency_key,p.id payment_id,p.amount,p.amount_due_now,p.status payment_status FROM canonical_bookings b LEFT JOIN booking_payments p ON p.booking_id=b.id WHERE b.idempotency_key LIKE '${RUN_ID}:booking:%' ORDER BY b.idempotency_key;"
+          run_query track3-journal.json "SELECT j.booking_id,j.reference,j.line_no,j.entry,j.debit,j.credit,j.amount,j.source FROM finance_journal_entries j WHERE j.booking_id IN (SELECT id FROM canonical_bookings WHERE idempotency_key LIKE '${RUN_ID}:booking:%') ORDER BY j.booking_id,j.reference,j.line_no;"
+          run_query track3-drift-by-booking.json "SELECT b.id booking_id,b.idempotency_key,COUNT(j.id) journal_lines,ROUND(COALESCE(SUM(j.debit),0),2) debit,ROUND(COALESCE(SUM(j.credit),0),2) credit,ROUND(COALESCE(SUM(j.debit),0)-COALESCE(SUM(j.credit),0),2) drift FROM canonical_bookings b LEFT JOIN finance_journal_entries j ON j.booking_id=b.id WHERE b.idempotency_key LIKE '${RUN_ID}:booking:%' GROUP BY b.id,b.idempotency_key HAVING ABS(ROUND(COALESCE(SUM(j.debit),0)-COALESCE(SUM(j.credit),0),2))>0 ORDER BY ABS(ROUND(COALESCE(SUM(j.debit),0)-COALESCE(SUM(j.credit),0),2)) DESC,b.idempotency_key;"
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const files=['ledger-global.json','ledger-unbalanced-references.json','ledger-unbalanced-bookings.json','track3-drift-by-booking.json'];
+          for(const file of files){const raw=JSON.parse(fs.readFileSync(file,'utf8'));const meta=(Array.isArray(raw)?raw[0]:raw)?.meta||{};if(Number(meta.rows_written||0)!==0)throw new Error(`${file}: unexpected write`);}
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: staging-track3-ledger-audit-33725580590
+          path: |
+            ledger-audit-isolation.json
+            ledger-schema.json
+            ledger-global.json
+            ledger-unbalanced-references.json
+            ledger-unbalanced-bookings.json
+            track3-bookings.json
+            track3-journal.json
+            track3-drift-by-booking.json
+          if-no-files-found: warn
