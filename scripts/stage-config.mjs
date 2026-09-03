@@ -58,13 +58,8 @@ cfg.topLevelName = "pawspace-staging";
 cfg.d1_databases = [{ binding: "DB", database_name: "pawspace-staging", database_id: d1Id }];
 cfg.ai = { binding: "AI" };
 
-/* Vars that only ever make sense on a developer's machine. PAWSPACE_LOCAL_PREVIEW is the runtime
- * switch for an AUTHENTICATION-FREE actor: combined with a forged `Host: localhost` it is two thirds
- * of the local-preview gate, so it must never reach a deployed environment. Listed rather than
- * assumed, and enforced below, so a future addition to vite.config.ts cannot ride in unnoticed. */
 export const DEV_ONLY_VARS = ["PAWSPACE_LOCAL_PREVIEW"];
 
-/* Staging DECLARES its complete var set. */
 cfg.vars = {
   PAWSPACE_DEPLOYMENT_ENV: "staging",
   PAWSPACE_SCHEDULING_ENV: "uat",
@@ -74,6 +69,7 @@ cfg.vars = {
   PAWSPACE_COMMUNICATION_ENV: "uat",
   META_WHATSAPP_UAT_DELIVERY_ENABLED: "true",
   PAWSPACE_MEDIA_ENV: "uat",
+  PAWSPACE_PRODUCTION_ENFORCE: "false",
 };
 if (r2BucketName) {
   cfg.r2_buckets = [{ binding: "PAWSPACE_MEDIA_BUCKET", bucket_name: r2BucketName }];
@@ -89,7 +85,7 @@ if (leaked.length) {
 
 writeFileSync(path, JSON.stringify(cfg));
 
-console.log(`Staging config written → name=pawspace-staging, DB=${d1Id}, PAWSPACE_PAYMENT_ENV=sandbox, UAT_LOGIN=on, UAT integrations locked`);
+console.log(`Staging config written → name=pawspace-staging, DB=${d1Id}, PAWSPACE_PAYMENT_ENV=sandbox, UAT_LOGIN=on, PAWSPACE_PRODUCTION_ENFORCE=false`);
 console.log(`Private media binding: ${r2BucketName ? "configured" : "not configured"}`);
 console.log("Workers AI binding: configured as AI");
 console.log("UAT credentials were validated from the environment, are NOT written to wrangler.json, and are uploaded as Cloudflare Worker secrets — nothing secret is logged.");
