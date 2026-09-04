@@ -1,5 +1,5 @@
-export type TranscriptChannel = "whatsapp" | "email";
-export type TranscriptDirection = "inbound" | "outbound";
+export type TranscriptChannel = "whatsapp" | "email" | "call";
+export type TranscriptDirection = "inbound" | "outbound" | "summary";
 
 export interface OmnichannelWebhookRequest {
   channel: TranscriptChannel;

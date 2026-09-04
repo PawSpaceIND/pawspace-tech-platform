@@ -21,7 +21,7 @@ export interface StructuredJsonGenerationRequest {
   systemInstruction: string;
   transcript: Array<{
     messageId: string;
-    channel: "whatsapp" | "email";
+    channel: "whatsapp" | "email" | "call";
     occurredAt: number;
     text: string;
   }>;
@@ -194,7 +194,9 @@ export async function extractAndApplyCrmEntities(input: {
   dependencies: AiCrmEntityExtractorDependencies;
   confidenceThreshold?: number;
 }): Promise<AiCrmExtractionResult> {
-  const transcript = input.transcript.filter((message) => message.direction === "inbound").slice(-40);
+  const transcript = input.transcript
+    .filter((message) => message.direction === "inbound" || message.direction === "summary")
+    .slice(-40);
   const response = await input.dependencies.generator.generate({
     schemaName: "pawspace_ai_crm_entity_extraction_v1",
     systemInstruction: SYSTEM_INSTRUCTION,
