@@ -1,5 +1,6 @@
 import{processMetaWhatsAppEvents,parseMetaWhatsAppWebhook,verifyMetaWebhookChallenge,verifyMetaWhatsAppSignature}from"../../../../lib/meta-whatsapp-webhook";
 import{processMetaStatusEventAtomic}from"../../../../lib/whatsapp-production-runtime";
+import{processEliteInboundMessage}from"../../../../lib/services/elite-production-runtime";
 
 async function bindings(){const{env}=await import("cloudflare:workers");return env as unknown as{DB:D1Database;META_WHATSAPP_APP_SECRET?:string;META_WHATSAPP_VERIFY_TOKEN?:string;META_WHATSAPP_ACCESS_TOKEN?:string;META_WHATSAPP_UAT_ACCESS_TOKEN?:string;META_WHATSAPP_GRAPH_VERSION?:string;PAWSPACE_MEDIA_BUCKET?:unknown};}
 const noStore={"cache-control":"no-store"};
@@ -20,10 +21,18 @@ export async function POST(request:Request){
  try{
   const messages=events.filter(event=>event.kind==="message");
   const results:Array<Record<string,unknown>>=[];
-  if(messages.length)results.push(...await processMetaWhatsAppEvents(env.DB,messages,rawBody,env as unknown as Record<string,unknown>));
-  for(const event of events){
-   if(event.kind==="status")results.push(await processMetaStatusEventAtomic(env.DB,event,rawBody));
+  if(messages.length){
+   const processed=await processMetaWhatsAppEvents(env.DB,messages,rawBody,env as unknown as Record<string,unknown>);
+   results.push(...processed);
+   const byEvent=new Map(processed.map(result=>[String(result.eventId||""),result]));
+   for(const event of messages){
+    const mapped=byEvent.get(event.eventId),customerId=String(mapped?.customerId||"").trim(),messageId=String(mapped?.messageId||event.eventId).trim();
+    if(!customerId||!event.body)continue;
+    try{await processEliteInboundMessage(env.DB,{customerId,messageId,text:event.body,occurredAt:event.timestamp,channel:"whatsapp"});}
+    catch(error){console.error("elite_ingress_failed",{eventId:event.eventId,error:error instanceof Error?error.message:String(error)});}
+   }
   }
+  for(const event of events){if(event.kind==="status")results.push(await processMetaStatusEventAtomic(env.DB,event,rawBody));}
   return Response.json({ok:true,accepted:events.length,results,externalDelivery:false},{status:200,headers:noStore});
  }catch(error){
   if(error instanceof Response)return Response.json({ok:false,error:await error.text(),externalDelivery:false},{status:error.status,headers:noStore});

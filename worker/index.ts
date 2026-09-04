@@ -56,14 +56,6 @@ const worker = {
       // pre-gateway /api/* handler path exists. A clone is retained only for the post-response Elite observer.
       const eliteRequest=isMetaWebhook?request.clone():null;
       if(request.method==="POST"&&(url.pathname==="/api/uat-scheduling"||url.pathname==="/api/canonical-bookings"))await cleanupExpiredReservationLeases(env.DB);
-      // Source-contract markers retained for existing gateway-composition tests. The calls immediately
-      // below preserve this exact ordering while using an independent body stream for inspection:
-      // authorizePlatformSessionRequest(request,env.DB)
-      // sessionAccess ?? await authorizeApiRequest(request, env)
-      // Every pre-route authorization/service inspection runs on a clone so the route always receives
-      // the original request body untouched. This is load-bearing for anonymous AI web-chat POSTs:
-      // the permission mapper needs to inspect `mode`, while app/api/ai-web-chat/route.ts still needs
-      // to consume the same JSON body afterwards. Cross-origin and ownership checks remain unchanged.
       const inspectionRequest=request.clone();
       const sessionAccess=await authorizePlatformSessionRequest(inspectionRequest,env.DB);
       if(sessionAccess instanceof Response)return sessionAccess;
