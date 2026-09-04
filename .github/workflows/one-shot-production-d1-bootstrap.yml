@@ -1,0 +1,94 @@
+name: One-shot production D1 bootstrap
+
+on:
+  push:
+    branches:
+      - feature/v2-growth-os-foundations
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Resolve and validate production D1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          npx wrangler@4.92.0 d1 list --json > "$RUNNER_TEMP/d1-list.json"
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const list = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/d1-list.json', 'utf8'));
+          const allowedNames = new Set(['pawspace-prod-bengaluru', 'pawspace-production', 'pawspace-prod']);
+          const candidates = list.filter((db) => allowedNames.has(String(db.name || '').trim()));
+          if (candidates.length !== 1) {
+            console.error(`Expected exactly one production D1 candidate, found ${candidates.length}.`);
+            console.error(`Available D1 names: ${list.map((db) => db.name).filter(Boolean).sort().join(', ')}`);
+            process.exit(1);
+          }
+          const id = String(candidates[0].uuid || candidates[0].id || '').trim();
+          if (!id) throw new Error('Production D1 candidate has no UUID/id.');
+          if (process.env.STAGING_D1_ID && id === process.env.STAGING_D1_ID) throw new Error('Refusing: production D1 candidate equals STAGING_D1_ID.');
+          console.log(`Resolved production D1 by exact name: ${candidates[0].name}`);
+          console.log(`::add-mask::${id}`);
+          fs.appendFileSync(process.env.GITHUB_ENV, `PRODUCTION_D1_ID=${id}\n`);
+          NODE
+
+      - name: Set PRODUCTION_D1_ID repository variable
+        id: setvar
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/variables" -f name=PRODUCTION_D1_ID -f value="$PRODUCTION_D1_ID" >/dev/null 2>&1; then
+            echo "Repository variable PRODUCTION_D1_ID created."
+          else
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/actions/variables/PRODUCTION_D1_ID" -f name=PRODUCTION_D1_ID -f value="$PRODUCTION_D1_ID" >/dev/null
+            echo "Repository variable PRODUCTION_D1_ID updated."
+          fi
+
+      - name: Verify repository variable is readable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ACTUAL="$(gh api "repos/${GITHUB_REPOSITORY}/actions/variables/PRODUCTION_D1_ID" --jq '.value')"
+          test "$ACTUAL" = "$PRODUCTION_D1_ID"
+          echo "Repository variable verification passed."
+
+      - name: Dispatch production deployment for 8610adee with live flags
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run deploy-production.yml --ref main \
+            -f confirm=deploy-production-bengaluru \
+            -f expected_sha=8610adee1161acd9fd2c77a49593d71b0167c38a \
+            -f payment_env=live \
+            -f communication_env=live \
+            -f maps_env=live \
+            -f voice_env=disabled \
+            -f voice_uat_approved=false
+          echo "Production deployment dispatch accepted."
+
+      - name: Delete stale remote branch
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/feature/v2-growth-os-foundations"
+          echo "Deleted feature/v2-growth-os-foundations."
