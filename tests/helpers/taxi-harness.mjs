@@ -186,6 +186,41 @@ export async function seedActiveCommercialTerm(db, { serviceCode = "pet_taxi", p
   return draft.id;
 }
 
+/**
+ * A REAL customer session cookie for a verified phone principal.
+ *
+ * The taxi routes resolve a customer through `resolvePlatformSession`, which reads a signed session
+ * cookie — not through the staff `oai-authenticated-user-email` header. Minting the session through
+ * the production `upsertIdentityBinding` + `issuePlatformSession` path is what makes the
+ * customer-versus-Finance authority assertions real: the session is only usable while the binding
+ * behind it stays active and verified.
+ *
+ * Returns a `cookie` header value ready to put on a Request.
+ */
+export async function customerSessionCookie(db, { principalKey, customerId, subjectType = "customer" }) {
+  const bindings = await import("../../lib/identity-binding.ts");
+  const sessions = await import("../../lib/platform-session.ts");
+  await bindings.ensureIdentityBindingTables(db);
+  await bindings.upsertIdentityBinding(db, {
+    identitySource: subjectType === "customer" ? "customer_otp" : "partner_otp",
+    principalType: "phone", principalKey, subjectType, subjectId: customerId,
+    verificationState: "verified", actorId: "otp@pawspace.test", reason: "verified OTP sign-in",
+  });
+  const binding = await bindings.findIdentityBinding(db, {
+    identitySource: subjectType === "customer" ? "customer_otp" : "partner_otp",
+    principalType: "phone", principalKey, subjectType,
+  });
+  if (!binding) throw new Error("the harness could not find the binding it just created");
+  const issued = await sessions.issuePlatformSession(db, {
+    bindingId: String(binding.id),
+    identitySource: subjectType === "customer" ? "customer_otp" : "partner_otp",
+    principalType: "phone", principalKey, subjectType, subjectId: customerId,
+  });
+  const token = String(issued.token ?? issued.sessionToken ?? "");
+  if (!token) throw new Error(`issuePlatformSession returned no token: ${JSON.stringify(Object.keys(issued))}`);
+  return { cookie: `${sessions.PLATFORM_SESSION_COOKIE}=${encodeURIComponent(token)}`, bindingId: String(binding.id) };
+}
+
 /** A distinct idempotency key per call, so a test's own repeats do not collide by accident. */
 let keySeq = 0;
 export const nextKey = (prefix = "K") => `${prefix}-${++keySeq}-${Math.random().toString(36).slice(2, 8)}`;
