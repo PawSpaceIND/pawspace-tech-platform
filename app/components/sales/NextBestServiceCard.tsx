@@ -31,11 +31,12 @@ function formatMoney(value: number): string {
 }
 
 export function NextBestServiceCard({ recommendation, householdName, petName, safety }: NextBestServiceCardProps) {
-  const disabled = safety.eligibility !== "Allowed";
-  const suppressionReason = safety.reasonCodes.map((reason) => SAFETY_REASON_LABELS[reason] ?? pretty(reason)).join(" · ");
+  const suppressed = safety.eligibility === "Suppressed";
+  const contactBlocked = safety.eligibility !== "Allowed";
+  const safetyReason = safety.reasonCodes.map((reason) => SAFETY_REASON_LABELS[reason] ?? pretty(reason)).join(" · ");
 
   return (
-    <article className={`${styles.recommendationCard} ${disabled ? styles.recommendationDisabled : ""}`} aria-disabled={disabled}>
+    <article className={`${styles.recommendationCard} ${suppressed ? styles.recommendationDisabled : ""}`} aria-disabled={contactBlocked}>
       <header><div><span>NEXT BEST SERVICE</span><h3>{pretty(recommendation.targetService)}</h3></div><em>{Math.round(recommendation.confidence * 100)}% confidence</em></header>
       <div className={styles.householdLine}><strong>{householdName}</strong><span>{petName}</span></div>
       <dl className={styles.recommendationFacts}>
@@ -43,7 +44,7 @@ export function NextBestServiceCard({ recommendation, householdName, petName, sa
         <div><dt>Estimated Revenue</dt><dd>{formatMoney(recommendation.expectedRevenue)}</dd></div>
       </dl>
       <div className={styles.reasonChips}>{recommendation.reasonCodes.map((reason) => <span key={reason}>{pretty(reason)}</span>)}</div>
-      {disabled ? <div className={styles.suppressionBanner} role="status"><strong>{safety.eligibility}</strong><span>{suppressionReason || "Contact requires safety review before outreach."}</span></div> : <Link className={styles.primaryAction} href="/team/sales">Open governed outreach</Link>}
+      {contactBlocked ? <div className={styles.suppressionBanner} role="status"><strong>{safety.eligibility}</strong><span>{safetyReason || "Contact requires safety review before outreach."}</span></div> : <Link className={styles.primaryAction} href="/team/sales">Open governed outreach</Link>}
     </article>
   );
 }
