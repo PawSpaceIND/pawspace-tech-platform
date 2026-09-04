@@ -6,11 +6,17 @@ import { classifyWinbackLifecycle } from "../lib/policies/winback-lifecycle.ts";
 import { calculateQueuePriority } from "../lib/types/sales-work-queue.ts";
 import { recommendNextBestServices } from "../lib/services/pet-next-best-service.ts";
 
-test("contact safety gate fails closed for opt-outs, complaints and quiet hours", () => {
-  assert.equal(evaluateContactEligibility({ optedOut: true, openComplaint: false }).decision, "Suppressed");
-  assert.equal(evaluateContactEligibility({ optedOut: false, openComplaint: true }).decision, "Suppressed");
+test("contact safety gate suppresses marketing opt-outs, complaints and quiet hours", () => {
+  assert.equal(
+    evaluateContactEligibility({ marketingOptOut: true, openComplaint: false }).decision,
+    "Suppressed",
+  );
+  assert.equal(
+    evaluateContactEligibility({ marketingOptOut: false, openComplaint: true }).decision,
+    "Suppressed",
+  );
   const quiet = evaluateContactEligibility({
-    optedOut: false,
+    marketingOptOut: false,
     openComplaint: false,
     evaluatedAt: new Date("2026-09-04T00:00:00.000Z"),
     quietHours: { timezone: "Asia/Kolkata", startMinute: 21 * 60, endMinute: 9 * 60 },
@@ -22,7 +28,7 @@ test("contact safety gate fails closed for opt-outs, complaints and quiet hours"
 test("contact safety gate requires review for invalid quiet-hours configuration", () => {
   assert.equal(
     evaluateContactEligibility({
-      optedOut: false,
+      marketingOptOut: false,
       openComplaint: false,
       quietHours: { timezone: "Not/AZone", startMinute: 0, endMinute: 60 },
     }).decision,
@@ -30,20 +36,49 @@ test("contact safety gate requires review for invalid quiet-hours configuration"
   );
 });
 
-test("grooming lifecycle uses V2 15/30/45 day thresholds", () => {
+test("grooming lifecycle uses the directed V2 15/30/45 day thresholds", () => {
   assert.equal(classifyWinbackLifecycle("grooming", 14), "active");
   assert.equal(classifyWinbackLifecycle("grooming", 15), "repeat_due");
   assert.equal(classifyWinbackLifecycle("grooming", 30), "at_risk");
   assert.equal(classifyWinbackLifecycle("grooming", 45), "win_back");
 });
 
-test("unified work queue priority is multiplicative and normalized", () => {
-  assert.equal(calculateQueuePriority(1, 1, 1, 1, 1), 100);
-  assert.equal(calculateQueuePriority(1, 0.5, 1, 1, 1), 50);
-  assert.equal(calculateQueuePriority(2, 1, 1, 1, 1), 100);
+test("unapproved service lifecycle thresholds remain configuration-required", () => {
+  assert.equal(classifyWinbackLifecycle("dog_training", 90), null);
 });
 
-test("young trained dog gets explainable walking and boarding cross-sell candidates", () => {
+test("unified work queue scoring is policy-weighted and safety-gated", () => {
+  const factors = {
+    urgency: 1,
+    conversionConfidence: 0,
+    expectedRevenue: 0,
+    expectedContribution: 0,
+    customerValue: 0,
+    lifecycleRisk: 0,
+    capacityAvailability: 0,
+    workAge: 0,
+    managerEscalation: 0,
+  };
+  const weights = {
+    urgency: 1,
+    conversionConfidence: 0,
+    expectedRevenue: 0,
+    expectedContribution: 0,
+    customerValue: 0,
+    lifecycleRisk: 0,
+    capacityAvailability: 0,
+    workAge: 0,
+    managerEscalation: 0,
+  };
+  assert.equal(calculateQueuePriority({ factors, weights, safetyDecision: "Allowed" }), 100);
+  assert.equal(
+    calculateQueuePriority({ factors: { ...factors, urgency: 0.5 }, weights, safetyDecision: "Allowed" }),
+    50,
+  );
+  assert.equal(calculateQueuePriority({ factors, weights, safetyDecision: "Suppressed" }), 0);
+});
+
+test("young trained dog gets explainable Grooming cross-sell candidate", () => {
   const recommendations = recommendNextBestServices({
     pet: {
       petId: "PET-1",
@@ -51,19 +86,19 @@ test("young trained dog gets explainable walking and boarding cross-sell candida
       species: "dog",
       breed: "Labrador Retriever",
       ageMonths: 12,
-      vaccinationStatus: "current",
     },
     serviceHistory: [{ serviceCode: "dog_training", status: "completed", completedAt: 1 }],
   });
-  assert.deepEqual(
-    recommendations.map((item) => item.targetServiceCode),
-    ["dog_walking", "boarding"],
-  );
-  assert.equal(recommendations[0].canonicalOpportunity.opportunityType, "cross_sell");
+  assert.deepEqual(recommendations.map((item) => item.targetServiceCode), ["grooming"]);
+  assert.deepEqual(recommendations[0].reasonCodes, [
+    "training_completed",
+    "young_dog",
+    "grooming_service_gap",
+  ]);
   assert.equal(recommendations[0].canonicalOpportunity.valueStatus, "configuration_required");
 });
 
-test("repeat grooming customer with travel intent gets boarding recommendation", () => {
+test("Grooming customer with travel intent gets Boarding, Sitting and Taxi candidates", () => {
   const recommendations = recommendNextBestServices({
     pet: {
       petId: "PET-TRAVEL-1",
@@ -71,22 +106,28 @@ test("repeat grooming customer with travel intent gets boarding recommendation",
       species: "dog",
       breed: "Golden Retriever",
       ageMonths: 36,
-      vaccinationStatus: "current",
     },
-    serviceHistory: [
-      { serviceCode: "grooming", status: "completed", completedAt: 1 },
-      { serviceCode: "grooming", status: "completed", completedAt: 2 },
-    ],
+    serviceHistory: [{ serviceCode: "grooming", status: "completed", completedAt: 1 }],
     travelIntent: true,
   });
+  assert.deepEqual(
+    recommendations.map((item) => item.targetServiceCode),
+    ["boarding", "pet_sitting", "pet_taxi"],
+  );
+});
 
-  assert.deepEqual(recommendations.map((item) => item.targetServiceCode), ["boarding"]);
-  assert.deepEqual(recommendations[0].reasonCodes, [
-    "repeat_grooming_customer",
-    "travel_intent",
-    "boarding_service_gap",
-  ]);
-  assert.equal(recommendations[0].sourceFeatures.travelIntent, true);
+test("Boarding customer with no Grooming history gets pre-stay Grooming candidate", () => {
+  const recommendations = recommendNextBestServices({
+    pet: {
+      petId: "PET-BOARD-1",
+      customerId: "CUS-BOARD-1",
+      species: "dog",
+      breed: null,
+      ageMonths: 48,
+    },
+    serviceHistory: [{ serviceCode: "boarding", status: "completed" }],
+  });
+  assert.deepEqual(recommendations.map((item) => item.targetServiceCode), ["grooming"]);
 });
 
 test("existing canonical cross-sell opportunity prevents duplicate target recommendation", () => {
@@ -97,12 +138,11 @@ test("existing canonical cross-sell opportunity prevents duplicate target recomm
       species: "dog",
       breed: null,
       ageMonths: 10,
-      vaccinationStatus: "current",
     },
-    serviceHistory: [{ serviceCode: "dog_training", status: "completed" }],
+    serviceHistory: [{ serviceCode: "training", status: "completed" }],
     existingOpportunities: [
-      { id: "OPP-1", opportunityType: "cross_sell", serviceCode: "dog_walking", status: "ready" },
+      { id: "OPP-1", opportunityType: "cross_sell", serviceCode: "grooming", status: "ready" },
     ],
   });
-  assert.deepEqual(recommendations.map((item) => item.targetServiceCode), ["boarding"]);
+  assert.deepEqual(recommendations, []);
 });
