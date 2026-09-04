@@ -51,7 +51,7 @@ jobs:
           test "${#tracked_tests[@]}" -gt 0
           status=0
           set +e
-          PAWSPACE_LOCAL_PREVIEW=on NODE_ENV=test node --experimental-strip-types --test "${tracked_tests[@]}" 2>&1 | tee web-tests.tap
+          APP_ENV=staging FORBID_PRODUCTION=true PAWSPACE_PRODUCTION_ENFORCE=false PAWSPACE_LOCAL_PREVIEW=on NODE_ENV=test node --experimental-strip-types --test "${tracked_tests[@]}" 2>&1 | tee web-tests.tap
           status=${PIPESTATUS[0]}
           set -e
           if [ "$status" -ne 0 ]; then
