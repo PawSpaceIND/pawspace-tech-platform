@@ -20,14 +20,34 @@ import { DatabaseSync } from "node:sqlite";
  * what D1 does and what the ensure*Tables + seed paths assume.
  */
 export function makeD1(sqlite) {
+  /*
+   * `onSql(pattern, fn)` — a ONE-SHOT hook that runs immediately before the next statement whose SQL
+   * contains `pattern`. Same idea as tests/helpers/voice-harness.mjs.
+   *
+   * This is what makes a check-then-act test real rather than nominal. Statements against this shim
+   * are synchronous, so `Promise.all` over two route calls does NOT interleave them — each runs to
+   * completion before the next starts, and a claim-token race can never actually occur. Measured:
+   * relaxing `INSERT OR IGNORE` to `INSERT OR REPLACE` on the refund transition claim survived a
+   * Promise.all "concurrency" test precisely because of that. Registering a hook on the guarded UPDATE
+   * lets a competing transition land in the exact gap between claiming and applying, which is the race
+   * itself instead of a stand-in for it.
+   */
+  const hooks = [];
+  const fire = async (sql) => {
+    const index = hooks.findIndex((hook) => sql.includes(hook.pattern));
+    if (index === -1) return;
+    const [hook] = hooks.splice(index, 1);
+    await hook.fn();
+  };
   const statement = (sql, args) => ({
     bind: (...bound) => statement(sql, bound),
-    first: async () => { const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
-    run: async () => { const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes || 0) } }; },
-    all: async () => ({ results: sqlite.prepare(sql).all(...args) }),
+    first: async () => { await fire(sql); const row = sqlite.prepare(sql).get(...args); return row === undefined ? null : row; },
+    run: async () => { await fire(sql); const info = sqlite.prepare(sql).run(...args); return { success: true, meta: { changes: Number(info.changes || 0) } }; },
+    all: async () => { await fire(sql); return { results: sqlite.prepare(sql).all(...args) }; },
   });
   let depth = 0;
   return {
+    onSql: (pattern, fn) => { hooks.push({ pattern, fn }); },
     prepare: (sql) => statement(sql, []),
     batch: async (items) => {
       const outer = depth === 0;
