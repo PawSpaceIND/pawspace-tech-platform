@@ -51,7 +51,7 @@ test("missing or revoked contact consent is wired fail-closed before autonomous 
 
 test("surge route contract is preview-only and declares no customer price mutation", () => {
   const route = read("app/api/elite-surge-preview/route.ts");
-  assert.match(route, /pricing\.view/);
+  assert.match(route, /pricing\.manage/);
   assert.match(route, /mode: "preview_only"/);
   assert.match(route, /customerPriceMutation: false/);
 });
