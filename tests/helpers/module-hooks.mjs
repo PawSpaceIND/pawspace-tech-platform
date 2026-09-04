@@ -12,8 +12,20 @@
  * pattern in one place so a new suite cannot pick only the half that works on a newer laptop.
  */
 import * as nodeModule from "node:module";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+// Request-scoped Worker DB for suites that call real routes. ESM caches the first
+// `cloudflare:workers` shim, so later suites' named globals never reach `database()`.
+// AsyncLocalStorage is the only isolation that survives a parallel `tests/*.test.mjs` run.
+export const WORKERS_DB_ALS_KEY = "__PAWSPACE_SCOPED_WORKERS_DB__";
+const workersDbAls = new AsyncLocalStorage();
+globalThis[WORKERS_DB_ALS_KEY] = workersDbAls;
+
+export function runWithWorkersDb(db, callback) {
+  return workersDbAls.run(db, callback);
+}
 
 // Loaded lazily and cached: only a suite that actually imports a .tsx pays for TypeScript's compiler.
 let cachedTs = null;
@@ -103,7 +115,7 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
   }
   installedWorkersDbGlobals.add(globalName);
 
-  const shim = `export const env = new Proxy({}, { get: (_, key) => key === "DB" ? globalThis[${JSON.stringify(globalName)}] : (globalThis[${JSON.stringify(envName)}] ?? {})[key] });`;
+  const shim = `export const env = new Proxy({}, { get: (_, key) => { const als = globalThis[${JSON.stringify(WORKERS_DB_ALS_KEY)}]; const scoped = als && typeof als.getStore === "function" ? als.getStore() : undefined; if (key === "DB" && scoped) return scoped; return key === "DB" ? globalThis[${JSON.stringify(globalName)}] : (globalThis[${JSON.stringify(envName)}] ?? {})[key]; } });`;
   const workersUrl = `data:text/javascript,${encodeURIComponent(shim)}`;
 
   // The fallback below only runs on the Node CI pins, so on a newer machine it is never exercised -
