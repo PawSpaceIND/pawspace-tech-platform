@@ -23,13 +23,18 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       SCRATCH_NAME: pawspace-restore-drill-${{ github.run_id }}-${{ github.run_attempt }}
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.16.0'
           cache: npm
       - run: npm run install:ci
+      - name: Blocking application build
+        run: npm run build
       - name: Verify restore safety guards
         run: node --test tests/d1-backup-restore-guards.test.mjs
       - name: Back up staging D1
