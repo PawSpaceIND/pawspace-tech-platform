@@ -1492,4 +1492,20 @@ test("W2-PAY-07: the credential default documented as the rollback is unchanged"
   assert.equal(environment.sandboxCapabilitiesUnlocked({ PAWSPACE_PAYMENT_ENV: "  SANDBOX " }), false, "aliases, trimming and case-folding are not declarations");
   assert.equal(environment.sandboxCapabilitiesUnlocked({ PAWSPACE_PAYMENT_ENV: "sandbox" }), true, "only the exact canonical sandbox declaration unlocks sandbox capabilities");
   assert.equal(environment.sandboxCapabilitiesUnlocked({ PAWSPACE_PAYMENT_ENV: "" }), false, "and an empty declaration is not a declaration");
+
+  // The load-bearing half: with nothing declared, no money path is open - and each boundary refuses in
+  // the GOVERNED SHAPE its caller records, rather than raising past it. lib/financial-lifecycle.ts and
+  // lib/razorpay-order-outbox-saga.ts read `connected:false` to move financial_outbox to
+  // RETRY / RECONCILIATION_REQUIRED with a last_error and release the lease; a throw skipped all of
+  // that and left the row leased, silent and stuck.
+  const order = await client.createPaymentOrderPaise({ RAZORPAY_KEY_ID: "rzp_live_never_used", RAZORPAY_KEY_SECRET: "never-used" }, { bookingId: "BK-W2-07", paymentId: "PAY-W2-07", amountPaise: 100_000, currency: "INR" });
+  assert.equal(order.connected, false, "an undeclared environment opens no order, live credentials present or not");
+  assert.equal(order.environment, "unconfigured", "and the refusal invents no environment it was never told about");
+  assert.match(String(order.reason), /PAWSPACE_PAYMENT_ENV/, "the refusal names what is missing, so the outbox records why");
+  const link = await client.createSandboxPaymentLink({ RAZORPAY_KEY_ID_SANDBOX: "rzp_test_x", RAZORPAY_KEY_SECRET_SANDBOX: "x" }, { bookingId: "BK-W2-07", paymentId: "PAY-W2-07", referenceId: "REF-W2-07", customerId: "CUS-W2-07", amount: 1000, currency: "INR", expiresAt: Date.now() + 3_600_000 });
+  assert.equal(link.connected, false, "and neither does a post-service payment link");
+  assert.equal(link.environment, "unconfigured");
+  const receiver = gate.resolvePaymentWebhookGate({ RAZORPAY_WEBHOOK_SECRET_LIVE: "live-secret", PAWSPACE_PAYMENT_LIVE_APPROVED: "true" });
+  assert.equal(receiver.ok, false, "and the webhook receiver processes nothing, live secret and approval present or not");
+  assert.equal(receiver.status, 503, "it fails closed on configuration, not on authentication");
 });

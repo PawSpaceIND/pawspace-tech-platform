@@ -126,7 +126,7 @@ export async function generateGroomingRebookingReminders(db: Db, input: { actorI
     const result = await enqueueCommunication(db, {
       customerId, cityId: "blr", channel, purpose: "lifecycle", idempotencyKey: cycleKey,
       templateKey: "grooming_rebooking_reminder", payload: { daysSinceLastService: daysSince, cadenceDays: policy.groomingRebookingDays },
-      createdBy: input.actorId, scheduledAt: asOf,
+      createdBy: input.actorId, scheduledAt: asOf, asOf,
     });
     await logEvent(db, customerId, "grooming_rebooking", cycleKey, result, { daysSince, cycle }, asOf);
     if (result.duplicatePrevented) continue;
@@ -168,7 +168,7 @@ export async function generateSubscriptionReminders(db: Db, input: { actorId: st
         const result = await enqueueCommunication(db, {
           customerId, cityId: "blr", channel, purpose: "lifecycle", idempotencyKey: cycleKey,
           templateKey: "subscription_unused_sessions_reminder", payload: { subscriptionId, sessionsConsumed: consumed, totalSessions: total, sessionsRemaining: total - consumed, daysInactive },
-          createdBy: input.actorId, scheduledAt: asOf,
+          createdBy: input.actorId, scheduledAt: asOf, asOf,
         });
         await logEvent(db, customerId, "subscription_sessions", cycleKey, result, { subscriptionId, consumed, total, daysInactive }, asOf);
         if (!result.duplicatePrevented) { if (result.status === "suppressed") suppressed++; else sessionReminders++; }
@@ -181,7 +181,7 @@ export async function generateSubscriptionReminders(db: Db, input: { actorId: st
       const result = await enqueueCommunication(db, {
         customerId, cityId: "blr", channel, purpose: "lifecycle", idempotencyKey: cycleKey,
         templateKey: "subscription_renewal_reminder", payload: { subscriptionId, daysToExpiry, sessionsRemaining: total - consumed },
-        createdBy: input.actorId, scheduledAt: asOf,
+        createdBy: input.actorId, scheduledAt: asOf, asOf,
       });
       await logEvent(db, customerId, "subscription_renewal", cycleKey, result, { subscriptionId, daysToExpiry }, asOf);
       if (!result.duplicatePrevented) { if (result.status === "suppressed") suppressed++; else renewalReminders++; }

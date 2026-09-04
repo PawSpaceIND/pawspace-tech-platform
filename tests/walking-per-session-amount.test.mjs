@@ -32,11 +32,12 @@ test("Walking completion commits payment, audit, notification, idempotency and g
   assert.ok(start >= 0 && end > start);
   assert.match(block, /await db\.batch\(\[/);
   assert.match(block, /walking_session_payment_events/);
-<<<<<<< Updated upstream
   assert.match(block, /walk_completed/);
+  assert.match(block, /walking_session_events/);
   assert.match(block, /resolveServiceCompletionFinance/);
   assert.match(block, /Your PawSpace Walking programme is complete/);
   assert.match(block, /Your PawSpace walk is complete/);
+  assert.match(block, /walking_action_keys/);
   /*
    * The whole completion commits in ONE batch. walking_session_payment_events.session_id is UNIQUE, so
    * while the idempotency key was written after the batch through remember(), a worker lost between the
@@ -44,11 +45,6 @@ test("Walking completion commits payment, audit, notification, idempotency and g
    * walk could never be completed through the API again. The key, the payment row, the audit event and
    * both notifications must therefore land together, and none of them may be a separate awaited call.
    */
-=======
-  assert.match(block, /walking_session_events/);
-  assert.match(block, /Your PawSpace walking is complete/);
-  assert.match(block, /walking_action_keys/);
->>>>>>> Stashed changes
   assert.match(block, /CASE WHEN EXISTS \(SELECT 1 FROM walking_sessions/);
   assert.doesNotMatch(block, /await event\(/);
   assert.doesNotMatch(block, /await notify\(/);

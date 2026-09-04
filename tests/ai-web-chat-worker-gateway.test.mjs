@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { installWorkersHooks, runWithWorkersDb } from "./helpers/module-hooks.mjs";
 
 installWorkersHooks("__AI_WEB_CHAT_DB__", "__AI_WEB_CHAT_ENV__");
 
@@ -109,7 +109,10 @@ async function callEndpoint(request) {
   const handler = request.method === "GET" ? route.GET : route.POST;
   let response;
   try {
-    response = await handler(request);
+    // Pin this suite's in-memory DB for the route's `database()` call. Release CI runs the
+    // whole tests/*.test.mjs glob in parallel; the cached cloudflare:workers shim otherwise
+    // reads whichever suite registered first, and public lead capture 500s on a foreign/empty DB.
+    response = await runWithWorkersDb(globalThis.__AI_WEB_CHAT_DB__, () => handler(request));
   } catch (error) {
     // A throw that escapes the route entirely: the one case where no response exists to inspect.
     console.error(`[ai-web-chat-gateway] handler THREW on ${request.method} ${request.url}: ${error?.name}: ${error?.message}`);

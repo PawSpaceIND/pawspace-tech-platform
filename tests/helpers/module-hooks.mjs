@@ -5,30 +5,38 @@
  * This harness remains test-only: production modules are deliberately not modified to satisfy loader fixtures.
  * This comment-only touch forces exact-head CI after production files were restored to main.
  *
- * `module.registerHooks` only exists from Node 22.15. CI pins 22.13.0, where calling it throws
- * `TypeError: nodeModule.registerHooks is not a function` and takes the whole file down before a single
- * test runs - which is exactly what it did. On that version the same resolver is registered as an
- * out-of-thread loader hook instead. Several suites already carried both branches inline; this is that
- * pattern in one place so a new suite cannot pick only the half that works on a newer laptop.
+ * `module.registerHooks` exists from Node 22.15. The current CI job pins Node 22.16.0 and explicitly
+ * verifies that `registerHooks` is available before running the hook-backed suites, so that native branch
+ * is the path exercised by CI. The out-of-thread `module.register()` branch remains only as a compatibility
+ * fallback (and can still be forced in tests with PAWSPACE_FORCE_LOADER_HOOK=1).
  */
 import * as nodeModule from "node:module";
-import { createRequire } from "node:module";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const require = createRequire(import.meta.url);
+// Request-scoped Worker DB for suites that call real routes. ESM caches the first
+// `cloudflare:workers` shim, so later suites' named globals never reach `database()`.
+// AsyncLocalStorage is the only isolation that survives a parallel `tests/*.test.mjs` run.
+export const WORKERS_DB_ALS_KEY = "__PAWSPACE_SCOPED_WORKERS_DB__";
+const workersDbAls = new AsyncLocalStorage();
+globalThis[WORKERS_DB_ALS_KEY] = workersDbAls;
+
+export function runWithWorkersDb(db, callback) {
+  return workersDbAls.run(db, callback);
+}
 
 // Loaded lazily and cached: only a suite that actually imports a .tsx pays for TypeScript's compiler.
 let cachedTs = null;
 function typescript() {
-  if (!cachedTs) cachedTs = require("typescript");
+  if (!cachedTs) cachedTs = nodeModule.createRequire(import.meta.url)("typescript");
   return cachedTs;
 }
 /*
  * The out-of-thread hook is handed to Node as a data: URL, and a data: URL module has no base path -
  * so `import "typescript"` inside it fails with ERR_UNSUPPORTED_RESOLVE_REQUEST, no matter what
- * parentURL register() is given. Resolving the absolute path here and interpolating it is what makes
- * that branch work, and that branch is the one CI's Node 22.13 pin actually takes.
+ * parentURL register() is given. Resolving the absolute path here and interpolating it is what keeps
+ * the compatibility fallback self-contained when that branch is exercised.
  */
 const typescriptUrl = pathToFileURL(nodeModule.createRequire(import.meta.url).resolve("typescript")).href;
 
@@ -106,12 +114,11 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
   }
   installedWorkersDbGlobals.add(globalName);
 
-  const shim = `export const env = new Proxy({}, { get: (_, key) => key === "DB" ? globalThis[${JSON.stringify(globalName)}] : (globalThis[${JSON.stringify(envName)}] ?? {})[key] });`;
+  const shim = `export const env = new Proxy({}, { get: (_, key) => { const als = globalThis[${JSON.stringify(WORKERS_DB_ALS_KEY)}]; const scoped = als && typeof als.getStore === "function" ? als.getStore() : undefined; if (key === "DB" && scoped) return scoped; return key === "DB" ? globalThis[${JSON.stringify(globalName)}] : (globalThis[${JSON.stringify(envName)}] ?? {})[key]; } });`;
   const workersUrl = `data:text/javascript,${encodeURIComponent(shim)}`;
 
-  // The fallback below only runs on the Node CI pins, so on a newer machine it is never exercised -
-  // which is how it came to be missing at all. PAWSPACE_FORCE_LOADER_HOOK=1 takes that path on any
-  // version, so the suite can prove both branches work.
+  // The fallback below is compatibility-only on the current CI pin. PAWSPACE_FORCE_LOADER_HOOK=1
+  // still takes that path on any version so the suite can prove both branches work.
   const forceLoader = process.env.PAWSPACE_FORCE_LOADER_HOOK === "1";
   if (!forceLoader && typeof nodeModule.registerHooks === "function") {
     nodeModule.registerHooks({
@@ -149,7 +156,7 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
   const hook = `const workersUrl=${JSON.stringify(workersUrl)};
   import * as tsModule from ${JSON.stringify(typescriptUrl)};
   import { readFile } from "node:fs/promises";
-  import { fileURLToPath, pathToFileURL } from "node:url";
+  import { fileURLToPath } from "node:url";
   ${TSX_TRANSFORM}
   function splitSpecifierSuffix(specifier) {
     const queryIndex = specifier.indexOf("?");
