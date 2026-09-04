@@ -63,6 +63,32 @@ test("young trained dog gets explainable walking and boarding cross-sell candida
   assert.equal(recommendations[0].canonicalOpportunity.valueStatus, "configuration_required");
 });
 
+test("repeat grooming customer with travel intent gets boarding recommendation", () => {
+  const recommendations = recommendNextBestServices({
+    pet: {
+      petId: "PET-TRAVEL-1",
+      customerId: "CUS-TRAVEL-1",
+      species: "dog",
+      breed: "Golden Retriever",
+      ageMonths: 36,
+      vaccinationStatus: "current",
+    },
+    serviceHistory: [
+      { serviceCode: "grooming", status: "completed", completedAt: 1 },
+      { serviceCode: "grooming", status: "completed", completedAt: 2 },
+    ],
+    travelIntent: true,
+  });
+
+  assert.deepEqual(recommendations.map((item) => item.targetServiceCode), ["boarding"]);
+  assert.deepEqual(recommendations[0].reasonCodes, [
+    "repeat_grooming_customer",
+    "travel_intent",
+    "boarding_service_gap",
+  ]);
+  assert.equal(recommendations[0].sourceFeatures.travelIntent, true);
+});
+
 test("existing canonical cross-sell opportunity prevents duplicate target recommendation", () => {
   const recommendations = recommendNextBestServices({
     pet: {
