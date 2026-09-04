@@ -14,6 +14,7 @@ import {runRazorpayOrderOutboxSweep} from "../lib/razorpay-order-outbox-sweep";
 import {runRazorpaySettlementReconciliationSweep} from "../lib/razorpay-settlement-reconciliation";
 import {runSubscriptionBillingSweep} from "../lib/subscription-billing";
 import {runSubscriptionScheduledMaintenance} from "../lib/subscription-scheduled";
+import {runEliteMaintenanceSweep} from "../lib/services/elite-production-runtime";
 
 interface Env {
   ASSETS: Fetcher;
@@ -50,14 +51,6 @@ const worker = {
     if (url.pathname.startsWith("/api/")) {
       if(url.pathname==="/api/identity-session")return secureApiResponse(await handler.fetch(request,env,ctx));
       if(request.method==="POST"&&(url.pathname==="/api/uat-scheduling"||url.pathname==="/api/canonical-bookings"))await cleanupExpiredReservationLeases(env.DB);
-      // Source-contract markers retained for existing gateway-composition tests. The calls immediately
-      // below preserve this exact ordering while using an independent body stream for inspection:
-      // authorizePlatformSessionRequest(request,env.DB)
-      // sessionAccess ?? await authorizeApiRequest(request, env)
-      // Every pre-route authorization/service inspection runs on a clone so the route always receives
-      // the original request body untouched. This is load-bearing for anonymous AI web-chat POSTs:
-      // the permission mapper needs to inspect `mode`, while app/api/ai-web-chat/route.ts still needs
-      // to consume the same JSON body afterwards. Cross-origin and ownership checks remain unchanged.
       const inspectionRequest=request.clone();
       const sessionAccess=await authorizePlatformSessionRequest(inspectionRequest,env.DB);
       if(sessionAccess instanceof Response)return sessionAccess;
@@ -85,7 +78,7 @@ const worker = {
   },
   async scheduled(controller:ScheduledControllerLike,env:Env,ctx:ExecutionContext){
     ctx.waitUntil((async()=>{
-      const [cleanup,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,templateSync,razorpayOrderOutbox,settlementRecon,subscriptionMaintenance]=await Promise.allSettled([
+      const [cleanup,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,templateSync,razorpayOrderOutbox,settlementRecon,subscriptionMaintenance,eliteMaintenance]=await Promise.allSettled([
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
         runCommunicationOutboxDispatcher(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
@@ -96,6 +89,7 @@ const worker = {
         runRazorpayOrderOutboxSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50,workerId:"system:scheduled-worker"}),
         runRazorpaySettlementReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
         runSubscriptionScheduledMaintenance(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,billingSweep:(db,input)=>runSubscriptionBillingSweep(db,input)}),
+        runEliteMaintenanceSweep(env.DB,controller.scheduledTime),
       ]);
       const errors:string[]=[];
       if(cleanup.status==="rejected")errors.push(`reservation cleanup: ${cleanup.reason instanceof Error?cleanup.reason.message:String(cleanup.reason)}`);
@@ -108,6 +102,7 @@ const worker = {
       if(razorpayOrderOutbox.status==="rejected")errors.push(`razorpay order outbox: ${razorpayOrderOutbox.reason instanceof Error?razorpayOrderOutbox.reason.message:String(razorpayOrderOutbox.reason)}`);else if(razorpayOrderOutbox.value.failed)errors.push(`razorpay order outbox: ${razorpayOrderOutbox.value.failed} dispatch exception(s)`);
       if(settlementRecon.status==="rejected")errors.push(`razorpay settlement reconciliation: ${settlementRecon.reason instanceof Error?settlementRecon.reason.message:String(settlementRecon.reason)}`);
       if(subscriptionMaintenance.status==="rejected")errors.push(`subscription maintenance: ${subscriptionMaintenance.reason instanceof Error?subscriptionMaintenance.reason.message:String(subscriptionMaintenance.reason)}`);else if(Number(subscriptionMaintenance.value.errors||0)>0)errors.push(`subscription maintenance: ${subscriptionMaintenance.value.errors} exception(s)`);
+      if(eliteMaintenance.status==="rejected")errors.push(`elite maintenance: ${eliteMaintenance.reason instanceof Error?eliteMaintenance.reason.message:String(eliteMaintenance.reason)}`);
       if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);
     })());
   },
