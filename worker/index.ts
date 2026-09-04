@@ -50,15 +50,11 @@ const worker = {
 
     if (url.pathname.startsWith("/api/")) {
       if(url.pathname==="/api/identity-session")return secureApiResponse(await handler.fetch(request,env,ctx));
-      // Provider-authenticated Meta callbacks must reach the route's HMAC/challenge verification without
-      // being forced through a PawSpace user session. The Elite observer receives independent clones so
-      // it cannot consume or mutate the request/response that Meta sees.
-      if(url.pathname==="/api/whatsapp/meta-webhook"){
-        const eliteRequest=request.clone();
-        const response=await handler.fetch(request,env,ctx);
-        ctx.waitUntil(runEliteWebhookHooks(env.DB,env as unknown as Record<string,unknown>,eliteRequest,response.clone()).catch(()=>undefined));
-        return secureApiResponse(response);
-      }
+      const isMetaWebhook=url.pathname==="/api/whatsapp/meta-webhook";
+      // Meta is provider-authenticated by the route's HMAC/challenge verifier, not by a PawSpace user
+      // session. Keep its actual handler dispatch after the shared pre-route composition so no second
+      // pre-gateway /api/* handler path exists. A clone is retained only for the post-response Elite observer.
+      const eliteRequest=isMetaWebhook?request.clone():null;
       if(request.method==="POST"&&(url.pathname==="/api/uat-scheduling"||url.pathname==="/api/canonical-bookings"))await cleanupExpiredReservationLeases(env.DB);
       // Source-contract markers retained for existing gateway-composition tests. The calls immediately
       // below preserve this exact ordering while using an independent body stream for inspection:
@@ -71,11 +67,14 @@ const worker = {
       const inspectionRequest=request.clone();
       const sessionAccess=await authorizePlatformSessionRequest(inspectionRequest,env.DB);
       if(sessionAccess instanceof Response)return sessionAccess;
-      const access=sessionAccess??await authorizeApiRequest(inspectionRequest, env);
+      const access=isMetaWebhook
+        ?{actor:{email:"meta-webhook@provider",roleCode:"provider_webhook",permissions:[],preview:false},permission:null}
+        :sessionAccess??await authorizeApiRequest(inspectionRequest, env);
       if (access instanceof Response) return access;
       const serviceBlock=await blockDisabledServiceRequest(inspectionRequest,env.DB);
       if(serviceBlock){ctx.waitUntil(auditApiResponse(env,access.actor,access.permission,inspectionRequest,serviceBlock.clone()));return secureApiResponse(serviceBlock);}
       const response = await handler.fetch(request, env, ctx);
+      if(isMetaWebhook&&eliteRequest)ctx.waitUntil(runEliteWebhookHooks(env.DB,env as unknown as Record<string,unknown>,eliteRequest,response.clone()).catch(()=>undefined));
       ctx.waitUntil(auditApiResponse(env, access.actor, access.permission, inspectionRequest, response.clone()));
       return secureApiResponse(response);
     }
