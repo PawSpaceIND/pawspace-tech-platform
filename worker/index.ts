@@ -14,7 +14,7 @@ import {runRazorpayOrderOutboxSweep} from "../lib/razorpay-order-outbox-sweep";
 import {runRazorpaySettlementReconciliationSweep} from "../lib/razorpay-settlement-reconciliation";
 import {runSubscriptionBillingSweep} from "../lib/subscription-billing";
 import {runSubscriptionScheduledMaintenance} from "../lib/subscription-scheduled";
-import {runEliteMaintenanceSweep} from "../lib/services/elite-production-runtime";
+import {runEliteScheduledHooks,runEliteWebhookHooks} from "../lib/services/elite-runtime";
 
 interface Env {
   ASSETS: Fetcher;
@@ -50,15 +50,23 @@ const worker = {
 
     if (url.pathname.startsWith("/api/")) {
       if(url.pathname==="/api/identity-session")return secureApiResponse(await handler.fetch(request,env,ctx));
+      const isMetaWebhook=url.pathname==="/api/whatsapp/meta-webhook";
+      // Meta is provider-authenticated by the route's HMAC/challenge verifier, not by a PawSpace user
+      // session. Keep its actual handler dispatch after the shared pre-route composition so no second
+      // pre-gateway /api/* handler path exists. A clone is retained only for the post-response Elite observer.
+      const eliteRequest=isMetaWebhook?request.clone():null;
       if(request.method==="POST"&&(url.pathname==="/api/uat-scheduling"||url.pathname==="/api/canonical-bookings"))await cleanupExpiredReservationLeases(env.DB);
       const inspectionRequest=request.clone();
       const sessionAccess=await authorizePlatformSessionRequest(inspectionRequest,env.DB);
       if(sessionAccess instanceof Response)return sessionAccess;
-      const access=sessionAccess??await authorizeApiRequest(inspectionRequest, env);
+      const access=isMetaWebhook
+        ?{actor:{email:"meta-webhook@provider",roleCode:"provider_webhook",permissions:[],preview:false},permission:null}
+        :sessionAccess??await authorizeApiRequest(inspectionRequest, env);
       if (access instanceof Response) return access;
       const serviceBlock=await blockDisabledServiceRequest(inspectionRequest,env.DB);
       if(serviceBlock){ctx.waitUntil(auditApiResponse(env,access.actor,access.permission,inspectionRequest,serviceBlock.clone()));return secureApiResponse(serviceBlock);}
       const response = await handler.fetch(request, env, ctx);
+      if(isMetaWebhook&&eliteRequest)ctx.waitUntil(runEliteWebhookHooks(env.DB,env as unknown as Record<string,unknown>,eliteRequest,response.clone()).catch(()=>undefined));
       ctx.waitUntil(auditApiResponse(env, access.actor, access.permission, inspectionRequest, response.clone()));
       return secureApiResponse(response);
     }
@@ -78,7 +86,7 @@ const worker = {
   },
   async scheduled(controller:ScheduledControllerLike,env:Env,ctx:ExecutionContext){
     ctx.waitUntil((async()=>{
-      const [cleanup,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,templateSync,razorpayOrderOutbox,settlementRecon,subscriptionMaintenance,eliteMaintenance]=await Promise.allSettled([
+      const [cleanup,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,templateSync,razorpayOrderOutbox,settlementRecon,subscriptionMaintenance,eliteRuntime]=await Promise.allSettled([
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
         runCommunicationOutboxDispatcher(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
@@ -89,7 +97,7 @@ const worker = {
         runRazorpayOrderOutboxSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50,workerId:"system:scheduled-worker"}),
         runRazorpaySettlementReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
         runSubscriptionScheduledMaintenance(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,billingSweep:(db,input)=>runSubscriptionBillingSweep(db,input)}),
-        runEliteMaintenanceSweep(env.DB,controller.scheduledTime),
+        runEliteScheduledHooks(env.DB,{asOf:controller.scheduledTime}),
       ]);
       const errors:string[]=[];
       if(cleanup.status==="rejected")errors.push(`reservation cleanup: ${cleanup.reason instanceof Error?cleanup.reason.message:String(cleanup.reason)}`);
@@ -102,7 +110,7 @@ const worker = {
       if(razorpayOrderOutbox.status==="rejected")errors.push(`razorpay order outbox: ${razorpayOrderOutbox.reason instanceof Error?razorpayOrderOutbox.reason.message:String(razorpayOrderOutbox.reason)}`);else if(razorpayOrderOutbox.value.failed)errors.push(`razorpay order outbox: ${razorpayOrderOutbox.value.failed} dispatch exception(s)`);
       if(settlementRecon.status==="rejected")errors.push(`razorpay settlement reconciliation: ${settlementRecon.reason instanceof Error?settlementRecon.reason.message:String(settlementRecon.reason)}`);
       if(subscriptionMaintenance.status==="rejected")errors.push(`subscription maintenance: ${subscriptionMaintenance.reason instanceof Error?subscriptionMaintenance.reason.message:String(subscriptionMaintenance.reason)}`);else if(Number(subscriptionMaintenance.value.errors||0)>0)errors.push(`subscription maintenance: ${subscriptionMaintenance.value.errors} exception(s)`);
-      if(eliteMaintenance.status==="rejected")errors.push(`elite maintenance: ${eliteMaintenance.reason instanceof Error?eliteMaintenance.reason.message:String(eliteMaintenance.reason)}`);
+      if(eliteRuntime.status==="rejected")errors.push(`elite runtime: ${eliteRuntime.reason instanceof Error?eliteRuntime.reason.message:String(eliteRuntime.reason)}`);else if(Number(eliteRuntime.value.failed||0)>0)errors.push(`elite runtime: ${eliteRuntime.value.failed} churn scoring exception(s)`);
       if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);
     })());
   },
