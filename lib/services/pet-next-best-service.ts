@@ -1,5 +1,4 @@
 export type PetSpecies = "dog" | "cat" | "other";
-export type VaccinationStatus = "current" | "due" | "unknown";
 
 export interface PetProfileSignal {
   petId: string;
@@ -7,7 +6,6 @@ export interface PetProfileSignal {
   species: PetSpecies;
   breed: string | null;
   ageMonths: number | null;
-  vaccinationStatus: VaccinationStatus;
 }
 
 export interface PetServiceHistoryItem {
@@ -26,8 +24,8 @@ export interface ExistingCanonicalOpportunity {
 export interface NextBestServiceInput {
   pet: PetProfileSignal;
   serviceHistory: PetServiceHistoryItem[];
-  existingOpportunities?: ExistingCanonicalOpportunity[];
   travelIntent?: boolean;
+  existingOpportunities?: ExistingCanonicalOpportunity[];
 }
 
 export interface CanonicalCrossSellOpportunitySeed {
@@ -52,7 +50,6 @@ export interface NextBestServiceRecommendation {
     species: PetSpecies;
     breed: string | null;
     ageMonths: number | null;
-    vaccinationStatus: VaccinationStatus;
     completedServices: string[];
     travelIntent: boolean;
   };
@@ -70,28 +67,34 @@ interface RuleCandidate {
   serviceCode: string;
   reasonCodes: string[];
   explanation: string;
-  confidence: number;
 }
 
 const ACTIVE_OPPORTUNITY_STATES = new Set(["ready", "suppressed", "review_required"]);
+const SERVICE_ALIASES: Readonly<Record<string, string>> = {
+  training: "dog_training",
+  dog_training: "dog_training",
+  walking: "dog_walking",
+  dog_walking: "dog_walking",
+  sitting: "pet_sitting",
+  pet_sitting: "pet_sitting",
+  taxi: "pet_taxi",
+  pet_taxi: "pet_taxi",
+  grooming: "grooming",
+  boarding: "boarding",
+};
 
-function normalizedServiceCode(serviceCode: string): string {
-  return serviceCode.trim().toLowerCase();
+function normalizeServiceCode(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  return SERVICE_ALIASES[normalized] ?? normalized;
 }
 
-function completedServiceCounts(history: PetServiceHistoryItem[]): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const item of history) {
-    if (item.status !== "completed") continue;
-    const serviceCode = normalizedServiceCode(item.serviceCode);
-    if (!serviceCode) continue;
-    counts.set(serviceCode, (counts.get(serviceCode) ?? 0) + 1);
-  }
-  return counts;
-}
-
-function completedServices(counts: Map<string, number>): Set<string> {
-  return new Set(counts.keys());
+function completedServices(history: PetServiceHistoryItem[]): Set<string> {
+  return new Set(
+    history
+      .filter((item) => item.status === "completed")
+      .map((item) => normalizeServiceCode(item.serviceCode))
+      .filter(Boolean),
+  );
 }
 
 function existingTargetServices(opportunities: ExistingCanonicalOpportunity[]): Set<string> {
@@ -103,71 +106,38 @@ function existingTargetServices(opportunities: ExistingCanonicalOpportunity[]): 
           opportunity.serviceCode &&
           ACTIVE_OPPORTUNITY_STATES.has(opportunity.status),
       )
-      .map((opportunity) => normalizedServiceCode(opportunity.serviceCode!)),
+      .map((opportunity) => normalizeServiceCode(opportunity.serviceCode!)),
   );
-}
-
-function eligibleAge(ageMonths: number | null, minimumMonths: number): boolean {
-  return ageMonths !== null && Number.isFinite(ageMonths) && ageMonths >= minimumMonths;
 }
 
 function isYoungDog(pet: PetProfileSignal): boolean {
   return pet.species === "dog" && pet.ageMonths !== null && pet.ageMonths >= 6 && pet.ageMonths <= 24;
 }
 
-function completedCount(counts: Map<string, number>, ...serviceCodes: string[]): number {
-  return serviceCodes.reduce((total, serviceCode) => total + (counts.get(serviceCode) ?? 0), 0);
-}
-
-function ruleCandidates(
-  pet: PetProfileSignal,
-  completed: Set<string>,
-  counts: Map<string, number>,
-  travelIntent: boolean,
-): RuleCandidate[] {
-  if (pet.species !== "dog") return [];
-
+function ruleCandidates(pet: PetProfileSignal, completed: Set<string>, travelIntent: boolean): RuleCandidate[] {
   const candidates: RuleCandidate[] = [];
-  const hasTraining = completed.has("dog_training") || completed.has("training");
-  const hasWalking = completed.has("dog_walking") || completed.has("walking");
-  const hasBoarding = completed.has("boarding");
+  const hasTraining = completed.has("dog_training");
   const hasGrooming = completed.has("grooming");
-  const groomingCompletions = completedCount(counts, "grooming");
+  const hasBoarding = completed.has("boarding");
 
-  if (hasTraining && isYoungDog(pet) && !hasWalking) {
+  if (hasTraining && isYoungDog(pet) && !hasGrooming) {
     candidates.push({
-      serviceCode: "dog_walking",
-      reasonCodes: ["training_completed", "young_dog", "walking_service_gap"],
-      explanation: "Training is complete and this young dog has no completed Walking history.",
-      confidence: 0.82,
+      serviceCode: "grooming",
+      reasonCodes: ["training_completed", "young_dog", "grooming_service_gap"],
+      explanation: "Training is complete for a young dog and there is no completed Grooming history.",
     });
   }
 
-  if (hasTraining && eligibleAge(pet.ageMonths, 6) && pet.vaccinationStatus === "current" && !hasBoarding) {
-    candidates.push({
-      serviceCode: "boarding",
-      reasonCodes: ["training_completed", "vaccination_current", "boarding_service_gap"],
-      explanation: "Training is complete, vaccination is current, and there is no completed Boarding history.",
-      confidence: 0.74,
-    });
-  }
-
-  if (groomingCompletions >= 2 && travelIntent && !hasBoarding) {
-    candidates.push({
-      serviceCode: "boarding",
-      reasonCodes: ["repeat_grooming_customer", "travel_intent", "boarding_service_gap"],
-      explanation: "This repeat Grooming customer has travel intent and no completed Boarding history.",
-      confidence: 0.88,
-    });
-  }
-
-  if (hasGrooming && isYoungDog(pet) && !hasTraining) {
-    candidates.push({
-      serviceCode: "dog_training",
-      reasonCodes: ["grooming_completed", "young_dog", "training_service_gap"],
-      explanation: "This young dog has completed Grooming but has no completed Training history.",
-      confidence: 0.78,
-    });
+  if (hasGrooming && travelIntent) {
+    for (const serviceCode of ["boarding", "pet_sitting", "pet_taxi"] as const) {
+      if (!completed.has(serviceCode)) {
+        candidates.push({
+          serviceCode,
+          reasonCodes: ["grooming_completed", "travel_intent", `${serviceCode}_service_gap`],
+          explanation: `Grooming is established, travel intent is present, and there is no completed ${serviceCode} history.`,
+        });
+      }
+    }
   }
 
   if (hasBoarding && !hasGrooming) {
@@ -175,20 +145,10 @@ function ruleCandidates(
       serviceCode: "grooming",
       reasonCodes: ["boarding_completed", "grooming_service_gap"],
       explanation: "Boarding has been completed and there is no completed Grooming history.",
-      confidence: 0.68,
     });
   }
 
   return candidates;
-}
-
-function highestConfidencePerService(candidates: RuleCandidate[]): RuleCandidate[] {
-  const best = new Map<string, RuleCandidate>();
-  for (const candidate of candidates) {
-    const existing = best.get(candidate.serviceCode);
-    if (!existing || candidate.confidence > existing.confidence) best.set(candidate.serviceCode, candidate);
-  }
-  return [...best.values()];
 }
 
 function stableSignalKey(petId: string, serviceCode: string): string {
@@ -196,9 +156,8 @@ function stableSignalKey(petId: string, serviceCode: string): string {
 }
 
 /**
- * Generates explainable cross-sell candidates only. Contact eligibility remains the
- * responsibility of the central safety gate. Breed is retained as an explanation/signal
- * input but is never used alone to infer medical, behavioural, or service eligibility.
+ * Produces deterministic, explainable cross-sell seeds from canonical pet/service facts.
+ * It does not infer medical suitability and it never bypasses the central contact safety gate.
  */
 export function recommendNextBestServices(input: NextBestServiceInput): NextBestServiceRecommendation[] {
   if (!input.pet.petId || !input.pet.customerId) throw new Error("Canonical pet and customer identity are required");
@@ -206,40 +165,36 @@ export function recommendNextBestServices(input: NextBestServiceInput): NextBest
     throw new Error("Pet ageMonths must be non-negative when provided");
   }
 
-  const counts = completedServiceCounts(input.serviceHistory);
-  const completed = completedServices(counts);
+  const completed = completedServices(input.serviceHistory);
   const existingTargets = existingTargetServices(input.existingOpportunities ?? []);
   const travelIntent = input.travelIntent === true;
   const sourceFeatures = {
     species: input.pet.species,
     breed: input.pet.breed?.trim() || null,
     ageMonths: input.pet.ageMonths,
-    vaccinationStatus: input.pet.vaccinationStatus,
     completedServices: [...completed].sort(),
     travelIntent,
   };
 
-  return highestConfidencePerService(ruleCandidates(input.pet, completed, counts, travelIntent))
+  return ruleCandidates(input.pet, completed, travelIntent)
     .filter((candidate) => !completed.has(candidate.serviceCode) && !existingTargets.has(candidate.serviceCode))
-    .sort((left, right) => right.confidence - left.confidence)
     .map((candidate) => {
       const sourceKey = stableSignalKey(input.pet.petId, candidate.serviceCode);
-      const reason = `${candidate.explanation}${sourceFeatures.breed ? ` Pet profile breed: ${sourceFeatures.breed}.` : ""}`;
       return {
         petId: input.pet.petId,
         targetServiceCode: candidate.serviceCode,
         reasonCodes: candidate.reasonCodes,
-        explanation: reason,
-        confidence: candidate.confidence,
+        explanation: candidate.explanation,
+        confidence: 1,
         sourceFeatures,
         canonicalOpportunity: {
           customerId: input.pet.customerId,
           opportunityType: "cross_sell",
           serviceCode: candidate.serviceCode,
-          reason,
+          reason: candidate.explanation,
           estimatedValue: 0,
           valueStatus: "configuration_required",
-          confidence: candidate.confidence,
+          confidence: 1,
           sourceKey,
           idempotencyKey: sourceKey,
         },
