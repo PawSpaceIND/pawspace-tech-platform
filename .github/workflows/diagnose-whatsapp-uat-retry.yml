@@ -1,0 +1,40 @@
+name: Diagnose WhatsApp UAT provider retry
+
+on:
+  push:
+    branches:
+      - fix/whatsapp-uat-staging-deploy-isolation
+    paths:
+      - .github/workflows/diagnose-whatsapp-uat-retry.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose-retry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Read sanitized retry classification from staging D1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/retry.json"; export OUT
+          trap 'rm -f "$OUT"' EXIT
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --command "SELECT m.status AS message_status,o.status AS outbox_status,o.last_error,o.attempt_count,o.max_attempts,o.next_attempt_at FROM communication_messages m JOIN communication_outbox o ON o.message_id=m.id WHERE m.customer_id='UAT-WA-CERT-CUSTOMER' AND m.channel='whatsapp' ORDER BY m.created_at DESC LIMIT 3;" --json > "$OUT"
+          node --input-type=module <<'NODE'
+          import{readFileSync}from'node:fs';
+          const p=JSON.parse(readFileSync(process.env.OUT,'utf8'));
+          const rows=(Array.isArray(p)?p:[]).flatMap(b=>Array.isArray(b?.results)?b.results:[]);
+          if(!rows.length)throw new Error('No UAT certification WhatsApp message found');
+          for(const [i,r] of rows.entries()){
+            const err=String(r.last_error||'none');
+            if(!/^(none|meta_network_failure|meta_http_[0-9]{3}|meta_message_id_missing|[a-z0-9_:-]+)$/i.test(err))throw new Error('Unexpected retry classification format; refusing to print');
+            console.log(`candidate${i+1}: messageStatus=${String(r.message_status||'unknown')}; outboxStatus=${String(r.outbox_status||'unknown')}; lastError=${err}; attempts=${Number(r.attempt_count||0)}/${Number(r.max_attempts||0)}; retryScheduled=${Number(r.next_attempt_at||0)>Date.now()}`);
+          }
+          NODE

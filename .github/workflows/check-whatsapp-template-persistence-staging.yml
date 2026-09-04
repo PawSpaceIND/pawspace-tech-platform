@@ -1,0 +1,32 @@
+name: Check WhatsApp template persistence staging
+
+on:
+  push:
+    branches:
+      - fix/whatsapp-uat-staging-deploy-isolation
+    paths:
+      - .github/workflows/check-whatsapp-template-persistence-staging.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-template-persistence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Read staging D1 template counts only
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/counts.json"; export OUT
+          trap 'rm -f "$OUT"' EXIT
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --command "SELECT COUNT(*) AS total, SUM(CASE WHEN status='approved' THEN 1 ELSE 0 END) AS approved FROM whatsapp_uat_templates;" --json > "$OUT"
+          node --input-type=module <<'NODE'
+          import{readFileSync}from'node:fs';const p=JSON.parse(readFileSync(process.env.OUT,'utf8'));const rows=(Array.isArray(p)?p:[]).flatMap(b=>Array.isArray(b?.results)?b.results:[]);const r=rows.find(x=>x?.total!==undefined)||{};console.log(`staging template rows=${Number(r.total??-1)} approved=${Number(r.approved??0)}`);
+          NODE

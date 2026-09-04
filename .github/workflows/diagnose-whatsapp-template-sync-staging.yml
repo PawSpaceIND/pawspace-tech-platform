@@ -1,0 +1,61 @@
+name: Diagnose WhatsApp template sync staging
+
+on:
+  push:
+    branches:
+      - fix/whatsapp-uat-staging-deploy-isolation
+    paths:
+      - .github/workflows/diagnose-whatsapp-template-sync-staging.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose-template-sync:
+    runs-on: ubuntu-latest
+    env:
+      STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+    steps:
+      - name: Diagnose Meta template allowlist without exposing values
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        run: |
+          set -euo pipefail
+          SETTINGS="$RUNNER_TEMP/settings.json"; export SETTINGS
+          trap 'rm -f "$SETTINGS"' EXIT
+          HTTP="$(curl --silent --show-error --output "$SETTINGS" --write-out '%{http_code}' --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" --header 'Accept: application/json' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/pawspace-staging/settings")"
+          [ "$HTTP" = "200" ] || { echo "Unable to read staging settings (HTTP $HTTP); response withheld." >&2; exit 1; }
+          node --input-type=module <<'NODE'
+          import{readFileSync}from"node:fs";
+          const settings=JSON.parse(readFileSync(process.env.SETTINGS,"utf8"));
+          const bindings=Array.isArray(settings?.result?.bindings)?settings.result.bindings:[];
+          const plain=Object.fromEntries(bindings.filter(b=>b?.type==="plain_text").map(b=>[String(b?.name||""),String(b?.text??b?.value??"")]));
+          const waba=String(plain.META_WHATSAPP_WABA_ID||"").trim();
+          const graph=String(plain.META_WHATSAPP_GRAPH_VERSION||"v23.0").trim();
+          const allow=String(plain.META_WHATSAPP_TEMPLATE_ALLOWLIST||"").split(",").map(v=>v.trim()).filter(Boolean);
+          const productionFlag=String(plain.PAWSPACE_PRODUCTION_ENFORCE||"");
+          if(!waba)throw new Error("Staging WABA identifier missing");
+          if(!/^v\d+\.\d+$/.test(graph))throw new Error("Staging Meta Graph version is invalid");
+          if(productionFlag!=="false")throw new Error("Staging production enforcement is not false");
+          const token=String(process.env.META_WHATSAPP_UAT_ACCESS_TOKEN||"").trim();if(!token)throw new Error("UAT Meta token missing");
+          const meta=await fetch(`https://graph.facebook.com/${graph}/${encodeURIComponent(waba)}/message_templates?fields=name,status,category,language&limit=100`,{headers:{authorization:`Bearer ${token}`},redirect:"error",signal:AbortSignal.timeout(30000)});
+          let body=null;try{body=await meta.json()}catch{}
+          const rows=Array.isArray(body?.data)?body.data:[];
+          const names=new Set(rows.map(r=>String(r?.name||"").trim()).filter(Boolean));
+          const approved=rows.filter(r=>String(r?.status||"").toUpperCase()==="APPROVED");
+          const approvedNames=new Set(approved.map(r=>String(r?.name||"").trim()).filter(Boolean));
+          const matches=allow.filter(name=>names.has(name));
+          const approvedMatches=allow.filter(name=>approvedNames.has(name));
+          console.log(`Meta HTTP=${meta.status}; returned=${rows.length}; approved=${approved.length}; configuredAllowlist=${allow.length}; allowlistMatches=${matches.length}; approvedAllowlistMatches=${approvedMatches.length}; graphVersionValid=true; productionEnforceFalse=true`);
+          if(!meta.ok)throw new Error("Direct Meta template read failed");
+          const base=String(process.env.STAGING_URL||"").replace(/\/$/,"");
+          const login=await fetch(`${base}/api/staging-login`,{method:"POST",headers:{"content-type":"application/json",origin:base},body:JSON.stringify({action:"login",code:String(process.env.PAWSPACE_UAT_ACCESS_CODE||""),email:"founder@pawspace.in"}),redirect:"manual",signal:AbortSignal.timeout(20000)});
+          const cookie=String(login.headers.get("set-cookie")||"").split(";")[0];if(!cookie)throw new Error("Staging sign-in failed");
+          const state=await fetch(`${base}/api/whatsapp/meta-admin`,{headers:{cookie},signal:AbortSignal.timeout(20000)});let sb=null;try{sb=await state.json()}catch{};
+          const persisted=Array.isArray(sb?.data?.templates)?sb.data.templates:[];
+          console.log(`Staging meta-admin GET HTTP=${state.status}; persisted=${persisted.length}; persistedApproved=${persisted.filter(t=>String(t?.status||"")==="approved").length}`);
+          NODE
