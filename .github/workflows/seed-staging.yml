@@ -34,11 +34,15 @@ jobs:
     if: ${{ github.event.inputs.confirm == 'staging' }}
     runs-on: ubuntu-latest
     concurrency: pawspace-staging-deploy
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.16.0'
       - name: Install
         run: npm run install:ci
       - name: Load staff directory (employee-seed.sql)
