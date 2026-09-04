@@ -37,7 +37,8 @@ test("customer and provider sessions are scoped before reaching self-service API
   assert.match(sessionGateway,/body\.action==="mark_paid"\?undefined/);
   assert.match(serverAuth,/resolvePlatformSession\(db,request\)/);
   assert.match(serverAuth,/identitySource:session\.identitySource/);
-  assert.match(worker,/authorizePlatformSessionRequest\(request,env\.DB\)/);
+  assert.match(worker,/const inspectionRequest=request\.clone\(\)/);
+  assert.match(worker,/authorizePlatformSessionRequest\(inspectionRequest,env\.DB\)/);
   assert.match(worker,/url\.pathname==="\/api\/identity-session"/);
 });
 
