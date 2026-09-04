@@ -27,6 +27,7 @@ export interface NextBestServiceInput {
   pet: PetProfileSignal;
   serviceHistory: PetServiceHistoryItem[];
   existingOpportunities?: ExistingCanonicalOpportunity[];
+  travelIntent?: boolean;
 }
 
 export interface CanonicalCrossSellOpportunitySeed {
@@ -53,6 +54,7 @@ export interface NextBestServiceRecommendation {
     ageMonths: number | null;
     vaccinationStatus: VaccinationStatus;
     completedServices: string[];
+    travelIntent: boolean;
   };
   canonicalOpportunity: CanonicalCrossSellOpportunitySeed;
   canonicalContext: {
@@ -73,13 +75,23 @@ interface RuleCandidate {
 
 const ACTIVE_OPPORTUNITY_STATES = new Set(["ready", "suppressed", "review_required"]);
 
-function completedServices(history: PetServiceHistoryItem[]): Set<string> {
-  return new Set(
-    history
-      .filter((item) => item.status === "completed")
-      .map((item) => item.serviceCode.trim().toLowerCase())
-      .filter(Boolean),
-  );
+function normalizedServiceCode(serviceCode: string): string {
+  return serviceCode.trim().toLowerCase();
+}
+
+function completedServiceCounts(history: PetServiceHistoryItem[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const item of history) {
+    if (item.status !== "completed") continue;
+    const serviceCode = normalizedServiceCode(item.serviceCode);
+    if (!serviceCode) continue;
+    counts.set(serviceCode, (counts.get(serviceCode) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function completedServices(counts: Map<string, number>): Set<string> {
+  return new Set(counts.keys());
 }
 
 function existingTargetServices(opportunities: ExistingCanonicalOpportunity[]): Set<string> {
@@ -91,7 +103,7 @@ function existingTargetServices(opportunities: ExistingCanonicalOpportunity[]): 
           opportunity.serviceCode &&
           ACTIVE_OPPORTUNITY_STATES.has(opportunity.status),
       )
-      .map((opportunity) => opportunity.serviceCode!.trim().toLowerCase()),
+      .map((opportunity) => normalizedServiceCode(opportunity.serviceCode!)),
   );
 }
 
@@ -103,7 +115,16 @@ function isYoungDog(pet: PetProfileSignal): boolean {
   return pet.species === "dog" && pet.ageMonths !== null && pet.ageMonths >= 6 && pet.ageMonths <= 24;
 }
 
-function ruleCandidates(pet: PetProfileSignal, completed: Set<string>): RuleCandidate[] {
+function completedCount(counts: Map<string, number>, ...serviceCodes: string[]): number {
+  return serviceCodes.reduce((total, serviceCode) => total + (counts.get(serviceCode) ?? 0), 0);
+}
+
+function ruleCandidates(
+  pet: PetProfileSignal,
+  completed: Set<string>,
+  counts: Map<string, number>,
+  travelIntent: boolean,
+): RuleCandidate[] {
   if (pet.species !== "dog") return [];
 
   const candidates: RuleCandidate[] = [];
@@ -111,6 +132,7 @@ function ruleCandidates(pet: PetProfileSignal, completed: Set<string>): RuleCand
   const hasWalking = completed.has("dog_walking") || completed.has("walking");
   const hasBoarding = completed.has("boarding");
   const hasGrooming = completed.has("grooming");
+  const groomingCompletions = completedCount(counts, "grooming");
 
   if (hasTraining && isYoungDog(pet) && !hasWalking) {
     candidates.push({
@@ -121,17 +143,21 @@ function ruleCandidates(pet: PetProfileSignal, completed: Set<string>): RuleCand
     });
   }
 
-  if (
-    hasTraining &&
-    eligibleAge(pet.ageMonths, 6) &&
-    pet.vaccinationStatus === "current" &&
-    !hasBoarding
-  ) {
+  if (hasTraining && eligibleAge(pet.ageMonths, 6) && pet.vaccinationStatus === "current" && !hasBoarding) {
     candidates.push({
       serviceCode: "boarding",
       reasonCodes: ["training_completed", "vaccination_current", "boarding_service_gap"],
       explanation: "Training is complete, vaccination is current, and there is no completed Boarding history.",
       confidence: 0.74,
+    });
+  }
+
+  if (groomingCompletions >= 2 && travelIntent && !hasBoarding) {
+    candidates.push({
+      serviceCode: "boarding",
+      reasonCodes: ["repeat_grooming_customer", "travel_intent", "boarding_service_gap"],
+      explanation: "This repeat Grooming customer has travel intent and no completed Boarding history.",
+      confidence: 0.88,
     });
   }
 
@@ -156,6 +182,15 @@ function ruleCandidates(pet: PetProfileSignal, completed: Set<string>): RuleCand
   return candidates;
 }
 
+function highestConfidencePerService(candidates: RuleCandidate[]): RuleCandidate[] {
+  const best = new Map<string, RuleCandidate>();
+  for (const candidate of candidates) {
+    const existing = best.get(candidate.serviceCode);
+    if (!existing || candidate.confidence > existing.confidence) best.set(candidate.serviceCode, candidate);
+  }
+  return [...best.values()];
+}
+
 function stableSignalKey(petId: string, serviceCode: string): string {
   return `pet-next-best-service:${petId}:${serviceCode}`;
 }
@@ -171,17 +206,20 @@ export function recommendNextBestServices(input: NextBestServiceInput): NextBest
     throw new Error("Pet ageMonths must be non-negative when provided");
   }
 
-  const completed = completedServices(input.serviceHistory);
+  const counts = completedServiceCounts(input.serviceHistory);
+  const completed = completedServices(counts);
   const existingTargets = existingTargetServices(input.existingOpportunities ?? []);
+  const travelIntent = input.travelIntent === true;
   const sourceFeatures = {
     species: input.pet.species,
     breed: input.pet.breed?.trim() || null,
     ageMonths: input.pet.ageMonths,
     vaccinationStatus: input.pet.vaccinationStatus,
     completedServices: [...completed].sort(),
+    travelIntent,
   };
 
-  return ruleCandidates(input.pet, completed)
+  return highestConfidencePerService(ruleCandidates(input.pet, completed, counts, travelIntent))
     .filter((candidate) => !completed.has(candidate.serviceCode) && !existingTargets.has(candidate.serviceCode))
     .sort((left, right) => right.confidence - left.confidence)
     .map((candidate) => {
