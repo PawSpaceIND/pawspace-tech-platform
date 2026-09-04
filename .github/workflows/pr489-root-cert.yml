@@ -1,0 +1,49 @@
+name: PR 489 exact-head root certification
+
+on:
+  push:
+    branches:
+      - ci/pr489-root-cert-8198da6
+
+permissions:
+  contents: read
+
+jobs:
+  root-certification:
+    name: Root build and test certification
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+      NODE_ENV: test
+      PAWSPACE_PRODUCTION_ENFORCE: 'false'
+    steps:
+      - name: Checkout exact PR 489 head
+        uses: actions/checkout@v4
+        with:
+          ref: 8198da6578a200d38840b8c2e3ba8db12e733277
+          fetch-depth: 1
+
+      - name: Verify exact commit and sandbox posture
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "8198da6578a200d38840b8c2e3ba8db12e733277"
+          test "$APP_ENV" = "staging"
+          test "$FORBID_PRODUCTION" = "true"
+          printf 'HEAD=%s\nAPP_ENV=%s\nFORBID_PRODUCTION=%s\n' "$(git rev-parse HEAD)" "$APP_ENV" "$FORBID_PRODUCTION"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+
+      - name: Install exact dependencies
+        run: npm ci
+
+      - name: Root build
+        run: npm run build
+
+      - name: Root test suite
+        run: npm test
