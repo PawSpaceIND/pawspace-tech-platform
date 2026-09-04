@@ -17,7 +17,7 @@ function targetsApplicationRuntime(pathname: string) {
   return APPLICATION_ROUTE_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 
-async function readBody(request: IncomingMessage): Promise<Buffer | undefined> {
+async function readBody(request: IncomingMessage): Promise<Uint8Array | undefined> {
   if (request.method === 'GET' || request.method === 'HEAD') return undefined;
   const chunks: Buffer[] = [];
   let total = 0;
@@ -27,7 +27,7 @@ async function readBody(request: IncomingMessage): Promise<Buffer | undefined> {
     if (total > MAX_PROXY_BODY_BYTES) throw Object.assign(new Error('Proxy request body exceeded the application routing limit'), { statusCode: 413 });
     chunks.push(buffer);
   }
-  return Buffer.concat(chunks);
+  return new Uint8Array(Buffer.concat(chunks));
 }
 
 function upstreamHeaders(request: IncomingMessage) {
