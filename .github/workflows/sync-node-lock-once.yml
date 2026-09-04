@@ -1,0 +1,37 @@
+name: Sync Node lock metadata once
+
+on:
+  push:
+    branches:
+      - fix/node-baseline-test-harness-hardening-20260904
+    paths:
+      - .github/workflows/sync-node-lock-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/node-baseline-test-harness-hardening-20260904
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - name: Regenerate lock metadata from package.json
+        run: npm install --package-lock-only --ignore-scripts
+      - name: Verify Node engine metadata is synchronized
+        run: |
+          node -e "const p=require('./package.json');const l=require('./package-lock.json');if(l.packages?.['']?.engines?.node!==p.engines?.node)throw new Error('package-lock Node engine metadata is not synchronized')"
+      - name: Commit synchronized lockfile and remove one-shot workflow
+        run: |
+          git config user.name "PawSpace CI Maintenance"
+          git config user.email "actions@users.noreply.github.com"
+          git rm .github/workflows/sync-node-lock-once.yml
+          git add package-lock.json
+          git diff --cached --check
+          git commit -m "chore: sync Node engine lock metadata"
+          git push origin HEAD:fix/node-baseline-test-harness-hardening-20260904
