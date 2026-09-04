@@ -5,6 +5,7 @@ export type UnifiedWorkType =
   | "rnr_follow_up"
   | "repeat_due"
   | "subscription_renewal"
+  | "subscription_low_balance"
   | "payment_recovery"
   | "win_back"
   | "cross_sell"
@@ -12,6 +13,7 @@ export type UnifiedWorkType =
   | "service_recovery";
 
 export type UnifiedWorkState = "ready" | "waiting" | "deferred" | "suppressed" | "completed";
+export type QueueSafetyDecision = "Allowed" | "Suppressed" | "Review Required";
 
 export interface UnifiedWorkItem {
   id: string;
@@ -25,37 +27,52 @@ export interface UnifiedWorkItem {
   dueAt: number | null;
   priorityScore: number;
   priorityReasons: string[];
-  safetyDecision: "Allowed" | "Suppressed" | "Review Required";
+  safetyDecision: QueueSafetyDecision;
   expectedRevenue: number | null;
   expectedContribution: number | null;
   createdAt: number;
   updatedAt: number;
 }
 
-function normalized(value: number, name: string): number {
+export interface QueuePriorityFactors {
+  urgency: number;
+  conversionConfidence: number;
+  expectedRevenue: number;
+  expectedContribution: number;
+  customerValue: number;
+  lifecycleRisk: number;
+  capacityAvailability: number;
+  workAge: number;
+  managerEscalation: number;
+}
+
+export type QueuePriorityWeights = Readonly<Record<keyof QueuePriorityFactors, number>>;
+
+export interface QueuePriorityInput {
+  factors: QueuePriorityFactors;
+  weights: QueuePriorityWeights;
+  safetyDecision: QueueSafetyDecision;
+}
+
+function normalizeUnit(value: number, name: string): number {
   if (!Number.isFinite(value)) throw new Error(`${name} must be a finite number`);
   return Math.min(1, Math.max(0, value));
 }
 
-/**
- * All inputs are normalized 0..1 factors. The multiplicative contract intentionally
- * requires every dimension to contribute: urgency alone cannot outrank a zero-capacity
- * or zero-conversion opportunity. The returned score is 0..100.
- */
-export function calculateQueuePriority(
-  urgency: number,
-  conversionProbability: number,
-  contributionOpportunity: number,
-  customerValue: number,
-  capacity: number,
-): number {
-  const factors = [
-    normalized(urgency, "urgency"),
-    normalized(conversionProbability, "conversionProbability"),
-    normalized(contributionOpportunity, "contributionOpportunity"),
-    normalized(customerValue, "customerValue"),
-    normalized(capacity, "capacity"),
-  ];
-  const score = factors.reduce((product, factor) => product * factor, 1) * 100;
-  return Math.round(score * 100) / 100;
+export function calculateQueuePriority(input: QueuePriorityInput): number {
+  if (input.safetyDecision !== "Allowed") return 0;
+
+  const entries = Object.entries(input.factors) as Array<[keyof QueuePriorityFactors, number]>;
+  let weightedScore = 0;
+  let totalWeight = 0;
+
+  for (const [factor, rawValue] of entries) {
+    const weight = input.weights[factor];
+    if (!Number.isFinite(weight) || weight < 0) throw new Error(`${factor} weight must be a non-negative finite number`);
+    weightedScore += normalizeUnit(rawValue, factor) * weight;
+    totalWeight += weight;
+  }
+
+  if (totalWeight <= 0) throw new Error("At least one queue-priority weight must be greater than zero");
+  return Math.round((weightedScore / totalWeight) * 10_000) / 100;
 }
