@@ -78,9 +78,7 @@ export default function UnifiedWorkQueueDashboard({
   const activeItems = scoredItems.filter(({ item }) => item.status !== "completed");
   const highPriority = activeItems.filter(({ priority }) => priority >= 80).length;
   const suppressed = activeItems.filter(({ item }) => item.status === "suppressed").length;
-  const dueNow = activeItems.filter(
-    ({ item }) => item.dueAt != null && item.dueAt <= Date.now(),
-  ).length;
+  const scheduled = activeItems.filter(({ item }) => item.dueAt != null).length;
 
   return (
     <TeamShell
@@ -91,7 +89,7 @@ export default function UnifiedWorkQueueDashboard({
       <TeamStatGrid>
         <StatCard label="Active work" value={activeItems.length} meta="all open queue types" />
         <StatCard label="Priority 80+" value={highPriority} meta="highest-action tier" />
-        <StatCard label="Due now" value={dueNow} meta="due or overdue work" />
+        <StatCard label="Scheduled" value={scheduled} meta="work with a due time" />
         <StatCard label="Suppressed" value={suppressed} meta="visible but not contactable" />
       </TeamStatGrid>
 
