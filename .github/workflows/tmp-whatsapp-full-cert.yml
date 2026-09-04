@@ -1,0 +1,95 @@
+name: Temporary WhatsApp Full Certification
+
+on:
+  push:
+    branches:
+      - audit/whatsapp-full-cert-4c2d7126
+
+permissions:
+  contents: read
+
+jobs:
+  full-certification:
+    runs-on: ubuntu-latest
+    env:
+      APP_ENV: staging
+      FORBID_PRODUCTION: "true"
+      NODE_ENV: test
+      PAWSPACE_PRODUCTION_ENFORCE: "false"
+      PAWSPACE_LOCAL_PREVIEW: on
+      PAWSPACE_VOICE_TRANSPORT: local_simulator_non_production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 4c2d7126d3247b72d8cc4da25457f745ab009422
+          fetch-depth: 0
+      - name: Verify exact target and clean state
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "4c2d7126d3247b72d8cc4da25457f745ab009422"
+          test -z "$(git status --porcelain)"
+          git status --short --branch
+          git log -1 --oneline
+      - name: Conflict marker scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          conflicts="$(grep -R -nE '^(<<<<<<<|=======|>>>>>>>)' app/ lib/ tests/ worker/ || true)"
+          if [ -n "$conflicts" ]; then
+            printf '%s\n' "$conflicts"
+            exit 1
+          fi
+          echo 'CONFLICT_MARKERS=0'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Verify isolation flags
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'APP_ENV=%s\n' "$APP_ENV"
+          printf 'FORBID_PRODUCTION=%s\n' "$FORBID_PRODUCTION"
+          printf 'NODE_ENV=%s\n' "$NODE_ENV"
+          printf 'PAWSPACE_PRODUCTION_ENFORCE=%s\n' "$PAWSPACE_PRODUCTION_ENFORCE"
+          test "$APP_ENV" = staging
+          test "$FORBID_PRODUCTION" = true
+          test "$NODE_ENV" = test
+          test "$PAWSPACE_PRODUCTION_ENFORCE" = false
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Full isolated test suite
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee full-test.tap
+      - name: Build
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee build.log
+      - name: Final state verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "4c2d7126d3247b72d8cc4da25457f745ab009422"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          echo 'FINAL_HEAD=4c2d7126d3247b72d8cc4da25457f745ab009422'
+          echo 'PRODUCTION_ISOLATION=maintained'
+          grep -E '^# (tests|pass|fail|cancelled|skipped|todo) ' full-test.tap || true
+          tail -n 25 build.log || true
+      - name: Upload certification logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: whatsapp-full-cert-4c2d7126
+          path: |
+            full-test.tap
+            build.log
+          if-no-files-found: warn
+          retention-days: 7
