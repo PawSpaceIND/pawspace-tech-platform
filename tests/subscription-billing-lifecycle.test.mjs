@@ -133,5 +133,5 @@ test("canonical gateway owns subscription route permission classification and wo
   assert.match(gateway,/url\.pathname==="\/api\/subscription-billing-admin"/);
   assert.match(gateway,/\["save_plan","approve_plan"\]\.includes\(action\)\?"pricing\.manage":"finance\.manage"/);
   assert.doesNotMatch(worker,/gatewayAuthorizationRequest|policyRequest/);
-  assert.match(worker,/authorizeApiRequest\(request, env\)/);
+  assert.match(worker,/authorizeApiRequest\(inspectionRequest, env\)/);
 });
