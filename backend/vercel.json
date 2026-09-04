@@ -4,6 +4,8 @@
     { "src": "vercel-entry.ts", "use": "@vercel/node" }
   ],
   "routes": [
+    { "src": "/api/(.*)", "dest": "https://app.pawspace.in/api/$1" },
+    { "src": "/team/(.*)", "dest": "https://app.pawspace.in/team/$1" },
     { "src": "/(.*)", "dest": "vercel-entry.ts" }
   ]
 }
