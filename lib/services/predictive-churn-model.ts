@@ -49,7 +49,10 @@ export interface PredictiveChurnResult {
   customerId: string;
   churnProbability: number;
   riskScore: number;
+  engagementScore: number;
   riskBand: "low" | "medium" | "high" | "critical";
+  engagementState: "healthy" | "watch" | "intervene" | "critical";
+  recommendedRecheckMinutes: number;
   featureVector: ChurnFeatureVector;
   reasonCodes: string[];
   contactSafety: ContactSafetyDecision;
@@ -136,24 +139,39 @@ function riskBand(probability: number): PredictiveChurnResult["riskBand"] {
   return "low";
 }
 
+function continuousEngagementPolicy(band: PredictiveChurnResult["riskBand"]): {
+  engagementState: PredictiveChurnResult["engagementState"];
+  recommendedRecheckMinutes: number;
+} {
+  if (band === "critical") return { engagementState: "critical", recommendedRecheckMinutes: 60 };
+  if (band === "high") return { engagementState: "intervene", recommendedRecheckMinutes: 180 };
+  if (band === "medium") return { engagementState: "watch", recommendedRecheckMinutes: 720 };
+  return { engagementState: "healthy", recommendedRecheckMinutes: 1_440 };
+}
+
 export async function scorePredictiveChurn(input: PredictiveChurnInput): Promise<PredictiveChurnResult> {
   const features = buildChurnFeatureVector(input.telemetry);
   const modelScore = await (input.model ?? DEFAULT_CHURN_MODEL).score(features);
   const probability = clamp(modelScore.probability, 0, 1);
   const contactSafety = evaluateContactEligibility(input.contactSafety);
   const band = riskBand(probability);
+  const engagement = continuousEngagementPolicy(band);
   const highRisk = probability >= 0.6;
   const winBackTrigger = !highRisk
     ? "none"
     : contactSafety.eligibility === "Allowed"
       ? "eligible_for_proactive_winback"
       : "queue_for_review";
+  const riskScore = Math.round(probability * 100);
 
   return {
     customerId: input.customerId,
     churnProbability: Math.round(probability * 10_000) / 10_000,
-    riskScore: Math.round(probability * 100),
+    riskScore,
+    engagementScore: 100 - riskScore,
     riskBand: band,
+    engagementState: engagement.engagementState,
+    recommendedRecheckMinutes: engagement.recommendedRecheckMinutes,
     featureVector: features,
     reasonCodes: reasons(features),
     contactSafety,
