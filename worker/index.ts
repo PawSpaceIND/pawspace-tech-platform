@@ -76,14 +76,20 @@ const worker = {
   },
   async scheduled(controller:ScheduledControllerLike,env:Env,ctx:ExecutionContext){
     ctx.waitUntil((async()=>{
-      const [cleanup,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,templateSync,razorpayOrderOutbox,settlementRecon,subscriptionMaintenance]=await Promise.allSettled([
+      let templateSync;
+      try{
+        templateSync=await syncSubmittedMetaTemplateStatuses(env.DB,env as unknown as Record<string,unknown>,{actorId:"system:scheduled-worker",limit:50});
+      }catch(error){
+        throw new Error(`Background scheduler blocked before dispatch: whatsapp template sync: ${error instanceof Error?error.message:String(error)}`);
+      }
+      if(templateSync.failed&&templateSync.processed)throw new Error(`Background scheduler blocked before dispatch: whatsapp template sync: ${templateSync.failed} verification exception(s)`);
+      const [cleanup,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,settlementRecon,subscriptionMaintenance]=await Promise.allSettled([
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
         runCommunicationOutboxDispatcher(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
         runServiceRecoveryAudioBotSweep(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,env:env as unknown as Record<string,unknown>}),
         processDueWhatsAppNoResponseSequences(env.DB,{now:controller.scheduledTime,actorEmail:"system:scheduled-worker"}),
         runWhatsAppOutboxDispatcher(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50}),
-        syncSubmittedMetaTemplateStatuses(env.DB,env as unknown as Record<string,unknown>,{actorId:"system:scheduled-worker",limit:50}),
         runRazorpayOrderOutboxSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50,workerId:"system:scheduled-worker"}),
         runRazorpaySettlementReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
         runSubscriptionScheduledMaintenance(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,billingSweep:(db,input)=>runSubscriptionBillingSweep(db,input)}),
@@ -95,7 +101,6 @@ const worker = {
       if(voiceRecovery.status==="rejected")errors.push(`service recovery audio bot: ${voiceRecovery.reason instanceof Error?voiceRecovery.reason.message:String(voiceRecovery.reason)}`);
       if(whatsappRecovery.status==="rejected")errors.push(`whatsapp recovery: ${whatsappRecovery.reason instanceof Error?whatsappRecovery.reason.message:String(whatsappRecovery.reason)}`);
       if(whatsappOutbox.status==="rejected")errors.push(`whatsapp outbox: ${whatsappOutbox.reason instanceof Error?whatsappOutbox.reason.message:String(whatsappOutbox.reason)}`);else if(whatsappOutbox.value.failed)errors.push(`whatsapp outbox: ${whatsappOutbox.value.failed} dispatch exception(s)`);
-      if(templateSync.status==="rejected")errors.push(`whatsapp template sync: ${templateSync.reason instanceof Error?templateSync.reason.message:String(templateSync.reason)}`);else if(templateSync.value.failed&&templateSync.value.processed)errors.push(`whatsapp template sync: ${templateSync.value.failed} verification exception(s)`);
       if(razorpayOrderOutbox.status==="rejected")errors.push(`razorpay order outbox: ${razorpayOrderOutbox.reason instanceof Error?razorpayOrderOutbox.reason.message:String(razorpayOrderOutbox.reason)}`);else if(razorpayOrderOutbox.value.failed)errors.push(`razorpay order outbox: ${razorpayOrderOutbox.value.failed} dispatch exception(s)`);
       if(settlementRecon.status==="rejected")errors.push(`razorpay settlement reconciliation: ${settlementRecon.reason instanceof Error?settlementRecon.reason.message:String(settlementRecon.reason)}`);
       if(subscriptionMaintenance.status==="rejected")errors.push(`subscription maintenance: ${subscriptionMaintenance.reason instanceof Error?subscriptionMaintenance.reason.message:String(subscriptionMaintenance.reason)}`);else if(Number(subscriptionMaintenance.value.errors||0)>0)errors.push(`subscription maintenance: ${subscriptionMaintenance.value.errors} exception(s)`);
