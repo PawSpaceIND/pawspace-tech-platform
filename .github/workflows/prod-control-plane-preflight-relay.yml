@@ -1,0 +1,209 @@
+name: Production control-plane preflight relay
+
+on:
+  push:
+    branches:
+      - ops/prod-control-plane-preflight-589cf839-20260904
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  verify-dispatch-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      EXPECTED_SHA: 589cf8391039722985cd00d7a5640eb664fcbd80
+      REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+      PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      META_WHATSAPP_VERIFY_TOKEN: ${{ secrets.META_WHATSAPP_VERIFY_TOKEN }}
+
+    steps:
+      - name: Verify GitHub and Cloudflare production prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in PRODUCTION_D1_ID CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN META_WHATSAPP_VERIFY_TOKEN; do
+            if [ -z "${!name:-}" ]; then
+              echo "PRECHECK FAILED: $name is absent or empty" >&2
+              exit 1
+            fi
+          done
+          case "$PRODUCTION_D1_ID" in
+            ????????-????-????-????-????????????) ;;
+            *) echo "PRECHECK FAILED: PRODUCTION_D1_ID is not UUID-shaped" >&2; exit 1 ;;
+          esac
+
+          node --input-type=module <<'NODE'
+          const expected = process.env.EXPECTED_SHA;
+          const repo = process.env.REPO;
+          const ghHeaders = {
+            authorization: `Bearer ${process.env.GH_TOKEN}`,
+            accept: 'application/vnd.github+json',
+            'x-github-api-version': '2022-11-28',
+          };
+          const cfHeaders = { authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}` };
+          const readJson = async (url, options = {}) => {
+            const response = await fetch(url, options);
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
+            return body;
+          };
+
+          const main = await readJson(`https://api.github.com/repos/${repo}/git/ref/heads/main`, { headers: ghHeaders });
+          if (main?.object?.sha !== expected) throw new Error(`main moved to ${main?.object?.sha || 'unknown'}; expected ${expected}`);
+
+          const runs = await readJson(`https://api.github.com/repos/${repo}/actions/runs?head_sha=${expected}&per_page=100`, { headers: ghHeaders });
+          const releaseRuns = (runs.workflow_runs || []).filter(run => run.name === 'Release CI').sort((a, b) => new Date(a.run_started_at) - new Date(b.run_started_at));
+          const release = releaseRuns.at(-1);
+          if (!release || release.conclusion !== 'success') throw new Error(`Release CI on exact SHA is ${release?.conclusion || 'missing'}`);
+
+          const account = process.env.CLOUDFLARE_ACCOUNT_ID;
+          const d1id = process.env.PRODUCTION_D1_ID;
+          const d1 = await readJson(`https://api.cloudflare.com/client/v4/accounts/${account}/d1/database/${d1id}?fields=uuid,name`, { headers: cfHeaders });
+          if (d1?.success !== true || d1?.result?.uuid !== d1id || d1?.result?.name !== 'pawspace-prod-bengaluru') {
+            throw new Error(`PRODUCTION_D1_ID does not resolve to the expected production D1 database`);
+          }
+
+          const domains = await readJson(`https://api.cloudflare.com/client/v4/accounts/${account}/workers/domains?hostname=app.pawspace.in`, { headers: cfHeaders });
+          const binding = (domains.result || []).find(item => item.hostname === 'app.pawspace.in' && item.service === 'pawspace-prod-bengaluru');
+          if (domains?.success !== true || !binding) throw new Error('app.pawspace.in is not bound to pawspace-prod-bengaluru');
+          if (!binding.cert_id) throw new Error('app.pawspace.in binding has no active certificate identifier');
+
+          console.log(`PRECHECK_OK main=${expected} release_ci_run=${release.id} production_d1=present_and_named domain=app.pawspace.in worker=pawspace-prod-bengaluru`);
+          NODE
+
+      - name: Dispatch exact production workflow
+        id: dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          DISPATCHED_AT="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          echo "at=$DISPATCHED_AT" >> "$GITHUB_OUTPUT"
+          cat > "$RUNNER_TEMP/dispatch.json" <<JSON
+          {
+            "ref": "main",
+            "inputs": {
+              "confirm": "deploy-production-bengaluru",
+              "expected_sha": "$EXPECTED_SHA",
+              "payment_env": "live",
+              "communication_env": "live",
+              "maps_env": "live",
+              "voice_env": "disabled",
+              "voice_uat_approved": "false"
+            }
+          }
+          JSON
+          gh api --method POST "repos/$REPO/actions/workflows/deploy-production.yml/dispatches" --input "$RUNNER_TEMP/dispatch.json"
+          rm -f "$RUNNER_TEMP/dispatch.json"
+          echo "DEPLOY_DISPATCH_ACCEPTED sha=$EXPECTED_SHA payment=live communication=live maps=live voice=disabled"
+
+      - name: Wait for exact Deploy production run to succeed
+        id: deploy
+        env:
+          DISPATCHED_AT: ${{ steps.dispatch.outputs.at }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const repo = process.env.REPO;
+          const expected = process.env.EXPECTED_SHA;
+          const dispatchedAt = new Date(process.env.DISPATCHED_AT).getTime();
+          const headers = {
+            authorization: `Bearer ${process.env.GH_TOKEN}`,
+            accept: 'application/vnd.github+json',
+            'x-github-api-version': '2022-11-28',
+          };
+          const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+          async function json(url) {
+            const res = await fetch(url, { headers });
+            if (!res.ok) throw new Error(`${url} returned HTTP ${res.status}`);
+            return res.json();
+          }
+          let run = null;
+          for (let i = 0; i < 60; i++) {
+            const body = await json(`https://api.github.com/repos/${repo}/actions/workflows/deploy-production.yml/runs?event=workflow_dispatch&branch=main&per_page=20`);
+            run = (body.workflow_runs || []).find(candidate => candidate.head_sha === expected && new Date(candidate.created_at).getTime() >= dispatchedAt - 2000) || null;
+            if (run) break;
+            await sleep(5000);
+          }
+          if (!run) throw new Error('No matching Deploy production workflow run appeared after dispatch');
+          console.log(`DEPLOY_RUN_ID=${run.id}`);
+          process.stdout.write(`deploy_run_id=${run.id}\n`);
+          const { appendFileSync } = await import('node:fs');
+          appendFileSync(process.env.GITHUB_OUTPUT, `deploy_run_id=${run.id}\n`);
+          for (let i = 0; i < 80; i++) {
+            run = await json(`https://api.github.com/repos/${repo}/actions/runs/${run.id}`);
+            if (run.status === 'completed') {
+              if (run.conclusion !== 'success') throw new Error(`Deploy production run ${run.id} concluded ${run.conclusion}`);
+              console.log(`DEPLOY_SUCCESS run=${run.id} sha=${expected}`);
+              process.exit(0);
+            }
+            await sleep(7500);
+          }
+          throw new Error(`Deploy production run ${run.id} did not complete within the bounded verification window`);
+          NODE
+
+      - name: Run live Meta webhook probes and prove zero probe-attributable D1 or outbox writes
+        env:
+          DEPLOY_RUN_ID: ${{ steps.deploy.outputs.deploy_run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENDPOINT="https://app.pawspace.in/api/whatsapp/meta-webhook"
+          CHALLENGE="PAWSPACE-PROD-CHALLENGE-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          GET_STATUS="$(curl -sS -G -o "$RUNNER_TEMP/meta-get.txt" -w '%{http_code}' "$ENDPOINT" \
+            --data-urlencode 'hub.mode=subscribe' \
+            --data-urlencode "hub.verify_token=$META_WHATSAPP_VERIFY_TOKEN" \
+            --data-urlencode "hub.challenge=$CHALLENGE")"
+          GET_BODY="$(cat "$RUNNER_TEMP/meta-get.txt")"
+          if [ "$GET_STATUS" != "200" ] || [ "$GET_BODY" != "$CHALLENGE" ]; then
+            echo "LIVE PROBE FAILED: GET challenge status=$GET_STATUS" >&2
+            exit 1
+          fi
+
+          PROBE_EVENT_ID="PS-PROD-INVALID-SIG-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export PROBE_EVENT_ID
+          PROBE_TS="$(( $(date +%s) ))"
+          BODY="$(node --input-type=module -e 'const id=process.env.PROBE_EVENT_ID,ts=process.argv[1]; console.log(JSON.stringify({object:"whatsapp_business_account",entry:[{id:"probe",changes:[{field:"messages",value:{messages:[{id,from:"919999999999",timestamp:ts,type:"text",text:{body:"production invalid signature probe"}}]}}]}]}));' "$PROBE_TS")"
+          INVALID_SIGNATURE="sha256=$(printf '0%.0s' {1..64})"
+          POST_STATUS="$(curl -sS -o "$RUNNER_TEMP/meta-post.json" -w '%{http_code}' -X POST "$ENDPOINT" \
+            -H 'content-type: application/json' \
+            -H "x-hub-signature-256: $INVALID_SIGNATURE" \
+            --data "$BODY")"
+          if [ "$POST_STATUS" != "401" ]; then
+            echo "LIVE PROBE FAILED: invalid-signature POST status=$POST_STATUS" >&2
+            exit 1
+          fi
+
+          node --input-type=module <<'NODE'
+          const account = process.env.CLOUDFLARE_ACCOUNT_ID;
+          const database = process.env.PRODUCTION_D1_ID;
+          const marker = process.env.PROBE_EVENT_ID;
+          const token = process.env.CLOUDFLARE_API_TOKEN;
+          const endpoint = `https://api.cloudflare.com/client/v4/accounts/${account}/d1/database/${database}/query`;
+          const checks = [
+            ['whatsapp_uat_events', 'SELECT COUNT(*) AS c FROM whatsapp_uat_events WHERE event_id = ?', [marker]],
+            ['communication_messages', 'SELECT COUNT(*) AS c FROM communication_messages WHERE provider_reference = ? OR idempotency_key = ?', [marker, `whatsapp-uat:meta_whatsapp:${marker}`]],
+            ['communication_outbox', 'SELECT COUNT(*) AS c FROM communication_outbox o JOIN communication_messages m ON m.id = o.message_id WHERE m.provider_reference = ? OR m.idempotency_key = ?', [marker, `whatsapp-uat:meta_whatsapp:${marker}`]],
+          ];
+          for (const [name, sql, params] of checks) {
+            const res = await fetch(endpoint, {
+              method: 'POST',
+              headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+              body: JSON.stringify({ sql, params }),
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || body.success !== true) throw new Error(`D1 verification query failed for ${name}: HTTP ${res.status}`);
+            const result = Array.isArray(body.result) ? body.result[0] : body.result;
+            const count = Number(result?.results?.[0]?.c ?? NaN);
+            if (count !== 0) throw new Error(`Invalid-signature probe produced ${count} row(s) in ${name}`);
+            console.log(`D1_ZERO_WRITE table=${name} marker_matches=0`);
+          }
+          NODE
+
+          echo "LIVE_PROBES_OK deploy_run=$DEPLOY_RUN_ID get_status=$GET_STATUS post_status=$POST_STATUS d1_probe_writes=0"
