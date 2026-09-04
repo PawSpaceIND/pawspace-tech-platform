@@ -1,0 +1,38 @@
+name: Production Cloudflare domain read-only check
+
+on:
+  push:
+    branches:
+      - ops/prod-control-plane-preflight-589cf839-20260904
+
+permissions:
+  contents: read
+
+jobs:
+  verify-domain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Verify app.pawspace.in custom domain binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ] || [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "DOMAIN_CHECK_FAILED: Cloudflare credentials missing" >&2
+            exit 1
+          fi
+          node --input-type=module <<'NODE'
+          const account = process.env.CLOUDFLARE_ACCOUNT_ID;
+          const token = process.env.CLOUDFLARE_API_TOKEN;
+          const url = `https://api.cloudflare.com/client/v4/accounts/${account}/workers/domains?hostname=app.pawspace.in&service=pawspace-prod-bengaluru`;
+          const response = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok || body.success !== true) throw new Error(`Cloudflare Workers Domains API returned HTTP ${response.status}`);
+          const binding = (body.result || []).find(item => item.hostname === 'app.pawspace.in' && item.service === 'pawspace-prod-bengaluru');
+          if (!binding) throw new Error('app.pawspace.in is not bound to pawspace-prod-bengaluru');
+          if (!binding.cert_id) throw new Error('app.pawspace.in has no certificate id');
+          console.log(`DOMAIN_OK hostname=${binding.hostname} service=${binding.service} certificate=present`);
+          NODE
