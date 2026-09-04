@@ -37,8 +37,8 @@ export interface QueuePriorityInputs {
 const clampUnit = (value: number) => Math.max(0, Math.min(1, value));
 
 /**
- * Deterministic V2 queue-priority contract. Inputs are normalized to 0..1 before
- * weighting so callers cannot accidentally dominate the score with raw units.
+ * Deterministic V2 queue-priority contract. Inputs are normalized to 0..1 and
+ * the resulting score is returned on a 0..100 scale for queue sorting/display.
  */
 export function calculateQueuePriority(
   urgency: number,
@@ -54,5 +54,5 @@ export function calculateQueuePriority(
     clampUnit(customerValue) * 0.15 +
     clampUnit(capacity) * 0.1;
 
-  return Number(weightedScore.toFixed(4));
+  return Number((weightedScore * 100).toFixed(2));
 }
