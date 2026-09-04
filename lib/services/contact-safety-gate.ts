@@ -1,7 +1,7 @@
 export type ContactEligibilityDecision = "Allowed" | "Suppressed" | "Review Required";
 
 export type ContactSafetyReason =
-  | "customer_opted_out"
+  | "marketing_opt_out"
   | "open_complaint"
   | "quiet_hours"
   | "invalid_timezone"
@@ -14,7 +14,7 @@ export interface QuietHoursPolicy {
 }
 
 export interface ContactEligibilityInput {
-  optedOut: boolean;
+  marketingOptOut: boolean;
   openComplaint: boolean;
   quietHours?: QuietHoursPolicy | null;
   evaluatedAt?: number | Date;
@@ -62,7 +62,7 @@ export function evaluateContactEligibility(input: ContactEligibilityInput): Cont
   const evaluatedAt = normalizeTimestamp(input.evaluatedAt);
   const reasons: ContactSafetyReason[] = [];
 
-  if (input.optedOut) reasons.push("customer_opted_out");
+  if (input.marketingOptOut) reasons.push("marketing_opt_out");
   if (input.openComplaint) reasons.push("open_complaint");
 
   if (input.quietHours) {
