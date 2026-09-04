@@ -50,11 +50,8 @@ jobs:
           node-version: '22.16.0'
           cache: npm
       - run: npm ci
-      # The TAP stream for ~2,600 tests is far larger than the Actions log API will hand back, and
-      # `not ok` for a failure in the first half of the run is therefore unreachable: a red run said
-      # "# fail 1" and nothing that could be retrieved said WHICH one. The stream is now captured and,
-      # on failure, only the failing blocks are re-printed at the end of the step - where they are both
-      # readable and fetchable - before the job exits non-zero.
+      - name: Materialize server build for rendered-route tests
+        run: npm run build
       - name: Run tracked Web tests
         shell: bash
         run: |
@@ -74,7 +71,6 @@ jobs:
           if [ "$status" -ne 0 ]; then
             echo ""
             echo "================ FAILING TESTS ================"
-            # Each failing test's TAP block runs from its `not ok` line to the closing `...`.
             awk '/^not ok /{show=1} show{print} show&&/^  \.\.\.$/{show=0; print ""}' web-tests.tap
             echo "==============================================="
             grep -E '^# (tests|pass|fail) ' web-tests.tap || true
@@ -286,11 +282,6 @@ jobs:
           node-version: '22.16.0'
           cache: npm
       - run: npm ci
-      # The suite count is not a proof score. This publishes what each of the ~300 suites actually
-      # EXECUTES - a real database and route, an imported unit, a hosted provider, or source text - so a
-      # reviewer reading a closure claim can see which kind of evidence is behind it without taking the
-      # aggregate number on trust. tests/evidence-class-audit.test.mjs enforces the floors; this job
-      # exists to make the inventory readable on every run.
       - name: Classify every suite by what it executes
         shell: bash
         run: |
@@ -314,8 +305,6 @@ jobs:
       PAWSPACE_LOCAL_PREVIEW: 'on'
     steps:
       - uses: actions/checkout@v4
-      # The shared resolver uses module.registerHooks on Node >= 22.15 and retains a forced loader-hook
-      # compatibility path. This lane proves both branches on the same Node 22.16 baseline.
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
