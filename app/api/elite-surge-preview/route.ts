@@ -6,7 +6,7 @@ const json = (value: unknown, status = 200) => Response.json(value, { status, he
 
 export async function POST(request: Request) {
   try {
-    await authorize(request, "pricing.view");
+    await authorize(request, "pricing.manage");
     const body = await request.json() as Partial<SurgePricingInput>;
     if (!body.service || !body.zone || !body.weather || !body.capacity || !Number.isFinite(body.basePricePaise)) {
       return json({ error: "service, basePricePaise, zone, weather and capacity are required" }, 400);
