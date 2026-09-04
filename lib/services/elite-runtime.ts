@@ -42,10 +42,10 @@ export async function ensureEliteRuntimeTables(db: D1Database) {
   await db.batch([
     db.prepare("CREATE TABLE IF NOT EXISTS elite_runtime_events (id TEXT PRIMARY KEY,module TEXT NOT NULL,event_type TEXT NOT NULL,customer_id TEXT,thread_id TEXT,detail_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL)"),
     db.prepare("CREATE INDEX IF NOT EXISTS elite_runtime_events_created_idx ON elite_runtime_events(created_at,module)"),
-    db.prepare("CREATE TABLE IF NOT EXISTS elite_crm_profile_facts (customer_id TEXT PRIMARY KEY,pet_id TEXT,pet_temperament TEXT,budget_min_paise INTEGER,budget_max_paise INTEGER,service_intent_json TEXT,provenance_json TEXT NOT NULL DEFAULT '[]',model TEXT,request_id TEXT,updated_at INTEGER NOT NULL)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS elite_crm_profile_facts (customer_id TEXT PRIMARY KEY,pet_id TEXT,pet_temperament TEXT,budget_min_paise INTEGER,budget_max_paise INTEGER,service_intent_json TEXT,provenance_json TEXT NOT NULL DEFAULT '[]',updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS elite_deal_state (deal_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,thread_id TEXT NOT NULL UNIQUE,stage TEXT NOT NULL DEFAULT 'new',canonical_quote_json TEXT,payment_verified INTEGER NOT NULL DEFAULT 0,payment_link_issued INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE TABLE IF NOT EXISTS elite_payment_approval_queue (idempotency_key TEXT PRIMARY KEY,deal_id TEXT NOT NULL,customer_id TEXT NOT NULL,quote_id TEXT NOT NULL,amount_paise INTEGER NOT NULL,currency TEXT NOT NULL,requires_approval INTEGER NOT NULL CHECK(requires_approval=1),requested_by TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending_approval',created_at INTEGER NOT NULL)"),
-    db.prepare("CREATE TABLE IF NOT EXISTS elite_churn_scores (customer_id TEXT PRIMARY KEY,churn_probability REAL NOT NULL,risk_score INTEGER NOT NULL,engagement_score INTEGER NOT NULL,risk_band TEXT NOT NULL,engagement_state TEXT NOT NULL,win_back_trigger TEXT NOT NULL,contact_eligibility TEXT NOT NULL,reason_codes_json TEXT NOT NULL,model_version TEXT NOT NULL,policy_version TEXT NOT NULL,scored_at INTEGER NOT NULL)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS elite_churn_scores (customer_id TEXT PRIMARY KEY,risk_score INTEGER NOT NULL,risk_band TEXT NOT NULL,engagement_state TEXT NOT NULL,win_back_trigger TEXT NOT NULL,reason_codes_json TEXT NOT NULL,model_version TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
   ]);
 }
 
@@ -159,7 +159,7 @@ async function extractCrmFacts(db: D1Database, customerId: string, transcript: T
       writer: {
         async applyMissingFields(input) {
           const patch: CrmProfilePatch = input.patch;
-          await db.prepare("INSERT INTO elite_crm_profile_facts (customer_id,pet_id,pet_temperament,budget_min_paise,budget_max_paise,service_intent_json,provenance_json,model,request_id,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(customer_id) DO UPDATE SET pet_id=CASE WHEN elite_crm_profile_facts.pet_id IS NULL OR elite_crm_profile_facts.pet_id='' THEN excluded.pet_id ELSE elite_crm_profile_facts.pet_id END,pet_temperament=COALESCE(elite_crm_profile_facts.pet_temperament,excluded.pet_temperament),budget_min_paise=COALESCE(elite_crm_profile_facts.budget_min_paise,excluded.budget_min_paise),budget_max_paise=COALESCE(elite_crm_profile_facts.budget_max_paise,excluded.budget_max_paise),service_intent_json=COALESCE(elite_crm_profile_facts.service_intent_json,excluded.service_intent_json),provenance_json=excluded.provenance_json,model=excluded.model,request_id=excluded.request_id,updated_at=excluded.updated_at")
+          await db.prepare("INSERT INTO elite_crm_profile_facts (customer_id,pet_id,pet_temperament,budget_min_paise,budget_max_paise,service_intent_json,provenance_json,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(customer_id) DO UPDATE SET pet_id=CASE WHEN elite_crm_profile_facts.pet_id IS NULL OR elite_crm_profile_facts.pet_id='' THEN excluded.pet_id ELSE elite_crm_profile_facts.pet_id END,pet_temperament=COALESCE(elite_crm_profile_facts.pet_temperament,excluded.pet_temperament),budget_min_paise=COALESCE(elite_crm_profile_facts.budget_min_paise,excluded.budget_min_paise),budget_max_paise=COALESCE(elite_crm_profile_facts.budget_max_paise,excluded.budget_max_paise),service_intent_json=COALESCE(elite_crm_profile_facts.service_intent_json,excluded.service_intent_json),provenance_json=excluded.provenance_json,updated_at=excluded.updated_at")
             .bind(
               input.customerId,
               input.petId,
@@ -168,8 +168,6 @@ async function extractCrmFacts(db: D1Database, customerId: string, transcript: T
               patch.budgetMaxPaise ?? null,
               patch.serviceIntent ? JSON.stringify(patch.serviceIntent) : null,
               JSON.stringify(input.provenance),
-              input.model,
-              input.requestId,
               Date.now(),
             )
             .run();
@@ -356,8 +354,8 @@ export async function runEliteScheduledHooks(db: D1Database, input: { asOf?: num
         },
         contactSafety,
       });
-      await db.prepare("INSERT INTO elite_churn_scores (customer_id,churn_probability,risk_score,engagement_score,risk_band,engagement_state,win_back_trigger,contact_eligibility,reason_codes_json,model_version,policy_version,scored_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(customer_id) DO UPDATE SET churn_probability=excluded.churn_probability,risk_score=excluded.risk_score,engagement_score=excluded.engagement_score,risk_band=excluded.risk_band,engagement_state=excluded.engagement_state,win_back_trigger=excluded.win_back_trigger,contact_eligibility=excluded.contact_eligibility,reason_codes_json=excluded.reason_codes_json,model_version=excluded.model_version,policy_version=excluded.policy_version,scored_at=excluded.scored_at")
-        .bind(customerId, score.churnProbability, score.riskScore, score.engagementScore, score.riskBand, score.engagementState, score.winBackTrigger, score.contactSafety.eligibility, JSON.stringify(score.reasonCodes), score.modelVersion, score.policyVersion, asOf)
+      await db.prepare("INSERT INTO elite_churn_scores (customer_id,risk_score,risk_band,engagement_state,win_back_trigger,reason_codes_json,model_version,updated_at) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(customer_id) DO UPDATE SET risk_score=excluded.risk_score,risk_band=excluded.risk_band,engagement_state=excluded.engagement_state,win_back_trigger=excluded.win_back_trigger,reason_codes_json=excluded.reason_codes_json,model_version=excluded.model_version,updated_at=excluded.updated_at")
+        .bind(customerId, score.riskScore, score.riskBand, score.engagementState, score.winBackTrigger, JSON.stringify(score.reasonCodes), score.modelVersion, asOf)
         .run();
       processed += 1;
     } catch {
@@ -377,7 +375,7 @@ export async function eliteRuntimeStatus(db: D1Database) {
   await ensureEliteRuntimeTables(db);
   const [lastEvent, churn, approvals] = await Promise.all([
     db.prepare("SELECT module,event_type,created_at FROM elite_runtime_events ORDER BY created_at DESC LIMIT 1").first<Row>(),
-    db.prepare("SELECT COUNT(*) count,MAX(scored_at) last_scored_at FROM elite_churn_scores").first<Row>(),
+    db.prepare("SELECT COUNT(*) count,MAX(updated_at) last_scored_at FROM elite_churn_scores").first<Row>(),
     db.prepare("SELECT COUNT(*) count FROM elite_payment_approval_queue WHERE status='pending_approval' AND requires_approval=1").first<Row>(),
   ]);
   return {

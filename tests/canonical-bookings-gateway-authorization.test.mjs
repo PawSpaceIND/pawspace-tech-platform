@@ -338,10 +338,10 @@ test("worker/index.ts routes every /api/* request through this same authorizatio
   // The sequence this suite mirrors. If the worker is reordered or a gateway is dropped, this fails.
   assert.match(worker, /url\.pathname\.startsWith\("\/api\/"\)/, "the worker gates on the /api/ prefix");
   assert.match(worker, /cleanupExpiredReservationLeases\(env\.DB\)/, "system-owned lease cleanup runs before request authorization");
-  assert.ok(worker.indexOf("cleanupExpiredReservationLeases(env.DB)") < worker.indexOf("authorizePlatformSessionRequest(request,env.DB)"), "an expired session cannot be refused before its server-owned lease is considered");
-  assert.match(worker, /authorizePlatformSessionRequest\(request,\s*env\.DB\)/, "the session gateway runs first");
+  assert.ok(worker.indexOf("cleanupExpiredReservationLeases(env.DB)") < worker.indexOf("authorizePlatformSessionRequest(inspectionRequest,env.DB)"), "an expired session cannot be refused before its server-owned lease is considered");
+  assert.match(worker, /authorizePlatformSessionRequest\(inspectionRequest,\s*env\.DB\)/, "the session gateway runs first");
   assert.match(worker, /sessionAccess\s+instanceof\s+Response\s*\)\s*return\s+sessionAccess/, "a session refusal is returned as-is");
-  assert.match(worker, /sessionAccess\s*\?\?\s*await\s+authorizeApiRequest\(request,\s*env\)/, "the staff gateway is the fallback, not a replacement");
+  assert.match(worker, /sessionAccess\s*\?\?\s*await\s+authorizeApiRequest\(inspectionRequest,\s*env\)/, "the staff gateway is the fallback, not a replacement");
   assert.match(worker, /access\s+instanceof\s+Response\s*\)\s*return\s+access/, "a staff refusal is returned as-is");
 
   // Public HTTP cannot reach the handler around the gateway: within the /api/ branch the ONLY documented
