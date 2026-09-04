@@ -140,22 +140,22 @@ export default function SubscriptionRenewalCheckout({
   onPaymentLinkClick,
 }: SubscriptionRenewalCheckoutProps) {
   const [localClickedAt, setLocalClickedAt] = useState<number | null>(linkClickedAt);
+  const [rejectedPaymentLink, setRejectedPaymentLink] = useState<string | null>(null);
   const effectiveClickedAt = linkClickedAt ?? localClickedAt;
   const unified = useMemo(
     () => buildUnifiedRenewalJourney(journey, effectiveClickedAt),
     [effectiveClickedAt, journey],
   );
-  const paymentLinkExpired = journey.paymentLink
-    ? Date.parse(journey.paymentLink.expiresAt) <= Date.now()
-    : true;
+  const paymentLinkRejected =
+    journey.paymentLink !== null &&
+    journey.paymentLink.providerReference === rejectedPaymentLink;
   const paymentLinkEnabled =
     journey.paymentLink !== null &&
-    !paymentLinkExpired &&
+    !paymentLinkRejected &&
     !["active", "cancelled"].includes(journey.stage);
 
-  async function recordLinkClick() {
+  async function recordLinkClick(clickedAt: number) {
     if (!journey.paymentLink) return;
-    const clickedAt = Date.now();
     setLocalClickedAt(clickedAt);
     await onPaymentLinkClick?.({
       contractId: journey.contractId,
@@ -201,12 +201,22 @@ export default function SubscriptionRenewalCheckout({
               className="mt-4 inline-flex rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white"
               href={journey.paymentLink.url}
               rel="noopener noreferrer"
-              onClick={() => void recordLinkClick()}
+              onClick={(event) => {
+                const clickedAt = Date.now();
+                const expiresAt = Date.parse(journey.paymentLink!.expiresAt);
+                if (Number.isNaN(expiresAt) || expiresAt <= clickedAt) {
+                  event.preventDefault();
+                  setRejectedPaymentLink(journey.paymentLink!.providerReference);
+                  return;
+                }
+                setRejectedPaymentLink(null);
+                void recordLinkClick(clickedAt);
+              }}
             >
               Renew in one tap
             </a>
           ) : (
-            <p className="mt-2 text-sm text-slate-600">{paymentLinkExpired && journey.paymentLink ? "The current payment link has expired; request a governed replacement." : "A verified payment link will appear here when issued."}</p>
+            <p className="mt-2 text-sm text-slate-600">{paymentLinkRejected ? "The current payment link is expired or invalid; request a governed replacement." : "A verified payment link will appear here when issued."}</p>
           )}
           <p className="mt-3 text-xs leading-5 text-slate-500">Opening the link records customer interaction only. Payment Verified is shown only when the upstream renewal journey reports confirmed payment.</p>
         </article>
