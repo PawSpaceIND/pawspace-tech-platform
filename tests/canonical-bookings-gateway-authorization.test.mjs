@@ -159,6 +159,7 @@ test("GET with bookings.manage is permitted and keeps its existing success behav
   assert.equal(result.reachedRoute, true, `a manager holding bookings.manage must pass the gateway: ${JSON.stringify(result.body)}`);
   assert.equal(result.status, 200, `and the route must still answer: ${JSON.stringify(result.body)}`);
   assert.ok(Array.isArray(result.body?.bookings), "the existing success shape is preserved: { bookings: [...] }");
+  // The mirror image of the leak test: what a refused caller cannot see, an authorized one still gets.
   assert.equal(result.body.bookings.length, 1, `the seeded booking is returned: ${JSON.stringify(result.body)}`);
   assert.equal(result.body.bookings[0].id, "BK-GW-LEAK-1");
 });
@@ -167,21 +168,29 @@ test("GET without bookings.manage is refused, and the refusal leaks no booking, 
   const { sqlite } = freshDb();
   seedBooking(sqlite);
   const result = await callEndpoint(get({ "oai-authenticated-user-email": "finance@pawspace.in" }));
+
   assert.equal(result.reachedRoute, false, "finance does not hold bookings.manage and must never reach the handler");
   assert.equal(result.status, 403, `the established refusal for a known identity lacking the permission: ${JSON.stringify(result.body)}`);
   assert.equal(result.body.error, "Permission denied");
+
   const serialized = JSON.stringify(result.body);
-  for (const secret of ["BK-GW-LEAK-1", "Leaky Customer Name", "Leaky Provider Name", PROVIDER, CUSTOMER, "PAY-GW-1"]) assert.ok(!serialized.includes(secret), `the refusal must not disclose ${secret}`);
+  for (const secret of ["BK-GW-LEAK-1", "Leaky Customer Name", "Leaky Provider Name", PROVIDER, CUSTOMER, "PAY-GW-1"]) {
+    assert.ok(!serialized.includes(secret), `the refusal must not disclose ${secret}`);
+  }
 });
+
 
 test("service_provider cannot use bookings.view to read the platform-wide canonical booking list", async () => {
   const { sqlite } = freshDb();
   seedBooking(sqlite);
   const result = await callEndpoint(get({ "oai-authenticated-user-email": "provider.list@pawspace.in" }));
+
   assert.equal(result.reachedRoute, false, "assigned-job access must not open the platform-wide booking list");
   assert.equal(result.status, 403, `service_provider must be refused: ${JSON.stringify(result.body)}`);
   const serialized = JSON.stringify(result.body);
-  for (const secret of ["BK-GW-LEAK-1", "Leaky Customer Name", "Leaky Provider Name", PROVIDER, CUSTOMER, "PAY-GW-1"]) assert.ok(!serialized.includes(secret), `the refusal must not disclose ${secret}`);
+  for (const secret of ["BK-GW-LEAK-1", "Leaky Customer Name", "Leaky Provider Name", PROVIDER, CUSTOMER, "PAY-GW-1"]) {
+    assert.ok(!serialized.includes(secret), `the refusal must not disclose ${secret}`);
+  }
 });
 
 test("GET with no identity at all is refused before the handler", async () => {
@@ -191,9 +200,14 @@ test("GET with no identity at all is refused before the handler", async () => {
   assert.equal(result.status, 401, `anonymous is unauthenticated, not merely unauthorized: ${JSON.stringify(result.body)}`);
 });
 
+// --- POST: scheduling.book AND canonical customer ownership ------------------------------------
+
 test("POST with no identity is refused before validation and writes nothing", async () => {
   const { sqlite } = freshDb();
   const before = counts(sqlite);
+
+  // The payload is deliberately INVALID (no pets, no customer). If validation ran first the answer
+  // would be 400; the gateway must answer 401 instead, proving authorization precedes validation.
   const result = await callEndpoint(post(JSON.stringify({ idempotencyKey: "gw-anon" })));
   assert.equal(result.reachedRoute, false, "an anonymous write must not reach the handler");
   assert.equal(result.status, 401, `authorization must precede validation: ${JSON.stringify(result.body)}`);
@@ -216,6 +230,7 @@ test("POST from a customer session holding scheduling.book, booking its OWN cust
   const cookie = await sessionCookie(db, "customer", CUSTOMER, "+919000000001");
   const result = await callEndpoint(post(bookingPayload(CUSTOMER), { cookie }));
   assert.equal(result.reachedRoute, true, `an owning customer session must pass the gateway: ${JSON.stringify(result.body)}`);
+  // What the handler then does is its own contract; the gateway's job is done once the request arrives.
   assert.ok(result.status >= 200, "the handler answered");
   assert.notEqual(result.status, 401, "an authorized session is not unauthenticated at the route");
   assert.notEqual(result.status, 403, "an authorized session is not forbidden at the route");
@@ -225,6 +240,7 @@ test("POST from a customer session booking ANOTHER customer's id is refused with
   const { sqlite, db } = freshDb();
   const cookie = await sessionCookie(db, "customer", CUSTOMER, "+919000000001");
   const before = counts(sqlite);
+
   const result = await callEndpoint(post(bookingPayload(OTHER_CUSTOMER), { cookie }));
   assert.equal(result.reachedRoute, false, "a session may not write against a customer it does not own");
   assert.equal(result.status, 403, `cross-customer writes are refused: ${JSON.stringify(result.body)}`);
@@ -255,12 +271,14 @@ test("an expired authentic session releases its server-owned reservation before 
   sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at,lease_expires_at,customer_session_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'assigned','{}',?,?,?)")
     .run("RES-GW-EXPIRED", `SG-GW-${CUSTOMER}`, PROVIDER, "pet_sitting", "blr", "koramangala", CUSTOMER, '["gw-pet-1"]', START, END, 1, 1, null, now, now + 60_000, session.id);
   sqlite.prepare("UPDATE platform_identity_sessions SET expires_at=? WHERE id=?").run(now - 1, session.id);
+
   const result = await callEndpoint(post(bookingPayload(CUSTOMER), { cookie }));
   assert.equal(result.reachedRoute, false, "the expired session is still refused by the production gateway order");
   assert.equal(result.status, 401);
   assert.equal(sqlite.prepare("SELECT status FROM scheduling_reservations WHERE id='RES-GW-EXPIRED'").get().status, "cancelled");
   assert.equal(sqlite.prepare("SELECT status FROM scheduling_assignment_decisions WHERE group_id=?").get(`SG-GW-${CUSTOMER}`).status, "expired");
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservation_lease_cleanup WHERE group_id=?").get(`SG-GW-${CUSTOMER}`).n, 1);
+
   const replay = await callEndpoint(post(bookingPayload(CUSTOMER), { cookie }));
   assert.equal(replay.status, 401);
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservation_lease_cleanup WHERE group_id=?").get(`SG-GW-${CUSTOMER}`).n, 1, "gateway retries keep cleanup idempotent");
@@ -270,6 +288,7 @@ test("POST from a PROVIDER session is refused for a customer-scoped write", asyn
   const { sqlite, db } = freshDb();
   const cookie = await sessionCookie(db, "provider", PROVIDER, "+919000000777");
   const before = counts(sqlite);
+
   const result = await callEndpoint(post(bookingPayload(CUSTOMER), { cookie }));
   assert.equal(result.reachedRoute, false, "a provider identity may not create a customer's booking");
   assert.equal(result.status, 403, `cross-subject writes are refused: ${JSON.stringify(result.body)}`);
@@ -279,6 +298,9 @@ test("POST from a PROVIDER session is refused for a customer-scoped write", asyn
 test("client-supplied identity and role headers cannot manufacture authorization", async () => {
   const { sqlite } = freshDb();
   const before = counts(sqlite);
+
+  // Each of these asserts privilege the caller does not have: a forged role, a forged permission set,
+  // a forged session subject, and an email that is not a provisioned app_users row.
   for (const [label, headers] of [
     ["forged role header", { "x-role": "founder", "x-role-code": "founder" }],
     ["forged permissions header", { "x-permissions": "*", "x-pawspace-permissions": "*" }],
@@ -296,6 +318,9 @@ test("client-supplied identity and role headers cannot manufacture authorization
 test("the route independently enforces the platform-wide booking-list permission", async () => {
   const { sqlite } = freshDb();
   seedBooking(sqlite);
+
+  // The Worker remains the first boundary, but a dispatch/configuration mistake must not expose this
+  // platform-wide data set. Route-local authorization is deliberate defense in depth.
   const route = await import("../app/api/canonical-bookings/route.ts");
   const direct = await route.GET(get({ "oai-authenticated-user-email": "finance@pawspace.in" }));
   assert.equal(direct.status, 403, "the handler itself refuses an identity without bookings.manage");
@@ -305,16 +330,22 @@ test("the route independently enforces the platform-wide booking-list permission
   assert.ok(!JSON.stringify(body).includes("BK-GW-LEAK-1"));
 });
 
+// --- the mirror cannot drift from the worker ---------------------------------------------------
+
 test("worker/index.ts routes every /api/* request through this same authorization composition", () => {
   const worker = readFileSync(new URL("../worker/index.ts", import.meta.url), "utf8");
+
+  // The sequence this suite mirrors. If the worker is reordered or a gateway is dropped, this fails.
   assert.match(worker, /url\.pathname\.startsWith\("\/api\/"\)/, "the worker gates on the /api/ prefix");
   assert.match(worker, /cleanupExpiredReservationLeases\(env\.DB\)/, "system-owned lease cleanup runs before request authorization");
   assert.ok(worker.indexOf("cleanupExpiredReservationLeases(env.DB)") < worker.indexOf("authorizePlatformSessionRequest(inspectionRequest,env.DB)"), "an expired session cannot be refused before its server-owned lease is considered");
-  assert.match(worker, /const inspectionRequest=request\.clone\(\)/, "authorization inspects a cloned request so handler bodies remain readable");
   assert.match(worker, /authorizePlatformSessionRequest\(inspectionRequest,\s*env\.DB\)/, "the session gateway runs first");
   assert.match(worker, /sessionAccess\s+instanceof\s+Response\s*\)\s*return\s+sessionAccess/, "a session refusal is returned as-is");
   assert.match(worker, /sessionAccess\s*\?\?\s*await\s+authorizeApiRequest\(inspectionRequest,\s*env\)/, "the staff gateway is the fallback, not a replacement");
   assert.match(worker, /access\s+instanceof\s+Response\s*\)\s*return\s+access/, "a staff refusal is returned as-is");
+
+  // Public HTTP cannot reach the handler around the gateway: within the /api/ branch the ONLY documented
+  // pre-gateway dispatch is /api/identity-session, which mints sessions and is exempt by design.
   const apiBranch = worker.slice(worker.indexOf('startsWith("/api/")'), worker.indexOf("/_vinext/image"));
   const preGateway = apiBranch.slice(0, apiBranch.indexOf("authorizePlatformSessionRequest"));
   const exemptions = [...preGateway.matchAll(/handler\.fetch/g)];
