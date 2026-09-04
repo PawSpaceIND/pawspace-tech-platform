@@ -87,6 +87,89 @@ export function validQuoteInput(overrides = {}) {
   };
 }
 
+/**
+ * A canonical Pet Taxi trip, seeded across the five tables the lifecycle and finance modules read but
+ * do not own: canonical_bookings, provider_work_orders, booking_payments, taxi_trips and
+ * provider_assignment_offers. Everything those modules DO own comes from their own ensure*Tables, so
+ * this is the whole external fixture surface.
+ *
+ * DDL is copied verbatim from the owning sources (app/api/taxi-bookings/route.ts for taxi_trips,
+ * lib/provider-capacity-governance.ts for the offers table) rather than invented, so a schema change
+ * upstream surfaces here as a real error instead of a test that quietly diverges.
+ *
+ * Returns the ids so a test can drive `mutateTaxiBooking` without restating them.
+ */
+export function seedCanonicalTrip(sqlite, {
+  bookingId = "BKG-TAXI-1", tripId = "TRIP-1", providerId = "taxi_rahul", customerId = "CUST-TAXI-1",
+  reservationId = "RES-1", groupId = "GRP-1", routeCode = "taxi-blr-east-short", amount = 449,
+  tripStatus = "scheduled", workOrderStatus = "offered", offerStatus = "pending",
+  offerExpiresAt = Date.now() + 10 * 60_000, scheduledStart = futurePickup(), pickupStatus = "pending",
+  dropoffStatus = "pending", vehicleId = null, paymentStatus = "pending",
+} = {}) {
+  const now = Date.now();
+  const scheduledEnd = new Date(new Date(scheduledStart).getTime() + 45 * 60_000).toISOString();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,idempotency_key TEXT,customer_id TEXT NOT NULL,pet_ids_json TEXT DEFAULT '[]',city_id TEXT,zone_id TEXT,service_code TEXT NOT NULL,package_code TEXT,package_name TEXT,schedule_group_id TEXT,provider_id TEXT,scheduled_start TEXT,scheduled_end TEXT,status TEXT NOT NULL DEFAULT 'confirmed',channel TEXT,total_amount REAL,currency TEXT DEFAULT 'INR',pricing_json TEXT DEFAULT '{}',created_by TEXT,created_at INTEGER,updated_at INTEGER)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS provider_work_orders (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,provider_id TEXT NOT NULL,provider_name TEXT,status TEXT NOT NULL DEFAULT 'offered',created_at INTEGER,updated_at INTEGER)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT,amount REAL NOT NULL,amount_due_now REAL DEFAULT 0,currency TEXT DEFAULT 'INR',method TEXT,mode TEXT,status TEXT NOT NULL,gateway TEXT,idempotency_key TEXT,detail_json TEXT DEFAULT '{}',created_at INTEGER,updated_at INTEGER)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS taxi_trips (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,schedule_group_id TEXT NOT NULL,reservation_id TEXT NOT NULL UNIQUE,provider_id TEXT NOT NULL,origin_label TEXT NOT NULL,destination_label TEXT NOT NULL,route_code TEXT NOT NULL,synthetic_distance_km REAL NOT NULL,estimated_duration_minutes INTEGER NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'scheduled',vehicle_id TEXT,pickup_verification_status TEXT NOT NULL DEFAULT 'pending',dropoff_verification_status TEXT NOT NULL DEFAULT 'pending',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS provider_assignment_offers (group_id TEXT PRIMARY KEY,booking_id TEXT,provider_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',offered_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,responded_at INTEGER,response_reason TEXT,attempt_no INTEGER NOT NULL DEFAULT 1,updated_at INTEGER NOT NULL)");
+  // The recovery path cancels the scheduling hold, and completion closes the reservation, so the
+  // reservation row has to exist for either to be exercised. DDL from backend/src/scheduling.ts.
+  sqlite.exec("CREATE TABLE IF NOT EXISTS scheduling_reservations (id TEXT PRIMARY KEY,group_id TEXT NOT NULL,provider_id TEXT NOT NULL,service_code TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,customer_id TEXT NOT NULL,pet_ids_json TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,capacity_units INTEGER NOT NULL DEFAULT 1,occurrence_number INTEGER NOT NULL DEFAULT 1,care_mode TEXT,status TEXT NOT NULL,explanation_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,lease_expires_at INTEGER,customer_session_id TEXT,attempt_id TEXT)");
+
+  sqlite.prepare("INSERT OR REPLACE INTO canonical_bookings (id,idempotency_key,customer_id,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,total_amount,created_by,created_at,updated_at) VALUES (?,?,?,'blr','blr-east','pet_taxi',?,'Pet Taxi',?,?,?,?,'confirmed',?,'harness',?,?)")
+    .run(bookingId, `idem-${bookingId}`, customerId, routeCode, groupId, providerId, scheduledStart, scheduledEnd, amount, now, now);
+  sqlite.prepare("INSERT OR REPLACE INTO provider_work_orders (id,booking_id,provider_id,provider_name,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
+    .run(`WO-${bookingId}`, bookingId, providerId, "Rahul K.", workOrderStatus, now, now);
+  sqlite.prepare("INSERT OR REPLACE INTO booking_payments (id,booking_id,customer_id,amount,amount_due_now,method,mode,status,idempotency_key,created_at,updated_at) VALUES (?,?,?,?,0,'upi','sandbox_deferred',?,?,?,?)")
+    .run(`PAY-${bookingId}`, bookingId, customerId, amount, paymentStatus, `pk-${bookingId}`, now, now);
+  sqlite.prepare("INSERT OR REPLACE INTO taxi_trips (id,booking_id,schedule_group_id,reservation_id,provider_id,origin_label,destination_label,route_code,synthetic_distance_km,estimated_duration_minutes,scheduled_start,scheduled_end,status,vehicle_id,pickup_verification_status,dropoff_verification_status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,5,45,?,?,?,?,?,?,?,?)")
+    .run(tripId, bookingId, groupId, reservationId, providerId, "Indiranagar pickup point", "Whitefield veterinary clinic", routeCode, scheduledStart, scheduledEnd, tripStatus, vehicleId, pickupStatus, dropoffStatus, now, now);
+  sqlite.prepare("INSERT OR REPLACE INTO provider_assignment_offers (group_id,booking_id,provider_id,status,offered_at,expires_at,attempt_no,updated_at) VALUES (?,?,?,?,?,?,1,?)")
+    .run(groupId, bookingId, providerId, offerStatus, now, offerExpiresAt, now);
+  sqlite.prepare("INSERT OR REPLACE INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,status,created_at) VALUES (?,?,?,'pet_taxi','blr','blr-east',?,'[]',?,?,'confirmed',?)")
+    .run(reservationId, groupId, providerId, customerId, scheduledStart, scheduledEnd, now);
+  // Recovery re-opens the assignment decision for this group, so the decision row must exist.
+  // DDL from lib/provider-capacity-governance.ts.
+  sqlite.exec("CREATE TABLE IF NOT EXISTS scheduling_assignment_decisions (group_id TEXT PRIMARY KEY,strategy TEXT NOT NULL,shortlist_json TEXT NOT NULL,selected_provider_id TEXT,status TEXT NOT NULL,actor_id TEXT,reason TEXT,updated_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT OR REPLACE INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,actor_id,updated_at) VALUES (?,'best_fit',?,?,'assigned','harness',?)")
+    .run(groupId, JSON.stringify([providerId]), providerId, now);
+
+  return { bookingId, tripId, providerId, customerId, reservationId, groupId, scheduledStart, scheduledEnd, amount };
+}
+
+/** An active, UAT-verified vehicle owned by the seeded driver. */
+export function seedVehicle(sqlite, { vehicleId = "VEH-1", providerId = "taxi_rahul", active = 1, inspection = "uat_verified" } = {}) {
+  sqlite.exec("CREATE TABLE IF NOT EXISTS taxi_vehicle_profiles (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,label TEXT NOT NULL,vehicle_type TEXT NOT NULL,pet_restraint TEXT NOT NULL,inspection_status TEXT NOT NULL DEFAULT 'uat_verified',active INTEGER NOT NULL DEFAULT 1,updated_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT OR REPLACE INTO taxi_vehicle_profiles (id,provider_id,label,vehicle_type,pet_restraint,inspection_status,active,updated_at) VALUES (?,?,?,?,?,?,?,?)")
+    .run(vehicleId, providerId, "Hatchback · crate", "hatchback", "crate", inspection, active, Date.now());
+  return vehicleId;
+}
+
+/**
+ * An ACTIVE commercial term for pet_taxi, created through the real maker/checker path.
+ *
+ * Discovered by running the conversion: `complete_trip` calls resolveServiceCompletionFinance, which
+ * throws `CommercialTermConfigurationRequired: no active commercial term for service pet_taxi`. That
+ * is correct fail-closed behaviour — the platform refuses to invent a payout or a tax status for a
+ * service nobody has configured — so trip completion is genuinely unreachable without this. The taxi
+ * suites therefore assert BOTH directions: refused without a term, resolved with one.
+ */
+export async function seedActiveCommercialTerm(db, { serviceCode = "pet_taxi", providerSharePct = 0.7, engagementModel = "commission_standard" } = {}) {
+  const terms = await import("../../lib/provider-commercial-terms.ts");
+  await terms.ensureCommercialTermsTables(db);
+  const draft = await terms.saveCommercialTerm(db, {
+    serviceCode, engagementModel, providerSharePct,
+    effectiveFrom: "2026-01-01", reason: "Pet Taxi executed-test baseline", actorId: "maker@pawspace.test",
+  });
+  await terms.activateCommercialTerm(db, { termId: draft.id, approvalReference: "APPR-TAXI-1", actorId: "checker@pawspace.test" });
+  return draft.id;
+}
+
+/** A distinct idempotency key per call, so a test's own repeats do not collide by accident. */
+let keySeq = 0;
+export const nextKey = (prefix = "K") => `${prefix}-${++keySeq}-${Math.random().toString(36).slice(2, 8)}`;
+
 /** The status a thrown control Response carries, or null when the value is not one. */
 export async function refusal(promise) {
   try { await promise; return null; }
