@@ -9,7 +9,18 @@ permissions:
   contents: read
 
 jobs:
+  pre-uat-isolation-gate:
+    if: ${{ github.event_name == 'pull_request' && github.head_ref == 'fix/pre-uat-protocol-isolation' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm pre-UAT PR never enters the production environment
+        run: |
+          set -euo pipefail
+          test "${GITHUB_HEAD_REF}" = "fix/pre-uat-protocol-isolation"
+          echo "Pre-UAT protocol PR is intentionally excluded from the GitHub production environment and production secrets."
+
   master-production-audit:
+    if: ${{ github.event_name != 'pull_request' || github.head_ref != 'fix/pre-uat-protocol-isolation' }}
     runs-on: ubuntu-latest
     environment: production
     steps:
