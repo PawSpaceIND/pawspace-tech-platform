@@ -103,7 +103,11 @@ async function captureUnexpectedFailure(request, response) {
 }
 
 async function callEndpoint(request) {
-  const gate = await throughGateway(request);
+  // Mirror the real Worker boundary exactly: pre-route authorization and service inspection run on a
+  // clone, while the application handler receives the untouched original request body. Reusing the
+  // original for both stages made the legacy module.register() fallback fixture capable of consuming
+  // the body before route.ts read it, even though worker/index.ts never does that in production.
+  const gate = await throughGateway(request.clone());
   if (gate.refused) return { reachedRoute: false, response: gate.refused };
   const route = await import("../app/api/ai-web-chat/route.ts");
   const handler = request.method === "GET" ? route.GET : route.POST;
