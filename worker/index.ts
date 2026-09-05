@@ -58,16 +58,18 @@ const worker = {
       if(url.pathname==="/api/identity-session")return secureApiResponse(await handler.fetch(request,env,ctx));
       const isMetaWebhook=url.pathname==="/api/whatsapp/meta-webhook";
       const isEmailWebhook=url.pathname==="/api/email-provider-webhook";
-      const isProviderWebhook=isMetaWebhook||isEmailWebhook;
-      // Provider webhooks are authenticated inside their route by HMAC/challenge verification, not by
-      // a PawSpace user session. Meta additionally feeds the Elite observer after its response.
+      const isDiallerWebhook=url.pathname==="/api/dialler/callback";
+      const isProviderWebhook=isMetaWebhook||isEmailWebhook||isDiallerWebhook;
+      // Provider webhooks authenticate inside their own route, not through a PawSpace employee session.
+      // Meta additionally feeds the Elite observer after its response; dialler callbacks verify Exotel auth.
       const eliteRequest=isMetaWebhook?request.clone():null;
       if(request.method==="POST"&&(url.pathname==="/api/uat-scheduling"||url.pathname==="/api/canonical-bookings"))await cleanupExpiredReservationLeases(env.DB);
       const inspectionRequest=request.clone();
       const sessionAccess=await authorizePlatformSessionRequest(inspectionRequest,env.DB);
-      if(sessionAccess instanceof Response)return sessionAccess;
+      if(sessionAccess instanceof Response&&!isProviderWebhook)return sessionAccess;
+      const providerEmail=isMetaWebhook?"meta-webhook@provider":isEmailWebhook?"email-webhook@provider":"exotel-dialler@provider";
       const access=isProviderWebhook
-        ?{actor:{email:isMetaWebhook?"meta-webhook@provider":"email-webhook@provider",roleCode:"provider_webhook",permissions:[],preview:false},permission:null}
+        ?{actor:{email:providerEmail,roleCode:"provider_webhook",permissions:[],preview:false},permission:null}
         :sessionAccess??await authorizeApiRequest(inspectionRequest, env);
       if (access instanceof Response) return access;
       const serviceBlock=await blockDisabledServiceRequest(inspectionRequest,env.DB);
