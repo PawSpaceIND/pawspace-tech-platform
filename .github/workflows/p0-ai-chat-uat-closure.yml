@@ -1,0 +1,166 @@
+name: P0 AI Chat UAT Closure
+
+on:
+  push:
+    branches:
+      - remediation/p0-pilot-gates-b379631
+    paths:
+      - .github/workflows/p0-ai-chat-uat-closure.yml
+
+permissions:
+  contents: read
+
+jobs:
+  certify-ai-chat:
+    runs-on: ubuntu-24.04
+    environment: pawspace-staging
+    timeout-minutes: 35
+    env:
+      STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+      WRANGLER_CONFIG: dist/server/wrangler.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install and run focused AI chat tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run install:ci
+          node --experimental-strip-types --test tests/ai-web-chat-worker-gateway.test.mjs tests/ai-provider-adapter-execution.test.mjs
+
+      - name: Build staging candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build
+
+      - name: Configure staging while preserving remote bindings and vars
+        env:
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -n "$STAGING_D1_ID" ] || { echo 'STAGING_D1_ID missing' >&2; exit 1; }
+          if [ -n "${PRODUCTION_D1_ID:-}" ] && [ "$STAGING_D1_ID" = "$PRODUCTION_D1_ID" ]; then echo 'Refusing production D1.' >&2; exit 1; fi
+          node scripts/stage-config.mjs
+          SETTINGS="$RUNNER_TEMP/staging-settings.json"; export SETTINGS
+          HTTP="$(curl --silent --show-error --output "$SETTINGS" --write-out '%{http_code}' --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" --header 'Accept: application/json' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/pawspace-staging/settings")"
+          [ "$HTTP" = "200" ] || { echo 'Unable to read staging Worker settings.' >&2; exit 1; }
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const settings=JSON.parse(readFileSync(process.env.SETTINGS,'utf8'));
+          const bindings=Array.isArray(settings?.result?.bindings)?settings.result.bindings:[];
+          const remote={};
+          for(const b of bindings){ if(b?.type==='plain_text'){ const n=String(b.name||''); if(/^[A-Z0-9_]+$/.test(n)) remote[n]=String(b.text??b.value??''); } }
+          const cfg=JSON.parse(readFileSync(process.env.WRANGLER_CONFIG,'utf8'));
+          if(cfg.name!=='pawspace-staging') throw new Error('Refusing non-staging Worker target');
+          cfg.vars={...remote,...(cfg.vars||{}),PAWSPACE_PRODUCTION_ENFORCE:'false'};
+          cfg.keep_vars=true;
+          if(bindings.some(b=>String(b?.name||'')==='AI'&&/ai/i.test(String(b?.type||'')))) cfg.ai={binding:'AI'};
+          writeFileSync(process.env.WRANGLER_CONFIG,JSON.stringify(cfg,null,2),{mode:0o600});
+          NODE
+          rm -f "$SETTINGS"
+
+      - name: Deploy AI chat patch to staging only
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          LOG="$RUNNER_TEMP/deploy.log"
+          npx wrangler deploy --config "$WRANGLER_CONFIG" --keep-vars --message "staging ai-chat-uat ${GITHUB_SHA}" > "$LOG" 2>&1
+          URL="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' "$LOG" | tail -n 1 || true)"
+          [ "$URL" = "$STAGING_URL" ] || { echo 'Unexpected Worker deployment target.' >&2; exit 1; }
+          rm -f "$LOG"
+          echo 'Staging-only deployment complete.'
+
+      - name: Obtain temporary founder UAT session
+        env:
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          COOKIE="$(node --input-type=module <<'NODE'
+          const base=String(process.env.STAGING_URL||'').replace(/\/$/,'');
+          const code=String(process.env.PAWSPACE_UAT_ACCESS_CODE||'');
+          const r=await fetch(`${base}/api/staging-login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'login',code,email:'founder@pawspace.in'}),signal:AbortSignal.timeout(20000)});
+          if(!r.ok) throw new Error(`staging login HTTP ${r.status}`);
+          const c=(r.headers.get('set-cookie')||'').split(';')[0].trim();
+          if(!c.includes('=')) throw new Error('No session cookie');
+          process.stdout.write(c);
+          NODE
+          )"
+          echo "::add-mask::$COOKIE"
+          umask 077
+          printf '%s' "$COOKIE" > "$RUNNER_TEMP/founder-cookie"
+
+      - name: Enable customer AI rollout in staging
+        shell: bash
+        run: |
+          set -euo pipefail
+          COOKIE="$(cat "$RUNNER_TEMP/founder-cookie")"
+          CODE="$(curl --silent --show-error --output "$RUNNER_TEMP/rollout.json" --write-out '%{http_code}' -X POST \
+            -H "cookie: $COOKIE" -H 'content-type: application/json' -H "origin: $STAGING_URL" \
+            --data '{"stage":"customers","reason":"Controlled Human UAT AI chat closure"}' \
+            "$STAGING_URL/api/ai-rollout")"
+          [ "$CODE" = "201" ] || { echo "AI rollout update failed HTTP=$CODE" >&2; cat "$RUNNER_TEMP/rollout.json" >&2; exit 1; }
+          node --input-type=module <<'NODE'
+          import {readFileSync} from 'node:fs';
+          const body=JSON.parse(readFileSync(process.env.RUNNER_TEMP+'/rollout.json','utf8'));
+          if(body?.data?.stage!=='customers') throw new Error('AI customer rollout did not activate');
+          NODE
+          rm -f "$RUNNER_TEMP/rollout.json"
+
+      - name: Verify live AI provider and authenticated web-chat turn
+        shell: bash
+        run: |
+          set -euo pipefail
+          COOKIE="$(cat "$RUNNER_TEMP/founder-cookie")"
+          IDKEY="uat-ai-chat-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          HTTP="$(curl --silent --show-error --output "$RUNNER_TEMP/chat.json" --write-out '%{http_code}' -X POST \
+            -H "cookie: $COOKIE" -H 'content-type: application/json' -H "origin: $STAGING_URL" \
+            --data "{\"mode\":\"authenticated\",\"customerId\":\"UATD-CUS-1\",\"message\":\"What PawSpace grooming services are available?\",\"idempotencyKey\":\"$IDKEY\"}" \
+            "$STAGING_URL/api/ai-web-chat")"
+          [ "$HTTP" = "201" ] || { echo "Authenticated AI chat failed HTTP=$HTTP" >&2; cat "$RUNNER_TEMP/chat.json" >&2; exit 1; }
+          node --input-type=module <<'NODE'
+          import {readFileSync} from 'node:fs';
+          const b=JSON.parse(readFileSync(process.env.RUNNER_TEMP+'/chat.json','utf8'));
+          const d=b?.data||{}; const turn=d?.ai?.turn||{};
+          const provider=String(turn.provider||''); const output=String(turn.output_text??turn.output??'').trim(); const outcome=String(turn.outcome||'');
+          if(!d.threadId||!d.messageId) throw new Error('Canonical AI chat identifiers missing');
+          if(!provider || provider==='not_connected') throw new Error('Live AI provider is not connected on staging');
+          if(!output) throw new Error('Live AI provider returned no governed chat output');
+          if(d.autonomousExecution!==false) throw new Error('Autonomous execution must remain disabled');
+          if(!['draft_review_required','responded','completed','draft_ready'].includes(outcome) && !outcome) throw new Error('AI turn outcome missing');
+          console.log(`ai_chat_live=pass provider=${provider} outcome=${outcome||'recorded'} output_present=true autonomous_execution=false`);
+          NODE
+
+          REPLAY="$(curl --silent --show-error --output "$RUNNER_TEMP/replay.json" --write-out '%{http_code}' -X POST \
+            -H "cookie: $COOKIE" -H 'content-type: application/json' -H "origin: $STAGING_URL" \
+            --data "{\"mode\":\"authenticated\",\"customerId\":\"UATD-CUS-1\",\"message\":\"What PawSpace grooming services are available?\",\"idempotencyKey\":\"$IDKEY\"}" \
+            "$STAGING_URL/api/ai-web-chat")"
+          [ "$REPLAY" = "200" ] || { echo "AI replay check failed HTTP=$REPLAY" >&2; cat "$RUNNER_TEMP/replay.json" >&2; exit 1; }
+          node --input-type=module <<'NODE'
+          import {readFileSync} from 'node:fs';
+          const b=JSON.parse(readFileSync(process.env.RUNNER_TEMP+'/replay.json','utf8'));
+          if(b?.data?.duplicatePrevented!==true) throw new Error('AI chat replay was not deduplicated');
+          console.log('ai_chat_idempotency=pass');
+          NODE
+          rm -f "$RUNNER_TEMP/chat.json" "$RUNNER_TEMP/replay.json" "$RUNNER_TEMP/founder-cookie"
+
+      - name: Closure marker
+        run: |
+          echo 'AI Chat Human UAT — CLOSED ✅'
+          echo 'Customer rollout: staging only'
+          echo 'Production unchanged'
