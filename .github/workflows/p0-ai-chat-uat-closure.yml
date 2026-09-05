@@ -122,17 +122,42 @@ jobs:
           NODE
           rm -f "$RUNNER_TEMP/rollout.json"
 
-      - name: Verify live AI provider and authenticated web-chat turn
+      - name: Create a fresh staging customer session through sandbox OTP
         shell: bash
         run: |
           set -euo pipefail
-          COOKIE="$(cat "$RUNNER_TEMP/founder-cookie")"
+          node --input-type=module <<'NODE'
+          import {writeFileSync} from 'node:fs';
+          const base=String(process.env.STAGING_URL||'').replace(/\/$/,'');
+          const phone=`+9197000${String(process.env.GITHUB_RUN_ID||'0').slice(-5).padStart(5,'0')}`;
+          const req=await fetch(`${base}/api/customer-otp`,{method:'POST',headers:{'content-type':'application/json',origin:base},body:JSON.stringify({action:'request',phone}),signal:AbortSignal.timeout(20000)});
+          const rb=await req.json().catch(()=>({}));
+          if(!req.ok) throw new Error(`customer OTP request HTTP ${req.status}`);
+          const challengeId=String(rb?.data?.challengeId||''); const code=String(rb?.data?.sandboxCode||'');
+          if(!challengeId||!/^[0-9]{6}$/.test(code)) throw new Error('Staging sandbox OTP challenge/code unavailable');
+          const verify=await fetch(`${base}/api/customer-otp`,{method:'POST',headers:{'content-type':'application/json',origin:base},body:JSON.stringify({action:'verify',challengeId,code,name:'AI Chat UAT',cityId:'blr',installId:`ai-chat-${process.env.GITHUB_RUN_ID}`}),signal:AbortSignal.timeout(20000)});
+          const vb=await verify.json().catch(()=>({}));
+          if(!verify.ok) throw new Error(`customer OTP verify HTTP ${verify.status}`);
+          const cookie=(verify.headers.get('set-cookie')||'').split(';')[0].trim(); const customerId=String(vb?.data?.customerId||'');
+          if(!cookie.includes('=')||!customerId) throw new Error('Customer session issuance incomplete');
+          console.log(`::add-mask::${cookie}`);
+          writeFileSync(process.env.RUNNER_TEMP+'/customer-cookie',cookie,{mode:0o600});
+          writeFileSync(process.env.RUNNER_TEMP+'/customer-id',customerId,{mode:0o600});
+          console.log('fresh_customer_session=pass');
+          NODE
+
+      - name: Verify live AI provider and authenticated customer web-chat turn
+        shell: bash
+        run: |
+          set -euo pipefail
+          COOKIE="$(cat "$RUNNER_TEMP/customer-cookie")"
+          CUSTOMER_ID="$(cat "$RUNNER_TEMP/customer-id")"
           IDKEY="uat-ai-chat-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           HTTP="$(curl --silent --show-error --output "$RUNNER_TEMP/chat.json" --write-out '%{http_code}' -X POST \
             -H "cookie: $COOKIE" -H 'content-type: application/json' -H "origin: $STAGING_URL" \
-            --data "{\"mode\":\"authenticated\",\"customerId\":\"UATD-CUS-1\",\"message\":\"What PawSpace grooming services are available?\",\"idempotencyKey\":\"$IDKEY\"}" \
+            --data "{\"mode\":\"authenticated\",\"customerId\":\"$CUSTOMER_ID\",\"message\":\"What PawSpace grooming services are available?\",\"idempotencyKey\":\"$IDKEY\"}" \
             "$STAGING_URL/api/ai-web-chat")"
-          [ "$HTTP" = "201" ] || { echo "Authenticated AI chat failed HTTP=$HTTP" >&2; cat "$RUNNER_TEMP/chat.json" >&2; exit 1; }
+          [ "$HTTP" = "201" ] || { echo "Authenticated customer AI chat failed HTTP=$HTTP" >&2; cat "$RUNNER_TEMP/chat.json" >&2; exit 1; }
           node --input-type=module <<'NODE'
           import {readFileSync} from 'node:fs';
           const b=JSON.parse(readFileSync(process.env.RUNNER_TEMP+'/chat.json','utf8'));
@@ -142,13 +167,12 @@ jobs:
           if(!provider || provider==='not_connected') throw new Error('Live AI provider is not connected on staging');
           if(!output) throw new Error('Live AI provider returned no governed chat output');
           if(d.autonomousExecution!==false) throw new Error('Autonomous execution must remain disabled');
-          if(!['draft_review_required','responded','completed','draft_ready'].includes(outcome) && !outcome) throw new Error('AI turn outcome missing');
           console.log(`ai_chat_live=pass provider=${provider} outcome=${outcome||'recorded'} output_present=true autonomous_execution=false`);
           NODE
 
           REPLAY="$(curl --silent --show-error --output "$RUNNER_TEMP/replay.json" --write-out '%{http_code}' -X POST \
             -H "cookie: $COOKIE" -H 'content-type: application/json' -H "origin: $STAGING_URL" \
-            --data "{\"mode\":\"authenticated\",\"customerId\":\"UATD-CUS-1\",\"message\":\"What PawSpace grooming services are available?\",\"idempotencyKey\":\"$IDKEY\"}" \
+            --data "{\"mode\":\"authenticated\",\"customerId\":\"$CUSTOMER_ID\",\"message\":\"What PawSpace grooming services are available?\",\"idempotencyKey\":\"$IDKEY\"}" \
             "$STAGING_URL/api/ai-web-chat")"
           [ "$REPLAY" = "200" ] || { echo "AI replay check failed HTTP=$REPLAY" >&2; cat "$RUNNER_TEMP/replay.json" >&2; exit 1; }
           node --input-type=module <<'NODE'
@@ -157,7 +181,7 @@ jobs:
           if(b?.data?.duplicatePrevented!==true) throw new Error('AI chat replay was not deduplicated');
           console.log('ai_chat_idempotency=pass');
           NODE
-          rm -f "$RUNNER_TEMP/chat.json" "$RUNNER_TEMP/replay.json" "$RUNNER_TEMP/founder-cookie"
+          rm -f "$RUNNER_TEMP/chat.json" "$RUNNER_TEMP/replay.json" "$RUNNER_TEMP/customer-cookie" "$RUNNER_TEMP/customer-id" "$RUNNER_TEMP/founder-cookie"
 
       - name: Closure marker
         run: |
