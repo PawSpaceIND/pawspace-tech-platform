@@ -29,7 +29,7 @@ test("Sitting Gate 5 executes canonical Operations note persistence", async () =
   });
   assert.equal(result.status, "noted");
   const note = sqlite.prepare("SELECT note,actor_id FROM sitting_ops_notes WHERE booking_id='BK-SG5'").get();
-  assert.deepEqual(note, { note: "Customer requested a callback before check-in", actor_id: "ops@pawspace.in" });
+  assert.deepEqual({ ...note }, { note: "Customer requested a callback before check-in", actor_id: "ops@pawspace.in" });
   const event = sqlite.prepare("SELECT event_type FROM sitting_care_events WHERE booking_id='BK-SG5' ORDER BY created_at DESC LIMIT 1").get();
   assert.equal(event.event_type, "ops_note_added");
 });
