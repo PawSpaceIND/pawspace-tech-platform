@@ -30,9 +30,24 @@ jobs:
           node-version: '22.16.0'
           cache: npm
       - run: npm ci
-      - name: Enforced master production readiness audit
+      # DRY RUN, not a certification. PAWSPACE_PRODUCTION_ENFORCE stays 'false' under the approved
+      # release-phase override (a78d3af4), so this step cannot fail on a configuration gap. What it
+      # previously also could not do was TELL anyone a gap existed: it printed a success-shaped payload
+      # and exited 0 having checked nothing, which reads as a production sign-off and is not one.
+      #
+      # The script now re-runs the same evaluation with enforcement forced on, purely to report which
+      # secrets and configuration values are still missing - by NAME, never by value - as ::warning
+      # annotations and a job summary table. That inventory is the answer to "what is left before we
+      # can actually sign off", produced without disclosing anything.
+      #
+      # Two ways to make this gate real, in increasing order of strictness:
+      #   PAWSPACE_READINESS_DRY_RUN_STRICT: 'true'  -> still a dry run, but any gap fails the job.
+      #   PAWSPACE_PRODUCTION_ENFORCE: 'true'        -> the full guard; nothing ships with a gap.
+      - name: Production readiness dry run (reports gaps, does not certify)
         env:
           PAWSPACE_PRODUCTION_ENFORCE: 'false'
+          # Flip to 'true' to make a configuration gap fail this job while keeping the dry-run posture.
+          PAWSPACE_READINESS_DRY_RUN_STRICT: 'false'
           # Approved release-phase policy. Complete test API credentials may
           # satisfy only the IDfy and messaging checks via explicit aliases.
           PAWSPACE_TEST_API_POLICY_OVERRIDE: 'true'
@@ -64,4 +79,5 @@ jobs:
           META_WHATSAPP_PHONE_NUMBER_ID_UAT: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID_UAT }}
           INTERAKT_API_KEY_SANDBOX: ${{ secrets.INTERAKT_API_KEY_SANDBOX }}
           INTERAKT_WEBHOOK_SECRET_SANDBOX: ${{ secrets.INTERAKT_WEBHOOK_SECRET_SANDBOX }}
-        run: PAWSPACE_PRODUCTION_ENFORCE=false node scripts/assert-production-readiness.mjs
+        # No inline override here: the env block above is the single place the mode is decided.
+        run: node scripts/assert-production-readiness.mjs
