@@ -1,0 +1,114 @@
+name: P0 Exotel Consent Capture
+
+on:
+  push:
+    branches:
+      - remediation/p0-pilot-gates-b379631
+    paths:
+      - .github/workflows/p0-exotel-consent-capture.yml
+
+permissions:
+  contents: read
+
+jobs:
+  capture-explicit-consent:
+    runs-on: ubuntu-24.04
+    environment: pawspace-staging
+    timeout-minutes: 8
+    env:
+      STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+      STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+      WORKER_SCRIPT: pawspace-staging
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Resolve allowlisted UAT number and persist explicit consent
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const base=String(process.env.STAGING_URL||'').replace(/\/$/,'');
+          const dbId=String(process.env.STAGING_D1_ID||'');
+          const account=String(process.env.CLOUDFLARE_ACCOUNT_ID||'');
+          const token=String(process.env.CLOUDFLARE_API_TOKEN||'');
+          const accessCode=String(process.env.PAWSPACE_UAT_ACCESS_CODE||'');
+          const script=String(process.env.WORKER_SCRIPT||'pawspace-staging');
+          if(!base||!dbId||!account||!token||!accessCode) throw new Error('Required staging-only configuration is missing');
+
+          const normalize=value=>String(value||'').replace(/[^0-9]/g,'').slice(-10);
+          const d1=async(sql,params=[])=>{
+            const r=await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/d1/database/${dbId}/query`,{
+              method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},
+              body:JSON.stringify({sql,params}),signal:AbortSignal.timeout(20000),
+            });
+            const body=await r.json().catch(()=>null);
+            if(!r.ok||!body?.success) throw new Error(`Staging D1 query failed HTTP ${r.status}`);
+            return body?.result?.[0]?.results||[];
+          };
+
+          const settingsRes=await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/${encodeURIComponent(script)}/settings`,{
+            headers:{authorization:`Bearer ${token}`},signal:AbortSignal.timeout(20000),
+          });
+          const settings=await settingsRes.json().catch(()=>null);
+          if(!settingsRes.ok||!settings?.success) throw new Error(`Unable to read staging Worker settings HTTP ${settingsRes.status}`);
+          const bindings=Array.isArray(settings?.result?.bindings)?settings.result.bindings:[];
+          const binding=bindings.find(b=>String(b?.name||'')==='PAWSPACE_VOICE_UAT_ALLOWLIST');
+          if(!binding) throw new Error('PAWSPACE_VOICE_UAT_ALLOWLIST binding is not present in staging Worker settings');
+          let raw='';
+          if(typeof binding.text==='string') raw=binding.text;
+          else if(typeof binding.value==='string') raw=binding.value;
+          else if(typeof binding.json==='string') raw=binding.json;
+          else if(binding.json!=null) raw=String(binding.json);
+          if(!raw) throw new Error(`PAWSPACE_VOICE_UAT_ALLOWLIST is not readable through the staging settings API (binding type=${String(binding.type||'unknown')}); refusing to guess`);
+          const entries=raw.split(/[,;\n]+/).map(v=>v.trim()).filter(Boolean);
+          if(entries.length!==1) throw new Error(`Expected exactly one UAT allowlisted number, found ${entries.length}; refusing to choose`);
+          const phone=entries[0];
+          const key=normalize(phone);
+          if(key.length!==10) throw new Error('The sole UAT allowlisted number could not be normalized safely');
+          console.log(`::add-mask::${phone}`);
+          console.log(`::add-mask::${key}`);
+
+          const login=await fetch(`${base}/api/staging-login`,{
+            method:'POST',headers:{'content-type':'application/json'},
+            body:JSON.stringify({action:'login',code:accessCode,email:'founder@pawspace.in'}),
+            signal:AbortSignal.timeout(20000),
+          });
+          if(!login.ok) throw new Error(`Staging login failed HTTP ${login.status}`);
+          const cookie=(login.headers.get('set-cookie')||'').split(';')[0].trim();
+          if(!cookie.includes('=')) throw new Error('Staging login returned no session cookie');
+          console.log(`::add-mask::${cookie}`);
+
+          const customers=await d1('SELECT id,primary_phone,secondary_phone FROM canonical_customers');
+          const owners=customers.filter(row=>[row.primary_phone,row.secondary_phone].some(value=>normalize(value)===key));
+          if(owners.length>1) throw new Error(`Allowlisted UAT number maps to ${owners.length} canonical customers; refusing ambiguous consent ownership`);
+          const subjectId=owners.length===1?String(owners[0].id):'';
+
+          const consent=await fetch(`${base}/api/voice-outbound`,{
+            method:'POST',
+            headers:{cookie,'content-type':'application/json',origin:base},
+            body:JSON.stringify({
+              action:'record_consent',
+              phone,
+              subjectType:'customer',
+              subjectId,
+              granted:true,
+              source:'user_explicit_chat_2026-09-05_exotel_uat',
+            }),
+            signal:AbortSignal.timeout(30000),
+          });
+          const consentBody=await consent.json().catch(()=>({}));
+          if(!consent.ok) throw new Error(`Voice consent API failed HTTP ${consent.status}: ${String(consentBody?.error||'unknown').slice(0,180)}`);
+
+          const rows=await d1('SELECT phone_key,subject_type,subject_id,granted,source,captured_at,revoked_at FROM voice_call_consents WHERE phone_key=? LIMIT 1',[key]);
+          if(rows.length!==1||Number(rows[0].granted)!==1||rows[0].revoked_at!=null) throw new Error('Consent row was not persisted as granted');
+          if(String(rows[0].source||'')!=='user_explicit_chat_2026-09-05_exotel_uat') throw new Error('Consent source audit marker is incorrect');
+
+          console.log(`EXOTEL_UAT_CONSENT_RECORDED phone_last4=${key.slice(-4)} canonical_owner=${subjectId?'yes':'not_yet_linked'} granted=true source=user_explicit_chat_2026-09-05_exotel_uat`);
+          console.log('Authorized statement: I consent to receive the PawSpace Exotel UAT test call on the existing allowlisted number.');
+          console.log('No phone call was dispatched by this workflow.');
+          NODE
