@@ -296,8 +296,8 @@ export async function listMarketingAdMetrics(db: Db, input: { from: string; to: 
 async function reportAggregate(db: Db, from: string, to: string) {
   const total = await db.prepare("SELECT COUNT(*) row_count,COALESCE(SUM(impressions),0) impressions,COALESCE(SUM(clicks),0) clicks,COALESCE(SUM(spend_minor),0) spend_minor,COALESCE(SUM(conversions),0) conversions,COALESCE(SUM(conversion_value_minor),0) conversion_value_minor FROM marketing_ad_metric_facts WHERE report_date>=? AND report_date<=?").bind(from,to).first<Row>();
   const platforms = await db.prepare("SELECT platform,COUNT(*) row_count,COALESCE(SUM(impressions),0) impressions,COALESCE(SUM(clicks),0) clicks,COALESCE(SUM(spend_minor),0) spend_minor,COALESCE(SUM(conversions),0) conversions,COALESCE(SUM(conversion_value_minor),0) conversion_value_minor FROM marketing_ad_metric_facts WHERE report_date>=? AND report_date<=? GROUP BY platform ORDER BY platform").bind(from,to).all<Row>();
-  const spend = integer(total?.spend_minor), conversions = Math.max(0, number(total?.conversions)), revenue = integer(total?.conversion_value_minor);
-  return { ...total, cpa_minor: conversions > 0 ? Math.round(spend / conversions) : 0, roas: spend > 0 ? revenue / spend : 0, platforms: platforms.results };
+  const rowCount=integer(total?.row_count),impressions=integer(total?.impressions),clicks=integer(total?.clicks),spendMinor=integer(total?.spend_minor),conversions=Math.max(0,number(total?.conversions)),conversionValueMinor=integer(total?.conversion_value_minor);
+  return { row_count:rowCount, impressions, clicks, spend_minor:spendMinor, conversions, conversion_value_minor:conversionValueMinor, cpa_minor: conversions > 0 ? Math.round(spendMinor / conversions) : 0, roas: spendMinor > 0 ? conversionValueMinor / spendMinor : 0, platforms: platforms.results };
 }
 async function persistReport(db: Db, cadence: "daily" | "weekly" | "monthly", periodKey: string, from: string, to: string, now: number) {
   const existing = await db.prepare("SELECT * FROM marketing_ad_report_runs WHERE cadence=? AND period_key=?").bind(cadence,periodKey).first<Row>();
@@ -346,7 +346,6 @@ export async function mutateMarketingAdResource(db: Db, runtime: Runtime, input:
     await db.prepare("UPDATE marketing_ad_mutation_audit SET status='completed',provider_request_id=?,updated_at=? WHERE id=?").bind(requestId||null,Date.now(),auditId).run();
     return { id:auditId,platform:input.platform,mutationType:input.mutationType,resourceId,amountMinor,status:"completed",externalMutation:true,providerRequestId:requestId||null };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
     await db.prepare("UPDATE marketing_ad_mutation_audit SET status='failed',updated_at=? WHERE id=?").bind(Date.now(),auditId).run();
     throw error;
   }
