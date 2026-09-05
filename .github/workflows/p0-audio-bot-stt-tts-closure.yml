@@ -6,6 +6,9 @@ on:
       - remediation/p0-pilot-gates-b379631
     paths:
       - .github/workflows/p0-audio-bot-stt-tts-closure.yml
+      - lib/voice-workers-ai.ts
+      - scripts/stage-config.mjs
+      - tests/voice-workers-ai.test.mjs
 
 permissions:
   contents: read
