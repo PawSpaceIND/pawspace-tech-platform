@@ -1,0 +1,45 @@
+name: P0 Exotel Provider Live Tail
+
+on:
+  push:
+    branches:
+      - remediation/p0-pilot-gates-b379631
+    paths:
+      - .github/workflows/p0-exotel-provider-live-tail.yml
+
+permissions:
+  contents: read
+
+jobs:
+  tail:
+    runs-on: ubuntu-24.04
+    environment: pawspace-staging
+    timeout-minutes: 8
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WORKER_SCRIPT: pawspace-staging
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Capture callback traffic for six minutes
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'EXOTEL_LIVE_TAIL_READY'
+          timeout 370s npm exec --yes wrangler@4 -- tail "$WORKER_SCRIPT" --format=json > "$RUNNER_TEMP/exotel-live-tail.log" 2>&1 || true
+          echo 'EXOTEL_LIVE_TAIL_FINISHED'
+          node --input-type=module <<'NODE'
+          import {readFileSync} from 'node:fs';
+          const p=process.env.RUNNER_TEMP+'/exotel-live-tail.log';
+          let text='';try{text=readFileSync(p,'utf8')}catch{}
+          const lines=text.split('\n').filter(Boolean);
+          const hits=lines.filter(line=>line.includes('/api/voice-provider-webhook'));
+          console.log(`EXOTEL_CALLBACK_INGRESS_HITS=${hits.length}`);
+          let statuses=[];
+          for(const line of hits){try{const j=JSON.parse(line);const s=j?.event?.response?.status??j?.response?.status??j?.event?.response?.statusCode??j?.response?.statusCode;if(s!=null)statuses.push(String(s));}catch{}}
+          console.log(`EXOTEL_CALLBACK_INGRESS_STATUSES=${statuses.length?statuses.join(','):'none_observed'}`);
+          if(hits.length===0) console.log('EXOTEL_CALLBACK_INGRESS=NOT_SEEN');
+          else console.log('EXOTEL_CALLBACK_INGRESS=SEEN');
+          NODE
