@@ -1,0 +1,30 @@
+name: P0 Multi-Role Synthetic Journey
+
+on:
+  push:
+    branches:
+      - remediation/p0-pilot-gates-b379631
+    paths:
+      - tests/p0-multirole-synthetic.test.mjs
+      - .github/workflows/p0-multirole-synthetic.yml
+      - tests/helpers/grooming-journey-harness.mjs
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-journey:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Execute lifecycle and least-privilege authorization gates
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types --test tests/p0-multirole-synthetic.test.mjs
+          node --experimental-strip-types --test tests/route-authorization-class.test.mjs
