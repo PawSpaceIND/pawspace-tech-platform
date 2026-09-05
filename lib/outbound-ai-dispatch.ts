@@ -88,7 +88,9 @@ async function reconcileOne(db: Db, env: Env, queue: Row, asOf: number) {
   return { queueId: text(queue.id), status: state || "pending" };
 }
 
-export async function runOutboundAiDispatchSweep(db: Db, env: Env, input: { asOf?: number; limit?: number; actorId?: string } = {}) {
+// This is a phase of the Diamond CRM scheduled sweep, not an independent cron sweep. Keeping the
+// queue-dispatch name makes that ownership explicit and avoids presenting it as a standalone scheduler.
+export async function dispatchOutboundAiQueue(db: Db, env: Env, input: { asOf?: number; limit?: number; actorId?: string } = {}) {
   const asOf = input.asOf ?? Date.now(), limit = Math.max(1, Math.min(50, Number(input.limit || 20))), actorId = input.actorId || "system:outbound-ai";
   await ensureOutboundAiTables(db);
   const speech = voiceProvidersStatus(env);
