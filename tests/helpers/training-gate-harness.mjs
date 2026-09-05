@@ -22,6 +22,7 @@ export const {
   ensureProviderCapacityTables,
   ensureProviderBookingGuard,
   providerUnavailableForWindow,
+  getGovernedProvider,
 } = capacity;
 
 export const {
