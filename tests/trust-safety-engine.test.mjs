@@ -5,6 +5,7 @@ import { makeD1, freshSqlite, seedRecipient, uatVoiceEnv, ALLOWLISTED_PHONE, FOU
 
 installWorkersHooks("__TS_DB__", "__TS_ENV__");
 const trust = await import("../lib/trust-safety-governance.ts");
+const blocklist = await import("../lib/trust-safety-blocklist.ts");
 const voice = await import("../lib/voice-outbound-governance.ts");
 
 async function freshTrustDb() {
@@ -86,7 +87,7 @@ test("globally blocked customer is rejected by the shared Audio Bot pre-dial gat
   await voice.seedVoiceCallScripts(db);
   const seeded = seedRecipient(sqlite, { contactId: "CON-BLOCK", leadId: "LEAD-BLOCK", bookingId: "BKG-BLOCK", phone: ALLOWLISTED_PHONE });
   await voice.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: seeded.contactId, granted: true, source: "booking_form_consent", actorId: "ops@pawspace.in", asOf: DAYTIME });
-  await trust.flagCustomerOnGlobalBlocklist(db, { phone: ALLOWLISTED_PHONE, customerId: seeded.contactId, bookingId: seeded.bookingId, reasonCode: "circumvention", actorId: "ops@pawspace.in", actorType: "staff", asOf: DAYTIME });
+  await blocklist.flagCustomerOnGlobalBlocklistSafe(db, { phone: ALLOWLISTED_PHONE, customerId: seeded.contactId, bookingId: seeded.bookingId, reasonCode: "circumvention", actorId: "ops@pawspace.in", actorType: "staff", asOf: DAYTIME });
 
   const call = await voice.requestOutboundVoiceCall(db, env, {
     idempotencyKey: "blocked-audio-bot-call", useCase: "booking_confirmation", phone: ALLOWLISTED_PHONE, cityId: "blr",
