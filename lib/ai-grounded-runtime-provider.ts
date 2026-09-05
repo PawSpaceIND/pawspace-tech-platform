@@ -22,15 +22,15 @@ const HUMAN_EXCEPTION_PATTERNS=[
 ];
 export function requiresImmediateHumanHandoff(input:string){return HUMAN_EXCEPTION_PATTERNS.some(pattern=>pattern.test(input));}
 
-async function safeRows(db:D1Database,sql:string){try{return(await db.prepare(sql).all<Row>()).results}catch{return[] as Row[];}}
+async function canonicalRows(db:D1Database,sql:string){return(await db.prepare(sql).all<Row>()).results;}
 function compact(rows:Row[],fields:string[]){return rows.slice(0,25).map(row=>Object.fromEntries(fields.filter(key=>row[key]!==undefined).map(key=>[key,row[key]])));}
 async function canonicalCatalogueSnapshot(db:D1Database){const[grooming,training,boarding,sitting,walking,taxi]=await Promise.all([
- safeRows(db,"SELECT package_code,name,base_price,currency,version FROM service_packages WHERE service_code='grooming' AND active=1 ORDER BY base_price"),
- safeRows(db,"SELECT package_code,name,sessions,validity_days,base_price,currency,version FROM training_commercial_packages WHERE active=1 ORDER BY sessions"),
- safeRows(db,"SELECT package_code,name,care_kind,max_hours,base_price_per_pet,currency,version FROM boarding_commercial_packages WHERE active=1 ORDER BY max_hours"),
- safeRows(db,"SELECT package_code,name,mode,base_price_per_pet,extra_pet_price,currency,version FROM sitting_commercial_packages WHERE active=1 ORDER BY base_price_per_pet"),
- safeRows(db,"SELECT package_code,name,duration_minutes,amount_per_walk,currency,version FROM walking_commercial_packages WHERE active=1 ORDER BY duration_minutes"),
- safeRows(db,"SELECT route_code,name,synthetic_distance_km,estimated_duration_minutes,amount,currency,version FROM taxi_route_classes WHERE active=1 ORDER BY synthetic_distance_km"),
+ canonicalRows(db,"SELECT package_code,name,base_price,currency,version FROM service_packages WHERE service_code='grooming' AND active=1 ORDER BY base_price"),
+ canonicalRows(db,"SELECT package_code,name,sessions,validity_days,base_price,currency,version FROM training_commercial_packages WHERE active=1 ORDER BY sessions"),
+ canonicalRows(db,"SELECT package_code,name,care_kind,max_hours,base_price_per_pet,currency,version FROM boarding_commercial_packages WHERE active=1 ORDER BY max_hours"),
+ canonicalRows(db,"SELECT package_code,name,mode,base_price_per_pet,extra_pet_price,currency,version FROM sitting_commercial_packages WHERE active=1 ORDER BY base_price_per_pet"),
+ canonicalRows(db,"SELECT package_code,name,duration_minutes,amount_per_walk,currency,version FROM walking_commercial_packages WHERE active=1 ORDER BY duration_minutes"),
+ canonicalRows(db,"SELECT route_code,name,synthetic_distance_km,estimated_duration_minutes,amount,currency,version FROM taxi_route_classes WHERE active=1 ORDER BY synthetic_distance_km"),
 ]);return{
  grooming:compact(grooming,["package_code","name","base_price","currency","version"]),
  dogTraining:compact(training,["package_code","name","sessions","validity_days","base_price","currency","version"]),
