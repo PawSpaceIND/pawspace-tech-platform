@@ -1,0 +1,67 @@
+name: P0 Exotel Callback Network Audit
+
+on:
+  push:
+    branches:
+      - remediation/p0-pilot-gates-b379631
+    paths:
+      - .github/workflows/p0-exotel-callback-network-audit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    environment: pawspace-staging
+    timeout-minutes: 6
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CALLBACK_URL: https://pawspace-staging.karthik-fce.workers.dev/api/voice-provider-webhook
+      WORKER_SCRIPT: pawspace-staging
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Start live Worker tail
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm exec --yes wrangler@4 -- --version
+          rm -f "$RUNNER_TEMP/tail.log"
+          timeout 40s npm exec --yes wrangler@4 -- tail "$WORKER_SCRIPT" --format=json > "$RUNNER_TEMP/tail.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/tail.pid"
+          sleep 8
+
+      - name: Probe unsigned callback reachability
+        shell: bash
+        run: |
+          set -euo pipefail
+          STATUS=$(curl -sS -o "$RUNNER_TEMP/body.txt" -w '%{http_code}' \
+            -X POST "$CALLBACK_URL" \
+            -H 'content-type: application/x-www-form-urlencoded' \
+            --data 'CallSid=reachability-probe&CallStatus=completed&CustomField=SELFTEST-NOAPPLY')
+          echo "UNSIGNED_CALLBACK_HTTP=$STATUS"
+          if [ "$STATUS" != "401" ]; then
+            echo "Expected public callback to be reachable and reject unsigned traffic with 401"
+            cat "$RUNNER_TEMP/body.txt" || true
+            exit 1
+          fi
+          echo 'CALLBACK_HTTP_REACHABILITY=PASS'
+          sleep 8
+
+      - name: Verify Cloudflare ingress evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "$RUNNER_TEMP/tail.pid" ]; then kill "$(cat "$RUNNER_TEMP/tail.pid")" 2>/dev/null || true; fi
+          sleep 2
+          if grep -q 'voice-provider-webhook' "$RUNNER_TEMP/tail.log"; then
+            echo 'CLOUDFLARE_TAIL_CALLBACK_REQUEST=SEEN'
+          else
+            echo 'CLOUDFLARE_TAIL_CALLBACK_REQUEST=NOT_SEEN'
+            tail -n 120 "$RUNNER_TEMP/tail.log" || true
+            exit 1
+          fi
