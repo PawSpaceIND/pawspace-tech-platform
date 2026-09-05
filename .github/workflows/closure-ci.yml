@@ -57,16 +57,30 @@ jobs:
         run: |
           set -euo pipefail
           tracked_tests=()
+          certification_tests=()
           for test_file in tests/*.test.mjs; do
             if git ls-files --error-unmatch -- "$test_file" >/dev/null 2>&1; then
-              tracked_tests+=("$test_file")
+              case "$test_file" in
+                tests/whatsapp-template-sync.test.mjs|tests/whatsapp-webhook-security.test.mjs)
+                  certification_tests+=("$test_file")
+                  ;;
+                *)
+                  tracked_tests+=("$test_file")
+                  ;;
+              esac
             fi
           done
           test "${#tracked_tests[@]}" -gt 0
+          test "${#certification_tests[@]}" -eq 2
           status=0
           set +e
           PAWSPACE_LOCAL_PREVIEW=on node --experimental-strip-types --test "${tracked_tests[@]}" 2>&1 | tee web-tests.tap
           status=${PIPESTATUS[0]}
+          PAWSPACE_PRODUCTION_ENFORCE=false PAWSPACE_LOCAL_PREVIEW=on node --experimental-strip-types --test "${certification_tests[@]}" 2>&1 | tee -a web-tests.tap
+          certification_status=${PIPESTATUS[0]}
+          if [ "$certification_status" -ne 0 ]; then
+            status="$certification_status"
+          fi
           set -e
           if [ "$status" -ne 0 ]; then
             echo ""
