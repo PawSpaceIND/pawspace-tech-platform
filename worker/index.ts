@@ -16,6 +16,7 @@ import {runSubscriptionBillingSweep} from "../lib/subscription-billing";
 import {runSubscriptionScheduledMaintenance} from "../lib/subscription-scheduled";
 import {runEliteScheduledHooks,runEliteWebhookHooks} from "../lib/services/elite-runtime";
 import {runMarketingConnectorScheduler} from "../lib/google-ads-conversion-consent";
+import {handleAiVoiceSelfTestStream} from "../lib/voice-ai-self-test";
 
 interface Env {
   ASSETS: Fetcher;
@@ -49,12 +50,13 @@ const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
+    // Provider-authenticated websocket lane. Exotel cannot carry a PawSpace staff cookie, so this path
+    // authenticates with the short-lived HMAC in lib/voice-ai-self-test and is UAT-only/allow-list-only.
+    if(url.pathname==="/voice/ai-self-test")return handleAiVoiceSelfTestStream(request,env as unknown as Record<string,unknown>);
+
     if (url.pathname.startsWith("/api/")) {
       if(url.pathname==="/api/identity-session")return secureApiResponse(await handler.fetch(request,env,ctx));
       const isMetaWebhook=url.pathname==="/api/whatsapp/meta-webhook";
-      // Meta is provider-authenticated by the route's HMAC/challenge verifier, not by a PawSpace user
-      // session. Keep its actual handler dispatch after the shared pre-route composition so no second
-      // pre-gateway /api/* handler path exists. A clone is retained only for the post-response Elite observer.
       const eliteRequest=isMetaWebhook?request.clone():null;
       if(request.method==="POST"&&(url.pathname==="/api/uat-scheduling"||url.pathname==="/api/canonical-bookings"))await cleanupExpiredReservationLeases(env.DB);
       const inspectionRequest=request.clone();
