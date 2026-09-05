@@ -50,6 +50,17 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+function sttPayload(model:string,audio:number[],language?:string|null):Record<string,unknown>{
+  // Cloudflare's current whisper-large-v3-turbo binding accepts base64 audio, while classic Whisper
+  // accepts the historical byte-array form. Keep both so environments can select either model safely.
+  if(model.includes("whisper-large-v3-turbo")){
+    const payload:Record<string,unknown>={audio:bytesToBase64(Uint8Array.from(audio)),task:"transcribe"};
+    if(language)payload.language=language;
+    return payload;
+  }
+  return{audio};
+}
+
 async function workersAiTtsBase64(result: unknown): Promise<string> {
   if (result && typeof result === "object" && !ArrayBuffer.isView(result) && !(result instanceof ArrayBuffer) && !(result instanceof ReadableStream) && !(result instanceof Response)) {
     const audio = (result as Record<string, unknown>).audio;
@@ -78,7 +89,7 @@ export function resolveWorkersAiStt(env: Env): VoiceSttProvider {
       const startedAt = Date.now();
       const audio = await audioBytes(input.audioRef, allowedHosts, timeoutMs);
       let rawResult: unknown;
-      try { rawResult = await withSpeechDeadline("stt", ai.run(model, { audio }), timeoutMs); }
+      try { rawResult = await withSpeechDeadline("stt", ai.run(model, sttPayload(model,audio,input.language)), timeoutMs); }
       catch (error) { throw asSpeechFailure("stt", error); }
       if (!rawResult || typeof rawResult !== "object" || Array.isArray(rawResult)) throw new VoiceSpeechError("stt", "malformed_output", "STT model returned no result object");
       const result = rawResult as Record<string, unknown>;
