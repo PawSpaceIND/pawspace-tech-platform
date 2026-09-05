@@ -21,7 +21,8 @@ test("Food Gate 2 executes the canonical fulfilment lifecycle and consumes stock
   });
   assert.equal(accepted.status, "accepted");
   let inventory = world.sqlite.prepare("SELECT available_units,reserved_units FROM food_inventory_uat WHERE sku=? AND zone_id=?").get(fixture.sku, fixture.zoneId);
-  assert.deepEqual(inventory, { available_units: 30, reserved_units: 2 });
+  assert.equal(inventory.available_units, 30);
+  assert.equal(inventory.reserved_units, 2);
 
   const picked = await mutateFoodFulfilment(world.db, {
     orderId: fixture.orderId,
@@ -41,7 +42,8 @@ test("Food Gate 2 executes the canonical fulfilment lifecycle and consumes stock
   });
   assert.equal(packed.status, "packed");
   inventory = world.sqlite.prepare("SELECT available_units,reserved_units FROM food_inventory_uat WHERE sku=? AND zone_id=?").get(fixture.sku, fixture.zoneId);
-  assert.deepEqual(inventory, { available_units: 28, reserved_units: 0 });
+  assert.equal(inventory.available_units, 28);
+  assert.equal(inventory.reserved_units, 0);
   assert.equal(world.sqlite.prepare("SELECT status FROM food_inventory_reservations WHERE order_id=?").get(fixture.orderId).status, "consumed");
 
   const replay = await mutateFoodFulfilment(world.db, {
@@ -52,7 +54,8 @@ test("Food Gate 2 executes the canonical fulfilment lifecycle and consumes stock
   });
   assert.equal(replay.duplicatePrevented, true);
   inventory = world.sqlite.prepare("SELECT available_units,reserved_units FROM food_inventory_uat WHERE sku=? AND zone_id=?").get(fixture.sku, fixture.zoneId);
-  assert.deepEqual(inventory, { available_units: 28, reserved_units: 0 });
+  assert.equal(inventory.available_units, 28);
+  assert.equal(inventory.reserved_units, 0);
 });
 
 test("Food Gate 2 keeps dispatch sandbox-only and creates the delivery payment-due ledger", async () => {
