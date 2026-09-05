@@ -1,5 +1,6 @@
 import { authError, database, requirePermission, resolveActor, securityAudit } from "../../../lib/server-auth";
-import { BLOCKLIST_REASONS, clearCustomerGlobalBlock, ensureTrustSafetyTables, flagCustomerOnGlobalBlocklist, runTrustSafetySweep, type BlocklistReason } from "../../../lib/trust-safety-governance";
+import { BLOCKLIST_REASONS, clearCustomerGlobalBlock, ensureTrustSafetyTables, runTrustSafetySweep, type BlocklistReason } from "../../../lib/trust-safety-governance";
+import { flagCustomerOnGlobalBlocklistSafe } from "../../../lib/trust-safety-blocklist";
 
 type Row = Record<string, unknown>;
 type Body = { action?: "flag_customer" | "clear_customer" | "run_sweep"; customerId?: string; bookingId?: string; reasonCode?: BlocklistReason; note?: string; phone?: string };
@@ -50,7 +51,7 @@ export async function POST(request: Request) {
       const reasonCode = text(body.reasonCode) as BlocklistReason;
       if (!BLOCKLIST_REASONS.includes(reasonCode)) return json({ error: "Supported reason is required" }, 400);
       const customer = await resolveCustomerPhone(db, { customerId: body.customerId, bookingId: body.bookingId });
-      await flagCustomerOnGlobalBlocklist(db, { phone: customer.phone, customerId: customer.customerId, bookingId: text(body.bookingId) || null, reasonCode, actorId: actor.email, actorType: "staff", detail: { note: text(body.note).slice(0, 1000) } });
+      await flagCustomerOnGlobalBlocklistSafe(db, { phone: customer.phone, customerId: customer.customerId, bookingId: text(body.bookingId) || null, reasonCode, actorId: actor.email, actorType: "staff", detail: { note: text(body.note).slice(0, 1000) } });
       await securityAudit(db, actor, "trust_safety.customer_block", "customer", customer.customerId, "completed", { reasonCode, bookingId: text(body.bookingId) || null });
       return json({ data: { blocked: true, customerId: customer.customerId, reasonCode } }, 201);
     }
