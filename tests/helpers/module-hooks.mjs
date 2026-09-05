@@ -3,17 +3,15 @@
  * reads a per-suite global, and lib modules that import each other extensionlessly resolve to `.ts`.
  *
  * This harness remains test-only: production modules are deliberately not modified to satisfy loader fixtures.
- * This comment-only touch forces exact-head CI after production files were restored to main.
  *
- * `module.registerHooks` exists from Node 22.15. The current CI job pins Node 22.16.0 and explicitly
- * verifies that `registerHooks` is available before running the hook-backed suites, so that native branch
- * is the path exercised by CI. The out-of-thread `module.register()` branch remains only as a compatibility
- * fallback (and can still be forced in tests with PAWSPACE_FORCE_LOADER_HOOK=1).
+ * `module.registerHooks` exists from Node 22.15. The synchronous branch is preferred when available.
+ * The out-of-thread `module.register()` branch remains as a compatibility fallback and can still be
+ * forced in tests with PAWSPACE_FORCE_LOADER_HOOK=1.
  */
 import * as nodeModule from "node:module";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync } from "node:fs";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 // Request-scoped Worker DB for suites that call real routes. ESM caches the first
 // `cloudflare:workers` shim, so later suites' named globals never reach `database()`.
@@ -32,13 +30,6 @@ function typescript() {
   if (!cachedTs) cachedTs = nodeModule.createRequire(import.meta.url)("typescript");
   return cachedTs;
 }
-/*
- * The out-of-thread hook is handed to Node as a data: URL, and a data: URL module has no base path -
- * so `import "typescript"` inside it fails with ERR_UNSUPPORTED_RESOLVE_REQUEST, no matter what
- * parentURL register() is given. Resolving the absolute path here and interpolating it is what keeps
- * the compatibility fallback self-contained when that branch is exercised.
- */
-const typescriptUrl = pathToFileURL(nodeModule.createRequire(import.meta.url).resolve("typescript")).href;
 
 // envName defaults to `${globalName}_ENV`, which is what the suites written before it existed use. The
 // two call sites that pass a name of their own (__FANOUT_ENV__, __SEED_ENV__) were setting a global the
@@ -49,28 +40,6 @@ const typescriptUrl = pathToFileURL(nodeModule.createRequire(import.meta.url).re
 // process makes cloudflare:workers resolve to whichever suite wrote the global last, which can turn an
 // authorization refusal into a fixture-dependent 500. Fail immediately instead of allowing that alias.
 const installedWorkersDbGlobals = new Set();
-
-// Both hook branches below need the same two things, so they are written once, as source text, because
-// the out-of-thread branch can only receive its hook as a string.
-const TSX_TRANSFORM = `
-  function transpileTsx(source, fileName) {
-    const ts = tsModule.default ?? tsModule;
-    return ts.transpileModule(source, {
-      fileName,
-      compilerOptions: {
-        target: ts.ScriptTarget.ESNext,
-        module: ts.ModuleKind.ESNext,
-        jsx: ts.JsxEmit.ReactJSX,
-        jsxImportSource: "react",
-        verbatimModuleSyntax: false,
-      },
-    }).outputText;
-  }
-  // A component that imports a CSS module wants an object whose every key is a class name. Returning a
-  // Proxy rather than {} means a style lookup yields a string instead of undefined, so a className never
-  // renders as the literal "undefined" and a missing stylesheet cannot be mistaken for a render bug.
-  const CSS_STUB = "const handler={get:(_,key)=>typeof key===\\"string\\"?key:undefined};export default new Proxy({},handler);";
-`;
 
 function transpileTsx(source, fileName) {
   const ts = typescript();
@@ -117,8 +86,7 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
   const shim = `export const env = new Proxy({}, { get: (_, key) => { const als = globalThis[${JSON.stringify(WORKERS_DB_ALS_KEY)}]; const scoped = als && typeof als.getStore === "function" ? als.getStore() : undefined; if (key === "DB" && scoped) return scoped; return key === "DB" ? globalThis[${JSON.stringify(globalName)}] : (globalThis[${JSON.stringify(envName)}] ?? {})[key]; } });`;
   const workersUrl = `data:text/javascript,${encodeURIComponent(shim)}`;
 
-  // The fallback below is compatibility-only on the current CI pin. PAWSPACE_FORCE_LOADER_HOOK=1
-  // still takes that path on any version so the suite can prove both branches work.
+  // PAWSPACE_FORCE_LOADER_HOOK=1 deliberately exercises the compatibility branch in CI.
   const forceLoader = process.env.PAWSPACE_FORCE_LOADER_HOOK === "1";
   if (!forceLoader && typeof nodeModule.registerHooks === "function") {
     nodeModule.registerHooks({
@@ -153,41 +121,11 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
     return workersUrl;
   }
 
-  const hook = `const workersUrl=${JSON.stringify(workersUrl)};
-  import * as tsModule from ${JSON.stringify(typescriptUrl)};
-  import { readFile } from "node:fs/promises";
-  import { fileURLToPath } from "node:url";
-  ${TSX_TRANSFORM}
-  function splitSpecifierSuffix(specifier) {
-    const queryIndex = specifier.indexOf("?");
-    const hashIndex = specifier.indexOf("#");
-    const suffixIndexes = [queryIndex, hashIndex].filter((index) => index >= 0);
-    const suffixIndex = suffixIndexes.length ? Math.min(...suffixIndexes) : specifier.length;
-    return { pathname: specifier.slice(0, suffixIndex), suffix: specifier.slice(suffixIndex) };
-  }
-  export async function resolve(specifier, context, nextResolve) {
-    if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
-    try { return await nextResolve(specifier, context); }
-    catch (error) {
-      const { pathname, suffix } = splitSpecifierSuffix(specifier);
-      if (pathname.startsWith(".") && !pathname.endsWith(".ts") && !pathname.endsWith(".tsx")) {
-        try { return await nextResolve(pathname + ".ts" + suffix, context); }
-        catch { return await nextResolve(pathname + ".tsx" + suffix, context); }
-      }
-      if (!pathname.startsWith(".") && !pathname.endsWith(".js")) return await nextResolve(pathname + ".js" + suffix, context);
-      throw error;
-    }
-  }
-  export async function load(url, context, nextLoad) {
-    const parsed = new URL(url);
-    const pathname = parsed.pathname;
-    parsed.search = "";
-    parsed.hash = "";
-    if (pathname.endsWith(".css")) return { format: "module", source: CSS_STUB, shortCircuit: true };
-    if (!pathname.endsWith(".tsx")) return nextLoad(url, context);
-    const path = fileURLToPath(parsed);
-    return { format: "module", source: transpileTsx(await readFile(path, "utf8"), path), shortCircuit: true };
-  }`;
-  nodeModule.register(new URL(`data:text/javascript,${encodeURIComponent(hook)}`), import.meta.url);
+  // register() runs hooks in a separate thread. Give that thread a real file URL so its bare imports
+  // resolve against this repository rather than a data: URL with no filesystem package scope/base path.
+  // The worker shim remains per registration by encoding it in the file URL's query string.
+  const loaderUrl = new URL("./module-loader-hook.mjs", import.meta.url);
+  loaderUrl.searchParams.set("workersUrl", workersUrl);
+  nodeModule.register(loaderUrl, import.meta.url);
   return workersUrl;
 }
