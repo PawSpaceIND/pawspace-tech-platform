@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { installWorkersHooks } from "./module-hooks.mjs";
 import { makeD1, freshSqlite } from "./taxi-harness.mjs";
 
@@ -37,6 +38,26 @@ export const TRAINER_ID = "train_kiran";
 export const CUSTOMER_ID = "CUST-TRAIN-PHASE2";
 export const BOOKING_ID = "BKG-TRAIN-PHASE2";
 export const GROUP_ID = "GRP-TRAIN-PHASE2";
+
+/**
+ * Product governance functions deliberately throw Response objects for HTTP-grade refusals.
+ * Node's assert.rejects(regex) stringifies those as "[object Response]", which proves only that
+ * something rejected and loses the status/body that define the fail-closed contract. This helper
+ * asserts the real refusal surface: Response type, exact status when supplied, and response body.
+ */
+export async function expectResponseRefusal(operation, { status, message } = {}) {
+  let refusal;
+  try {
+    await (typeof operation === "function" ? operation() : operation);
+  } catch (error) {
+    refusal = error;
+  }
+  assert.ok(refusal instanceof Response, `expected a Response refusal, got ${refusal?.constructor?.name ?? typeof refusal}`);
+  if (status !== undefined) assert.equal(refusal.status, status, "unexpected refusal status");
+  const body = await refusal.text();
+  if (message) assert.match(body, message);
+  return { response: refusal, body };
+}
 
 export function futureTrainingStart(offsetHours = 72) {
   const date = new Date(Date.now() + offsetHours * 60 * 60_000);
