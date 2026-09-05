@@ -86,7 +86,12 @@ export async function seedSittingBooking(db, sqlite, {
   amountDueNow, paymentStatus = "captured", paymentMode = "prepaid", window: given, ...rest
 } = {}) {
   const lifecycle = await import("../../lib/sitting-lifecycle.ts");
+  const capacity = await import("../../lib/provider-capacity-governance.ts");
   await lifecycle.ensureSittingLifecycleTables(db);
+  // The Sitting Operations snapshot and the replacement-eligibility check both read the provider
+  // capacity profiles. Boarding gets these for free because ensureBoardingGovernanceTables seeds
+  // them; Sitting does not, so the real seeder is called here rather than a hand-written fixture.
+  await capacity.seedProviderCapacityDefaults(db);
   const window = given ?? stayWindow();
   const booking = seedCanonicalStayBooking(sqlite, {
     bookingId, customerId, providerId, serviceCode: "pet_sitting", packageCode, packageName,
