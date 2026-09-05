@@ -29,7 +29,7 @@ test("Boarding Gate 5 executes canonical Operations note persistence", async () 
   });
   assert.equal(result.status, "noted");
   const note = sqlite.prepare("SELECT booking_id,note,actor_id FROM boarding_ops_notes WHERE stay_id='STAY-BG5'").get();
-  assert.deepEqual(note, { booking_id: "BK-BG5", note: "Customer requested a callback before check-in", actor_id: "ops@pawspace.in" });
+  assert.deepEqual({ ...note }, { booking_id: "BK-BG5", note: "Customer requested a callback before check-in", actor_id: "ops@pawspace.in" });
   const event = sqlite.prepare("SELECT event_type FROM boarding_stay_events WHERE stay_id='STAY-BG5' ORDER BY created_at DESC LIMIT 1").get();
   assert.equal(event.event_type, "ops_note_added");
 });
