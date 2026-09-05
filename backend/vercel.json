@@ -4,8 +4,9 @@
     { "src": "vercel-entry.ts", "use": "@vercel/node" }
   ],
   "routes": [
-    { "src": "/api/(.*)", "dest": "https://app.pawspace.in/api/$1" },
-    { "src": "/team/(.*)", "dest": "https://app.pawspace.in/team/$1" },
+    { "src": "/api/whatsapp/meta-webhook", "dest": "vercel-entry.ts" },
+    { "src": "/api/elite-runtime(?:/.*)?", "dest": "vercel-entry.ts" },
+    { "src": "/api/elite-surge-preview(?:/.*)?", "dest": "vercel-entry.ts" },
     { "src": "/(.*)", "dest": "vercel-entry.ts" }
   ]
 }

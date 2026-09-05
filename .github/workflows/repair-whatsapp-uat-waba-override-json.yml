@@ -1,0 +1,81 @@
+name: Repair WhatsApp UAT WABA callback override JSON
+
+on:
+  push:
+    branches:
+      - fix/whatsapp-uat-staging-deploy-isolation
+    paths:
+      - .github/workflows/repair-whatsapp-uat-waba-override-json.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    env:
+      META_APP_ID: '922882727551525'
+      META_WABA_ID: '1647621440064984'
+      CALLBACK_URL: 'https://pawspace-staging.karthik-fce.workers.dev/api/whatsapp/meta-webhook'
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Bind fresh staging-only verify token
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          VERIFY_TOKEN="$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")"
+          echo "::add-mask::$VERIFY_TOKEN"
+          echo "UAT_VERIFY_TOKEN=$VERIFY_TOKEN" >> "$GITHUB_ENV"
+          printf '%s' "$VERIFY_TOKEN" | npx --yes wrangler@4 secret put META_WHATSAPP_VERIFY_TOKEN --name pawspace-staging >/dev/null
+          echo 'Fresh staging-only Meta verify token bound; value withheld.'
+
+      - name: Override test WABA callback to PawSpace staging using JSON
+        env:
+          META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const token=String(process.env.META_WHATSAPP_UAT_ACCESS_TOKEN||'').trim();
+          const waba=String(process.env.META_WABA_ID||'').trim();
+          const callback=String(process.env.CALLBACK_URL||'').trim();
+          const verify=String(process.env.UAT_VERIFY_TOKEN||'').trim();
+          if(!token||!waba||!callback||!verify)throw new Error('Required UAT Meta inputs unavailable');
+          const r=await fetch(`https://graph.facebook.com/v23.0/${waba}/subscribed_apps`,{
+            method:'POST',
+            headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},
+            body:JSON.stringify({override_callback_uri:callback,verify_token:verify}),
+            signal:AbortSignal.timeout(30000)
+          });
+          let p={};try{p=await r.json()}catch{}
+          if(!r.ok){const e=p?.error||{};console.log(`WABA JSON override failed: HTTP=${r.status}; code=${Number(e.code||0)}; subcode=${Number(e.error_subcode||0)}.`);process.exit(2);}
+          if(p?.success!==true)throw new Error('Meta did not confirm JSON callback override');
+          console.log('Meta confirmed test-WABA callback override to PawSpace staging; sensitive values withheld.');
+          NODE
+
+      - name: Verify subscribed app and staging override safely
+        env:
+          META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const token=String(process.env.META_WHATSAPP_UAT_ACCESS_TOKEN||'').trim();
+          const waba=String(process.env.META_WABA_ID||'').trim();
+          const app=String(process.env.META_APP_ID||'').trim();
+          const callback=String(process.env.CALLBACK_URL||'').trim();
+          const r=await fetch(`https://graph.facebook.com/v23.0/${waba}/subscribed_apps`,{headers:{authorization:`Bearer ${token}`},signal:AbortSignal.timeout(30000)});
+          let p={};try{p=await r.json()}catch{}
+          if(!r.ok){const e=p?.error||{};console.log(`WABA verification failed: HTTP=${r.status}; code=${Number(e.code||0)}; subcode=${Number(e.error_subcode||0)}.`);process.exit(3);}
+          const rows=Array.isArray(p?.data)?p.data:[];
+          const idOf=x=>String(x?.id||x?.whatsapp_business_api_data?.id||'');
+          const row=rows.find(x=>idOf(x)===app) || rows.find(x=>String(x?.override_callback_uri||'')===callback) || null;
+          const appSubscribed=Boolean(row);
+          const callbackMatches=String(row?.override_callback_uri||'')===callback;
+          console.log(`currentUatAppSubscribed=${appSubscribed}; callbackMatchesStaging=${callbackMatches}; subscribedAppCount=${rows.length}`);
+          if(!appSubscribed||!callbackMatches)process.exit(4);
+          NODE

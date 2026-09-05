@@ -1,0 +1,64 @@
+name: Certify fixed WhatsApp UAT staging
+
+on:
+  push:
+    branches:
+      - fix/whatsapp-uat-staging-deploy-isolation
+    paths:
+      - worker/index.ts
+      - tests/whatsapp-template-sync.test.mjs
+      - tests/whatsapp-webhook-security.test.mjs
+      - tests/whatsapp-template-lifecycle-execution.test.mjs
+      - tests/meta-whatsapp-webhook.test.mjs
+      - tests/helpers/**
+      - .github/workflows/certify-whatsapp-uat-fixed-staging.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: whatsapp-staging-certification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  certify-fixed-staging:
+    runs-on: ubuntu-latest
+    env:
+      APP_ENV: staging
+      FORBID_PRODUCTION: "true"
+      PAWSPACE_PRODUCTION_ENFORCE: "false"
+      NODE_ENV: test
+      PAWSPACE_LOCAL_PREVIEW: on
+      PAWSPACE_VOICE_TRANSPORT: local_simulator_non_production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+      - name: Verify immutable staging isolation contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$APP_ENV" = "staging"
+          test "$FORBID_PRODUCTION" = "true"
+          test "$PAWSPACE_PRODUCTION_ENFORCE" = "false"
+          test "$GITHUB_REF_NAME" = "fix/whatsapp-uat-staging-deploy-isolation"
+          echo "APP_ENV=$APP_ENV"
+          echo "FORBID_PRODUCTION=$FORBID_PRODUCTION"
+          echo "PAWSPACE_PRODUCTION_ENFORCE=$PAWSPACE_PRODUCTION_ENFORCE"
+          echo "CERTIFICATION_SHA=$GITHUB_SHA"
+      - name: Install dependencies
+        run: npm ci
+      - name: Build staging test artifact
+        run: npm run build
+      - name: Run corrected WhatsApp .mjs certification contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --experimental-strip-types --test --test-concurrency=1 \
+            tests/whatsapp-template-sync.test.mjs \
+            tests/whatsapp-webhook-security.test.mjs
