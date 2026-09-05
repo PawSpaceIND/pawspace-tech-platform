@@ -1,0 +1,114 @@
+name: Synthetic UAT Run 2 V2
+
+on:
+  push:
+    branches:
+      - ops/synthetic-uat-run2-20260905
+    paths:
+      - .github/workflows/synthetic-uat-run2-v2.yml
+
+permissions:
+  contents: read
+
+jobs:
+  run2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      APP_ENV: staging
+      EXPECTED_SHA: 5a34e28f9696e6ebf6d136af1218381bfe6c01ce
+      STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      META_WHATSAPP_APP_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET }}
+      PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+      STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+      PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        run: npm run install:ci
+
+      - name: Pre-check exact isolated deployment
+        run: |
+          set -euo pipefail
+          [ "$APP_ENV" = staging ]
+          [ -n "$META_WHATSAPP_APP_SECRET" ]
+          [ -n "$STAGING_D1_ID" ]
+          if [ -n "${PRODUCTION_D1_ID:-}" ] && [ "$STAGING_D1_ID" = "$PRODUCTION_D1_ID" ]; then exit 1; fi
+          node tests/e2e/staging-certification.mjs --isolation-only
+          echo '{"precheck":"PASS"}' > run2-evidence.jsonl
+
+      - name: Derive disposable IDs
+        run: |
+          node --input-type=module <<'NODE'
+          import {appendFileSync} from 'node:fs';
+          const r=process.env.GITHUB_RUN_ID, suffix=String(Number(r)%100000000).padStart(8,'0');
+          const v={CUSTOMER:`UAT-R2-CUS-${r}`,PET:`UAT-R2-PET-${r}`,PROVIDER:`uat_r2_groomer_${r}`,BOOKING:`UAT-R2-BKG-${r}`,GROUP:`UAT-R2-GRP-${r}`,WORK:`UAT-R2-WO-${r}`,PAY:`UAT-R2-PAY-${r}`,PHONE:`91${suffix}`,EVENT:`wamid.UATR2${r}`};
+          for(const[k,x]of Object.entries(v))appendFileSync(process.env.GITHUB_ENV,`R2_${k}=${x}\n`);
+          NODE
+
+      - name: Step 1 - seed demo customer and assigned provider
+        run: |
+          set -euo pipefail
+          NOW=$(date +%s000)
+          START=$(date -u -d '-15 minutes' +%Y-%m-%dT%H:%M:%S.000Z)
+          END=$(date -u -d '+45 minutes' +%Y-%m-%dT%H:%M:%S.000Z)
+          cat > "$RUNNER_TEMP/r2.sql" <<SQL
+          INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES ('$R2_CUSTOMER','blr','Run 2 Pet Parent','$R2_PHONE',NULL,NULL,'synthetic_uat_run2','{"whatsapp":true}',${NOW},${NOW});
+          INSERT INTO canonical_pets (id,customer_id,name,species,breed,vaccination_status,source_pet_id,created_at,updated_at) VALUES ('$R2_PET','$R2_CUSTOMER','RunTwo','dog','Labrador','verified',NULL,${NOW},${NOW});
+          INSERT INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES ('$R2_PROVIDER','blr','Run 2 Groomer','commission','["grooming"]','["blr-east"]',1,4.9,95,1,30,5,3,'active',1,'2026-09-01',NULL,'synthetic_uat_run2',${NOW});
+          INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES ('$R2_BOOKING','r2:$GITHUB_RUN_ID','$R2_CUSTOMER','["$R2_PET"]','[]','blr','blr-east','grooming','routine','Routine Grooming','$R2_GROUP','$R2_PROVIDER','$START','$END','in_service','synthetic_uat',1149,'INR','{"synthetic":true}','synthetic_uat_run2',${NOW},${NOW});
+          INSERT INTO provider_work_orders (id,booking_id,schedule_group_id,provider_id,provider_name,provider_model,service_code,scheduled_start,scheduled_end,occurrence_count,status,assignment_json,created_at,updated_at) VALUES ('$R2_WORK','$R2_BOOKING','$R2_GROUP','$R2_PROVIDER','Run 2 Groomer','commission','grooming','$START','$END',1,'in_service','{"synthetic":true}',${NOW},${NOW});
+          INSERT INTO booking_payments (id,booking_id,customer_id,amount,amount_due_now,currency,method,mode,status,gateway,idempotency_key,detail_json,created_at,updated_at) VALUES ('$R2_PAY','$R2_BOOKING','$R2_CUSTOMER',1149,1149,'INR','upi','pay_after_service','pending','uat_sandbox','r2pay:$GITHUB_RUN_ID','{"synthetic":true}',${NOW},${NOW});
+          SQL
+          npx wrangler d1 execute pawspace-staging --remote --file="$RUNNER_TEMP/r2.sql" >/dev/null
+          OUT=$(npx wrangler d1 execute pawspace-staging --remote --command "SELECT b.customer_id,b.provider_id,w.id work_order FROM canonical_bookings b JOIN provider_work_orders w ON w.booking_id=b.id WHERE b.id='$R2_BOOKING';" --json)
+          OUT="$OUT" node --input-type=module <<'NODE'
+          import{appendFileSync}from'node:fs';const j=JSON.parse(process.env.OUT),r=j.flatMap(x=>x.results||[])[0];if(!r||r.customer_id!==process.env.R2_CUSTOMER||r.provider_id!==process.env.R2_PROVIDER)throw new Error('seed verification failed');appendFileSync('run2-evidence.jsonl',JSON.stringify({step:1,status:'PASS',customerId:r.customer_id,providerId:r.provider_id,workOrder:r.work_order})+'\n');console.log('STEP 1 PASS');
+          NODE
+
+      - name: Step 2 - signed Meta webhook
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import{createHmac}from'node:crypto';import{appendFileSync}from'node:fs';
+          const raw=JSON.stringify({object:'whatsapp_business_account',entry:[{id:'UAT-R2',changes:[{field:'messages',value:{messages:[{from:process.env.R2_PHONE,id:process.env.R2_EVENT,timestamp:String(Math.floor(Date.now()/1000)),type:'text',text:{body:'I confirm my grooming booking for my calm pet. Budget ₹1,149.'}}]}}]}]});
+          const sig='sha256='+createHmac('sha256',process.env.META_WHATSAPP_APP_SECRET).update(raw).digest('hex');
+          const res=await fetch(process.env.STAGING_URL+'/api/whatsapp/meta-webhook',{method:'POST',headers:{'content-type':'application/json','x-hub-signature-256':sig},body:raw,signal:AbortSignal.timeout(20000)});const p=await res.json().catch(()=>({}));const x=(p.results||[]).find(v=>v?.eventId===process.env.R2_EVENT);
+          if(res.status!==200||p.ok!==true||Number(p.accepted)!==1||x?.customerId!==process.env.R2_CUSTOMER||!x?.messageId){appendFileSync('run2-evidence.jsonl',JSON.stringify({step:2,status:'FAIL',http:res.status,ok:p.ok??null,accepted:p.accepted??null,resultStatus:x?.status??null})+'\n');throw new Error('STRICT HALT: webhook assertion failed');}
+          appendFileSync('run2-evidence.jsonl',JSON.stringify({step:2,status:'PASS',http:200,accepted:1,messageId:x.messageId,customerId:x.customerId})+'\n');console.log('STEP 2 PASS');
+          NODE
+
+      - name: Step 3 - provider GPS GET contract
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import{appendFileSync}from'node:fs';const base=process.env.STAGING_URL;
+          const login=await fetch(base+'/api/uat-provider-switch',{method:'POST',headers:{'content-type':'application/json',origin:base},body:JSON.stringify({providerId:process.env.R2_PROVIDER,code:process.env.PAWSPACE_UAT_ACCESS_CODE}),signal:AbortSignal.timeout(20000)});const cookie=String(login.headers.get('set-cookie')||'').split(';')[0];if(!login.ok||!cookie){appendFileSync('run2-evidence.jsonl',JSON.stringify({step:3,status:'FAIL',phase:'provider_auth',http:login.status})+'\n');throw new Error('STRICT HALT: provider authentication failed');}
+          const res=await fetch(base+'/api/location-recovery',{headers:{cookie},signal:AbortSignal.timeout(20000)});const p=await res.json().catch(()=>({}));const d=Number(p.simulatedDistanceKm??p.data?.simulatedDistanceKm);const ok=res.status===200&&p.gpsConnected===true&&Number.isFinite(d);
+          appendFileSync('run2-evidence.jsonl',JSON.stringify({step:3,status:ok?'PASS':'FAIL',phase:'location_recovery_get',http:res.status,gpsConnected:p.gpsConnected??null,simulatedDistanceKm:Number.isFinite(d)?d:null})+'\n');
+          console.log(`STEP 3 ${ok?'PASS':'FAIL'} HTTP=${res.status} gpsConnected=${String(p.gpsConnected)} simulatedDistanceKm=${Number.isFinite(d)?d:'missing'}`);
+          if(!ok)throw new Error('STRICT HALT: GET /api/location-recovery did not return gpsConnected:true plus simulatedDistanceKm');
+          NODE
+
+      - name: Step 3B - completion and automatic payment trigger
+        run: |
+          echo 'This step runs only if the mandatory GPS GET contract passed.'
+          exit 1
+
+      - name: Step 4 - system audit
+        run: |
+          echo 'This step runs only after all Step 3 assertions pass.'
+          exit 1
+
+      - name: Upload sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-uat-run2-v2-${{ github.run_id }}
+          path: run2-evidence.jsonl
+          if-no-files-found: warn
