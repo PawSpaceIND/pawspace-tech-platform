@@ -1,5 +1,6 @@
 import{authError,database,resolveActor,securityAudit}from"../../../lib/server-auth";
 import{providerWorkspace,resolveProviderForActor,submitJobProof,respondToJobOffer}from"../../../lib/provider-workspace";
+import{finalizeAutonomousProviderAssignment}from"../../../lib/autonomous-booking-engine";
 
 type Row=Record<string,unknown>;
 const text=(v:unknown)=>String(v??"").trim();
@@ -10,7 +11,7 @@ export async function GET(request:Request){try{const actor=await resolveActor(re
 
 export async function POST(request:Request){try{sameOrigin(request);const actor=await resolveActor(request);const db=await database();const providerId=await resolveProviderForActor(db,actor.email);if(!providerId)throw new Response("No active provider record is linked to your identity",{status:403});const body=await request.json() as Row,action=text(body.action);let result:unknown;
  if(action==="submit_proof")result=await submitJobProof(db,{providerId,bookingId:text(body.bookingId),proofType:text(body.proofType),objectId:text(body.objectId)||null,note:text(body.note)||null,distanceKm:body.distanceKm==null?null:Number(body.distanceKm)});
- else if(action==="accept_job")result=await respondToJobOffer(db,{providerId,bookingId:text(body.bookingId),accept:true});
+ else if(action==="accept_job"){result=await respondToJobOffer(db,{providerId,bookingId:text(body.bookingId),accept:true});const lock=await finalizeAutonomousProviderAssignment(db,{providerId,bookingId:text(body.bookingId),actorId:actor.email});if(lock.handled)result={...(result as Row),autonomousSlotLock:lock};}
  else if(action==="decline_job")result=await respondToJobOffer(db,{providerId,bookingId:text(body.bookingId),accept:false});
  else return json({error:"Unknown provider-workspace action"},400);
  await securityAudit(db,actor,`provider_workspace.${action}`,"provider_workspace",providerId,"completed");
