@@ -1,0 +1,48 @@
+name: P0 Exotel Callback Ledger Audit
+
+on:
+  push:
+    branches:
+      - remediation/p0-pilot-gates-b379631
+    paths:
+      - .github/workflows/p0-exotel-callback-ledger-audit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    environment: pawspace-staging
+    timeout-minutes: 5
+    env:
+      STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Inspect recent Exotel callback event rows
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const account=String(process.env.CLOUDFLARE_ACCOUNT_ID||'');
+          const token=String(process.env.CLOUDFLARE_API_TOKEN||'');
+          const dbId=String(process.env.STAGING_D1_ID||'');
+          if(!account||!token||!dbId) throw new Error('Missing staging D1 audit configuration');
+          const d1=async(sql,params=[])=>{const r=await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/d1/database/${dbId}/query`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({sql,params}),signal:AbortSignal.timeout(20000)});const j=await r.json().catch(()=>null);if(!r.ok||!j?.success)throw new Error(`D1 HTTP ${r.status}`);return j.result?.[0]?.results||[]};
+          const since=Date.parse('2026-09-05T18:11:30Z');
+          const rows=await d1("SELECT call_id,provider_event_id,event_kind,provider_status,signature_mechanism,applied,created_at,curated_json FROM voice_call_provider_events WHERE provider='exotel' AND created_at>=? ORDER BY created_at",[since]);
+          console.log(`RECENT_EXOTEL_EVENT_ROWS=${rows.length}`);
+          for(const row of rows){
+            let c={};try{c=JSON.parse(String(row.curated_json||'{}'))}catch{}
+            const ref=String(c.callRef||c.call_ref||'');
+            const refClass=ref.startsWith('EXOTEL-TAIL-PROBE-')?'tail_probe':ref.startsWith('VCALL-')?'pawspace_call':ref?'other':'none';
+            console.log(`EVENT call_linked=${Boolean(row.call_id)} kind=${String(row.event_kind||'')} status=${String(row.provider_status||'')} signature=${String(row.signature_mechanism||'')} applied=${Number(row.applied||0)} ref_class=${refClass} event_id_suffix=${String(row.provider_event_id||'').slice(-12)}`);
+          }
+          const probe=rows.filter(row=>{try{const c=JSON.parse(String(row.curated_json||'{}'));return String(c.callRef||c.call_ref||'').startsWith('EXOTEL-TAIL-PROBE-')}catch{return false}});
+          console.log(`TAIL_PROBE_PERSISTED=${probe.length?'YES':'NO'}`);
+          if(probe.length) console.log(`TAIL_PROBE_AUTH=${probe.map(x=>String(x.signature_mechanism||'unknown')).join(',')}`);
+          NODE
