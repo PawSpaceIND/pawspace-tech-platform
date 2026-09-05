@@ -17,6 +17,8 @@ import {runSubscriptionScheduledMaintenance} from "../lib/subscription-scheduled
 import {runEliteScheduledHooks,runEliteWebhookHooks} from "../lib/services/elite-runtime";
 import {runMarketingConnectorScheduler} from "../lib/google-ads-conversion-consent";
 import {runDiamondCrmScheduledSweep} from "../lib/diamond-crm-scheduler";
+import {EXOTEL_AGENTSTREAM_PATH,handleExotelAgentStream} from "../lib/exotel-agentstream";
+import {runVoiceCarrierUatScheduler} from "../lib/voice-carrier-uat-scheduler";
 
 interface Env {
   ASSETS: Fetcher;
@@ -49,6 +51,8 @@ function secureApiResponse(response:Response){const secured=new Response(respons
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    if(url.pathname===EXOTEL_AGENTSTREAM_PATH)return handleExotelAgentStream(request,env,ctx);
 
     if (url.pathname.startsWith("/api/")) {
       if(url.pathname==="/api/identity-session")return secureApiResponse(await handler.fetch(request,env,ctx));
@@ -95,7 +99,7 @@ const worker = {
       const marketingTask=marketingHour>=6
         ?runMarketingConnectorScheduler(env.DB,{asOf:controller.scheduledTime,runtime:env as unknown as Record<string,unknown>}).then(result=>{const failedSync=Array.isArray(result.sync)?result.sync.filter(item=>String((item as Record<string,unknown>).status)==="failed"):[];const offline=result.offlineConversions as Record<string,unknown>;if(failedSync.length||String(offline?.status||"")==="failed")throw new Error(`provider sync/upload failure: ${JSON.stringify({failedSync,offline})}`);return result;})
         :Promise.resolve({status:"not_due_before_06_ist"});
-      const [cleanup,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm]=await Promise.allSettled([
+      const [cleanup,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat]=await Promise.allSettled([
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
         runCommunicationOutboxDispatcher(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
@@ -108,6 +112,7 @@ const worker = {
         marketingTask,
         runEliteScheduledHooks(env.DB,{asOf:controller.scheduledTime}),
         runDiamondCrmScheduledSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,actorId:"system:scheduled-worker"}),
+        runVoiceCarrierUatScheduler(env.DB,env as unknown as Record<string,unknown>,controller.scheduledTime),
       ]);
       const errors:string[]=[];
       if(cleanup.status==="rejected")errors.push(`reservation cleanup: ${cleanup.reason instanceof Error?cleanup.reason.message:String(cleanup.reason)}`);
@@ -122,6 +127,7 @@ const worker = {
       if(marketingConnector.status==="rejected")errors.push(`marketing connector: ${marketingConnector.reason instanceof Error?marketingConnector.reason.message:String(marketingConnector.reason)}`);
       if(eliteRuntime.status==="rejected")errors.push(`elite runtime: ${eliteRuntime.reason instanceof Error?eliteRuntime.reason.message:String(eliteRuntime.reason)}`);else if(Number(eliteRuntime.value.failed||0)>0)errors.push(`elite runtime: ${eliteRuntime.value.failed} churn scoring exception(s)`);
       if(diamondCrm.status==="rejected")errors.push(`diamond crm: ${diamondCrm.reason instanceof Error?diamondCrm.reason.message:String(diamondCrm.reason)}`);
+      if(voiceCarrierUat.status==="rejected")errors.push(`voice carrier UAT: ${voiceCarrierUat.reason instanceof Error?voiceCarrierUat.reason.message:String(voiceCarrierUat.reason)}`);
       if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);
     })());
   },
