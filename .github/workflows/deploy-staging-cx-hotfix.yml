@@ -1,13 +1,8 @@
 name: Deploy staging CX hotfix
 
-# Shared staging recovery: this workflow restores the WATI/CX owner build after another UAT lane overwrites pawspace-staging.
+# Shared staging is a single Worker. Keep this workflow manual so CX recovery cannot
+# silently overwrite another active UAT lane (for example the PR #522 voice build).
 on:
-  push:
-    branches:
-      - hotfix/staging-chat-cx-runtime
-    paths:
-      - app/team/customer-experience/**
-      - .github/workflows/deploy-staging-cx-hotfix.yml
   workflow_dispatch:
 
 permissions:
@@ -73,13 +68,6 @@ jobs:
             sleep 8
           done
 
-  # The freshness probe lives HERE, behind `needs: [deploy]`, and not in its own push-triggered
-  # workflow. Both workflows used to fire on the same push and run concurrently: for f32b83b7 the
-  # smoke started at 19:20:25 and failed at 19:20:35 reporting cx=500, while the deploy that fixed
-  # that 500 only finished at 19:21:42. Every smoke run was probing the PREVIOUS Worker build, so a
-  # green fix still reported red. A job dependency is the only ordering GitHub Actions guarantees;
-  # a shared concurrency group would merely queue the two in an arbitrary order, and `workflow_run`
-  # does not fire for a workflow file that is not yet on the default branch.
   smoke:
     needs: [deploy]
     runs-on: ubuntu-latest
