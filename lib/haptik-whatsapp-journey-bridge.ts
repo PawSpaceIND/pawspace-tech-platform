@@ -67,6 +67,16 @@ async function approvedTemplate(db:Db,key:string){
  return{key:text(row.template_key),category:text(row.category).toLowerCase(),language:text(row.approved_language)||"en"};
 }
 
+export async function persistHaptikVoiceOptOut(db:Db,input:{dispositionId:string;actorId?:string;asOf?:number}){
+ await ensureCustomer360Tables(db);
+ const row=await db.prepare("SELECT d.contact_id,d.phone,d.opted_out,c.primary_phone AS contact_phone FROM bot_call_dispositions d JOIN crm_contacts c ON c.id=d.contact_id WHERE d.id=? AND d.bot_provider='haptik' AND d.channel='voice'").bind(text(input.dispositionId)).first<Row>().catch(()=>null);
+ if(!row||Number(row.opted_out||0)!==1)return{persisted:false,reason:"not_opted_out"};
+ const identity=await canonicalCustomer(db,row);if(!identity.customer)return{persisted:false,reason:identity.reason||"canonical_customer_required"};
+ const customerId=text(identity.customer.id),now=input.asOf??Date.now(),actor=text(input.actorId)||"haptik_voice";
+ await db.prepare("INSERT INTO customer_contact_preferences (customer_id,marketing_consent,service_consent,whatsapp_consent,sms_consent,email_consent,opt_out,source,updated_by,updated_at) VALUES (?,0,0,0,0,0,1,'haptik_voice_opt_out',?,?) ON CONFLICT(customer_id) DO UPDATE SET marketing_consent=0,whatsapp_consent=0,opt_out=1,source='haptik_voice_opt_out',updated_by=excluded.updated_by,updated_at=excluded.updated_at").bind(customerId,actor,now).run();
+ return{persisted:true,customerId};
+}
+
 export async function bridgeHaptikVoiceOutcomeToWhatsApp(db:Db,env:Env,input:HaptikWhatsAppBridgeInput){
  await ensureCommunicationTables(db);await ensureCustomer360Tables(db);await ensureWhatsAppUatTables(db);
  const dispositionId=text(input.dispositionId),dispositionKey=text(input.dispositionIdempotencyKey);
