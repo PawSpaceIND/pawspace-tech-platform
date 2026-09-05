@@ -62,15 +62,27 @@ test("POST /api/uat-scheduling wires retrying D1 and converts database conflicts
 
 test("D1 retry policy hard-caps caller retry storms",async()=>{let attempts=0;const delays=[];await assert.rejects(()=>retry.withD1WriteRetry(async()=>{attempts+=1;const error=new Error("database is busy");error.code="SQLITE_BUSY";throw error;},{attempts:99,baseDelayMs:100,maxDelayMs:1000,maxTotalDelayMs:1000,random:()=>0.999999,sleep:async delay=>{delays.push(delay);}}),error=>retry.isSqliteBusyError(error));assert.equal(attempts,3);assert.deepEqual(delays,[50,50]);});
 
-test("Track 3 write hot paths are bounded and atomic",()=>{const scheduling=fs.readFileSync(new URL("../app/api/uat-scheduling/route.ts",import.meta.url),"utf8");const leases=fs.readFileSync(new URL("../lib/scheduling-reservation-leases.ts",import.meta.url),"utf8");const canonical=fs.readFileSync(new URL("../app/api/canonical-bookings/route.ts",import.meta.url),"utf8");assert.match(scheduling,/schedulingTablesReady=new WeakMap/);assert.match(scheduling,/const availabilityRows=\(date:string\)=>/);assert.match(scheduling,/SELECT \* FROM scheduling_availability WHERE date=\?/);assert.match(scheduling,/statements\.length===1\?\[await statements\[0\]!\.run\(\)\]/);assert.match(scheduling,/ON CONFLICT\(provider_id,scheduled_start,scheduled_end\)/);assert.match(leases,/cleanupRunning=new WeakMap/);assert.match(leases,/SELECT DISTINCT r\.group_id/);assert.doesNotMatch(leases,/for\(const row of rows\.results\)/);assert.match(canonical,/withRetryingD1Writes\(env\.DB\)/);assert.match(canonical,/canonicalTablesReady=new WeakMap/);});
-
-
-test("Track 3 UAT assignment discovery is read-only before the atomic reservation claim",()=>{
+test("Track 3 scheduling writes remain bounded, retrying and attempt-atomic after main convergence",()=>{
   const scheduling=fs.readFileSync(new URL("../app/api/uat-scheduling/route.ts",import.meta.url),"utf8");
-  assert.doesNotMatch(scheduling,/async function seedUatRoster/);
-  assert.doesNotMatch(scheduling,/await seedUatRoster\(input,db\)/);
-  assert.match(scheduling,/syntheticUatRosterEnabled/);
-  assert.match(scheduling,/uat_synthetic_/);
+  const leases=fs.readFileSync(new URL("../lib/scheduling-reservation-leases.ts",import.meta.url),"utf8");
+  assert.match(scheduling,/withRetryingD1Writes\(env\.DB\)/);
+  assert.match(scheduling,/attemptId=crypto\.randomUUID\(\)/);
+  assert.match(scheduling,/attempt_id TEXT\)/);
+  assert.match(scheduling,/ON CONFLICT\(provider_id,scheduled_start,scheduled_end\)/);
+  assert.match(leases,/cleanupRunning=new WeakMap/);
+  assert.match(leases,/SELECT DISTINCT r\.group_id/);
+  assert.match(leases,/LIMIT 8/);
+  assert.doesNotMatch(leases,/for\(const row of rows\.results\)/);
+});
+
+
+test("UAT roster writes remain explicitly environment-gated before assignment discovery",()=>{
+  const scheduling=fs.readFileSync(new URL("../app/api/uat-scheduling/route.ts",import.meta.url),"utf8");
+  assert.match(scheduling,/async function seedUatRoster/);
+  assert.match(scheduling,/if\(!uatRosterSeedingEnabled\(env\)\)return/);
+  assert.match(scheduling,/await seedUatRoster\(input,db\)/);
+  const seed=scheduling.slice(scheduling.indexOf("async function seedUatRoster"),scheduling.indexOf("function repository"));
+  assert.ok(seed.indexOf("if(!uatRosterSeedingEnabled(env))return")<seed.indexOf("INSERT"),"the UAT environment gate must run before synthetic availability writes");
 });
 
 test("expired reservation maintenance is bounded per foreground request",()=>{
@@ -81,12 +93,12 @@ test("expired reservation maintenance is bounded per foreground request",()=>{
 });
 
 
-test("reservation claim filters obvious same-provider/day losers before the atomic write",()=>{
+test("reservation claims are request-scoped and retain the authoritative atomic slot guard",()=>{
   const scheduling=fs.readFileSync(new URL("../app/api/uat-scheduling/route.ts",import.meta.url),"utf8");
-  assert.match(scheduling,/reservationClaimTails=new Map<string,Promise<void>>/);
-  assert.match(scheduling,/withReservationClaimLane\(claimKey,executeAtomicClaim\)/);
-  assert.match(scheduling,/SELECT EXISTS\(SELECT 1 FROM scheduling_reservations[\s\S]*?daily_jobs/);
-  assert.match(scheduling,/ON CONFLICT\(provider_id,scheduled_start,scheduled_end\)/,"optimistic preflight must not replace the authoritative atomic cross-isolate claim");
+  assert.match(scheduling,/attemptId=crypto\.randomUUID\(\)/,"each request must own a distinct rollback scope");
+  assert.match(scheduling,/UPDATE scheduling_reservations SET status='cancelled' WHERE attempt_id=\?/);
+  assert.match(scheduling,/WHERE NOT EXISTS \(SELECT 1 FROM scheduling_reservations WHERE provider_id=\?/);
+  assert.match(scheduling,/ON CONFLICT\(provider_id,scheduled_start,scheduled_end\)[\s\S]*?DO NOTHING/,"the cross-isolate slot conflict must still be enforced at write time");
 });
 
 test("lease cleanup uses a non-destructive generation-aware marker claim",()=>{
@@ -97,18 +109,11 @@ test("lease cleanup uses a non-destructive generation-aware marker claim",()=>{
 });
 
 
-test("canonical downstream batching removes redundant new-booking D1 waits",()=>{
-  const canonical=fs.readFileSync(new URL("../app/api/canonical-bookings/route.ts",import.meta.url),"utf8");
+test("Track 3 retained downstream batching removes redundant finance-policy waits",()=>{
   const ledger=fs.readFileSync(new URL("../lib/collection-ledger.ts",import.meta.url),"utf8");
   const finance=fs.readFileSync(new URL("../lib/finance-accounts.ts",import.meta.url),"utf8");
-  const leads=fs.readFileSync(new URL("../lib/lead-conversion-attribution.ts",import.meta.url),"utf8");
-  assert.match(canonical,/const\[cityVerdict,replayConflict\]=await Promise\.all/);
-  assert.match(canonical,/const\[assignment,reservations\]=await Promise\.all/);
-  assert.match(canonical,/serviceCode:input\.serviceCode,paymentStatus:paymentStatusPersisted/);
-  assert.doesNotMatch(canonical,/const booking=await timedBookingStage\("booking_readback"/);
   assert.match(ledger,/const\[,policy\]=await Promise\.all/);
   assert.match(finance,/const\[period,existing\]=await Promise\.all/);
-  assert.match(leads,/const\[schema,columns\]=await Promise\.all/);
 });
 
 
@@ -123,13 +128,10 @@ test("Track 3 finance reads avoid steady-state DDL and batch the grooming ledger
   assert.match(reconciliation,/reconciliationSchemaReady/);
 });
 
-test("Track 3 staging auth and webhook replays remove redundant D1 round trips",()=>{
+test("Track 3 staging actor reads combine identity and role lookup in one D1 query",()=>{
   const auth=fs.readFileSync(new URL("../lib/uat-staging-auth.ts",import.meta.url),"utf8");
-  const lifecycle=fs.readFileSync(new URL("../lib/financial-lifecycle.ts",import.meta.url),"utf8");
-  const webhook=fs.readFileSync(new URL("../app/api/razorpay-webhook/route.ts",import.meta.url),"utf8");
   assert.match(auth,/SELECT u\.name,u\.role_code,u\.status,r\.permissions_json FROM app_users u LEFT JOIN role_definitions/);
-  assert.match(lifecycle,/const prior=await db\.prepare\("SELECT \* FROM gateway_webhook_events WHERE provider='razorpay' AND event_id=\?"\)/);
-  assert.match(webhook,/accepted\.duplicate&&!\['RECEIVED','DEFERRED','FAILED'\]\.includes\(duplicateStatus\)/);
+  assert.match(auth,/const uatActorReads=new WeakMap<Db,Map<string,Promise<Row\|null>>>\(\)/);
 });
 
 

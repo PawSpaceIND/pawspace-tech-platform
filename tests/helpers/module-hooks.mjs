@@ -13,6 +13,12 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
+// Resolve both public Node hook APIs once. Node 22.15+ exposes registerHooks(); older supported Node 22
+// builds expose register(). Keeping the feature test here means the rest of the harness never calls a
+// missing export and the forced-loader CI path proves the compatibility branch on the same runner.
+const registerHooks = typeof nodeModule.registerHooks === "function" ? nodeModule.registerHooks : null;
+const register = typeof nodeModule.register === "function" ? nodeModule.register : null;
+
 // Request-scoped Worker DB for suites that call real routes. ESM caches the first
 // `cloudflare:workers` shim, so later suites' named globals never reach `database()`.
 // AsyncLocalStorage is the only isolation that survives a parallel `tests/*.test.mjs` run.
@@ -88,8 +94,8 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
 
   // PAWSPACE_FORCE_LOADER_HOOK=1 deliberately exercises the compatibility branch in CI.
   const forceLoader = process.env.PAWSPACE_FORCE_LOADER_HOOK === "1";
-  if (!forceLoader && typeof nodeModule.registerHooks === "function") {
-    nodeModule.registerHooks({
+  if (!forceLoader && registerHooks) {
+    registerHooks({
       resolve(specifier, context, nextResolve) {
         if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
         try {
@@ -121,11 +127,14 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
     return workersUrl;
   }
 
+  if (!register) {
+    throw new Error("PawSpace test harness requires node:module register() when registerHooks() is unavailable or bypassed");
+  }
   // register() runs hooks in a separate thread. Give that thread a real file URL so its bare imports
   // resolve against this repository rather than a data: URL with no filesystem package scope/base path.
   // The worker shim remains per registration by encoding it in the file URL's query string.
   const loaderUrl = new URL("./module-loader-hook.mjs", import.meta.url);
   loaderUrl.searchParams.set("workersUrl", workersUrl);
-  nodeModule.register(loaderUrl, import.meta.url);
+  register(loaderUrl, import.meta.url);
   return workersUrl;
 }

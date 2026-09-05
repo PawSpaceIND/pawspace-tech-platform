@@ -25,14 +25,17 @@ const squash = (value) => value.replace(/\s+/g, "");
 
 /**
  * Bounded IN lists, allowlisted by the exact expression rather than by file. Each is a fixed
- * vocabulary - statuses, months, a single stay's pets - that cannot grow with the data.
+ * vocabulary - statuses, schema objects, canonical seed catalogues, months, or a single stay's pets -
+ * that cannot grow with production data.
  */
 export const BOUNDED_IN_LISTS = {
   "communication-engine.ts": [{ expression: 'allowed.map(()=>"?")', why: "the literal statuses one delivery event may advance from" }],
   "boarding-ops-governance.ts": [{ expression: 'petIds.map(()=>"?")', why: "pet ids of a single stay" }],
+  "grooming-payment-reconciliation.ts": [{ expression: 'reconciliationSchemaObjects.map(()=>"?")', why: "the six compile-time schema objects required by reconciliation" }],
   "lead-assignment-governance.ts": [{ expression: 'services.map(()=>"?")', why: "the service codes on one policy" }],
   "meet-and-greet.ts": [{ expression: 'rule.from.map(()=>"?")', why: "the literal statuses a transition may come from" }],
   "ops-work-queue.ts": [{ expression: 'allowedFrom.map(()=>"?")', why: "the literal statuses a task may be claimed from" }],
+  "pricing-control-runtime.ts": [{ expression: 'ids.map(()=>"?")', why: "the compile-time canonical pricing seed catalogue, currently about 56 rows" }],
   "staff-alert-center.ts": [{ expression: 'check.types.map(()=>"?")', why: "the literal alert types the sweep owns" }],
   "statutory-compliance.ts": [{ expression: 'obligations.map(()=>"?")', why: "the obligations of one month" }],
   "subscription-wallet.ts": [{ expression: 'planCodes.map(()=>"?")', why: "the grooming plan catalogue" }],
