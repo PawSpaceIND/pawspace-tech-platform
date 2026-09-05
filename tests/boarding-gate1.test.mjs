@@ -50,7 +50,7 @@ test("Boarding Gate 1 executes the canonical catalogue, host roster and quote pe
   assert.equal(quote.stayUnits, 1);
 
   const stored = sqlite.prepare("SELECT package_code,total_amount,amount_due_now,status FROM boarding_commercial_quotes WHERE id=?").get(quote.quoteId);
-  assert.deepEqual(stored, { package_code: "boarding-24h", total_amount: 699, amount_due_now: 699, status: "open" });
+  assert.deepEqual({ ...stored }, { package_code: "boarding-24h", total_amount: 699, amount_due_now: 699, status: "open" });
 });
 
 test("Boarding Gate 1 fails closed on an unapproved coupon instead of inventing a discount", async () => {
