@@ -16,7 +16,7 @@ const MAX_UTTERANCE_MS = 6_000;
 const END_SILENCE_MS = 350;
 const PRE_ROLL_MS = 250;
 const SPEECH_RMS_THRESHOLD = 420;
-const OUTBOUND_CHUNK_BYTES = 3_200;
+const outboundFrameBytes = 3_200;
 
 type Env = Record<string, unknown> & { DB: D1Database; AI?: unknown };
 type Row = Record<string, unknown>;
@@ -225,8 +225,8 @@ async function synthesizeLinear16(env: Env, output: string, sampleRate: number) 
 
 function sendAudio(socket: WebSocket, session: Session, audio: Uint8Array, markName: string) {
   // Exotel documents chunks as multiples of 320 bytes. Pad only the terminal chunk with digital silence.
-  for (let offset = 0; offset < audio.byteLength; offset += OUTBOUND_CHUNK_BYTES) {
-    const raw = audio.subarray(offset, Math.min(audio.byteLength, offset + OUTBOUND_CHUNK_BYTES));
+  for (let offset = 0; offset < audio.byteLength; offset += outboundFrameBytes) {
+    const raw = audio.subarray(offset, Math.min(audio.byteLength, offset + outboundFrameBytes));
     const paddedLength = Math.ceil(raw.byteLength / 320) * 320;
     const chunk = paddedLength === raw.byteLength ? raw : (() => { const value = new Uint8Array(paddedLength); value.set(raw); return value; })();
     socket.send(JSON.stringify({ event: "media", stream_sid: session.streamSid, media: { payload: bytesToBase64(chunk) } }));
