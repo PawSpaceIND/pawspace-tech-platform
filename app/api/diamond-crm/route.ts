@@ -1,5 +1,6 @@
 import { authError, authorize, database } from "../../../lib/server-auth";
-import { advanceOpportunityStage, buildProbabilisticForecast, ensureCrmPipelineTables, syncOpenLeadPipeline } from "../../../lib/crm-pipeline-forecast";
+import { advanceOpportunityStage, buildProbabilisticForecast, ensureCrmPipelineTables } from "../../../lib/crm-pipeline-forecast";
+import { syncLeadOpportunityPipeline } from "../../../lib/crm-pipeline-sync";
 import { ensureLeadScoringMergeTables, refreshLeadScores, scoreLead } from "../../../lib/crm-lead-scoring-merge";
 import { executeTransactionalCustomerMerge } from "../../../lib/crm-transactional-merge";
 import { ensureCrmEmailTables, syncCalendarEvents } from "../../../lib/crm-email-sync";
@@ -56,7 +57,7 @@ export async function POST(request: Request) {
     const actor = await authorize(request, "customers.manage");
     const db = await database(); await ensureAll(db);
     const body = await request.json() as Record<string, unknown>, action = text(body.action);
-    if (action === "sync_pipeline") return Response.json(await syncOpenLeadPipeline(db, { actorId: actor.email, limit: Number(body.limit || 300) }));
+    if (action === "sync_pipeline") return Response.json(await syncLeadOpportunityPipeline(db, { actorId: actor.email, limit: Number(body.limit || 300) }));
     if (action === "advance_stage") return Response.json(await advanceOpportunityStage(db, {
       opportunityId: text(body.opportunityId), stage: text(body.stage) as never, actorId: actor.email, reason: text(body.reason),
       amount: body.amount == null ? undefined : Number(body.amount), wonBookingId: body.wonBookingId == null ? null : text(body.wonBookingId), lostReason: body.lostReason == null ? null : text(body.lostReason),
