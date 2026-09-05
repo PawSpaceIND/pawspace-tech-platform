@@ -70,15 +70,27 @@ async function normalizeSttResult(raw:unknown):Promise<Record<string,unknown>>{
   return raw as Record<string,unknown>;
 }
 
+function audioFieldFromObject(value:unknown):string|null{
+  if(!value||typeof value!=="object"||Array.isArray(value))return null;
+  const audio=(value as Record<string,unknown>).audio;
+  if(audio==null)return null;
+  if(typeof audio!=="string")throw new VoiceSpeechError("tts","malformed_output",`TTS model returned a ${typeof audio} audio field`);
+  return audio.trim()||null;
+}
+
 async function workersAiTtsBase64(result: unknown): Promise<string> {
-  if (result && typeof result === "object" && !ArrayBuffer.isView(result) && !(result instanceof ArrayBuffer) && !(result instanceof ReadableStream) && !(result instanceof Response)) {
-    const audio = (result as Record<string, unknown>).audio;
-    if (audio != null && typeof audio !== "string") throw new VoiceSpeechError("tts", "malformed_output", `TTS model returned a ${typeof audio} audio field`);
-    if (typeof audio === "string" && audio.trim()) return audio.trim();
-  }
+  const objectAudio=audioFieldFromObject(result);
+  if(objectAudio)return objectAudio;
   let bytes: Uint8Array | null = null;
   if (result instanceof Response) {
     if (!result.ok) throw new VoiceSpeechError("tts", "provider_failure", `TTS provider returned HTTP ${result.status}`,String(result.status));
+    const contentType=String(result.headers.get("content-type")||"").toLowerCase();
+    if(contentType.includes("application/json")){
+      const parsed=await result.json().catch(()=>null);
+      const audio=audioFieldFromObject(parsed);
+      if(!audio)throw new VoiceSpeechError("tts","malformed_output","TTS JSON response contained no audio field");
+      return audio;
+    }
     bytes = new Uint8Array(await result.arrayBuffer());
   } else if (result instanceof ReadableStream) bytes = new Uint8Array(await new Response(result).arrayBuffer());
   else if (result instanceof ArrayBuffer) bytes = new Uint8Array(result);
