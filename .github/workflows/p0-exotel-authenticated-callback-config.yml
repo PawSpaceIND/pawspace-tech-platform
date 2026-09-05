@@ -1,0 +1,51 @@
+name: P0 Exotel Authenticated Callback Config
+
+on:
+  push:
+    branches:
+      - remediation/p0-pilot-gates-b379631
+    paths:
+      - .github/workflows/p0-exotel-authenticated-callback-config.yml
+
+permissions:
+  contents: read
+
+jobs:
+  configure:
+    runs-on: ubuntu-24.04
+    environment: pawspace-staging
+    timeout-minutes: 6
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      EXOTEL_WEBHOOK_SECRET: ${{ secrets.EXOTEL_WEBHOOK_SECRET }}
+      WORKER_SCRIPT: pawspace-staging
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build masked authenticated callback URL
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import {appendFileSync,writeFileSync} from 'node:fs';
+          const secret=String(process.env.EXOTEL_WEBHOOK_SECRET||'');
+          if(!secret) throw new Error('EXOTEL_WEBHOOK_SECRET is missing from pawspace-staging GitHub secrets');
+          console.log(`::add-mask::${secret}`);
+          const u=new URL('https://pawspace-staging.karthik-fce.workers.dev/api/voice-provider-webhook');
+          u.username='exotel';
+          u.password=secret;
+          const callback=u.toString();
+          console.log(`::add-mask::${callback}`);
+          writeFileSync(process.env.RUNNER_TEMP+'/callback-url.txt',callback,{mode:0o600});
+          NODE
+      - name: Set staging callback as Cloudflare secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          CALLBACK=$(cat "$RUNNER_TEMP/callback-url.txt")
+          printf '%s' "$CALLBACK" | npm exec --yes wrangler@4 -- secret put PAWSPACE_VOICE_STATUS_CALLBACK_URL --name "$WORKER_SCRIPT"
+          rm -f "$RUNNER_TEMP/callback-url.txt"
+          echo 'STAGING_AUTHENTICATED_CALLBACK_CONFIGURED=PASS'
+          echo 'Production unchanged'
