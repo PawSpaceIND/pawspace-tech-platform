@@ -16,6 +16,7 @@ import {
   activateTrainingCommercialTerm,
   computeOrderPayout,
   CommercialTermConfigurationRequired,
+  expectResponseRefusal,
   TRAINER_ID,
   GROUP_ID,
 } from "./helpers/training-gate-harness.mjs";
@@ -86,17 +87,17 @@ test("Training invalid commercial inputs fail closed instead of creating quotes"
   await createTrainingQuote(world.db, { packageCode: "training-2-starter", petCount: 1, scheduledStart: futureTrainingStart(), paymentMode: "prepaid" });
   const baseline = before();
 
-  await assert.rejects(() => createTrainingQuote(world.db, {
+  await expectResponseRefusal(() => createTrainingQuote(world.db, {
     packageCode: "training-2-starter",
     petCount: 5,
     scheduledStart: futureTrainingStart(),
     paymentMode: "prepaid",
-  }), /Training supports 1-4 pets per programme/);
-  await assert.rejects(() => createTrainingQuote(world.db, {
+  }), { status: 409, message: /Training supports 1-4 pets per programme/ });
+  await expectResponseRefusal(() => createTrainingQuote(world.db, {
     packageCode: "trainer-meet-greet",
     petCount: 1,
     scheduledStart: futureTrainingStart(),
     paymentMode: "split",
-  }), /Meet & Greet must be paid in full/);
+  }), { status: 409, message: /Trainer Meet & Greet must be paid in full/ });
   assert.equal(before(), baseline, "refused quotes leave no partial commercial rows");
 });
