@@ -25,7 +25,7 @@ jobs:
       - name: Patch root production dependencies
         run: |
           set -euo pipefail
-          npm install --save-exact next@16.3.4
+          npm install --save-exact next@16.3.4 react@19.2.8 react-dom@19.2.8
           npm install --save-dev --save-exact eslint-config-next@16.3.4 react-server-dom-webpack@19.2.8
           npm audit fix --package-lock-only
       - name: Patch backend transitive dependencies
