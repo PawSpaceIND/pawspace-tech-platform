@@ -54,12 +54,12 @@ const capture = (db, booking, action, extra = {}) => proof.mutateWalkingProof(db
 });
 
 /** A grant → upload → clean-scan cycle, returning a proof asset ready to be attached. */
-async function cleanProof(db, booking, { purpose = "walking_update", sessionId = booking.sessionId } = {}) {
+async function cleanProof(db, booking, { purpose = "walking_update", sessionId = booking.sessionId, actorId = booking.providerId ?? WALKER } = {}) {
   const grant = await capture(db, booking, "prepare_media", {
-    sessionId, purpose, mimeType: "image/jpeg", sizeBytes: 120_000, sha256: SHA,
+    sessionId, purpose, actorId, mimeType: "image/jpeg", sizeBytes: 120_000, sha256: SHA,
   });
   await capture(db, booking, "sandbox_finalize_media", {
-    uploadToken: grant.upload.token, storageObjectId: `walking-object-${grant.mediaId}`,
+    sessionId, actorId, uploadToken: grant.upload.token, storageObjectId: `walking-object-${grant.mediaId}`,
   });
   await proof.mutateWalkingProof(db, {
     bookingId: booking.bookingId, action: "record_media_scan", actorId: REVIEWER,
@@ -244,12 +244,54 @@ test("Dog Walking Gate 4 scan review is a separate pair of hands and gates proof
 
 // ---------------------------------------------------------------------------------------------
 test("Dog Walking proof cannot be borrowed across sessions, bookings or evidence slots", async () => {
-  const { db, booking } = await proofWorld({ bookingId: "BKG-WALK-BORROW", walkCount: 2 });
+  const { db, sqlite, booking } = await proofWorld({ bookingId: "BKG-WALK-BORROW", walkCount: 2 });
   const other = booking.sessions[1].sessionId;
 
   // Clean proof captured for THIS session cannot be attached to a different one.
   const mine = await cleanProof(db, booking);
   await db.prepare("UPDATE walking_sessions SET status='in_progress' WHERE id=?").bind(other).run();
+
+  /*
+   * A SECOND, INDEPENDENT BOOKING -- another customer, another walker, its own session in progress.
+   * Without it the "across bookings" half of this test's title is unproven: one booking can only ever
+   * show the cross-SESSION guard, and a media asset borrowed by a different booking entirely is the
+   * case that leaks one customer's dog into another customer's proof record.
+   */
+  // Its own schedule group and reservation: walking_sessions.reservation_id is UNIQUE, so a second
+  // booking seeded on the harness default would REPLACE the first booking's session row outright.
+  const neighbour = await seedWalkingBooking(db, sqlite, {
+    bookingId: "BKG-WALK-BORROW-2", customerId: "CUST-WALK-2", providerId: "walker_two",
+    groupId: "GRP-WALK-BORROW-2", reservationId: "RES-WALK-BORROW-2",
+  });
+  seedDoorstep(sqlite, {
+    bookingId: neighbour.bookingId, customerId: neighbour.customerId, providerId: neighbour.providerId, ...DOORSTEP,
+  });
+  const neighbourAct = (action, extra) => lifecycle.mutateWalkingBooking(db, {
+    bookingId: neighbour.bookingId, action, actorId: neighbour.providerId, idempotencyKey: nextKey(), ...extra,
+  });
+  await neighbourAct("accept");
+  await neighbourAct("confirm_handover", { sessionId: neighbour.sessionId, handoverMethod: "owner" });
+  await neighbourAct("start_walk", { sessionId: neighbour.sessionId, ...DOORSTEP });
+
+  const acrossBookings = await refusal(proof.mutateWalkingProof(db, {
+    bookingId: neighbour.bookingId, action: "record_photo_update", actorId: neighbour.providerId,
+    idempotencyKey: nextKey(), sessionId: neighbour.sessionId, mediaRef: mine.mediaRef,
+    note: "Another customer's walk photo",
+  }));
+  assert.ok([403, 409].includes(acrossBookings?.status), `borrowing across bookings is refused: ${acrossBookings?.status}`);
+  assert.match(acrossBookings.message, /media ownership does not match booking\/provider/);
+
+  // And the neighbour's own clean proof cannot be pulled back into the first booking either.
+  const theirs = await cleanProof(db, neighbour);
+  const reverse = await refusal(capture(db, booking, "record_photo_update", { mediaRef: theirs.mediaRef, note: "Borrowed the other way" }));
+  assert.ok([403, 409].includes(reverse?.status), `borrowing back is refused: ${reverse?.status}`);
+  assert.match(reverse.message, /media ownership does not match booking\/provider/);
+
+  // Nothing above attached a foreign asset to either booking's proof record.
+  for (const id of [booking.bookingId, neighbour.bookingId]) {
+    const events = await db.prepare("SELECT COUNT(*) AS n FROM walking_session_events WHERE booking_id=? AND event_type='proof_photo_update'").bind(id).first();
+    assert.equal(Number(events.n), 0, `${id} recorded no photo update from a borrowed asset`);
+  }
   const borrowed = await refusal(proof.mutateWalkingProof(db, {
     bookingId: booking.bookingId, action: "record_photo_update", actorId: WALKER, idempotencyKey: nextKey(),
     sessionId: other, mediaRef: mine.mediaRef, note: "Same dog, other walk",

@@ -15,7 +15,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
-import { freshSqlite, makeD1, refusal, stayUrl, stayWindow } from "./helpers/stay-harness.mjs";
+import { customerSessionCookie, freshSqlite, makeD1, nextKey, refusal, stayUrl, stayWindow } from "./helpers/stay-harness.mjs";
 
 installWorkersHooks("__WALK_G1_DB__", "__WALK_G1_ENV__");
 
@@ -30,6 +30,17 @@ async function walkingWorld() {
   globalThis.__WALK_G1_DB__ = db;
   globalThis.__WALK_G1_ENV__ = {};
   await governance.ensureWalkingGovernanceTables(db);
+  /*
+   * The booking route creates the canonical tables it writes, so the harness must NOT pre-create
+   * them: `CREATE TABLE IF NOT EXISTS` is a no-op against a narrower fixture table, and the route's
+   * insert then dies on the missing column. What it only READS -- the scheduling decision, the
+   * reservations -- and the offers table its batch closes on, are scheduling's, so those are seeded
+   * here with DDL verbatim from their owning sources (lib/provider-capacity-governance.ts,
+   * backend/src/scheduling.ts).
+   */
+  sqlite.exec("CREATE TABLE IF NOT EXISTS scheduling_reservations (id TEXT PRIMARY KEY,group_id TEXT NOT NULL,provider_id TEXT NOT NULL,service_code TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,customer_id TEXT NOT NULL,pet_ids_json TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,capacity_units INTEGER NOT NULL DEFAULT 1,occurrence_number INTEGER NOT NULL DEFAULT 1,care_mode TEXT,status TEXT NOT NULL,explanation_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,lease_expires_at INTEGER,customer_session_id TEXT,attempt_id TEXT)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS scheduling_assignment_decisions (group_id TEXT PRIMARY KEY,strategy TEXT NOT NULL,shortlist_json TEXT NOT NULL,selected_provider_id TEXT,status TEXT NOT NULL,actor_id TEXT,reason TEXT,updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS provider_assignment_offers (group_id TEXT PRIMARY KEY,booking_id TEXT,provider_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',offered_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,responded_at INTEGER,response_reason TEXT,attempt_no INTEGER NOT NULL DEFAULT 1,updated_at INTEGER NOT NULL)");
   return { sqlite, db };
 }
 
@@ -225,10 +236,92 @@ test("Dog Walking quote expires and cannot be reused", async () => {
   assert.equal(expired?.status, 409);
   assert.match(expired.message, /quote expired; refresh price and availability/);
 
-  await db.prepare("UPDATE walking_commercial_quotes SET expires_at=?,status='used' WHERE id=?").bind(Date.now() + 900_000, quote.quoteId).run();
-  const used = await refusal(governance.governWalkingBooking(db, body));
-  assert.equal(used?.status, 409);
-  assert.match(used.message, /already been used|already linked to a booking/);
+  // The expiry refusal did not consume the quote: it is still open and still bookable.
+  await db.prepare("UPDATE walking_commercial_quotes SET expires_at=? WHERE id=?").bind(Date.now() + 900_000, quote.quoteId).run();
+  assert.equal(
+    (await db.prepare("SELECT status FROM walking_commercial_quotes WHERE id=?").bind(quote.quoteId).first()).status,
+    "open",
+  );
+});
+
+// ---------------------------------------------------------------------------------------------
+test("a confirmed Dog Walking booking consumes its quote, and the quote cannot be booked twice", async () => {
+  const { db, sqlite } = await walkingWorld();
+  const route = await import("../app/api/walking-bookings/route.ts");
+  const window = walkWindow();
+  const quote = await quoteFor(db, window);
+
+  /*
+   * THE POINT OF DRIVING THE ROUTE. The quote is not marked used by this test -- the real
+   * POST /api/walking-bookings handler consumes it, inside the same batch that writes the booking,
+   * the work order, the payment and the walking sessions. A test that set status='used' by hand
+   * would still see the second attempt refused while the production path had stopped consuming
+   * anything at all, which is the failure that leaves one quote paying for two bookings.
+   */
+  const CUSTOMER = "CUS-WALK-REUSE";
+  const GROUP = "GRP-WALK-REUSE";
+  sqlite.prepare("INSERT INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,actor_id,reason,updated_at) VALUES (?,'governed','[]',?,'assigned','test','fixture',?)")
+    .run(GROUP, "walker_dev", Date.now());
+  sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES (?,?,?,'dog_walking','blr','blr-east',?,'[]',?,?,1,1,'once','held','{}',?)")
+    .run("RES-WALK-REUSE-1", GROUP, "walker_dev", CUSTOMER, window.scheduledStart, window.scheduledEnd, Date.now());
+  const { cookie } = await customerSessionCookie(db, { principalKey: "+919800000077", customerId: CUSTOMER });
+
+  const post = (overrides = {}) => route.POST(new Request(stayUrl("/api/walking-bookings"), {
+    method: "POST", headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify({
+      idempotencyKey: nextKey("walk-reuse"), scheduleGroupId: GROUP, walkingQuoteId: quote.quoteId,
+      customer: { id: CUSTOMER, name: "Asha K.", primaryPhone: "+919800000077" },
+      pets: [{ sourceId: "pet-1", name: "Bruno", species: "dog" }],
+      cityId: "blr", zoneId: "blr-east",
+      packageCode: quote.packageCode, packageName: quote.packageName,
+      walkCount: 1, weekdays: [], scheduledStart: quote.scheduledStart, scheduledEnd: quote.scheduledEnd,
+      provider: { id: "walker_dev", name: "Dev Walker", model: "full_time" },
+      totalAmount: quote.totalAmount, amountDueNow: quote.amountDueNow,
+      payment: { method: "upi", mode: "pay_after_service", detail: "sandbox" },
+      ...overrides,
+    }),
+  }));
+
+  const created = await post();
+  assert.equal(created.status, 201, `the governed booking is created: ${await created.clone().text()}`);
+  const bundle = (await created.json()).data;
+  assert.match(bundle.bookingId, /^PS-UAT-WALK-/);
+  assert.equal(bundle.liveMoney, false, "and never claims live money");
+
+  // The PRODUCTION path consumed the quote and linked it to the booking it paid for.
+  const consumed = await db.prepare("SELECT status,used_booking_id FROM walking_commercial_quotes WHERE id=?").bind(quote.quoteId).first();
+  assert.equal(String(consumed.status), "used", "confirming a booking consumes the quote");
+  assert.equal(String(consumed.used_booking_id), bundle.bookingId);
+  const link = await db.prepare("SELECT booking_id FROM walking_booking_quote_links WHERE quote_id=?").bind(quote.quoteId).first();
+  assert.equal(String(link.booking_id), bundle.bookingId, "and records the link the reuse gate reads");
+
+  // THE REUSE GATE, now standing on a genuinely consumed quote: a second booking on a fresh
+  // idempotency key and a fresh scheduling group cannot spend the same quote again.
+  const secondGroup = "GRP-WALK-REUSE-2";
+  sqlite.prepare("INSERT INTO scheduling_assignment_decisions (group_id,strategy,shortlist_json,selected_provider_id,status,actor_id,reason,updated_at) VALUES (?,'governed','[]',?,'assigned','test','fixture',?)")
+    .run(secondGroup, "walker_dev", Date.now());
+  sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at) VALUES (?,?,?,'dog_walking','blr','blr-east',?,'[]',?,?,1,1,'once','held','{}',?)")
+    .run("RES-WALK-REUSE-2", secondGroup, "walker_dev", CUSTOMER, window.scheduledStart, window.scheduledEnd, Date.now());
+
+  const reused = await post({ scheduleGroupId: secondGroup });
+  assert.equal(reused.status, 409);
+  assert.match((await reused.json()).error, /already linked to a booking|already been used/);
+  assert.equal(
+    Number((await db.prepare("SELECT COUNT(*) AS n FROM canonical_bookings WHERE service_code='dog_walking'").first()).n),
+    1,
+    "the refused reuse wrote no second booking",
+  );
+
+  // And the direct governance call refuses it too, so the gate is not only in the route.
+  const governed = await refusal(governance.governWalkingBooking(db, {
+    quoteId: quote.quoteId, packageCode: quote.packageCode, packageName: quote.packageName,
+    petCount: 1, walkCount: 1, weekdays: [], scheduledStart: quote.scheduledStart,
+    scheduledEnd: quote.scheduledEnd, submittedTotal: quote.totalAmount,
+    submittedAmountDueNow: 0, paymentMode: quote.paymentMode,
+    reservations: [walkReservation("RES-WALK-REUSE-2", "walker_dev", quote.scheduledStart, quote.scheduledEnd)],
+  }));
+  assert.equal(governed?.status, 409);
+  assert.match(governed.message, /already linked to a booking|already been used/);
 });
 
 // ---------------------------------------------------------------------------------------------

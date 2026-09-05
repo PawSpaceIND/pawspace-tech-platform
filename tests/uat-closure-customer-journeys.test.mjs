@@ -15,12 +15,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { installWorkersHooks } from "./helpers/module-hooks.mjs";
-import { customerSessionCookie, freshSqlite, makeD1, OPS_ORIGIN } from "./helpers/taxi-harness.mjs";
+import { customerSessionCookie, freshSqlite, makeD1, OPS_ORIGIN, refusal } from "./helpers/taxi-harness.mjs";
 import { ensureCanonicalTables, seedCanonicalStayBooking } from "./helpers/stay-harness.mjs";
 
 installWorkersHooks("__JOURNEY_DB__", "__JOURNEY_ENV__");
 
 const coupons = await import("../lib/coupon-governance.ts");
+const sitting = await import("../lib/sitting-governance.ts");
+
+/*
+ * react and react-dom/server are imported BEFORE any .tsx module, and that order is load-bearing.
+ * The transpiled component's first import is `react/jsx-runtime`, whose CommonJS development build
+ * does `require("react")` while it initialises. On Node 22.16 (the version CI pins), pulling that in
+ * as the first entry of an ESM graph hands it a react whose `__CLIENT_INTERNALS...` export is not yet
+ * populated, and the first JSX call dies on `recentlyCreatedOwnerStacks` of undefined. Importing
+ * react itself first means it is already fully evaluated and cached by the time jsx-runtime asks.
+ */
+const React = await import("react");
+const { renderToStaticMarkup } = await import("react-dom/server");
+const stayFlow = await import("../app/mobile-app/stay-flow.tsx");
 
 const CUSTOMER = "CUST-JOURNEY-1";
 const PRINCIPAL = "+919800000021";
@@ -296,36 +309,151 @@ test("Grooming carries the governed coupon quote through to a single redemption"
 });
 
 // ---------------------------------------------------------------------------------------------
-test("Embedded Sitting uses the governed quote and the canonical Sitting booking", async () => {
-  const { db, sqlite } = await journeyWorld();
-  const sitting = await import("../lib/canonical-sitting-commercial.ts").catch(() => null);
-  const flow = await import("../app/mobile-app/stay-flow.tsx").catch(() => null);
+test("the embedded Sitting screen offers no coupon field, because the governed quote refuses one", async () => {
+  await journeyWorld();
 
-  // The embedded Sitting flow renders without a coupon field: Sitting has no canonical redemption
-  // policy, so a coupon must not be offerable there at all.
-  if (flow?.default) {
-    const { renderToStaticMarkup } = await import("react-dom/server");
-    const React = await import("react");
-    const html = renderToStaticMarkup(React.createElement(flow.default, {
-      customer: { customerId: CUSTOMER, name: "Asha K.", phone: PRINCIPAL },
-    }));
-    const rendered = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-    assert.doesNotMatch(rendered, /promo code|coupon/i, "no coupon entry is offered for Sitting");
-    assert.doesNotMatch(rendered, /Partner accepted . live calendar verified/i,
-      "the first screen never claims a partner has accepted");
-    assert.doesNotMatch(rendered, /\bpayment (?:captured|successful)\b/i, "nor that money has moved");
+  const html = renderToStaticMarkup(React.createElement(stayFlow.default, {
+    customer: { customerId: CUSTOMER, name: "Asha K.", phone: PRINCIPAL },
+  }));
+  assert.ok(html.length > 0, "the embedded Sitting/Boarding flow renders");
+  const rendered = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+
+  // Sitting has no canonical redemption policy, so a coupon must not be offerable on the screen at all.
+  assert.doesNotMatch(rendered, /promo code|coupon/i, "no coupon entry is offered for Sitting");
+  assert.doesNotMatch(rendered, /Partner accepted . live calendar verified/i,
+    "the first screen never claims a partner has accepted");
+  assert.doesNotMatch(rendered, /\bpayment (?:captured|successful)\b/i, "nor that money has moved");
+});
+
+// ---------------------------------------------------------------------------------------------
+test("the governed Sitting quote is the only source of a Sitting price", async () => {
+  const { db } = await journeyWorld();
+  const start = new Date(Date.now() + 86_400_000).toISOString();
+  const visitEnd = new Date(Date.now() + 86_400_000 + 3_600_000).toISOString();
+  const quoteFor = (overrides = {}) => sitting.createSittingQuote(db, {
+    packageCode: "sitting-visit-60", petCount: 1, cityId: "blr", zoneId: "blr-east",
+    scheduledStart: start, scheduledEnd: visitEnd, paymentMode: "prepaid", ...overrides,
+  });
+
+  // THE ASSERTION THE SCREEN ABOVE DEPENDS ON. A coupon is not merely absent from the UI: the
+  // governed quote refuses one, so a hand-rolled request cannot discount a Sitting visit either.
+  const coupon = await refusal(quoteFor({ couponCode: "WELCOME200" }));
+  assert.equal(coupon.status, 409);
+  assert.match(coupon.message, /Sitting coupon policy is not enabled/);
+
+  // The payment mode is a closed set: only full prepaid or the approved 50/50 split.
+  const badMode = await refusal(quoteFor({ paymentMode: "cash_on_arrival" }));
+  assert.equal(badMode.status, 409);
+  assert.match(badMode.message, /full prepaid or the approved 50\/50 split/);
+
+  // The price is computed from the catalogue row, not accepted from the caller.
+  const one = await quoteFor();
+  assert.equal(one.packageName, "Home Visit");
+  assert.equal(one.mode, "visit");
+  assert.equal(one.billableUnits, 1, "a Home Visit is a single service day");
+  assert.equal(one.basePricePerPet, 399, "the base price is the catalogue's");
+  assert.equal(one.totalAmount, 399);
+  assert.equal(one.amountDueNow, 399, "prepaid means the whole amount is due now");
+
+  // Extra pets are priced at the catalogue's extra-pet rate, and only from the second pet.
+  const three = await quoteFor({ petCount: 3 });
+  assert.equal(three.totalAmount, 399 + 2 * 149, "399 + two extra pets at 149");
+  assert.notEqual(three.quoteId, one.quoteId, "each quote is its own row");
+
+  // Beyond the package's pet ceiling there is no price at all.
+  const tooMany = await refusal(quoteFor({ petCount: 5 }));
+  assert.equal(tooMany.status, 409);
+  assert.match(tooMany.message, /Sitting supports 1-4 pets per booking/);
+
+  // A care window in the past cannot be priced.
+  const past = await refusal(quoteFor({
+    scheduledStart: new Date(Date.now() - 3_600_000).toISOString(),
+    scheduledEnd: new Date(Date.now() + 3_600_000).toISOString(),
+  }));
+  assert.equal(past.status, 400);
+  assert.match(past.message, /requires a future start/);
+
+  // Overnight is a DIFFERENT package with its own window rule: a six-hour stay is not an overnight.
+  const shortNight = await refusal(quoteFor({ packageCode: "sitting-overnight", scheduledEnd: new Date(Date.now() + 86_400_000 + 6 * 3_600_000).toISOString() }));
+  assert.equal(shortNight.status, 409);
+  assert.match(shortNight.message, /Overnight Sitting requires more than 10 hours/);
+
+  const twoNights = await quoteFor({
+    packageCode: "sitting-overnight",
+    scheduledEnd: new Date(Date.now() + 86_400_000 + 26 * 3_600_000).toISOString(),
+  });
+  assert.equal(twoNights.billableUnits, 2, "26 hours of overnight care bills two units");
+  assert.equal(twoNights.totalAmount, 799 * 2);
+
+  // A package that is not in the catalogue has no price.
+  const unknown = await refusal(quoteFor({ packageCode: "sitting-visit-30" }));
+  assert.equal(unknown.status, 404);
+  assert.match(unknown.message, /Active Sitting package not found/);
+});
+
+// ---------------------------------------------------------------------------------------------
+test("a Sitting booking is governed against its server quote and consumes it exactly once", async () => {
+  const { db } = await journeyWorld();
+  const start = new Date(Date.now() + 86_400_000).toISOString();
+  const end = new Date(Date.now() + 86_400_000 + 3_600_000).toISOString();
+  const quote = await sitting.createSittingQuote(db, {
+    packageCode: "sitting-visit-60", petCount: 2, cityId: "blr", zoneId: "blr-east",
+    scheduledStart: start, scheduledEnd: end, paymentMode: "prepaid",
+  });
+  assert.equal(quote.totalAmount, 399 + 149);
+
+  const submit = (overrides = {}) => sitting.governSittingBooking(db, {
+    quoteId: quote.quoteId, packageCode: quote.packageCode, packageName: quote.packageName,
+    petCount: quote.petCount, cityId: "blr", zoneId: "blr-east",
+    scheduledStart: start, scheduledEnd: end,
+    submittedTotal: quote.totalAmount, submittedAmountDueNow: quote.amountDueNow,
+    paymentMode: "prepaid", paymentStatus: "captured", reservationCount: 1, ...overrides,
+  });
+
+  // A client that reprices the visit downward is refused; the server quote is the price of record.
+  const cheaper = await refusal(submit({ submittedTotal: 199 }));
+  assert.equal(cheaper.status, 409);
+  assert.match(cheaper.message, /amount does not match the server quote/);
+
+  // So is a client that moves the care window, the pet count or the zone after pricing.
+  for (const [overrides, pattern] of [
+    [{ petCount: 1 }, /pet count changed after quote/],
+    [{ scheduledEnd: new Date(Date.now() + 86_400_000 + 7_200_000).toISOString() }, /care window changed after quote/],
+    [{ zoneId: "blr-central" }, /city\/zone does not match the scheduling reservation/],
+    [{ paymentStatus: "pending" }, /payment must be captured in sandbox/],
+    [{ reservationCount: 2 }, /exactly one canonical care reservation/],
+  ]) {
+    const refused = await refusal(submit(overrides));
+    assert.equal(refused.status, 409, `${pattern} is a 409`);
+    assert.match(refused.message, pattern);
   }
 
-  // The governed Sitting quote is the only source of a Sitting price.
-  if (sitting?.createSittingQuote) {
-    const quote = await sitting.createSittingQuote(db, {
-      packageCode: "sitting-visit-30", petCount: 1, cityId: "blr", zoneId: "blr-east",
-      scheduledStart: new Date(Date.now() + 86_400_000).toISOString(),
-      scheduledEnd: new Date(Date.now() + 86_400_000 + 1_800_000).toISOString(),
-    }).then((value) => value, (error) => error);
-    if (quote?.quoteId) {
-      assert.ok(quote.totalAmount > 0, "the quote prices the visit from the catalogue");
-      assert.equal(quote.liveMoney ?? false, false, "and never claims live money");
-    }
-  }
+  // None of those refusals consumed the quote.
+  assert.equal(
+    String((await db.prepare("SELECT status FROM sitting_commercial_quotes WHERE id=?").bind(quote.quoteId).first()).status),
+    "open",
+    "a refused submission leaves the quote open",
+  );
+
+  // The governed submission carries the SERVER's figures through to the booking.
+  const governed = await submit();
+  assert.equal(governed.totalAmount, quote.totalAmount);
+  assert.equal(governed.basePricePerPet, 399);
+  assert.equal(governed.extraPetPrice, 149);
+  assert.equal(governed.catalogueVersion, "sitting-v1", "the catalogue version is stamped on the booking");
+
+  await sitting.consumeSittingQuote(db, quote.quoteId, "BKG-SITTING-1");
+  await sitting.sittingQuoteLinkStatement(db, quote.quoteId, "BKG-SITTING-1").run();
+
+  const consumed = await db.prepare("SELECT status,used_booking_id FROM sitting_commercial_quotes WHERE id=?").bind(quote.quoteId).first();
+  assert.equal(String(consumed.status), "used");
+  assert.equal(String(consumed.used_booking_id), "BKG-SITTING-1");
+
+  // THE DOUBLE-BOOKING GATE. The same quote cannot be presented for a second booking.
+  const reused = await refusal(submit());
+  assert.equal(reused.status, 409);
+  assert.match(reused.message, /already linked to a booking/);
+  const again = await refusal(sitting.consumeSittingQuote(db, quote.quoteId, "BKG-SITTING-2"));
+  assert.equal(again.status, 409);
+  assert.match(again.message, /could not be consumed/);
 });

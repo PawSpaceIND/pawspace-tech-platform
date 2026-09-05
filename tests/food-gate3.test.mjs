@@ -242,8 +242,27 @@ test("Fresh Food cancellation releases only still-reserved inventory", async () 
   assert.equal(Number(afterPack.available_units), 28);
   assert.equal(Number(afterPack.reserved_units), 0);
 
-  // Packed orders route through Operations, so drive the case that reaches Finance: an order rolled
-  // back to a cancellable fulfilment state while its reservation stays consumed.
+  // FIRST, THE REACHABLE TRUTH: once the stock is picked and packed, a customer cannot cancel at
+  // all -- the request is refused and routed to Operations, and the consumed stock stays consumed.
+  const packedCancel = await refusal(finance.mutateFoodFinance(db, {
+    orderId: order.orderId, action: "request_cancel", actorId: CUSTOMER,
+    idempotencyKey: nextKey(), reason: "Changed my mind after packing",
+  }));
+  assert.equal(packedCancel?.status, 409, "a packed order is not cancellable by request");
+  const afterRefusal = await stock(db);
+  assert.equal(Number(afterRefusal.available_units), 28, "the refusal put nothing back on the shelf");
+  assert.equal(Number(afterRefusal.reserved_units), 0);
+
+  /*
+   * SECOND, THE DEFENSIVE BRANCH, over a state this build cannot reach on its own. The statuses
+   * below are written directly and deliberately: Fresh Food has no Operations action that rolls a
+   * packed order back to a cancellable one (lib/food-ops-governance.ts offers only
+   * resume_same_sku_stock and add_note), so releaseReservedInventoryStatements() can never see a
+   * CONSUMED reservation through a real transition today. That unreachability is reported as a
+   * product gap rather than papered over; the assertions below pin what the release code does if a
+   * future Operations rollback ever does deliver it this state -- which is the moment consumed stock
+   * could be resurrected onto the shelf and sold twice.
+   */
   await db.prepare("UPDATE food_order_fulfilment SET status='accepted' WHERE order_id=?").bind(order.orderId).run();
   await db.prepare("UPDATE food_orders SET status='accepted' WHERE id=?").bind(order.orderId).run();
   await finance.mutateFoodFinance(db, {
@@ -276,13 +295,21 @@ test("Fresh Food refund ledger is sandbox-only and replay resistant", async () =
   await deliver(db, order);
   await money(db, order, "record_order_payment", { paymentReference: "SBX-R-1" });
 
-  // A delivered order cannot be cancelled, so the refund path is exercised through an order that was
-  // paid and then rolled back by Operations -- which is exactly when a refund is owed.
+  /*
+   * THE STATUSES BELOW ARE WRITTEN DIRECTLY, AND THE REASON IS A PRODUCT GAP, NOT A SHORTCUT.
+   * A refund needs money in: `record_order_payment` only settles a payment event, and one is only
+   * raised at confirm_delivery. But `request_cancel` and `approve_cancel` both refuse a DELIVERED
+   * order outright, and Fresh Food has no Operations action that reopens one. So in this build a
+   * non-zero approvedRefundAmount -- and therefore every row in food_refund_ledger -- is
+   * unreachable through the product's own transitions. That is reported as a gap rather than
+   * silently left uncovered: what follows pins the refund ledger's behaviour so it is already
+   * governed on the day the missing rollback lands.
+   */
   await db.prepare("UPDATE food_orders SET status='accepted' WHERE id=?").bind(order.orderId).run();
   await db.prepare("UPDATE food_order_fulfilment SET status='accepted' WHERE order_id=?").bind(order.orderId).run();
   await finance.mutateFoodFinance(db, {
     orderId: order.orderId, action: "request_cancel", actorId: CUSTOMER,
-    idempotencyKey: nextKey(), reason: "Delivered damaged, Operations rolled it back",
+    idempotencyKey: nextKey(), reason: "Damaged in transit, stop the delivery",
   });
 
   const tooMuch = await refusal(money(db, order, "approve_cancel", {
@@ -319,6 +346,22 @@ test("Fresh Food refund ledger is sandbox-only and replay resistant", async () =
   const reused = await refusal(money(db, order, "record_refund", { refundReference: "SBX-FOOD-REFUND-1" }));
   assert.equal(reused?.status, 409);
   assert.match(reused.message, /refund reference was already used/);
+
+  // THE OTHER HALF OF THE WINDOW, on its own order and its own real transitions: once the food is in
+  // the customer's hands the order is closed, and no cancellation request opens a refund at all.
+  const { db: closedDb, order: delivered } = await foodWorld();
+  await deliver(closedDb, delivered);
+  const afterDelivery = await refusal(finance.mutateFoodFinance(closedDb, {
+    orderId: delivered.orderId, action: "request_cancel", actorId: CUSTOMER,
+    idempotencyKey: nextKey(), reason: "Too late",
+  }));
+  assert.equal(afterDelivery?.status, 409);
+  assert.match(afterDelivery.message, /Closed Food orders cannot accept cancellation requests/);
+  assert.equal(
+    Number((await closedDb.prepare("SELECT COUNT(*) AS n FROM food_refund_ledger WHERE order_id=?").bind(delivered.orderId).first()).n),
+    0,
+    "and no refund ledger entry is opened for a delivered order",
+  );
 });
 
 // ---------------------------------------------------------------------------------------------

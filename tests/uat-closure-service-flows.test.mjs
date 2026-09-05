@@ -22,6 +22,17 @@ installWorkersHooks("__FLOWS_DB__", "__FLOWS_ENV__");
 
 const client = await import("../lib/service-zone-client.ts");
 
+/*
+ * react and react-dom/server are imported BEFORE any .tsx module, and that order is load-bearing.
+ * The transpiled component's first import is `react/jsx-runtime`, whose CommonJS development build
+ * does `require("react")` while it initialises. On Node 22.16 (the version CI pins), pulling that in
+ * as the first entry of an ESM graph hands it a react whose `__CLIENT_INTERNALS...` export is not yet
+ * populated, and the first JSX call dies on `recentlyCreatedOwnerStacks` of undefined. Importing
+ * react itself first means it is already fully evaluated and cached by the time jsx-runtime asks.
+ */
+const React = await import("react");
+const { renderToStaticMarkup } = await import("react-dom/server");
+
 const CUSTOMER = { customerId: "CUST-FLOWS-1", name: "Asha K.", phone: "+919800000031" };
 
 /**
@@ -53,9 +64,8 @@ async function flowsWorld() {
 }
 
 async function render(modulePath, props) {
-  const { renderToStaticMarkup } = await import("react-dom/server");
-  const React = await import("react");
   const mod = await import(modulePath);
+  assert.equal(typeof mod.default, "function", `${modulePath} exports a component`);
   return renderToStaticMarkup(React.createElement(mod.default, props));
 }
 const text = (html) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
@@ -231,8 +241,10 @@ test("the resolved coverage a flow schedules against comes from the server on ev
 // ---------------------------------------------------------------------------------------------
 test("customer Activity renders canonical account state, not dated demo cards", async () => {
   await flowsWorld();
-  const html = await render("../app/mobile-app/page.tsx", {}).catch(() => null);
-  if (!html) return;
+  // Rendered unconditionally: a render failure swallowed here would silently delete every assertion
+  // below it, which is exactly the shape of "test passes, screen is broken" this file exists to stop.
+  const html = await render("../app/mobile-app/page.tsx", {});
+  assert.ok(html.length > 0, "the customer Activity screen renders");
 
   const rendered = text(html);
   // A demo card would name a date that never moves. The screen before data arrives must not show one.

@@ -22,10 +22,20 @@ installWorkersHooks("__HOME_BOOKING_DB__", "__HOME_BOOKING_ENV__");
 
 const calendar = await import("../lib/grooming-booking-calendar.ts");
 
+/*
+ * react and react-dom/server are imported BEFORE any .tsx module, and that order is load-bearing.
+ * The transpiled component's first import is `react/jsx-runtime`, whose CommonJS development build
+ * does `require("react")` while it initialises. On Node 22.16 (the version CI pins), pulling that in
+ * as the first entry of an ESM graph hands it a react whose `__CLIENT_INTERNALS...` export is not yet
+ * populated, and the first JSX call dies on `recentlyCreatedOwnerStacks` of undefined. Importing
+ * react itself first means it is already fully evaluated and cached by the time jsx-runtime asks.
+ */
+const React = await import("react");
+const { renderToStaticMarkup } = await import("react-dom/server");
+
 async function render(modulePath, props) {
-  const { renderToStaticMarkup } = await import("react-dom/server");
-  const React = await import("react");
   const mod = await import(modulePath);
+  assert.equal(typeof mod.default, "function", `${modulePath} exports a component`);
   return renderToStaticMarkup(React.createElement(mod.default, props));
 }
 const text = (html) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
