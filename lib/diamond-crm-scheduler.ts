@@ -3,6 +3,8 @@ import { syncLeadOpportunityPipeline } from "./crm-pipeline-sync";
 import { refreshLeadScores } from "./crm-lead-scoring-merge";
 import { dispatchEmailOutbox } from "./crm-email-sync";
 import { dispatchReportExportDeliveries, processReportExportJobs, runScheduledReportExports } from "./report-export-runtime";
+import { runOutboundOrchestrationSweep } from "./outbound-sweep";
+import { dispatchOutboundAiQueue } from "./outbound-ai-dispatch";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
@@ -12,6 +14,12 @@ export async function runDiamondCrmScheduledSweep(db: Db, env: Record<string, un
   const asOf = input.asOf ?? Date.now(), actorId = input.actorId || "system:diamond-crm-scheduler";
   const pipeline = await syncLeadOpportunityPipeline(db, { actorId, limit: 500 });
   const scoring = await refreshLeadScores(db, 500);
+  // A cursor window continually walks the full customer base. Each open lead in the current window is
+  // re-scored with PR #515 before routing, so the 40k+ backlog does not depend on the newest-500 refresh.
+  const outboundRouting = await runOutboundOrchestrationSweep(db, { actorId, asOf, batchSize: 50 } as never);
+  // AI execution is a phase of this scheduled sweep and remains fail-closed: canonical voice governance
+  // decides whether any queue item may actually dial.
+  const outboundAi = await dispatchOutboundAiQueue(db, env, { actorId, asOf, limit: 20 });
   const minute = new Date(asOf).getUTCMinutes();
   const forecast = await buildProbabilisticForecast(db, { actorId, persist: minute < 5 });
   const schedules = await runScheduledReportExports(db, { actorId, asOf });
@@ -23,5 +31,5 @@ export async function runDiamondCrmScheduledSweep(db: Db, env: Record<string, un
     const promoted = await db.prepare("UPDATE command_report_runs SET status='generated' WHERE status='uat_queued'").run();
     legacyReportsPromoted = Number(promoted.meta?.changes || 0);
   }
-  return { pipeline, scoring, forecast, schedules, exports, reportDelivery, emailDelivery, legacyReportsPromoted };
+  return { pipeline, scoring, outboundRouting, outboundAi, forecast, schedules, exports, reportDelivery, emailDelivery, legacyReportsPromoted };
 }
