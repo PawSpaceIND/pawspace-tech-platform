@@ -48,6 +48,11 @@ export async function seedFoodOrder(db, sqlite, {
   const governance = await import("../../lib/food-governance.ts");
   await governance.ensureFoodGovernanceTables(db);
   seedFoodPet(sqlite, { petId, customerId, species });
+  // getFoodOpsSnapshot joins canonical_customers for the display name. DDL copied verbatim from
+  // lib/canonical-booking.ts, which owns the table.
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_customers (id TEXT PRIMARY KEY,city_id TEXT NOT NULL,name TEXT NOT NULL,primary_phone TEXT NOT NULL,secondary_phone TEXT,email TEXT,source TEXT NOT NULL DEFAULT 'customer_app',consent_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT OR REPLACE INTO canonical_customers (id,city_id,name,primary_phone,created_at,updated_at) VALUES (?,?,?,?,?,?)")
+    .run(customerId, cityId, "UAT Customer", "+919800000000", Date.now(), Date.now());
 
   const quote = await governance.createFoodQuote(db, {
     sku, quantity, zoneId, paymentMode: "sandbox_deferred", customerId, petIds: [petId],
