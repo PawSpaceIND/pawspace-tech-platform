@@ -13,9 +13,10 @@ import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 //
 // They drive the REAL gateway modules in the REAL order worker/index.ts composes them:
 //
-//   sessionAccess = await authorizePlatformSessionRequest(request, env.DB)   // customer/provider session
+//   inspectionRequest = request.clone()                                    // preserve route body
+//   sessionAccess = await authorizePlatformSessionRequest(inspectionRequest, env.DB)
 //   if (sessionAccess instanceof Response) refuse
-//   access = sessionAccess ?? await authorizeApiRequest(request, env)        // staff header identity
+//   access = sessionAccess ?? await authorizeApiRequest(inspectionRequest, env)
 //   if (access instanceof Response) refuse
 //   -> route handler
 //
@@ -73,11 +74,12 @@ async function throughGateway(request) {
     const { cleanupExpiredReservationLeases } = await import("../lib/scheduling-reservation-leases.ts");
     await cleanupExpiredReservationLeases(env.DB);
   }
+  const inspectionRequest = request.clone();
   const { authorizePlatformSessionRequest } = await import("../lib/session-api-gateway.ts");
   const { authorizeApiRequest } = await import("../lib/api-gateway.ts");
-  const sessionAccess = await authorizePlatformSessionRequest(request, env.DB);
+  const sessionAccess = await authorizePlatformSessionRequest(inspectionRequest, env.DB);
   if (sessionAccess instanceof Response) return { refused: sessionAccess };
-  const access = sessionAccess ?? await authorizeApiRequest(request, env);
+  const access = sessionAccess ?? await authorizeApiRequest(inspectionRequest, env);
   if (access instanceof Response) return { refused: access };
   return { access };
 }
@@ -338,6 +340,7 @@ test("worker/index.ts routes every /api/* request through this same authorizatio
   // The sequence this suite mirrors. If the worker is reordered or a gateway is dropped, this fails.
   assert.match(worker, /url\.pathname\.startsWith\("\/api\/"\)/, "the worker gates on the /api/ prefix");
   assert.match(worker, /cleanupExpiredReservationLeases\(env\.DB\)/, "system-owned lease cleanup runs before request authorization");
+  assert.match(worker, /const inspectionRequest=request\.clone\(\)/, "authorization inspects a clone so route bodies remain unread");
   assert.ok(worker.indexOf("cleanupExpiredReservationLeases(env.DB)") < worker.indexOf("authorizePlatformSessionRequest(inspectionRequest,env.DB)"), "an expired session cannot be refused before its server-owned lease is considered");
   assert.match(worker, /authorizePlatformSessionRequest\(inspectionRequest,\s*env\.DB\)/, "the session gateway runs first");
   assert.match(worker, /sessionAccess\s+instanceof\s+Response\s*\)\s*return\s+sessionAccess/, "a session refusal is returned as-is");
