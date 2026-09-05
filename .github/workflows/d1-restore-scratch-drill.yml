@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - ops/d1-backup-restore-track5
+      - remediation/p0-pilot-gates-b379631
     paths:
       - .github/workflows/d1-restore-scratch-drill.yml
 
