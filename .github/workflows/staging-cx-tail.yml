@@ -1,0 +1,38 @@
+name: Staging CX worker exception
+
+on:
+  push:
+    branches:
+      - hotfix/staging-chat-cx-runtime
+    paths:
+      - .github/workflows/staging-cx-tail.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Tail one failing request
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > /tmp/tail.log
+          npx --yes wrangler@4.92.0 tail pawspace-staging --format pretty > /tmp/tail.log 2>&1 &
+          pid=$!
+          sleep 6
+          curl -sS -o /dev/null 'https://pawspace-staging.karthik-fce.workers.dev/team/customer-experience' || true
+          sleep 6
+          kill "$pid" 2>/dev/null || true
+          sleep 1
+          grep -E -A8 -B3 'exception|Error|error|customer-experience' /tmp/tail.log | head -n 160 || cat /tmp/tail.log | tail -n 120
