@@ -29,7 +29,7 @@ async function openThread(db: Db, customerId: string, leadId?: string | null) {
   return id;
 }
 
-function useCaseFor(row: Row) {
+function outboundVoiceUseCaseFor(row: Row) {
   const lifecycle = text(row.lifecycle_code);
   return ["fresh_lead", "dormant_lead"].includes(lifecycle) ? "lead_qualification" : "sales_pitch";
 }
@@ -107,7 +107,7 @@ export async function runOutboundAiDispatchSweep(db: Db, env: Env, input: { asOf
     try {
       const call = await requestOutboundVoiceCall(db, env, {
         idempotencyKey: `outbound-ai:${text(queue.id)}:${attempt}`,
-        useCase: useCaseFor(queue),
+        useCase: outboundVoiceUseCaseFor(queue),
         phone: text(customer.primary_phone),
         cityId: text(customer.city_id) || "blr",
         customerId: text(queue.customer_id),
