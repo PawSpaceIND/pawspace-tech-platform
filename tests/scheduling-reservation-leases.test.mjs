@@ -204,3 +204,24 @@ test("cleanup never releases capacity behind an existing canonical booking", asy
   assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM provider_work_orders WHERE booking_id=?").get(result.bookingId).n, 1);
   assert.equal(ctx.sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservation_lease_cleanup WHERE group_id=?").get(config.groupId).n, 0);
 });
+
+
+test("a later lease generation for the same group can expire after an earlier cleanup", async (t) => {
+  const ctx = await bareLeaseContext(); t.after(ctx.close);
+  const firstNow = Date.now(), groupId = "GROOM-LEASE-SECOND-GEN", customerId = "CUST-LEASE-SECOND-GEN";
+  const session = await customerSession(ctx, customerId);
+  seedLease(ctx, { groupId, customerId, sessionId: session.sessionId, leaseExpiresAt: firstNow - 1, now: firstNow });
+  assert.deepEqual(await ctx.governance.cleanupExpiredReservationLeases(ctx.db, firstNow), { groups: 1, reservations: 1 });
+
+  const secondNow = firstNow + 60 * 60_000;
+  ctx.sqlite.prepare("UPDATE scheduling_assignment_decisions SET status='assigned',actor_id='ops@pawspace.in',reason='reassigned',updated_at=? WHERE group_id=?").run(secondNow - 1000, groupId);
+  ctx.sqlite.prepare("UPDATE provider_assignment_offers SET status='pending',responded_at=NULL,response_reason=NULL,updated_at=? WHERE group_id=?").run(secondNow - 1000, groupId);
+  ctx.sqlite.prepare("INSERT INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,capacity_units,occurrence_number,care_mode,status,explanation_json,created_at,lease_expires_at,customer_session_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'assigned','{}',?,?,?)")
+    .run(`RES-${groupId}-2`, groupId, "groom_arun", "grooming", "blr", "blr-east", customerId, '["PET-2"]', "2026-11-27T10:00:00.000Z", "206-11-27T12:00:00.000Z", 1, 1, null, secondNow - 1000, secondNow - 1, session.sessionId);
+
+  assert.deepEqual(await ctx.governance.cleanupExpiredReservationLeases(ctx.db, secondNow), { groups: 1, reservations: 1 });
+  assert.equal(ctx.sqlite.prepare("SELECT status FROM scheduling_reservations WHERE id=?").get(`RES-${groupId}-2`).status, "cancelled");
+  assert.deepEqual({ ...ctx.sqlite.prepare("SELECT status,actor_id,reason,updated_at FROM scheduling_assignment_decisions WHERE group_id=?").get(groupId) }, { status: "expired", actor_id: "system:reservation-lease-cleanup", reason: "reservation_lease_expired", updated_at: secondNow });
+  assert.equal(ctx.sqlite.prepare("SELECT status FROM provider_assignment_offers WHERE group_id=?").get(groupId).status, "cancelled");
+  assert.equal(ctx.sqlite.prepare("SELECT released_at FROM scheduling_reservation_lease_cleanup WHERE group_id=?").get(groupId).released_at, secondNow);
+});

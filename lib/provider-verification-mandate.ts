@@ -97,7 +97,7 @@ const DEFAULT_MANDATES: Record<string, string[]> = {
   pet_taxi_driver: ["aadhaar", "address", "police_verification", "selfie_liveness", "pet_handling_induction", "emergency_safety_training", "driving_licence", "vehicle_registration", "vehicle_insurance", "vehicle_fitness_pollution"],
 };
 
-export async function ensureVerificationMandateTables(db: Db) {
+async function ensureVerificationMandateTablesUncached(db: Db) {
   await db.batch([
     db.prepare("CREATE TABLE IF NOT EXISTS provider_category_verification_mandates (category TEXT NOT NULL,verification_type TEXT NOT NULL,required INTEGER NOT NULL DEFAULT 1,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL,PRIMARY KEY(category,verification_type))"),
     db.prepare("CREATE TABLE IF NOT EXISTS provider_verifications (id TEXT PRIMARY KEY,application_id TEXT NOT NULL,category TEXT NOT NULL,verification_type TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',automated INTEGER NOT NULL DEFAULT 0,provider_ref TEXT,detail_json TEXT NOT NULL DEFAULT '{}',updated_by TEXT NOT NULL,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,UNIQUE(application_id,verification_type))"),
@@ -111,7 +111,11 @@ export async function ensureVerificationMandateTables(db: Db) {
    */
   await db.prepare("ALTER TABLE provider_verifications ADD COLUMN expires_at INTEGER").run()
     .catch((error: unknown) => { if (!/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) throw error; });
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_onboarding_provider_updated ON provider_onboarding_applications(provider_id,updated_at DESC)").run().catch((error: unknown) => { if (!/no such table/i.test(error instanceof Error ? error.message : String(error))) throw error; });
 }
+const verificationMandateTablesReady=new WeakSet<Db>();
+const verificationMandateTablesRunning=new WeakMap<Db,Promise<void>>();
+export async function ensureVerificationMandateTables(db: Db) {if(verificationMandateTablesReady.has(db))return;const running=verificationMandateTablesRunning.get(db);if(running)return running;const pending=ensureVerificationMandateTablesUncached(db).then(()=>{verificationMandateTablesReady.add(db);});verificationMandateTablesRunning.set(db,pending);try{await pending;}finally{if(verificationMandateTablesRunning.get(db)===pending)verificationMandateTablesRunning.delete(db);}}
 
 /** The statuses that mean a check is NOT currently satisfied. `revoked` is a decision, not an absence. */
 export const INVALID_VERIFICATION_STATUSES = ["pending", "not_started", "failed", "rejected", "revoked", "manual_review", "expired"];

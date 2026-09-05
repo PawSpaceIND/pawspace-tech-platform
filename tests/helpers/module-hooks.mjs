@@ -75,6 +75,28 @@ function splitSpecifierSuffix(specifier) {
   };
 }
 
+function installLoaderFallback(workersUrl, registerHooksError = null) {
+  if (typeof nodeModule.register !== "function") {
+    if (registerHooksError) throw registerHooksError;
+    throw new Error("PawSpace test harness requires node:module register() when registerHooks() is unavailable or bypassed");
+  }
+
+  // register() runs hooks in a separate thread. Give that thread a real file URL so its bare imports
+  // resolve against this repository rather than a data: URL with no filesystem package scope/base path.
+  // The worker shim remains per registration by encoding it in the file URL's query string.
+  const loaderUrl = new URL("./module-loader-hook.mjs", import.meta.url);
+  loaderUrl.searchParams.set("workersUrl", workersUrl);
+  try {
+    nodeModule.register(loaderUrl, import.meta.url);
+  } catch (error) {
+    if (registerHooksError) {
+      throw new AggregateError([registerHooksError, error], "PawSpace test harness could not register either Node module hook path");
+    }
+    throw error;
+  }
+  return workersUrl;
+}
+
 export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
   process.env.NODE_ENV = "test";
   process.env.PAWSPACE_LOCAL_PREVIEW = "on";
@@ -86,46 +108,46 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
   const shim = `export const env = new Proxy({}, { get: (_, key) => { const als = globalThis[${JSON.stringify(WORKERS_DB_ALS_KEY)}]; const scoped = als && typeof als.getStore === "function" ? als.getStore() : undefined; if (key === "DB" && scoped) return scoped; return key === "DB" ? globalThis[${JSON.stringify(globalName)}] : (globalThis[${JSON.stringify(envName)}] ?? {})[key]; } });`;
   const workersUrl = `data:text/javascript,${encodeURIComponent(shim)}`;
 
-  // PAWSPACE_FORCE_LOADER_HOOK=1 deliberately exercises the compatibility branch in CI.
+  // PAWSPACE_FORCE_LOADER_HOOK=1 deliberately exercises the compatibility branch in CI. Node 22.15+
+  // can expose registerHooks() even where synchronous hook registration itself is restricted; treat a
+  // registration-time exception as a signal to use the established out-of-thread register() loader.
   const forceLoader = process.env.PAWSPACE_FORCE_LOADER_HOOK === "1";
   if (!forceLoader && typeof nodeModule.registerHooks === "function") {
-    nodeModule.registerHooks({
-      resolve(specifier, context, nextResolve) {
-        if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
-        try {
-          return nextResolve(specifier, context);
-        } catch (error) {
-          const { pathname, suffix } = splitSpecifierSuffix(specifier);
-          // .ts first, because that is what every lib module means by an extensionless import; .tsx only
-          // when .ts is not there either, so a component's sibling import resolves too. Keep any query/hash
-          // suffix after the extension so Node receives ./module.ts?register rather than ./module?register.ts.
-          if (pathname.startsWith(".") && !pathname.endsWith(".ts") && !pathname.endsWith(".tsx")) {
-            try { return nextResolve(`${pathname}.ts${suffix}`, context); }
-            catch { return nextResolve(`${pathname}.tsx${suffix}`, context); }
+    try {
+      nodeModule.registerHooks({
+        resolve(specifier, context, nextResolve) {
+          if (specifier === "cloudflare:workers") return { url: workersUrl, shortCircuit: true };
+          try {
+            return nextResolve(specifier, context);
+          } catch (error) {
+            const { pathname, suffix } = splitSpecifierSuffix(specifier);
+            // .ts first, because that is what every lib module means by an extensionless import; .tsx only
+            // when .ts is not there either, so a component's sibling import resolves too. Keep any query/hash
+            // suffix after the extension so Node receives ./module.ts?register rather than ./module?register.ts.
+            if (pathname.startsWith(".") && !pathname.endsWith(".ts") && !pathname.endsWith(".tsx")) {
+              try { return nextResolve(`${pathname}.ts${suffix}`, context); }
+              catch { return nextResolve(`${pathname}.tsx${suffix}`, context); }
+            }
+            // A bare specifier into a package with no exports map - `next/link` is the one that matters -
+            // resolves only with its extension. Reached ONLY after the real resolution has already failed,
+            // so it can never change an import that works.
+            if (!pathname.startsWith(".") && !pathname.endsWith(".js")) return nextResolve(`${pathname}.js${suffix}`, context);
+            throw error;
           }
-          // A bare specifier into a package with no exports map - `next/link` is the one that matters -
-          // resolves only with its extension. Reached ONLY after the real resolution has already failed,
-          // so it can never change an import that works.
-          if (!pathname.startsWith(".") && !pathname.endsWith(".js")) return nextResolve(`${pathname}.js${suffix}`, context);
-          throw error;
-        }
-      },
-      load(url, context, nextLoad) {
-        const { pathname, parsed } = normalizedFileUrl(url);
-        if (pathname.endsWith(".css")) return { format: "module", source: cssStub(), shortCircuit: true };
-        if (!pathname.endsWith(".tsx")) return nextLoad(url, context);
-        const path = fileURLToPath(parsed);
-        return { format: "module", source: transpileTsx(readFileSync(path, "utf8"), path), shortCircuit: true };
-      },
-    });
-    return workersUrl;
+        },
+        load(url, context, nextLoad) {
+          const { pathname, parsed } = normalizedFileUrl(url);
+          if (pathname.endsWith(".css")) return { format: "module", source: cssStub(), shortCircuit: true };
+          if (!pathname.endsWith(".tsx")) return nextLoad(url, context);
+          const path = fileURLToPath(parsed);
+          return { format: "module", source: transpileTsx(readFileSync(path, "utf8"), path), shortCircuit: true };
+        },
+      });
+      return workersUrl;
+    } catch (error) {
+      return installLoaderFallback(workersUrl, error);
+    }
   }
 
-  // register() runs hooks in a separate thread. Give that thread a real file URL so its bare imports
-  // resolve against this repository rather than a data: URL with no filesystem package scope/base path.
-  // The worker shim remains per registration by encoding it in the file URL's query string.
-  const loaderUrl = new URL("./module-loader-hook.mjs", import.meta.url);
-  loaderUrl.searchParams.set("workersUrl", workersUrl);
-  nodeModule.register(loaderUrl, import.meta.url);
-  return workersUrl;
+  return installLoaderFallback(workersUrl);
 }

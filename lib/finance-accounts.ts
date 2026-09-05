@@ -64,12 +64,41 @@ const COLLECTION_COLUMNS: Array<[string, string]> = [
   ["verification_status", "text"], ["verified_by", "text"], ["verified_at", "integer"],
 ];
 
-export async function ensureFinanceJournalTable(db: Db) {
+const FINANCE_JOURNAL_BASE_COLUMNS=["id","entry_date","source_type","source_id","account_code","debit","credit","narration","period_code","posted","created_at"] as const;
+const financeJournalReady=new WeakSet<Db>();
+const financeJournalEnsuring=new WeakMap<Db,Promise<void>>();
+
+async function financeJournalSchemaReady(db:Db){
+  try{
+    const info=await db.prepare("PRAGMA table_info(finance_journal_entries)").all<Row>();
+    const names=new Set(info.results.map(row=>String(row.name??"")));
+    if(!names.size)return false;
+    return FINANCE_JOURNAL_BASE_COLUMNS.every(column=>names.has(column))&&COLLECTION_COLUMNS.every(([column])=>names.has(column));
+  }catch{return false;}
+}
+
+async function ensureFinanceJournalTableUncached(db:Db){
+  // Steady-state requests must not replay schema writes. Under 100-way booking concurrency the old
+  // CREATE + fourteen ALTER attempts serialized D1 even though every column already existed, and
+  // postCollectionEvent called this path twice per request. A single read-only PRAGMA proves the
+  // deployed schema is complete; DDL is reserved for an actually missing/old schema.
+  if(await financeJournalSchemaReady(db))return;
   await db.prepare("CREATE TABLE IF NOT EXISTS finance_journal_entries (id text PRIMARY KEY NOT NULL,entry_date text NOT NULL,source_type text NOT NULL,source_id text NOT NULL,account_code text NOT NULL,cost_centre text,vertical text,debit real DEFAULT 0 NOT NULL,credit real DEFAULT 0 NOT NULL,narration text NOT NULL,period_code text NOT NULL,posted integer DEFAULT 0 NOT NULL,created_at integer NOT NULL)").run();
   for (const [column, type] of COLLECTION_COLUMNS) {
     await db.prepare(`ALTER TABLE finance_journal_entries ADD COLUMN ${column} ${type}`).run()
       .catch((error: unknown) => { if (!/duplicate column name/i.test(error instanceof Error ? error.message : String(error))) throw error; });
   }
+}
+
+export async function ensureFinanceJournalTable(db:Db){
+  if(financeJournalReady.has(db))return;
+  const inFlight=financeJournalEnsuring.get(db);
+  if(inFlight)return inFlight;
+  const work=ensureFinanceJournalTableUncached(db)
+    .then(()=>{financeJournalReady.add(db);})
+    .finally(()=>{financeJournalEnsuring.delete(db);});
+  financeJournalEnsuring.set(db,work);
+  return work;
 }
 
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -100,18 +129,25 @@ export async function postJournal(db: Db, input: { groupKey: string; entryDate: 
   if (datedPeriod !== input.periodCode) throw new Error(`period_mismatch: this journal is dated ${datedPeriod}; it cannot be posted as ${input.periodCode}`);
   // A missing finance_close_periods table means no period has ever been closed, so there is nothing to
   // violate - but a row that says 'locked' is decisive.
-  const period = await db.prepare("SELECT status FROM finance_close_periods WHERE period_code=?").bind(datedPeriod).first<Row>().catch(() => null);
-  if (String(period?.status ?? "") === "locked") throw new Error(`period_locked: ${datedPeriod} is closed and locked; post corrections in the next open period`);
   const journalGroup = `JRN-${input.groupKey}`;
+  const[period,existing]=await Promise.all([
+    db.prepare("SELECT status FROM finance_close_periods WHERE period_code=?").bind(datedPeriod).first<Row>().catch(() => null),
+    db.prepare("SELECT id FROM finance_journal_entries WHERE id=?").bind(`${journalGroup}-1`).first<Row>(),
+  ]);
+  if (String(period?.status ?? "") === "locked") throw new Error(`period_locked: ${datedPeriod} is closed and locked; post corrections in the next open period`);
   // every group always writes its first line as `${journalGroup}-1`, so an exact hit means already posted
-  const existing = await db.prepare("SELECT id FROM finance_journal_entries WHERE id=?").bind(`${journalGroup}-1`).first<Row>();
   if (existing) return { journalGroup, posted: false, duplicatePrevented: true };
   const now = Date.now();
   const meta = input.metadata ?? {};
-  await db.batch(lines.map((l, i) => db.prepare("INSERT INTO finance_journal_entries (id,entry_date,source_type,source_id,account_code,cost_centre,vertical,debit,credit,narration,period_code,posted,created_at,booking_id,customer_id,city_id,service_code,payment_id,settlement_id,payment_method,tax_amount,gateway_fee,collector_id,reversal_reference,transaction_at,verification_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+  // The read above is a fast replay path, not the concurrency boundary. Two checkers can both observe
+  // no row before either writes, so the insert itself must be idempotent. D1 batches serialize the
+  // complete journal; INSERT OR IGNORE makes the losing batch a clean duplicate instead of surfacing a
+  // UNIQUE violation from finance_journal_entries.id.
+  const results=await db.batch(lines.map((l, i) => db.prepare("INSERT OR IGNORE INTO finance_journal_entries (id,entry_date,source_type,source_id,account_code,cost_centre,vertical,debit,credit,narration,period_code,posted,created_at,booking_id,customer_id,city_id,service_code,payment_id,settlement_id,payment_method,tax_amount,gateway_fee,collector_id,reversal_reference,transaction_at,verification_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
     .bind(`${journalGroup}-${i + 1}`, input.entryDate, input.sourceType, input.sourceId, l.accountCode, l.costCentre ?? null, l.vertical ?? null, round2(Number(l.debit) || 0), round2(Number(l.credit) || 0), input.narration, input.periodCode, now,
       meta.bookingId ?? null, meta.customerId ?? null, meta.cityId ?? null, meta.serviceCode ?? null, meta.paymentId ?? null, meta.settlementId ?? null, meta.paymentMethod ?? null,
       meta.taxAmount ?? null, meta.gatewayFee ?? null, meta.collectorId ?? null, meta.reversalReference ?? null, meta.transactionAt ?? null, meta.verificationStatus ?? null)));
+  if(Number(results[0]?.meta?.changes||0)===0)return { journalGroup, posted: false, duplicatePrevented: true };
   return { journalGroup, posted: true, lines: lines.length };
 }
 

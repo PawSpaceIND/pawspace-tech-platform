@@ -41,26 +41,21 @@ const postQuote = async (body, { origin } = {}) => {
 
 // ---------------------------------------------------------------------------------------------
 test("Pet Taxi Gate 1 extends the shared scheduler and governed provider model", async () => {
-  // The scheduler's own catalogue entry, read from the exported object rather than from its source.
   const { scheduleRules } = await import("../backend/src/scheduling.ts");
   assert.equal(scheduleRules.pet_taxi.label, "Pet Taxi");
   assert.equal(scheduleRules.pet_taxi.durationMinutes, 45, "a changed taxi slot length must fail this test, not just re-word a string");
   assert.equal(scheduleRules.pet_taxi.maxOccurrences, 1, "Gate 1 is one canonical trip per reservation");
   assert.equal(scheduleRules.pet_taxi.capacityMode, "appointment", "a taxi trip is an appointment, not an overnight or care-mode hold");
 
-  // The governed roster, seeded and read back through the real capacity module.
   const { db } = taxiWorld();
   const capacity = await import("../lib/provider-capacity-governance.ts");
   await capacity.ensureProviderCapacityTables(db);
   await capacity.seedProviderCapacityDefaults(db);
-  // (db, cityId, zoneId, serviceCode) — the seeded taxi drivers are blr / blr-east.
   const drivers = await capacity.loadGovernedProviders(db, "blr", "blr-east", "pet_taxi");
   const ids = drivers.map((provider) => String(provider.id ?? provider.provider_id)).sort();
   for (const expected of ["taxi_imran", "taxi_meera", "taxi_rahul"]) {
     assert.ok(ids.includes(expected), `${expected} must be a governed pet_taxi provider, found: ${ids.join(", ")}`);
   }
-  // Every driver returned for pet_taxi must actually serve pet_taxi — the guard the source-text
-  // version could only assert as the literal `services:["pet_taxi"]`.
   for (const driver of drivers) {
     const services = typeof driver.services === "string" ? JSON.parse(driver.services) : driver.services;
     assert.ok(Array.isArray(services) && services.includes("pet_taxi"), `${driver.id} was returned for pet_taxi without serving it`);
@@ -70,15 +65,12 @@ test("Pet Taxi Gate 1 extends the shared scheduler and governed provider model",
 // ---------------------------------------------------------------------------------------------
 test("Pet Taxi commercial truth is server-owned UAT route-class truth", async () => {
   const { db } = taxiWorld();
-
-  // The route classes come from the module's own seed, not from the request.
   const routes = await governance.listTaxiRouteClasses(db);
   assert.equal(routes.length, 3, "three seeded UAT route classes");
   assert.deepEqual(routes.map((route) => String(route.route_code)),
     ["taxi-blr-east-short", "taxi-blr-east-medium", "taxi-blr-east-long"],
     "ordered by synthetic distance, which is what the customer picker relies on");
 
-  // The public envelope, from the real handler.
   const listed = await commercialRoute.GET(new Request(taxiUrl("/api/taxi-commercial")));
   const listedBody = await listed.json();
   assert.equal(listed.status, 200);
@@ -88,21 +80,17 @@ test("Pet Taxi commercial truth is server-owned UAT route-class truth", async ()
   assert.equal(listedBody.data.liveMoney, false, "nor live money");
   assert.equal(listed.headers.get("cache-control"), "no-store", "a priced quote surface must not be cached");
 
-  // A quote is priced from the route class, not from anything the caller sends.
   const quote = await governance.createTaxiQuote(db, validQuoteInput());
   assert.equal(quote.totalAmount, 449, "the short route's seeded amount");
   assert.equal(quote.amountDueNow, 0, "Gate 1 collects nothing up front");
   assert.equal(quote.paymentMode, "sandbox_deferred");
   assert.equal(quote.routeSource, "uat_route_class");
   assert.equal(quote.productionMapsVerified, false);
-  // Read back through the same D1 surface the module wrote with, so this cannot pass against a table
-  // the production path never touched.
   const stored = await db.prepare("SELECT total_amount,amount_due_now,status FROM taxi_commercial_quotes WHERE id=?").bind(quote.quoteId).first();
   assert.equal(Number(stored.total_amount), 449, "and the stored quote agrees with what was returned");
   assert.equal(Number(stored.amount_due_now), 0);
   assert.equal(String(stored.status), "open");
 
-  // The three commercial policies Gate 1 states, each as an actual refusal.
   const live = await refusal(governance.createTaxiQuote(db, validQuoteInput({ paymentMode: "live" })));
   assert.equal(live?.status, 409, "sandbox-deferred UAT payment only");
   assert.match(live.message, /sandbox-deferred UAT payment only/);
@@ -133,38 +121,31 @@ test("Pet Taxi quote binds one canonical trip reservation and normalizes timesta
     paymentMode: "sandbox_deferred", reservations: [reservation()], ...overrides,
   });
 
-  // Non-vacuity FIRST: the happy path must actually bind, or every refusal below proves nothing.
   const governed = await governance.governTaxiBooking(db, bookingInput());
   assert.equal(governed.quoteId, quote.quoteId);
   assert.equal(governed.providerId, "taxi_rahul");
   assert.equal(governed.catalogueVersion, "taxi-v1");
   assert.equal(governed.productionMapsVerified, false);
 
-  // EXACTLY one reservation — zero and two are both refused.
   for (const reservations of [[], [reservation(), reservation({ id: "RES-2" })]]) {
     const many = await refusal(governance.governTaxiBooking(db, bookingInput({ reservations })));
     assert.equal(many?.status, 409, `${reservations.length} reservations must be refused`);
     assert.match(many.message, /exactly one canonical trip reservation/);
   }
 
-  // A reservation for a different service is not a taxi trip, whatever it is labelled.
   const wrongService = await refusal(governance.governTaxiBooking(db, bookingInput({ reservations: [reservation({ service_code: "grooming" })] })));
   assert.equal(wrongService?.status, 409);
   assert.match(wrongService.message, /not a Pet Taxi reservation/);
 
-  // A reservation whose window does not match the quote is refused.
   const drifted = await refusal(governance.governTaxiBooking(db, bookingInput({
     reservations: [reservation({ scheduled_start: futurePickup(600) })],
   })));
   assert.equal(drifted?.status, 409);
   assert.match(drifted.message, /reservation does not match the canonical quote/);
 
-  // TIMESTAMP NORMALISATION, which is the half the source-text test could not reach: the same instant
-  // written with a +05:30 offset instead of Z must be ACCEPTED. `sameInstant` is what makes that true,
-  // and a string comparison in its place would reject a correct booking.
-  const offsetForm = new Date(quote.scheduledStart).toLocaleString("sv-SE", { timeZone: "Asia/Kolkata" }).replace(" ", "T") + "+05:30";
-  assert.notEqual(offsetForm, quote.scheduledStart, "the two spellings really do differ as strings");
   const secondQuote = await governance.createTaxiQuote(db, validQuoteInput({ originLabel: "Koramangala pickup point" }));
+  const offsetForm = new Date(secondQuote.scheduledStart).toLocaleString("sv-SE", { timeZone: "Asia/Kolkata" }).replace(" ", "T") + "+05:30";
+  assert.notEqual(offsetForm, secondQuote.scheduledStart, "the two spellings really do differ as strings");
   const normalised = await governance.governTaxiBooking(db, {
     ...bookingInput(), quoteId: secondQuote.quoteId, originLabel: secondQuote.originLabel,
     scheduledStart: secondQuote.scheduledStart, scheduledEnd: secondQuote.scheduledEnd,
@@ -187,28 +168,24 @@ test("Pet Taxi booking creates one canonical bundle and one trip row", async () 
   };
 
   await governance.governTaxiBooking(db, bookingInput);
-  // ONE booking per quote: the link table is the enforcement, so claim the quote and try again.
   await db.prepare("INSERT INTO taxi_booking_quote_links (quote_id,booking_id,created_at) VALUES (?,?,?)")
     .bind(quote.quoteId, "BKG-TAXI-1", Date.now()).run();
   const relink = await refusal(governance.governTaxiBooking(db, bookingInput));
   assert.equal(relink?.status, 409, "a quote already linked to a booking cannot be spent twice");
   assert.match(relink.message, /already linked to a booking/);
 
-  // A used quote cannot be re-governed even without a link row.
   const spent = await governance.createTaxiQuote(db, validQuoteInput({ originLabel: "HSR pickup point" }));
   await db.prepare("UPDATE taxi_commercial_quotes SET status='used' WHERE id=?").bind(spent.quoteId).run();
   const used = await refusal(governance.governTaxiBooking(db, { ...bookingInput, quoteId: spent.quoteId, originLabel: spent.originLabel, scheduledStart: spent.scheduledStart, scheduledEnd: spent.scheduledEnd, submittedTotal: spent.totalAmount, reservations: [{ ...reservations[0], scheduled_start: spent.scheduledStart, scheduled_end: spent.scheduledEnd }] }));
   assert.equal(used?.status, 409);
   assert.match(used.message, /already been used/);
 
-  // An expired quote is refused rather than honoured at a stale price.
   const stale = await governance.createTaxiQuote(db, validQuoteInput({ originLabel: "Jayanagar pickup point" }));
   await db.prepare("UPDATE taxi_commercial_quotes SET expires_at=? WHERE id=?").bind(Date.now() - 1, stale.quoteId).run();
   const expired = await refusal(governance.governTaxiBooking(db, { ...bookingInput, quoteId: stale.quoteId, originLabel: stale.originLabel, scheduledStart: stale.scheduledStart, scheduledEnd: stale.scheduledEnd, submittedTotal: stale.totalAmount, reservations: [{ ...reservations[0], scheduled_start: stale.scheduledStart, scheduled_end: stale.scheduledEnd }] }));
   assert.equal(expired?.status, 409);
   assert.match(expired.message, /expired/);
 
-  // And the amount is the SERVER's: a submitted total that differs is refused, not trusted.
   const fresh = await governance.createTaxiQuote(db, validQuoteInput({ originLabel: "Hebbal pickup point" }));
   const underpaid = await refusal(governance.governTaxiBooking(db, { ...bookingInput, quoteId: fresh.quoteId, originLabel: fresh.originLabel, scheduledStart: fresh.scheduledStart, scheduledEnd: fresh.scheduledEnd, submittedTotal: 1, reservations: [{ ...reservations[0], scheduled_start: fresh.scheduledStart, scheduled_end: fresh.scheduledEnd }] }));
   assert.equal(underpaid?.status, 409, "a client-supplied price must never win");
@@ -217,8 +194,6 @@ test("Pet Taxi booking creates one canonical bundle and one trip row", async () 
 
 // ---------------------------------------------------------------------------------------------
 test("Pet Taxi customer UI uses route class quote scheduler and canonical booking", async () => {
-  // Executed against the real quote surface rather than the page source: what the customer screen can
-  // possibly show is bounded by what this endpoint returns, and these are the fields it binds to.
   const { db } = taxiWorld();
   await governance.listTaxiRouteClasses(db);
   const created = await postQuote(validQuoteInput());
@@ -230,7 +205,6 @@ test("Pet Taxi customer UI uses route class quote scheduler and canonical bookin
   assert.equal(created.body.data.liveMoney, false);
   assert.equal(created.body.data.productionMapsVerified, false, "the page's \"not a live Maps distance/ETA\" disclosure must match the server");
 
-  // The page posts same-origin; a cross-origin write is refused before any quote is created.
   const before = (await db.prepare("SELECT COUNT(*) AS c FROM taxi_commercial_quotes").first()).c;
   const crossOrigin = await postQuote(validQuoteInput(), { origin: "https://evil.example" });
   assert.equal(crossOrigin.status, 403, `cross-origin Pet Taxi quote must be blocked: ${JSON.stringify(crossOrigin).slice(0, 200)}`);
@@ -240,8 +214,6 @@ test("Pet Taxi customer UI uses route class quote scheduler and canonical bookin
 
 // ---------------------------------------------------------------------------------------------
 test("Pet Taxi Gate 1 gateway keeps public quote separate from authenticated booking", async () => {
-  // The real gateway resolver, not its source. Posted to a non-preview origin, because on localhost
-  // the preview branch returns a ["*"] actor and this distinction would be unobservable.
   const { db } = taxiWorld();
   const gateway = await import("../lib/api-gateway.ts");
   const env = { DB: db };
@@ -263,20 +235,16 @@ test("Pet Taxi Gate 1 remains UAT honest about Maps and payment", async () => {
   const { db } = taxiWorld();
   const quote = await governance.createTaxiQuote(db, validQuoteInput());
 
-  // The honesty flags are values the server computes, so they are asserted as values.
   assert.equal(quote.routeSource, "uat_route_class", "the distance is a route class, never a live Maps lookup");
   assert.equal(quote.productionMapsVerified, false);
   assert.equal(quote.amountDueNow, 0, "no money is taken at quote time");
   assert.equal(quote.paymentMode, "sandbox_deferred");
 
-  // The synthetic distance is the route class's, not a computed geodesic — so it cannot silently
-  // become a real Maps number without this failing.
   const routes = await governance.listTaxiRouteClasses(db);
   const short = routes.find((route) => String(route.route_code) === "taxi-blr-east-short");
   assert.equal(quote.syntheticDistanceKm, Number(short.synthetic_distance_km));
   assert.equal(quote.estimatedDurationMinutes, Number(short.estimated_duration_minutes));
 
-  // And the quote window is derived from the route class duration, not from the caller.
   const spanMinutes = (new Date(quote.scheduledEnd) - new Date(quote.scheduledStart)) / 60_000;
   assert.equal(spanMinutes, Number(short.estimated_duration_minutes), "the drop-off time is the server's arithmetic");
 });

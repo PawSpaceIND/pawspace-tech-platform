@@ -1,22 +1,24 @@
 type Db=D1Database;
 type Row=Record<string,unknown>;
 
-// Home-base reads are fanned out for the provider shortlist. The local D1 harness implements each
-// db.batch() as a real SQLite transaction, so concurrent currentHomeBase() calls must not each start
-// their own setup transaction on the same connection. Share one in-flight setup and run the idempotent
-// DDL statements directly; callers already execute against the active database connection.
-const homeBaseTablesReady=new WeakMap<Db,Promise<void>>();
-
+// Home-base reads are fanned out for the provider shortlist. Steady-state matching must not issue
+// idempotent schema writes: under concurrent D1 traffic those writes serialize otherwise independent
+// assignments. The probe is schema-only; provider location data is still read fresh for every match.
+const homeBaseTablesReady=new WeakSet<Db>();
+const homeBaseTablesRunning=new WeakMap<Db,Promise<void>>();
+async function homeBaseSchemaReady(db:Db){
+ try{const rows=await db.prepare("SELECT name FROM sqlite_master WHERE name IN ('provider_home_base','idx_provider_home_base_provider')").all<Row>();return new Set(rows.results.map(row=>String(row.name))).size===2;}catch{return false;}
+}
 export async function ensureProviderHomeBaseTables(db:Db){
- let ready=homeBaseTablesReady.get(db);
- if(!ready){
-  ready=(async()=>{
-   await db.prepare("CREATE TABLE IF NOT EXISTS provider_home_base (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,address TEXT NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,effective_from INTEGER NOT NULL,effective_until INTEGER,reason TEXT NOT NULL,updated_by TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
-   await db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_home_base_provider ON provider_home_base(provider_id,effective_from)").run();
-  })();
-  homeBaseTablesReady.set(db,ready);
- }
- try{await ready;}catch(error){homeBaseTablesReady.delete(db);throw error;}
+ if(homeBaseTablesReady.has(db))return;
+ const running=homeBaseTablesRunning.get(db);if(running)return running;
+ const pending=(async()=>{
+  if(await homeBaseSchemaReady(db))return;
+  await db.prepare("CREATE TABLE IF NOT EXISTS provider_home_base (id TEXT PRIMARY KEY,provider_id TEXT NOT NULL,address TEXT NOT NULL,latitude REAL NOT NULL,longitude REAL NOT NULL,effective_from INTEGER NOT NULL,effective_until INTEGER,reason TEXT NOT NULL,updated_by TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
+  await db.prepare("CREATE INDEX IF NOT EXISTS idx_provider_home_base_provider ON provider_home_base(provider_id,effective_from)").run();
+ })().then(()=>{homeBaseTablesReady.add(db);});
+ homeBaseTablesRunning.set(db,pending);
+ try{await pending;}finally{if(homeBaseTablesRunning.get(db)===pending)homeBaseTablesRunning.delete(db);}
 }
 
 function text(v:unknown){return String(v??"").trim();}
