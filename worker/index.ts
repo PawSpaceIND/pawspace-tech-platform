@@ -61,7 +61,7 @@ const worker = {
       if(request.method==="POST"&&(url.pathname==="/api/uat-scheduling"||url.pathname==="/api/canonical-bookings"))await cleanupExpiredReservationLeases(env.DB);
       const inspectionRequest=request.clone();
       const sessionAccess=await authorizePlatformSessionRequest(inspectionRequest,env.DB);
-      if(sessionAccess instanceof Response&&!isProviderWebhook)return sessionAccess;
+      if(sessionAccess instanceof Response)return sessionAccess;
       const access=isProviderWebhook
         ?{actor:{email:isMetaWebhook?"meta-webhook@provider":"email-webhook@provider",roleCode:"provider_webhook",permissions:[],preview:false},permission:null}
         :sessionAccess??await authorizeApiRequest(inspectionRequest, env);
