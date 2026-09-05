@@ -32,7 +32,7 @@ test("Boarding Gate 4 executes private opaque media-grant creation", async () =>
   assert.equal(result.upload.mode, "sandbox_contract");
   assert.equal(result.proofReady, false);
   const asset = sqlite.prepare("SELECT booking_id,provider_id,scan_status,access_status,synthetic FROM service_media_assets WHERE id=?").get(result.mediaId);
-  assert.deepEqual(asset, { booking_id: "BK-BG4", provider_id: "host_maya_rohan", scan_status: "pending", access_status: "pending_upload", synthetic: 0 });
+  assert.deepEqual({ ...asset }, { booking_id: "BK-BG4", provider_id: "host_maya_rohan", scan_status: "pending", access_status: "pending_upload", synthetic: 0 });
   const grant = sqlite.prepare("SELECT status,expires_at FROM boarding_media_upload_grants WHERE media_id=?").get(result.mediaId);
   assert.equal(grant.status, "issued");
   assert.ok(Number(grant.expires_at) > Date.now());
@@ -45,6 +45,6 @@ test("Boarding Gate 4 rejects unsupported media before persisting an asset", asy
     purpose: "stay_update", mimeType: "image/gif", sizeBytes: 5000, sha256: "b".repeat(64),
   }));
   assert.equal(failure.status, 400);
-  assert.match(await failure.text(), /JPEG, PNG and WebP/i);
+  assert.match(await failure.text(), /JPEG, PNG, WebP and MP4/i);
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM service_media_assets WHERE booking_id='BK-BG4'").get().n, 0);
 });
