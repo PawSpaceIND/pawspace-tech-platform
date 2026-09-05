@@ -5,6 +5,7 @@ export type D1WriteRetryOptions={
   attempts?:number;
   baseDelayMs?:number;
   maxDelayMs?:number;
+  maxTotalDelayMs?:number;
   sleep?:(delayMs:number)=>Promise<void>;
   random?:()=>number;
 };
@@ -31,18 +32,24 @@ export function isSqliteBusyError(error:unknown){return SQLITE_BUSY_PATTERN.test
 export function isSqliteConstraintError(error:unknown){return SQLITE_CONSTRAINT_PATTERN.test(errorDetails(error));}
 
 export async function withD1WriteRetry<T>(work:()=>Promise<T>,options:D1WriteRetryOptions={}):Promise<T>{
-  const attempts=Math.max(1,Math.floor(options.attempts??6));
-  const baseDelayMs=Math.max(1,Math.floor(options.baseDelayMs??10));
-  const maxDelayMs=Math.max(baseDelayMs,Math.floor(options.maxDelayMs??160));
+  const attempts=Math.min(3,Math.max(1,Math.floor(options.attempts??3)));
+  const baseDelayMs=Math.min(50,Math.max(1,Math.floor(options.baseDelayMs??5)));
+  const maxDelayMs=Math.min(50,Math.max(baseDelayMs,Math.floor(options.maxDelayMs??40)));
+  const maxTotalDelayMs=Math.min(100,Math.max(0,Math.floor(options.maxTotalDelayMs??75)));
   const sleep=options.sleep??((delayMs:number)=>new Promise<void>(resolve=>setTimeout(resolve,delayMs)));
   const random=options.random??Math.random;
+  let totalDelayMs=0;
   for(let attempt=0;attempt<attempts;attempt+=1){
     try{return await work();}
     catch(error){
       if(!isSqliteBusyError(error)||attempt===attempts-1)throw error;
       const exponential=Math.min(maxDelayMs,baseDelayMs*(2**attempt));
-      const jitter=Math.floor(Math.max(0,Math.min(0.999999,random()))*baseDelayMs);
-      await sleep(exponential+jitter);
+      const floor=Math.max(1,Math.ceil(exponential/2));
+      const unit=Math.max(0,Math.min(0.999999,random()));
+      const delay=Math.min(maxDelayMs,floor+Math.floor(unit*(exponential-floor+1)));
+      if(totalDelayMs+delay>maxTotalDelayMs)throw error;
+      totalDelayMs+=delay;
+      await sleep(delay);
     }
   }
   throw new Error("D1 write retry loop exhausted unexpectedly");

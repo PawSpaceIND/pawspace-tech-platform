@@ -97,13 +97,30 @@ export async function resolveCollectionLedgerPolicy(db:Db,scope:{serviceCode?:st
 }
 
 const ledgerReady=new WeakSet<Db>();
-export async function ensureCollectionLedgerTables(db:Db){
-  if(ledgerReady.has(db))return;
+const ledgerEnsuring=new WeakMap<Db,Promise<void>>();
+async function collectionLedgerSchemaReady(db:Db){
+  try{
+    const rows=await db.prepare("SELECT name FROM sqlite_master WHERE name IN ('collection_ledger_postings','idx_collection_postings_period')").all<Row>();
+    const names=new Set(rows.results.map(row=>text(row.name)));
+    return names.has("collection_ledger_postings")&&names.has("idx_collection_postings_period");
+  }catch{return false;}
+}
+async function ensureCollectionLedgerTablesUncached(db:Db){
   const{ensureFinanceJournalTable}=await import("./finance-accounts");
-  await ensureFinanceJournalTable(db);
+  const[,ledgerSchemaReady]=await Promise.all([ensureFinanceJournalTable(db),collectionLedgerSchemaReady(db)]);
+  if(ledgerSchemaReady)return;
   await db.prepare("CREATE TABLE IF NOT EXISTS collection_ledger_postings (group_key TEXT PRIMARY KEY,event TEXT NOT NULL,payment_id TEXT,settlement_id TEXT,reversal_reference TEXT,amount REAL NOT NULL,period_code TEXT NOT NULL,manual_entry INTEGER NOT NULL DEFAULT 0,verification_status TEXT NOT NULL DEFAULT 'posted',verified_by TEXT,verified_at INTEGER,verification_reason TEXT,created_by TEXT NOT NULL,created_at INTEGER NOT NULL)").run();
   await db.prepare("CREATE INDEX IF NOT EXISTS idx_collection_postings_period ON collection_ledger_postings(period_code,verification_status)").run();
-  ledgerReady.add(db);
+}
+export async function ensureCollectionLedgerTables(db:Db){
+  if(ledgerReady.has(db))return;
+  const inFlight=ledgerEnsuring.get(db);
+  if(inFlight)return inFlight;
+  const work=ensureCollectionLedgerTablesUncached(db)
+    .then(()=>{ledgerReady.add(db);})
+    .finally(()=>{ledgerEnsuring.delete(db);});
+  ledgerEnsuring.set(db,work);
+  return work;
 }
 
 export type CollectionEventInput={
@@ -135,8 +152,7 @@ const groupKeyFor=(input:CollectionEventInput)=>
   `COLL-${input.event}-${text(input.settlementId)||text(input.refundReference)||text(input.paymentId)}`;
 
 export async function postCollectionEvent(db:Db,input:CollectionEventInput){
-  await ensureCollectionLedgerTables(db);
-  const policy=await resolveCollectionLedgerPolicy(db,{serviceCode:input.serviceCode,cityId:input.cityId});
+  const[,policy]=await Promise.all([ensureCollectionLedgerTables(db),resolveCollectionLedgerPolicy(db,{serviceCode:input.serviceCode,cityId:input.cityId})]);
   const config=policy.config;
   const groupKey=groupKeyFor(input);
 

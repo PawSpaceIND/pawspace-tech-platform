@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 const read=(path)=>readFile(new URL(`../${path}`,import.meta.url),'utf8');
 
-test('Training has a permanent UAT closure contract',async()=>{const[p,t]=await Promise.all([read('docs/TRAINING_CLOSURE_PLAN.md'),read('tests/training-closure.test.mjs')]);assert.match(p,/PRODUCTION READY = FALSE/);assert.match(p,/canonical programme/);assert.match(t,/Training API permissions are explicit/);});
+test('Training has a permanent UAT closure contract',async()=>{const[p,t]=await Promise.all([read('docs/TRAINING_CLOSURE_PLAN.md'),read('tests/training-closure.test.mjs')]);assert.match(p,/PRODUCTION READY = FALSE/);assert.match(p,/canonical programme/);assert.match(t,/freshTrainingWorld/);assert.match(t,/Training capacity sabotage/);assert.match(t,/Training finance sabotage/);assert.match(t,/expectResponseRefusal/);});
 
 test('Customer 360 joins canonical customers pets bookings CX consent and duplicate review',async()=>{const[g,a]=await Promise.all([read('lib/customer-360.ts'),read('app/api/customer-360/route.ts')]);for(const token of ['canonical_customers','canonical_pets','canonical_bookings','customer_experience_tickets','customer_contact_preferences','customer_merge_reviews'])assert.ok(g.includes(token),token);assert.match(a,/customers\.view/);assert.match(a,/customers\.manage/);assert.match(a,/no destructive merge is executed/);});
 

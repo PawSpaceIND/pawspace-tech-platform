@@ -80,15 +80,23 @@ export function servicePolicyDomain(domain:string){return registry.get(domain)??
 export function servicePolicyDomains(){return [...registry.values()].map(spec=>({domain:spec.domain,label:spec.label,managePermission:spec.managePermission,defaults:spec.defaults}));}
 
 const tablesEnsured=new WeakSet<Db>();
-export async function ensureServicePolicyTables(db:Db){
-  if(tablesEnsured.has(db))return;
+const tablesEnsuring=new WeakMap<Db,Promise<void>>();
+async function servicePolicySchemaReady(db:Db){
+  try{const rows=await db.prepare("SELECT name FROM sqlite_master WHERE name IN ('service_policy_configs','idx_service_policy_lookup','service_policy_audit','idx_service_policy_audit_domain')").all<Row>();return new Set(rows.results.map(row=>String(row.name))).size===4;}catch{return false;}
+}
+async function ensureServicePolicyTablesUncached(db:Db){
+  if(await servicePolicySchemaReady(db))return;
   await db.batch([
     db.prepare("CREATE TABLE IF NOT EXISTS service_policy_configs (id TEXT PRIMARY KEY,policy_domain TEXT NOT NULL,service_code TEXT NOT NULL DEFAULT '*',city_id TEXT NOT NULL DEFAULT '*',config_json TEXT NOT NULL DEFAULT '{}',notes TEXT NOT NULL DEFAULT '',active INTEGER NOT NULL DEFAULT 1,version INTEGER NOT NULL DEFAULT 1,effective_from TEXT NOT NULL,effective_to TEXT,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_service_policy_lookup ON service_policy_configs(policy_domain,service_code,city_id,active,effective_from,effective_to)"),
     db.prepare("CREATE TABLE IF NOT EXISTS service_policy_audit (id TEXT PRIMARY KEY,policy_id TEXT NOT NULL,policy_domain TEXT NOT NULL,service_code TEXT NOT NULL,city_id TEXT NOT NULL,action TEXT NOT NULL,before_json TEXT,after_json TEXT NOT NULL,actor_id TEXT NOT NULL,reason TEXT NOT NULL,created_at INTEGER NOT NULL)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_service_policy_audit_domain ON service_policy_audit(policy_domain,created_at)"),
   ]);
-  tablesEnsured.add(db);
+}
+export async function ensureServicePolicyTables(db:Db){
+  if(tablesEnsured.has(db))return;const running=tablesEnsuring.get(db);if(running)return running;
+  const pending=ensureServicePolicyTablesUncached(db).then(()=>{tablesEnsured.add(db);});tablesEnsuring.set(db,pending);
+  try{await pending;}finally{if(tablesEnsuring.get(db)===pending)tablesEnsuring.delete(db);}
 }
 
 const normalise=(value:unknown)=>{const text=String(value??"").trim().toLowerCase();return text||POLICY_ANY;};
@@ -99,12 +107,14 @@ function parseJson<T>(value:unknown,fallback:T):T{try{return JSON.parse(String(v
  * is never overwritten - the same rule seedDefaultCityLaunchConfigs and seedDefaultGroomingPolicy
  * already follow.
  */
+const defaultPolicySeedsReady=new WeakMap<Db,Set<string>>();
 export async function seedServicePolicyDefault(db:Db,domain:string,effectiveFrom="2026-08-01"){
-  const spec=registry.get(domain);
-  if(!spec)throw new Error(`Unknown policy domain ${domain}`);
-  await ensureServicePolicyTables(db);
-  await db.prepare("INSERT OR IGNORE INTO service_policy_configs (id,policy_domain,service_code,city_id,config_json,notes,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,?,1,1,?,NULL,'founder_seed',?)")
+  const spec=registry.get(domain);if(!spec)throw new Error(`Unknown policy domain ${domain}`);await ensureServicePolicyTables(db);
+  let ready=defaultPolicySeedsReady.get(db);if(!ready){ready=new Set();defaultPolicySeedsReady.set(db,ready);}if(ready.has(domain))return;
+  const existing=await db.prepare("SELECT id FROM service_policy_configs WHERE policy_domain=? AND service_code='*' AND city_id='*' LIMIT 1").bind(domain).first<Row>();
+  if(!existing)await db.prepare("INSERT OR IGNORE INTO service_policy_configs (id,policy_domain,service_code,city_id,config_json,notes,active,version,effective_from,effective_to,updated_by,updated_at) VALUES (?,?,?,?,?,?,1,1,?,NULL,'founder_seed',?)")
     .bind(`spolicy_${domain}_default`,domain,POLICY_ANY,POLICY_ANY,JSON.stringify(spec.defaults),`${spec.label} - platform default`,effectiveFrom,Date.now()).run();
+  ready.add(domain);
 }
 
 /**

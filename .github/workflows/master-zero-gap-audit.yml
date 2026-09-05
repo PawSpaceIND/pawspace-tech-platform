@@ -24,6 +24,9 @@ jobs:
     env:
       EXACT_HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       GH_TOKEN: ${{ github.token }}
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -154,7 +157,7 @@ jobs:
           cat open-pull-requests.md
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '22.16.0'
           cache: npm
       - name: Install exact locked dependencies
         run: npm ci

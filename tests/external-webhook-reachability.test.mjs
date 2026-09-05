@@ -189,3 +189,12 @@ test("following imports did not turn the exemption guard into a rubber stamp", (
   assert.deepEqual(externalAuth(halfB), [], "a signing helper alone is not verification");
   assert.ok(externalAuth([halfA, halfB].join("\n")).includes("hmac_signature"), "joined, the halves would have passed");
 });
+
+test("Meta WhatsApp webhook is gateway-reachable and retains provider verification", () => {
+  assert.match(gateway, /url\.pathname==="\/api\/whatsapp\/meta-webhook"/);
+  const source = read("app/api/whatsapp/meta-webhook/route.ts");
+  assert.match(source, /META_WHATSAPP_VERIFY_TOKEN/);
+  assert.match(source, /META_WHATSAPP_APP_SECRET/);
+  assert.match(source, /x-hub-signature-256/);
+  assert.match(source, /verifyMetaWhatsAppSignature/);
+});
