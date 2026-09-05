@@ -1,0 +1,58 @@
+name: P0 Exotel Post-Run Audit
+
+on:
+  push:
+    branches:
+      - remediation/p0-pilot-gates-b379631
+    paths:
+      - .github/workflows/p0-exotel-postrun-audit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    environment: pawspace-staging
+    timeout-minutes: 5
+    env:
+      STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CALL_ID: VCALL-32E95E6B-C40
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Read final carrier state from staging D1
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const dbId=String(process.env.STAGING_D1_ID||'');
+          const account=String(process.env.CLOUDFLARE_ACCOUNT_ID||'');
+          const token=String(process.env.CLOUDFLARE_API_TOKEN||'');
+          const callId=String(process.env.CALL_ID||'');
+          if(!dbId||!account||!token||!callId) throw new Error('Missing staging audit configuration');
+          const d1=async(sql,params=[])=>{
+            const r=await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/d1/database/${dbId}/query`,{
+              method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({sql,params}),signal:AbortSignal.timeout(20000)
+            });
+            const j=await r.json().catch(()=>null);
+            if(!r.ok||!j?.success) throw new Error(`D1 audit failed HTTP ${r.status}`);
+            return j.result?.[0]?.results||[];
+          };
+          const rows=await d1('SELECT state,provider,provider_call_id,dialed_at,connected_at,ended_at,recording_allowed,recording_ref FROM voice_call_orders WHERE id=? LIMIT 1',[callId]);
+          if(rows.length!==1) throw new Error('Call row not found');
+          const row=rows[0];
+          const events=await d1('SELECT provider_event_id,event_kind,provider_status,signature_mechanism,applied,created_at FROM voice_call_provider_events WHERE call_id=? ORDER BY created_at',[callId]);
+          const transitions=await d1('SELECT sequence,to_state,actor,created_at FROM voice_call_state_transitions WHERE call_id=? ORDER BY sequence',[callId]);
+          const providerSuffix=row.provider_call_id?String(row.provider_call_id).slice(-8):'none';
+          console.log(`POSTRUN_STATE state=${String(row.state||'missing')} provider=${String(row.provider||'missing')} provider_call_id_suffix=${providerSuffix} dialed=${Boolean(row.dialed_at)} connected=${Boolean(row.connected_at)} ended=${Boolean(row.ended_at)}`);
+          console.log(`POSTRUN_RECORDING recording_allowed=${Number(row.recording_allowed||0)} recording_ref_present=${Boolean(row.recording_ref)}`);
+          console.log(`POSTRUN_EVENTS count=${events.length} applied=${events.filter(e=>Number(e.applied)===1).length}`);
+          for(const e of events){console.log(`PROVIDER_EVENT kind=${String(e.event_kind||'')} status=${String(e.provider_status||'')} signature=${String(e.signature_mechanism||'')} applied=${Number(e.applied||0)}`)}
+          console.log(`POSTRUN_TRANSITIONS ${transitions.map(t=>String(t.to_state||'')).join('>')}`);
+          if(String(row.state)==='ended'&&row.connected_at&&row.ended_at&&events.some(e=>Number(e.applied)===1)) console.log('LATE_CALLBACK_CLOSURE=PASS');
+          else console.log('LATE_CALLBACK_CLOSURE=NOT_PROVEN');
+          NODE
