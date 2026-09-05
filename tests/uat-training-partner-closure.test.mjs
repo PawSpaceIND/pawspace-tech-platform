@@ -6,6 +6,7 @@ import {
   createTrainingQuote,
   captureTrainingQuoteSandbox,
   getGovernedProvider,
+  expectResponseRefusal,
   TRAINER_ID,
 } from "./helpers/training-gate-harness.mjs";
 
@@ -37,12 +38,12 @@ test("UAT Training closure executes Meet & Greet through the same governed quote
 
 test("UAT Training closure keeps Meet & Greet payment fail-closed", async () => {
   const world = freshTrainingWorld();
-  await assert.rejects(() => createTrainingQuote(world.db, {
+  await expectResponseRefusal(() => createTrainingQuote(world.db, {
     packageCode: "trainer-meet-greet",
     petCount: 1,
     scheduledStart: futureTrainingStart(),
     paymentMode: "split",
-  }), /Meet & Greet must be paid in full/);
+  }), { status: 409, message: /Trainer Meet & Greet must be paid in full/ });
 
   const quote = await createTrainingQuote(world.db, {
     packageCode: "trainer-meet-greet",
@@ -50,10 +51,10 @@ test("UAT Training closure keeps Meet & Greet payment fail-closed", async () => 
     scheduledStart: futureTrainingStart(),
     paymentMode: "prepaid",
   });
-  await assert.rejects(() => captureTrainingQuoteSandbox(world.db, {
+  await expectResponseRefusal(() => captureTrainingQuoteSandbox(world.db, {
     quoteId: quote.quoteId,
     amount: quote.amountDueNow,
     paymentKey: "uat-meet-greet",
-  }), /Meet & Greet remains pending until a verified payment event/);
+  }), { status: 409, message: /Meet & Greet remains pending until a verified payment event/ });
   assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_quote_payment_attestations WHERE quote_id=?").get(quote.quoteId).n, 0);
 });
