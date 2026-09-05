@@ -185,17 +185,17 @@ test("TRUTH: founder access cannot be taken by anyone who can administer users",
 
   // Door 1 — creating a founder is refused, and NO account is written for it.
   const created = await post({ action: "create_user", email: "brand.new@tkpetcare.in", name: "Brand New", roleCode: "founder" });
-  assert.equal(created.status, 400, "create_user must refuse the founder role");
+  assert.equal(created.status, 403, "create_user must refuse the founder role");
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS total FROM app_users WHERE email=?").get("brand.new@tkpetcare.in").total, 0, "no founder account may be created");
 
   // Door 2 — promoting an existing user into a founder is refused, and the row is unchanged.
   const promoted = await post({ action: "update_user", id: "U-STAFF", roleCode: "founder", status: "active" });
-  assert.equal(promoted.status, 400, "update_user must refuse to promote into a founder");
+  assert.equal(promoted.status, 403, "update_user must refuse to promote into a founder");
   assert.equal(sqlite.prepare("SELECT role_code FROM app_users WHERE id=?").get("U-STAFF").role_code, "associate", "the target's role must be untouched");
 
   // And the same protection covers the OTHER full-access role the name-based guard used to miss.
   const superuser = await post({ action: "update_user", id: "U-STAFF", roleCode: "superuser", status: "active" });
-  assert.equal(superuser.status, 400, "superuser is ['*'] too and must be refused identically");
+  assert.equal(superuser.status, 403, "superuser is ['*'] too and must be refused identically");
   assert.equal(sqlite.prepare("SELECT role_code FROM app_users WHERE id=?").get("U-STAFF").role_code, "associate");
   assert.equal(typeof route.POST, "function");
 });

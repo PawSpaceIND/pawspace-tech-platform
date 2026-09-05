@@ -1,10 +1,9 @@
 import{processMetaWhatsAppEvents,parseMetaWhatsAppWebhook,verifyMetaWebhookChallenge,verifyMetaWhatsAppSignature}from"../../../../lib/meta-whatsapp-webhook";
 import{processMetaStatusEventAtomic}from"../../../../lib/whatsapp-production-runtime";
-import{ingestMetaInboundMediaRetrySafe}from"../../../../lib/meta-whatsapp-media-ingestion";
+import{processEliteInboundMessage}from"../../../../lib/services/elite-production-runtime";
 
 async function bindings(){const{env}=await import("cloudflare:workers");return env as unknown as{DB:D1Database;META_WHATSAPP_APP_SECRET?:string;META_WHATSAPP_VERIFY_TOKEN?:string;META_WHATSAPP_ACCESS_TOKEN?:string;META_WHATSAPP_UAT_ACCESS_TOKEN?:string;META_WHATSAPP_GRAPH_VERSION?:string;PAWSPACE_MEDIA_BUCKET?:unknown};}
 const noStore={"cache-control":"no-store"};
-const mediaTypes=new Set(["image","audio","video","document","sticker"]);
 
 export async function GET(request:Request){
  const env=await bindings(),challenge=verifyMetaWebhookChallenge(new URL(request.url),String(env.META_WHATSAPP_VERIFY_TOKEN||""));
@@ -20,13 +19,20 @@ export async function POST(request:Request){
  const events=parseMetaWhatsAppWebhook(payload);
  if(events.length===0)return Response.json({ok:true,accepted:0,results:[],externalDelivery:false},{status:200,headers:noStore});
  try{
-  const standard=events.filter(event=>event.kind==="message"&&!mediaTypes.has(event.messageType));
+  const messages=events.filter(event=>event.kind==="message");
   const results:Array<Record<string,unknown>>=[];
-  if(standard.length)results.push(...await processMetaWhatsAppEvents(env.DB,standard,rawBody));
-  for(const event of events){
-   if(event.kind==="status"){results.push(await processMetaStatusEventAtomic(env.DB,event,rawBody));continue;}
-   if(mediaTypes.has(event.messageType)){const media=await ingestMetaInboundMediaRetrySafe(env.DB,env as unknown as Record<string,unknown>,event,rawBody);results.push({eventId:event.eventId,...media});}
+  if(messages.length){
+   const processed=await processMetaWhatsAppEvents(env.DB,messages,rawBody,env as unknown as Record<string,unknown>);
+   results.push(...processed);
+   const byEvent=new Map(processed.map(result=>[String(result.eventId||""),result]));
+   for(const event of messages){
+    const mapped=byEvent.get(event.eventId),customerId=String(mapped?.customerId||"").trim(),messageId=String(mapped?.messageId||event.eventId).trim();
+    if(!customerId||!event.body)continue;
+    try{await processEliteInboundMessage(env.DB,{customerId,messageId,text:event.body,occurredAt:event.timestamp,channel:"whatsapp"});}
+    catch(error){console.error("elite_ingress_failed",{eventId:event.eventId,error:error instanceof Error?error.message:String(error)});}
+   }
   }
+  for(const event of events){if(event.kind==="status")results.push(await processMetaStatusEventAtomic(env.DB,event,rawBody));}
   return Response.json({ok:true,accepted:events.length,results,externalDelivery:false},{status:200,headers:noStore});
  }catch(error){
   if(error instanceof Response)return Response.json({ok:false,error:await error.text(),externalDelivery:false},{status:error.status,headers:noStore});

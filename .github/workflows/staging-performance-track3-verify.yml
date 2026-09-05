@@ -85,7 +85,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p scripts/ops
-          git show origin/ops/nontrack2-closure-20260901:scripts/ops/staging-role-seed.mjs > scripts/ops/staging-role-seed.mjs
+          git show "${GITHUB_SHA}:scripts/ops/staging-role-seed.mjs" > scripts/ops/staging-role-seed.mjs
           node --experimental-strip-types scripts/ops/staging-role-seed.mjs "$RUNNER_TEMP/staging-role-seed.sql"
           npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --yes --file="$RUNNER_TEMP/staging-role-seed.sql"
           npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --file=scripts/employee-seed.sql
@@ -101,10 +101,10 @@ jobs:
           console.log(JSON.stringify(evidence,null,2));
           if(response.status!==200||body?.status!=='ok') process.exit(1);
           NODE
-      - name: Materialize existing Track 3 gate
+      - name: Materialize committed Track 3 gate
         run: |
           mkdir -p scripts/ops
-          git show origin/ops/nontrack2-closure-20260901:scripts/ops/staging-performance-gate.mjs > scripts/ops/staging-performance-gate.mjs
+          git show "${GITHUB_SHA}:scripts/ops/staging-performance-gate.mjs" > scripts/ops/staging-performance-gate.mjs
       - name: Run hosted Track 3 workload
         env:
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}

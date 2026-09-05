@@ -46,6 +46,7 @@ const dateTime = (value: unknown) => value
   ? new Date(Number(value)).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })
   : "—";
 const initials = (name: unknown) => text(name, "PS").split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase();
+const inboxRefreshMs = 5_000;
 
 export default function CustomerExperiencePage() {
   const [threads, setThreads] = useState<Thread[]>([]);
@@ -97,32 +98,49 @@ export default function CustomerExperiencePage() {
 
   useEffect(() => {
     let active = true;
-    const timer = window.setTimeout(() => {
-      void loadThreads()
-        .then((next) => {
-          if (active && next[0]) setSelected((current) => current || String(next[0].id));
-        })
-        .catch((cause) => {
-          if (active) setError(cause instanceof Error ? cause.message : String(cause));
-        });
-    }, 0);
+    let refreshing = false;
+    const refresh = async () => {
+      if (!active || refreshing) return;
+      refreshing = true;
+      try {
+        const next = await loadThreads();
+        if (active && next[0]) setSelected((current) => current || String(next[0].id));
+        if (active) setError("");
+      } catch (cause) {
+        if (active) setError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        refreshing = false;
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => { void refresh(); }, inboxRefreshMs);
     return () => {
       active = false;
-      window.clearTimeout(timer);
+      window.clearInterval(timer);
     };
   }, [loadThreads]);
 
   useEffect(() => {
     if (!selected) return;
     let active = true;
-    const timer = window.setTimeout(() => {
-      void Promise.all([loadConversation(selected, () => active), loadControl(selected, () => active)]).catch((cause) => {
+    let refreshing = false;
+    const refresh = async () => {
+      if (!active || refreshing) return;
+      refreshing = true;
+      try {
+        await Promise.all([loadConversation(selected, () => active), loadControl(selected, () => active)]);
+        if (active) setError("");
+      } catch (cause) {
         if (active) setError(cause instanceof Error ? cause.message : String(cause));
-      });
-    }, 0);
+      } finally {
+        refreshing = false;
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => { void refresh(); }, inboxRefreshMs);
     return () => {
       active = false;
-      window.clearTimeout(timer);
+      window.clearInterval(timer);
     };
   }, [selected, loadConversation, loadControl]);
 

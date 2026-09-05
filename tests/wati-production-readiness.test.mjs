@@ -22,23 +22,20 @@
  * Interakt production paths. It is not obsolete and must not be pruned - PR #392 moved the platform
  * off WATI, and these are the guards over what replaced it.
  *
- * Six of its source contracts broke when #419 relocated the implementations without updating them.
- * Each is now pointed at where the behaviour actually lives, verified present before the assertion
- * was moved rather than relaxed:
+ * Source contracts follow the current implementation boundaries:
  *
- *   inbound media   ingestMetaInboundMediaRetrySafe, called from app/api/whatsapp/meta-webhook
- *                   (the route), not lib/meta-whatsapp-webhook.ts (the parser)
+ *   inbound media   processMetaWhatsAppEvents owns active message routing and calls
+ *                   ingestMetaInboundMediaRetrySafe; the API route delegates message events to it
  *   outbox drain    runCommunicationOutboxDispatcher, renamed from drainCommunicationOutbox
  *   interakt atomic lib/interakt-delivery-atomic.ts -> recordWhatsAppDeliveryEventAtomic in
  *                   lib/whatsapp-production-runtime.ts; the batch, regression-prevention and
- *                   dead-letter properties are now asserted there directly, so this guard is
- *                   stronger than the single-symbol check it replaces
- *   CX polling      setInterval moved to customer-experience/template.tsx
+ *                   dead-letter properties are asserted there directly
+ *   CX polling      setInterval transport is asserted on the active CX surface
  *   template copy   "No manual approval" reworded to "cannot fabricate provider approval"
  */
 import test from"node:test";import assert from"node:assert/strict";import fs from"node:fs";
 const read=p=>fs.readFileSync(p,"utf8");
-test("Meta webhook supports secure R2 media ingestion without dropping text or interactive routing",()=>{const webhook=read("lib/meta-whatsapp-webhook.ts"),media=read("lib/meta-whatsapp-media.ts"),inboundRoute=read("app/api/whatsapp/meta-webhook/route.ts");for(const type of["image","audio","video","document"])assert.match(media,new RegExp(`\\"${type}\\"`));assert.match(inboundRoute,/ingestMetaInboundMediaRetrySafe/);assert.match(webhook,/recordWhatsAppInteractiveSubmission/);assert.match(webhook,/routeInboundAutomation/);assert.match(media,/PAWSPACE_MEDIA_BUCKET/);assert.match(media,/SHA-256/);assert.match(media,/r2:\/\/PAWSPACE_MEDIA_BUCKET/);});
+test("Meta webhook supports secure R2 media ingestion without dropping text or interactive routing",()=>{const webhook=read("lib/meta-whatsapp-webhook.ts"),media=read("lib/meta-whatsapp-media.ts"),inboundRoute=read("app/api/whatsapp/meta-webhook/route.ts");for(const type of["image","audio","video","document"])assert.match(media,new RegExp(`\\"${type}\\"`));assert.match(webhook,/ingestMetaInboundMediaRetrySafe/);assert.match(inboundRoute,/processMetaWhatsAppEvents\(env\.DB,messages,rawBody,env/);assert.match(webhook,/recordWhatsAppInteractiveSubmission/);assert.match(webhook,/routeInboundAutomation/);assert.match(media,/PAWSPACE_MEDIA_BUCKET/);assert.match(media,/SHA-256/);assert.match(media,/r2:\/\/PAWSPACE_MEDIA_BUCKET/);});
 test("scheduled worker drains WhatsApp communication outbox to Meta or Interakt",()=>{const worker=read("worker/index.ts"),dispatcher=read("lib/communication-outbox-dispatcher.ts"),providerRuntime=read("lib/whatsapp-production-runtime.ts");assert.match(worker,/runCommunicationOutboxDispatcher/);assert.match(dispatcher,/communication_outbox/);assert.match(providerRuntime,/dispatchInteraktWhatsApp/);assert.match(providerRuntime,/dispatchMetaCloudWhatsApp/);assert.match(providerRuntime,/unknown_provider/);});
 test("delivery state helper atomically prevents regression and couples retry dead-letter state with event log",()=>{const source=read("lib/communication-delivery-state.ts"),meta=read("lib/meta-whatsapp-dispatch.ts"),interakt=read("lib/interakt-whatsapp.ts"),interaktAtomic=read("lib/interakt-delivery-atomic.ts"),whatsappRuntime=read("lib/whatsapp-production-runtime.ts");assert.match(source,/db\.batch\(statements\)/);assert.match(source,/shouldApplyDeliveryTransition/);assert.match(source,/regressionPrevented/);assert.match(source,/communication_dead_letters/);assert.match(source,/provider_reference=COALESCE/);assert.match(meta,/recordAtomicDeliveryEvent/);assert.match(interaktAtomic,/recordWhatsAppDeliveryEventAtomic/);assert.match(whatsappRuntime,/db\.batch/);assert.match(whatsappRuntime,/regressionPrevented/);assert.match(whatsappRuntime,/communication_dead_letters/);assert.doesNotMatch(interakt,/recordDeliveryEvent/);});
 test("CX inbox refreshes threads conversation and controls automatically",()=>{const source=read("app/team/customer-experience/page.tsx"),shell=read("app/team/customer-experience/template.tsx");assert.match(shell,/setInterval/);assert.match(source,/loadThreads/);assert.match(source,/loadConversation/);assert.match(source,/loadControl/);assert.match(source,/human_reply/);});

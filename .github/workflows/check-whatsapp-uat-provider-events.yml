@@ -1,0 +1,32 @@
+name: Check WhatsApp UAT provider events
+
+on:
+  push:
+    branches:
+      - fix/whatsapp-uat-staging-deploy-isolation
+    paths:
+      - .github/workflows/check-whatsapp-uat-provider-events.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-provider-events:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Count persisted Meta provider events only
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/events.json"; export OUT
+          trap 'rm -f "$OUT"' EXIT
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --command "SELECT COUNT(*) AS inbound FROM whatsapp_uat_events WHERE provider='meta_whatsapp' AND event_type='inbound_message'; SELECT COUNT(*) AS delivery FROM whatsapp_uat_events WHERE provider='meta_whatsapp' AND event_type LIKE 'delivery_%'; SELECT COUNT(*) AS status_events FROM communication_delivery_events WHERE provider='meta_whatsapp';" --json > "$OUT"
+          node --input-type=module <<'NODE'
+          import{readFileSync}from'node:fs';const p=JSON.parse(readFileSync(process.env.OUT,'utf8'));const rows=(Array.isArray(p)?p:[]).flatMap(b=>Array.isArray(b?.results)?b.results:[]);const inbound=rows.find(x=>x?.inbound!==undefined),delivery=rows.find(x=>x?.delivery!==undefined),status=rows.find(x=>x?.status_events!==undefined);console.log(`persistedMetaInbound=${Number(inbound?.inbound??0)}; persistedMetaDelivery=${Number(delivery?.delivery??0)}; persistedMetaStatusEvents=${Number(status?.status_events??0)}; identifiers withheld`);
+          NODE
