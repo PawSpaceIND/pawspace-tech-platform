@@ -26,13 +26,13 @@ jobs:
         run: |
           set -euo pipefail
           npm install --save-exact next@16.3.4 react@19.2.8 react-dom@19.2.8
-          npm install --save-dev --save-exact eslint-config-next@16.3.4 react-server-dom-webpack@19.2.8 @cloudflare/vite-plugin@1.54.4 vite@8.2.2
-          npm audit fix --package-lock-only --omit=dev || true
-      - name: Patch backend production transitive dependencies
+          npm install --save-dev --save-exact eslint-config-next@16.3.4 react-server-dom-webpack@19.2.8 @cloudflare/vite-plugin@1.54.4 vite@8.2.2 wrangler@4.129.0
+          npm audit fix --package-lock-only || true
+      - name: Patch backend transitive dependencies without forced majors
         working-directory: backend
         run: |
           set -euo pipefail
-          npm audit fix --package-lock-only --omit=dev || true
+          npm audit fix --package-lock-only || true
       - name: Prove no production high or critical advisories remain
         shell: bash
         run: |
@@ -73,12 +73,17 @@ jobs:
               rows.push({scope,package:pkg,severity:v.severity,direct:Boolean(v.isDirect),range:v.range,fixAvailable:v.fixAvailable,via:v.via});
             }
           }
-          const productionBlocked=rows.filter(r=>r.scope==='backend' || (r.scope==='root' && !['vinext','image-size'].includes(r.package)));
-          const accepted=rows.filter(r=>r.scope==='root' && ['vinext','image-size'].includes(r.package)).map(r=>({...r,disposition:'temporary-risk-acceptance',reachability:'build-time image metadata parser only; not installed in production dependency tree',controls:['CI/repository-controlled image inputs','production npm audit must remain high/critical-free','upgrade vinext when compatible beta/stable is validated']}));
-          const out={generatedAt:new Date().toISOString(),highCriticalRows:rows,temporaryRiskAcceptances:accepted,untriaged:productionBlocked};
+          const acceptedPackages=new Set(['vinext','image-size']);
+          const untriaged=rows.filter(r=>!acceptedPackages.has(r.package));
+          const accepted=rows.filter(r=>acceptedPackages.has(r.package)).map(r=>({...r,
+            disposition:'temporary-risk-acceptance',
+            reachability:'development/build-time Vinext image metadata path; absent from production-only dependency audit',
+            controls:['repository-controlled build inputs only','production audit remains high/critical-free','do not process untrusted ICNS/JXL/HEIF through this build path','upgrade Vinext to patched compatible beta/stable after separate compatibility certification']
+          }));
+          const out={generatedAt:new Date().toISOString(),highCriticalRows:rows,temporaryRiskAcceptances:accepted,untriaged};
           fs.writeFileSync('p0-dependency-disposition.json',JSON.stringify(out,null,2));
           console.log(JSON.stringify(out,null,2));
-          if(productionBlocked.length){console.error(`Untriaged non-accepted high/critical rows: ${productionBlocked.length}`);process.exit(1)}
+          if(untriaged.length){console.error(`Untriaged high/critical rows: ${untriaged.length}`);process.exit(1)}
           NODE
       - name: Commit validated dependency remediation
         shell: bash
@@ -91,7 +96,7 @@ jobs:
           git config user.name 'pawspace-p0-bot'
           git config user.email 'actions@users.noreply.github.com'
           git add package.json package-lock.json backend/package.json backend/package-lock.json
-          git commit -m 'fix(p0): patch production dependency advisories'
+          git commit -m 'fix(p0): patch dependency advisories without forced majors'
           git push origin HEAD:remediation/p0-pilot-gates-b379631
       - name: Upload dependency disposition
         if: always()
