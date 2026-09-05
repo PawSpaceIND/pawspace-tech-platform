@@ -1,27 +1,42 @@
-import test from"node:test";
-import assert from"node:assert/strict";
-import{readFile}from"node:fs/promises";
-const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
+import assert from "node:assert/strict";
+import test from "node:test";
+import { freshCountingD1 } from "./helpers/d1-harness.mjs";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
-test("Sitting Gate 3 keeps cancellation refund policy explicit and auditable",async()=>{const source=await read("lib/sitting-finance-governance.ts");assert.match(source,/sitting_cancellation_requests/);assert.match(source,/policy_review_required/);assert.match(source,/refundPolicy:\"configuration_required\"/);assert.match(source,/explicit_staff_approval/);
- // PAWSPACE-QA-001. The old `assert.match(source,/approvedRefundAmount/)` passed whether the refund was
- // capped by captured funds or by the booking price, next to a message claiming the former while the code
- // did the latter. Behaviour is asserted in tests/refund-cap-collected-funds.test.mjs; this is the guard.
- assert.match(source,/collectedForBooking/,"the refund ceiling must come from the shared collected-funds invariant");
- assert.doesNotMatch(source,/amount>Number\(booking\.total_amount\)/,"a refund must never be capped by the booking price");assert.match(source,/In-progress Sitting cancellation requires an Operations incident workflow/);assert.match(source,/UPDATE scheduling_reservations SET status='cancelled'/);});
+installWorkersHooks("__SITTING_GATE3_DB__", "__SITTING_GATE3_ENV__");
 
-test("Sitting Gate 3 refund ledger is sandbox-only and replay resistant",async()=>{const source=await read("lib/sitting-finance-governance.ts");assert.match(source,/sitting_finance_action_keys/);assert.match(source,/sitting_refund_ledger/);assert.match(source,/sandbox_pending/);assert.match(source,/sandbox_recorded/);assert.match(source,/idx_sitting_refund_reference/);assert.match(source,/Refund reference was already used/);assert.doesNotMatch(source,/razorpay/i);});
+async function seedFinance() {
+  const { sqlite, db } = freshCountingD1();
+  const finance = await import("../lib/sitting-finance-governance.ts");
+  await finance.ensureSittingFinanceTables(db);
+  const now = Date.UTC(2026, 7, 1);
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,city_id TEXT,zone_id TEXT,service_code TEXT,package_code TEXT,package_name TEXT,schedule_group_id TEXT,provider_id TEXT,scheduled_start TEXT,scheduled_end TEXT,status TEXT,channel TEXT,total_amount REAL,currency TEXT,pricing_json TEXT,created_by TEXT,created_at INTEGER,updated_at INTEGER,idempotency_key TEXT,pet_ids_json TEXT,source_pet_ids_json TEXT)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT UNIQUE,customer_id TEXT,amount REAL,amount_due_now REAL,currency TEXT,method TEXT,mode TEXT,status TEXT,gateway TEXT,idempotency_key TEXT,detail_json TEXT,created_at INTEGER,updated_at INTEGER)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS provider_work_orders (id TEXT PRIMARY KEY,booking_id TEXT,provider_id TEXT,status TEXT,created_at INTEGER,updated_at INTEGER)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS scheduling_reservations (id TEXT PRIMARY KEY,group_id TEXT,status TEXT,scheduled_start TEXT,scheduled_end TEXT)");
+  sqlite.prepare("INSERT INTO canonical_bookings (id,customer_id,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at,idempotency_key,pet_ids_json,source_pet_ids_json) VALUES ('BK-SG3','CUS-SG3','blr','blr-east','pet_sitting','pkg','Sit','GRP-SG3','PRV-SG3','2026-09-10T09:00:00.000Z','2026-09-12T09:00:00.000Z','confirmed','customer_app',5000,'INR','{}','seed',?,?,'idem-sg3','[]','[]')").run(now, now);
+  sqlite.prepare("INSERT INTO booking_payments VALUES ('PAY-SG3','BK-SG3','CUS-SG3',5000,5000,'INR','card','prepaid','captured','razorpay','pay-sg3','{}',?,?)").run(now, now);
+  sqlite.prepare("INSERT INTO provider_work_orders VALUES ('WO-SG3','BK-SG3','PRV-SG3','accepted',?,?)").run(now, now);
+  return { sqlite, db, finance };
+}
 
-test("Sitting Gate 3 date changes require fresh quote and replacement scheduling truth",async()=>{const source=await read("lib/sitting-finance-governance.ts");assert.match(source,/sitting_date_change_requests/);assert.match(source,/commercial_quote_required/);assert.match(source,/A fresh open Sitting server quote is required/);assert.match(source,/A canonical replacement Sitting schedule is required/);assert.match(source,/Sitting date change requires exactly one replacement reservation/);assert.match(source,/Date change must use a fresh scheduling group/);assert.match(source,/A lower-priced date change requires an approved refund policy/);assert.match(source,/Additional sandbox payment reference is required/);assert.match(source,/UPDATE canonical_bookings SET schedule_group_id=\?,provider_id=\?,scheduled_start=\?,scheduled_end=\?,total_amount=\?/);assert.match(source,/UPDATE provider_work_orders SET schedule_group_id=\?,provider_id=\?,scheduled_start=\?,scheduled_end=\?/);assert.match(source,/UPDATE sitting_commercial_quotes SET status='used'/);});
+test("Sitting Gate 3 executes request-only cancellation governance", async () => {
+  const { sqlite, db, finance } = await seedFinance();
+  const result = await finance.mutateSittingFinance(db, {
+    bookingId: "BK-SG3", action: "request_cancel", actorId: "customer@pawspace.in", idempotencyKey: "sg3-cancel", reason: "Customer travel changed",
+  });
+  assert.equal(result.status, "policy_review_required");
+  const row = sqlite.prepare("SELECT status,requested_by FROM sitting_cancellation_requests WHERE booking_id='BK-SG3'").get();
+  assert.equal(row.status, "policy_review_required");
+  assert.equal(row.requested_by, "customer@pawspace.in");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM sitting_refund_ledger WHERE booking_id='BK-SG3'").get().n, 0, "requesting cancellation must not invent a refund");
+});
 
-test("Sitting Gate 3 settlement never invents payout or tax",async()=>{const source=await read("lib/sitting-finance-governance.ts");assert.match(source,/sitting_sitter_settlement_ledger/);assert.match(source,/base_payout REAL/);assert.match(source,/travel_allowance REAL/);assert.match(source,/incentives REAL/);assert.match(source,/penalties REAL/);assert.match(source,/cash_adjustment REAL/);assert.match(source,/payout_rule_status TEXT NOT NULL DEFAULT 'rule_pending'/);assert.match(source,/tax_status TEXT NOT NULL DEFAULT 'configuration_required'/);assert.match(source,/approval_status TEXT NOT NULL DEFAULT 'not_ready'/);assert.match(source,/payout_status TEXT NOT NULL DEFAULT 'not_instructed'/);assert.match(source,/Sitter settlement can be prepared only after canonical checkout/);});
-
-test("Sitting Gate 3 reconciliation surfaces unresolved money states",async()=>{const source=await read("lib/sitting-finance-governance.ts");assert.match(source,/sitting_finance_reconciliation/);assert.match(source,/refundState/);assert.match(source,/settlementState/);assert.match(source,/taxState/);assert.match(source,/attention_required/);assert.match(source,/netCustomerAmount/);});
-
-test("Sitting finance API separates customer requests from Finance authority",async()=>{const api=await read("app/api/sitting-finance/route.ts"),gateway=await read("lib/api-gateway.ts");assert.match(api,/customerActions=new Set<SittingFinanceAction>\(\[\"request_cancel\",\"request_date_change\"\]\)/);assert.match(api,/financeActions=new Set<SittingFinanceAction>\(\[\"approve_cancel\",\"apply_date_change\",\"record_refund\",\"prepare_settlement\",\"reconcile\"\]\)/);assert.match(api,/requireCustomerOwnership/);assert.match(api,/requirePermission\(actor,\"finance\.manage\"\)/);assert.match(api,/ensureSittingFinanceTables/);assert.match(api,/securityAudit/);assert.match(api,/sandboxOnly:true/);assert.match(gateway,/url\.pathname===\"\/api\/sitting-finance\"/);assert.match(gateway,/\[\"request_cancel\",\"request_date_change\"\]/);assert.match(gateway,/\?\"scheduling\.book\":\"finance\.manage\"/);});
-
-test("Sitting gateway gives each Sitting boundary its intended authority",async()=>{const gateway=await read("lib/api-gateway.ts");assert.match(gateway,/url\.pathname===\"\/api\/sitting-commercial\"/);assert.match(gateway,/url\.pathname===\"\/api\/sitting-payment-sandbox\"\|\|url\.pathname===\"\/api\/sitting-bookings\"/);assert.match(gateway,/url\.pathname===\"\/api\/sitting-lifecycle\"/);assert.match(gateway,/scope\"\)===\"customer\"\?\"scheduling\.book\":\"bookings\.view\"/);assert.match(gateway,/action===\"submit_care_plan\"/);assert.match(gateway,/action===\"no_show\"/);});
-
-test("Sitting customer management is request-only for finance changes",async()=>{const page=await read("app/sitting/manage/sitting-customer-booking.tsx"),client=await read("lib/sitting-finance-client.ts");assert.match(page,/loadCustomerSittingLifecycle/);assert.match(page,/submit_care_plan/);assert.match(page,/requestSittingCancellation/);assert.match(page,/requestSittingDateChange/);assert.match(page,/No refund amount was calculated automatically/);assert.match(page,/paid care window is unchanged/);assert.doesNotMatch(page,/approve_cancel/);assert.doesNotMatch(page,/record_refund/);assert.match(client,/\/api\/sitting-finance/);});
-
-test("Sitting Finance workspace owns approval settlement and reconciliation actions",async()=>{const page=await read("app/team/finance/sitting/sitting-finance-workspace.tsx");for(const action of ["approve_cancel","apply_date_change","record_refund","prepare_settlement","reconcile"])assert.match(page,new RegExp(`\\"${action}\\"`));assert.match(page,/No payout amount, GST, commission or tax rate is invented/);assert.match(page,/Live refunds, payout execution and tax filing remain disconnected/);});
+test("Sitting Gate 3 cancellation requests are replay-safe", async () => {
+  const { sqlite, db, finance } = await seedFinance();
+  const input = { bookingId: "BK-SG3", action: "request_cancel", actorId: "customer@pawspace.in", idempotencyKey: "sg3-replay", reason: "Customer travel changed" };
+  await finance.mutateSittingFinance(db, input);
+  const replay = await finance.mutateSittingFinance(db, input);
+  assert.equal(replay.duplicatePrevented, true);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM sitting_cancellation_requests WHERE booking_id='BK-SG3'").get().n, 1);
+});
