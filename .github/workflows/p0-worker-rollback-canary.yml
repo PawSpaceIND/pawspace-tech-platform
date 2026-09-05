@@ -1,0 +1,76 @@
+name: P0 Worker Rollback Canary
+
+on:
+  push:
+    branches:
+      - remediation/p0-pilot-gates-b379631
+    paths:
+      - .github/workflows/p0-worker-rollback-canary.yml
+
+permissions:
+  contents: read
+
+jobs:
+  rollback-canary:
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WORKER: pawspace-p0-rollback-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Create isolated rollback canary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/p0-rollback"
+          cd "$RUNNER_TEMP/p0-rollback"
+          cat > wrangler.toml <<EOF
+          name = "$WORKER"
+          main = "worker.mjs"
+          compatibility_date = "2026-09-05"
+          workers_dev = true
+          EOF
+          cat > worker.mjs <<'EOF'
+          export default { fetch() { return Response.json({version:"v1", healthy:true}); } };
+          EOF
+          npx wrangler@4.129.0 deploy --config wrangler.toml --message "p0 rollback v1" 2>&1 | tee deploy-v1.log
+          URL="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' deploy-v1.log | tail -n 1)"
+          [ -n "$URL" ] || { echo 'Canary URL not found.' >&2; exit 1; }
+          echo "URL=$URL" >> "$GITHUB_ENV"
+          curl --fail --silent --show-error "$URL" | grep -q '"version":"v1"'
+      - name: Deploy a distinguishable second version
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/p0-rollback"
+          cat > worker.mjs <<'EOF'
+          export default { fetch() { return Response.json({version:"v2", healthy:true}); } };
+          EOF
+          npx wrangler@4.129.0 deploy --config wrangler.toml --message "p0 rollback v2" >/dev/null
+          curl --fail --silent --show-error "$URL" | grep -q '"version":"v2"'
+      - name: Roll back to previous application version and verify traffic
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/p0-rollback"
+          npx wrangler@4.129.0 rollback --name "$WORKER" --message "p0 rollback rehearsal" > rollback.log 2>&1
+          cat rollback.log
+          for attempt in 1 2 3 4 5; do
+            BODY="$(curl --fail --silent --show-error "$URL" || true)"
+            if printf '%s' "$BODY" | grep -q '"version":"v1"'; then
+              echo 'application_rollback_verified=true'
+              exit 0
+            fi
+            sleep 2
+          done
+          echo 'Rollback command completed but v1 was not observed at the canary URL.' >&2
+          exit 1
+      - name: Delete canary Worker
+        if: always()
+        shell: bash
+        run: npx wrangler@4.129.0 delete --name "$WORKER" --force || true
