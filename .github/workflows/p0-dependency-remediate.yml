@@ -13,7 +13,7 @@ permissions:
 jobs:
   remediate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,22 +22,30 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - name: Patch root production dependencies
+      - name: Patch production and compatible tooling dependencies
         run: |
           set -euo pipefail
           npm install --save-exact next@16.3.4 react@19.2.8 react-dom@19.2.8
-          npm install --save-dev --save-exact eslint-config-next@16.3.4 react-server-dom-webpack@19.2.8
-          npm audit fix --package-lock-only
-      - name: Patch backend transitive dependencies
+          npm install --save-dev --save-exact eslint-config-next@16.3.4 react-server-dom-webpack@19.2.8 @cloudflare/vite-plugin@1.54.4 vite@8.2.2
+          npm audit fix --package-lock-only --omit=dev || true
+      - name: Patch backend production transitive dependencies
         working-directory: backend
         run: |
           set -euo pipefail
-          npm audit fix --package-lock-only
+          npm audit fix --package-lock-only --omit=dev || true
       - name: Prove no production high or critical advisories remain
+        shell: bash
         run: |
           set -euo pipefail
           npm audit --omit=dev --audit-level=high
           npm --prefix backend audit --omit=dev --audit-level=high
+      - name: Capture residual all-dependency advisories
+        shell: bash
+        run: |
+          set +e
+          npm audit --json > "$RUNNER_TEMP/root-residual.json"
+          npm --prefix backend audit --json > "$RUNNER_TEMP/backend-residual.json"
+          exit 0
       - name: Validate root build and typecheck
         run: |
           set -euo pipefail
@@ -51,6 +59,27 @@ jobs:
           npm ci
           npm run typecheck
           npm test
+      - name: Write residual security disposition
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs=require('node:fs');
+          const reports=[['root',`${process.env.RUNNER_TEMP}/root-residual.json`],['backend',`${process.env.RUNNER_TEMP}/backend-residual.json`]];
+          const rows=[];
+          for(const [scope,file] of reports){
+            const report=JSON.parse(fs.readFileSync(file,'utf8'));
+            for(const [pkg,v] of Object.entries(report.vulnerabilities||{})){
+              if(!['high','critical'].includes(String(v.severity))) continue;
+              rows.push({scope,package:pkg,severity:v.severity,direct:Boolean(v.isDirect),range:v.range,fixAvailable:v.fixAvailable,via:v.via});
+            }
+          }
+          const productionBlocked=rows.filter(r=>r.scope==='backend' || (r.scope==='root' && !['vinext','image-size'].includes(r.package)));
+          const accepted=rows.filter(r=>r.scope==='root' && ['vinext','image-size'].includes(r.package)).map(r=>({...r,disposition:'temporary-risk-acceptance',reachability:'build-time image metadata parser only; not installed in production dependency tree',controls:['CI/repository-controlled image inputs','production npm audit must remain high/critical-free','upgrade vinext when compatible beta/stable is validated']}));
+          const out={generatedAt:new Date().toISOString(),highCriticalRows:rows,temporaryRiskAcceptances:accepted,untriaged:productionBlocked};
+          fs.writeFileSync('p0-dependency-disposition.json',JSON.stringify(out,null,2));
+          console.log(JSON.stringify(out,null,2));
+          if(productionBlocked.length){console.error(`Untriaged non-accepted high/critical rows: ${productionBlocked.length}`);process.exit(1)}
+          NODE
       - name: Commit validated dependency remediation
         shell: bash
         run: |
@@ -64,3 +93,10 @@ jobs:
           git add package.json package-lock.json backend/package.json backend/package-lock.json
           git commit -m 'fix(p0): patch production dependency advisories'
           git push origin HEAD:remediation/p0-pilot-gates-b379631
+      - name: Upload dependency disposition
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-dependency-remediation-${{ github.sha }}
+          path: p0-dependency-disposition.json
+          if-no-files-found: warn
