@@ -15,6 +15,7 @@ import {runRazorpaySettlementReconciliationSweep} from "../lib/razorpay-settleme
 import {runSubscriptionBillingSweep} from "../lib/subscription-billing";
 import {runSubscriptionScheduledMaintenance} from "../lib/subscription-scheduled";
 import {runEliteScheduledHooks,runEliteWebhookHooks} from "../lib/services/elite-runtime";
+import {runMarketingConnectorScheduler} from "../lib/google-ads-conversion-consent";
 
 interface Env {
   ASSETS: Fetcher;
@@ -88,7 +89,11 @@ const worker = {
     ctx.waitUntil((async()=>{
       const templateSync=await syncSubmittedMetaTemplateStatuses(env.DB,env as unknown as Record<string,unknown>,{actorId:"system:scheduled-worker",limit:50});
       if(templateSync.failed&&templateSync.processed)throw new Error(`blocked before dispatch: whatsapp template sync: ${templateSync.failed} verification exception(s)`);
-      const [cleanup,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,settlementRecon,subscriptionMaintenance,eliteRuntime]=await Promise.allSettled([
+      const marketingHour=Number(new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Kolkata",hour:"2-digit",hour12:false}).format(new Date(controller.scheduledTime)));
+      const marketingTask=marketingHour>=6
+        ?runMarketingConnectorScheduler(env.DB,{asOf:controller.scheduledTime,runtime:env as unknown as Record<string,unknown>}).then(result=>{const failedSync=Array.isArray(result.sync)?result.sync.filter(item=>String((item as Record<string,unknown>).status)==="failed"):[];const offline=result.offlineConversions as Record<string,unknown>;if(failedSync.length||String(offline?.status||"")==="failed")throw new Error(`provider sync/upload failure: ${JSON.stringify({failedSync,offline})}`);return result;})
+        :Promise.resolve({status:"not_due_before_06_ist"});
+      const [cleanup,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime]=await Promise.allSettled([
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
         runCommunicationOutboxDispatcher(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
@@ -98,6 +103,7 @@ const worker = {
         runRazorpayOrderOutboxSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50,workerId:"system:scheduled-worker"}),
         runRazorpaySettlementReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
         runSubscriptionScheduledMaintenance(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,billingSweep:(db,input)=>runSubscriptionBillingSweep(db,input)}),
+        marketingTask,
         runEliteScheduledHooks(env.DB,{asOf:controller.scheduledTime}),
       ]);
       const errors:string[]=[];
@@ -110,6 +116,7 @@ const worker = {
       if(razorpayOrderOutbox.status==="rejected")errors.push(`razorpay order outbox: ${razorpayOrderOutbox.reason instanceof Error?razorpayOrderOutbox.reason.message:String(razorpayOrderOutbox.reason)}`);else if(razorpayOrderOutbox.value.failed)errors.push(`razorpay order outbox: ${razorpayOrderOutbox.value.failed} dispatch exception(s)`);
       if(settlementRecon.status==="rejected")errors.push(`razorpay settlement reconciliation: ${settlementRecon.reason instanceof Error?settlementRecon.reason.message:String(settlementRecon.reason)}`);
       if(subscriptionMaintenance.status==="rejected")errors.push(`subscription maintenance: ${subscriptionMaintenance.reason instanceof Error?subscriptionMaintenance.reason.message:String(subscriptionMaintenance.reason)}`);else if(Number(subscriptionMaintenance.value.errors||0)>0)errors.push(`subscription maintenance: ${subscriptionMaintenance.value.errors} exception(s)`);
+      if(marketingConnector.status==="rejected")errors.push(`marketing connector: ${marketingConnector.reason instanceof Error?marketingConnector.reason.message:String(marketingConnector.reason)}`);
       if(eliteRuntime.status==="rejected")errors.push(`elite runtime: ${eliteRuntime.reason instanceof Error?eliteRuntime.reason.message:String(eliteRuntime.reason)}`);else if(Number(eliteRuntime.value.failed||0)>0)errors.push(`elite runtime: ${eliteRuntime.value.failed} churn scoring exception(s)`);
       if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);
     })());

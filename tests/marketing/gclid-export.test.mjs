@@ -19,6 +19,9 @@ function mockD1(rows) {
         async all() {
           return { results: rows };
         },
+        async run() {
+          return { success: true };
+        },
       };
       return statement;
     },
@@ -26,7 +29,7 @@ function mockD1(rows) {
   return { db, calls };
 }
 
-test("GCLID export joins canonical attribution/conversion facts and emits the strict Google Ads CSV contract", async () => {
+test("GCLID export joins canonical attribution/conversion facts, requires explicit granted consent, and emits the strict Google Ads CSV contract", async () => {
   const { db, calls } = mockD1([
     {
       click_id: "GCLID-PS-0001",
@@ -41,11 +44,14 @@ test("GCLID export joins canonical attribution/conversion facts and emits the st
     to: Date.parse("2026-09-07T23:59:59.999Z"),
   });
 
-  assert.match(calls[0].sql, /FROM whatsapp_conversion_facts AS facts/);
-  assert.match(calls[0].sql, /INNER JOIN whatsapp_lead_attribution AS attribution/);
-  assert.match(calls[0].sql, /attribution\.click_id/);
-  assert.match(calls[0].sql, /facts\.event_type IN \('lead_qualified','booking_created','payment_captured'\)/);
-  assert.deepEqual(calls[0].bindings, [
+  const queryCall = calls.find(call => /FROM whatsapp_conversion_facts AS facts/.test(call.sql));
+  assert.ok(queryCall);
+  assert.match(queryCall.sql, /INNER JOIN whatsapp_lead_attribution AS attribution/);
+  assert.match(queryCall.sql, /INNER JOIN google_ads_conversion_consent AS consent/);
+  assert.match(queryCall.sql, /consent\.ad_user_data = 'Granted'/);
+  assert.match(queryCall.sql, /consent\.ad_personalization = 'Granted'/);
+  assert.match(queryCall.sql, /facts\.event_type IN \('lead_qualified','booking_created','payment_captured'\)/);
+  assert.deepEqual(queryCall.bindings, [
     Date.parse("2026-09-01T00:00:00.000Z"),
     Date.parse("2026-09-07T23:59:59.999Z"),
   ]);
@@ -60,7 +66,7 @@ test("GCLID export joins canonical attribution/conversion facts and emits the st
   );
 });
 
-test("GCLID export preserves exact two-row header for an empty valid conversion set", async () => {
+test("GCLID export preserves exact two-row header for an empty consent-eligible conversion set", async () => {
   const { db } = mockD1([]);
   const csv = await mod.exportGoogleAdsOfflineConversions(db);
   assert.equal(
