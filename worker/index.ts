@@ -89,6 +89,10 @@ const worker = {
     ctx.waitUntil((async()=>{
       const templateSync=await syncSubmittedMetaTemplateStatuses(env.DB,env as unknown as Record<string,unknown>,{actorId:"system:scheduled-worker",limit:50});
       if(templateSync.failed&&templateSync.processed)throw new Error(`blocked before dispatch: whatsapp template sync: ${templateSync.failed} verification exception(s)`);
+      const marketingHour=Number(new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Kolkata",hour:"2-digit",hour12:false}).format(new Date(controller.scheduledTime)));
+      const marketingTask=marketingHour>=6
+        ?runMarketingConnectorScheduler(env.DB,{asOf:controller.scheduledTime,runtime:env as unknown as Record<string,unknown>}).then(result=>{const failedSync=Array.isArray(result.sync)?result.sync.filter(item=>String((item as Record<string,unknown>).status)==="failed"):[];const offline=result.offlineConversions as Record<string,unknown>;if(failedSync.length||String(offline?.status||"")==="failed")throw new Error(`provider sync/upload failure: ${JSON.stringify({failedSync,offline})}`);return result;})
+        :Promise.resolve({status:"not_due_before_06_ist"});
       const [cleanup,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime]=await Promise.allSettled([
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
@@ -99,7 +103,7 @@ const worker = {
         runRazorpayOrderOutboxSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,limit:50,workerId:"system:scheduled-worker"}),
         runRazorpaySettlementReconciliationSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
         runSubscriptionScheduledMaintenance(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,billingSweep:(db,input)=>runSubscriptionBillingSweep(db,input)}),
-        runMarketingConnectorScheduler(env.DB,{asOf:controller.scheduledTime,runtime:env as unknown as Record<string,unknown>}),
+        marketingTask,
         runEliteScheduledHooks(env.DB,{asOf:controller.scheduledTime}),
       ]);
       const errors:string[]=[];
