@@ -1,0 +1,90 @@
+name: P0 Exotel Callback Reachability Audit
+
+on:
+  push:
+    branches:
+      - remediation/p0-pilot-gates-b379631
+    paths:
+      - .github/workflows/p0-exotel-callback-reachability-audit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    environment: pawspace-staging
+    timeout-minutes: 6
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WORKER_SCRIPT: pawspace-staging
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Audit deployed callback URL and public reachability
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const account=String(process.env.CLOUDFLARE_ACCOUNT_ID||'');
+          const token=String(process.env.CLOUDFLARE_API_TOKEN||'');
+          const script=String(process.env.WORKER_SCRIPT||'pawspace-staging');
+          if(!account||!token) throw new Error('Missing Cloudflare staging audit credentials');
+          const r=await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/${encodeURIComponent(script)}/settings`,{headers:{authorization:`Bearer ${token}`},signal:AbortSignal.timeout(20000)});
+          const j=await r.json().catch(()=>null);
+          if(!r.ok||!j?.success) throw new Error(`Worker settings audit failed HTTP ${r.status}`);
+          const bindings=Array.isArray(j?.result?.bindings)?j.result.bindings:[];
+          const b=bindings.find(x=>String(x?.name||'')==='PAWSPACE_VOICE_STATUS_CALLBACK_URL');
+          let raw='';
+          if(typeof b?.text==='string') raw=b.text;
+          else if(typeof b?.value==='string') raw=b.value;
+          else if(typeof b?.json==='string') raw=b.json;
+          if(!raw) throw new Error(`PAWSPACE_VOICE_STATUS_CALLBACK_URL is not readable as a plaintext staging binding (type=${String(b?.type||'missing')})`);
+          const u=new URL(raw);
+          const hasUserInfo=Boolean(u.username||u.password);
+          const safe=`${u.protocol}//${u.hostname}${u.port?':'+u.port:''}${u.pathname}`;
+          console.log(`CALLBACK_CONFIG protocol=${u.protocol} host=${u.hostname} path=${u.pathname} has_basic_userinfo=${hasUserInfo}`);
+          if(u.protocol!=='https:') throw new Error('Callback is not HTTPS');
+          if(u.pathname!=='/api/voice-provider-webhook') throw new Error(`Callback path mismatch: ${u.pathname}`);
+          const probeBody='CallSid=reachability-probe&CallStatus=completed&CustomField=SELFTEST-NOAPPLY';
+          const probe=await fetch(safe,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:probeBody,redirect:'manual',signal:AbortSignal.timeout(20000)});
+          const text=await probe.text();
+          console.log(`CALLBACK_PUBLIC_REACHABILITY http=${probe.status} body_class=${probe.status===401?'auth_rejected_as_expected':probe.status>=500?'server_error':'other'}`);
+          if(probe.status!==401) throw new Error(`Expected reachable callback to reject unsigned request with 401, got ${probe.status}`);
+          console.log('CALLBACK_NETWORK_REACHABILITY=PASS');
+          console.log(`CALLBACK_AUTH_EMBEDDED=${hasUserInfo?'YES':'NO'}`);
+          NODE
+
+      - name: Capture Cloudflare tail for synthetic probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm exec --yes wrangler@4 -- --version
+          rm -f "$RUNNER_TEMP/tail.log"
+          timeout 35s npm exec --yes wrangler@4 -- tail "$WORKER_SCRIPT" --format=json > "$RUNNER_TEMP/tail.log" 2>&1 &
+          TAIL_PID=$!
+          sleep 8
+          node --input-type=module <<'NODE'
+          const account=String(process.env.CLOUDFLARE_ACCOUNT_ID||'');
+          const token=String(process.env.CLOUDFLARE_API_TOKEN||'');
+          const script=String(process.env.WORKER_SCRIPT||'pawspace-staging');
+          const r=await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/workers/scripts/${encodeURIComponent(script)}/settings`,{headers:{authorization:`Bearer ${token}`}});
+          const j=await r.json();
+          const b=(j?.result?.bindings||[]).find(x=>String(x?.name||'')==='PAWSPACE_VOICE_STATUS_CALLBACK_URL');
+          const raw=typeof b?.text==='string'?b.text:typeof b?.value==='string'?b.value:'';
+          const u=new URL(raw); u.username=''; u.password=''; u.search=''; u.hash='';
+          await fetch(u.toString(),{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded'},body:'CallSid=tail-probe&CallStatus=completed&CustomField=SELFTEST-NOAPPLY'}).catch(()=>{});
+          NODE
+          sleep 8
+          kill "$TAIL_PID" 2>/dev/null || true
+          wait "$TAIL_PID" 2>/dev/null || true
+          if grep -q 'voice-provider-webhook' "$RUNNER_TEMP/tail.log"; then
+            echo 'CLOUDFLARE_TAIL_CALLBACK_REQUEST=SEEN'
+          else
+            echo 'CLOUDFLARE_TAIL_CALLBACK_REQUEST=NOT_SEEN'
+            tail -n 80 "$RUNNER_TEMP/tail.log" || true
+            exit 1
+          fi
