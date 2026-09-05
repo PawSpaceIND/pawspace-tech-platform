@@ -8,6 +8,7 @@ import {
   collectTrainingRemainingBalanceSandbox,
   requireTrainingQuoteSandboxCapture,
   consumeTrainingQuote,
+  expectResponseRefusal,
 } from "./helpers/training-gate-harness.mjs";
 
 test("Training commercial truth is server-quoted and linked exactly once", async () => {
@@ -36,7 +37,10 @@ test("Training commercial truth is server-quoted and linked exactly once", async
   assert.equal(row.status, "used");
   assert.equal(row.used_booking_id, "BKG-GATE3-1");
 
-  await assert.rejects(() => consumeTrainingQuote(world.db, quote.quoteId, "BKG-GATE3-2"), /already linked|already used|exactly one/i);
+  await expectResponseRefusal(() => consumeTrainingQuote(world.db, quote.quoteId, "BKG-GATE3-2"), {
+    status: 409,
+    message: /Training quote is already linked to a booking/,
+  });
   assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_booking_quote_links WHERE quote_id=?").get(quote.quoteId).n, 1);
 });
 
@@ -49,11 +53,11 @@ test("Training payment sabotage rejects mismatched amount and replay key", async
     paymentMode: "split",
   });
 
-  await assert.rejects(() => captureTrainingQuoteSandbox(world.db, {
+  await expectResponseRefusal(() => captureTrainingQuoteSandbox(world.db, {
     quoteId: quote.quoteId,
     amount: quote.amountDueNow - 1,
     paymentKey: "gate3-wrong-amount",
-  }), /amount must match|amount.*match/i);
+  }), { status: 409, message: /Sandbox capture amount must match the Training quote amount due now/ });
   assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_quote_payment_attestations WHERE quote_id=?").get(quote.quoteId).n, 0);
 
   await captureTrainingQuoteSandbox(world.db, {
@@ -61,11 +65,11 @@ test("Training payment sabotage rejects mismatched amount and replay key", async
     amount: quote.amountDueNow,
     paymentKey: "gate3-deposit",
   });
-  await assert.rejects(() => captureTrainingQuoteSandbox(world.db, {
+  await expectResponseRefusal(() => captureTrainingQuoteSandbox(world.db, {
     quoteId: quote.quoteId,
     amount: quote.amountDueNow,
     paymentKey: "gate3-different-key",
-  }), /PAYMENT_CAPTURE_REPLAY/);
+  }), { status: 403, message: /PAYMENT_CAPTURE_REPLAY/ });
   assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_quote_payment_attestations WHERE quote_id=?").get(quote.quoteId).n, 1);
 });
 
@@ -79,11 +83,11 @@ test("Training split-payment balance executes once and refuses incorrect remaini
   });
   await captureTrainingQuoteSandbox(world.db, { quoteId: quote.quoteId, amount: quote.amountDueNow, paymentKey: "gate3-basic-deposit" });
 
-  await assert.rejects(() => collectTrainingRemainingBalanceSandbox(world.db, {
+  await expectResponseRefusal(() => collectTrainingRemainingBalanceSandbox(world.db, {
     quoteId: quote.quoteId,
     amount: quote.totalAmount - quote.amountDueNow - 1,
     paymentKey: "gate3-wrong-balance",
-  }), /Remaining Training balance must equal/);
+  }), { status: 409, message: /Remaining Training balance must equal/ });
   assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_balance_payment_events WHERE quote_id=?").get(quote.quoteId).n, 0);
 
   const result = await collectTrainingRemainingBalanceSandbox(world.db, {
@@ -98,19 +102,19 @@ test("Training split-payment balance executes once and refuses incorrect remaini
 
 test("Training commercial inputs fail closed for coupon misuse and past scheduling", async () => {
   const world = freshTrainingWorld();
-  await assert.rejects(() => createTrainingQuote(world.db, {
+  await expectResponseRefusal(() => createTrainingQuote(world.db, {
     packageCode: "training-2-starter",
     petCount: 1,
     scheduledStart: futureTrainingStart(),
     paymentMode: "split",
     couponCode: "ANY",
-  }), /coupons require full prepaid payment/);
+  }), { status: 409, message: /Training coupons require full prepaid payment/ });
 
-  await assert.rejects(() => createTrainingQuote(world.db, {
+  await expectResponseRefusal(() => createTrainingQuote(world.db, {
     packageCode: "training-2-starter",
     petCount: 1,
     scheduledStart: new Date(Date.now() - 60_000).toISOString(),
     paymentMode: "prepaid",
-  }), /requires a future scheduled start/);
+  }), { status: 400, message: /Training quote requires a future scheduled start/ });
   assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_commercial_quotes").get().n, 0);
 });
