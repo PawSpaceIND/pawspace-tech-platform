@@ -51,14 +51,23 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 function sttPayload(model:string,audio:number[],language?:string|null):Record<string,unknown>{
-  // Cloudflare's current whisper-large-v3-turbo binding accepts base64 audio, while classic Whisper
-  // accepts the historical byte-array form. Keep both so environments can select either model safely.
   if(model.includes("whisper-large-v3-turbo")){
-    const payload:Record<string,unknown>={audio:bytesToBase64(Uint8Array.from(audio)),task:"transcribe"};
+    const payload:Record<string,unknown>={audio:bytesToBase64(Uint8Array.from(audio))};
     if(language)payload.language=language;
     return payload;
   }
   return{audio};
+}
+
+async function normalizeSttResult(raw:unknown):Promise<Record<string,unknown>>{
+  if(raw instanceof Response){
+    if(!raw.ok)throw new VoiceSpeechError("stt","provider_failure",`STT provider returned HTTP ${raw.status}`,String(raw.status));
+    const parsed=await raw.json().catch(()=>null);
+    if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))throw new VoiceSpeechError("stt","malformed_output","STT raw response was not a JSON object");
+    return parsed as Record<string,unknown>;
+  }
+  if(!raw||typeof raw!=="object"||Array.isArray(raw))throw new VoiceSpeechError("stt","malformed_output","STT model returned no result object");
+  return raw as Record<string,unknown>;
 }
 
 async function workersAiTtsBase64(result: unknown): Promise<string> {
@@ -69,7 +78,7 @@ async function workersAiTtsBase64(result: unknown): Promise<string> {
   }
   let bytes: Uint8Array | null = null;
   if (result instanceof Response) {
-    if (!result.ok) throw new VoiceSpeechError("tts", "provider_failure", `TTS provider returned HTTP ${result.status}`);
+    if (!result.ok) throw new VoiceSpeechError("tts", "provider_failure", `TTS provider returned HTTP ${result.status}`,String(result.status));
     bytes = new Uint8Array(await result.arrayBuffer());
   } else if (result instanceof ReadableStream) bytes = new Uint8Array(await new Response(result).arrayBuffer());
   else if (result instanceof ArrayBuffer) bytes = new Uint8Array(result);
@@ -89,10 +98,14 @@ export function resolveWorkersAiStt(env: Env): VoiceSttProvider {
       const startedAt = Date.now();
       const audio = await audioBytes(input.audioRef, allowedHosts, timeoutMs);
       let rawResult: unknown;
-      try { rawResult = await withSpeechDeadline("stt", ai.run(model, sttPayload(model,audio,input.language)), timeoutMs); }
-      catch (error) { throw asSpeechFailure("stt", error); }
-      if (!rawResult || typeof rawResult !== "object" || Array.isArray(rawResult)) throw new VoiceSpeechError("stt", "malformed_output", "STT model returned no result object");
-      const result = rawResult as Record<string, unknown>;
+      try {
+        rawResult = await withSpeechDeadline(
+          "stt",
+          ai.run(model, sttPayload(model,audio,input.language), { returnRawResponse: true }),
+          timeoutMs,
+        );
+      } catch (error) { throw asSpeechFailure("stt", error); }
+      const result=await normalizeSttResult(rawResult);
       const field = result.text ?? result.transcription;
       if (field == null) throw new VoiceSpeechError("stt", "malformed_output", "STT model returned no transcript field");
       if (typeof field !== "string") throw new VoiceSpeechError("stt", "malformed_output", `STT model returned a ${typeof field} transcript`);
