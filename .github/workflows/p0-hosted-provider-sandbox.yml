@@ -23,7 +23,7 @@ jobs:
       RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
       RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
       META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
-      META_WHATSAPP_APP_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET }}
+      META_WHATSAPP_APP_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET_UAT || secrets.META_WHATSAPP_APP_SECRET }}
       META_WHATSAPP_UAT_ALLOWLIST: ${{ secrets.META_WHATSAPP_UAT_ALLOWLIST }}
       GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
     steps:
@@ -31,12 +31,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Resolve non-secret Meta staging identifiers from deployed Worker
+      - name: Resolve non-secret Meta staging identifiers from deployed Worker or approved UAT aliases
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          FALLBACK_PHONE_ID: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID }}
-          FALLBACK_WABA_ID: ${{ vars.META_WHATSAPP_WABA_ID }}
+          FALLBACK_PHONE_ID: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID_UAT || vars.META_WHATSAPP_PHONE_NUMBER_ID || secrets.META_WHATSAPP_PHONE_NUMBER_ID_UAT }}
+          FALLBACK_WABA_ID: ${{ vars.META_WHATSAPP_WABA_ID_UAT || vars.META_WHATSAPP_WABA_ID || secrets.META_WHATSAPP_WABA_ID_UAT }}
+          FALLBACK_TEMPLATE_ALLOWLIST: ${{ vars.META_WHATSAPP_TEMPLATE_ALLOWLIST || secrets.META_WHATSAPP_TEMPLATE_ALLOWLIST }}
           FALLBACK_GRAPH_VERSION: ${{ vars.META_WHATSAPP_GRAPH_VERSION }}
         shell: bash
         run: |
@@ -49,16 +50,16 @@ jobs:
           const j=JSON.parse(readFileSync(process.env.SETTINGS,'utf8'));
           const vars={}; for(const b of (j?.result?.bindings||[])) if(b?.type==='plain_text') vars[String(b.name||'')]=String(b.text??b.value??'');
           const picked={
-            META_WHATSAPP_PHONE_NUMBER_ID:vars.META_WHATSAPP_PHONE_NUMBER_ID||process.env.FALLBACK_PHONE_ID||'',
-            META_WHATSAPP_WABA_ID:vars.META_WHATSAPP_WABA_ID||process.env.FALLBACK_WABA_ID||'',
-            META_WHATSAPP_TEMPLATE_ALLOWLIST:vars.META_WHATSAPP_TEMPLATE_ALLOWLIST||'',
+            META_WHATSAPP_PHONE_NUMBER_ID:vars.META_WHATSAPP_PHONE_NUMBER_ID||vars.META_WHATSAPP_PHONE_NUMBER_ID_UAT||process.env.FALLBACK_PHONE_ID||'',
+            META_WHATSAPP_WABA_ID:vars.META_WHATSAPP_WABA_ID||vars.META_WHATSAPP_WABA_ID_UAT||process.env.FALLBACK_WABA_ID||'',
+            META_WHATSAPP_TEMPLATE_ALLOWLIST:vars.META_WHATSAPP_TEMPLATE_ALLOWLIST||process.env.FALLBACK_TEMPLATE_ALLOWLIST||'',
             META_WHATSAPP_GRAPH_VERSION:vars.META_WHATSAPP_GRAPH_VERSION||process.env.FALLBACK_GRAPH_VERSION||'v23.0',
           };
           for(const [name,value] of Object.entries(picked)){
-            if(!String(value).trim()) throw new Error(`Missing ${name} in staging Worker/repository configuration`);
+            if(!String(value).trim()) throw new Error(`Missing ${name} in staging Worker/UAT configuration`);
             appendFileSync(process.env.GITHUB_ENV,`${name}=${String(value).replace(/\n/g,',')}\n`);
           }
-          console.log('Resolved Meta phone/WABA/template/version from staging configuration; values withheld.');
+          console.log('Resolved Meta phone/WABA/template/version from staging/UAT configuration; values withheld.');
           NODE
           rm -f "$SETTINGS"
       - name: Refuse production-looking provider credentials and endpoints
