@@ -75,6 +75,37 @@ export async function seedBoardingStay(db, sqlite, {
   return { ...booking, stayId: String(stay.id), ...window };
 }
 
+/**
+ * A canonical Pet Sitting booking. Sitting has no separate stay table — its lifecycle works off
+ * canonical_bookings and provider_work_orders directly — so this is the canonical seed with the
+ * sitting service code and the tables its modules own already ensured.
+ */
+export async function seedSittingBooking(db, sqlite, {
+  bookingId = "BKG-SIT-1", customerId = "CUST-SIT-1", providerId = "sitter_ananya",
+  packageCode = "sitting-visit-60", packageName = "Home Visit", amount = 399,
+  amountDueNow, paymentStatus = "captured", paymentMode = "prepaid", window: given, ...rest
+} = {}) {
+  const lifecycle = await import("../../lib/sitting-lifecycle.ts");
+  await lifecycle.ensureSittingLifecycleTables(db);
+  const window = given ?? stayWindow();
+  return seedCanonicalStayBooking(sqlite, {
+    bookingId, customerId, providerId, serviceCode: "pet_sitting", packageCode, packageName,
+    amount, amountDueNow: amountDueNow ?? amount, paymentStatus, paymentMode, ...window, ...rest,
+  });
+}
+
+/** A Sitting care plan: the same three requirements plus home access, which Boarding does not need. */
+export function validSittingCarePlan(overrides = {}) {
+  return {
+    feeding: "Two meals, 8am and 7pm",
+    medication: "None",
+    emergencyContact: "Asha R. +919800000001",
+    vet: "Cessna Lifeline +919800000002",
+    homeAccess: "Lockbox by the gate, code shared at check-in",
+    ...overrides,
+  };
+}
+
 /** A care plan that satisfies the emergency-contact and vet requirements, so a test can drop ONE field. */
 export function validCarePlan(overrides = {}) {
   return {
