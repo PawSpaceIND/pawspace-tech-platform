@@ -6,6 +6,7 @@ const label=(source:string,key:string)=>{const escaped=key.replace(/[.*+?^${}()|
  * Deterministic boundary between STT/LLM understanding and booking.create. Production voice can send
  * the JSON shape directly; the labelled form exists so synthetic transcript UAT can exercise the same
  * extraction/parameter-lock path without giving tests an LLM-shaped mock.
+ * Keep this boundary deterministic so CI can certify the autonomous booking path without live-model variance.
  */
 export function extractVoiceBookingCreate(transcript:string){
  const source=text(transcript);if(!source)return{intent:"unknown",complete:false,arguments:{},missing:["transcript"]};
