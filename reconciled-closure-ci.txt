@@ -1,0 +1,374 @@
+name: Release CI
+
+on:
+  push:
+    branches:
+      - main
+      - grooming-integration-closure
+      - agent/food-gates1-5
+      - agent/platform-stack-recertification
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-gate:
+    name: Build gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Blocking application build
+        run: npm run build
+
+  web-tests:
+    name: Web tests
+    runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clean checkout workspace
+        run: git clean -ffdx
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Materialize server build for rendered-route tests
+        run: npm run build
+      - name: Run tracked Web tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          tracked_tests=()
+          certification_tests=()
+          for test_file in tests/*.test.mjs; do
+            if git ls-files --error-unmatch -- "$test_file" >/dev/null 2>&1; then
+              case "$test_file" in
+                tests/whatsapp-template-sync.test.mjs|tests/whatsapp-webhook-security.test.mjs)
+                  certification_tests+=("$test_file")
+                  ;;
+                *)
+                  tracked_tests+=("$test_file")
+                  ;;
+              esac
+            fi
+          done
+          test "${#tracked_tests[@]}" -gt 0
+          test "${#certification_tests[@]}" -eq 2
+          status=0
+          set +e
+          PAWSPACE_LOCAL_PREVIEW=on node --experimental-strip-types --test "${tracked_tests[@]}" 2>&1 | tee web-tests.tap
+          status=${PIPESTATUS[0]}
+          PAWSPACE_PRODUCTION_ENFORCE=false PAWSPACE_LOCAL_PREVIEW=on node --experimental-strip-types --test "${certification_tests[@]}" 2>&1 | tee -a web-tests.tap
+          certification_status=${PIPESTATUS[0]}
+          if [ "$certification_status" -ne 0 ]; then
+            status="$certification_status"
+          fi
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo ""
+            echo "================ FAILING TESTS ================"
+            awk '/^not ok /{show=1} show{print} show&&/^  \.\.\.$/{show=0; print ""}' web-tests.tap
+            echo "==============================================="
+            grep -E '^# (tests|pass|fail) ' web-tests.tap || true
+          fi
+          exit "$status"
+      - name: Upload the TAP stream
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-tests-tap
+          path: web-tests.tap
+          if-no-files-found: warn
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
+  artifact:
+    name: Artifact validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run validate:artifact
+
+  runtime-d1:
+    name: Runtime D1 regression
+    runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Execute production flow against isolated local D1
+        shell: bash
+        run: |
+          rm -rf .runtime-d1
+          npx wrangler dev --config wrangler.runtime-d1.jsonc --persist-to .runtime-d1 --port 8788 > /tmp/runtime-d1-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'cat /tmp/runtime-d1-worker.log; kill "$worker_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8788/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = 1
+          status=$(curl -sS -o /tmp/runtime-d1-result.json -w '%{http_code}' http://127.0.0.1:8788/run)
+          cat /tmp/runtime-d1-result.json
+          test "$status" = 200
+          node -e "const fs=require('fs');const r=JSON.parse(fs.readFileSync('/tmp/runtime-d1-result.json','utf8'));if(!r.ok)throw new Error(r.error||'Runtime D1 regression failed');const expected={canonicalPets:2,accountMutations:3};for(const [k,v] of Object.entries(r.assertions||{})){const want=expected[k]??1;if(v!==want)throw new Error(k+' cardinality was '+v+', expected '+want)}"
+
+  scheduler-d1:
+    name: Background scheduler D1
+    runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Fire real scheduled handler against isolated local D1
+        shell: bash
+        run: |
+          rm -rf .scheduler-d1
+          npx wrangler dev --config wrangler.background-scheduler.jsonc --persist-to .scheduler-d1 --port 8789 --test-scheduled > /tmp/scheduler-d1-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'cat /tmp/scheduler-d1-worker.log; kill "$worker_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8789/health >/dev/null; then ready=1; break; fi
+            sleep 1
+          done
+          test "$ready" = 1
+          curl -fsS http://127.0.0.1:8789/seed
+          curl -fsS 'http://127.0.0.1:8789/cdn-cgi/handler/scheduled?cron=%2A%2F5+%2A+%2A+%2A+%2A&time=1786458600000&format=json'
+          curl -fsS 'http://127.0.0.1:8789/cdn-cgi/handler/scheduled?cron=%2A%2F5+%2A+%2A+%2A+%2A&time=1786458600000&format=json'
+          curl -fsS http://127.0.0.1:8789/assert > /tmp/scheduler-state.json
+          cat /tmp/scheduler-state.json
+          node -e "const s=require('/tmp/scheduler-state.json');if(s.cold?.status!=='active'||Number(s.cold?.recycle_cycle)!==1)throw Error('cold lead did not reopen');if(s.sla?.status!=='sla_breached')throw Error('SLA did not escalate');if(Number(s.ops?.escalation_level)!==1)throw Error('ops did not escalate');if(s.callback?.status!=='missed')throw Error('callback did not sweep');if(Number(s.reports?.count)!==3)throw Error('command reports were not generated');if(Number(s.runs?.count)!==1||Number(s.runs?.attempts)!==1||s.runs?.status!=='completed')throw Error('scheduled replay was not idempotent')"
+
+  pricing-control-d1:
+    name: Pricing Control D1 regression
+    runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Prove Pricing Control changes real canonical quotes
+        shell: bash
+        run: |
+          rm -rf .pricing-control-d1
+          npx wrangler dev --config wrangler.pricing-control.jsonc --persist-to .pricing-control-d1 --port 8790 > /tmp/pricing-control-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'cat /tmp/pricing-control-worker.log; kill "$worker_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8790/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = 1
+          status=$(curl -sS -o /tmp/pricing-control-result.json -w '%{http_code}' http://127.0.0.1:8790/run)
+          cat /tmp/pricing-control-result.json
+          test "$status" = 200
+          node -e "const fs=require('fs');const r=JSON.parse(fs.readFileSync('/tmp/pricing-control-result.json','utf8'));if(!r.ok)throw new Error(r.error||'Pricing Control regression failed');const e={training:13000,boarding:1600,sitting:1350,grooming:3600,activeCanonicalRows:5};for(const [k,v] of Object.entries(e)){if(r.assertions?.[k]!==v)throw new Error(k+' expected '+v+' got '+r.assertions?.[k]);}if(!r.oldGroomingRejected)throw new Error('old Grooming multi-pet amount was accepted');"
+
+  production-readiness-d1:
+    name: Production readiness truth D1
+    runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: No code may hardcode productionReady:true - it must always be a computed claim
+        shell: bash
+        run: |
+          if grep -rnoE "productionReady\s*:\s*true" lib/*.ts app/api/*/route.ts 2>/dev/null; then
+            echo "A hardcoded productionReady:true literal was found - this must always be a computed expression, never a bare literal, so it can never silently claim readiness a dependency does not actually have."
+            exit 1
+          fi
+          echo "No hardcoded productionReady:true literal found."
+      - name: Verify the Production Readiness registry's own safety enforcement cannot be bypassed
+        shell: bash
+        run: |
+          rm -rf .production-readiness-d1
+          npx wrangler dev --config wrangler.production-readiness.jsonc --persist-to .production-readiness-d1 --port 8791 > /tmp/production-readiness-worker.log 2>&1 &
+          worker_pid=$!
+          trap 'cat /tmp/production-readiness-worker.log; kill "$worker_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8791/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = 1
+          status=$(curl -sS -o /tmp/production-readiness-result.json -w '%{http_code}' http://127.0.0.1:8791/run)
+          cat /tmp/production-readiness-result.json
+          test "$status" = 200
+          node -e "const fs=require('fs');const r=JSON.parse(fs.readFileSync('/tmp/production-readiness-result.json','utf8'));if(!r.ok)throw new Error(r.error||'Production readiness regression failed');const a=r.assertions||{};if(a.razorpayCredentialStatus!=='missing')throw new Error('expected missing credential status, got '+a.razorpayCredentialStatus);if(a.registryProductionReady!==false)throw new Error('registry must honestly report productionReady=false');if(!a.bypassBlocked)throw new Error('controlled_live_verified bypass was not blocked');if(!a.secretLeakBlocked)throw new Error('secret value leak into secret_reference was not blocked');if(!a.razorpayIsLaunchBlocker)throw new Error('Razorpay must appear as a real launch blocker');"
+
+  evidence-inventory:
+    name: Evidence class inventory
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Classify every suite by what it executes
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/evidence-class-audit.mjs | tee evidence-class-audit.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: evidence-class-audit
+          path: evidence-class-audit.md
+          if-no-files-found: warn
+
+  harness-hook-paths:
+    name: Test harness hook paths
+    runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+      PAWSPACE_LOCAL_PREVIEW: 'on'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Module hook resolver smoke
+        run: npx node --test tests/helpers/module-hooks.mjs
+      - name: Collect the suites that install the shared workers hooks
+        id: collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t suites < <(grep -l "helpers/module-hooks.mjs" tests/*.test.mjs | sort)
+          test "${#suites[@]}" -gt 0
+          printf '%s\n' "${suites[@]}" > harness-suites.txt
+          echo "count=${#suites[@]}" >> "$GITHUB_OUTPUT"
+      - name: registerHooks path (Node >= 22.15)
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e "const m=require('node:module');if(typeof m.registerHooks!=='function'){console.error('this runner has no registerHooks - the job cannot prove that branch');process.exit(1)}"
+          mapfile -t suites < harness-suites.txt
+          node --experimental-strip-types --test "${suites[@]}"
+      - name: Loader-hook fallback compatibility path
+        shell: bash
+        env:
+          PAWSPACE_FORCE_LOADER_HOOK: '1'
+        run: |
+          set -euo pipefail
+          mapfile -t suites < harness-suites.txt
+          node --experimental-strip-types --test "${suites[@]}"
+
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
