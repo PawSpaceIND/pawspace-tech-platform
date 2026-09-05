@@ -4,7 +4,7 @@ import { refreshLeadScores } from "./crm-lead-scoring-merge";
 import { dispatchEmailOutbox } from "./crm-email-sync";
 import { dispatchReportExportDeliveries, processReportExportJobs, runScheduledReportExports } from "./report-export-runtime";
 import { runOutboundOrchestrationSweep } from "./outbound-sweep";
-import { runOutboundAiDispatchSweep } from "./outbound-ai-dispatch";
+import { dispatchOutboundAiQueue } from "./outbound-ai-dispatch";
 
 type Db = D1Database;
 type Row = Record<string, unknown>;
@@ -17,8 +17,9 @@ export async function runDiamondCrmScheduledSweep(db: Db, env: Record<string, un
   // A cursor window continually walks the full customer base. Each open lead in the current window is
   // re-scored with PR #515 before routing, so the 40k+ backlog does not depend on the newest-500 refresh.
   const outboundRouting = await runOutboundOrchestrationSweep(db, { actorId, asOf, batchSize: 50 } as never);
-  // AI execution is separate and fail-closed: canonical voice governance decides whether a call may dial.
-  const outboundAi = await runOutboundAiDispatchSweep(db, env, { actorId, asOf, limit: 20 });
+  // AI execution is a phase of this scheduled sweep and remains fail-closed: canonical voice governance
+  // decides whether any queue item may actually dial.
+  const outboundAi = await dispatchOutboundAiQueue(db, env, { actorId, asOf, limit: 20 });
   const minute = new Date(asOf).getUTCMinutes();
   const forecast = await buildProbabilisticForecast(db, { actorId, persist: minute < 5 });
   const schedules = await runScheduledReportExports(db, { actorId, asOf });
