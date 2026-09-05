@@ -1,20 +1,151 @@
-import test from"node:test";
-import assert from"node:assert/strict";
-import{readFile}from"node:fs/promises";
-const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  freshFoodWorld,
+  createFoodOrderFixture,
+  fulfilTo,
+  mutateFoodFulfilment,
+  mutateFoodFinance,
+  expectResponse,
+} from "./helpers/food-gate-harness.mjs";
 
-test("Food Gate 3 keeps delivered-order payment due until sandbox payment is recorded",async()=>{const source=await read("lib/food-finance-governance.ts");assert.match(source,/food_order_payment_events/);assert.match(source,/record_order_payment/);assert.match(source,/sandbox_paid/);assert.match(source,/Food sandbox payment reference was already used/);assert.match(source,/idx_food_payment_reference/);assert.match(source,/liveMoney:false/);});
+test("Food Gate 3 executes delivery payment capture and refuses payment-reference reuse", async () => {
+  const world = freshFoodWorld();
+  const first = await createFoodOrderFixture(world, { idempotencyKey: "gate3-paid-1" });
+  await fulfilTo(world, first, "delivered");
+  const paid = await mutateFoodFinance(world.db, {
+    orderId: first.orderId,
+    action: "record_order_payment",
+    actorId: "finance@example.in",
+    idempotencyKey: "gate3-payment-1",
+    paymentReference: "PAYREF-GATE3-001",
+  });
+  assert.equal(paid.status, "sandbox_paid");
+  assert.equal(paid.liveMoney, false);
+  const payment = world.sqlite.prepare("SELECT status,reference FROM food_order_payment_events WHERE order_id=?").get(first.orderId);
+  assert.deepEqual(payment, { status: "sandbox_paid", reference: "PAYREF-GATE3-001" });
 
-test("Food cancellation is request-only and packed or dispatched orders require Operations first",async()=>{const source=await read("lib/food-finance-governance.ts");assert.match(source,/food_cancellation_requests/);assert.match(source,/policy_review_required/);assert.match(source,/refundPolicy:\"configuration_required\"/);assert.match(source,/Packed\/dispatched Food order must use Operations fulfilment review before cancellation/);assert.match(source,/Approved Food refund must be explicit/);assert.match(source,/cannot exceed sandbox-paid order value/);});
+  const second = await createFoodOrderFixture(world, { idempotencyKey: "gate3-paid-2" });
+  await fulfilTo(world, second, "delivered");
+  await expectResponse(mutateFoodFinance(world.db, {
+    orderId: second.orderId,
+    action: "record_order_payment",
+    actorId: "finance@example.in",
+    idempotencyKey: "gate3-payment-2",
+    paymentReference: "PAYREF-GATE3-001",
+  }), 409, /payment reference was already used/i);
+});
 
-test("Food cancellation releases only still-reserved UAT inventory",async()=>{const source=await read("lib/food-finance-governance.ts");assert.match(source,/releaseReservedInventory/);assert.match(source,/reserved_units=MAX\(0,reserved_units-\?\)/);assert.match(source,/UPDATE food_inventory_reservations SET status='released'/);});
+test("Food Gate 3 cancellation is request-only, segregated and releases only reserved inventory", async () => {
+  const world = freshFoodWorld();
+  const fixture = await createFoodOrderFixture(world, { quantity: 2, idempotencyKey: "gate3-cancel-order" });
+  const requested = await mutateFoodFinance(world.db, {
+    orderId: fixture.orderId,
+    action: "request_cancel",
+    actorId: "customer@example.in",
+    idempotencyKey: "gate3-request-cancel",
+    reason: "Customer requested cancellation",
+  });
+  assert.equal(requested.status, "policy_review_required");
+  assert.equal(requested.orderPreserved, true);
+  assert.equal(world.sqlite.prepare("SELECT status FROM food_orders WHERE id=?").get(fixture.orderId).status, "uat_reserved");
 
-test("Food refund ledger is sandbox-only and replay resistant",async()=>{const source=await read("lib/food-finance-governance.ts");assert.match(source,/food_refund_ledger/);assert.match(source,/sandbox_pending/);assert.match(source,/sandbox_recorded/);assert.match(source,/idx_food_refund_reference/);assert.match(source,/Food refund reference was already used/);});
+  await expectResponse(mutateFoodFinance(world.db, {
+    orderId: fixture.orderId,
+    action: "approve_cancel",
+    actorId: "customer@example.in",
+    idempotencyKey: "gate3-self-approve",
+    reason: "Self approval must fail",
+    approvedRefundAmount: 0,
+  }), 409, /Segregation of duties/i);
 
-test("Food supplier settlement never invents COGS supplier amount or tax",async()=>{const source=await read("lib/food-finance-governance.ts");assert.match(source,/food_supplier_settlement_ledger/);assert.match(source,/Supplier settlement can be prepared only after canonical UAT Food delivery/);assert.match(source,/must be sandbox-paid before supplier settlement readiness/);assert.match(source,/cogs_status TEXT NOT NULL DEFAULT 'configuration_required'/);assert.match(source,/supplier_settlement_policy TEXT NOT NULL DEFAULT 'rule_pending'/);assert.match(source,/tax_status TEXT NOT NULL DEFAULT 'configuration_required'/);assert.match(source,/settlement_status TEXT NOT NULL DEFAULT 'not_instructed'/);});
+  const approved = await mutateFoodFinance(world.db, {
+    orderId: fixture.orderId,
+    action: "approve_cancel",
+    actorId: "finance@example.in",
+    idempotencyKey: "gate3-finance-approve",
+    reason: "Approved under cancellation review",
+    approvedRefundAmount: 0,
+  });
+  assert.equal(approved.status, "cancelled");
+  assert.equal(approved.inventoryReservationReleased, true);
+  const inventory = world.sqlite.prepare("SELECT reserved_units FROM food_inventory_uat WHERE sku=? AND zone_id=?").get(fixture.sku, fixture.zoneId);
+  assert.equal(inventory.reserved_units, 0);
+  assert.equal(world.sqlite.prepare("SELECT status FROM food_inventory_reservations WHERE order_id=?").get(fixture.orderId).status, "released");
+});
 
-test("Food reconciliation exposes due paid refund net supplier COGS and tax truth",async()=>{const source=await read("lib/food-finance-governance.ts");assert.match(source,/food_finance_reconciliation/);assert.match(source,/deliveryDueTotal/);assert.match(source,/paidTotal/);assert.match(source,/refundTotal/);assert.match(source,/unpaidTotal/);assert.match(source,/netPaidTotal/);assert.match(source,/cogsState/);assert.match(source,/supplierSettlementState/);assert.match(source,/taxState/);});
+test("Food Gate 3 blocks packed-order cancellation and refuses refund amounts above paid money", async () => {
+  const world = freshFoodWorld();
+  const packed = await createFoodOrderFixture(world, { idempotencyKey: "gate3-packed" });
+  await fulfilTo(world, packed, "packed");
+  await expectResponse(mutateFoodFinance(world.db, {
+    orderId: packed.orderId,
+    action: "request_cancel",
+    actorId: "customer@example.in",
+    idempotencyKey: "gate3-packed-cancel",
+    reason: "Cancel after pack",
+  }), 409, /Operations fulfilment review/i);
 
-test("Food Finance API separates customer cancellation request from Finance authority",async()=>{const api=await read("app/api/food-finance/route.ts");assert.match(api,/customerActions=new Set<FoodFinanceAction>\(\[\"request_cancel\"\]\)/);assert.match(api,/requireCustomerOwnership/);assert.match(api,/requirePermission\(actor,\"finance\.manage\"\)/);assert.match(api,/securityAudit/);});
+  const fresh = await createFoodOrderFixture(world, { idempotencyKey: "gate3-unpaid-refund" });
+  await mutateFoodFinance(world.db, {
+    orderId: fresh.orderId,
+    action: "request_cancel",
+    actorId: "customer@example.in",
+    idempotencyKey: "gate3-unpaid-request",
+    reason: "Cancellation before delivery",
+  });
+  await expectResponse(mutateFoodFinance(world.db, {
+    orderId: fresh.orderId,
+    action: "approve_cancel",
+    actorId: "finance@example.in",
+    idempotencyKey: "gate3-too-much-refund",
+    reason: "Refund exceeds collected funds",
+    approvedRefundAmount: 1,
+  }), 409, /cannot exceed sandbox-paid order value/i);
+  assert.equal(world.sqlite.prepare("SELECT COUNT(*) count FROM food_refund_ledger WHERE order_id=?").get(fresh.orderId).count, 0);
+});
 
-test("Food customer and Finance surfaces preserve specialist money authority",async()=>{const customer=await read("app/food/manage/food-customer-management.tsx"),finance=await read("app/team/finance/food/food-finance-workspace.tsx");assert.match(customer,/requestFoodCancellation/);assert.match(customer,/Refund is not calculated in the customer UI/);assert.doesNotMatch(customer,/approve_cancel/);for(const action of["record_order_payment","approve_cancel","record_refund","prepare_supplier_settlement","reconcile"])assert.match(finance,new RegExp(`\\"${action}\\"`));assert.match(finance,/without inventing supplier cost, payout or tax/);});
+test("Food Gate 3 reconciliation and supplier settlement expose configured-vs-pending finance truth", async () => {
+  const world = freshFoodWorld();
+  const fixture = await createFoodOrderFixture(world, { idempotencyKey: "gate3-reconcile" });
+  await fulfilTo(world, fixture, "delivered");
+  const unpaid = await mutateFoodFinance(world.db, {
+    orderId: fixture.orderId,
+    action: "reconcile",
+    actorId: "finance@example.in",
+    idempotencyKey: "gate3-reconcile-unpaid",
+  });
+  assert.equal(unpaid.status, "attention_required");
+  assert.equal(unpaid.unpaidTotal, fixture.quote.totalAmount);
+  assert.equal(unpaid.paidTotal, 0);
+
+  await mutateFoodFinance(world.db, {
+    orderId: fixture.orderId,
+    action: "record_order_payment",
+    actorId: "finance@example.in",
+    idempotencyKey: "gate3-pay-for-settlement",
+    paymentReference: "PAYREF-GATE3-SETTLE",
+  });
+  const settlement = await mutateFoodFinance(world.db, {
+    orderId: fixture.orderId,
+    action: "prepare_supplier_settlement",
+    actorId: "finance@example.in",
+    idempotencyKey: "gate3-settlement",
+  });
+  assert.equal(settlement.status, "not_ready");
+  assert.equal(settlement.cogs, "configuration_required");
+  assert.equal(settlement.supplierSettlementPolicy, "rule_pending");
+  assert.equal(settlement.tax, "configuration_required");
+  assert.equal(settlement.settlement, "not_instructed");
+
+  const reconciled = await mutateFoodFinance(world.db, {
+    orderId: fixture.orderId,
+    action: "reconcile",
+    actorId: "finance@example.in",
+    idempotencyKey: "gate3-reconcile-paid",
+  });
+  assert.equal(reconciled.paidTotal, fixture.quote.totalAmount);
+  assert.equal(reconciled.unpaidTotal, 0);
+  assert.equal(reconciled.netPaidTotal, fixture.quote.totalAmount);
+  assert.equal(reconciled.status, "attention_required", "COGS/tax/settlement remain deliberately unconfigured");
+});
