@@ -1,4 +1,5 @@
 import { ingestInboundEmail, recordEmailEngagement, syncCalendarEvents } from "../../../lib/crm-email-sync";
+import { authError } from "../../../lib/server-auth";
 
 type Env = { DB: D1Database; PAWSPACE_EMAIL_WEBHOOK_SECRET?: string };
 const text = (v: unknown) => String(v ?? "").trim();
@@ -43,6 +44,6 @@ export async function POST(request: Request) {
     }
     return Response.json({ ok: false, error: "unsupported_event" }, { status: 400 });
   } catch (error) {
-    return Response.json({ ok: false, error: error instanceof Error ? error.message : "email_webhook_error" }, { status: 400 });
+    return authError(error, "Email webhook failed");
   }
 }
