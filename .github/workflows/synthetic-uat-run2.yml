@@ -1,0 +1,204 @@
+name: Synthetic UAT Run 2
+
+on:
+  push:
+    branches:
+      - ops/synthetic-uat-run2-20260905
+    paths:
+      - .github/workflows/synthetic-uat-run2.yml
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-uat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      APP_ENV: staging
+      EXPECTED_DEPLOYED_SHA: 5a34e28f9696e6ebf6d136af1218381bfe6c01ce
+      STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      META_WHATSAPP_APP_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET }}
+      PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+      STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+      PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install locked dependencies
+        run: npm run install:ci
+
+      - name: Re-certify exact staging isolation gate
+        run: |
+          set -euo pipefail
+          [ "$APP_ENV" = "staging" ] || { echo "FAIL: APP_ENV is not staging"; exit 1; }
+          [ -n "$STAGING_D1_ID" ] || { echo "FAIL: STAGING_D1_ID is missing"; exit 1; }
+          if [ -n "${PRODUCTION_D1_ID:-}" ] && [ "$STAGING_D1_ID" = "$PRODUCTION_D1_ID" ]; then
+            echo "FAIL: staging D1 equals production D1"
+            exit 1
+          fi
+          [ -n "$META_WHATSAPP_APP_SECRET" ] || { echo "FAIL: Meta app secret is unavailable to the staging test runner"; exit 1; }
+          node tests/e2e/staging-certification.mjs --isolation-only
+          printf '%s\n' '{"precheck":"PASS","sha":"5a34e28f9696e6ebf6d136af1218381bfe6c01ce"}' > run2-evidence.jsonl
+
+      - name: Derive disposable demo identities
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+          const run = process.env.GITHUB_RUN_ID;
+          const suffix = String(Number(run) % 100000000).padStart(8,'0');
+          const values = {
+            RUN2_CUSTOMER_ID: `UAT-RUN2-CUS-${run}`,
+            RUN2_PET_ID: `UAT-RUN2-PET-${run}`,
+            RUN2_PROVIDER_ID: `uat_run2_groomer_${run}`,
+            RUN2_BOOKING_ID: `UAT-RUN2-BKG-${run}`,
+            RUN2_PAYMENT_ID: `UAT-RUN2-PAY-${run}`,
+            RUN2_GROUP_ID: `UAT-RUN2-GRP-${run}`,
+            RUN2_WORK_ID: `UAT-RUN2-WO-${run}`,
+            RUN2_PHONE: `91${suffix}`,
+            RUN2_EVENT_ID: `wamid.UATRUN2${run}`,
+          };
+          for (const [k,v] of Object.entries(values)) appendFileSync(process.env.GITHUB_ENV, `${k}=${v}\n`);
+          NODE
+
+      - name: Step 1 - seed customer, pet, provider and assignment in isolated D1
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs';
+          const q = value => `'${String(value).replaceAll("'", "''")}'`;
+          const now = Date.now();
+          const start = new Date(now - 15*60_000).toISOString();
+          const end = new Date(now + 45*60_000).toISOString();
+          const sql = [
+            `INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (${q(process.env.RUN2_CUSTOMER_ID)},'blr','Demo Run 2 Pet Parent',${q(process.env.RUN2_PHONE)},NULL,NULL,'synthetic_uat_run2','{"whatsapp":true,"transactional":true}',${now},${now});`,
+            `INSERT INTO canonical_pets (id,customer_id,name,species,breed,vaccination_status,source_pet_id,created_at,updated_at) VALUES (${q(process.env.RUN2_PET_ID)},${q(process.env.RUN2_CUSTOMER_ID)},'RunTwo','dog','Labrador','verified',NULL,${now},${now});`,
+            `INSERT INTO provider_capacity_profiles (id,city_id,name,provider_model,services_json,zones_json,live,rating,quality_score,capacity,travel_buffer_minutes,max_daily_jobs,acceptance_timeout_minutes,status,version,effective_from,effective_to,updated_by,updated_at) VALUES (${q(process.env.RUN2_PROVIDER_ID)},'blr','Demo Run 2 Groomer','commission','["grooming"]','["blr-east"]',1,4.9,95,1,30,5,3,'active',1,'2026-09-01',NULL,'synthetic_uat_run2',${now});`,
+            `INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (${q(process.env.RUN2_BOOKING_ID)},${q('run2:'+process.env.GITHUB_RUN_ID)},${q(process.env.RUN2_CUSTOMER_ID)},${q(JSON.stringify([process.env.RUN2_PET_ID]))},'[]','blr','blr-east','grooming','routine','Routine Grooming',${q(process.env.RUN2_GROUP_ID)},${q(process.env.RUN2_PROVIDER_ID)},${q(start)},${q(end)},'in_service','synthetic_uat',1149.00,'INR','{"source":"run2"}','synthetic_uat_run2',${now},${now});`,
+            `INSERT INTO provider_work_orders (id,booking_id,schedule_group_id,provider_id,provider_name,provider_model,service_code,scheduled_start,scheduled_end,occurrence_count,status,assignment_json,created_at,updated_at) VALUES (${q(process.env.RUN2_WORK_ID)},${q(process.env.RUN2_BOOKING_ID)},${q(process.env.RUN2_GROUP_ID)},${q(process.env.RUN2_PROVIDER_ID)},'Demo Run 2 Groomer','commission','grooming',${q(start)},${q(end)},1,'in_service','{"synthetic":true}',${now},${now});`,
+            `INSERT INTO booking_payments (id,booking_id,customer_id,amount,amount_due_now,currency,method,mode,status,gateway,idempotency_key,detail_json,created_at,updated_at) VALUES (${q(process.env.RUN2_PAYMENT_ID)},${q(process.env.RUN2_BOOKING_ID)},${q(process.env.RUN2_CUSTOMER_ID)},1149.00,1149.00,'INR','upi','pay_after_service','pending','uat_sandbox',${q('run2pay:'+process.env.GITHUB_RUN_ID)},'{"synthetic":true}',${now},${now});`,
+          ].join('\n');
+          writeFileSync(process.env.RUNNER_TEMP + '/run2-seed.sql', sql, { mode: 0o600 });
+          NODE
+          npx wrangler d1 execute pawspace-staging --remote --file="$RUNNER_TEMP/run2-seed.sql" >/tmp/run2-seed.out
+          npx wrangler d1 execute pawspace-staging --remote --command "SELECT c.id customer_id,p.id pet_id,b.id booking_id,b.provider_id,w.id work_order_id FROM canonical_customers c JOIN canonical_pets p ON p.customer_id=c.id JOIN canonical_bookings b ON b.customer_id=c.id JOIN provider_work_orders w ON w.booking_id=b.id WHERE c.id='$RUN2_CUSTOMER_ID';" --json > "$RUNNER_TEMP/run2-step1.json"
+          STEP_FILE="$RUNNER_TEMP/run2-step1.json" node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          const root=JSON.parse(readFileSync(process.env.STEP_FILE,'utf8'));
+          const rows=(Array.isArray(root)?root:[]).flatMap(x=>Array.isArray(x?.results)?x.results:[]);
+          const row=rows[0];
+          if(!row || row.customer_id!==process.env.RUN2_CUSTOMER_ID || row.provider_id!==process.env.RUN2_PROVIDER_ID) throw new Error('Step 1 seed verification failed');
+          appendFileSync('run2-evidence.jsonl', JSON.stringify({step:1,status:'PASS',customerId:row.customer_id,petId:row.pet_id,bookingId:row.booking_id,providerId:row.provider_id})+'\n');
+          console.log('STEP 1 PASS: disposable customer, pet, provider and assignment verified in isolated staging D1.');
+          NODE
+
+      - name: Step 2 - signed Meta webhook confirms booking
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { createHmac } from 'node:crypto';
+          import { appendFileSync } from 'node:fs';
+          const body={
+            object:'whatsapp_business_account',
+            entry:[{id:'UAT-RUN2',changes:[{field:'messages',value:{messages:[{
+              from:process.env.RUN2_PHONE,
+              id:process.env.RUN2_EVENT_ID,
+              timestamp:String(Math.floor(Date.now()/1000)),
+              type:'text',
+              text:{body:'I confirm my grooming booking for my calm pet. Budget ₹1,149.'}
+            }]}}]}]
+          };
+          const raw=JSON.stringify(body);
+          const signature='sha256='+createHmac('sha256',process.env.META_WHATSAPP_APP_SECRET).update(raw).digest('hex');
+          const response=await fetch(process.env.STAGING_URL+'/api/whatsapp/meta-webhook',{method:'POST',headers:{'content-type':'application/json','x-hub-signature-256':signature},body:raw,signal:AbortSignal.timeout(20000)});
+          const payload=await response.json().catch(()=>({}));
+          const result=Array.isArray(payload.results)?payload.results.find(x=>x?.eventId===process.env.RUN2_EVENT_ID):null;
+          if(response.status!==200 || payload.ok!==true || Number(payload.accepted)!==1 || !result?.messageId || result?.customerId!==process.env.RUN2_CUSTOMER_ID){
+            appendFileSync('run2-evidence.jsonl',JSON.stringify({step:2,status:'FAIL',http:response.status,ok:payload.ok??null,accepted:payload.accepted??null,resultStatus:result?.status??null})+'\n');
+            throw new Error(`Step 2 Meta webhook assertion failed: HTTP ${response.status}`);
+          }
+          appendFileSync(process.env.GITHUB_ENV,`RUN2_MESSAGE_ID=${result.messageId}\nRUN2_THREAD_ID=${result.threadId}\n`);
+          console.log(`STEP 2 webhook HTTP=${response.status}; accepted=${payload.accepted}; canonical message persisted.`);
+          NODE
+          npx wrangler d1 execute pawspace-staging --remote --command "SELECT id,status,customer_id,provider FROM communication_messages WHERE customer_id='$RUN2_CUSTOMER_ID' AND channel='whatsapp' AND direction='inbound' ORDER BY created_at DESC LIMIT 1;" --json > "$RUNNER_TEMP/run2-step2-db.json"
+          STEP_FILE="$RUNNER_TEMP/run2-step2-db.json" node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          const root=JSON.parse(readFileSync(process.env.STEP_FILE,'utf8'));
+          const rows=(Array.isArray(root)?root:[]).flatMap(x=>Array.isArray(x?.results)?x.results:[]);
+          const row=rows[0];
+          if(!row || row.customer_id!==process.env.RUN2_CUSTOMER_ID || row.status!=='received' || row.provider!=='meta_whatsapp') throw new Error('Step 2 D1 message persistence assertion failed');
+          appendFileSync('run2-evidence.jsonl',JSON.stringify({step:2,status:'PASS',http:200,messageId:row.id,messageStatus:row.status,provider:row.provider})+'\n');
+          console.log('STEP 2 PASS: signed Meta webhook accepted and canonical inbound message recorded.');
+          NODE
+
+      - name: Step 3 - provider GPS contract and completion trigger
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { appendFileSync } from 'node:fs';
+          const base=process.env.STAGING_URL;
+          const login=await fetch(base+'/api/uat-provider-switch',{method:'POST',headers:{'content-type':'application/json',origin:base},body:JSON.stringify({providerId:process.env.RUN2_PROVIDER_ID,code:process.env.PAWSPACE_UAT_ACCESS_CODE}),signal:AbortSignal.timeout(20000)});
+          const cookie=String(login.headers.get('set-cookie')||'').split(';')[0];
+          if(!login.ok || !cookie){
+            appendFileSync('run2-evidence.jsonl',JSON.stringify({step:3,status:'FAIL',phase:'provider_session',http:login.status})+'\n');
+            throw new Error(`Step 3 provider session failed: HTTP ${login.status}`);
+          }
+          const gps=await fetch(base+'/api/location-recovery',{headers:{cookie},signal:AbortSignal.timeout(20000)});
+          const gpsPayload=await gps.json().catch(()=>({}));
+          const simulatedDistanceKm=Number(gpsPayload?.simulatedDistanceKm ?? gpsPayload?.data?.simulatedDistanceKm);
+          if(gps.status!==200 || gpsPayload?.gpsConnected!==true || !Number.isFinite(simulatedDistanceKm)){
+            appendFileSync('run2-evidence.jsonl',JSON.stringify({step:3,status:'FAIL',phase:'location_recovery_get',http:gps.status,gpsConnected:gpsPayload?.gpsConnected??null,simulatedDistanceKm:Number.isFinite(simulatedDistanceKm)?simulatedDistanceKm:null,error:gpsPayload?.error??null})+'\n');
+            console.log(`STEP 3 FAIL: /api/location-recovery HTTP=${gps.status}, gpsConnected=${String(gpsPayload?.gpsConnected)}, simulatedDistanceKm=${Number.isFinite(simulatedDistanceKm)?simulatedDistanceKm:'missing'}`);
+            throw new Error('STRICT HALT: provider GPS GET contract did not satisfy gpsConnected:true plus simulatedDistanceKm.');
+          }
+
+          const proof=await fetch(base+'/api/grooming-lifecycle',{method:'POST',headers:{cookie,'content-type':'application/json',origin:base},body:JSON.stringify({bookingId:process.env.RUN2_BOOKING_ID,action:'add_proof',beforePhotoRef:`uat://proof/${process.env.RUN2_BOOKING_ID}/before`,afterPhotoRef:`uat://proof/${process.env.RUN2_BOOKING_ID}/after`,checklist:['coat','nails','ears'],completionNotes:'Synthetic Run 2 completion'}),signal:AbortSignal.timeout(20000)});
+          if(!proof.ok){const p=await proof.json().catch(()=>({}));appendFileSync('run2-evidence.jsonl',JSON.stringify({step:3,status:'FAIL',phase:'proof',http:proof.status,error:p?.error??null})+'\n');throw new Error(`STRICT HALT: proof HTTP ${proof.status}`);}
+          const complete=await fetch(base+'/api/grooming-lifecycle',{method:'POST',headers:{cookie,'content-type':'application/json',origin:base},body:JSON.stringify({bookingId:process.env.RUN2_BOOKING_ID,action:'complete'}),signal:AbortSignal.timeout(30000)});
+          const completePayload=await complete.json().catch(()=>({}));
+          if(!complete.ok){appendFileSync('run2-evidence.jsonl',JSON.stringify({step:3,status:'FAIL',phase:'completion',http:complete.status,error:completePayload?.error??null})+'\n');throw new Error(`STRICT HALT: completion HTTP ${complete.status}`);}
+
+          const payment=await fetch(base+`/api/grooming-payment-sandbox?bookingId=${encodeURIComponent(process.env.RUN2_BOOKING_ID)}`,{headers:{cookie},signal:AbortSignal.timeout(20000)});
+          const paymentPayload=await payment.json().catch(()=>({}));
+          const link=paymentPayload?.data;
+          if(payment.status!==200 || !link || typeof link.paymentPath!=='string' || !link.paymentPath.startsWith('https://')){
+            appendFileSync('run2-evidence.jsonl',JSON.stringify({step:3,status:'FAIL',phase:'automatic_payment_link_after_completion',http:payment.status,linkPresent:Boolean(link),error:paymentPayload?.error??null})+'\n');
+            throw new Error('STRICT HALT: completion did not automatically produce the required Razorpay sandbox post-service payment link.');
+          }
+          appendFileSync('run2-evidence.jsonl',JSON.stringify({step:3,status:'PASS',gpsConnected:true,simulatedDistanceKm,completion:'completed',paymentLinkGenerated:true})+'\n');
+          console.log('STEP 3 PASS: GPS contract, completion and automatic sandbox payment-link trigger verified.');
+          NODE
+
+      - name: Step 4 - system database audit
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute pawspace-staging --remote --command "SELECT customer_id,pet_id,pet_temperament,budget_min_paise,budget_max_paise,service_intent_json,updated_at FROM elite_crm_profile_facts WHERE customer_id='$RUN2_CUSTOMER_ID';" --json > "$RUNNER_TEMP/run2-facts.json"
+          npx wrangler d1 execute pawspace-staging --remote --command "SELECT customer_id,risk_score,risk_band,engagement_state,win_back_trigger,model_version,updated_at FROM elite_churn_scores WHERE customer_id='$RUN2_CUSTOMER_ID';" --json > "$RUNNER_TEMP/run2-churn.json"
+          npx wrangler d1 execute pawspace-staging --remote --command "SELECT r.booking_id,r.status,r.payment_path,l.gateway_payment_link_id,l.environment FROM post_service_payment_requests r LEFT JOIN payment_gateway_links l ON l.booking_id=r.booking_id WHERE r.booking_id='$RUN2_BOOKING_ID';" --json > "$RUNNER_TEMP/run2-paylink.json"
+          FACTS_FILE="$RUNNER_TEMP/run2-facts.json" CHURN_FILE="$RUNNER_TEMP/run2-churn.json" PAY_FILE="$RUNNER_TEMP/run2-paylink.json" node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          const rows=file=>{const root=JSON.parse(readFileSync(file,'utf8'));return (Array.isArray(root)?root:[]).flatMap(x=>Array.isArray(x?.results)?x.results:[])};
+          const facts=rows(process.env.FACTS_FILE)[0],churn=rows(process.env.CHURN_FILE)[0],pay=rows(process.env.PAY_FILE)[0];
+          const intent=(()=>{try{return JSON.parse(String(facts?.service_intent_json||'[]'))}catch{return[]}})();
+          const factOk=Boolean(facts&&facts.customer_id===process.env.RUN2_CUSTOMER_ID&&facts.pet_temperament==='calm'&&Number(facts.budget_min_paise)===114900&&Array.isArray(intent)&&intent.includes('grooming'));
+          const churnOk=Boolean(churn&&churn.customer_id===process.env.RUN2_CUSTOMER_ID&&Number.isFinite(Number(churn.risk_score)));
+          const payOk=Boolean(pay&&pay.booking_id===process.env.RUN2_BOOKING_ID&&pay.environment==='sandbox'&&String(pay.payment_path||'').startsWith('https://')&&String(pay.gateway_payment_link_id||'').trim());
+          if(!factOk||!churnOk||!payOk){appendFileSync('run2-evidence.jsonl',JSON.stringify({step:4,status:'FAIL',eliteCrmFacts:factOk,eliteChurnScore:churnOk,razorpaySandboxLink:payOk})+'\n');throw new Error(`STRICT HALT: Step 4 audit failed facts=${factOk} churn=${churnOk} paylink=${payOk}`);}
+          appendFileSync('run2-evidence.jsonl',JSON.stringify({step:4,status:'PASS',eliteCrmFacts:true,eliteChurnScore:true,razorpaySandboxLink:true,integerPaiseError:false})+'\n');
+          console.log('STEP 4 PASS: Elite CRM facts, churn score, and Razorpay sandbox payment link verified; no integer-paise error observed.');
+          NODE
+
+      - name: Upload sanitized Run 2 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-uat-run2-${{ github.run_id }}
+          path: run2-evidence.jsonl
+          if-no-files-found: warn
