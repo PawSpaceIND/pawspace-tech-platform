@@ -1,0 +1,57 @@
+name: P0 Exotel Auth Header Tail
+
+on:
+  push:
+    branches:
+      - remediation/p0-pilot-gates-b379631
+    paths:
+      - .github/workflows/p0-exotel-auth-header-tail.yml
+
+permissions:
+  contents: read
+
+jobs:
+  tail:
+    runs-on: ubuntu-24.04
+    environment: pawspace-staging
+    timeout-minutes: 6
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WORKER_SCRIPT: pawspace-staging
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Capture and classify callback auth metadata only
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'AUTH_HEADER_TAIL_READY'
+          timeout 280s npm exec --yes wrangler@4 -- tail "$WORKER_SCRIPT" --format=json > "$RUNNER_TEMP/tail.jsonl" 2>&1 || true
+          node --input-type=module <<'NODE'
+          import {readFileSync} from 'node:fs';
+          let text='';try{text=readFileSync(process.env.RUNNER_TEMP+'/tail.jsonl','utf8')}catch{}
+          const hits=[];
+          for(const line of text.split('\n')){
+            if(!line.includes('/api/voice-provider-webhook')) continue;
+            try{hits.push(JSON.parse(line))}catch{}
+          }
+          const getHeader=(obj,name)=>{
+            const candidates=[obj?.event?.request?.headers,obj?.request?.headers,obj?.event?.request?.cf?.headers];
+            for(const h of candidates){
+              if(!h)continue;
+              if(Array.isArray(h)){for(const item of h){if(Array.isArray(item)&&String(item[0]).toLowerCase()===name)return String(item[1]||''); if(item&&typeof item==='object'&&String(item.name||item.key||'').toLowerCase()===name)return String(item.value||'')}}
+              else if(typeof h==='object'){for(const [k,v] of Object.entries(h)){if(k.toLowerCase()===name)return Array.isArray(v)?String(v[0]||''):String(v||'')}}
+            }
+            return '';
+          };
+          console.log(`CALLBACK_HITS=${hits.length}`);
+          hits.forEach((h,i)=>{
+            const auth=getHeader(h,'authorization');
+            const ua=getHeader(h,'user-agent');
+            const scheme=auth?auth.split(/\s+/)[0].toLowerCase():'none';
+            const uaClass=/exotel/i.test(ua)?'exotel':ua?'other':'unknown';
+            console.log(`CALLBACK_${i+1} authorization_present=${Boolean(auth)} auth_scheme=${scheme} user_agent_class=${uaClass}`);
+          });
+          NODE
