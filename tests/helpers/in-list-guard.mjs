@@ -28,6 +28,7 @@ const squash = (value) => value.replace(/\s+/g, "");
  * vocabulary - statuses, months, a single stay's pets - that cannot grow with the data.
  */
 export const BOUNDED_IN_LISTS = {
+  "communication-engine.ts": [{ expression: 'allowed.map(()=>"?")', why: "the literal statuses one delivery event may advance from" }],
   "boarding-ops-governance.ts": [{ expression: 'petIds.map(()=>"?")', why: "pet ids of a single stay" }],
   "lead-assignment-governance.ts": [{ expression: 'services.map(()=>"?")', why: "the service codes on one policy" }],
   "meet-and-greet.ts": [{ expression: 'rule.from.map(()=>"?")', why: "the literal statuses a transition may come from" }],

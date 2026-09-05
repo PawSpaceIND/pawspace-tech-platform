@@ -74,7 +74,10 @@ async function loadFinanceModule() {
       moduleResolution: ts.ModuleResolutionKind.Bundler,
     },
   }).outputText;
-  const razorSource = await readFile(new URL("lib/razorpay-client.ts", repoRoot), "utf8");
+  const paymentEnvironmentSource = await readFile(new URL("lib/payment-environment.ts", repoRoot), "utf8");
+  await writeFile(path.join(tempDir, "payment-environment.mjs"), transpile(paymentEnvironmentSource));
+  const razorSource = (await readFile(new URL("lib/razorpay-client.ts", repoRoot), "utf8"))
+    .replaceAll('from"./payment-environment"', 'from"./payment-environment.mjs"');
   await writeFile(path.join(tempDir, "razorpay-client.mjs"), transpile(razorSource));
   const financeSource = (await readFile(new URL("lib/financial-lifecycle.ts", repoRoot), "utf8"))
     .replace('from "./razorpay-client"', 'from "./razorpay-client.mjs"');
@@ -170,6 +173,54 @@ test("executable finance acceptance: 20 concurrent checkout requests create one 
       })));
       assert.equal(providerCalls(), 1, "replays after success must not invoke Razorpay again");
     });
+  } finally {
+    db.close();
+  }
+});
+
+test("executable finance acceptance: an expired PROCESSING lease enters reconciliation and never calls Razorpay", async () => {
+  const db = await createFinanceDb();
+  const { claimPaymentIntent, executeRazorpayOrderOutbox } = loaded.module;
+  try {
+    const intent = await claimPaymentIntent(db, {
+      bookingId: "BOOK-STALE-1",
+      customerId: "CUS-STALE-1",
+      paymentId: "PAY-STALE-1",
+      idempotencyKey: "stale-provider-attempt",
+      amountPaise: 15000,
+      currency: "INR",
+      environment: "sandbox",
+    });
+    const outbox = await db.prepare("SELECT id FROM financial_outbox WHERE aggregate_id=? AND event_type='CREATE_RAZORPAY_ORDER'")
+      .bind(String(intent.id)).first();
+    assert.ok(outbox?.id);
+    await db.prepare("UPDATE financial_outbox SET status='PROCESSING',lease_owner='crashed-worker',lease_expires_at=?,attempts=1 WHERE id=?")
+      .bind(Date.now() - 60_000, String(outbox.id)).run();
+
+    await withLoopbackRazorpay(async ({ baseUrl, providerCalls }) => {
+      const result = await executeRazorpayOrderOutbox(db, {
+        PAWSPACE_PAYMENT_ENV: "sandbox",
+        PAWSPACE_PAYMENT_CONTRACT_TEST: "true",
+        PAWSPACE_RAZORPAY_API_BASE_URL: baseUrl,
+        RAZORPAY_KEY_ID_SANDBOX: "rzp_test_contract",
+        RAZORPAY_KEY_SECRET_SANDBOX: "contract-secret",
+      }, { outboxId: String(outbox.id), workerId: "replacement-worker" });
+      assert.equal(providerCalls(), 0, "an expired ambiguous provider lease must not create a second Razorpay order");
+      assert.equal(result.claimed, true);
+      assert.equal(result.connected, false);
+      assert.equal(result.reconciliationRequired, true);
+    });
+
+    const row = await db.prepare("SELECT status,lease_owner,lease_expires_at,last_error FROM financial_outbox WHERE id=?")
+      .bind(String(outbox.id)).first();
+    assert.equal(row?.status, "RECONCILIATION_REQUIRED");
+    assert.equal(row?.lease_owner, null);
+    assert.equal(row?.lease_expires_at, null);
+    assert.match(String(row?.last_error || ""), /stale_processing_lease_requires_reconciliation/);
+    const persistedIntent = await db.prepare("SELECT order_request_state,gateway_order_id FROM payment_intents WHERE id=?")
+      .bind(String(intent.id)).first();
+    assert.equal(persistedIntent?.order_request_state, "RECONCILIATION_REQUIRED");
+    assert.equal(persistedIntent?.gateway_order_id, null);
   } finally {
     db.close();
   }

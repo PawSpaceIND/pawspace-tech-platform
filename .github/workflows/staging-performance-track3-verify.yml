@@ -17,6 +17,9 @@ concurrency:
 env:
   EXPECTED_SHA: 43156cd1900177831f33c25a7e81fe46a5e96601
   STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+  NODE_ENV: test
+  APP_ENV: staging
+  FORBID_PRODUCTION: 'true'
 
 jobs:
   track3:
@@ -32,7 +35,7 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.16.0'
           cache: npm
       - run: npm run install:ci
       - run: npm run build
@@ -85,7 +88,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p scripts/ops
-          git show origin/ops/nontrack2-closure-20260901:scripts/ops/staging-role-seed.mjs > scripts/ops/staging-role-seed.mjs
+          git show "${GITHUB_SHA}:scripts/ops/staging-role-seed.mjs" > scripts/ops/staging-role-seed.mjs
           node --experimental-strip-types scripts/ops/staging-role-seed.mjs "$RUNNER_TEMP/staging-role-seed.sql"
           npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --yes --file="$RUNNER_TEMP/staging-role-seed.sql"
           npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --file=scripts/employee-seed.sql
@@ -101,10 +104,10 @@ jobs:
           console.log(JSON.stringify(evidence,null,2));
           if(response.status!==200||body?.status!=='ok') process.exit(1);
           NODE
-      - name: Materialize existing Track 3 gate
+      - name: Materialize committed Track 3 gate
         run: |
           mkdir -p scripts/ops
-          git show origin/ops/nontrack2-closure-20260901:scripts/ops/staging-performance-gate.mjs > scripts/ops/staging-performance-gate.mjs
+          git show "${GITHUB_SHA}:scripts/ops/staging-performance-gate.mjs" > scripts/ops/staging-performance-gate.mjs
       - name: Run hosted Track 3 workload
         env:
           PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}

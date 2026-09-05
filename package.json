@@ -3,15 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22.15.0"
   },
   "scripts": {
     "install:ci": "bash scripts/install-ci.sh",
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vite",
     "build": "bash scripts/build-verified.sh",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
-    "test": "npm run build && PAWSPACE_LOCAL_PREVIEW=on PAWSPACE_VOICE_TRANSPORT=local_simulator_non_production NODE_ENV=test node --experimental-strip-types --test --test-concurrency=1 tests/*.test.mjs",
+    "test": "npm run build && PAWSPACE_LOCAL_PREVIEW=on PAWSPACE_VOICE_TRANSPORT=local_simulator_non_production NODE_ENV=test APP_ENV=staging FORBID_PRODUCTION=true node --experimental-strip-types --test --test-concurrency=1 tests/*.test.mjs",
     "validate:artifact": "bash scripts/validate-artifact.sh",
+    "test:integration": "NODE_ENV=test APP_ENV=staging FORBID_PRODUCTION=true node --experimental-strip-types --test tests/integration/*.test.mjs",
     "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next",
     "typecheck": "bash scripts/sites-env.sh -- tsc --noEmit -p tsconfig.json",
     "db:generate": "bash scripts/sites-env.sh -- drizzle-kit generate",

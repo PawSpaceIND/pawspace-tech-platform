@@ -33,9 +33,11 @@ test("Walking completion commits payment, audit, notification, idempotency and g
   assert.match(block, /await db\.batch\(\[/);
   assert.match(block, /walking_session_payment_events/);
   assert.match(block, /walk_completed/);
+  assert.match(block, /walking_session_events/);
   assert.match(block, /resolveServiceCompletionFinance/);
   assert.match(block, /Your PawSpace Walking programme is complete/);
   assert.match(block, /Your PawSpace walk is complete/);
+  assert.match(block, /walking_action_keys/);
   /*
    * The whole completion commits in ONE batch. walking_session_payment_events.session_id is UNIQUE, so
    * while the idempotency key was written after the batch through remember(), a worker lost between the

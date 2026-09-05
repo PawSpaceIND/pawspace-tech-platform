@@ -50,11 +50,28 @@ export const scheduleRules = {
 const activeStatuses = new Set<Booking["status"]>(["confirmed","assigned","on_the_way","arrived","in_service"]);
 const msMinute = 60_000;
 const addDays = (value:string, days:number) => new Date(new Date(value).getTime()+days*24*60*msMinute).toISOString();
-/** The city's UTC offset in minutes. Exported so the committing SQL guard in
- * app/api/uat-scheduling/route.ts keys its daily-job count on the same local day this engine does,
- * rather than restating the offset - which is also how a hardcoded city id got into that route and was
- * caught by tests/city-propagation-closure.test.mjs. [PTJA-W1-F30] */
-export const cityOffsetMinutes=(cityId:string)=>cityId==="blr"?330:0;
+/**
+ * Canonical scheduling UTC offsets for the currently operational PawSpace cities.
+ *
+ * The old implementation treated every city except Bengaluru as UTC, shifting roster windows,
+ * recurring weekdays and daily-job limits by 5h30m for Mumbai, Pune, Hyderabad and Chennai. Keep the
+ * operational city registry explicit and fail closed for an unknown city rather than silently inventing
+ * UTC semantics. When an international city is launched, its governed offset must be added alongside
+ * the launch configuration before scheduling can accept it.
+ */
+export const SCHEDULING_CITY_UTC_OFFSETS:Readonly<Record<string,number>>=Object.freeze({
+  blr:330,bengaluru:330,
+  mum:330,mumbai:330,bom:330,
+  pnq:330,pune:330,
+  hyd:330,hyderabad:330,
+  maa:330,chennai:330,chn:330,
+});
+export const cityOffsetMinutes=(cityId:string)=>{
+  const normalized=String(cityId||"").trim().toLowerCase();
+  const offset=SCHEDULING_CITY_UTC_OFFSETS[normalized];
+  if(offset===undefined)throw Object.assign(new Error(`Scheduling timezone is not configured for city ${normalized||"<empty>"}`),{statusCode:422});
+  return offset;
+};
 const localDate=(value:string,cityId:string)=>new Date(new Date(value).getTime()+cityOffsetMinutes(cityId)*msMinute);
 const dateKey = (value:string,cityId:string) => localDate(value,cityId).toISOString().slice(0,10);
 const minutesOfDay = (value:string,cityId:string) => { const d=localDate(value,cityId); return d.getUTCHours()*60+d.getUTCMinutes(); };

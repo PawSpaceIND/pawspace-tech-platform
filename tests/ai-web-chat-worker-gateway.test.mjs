@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import { installWorkersHooks, runWithWorkersDb } from "./helpers/module-hooks.mjs";
 
 installWorkersHooks("__AI_WEB_CHAT_DB__", "__AI_WEB_CHAT_ENV__");
 
@@ -103,13 +103,20 @@ async function captureUnexpectedFailure(request, response) {
 }
 
 async function callEndpoint(request) {
-  const gate = await throughGateway(request);
+  // Mirror the real Worker boundary exactly: pre-route authorization and service inspection run on a
+  // clone, while the application handler receives the untouched original request body. Reusing the
+  // original for both stages made the legacy module.register() fallback fixture capable of consuming
+  // the body before route.ts read it, even though worker/index.ts never does that in production.
+  const gate = await throughGateway(request.clone());
   if (gate.refused) return { reachedRoute: false, response: gate.refused };
   const route = await import("../app/api/ai-web-chat/route.ts");
   const handler = request.method === "GET" ? route.GET : route.POST;
   let response;
   try {
-    response = await handler(request);
+    // Pin this suite's in-memory DB for the route's `database()` call. Release CI runs the
+    // whole tests/*.test.mjs glob in parallel; the cached cloudflare:workers shim otherwise
+    // reads whichever suite registered first, and public lead capture 500s on a foreign/empty DB.
+    response = await runWithWorkersDb(globalThis.__AI_WEB_CHAT_DB__, () => handler(request));
   } catch (error) {
     // A throw that escapes the route entirely: the one case where no response exists to inspect.
     console.error(`[ai-web-chat-gateway] handler THREW on ${request.method} ${request.url}: ${error?.name}: ${error?.message}`);

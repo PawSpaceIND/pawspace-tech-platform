@@ -1,0 +1,106 @@
+name: Provision WhatsApp UAT certification fixture v2
+
+on:
+  push:
+    branches:
+      - fix/whatsapp-uat-staging-deploy-isolation
+    paths:
+      - .github/workflows/provision-whatsapp-uat-certification-fixture-v2.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  provision-uat-fixture:
+    runs-on: ubuntu-latest
+    concurrency: pawspace-staging-deploy
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify staging lockdown and select controlled recipient
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          META_WHATSAPP_UAT_ALLOWLIST: ${{ secrets.META_WHATSAPP_UAT_ALLOWLIST }}
+          PAWSPACE_COMMUNICATION_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_COMMUNICATION_UAT_ALLOWLIST }}
+        run: |
+          set -euo pipefail
+          SETTINGS="$RUNNER_TEMP/settings.json"; export SETTINGS
+          trap 'rm -f "$SETTINGS"' EXIT
+          HTTP="$(curl --silent --show-error --output "$SETTINGS" --write-out '%{http_code}' --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" --header 'Accept: application/json' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/pawspace-staging/settings")"
+          [ "$HTTP" = "200" ] || { echo "Unable to read pawspace-staging settings; response withheld." >&2; exit 1; }
+          node --input-type=module <<'NODE'
+          import{readFileSync,appendFileSync}from'node:fs';
+          const settings=JSON.parse(readFileSync(process.env.SETTINGS,'utf8'));
+          const bindings=Array.isArray(settings?.result?.bindings)?settings.result.bindings:[];
+          const plain=Object.fromEntries(bindings.filter(b=>b?.type==='plain_text').map(b=>[String(b.name||''),String(b.text??b.value??'')]));
+          if(String(plain.PAWSPACE_PRODUCTION_ENFORCE||'')!=='false')throw new Error('pawspace-staging production enforcement is not explicitly false');
+          if(String(plain.PAWSPACE_COMMUNICATION_ENV||'')!=='uat')throw new Error('pawspace-staging communications are not explicitly in UAT mode');
+          const raw=String(process.env.META_WHATSAPP_UAT_ALLOWLIST||process.env.PAWSPACE_COMMUNICATION_UAT_ALLOWLIST||'').trim();
+          const recipient=raw.split(',').map(v=>v.trim()).filter(Boolean)[0]||'';
+          if(!/^\+?[0-9]{10,15}$/.test(recipient))throw new Error('No valid UAT recipient configured');
+          console.log(`::add-mask::${recipient}`);
+          appendFileSync(process.env.GITHUB_ENV,`UAT_RECIPIENT=${recipient}\n`);
+          console.log('Staging lockdown verified; controlled UAT recipient selected; value withheld.');
+          NODE
+
+      - name: Refuse collision with existing customer identity
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/customers.json"; export OUT
+          trap 'rm -f "$OUT"' EXIT
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --command "SELECT id,primary_phone,secondary_phone FROM canonical_customers WHERE id<>'UAT-WA-CERT-CUSTOMER';" --json > "$OUT"
+          node --input-type=module <<'NODE'
+          import{readFileSync}from'node:fs';
+          const digits=v=>String(v??'').replace(/\D/g,'');
+          const target=digits(process.env.UAT_RECIPIENT);
+          const payload=JSON.parse(readFileSync(process.env.OUT,'utf8'));
+          const rows=(Array.isArray(payload)?payload:[]).flatMap(b=>Array.isArray(b?.results)?b.results:[]);
+          if(rows.some(r=>[r.primary_phone,r.secondary_phone].some(v=>digits(v)===target)))throw new Error('Allowlisted number belongs to an existing non-UAT customer; refusing fixture creation');
+          console.log('No existing non-UAT customer collision detected.');
+          NODE
+
+      - name: Provision isolated UAT fixture
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE' > "$RUNNER_TEMP/uat-fixture.sql"
+          const phone=String(process.env.UAT_RECIPIENT||'');
+          const now=Date.now();
+          const start=new Date(now+3600000).toISOString(),end=new Date(now+7200000).toISOString();
+          const esc=s=>"'"+String(s).replaceAll("'","''")+"'";
+          console.log(`INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES ('UAT-WA-CERT-CUSTOMER','blr','WhatsApp UAT Certification',${esc(phone)},NULL,NULL,'uat_certification','{\"whatsapp\":true,\"purpose\":\"provider_roundtrip_certification\"}',${now},${now}) ON CONFLICT(id) DO UPDATE SET primary_phone=excluded.primary_phone,source='uat_certification',consent_json=excluded.consent_json,updated_at=excluded.updated_at;`);
+          console.log(`INSERT INTO customer_contact_preferences (customer_id,marketing_consent,service_consent,whatsapp_consent,sms_consent,email_consent,opt_out,source,updated_by,updated_at) VALUES ('UAT-WA-CERT-CUSTOMER',0,1,1,0,0,0,'uat_certification','uat_certification',${now}) ON CONFLICT(customer_id) DO UPDATE SET service_consent=1,whatsapp_consent=1,opt_out=0,source='uat_certification',updated_by='uat_certification',updated_at=excluded.updated_at;`);
+          console.log(`INSERT INTO canonical_pets (id,customer_id,name,species,breed,vaccination_status,source_pet_id,created_at,updated_at) VALUES ('UAT-WA-CERT-PET','UAT-WA-CERT-CUSTOMER','UAT Pet','dog','Mixed','verified',NULL,${now},${now}) ON CONFLICT(id) DO UPDATE SET customer_id='UAT-WA-CERT-CUSTOMER',updated_at=excluded.updated_at;`);
+          console.log(`INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES ('UAT-WA-CERT-BOOKING','uat-wa-cert-booking','UAT-WA-CERT-CUSTOMER','[\"UAT-WA-CERT-PET\"]','[\"UAT-WA-CERT-PET\"]','blr','blr-east','grooming','grooming-std','UAT WhatsApp Certification','UAT-WA-CERT-SG','UAT-WA-CERT-PROVIDER',${esc(start)},${esc(end)},'confirmed','uat_certification',799,'INR','{\"uatCertification\":true}','uat_certification',${now},${now}) ON CONFLICT(id) DO UPDATE SET customer_id='UAT-WA-CERT-CUSTOMER',scheduled_start=excluded.scheduled_start,scheduled_end=excluded.scheduled_end,status='confirmed',channel='uat_certification',updated_at=excluded.updated_at;`);
+          NODE
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --file="$RUNNER_TEMP/uat-fixture.sql" >/dev/null
+          rm -f "$RUNNER_TEMP/uat-fixture.sql"
+          echo "Staging-only UAT certification fixture provisioned."
+
+      - name: Verify fixture eligibility
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/fixture.json"; export OUT
+          trap 'rm -f "$OUT"' EXIT
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --command "SELECT c.primary_phone,c.source,p.whatsapp_consent,p.opt_out,b.id AS booking_id FROM canonical_customers c JOIN customer_contact_preferences p ON p.customer_id=c.id JOIN canonical_bookings b ON b.customer_id=c.id WHERE c.id='UAT-WA-CERT-CUSTOMER' AND b.id='UAT-WA-CERT-BOOKING';" --json > "$OUT"
+          node --input-type=module <<'NODE'
+          import{readFileSync}from'node:fs';
+          const digits=v=>String(v??'').replace(/\D/g,'');
+          const payload=JSON.parse(readFileSync(process.env.OUT,'utf8'));
+          const rows=(Array.isArray(payload)?payload:[]).flatMap(b=>Array.isArray(b?.results)?b.results:[]);
+          const r=rows[0];
+          if(!r||digits(r.primary_phone)!==digits(process.env.UAT_RECIPIENT)||String(r.source)!=='uat_certification'||Number(r.whatsapp_consent)!==1||Number(r.opt_out)!==0||String(r.booking_id)!=='UAT-WA-CERT-BOOKING')throw new Error('UAT certification fixture validation failed');
+          console.log('UAT fixture eligible: controlled allowlist + explicit UAT consent + booking, staging only.');
+          NODE

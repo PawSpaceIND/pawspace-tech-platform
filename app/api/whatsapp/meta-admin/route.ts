@@ -4,6 +4,7 @@ import{dispatchMetaWhatsAppUat,syncMetaWhatsAppTemplates}from"../../../../lib/me
 
 type Row=Record<string,unknown>;
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
+function uatDiagnosticCode(error:unknown){if(!(error instanceof Error))return"unknown";const message=String(error.message||"");const stage=/^uat_sync_(ensure_tables|template_fetch|template_payload|template_upsert)(?::|$)/.exec(message)?.[1];if(stage)return`sync_${stage}`;if(/Meta template sync failed with HTTP/i.test(message))return"meta_http";if(/D1|SQL|database|constraint|column|table/i.test(message))return"database";if(/fetch|network|timeout|socket/i.test(message))return"network";if(/json|parse/i.test(message))return"provider_payload";return"application";}
 
 export async function GET(request:Request){
  try{const actor=await resolveActor(request);requirePermission(actor,"communications.manage");const db=await database();await ensureWhatsAppUatTables(db);
@@ -20,5 +21,5 @@ export async function POST(request:Request){
   if(action==="sync_templates"){requirePermission(actor,"settings.manage");const{env}=await import("cloudflare:workers");const result=await syncMetaWhatsAppTemplates(db,env as unknown as Record<string,unknown>,{actorId:actor.email});await securityAudit(db,actor,"whatsapp.meta_template_sync","integration","meta_whatsapp","completed",result);return json({data:result});}
   if(action==="dispatch_uat"){requirePermission(actor,"communications.manage");const messageId=String(body.messageId||"").trim(),recipient=String(body.recipient||"").trim();if(!messageId||!recipient)return json({error:"Message ID and allow-listed recipient are required"},400);const{env}=await import("cloudflare:workers");const result=await dispatchMetaWhatsAppUat(db,env as unknown as Record<string,unknown>,{messageId,recipient});await securityAudit(db,actor,"whatsapp.meta_dispatch_uat","communication",messageId,"completed",{status:result.status,providerReference:"providerReference"in result?result.providerReference:null,externalDelivery:result.externalDelivery,productionDelivery:false});return json({data:result});}
   return json({error:"Supported action is sync_templates or dispatch_uat"},400);
- }catch(error){return authError(error,"Unable to update Meta WhatsApp controls");}
+ }catch(error){try{const{env}=await import("cloudflare:workers");if(String((env as unknown as Record<string,unknown>).PAWSPACE_COMMUNICATION_ENV||"").toLowerCase()==="uat")return json({error:"Unable to update Meta WhatsApp controls",diagnosticCode:uatDiagnosticCode(error)},500);}catch{}return authError(error,"Unable to update Meta WhatsApp controls");}
 }

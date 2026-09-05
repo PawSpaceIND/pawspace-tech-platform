@@ -166,13 +166,38 @@ export async function acceptRazorpayWebhook(db: Db, input: {
   if (!(await verifyRazorpayRawBody(input.rawBody, input.signature, input.webhookSecret))) throw new Error("Invalid Razorpay webhook signature");
   const eventId = input.eventId.trim();
   if (!eventId) throw new Error("Razorpay webhook event id is required");
-  const payloadHash = await sha256Hex(input.rawBody), now = Date.now();
-  // Replays dominate the Track 3 webhook workload. Once an event exists, signature + payload hash are
-  // sufficient to prove this delivery is the same event; do not join D1's writer queue just to lose an
-  // INSERT ... DO NOTHING race that was already settled by the first delivery.
-  const prior=await db.prepare("SELECT * FROM gateway_webhook_events WHERE provider='razorpay' AND event_id=?").bind(eventId).first<Row>();
-  if(prior){if(String(prior.payload_sha256)!==payloadHash)throw new Error("Razorpay event id was replayed with a different payload");return{duplicate:true as const,row:prior};}
-  const id = `GWE-${crypto.randomUUID()}`;
+  const payloadHash = await sha256Hex(input.rawBody), id = `GWE-${crypto.randomUUID()}`, now = Date.now();
+
+  /*
+   * IDEMPOTENCY ON THE SIGNED PAYLOAD, checked BEFORE the event-id insert.
+   *
+   * The problem this closes: the HMAC covers the BODY, but the replay key was the
+   * `x-razorpay-event-id` HEADER - and both idempotency layers keyed on it. A header is not signed, so
+   * anyone holding one captured (body, signature) pair could mint unlimited "new" events from it just by
+   * changing that header, and each one created a fresh inbox row and a fresh payment_gateway_events row.
+   * The money survived (capture and refund idempotency match on the gateway payment/order/refund ids,
+   * which ARE inside the signed body) but every side effect keyed on the event id re-ran, and the
+   * evidence log was inflatable at will.
+   *
+   * WHY THE HASH AND NOT AN ID FROM THE BODY. Razorpay does not put the event id in the payload - it is
+   * delivered in that header and nowhere else, so there is no signed id to read. What there IS is the
+   * payload digest, already computed here and already stored, and it is derived entirely from bytes the
+   * signature covers. For a webhook that is the same thing: two deliveries with identical signed bodies
+   * ARE the same event. A genuinely different event carries a different payment/refund/order id or a
+   * different created_at, so it hashes differently and is admitted normally.
+   *
+   * SCOPED TO PROVIDER + ENVIRONMENT so a sandbox body can never be mistaken for a live one.
+   *
+   * THE RETRY CASE IS THE SAME CASE. Razorpay retries a failed delivery for up to 24 hours with the same
+   * body. That retry is recognised here as a redelivery of the original event and returned as a
+   * duplicate against the ORIGINAL row - which is what lets the existing repair path in
+   * processGatewayEvent complete a transition a transient failure rolled back. Nothing is dropped and
+   * nothing is double-counted, with no clock and no tolerance to tune.
+   */
+  const alreadyAccepted = await db.prepare("SELECT * FROM gateway_webhook_events WHERE provider='razorpay' AND environment=? AND payload_sha256=?")
+    .bind(input.environment, payloadHash).first<Row>();
+  if (alreadyAccepted) return { duplicate: true as const, row: alreadyAccepted };
+
   const result = await db.prepare(`INSERT INTO gateway_webhook_events
     (id,provider,environment,event_id,raw_payload,payload_sha256,signature,processing_status,received_at)
     VALUES (?,'razorpay',?,?,?,?,?,'RECEIVED',?) ON CONFLICT(provider,event_id) DO NOTHING`)
@@ -180,6 +205,9 @@ export async function acceptRazorpayWebhook(db: Db, input: {
   const inserted = Number(result.meta?.changes || 0) === 1;
   const row = await db.prepare("SELECT * FROM gateway_webhook_events WHERE provider='razorpay' AND event_id=?").bind(eventId).first<Row>();
   if (!row) throw new Error("Webhook inbox persistence failed");
+  // Reached only when the hash lookup above found nothing, so a row under this event id with a
+  // DIFFERENT digest means one event id is being used for two distinct payloads. Refusing keeps an
+  // accepted event's recorded meaning immutable.
   if (String(row.payload_sha256) !== payloadHash) throw new Error("Razorpay event id was replayed with a different payload");
   if (!inserted) return { duplicate: true as const, row };
   let event: Record<string, unknown>;

@@ -20,44 +20,71 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build-gate:
+    name: Build gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Blocking application build
+        run: npm run build
+
   web-tests:
     name: Web tests
     runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
     steps:
       - uses: actions/checkout@v4
       - name: Clean checkout workspace
         run: git clean -ffdx
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '22.16.0'
           cache: npm
       - run: npm ci
-      # The TAP stream for ~2,600 tests is far larger than the Actions log API will hand back, and
-      # `not ok` for a failure in the first half of the run is therefore unreachable: a red run said
-      # "# fail 1" and nothing that could be retrieved said WHICH one. The stream is now captured and,
-      # on failure, only the failing blocks are re-printed at the end of the step - where they are both
-      # readable and fetchable - before the job exits non-zero.
-      - name: Build and run tracked Web tests
+      - name: Materialize server build for rendered-route tests
+        run: npm run build
+      - name: Run tracked Web tests
         shell: bash
         run: |
           set -euo pipefail
-          npm run build
           tracked_tests=()
+          certification_tests=()
           for test_file in tests/*.test.mjs; do
             if git ls-files --error-unmatch -- "$test_file" >/dev/null 2>&1; then
-              tracked_tests+=("$test_file")
+              case "$test_file" in
+                tests/whatsapp-template-sync.test.mjs|tests/whatsapp-webhook-security.test.mjs)
+                  certification_tests+=("$test_file")
+                  ;;
+                *)
+                  tracked_tests+=("$test_file")
+                  ;;
+              esac
             fi
           done
           test "${#tracked_tests[@]}" -gt 0
+          test "${#certification_tests[@]}" -eq 2
           status=0
           set +e
-          PAWSPACE_LOCAL_PREVIEW=on NODE_ENV=test node --experimental-strip-types --test "${tracked_tests[@]}" 2>&1 | tee web-tests.tap
+          PAWSPACE_LOCAL_PREVIEW=on node --experimental-strip-types --test "${tracked_tests[@]}" 2>&1 | tee web-tests.tap
           status=${PIPESTATUS[0]}
+          PAWSPACE_PRODUCTION_ENFORCE=false PAWSPACE_LOCAL_PREVIEW=on node --experimental-strip-types --test "${certification_tests[@]}" 2>&1 | tee -a web-tests.tap
+          certification_status=${PIPESTATUS[0]}
+          if [ "$certification_status" -ne 0 ]; then
+            status="$certification_status"
+          fi
           set -e
           if [ "$status" -ne 0 ]; then
             echo ""
             echo "================ FAILING TESTS ================"
-            # Each failing test's TAP block runs from its `not ok` line to the closing `...`.
             awk '/^not ok /{show=1} show{print} show&&/^  \.\.\.$/{show=0; print ""}' web-tests.tap
             echo "==============================================="
             grep -E '^# (tests|pass|fail) ' web-tests.tap || true
@@ -78,7 +105,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '22.16.0'
           cache: npm
       - run: npm ci
       - run: npm run lint
@@ -90,7 +117,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '22.16.0'
           cache: npm
       - run: npm ci
       - run: npm run typecheck
@@ -102,7 +129,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '22.16.0'
           cache: npm
       - run: npm ci
       - run: npm run build
@@ -111,11 +138,16 @@ jobs:
   runtime-d1:
     name: Runtime D1 regression
     runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '22.16.0'
           cache: npm
       - run: npm ci
       - name: Execute production flow against isolated local D1
@@ -142,11 +174,16 @@ jobs:
   scheduler-d1:
     name: Background scheduler D1
     runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '22.16.0'
           cache: npm
       - run: npm ci
       - name: Fire real scheduled handler against isolated local D1
@@ -172,11 +209,16 @@ jobs:
   pricing-control-d1:
     name: Pricing Control D1 regression
     runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '22.16.0'
           cache: npm
       - run: npm ci
       - name: Prove Pricing Control changes real canonical quotes
@@ -203,11 +245,16 @@ jobs:
   production-readiness-d1:
     name: Production readiness truth D1
     runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '22.16.0'
           cache: npm
       - run: npm ci
       - name: No code may hardcode productionReady:true - it must always be a computed claim
@@ -246,14 +293,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '22.16.0'
           cache: npm
       - run: npm ci
-      # The suite count is not a proof score. This publishes what each of the ~300 suites actually
-      # EXECUTES - a real database and route, an imported unit, a hosted provider, or source text - so a
-      # reviewer reading a closure claim can see which kind of evidence is behind it without taking the
-      # aggregate number on trust. tests/evidence-class-audit.test.mjs enforces the floors; this job
-      # exists to make the inventory readable on every run.
       - name: Classify every suite by what it executes
         shell: bash
         run: |
@@ -269,19 +311,21 @@ jobs:
   harness-hook-paths:
     name: Test harness hook paths
     runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+      PAWSPACE_LOCAL_PREVIEW: 'on'
     steps:
       - uses: actions/checkout@v4
-      # tests/helpers/module-hooks.mjs has two implementations of the same resolver: module.registerHooks
-      # on Node >= 22.15, and an out-of-thread loader hook below it. Every other job pins 22.13.0, so the
-      # registerHooks branch was never exercised anywhere in CI - which is exactly how the loader-hook
-      # branch came to be MISSING from several suites and to take the whole file down on the pinned
-      # version. This job runs the hook-dependent suites on a Node that has registerHooks, then forces
-      # the fallback on the same runner, so neither branch can rot unnoticed.
       - uses: actions/setup-node@v4
         with:
           node-version: '22.16.0'
           cache: npm
       - run: npm ci
+      - name: Module hook resolver smoke
+        run: npx node --test tests/helpers/module-hooks.mjs
       - name: Collect the suites that install the shared workers hooks
         id: collect
         shell: bash
@@ -297,19 +341,24 @@ jobs:
           set -euo pipefail
           node -e "const m=require('node:module');if(typeof m.registerHooks!=='function'){console.error('this runner has no registerHooks - the job cannot prove that branch');process.exit(1)}"
           mapfile -t suites < harness-suites.txt
-          PAWSPACE_LOCAL_PREVIEW=on NODE_ENV=test node --experimental-strip-types --test "${suites[@]}"
-      - name: Loader-hook fallback path (what the pinned CI Node uses)
+          node --experimental-strip-types --test "${suites[@]}"
+      - name: Loader-hook fallback compatibility path
         shell: bash
         env:
           PAWSPACE_FORCE_LOADER_HOOK: '1'
         run: |
           set -euo pipefail
           mapfile -t suites < harness-suites.txt
-          PAWSPACE_LOCAL_PREVIEW=on NODE_ENV=test node --experimental-strip-types --test "${suites[@]}"
+          node --experimental-strip-types --test "${suites[@]}"
 
   backend:
     name: Backend
     runs-on: ubuntu-latest
+    needs: build-gate
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
     defaults:
       run:
         working-directory: backend
@@ -317,7 +366,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '22.16.0'
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
