@@ -1,21 +1,97 @@
-import test from"node:test";
-import assert from"node:assert/strict";
-import{readFile}from"node:fs/promises";
+import assert from "node:assert/strict";
+import test from "node:test";
+import { freshCountingD1 } from "./helpers/d1-harness.mjs";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
-const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
+installWorkersHooks("__SITTING_GATE1_DB__", "__SITTING_GATE1_ENV__");
 
-test("Sitting Gate 1 owns catalogue and quote truth on the server",async()=>{const source=await read("lib/sitting-governance.ts");assert.match(source,/sitting_commercial_packages/);assert.match(source,/sitting_commercial_quotes/);assert.match(source,/Sitting supports full prepaid or the approved 50\/50 split payment/);assert.match(source,/Sitting coupon policy is not enabled/);assert.match(source,/Sitting amount does not match the server quote/);assert.match(source,/Sitting quote is already linked to a booking/);});
+const windowFromNow = (days = 5, hours = 24) => {
+  const start = new Date(Date.now() + days * 86_400_000);
+  start.setUTCHours(6, 0, 0, 0);
+  return { start: start.toISOString(), end: new Date(start.getTime() + hours * 3_600_000).toISOString() };
+};
 
-test("Sitting commercial API is same-origin with sandbox server-authoritative pricing",async()=>{const source=await read("app/api/sitting-commercial/route.ts");assert.match(source,/Cross-origin Sitting quote blocked/);assert.match(source,/canonical_sitting_governance/);assert.match(source,/liveAvailability:false/);assert.match(source,/productionReady:false/);assert.match(source,/paymentMode:"uat_sandbox"/);assert.match(source,/liveMoney:false/);});
+async function rejectedResponse(work) {
+  try {
+    await work();
+    assert.fail("expected governed request to be rejected");
+  } catch (error) {
+    assert.ok(error instanceof Response, `expected Response rejection, got ${error}`);
+    return error;
+  }
+}
 
-test("Sitting client consumes canonical quote API instead of inventing prices",async()=>{const source=await read("lib/sitting-commercial-client.ts");assert.match(source,/\/api\/sitting-commercial/);assert.match(source,/createSittingQuote/);assert.match(source,/paymentMode:input\.paymentMode\|\|"prepaid"/);});
+test("Sitting Gate 1 executes server-owned catalogue, quote and booking governance", async () => {
+  const { sqlite, db } = freshCountingD1();
+  const sitting = await import("../lib/sitting-governance.ts");
+  const { start, end } = windowFromNow();
 
-test("Sitting UI closes quote to canonical booking through server-owned steps",async()=>{const page=await read("app/sitting/page.tsx");assert.match(page,/createSittingQuote/);assert.match(page,/loadSittingCatalogue/);assert.match(page,/reserveUatSchedule/);assert.match(page,/captureSittingQuoteSandbox/);assert.match(page,/createCanonicalSittingBooking/);assert.match(page,/serviceCode:"pet_sitting"/);assert.match(page,/provider:schedule\.provider/);assert.match(page,/groupId=`sit-\$\{quote\.quoteId\}`/);assert.match(page,/idempotencyKey=`sitting:\$\{quote\.quoteId\}:\$\{uatCustomer\.id\}`/);assert.match(page,/Canonical Sitting booking confirmed/);assert.match(page,/booking\?\.bookingId/);assert.doesNotMatch(page,/chosen\.price\*3/);assert.doesNotMatch(page,/No booking, live payment or provider assignment is created/);});
+  const packages = await sitting.listSittingPackages(db, start);
+  assert.deepEqual(
+    packages.map((row) => [String(row.package_code), Number(row.base_price_per_pet), Number(row.extra_pet_price)]),
+    [["sitting-visit-60", 399, 149], ["sitting-overnight", 799, 399]],
+  );
 
-test("Sitting booking boundary requires customer ownership and canonical scheduling",async()=>{const source=await read("app/api/sitting-bookings/route.ts");assert.match(source,/Cross-origin Sitting booking blocked/);assert.match(source,/requireCustomerOwnership/);assert.match(source,/scheduling_assignment_decisions/);assert.match(source,/Scheduling must be assigned before Sitting confirmation/);assert.match(source,/The sitter does not match the scheduling decision/);assert.match(source,/Sitting Gate 1 requires exactly one canonical care reservation/);assert.match(source,/Sitting booking window does not match the canonical reservation/);});
+  const quote = await sitting.createSittingQuote(db, {
+    packageCode: "sitting-overnight",
+    petCount: 2,
+    scheduledStart: start,
+    scheduledEnd: end,
+    paymentMode: "prepaid",
+    cityId: "blr",
+    zoneId: "blr-east",
+  });
+  assert.equal(quote.totalAmount, 1198);
+  assert.equal(quote.amountDueNow, 1198);
+  assert.equal(quote.billableUnits, 1);
 
-test("Sitting sandbox payment is server-attested before booking",async()=>{const governance=await read("lib/sitting-payment-governance.ts");const api=await read("app/api/sitting-payment-sandbox/route.ts");const booking=await read("app/api/sitting-bookings/route.ts");assert.match(governance,/sitting_quote_payment_attestations/);assert.match(governance,/Sandbox capture amount must match the Sitting quote/);assert.match(governance,/server-confirmed sandbox capture/);assert.match(api,/Cross-origin Sitting sandbox payment blocked/);assert.match(api,/PAWSPACE_PAYMENT_ENV/);assert.match(api,/liveMoney:false/);assert.match(api,/synthetic:true/);assert.match(booking,/requireSittingQuoteSandboxCapture/);assert.match(booking,/paymentStatus:capture\.status/);assert.doesNotMatch(booking,/paymentStatus:input\.payment\.status/);});
+  const governed = await sitting.governSittingBooking(db, {
+    quoteId: quote.quoteId,
+    packageCode: quote.packageCode,
+    packageName: quote.packageName,
+    petCount: quote.petCount,
+    cityId: quote.cityId,
+    zoneId: quote.zoneId,
+    scheduledStart: quote.scheduledStart,
+    scheduledEnd: quote.scheduledEnd,
+    submittedTotal: quote.totalAmount,
+    submittedAmountDueNow: quote.amountDueNow,
+    paymentMode: quote.paymentMode,
+    paymentStatus: "captured",
+    reservationCount: 1,
+  });
+  assert.equal(governed.totalAmount, 1198);
+  assert.equal(governed.basePricePerPet, 799);
+  assert.equal(governed.extraPetPrice, 399);
 
-test("Sitting booking boundary consumes governed quote into one canonical bundle",async()=>{const source=await read("app/api/sitting-bookings/route.ts");assert.match(source,/governSittingBooking/);assert.match(source,/canonical_bookings/);assert.match(source,/provider_work_orders/);assert.match(source,/booking_payments/);assert.match(source,/"pet_sitting"/);assert.match(source,/sitting_booking_quote_links/);assert.match(source,/status='used'/);assert.match(source,/uat_sandbox/);assert.match(source,/liveMoney:false/);assert.match(source,/findCustomerReplay/);assert.match(source,/hasForeignReplayConflict/);});
+  const stored = sqlite.prepare("SELECT total_amount,amount_due_now,status FROM sitting_commercial_quotes WHERE id=?").get(quote.quoteId);
+  assert.deepEqual(stored, { total_amount: 1198, amount_due_now: 1198, status: "open" });
+});
 
-test("Sitting clients keep scheduling, payment and canonical booking as explicit server steps",async()=>{const scheduling=await read("lib/uat-scheduling-client.ts");const payment=await read("lib/sitting-payment-client.ts");const booking=await read("lib/sitting-booking-client.ts");assert.match(scheduling,/"pet_sitting"/);assert.match(scheduling,/careMode/);assert.match(payment,/\/api\/sitting-payment-sandbox/);assert.match(booking,/\/api\/sitting-bookings/);assert.doesNotMatch(booking,/status:"captured"/);});
+test("Sitting Gate 1 rejects a changed amount instead of trusting the client", async () => {
+  const { db } = freshCountingD1();
+  const sitting = await import("../lib/sitting-governance.ts");
+  const { start, end } = windowFromNow(6);
+  const quote = await sitting.createSittingQuote(db, {
+    packageCode: "sitting-overnight",
+    petCount: 1,
+    scheduledStart: start,
+    scheduledEnd: end,
+    paymentMode: "prepaid",
+  });
+  const failure = await rejectedResponse(() => sitting.governSittingBooking(db, {
+    quoteId: quote.quoteId,
+    packageCode: quote.packageCode,
+    packageName: quote.packageName,
+    petCount: quote.petCount,
+    scheduledStart: quote.scheduledStart,
+    scheduledEnd: quote.scheduledEnd,
+    submittedTotal: quote.totalAmount + 1,
+    submittedAmountDueNow: quote.amountDueNow,
+    paymentMode: quote.paymentMode,
+    paymentStatus: "captured",
+    reservationCount: 1,
+  }));
+  assert.equal(failure.status, 409);
+  assert.match(await failure.text(), /amount does not match/i);
+});
