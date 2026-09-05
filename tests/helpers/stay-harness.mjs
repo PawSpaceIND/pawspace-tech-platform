@@ -119,8 +119,10 @@ export async function seedWalkingBooking(db, sqlite, {
     const reservationId = `${booking.reservationId}-${index + 1}`;
     sqlite.prepare("INSERT OR REPLACE INTO walking_sessions (id,booking_id,schedule_group_id,reservation_id,provider_id,occurrence_number,scheduled_start,scheduled_end,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
       .run(sessionId, bookingId, booking.groupId, reservationId, providerId, index + 1, start, end, sessionStatus, now, now);
-    sqlite.prepare("INSERT OR REPLACE INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,status,created_at) VALUES (?,?,?,'dog_walking','blr','blr-east',?,'[]',?,?,'confirmed',?)")
-      .run(reservationId, booking.groupId, providerId, customerId, start, end, now);
+    // occurrence_number matters: Operations reassigns reservations by matching the occurrence numbers
+    // of the sessions being recovered, so every walk needs its own number rather than the DDL default.
+    sqlite.prepare("INSERT OR REPLACE INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,occurrence_number,status,created_at) VALUES (?,?,?,'dog_walking','blr','blr-east',?,'[]',?,?,?,'confirmed',?)")
+      .run(reservationId, booking.groupId, providerId, customerId, start, end, index + 1, now);
     sessions.push({ sessionId, reservationId, scheduledStart: start, scheduledEnd: end });
   }
   return { ...booking, sessions, sessionId: sessions[0]?.sessionId, perWalkAmount: amount };
