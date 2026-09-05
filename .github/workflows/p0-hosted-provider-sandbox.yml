@@ -31,7 +31,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Resolve non-secret Meta staging identifiers from deployed Worker or approved UAT aliases
+      - name: Resolve available Meta staging identifiers without blocking other providers
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -55,11 +55,12 @@ jobs:
             META_WHATSAPP_TEMPLATE_ALLOWLIST:vars.META_WHATSAPP_TEMPLATE_ALLOWLIST||process.env.FALLBACK_TEMPLATE_ALLOWLIST||'',
             META_WHATSAPP_GRAPH_VERSION:vars.META_WHATSAPP_GRAPH_VERSION||process.env.FALLBACK_GRAPH_VERSION||'v23.0',
           };
+          const missing=[];
           for(const [name,value] of Object.entries(picked)){
-            if(!String(value).trim()) throw new Error(`Missing ${name} in staging Worker/UAT configuration`);
+            if(!String(value).trim()){missing.push(name);continue;}
             appendFileSync(process.env.GITHUB_ENV,`${name}=${String(value).replace(/\n/g,',')}\n`);
           }
-          console.log('Resolved Meta phone/WABA/template/version from staging/UAT configuration; values withheld.');
+          console.log(`Meta configuration fields unresolved: ${missing.length ? missing.join(', ') : 'none'}`);
           NODE
           rm -f "$SETTINGS"
       - name: Refuse production-looking provider credentials and endpoints
