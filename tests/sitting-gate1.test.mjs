@@ -65,7 +65,7 @@ test("Sitting Gate 1 executes server-owned catalogue, quote and booking governan
   assert.equal(governed.extraPetPrice, 399);
 
   const stored = sqlite.prepare("SELECT total_amount,amount_due_now,status FROM sitting_commercial_quotes WHERE id=?").get(quote.quoteId);
-  assert.deepEqual(stored, { total_amount: 1198, amount_due_now: 1198, status: "open" });
+  assert.deepEqual({ ...stored }, { total_amount: 1198, amount_due_now: 1198, status: "open" });
 });
 
 test("Sitting Gate 1 rejects a changed amount instead of trusting the client", async () => {
