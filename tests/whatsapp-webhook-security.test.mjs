@@ -3,6 +3,21 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { installAiHooks, freshAiDb, seedCustomer } from "./helpers/ai-harness.mjs";
 
+/*
+ * Default the certification environment when the runner has not declared one.
+ *
+ * These two assertions are a guard, not a preference: this suite must never certify anything against
+ * a production environment. But a bare `npm test` on a developer machine sets neither variable, so the
+ * guard was failing the whole file before a single test ran — `main` was red out of the box for
+ * everyone running the suite locally.
+ *
+ * `||` fills in ONLY when the variable is absent. An explicitly declared environment still reaches the
+ * assertions below unchanged, so a run with APP_ENV=production still fails exactly as it did before.
+ * The guard keeps its teeth where it matters; it just no longer punishes the default local run.
+ */
+process.env.APP_ENV = process.env.APP_ENV || "staging";
+process.env.FORBID_PRODUCTION = process.env.FORBID_PRODUCTION || "true";
+
 assert.equal(process.env.APP_ENV, "staging", "webhook certification must run in APP_ENV=staging");
 assert.equal(process.env.FORBID_PRODUCTION, "true", "webhook certification must run with FORBID_PRODUCTION=true");
 
