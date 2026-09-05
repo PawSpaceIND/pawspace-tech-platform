@@ -1,173 +1,124 @@
-import assert from"node:assert/strict";
-import test from"node:test";
-import{readFile}from"node:fs/promises";
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  freshGroomingWorld,
+  futureSlot,
+  seedCanonicalGroomingBooking,
+  seedGroomingReservation,
+  seedOverlappingUnavailability,
+  ensureProviderCapacityTables,
+  ensureProviderBookingGuard,
+  providerUnavailableForWindow,
+  resolveGroomingPolicy,
+  evaluateBookingChange,
+  policyVersion,
+  governGroomingBooking,
+  resolveGroomingSubscriptionPlan,
+  ensureCommercialTermsTables,
+  activateGroomingCommercialTerm,
+  computeOrderPayout,
+  CommercialTermConfigurationRequired,
+  GROOMER_ID,
+  GROUP_ID,
+} from "./helpers/grooming-harness.mjs";
 
-const source=async path=>readFile(new URL("../"+path,import.meta.url),"utf8");
+test("Grooming booking truth is server-governed and subscription-configured in D1", async () => {
+  const world = freshGroomingWorld();
+  const single = await governGroomingBooking(world.db, {
+    packageCode: "dog-basic",
+    pets: [{ species: "dog" }],
+    submittedTotal: 1899,
+    submittedAmountDueNow: 0,
+    paymentMode: "pay_after_service",
+    cityId: "blr",
+    zoneId: "blr-east",
+  });
+  assert.deepEqual(
+    { packageCode: single.packageCode, petCount: single.petCount, totalAmount: single.totalAmount, amountDueNow: single.amountDueNow },
+    { packageCode: "dog-basic", petCount: 1, totalAmount: 1899, amountDueNow: 0 },
+  );
 
-test("Grooming closure uses one canonical transaction across Customer Partner Team and Finance",async()=>{
-  const[customer,canonical,change,partnerApi,partnerUi,lifecycle,finance,security,governance,mediaSecurity,mediaApi,mediaBoundary]=await Promise.all([
-    source("app/mobile-app/grooming-flow.tsx"),source("app/api/canonical-bookings/route.ts"),source("app/api/grooming-booking-change/route.ts"),source("app/api/partner-grooming-jobs/route.ts"),source("app/partner-app/canonical-grooming-jobs.tsx"),source("app/api/grooming-lifecycle/route.ts"),source("app/api/grooming-finance/route.ts"),source("lib/server-auth.ts"),source("lib/grooming-governance.ts"),source("lib/service-media-security.ts"),source("app/api/service-media/route.ts"),source("lib/media-upload-boundary.ts"),
-  ]);
-  assert.match(customer,/createCanonicalLifecycle/);
-  assert.match(customer,/reserveUatSchedule/);
-  assert.match(canonical,/idempotency_key TEXT NOT NULL UNIQUE/);
-  assert.match(canonical,/provider_work_orders/);
-  assert.match(canonical,/booking_payments/);
-  assert.match(canonical,/booking_subscription_usage/);
-  assert.match(canonical,/customer_grooming_subscriptions/);
-  assert.match(canonical,/grooming_subscription_purchase_snapshots/);
-  assert.match(canonical,/governGroomingBooking/);
-  assert.match(canonical,/cityId:input\.cityId,zoneId:input\.zoneId/);
-  assert.match(canonical,/Grooming subscription purchases must be prepaid/);
-  assert.match(canonical,/subscription_reserved/);
-  assert.match(change,/booking_cancelled/);
-  assert.match(change,/booking_rescheduled/);
-  assert.match(change,/capacityRevalidated/);
-  assert.match(change,/refund_pending/);
-  assert.match(change,/subscriptionSessionsReleased/);
-  assert.match(partnerApi,/requirePermission\(actor,"bookings\.view"\)/);
-  assert.match(partnerApi,/requireProviderOwnership\(db,actor,providerId\)/);
-  assert.match(partnerApi,/provider_work_orders/);
-  assert.match(partnerUi,/\/api\/partner-grooming-jobs/);
-  assert.match(partnerUi,/\/api\/grooming-lifecycle/);
-  assert.match(lifecycle,/Before photo, after photo and completion checklist are required/);
-  assert.match(lifecycle,/booking_invoices/);
-  assert.match(lifecycle,/sessions_consumed=sessions_reserved/);
-  assert.match(lifecycle,/customer_grooming_subscriptions/);
-  assert.match(lifecycle,/booking_tax_readiness/);
-  assert.match(lifecycle,/provider_settlement_readiness/);
-  assert.match(lifecycle,/assertServiceProofRef/);
-  assert.match(lifecycle,/repeat_booking_tasks/);
-  assert.match(mediaSecurity,/Service media asset belongs to another booking/);
-  assert.match(mediaSecurity,/Service media asset belongs to another provider/);
-  assert.match(mediaSecurity,/Service media asset purpose does not match the proof slot/);
-  assert.match(mediaSecurity,/rejected by malware\/content scanning/);
-  assert.match(mediaSecurity,/has not been reviewed and approved/);
-  assert.match(mediaSecurity,/has not been released by the scan\/quarantine boundary/);
-  assert.match(mediaSecurity,/upload is not ready for service proof/);
-  assert.match(mediaSecurity,/outside its active retention state/);
-  assert.match(mediaSecurity,/still marked synthetic/);
-  assert.match(mediaApi,/issueMediaUploadGrant/);
-  assert.match(mediaApi,/redeemMediaUploadGrant/);
-  assert.match(mediaApi,/reviewMedia/);
-  assert.match(mediaApi,/synthetic:false/);
-  assert.match(mediaApi,/pending_upload/);
-  assert.match(mediaApi,/record_scan/);
-  assert.match(mediaBoundary,/SHA-256 checksum/);
-  assert.match(mediaBoundary,/maxSizeBytes:10_000_000/);
-  assert.match(mediaBoundary,/quarantined/);
-  assert.match(mediaBoundary,/const usable=approved&&release\.releasable/);
-  assert.match(mediaBoundary,/proofReady:usable/);
-  assert.match(finance,/booking_invoices/);
-  assert.match(finance,/booking_subscription_usage/);
-  assert.match(security,/security_audit_events/);
-  assert.match(governance,/GROOMING_CATALOGUE_VERSION/);
+  const plan = await resolveGroomingSubscriptionPlan(world.db, "sub-6", "blr", "blr-east");
+  assert.equal(plan?.sessions, 6);
+  assert.equal(plan?.singlePrice, 6594);
+
+  const subscription = await governGroomingBooking(world.db, {
+    packageCode: "sub-6",
+    pets: [{ species: "dog" }],
+    submittedTotal: 6594,
+    submittedAmountDueNow: 6594,
+    paymentMode: "prepaid",
+    cityId: "blr",
+    zoneId: "blr-east",
+  });
+  assert.equal(subscription.offerType, "subscription");
+  assert.equal(subscription.subscriptionPlan?.reserveSessions, 1);
 });
 
-test("Grooming subscription commercial rules are city-configurable with audited defaults",async()=>{
-  const[governance,plansApi,gateway]=await Promise.all([source("lib/grooming-governance.ts"),source("app/api/grooming-subscription-plans/route.ts"),source("lib/api-gateway.ts")]);
-  assert.match(governance,/CREATE TABLE IF NOT EXISTS grooming_subscription_plans/);
-  assert.match(governance,/city_id TEXT NOT NULL/);
-  assert.match(governance,/zone_id TEXT/);
-  assert.match(governance,/session_count INTEGER NOT NULL/);
-  assert.match(governance,/validity_value INTEGER NOT NULL/);
-  assert.match(governance,/validity_unit TEXT NOT NULL/);
-  assert.match(governance,/credits_per_pet INTEGER NOT NULL/);
-  assert.match(governance,/family_wallet INTEGER NOT NULL/);
-  assert.match(governance,/pause_days INTEGER NOT NULL/);
-  assert.match(governance,/grace_days INTEGER NOT NULL/);
-  assert.match(governance,/renewal_window_days INTEGER NOT NULL/);
-  assert.match(governance,/effective_from TEXT NOT NULL/);
-  assert.match(governance,/grooming_subscription_plan_audit/);
-  for(const [code,price,sessions,validity] of [["sub-3-dog",3597,3,4],["sub-6",6594,6,6],["sub-12",11988,12,12],["sub-trim",4197,3,4]]){
-    assert.match(governance,new RegExp(`planCode:\\"${code}\\"[\\s\\S]{0,180}price:${price}[\\s\\S]{0,80}sessions:${sessions}[\\s\\S]{0,80}validityValue:${validity}`));
-  }
-  assert.match(governance,/6 sessions · Semiannual/);
-  assert.match(governance,/12 sessions · Annual/);
-  assert.match(governance,/resolveGroomingSubscriptionPlan/);
-  assert.match(governance,/ORDER BY CASE WHEN zone_id=\? THEN 0 ELSE 1 END,version DESC/);
-  assert.match(governance,/reserveSessions=petCount\*\(item\.creditsPerPet\?\?1\)/);
-  assert.match(plansApi,/"price","currency","session_count","validity_value","validity_unit"/);
-  assert.match(plansApi,/"max_pets_per_booking","credits_per_pet","family_wallet","pause_days","grace_days","renewal_window_days"/);
-  assert.match(plansApi,/pricing\.manage/);
-  assert.match(gateway,/\/api\/grooming-subscription-plans/);
+test("Grooming capacity sabotage: an overlapping unavailable provider cannot pass booking confirmation", async () => {
+  const world = freshGroomingWorld();
+  await ensureProviderCapacityTables(world.db);
+  await ensureProviderBookingGuard(world.db);
+  const slot = futureSlot();
+  const reservation = seedGroomingReservation(world, { groupId: GROUP_ID, providerId: GROOMER_ID, start: slot.start, end: slot.end });
+  await seedOverlappingUnavailability(world, reservation);
+
+  assert.equal(await providerUnavailableForWindow(world.db, {
+    providerId: GROOMER_ID,
+    scheduledStart: slot.start,
+    scheduledEnd: slot.end,
+  }), true);
+
+  assert.throws(
+    () => world.sqlite.prepare("INSERT INTO provider_booking_confirmation_guards (group_id,created_at) VALUES (?,?)").run(GROUP_ID, Date.now()),
+    /provider_unavailable_before_booking/,
+    "the database trigger must fail closed even if an application caller tries to confirm anyway",
+  );
+  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM provider_booking_confirmation_guards WHERE group_id=?").get(GROUP_ID).n, 0);
 });
 
-test("Grooming Gate 3 governs provider capacity acceptance and same-booking recovery",async()=>{
-  const[capacity,scheduler,scheduling,recovery,partner,operations,gateway]=await Promise.all([
-    source("lib/provider-capacity-governance.ts"),source("app/api/uat-scheduling/route.ts"),source("backend/src/scheduling.ts"),source("app/api/provider-assignment-recovery/route.ts"),source("app/partner-app/canonical-grooming-jobs.tsx"),source("app/api/booking-operations/route.ts"),source("lib/api-gateway.ts"),
-  ]);
-  const control=await source("app/api/provider-capacity-control/route.ts");
-  assert.match(capacity,/provider_capacity_profiles/);
-  assert.match(capacity,/travel_buffer_minutes/);
-  assert.match(capacity,/max_daily_jobs/);
-  assert.match(capacity,/acceptance_timeout_minutes/);
-  assert.match(capacity,/provider_assignment_offers/);
-  assert.match(capacity,/provider_recovery_cases/);
-  assert.match(capacity,/provider_performance_events/);
-  assert.match(capacity,/provider_unavailability/);
-  assert.match(scheduler,/loadGovernedProviders/);
-  assert.match(scheduler,/createAssignmentOffer/);
-  assert.match(scheduling,/Existing booking conflicts with travel\/service buffer/);
-  assert.match(scheduling,/Daily job limit/);
-  assert.match(control,/"set_availability"\|"block_time"\|"unblock_time"/);
-  assert.match(control,/"provider_unavailable"/);
-  assert.match(control,/capacityLocked:true/);
-  assert.match(control,/UPDATE scheduling_reservations SET status='cancelled'/);
-  assert.match(recovery,/"accept"\|"decline"\|"timeout"\|"unavailable"\|"no_show"/);
-  assert.match(recovery,/UPDATE canonical_bookings SET provider_id=\?/);
-  assert.match(recovery,/UPDATE provider_work_orders SET provider_id=\?/);
-  assert.match(recovery,/provider_replacement_selected/);
-  assert.match(recovery,/ops_escalation/);
-  assert.match(recovery,/recordProviderPerformance/);
-  assert.match(recovery,/booking ID and scheduled slot remain unchanged/);
-  assert.match(partner,/\/api\/provider-assignment-recovery/);
-  assert.match(partner,/Decline job/);
-  assert.match(operations,/"running_late"/);
-  assert.match(operations,/"vehicle_issue"/);
-  assert.match(operations,/rebookingAvailable/);
-  assert.match(gateway,/\/api\/provider-capacity-control/);
-  assert.match(gateway,/\/api\/provider-assignment-recovery/);
+test("Grooming policy sabotage: locked or late changes are refused in enforce mode", async () => {
+  const world = freshGroomingWorld();
+  const policy = await resolveGroomingPolicy(world.db, "blr", "blr-east");
+  assert.match(policyVersion(policy), /^blr:/);
+
+  const enforced = {
+    ...policy,
+    enforcementMode: "enforce",
+    cancellationCutoffMinutes: 1440,
+    refundPercentBeforeCutoff: 100,
+    refundPercentAfterCutoff: 0,
+    rescheduleCutoffMinutes: 1440,
+    rescheduleAllowedAfterCutoff: false,
+    maxReschedules: 1,
+    changeLockStatuses: ["completed", "cancelled"],
+  };
+  const soon = new Date(Date.now() + 2 * 60 * 60_000).toISOString();
+  const cancel = evaluateBookingChange(enforced, { action: "cancel", scheduledStart: soon, status: "confirmed", bookingAmount: 1899 });
+  assert.equal(cancel.refundPercent, 0, "late cancellation cannot invent a refund");
+  const reschedule = evaluateBookingChange(enforced, { action: "reschedule", scheduledStart: soon, status: "confirmed", bookingAmount: 1899, rescheduleCount: 0 });
+  assert.equal(reschedule.allowed, false, "late reschedule fails closed when policy disables it");
+  const locked = evaluateBookingChange(enforced, { action: "cancel", scheduledStart: soon, status: "completed", bookingAmount: 1899 });
+  assert.equal(locked.allowed, false, "completed bookings remain immutable");
 });
 
-test("Grooming production-readiness policy is city-configurable, frozen per booking and observe-first",async()=>{
-  const[policy,control,canonical,change,gateway]=await Promise.all([
-    source("lib/grooming-policy-governance.ts"),source("app/api/grooming-commercial-policy/route.ts"),source("app/api/canonical-bookings/route.ts"),source("app/api/grooming-booking-change/route.ts"),source("lib/api-gateway.ts"),
-  ]);
-  assert.match(policy,/grooming_commercial_policies/);
-  assert.match(policy,/cancellation_cutoff_minutes/);
-  assert.match(policy,/refund_percent_before_cutoff/);
-  assert.match(policy,/refund_percent_after_cutoff/);
-  assert.match(policy,/reschedule_cutoff_minutes/);
-  assert.match(policy,/max_reschedules/);
-  assert.match(policy,/reschedule_fee_type/);
-  assert.match(policy,/no_show_refund_percent/);
-  assert.match(policy,/multi_pet_max/);
-  assert.match(policy,/enforcement_mode TEXT NOT NULL DEFAULT 'observe'/);
-  assert.match(policy,/grooming_commercial_policy_audit/);
-  assert.match(policy,/ORDER BY CASE WHEN zone_id=\? THEN 0 ELSE 1 END,version DESC/);
-  assert.match(policy,/Observe mode: policy would block this change but UAT behavior is preserved/);
-  assert.match(control,/pricing\.manage/);
-  assert.match(control,/'observe','enforce'/);
-  assert.match(canonical,/resolveGroomingPolicy/);
-  assert.match(canonical,/commercialPolicy:commercialPolicy\?policySnapshot/);
-  assert.match(canonical,/commercialPolicyVersion/);
-  assert.match(change,/parsePolicySnapshot/);
-  assert.match(change,/evaluateBookingChange/);
-  assert.match(change,/refundAmount/);
-  assert.match(change,/rescheduleFeeAmount/);
-  assert.match(gateway,/\/api\/grooming-commercial-policy/);
-});
+test("Grooming finance sabotage: payout cannot be computed without an active commercial term", async () => {
+  const world = freshGroomingWorld({ production: true });
+  await ensureCommercialTermsTables(world.db);
+  seedCanonicalGroomingBooking(world, { amount: 1899, providerId: GROOMER_ID });
 
-test("Grooming closure keeps live gateways outside UAT while completion finance is ledger-governed",async()=>{
-  const[lifecycle,finance,plan]=await Promise.all([source("app/api/grooming-lifecycle/route.ts"),source("app/team/finance/page.tsx"),source("docs/GROOMING_CLOSURE_PLAN.md")]);
-  assert.match(lifecycle,/uat_sandbox/);
-  assert.match(lifecycle,/resolveServiceCompletionFinance/);
-  assert.match(lifecycle,/tax_rule_status[\s\S]*'resolved'/);
-  assert.match(lifecycle,/status[\s\S]*'accrued'/);
-  assert.doesNotMatch(lifecycle,/Production GST\/tax rule is not yet approved/);
-  assert.doesNotMatch(lifecycle,/Provider payout percentage\/travel\/incentive\/penalty rule must be approved/);
-  assert.match(finance,/Razorpay production credentials, live refunds/);
-  assert.match(plan,/Deliberately still UAT \/ not production-complete/);
-  assert.match(plan,/Do not connect live operational customer feeds, live payment\/communication integrations or production credentials/);
+  await assert.rejects(
+    () => computeOrderPayout(world.db, { bookingId: "BKG-GROOM-PHASE2", actorId: "finance@example.in", persist: true }),
+    (error) => error instanceof CommercialTermConfigurationRequired,
+  );
+  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM provider_payout_computations").get().n, 0, "refused finance leaves no phantom payout row");
+
+  await activateGroomingCommercialTerm(world);
+  const payout = await computeOrderPayout(world.db, { bookingId: "BKG-GROOM-PHASE2", actorId: "finance@example.in", persist: true });
+  assert.equal(payout.serviceCode, "grooming");
+  assert.equal(payout.orderValue, 1899);
+  assert.equal(payout.engagementModel, "commission_groomer");
+  assert.equal(payout.providerSharePct, 0.7);
+  assert.ok(payout.providerNetPayout > 0);
+  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM provider_payout_computations WHERE booking_id='BKG-GROOM-PHASE2'").get().n, 1);
 });
