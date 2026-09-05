@@ -1,0 +1,107 @@
+name: P0 Dependency Advisory Audit
+
+on:
+  push:
+    branches:
+      - remediation/p0-pilot-gates-b379631
+    paths:
+      - package.json
+      - package-lock.json
+      - backend/package.json
+      - backend/package-lock.json
+      - .github/workflows/p0-dependency-audit.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Capture root audits
+        shell: bash
+        run: |
+          set +e
+          npm audit --json > "$RUNNER_TEMP/root-all.json"
+          npm audit --omit=dev --json > "$RUNNER_TEMP/root-prod.json"
+          exit 0
+      - name: Capture backend audits
+        shell: bash
+        working-directory: backend
+        run: |
+          set +e
+          npm audit --json > "$RUNNER_TEMP/backend-all.json"
+          npm audit --omit=dev --json > "$RUNNER_TEMP/backend-prod.json"
+          exit 0
+      - name: Classify high and critical advisories
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const files = [
+            ['root-all', process.env.RUNNER_TEMP + '/root-all.json'],
+            ['root-prod', process.env.RUNNER_TEMP + '/root-prod.json'],
+            ['backend-all', process.env.RUNNER_TEMP + '/backend-all.json'],
+            ['backend-prod', process.env.RUNNER_TEMP + '/backend-prod.json'],
+          ];
+          const rows = [];
+          for (const [scope, file] of files) {
+            const raw = fs.readFileSync(file, 'utf8');
+            let report;
+            try { report = JSON.parse(raw); } catch (error) {
+              console.error(`Invalid npm audit JSON for ${scope}: ${error.message}`);
+              process.exitCode = 2;
+              continue;
+            }
+            const vulnerabilities = report.vulnerabilities || {};
+            for (const [name, v] of Object.entries(vulnerabilities)) {
+              if (!['high','critical'].includes(String(v.severity))) continue;
+              const via = Array.isArray(v.via) ? v.via : [];
+              const advisories = via.filter(x => x && typeof x === 'object').map(x => ({
+                source: x.source ?? null,
+                name: x.name ?? name,
+                title: x.title ?? null,
+                url: x.url ?? null,
+                range: x.range ?? null,
+                severity: x.severity ?? v.severity,
+                cwe: x.cwe ?? [],
+                cvss: x.cvss ?? null,
+              }));
+              rows.push({
+                scope,
+                package: name,
+                severity: v.severity,
+                direct: Boolean(v.isDirect),
+                range: v.range ?? null,
+                fixAvailable: v.fixAvailable ?? false,
+                effects: v.effects ?? [],
+                viaPackages: via.filter(x => typeof x === 'string'),
+                advisories,
+              });
+            }
+          }
+          const out = path.join(process.env.RUNNER_TEMP, 'p0-high-critical.json');
+          fs.writeFileSync(out, JSON.stringify(rows, null, 2));
+          console.log(`P0_AUDIT_HIGH_CRITICAL_ROWS=${rows.length}`);
+          for (const row of rows) console.log(JSON.stringify(row));
+          NODE
+      - name: Upload audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-dependency-audit-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/root-all.json
+            ${{ runner.temp }}/root-prod.json
+            ${{ runner.temp }}/backend-all.json
+            ${{ runner.temp }}/backend-prod.json
+            ${{ runner.temp }}/p0-high-critical.json
+          if-no-files-found: error
