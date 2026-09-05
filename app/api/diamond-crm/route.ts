@@ -1,6 +1,7 @@
 import { authError, authorize, database } from "../../../lib/server-auth";
 import { advanceOpportunityStage, buildProbabilisticForecast, ensureCrmPipelineTables, syncOpenLeadPipeline } from "../../../lib/crm-pipeline-forecast";
-import { ensureLeadScoringMergeTables, executeCustomerMerge, refreshLeadScores, scoreLead } from "../../../lib/crm-lead-scoring-merge";
+import { ensureLeadScoringMergeTables, refreshLeadScores, scoreLead } from "../../../lib/crm-lead-scoring-merge";
+import { executeTransactionalCustomerMerge } from "../../../lib/crm-transactional-merge";
 import { ensureCrmEmailTables, syncCalendarEvents } from "../../../lib/crm-email-sync";
 import { dispatchReportExportDeliveries, ensureReportExportTables, processReportExportJobs, queueReportExport, runScheduledReportExports } from "../../../lib/report-export-runtime";
 import { aiProviderConnection, verifyAiProvider } from "../../../lib/ai-provider-adapter";
@@ -62,7 +63,7 @@ export async function POST(request: Request) {
     }));
     if (action === "score_lead") return Response.json(await scoreLead(db, text(body.leadId)));
     if (action === "refresh_scores") return Response.json(await refreshLeadScores(db, Number(body.limit || 300)));
-    if (action === "merge_customer") return Response.json(await executeCustomerMerge(db, { primaryCustomerId: text(body.primaryCustomerId), duplicateCustomerId: text(body.duplicateCustomerId), actorId: actor.email, reason: text(body.reason) }));
+    if (action === "merge_customer") return Response.json(await executeTransactionalCustomerMerge(db, { primaryCustomerId: text(body.primaryCustomerId), duplicateCustomerId: text(body.duplicateCustomerId), actorId: actor.email, reason: text(body.reason) }));
     if (action === "queue_export") return Response.json(await queueReportExport(db, { reportType: text(body.reportType), format: text(body.format) as "csv" | "pdf", filters: (body.filters || {}) as Record<string, unknown>, actorId: actor.email }), { status: 202 });
     if (action === "process_exports") return Response.json(await processReportExportJobs(db, { limit: Number(body.limit || 10) }));
     if (action === "run_scheduled_exports") {
