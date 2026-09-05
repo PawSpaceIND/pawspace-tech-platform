@@ -1,0 +1,43 @@
+name: P0 Exotel Signed Callback Selftest
+
+on:
+  push:
+    branches:
+      - remediation/p0-pilot-gates-b379631
+    paths:
+      - .github/workflows/p0-exotel-signed-callback-selftest.yml
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    runs-on: ubuntu-24.04
+    environment: pawspace-staging
+    timeout-minutes: 5
+    env:
+      CALLBACK_URL: https://pawspace-staging.karthik-fce.workers.dev/api/voice-provider-webhook
+      EXOTEL_WEBHOOK_SECRET: ${{ secrets.EXOTEL_WEBHOOK_SECRET }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Send valid HMAC-signed synthetic callback
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import crypto from 'node:crypto';
+          const url=String(process.env.CALLBACK_URL||'');
+          const secret=String(process.env.EXOTEL_WEBHOOK_SECRET||'');
+          if(!secret) throw new Error('EXOTEL_WEBHOOK_SECRET is not present in GitHub pawspace-staging secrets');
+          console.log('::add-mask::'+secret);
+          const ts=String(Date.now());
+          const body='CallSid=synthetic-signed-probe&CallStatus=completed&CustomField=SELFTEST-NOAPPLY';
+          const sig=crypto.createHmac('sha256',secret).update(`${ts}.${body}`).digest('hex');
+          const r=await fetch(url,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded','x-pawspace-voice-timestamp':ts,'x-pawspace-voice-signature':sig},body,signal:AbortSignal.timeout(20000)});
+          const text=await r.text();
+          console.log(`SIGNED_CALLBACK_HTTP=${r.status}`);
+          if(!r.ok) throw new Error(`Valid HMAC callback was rejected HTTP ${r.status}`);
+          console.log('SIGNED_CALLBACK_VERIFICATION=PASS');
+          NODE
