@@ -4,7 +4,6 @@ import {
   freshFoodWorld,
   createFoodOrderFixture,
   fulfilTo,
-  mutateFoodFulfilment,
   mutateFoodFinance,
   expectResponse,
 } from "./helpers/food-gate-harness.mjs";
@@ -23,7 +22,8 @@ test("Food Gate 3 executes delivery payment capture and refuses payment-referenc
   assert.equal(paid.status, "sandbox_paid");
   assert.equal(paid.liveMoney, false);
   const payment = world.sqlite.prepare("SELECT status,reference FROM food_order_payment_events WHERE order_id=?").get(first.orderId);
-  assert.deepEqual(payment, { status: "sandbox_paid", reference: "PAYREF-GATE3-001" });
+  assert.equal(payment.status, "sandbox_paid");
+  assert.equal(payment.reference, "PAYREF-GATE3-001");
 
   const second = await createFoodOrderFixture(world, { idempotencyKey: "gate3-paid-2" });
   await fulfilTo(world, second, "delivered");
