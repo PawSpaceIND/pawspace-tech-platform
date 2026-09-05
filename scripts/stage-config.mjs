@@ -83,6 +83,7 @@ cfg.vars = {
   PAWSPACE_VOICE_ENV: "uat",
   PAWSPACE_VOICE_UAT_AI_SELF_TEST_APPROVED: "true",
   PAWSPACE_VOICE_UAT_AI_SELF_TEST_DAILY_CAP: "3",
+  EXOTEL_SUBDOMAIN: "api.exotel.com",
   META_WHATSAPP_UAT_DELIVERY_ENABLED: "true",
   PAWSPACE_MEDIA_ENV: "uat",
 };
@@ -104,6 +105,6 @@ if (leaked.length) {
 writeFileSync(path, JSON.stringify(cfg));
 
 console.log(`Staging config written → name=pawspace-staging, DB=${d1Id}, PAWSPACE_PAYMENT_ENV=sandbox, UAT_LOGIN=on, UAT integrations locked`);
-console.log(`Workers AI binding: configured as AI; voice self-test mode: uat`);
+console.log(`Workers AI binding: configured as AI; voice self-test mode: uat; Exotel host: api.exotel.com`);
 console.log(`Private media binding: ${r2BucketName ? "configured" : "not configured"}`);
 console.log("UAT credentials were validated from the environment, are NOT written to wrangler.json, and are uploaded as Cloudflare Worker secrets — nothing secret is logged.");
