@@ -16,6 +16,7 @@ import {runSubscriptionBillingSweep} from "../lib/subscription-billing";
 import {runSubscriptionScheduledMaintenance} from "../lib/subscription-scheduled";
 import {runEliteScheduledHooks,runEliteWebhookHooks} from "../lib/services/elite-runtime";
 import {runMarketingConnectorScheduler} from "../lib/google-ads-conversion-consent";
+import {EXOTEL_AGENTSTREAM_PATH,handleExotelAgentStream} from "../lib/exotel-agentstream";
 
 interface Env {
   ASSETS: Fetcher;
@@ -48,6 +49,11 @@ function secureApiResponse(response:Response){const secured=new Response(respons
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    // Carrier-originated WebSockets are authenticated by the AgentStream start frame against the
+    // governed Exotel call ledger and configured account SID. They must not traverse the browser
+    // session gateway: Exotel has no PawSpace user session and the upgrade would otherwise be rejected.
+    if(url.pathname===EXOTEL_AGENTSTREAM_PATH)return handleExotelAgentStream(request,env,ctx);
 
     if (url.pathname.startsWith("/api/")) {
       if(url.pathname==="/api/identity-session")return secureApiResponse(await handler.fetch(request,env,ctx));
