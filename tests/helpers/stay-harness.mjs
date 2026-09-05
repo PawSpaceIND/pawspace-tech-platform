@@ -1,5 +1,5 @@
 /**
- * Shared setup for the EXECUTED Boarding and Pet Sitting suites.
+ * Shared setup for the EXECUTED home-service suites: Boarding, Pet Sitting, Dog Walking and Food.
  *
  * The ten Boarding and Sitting gate suites used to read `lib/boarding-...ts` and `lib/sitting-...ts`
  * as STRINGS and regex-match them. That is not a hypothetical weakness here: PAWSPACE-QA-001 was a
@@ -73,6 +73,53 @@ export async function seedBoardingStay(db, sqlite, {
   }).run();
   const stay = await db.prepare("SELECT id FROM boarding_stays WHERE booking_id=?").bind(bookingId).first();
   return { ...booking, stayId: String(stay.id), ...window };
+}
+
+/**
+ * A canonical Dog Walking booking with its walk sessions.
+ *
+ * Walking is per-SESSION: one canonical booking fans out into `walkCount` rows in walking_sessions,
+ * each with its own reservation, and the lifecycle, finance and proof modules all key off a session
+ * id rather than the booking. DDL for walking_sessions is verbatim from lib/walking-ops-governance.ts,
+ * which owns it.
+ */
+export async function seedWalkingBooking(db, sqlite, {
+  bookingId = "BKG-WALK-1", customerId = "CUST-WALK-1", providerId = "walker_dev",
+  packageCode = "walking-30", packageName = "30-minute Solo Walk", amount = 349,
+  walkCount = 1, paymentStatus = "pending", paymentMode = "pay_after_service",
+  window: given, sessionStatus = "scheduled", ...rest
+} = {}) {
+  const lifecycle = await import("../../lib/walking-lifecycle.ts");
+  const ops = await import("../../lib/walking-ops-governance.ts");
+  const capacity = await import("../../lib/provider-capacity-governance.ts");
+  await lifecycle.ensureWalkingLifecycleTables(db);
+  await ops.ensureWalkingOpsTables(db);
+  await capacity.seedProviderCapacityDefaults(db);
+
+  const window = given ?? stayWindow({ durationHours: 0.5 });
+  const booking = seedCanonicalStayBooking(sqlite, {
+    bookingId, customerId, providerId, serviceCode: "dog_walking", packageCode, packageName,
+    amount: amount * walkCount, amountDueNow: 0, paymentStatus, paymentMode, ...window, ...rest,
+  });
+
+  const now = Date.now();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS provider_assignment_offers (group_id TEXT PRIMARY KEY,booking_id TEXT,provider_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',offered_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,responded_at INTEGER,response_reason TEXT,attempt_no INTEGER NOT NULL DEFAULT 1,updated_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT OR REPLACE INTO provider_assignment_offers (group_id,booking_id,provider_id,status,offered_at,expires_at,attempt_no,updated_at) VALUES (?,?,?,'pending',?,?,1,?)")
+    .run(booking.groupId, bookingId, providerId, now, now + 30 * 60_000, now);
+
+  const sessions = [];
+  for (let index = 0; index < walkCount; index += 1) {
+    const start = new Date(new Date(window.scheduledStart).getTime() + index * 24 * 3_600_000).toISOString();
+    const end = new Date(new Date(start).getTime() + 30 * 60_000).toISOString();
+    const sessionId = `WSESS-${bookingId}-${index + 1}`;
+    const reservationId = `${booking.reservationId}-${index + 1}`;
+    sqlite.prepare("INSERT OR REPLACE INTO walking_sessions (id,booking_id,schedule_group_id,reservation_id,provider_id,occurrence_number,scheduled_start,scheduled_end,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+      .run(sessionId, bookingId, booking.groupId, reservationId, providerId, index + 1, start, end, sessionStatus, now, now);
+    sqlite.prepare("INSERT OR REPLACE INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,status,created_at) VALUES (?,?,?,'dog_walking','blr','blr-east',?,'[]',?,?,'confirmed',?)")
+      .run(reservationId, booking.groupId, providerId, customerId, start, end, now);
+    sessions.push({ sessionId, reservationId, scheduledStart: start, scheduledEnd: end });
+  }
+  return { ...booking, sessions, sessionId: sessions[0]?.sessionId, perWalkAmount: amount };
 }
 
 /**
