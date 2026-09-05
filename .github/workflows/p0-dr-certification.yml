@@ -7,7 +7,7 @@ on:
     paths:
       - docs/P0-ROLLBACK-DRILL.md
       - .github/workflows/p0-dr-certification.yml
-      - tests/d1-restore-scratch-guard.test.mjs
+      - tests/d1-backup-restore-guards.test.mjs
       - tests/ai-enablement.test.mjs
       - tests/customer-reminder-lifecycle-runtime.test.mjs
       - tests/communication-enqueue-contract-runtime.test.mjs
@@ -27,7 +27,7 @@ jobs:
           cache: npm
       - run: npm ci
       - name: D1 restore compatibility guards
-        run: node --experimental-strip-types --test tests/d1-restore-scratch-guard.test.mjs
+        run: node --experimental-strip-types --test tests/d1-backup-restore-guards.test.mjs
       - name: Feature kill switch guards
         run: node --experimental-strip-types --test tests/ai-enablement.test.mjs
       - name: Queue and communication replay guards
