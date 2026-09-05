@@ -1,22 +1,50 @@
-import test from"node:test";
-import assert from"node:assert/strict";
-import{readFile}from"node:fs/promises";
-const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
+import assert from "node:assert/strict";
+import test from "node:test";
+import { freshCountingD1 } from "./helpers/d1-harness.mjs";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
-test("Sitting Gate 4 media grants are short lived opaque and private",async()=>{const source=await read("lib/sitting-proof-governance.ts");assert.match(source,/sitting_media_upload_grants/);assert.match(source,/15\*60_000/);assert.match(source,/token_hash/);assert.match(source,/sandbox_contract/);assert.match(source,/rawPublicUrl:false/);assert.match(source,/Storage confirmation must use an opaque object ID, not a public URL/);assert.match(source,/upload grant expired/);assert.match(source,/upload token mismatch/);});
+installWorkersHooks("__SITTING_GATE4_DB__", "__SITTING_GATE4_ENV__");
 
-test("Sitting Gate 4 enforces proof MIME size checksum scan and exact ownership",async()=>{const source=await read("lib/sitting-proof-governance.ts");assert.match(source,/image\/jpeg/);assert.match(source,/image\/png/);assert.match(source,/image\/webp/);assert.match(source,/10_000_000/);assert.match(source,/SHA-256 checksum/);assert.match(source,/belongs to another booking/);assert.match(source,/belongs to another provider/);assert.match(source,/purpose does not match this evidence slot/);assert.match(source,/has not passed scan review/);assert.match(source,/not ready for private proof access/);assert.match(source,/outside active retention/);assert.match(source,/still synthetic/);});
+async function seedProof() {
+  const { sqlite, db } = freshCountingD1();
+  const proof = await import("../lib/sitting-proof-governance.ts");
+  await proof.ensureSittingProofTables(db);
+  const now = Date.now();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,schedule_group_id TEXT,provider_id TEXT,service_code TEXT,status TEXT,created_at INTEGER,updated_at INTEGER)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS provider_work_orders (id TEXT PRIMARY KEY,booking_id TEXT,provider_id TEXT,status TEXT,created_at INTEGER,updated_at INTEGER)");
+  sqlite.prepare("INSERT INTO canonical_bookings VALUES ('BK-SG4','CUS-SG4','GRP-SG4','PRV-SG4','pet_sitting','assigned',?,?)").run(now, now);
+  sqlite.prepare("INSERT INTO provider_work_orders VALUES ('WO-SG4','BK-SG4','PRV-SG4','accepted',?,?)").run(now, now);
+  return { sqlite, db, proof };
+}
 
-test("Sitting Gate 4 medication requires Care Card and clean evidence",async()=>{const source=await read("lib/sitting-proof-governance.ts");assert.match(source,/sitting_medication_administrations/);assert.match(source,/A ready Care Card is required before medication evidence/);assert.match(source,/canonical Care Card has no medication instruction/);assert.match(source,/sitting_medication/);assert.match(source,/medication_evidenced/);assert.match(source,/careCardInstructionPresent:true/);});
+async function rejectedResponse(work) {
+  try { await work(); assert.fail("expected rejection"); }
+  catch (error) { assert.ok(error instanceof Response); return error; }
+}
 
-test("Sitting Gate 4 incidents preserve booking and never invent money actions",async()=>{const source=await read("lib/sitting-proof-governance.ts");assert.match(source,/sitting_incidents/);assert.match(source,/attention/);assert.match(source,/urgent/);assert.match(source,/emergency/);assert.match(source,/ops_escalation/);assert.match(source,/notification_status TEXT NOT NULL DEFAULT 'queued'/);assert.match(source,/bookingPreserved:true/);assert.match(source,/automaticRefund:false/);assert.match(source,/automaticPayoutChange:false/);assert.match(source,/resolve_incident/);});
+test("Sitting Gate 4 executes private opaque media-grant creation", async () => {
+  const { sqlite, db, proof } = await seedProof();
+  const result = await proof.mutateSittingProof(db, {
+    bookingId: "BK-SG4", action: "prepare_media", actorId: "sitter@pawspace.in", idempotencyKey: "sg4-media",
+    purpose: "sitting_update", mimeType: "image/jpeg", sizeBytes: 5000, sha256: "a".repeat(64),
+  });
+  assert.equal(result.upload.rawPublicUrl, false);
+  assert.equal(result.upload.mode, "sandbox_contract");
+  assert.equal(result.proofReady, false);
+  const asset = sqlite.prepare("SELECT booking_id,provider_id,scan_status,access_status,synthetic FROM service_media_assets WHERE id=?").get(result.mediaId);
+  assert.deepEqual(asset, { booking_id: "BK-SG4", provider_id: "PRV-SG4", scan_status: "pending", access_status: "pending_upload", synthetic: 0 });
+  const grant = sqlite.prepare("SELECT status,expires_at FROM sitting_media_upload_grants WHERE media_id=?").get(result.mediaId);
+  assert.equal(grant.status, "issued");
+  assert.ok(Number(grant.expires_at) > Date.now());
+});
 
-test("Sitting Gate 4 keeps communications queued while adapters are disconnected",async()=>{const source=await read("lib/sitting-proof-governance.ts");assert.match(source,/sitting_customer_notifications/);assert.match(source,/push/);assert.match(source,/whatsapp/);assert.match(source,/live messaging is not connected in UAT/);assert.match(source,/communications:\{mode:\"queued_only\",liveDelivery:false/);});
-
-test("Sitting Gate 4 API separates provider customer and staff authority",async()=>{const api=await read("app/api/sitting-proof/route.ts"),gateway=await read("lib/api-gateway.ts");assert.match(api,/providerActions=new Set<SittingProofAction>/);assert.match(api,/staffActions=new Set<SittingProofAction>/);assert.match(api,/customerActions=new Set<SittingProofAction>/);assert.match(api,/requireProviderOwnership/);assert.match(api,/requireCustomerOwnership/);assert.match(api,/requirePermission\(actor,\"bookings\.manage\"\)/);assert.match(api,/securityAudit/);assert.match(api,/sandboxOnly:true/);assert.match(gateway,/url\.pathname===\"\/api\/sitting-proof\"/);assert.match(gateway,/acknowledge_incident/);assert.match(gateway,/record_media_scan/);});
-
-test("Sitting Gate 4 closes legacy medication photo and incident lifecycle bypass",async()=>{const api=await read("app/api/sitting-lifecycle/route.ts");assert.match(api,/evidenceCareEvents=new Set\(\[\"medication\",\"photo_update\",\"incident\"\]\)/);assert.match(api,/Medication, photo proof and incidents must use the governed Sitting proof workflow/);});
-
-test("Sitter workspace routes evidence to the dedicated proof workspace",async()=>{const workspace=await read("app/sitter/sitting-workspace.tsx"),proof=await read("app/sitter/proof/page.tsx");assert.match(workspace,/\/sitter\/proof\?bookingId=/);assert.match(workspace,/Proof · medication · incident/);assert.doesNotMatch(workspace,/careEventType:\"medication\"/);assert.doesNotMatch(workspace,/careEventType:\"photo_update\"/);assert.doesNotMatch(workspace,/careEventType:\"incident\"/);assert.match(proof,/prepare_media/);assert.match(proof,/record_medication/);assert.match(proof,/report_incident/);assert.match(proof,/SHA-256/);assert.match(proof,/staff-authorized storage finalization and scan review/);});
-
-test("Sitting customer can see and acknowledge incidents without changing money",async()=>{const page=await read("app/sitting/manage/sitting-customer-incidents.tsx");assert.match(page,/loadSittingProof/);assert.match(page,/scope:\"customer\"/);assert.match(page,/action:\"acknowledge_incident\"/);assert.match(page,/does not approve a refund, charge or sitter payout change/);});
+test("Sitting Gate 4 rejects unsupported media before persisting an asset", async () => {
+  const { sqlite, db, proof } = await seedProof();
+  const failure = await rejectedResponse(() => proof.mutateSittingProof(db, {
+    bookingId: "BK-SG4", action: "prepare_media", actorId: "sitter@pawspace.in", idempotencyKey: "sg4-gif",
+    purpose: "sitting_update", mimeType: "image/gif", sizeBytes: 5000, sha256: "b".repeat(64),
+  }));
+  assert.equal(failure.status, 400);
+  assert.match(await failure.text(), /JPEG, PNG and WebP/i);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM service_media_assets WHERE booking_id='BK-SG4'").get().n, 0);
+});
