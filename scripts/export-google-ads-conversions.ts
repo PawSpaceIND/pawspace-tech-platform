@@ -3,6 +3,7 @@ type D1Result<T> = { results?: T[] };
 type D1PreparedStatement = {
   bind: (...values: unknown[]) => D1PreparedStatement;
   all: <T = D1Row>() => Promise<D1Result<T>>;
+  run: () => Promise<unknown>;
 };
 type D1Like = { prepare: (sql: string) => D1PreparedStatement };
 
@@ -59,6 +60,10 @@ function conversionName(eventType: unknown) {
   }
 }
 
+async function ensureConsentTable(db: D1Like) {
+  await db.prepare("CREATE TABLE IF NOT EXISTS google_ads_conversion_consent (customer_id TEXT PRIMARY KEY,ad_user_data TEXT NOT NULL CHECK(ad_user_data IN ('Granted','Denied')),ad_personalization TEXT NOT NULL CHECK(ad_personalization IN ('Granted','Denied')),source TEXT NOT NULL,captured_at INTEGER NOT NULL,updated_by TEXT NOT NULL,updated_at INTEGER NOT NULL)").run();
+}
+
 export function buildGoogleAdsOfflineConversionCsv(rows: D1Row[]) {
   const dataRows = rows.map(row => {
     const clickId = text(row.click_id);
@@ -89,6 +94,7 @@ export async function exportGoogleAdsOfflineConversions(db: D1Like, input: { fro
   const from = Number.isFinite(input.from) ? Number(input.from) : 0;
   const to = Number.isFinite(input.to) ? Number(input.to) : Number.MAX_SAFE_INTEGER;
   if (from > to) throw new Error("Conversion export from must be less than or equal to to");
+  await ensureConsentTable(db);
 
   const query = `
     SELECT
@@ -98,13 +104,22 @@ export async function exportGoogleAdsOfflineConversions(db: D1Like, input: { fro
       facts.value_minor
     FROM whatsapp_conversion_facts AS facts
     INNER JOIN whatsapp_lead_attribution AS attribution
-      ON attribution.lead_id = facts.lead_id
-     AND attribution.customer_id = facts.customer_id
-     AND attribution.thread_id = facts.thread_id
-    WHERE attribution.source_platform = 'google'
-      AND attribution.click_id IS NOT NULL
-      AND TRIM(attribution.click_id) <> ''
-      AND facts.event_type IN ('lead_qualified','booking_created','payment_captured')
+      ON attribution.id = (
+        SELECT a.id FROM whatsapp_lead_attribution AS a
+        WHERE a.lead_id = facts.lead_id
+          AND a.customer_id = facts.customer_id
+          AND a.thread_id = facts.thread_id
+          AND a.source_platform = 'google'
+          AND a.click_id IS NOT NULL
+          AND TRIM(a.click_id) <> ''
+        ORDER BY a.created_at DESC, a.id DESC
+        LIMIT 1
+      )
+    INNER JOIN google_ads_conversion_consent AS consent
+      ON consent.customer_id = facts.customer_id
+     AND consent.ad_user_data = 'Granted'
+     AND consent.ad_personalization = 'Granted'
+    WHERE facts.event_type IN ('lead_qualified','booking_created','payment_captured')
       AND facts.occurred_at >= ?
       AND facts.occurred_at <= ?
     ORDER BY facts.occurred_at ASC, facts.id ASC
