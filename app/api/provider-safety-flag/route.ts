@@ -1,5 +1,6 @@
 import { authError, database, requirePermission, requireProviderOwnership, resolveActor, securityAudit } from "../../../lib/server-auth";
-import { BLOCKLIST_REASONS, flagCustomerOnGlobalBlocklist, type BlocklistReason } from "../../../lib/trust-safety-governance";
+import { BLOCKLIST_REASONS, type BlocklistReason } from "../../../lib/trust-safety-governance";
+import { flagCustomerOnGlobalBlocklistSafe } from "../../../lib/trust-safety-blocklist";
 
 type Body = { providerId?: string; bookingId?: string; reasonCode?: BlocklistReason; note?: string };
 type Row = Record<string, unknown>;
@@ -21,7 +22,7 @@ export async function POST(request: Request) {
     if (assigned !== providerId) return json({ error: "This booking is assigned to another provider" }, 403);
     const customerId = text(booking.customer_id), customer = await db.prepare("SELECT primary_phone FROM canonical_customers WHERE id=?").bind(customerId).first<Row>();
     if (!customer || !text(customer.primary_phone)) return json({ error: "Customer contact record unavailable" }, 409);
-    const result = await flagCustomerOnGlobalBlocklist(db, { phone: text(customer.primary_phone), customerId, bookingId, reasonCode, actorId: actor.email, actorType: "provider", detail: { note: text(body.note).slice(0, 500), providerId } });
+    const result = await flagCustomerOnGlobalBlocklistSafe(db, { phone: text(customer.primary_phone), customerId, bookingId, reasonCode, actorId: actor.email, actorType: "provider", detail: { note: text(body.note).slice(0, 500), providerId } });
     await securityAudit(db, actor, "trust_safety.customer_flagged", "customer", customerId, "completed", { bookingId, providerId, reasonCode });
     return json({ data: { blocked: result.blocked, reasonCode: result.reasonCode, customerId, bookingId } }, 201);
   } catch (error) { return authError(error, "Unable to flag customer"); }
