@@ -1,5 +1,6 @@
 import{authError,requirePermission,resolveActor}from"../../../lib/server-auth";
 import{voiceEngine,selectVoiceStt,selectVoiceTts,voiceProvidersStatus}from"../../../lib/voice-provider-adapter";
+import{VoiceSpeechError}from"../../../lib/voice-speech-failures";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 function sameOrigin(request:Request){const origin=request.headers.get("origin");if(origin&&origin!==new URL(request.url).origin)throw new Response("Cross-origin voice write blocked",{status:403});}
@@ -24,5 +25,11 @@ export async function POST(request:Request){
     if(action==="transcribe"){const ref=String(body.audioRef||"").trim();if(!ref)return json({error:"audioRef is required"},400);const stt=selectVoiceStt(env);if(stt.status!=="connected")return json({error:"STT is not connected"},503);return json({data:await stt.transcribe({audioRef:ref,language:body.language||null})});}
     if(action==="synthesize"){const t=String(body.text||"").trim();if(!t)return json({error:"text is required"},400);const tts=selectVoiceTts(env);if(tts.status!=="connected")return json({error:"TTS is not connected"},503);return json({data:await tts.synthesize({text:t,language:body.language||null})});}
     return json({error:"Unsupported action. Use transcribe | synthesize"},400);
-  }catch(error){return authError(error,"Unable to process voice speech request");}
+  }catch(error){
+    // Voice provider errors have a deliberately bounded internal vocabulary. Return only the stage/code
+    // so operators can distinguish timeout/provider/malformed failures without leaking provider text,
+    // prompts, credentials or model response bodies to a client.
+    if(error instanceof VoiceSpeechError)return json({error:"Voice speech provider failed",stage:error.stage,code:error.code},502);
+    return authError(error,"Unable to process voice speech request");
+  }
 }
