@@ -140,12 +140,12 @@ jobs:
           const n=Buffer.from(ref.slice(p.length),'base64').length;if(n<128)throw new Error(`TTS audio too small: ${n}`);
           writeFileSync(process.env.RUNNER_TEMP+'/audio-ref',ref,{mode:0o600});console.log(`melotts=pass audio_bytes=${n}`);
           NODE
-          AUDIO_REF="$(cat "$RUNNER_TEMP/audio-ref")"
-          export AUDIO_REF COOKIE
+          export COOKIE
           node --input-type=module <<'NODE'
-          import{writeFileSync}from'node:fs';
+          import{readFileSync,writeFileSync}from'node:fs';
           const base=String(process.env.STAGING_URL||'').replace(/\/$/,'');
-          const r=await fetch(`${base}/api/voice-speech`,{method:'POST',headers:{cookie:process.env.COOKIE,'content-type':'application/json',origin:base},body:JSON.stringify({action:'transcribe',audioRef:process.env.AUDIO_REF,language:'en'}),signal:AbortSignal.timeout(60000)});
+          const audioRef=readFileSync(process.env.RUNNER_TEMP+'/audio-ref','utf8');
+          const r=await fetch(`${base}/api/voice-speech`,{method:'POST',headers:{cookie:process.env.COOKIE,'content-type':'application/json',origin:base},body:JSON.stringify({action:'transcribe',audioRef,language:'en'}),signal:AbortSignal.timeout(60000)});
           const text=await r.text();if(!r.ok)throw new Error(`STT HTTP ${r.status}: ${text.slice(0,300)}`);writeFileSync(process.env.RUNNER_TEMP+'/stt.json',text,{mode:0o600});
           NODE
           node --input-type=module <<'NODE'
