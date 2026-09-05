@@ -216,6 +216,7 @@ test("Fresh Food cancellation approval is a second pair of hands and releases re
   );
 
   // The reserved stock goes back on the shelf, and only the still-reserved units.
+  assert.equal(approved.inventoryReservationReleased, true, "the result says so, and the rows agree");
   const released = await stock(db);
   assert.equal(Number(released.reserved_units), 0, "cancelling an unpacked order releases its reservation");
   assert.equal(Number(released.available_units), 30, "and does not consume anything on the way out");

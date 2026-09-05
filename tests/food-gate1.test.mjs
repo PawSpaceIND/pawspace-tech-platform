@@ -189,6 +189,13 @@ test("Fresh Food orders atomically reserve UAT stock and write the canonical led
   assert.equal(reservation.status, "reserved");
   assert.equal(reservation.inventory_mode, "uat_seed");
 
+  // The order row itself is stamped UAT on every axis, not just the catalogue it came from.
+  const stored = await db.prepare("SELECT total_amount,commercial_status,inventory_mode,delivery_status FROM food_orders WHERE id=?").bind(order.orderId).first();
+  assert.equal(Number(stored.total_amount), 1598);
+  assert.equal(stored.commercial_status, "uat_only");
+  assert.equal(stored.inventory_mode, "uat_seed");
+  assert.equal(stored.delivery_status, "fulfilment_review_required");
+
   const line = await db.prepare("SELECT sku,item_name,quantity,unit_price,line_total FROM food_order_lines WHERE order_id=?").bind(order.orderId).first();
   assert.equal(Number(line.unit_price), 799);
   assert.equal(Number(line.line_total), 1598, "the line total is the server price times quantity");
