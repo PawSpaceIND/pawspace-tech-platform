@@ -1,0 +1,83 @@
+name: P0 Pilot Gating
+
+on:
+  push:
+    branches:
+      - test/p0-pilot-gating
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p0-pilot-gating-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  security-dependency-triage:
+    name: P0 security dependency triage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Reject high or critical runtime dependency vulnerabilities
+        run: npm audit --omit=dev --audit-level=high
+      - name: Execute P0 adversarial security contracts
+        env:
+          NODE_ENV: test
+          APP_ENV: staging
+          FORBID_PRODUCTION: 'true'
+        run: >-
+          node --experimental-strip-types --test --test-concurrency=1
+          tests/adversarial-rbac-privilege-boundary.test.mjs
+          tests/adversarial-webhook-replay-signature.test.mjs
+          tests/adversarial-pii-reveal-tampering.test.mjs
+          tests/security-audit-reservation-runtime.test.mjs
+          tests/ptja-w3a-payment-webhook-verification.test.mjs
+
+  hosted-provider-sandbox-e2e:
+    name: Hosted provider sandbox E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+      PAWSPACE_SANDBOX_TESTS_STRICT: 'true'
+      RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+      RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+      RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+      IDFY_API_KEY: ${{ secrets.IDFY_API_KEY }}
+      IDFY_ACCOUNT_ID: ${{ secrets.IDFY_ACCOUNT_ID }}
+      IDFY_URL: ${{ secrets.IDFY_URL || vars.IDFY_URL }}
+      IDFY_WEBHOOK_SECRET: ${{ secrets.IDFY_WEBHOOK_SECRET }}
+      IDFY_SANDBOX_ACK: ${{ vars.IDFY_SANDBOX_ACK }}
+      META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
+      META_WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.META_WHATSAPP_PHONE_NUMBER_ID }}
+      META_WHATSAPP_WABA_ID: ${{ secrets.META_WHATSAPP_WABA_ID }}
+      META_WHATSAPP_APP_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET }}
+      META_WHATSAPP_VERIFY_TOKEN: ${{ secrets.META_WHATSAPP_VERIFY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Enforce explicit IDfy sandbox authorization
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${IDFY_SANDBOX_ACK:-}" != "true" ]; then
+            echo "IDfy hosted verification blocked: repository variable IDFY_SANDBOX_ACK must be exactly true."
+            exit 1
+          fi
+      - name: Execute strict hosted-provider sandbox contracts
+        run: npm run test:integration
