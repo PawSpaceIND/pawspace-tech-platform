@@ -1,0 +1,143 @@
+name: Voice UAT staging activation
+
+# Branch-limited automatic activation plus explicit manual replay. Both paths target only the protected
+# pawspace-staging environment. Deployment itself never dials; the staged Worker queue remains subject
+# to stored consent, the one-recipient allowlist and the ordinary outbound safety gate at 08:00 IST.
+on:
+  push:
+    branches:
+      - fix/audio-bot-exotel-uat-closure-20260905
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "voice-uat" to activate voice only on isolated staging'
+        required: true
+        default: ''
+      expected_sha:
+        description: 'Exact 40-character commit SHA to deploy'
+        required: true
+        default: ''
+
+jobs:
+  activate:
+    if: ${{ github.event_name == 'push' || github.event.inputs.confirm == 'voice-uat' }}
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    concurrency: pawspace-staging-deploy
+    env:
+      DEPLOY_SHA: ${{ github.event_name == 'push' && github.sha || github.event.inputs.expected_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify exact clean SHA
+        run: |
+          set -euo pipefail
+          case "$DEPLOY_SHA" in *[!0-9a-f]* | "") exit 1;; esac
+          [ "${#DEPLOY_SHA}" -eq 40 ]
+          [ "$(git rev-parse HEAD)" = "$DEPLOY_SHA" ]
+          [ -z "$(git status --porcelain)" ]
+      - name: Install and validate voice contracts
+        run: |
+          npm run install:ci
+          node --test tests/voice-operator-console.test.mjs tests/voice-outbound-policy.test.mjs tests/voice-provider-webhook.test.mjs tests/ai-channels-hardening.test.mjs tests/voice-audio-bot-source-contract.test.mjs tests/exotel-agentstream-source-contract.test.mjs
+      - name: Build
+        run: npm run build
+      - name: Validate seven-parameter UAT preflight
+        env:
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_ACCOUNT_SID: ${{ secrets.EXOTEL_ACCOUNT_SID || secrets.EXOTEL_SID }}
+          EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
+          EXOTEL_VOICE_APP_ID: ${{ secrets.EXOTEL_VOICE_APP_ID }}
+          EXOTEL_WEBHOOK_SECRET: ${{ secrets.EXOTEL_WEBHOOK_SECRET }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          EXOTEL_CALLBACK_URL: ${{ vars.EXOTEL_CALLBACK_URL || vars.PAWSPACE_VOICE_STATUS_CALLBACK_URL_UAT }}
+          EXOTEL_AGENTSTREAM_WSS_URL: ${{ vars.EXOTEL_AGENTSTREAM_WSS_URL || vars.PAWSPACE_VOICE_STREAM_URL_UAT }}
+          UAT_CUSTOMER_ID: ${{ vars.UAT_CUSTOMER_ID || vars.PAWSPACE_VOICE_UAT_CUSTOMER_ID }}
+          UAT_BOOKING_ID: ${{ vars.UAT_BOOKING_ID || vars.PAWSPACE_VOICE_UAT_BOOKING_ID }}
+          UAT_CITY_ID: ${{ vars.UAT_CITY_ID || vars.PAWSPACE_VOICE_UAT_CITY_ID }}
+          UAT_CONSENT_SOURCE_REF: ${{ vars.UAT_CONSENT_SOURCE_REF || vars.PAWSPACE_VOICE_UAT_CONSENT_SOURCE }}
+        run: node scripts/voice-uat-preflight.mjs
+      - name: Configure isolated staging base
+        env:
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+        run: node scripts/stage-config.mjs
+      - name: Apply voice UAT overlay
+        env:
+          PAWSPACE_VOICE_UAT_APPROVED: 'true'
+          EXOTEL_CALLBACK_URL: ${{ vars.EXOTEL_CALLBACK_URL || vars.PAWSPACE_VOICE_STATUS_CALLBACK_URL_UAT }}
+          EXOTEL_AGENTSTREAM_WSS_URL: ${{ vars.EXOTEL_AGENTSTREAM_WSS_URL || vars.PAWSPACE_VOICE_STREAM_URL_UAT }}
+          UAT_CUSTOMER_ID: ${{ vars.UAT_CUSTOMER_ID || vars.PAWSPACE_VOICE_UAT_CUSTOMER_ID }}
+          UAT_BOOKING_ID: ${{ vars.UAT_BOOKING_ID || vars.PAWSPACE_VOICE_UAT_BOOKING_ID }}
+          UAT_CITY_ID: ${{ vars.UAT_CITY_ID || vars.PAWSPACE_VOICE_UAT_CITY_ID }}
+          UAT_CONSENT_SOURCE_REF: ${{ vars.UAT_CONSENT_SOURCE_REF || vars.PAWSPACE_VOICE_UAT_CONSENT_SOURCE }}
+        run: node scripts/stage-voice-uat-config.mjs
+      - name: Deploy voice-enabled isolated staging
+        id: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID || secrets.EXOTEL_ACCOUNT_SID }}
+          EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
+          EXOTEL_VOICE_APP_ID: ${{ secrets.EXOTEL_VOICE_APP_ID }}
+          EXOTEL_WEBHOOK_SECRET: ${{ secrets.EXOTEL_WEBHOOK_SECRET }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+        run: |
+          set -euo pipefail
+          SECRETS_FILE="$RUNNER_TEMP/pawspace-voice-uat-secrets.json"
+          export SECRETS_FILE
+          trap 'rm -f "$SECRETS_FILE"' EXIT
+          node --input-type=module -e '
+            import { writeFileSync } from "node:fs";
+            const names=["PAWSPACE_UAT_ACCESS_CODE","PAWSPACE_UAT_SIGNING_KEY","PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT","EXOTEL_API_KEY","EXOTEL_API_TOKEN","EXOTEL_SID","EXOTEL_CALLER_ID","EXOTEL_VOICE_APP_ID","EXOTEL_WEBHOOK_SECRET","PAWSPACE_VOICE_UAT_ALLOWLIST"];
+            const values=Object.fromEntries(names.map(name=>[name,process.env[name]||""]));
+            if(Object.values(values).some(value=>!value))throw new Error("required voice UAT secret missing");
+            writeFileSync(process.env.SECRETS_FILE,JSON.stringify(values),{mode:0o600});
+          '
+          npx wrangler deploy --message "voice-uat $DEPLOY_SHA" --secrets-file "$SECRETS_FILE" 2>&1 | tee deployment.txt
+          URL="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' deployment.txt | tail -n 1 || true)"
+          [ -n "$URL" ] || { echo "No staging URL reported; refusing guessed origin." >&2; exit 1; }
+          echo "staging_url=$URL" >> "$GITHUB_OUTPUT"
+      - name: Re-certify isolation after voice activation
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          EXPECTED_SHA: ${{ env.DEPLOY_SHA }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
+        run: node tests/e2e/staging-certification.mjs --isolation-only
+      - name: Publish sanitized activation summary
+        env:
+          STAGING_URL: ${{ steps.deploy.outputs.staging_url }}
+        run: |
+          {
+            echo '## Voice UAT staging activation'
+            echo '- isolated staging deployed: yes'
+            echo '- Workers AI binding requested: yes'
+            echo '- STT: @cf/openai/whisper-large-v3-turbo'
+            echo '- in-app TTS: @cf/myshell-ai/melotts'
+            echo '- carrier TTS: @cf/deepgram/aura-2-en (linear16)'
+            echo '- Exotel secret names populated: yes'
+            echo '- account SID accepted from EXOTEL_SID or EXOTEL_ACCOUNT_SID alias: yes'
+            echo '- seven-parameter UAT preflight: passed'
+            echo '- single allow-listed E.164 test recipient validated: yes'
+            echo '- AgentStream wss endpoint configured: yes'
+            echo '- one-shot dispatch target: 2026-09-06 08:00 IST'
+            echo '- real call placed by this workflow: no'
+            echo '- consent written by this workflow: no (staging scheduler writes only the explicitly source-attributed record before the due time)'
+            echo "- staging origin: $STAGING_URL"
+          } >> "$GITHUB_STEP_SUMMARY"
