@@ -23,18 +23,44 @@ jobs:
       RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
       RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
       META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
-      META_WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.META_WHATSAPP_PHONE_NUMBER_ID }}
-      META_WHATSAPP_WABA_ID: ${{ secrets.META_WHATSAPP_WABA_ID }}
       META_WHATSAPP_APP_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET }}
       META_WHATSAPP_UAT_ALLOWLIST: ${{ secrets.META_WHATSAPP_UAT_ALLOWLIST }}
-      META_WHATSAPP_TEMPLATE_ALLOWLIST: ${{ secrets.META_WHATSAPP_TEMPLATE_ALLOWLIST }}
-      META_WHATSAPP_GRAPH_VERSION: ${{ vars.META_WHATSAPP_GRAPH_VERSION }}
       GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Resolve non-secret Meta staging identifiers from deployed Worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          FALLBACK_PHONE_ID: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID }}
+          FALLBACK_WABA_ID: ${{ vars.META_WHATSAPP_WABA_ID }}
+          FALLBACK_GRAPH_VERSION: ${{ vars.META_WHATSAPP_GRAPH_VERSION }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SETTINGS="$RUNNER_TEMP/p0-worker-settings.json"; export SETTINGS
+          HTTP="$(curl --silent --show-error --output "$SETTINGS" --write-out '%{http_code}' --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" --header 'Accept: application/json' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/pawspace-staging/settings")"
+          [ "$HTTP" = "200" ] || { echo 'Unable to read staging Worker settings.' >&2; exit 1; }
+          node --input-type=module <<'NODE'
+          import {readFileSync,appendFileSync} from 'node:fs';
+          const j=JSON.parse(readFileSync(process.env.SETTINGS,'utf8'));
+          const vars={}; for(const b of (j?.result?.bindings||[])) if(b?.type==='plain_text') vars[String(b.name||'')]=String(b.text??b.value??'');
+          const picked={
+            META_WHATSAPP_PHONE_NUMBER_ID:vars.META_WHATSAPP_PHONE_NUMBER_ID||process.env.FALLBACK_PHONE_ID||'',
+            META_WHATSAPP_WABA_ID:vars.META_WHATSAPP_WABA_ID||process.env.FALLBACK_WABA_ID||'',
+            META_WHATSAPP_TEMPLATE_ALLOWLIST:vars.META_WHATSAPP_TEMPLATE_ALLOWLIST||'',
+            META_WHATSAPP_GRAPH_VERSION:vars.META_WHATSAPP_GRAPH_VERSION||process.env.FALLBACK_GRAPH_VERSION||'v23.0',
+          };
+          for(const [name,value] of Object.entries(picked)){
+            if(!String(value).trim()) throw new Error(`Missing ${name} in staging Worker/repository configuration`);
+            appendFileSync(process.env.GITHUB_ENV,`${name}=${String(value).replace(/\n/g,',')}\n`);
+          }
+          console.log('Resolved Meta phone/WABA/template/version from staging configuration; values withheld.');
+          NODE
+          rm -f "$SETTINGS"
       - name: Refuse production-looking provider credentials and endpoints
         shell: bash
         run: |
