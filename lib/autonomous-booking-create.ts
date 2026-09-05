@@ -1,0 +1,61 @@
+import{ensureAutonomousBookingTables}from"./autonomous-booking-engine";
+import{createAutonomousPaymentLink}from"./autonomous-payment-link";
+import{enqueueCommunication}from"./communication-engine";
+import{dispatchInteraktWhatsApp}from"./interakt-whatsapp";
+import{ensurePricingControlRuntime}from"./pricing-control-runtime";
+import{resolveLivePrice}from"./live-pricing-resolver";
+import{resolveZoneByPincode}from"./service-zones";
+import{loadGovernedProviders}from"./provider-capacity-governance";
+
+type Db=D1Database;
+type Row=Record<string,unknown>;
+type Runtime=Record<string,unknown>;
+export type StrictBookingCreateInput={customerId:string;customerPhone:string;petId?:string|null;breed?:string|null;serviceId:string;dateTimeSlot:string;serviceLocation:{address:string;pincode:string;latitude?:number|null;longitude?:number|null};idempotencyKey:string;actorId:string;threadId?:string|null};
+export type StrictBookingCreateDeps={createPaymentLink?:typeof createAutonomousPaymentLink;dispatchWhatsApp?:typeof dispatchInteraktWhatsApp;now?:()=>number};
+
+const text=(v:unknown)=>String(v??"").trim();
+const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;
+const money=(v:unknown)=>Math.round(Number(v||0)*100)/100;
+const normalizePhone=(v:string)=>{const d=v.replace(/\D/g,"");return d.length===10?`+91${d}`:d.length===12&&d.startsWith("91")?`+${d}`:v.trim();};
+const samePhone=(a:unknown,b:unknown)=>normalizePhone(text(a))===normalizePhone(text(b));
+function coordinate(v:unknown,min:number,max:number){if(v==null||v==="")return null;const n=Number(v);if(!Number.isFinite(n)||n<min||n>max)throw new Error("service_location coordinates are invalid");return n;}
+function slot(value:string,now:number){const ms=Date.parse(value);if(!Number.isFinite(ms)||ms<=now)throw new Error("date_time_slot must be a future ISO date-time");return new Date(ms).toISOString();}
+function closingScript(value:string){const label=new Intl.DateTimeFormat("en-IN",{timeZone:"Asia/Kolkata",dateStyle:"medium",timeStyle:"short"}).format(new Date(value));return`I have reserved your slot for ${label}. I just sent the secure confirmation link to your WhatsApp. Once approved, your booking is locked in.`;}
+
+async function customer(db:Db,input:StrictBookingCreateInput){const row=await db.prepare("SELECT id,city_id,primary_phone,secondary_phone FROM canonical_customers WHERE id=?").bind(input.customerId).first<Row>();if(!row)throw new Error("Canonical customer was not found");if(!samePhone(input.customerPhone,row.primary_phone)&&!samePhone(input.customerPhone,row.secondary_phone))throw new Error("customer_phone does not match the canonical customer");return row;}
+async function pet(db:Db,input:StrictBookingCreateInput){const id=text(input.petId),breed=text(input.breed);if(id){const row=await db.prepare("SELECT * FROM canonical_pets WHERE id=? AND customer_id=?").bind(id,input.customerId).first<Row>();if(!row)throw new Error("pet_id is not owned by the canonical customer");if(breed&&text(row.breed).toLowerCase()!==breed.toLowerCase())throw new Error("breed does not match the canonical pet");return row;}const rows=await db.prepare("SELECT * FROM canonical_pets WHERE customer_id=? AND LOWER(COALESCE(breed,''))=LOWER(?) ORDER BY updated_at DESC").bind(input.customerId,breed).all<Row>();if(rows.results.length!==1)throw new Error(rows.results.length?"breed matches more than one pet; pet_id is required":"breed does not match an owned canonical pet");return rows.results[0];}
+async function activePackage(db:Db,serviceId:string,start:string){await ensurePricingControlRuntime(db);const d=start.slice(0,10),row=await db.prepare("SELECT * FROM service_packages WHERE package_code=? AND active=1 AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?)").bind(serviceId,d,d).first<Row>();if(!row)throw new Error("service_id is not an active catalogue package for the requested date");return row;}
+
+async function sendPayment(db:Db,runtime:Runtime,input:{customerId:string;bookingId:string;paymentPath:string;scheduledStart:string;actorId:string},dispatcher:typeof dispatchInteraktWhatsApp){const templateKey=text(runtime.AUTONOMOUS_BOOKING_PAYMENT_TEMPLATE)||"booking_payment_link";const queued=await enqueueCommunication(db,{customerId:input.customerId,cityId:"blr",channel:"whatsapp",purpose:"transactional",idempotencyKey:`autonomous-booking-payment:${input.bookingId}`,templateKey,payload:{bodyValues:[input.scheduledStart,input.paymentPath],payment_link:input.paymentPath,booking_id:input.bookingId,source:"autonomous_voice_booking"},bookingId:input.bookingId,createdBy:input.actorId});const messageId=text((queued as Row).messageId||((queued as Row).message as Row|undefined)?.id);if(!messageId)return{queued,dispatch:{status:"duplicate_or_unresolved"}};try{return{queued,dispatch:await dispatcher(db,runtime,{messageId})};}catch(error){return{queued,dispatch:{status:"queued_for_retry",reason:error instanceof Error?error.message:String(error)}};}}
+
+/** Absolute-parameter-lock writer used by the voice-only booking.create tool. */
+export async function createStrictAutonomousBooking(db:Db,runtime:Runtime,input:StrictBookingCreateInput,deps:StrictBookingCreateDeps={}){
+ await ensureAutonomousBookingTables(db);
+ const now=(deps.now||Date.now)();
+ if(!text(input.customerPhone)||(!text(input.petId)&&!text(input.breed))||!text(input.serviceId)||!text(input.dateTimeSlot)||!text(input.serviceLocation?.address)||!text(input.serviceLocation?.pincode))throw new Error("customer_phone, pet_id/breed, service_id, date_time_slot and service_location are all required before booking.create");
+ if(!text(input.idempotencyKey))throw new Error("booking.create requires an idempotency key");
+ const prior=await db.prepare("SELECT * FROM canonical_bookings WHERE idempotency_key=?").bind(input.idempotencyKey).first<Row>();
+ if(prior){const payment=await db.prepare("SELECT detail_json FROM booking_payments WHERE booking_id=?").bind(prior.id).first<Row>();let detail:Row={};try{detail=JSON.parse(text(payment?.detail_json)||"{}");}catch{}return{bookingId:text(prior.id),status:text(prior.status),paymentLink:detail.payment_link||null,closingScript:closingScript(text(prior.scheduled_start)),duplicatePrevented:true,autonomousExecution:true,humanApprovalRequired:false};}
+ const start=slot(input.dateTimeSlot,now),cust=await customer(db,input),ownedPet=await pet(db,input),zone=await resolveZoneByPincode(db,text(input.serviceLocation.pincode));
+ if(!zone||!zone.zone.serviceAvailable)throw new Error("service_location is outside an active PawSpace service zone");
+ const cityId=text(zone.assignment.cityId||cust.city_id).toLowerCase(),zoneId=text(zone.assignment.zoneId);if(!cityId||cityId!==text(cust.city_id).toLowerCase())throw new Error("service_location city does not match the canonical customer city");
+ const pkg=await activePackage(db,input.serviceId,start),serviceCode=text(pkg.service_code),duration=Math.max(15,Number(pkg.blocking_minutes||pkg.slot_minutes||60)),end=new Date(Date.parse(start)+duration*60_000).toISOString();
+ const candidates=await loadGovernedProviders(db,cityId,zoneId,serviceCode,new Date(start));if(!candidates.length)throw new Error("date_time_slot has no active provider matching service and locality/geofence");
+ const holds=await db.prepare("SELECT COUNT(*) n FROM autonomous_slot_holds WHERE status IN ('provisional','confirmed') AND service_code=? AND city_id=? AND zone_id=? AND expires_at>? AND scheduled_start<? AND scheduled_end>?").bind(serviceCode,cityId,zoneId,now,end,start).first<Row>();if(Number(holds?.n||0)>=candidates.length)throw new Error("date_time_slot has no governed provider capacity left");
+ const priced=await resolveLivePrice(db,{packageCode:input.serviceId,fallbackPrice:Number(pkg.base_price),scheduledStart:start,cityId,zoneId}),amount=money(priced.price);if(!(amount>0))throw new Error("Active catalogue package does not have a valid payable price");
+ const bookingId=uid("BKG-AUTO"),paymentId=uid("PAY-AUTO"),groupId=uid("SG-AUTO"),expiresAt=now+30*60_000,currency=text(pkg.currency)||"INR";
+ const link=await(deps.createPaymentLink||createAutonomousPaymentLink)(runtime,{bookingId,paymentId,referenceId:paymentId,customerId:input.customerId,amount,currency,expiresAt});if(!link.connected)throw new Error(link.reason);const linkId=text(link.paymentLink.id),paymentPath=text(link.paymentLink.short_url);
+ const petIds=JSON.stringify([text(ownedPet.id)]),pricing=JSON.stringify({source:priced.source,cataloguePackageId:pkg.id,catalogueVersion:pkg.version,serverAuthoritative:true}),paymentDetail=JSON.stringify({payment_link:paymentPath,payment_link_id:linkId,environment:link.environment,expires_at:expiresAt,source:"autonomous_voice_booking"}),lat=coordinate(input.serviceLocation.latitude,-90,90),lng=coordinate(input.serviceLocation.longitude,-180,180);
+ await db.batch([
+  db.prepare("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'provisional_awaiting_payment','voice',?,?,?,?,?,?)").bind(bookingId,input.idempotencyKey,input.customerId,petIds,petIds,cityId,zoneId,serviceCode,input.serviceId,text(pkg.name),groupId,"unassigned",start,end,amount,currency,pricing,input.actorId,now,now),
+  db.prepare("INSERT INTO booking_payments (id,booking_id,customer_id,amount,amount_due_now,currency,method,mode,status,gateway,idempotency_key,detail_json,created_at,updated_at) VALUES (?,?,?,?,?,?,'upi','prepaid','created','razorpay',?,?,?,?)").bind(paymentId,bookingId,input.customerId,amount,amount,currency,`autonomous:${input.idempotencyKey}`,paymentDetail,now,now),
+  db.prepare("INSERT INTO booking_service_locations (booking_id,customer_id,provider_id,address_text,latitude,longitude,source,status,created_at,updated_at) VALUES (?,?,'unassigned',?,?,?,'voice_booking','active',?,?)").bind(bookingId,input.customerId,text(input.serviceLocation.address),lat,lng,now,now),
+  db.prepare("INSERT INTO autonomous_slot_holds (booking_id,service_code,city_id,zone_id,scheduled_start,scheduled_end,status,expires_at,created_at,updated_at) VALUES (?,?,?,?,?,?,'provisional',?,?,?)").bind(bookingId,serviceCode,cityId,zoneId,start,end,expiresAt,now,now),
+  db.prepare("INSERT INTO payment_gateway_links (id,booking_id,payment_id,provider,environment,gateway_payment_link_id,status,created_at,updated_at) VALUES (?,?,?,'razorpay',?,?,'active',?,?)").bind(uid("PAYLINK"),bookingId,paymentId,link.environment,linkId,now,now),
+  db.prepare("INSERT INTO payment_reconciliation_records (payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,last_event_id,updated_at) VALUES (?,?,'razorpay',?,?,0,0,?,'payment_link_created','pending',0,NULL,?)").bind(paymentId,bookingId,link.environment,amount,currency,now),
+  db.prepare("INSERT INTO booking_lifecycle_events (id,booking_id,event_type,entity_type,entity_id,actor_id,detail_json,occurred_at) VALUES (?,?,'provisional_awaiting_payment','booking',?,?,?,?)").bind(uid("BLE"),bookingId,bookingId,input.actorId,JSON.stringify({source:"voice",paymentLinkId:linkId,slotExpiresAt:expiresAt}),now),
+  db.prepare("INSERT INTO autonomous_booking_events (id,booking_id,event_type,actor_id,detail_json,created_at) VALUES (?,?,'booking.create',?,?,?)").bind(uid("ABE"),bookingId,input.actorId,JSON.stringify({customerPhoneValidated:true,petId:ownedPet.id,serviceId:input.serviceId,zoneId,providerCandidates:candidates.length}),now),
+ ]);
+ const whatsapp=await sendPayment(db,runtime,{customerId:input.customerId,bookingId,paymentPath,scheduledStart:start,actorId:input.actorId},deps.dispatchWhatsApp||dispatchInteraktWhatsApp);
+ return{bookingId,paymentId,status:"provisional_awaiting_payment",paymentLink:paymentPath,paymentExpiresAt:expiresAt,scheduledStart:start,scheduledEnd:end,zoneId,serviceCode,packageCode:input.serviceId,closingScript:closingScript(start),whatsapp,duplicatePrevented:false,autonomousExecution:true,humanApprovalRequired:false};
+}
