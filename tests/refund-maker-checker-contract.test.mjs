@@ -173,26 +173,80 @@ test("refund state transition is claimed atomically before side effects", async 
 
 // ---------------------------------------------------------------------------------------------
 test("legacy backend cannot auto-approve a refund request for privileged roles", async () => {
-  // The legacy path, executed. `requestRefund` creates the case; whatever role the actor holds, the
-  // case must be born in `requested` with no approver — a finance or super-admin actor must not be
-  // able to be both maker and checker in one call.
+  /*
+   * The legacy backend path, EXECUTED against its real signature.
+   *
+   * THIS TEST WAS ITSELF VACUOUS on the first pass of this PR, and a review bot caught it. It called
+   *
+   *   finance.requestRefund(db, { actor, bookingId, amount, reason })
+   *
+   * but the real export is
+   *
+   *   requestRefund(repository: PlatformRepository, payment: Payment, actor: RequestActor,
+   *                 amount: number, reason: string)
+   *
+   * — five positional arguments, and a repository rather than a D1 handle. So every call threw
+   * `TypeError: repository.listRefunds is not a function`, a `.catch` turned the TypeError into a
+   * "refusal is also acceptable" branch, and BOTH loop iterations hit `continue` before reaching a
+   * single assertion. The test asserted nothing at all while reporting success — the exact defect
+   * this whole PR exists to remove. Verified by running the call directly and reading the TypeError.
+   *
+   * It now uses MemoryRepository and the real signature, exactly as backend/test/finance.test.ts does,
+   * and NOTHING is caught: an unexpected throw fails the test rather than being read as a refusal.
+   */
   const finance = await import("../backend/src/finance.ts");
-  const { sqlite, db } = await refundWorld();
+
+  /*
+   * The repository is an injected PORT, and requestRefund touches exactly two of its methods:
+   * listRefunds (to total what is already reserved) and createRefund (to persist). Both are
+   * implemented here against a plain array.
+   *
+   * MemoryRepository from backend/src/repository.ts would be the natural choice and is NOT usable:
+   * it declares a TypeScript constructor parameter property, which `node --experimental-strip-types`
+   * cannot erase — the same limitation lib/gst-accounting.ts documents for its own class. Importing
+   * it fails with ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX before any test runs. Verified.
+   *
+   * Faking the port does not weaken the test: every rule under test — the reservation arithmetic, the
+   * born-requested status, the recorded maker, the absent approver — lives in finance.ts, and the
+   * assertions below read the rows this port actually stored.
+   */
+  const makeRepository = () => {
+    const refunds = [];
+    return {
+      refunds,
+      async listRefunds(paymentId) { return refunds.filter((row) => !paymentId || row.paymentId === paymentId); },
+      async createRefund(refund) { refunds.push(refund); return refund; },
+    };
+  };
+  const payment = { id: "pay_refund_mc", bookingId: "book_refund_mc", amount: 2000 };
 
   for (const role of ["finance", "super_admin"]) {
-    const created = await finance.requestRefund(db, {
-      actor: { id: `legacy-${role}@pawspace.test`, role },
-      bookingId: BOOKING, amount: 500, reason: `${role} raised a refund`,
-    }).catch((error) => ({ error }));
-    if (created?.error) {
-      // A refusal is also an acceptable outcome — what must never happen is a self-approved case.
-      assert.ok(created.error, `refused for ${role}, which is not an auto-approval`);
-      continue;
-    }
-    const rows = sqlite.prepare("SELECT status,requested_by,approved_by FROM booking_refund_cases WHERE requested_by=?").all(`legacy-${role}@pawspace.test`).map((row) => ({ ...row }));
-    for (const row of rows) {
-      assert.equal(row.status, "requested", `a ${role} actor's refund must be born requested`);
-      assert.equal(row.approved_by, null, `and must not carry an approver — ${role} must not bypass maker/checker`);
-    }
+    const repository = makeRepository();
+    const actorId = `legacy-${role}@pawspace.test`;
+    const refund = await finance.requestRefund(repository, payment, { id: actorId, role, cityId: "blr" }, 500, `${role} raised a refund`);
+
+    // NON-VACUITY: the call really did create a refund. If the signature drifts again, this throws
+    // rather than being swallowed into a pass.
+    assert.ok(refund?.id, `requestRefund must return the created refund for ${role}: ${JSON.stringify(refund)}`);
+    // THE CLAIM: however privileged the actor, the refund is born awaiting a checker.
+    assert.equal(refund.status, "requested", `a ${role} actor's refund must be born requested`);
+    assert.equal(refund.requestedBy, actorId, "and must record the maker who raised it");
+    assert.equal(refund.approvedBy, undefined, `${role} must not be maker and checker in one call`);
+    assert.equal(refund.amount, 500);
+
+    // Read it back through the repository, so the assertion is about stored state and not just the
+    // returned object.
+    const stored = await repository.listRefunds(payment.id);
+    assert.equal(stored.length, 1);
+    assert.equal(stored[0].status, "requested");
+    assert.equal(stored[0].approvedBy, undefined);
+
+    // A pending request RESERVES the balance, so a privileged actor cannot stack requests past the
+    // captured amount while waiting for a checker. This is the guard the vacuous version never ran.
+    await assert.rejects(
+      () => finance.requestRefund(repository, payment, { id: actorId, role, cityId: "blr" }, 1600, "second bite"),
+      /exceeds refundable balance/,
+      `${role} must not reserve more than the payment holds`);
+    assert.equal((await repository.listRefunds(payment.id)).length, 1, "and the refused request creates nothing");
   }
 });

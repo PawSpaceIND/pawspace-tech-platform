@@ -29,8 +29,27 @@ export function makeD1(sqlite) {
    * completion before the next starts, and a claim-token race can never actually occur. Measured:
    * relaxing `INSERT OR IGNORE` to `INSERT OR REPLACE` on the refund transition claim survived a
    * Promise.all "concurrency" test precisely because of that. Registering a hook on the guarded UPDATE
-   * lets a competing transition land in the exact gap between claiming and applying, which is the race
-   * itself instead of a stand-in for it.
+   * lets a competing statement land in the exact gap between claiming and applying.
+   *
+   * WHAT THIS DOES AND DOES NOT MODEL — be precise, because the difference matters.
+   *
+   * It models STATEMENT-LEVEL INTERLEAVING: the competitor observes the intermediate state, exactly as
+   * a second caller would in the window between a check and the act that depends on it. That is the
+   * ordering the guards under test exist to survive.
+   *
+   * It does NOT model TRANSACTION ISOLATION. `depth` makes a nested batch join the outer transaction
+   * rather than open its own, so both callers share one connection and one transaction; the competitor
+   * sees the winner's uncommitted claim row. Real D1 would serialise two connections instead, and the
+   * loser would meet the same constraint after the winner committed. The OUTCOME asserted — exactly one
+   * winner, refused by a PRIMARY KEY or UNIQUE index — is the same either way, which is why these tests
+   * assert outcomes rather than isolation behaviour.
+   *
+   * Two connections is not an option here: a `node:sqlite` in-memory database is per-connection, so a
+   * second connection would not see this one's data at all.
+   *
+   * The assertions are sabotage-proven rather than assumed: relaxing the posting claim to
+   * `INSERT OR REPLACE`, and dropping the cancellation approval claim's exclusivity, each turn the
+   * corresponding test red.
    */
   const hooks = [];
   const fire = async (sql) => {

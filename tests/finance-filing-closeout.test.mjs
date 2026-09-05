@@ -403,8 +403,14 @@ test("Finance approvals use the authenticated actor and refuse the maker", async
   assert.equal((await patch(CHECKER, { entity: "expense", id: expenseId, action: "reject", reason: "changed my mind about it" })).status, 409);
 
   /*
-   * THE REAL RACE, not a stand-in for one. Two approvals of ONE expense that both read status
-   * 'submitted' must produce ONE journal.
+   * THE CHECK-THEN-ACT WINDOW. Two approvals of ONE expense that both read status 'submitted' must
+   * produce ONE journal.
+   *
+   * This interleaves STATEMENTS, not transactions: the hook runs the competitor inside the winner's
+   * transaction on the same connection (see the note on `depth` in tests/helpers/taxi-harness.mjs), so
+   * it is not two concurrent D1 transactions. It is the ordering that matters — the competitor acts in
+   * the window between the claim and the transition — and the asserted outcome, exactly one winner
+   * refused by the claim's PRIMARY KEY, is what real serialised writers would produce too.
    *
    * A `Promise.all` of two PATCH calls would not test this: statements against this shim are
    * synchronous, so the first call runs to completion — including its status transition — before the

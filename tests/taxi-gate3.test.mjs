@@ -408,8 +408,14 @@ test("Gate 3: the Finance API separates a customer request from Finance authorit
 // ---------------------------------------------------------------------------------------------
 test("Gate 3: two Finance approvals of one cancellation produce exactly one refund", async () => {
   /*
-   * THE REAL RACE. Two approvals that both see `policy_review_required` must yield ONE cancellation and
-   * ONE refund row.
+   * THE CHECK-THEN-ACT WINDOW. Two approvals that both see `policy_review_required` must yield ONE
+   * cancellation and ONE refund row.
+   *
+   * This interleaves STATEMENTS, not transactions: the hook runs the competitor inside the winner's
+   * transaction on the same connection (see the note on `depth` in tests/helpers/taxi-harness.mjs), so
+   * it is not two concurrent D1 transactions. The ordering is the point — the competitor acts between
+   * the claim and the update — and the asserted outcome, one winner refused by
+   * taxi_cancellation_approval_claims' PRIMARY KEY, is what real serialised writers would produce too.
    *
    * A `Promise.all` of two calls would not test this: statements against this D1 shim are synchronous,
    * so the first call runs to completion before the second starts and the second is then an ordinary
