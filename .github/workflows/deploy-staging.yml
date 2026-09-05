@@ -58,6 +58,7 @@ jobs:
   deploy:
     if: ${{ github.event.inputs.confirm == 'staging' }}
     runs-on: ubuntu-latest
+    environment: pawspace-staging
     concurrency: pawspace-staging-deploy
     steps:
       # Checked out AT the requested sha. Before this the workflow deployed whatever the default
@@ -150,6 +151,7 @@ jobs:
           EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
           EXOTEL_VOICE_APP_ID: ${{ secrets.EXOTEL_VOICE_APP_ID }}
           EXOTEL_WEBHOOK_SECRET: ${{ secrets.EXOTEL_WEBHOOK_SECRET }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
           META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
           META_WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.META_WHATSAPP_PHONE_NUMBER_ID }}
           META_WHATSAPP_WABA_ID: ${{ secrets.META_WHATSAPP_WABA_ID }}
@@ -186,7 +188,8 @@ jobs:
               "META_WHATSAPP_APP_SECRET", "META_WHATSAPP_VERIFY_TOKEN", "META_WHATSAPP_UAT_ALLOWLIST",
               "META_WHATSAPP_TEMPLATE_ALLOWLIST", "PAWSPACE_COMMUNICATION_PROVIDER_URL",
               "PAWSPACE_COMMUNICATION_PROVIDER_TOKEN", "PAWSPACE_COMMUNICATION_WEBHOOK_SECRET",
-              "PAWSPACE_COMMUNICATION_UAT_ALLOWLIST", "PAWSPACE_SMS_TEST_ENABLED",
+              "PAWSPACE_COMMUNICATION_UAT_ALLOWLIST", "PAWSPACE_VOICE_UAT_ALLOWLIST",
+              "PAWSPACE_SMS_TEST_ENABLED",
               "PAWSPACE_SMS_TEST_NUMBERS", "FAST2SMS_API_KEY"
             ];
             const required = Object.fromEntries(requiredNames.map(name => [name, process.env[name] || ""]));
