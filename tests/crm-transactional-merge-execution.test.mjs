@@ -67,6 +67,27 @@ test("merge and review are recorded for audit", async () => {
   assert.equal(run.actor_id, "ops@pawspace.in");
 });
 
+test("the merged loser row is neutralized so it can never be re-detected as a duplicate", async () => {
+  const sqlite = freshSqlite();
+  seed(sqlite);
+  await executeTransactionalCustomerMerge(makeD1(sqlite), {
+    primaryCustomerId: "CUST-P", duplicateCustomerId: "CUST-D", actorId: "ops@pawspace.in", reason: "manual duplicate review",
+  });
+  const loser = sqlite.prepare("SELECT merged_into,primary_phone,secondary_phone,email FROM canonical_customers WHERE id='CUST-D'").get();
+  assert.equal(loser.merged_into, "CUST-P", "the loser must point at the survivor");
+  assert.notEqual(loser.primary_phone, "9876500001"); // no longer shares the survivor's phone
+  assert.equal(loser.email, null);
+  assert.equal(loser.secondary_phone, null);
+  // The survivor still owns the real phone, and the dedup normalizer (digits-only, last 10) yields nothing
+  // for the loser, so the pair can never re-collide.
+  assert.equal(sqlite.prepare("SELECT primary_phone FROM canonical_customers WHERE id='CUST-P'").get().primary_phone, "9876500001");
+  assert.equal(String(loser.primary_phone).replace(/\D/g, ""), "");
+  // Originals are preserved for audit/reversal in the merge-run summary.
+  const run = sqlite.prepare("SELECT summary_json FROM customer_merge_runs WHERE duplicate_customer_id='CUST-D'").get();
+  assert.match(run.summary_json, /9876500001/);
+  assert.match(run.summary_json, /asha@example\.com/);
+});
+
 test("merge is refused without an open duplicate review (governance gate)", async () => {
   const sqlite = freshSqlite();
   seed(sqlite);
