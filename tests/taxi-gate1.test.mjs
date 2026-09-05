@@ -162,9 +162,9 @@ test("Pet Taxi quote binds one canonical trip reservation and normalizes timesta
   // TIMESTAMP NORMALISATION, which is the half the source-text test could not reach: the same instant
   // written with a +05:30 offset instead of Z must be ACCEPTED. `sameInstant` is what makes that true,
   // and a string comparison in its place would reject a correct booking.
-  const offsetForm = new Date(quote.scheduledStart).toLocaleString("sv-SE", { timeZone: "Asia/Kolkata" }).replace(" ", "T") + "+05:30";
-  assert.notEqual(offsetForm, quote.scheduledStart, "the two spellings really do differ as strings");
   const secondQuote = await governance.createTaxiQuote(db, validQuoteInput({ originLabel: "Koramangala pickup point" }));
+  const offsetForm = new Date(secondQuote.scheduledStart).toLocaleString("sv-SE", { timeZone: "Asia/Kolkata" }).replace(" ", "T") + "+05:30";
+  assert.notEqual(offsetForm, secondQuote.scheduledStart, "the two spellings really do differ as strings");
   const normalised = await governance.governTaxiBooking(db, {
     ...bookingInput(), quoteId: secondQuote.quoteId, originLabel: secondQuote.originLabel,
     scheduledStart: secondQuote.scheduledStart, scheduledEnd: secondQuote.scheduledEnd,
@@ -196,7 +196,7 @@ test("Pet Taxi booking creates one canonical bundle and one trip row", async () 
 
   // A used quote cannot be re-governed even without a link row.
   const spent = await governance.createTaxiQuote(db, validQuoteInput({ originLabel: "HSR pickup point" }));
-  await db.prepare("UPDATE taxi_commercial_quotes SET status='used' WHERE id=?").bind(spent.quoteId).run();
+  await db.prepare("UPDATE taxi_commercial_quotes SET status='used' WHERE id=?").bind(Date.now(), spent.quoteId).run();
   const used = await refusal(governance.governTaxiBooking(db, { ...bookingInput, quoteId: spent.quoteId, originLabel: spent.originLabel, scheduledStart: spent.scheduledStart, scheduledEnd: spent.scheduledEnd, submittedTotal: spent.totalAmount, reservations: [{ ...reservations[0], scheduled_start: spent.scheduledStart, scheduled_end: spent.scheduledEnd }] }));
   assert.equal(used?.status, 409);
   assert.match(used.message, /already been used/);
