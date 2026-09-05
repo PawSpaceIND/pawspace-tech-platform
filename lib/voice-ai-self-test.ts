@@ -26,6 +26,9 @@ type ChatMessage = { role: "user" | "assistant"; content: string };
 const text = (value: unknown) => String(value ?? "").trim();
 const truthy = (value: unknown) => text(value).toLowerCase() === "true";
 const SELF_TEST_PATH = "/voice/ai-self-test";
+const SELF_TEST_NEGOTIATE_PATH = "/voice/ai-self-test/negotiate";
+/** Exotel AgentStream PSTN leg: raw/slin, 16-bit, mono, little-endian, 8 kHz. */
+const EXOTEL_PSTN_SAMPLE_RATE = 8000;
 const MAX_CALL_SECONDS = 300;
 const MAX_TURNS = 12;
 const DAILY_CAP_DEFAULT = 3;
@@ -181,7 +184,10 @@ async function signedStreamUrl(env: Env, callId: string, publicOrigin: string) {
   url.searchParams.set("call", callId);
   url.searchParams.set("exp", String(exp));
   url.searchParams.set("sig", sig);
-  url.searchParams.set("sample-rate", "16000");
+  // Exotel AgentStream carries raw/slin 16-bit MONO PCM at 8 kHz on the PSTN leg. Advertising 16000
+  // here made the Worker generate TTS at twice the negotiated rate, which plays back chipmunked or as
+  // noise even when every frame is delivered. The `start` event remains authoritative.
+  url.searchParams.set("sample-rate", String(EXOTEL_PSTN_SAMPLE_RATE));
   return url.toString();
 }
 
@@ -244,6 +250,23 @@ function exotelErrorDetail(parsed: Record<string, unknown>) {
   return detail.slice(0, 180);
 }
 
+/**
+ * Exotel's Connect API is the ONLY documented way to place this call, and bidirectional AgentStream
+ * is NOT a parameter on it. Streaming is configured by a Voicebot applet inside an Exotel App, and the
+ * call is pointed at that App through `Url`. lib/voice-telephony-provider.ts - the path that already
+ * works in this repo - does exactly that.
+ *
+ * The previous version of this function posted lowercase `/v1/accounts/{sid}/calls/connect` with
+ * multipart `streamurl`/`streamtype` fields and no App reference at all. Exotel accepted the request
+ * and rang the number, because dialling `From` needs nothing else - but with no call flow attached
+ * there was no Voicebot applet to run, so Exotel never opened the AgentStream socket. That is exactly
+ * the reported symptom: the phone rings, the tester answers, and hears carrier tone with no AI.
+ *
+ * `EXOTEL_VOICE_APP_ID` must identify an Exotel App whose Voicebot applet points at
+ * `${publicOrigin}/voice/ai-self-test/negotiate`; that endpoint hands back the per-call signed wss URL.
+ * Without the App id there is nothing to dial into, so this fails closed rather than placing a call
+ * that can only ever be silent.
+ */
 async function createExotelAgentStreamCall(
   env: Env,
   input: { to: string; callId: string; streamUrl: string },
@@ -254,24 +277,37 @@ async function createExotelAgentStreamCall(
   const callerId = text(env.EXOTEL_CALLER_ID);
   const subdomain = text(env.EXOTEL_SUBDOMAIN) || "api.exotel.com";
 
-  const body = new FormData();
-  body.set("from", input.to);
-  body.set("callerid", callerId);
-  body.set("streamurl", input.streamUrl);
-  body.set("streamtype", "bidirectional");
-  body.set("record", "false");
-  body.set("timelimit", String(MAX_CALL_SECONDS));
-  body.set("customfield", input.callId.slice(0, 128));
-  body.set("streamname", "pawspace-ai-uat");
+  void input.streamUrl; // delivered to Exotel by the Voicebot applet negotiate endpoint, not the dial
+  const appId = text(env.EXOTEL_VOICE_APP_ID);
+  if (!appId) {
+    return {
+      ok: false as const,
+      status: 503,
+      reason:
+        "EXOTEL_VOICE_APP_ID is not configured. Bidirectional AgentStream needs an Exotel App containing a Voicebot applet; a dial without one rings but can never stream audio.",
+    };
+  }
+
+  // Documented Connect API: capitalised path, form-urlencoded, App referenced through Url.
+  const body = new URLSearchParams({
+    From: input.to,
+    CallerId: callerId,
+    Url: `http://my.exotel.com/${sid}/exoml/start_voice/${appId}`,
+    CallType: "trans",
+    CustomField: input.callId.slice(0, 128),
+    Record: "false",
+    TimeLimit: String(MAX_CALL_SECONDS),
+  });
 
   const response = await fetch(
-    `https://${subdomain}/v1/accounts/${encodeURIComponent(sid)}/calls/connect`,
+    `https://${subdomain}/v1/Accounts/${encodeURIComponent(sid)}/Calls/connect.json`,
     {
       method: "POST",
       headers: {
         authorization: `Basic ${btoa(`${key}:${token}`)}`,
+        "content-type": "application/x-www-form-urlencoded",
       },
-      body,
+      body: body.toString(),
     },
   );
   const raw = await response.text();
@@ -549,14 +585,19 @@ async function sendPcm(
   audio: Uint8Array,
   sampleRate: number,
 ) {
-  const frameBytes = 3200;
-  const frameMs = Math.max(20, Math.round((frameBytes / (sampleRate * 2)) * 1000));
+  // 100 ms per frame, computed from the NEGOTIATED rate: bytes = rate * 2 (16-bit mono) * 0.1.
+  // At Exotel's 8 kHz that is 1600 bytes; the previous hardcoded 3200 was a 200 ms frame at 8 kHz,
+  // so pacing and frame size disagreed with what the carrier expected.
+  const frameMs = 100;
+  const frameBytes = Math.max(2, Math.round(sampleRate * 2 * (frameMs / 1000)));
   for (let offset = 0; offset < audio.length; offset += frameBytes) {
     const part = audio.subarray(offset, Math.min(offset + frameBytes, audio.length));
     if (part.length < 2) break;
     let chunk = part;
-    if (chunk.length % 320) {
-      const padded = new Uint8Array(chunk.length + (320 - (chunk.length % 320)));
+    // Pad only to a whole 16-bit sample. Padding to 320 bytes appended up to 318 bytes of silence to
+    // every short final frame, which is audible clipping at the end of each utterance.
+    if (chunk.length % 2) {
+      const padded = new Uint8Array(chunk.length + 1);
       padded.set(chunk);
       chunk = padded;
     }
@@ -573,7 +614,98 @@ async function sendPcm(
 
 function supportedSampleRate(value: unknown) {
   const parsed = Number(text(value));
-  return parsed === 8000 || parsed === 16000 || parsed === 24000 ? parsed : 8000;
+  // Exotel documents 8/16/24 kHz for the socket, but the PSTN leg is 8 kHz. Anything unrecognised
+  // falls back to 8 kHz rather than to whatever the caller hoped for: a wrong rate is inaudible, and
+  // silence with a healthy socket is the hardest failure of all to diagnose.
+  return parsed === 8000 || parsed === 16000 || parsed === 24000
+    ? parsed
+    : EXOTEL_PSTN_SAMPLE_RATE;
+}
+
+/**
+ * Voicebot-applet negotiate endpoint.
+ *
+ * A Voicebot applet is configured ONCE in the Exotel dashboard with a single static URL, but this
+ * lane needs a per-call, short-lived, signed wss URL. Exotel documents exactly this case: give the
+ * applet an https URL and it will call it and use the wss URL that comes back. Exotel invokes it with
+ * the call's parameters, and `CustomField` carries the self-test id we set on the dial.
+ *
+ * This is UAT-gated and fails closed the same way the socket does. It deliberately does NOT accept a
+ * destination or an origin from the request - the wss URL is rebuilt from the Worker's own origin and
+ * signed with EXOTEL_WEBHOOK_SECRET, so a caller who reaches this endpoint cannot redirect the media
+ * stream anywhere.
+ */
+export async function handleAiVoiceSelfTestNegotiate(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const url = new URL(request.url);
+  if (url.pathname !== SELF_TEST_NEGOTIATE_PATH) {
+    return new Response("Not found", { status: 404 });
+  }
+
+  const readiness = aiVoiceSelfTestReadiness(env);
+  const db = env.DB as Db | undefined;
+  if (!readiness.enabled || !db) {
+    return new Response(JSON.stringify({ error: "AI voice self-test is disabled" }), {
+      status: 503,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  // Exotel sends applet parameters as query string on GET and as a form body on POST.
+  const fields: Record<string, string> = {};
+  for (const [key, value] of url.searchParams) fields[key.toLowerCase()] = value;
+  if (request.method === "POST") {
+    try {
+      const form = await request.formData();
+      for (const [key, value] of form) {
+        if (typeof value === "string") fields[key.toLowerCase()] = value;
+      }
+    } catch {
+      // A body we cannot parse is not fatal; the query string may still carry CustomField.
+    }
+  }
+
+  const callId = text(fields.customfield || fields.custom_field);
+  if (!callId) {
+    return new Response(JSON.stringify({ error: "Missing CustomField call reference" }), {
+      status: 400,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  // Only a self-test this Worker actually created, and only one still waiting for its stream.
+  const row = await db
+    .prepare("SELECT id,state FROM ai_voice_self_tests WHERE id=?")
+    .bind(callId)
+    .first<Record<string, unknown>>();
+  if (!row) {
+    return new Response(JSON.stringify({ error: "Unknown self-test reference" }), {
+      status: 404,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  if (["ended", "failed"].includes(text(row.state))) {
+    return new Response(JSON.stringify({ error: "Self-test is no longer active" }), {
+      status: 409,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  const streamUrl = await signedStreamUrl(env, callId, url.origin);
+  const now = Date.now();
+  await db
+    .prepare(
+      "UPDATE ai_voice_self_tests SET state=CASE WHEN state='dialing' THEN 'negotiated' ELSE state END,updated_at=? WHERE id=?",
+    )
+    .bind(now, callId)
+    .run();
+
+  return new Response(JSON.stringify({ url: streamUrl }), {
+    status: 200,
+    headers: { "content-type": "application/json", "cache-control": "no-store" },
+  });
 }
 
 export async function handleAiVoiceSelfTestStream(
