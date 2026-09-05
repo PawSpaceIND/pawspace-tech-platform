@@ -88,10 +88,41 @@ export async function seedSittingBooking(db, sqlite, {
   const lifecycle = await import("../../lib/sitting-lifecycle.ts");
   await lifecycle.ensureSittingLifecycleTables(db);
   const window = given ?? stayWindow();
-  return seedCanonicalStayBooking(sqlite, {
+  const booking = seedCanonicalStayBooking(sqlite, {
     bookingId, customerId, providerId, serviceCode: "pet_sitting", packageCode, packageName,
     amount, amountDueNow: amountDueNow ?? amount, paymentStatus, paymentMode, ...window, ...rest,
   });
+  // Sitting acceptance is a response to a pending assignment offer, unlike Boarding where the stay row
+  // carries its own acceptance state. DDL from lib/provider-capacity-governance.ts.
+  sqlite.exec("CREATE TABLE IF NOT EXISTS provider_assignment_offers (group_id TEXT PRIMARY KEY,booking_id TEXT,provider_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',offered_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,responded_at INTEGER,response_reason TEXT,attempt_no INTEGER NOT NULL DEFAULT 1,updated_at INTEGER NOT NULL)");
+  const now = Date.now();
+  sqlite.prepare("INSERT OR REPLACE INTO provider_assignment_offers (group_id,booking_id,provider_id,status,offered_at,expires_at,attempt_no,updated_at) VALUES (?,?,?,'pending',?,?,1,?)")
+    .run(booking.groupId, bookingId, providerId, now, now + 30 * 60_000, now);
+  return booking;
+}
+
+/**
+ * The customer's doorstep for a booking, written into the AUTHORITATIVE table.
+ *
+ * lib/booking-doorstep.ts consults booking_service_locations first (the one a customer flow actually
+ * writes) and only falls back to booking_service_addresses. Seeding the authoritative table is what
+ * makes a geofence assertion real rather than a fixture that exercises the fallback nobody writes.
+ * DDL verbatim from lib/grooming-maps.ts.
+ */
+export function seedDoorstep(sqlite, { bookingId, customerId = "CUST-SIT-1", providerId = "sitter_ananya", latitude = 12.9716, longitude = 77.5946 }) {
+  const now = Date.now();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_service_locations (booking_id TEXT PRIMARY KEY,customer_id TEXT NOT NULL,provider_id TEXT NOT NULL,address_text TEXT NOT NULL,latitude REAL,longitude REAL,source TEXT NOT NULL DEFAULT 'customer_booking',status TEXT NOT NULL DEFAULT 'active',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.prepare("INSERT OR REPLACE INTO booking_service_locations (booking_id,customer_id,provider_id,address_text,latitude,longitude,status,created_at,updated_at) VALUES (?,?,?,?,?,?,'active',?,?)")
+    .run(bookingId, customerId, providerId, "12 MG Road, Bengaluru", latitude, longitude, now, now);
+  return { latitude, longitude };
+}
+
+/**
+ * A point `metres` north of a reference coordinate. One degree of latitude is ~111,320 m, which is
+ * accurate enough to sit a sitter deliberately inside or outside a 250 m geofence.
+ */
+export function metresNorth({ latitude, longitude }, metres) {
+  return { latitude: latitude + metres / 111_320, longitude };
 }
 
 /** A Sitting care plan: the same three requirements plus home access, which Boarding does not need. */
