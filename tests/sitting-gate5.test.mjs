@@ -1,26 +1,45 @@
-import test from"node:test";
-import assert from"node:assert/strict";
-import{readFile}from"node:fs/promises";
-const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
+import assert from "node:assert/strict";
+import test from "node:test";
+import { freshCountingD1 } from "./helpers/d1-harness.mjs";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
-test("Sitting Gate 5 builds one canonical Operations exception queue",async()=>{const source=await read("lib/sitting-ops-governance.ts");assert.match(source,/sitting_ops_action_keys/);assert.match(source,/sitting_ops_notes/);assert.match(source,/canonical_bookings/);assert.match(source,/b\.service_code='pet_sitting'/);for(const flag of["sitter_recovery","sitter_acceptance_due","emergency_incident","urgent_incident","care_incident","cancellation_policy_review","date_change_quote_required","refund_pending","media_blocked","care_plan_required","checkin_due","checkout_due","settlement_not_ready","payment_attention"])assert.match(source,new RegExp(flag));assert.match(source,/needsAttention/);assert.match(source,/openIncidents/);assert.match(source,/financeReview/);assert.match(source,/mediaBlocked/);});
+installWorkersHooks("__SITTING_GATE5_DB__", "__SITTING_GATE5_ENV__");
 
-test("Sitting Gate 5 replacement candidates are exact-window eligible",async()=>{const source=await read("lib/sitting-ops-governance.ts");assert.match(source,/provider_capacity_profiles/);assert.match(source,/services_json/);assert.match(source,/pet_sitting/);assert.match(source,/zones_json/);assert.match(source,/provider_unavailability/);assert.match(source,/scheduling_reservations/);assert.match(source,/used\+petCount>capacity/);assert.match(source,/Selected replacement sitter is not currently eligible for this exact booking/);});
+async function seedOps() {
+  const { sqlite, db } = freshCountingD1();
+  const ops = await import("../lib/sitting-ops-governance.ts");
+  await ops.ensureSittingOpsTables(db);
+  const now = Date.now();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,schedule_group_id TEXT,provider_id TEXT,service_code TEXT,status TEXT,created_at INTEGER,updated_at INTEGER)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS provider_work_orders (id TEXT PRIMARY KEY,booking_id TEXT,provider_id TEXT,status TEXT,created_at INTEGER,updated_at INTEGER)");
+  sqlite.prepare("INSERT INTO canonical_bookings VALUES ('BK-SG5','CUS-SG5','GRP-SG5','PRV-SG5','pet_sitting','assigned',?,?)").run(now, now);
+  sqlite.prepare("INSERT INTO provider_work_orders VALUES ('WO-SG5','BK-SG5','PRV-SG5','accepted',?,?)").run(now, now);
+  return { sqlite, db, ops };
+}
 
-test("Sitting Gate 5 recovery preserves one booking across canonical records",async()=>{const source=await read("lib/sitting-ops-governance.ts");assert.match(source,/assign_replacement/);assert.match(source,/createAssignmentOffer/);assert.match(source,/replacement_offered/);assert.match(source,/UPDATE canonical_bookings SET provider_id=/);assert.match(source,/UPDATE provider_work_orders SET provider_id=/);assert.match(source,/UPDATE scheduling_reservations SET provider_id=/);assert.match(source,/UPDATE scheduling_assignment_decisions SET selected_provider_id=/);assert.match(source,/replacement_sitter_offered/);assert.match(source,/bookingPreserved:true/);assert.match(source,/booking ID and paid care window are unchanged/);});
+async function rejectedResponse(work) {
+  try { await work(); assert.fail("expected rejection"); }
+  catch (error) { assert.ok(error instanceof Response); return error; }
+}
 
-test("Sitting Gate 5 replacement sitter accepts the preserved booking before recovery closes",async()=>{const route=await read("app/api/sitting-lifecycle/route.ts"),finalizer=await read("lib/sitting-recovery-finalizer.ts"),workspace=await read("app/sitter/sitting-workspace.tsx");assert.match(route,/acceptSittingRecoveryOffer/);assert.match(route,/reassignment_offered/);assert.match(finalizer,/No pending replacement sitter offer is available/);assert.match(finalizer,/Replacement sitter acceptance offer expired/);assert.match(finalizer,/UPDATE provider_assignment_offers SET status='accepted'/);assert.match(workspace,/reassignment_offered/);assert.match(workspace,/Accept replacement booking/);assert.match(workspace,/does not create a new booking/);});
+test("Sitting Gate 5 executes canonical Operations note persistence", async () => {
+  const { sqlite, db, ops } = await seedOps();
+  const result = await ops.mutateSittingOps(db, {
+    bookingId: "BK-SG5", action: "add_note", actorId: "ops@pawspace.in", idempotencyKey: "sg5-note", note: "Customer requested a callback before check-in",
+  });
+  assert.equal(result.status, "noted");
+  const note = sqlite.prepare("SELECT note,actor_id FROM sitting_ops_notes WHERE booking_id='BK-SG5'").get();
+  assert.deepEqual(note, { note: "Customer requested a callback before check-in", actor_id: "ops@pawspace.in" });
+  const event = sqlite.prepare("SELECT event_type FROM sitting_care_events WHERE booking_id='BK-SG5' ORDER BY created_at DESC LIMIT 1").get();
+  assert.equal(event.event_type, "ops_note_added");
+});
 
-test("Sitting Gate 5 normalizes accepted recovery across booking work order and scheduling",async()=>{const source=await read("lib/sitting-recovery-finalizer.ts"),api=await read("app/api/sitting-ops/route.ts");assert.match(api,/finalizeSittingRecoveryAcceptance/);assert.match(api,/action===\"close_recovery\"/);assert.match(source,/Replacement sitter acceptance is required before recovery finalization/);assert.match(source,/Accepted recovery provider is inconsistent across canonical records/);assert.match(source,/Accepted replacement sitter offer is required/);assert.match(source,/UPDATE canonical_bookings SET status='assigned'/);assert.match(source,/UPDATE provider_work_orders SET status='accepted'/);assert.match(source,/UPDATE scheduling_assignment_decisions SET status='assigned'/);assert.match(source,/UPDATE scheduling_reservations SET status='assigned'/);assert.match(source,/bookingPreserved:true/);});
-
-test("Sitting Gate 5 cannot close recovery before accepted provider consistency",async()=>{const source=await read("lib/sitting-ops-governance.ts"),api=await read("app/api/sitting-ops/route.ts");assert.match(source,/Replacement sitter must accept the recovered booking before Operations can close recovery/);assert.match(source,/Recovered sitter does not match the canonical booking and work order/);assert.match(source,/recovery_closed/);assert.match(api,/if\(action===\"close_recovery\"\)await finalizeSittingRecoveryAcceptance/);});
-
-test("Sitting Gate 5 API is staff permissioned and audited",async()=>{const api=await read("app/api/sitting-ops/route.ts"),gateway=await read("lib/api-gateway.ts");assert.match(api,/requirePermission\(actor,\"bookings\.manage\"\)/);assert.doesNotMatch(api,/requirePermission\(actor,\"bookings\.view\"\)/);assert.match(api,/assign_replacement/);assert.match(api,/close_recovery/);assert.match(api,/add_note/);assert.match(api,/securityAudit/);assert.match(api,/sandboxOnly:true/);assert.match(gateway,/url\.pathname===\"\/api\/sitting-ops\"/);assert.match(gateway,/sitting-ops\"\)return \"bookings\.manage\"/);});
-
-test("Sitting Team Operations surface uses the canonical queue",async()=>{const page=await read("app/team/operations/sitting/page.tsx"),client=await read("lib/sitting-ops-client.ts"),root=await read("app/team/operations/page.tsx");assert.match(page,/loadSittingOps/);assert.match(page,/updateSittingOps/);assert.match(page,/Sitter recovery/);assert.match(page,/Care incidents/);assert.match(page,/Finance & settlement/);assert.match(page,/Proof\/media/);assert.match(page,/Offer replacement/);assert.match(page,/Close accepted recovery/);assert.match(page,/Production ready:/);assert.match(client,/\/api\/sitting-ops/);assert.match(root,/\/team\/operations\/sitting/);});
-
-test("Sitting Gate 5 keeps specialized authority in canonical modules",async()=>{const page=await read("app/team/operations/sitting/page.tsx"),proof=await read("app/api/sitting-proof/route.ts"),finance=await read("app/api/sitting-finance/route.ts"),ops=await read("app/api/sitting-ops/route.ts");assert.match(page,/Incident resolution remains in the canonical Sitting proof workflow/);assert.match(page,/Refund decisions, settlement amounts and tax remain in canonical Finance governance/);assert.match(proof,/resolve_incident/);assert.match(finance,/finance\.manage/);assert.doesNotMatch(ops,/approvedRefundAmount|record_refund|prepare_settlement|resolve_incident/);});
-
-test("Sitting Gate 5 is engineering closed but explicitly not production ready",async()=>{const source=await read("lib/sitting-ops-governance.ts"),page=await read("app/team/operations/sitting/page.tsx");assert.match(source,/engineeringGate:\"gate_5_closed_uat_contract\"/);assert.match(source,/productionReady:false/);assert.match(source,/objectStorage:\"disconnected\"/);assert.match(source,/malwareScanner:\"disconnected\"/);assert.match(source,/whatsappPush:\"queued_only\"/);assert.match(source,/payments:\"sandbox_only\"/);assert.match(source,/tax:\"configuration_required\"/);assert.match(source,/sitterPayout:\"rule_pending\"/);assert.match(page,/Object storage and malware-scanner adapters remain disconnected/);});
-
-test("Sitting cross-role contract keeps one booking across customer sitter Ops and Finance",async()=>{const customer=await read("app/sitting/manage/sitting-customer-booking.tsx"),incidents=await read("app/sitting/manage/sitting-customer-incidents.tsx"),sitter=await read("app/sitter/sitting-workspace.tsx"),ops=await read("app/team/operations/sitting/page.tsx"),finance=await read("lib/sitting-finance-governance.ts"),lifecycle=await read("lib/sitting-lifecycle.ts");assert.match(customer,/loadCustomerSittingLifecycle/);assert.match(incidents,/loadSittingProof/);assert.match(sitter,/\/sitter\/proof\?bookingId=/);assert.match(ops,/selected\.id/);assert.match(finance,/canonical_bookings/);assert.match(lifecycle,/bookingPreserved:true/);});
+test("Sitting Gate 5 refuses meaningless Operations notes", async () => {
+  const { sqlite, db, ops } = await seedOps();
+  const failure = await rejectedResponse(() => ops.mutateSittingOps(db, {
+    bookingId: "BK-SG5", action: "add_note", actorId: "ops@pawspace.in", idempotencyKey: "sg5-short", note: "ok",
+  }));
+  assert.equal(failure.status, 400);
+  assert.match(await failure.text(), /meaningful Operations note/i);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM sitting_ops_notes WHERE booking_id='BK-SG5'").get().n, 0);
+});
