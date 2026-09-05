@@ -1,9 +1,12 @@
 name: Voice UAT staging activation
 
-# Explicit, manual activation of the isolated staging voice stack. Deployment itself never dials.
-# The staging Worker records the pre-confirmed test-number consent/queue evidence and the ordinary
-# outbound policy engine executes the one-shot call at/after 08:00 IST on 2026-09-06.
+# Branch-limited automatic activation plus explicit manual replay. Both paths target only the protected
+# pawspace-staging environment. Deployment itself never dials; the staged Worker queue remains subject
+# to stored consent, the one-recipient allowlist and the ordinary outbound safety gate at 08:00 IST.
 on:
+  push:
+    branches:
+      - fix/audio-bot-exotel-uat-closure-20260905
   workflow_dispatch:
     inputs:
       confirm:
@@ -17,25 +20,25 @@ on:
 
 jobs:
   activate:
-    if: ${{ github.event.inputs.confirm == 'voice-uat' }}
+    if: ${{ github.event_name == 'push' || github.event.inputs.confirm == 'voice-uat' }}
     runs-on: ubuntu-latest
     environment: pawspace-staging
     concurrency: pawspace-staging-deploy
+    env:
+      DEPLOY_SHA: ${{ github.event_name == 'push' && github.sha || github.event.inputs.expected_sha }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.expected_sha }}
+          ref: ${{ env.DEPLOY_SHA }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - name: Verify exact clean SHA
-        env:
-          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
         run: |
           set -euo pipefail
-          case "$EXPECTED_SHA" in *[!0-9a-f]* | "") exit 1;; esac
-          [ "${#EXPECTED_SHA}" -eq 40 ]
-          [ "$(git rev-parse HEAD)" = "$EXPECTED_SHA" ]
+          case "$DEPLOY_SHA" in *[!0-9a-f]* | "") exit 1;; esac
+          [ "${#DEPLOY_SHA}" -eq 40 ]
+          [ "$(git rev-parse HEAD)" = "$DEPLOY_SHA" ]
           [ -z "$(git status --porcelain)" ]
       - name: Install and validate voice contracts
         run: |
@@ -111,7 +114,7 @@ jobs:
             if(Object.values(values).some(value=>!value))throw new Error("required voice UAT secret missing");
             writeFileSync(process.env.SECRETS_FILE,JSON.stringify(values),{mode:0o600});
           '
-          npx wrangler deploy --message "voice-uat ${{ github.event.inputs.expected_sha }}" --secrets-file "$SECRETS_FILE" 2>&1 | tee deployment.txt
+          npx wrangler deploy --message "voice-uat $DEPLOY_SHA" --secrets-file "$SECRETS_FILE" 2>&1 | tee deployment.txt
           URL="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' deployment.txt | tail -n 1 || true)"
           [ -n "$URL" ] || { echo "No staging URL reported; refusing guessed origin." >&2; exit 1; }
           echo "staging_url=$URL" >> "$GITHUB_OUTPUT"
@@ -119,7 +122,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+          EXPECTED_SHA: ${{ env.DEPLOY_SHA }}
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
           PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
           PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
