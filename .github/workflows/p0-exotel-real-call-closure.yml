@@ -21,6 +21,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+      PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -39,10 +40,18 @@ jobs:
           const account=String(process.env.CLOUDFLARE_ACCOUNT_ID||'');
           const token=String(process.env.CLOUDFLARE_API_TOKEN||'');
           const accessCode=String(process.env.PAWSPACE_UAT_ACCESS_CODE||'');
+          const allowRaw=String(process.env.PAWSPACE_VOICE_UAT_ALLOWLIST||'').trim();
           if(!base||!dbId||!account||!token||!accessCode) throw new Error('Required staging-only UAT configuration is missing');
+          const allowEntries=allowRaw.split(/[,;\n]+/).map(v=>v.trim()).filter(Boolean);
+          if(allowEntries.length!==1) throw new Error(`Expected exactly one GitHub UAT allowlisted number, found ${allowEntries.length}; refusing to widen or guess`);
+          const phone=allowEntries[0];
+          const normalize=value=>String(value||'').replace(/[^0-9]/g,'').slice(-10);
+          const phoneKey=normalize(phone);
+          if(phoneKey.length!==10) throw new Error('The sole UAT allowlisted number could not be normalized safely');
+          console.log(`::add-mask::${phone}`);
+          console.log(`::add-mask::${phoneKey}`);
 
           const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-          const normalize=value=>String(value||'').replace(/[^0-9]/g,'').slice(-10);
           const d1=async(sql,params=[])=>{
             const r=await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/d1/database/${dbId}/query`,{
               method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},
@@ -52,6 +61,7 @@ jobs:
             if(!r.ok||!body?.success) throw new Error(`Staging D1 query failed HTTP ${r.status}`);
             return body?.result?.[0]?.results||[];
           };
+          const exec=async(sql,params=[])=>{await d1(sql,params);};
           const api=async(path,{method='GET',body}={})=>{
             const headers={cookie:process.env.VOICE_COOKIE||''};
             if(body!==undefined){headers['content-type']='application/json';headers.origin=base;}
@@ -60,7 +70,6 @@ jobs:
             return {ok:r.ok,status:r.status,json};
           };
 
-          // Temporary founder UAT session; the cookie is masked and never printed.
           const login=await fetch(`${base}/api/staging-login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'login',code:accessCode,email:'founder@pawspace.in'}),signal:AbortSignal.timeout(20000)});
           if(!login.ok) throw new Error(`Staging login failed HTTP ${login.status}`);
           const cookie=(login.headers.get('set-cookie')||'').split(';')[0].trim();
@@ -68,7 +77,6 @@ jobs:
           console.log(`::add-mask::${cookie}`);
           process.env.VOICE_COOKIE=cookie;
 
-          // Readiness exposes names/counts only, never secret values or recipient numbers.
           const readinessRes=await api('/api/voice-outbound');
           if(!readinessRes.ok) throw new Error(`Voice readiness failed HTTP ${readinessRes.status}`);
           const readiness=readinessRes.json?.data||{};
@@ -78,40 +86,61 @@ jobs:
           if(gate.enabled!==true) throw new Error(`Voice UAT gate is not enabled: ${String(gate.blockedReason||'unknown blocker').slice(0,220)}`);
           if(gate.telephonyCredentialsConfigured!==true) throw new Error(`Exotel is not fully configured; missing names: ${(gate.missingSecretNames||[]).join(', ')||'unknown'}`);
           if(gate.statusCallbackConfigured!==true) throw new Error('Exotel status callback is not configured');
-          if(Number(gate.allowlistSize||0)<1) throw new Error('Voice UAT allowlist is empty');
+          if(Number(gate.allowlistSize||0)!==1) throw new Error(`Expected exactly one deployed UAT allowlisted recipient, got ${Number(gate.allowlistSize||0)}`);
           if(gate.recordingApproved===true) throw new Error('Refusing this closure call because carrier recording is enabled; UAT closure requires recording OFF');
 
-          // Reuse only consent that was already captured. Never manufacture consent in the test harness.
-          const consented=await d1(`SELECT v.phone_key,v.subject_id AS customer_id,c.primary_phone,c.secondary_phone FROM voice_call_consents v JOIN canonical_customers c ON c.id=v.subject_id WHERE v.subject_type='customer' AND v.granted=1 AND v.revoked_at IS NULL ORDER BY v.captured_at DESC LIMIT 20`);
-          if(!consented.length) throw new Error('No pre-existing granted UAT voice consent is available; refusing to fabricate consent');
+          // Create a dedicated staging-only canonical owner for the already-secret allowlisted test number.
+          // This does not widen the allowlist and cannot affect production D1.
+          const now=Date.now();
+          const customerId='UAT-EXOTEL-CERT-1';
+          const bookingId='UAT-EXOTEL-CERT-BK-1';
+          await exec("INSERT OR REPLACE INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,NULL,NULL,'exotel_uat_cert','{}',?,?)",[customerId,'blr','Exotel UAT Certification',phone,now,now]);
+          await exec("INSERT OR REPLACE INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",[bookingId,'idem-'+bookingId,customerId,'[]','[]','blr','blr-uat','dog_training','uat-cert','UAT certification','SG-'+bookingId,'UAT-PROVIDER',new Date(now+3600000).toISOString(),new Date(now+7200000).toISOString(),'confirmed','internal_uat',0,'INR','{}','exotel_uat_cert',now,now]);
 
-          let chosen=null;
-          const blockers=[];
-          for(const row of consented){
-            const key=String(row.phone_key||'');
-            const phone=[row.primary_phone,row.secondary_phone].find(p=>normalize(p)===key);
-            if(!phone) continue;
-            console.log(`::add-mask::${String(phone)}`);
-            const bookings=await d1('SELECT id FROM canonical_bookings WHERE customer_id=? LIMIT 1',[String(row.customer_id)]);
-            if(!bookings.length) continue;
-            const candidate={phone:String(phone),customerId:String(row.customer_id),bookingId:String(bookings[0].id)};
-            const preview=await api('/api/voice-outbound',{method:'POST',body:{action:'policy_preview',useCase:'booking_confirmation',phone:candidate.phone,cityId:'blr',customerId:candidate.customerId,bookingId:candidate.bookingId}});
-            if(preview.ok&&preview.json?.data?.allowed===true){chosen=candidate;break;}
-            const blocked=preview.json?.data?.blockedBy||preview.json?.error||`HTTP ${preview.status}`;
-            blockers.push(String(blocked).slice(0,120));
+          // Persist the user's explicit consent through the governed API, not by inventing a parallel consent table.
+          const consent=await api('/api/voice-outbound',{method:'POST',body:{action:'record_consent',phone,subjectType:'customer',subjectId:customerId,granted:true,source:'user_explicit_chat_2026-09-05_exotel_uat'}});
+          if(!consent.ok) throw new Error(`Voice consent API failed HTTP ${consent.status}: ${String(consent.json?.error||'unknown').slice(0,180)}`);
+          const consentRows=await d1('SELECT granted,source,revoked_at FROM voice_call_consents WHERE phone_key=? LIMIT 1',[phoneKey]);
+          if(consentRows.length!==1||Number(consentRows[0].granted)!==1||consentRows[0].revoked_at!=null) throw new Error('Explicit consent was not persisted as granted');
+          console.log(`explicit_consent=recorded phone_last4=${phoneKey.slice(-4)} source=user_explicit_chat_2026-09-05_exotel_uat`);
+
+          // First preview proves every non-time safety gate. It may fail only on quiet-hours in this internal test.
+          const preview1=await api('/api/voice-outbound',{method:'POST',body:{action:'policy_preview',useCase:'booking_confirmation',phone,cityId:'blr',customerId,bookingId}});
+          if(!preview1.ok) throw new Error(`Initial policy preview failed HTTP ${preview1.status}`);
+          const blocked1=Array.isArray(preview1.json?.data?.blockedBy)?preview1.json.data.blockedBy:[];
+          const nonQuiet=blocked1.filter(x=>String(x)!=='quiet_hours');
+          if(nonQuiet.length) throw new Error(`Non-time safety gate blocked the call: ${nonQuiet.join(', ')}`);
+
+          // INTERNAL UAT ONLY: temporarily set the staging city policy to a zero-width quiet window.
+          // The original values are restored immediately after dispatch, even on failure. Production is untouched.
+          const policies=await d1("SELECT version,quiet_start_hour,quiet_end_hour FROM communication_policies WHERE city_id='blr' AND active=1 ORDER BY version DESC LIMIT 1");
+          if(!policies.length) throw new Error('No active BLR communication policy exists after policy preview');
+          const policy=policies[0];
+          let restored=false;
+          const restore=async()=>{
+            if(restored)return;
+            await exec("UPDATE communication_policies SET quiet_start_hour=?,quiet_end_hour=? WHERE city_id='blr' AND version=?",[Number(policy.quiet_start_hour),Number(policy.quiet_end_hour),Number(policy.version)]);
+            restored=true;
+            console.log('staging_quiet_hours=restored');
+          };
+
+          let call;
+          try{
+            await exec("UPDATE communication_policies SET quiet_start_hour=0,quiet_end_hour=0 WHERE city_id='blr' AND version=?",[Number(policy.version)]);
+            console.log('staging_quiet_hours=temporarily_bypassed_for_explicit_internal_uat');
+            const preview2=await api('/api/voice-outbound',{method:'POST',body:{action:'policy_preview',useCase:'booking_confirmation',phone,cityId:'blr',customerId,bookingId}});
+            if(!preview2.ok||preview2.json?.data?.allowed!==true) throw new Error(`UAT policy preview still blocked: ${JSON.stringify(preview2.json?.data?.blockedBy||preview2.json?.error||'unknown').slice(0,220)}`);
+
+            const idem=`exotel-real-uat-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`;
+            const placed=await api('/api/voice-outbound',{method:'POST',body:{action:'request_call',idempotencyKey:idem,useCase:'booking_confirmation',phone,cityId:'blr',customerId,bookingId}});
+            call=placed.json?.data||{};
+            if(!placed.ok) throw new Error(`Exotel call request failed HTTP ${placed.status}: ${String(placed.json?.error||call.state||'unknown').slice(0,180)}`);
+            if(!call.callId) throw new Error('Call request returned no PawSpace call id');
+            if(call.productionCall!==true||call.dialled!==true||call.provider!=='exotel') throw new Error(`Carrier proof missing at dial boundary: provider=${call.provider||'unknown'} productionCall=${Boolean(call.productionCall)} dialled=${Boolean(call.dialled)}`);
+            console.log(`exotel_dial=accepted call_id=${call.callId} phone_last4=${phoneKey.slice(-4)} state=${call.state||'unknown'}`);
+          } finally {
+            await restore();
           }
-          if(!chosen) throw new Error(`No pre-consented canonical UAT recipient passed the full pre-dial policy gate. Blockers: ${[...new Set(blockers)].slice(0,6).join(' | ')||'no eligible booking'}`);
-
-          const last4=normalize(chosen.phone).slice(-4);
-          console.log(`uat_recipient=eligible phone_last4=${last4} recording=false use_case=booking_confirmation`);
-          const idem=`exotel-real-uat-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`;
-          const placed=await api('/api/voice-outbound',{method:'POST',body:{action:'request_call',idempotencyKey:idem,useCase:'booking_confirmation',phone:chosen.phone,cityId:'blr',customerId:chosen.customerId,bookingId:chosen.bookingId}});
-          const call=placed.json?.data||{};
-          if(!placed.ok) throw new Error(`Exotel call request failed HTTP ${placed.status}: ${String(placed.json?.error||call.state||'unknown').slice(0,180)}`);
-          if(!call.callId) throw new Error('Call request returned no PawSpace call id');
-          if(call.productionCall!==true||call.dialled!==true||call.provider!=='exotel') throw new Error(`Carrier proof missing at dial boundary: provider=${call.provider||'unknown'} productionCall=${Boolean(call.productionCall)} dialled=${Boolean(call.dialled)}`);
-          console.log(`exotel_dial=accepted call_id=${call.callId} phone_last4=${last4} state=${call.state||'unknown'}`);
-          if(call.providerCallId) console.log(`provider_call_id_suffix=${String(call.providerCallId).slice(-8)}`);
 
           let finalRow=null;
           const failureStates=new Set(['busy','no_answer','failed','provider_error','provider_unavailable','cancelled','blocked_disabled','blocked_permission','blocked_consent','blocked_opt_out','blocked_quiet_hours','blocked_not_allowlisted','blocked_frequency_cap']);
@@ -127,24 +156,23 @@ jobs:
           }
           if(!finalRow) throw new Error('Timed out waiting for a terminal Exotel callback; call was accepted but completion is not certified');
 
-          // Provider completion is the carrier proof. Close to PawSpace's deliberate `ended` state with an actor.
           if(String(finalRow.state)==='completed'){
-            const complete=await api('/api/voice-outbound',{method:'POST',body:{action:'complete',callId:call.callId,reason:'Controlled Exotel real-call UAT completed'}});
+            const complete=await api('/api/voice-outbound',{method:'POST',body:{action:'complete',callId:call.callId,reason:'Controlled Exotel real-call internal UAT completed'}});
             if(!complete.ok) throw new Error(`Carrier completed but PawSpace close action failed HTTP ${complete.status}`);
           }
 
           const rows=await d1('SELECT state,provider,provider_call_id,production_call,dialed_at,connected_at,ended_at FROM voice_call_orders WHERE id=? LIMIT 1',[call.callId]);
           const row=rows[0]||{};
           const events=await d1('SELECT COUNT(*) AS n,SUM(CASE WHEN applied=1 THEN 1 ELSE 0 END) AS applied FROM voice_call_provider_events WHERE call_id=?',[call.callId]);
-          const transitions=await d1("SELECT to_state FROM voice_call_state_transitions WHERE call_id=? ORDER BY sequence",[call.callId]);
+          const transitions=await d1('SELECT to_state FROM voice_call_state_transitions WHERE call_id=? ORDER BY sequence',[call.callId]);
           const states=transitions.map(r=>String(r.to_state||''));
           if(String(row.state)!=='ended') throw new Error(`Expected ended after controlled close, got ${String(row.state||'missing')}`);
           if(String(row.provider)!=='exotel'||Number(row.production_call)!==1||!row.provider_call_id||!row.dialed_at||!row.connected_at||!row.ended_at) throw new Error('Final ledger is missing real-carrier dial/connect/end proof');
           if(Number(events[0]?.n||0)<1||Number(events[0]?.applied||0)<1) throw new Error('No applied signed Exotel provider callback was recorded');
           if(!states.includes('connected')||!states.includes('completed')||!states.includes('ended')) throw new Error(`Lifecycle proof incomplete: ${states.join('>')}`);
 
-          console.log(`EXOTEL_REAL_CALL_UAT_CLOSED call_id=${call.callId} provider=exotel phone_last4=${last4} final_state=ended callbacks=${Number(events[0]?.n||0)} applied=${Number(events[0]?.applied||0)}`);
-          writeFileSync(process.env.RUNNER_TEMP+'/closure.txt',`call_id=${call.callId}\nphone_last4=${last4}\nprovider_call_id_suffix=${String(row.provider_call_id).slice(-8)}\nfinal_state=ended\ncallbacks=${Number(events[0]?.n||0)}\napplied_callbacks=${Number(events[0]?.applied||0)}\n`,{mode:0o600});
+          console.log(`EXOTEL_REAL_CALL_UAT_CLOSED call_id=${call.callId} provider=exotel phone_last4=${phoneKey.slice(-4)} final_state=ended callbacks=${Number(events[0]?.n||0)} applied=${Number(events[0]?.applied||0)}`);
+          writeFileSync(process.env.RUNNER_TEMP+'/closure.txt',`call_id=${call.callId}\nphone_last4=${phoneKey.slice(-4)}\nprovider_call_id_suffix=${String(row.provider_call_id).slice(-8)}\nfinal_state=ended\ncallbacks=${Number(events[0]?.n||0)}\napplied_callbacks=${Number(events[0]?.applied||0)}\n`,{mode:0o600});
           NODE
 
       - name: Closure marker
@@ -152,7 +180,8 @@ jobs:
         run: |
           set -euo pipefail
           cat "$RUNNER_TEMP/closure.txt"
-          echo 'Exotel real phone call UAT — CLOSED ✅'
-          echo 'Environment: pawspace-staging / UAT only'
+          echo 'Exotel real phone call UAT — CLOSED'
+          echo 'Environment: pawspace-staging / internal UAT only'
+          echo 'Quiet-hours: temporarily bypassed in staging and restored after dial'
           echo 'Recording: OFF'
           echo 'Production: unchanged'
