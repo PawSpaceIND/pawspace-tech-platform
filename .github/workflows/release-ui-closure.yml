@@ -35,9 +35,11 @@ jobs:
   ui-closure:
     if: ${{ github.event.inputs.confirm == 'ui-closure' }}
     runs-on: ubuntu-latest
-    # Preview and staging deliberately use different UAT credentials. Selecting the environment
-    # alongside the URL prevents a valid preview code being sent to staging (or vice versa).
     environment: ${{ github.event.inputs.target_environment }}
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
     steps:
       - name: Validate candidate and preview inputs
         env:
@@ -63,10 +65,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '22.16.0'
           cache: npm
 
       - run: npm ci
+      - name: Blocking application build
+        run: npm run build
 
       - name: Install Chromium for the preview browser gate
         run: npx playwright install --with-deps chromium

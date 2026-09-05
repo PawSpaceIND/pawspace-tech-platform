@@ -14,6 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,7 +24,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 22.13.0
+          node-version: 22.16.0
           cache: npm
       - uses: actions/setup-python@v5
         with:
@@ -55,7 +58,9 @@ jobs:
           grep -q "bufferedStart" lib/walking-ops-governance.ts
       - name: Install web dependencies
         run: npm ci
-      - name: Build and run full web regression
+      - name: Blocking application build
+        run: npm run build
+      - name: Run full web regression
         run: npm test
       - name: Lint
         run: npm run lint

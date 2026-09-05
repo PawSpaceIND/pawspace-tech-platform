@@ -17,6 +17,9 @@ concurrency:
 env:
   EXPECTED_SHA: 43156cd1900177831f33c25a7e81fe46a5e96601
   STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+  NODE_ENV: test
+  APP_ENV: staging
+  FORBID_PRODUCTION: 'true'
 
 jobs:
   track3:
@@ -32,7 +35,7 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.16.0'
           cache: npm
       - run: npm run install:ci
       - run: npm run build
