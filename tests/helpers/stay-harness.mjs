@@ -103,6 +103,10 @@ export async function seedWalkingBooking(db, sqlite, {
   });
 
   const now = Date.now();
+  // walkingPerSessionAmount() reads the per-walk price off pricing_json and refuses completion when it
+  // is absent, so a Walking booking is only well-formed with it.
+  sqlite.prepare("UPDATE canonical_bookings SET pricing_json=? WHERE id=?")
+    .run(JSON.stringify({ perWalkAmount: amount, walkCount, packageCode }), bookingId);
   sqlite.exec("CREATE TABLE IF NOT EXISTS provider_assignment_offers (group_id TEXT PRIMARY KEY,booking_id TEXT,provider_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',offered_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,responded_at INTEGER,response_reason TEXT,attempt_no INTEGER NOT NULL DEFAULT 1,updated_at INTEGER NOT NULL)");
   sqlite.prepare("INSERT OR REPLACE INTO provider_assignment_offers (group_id,booking_id,provider_id,status,offered_at,expires_at,attempt_no,updated_at) VALUES (?,?,?,'pending',?,?,1,?)")
     .run(booking.groupId, bookingId, providerId, now, now + 30 * 60_000, now);
