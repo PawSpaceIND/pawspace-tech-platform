@@ -1,0 +1,52 @@
+name: P0 Hosted Provider Sandbox
+
+on:
+  push:
+    branches:
+      - remediation/p0-pilot-gates-b379631
+    paths:
+      - scripts/p0-hosted-provider-sandbox.mjs
+      - .github/workflows/p0-hosted-provider-sandbox.yml
+
+permissions:
+  contents: read
+
+jobs:
+  hosted-providers:
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 20
+    env:
+      P0_STAGING_BASE_URL: https://pawspace-staging.karthik-fce.workers.dev
+      P0_PROVIDER_EVIDENCE: p0-provider-evidence.json
+      RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+      RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+      RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+      META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
+      META_WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.META_WHATSAPP_PHONE_NUMBER_ID }}
+      META_WHATSAPP_WABA_ID: ${{ secrets.META_WHATSAPP_WABA_ID }}
+      META_WHATSAPP_APP_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET }}
+      META_WHATSAPP_UAT_ALLOWLIST: ${{ secrets.META_WHATSAPP_UAT_ALLOWLIST }}
+      META_WHATSAPP_TEMPLATE_ALLOWLIST: ${{ secrets.META_WHATSAPP_TEMPLATE_ALLOWLIST }}
+      META_WHATSAPP_GRAPH_VERSION: ${{ vars.META_WHATSAPP_GRAPH_VERSION }}
+      GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Refuse production-looking provider credentials and endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$RAZORPAY_KEY_ID_SANDBOX" in rzp_test_*) ;; *) echo 'Razorpay sandbox key is missing or not test-mode.' >&2; exit 1;; esac
+          case "$P0_STAGING_BASE_URL" in *pawspace-staging*|*.workers.dev) ;; *) echo 'Provider test target is not staging.' >&2; exit 1;; esac
+      - name: Execute hosted provider certification
+        run: node scripts/p0-hosted-provider-sandbox.mjs
+      - name: Upload provider evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-hosted-provider-${{ github.sha }}
+          path: p0-provider-evidence.json
+          if-no-files-found: warn
