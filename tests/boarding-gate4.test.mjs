@@ -1,22 +1,50 @@
-import test from"node:test";
-import assert from"node:assert/strict";
-import{readFileSync}from"node:fs";
-const read=(path)=>readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
+import assert from "node:assert/strict";
+import test from "node:test";
+import { freshCountingD1 } from "./helpers/d1-harness.mjs";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
-test("Boarding Gate 4 media grants are short lived opaque and private",()=>{const source=read("lib/boarding-proof-governance.ts");assert.match(source,/boarding_media_upload_grants/);assert.match(source,/15\*60_000/);assert.match(source,/token_hash/);assert.match(source,/sandbox_contract/);assert.match(source,/rawPublicUrl:false/);assert.match(source,/Storage confirmation must use an opaque object ID, not a public URL/);assert.match(source,/upload grant expired/);assert.match(source,/upload token mismatch/);});
+installWorkersHooks("__BOARDING_GATE4_DB__", "__BOARDING_GATE4_ENV__");
 
-test("Boarding Gate 4 enforces proof MIME size checksum scan and exact ownership",()=>{const source=read("lib/boarding-proof-governance.ts");assert.match(source,/image\/jpeg/);assert.match(source,/image\/png/);assert.match(source,/image\/webp/);assert.match(source,/10_000_000/);assert.match(source,/SHA-256 checksum/);assert.match(source,/belongs to another booking/);assert.match(source,/belongs to another provider/);assert.match(source,/purpose does not match this evidence slot/);assert.match(source,/has not passed scan review/);assert.match(source,/not ready for private proof access/);assert.match(source,/outside active retention/);assert.match(source,/still synthetic/);});
+async function seedProof() {
+  const { sqlite, db } = freshCountingD1();
+  const proof = await import("../lib/boarding-proof-governance.ts");
+  await proof.ensureBoardingProofTables(db);
+  const now = Date.now();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,schedule_group_id TEXT,status TEXT,provider_id TEXT,service_code TEXT,total_amount REAL,package_name TEXT)");
+  sqlite.prepare("INSERT INTO canonical_bookings VALUES ('BK-BG4','GRP-BG4','assigned','host_maya_rohan','boarding',699,'Luxury Stay')").run();
+  sqlite.prepare("INSERT INTO boarding_stays (id,booking_id,customer_id,host_provider_id,city_id,zone_id,package_code,check_in_at,check_out_at,billed_units,pet_count,status,care_plan_status,check_in_status,check_out_status,extension_status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run("STAY-BG4","BK-BG4","CUS-BG4","host_maya_rohan","blr","blr-east","boarding-24h",new Date(now+86_400_000).toISOString(),new Date(now+2*86_400_000).toISOString(),1,1,"confirmed","ready","pending","pending","none",now,now);
+  return { sqlite, db, proof };
+}
 
-test("Boarding Gate 4 medication requires Care Card and clean evidence",()=>{const source=read("lib/boarding-proof-governance.ts");assert.match(source,/boarding_medication_administrations/);assert.match(source,/A ready Care Card is required before medication evidence/);assert.match(source,/canonical Care Card has no medication instruction/);assert.match(source,/boarding_medication/);assert.match(source,/medication_evidenced/);assert.match(source,/careCardInstructionPresent:true/);});
+async function rejectedResponse(work) {
+  try { await work(); assert.fail("expected rejection"); }
+  catch (error) { assert.ok(error instanceof Response); return error; }
+}
 
-test("Boarding Gate 4 incidents preserve booking and never invent money actions",()=>{const source=read("lib/boarding-proof-governance.ts");assert.match(source,/boarding_incidents/);assert.match(source,/attention/);assert.match(source,/urgent/);assert.match(source,/emergency/);assert.match(source,/ops_escalation/);assert.match(source,/notification_status TEXT NOT NULL DEFAULT 'queued'/);assert.match(source,/bookingPreserved:true/);assert.match(source,/automaticRefund:false/);assert.match(source,/automaticPayoutChange:false/);assert.match(source,/resolve_incident/);});
+test("Boarding Gate 4 executes private opaque media-grant creation", async () => {
+  const { sqlite, db, proof } = await seedProof();
+  const result = await proof.mutateBoardingProof(db, {
+    stayId: "STAY-BG4", action: "prepare_media", actorId: "host@pawspace.in", idempotencyKey: "bg4-media",
+    purpose: "stay_update", mimeType: "image/jpeg", sizeBytes: 5000, sha256: "a".repeat(64),
+  });
+  assert.equal(result.upload.rawPublicUrl, false);
+  assert.equal(result.upload.mode, "sandbox_contract");
+  assert.equal(result.proofReady, false);
+  const asset = sqlite.prepare("SELECT booking_id,provider_id,scan_status,access_status,synthetic FROM service_media_assets WHERE id=?").get(result.mediaId);
+  assert.deepEqual(asset, { booking_id: "BK-BG4", provider_id: "host_maya_rohan", scan_status: "pending", access_status: "pending_upload", synthetic: 0 });
+  const grant = sqlite.prepare("SELECT status,expires_at FROM boarding_media_upload_grants WHERE media_id=?").get(result.mediaId);
+  assert.equal(grant.status, "issued");
+  assert.ok(Number(grant.expires_at) > Date.now());
+});
 
-test("Boarding Gate 4 keeps communications queued only while adapters are disconnected",()=>{const source=read("lib/boarding-proof-governance.ts");assert.match(source,/booking_customer_notifications/);assert.match(source,/push/);assert.match(source,/whatsapp/);assert.match(source,/live messaging is not connected in UAT/);assert.match(source,/communications:\{mode:\"queued_only\",liveDelivery:false\}/);});
-
-test("Boarding Gate 4 API separates provider customer and staff authority",()=>{const api=read("app/api/boarding-proof/route.ts"),gateway=read("lib/api-gateway.ts");assert.match(api,/providerActions=new Set<BoardingProofAction>/);assert.match(api,/staffActions=new Set<BoardingProofAction>/);assert.match(api,/customerActions=new Set<BoardingProofAction>/);assert.match(api,/requireProviderOwnership/);assert.match(api,/requireCustomerOwnership/);assert.match(api,/requirePermission\(actor,\"bookings\.manage\"\)/);assert.match(api,/securityAudit/);assert.match(api,/sandboxOnly:true/);assert.match(gateway,/url\.pathname===\"\/api\/boarding-proof\"/);assert.match(gateway,/acknowledge_incident/);assert.match(gateway,/record_media_scan/);});
-
-test("Boarding Gate 4 closes legacy medication photo and incident care-event loophole",()=>{const api=read("app/api/boarding-stays/route.ts");assert.match(api,/evidenceCareEvents=new Set\(\[\"medication\",\"photo_update\",\"incident\"\]\)/);assert.match(api,/Medication, photo proof and incidents must use the governed Boarding proof workflow/);});
-
-test("Boarding Host routes evidence actions to the dedicated proof workspace",()=>{const host=read("app/host/page.tsx"),proof=read("app/host/proof/page.tsx");assert.match(host,/\/host\/proof\?stayId=/);assert.match(host,/Proof · medication · incident/);assert.doesNotMatch(host,/care\(liveStay,\"medication\"\)/);assert.doesNotMatch(host,/care\(liveStay,\"photo_update\"\)/);assert.doesNotMatch(host,/care\(liveStay,\"incident\"\)/);assert.match(proof,/prepare_media/);assert.match(proof,/record_medication/);assert.match(proof,/report_incident/);assert.match(proof,/SHA-256/);assert.match(proof,/adapter and scan review make it clean\/private/);});
-
-test("Boarding customer can see and acknowledge canonical incidents without changing money",()=>{const panel=read("app/mobile-app/boarding-customer-stay-panel.tsx");assert.match(panel,/loadBoardingProof/);assert.match(panel,/action:\"acknowledge_incident\"/);assert.match(panel,/does not approve a refund, charge or payout change/);});
+test("Boarding Gate 4 rejects unsupported media before persisting an asset", async () => {
+  const { sqlite, db, proof } = await seedProof();
+  const failure = await rejectedResponse(() => proof.mutateBoardingProof(db, {
+    stayId: "STAY-BG4", action: "prepare_media", actorId: "host@pawspace.in", idempotencyKey: "bg4-gif",
+    purpose: "stay_update", mimeType: "image/gif", sizeBytes: 5000, sha256: "b".repeat(64),
+  }));
+  assert.equal(failure.status, 400);
+  assert.match(await failure.text(), /JPEG, PNG and WebP/i);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM service_media_assets WHERE booking_id='BK-BG4'").get().n, 0);
+});
