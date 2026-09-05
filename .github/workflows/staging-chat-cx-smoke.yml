@@ -1,0 +1,29 @@
+name: Staging chat and CX smoke
+
+on:
+  push:
+    branches:
+      - hotfix/staging-chat-cx-runtime
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe public staging routes
+        shell: bash
+        run: |
+          set -euo pipefail
+          base='https://pawspace-staging.karthik-fce.workers.dev'
+          chat_status="$(curl -sS -L -o /tmp/chat.html -w '%{http_code}' "$base/chat")"
+          cx_status="$(curl -sS -L -o /tmp/cx.html -w '%{http_code}' "$base/team/customer-experience")"
+          ai_status="$(curl -sS -o /tmp/ai.json -w '%{http_code}' -X POST "$base/api/ai-web-chat" -H 'content-type: application/json' -H "origin: $base" --data '{"mode":"public","query":"dog grooming in Bangalore"}')"
+          printf 'chat=%s\ncx=%s\nai=%s\n' "$chat_status" "$cx_status" "$ai_status"
+          test "$chat_status" = '200'
+          test "$cx_status" != '500'
+          test "$cx_status" != '530'
+          test "$ai_status" -ge 200
+          test "$ai_status" -lt 500
