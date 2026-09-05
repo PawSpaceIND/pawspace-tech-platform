@@ -35,7 +35,8 @@ function toPdf(title: string, data: Row[]) {
     "4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj",
     `5 0 obj << /Length ${body.length} >> stream\n${body}\nendstream endobj`,
   ];
-  let pdf = "%PDF-1.4\n", offsets = [0];
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
   for (const object of objects) { offsets.push(pdf.length); pdf += `${object}\n`; }
   const xref = pdf.length;
   pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n` + offsets.slice(1).map(o => `${String(o).padStart(10, "0")} 00000 n \n`).join("");
