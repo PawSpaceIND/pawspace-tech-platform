@@ -1,0 +1,70 @@
+/**
+ * Shared setup for the EXECUTED Boarding and Pet Sitting suites.
+ *
+ * The ten Boarding and Sitting gate suites used to read `lib/boarding-...ts` and `lib/sitting-...ts`
+ * as STRINGS and regex-match them. That is not a hypothetical weakness here: PAWSPACE-QA-001 was a
+ * boarding refund ceiling that compared against `total_amount` while the message beside it read
+ * "within the captured booking value" — the file read correct, behaved wrong, and boarding-gate3
+ * agreed with it. These helpers exist so every assertion runs the real function against a real
+ * SQLite-backed D1 and reads the rows back.
+ *
+ * The D1 shim, the non-preview origin and the refusal reader are the same ones the Pet Taxi suites
+ * use, and are re-exported from there rather than copied: one shim, one set of documented limits
+ * (statement-level interleaving, not transaction isolation — see tests/helpers/taxi-harness.mjs).
+ * What is new here is the Boarding and Sitting fixture surface.
+ */
+export { makeD1, freshSqlite, refusal, nextKey, customerSessionCookie, seedActiveCommercialTerm, OPS_ORIGIN } from "./taxi-harness.mjs";
+import { OPS_ORIGIN } from "./taxi-harness.mjs";
+
+export const stayUrl = (path) => `${OPS_ORIGIN}${path}`;
+
+/** A stay window that starts comfortably in the future; the quote guards refuse anything at or before now. */
+export function stayWindow({ startInHours = 48, durationHours = 4 } = {}) {
+  const startMs = Math.floor((Date.now() + startInHours * 3_600_000) / 1000) * 1000;
+  return {
+    scheduledStart: new Date(startMs).toISOString(),
+    scheduledEnd: new Date(startMs + durationHours * 3_600_000).toISOString(),
+  };
+}
+
+/**
+ * The tables the Boarding and Sitting modules READ but do not own, so no ensure*Tables call creates
+ * them. DDL is copied verbatim from the owning source (app/api/canonical-bookings/route.ts for
+ * canonical_bookings, provider_work_orders and booking_payments; backend/src/scheduling.ts for
+ * scheduling_reservations) rather than invented, so an upstream schema change surfaces here as a real
+ * error instead of a fixture that quietly diverges.
+ */
+export function ensureCanonicalTables(sqlite) {
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,idempotency_key TEXT,customer_id TEXT NOT NULL,pet_ids_json TEXT DEFAULT '[]',city_id TEXT,zone_id TEXT,service_code TEXT NOT NULL,package_code TEXT,package_name TEXT,schedule_group_id TEXT,provider_id TEXT,scheduled_start TEXT,scheduled_end TEXT,status TEXT NOT NULL DEFAULT 'confirmed',channel TEXT,total_amount REAL,currency TEXT DEFAULT 'INR',pricing_json TEXT DEFAULT '{}',created_by TEXT,created_at INTEGER,updated_at INTEGER)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS provider_work_orders (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,schedule_group_id TEXT NOT NULL,provider_id TEXT NOT NULL,provider_name TEXT NOT NULL,provider_model TEXT NOT NULL,service_code TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,occurrence_count INTEGER NOT NULL DEFAULT 1,status TEXT NOT NULL DEFAULT 'assigned',assignment_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS booking_payments (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL UNIQUE,customer_id TEXT,amount REAL NOT NULL,amount_due_now REAL DEFAULT 0,currency TEXT DEFAULT 'INR',method TEXT,mode TEXT,status TEXT NOT NULL,gateway TEXT,idempotency_key TEXT,detail_json TEXT DEFAULT '{}',created_at INTEGER,updated_at INTEGER)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS scheduling_reservations (id TEXT PRIMARY KEY,group_id TEXT NOT NULL,provider_id TEXT NOT NULL,service_code TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,customer_id TEXT NOT NULL,pet_ids_json TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,capacity_units INTEGER NOT NULL DEFAULT 1,occurrence_number INTEGER NOT NULL DEFAULT 1,care_mode TEXT,status TEXT NOT NULL,explanation_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,lease_expires_at INTEGER,customer_session_id TEXT,attempt_id TEXT)");
+}
+
+/**
+ * A confirmed canonical booking with its work order, payment and scheduling reservation.
+ *
+ * `paymentStatus` matters more than it looks: the Boarding refund ceiling is `collectedForBooking`,
+ * which counts only rows the payment layer regards as captured. A test that wants a refund to be
+ * possible must seed a captured payment, and a test that wants the ceiling to bite must not.
+ */
+export function seedCanonicalStayBooking(sqlite, {
+  bookingId = "BKG-STAY-1", customerId = "CUST-STAY-1", providerId = "host_maya_rohan",
+  serviceCode = "boarding", packageCode = "boarding-4h", packageName = "Standard Stay",
+  groupId = "GRP-STAY-1", reservationId = "RES-STAY-1", amount = 499, amountDueNow = 499,
+  status = "confirmed", paymentStatus = "captured", paymentMode = "prepaid",
+  scheduledStart, scheduledEnd, cityId = "blr", zoneId = "blr-east", providerModel = "commission",
+} = {}) {
+  const now = Date.now();
+  const window = scheduledStart && scheduledEnd ? { scheduledStart, scheduledEnd } : stayWindow();
+  ensureCanonicalTables(sqlite);
+  sqlite.prepare("INSERT OR REPLACE INTO canonical_bookings (id,idempotency_key,customer_id,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,total_amount,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'harness',?,?)")
+    .run(bookingId, `idem-${bookingId}`, customerId, cityId, zoneId, serviceCode, packageCode, packageName, groupId, providerId, window.scheduledStart, window.scheduledEnd, status, amount, now, now);
+  sqlite.prepare("INSERT OR REPLACE INTO provider_work_orders (id,booking_id,schedule_group_id,provider_id,provider_name,provider_model,service_code,scheduled_start,scheduled_end,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,'assigned',?,?)")
+    .run(`WO-${bookingId}`, bookingId, groupId, providerId, "Maya & Rohan", providerModel, serviceCode, window.scheduledStart, window.scheduledEnd, now, now);
+  sqlite.prepare("INSERT OR REPLACE INTO booking_payments (id,booking_id,customer_id,amount,amount_due_now,method,mode,status,idempotency_key,created_at,updated_at) VALUES (?,?,?,?,?,'upi',?,?,?,?,?)")
+    .run(`PAY-${bookingId}`, bookingId, customerId, amount, amountDueNow, paymentMode, paymentStatus, `pk-${bookingId}`, now, now);
+  sqlite.prepare("INSERT OR REPLACE INTO scheduling_reservations (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,status,created_at) VALUES (?,?,?,?,?,?,?,'[]',?,?,'confirmed',?)")
+    .run(reservationId, groupId, providerId, serviceCode, cityId, zoneId, customerId, window.scheduledStart, window.scheduledEnd, now);
+  return { bookingId, customerId, providerId, groupId, reservationId, amount, ...window };
+}
