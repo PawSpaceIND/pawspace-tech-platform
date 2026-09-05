@@ -5,6 +5,7 @@ import {
   createFoodOrderFixture,
   fulfilTo,
   prepareCleanMedia,
+  ensureFoodFinanceTables,
   mutateFoodProof,
   expectResponse,
 } from "./helpers/food-gate-harness.mjs";
@@ -128,6 +129,7 @@ test("Food Gate 4 quality incidents preserve the order and never mutate money au
   const world = freshFoodWorld();
   const fixture = await createFoodOrderFixture(world, { idempotencyKey: "gate4-incident" });
   await fulfilTo(world, fixture, "picked");
+  await ensureFoodFinanceTables(world.db);
   const incident = await mutateFoodProof(world.db, {
     orderId: fixture.orderId,
     action: "report_quality_incident",
