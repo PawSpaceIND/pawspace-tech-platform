@@ -21,6 +21,9 @@ type Env = Record<string, unknown>;
 type AiBinding = { run: (model: string, input: Record<string, unknown>) => Promise<Record<string, unknown>> };
 const val = (env: Env, key: string) => String(env?.[key] ?? "").trim();
 
+export const DEFAULT_VOICE_STT_MODEL = "@cf/openai/whisper-large-v3-turbo";
+export const DEFAULT_VOICE_TTS_MODEL = "@cf/myshell-ai/melotts";
+
 /** One deadline for both halves of the speech stack, overridable per deployment. */
 export function speechTimeoutMs(env: Env): number {
   const configured = Number(val(env, "VOICE_SPEECH_TIMEOUT_MS"));
@@ -70,7 +73,7 @@ async function audioBytes(audioRef: string, allowedHosts: string[] = [], timeout
 /** Cloudflare Workers AI STT (Whisper). Returns the disconnected stub when the AI binding is absent. */
 export function resolveWorkersAiStt(env: Env): VoiceSttProvider {
   if (!workersAiConfigured(env)) return disconnectedStt;
-  const ai = env.AI as AiBinding, model = val(env, "VOICE_STT_MODEL") || "@cf/openai/whisper";
+  const ai = env.AI as AiBinding, model = val(env, "VOICE_STT_MODEL") || DEFAULT_VOICE_STT_MODEL;
   const timeoutMs = speechTimeoutMs(env);
   const allowedHosts = val(env, "VOICE_AUDIO_ALLOWED_HOSTS").split(",").map(h => h.trim().toLowerCase()).filter(Boolean);
   return {
@@ -101,7 +104,7 @@ export function resolveWorkersAiStt(env: Env): VoiceSttProvider {
 /** Cloudflare Workers AI TTS. Returns the disconnected stub when the AI binding is absent. */
 export function resolveWorkersAiTts(env: Env): VoiceTtsProvider {
   if (!workersAiConfigured(env)) return disconnectedTts;
-  const ai = env.AI as AiBinding, model = val(env, "VOICE_TTS_MODEL") || "@cf/myshell-ai/melotts";
+  const ai = env.AI as AiBinding, model = val(env, "VOICE_TTS_MODEL") || DEFAULT_VOICE_TTS_MODEL;
   const timeoutMs = speechTimeoutMs(env);
   return {
     provider: "workers_ai", status: "connected",
