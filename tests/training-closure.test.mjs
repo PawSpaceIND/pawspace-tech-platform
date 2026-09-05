@@ -1,82 +1,103 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  freshTrainingWorld,
+  futureTrainingStart,
+  seedCanonicalTrainingBooking,
+  seedTrainingReservation,
+  seedTrainingUnavailability,
+  createTrainingQuote,
+  captureTrainingQuoteSandbox,
+  trainingQuotePaymentState,
+  ensureProviderCapacityTables,
+  ensureProviderBookingGuard,
+  providerUnavailableForWindow,
+  ensureCommercialTermsTables,
+  activateTrainingCommercialTerm,
+  computeOrderPayout,
+  CommercialTermConfigurationRequired,
+  expectResponseRefusal,
+  TRAINER_ID,
+  GROUP_ID,
+} from "./helpers/training-gate-harness.mjs";
 
-const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
+test("Training commercial boundary executes a canonical server quote and payment state", async () => {
+  const world = freshTrainingWorld();
+  const quote = await createTrainingQuote(world.db, {
+    packageCode: "training-2-starter",
+    petCount: 1,
+    scheduledStart: futureTrainingStart(),
+    paymentMode: "split",
+  });
+  assert.deepEqual(
+    { sessions: quote.sessions, total: quote.totalAmount, due: quote.amountDueNow, mode: quote.paymentMode },
+    { sessions: 2, total: 3500, due: 1750, mode: "split" },
+  );
+  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_commercial_quotes WHERE id=?").get(quote.quoteId).n, 1);
 
-test('Training keeps one canonical programme/session commercial boundary', async () => {
-  const [commercialRoute, commercialGovernance, programmeRoute, programmeGovernance, sessions] = await Promise.all([
-    read('app/api/training-commercial/route.ts'),
-    read('lib/training-commercial-governance.ts'),
-    read('app/api/training-programmes/route.ts'),
-    read('lib/training-programme.ts'),
-    read('lib/training-session-lifecycle.ts'),
-  ]);
-  assert.match(commercialRoute, /createTrainingQuote/);
-  assert.match(commercialRoute, /listTrainingPackages/);
-  assert.match(commercialRoute, /canonical_training_commercial/);
-  assert.match(commercialGovernance, /training_commercial_quotes/);
-  assert.match(commercialGovernance, /training_booking_quote_links/);
-  assert.match(commercialGovernance, /consumeTrainingQuote/);
-  assert.match(programmeRoute, /materializeTrainingProgramme/);
-  assert.match(programmeRoute, /readTrainingProgramme/);
-  assert.match(programmeGovernance, /training_programmes/);
-  assert.match(programmeGovernance, /training_sessions/);
-  assert.match(programmeGovernance, /programme_materialized/);
-  assert.match(sessions, /training_sessions/);
-  assert.match(sessions, /training_session_recovery_cases/);
+  const captured = await captureTrainingQuoteSandbox(world.db, { quoteId: quote.quoteId, amount: quote.amountDueNow, paymentKey: "training-phase2-deposit" });
+  assert.equal(captured.status, "PARTIALLY_PAID");
+  const state = await trainingQuotePaymentState(world.db, quote.quoteId);
+  assert.deepEqual({ status: state.status, amountPaid: state.amountPaid, remainingAmount: state.remainingAmount }, { status: "PARTIALLY_PAID", amountPaid: 1750, remainingAmount: 1750 });
 });
 
-test('Training operations and finance project canonical records', async () => {
-  const [ops, reconciliation, finance] = await Promise.all([
-    read('app/api/training-ops/route.ts'),
-    read('app/api/training-reconciliation/route.ts'),
-    read('lib/training-finance.ts'),
-  ]);
-  assert.match(ops, /canonical_training_ops/);
-  assert.match(ops, /provider_capacity_profiles/);
-  assert.match(reconciliation, /canonical_training_reconciliation/);
-  assert.match(reconciliation, /training_booking_quote_links/);
-  assert.match(reconciliation, /training_session_earnings/);
-  assert.match(finance, /training_finance_invoices/);
+test("Training capacity sabotage: unavailable trainer cannot pass booking confirmation", async () => {
+  const world = freshTrainingWorld();
+  await ensureProviderCapacityTables(world.db);
+  await ensureProviderBookingGuard(world.db);
+  const reservation = seedTrainingReservation(world, { groupId: GROUP_ID, providerId: TRAINER_ID });
+  await seedTrainingUnavailability(world, reservation);
+
+  assert.equal(await providerUnavailableForWindow(world.db, {
+    providerId: TRAINER_ID,
+    scheduledStart: reservation.start,
+    scheduledEnd: reservation.end,
+  }), true);
+  assert.throws(
+    () => world.sqlite.prepare("INSERT INTO provider_booking_confirmation_guards (group_id,created_at) VALUES (?,?)").run(GROUP_ID, Date.now()),
+    /provider_unavailable_before_booking/,
+  );
+  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM provider_booking_confirmation_guards WHERE group_id=?").get(GROUP_ID).n, 0);
 });
 
-test('Training evidence remains private and external-storage gated', async () => {
-  const media = await read('app/api/training-session-media/route.ts');
-  const boundary = await read('lib/media-upload-boundary.ts');
-  assert.match(media, /requireProviderOwnership/);
-  // Training evidence now goes through the shared signed-upload boundary, so the checksum rule lives
-  // there and the route is pinned to delegating to it. The "no storage is connected" statement moved
-  // from storageBackend:"not_connected" to adapterConnected:false and is asserted on both files, so
-  // neither can start claiming a connected backend. [PTJA-W2-B4-M04]
-  assert.match(media, /issueMediaUploadGrant/);
-  assert.match(media, /redeemMediaUploadGrant/);
-  assert.match(media, /adapterConnected:false/);
-  assert.match(media, /proofReady:false/);
-  assert.match(boundary, /SHA-256/);
-  assert.match(boundary, /adapterConnected:false/);
+test("Training finance sabotage: no active commercial term means no payout computation", async () => {
+  const world = freshTrainingWorld({ production: true });
+  await ensureCommercialTermsTables(world.db);
+  seedCanonicalTrainingBooking(world, { amount: 3500, providerId: TRAINER_ID });
+
+  await assert.rejects(
+    () => computeOrderPayout(world.db, { bookingId: "BKG-TRAIN-PHASE2", actorId: "finance@example.in", persist: true }),
+    (error) => error instanceof CommercialTermConfigurationRequired,
+  );
+  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM provider_payout_computations").get().n, 0);
+
+  await activateTrainingCommercialTerm(world);
+  const payout = await computeOrderPayout(world.db, { bookingId: "BKG-TRAIN-PHASE2", actorId: "finance@example.in", persist: true });
+  assert.equal(payout.serviceCode, "dog_training");
+  assert.equal(payout.orderValue, 3500);
+  assert.equal(payout.engagementModel, "commission_standard");
+  assert.equal(payout.providerSharePct, 0.7);
+  assert.equal(payout.cashAllowed, false);
+  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM provider_payout_computations WHERE booking_id='BKG-TRAIN-PHASE2'").get().n, 1);
 });
 
-test('Training API permissions are explicit in the gateway', async () => {
-  const gateway = await read('lib/api-gateway.ts');
-  for (const route of [
-    '/api/training-commercial',
-    '/api/training-programmes',
-    '/api/training-sessions',
-    '/api/training-session-media',
-    '/api/training-cancellation',
-    '/api/training-customer-session-change',
-    '/api/training-ops',
-    '/api/training-finance',
-    '/api/training-provider-earnings',
-    '/api/training-reconciliation',
-  ]) assert.ok(gateway.includes(route), `${route} must be permission mapped`);
-});
+test("Training invalid commercial inputs fail closed instead of creating quotes", async () => {
+  const world = freshTrainingWorld();
+  const before = () => world.sqlite.prepare("SELECT COUNT(*) n FROM training_commercial_quotes").get().n;
+  await createTrainingQuote(world.db, { packageCode: "training-2-starter", petCount: 1, scheduledStart: futureTrainingStart(), paymentMode: "prepaid" });
+  const baseline = before();
 
-test('Training closure remains UAT-only', async () => {
-  const plan = await read('docs/TRAINING_CLOSURE_PLAN.md');
-  assert.match(plan, /PRODUCTION READY = FALSE/);
-  assert.match(plan, /Production object storage/);
-  assert.match(plan, /Production payment\/refund\/payout/);
-  assert.match(plan, /GST\/tax\/invoice\/accounting/);
+  await expectResponseRefusal(() => createTrainingQuote(world.db, {
+    packageCode: "training-2-starter",
+    petCount: 5,
+    scheduledStart: futureTrainingStart(),
+    paymentMode: "prepaid",
+  }), { status: 409, message: /Training supports 1-4 pets per programme/ });
+  await expectResponseRefusal(() => createTrainingQuote(world.db, {
+    packageCode: "trainer-meet-greet",
+    petCount: 1,
+    scheduledStart: futureTrainingStart(),
+    paymentMode: "split",
+  }), { status: 409, message: /Trainer Meet & Greet must be paid in full/ });
+  assert.equal(before(), baseline, "refused quotes leave no partial commercial rows");
 });

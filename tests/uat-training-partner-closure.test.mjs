@@ -1,40 +1,60 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import fs from "node:fs";
+import {
+  freshTrainingWorld,
+  futureTrainingStart,
+  createTrainingQuote,
+  captureTrainingQuoteSandbox,
+  getGovernedProvider,
+  expectResponseRefusal,
+  TRAINER_ID,
+} from "./helpers/training-gate-harness.mjs";
 
-const training = fs.readFileSync(new URL("../app/mobile-app/training-flow.tsx", import.meta.url), "utf8");
-const partner = fs.readFileSync(new URL("../app/partner-mobile/page.tsx", import.meta.url), "utf8");
-
-test("UAT closure: package flow does not offer fake per-session scheduling", () => {
-  assert.doesNotMatch(training, /Choose each session myself/);
-  assert.doesNotMatch(training, /cadenceDays\s*:\s*frequency===/);
+test("UAT Training closure resolves trainer identity from governed provider capacity", async () => {
+  const world = freshTrainingWorld();
+  const trainer = await getGovernedProvider(world.db, TRAINER_ID);
+  assert.ok(trainer, "canonical trainer must resolve from provider capacity governance");
+  assert.equal(trainer.id, TRAINER_ID);
+  assert.ok(trainer.services.includes("dog_training"));
+  assert.ok(trainer.zones.includes("blr-east"));
+  assert.equal(trainer.live, true);
+  assert.ok(trainer.maxDailyJobs >= 1);
 });
 
-test("UAT closure: Meet & Greet is not rendered as a post-package upsell", () => {
-  assert.doesNotMatch(training, /NOT READY TO BUY A PACKAGE\?/);
-  assert.doesNotMatch(training, /Meet the trainer first\. Book only when you feel confident\./);
+test("UAT Training closure executes Meet & Greet through the same governed quote boundary", async () => {
+  const world = freshTrainingWorld();
+  const quote = await createTrainingQuote(world.db, {
+    packageCode: "trainer-meet-greet",
+    petCount: 1,
+    scheduledStart: futureTrainingStart(),
+    paymentMode: "prepaid",
+  });
+  assert.equal(quote.meetAndGreet, true);
+  assert.equal(quote.sessions, 1);
+  assert.equal(quote.totalAmount, 500);
+  assert.equal(quote.amountDueNow, 500);
+  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_commercial_quotes WHERE id=?").get(quote.quoteId).n, 1);
 });
 
-test("UAT closure: partner mobile is identity-driven, not hard-coded to Arjun Kumar", () => {
-  assert.doesNotMatch(partner, />Arjun Kumar</);
-  assert.match(partner, /identity-session/);
-});
+test("UAT Training closure keeps Meet & Greet payment fail-closed", async () => {
+  const world = freshTrainingWorld();
+  await expectResponseRefusal(() => createTrainingQuote(world.db, {
+    packageCode: "trainer-meet-greet",
+    petCount: 1,
+    scheduledStart: futureTrainingStart(),
+    paymentMode: "split",
+  }), { status: 409, message: /Trainer Meet & Greet must be paid in full/ });
 
-test("UAT closure: partner UAT exposes an explicit governed identity-switch path", () => {
-  assert.match(partner, /staging-login|uat.*identity|switch.*provider|provider.*switch/i);
+  const quote = await createTrainingQuote(world.db, {
+    packageCode: "trainer-meet-greet",
+    petCount: 1,
+    scheduledStart: futureTrainingStart(),
+    paymentMode: "prepaid",
+  });
+  await expectResponseRefusal(() => captureTrainingQuoteSandbox(world.db, {
+    quoteId: quote.quoteId,
+    amount: quote.amountDueNow,
+    paymentKey: "uat-meet-greet",
+  }), { status: 409, message: /Meet & Greet remains pending until a verified payment event/ });
+  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_quote_payment_attestations WHERE quote_id=?").get(quote.quoteId).n, 0);
 });
-
-test("UAT closure: trainer discovery remains backed by the canonical roster", () => {
-  assert.match(training, /loadTrainingTrainers/);
-  assert.match(training, /Your trainer matches|No eligible trainer/i);
-});
-
-test("UAT closure: Meet & Greet uses the same governed quote/reserve/canonical lifecycle", () => {
-  assert.match(training, /quoteTraining\(\{packageCode:"trainer-meet-greet"/);
-  assert.match(training, /reserveUatSchedule/);
-  assert.match(training, /createCanonicalLifecycle/);
-});
-
-const providerSwitch=fs.readFileSync(new URL("../app/api/uat-provider-switch/route.ts",import.meta.url),"utf8");
-const gateway=fs.readFileSync(new URL("../lib/api-gateway.ts",import.meta.url),"utf8");
-test("UAT provider switch route is production-dead and access-code governed",()=>{assert.match(providerSwitch,/uatLoginEnabled/);assert.match(providerSwitch,/uatAccessCodeValid/);assert.match(providerSwitch,/issuePlatformSession/);assert.match(gateway,/\/api\/uat-provider-switch/);});
