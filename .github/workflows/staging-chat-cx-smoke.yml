@@ -1,3 +1,4 @@
+# Freshness probe: verify the live staging inbox remains healthy after deployment.
 name: Staging chat and CX smoke
 
 on:
