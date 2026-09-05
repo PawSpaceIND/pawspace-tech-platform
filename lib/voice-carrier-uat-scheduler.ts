@@ -29,10 +29,6 @@ export async function ensureVoiceCarrierUatQueue(db: D1Database) {
   await db.prepare("CREATE TABLE IF NOT EXISTS voice_carrier_uat_queue (id TEXT PRIMARY KEY,scheduled_for INTEGER NOT NULL,status TEXT NOT NULL,call_id TEXT,last_state TEXT,failure_class TEXT,prepared_at INTEGER NOT NULL,started_at INTEGER,finished_at INTEGER,updated_at INTEGER NOT NULL)").run();
 }
 
-/**
- * Called by the staging cron. It records only consent that the environment explicitly marks as
- * confirmed and source-attributed, then leaves an idempotent one-shot queue row. No dial occurs here.
- */
 export async function stageVoiceCarrierUat(db: D1Database, env: Env, asOf = Date.now()) {
   await ensureVoiceCarrierUatQueue(db);
   const cfg = requireUatConfig(env), scheduledFor = Date.parse(VOICE_CARRIER_UAT_RUN_AT);
@@ -45,7 +41,6 @@ export async function stageVoiceCarrierUat(db: D1Database, env: Env, asOf = Date
   return { runId: RUN_ID, scheduledFor, status: "pending", recipientStoredInQueue: false };
 }
 
-/** Execute at most once. The ordinary voice policy engine remains authoritative at dial time. */
 export async function runDueVoiceCarrierUat(db: D1Database, env: Env, asOf = Date.now()) {
   await ensureVoiceCarrierUatQueue(db);
   const cfg = requireUatConfig(env);
@@ -79,8 +74,8 @@ export async function runDueVoiceCarrierUat(db: D1Database, env: Env, asOf = Dat
 
 export async function runVoiceCarrierUatScheduler(db: D1Database, env: Env, asOf = Date.now()) {
   if (text(env.PAWSPACE_VOICE_ENV) !== "uat" || text(env.PAWSPACE_VOICE_UAT_AUTORUN).toLowerCase() !== "true") return { status: "disabled" as const };
-  const row = await db.prepare("SELECT status FROM sqlite_master WHERE type='table' AND name='voice_carrier_uat_queue'").first<Row>().catch(() => null);
-  if (!row) await stageVoiceCarrierUat(db, env, asOf);
+  const table = await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='voice_carrier_uat_queue'").first<Row>().catch(() => null);
+  if (!table) await stageVoiceCarrierUat(db, env, asOf);
   else {
     const staged = await db.prepare("SELECT id FROM voice_carrier_uat_queue WHERE id=? LIMIT 1").bind(RUN_ID).first<Row>();
     if (!staged) await stageVoiceCarrierUat(db, env, asOf);
