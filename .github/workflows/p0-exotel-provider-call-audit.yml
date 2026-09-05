@@ -1,0 +1,66 @@
+name: P0 Exotel Provider Call Audit
+
+on:
+  push:
+    branches:
+      - remediation/p0-pilot-gates-b379631
+    paths:
+      - .github/workflows/p0-exotel-provider-call-audit.yml
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    environment: pawspace-staging
+    timeout-minutes: 6
+    env:
+      STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+      EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+      EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+      EXOTEL_SUBDOMAIN: ${{ secrets.EXOTEL_SUBDOMAIN }}
+      PAWSPACE_CALL_ID: VCALL-C69095BF-D84
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Compare PawSpace ledger with Exotel carrier status
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const account=String(process.env.CLOUDFLARE_ACCOUNT_ID||'');
+          const cfToken=String(process.env.CLOUDFLARE_API_TOKEN||'');
+          const dbId=String(process.env.STAGING_D1_ID||'');
+          const key=String(process.env.EXOTEL_API_KEY||'');
+          const token=String(process.env.EXOTEL_API_TOKEN||'');
+          const sid=String(process.env.EXOTEL_SID||'');
+          const subdomain=String(process.env.EXOTEL_SUBDOMAIN||'').trim()||'api.exotel.com';
+          const callId=String(process.env.PAWSPACE_CALL_ID||'');
+          if(!account||!cfToken||!dbId||!key||!token||!sid||!callId) throw new Error('Required provider audit configuration is missing');
+          for(const v of [key,token,sid]) console.log('::add-mask::'+v);
+          const d1=async(sql,params=[])=>{const r=await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/d1/database/${dbId}/query`,{method:'POST',headers:{authorization:`Bearer ${cfToken}`,'content-type':'application/json'},body:JSON.stringify({sql,params}),signal:AbortSignal.timeout(20000)});const j=await r.json().catch(()=>null);if(!r.ok||!j?.success)throw new Error(`D1 HTTP ${r.status}`);return j.result?.[0]?.results||[]};
+          const rows=await d1('SELECT provider_call_id,state,dialed_at,connected_at,ended_at FROM voice_call_orders WHERE id=? LIMIT 1',[callId]);
+          if(rows.length!==1||!rows[0].provider_call_id) throw new Error('Provider call id unavailable in staging ledger');
+          const providerCallId=String(rows[0].provider_call_id);
+          console.log('::add-mask::'+providerCallId);
+          console.log(`PAWSPACE_LEDGER state=${String(rows[0].state||'')} dialed=${Boolean(rows[0].dialed_at)} connected=${Boolean(rows[0].connected_at)} ended=${Boolean(rows[0].ended_at)} provider_id_suffix=${providerCallId.slice(-8)}`);
+          const u=new URL(`https://${subdomain}/v1/Accounts/${encodeURIComponent(sid)}/Calls.json`);
+          u.searchParams.set('Sid',providerCallId);
+          u.searchParams.set('details','true');
+          const auth=Buffer.from(`${key}:${token}`).toString('base64');
+          const r=await fetch(u,{headers:{authorization:`Basic ${auth}`},signal:AbortSignal.timeout(20000)});
+          const text=await r.text();
+          if(!r.ok) throw new Error(`Exotel call-detail API HTTP ${r.status}`);
+          let j={};try{j=JSON.parse(text)}catch{throw new Error('Exotel call-detail API did not return JSON')}
+          const calls=Array.isArray(j?.Calls)?j.Calls:[];
+          if(calls.length<1) throw new Error('Exotel returned no matching call for the provider Sid');
+          const c=calls[0]||{};
+          const d=c.Details||{};
+          console.log(`EXOTEL_STATUS status=${String(c.Status||'unknown')} duration=${String(c.Duration||'')} conversation_duration=${String(d.ConversationDuration||'')} leg1=${String(d.Leg1Status||'')} leg2=${String(d.Leg2Status||'')} recording_url_present=${Boolean(c.RecordingUrl)}`);
+          console.log(`EXOTEL_TIMES start_present=${Boolean(c.StartTime)} end_present=${Boolean(c.EndTime)} updated_present=${Boolean(c.DateUpdated)}`);
+          NODE
