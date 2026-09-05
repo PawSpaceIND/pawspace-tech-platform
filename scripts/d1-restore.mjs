@@ -1,43 +1,164 @@
+#!/usr/bin/env node
+/**
+ * Restore a D1 database, and measure how long it took.
+ *
+ *   Fast, in place, from D1's own history:
+ *     node scripts/d1-restore.mjs --environment staging --timestamp 2026-09-02T05:00:00Z
+ *     node scripts/d1-restore.mjs --environment staging --bookmark <bookmark>
+ *
+ *   Portable, from a dump taken by scripts/d1-backup.mjs:
+ *     node scripts/d1-restore.mjs --environment staging --file backups/pawspace-staging-….sql
+ *
+ *   Non-destructive drill - restore a dump into a scratch database and verify it, touching nothing real:
+ *     node scripts/d1-restore.mjs --file backups/….sql --into-scratch drill-2026-09-02
+ *
+ * Production requires TWO independent gates (see assertRestoreAllowed) and is never the default.
+ *
+ * WHAT THIS DOES BEFORE IT OVERWRITES ANYTHING. It captures the CURRENT bookmark of the target and
+ * prints it, then refuses to continue if that capture failed. A restore is the one operation people
+ * reach for while already under pressure, and the way it turns a bad hour into a bad quarter is
+ * restoring the wrong point and having no way back to the state you had five minutes ago. That
+ * bookmark is the way back, and it is worth failing the restore to have it.
+ */
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
-import { spawnSync } from "node:child_process";
-import { D1_DATABASE_ID } from "./d1-identity.mjs";
+import path from "node:path";
+import {
+  resolveEnvironment, requireCredentials, resolveRestoreSource, assertRestoreAllowed, computeRpoSeconds, RefusedError,
+} from "./d1-environments.mjs";
 
-// One shared definition: these two scripts each held their own copy and they drifted.
-const UUID=D1_DATABASE_ID;
-const text=v=>String(v??"").trim();
-const sha256=path=>createHash("sha256").update(readFileSync(path)).digest("hex");
-export function assertRestoreTarget({environment,databaseName,databaseId,productionId,stagingId,confirm,breakGlass=false,breakGlassToken=""}){
- if(!["staging","production"].includes(environment))throw new Error("Restore environment must be staging or production");
- if(!databaseName||!/^[a-zA-Z0-9_-]{3,80}$/.test(databaseName))throw new Error("A valid D1 database name is required");
- if(!UUID.test(databaseId))throw new Error("A valid D1 database id is required");
- if(productionId&&stagingId&&productionId===stagingId)throw new Error("Production and staging D1 ids must be isolated");
- if(environment==="staging"){
-  if(productionId&&databaseId===productionId)throw new Error("Refusing to restore a staging snapshot into the production D1 id");
-  if(stagingId&&databaseId!==stagingId)throw new Error("Restore target does not match STAGING_D1_ID");
-  const expected=`RESTORE-STAGING:${databaseName}:${databaseId}`;if(confirm!==expected)throw new Error(`Missing exact staging confirmation: ${expected}`);
- }else{
-  if(!productionId||databaseId!==productionId)throw new Error("Production restore target does not match PRODUCTION_D1_ID");
-  if(!breakGlass||breakGlassToken!=="I_ACCEPT_PRODUCTION_D1_DATA_LOSS")throw new Error("Production restore requires the break-glass flag and protected token");
-  const expected=`RESTORE-PRODUCTION:${databaseName}:${databaseId}`;if(confirm!==expected)throw new Error(`Missing exact production confirmation: ${expected}`);
- }
- return true;
+function arg(name, fallback = null) {
+  const index = process.argv.indexOf(`--${name}`);
+  if (index !== -1 && process.argv[index + 1] && !process.argv[index + 1].startsWith("--")) return process.argv[index + 1];
+  const inline = process.argv.find((item) => item.startsWith(`--${name}=`));
+  return inline ? inline.slice(`--${name}=`.length) : fallback;
 }
-export function assertManifestChecksum(manifest,sqlPath){if(!manifest||manifest.version!==1||manifest.immutable!==true)throw new Error("Unsupported or mutable D1 backup manifest");if(!/^[0-9a-f]{64}$/i.test(text(manifest.sha256)))throw new Error("Manifest checksum is invalid");const actual=sha256(sqlPath);if(actual!==text(manifest.sha256).toLowerCase())throw new Error("D1 backup checksum mismatch");return actual;}
-function wrangler(args){const result=spawnSync(process.platform==="win32"?"npx.cmd":"npx",["wrangler",...args],{encoding:"utf8",stdio:["ignore","pipe","pipe"]});if(result.status!==0)throw new Error(`wrangler ${args[0]} failed: ${text(result.stderr||result.stdout).slice(0,500)}`);return text(result.stdout);}
-function jsonOutput(args){const raw=wrangler(args);try{return JSON.parse(raw);}catch{throw new Error(`wrangler ${args[0]} did not return JSON`);}}
-function flattened(value,out=[]){if(Array.isArray(value))for(const x of value)flattened(x,out);else if(value&&typeof value==="object"){out.push(value);for(const x of Object.values(value))flattened(x,out);}return out;}
-function infoIdentity(info){const rows=flattened(info);const id=rows.map(r=>text(r.uuid||r.id||r.database_id)).find(v=>UUID.test(v))||"";const name=rows.map(r=>text(r.name||r.database_name)).find(Boolean)||"";return{id,name};}
-function queryRows(databaseName,sql){const result=jsonOutput(["d1","execute",databaseName,"--remote","--json","--command",sql]);return flattened(result).flatMap(r=>Array.isArray(r.results)?r.results:[]);}
-function quoteIdent(name){if(!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name))throw new Error(`Unsafe table name: ${name}`);return `"${name}"`;}
-export function validateRestoredInventory(databaseName,tables){const actual=queryRows(databaseName,"SELECT name,sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name");const byName=new Map(actual.map(row=>[text(row.name),row]));for(const expected of tables||[]){const row=byName.get(text(expected.name));if(!row)throw new Error(`Restored schema is missing table ${expected.name}`);const schemaHash=createHash("sha256").update(text(row.sql)).digest("hex");if(expected.schemaSha256&&schemaHash!==expected.schemaSha256)throw new Error(`Restored schema checksum differs for ${expected.name}`);const count=queryRows(databaseName,`SELECT COUNT(*) AS count FROM ${quoteIdent(text(expected.name))}`)[0];const rows=Number(count?.count??count?.COUNT??0);if(rows!==Number(expected.rows))throw new Error(`Restored row count differs for ${expected.name}: ${rows} != ${expected.rows}`);}return true;}
-function arg(name,fallback=""){const at=process.argv.indexOf(`--${name}`);return at>=0?text(process.argv[at+1]):fallback;}
-export async function main(){const manifestPath=resolve(arg("manifest"));if(!arg("manifest"))throw new Error("--manifest is required");const manifest=JSON.parse(readFileSync(manifestPath,"utf8"));const sqlPath=resolve(dirname(manifestPath),text(manifest.sqlFile));assertManifestChecksum(manifest,sqlPath);
- const environment=arg("environment","staging"),databaseName=arg("database-name",environment==="production"?"pawspace-prod-bengaluru":"pawspace-staging"),databaseId=arg("database-id",environment==="production"?text(process.env.PRODUCTION_D1_ID):text(process.env.STAGING_D1_ID)),confirm=arg("confirm");assertRestoreTarget({environment,databaseName,databaseId,productionId:text(process.env.PRODUCTION_D1_ID),stagingId:text(process.env.STAGING_D1_ID),confirm,breakGlass:process.argv.includes("--break-glass"),breakGlassToken:text(process.env.PAWSPACE_PRODUCTION_D1_RESTORE_BREAK_GLASS)});
- const info=infoIdentity(jsonOutput(["d1","info",databaseName,"--json"]));if(info.id!==databaseId)throw new Error("Wrangler D1 target identity mismatch");if(info.name&&info.name!==databaseName)throw new Error("Wrangler D1 target name mismatch");
- const existing=queryRows(databaseName,"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' LIMIT 1");if(environment==="staging"&&existing.length)throw new Error("Isolated staging restore target is not empty; refusing to mutate it");
- // This is the first mutating command. Every environment, confirmation, identity and checksum guard is above it.
- wrangler(["d1","execute",databaseName,"--remote","--file",sqlPath,"--yes"]);validateRestoredInventory(databaseName,manifest.tables);console.log(JSON.stringify({ok:true,databaseName,databaseId,environment,checksum:manifest.sha256,tables:(manifest.tables||[]).length}));}
-if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)main().catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exit(1);});
+const flag = (name) => process.argv.includes(`--${name}`);
+
+function wrangler(args, { capture = true } = {}) {
+  return execFileSync("npx", ["wrangler", ...args], {
+    encoding: "utf8", stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit", maxBuffer: 64 * 1024 * 1024,
+  });
+}
+
+try {
+  requireCredentials();
+  const source = resolveRestoreSource({ bookmark: arg("bookmark"), timestamp: arg("timestamp"), file: arg("file") });
+  const scratch = arg("into-scratch");
+
+  /* A scratch drill has no environment: it creates its own throwaway database, so there is nothing
+   * real to name and nothing real to overwrite. Requiring --environment here would mean typing the
+   * name of a live database in order to run an exercise that must not touch one. */
+  let environment = null;
+  if (!scratch) {
+    environment = resolveEnvironment(arg("environment"));
+    assertRestoreAllowed({ environment, confirmProduction: arg("confirm-production") });
+  } else if (source.kind !== "file") {
+    throw new RefusedError(`--into-scratch restores a dump into a new database, so it needs --file. ` +
+      `Time Travel restores a database in place and cannot target a different one.`);
+  }
+
+  const target = scratch || environment.database;
+  const drill = Boolean(scratch);
+
+  if (source.kind === "file") {
+    if (!existsSync(source.value)) throw new RefusedError(`Backup file not found: ${source.value}`);
+    if (!statSync(source.value).size) throw new RefusedError(`Backup file is empty: ${source.value}`);
+    /* If a manifest sits beside the dump, the checksum is verified before the dump is trusted. A
+     * truncated download restored over a live database is a second incident on top of the first. */
+    const manifestPath = `${source.value}.manifest.json`;
+    if (existsSync(manifestPath)) {
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      const actual = createHash("sha256").update(readFileSync(source.value)).digest("hex");
+      if (manifest.sha256 && manifest.sha256 !== actual) {
+        throw new RefusedError(`Checksum mismatch for ${source.value}.\n  manifest ${manifest.sha256}\n  actual   ${actual}\n` +
+          `This file is not the backup that was taken. Refusing to restore it.`);
+      }
+      console.log(`Backup checksum verified against its manifest.`);
+    } else {
+      console.warn(`No manifest beside ${source.value} - its integrity cannot be verified. Continuing.`);
+    }
+  }
+
+  console.log(`\nPlan`);
+  console.log(`  target      ${target}${drill ? " (scratch database, created for this drill)" : environment.production ? "  *** PRODUCTION ***" : ""}`);
+  console.log(`  source      --${source.kind} ${source.value}`);
+  if (!flag("execute")) {
+    console.log(`\nThis was a plan only. Re-run with --execute to perform it.\n`);
+    process.exit(0);
+  }
+
+  /* The way back. Captured for real targets only - a scratch database has no prior state worth keeping. */
+  let priorBookmark = null;
+  if (!drill) {
+    try {
+      priorBookmark = JSON.parse(wrangler(["d1", "time-travel", "info", target, "--json"]))?.bookmark ?? null;
+    } catch (error) {
+      throw new Error(`Could not capture the current bookmark for ${target}, so this restore would have no undo. ` +
+        `Refusing to continue. (${String(error?.stderr || error?.message || error).slice(0, 300)})`);
+    }
+    if (!priorBookmark) throw new Error(`No current bookmark returned for ${target}; refusing a restore with no way back.`);
+    console.log(`\nPRE-RESTORE BOOKMARK (this is your undo): ${priorBookmark}`);
+    console.log(`  Undo with: node scripts/d1-restore.mjs --environment ${environment.key} --bookmark ${priorBookmark} --execute` +
+      `${environment.production ? ` --confirm-production ${environment.database}` : ""}`);
+  }
+
+  const startedAt = Date.now();
+  if (drill) {
+    console.log(`\nCreating scratch database ${target} …`);
+    wrangler(["d1", "create", target], { capture: false });
+  }
+  if (source.kind === "file") {
+    console.log(`\nRestoring ${source.value} into ${target} …`);
+    wrangler(["d1", "execute", target, "--remote", "--file", source.value, "-y"], { capture: false });
+  } else {
+    console.log(`\nTime-travelling ${target} to the requested point …`);
+    wrangler(["d1", "time-travel", "restore", target, `--${source.kind}`, source.value, "-y"], { capture: false });
+  }
+  const finishedAt = Date.now();
+
+  /* Verification. A restore that reports success and leaves an empty database has not restored
+   * anything, and "the command exited 0" is not evidence that it worked. */
+  let tables = null;
+  try {
+    const probe = wrangler(["d1", "execute", target, "--remote", "--json", "--command",
+      "SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table'"]);
+    tables = JSON.parse(probe)?.[0]?.results?.[0]?.n ?? null;
+  } catch { /* reported as unverified below */ }
+
+  const recoveryPointAt = source.kind === "file" && existsSync(`${source.value}.manifest.json`)
+    ? Date.parse(JSON.parse(readFileSync(`${source.value}.manifest.json`, "utf8")).recoveryPointAt)
+    : source.kind === "timestamp" ? Date.parse(source.value) : null;
+
+  const evidence = {
+    target, drill, source: { kind: source.kind, value: source.kind === "bookmark" ? "(bookmark)" : source.value },
+    priorBookmark,
+    startedAt: new Date(startedAt).toISOString(),
+    finishedAt: new Date(finishedAt).toISOString(),
+    /* RTO measured here is the RESTORE COMMAND only. The runbook's RTO is wall-clock from detection to
+     * service restored, which is always larger - it includes a human deciding what to restore to. */
+    restoreSeconds: Math.round((finishedAt - startedAt) / 1000),
+    rpoSeconds: computeRpoSeconds({ incidentAt: startedAt, recoveryPointAt }),
+    tablesAfterRestore: tables,
+    verified: typeof tables === "number" && tables > 0,
+  };
+  mkdirSync("ops/evidence", { recursive: true });
+  const evidencePath = path.join("ops/evidence", `restore-${new Date(startedAt).toISOString().replace(/[:.]/g, "-")}.json`);
+  writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
+
+  console.log(`\nRestore finished in ${evidence.restoreSeconds}s.`);
+  console.log(`  tables after restore   ${tables ?? "UNVERIFIED"}`);
+  if (evidence.rpoSeconds !== null) console.log(`  recovery point age     ${evidence.rpoSeconds}s before the restore started`);
+  console.log(`  evidence               ${evidencePath}`);
+  if (!evidence.verified) {
+    console.error(`\nThe restore command succeeded but the database could not be shown to contain tables.`);
+    console.error(`Do NOT record this as a passing drill. Investigate before trusting this path.`);
+    process.exit(1);
+  }
+  if (drill) console.log(`\nScratch database ${target} still exists. Delete it: npx wrangler d1 delete ${target}`);
+} catch (error) {
+  if (error instanceof RefusedError) { console.error(`\n${error.message}\n`); process.exit(2); }
+  console.error(`\nRestore failed: ${error?.message || error}\n`);
+  process.exit(1);
+}

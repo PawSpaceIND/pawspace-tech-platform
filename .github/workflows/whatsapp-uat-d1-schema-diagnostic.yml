@@ -1,0 +1,42 @@
+name: Inspect WhatsApp UAT staging template schema
+
+on:
+  push:
+    branches:
+      - fix/whatsapp-uat-staging-deploy-isolation
+    paths:
+      - .github/workflows/whatsapp-uat-d1-schema-diagnostic.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-staging-template-schema:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Inspect staging D1 schema only
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/schema.json"; export OUT
+          trap 'rm -f "$OUT"' EXIT
+          npx --yes wrangler@4 d1 execute pawspace-staging --remote --command "SELECT sql FROM sqlite_master WHERE type='table' AND name='whatsapp_uat_templates'; PRAGMA table_info(whatsapp_uat_templates); SELECT COUNT(*) AS row_count FROM whatsapp_uat_templates;" --json > "$OUT"
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const payload=JSON.parse(readFileSync(process.env.OUT,'utf8'));
+          const blocks=Array.isArray(payload)?payload:[];
+          const rows=blocks.flatMap(block=>Array.isArray(block?.results)?block.results:[]);
+          const create=rows.find(row=>typeof row?.sql==='string')?.sql||'';
+          const columns=rows.filter(row=>Number.isInteger(row?.cid)).map(row=>({name:String(row.name||''),type:String(row.type||''),notnull:Number(row.notnull||0),defaultValue:row.dflt_value??null,pk:Number(row.pk||0)}));
+          const countRow=rows.find(row=>row?.row_count!==undefined);
+          console.log(`staging whatsapp_uat_templates rows=${Number(countRow?.row_count??-1)} columns=${columns.length}`);
+          console.log(`columns=${JSON.stringify(columns)}`);
+          console.log(`createSql=${create.replace(/\s+/g,' ').trim()}`);
+          NODE

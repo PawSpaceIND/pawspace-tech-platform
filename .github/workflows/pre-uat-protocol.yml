@@ -1,0 +1,56 @@
+name: Pre-UAT Staging Protocol
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pre-uat-staging-protocol-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  staging-protocol:
+    name: Staging isolation + full certification
+    runs-on: ubuntu-latest
+    env:
+      APP_ENV: staging
+      FORBID_PRODUCTION: "true"
+      PAWSPACE_PRODUCTION_ENFORCE: "false"
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+
+      - name: Assert immutable staging isolation contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$APP_ENV" = "staging"
+          test "$FORBID_PRODUCTION" = "true"
+          test "$PAWSPACE_PRODUCTION_ENFORCE" = "false"
+          case "${PAWSPACE_PAYMENT_ENV:-sandbox}" in live) echo "live payment mode is forbidden in Pre-UAT" >&2; exit 1;; esac
+          case "${PAWSPACE_COMMUNICATION_ENV:-uat}" in live|production) echo "live communication mode is forbidden in Pre-UAT" >&2; exit 1;; esac
+          case "${PAWSPACE_MAPS_ENV:-sandbox}" in live|production) echo "live maps mode is forbidden in Pre-UAT" >&2; exit 1;; esac
+          echo "Pre-UAT staging isolation contract verified."
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Full tests
+        run: npm test
+
+      - name: Build under staging isolation
+        run: npm run build
