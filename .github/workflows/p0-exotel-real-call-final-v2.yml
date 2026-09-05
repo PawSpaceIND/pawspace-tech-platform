@@ -1,0 +1,99 @@
+name: P0 Exotel Real Call Final V2
+
+on:
+  push:
+    branches: [remediation/p0-pilot-gates-b379631]
+    paths: [.github/workflows/p0-exotel-real-call-final-v2.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-24.04
+    environment: pawspace-staging
+    timeout-minutes: 12
+    env:
+      STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+      STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+      PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22'}
+      - name: Execute isolated duplicate-safe Exotel UAT call
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const base=String(process.env.STAGING_URL||'').replace(/\/$/,'');
+          const dbId=String(process.env.STAGING_D1_ID||'');
+          const account=String(process.env.CLOUDFLARE_ACCOUNT_ID||'');
+          const cfToken=String(process.env.CLOUDFLARE_API_TOKEN||'');
+          const accessCode=String(process.env.PAWSPACE_UAT_ACCESS_CODE||'');
+          const entries=String(process.env.PAWSPACE_VOICE_UAT_ALLOWLIST||'').split(/[,;\n]+/).map(x=>x.trim()).filter(Boolean);
+          if(!base||!dbId||!account||!cfToken||!accessCode||entries.length!==1) throw new Error('Expected complete staging config and exactly one UAT recipient');
+          const phone=entries[0], key=phone.replace(/\D/g,'').slice(-10);
+          if(key.length!==10) throw new Error('UAT recipient is not a valid Indian dial key');
+          console.log(`::add-mask::${phone}`);console.log(`::add-mask::${key}`);
+          const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+          const d1=async(sql,params=[])=>{const r=await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/d1/database/${dbId}/query`,{method:'POST',headers:{authorization:`Bearer ${cfToken}`,'content-type':'application/json'},body:JSON.stringify({sql,params}),signal:AbortSignal.timeout(20000)});const j=await r.json().catch(()=>null);if(!r.ok||!j?.success)throw new Error(`D1 HTTP ${r.status}`);return j.result?.[0]?.results||[]};
+          const login=await fetch(`${base}/api/staging-login`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'login',code:accessCode,email:'founder@pawspace.in'}),signal:AbortSignal.timeout(20000)});if(!login.ok)throw new Error(`staging login HTTP ${login.status}`);const cookie=(login.headers.get('set-cookie')||'').split(';')[0];console.log(`::add-mask::${cookie}`);
+          const api=async(body)=>{const r=await fetch(`${base}/api/voice-outbound`,{method:'POST',headers:{cookie,'content-type':'application/json',origin:base},body:JSON.stringify(body),signal:AbortSignal.timeout(30000)});const j=await r.json().catch(()=>({}));return{ok:r.ok,status:r.status,j}};
+          const norm=v=>String(v||'').replace(/\D/g,'').slice(-10);
+          const synthetic='UAT-EXOTEL-CERT-ISO';
+          const now=Date.now();
+          let originals=[]; let pol=null; let quietRestored=true; let phonesRestored=true;
+          const restorePhones=async()=>{if(phonesRestored)return;for(const r of originals){await d1('UPDATE canonical_customers SET primary_phone=?,secondary_phone=?,updated_at=? WHERE id=?',[r.primary_phone,r.secondary_phone,Date.now(),r.id])}phonesRestored=true;console.log('staging_duplicate_phone_ownership=restored')};
+          const restoreQuiet=async()=>{if(quietRestored||!pol)return;await d1("UPDATE communication_policies SET quiet_start_hour=?,quiet_end_hour=? WHERE city_id='blr' AND version=?",[Number(pol.quiet_start_hour),Number(pol.quiet_end_hour),Number(pol.version)]);quietRestored=true;console.log('staging_quiet_hours=restored')};
+          let call=null;
+          try{
+            // Remove stale synthetic fixtures from prior failed certification attempts.
+            await d1("DELETE FROM canonical_bookings WHERE customer_id IN ('UAT-EXOTEL-CERT-1','UAT-EXOTEL-CERT-ISO') AND created_by='exotel_uat_cert'");
+            await d1("DELETE FROM canonical_customers WHERE id='UAT-EXOTEL-CERT-1' AND source='exotel_uat_cert'");
+            await d1("DELETE FROM canonical_customers WHERE id='UAT-EXOTEL-CERT-ISO' AND source='exotel_uat_cert'");
+
+            const customers=await d1('SELECT id,primary_phone,secondary_phone FROM canonical_customers');
+            originals=customers.filter(r=>[r.primary_phone,r.secondary_phone].some(v=>norm(v)===key));
+            console.log(`staging_existing_owner_count=${originals.length}`);
+            // Temporarily make every pre-existing staging owner non-dialable for this test only.
+            // Exact original values stay only in runner memory and are restored in finally.
+            for(const r of originals){
+              const p=norm(r.primary_phone)===key?`uat-hold-${r.id}`:r.primary_phone;
+              const s=norm(r.secondary_phone)===key?null:r.secondary_phone;
+              await d1('UPDATE canonical_customers SET primary_phone=?,secondary_phone=?,updated_at=? WHERE id=?',[p,s,Date.now(),r.id]);
+            }
+            phonesRestored=false;
+            await d1("INSERT INTO canonical_customers (id,city_id,name,primary_phone,secondary_phone,email,source,consent_json,created_at,updated_at) VALUES (?,?,?,?,NULL,NULL,'exotel_uat_cert','{}',?,?)",[synthetic,'blr','Exotel UAT Certification',phone,now,now]);
+            const bookingId='UAT-EXOTEL-CERT-ISO-BK';
+            await d1("INSERT INTO canonical_bookings (id,idempotency_key,customer_id,pet_ids_json,source_pet_ids_json,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",[bookingId,'idem-'+bookingId,synthetic,'[]','[]','blr','blr-uat','dog_training','uat-cert','UAT certification','SG-'+bookingId,'UAT-PROVIDER',new Date(now+3600000).toISOString(),new Date(now+7200000).toISOString(),'confirmed','internal_uat',0,'INR','{}','exotel_uat_cert',now,now]);
+            const consent=await api({action:'record_consent',phone,subjectType:'customer',subjectId:synthetic,granted:true,source:'user_explicit_chat_2026-09-05_exotel_uat'});if(!consent.ok)throw new Error(`consent HTTP ${consent.status}`);console.log(`explicit_consent=recorded phone_last4=${key.slice(-4)}`);
+            const p1=await api({action:'policy_preview',useCase:'booking_confirmation',phone,cityId:'blr',customerId:synthetic,bookingId});if(!p1.ok)throw new Error(`policy preview HTTP ${p1.status}: ${String(p1.j?.error||'unknown')}`);const blocked=Array.isArray(p1.j?.data?.blockedBy)?p1.j.data.blockedBy:[];const nonQuiet=blocked.filter(x=>String(x)!=='quiet_hours');if(nonQuiet.length)throw new Error(`non-time policy blockers: ${nonQuiet.join(',')}`);
+            const policies=await d1("SELECT version,quiet_start_hour,quiet_end_hour FROM communication_policies WHERE city_id='blr' AND active=1 ORDER BY version DESC LIMIT 1");if(!policies.length)throw new Error('active BLR communication policy missing');pol=policies[0];quietRestored=false;
+            await d1("UPDATE communication_policies SET quiet_start_hour=0,quiet_end_hour=0 WHERE city_id='blr' AND version=?",[Number(pol.version)]);
+            const p2=await api({action:'policy_preview',useCase:'booking_confirmation',phone,cityId:'blr',customerId:synthetic,bookingId});if(!p2.ok||p2.j?.data?.allowed!==true)throw new Error(`internal UAT preview blocked: ${JSON.stringify(p2.j?.data?.blockedBy||p2.j?.error||'unknown')}`);
+            const placed=await api({action:'request_call',idempotencyKey:`exotel-iso-${process.env.GITHUB_RUN_ID}`,useCase:'booking_confirmation',phone,cityId:'blr',customerId:synthetic,bookingId});call=placed.j?.data||{};if(!placed.ok||!call.callId||call.provider!=='exotel'||call.dialled!==true)throw new Error(`Exotel dial failed HTTP ${placed.status} state=${call.state||'unknown'}`);console.log(`EXOTEL_DIAL_ACCEPTED call_id=${call.callId} phone_last4=${key.slice(-4)}`);
+            await restoreQuiet();
+
+            const bad=new Set(['busy','no_answer','failed','provider_error','provider_unavailable','cancelled']);let row=null;
+            for(let i=1;i<=48;i++){const rs=await d1('SELECT state,provider_call_id,dialed_at,connected_at,ended_at FROM voice_call_orders WHERE id=?',[call.callId]);row=rs[0]||null;const st=String(row?.state||'');if(i===1||i%6===0)console.log(`call_progress=${st}`);if(bad.has(st))throw new Error(`carrier terminal failure=${st}`);if(st==='completed'||st==='ended')break;await sleep(5000)}
+            if(!row||!['completed','ended'].includes(String(row.state)))throw new Error('Timed out waiting for Exotel completion callback');
+            if(String(row.state)==='completed'){const done=await api({action:'complete',callId:call.callId,reason:'Internal Exotel UAT certification completed'});if(!done.ok)throw new Error(`close HTTP ${done.status}`)}
+            const final=(await d1('SELECT state,provider_call_id,dialed_at,connected_at,ended_at FROM voice_call_orders WHERE id=?',[call.callId]))[0]||{};
+            const ev=(await d1('SELECT COUNT(*) n,SUM(CASE WHEN applied=1 THEN 1 ELSE 0 END) applied FROM voice_call_provider_events WHERE call_id=?',[call.callId]))[0]||{};
+            const states=(await d1('SELECT to_state FROM voice_call_state_transitions WHERE call_id=? ORDER BY sequence',[call.callId])).map(x=>String(x.to_state||''));
+            if(String(final.state)!=='ended'||!final.provider_call_id||!final.dialed_at||!final.connected_at||!final.ended_at)throw new Error('final carrier ledger incomplete');
+            if(Number(ev.n||0)<1||Number(ev.applied||0)<1)throw new Error('signed provider callback evidence missing');
+            if(!states.includes('connected')||!states.includes('completed')||!states.includes('ended'))throw new Error(`lifecycle incomplete ${states.join('>')}`);
+            console.log(`EXOTEL_REAL_CALL_UAT_CLOSED call_id=${call.callId} phone_last4=${key.slice(-4)} callbacks=${ev.n} applied=${ev.applied}`);
+          } finally {
+            await restoreQuiet().catch(e=>console.error('quiet restore failed',e.message));
+            await restorePhones().catch(e=>console.error('phone restore failed',e.message));
+            // Revoke test-only consent but preserve call/provider evidence.
+            await d1('UPDATE voice_call_consents SET granted=0,revoked_at=? WHERE phone_key=? AND source=?',[Date.now(),key,'user_explicit_chat_2026-09-05_exotel_uat']).catch(()=>{});
+            await d1("UPDATE canonical_customers SET primary_phone='uat-closed-exotel-cert',updated_at=? WHERE id=? AND source='exotel_uat_cert'",[Date.now(),synthetic]).catch(()=>{});
+          }
+          NODE
