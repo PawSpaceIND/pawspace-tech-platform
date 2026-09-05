@@ -19,7 +19,8 @@ export async function POST(request:Request){try{const env=await runtime();assert
  if(action==="record_call_outcome"){
   const idempotencyKey=String(body.idempotencyKey||"");
   const disposition=await recordBotCallDisposition(db,{idempotencyKey,leadId:body.leadId as string,phone:String(body.phone||""),channel:body.channel==="whatsapp"?"whatsapp":"voice",botProvider:"haptik",callRef:body.callRef as string,primaryTag:String(body.primaryTag||body.outcome||""),secondaryTags:Array.isArray(body.tags)?body.tags as string[]:[],crossSellServices:Array.isArray(body.crossSellServices)?body.crossSellServices as string[]:[],callbackAt:body.callbackAt as number,talkTimeSeconds:body.talkTimeSeconds as number,sentiment:body.sentiment as string,notes:body.notes as string,transcriptRef:body.transcriptRef as string,actorId});
-  const optOut=disposition.optedOut?await persistHaptikVoiceOptOut(db,{dispositionId:disposition.id,actorId}):null;
+  const optedOut="optedOut"in disposition&&Boolean(disposition.optedOut);
+  const optOut=optedOut?await persistHaptikVoiceOptOut(db,{dispositionId:disposition.id,actorId}):null;
   const whatsapp=await bridgeHaptikVoiceOutcomeToWhatsApp(db,env,{dispositionId:disposition.id,dispositionIdempotencyKey:idempotencyKey,journeyCode:body.journeyCode as string,paymentLinkPath:body.paymentLinkPath as string,bookingId:body.bookingId as string,actorId});
   return json({data:{...disposition,optOut,whatsapp}},201);
  }
