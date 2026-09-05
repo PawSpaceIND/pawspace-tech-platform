@@ -14,6 +14,14 @@ const CHANNEL_PROMPTS:Record<AiToolChannel,string>={
 };
 export function pawspaceChannelSystemPrompt(channel:AiToolChannel){return`${BASE_PROMPT}\n\n${CHANNEL_PROMPTS[channel]}`;}
 
+const HUMAN_EXCEPTION_PATTERNS=[
+ /\b(refund|money back|payment dispute|charged twice|wrong charge)\b/i,
+ /\b(emergency|not breathing|collapsed|seizure|bleeding|poisoned|injured|accident)\b/i,
+ /\b(provider|trainer|groomer|sitter|walker|driver).{0,24}\b(no[- ]?show|did not come|didn't come|not arrived|never arrived)\b/i,
+ /\b(complaint|very unhappy|serious issue|escalate this|service failure)\b/i,
+];
+export function requiresImmediateHumanHandoff(input:string){return HUMAN_EXCEPTION_PATTERNS.some(pattern=>pattern.test(input));}
+
 async function safeRows(db:D1Database,sql:string){try{return(await db.prepare(sql).all<Row>()).results}catch{return[] as Row[];}}
 function compact(rows:Row[],fields:string[]){return rows.slice(0,25).map(row=>Object.fromEntries(fields.filter(key=>row[key]!==undefined).map(key=>[key,row[key]])));}
 async function canonicalCatalogueSnapshot(db:D1Database){const[grooming,training,boarding,sitting,walking,taxi]=await Promise.all([
@@ -37,7 +45,12 @@ export async function buildGroundedAiTurnContext(db:D1Database,input:{actor:Auth
  const knowledge=await prepareAiToolExecution(db,{actor:input.actor,toolCode:"approved_knowledge.read",threadId:input.threadId,customerId:input.customerId,intent:input.intent,channel:input.channel,arguments:{query:input.query,visibilityScopes:["public"]}});
  const catalogueTool=(input.intent==="service_info"||input.intent==="booking_create")?await prepareAiToolExecution(db,{actor:input.actor,toolCode:"service_catalogue.read",threadId:input.threadId,customerId:input.customerId,intent:input.intent,channel:input.channel,arguments:{}}):null;
  const catalogue=await canonicalCatalogueSnapshot(db);
- return{context:{...input.canonicalContext,approvedKnowledge:knowledge,catalogueTool,catalogue,groundingPolicy:{approvedCurrentOnly:true,readOnlyToolsOnly:true,carrierIndependent:true,mutationsAuthorized:false}},groundingRefs:knowledgeRefs(knowledge)};
+ const operationalFaq={
+  payments:"Use only server-confirmed payment information. Approved PawSpace knowledge supports secure Razorpay online payment and mentions UPI/GPay; do not claim additional methods without evidence.",
+  cancellations:"Cancellation and reschedule eligibility is service-policy specific. Never promise a refund; refund and payment disputes go to a human reviewer.",
+  operatingHours:"Do not invent fixed operating hours. State hours only when approved knowledge or a server scheduling/availability tool supplies them for the requested service/location."
+ };
+ return{context:{...input.canonicalContext,approvedKnowledge:knowledge,catalogueTool,catalogue,operationalFaq,groundingPolicy:{approvedCurrentOnly:true,readOnlyToolsOnly:true,carrierIndependent:true,mutationsAuthorized:false}},groundingRefs:knowledgeRefs(knowledge)};
 }
 
-export async function createGroundedAiRuntimeProvider(db:D1Database,actor:AuthenticatedActor,channel:AiToolChannel):Promise<AiResponseProvider>{const connection=await aiProviderConnection();return{status:connection.connected?"connected":"not_connected",provider:connection.providerRef||"not_connected",modelRef:connection.modelRef,deadlineMs:connection.timeoutMs,async generate(input:AiProviderInput){const grounded=await buildGroundedAiTurnContext(db,{actor,threadId:input.threadId,customerId:input.customerId,intent:input.intent.intent as AiToolIntent,channel,query:input.inputText,canonicalContext:input.context});const result=await requestAiDraft({systemPrompt:pawspaceChannelSystemPrompt(channel),userPrompt:JSON.stringify({channel,customerMessage:input.inputText,intent:input.intent,canonicalContext:grounded.context}),maxTokens:channel==="voice"?450:1200});if(!result.connected)return{text:"",provider:connection.providerRef||"not_connected",modelRef:connection.modelRef,latencyMs:0,unsupported:true};return{text:result.text,provider:result.providerRef,modelRef:result.modelRef,latencyMs:result.latencyMs,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,highImpactAction:false};}};}
+export async function createGroundedAiRuntimeProvider(db:D1Database,actor:AuthenticatedActor,channel:AiToolChannel):Promise<AiResponseProvider>{const connection=await aiProviderConnection();return{status:connection.connected?"connected":"not_connected",provider:connection.providerRef||"not_connected",modelRef:connection.modelRef,deadlineMs:connection.timeoutMs,async generate(input:AiProviderInput){if(requiresImmediateHumanHandoff(input.inputText))return{text:"",provider:connection.providerRef||"not_connected",modelRef:connection.modelRef,latencyMs:0,unsupported:true,highImpactAction:true};const grounded=await buildGroundedAiTurnContext(db,{actor,threadId:input.threadId,customerId:input.customerId,intent:input.intent.intent as AiToolIntent,channel,query:input.inputText,canonicalContext:input.context});const result=await requestAiDraft({systemPrompt:pawspaceChannelSystemPrompt(channel),userPrompt:JSON.stringify({channel,customerMessage:input.inputText,intent:input.intent,canonicalContext:grounded.context}),maxTokens:channel==="voice"?450:1200});if(!result.connected)return{text:"",provider:connection.providerRef||"not_connected",modelRef:connection.modelRef,latencyMs:0,unsupported:true};return{text:result.text,provider:result.providerRef,modelRef:result.modelRef,latencyMs:result.latencyMs,referencedCustomerIds:[input.customerId],groundingRefs:grounded.groundingRefs,highImpactAction:false};}};}
