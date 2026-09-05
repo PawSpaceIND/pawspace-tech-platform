@@ -56,21 +56,10 @@ if (problems.length) {
 cfg.name = "pawspace-staging";
 cfg.topLevelName = "pawspace-staging";
 cfg.d1_databases = [{ binding: "DB", database_name: "pawspace-staging", database_id: d1Id }];
+cfg.ai = { binding: "AI" };
 
-/* Vars that only ever make sense on a developer's machine. PAWSPACE_LOCAL_PREVIEW is the runtime
- * switch for an AUTHENTICATION-FREE actor: combined with a forged `Host: localhost` it is two thirds
- * of the local-preview gate, so it must never reach a deployed environment. Listed rather than
- * assumed, and enforced below, so a future addition to vite.config.ts cannot ride in unnoticed. */
 export const DEV_ONLY_VARS = ["PAWSPACE_LOCAL_PREVIEW"];
 
-/* Staging DECLARES its complete var set. It used to spread `...cfg.vars` from the build output, which
- * is written by vite.config.ts and carries development values - that is how PAWSPACE_LOCAL_PREVIEW:"on"
- * reached deployed staging. Inheritance meant the deployed configuration was whatever the build
- * happened to contain; declaring it means a var is present because staging asked for it.
- *
- * PAWSPACE_SCHEDULING_ENV is re-declared deliberately, not dropped: staging IS a UAT environment and
- * governed commercial terms are seeded from it. It is here because staging needs it, not because the
- * build leaked it. */
 cfg.vars = {
   PAWSPACE_DEPLOYMENT_ENV: "staging",
   PAWSPACE_SCHEDULING_ENV: "uat",
@@ -86,9 +75,6 @@ if (r2BucketName) {
 }
 for (const [name] of REQUIRED) delete cfg.vars[name];
 
-/* Belt and braces: the declaration above cannot carry a dev-only var today, but this refuses the
- * deploy outright if one ever appears rather than shipping it. A deploy that cannot be configured
- * safely does not get configured. */
 const leaked = DEV_ONLY_VARS.filter((name) => name in cfg.vars);
 if (leaked.length) {
   console.error(`Refusing to configure the staging deploy: development-only vars present: ${leaked.join(", ")}`);
