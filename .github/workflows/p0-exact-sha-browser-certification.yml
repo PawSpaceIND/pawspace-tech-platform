@@ -1,0 +1,194 @@
+name: P0 Exact-SHA Browser Certification
+
+on:
+  push:
+    branches:
+      - remediation/p0-pilot-gates-b379631
+    paths:
+      - .github/workflows/p0-exact-sha-browser-certification.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pawspace-p0-exact-sha-preview
+  cancel-in-progress: false
+
+env:
+  CANDIDATE_SHA: b379631fa30fcd1aba5874d58664f9a03dbfa487
+
+jobs:
+  browser-certification:
+    runs-on: ubuntu-latest
+    environment: pawspace-release-preview
+    timeout-minutes: 45
+    steps:
+      - name: Checkout P0 infrastructure
+        uses: actions/checkout@v4
+        with:
+          ref: remediation/p0-pilot-gates-b379631
+          path: infra
+          fetch-depth: 0
+      - name: Checkout frozen product candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          path: candidate
+          fetch-depth: 0
+      - name: Verify candidate identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTUAL="$(git -C candidate rev-parse HEAD)"
+          [ "$ACTUAL" = "$CANDIDATE_SHA" ] || { echo 'Frozen candidate SHA mismatch.' >&2; exit 1; }
+          test -z "$(git -C candidate status --porcelain)"
+          echo "candidate_sha=$ACTUAL"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install candidate dependencies
+        working-directory: candidate
+        run: npm run install:ci
+      - name: Prove preview isolation before any write
+        id: isolation
+        env:
+          RELEASE_PREVIEW_D1_ID: ${{ vars.RELEASE_PREVIEW_D1_ID }}
+          PRODUCTION_D1_ID: ${{ secrets.PRODUCTION_D1_ID }}
+          SHARED_STAGING_D1_ID: ${{ secrets.SHARED_STAGING_D1_ID }}
+          RELEASE_PREVIEW_WORKER_NAME: ${{ vars.RELEASE_PREVIEW_WORKER_NAME }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in RELEASE_PREVIEW_D1_ID PRODUCTION_D1_ID SHARED_STAGING_D1_ID RELEASE_PREVIEW_WORKER_NAME; do
+            [ -n "${!name:-}" ] || { echo "$name is required for isolation proof." >&2; exit 1; }
+          done
+          [ "$RELEASE_PREVIEW_D1_ID" != "$PRODUCTION_D1_ID" ] || { echo 'Preview D1 equals production D1.' >&2; exit 1; }
+          [ "$RELEASE_PREVIEW_D1_ID" != "$SHARED_STAGING_D1_ID" ] || { echo 'Preview D1 equals shared staging D1.' >&2; exit 1; }
+          case "$(printf '%s' "$RELEASE_PREVIEW_WORKER_NAME" | tr '[:upper:]' '[:lower:]')" in
+            pawspace|pawspace-prod|pawspace-production|pawspace-staging|pawspace-uat) echo 'Preview Worker name is not isolated.' >&2; exit 1;;
+          esac
+          echo 'isolated=true' >> "$GITHUB_OUTPUT"
+          echo 'release_preview_isolation=verified'
+      - name: Build frozen candidate
+        working-directory: candidate
+        run: npm run build
+      - name: Configure candidate artifact for isolated preview
+        env:
+          RELEASE_PREVIEW_WORKER_NAME: ${{ vars.RELEASE_PREVIEW_WORKER_NAME }}
+          RELEASE_PREVIEW_D1_ID: ${{ vars.RELEASE_PREVIEW_D1_ID }}
+          PRODUCTION_D1_ID: ${{ secrets.PRODUCTION_D1_ID }}
+          SHARED_STAGING_D1_ID: ${{ secrets.SHARED_STAGING_D1_ID }}
+          RELEASE_SHA: ${{ env.CANDIDATE_SHA }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+        run: node infra/scripts/release-preview-config.mjs candidate/dist/server/wrangler.json
+      - name: Migrate only isolated preview D1
+        working-directory: candidate
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PREVIEW_D1: ${{ vars.RELEASE_PREVIEW_D1_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d migrations ]; then npx wrangler d1 migrations apply "$PREVIEW_D1" --remote; fi
+      - name: Record prior preview deployment for rollback
+        working-directory: candidate
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WORKER: ${{ vars.RELEASE_PREVIEW_WORKER_NAME }}
+        shell: bash
+        run: |
+          set +e
+          npx wrangler deployments list --name "$WORKER" > "$GITHUB_WORKSPACE/rollback-reference.txt" 2>&1
+          exit 0
+      - name: Deploy frozen candidate to isolated preview Worker
+        id: deploy
+        working-directory: candidate
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          LOG="$(mktemp)"
+          npx wrangler deploy --message "p0-browser $CANDIDATE_SHA" 2>&1 | tee "$LOG"
+          URL="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' "$LOG" | tail -n 1)"
+          rm -f "$LOG"
+          [ -n "$URL" ] || { echo 'Preview deploy did not report a workers.dev URL.' >&2; exit 1; }
+          echo "preview_url=$URL" >> "$GITHUB_OUTPUT"
+          echo 'isolated_preview_deployed=true'
+      - name: Install UAT-only authentication secrets
+        working-directory: candidate
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WORKER: ${{ vars.RELEASE_PREVIEW_WORKER_NAME }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in PAWSPACE_UAT_ACCESS_CODE PAWSPACE_UAT_SIGNING_KEY PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT; do
+            [ -n "${!name:-}" ] || { echo "$name is missing." >&2; exit 1; }
+            printf '%s' "${!name}" | npx wrangler secret put "$name" --name "$WORKER" >/dev/null
+          done
+      - name: Load isolated UAT demo identities and journeys
+        working-directory: candidate
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f scripts/uat-demo-seed.sql
+          npx wrangler d1 execute DB --remote --config dist/server/wrangler.json --file scripts/uat-demo-seed.sql
+      - name: Verify deployed version message is the frozen SHA
+        working-directory: candidate
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WORKER: ${{ vars.RELEASE_PREVIEW_WORKER_NAME }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler versions list --json --name "$WORKER" > versions.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const values=[]; const collect=v=>{if(typeof v==='string')values.push(v); else if(Array.isArray(v))v.forEach(collect); else if(v&&typeof v==='object')Object.values(v).forEach(collect)};
+          collect(JSON.parse(fs.readFileSync('versions.json','utf8')));
+          const expected=`p0-browser ${process.env.CANDIDATE_SHA}`;
+          if(!values.includes(expected)) throw new Error(`No deployed version exactly matches ${expected}`);
+          console.log(`deployed_sha=${process.env.CANDIDATE_SHA}`);
+          NODE
+      - name: Install Chromium for P0 Playwright gate
+        working-directory: candidate
+        run: npx playwright install --with-deps chromium
+      - name: Stage P0 browser tests beside candidate dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p candidate/e2e
+          cp infra/e2e/p0-pilot-gates.spec.ts candidate/e2e/p0-pilot-gates.spec.ts
+          cp infra/playwright.config.ts candidate/playwright.config.ts
+      - name: Execute desktop and mobile multi-role browser gate
+        working-directory: candidate
+        env:
+          PLAYWRIGHT_BASE_URL: ${{ steps.deploy.outputs.preview_url }}
+          P0_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          CI: 'true'
+        run: npx playwright test e2e/p0-pilot-gates.spec.ts
+      - name: Upload browser and rollback evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-exact-sha-browser-${{ env.CANDIDATE_SHA }}
+          path: |
+            candidate/playwright-report/
+            candidate/test-results/
+            candidate/playwright-results.json
+            rollback-reference.txt
+          if-no-files-found: warn
