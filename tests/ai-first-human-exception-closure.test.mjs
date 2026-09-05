@@ -13,6 +13,17 @@ test("authenticated callback phrases are deterministic and arbitrary chat is not
  assert.equal(control.isCustomerCallbackRequest("What is the grooming price?"),false);
 });
 
+test("customer-requested callback is transactional and never inherits sales approval",()=>{
+ const useCase=control.ensureCustomerRequestedCallbackUseCase();
+ assert.equal(useCase.code,"customer_requested_callback");
+ assert.equal(useCase.purpose,"transactional");
+ assert.equal(useCase.requiresBooking,false);
+ assert.equal(useCase.requiresSalesApproval,false);
+ const source=read("lib/ai-first-control-plane.ts");
+ assert.match(source,/useCase:CUSTOMER_REQUESTED_CALLBACK_USE_CASE/);
+ assert.doesNotMatch(source,/useCase:\"lead_qualification\"/);
+});
+
 test("WhatsApp auto-send permits only grounded low-risk replies",()=>{
  const base={intent:"booking_status",outcome:"reply_ready",humanOwned:false,customerConsented:true,optedOut:false,grounded:true,containsHighImpactClaim:false,messageType:"eta_update"};
  assert.equal(control.evaluateWhatsAppAutoSend(base).allowed,true);
@@ -35,7 +46,7 @@ test("controlled-live readiness never mistakes configured credentials for verifi
 test("chat callback wiring uses canonical phone, persisted consent, Customer360 and voice policy engine",()=>{
  const source=read("lib/ai-first-control-plane.ts"),route=read("app/api/ai-web-chat/route.ts");
  assert.match(source,/SELECT id,primary_phone FROM canonical_customers/);assert.match(source,/recordVoiceConsent/);assert.match(source,/buildCustomer360/);assert.match(source,/requestOutboundVoiceCall/);assert.match(source,/idempotencyKey:`ai-callback:/);
- assert.match(route,/mode==="public"/);assert.match(route,/callbackAutomation:false/);assert.match(route,/isCustomerCallbackRequest/);
+ assert.match(route,/mode===\"public\"/);assert.match(route,/callbackAutomation:false/);assert.match(route,/isCustomerCallbackRequest/);
 });
 
 test("inbound carrier boundary verifies provider signature before STT-AI-TTS pipeline",()=>{
@@ -45,11 +56,11 @@ test("inbound carrier boundary verifies provider signature before STT-AI-TTS pip
 });
 
 test("AI tools expose low-risk auto_execute but preserve existing prepare-confirm path",()=>{
- const route=read("app/api/ai-tools/route.ts");assert.match(route,/action\?:"prepare"\|"confirm"\|"auto_execute"/);assert.match(route,/executeGovernedLowRiskTool/);assert.match(route,/confirmAiToolExecution/);
+ const route=read("app/api/ai-tools/route.ts");assert.match(route,/action\?:\"prepare\"\|\"confirm\"\|\"auto_execute\"/);assert.match(route,/executeGovernedLowRiskTool/);assert.match(route,/confirmAiToolExecution/);
 });
 
 test("Meta AI queues low-risk replies through communication governance and never auto-sends a handoff",()=>{
- const source=read("lib/meta-whatsapp-ai-executor.ts");assert.match(source,/evaluateWhatsAppAutoSend/);assert.match(source,/enqueueCommunication/);assert.match(source,/ai_auto_send_queued/);assert.match(source,/outcome==="handoff"/);assert.match(source,/autoSend:false/);
+ const source=read("lib/meta-whatsapp-ai-executor.ts");assert.match(source,/evaluateWhatsAppAutoSend/);assert.match(source,/enqueueCommunication/);assert.match(source,/ai_auto_send_queued/);assert.match(source,/outcome===\"handoff\"/);assert.match(source,/autoSend:false/);
 });
 
 test("human exception classes route into existing paused AI handoff centre",()=>{
