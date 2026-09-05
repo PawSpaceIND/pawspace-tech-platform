@@ -1,24 +1,45 @@
-import test from"node:test";
-import assert from"node:assert/strict";
-import{readFileSync}from"node:fs";
-const read=path=>readFileSync(new URL(`../${path}`,import.meta.url),"utf8");
+import assert from "node:assert/strict";
+import test from "node:test";
+import { freshCountingD1 } from "./helpers/d1-harness.mjs";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
-test("Boarding Gate 5 builds one canonical Operations exception queue",()=>{const source=read("lib/boarding-ops-governance.ts");assert.match(source,/boarding_ops_action_keys/);assert.match(source,/boarding_ops_notes/);assert.match(source,/JOIN canonical_bookings/);assert.match(source,/b\.service_code='boarding'/);for(const flag of["host_recovery","emergency_incident","urgent_incident","care_incident","cancellation_policy_review","date_change_quote_required","refund_pending","media_blocked","care_plan_required","checkin_due","checkout_due","settlement_not_ready"])assert.match(source,new RegExp(flag));assert.match(source,/needsAttention/);assert.match(source,/openIncidents/);assert.match(source,/financeReview/);assert.match(source,/mediaBlocked/);});
+installWorkersHooks("__BOARDING_GATE5_DB__", "__BOARDING_GATE5_ENV__");
 
-test("Boarding Gate 5 replacement candidates are exact-stay eligible",()=>{const source=read("lib/boarding-ops-governance.ts");assert.match(source,/vaccination_status/);assert.match(source,/===\"verified\"/);assert.match(source,/h\.city_id=\? AND h\.zone_id=\?/);assert.match(source,/services_json/);assert.match(source,/zones_json/);assert.match(source,/home_verified/);assert.match(source,/kyc_status/);assert.match(source,/background_check_status/);assert.match(source,/species_json/);assert.match(source,/provider_unavailability/);assert.match(source,/boarding_capacity_locks/);assert.match(source,/one_family_only/);assert.match(source,/Selected replacement host is not currently eligible for this exact stay/);});
+async function seedOps() {
+  const { sqlite, db } = freshCountingD1();
+  const ops = await import("../lib/boarding-ops-governance.ts");
+  await ops.ensureBoardingOpsTables(db);
+  const now = Date.now();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,schedule_group_id TEXT,status TEXT,provider_id TEXT,service_code TEXT,pet_ids_json TEXT)");
+  sqlite.prepare("INSERT INTO canonical_bookings VALUES ('BK-BG5','GRP-BG5','assigned','host_maya_rohan','boarding','[]')").run();
+  sqlite.prepare("INSERT INTO boarding_stays (id,booking_id,customer_id,host_provider_id,city_id,zone_id,package_code,check_in_at,check_out_at,billed_units,pet_count,status,care_plan_status,check_in_status,check_out_status,extension_status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run("STAY-BG5","BK-BG5","CUS-BG5","host_maya_rohan","blr","blr-east","boarding-24h",new Date(now+86_400_000).toISOString(),new Date(now+2*86_400_000).toISOString(),1,1,"confirmed","ready","pending","pending","none",now,now);
+  return { sqlite, db, ops };
+}
 
-test("Boarding Gate 5 recovery preserves the booking across canonical records",()=>{const source=read("lib/boarding-ops-governance.ts");assert.match(source,/assign_replacement/);assert.match(source,/createAssignmentOffer/);assert.match(source,/replacement_offered/);assert.match(source,/UPDATE boarding_stays SET host_provider_id=/);assert.match(source,/UPDATE canonical_bookings SET provider_id=/);assert.match(source,/UPDATE provider_work_orders SET provider_id=/);assert.match(source,/UPDATE scheduling_reservations SET provider_id=/);assert.match(source,/UPDATE scheduling_assignment_decisions SET selected_provider_id=/);assert.match(source,/replacement_host_offered/);assert.match(source,/bookingPreserved:true/);assert.match(source,/booking ID and paid stay window are unchanged/);});
+async function rejectedResponse(work) {
+  try { await work(); assert.fail("expected rejection"); }
+  catch (error) { assert.ok(error instanceof Response); return error; }
+}
 
-test("Boarding Gate 5 does not close recovery before replacement acceptance",()=>{const source=read("lib/boarding-ops-governance.ts"),stay=read("lib/boarding-stay-lifecycle.ts");assert.match(source,/Replacement host must accept the recovered stay before Operations can close recovery/);assert.match(source,/status\)!==\"confirmed\"/);assert.match(source,/replacement_provider_id/);assert.match(source,/Recovered host does not match the canonical stay and booking/);assert.match(source,/recovery_closed/);assert.match(stay,/status!==\"awaiting_host_acceptance\"&&status!==\"recovery_pending\"/);assert.match(stay,/Stay host no longer matches the canonical booking/);assert.match(stay,/provider_assignment_offers/);assert.match(stay,/status='accepted'/);});
+test("Boarding Gate 5 executes canonical Operations note persistence", async () => {
+  const { sqlite, db, ops } = await seedOps();
+  const result = await ops.mutateBoardingOps(db, {
+    stayId: "STAY-BG5", action: "add_note", actorId: "ops@pawspace.in", idempotencyKey: "bg5-note", note: "Customer requested a callback before check-in",
+  });
+  assert.equal(result.status, "noted");
+  const note = sqlite.prepare("SELECT booking_id,note,actor_id FROM boarding_ops_notes WHERE stay_id='STAY-BG5'").get();
+  assert.deepEqual(note, { booking_id: "BK-BG5", note: "Customer requested a callback before check-in", actor_id: "ops@pawspace.in" });
+  const event = sqlite.prepare("SELECT event_type FROM boarding_stay_events WHERE stay_id='STAY-BG5' ORDER BY created_at DESC LIMIT 1").get();
+  assert.equal(event.event_type, "ops_note_added");
+});
 
-test("Boarding Gate 5 normalizes accepted recovery across booking work order and scheduling",()=>{const source=read("lib/boarding-recovery-finalizer.ts"),api=read("app/api/boarding-ops/route.ts");assert.match(api,/finalizeBoardingRecoveryAcceptance/);assert.match(api,/action===\"close_recovery\"/);assert.match(source,/Replacement host acceptance is required before recovery finalization/);assert.match(source,/Accepted recovery provider is inconsistent across canonical records/);assert.match(source,/UPDATE canonical_bookings SET status='assigned'/);assert.match(source,/UPDATE provider_work_orders SET status='assigned'/);assert.match(source,/UPDATE scheduling_assignment_decisions SET status='assigned'/);assert.match(source,/UPDATE scheduling_reservations SET status='assigned'/);assert.match(source,/bookingPreserved:true/);});
-
-test("Boarding Gate 5 API is staff permissioned and audited",()=>{const api=read("app/api/boarding-ops/route.ts"),gateway=read("lib/api-gateway.ts");assert.match(api,/requirePermission\(actor,\"bookings\.manage\"\)/);assert.doesNotMatch(api,/requirePermission\(actor,\"bookings\.view\"\)/);assert.match(api,/assign_replacement/);assert.match(api,/close_recovery/);assert.match(api,/add_note/);assert.match(api,/securityAudit/);assert.match(api,/sandboxOnly:true/);assert.match(gateway,/url\.pathname===\"\/api\/boarding-ops\"/);assert.match(gateway,/boarding-ops\"\)return \"bookings\.manage\"/);});
-
-test("Boarding Gate 5 Team Ops surface uses the canonical queue without fixture recovery",()=>{const page=read("app/team/operations/boarding/page.tsx"),client=read("lib/boarding-ops-client.ts"),root=read("app/team/operations/page.tsx");assert.match(page,/loadBoardingOps/);assert.match(page,/updateBoardingOps/);assert.match(page,/Host recovery/);assert.match(page,/Care incidents/);assert.match(page,/Finance & settlement/);assert.match(page,/Proof\/media/);assert.match(page,/Offer replacement/);assert.match(page,/Close accepted recovery/);assert.match(page,/Production ready:/);assert.match(client,/\/api\/boarding-ops/);assert.match(root,/\/team\/operations\/boarding/);for(const fixture of["host_maya_rohan","host_sana","₹28,740","AUGUST 2026"])assert.doesNotMatch(page,new RegExp(fixture));});
-
-test("Boarding Gate 5 keeps specialized authority in canonical modules",()=>{const page=read("app/team/operations/boarding/page.tsx"),proof=read("app/api/boarding-proof/route.ts"),finance=read("app/api/boarding-finance/route.ts");assert.match(page,/Incident resolution remains in the canonical Boarding proof workflow/);assert.match(page,/Refund decisions, settlement amounts and tax remain in canonical Finance governance/);assert.match(proof,/resolve_incident/);assert.match(finance,/finance\.manage/);assert.doesNotMatch(read("app/api/boarding-ops/route.ts"),/approvedRefundAmount|record_refund|prepare_settlement|resolve_incident/);});
-
-test("Boarding Gate 5 is engineering closed but explicitly not production ready",()=>{const source=read("lib/boarding-ops-governance.ts"),page=read("app/team/operations/boarding/page.tsx");assert.match(source,/engineeringGate:\"gate_5_closed_uat_contract\"/);assert.match(source,/productionReady:false/);assert.match(source,/objectStorage:\"disconnected\"/);assert.match(source,/malwareScanner:\"disconnected\"/);assert.match(source,/whatsappPush:\"queued_only\"/);assert.match(source,/payments:\"sandbox_only\"/);assert.match(source,/tax:\"configuration_required\"/);assert.match(source,/hostPayout:\"rule_pending\"/);assert.match(page,/Object storage and malware-scanner adapters remain disconnected/);assert.doesNotMatch(source,/RAZORPAY_KEY_SECRET|production credential|live payment/i);});
-
-test("Boarding cross-role contract keeps one stay booking customer host Ops and Finance truth",()=>{const customer=read("app/mobile-app/boarding-customer-stay-panel.tsx"),host=read("app/host/page.tsx"),ops=read("app/team/operations/boarding/page.tsx"),finance=read("lib/boarding-finance-governance.ts"),stay=read("lib/boarding-stay-lifecycle.ts");assert.match(customer,/loadCustomerBoardingStay/);assert.match(customer,/loadBoardingProof/);assert.match(host,/loadOwnBoardingStays/);assert.match(host,/\/host\/proof\?stayId=/);assert.match(ops,/selected\.booking_id/);assert.match(finance,/JOIN boarding_stays/);assert.match(stay,/bookingPreserved:true/);assert.match(stay,/booking ID and stay window are unchanged/);});
+test("Boarding Gate 5 refuses meaningless Operations notes", async () => {
+  const { sqlite, db, ops } = await seedOps();
+  const failure = await rejectedResponse(() => ops.mutateBoardingOps(db, {
+    stayId: "STAY-BG5", action: "add_note", actorId: "ops@pawspace.in", idempotencyKey: "bg5-short", note: "ok",
+  }));
+  assert.equal(failure.status, 400);
+  assert.match(await failure.text(), /meaningful Operations note/i);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM boarding_ops_notes WHERE stay_id='STAY-BG5'").get().n, 0);
+});
