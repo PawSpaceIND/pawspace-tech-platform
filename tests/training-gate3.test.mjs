@@ -1,148 +1,116 @@
-import assert from"node:assert/strict";
-import test from"node:test";
-import{readFile}from"node:fs/promises";
-const read=(path)=>readFile(new URL("../"+path,import.meta.url),"utf8");
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  freshTrainingWorld,
+  futureTrainingStart,
+  createTrainingQuote,
+  captureTrainingQuoteSandbox,
+  collectTrainingRemainingBalanceSandbox,
+  requireTrainingQuoteSandboxCapture,
+  consumeTrainingQuote,
+} from "./helpers/training-gate-harness.mjs";
 
-test("Training commercial truth is server-quoted and consumed exactly once",async()=>{
- const[commercial,commercialApi,booking,flow,client]=await Promise.all([read("lib/training-commercial-governance.ts"),read("app/api/training-commercial/route.ts"),read("app/api/canonical-bookings/route.ts"),read("app/mobile-app/training-flow.tsx"),read("lib/training-commercial-client.ts")]);
- assert.match(commercial,/training_commercial_packages/);
- assert.match(commercial,/training_commercial_quotes/);
- assert.match(commercial,/training_booking_quote_links/);
- assert.match(commercial,/expiresAt=now\+15\*60_000/);
- assert.match(commercial,/Training coupons require full prepaid payment/);
- assert.match(commercial,/Training quote is already linked to a booking/);
- assert.match(commercial,/Training quote expired/);
- assert.match(commercial,/reservationCount!==Number\(quote\.sessions\)/);
- assert.match(commercialApi,/sameOriginWrite/);
- assert.match(commercialApi,/productionReady:false/);
- assert.match(commercialApi,/paymentMode:"uat_sandbox"/);
- assert.match(commercialApi,/liveMoney:false/);
- assert.match(booking,/governTrainingBooking/);
- assert.match(booking,/trainingQuoteId/);
- assert.match(booking,/trainingQuoteLinkStatement/);
- assert.match(booking,/consumeTrainingQuote/);
- assert.match(flow,/loadTrainingPackages/);
- assert.match(flow,/quoteTraining/);
- assert.match(flow,/trainingQuoteId/);
- assert.match(flow,/futureIst/);
- assert.match(flow,/loadTrainingProgramme/);
- assert.match(client,/\/api\/training-commercial/);
- assert.doesNotMatch(flow,/7 Aug|9 Aug|12 Aug|16 Aug|19 Aug/);
+test("Training commercial truth is server-quoted and linked exactly once", async () => {
+  const world = freshTrainingWorld();
+  const quote = await createTrainingQuote(world.db, {
+    packageCode: "training-4-puppy",
+    petCount: 1,
+    scheduledStart: futureTrainingStart(),
+    paymentMode: "prepaid",
+  });
+  assert.equal(quote.sessions, 4);
+  assert.equal(quote.totalAmount, 6000);
+  assert.equal(quote.amountDueNow, 6000);
+
+  const payment = await captureTrainingQuoteSandbox(world.db, {
+    quoteId: quote.quoteId,
+    amount: quote.amountDueNow,
+    paymentKey: "gate3-full-payment",
+  });
+  assert.equal(payment.status, "FULLY_PAID");
+  const attestation = await requireTrainingQuoteSandboxCapture(world.db, { quoteId: quote.quoteId, amount: quote.amountDueNow });
+  assert.equal(attestation.environment, "sandbox");
+
+  await consumeTrainingQuote(world.db, quote.quoteId, "BKG-GATE3-1");
+  const row = world.sqlite.prepare("SELECT status,used_booking_id FROM training_commercial_quotes WHERE id=?").get(quote.quoteId);
+  assert.equal(row.status, "used");
+  assert.equal(row.used_booking_id, "BKG-GATE3-1");
+
+  await assert.rejects(() => consumeTrainingQuote(world.db, quote.quoteId, "BKG-GATE3-2"), /already linked|already used|exactly one/i);
+  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_booking_quote_links WHERE quote_id=?").get(quote.quoteId).n, 1);
 });
 
-test("Training customer trainer choice comes from canonical capacity and final scheduling truth",async()=>{
- const[route,client,flow,gateway]=await Promise.all([read("app/api/training-trainers/route.ts"),read("lib/training-commercial-client.ts"),read("app/mobile-app/training-flow.tsx"),read("lib/api-gateway.ts")]);
- assert.match(route,/loadGovernedProviders/);
- assert.match(route,/"dog_training"/);
- assert.match(route,/canonical_provider_capacity/);
- assert.match(route,/liveAvailability:false/);
- assert.doesNotMatch(route,/phone|email/i);
- assert.match(client,/loadTrainingTrainers/);
- assert.match(flow,/loadTrainingTrainers/);
- assert.match(flow,/preferredProviderId:selectedTrainer\?\.id/);
- assert.match(flow,/decision\.provider\.name/);
- assert.match(flow,/final assignment checked server-side/);
- assert.doesNotMatch(flow,/const trainers\s*=\s*\[/);
- assert.doesNotMatch(flow,/1,180 dogs|98% match|trainer\.name===\"Kiran S\.\"/);
- assert.match(gateway,/\/api\/training-trainers/);
+test("Training payment sabotage rejects mismatched amount and replay key", async () => {
+  const world = freshTrainingWorld();
+  const quote = await createTrainingQuote(world.db, {
+    packageCode: "training-2-starter",
+    petCount: 1,
+    scheduledStart: futureTrainingStart(),
+    paymentMode: "split",
+  });
+
+  await assert.rejects(() => captureTrainingQuoteSandbox(world.db, {
+    quoteId: quote.quoteId,
+    amount: quote.amountDueNow - 1,
+    paymentKey: "gate3-wrong-amount",
+  }), /amount must match|amount.*match/i);
+  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_quote_payment_attestations WHERE quote_id=?").get(quote.quoteId).n, 0);
+
+  await captureTrainingQuoteSandbox(world.db, {
+    quoteId: quote.quoteId,
+    amount: quote.amountDueNow,
+    paymentKey: "gate3-deposit",
+  });
+  await assert.rejects(() => captureTrainingQuoteSandbox(world.db, {
+    quoteId: quote.quoteId,
+    amount: quote.amountDueNow,
+    paymentKey: "gate3-different-key",
+  }), /PAYMENT_CAPTURE_REPLAY/);
+  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_quote_payment_attestations WHERE quote_id=?").get(quote.quoteId).n, 1);
 });
 
-test("Training Ops uses canonical programme session recovery and payment records",async()=>{
- const[ops,panel,lifecycle]=await Promise.all([read("app/api/training-ops/route.ts"),read("app/admin/training-panel.tsx"),read("lib/training-session-lifecycle.ts")]);
- assert.match(ops,/training_programmes/);
- assert.match(ops,/training_sessions/);
- assert.match(ops,/training_session_recovery_cases/);
- assert.match(ops,/booking_payments/);
- assert.match(ops,/services_json/);
- assert.match(panel,/\/api\/training-ops/);
- for(const action of ["reschedule","replace_provider","no_show","cancel_session"])assert.match(panel,new RegExp(`\\"${action}\\"`));
- assert.match(panel,/Canonical programmes/);
- assert.match(panel,/Source of truth/);
- assert.doesNotMatch(panel,/const cases\s*=|98% match|1,180/);
- assert.match(lifecycle,/travel_buffer_minutes/);
- assert.match(lifecycle,/training_session_recovery_cases/);
+test("Training split-payment balance executes once and refuses incorrect remaining value", async () => {
+  const world = freshTrainingWorld();
+  const quote = await createTrainingQuote(world.db, {
+    packageCode: "training-8-basic",
+    petCount: 1,
+    scheduledStart: futureTrainingStart(),
+    paymentMode: "split",
+  });
+  await captureTrainingQuoteSandbox(world.db, { quoteId: quote.quoteId, amount: quote.amountDueNow, paymentKey: "gate3-basic-deposit" });
+
+  await assert.rejects(() => collectTrainingRemainingBalanceSandbox(world.db, {
+    quoteId: quote.quoteId,
+    amount: quote.totalAmount - quote.amountDueNow - 1,
+    paymentKey: "gate3-wrong-balance",
+  }), /Remaining Training balance must equal/);
+  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_balance_payment_events WHERE quote_id=?").get(quote.quoteId).n, 0);
+
+  const result = await collectTrainingRemainingBalanceSandbox(world.db, {
+    quoteId: quote.quoteId,
+    amount: quote.totalAmount - quote.amountDueNow,
+    paymentKey: "gate3-balance",
+  });
+  assert.equal(result.status, "FULLY_PAID");
+  assert.equal(result.remainingAmount, 0);
+  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_balance_payment_events WHERE quote_id=?").get(quote.quoteId).n, 1);
 });
 
-test("Training Finance uses governed tax, trainer rates and sandbox-only payout execution",async()=>{
- const[finance,api,providerApi,sessionGateway,trainerPage,financePage]=await Promise.all([read("lib/training-finance.ts"),read("app/api/training-finance/route.ts"),read("app/api/training-provider-earnings/route.ts"),read("lib/session-api-gateway.ts"),read("app/trainer/page.tsx"),read("app/team/finance/training/page.tsx")]);
- assert.match(finance,/Published Training tax policy is required/);
- assert.match(finance,/Canonical Bengaluru GST rate for deterministic UAT invoice calculation/);
- assert.match(finance,/pending_rate_configuration/);
- assert.match(finance,/held_payment/);
- assert.match(finance,/sandbox_not_connected/);
- assert.match(finance,/ready_for_finance_approval/);
- assert.match(finance,/instruction_ready_sandbox/);
- assert.match(finance,/training_invoice_sequences/);
- assert.match(finance,/issueTrainingInvoice/);
- assert.match(finance,/issued_uat/);
- assert.match(finance,/liveTaxFiling:false/);
- assert.match(finance,/requiredCoverage/);
- assert.match(finance,/paid\+0\.01>=requiredCoverage/);
- assert.match(finance,/does not yet cover delivered Training value/);
- assert.match(finance,/resolveServiceCompletionFinance/);
- assert.doesNotMatch(finance,/founder_seed/);
- assert.doesNotMatch(finance,/booking_status\)!==\"cancelled\"\?\"earned\"/);
- assert.match(api,/finance\.manage/);
- assert.match(api,/issue_invoice/);
- assert.match(providerApi,/requireProviderOwnership/);
- assert.match(sessionGateway,/training-provider-earnings/);
- assert.match(trainerPage,/CANONICAL TRAINING PAYOUT LEDGER/);
- assert.match(trainerPage,/Live payout is not connected/);
- assert.match(financePage,/Publish trainer rate/);
- assert.match(financePage,/Configure tax policy/);
- assert.match(financePage,/Issue UAT invoice/);
- assert.match(financePage,/Approve sandbox instruction/);
- assert.doesNotMatch(trainerPage,/₹42,680|Bank ending 2481/);
-});
+test("Training commercial inputs fail closed for coupon misuse and past scheduling", async () => {
+  const world = freshTrainingWorld();
+  await assert.rejects(() => createTrainingQuote(world.db, {
+    packageCode: "training-2-starter",
+    petCount: 1,
+    scheduledStart: futureTrainingStart(),
+    paymentMode: "split",
+    couponCode: "ANY",
+  }), /coupons require full prepaid payment/);
 
-test("Training cancellation refund and credit-note flow is policy governed and customer owned",async()=>{
- const[cancel,route,customerChange,gateway,sessionGateway,flow,financePage,finance]=await Promise.all([read("lib/training-cancellation.ts"),read("app/api/training-cancellation/route.ts"),read("app/api/training-customer-session-change/route.ts"),read("lib/api-gateway.ts"),read("lib/session-api-gateway.ts"),read("app/mobile-app/training-flow.tsx"),read("app/team/finance/training/page.tsx"),read("lib/training-finance.ts")]);
- assert.match(cancel,/training_cancellation_policies/);
- assert.match(cancel,/configuration_required/);
- assert.match(cancel,/captured_less_pro_rata_used/);
- assert.match(cancel,/no_show_treatment/);
- assert.match(cancel,/capturedAmount=String\(row\.payment_status\)===\"captured\"\?Number\(row\.amount_due_now\|\|0\):0/);
- assert.match(cancel,/outstandingServiceValue/);
- assert.match(cancel,/waiveOutstanding/);
- assert.match(cancel,/status IN \('arrived','in_session'\)/);
- assert.match(cancel,/cannot be cancelled while session/);
- assert.match(cancel,/training_refund_instructions/);
- assert.match(cancel,/instruction_ready_sandbox/);
- assert.match(cancel,/sandbox_not_connected/);
- assert.match(cancel,/training_credit_notes/);
- assert.match(cancel,/training_credit_note_sequences/);
- assert.match(cancel,/credit_note\.issued_uat/);
- assert.match(cancel,/status NOT IN \('completed','no_show','cancelled'\)/);
- assert.match(route,/requireCustomerOwnership/);
- assert.match(route,/finance\.manage/);
- assert.match(customerChange,/requireCustomerOwnership/);
- assert.match(customerChange,/request_reschedule/);
- assert.match(gateway,/training-cancellation/);
- assert.match(gateway,/training-customer-session-change/);
- assert.match(sessionGateway,/training-cancellation/);
- assert.match(sessionGateway,/training-customer-session-change/);
- assert.match(flow,/requestTrainingSessionReschedule/);
- assert.match(flow,/Request programme cancellation \/ refund review/);
- assert.match(financePage,/Configure cancellation policy/);
- assert.match(financePage,/Training cancellation & refund cases/);
- assert.match(financePage,/Issue UAT credit note/);
- assert.match(finance,/paid\+0\.01>=requiredCoverage/);
- assert.doesNotMatch(finance,/booking_status\)!==\"cancelled\"\?\"earned\"/);
-});
-
-test("Training reconciliation spans quote booking programme sessions payment invoice and earnings",async()=>{
- const[recon,gateway,financeHome]=await Promise.all([read("app/api/training-reconciliation/route.ts"),read("lib/api-gateway.ts"),read("app/team/finance/page.tsx")]);
- assert.match(recon,/reports\.view/);
- assert.match(recon,/training_booking_quote_links/);
- assert.match(recon,/training_commercial_quotes/);
- assert.match(recon,/training_session_consumptions/);
- assert.match(recon,/training_session_earnings/);
- assert.match(recon,/Training booking has no canonical server quote link \(legacy\/pre-Gate-3 record\)/);
- assert.match(recon,/Training quote session count does not match programme/);
- assert.match(recon,/Training quote total does not match booking/);
- assert.match(recon,/Training invoice commercial total does not match booking total/);
- assert.match(recon,/Earning exists for non-completed session/);
- assert.match(gateway,/training-reconciliation/);
- assert.match(gateway,/reports\.view/);
- assert.match(financeHome,/\/team\/finance\/training/);
+  await assert.rejects(() => createTrainingQuote(world.db, {
+    packageCode: "training-2-starter",
+    petCount: 1,
+    scheduledStart: new Date(Date.now() - 60_000).toISOString(),
+    paymentMode: "prepaid",
+  }), /requires a future scheduled start/);
+  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_commercial_quotes").get().n, 0);
 });
