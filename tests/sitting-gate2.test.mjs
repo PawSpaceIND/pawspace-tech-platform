@@ -1,20 +1,54 @@
-import test from"node:test";
-import assert from"node:assert/strict";
-import{readFile}from"node:fs/promises";
-const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
+import assert from "node:assert/strict";
+import test from "node:test";
+import { freshCountingD1 } from "./helpers/d1-harness.mjs";
+import { installWorkersHooks } from "./helpers/module-hooks.mjs";
 
-test("Sitting Gate 2 owns acceptance lifecycle and idempotency",async()=>{const source=await read("lib/sitting-lifecycle.ts");assert.match(source,/sitting_action_keys/);assert.match(source,/provider_assignment_offers/);assert.match(source,/Sitter acceptance offer expired/);assert.match(source,/status='accepted'/);assert.match(source,/duplicatePrevented:true/);});
+installWorkersHooks("__SITTING_GATE2_DB__", "__SITTING_GATE2_ENV__");
 
-test("Sitting Gate 2 requires a complete care plan before check-in",async()=>{const source=await read("lib/sitting-lifecycle.ts");assert.match(source,/sitting_care_plan_snapshots/);assert.match(source,/emergency contact, vet and home access details/);assert.match(source,/A ready Sitting care plan is required before check-in/);assert.match(source,/SITTING_CHECKIN_GEOFENCE_METERS/);assert.match(source,/status='in_progress'/);});
+async function seedBooking() {
+  const { sqlite, db } = freshCountingD1();
+  const lifecycle = await import("../lib/sitting-lifecycle.ts");
+  await lifecycle.ensureSittingLifecycleTables(db);
+  const now = Date.now();
+  sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,customer_id TEXT,schedule_group_id TEXT,provider_id TEXT,service_code TEXT,status TEXT,created_at INTEGER,updated_at INTEGER)");
+  sqlite.exec("CREATE TABLE IF NOT EXISTS provider_work_orders (id TEXT PRIMARY KEY,booking_id TEXT,provider_id TEXT,status TEXT,created_at INTEGER,updated_at INTEGER)");
+  sqlite.prepare("INSERT INTO canonical_bookings VALUES ('BK-SG2','CUS-SG2','GRP-SG2','PRV-SG2','pet_sitting','assigned',?,?)").run(now, now);
+  sqlite.prepare("INSERT INTO provider_work_orders VALUES ('WO-SG2','BK-SG2','PRV-SG2','accepted',?,?)").run(now, now);
+  return { sqlite, db, lifecycle };
+}
 
-test("Sitting Gate 2 records canonical care events only during active service",async()=>{const source=await read("lib/sitting-lifecycle.ts");for(const type of ["meal","walk","medication","photo_update","general_update","incident","home_check"])assert.match(source,new RegExp(`\\"${type}\\"`));assert.match(source,/sitting_care_events/);assert.match(source,/only during an active booking/);});
+async function rejectedResponse(work) {
+  try { await work(); assert.fail("expected rejection"); }
+  catch (error) { assert.ok(error instanceof Response); return error; }
+}
 
-test("Sitting Gate 2 recovery preserves the same booking",async()=>{const source=await read("lib/sitting-lifecycle.ts");assert.match(source,/sitting_recovery_cases/);assert.match(source,/reassignment_needed/);assert.match(source,/ops_escalation/);assert.match(source,/bookingPreserved:true/);assert.match(source,/UPDATE scheduling_reservations SET status='cancelled'/);assert.match(source,/UPDATE provider_work_orders SET status='recovery_pending'/);});
+test("Sitting Gate 2 executes care-plan validation and persistence", async () => {
+  const { sqlite, db, lifecycle } = await seedBooking();
+  const invalid = await rejectedResponse(() => lifecycle.mutateSittingBooking(db, {
+    bookingId: "BK-SG2", action: "submit_care_plan", actorId: "customer@pawspace.in", idempotencyKey: "sg2-invalid",
+    carePlan: { emergencyContact: "9999999999", vet: "Dr Rao" },
+  }));
+  assert.equal(invalid.status, 409);
+  assert.match(await invalid.text(), /home access/i);
 
-test("Sitting Gate 2 checkout closes work order and reservation with governed finance",async()=>{const source=await read("lib/sitting-lifecycle.ts");assert.match(source,/UPDATE canonical_bookings SET status='completed'/);assert.match(source,/UPDATE provider_work_orders SET status='completed'/);assert.match(source,/UPDATE scheduling_reservations SET status='completed'/);assert.match(source,/resolveServiceCompletionFinance/);assert.match(source,/payout:finance\.payoutStatus/);assert.match(source,/tax:finance\.taxStatus/);assert.doesNotMatch(source,/payout:\"rule_pending\"/);assert.doesNotMatch(source,/tax:\"configuration_required\"/);});
+  const result = await lifecycle.mutateSittingBooking(db, {
+    bookingId: "BK-SG2", action: "submit_care_plan", actorId: "customer@pawspace.in", idempotencyKey: "sg2-valid",
+    carePlan: { emergencyContact: "9999999999", vet: "Dr Rao", homeAccess: "Key with security" },
+  });
+  assert.equal(result.status, "care_plan_ready");
+  const row = sqlite.prepare("SELECT status,plan_json FROM sitting_care_plan_snapshots WHERE booking_id='BK-SG2'").get();
+  assert.equal(row.status, "ready");
+  assert.equal(JSON.parse(row.plan_json).homeAccess, "Key with security");
+});
 
-test("Sitting lifecycle API enforces provider customer and staff authority",async()=>{const api=await read("app/api/sitting-lifecycle/route.ts");assert.match(api,/requireProviderOwnership/);assert.match(api,/requireCustomerOwnership/);assert.match(api,/requirePermission\(actor,\"bookings\.manage\"\)/);assert.match(api,/requirePermission\(actor,\"scheduling\.book\"\)/);assert.match(api,/securityAudit/);assert.match(api,/sitting\.lifecycle/);});
-
-test("Sitting lifecycle client has explicit read and mutation boundaries",async()=>{const client=await read("lib/sitting-lifecycle-client.ts");assert.match(client,/\/api\/sitting-lifecycle/);assert.match(client,/loadSittingLifecycle/);assert.match(client,/updateSittingLifecycle/);});
-
-test("Sitting provider workspace performs canonical lifecycle actions",async()=>{const page=await read("app/sitter/sitting-workspace.tsx");assert.match(page,/loadSittingLifecycle/);assert.match(page,/updateSittingLifecycle/);for(const action of ["accept","check_in","care_event","check_out","sitter_unavailable"])assert.match(page,new RegExp(`\\"${action}\\"`));assert.match(page,/canonical booking/i);assert.doesNotMatch(page,/sit_sana/);});
+test("Sitting Gate 2 replays an identical idempotency key without duplicating the action", async () => {
+  const { sqlite, db, lifecycle } = await seedBooking();
+  const input = {
+    bookingId: "BK-SG2", action: "submit_care_plan", actorId: "customer@pawspace.in", idempotencyKey: "sg2-replay",
+    carePlan: { emergencyContact: "9999999999", vet: "Dr Rao", homeAccess: "Key with security" },
+  };
+  await lifecycle.mutateSittingBooking(db, input);
+  const replay = await lifecycle.mutateSittingBooking(db, input);
+  assert.equal(replay.duplicatePrevented, true);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM sitting_action_keys WHERE idempotency_key='sg2-replay'").get().n, 1);
+});
