@@ -1,5 +1,6 @@
 name: Deploy staging CX hotfix
 
+# Shared staging recovery: this workflow restores the WATI/CX owner build after another UAT lane overwrites pawspace-staging.
 on:
   push:
     branches:
