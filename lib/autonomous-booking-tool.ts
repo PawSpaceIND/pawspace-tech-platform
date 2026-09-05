@@ -1,4 +1,5 @@
-import { createAutonomousBooking, createExplicitAutonomousException, detectAutonomousHumanException, type AutonomousBookingInput } from "./autonomous-booking-engine";
+import { createExplicitAutonomousException, detectAutonomousHumanException, type AutonomousBookingInput } from "./autonomous-booking-engine";
+import { createStrictAutonomousBooking } from "./autonomous-booking-create";
 import { ensureAutonomousBookingCaptureTrigger } from "./autonomous-booking-capture-trigger";
 import { requireCustomerOwnership, type AuthenticatedActor } from "./server-auth";
 
@@ -50,10 +51,8 @@ export async function executeGovernedBookingCreate(db:D1Database,runtime:Runtime
     return{status:"human_exception",executed:false,tool:"booking.create",autonomousExecution:false,humanApprovalRequired:true,reason:edge.reasonCode,exception};
   }
   const locked=validateBookingCreateArguments(input.customerId,input.arguments,input.idempotencyKey,input.actor.email,input.threadId);
-  // Install the D1 capture trigger before the customer can receive the payment URL. This removes the
-  // timing window in which an ultra-fast payment could be captured before confirmation automation exists.
   await ensureAutonomousBookingCaptureTrigger(db);
-  const result=await createAutonomousBooking(db,runtime,locked);
+  const result=await createStrictAutonomousBooking(db,runtime,locked);
   return{status:"completed",executed:true,tool:"booking.create",autonomousExecution:true,humanApprovalRequired:false,result};
 }
 
