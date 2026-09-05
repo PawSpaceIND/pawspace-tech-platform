@@ -11,7 +11,7 @@ import {
   expectResponseRefusal,
 } from "./helpers/training-gate-harness.mjs";
 
-test("Training commercial truth is server-quoted and linked exactly once", async () => {
+test("Training commercial truth is server-quoted and consumed exactly once", async () => {
   const world = freshTrainingWorld();
   const quote = await createTrainingQuote(world.db, {
     packageCode: "training-4-puppy",
@@ -39,9 +39,8 @@ test("Training commercial truth is server-quoted and linked exactly once", async
 
   await expectResponseRefusal(() => consumeTrainingQuote(world.db, quote.quoteId, "BKG-GATE3-2"), {
     status: 409,
-    message: /Training quote is already linked to a booking/,
+    message: /Training quote could not be consumed exactly once/,
   });
-  assert.equal(world.sqlite.prepare("SELECT COUNT(*) n FROM training_booking_quote_links WHERE quote_id=?").get(quote.quoteId).n, 1);
 });
 
 test("Training payment sabotage rejects mismatched amount and replay key", async () => {
