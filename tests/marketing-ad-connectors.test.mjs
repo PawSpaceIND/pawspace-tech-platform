@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
-import { makeD1 } from "./helpers/ai-harness.mjs";
+import { makeD1, installAiHooks } from "./helpers/ai-harness.mjs";
 
+installAiHooks();
 const mod = await import("../lib/marketing-ad-connectors.ts");
 
 function freshDb() {
