@@ -1,36 +1,43 @@
 import{authError,database}from"../../../lib/server-auth";
 import{recordVoiceProviderEvent}from"../../../lib/voice-outbound-governance";
+import{selectTelephonyProvider}from"../../../lib/voice-telephony-provider";
+import{startInboundAiVoiceSession,runInboundAiVoiceTurn,endInboundAiVoiceSession}from"../../../lib/inbound-ai-telephony";
 import{readBoundedRequestText,VoiceFetchRefused}from"../../../lib/voice-safe-fetch";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 const MAX_CALLBACK_BYTES=65_536;
+const text=(value:unknown)=>String(value??"").trim();
+function fields(raw:string){const value=raw.trim();if(value.startsWith("{")){try{return JSON.parse(value)as Record<string,unknown>}catch{return{}}}return Object.fromEntries(new URLSearchParams(value));}
 
 /**
- * Telephony provider callbacks (call progress, DTMF, completion, recording availability).
- *
- * Unauthenticated by session on purpose - a carrier has no cookie - and therefore verified by shared
- * secret instead: an HMAC-SHA256 signature over `${timestamp}.${body}` with a freshness window, or HTTP
- * Basic whose password matches EXOTEL_WEBHOOK_SECRET (which is what Exotel's callback configuration can
- * actually produce). Neither present, or either wrong, and the payload is rejected 401 with no state
- * change of any kind. There is no unverified path in.
- *
- * Redelivery is normal, not exceptional: providers retry on any non-2xx. A duplicate is answered 200 so
- * the provider stops retrying, and it changes nothing - deduplication is on (provider, provider_event_id)
- * with a unique index, so the state machine cannot be advanced twice by the same event.
+ * Single carrier boundary for outbound status callbacks and inbound AI voice sessions.
+ * Every request is bounded before buffering. Existing outbound callbacks continue through
+ * recordVoiceProviderEvent. Inbound start/turn/end actions are accepted only after the exact same
+ * provider shared-secret verification used by outbound callbacks; there is no cookie/session path.
  */
 export async function POST(request:Request){
-  try{
-    const{env}=await import("cloudflare:workers");
-    const runtime=env as unknown as Record<string,unknown>;
-    // Bounded while streaming, before the body is buffered and before verification. This endpoint is
-    // gateway-allowlisted (a carrier has no session), so an oversized body is reachable with no
-    // credential at all - the limit has to bite before the allocation, not after it.
-    let raw:string;
-    try{raw=await readBoundedRequestText(request,MAX_CALLBACK_BYTES);}
-    catch(error){if(error instanceof VoiceFetchRefused)return json({error:"Provider callback payload is too large"},413);throw error;}
-    const db=await database();
-    const result=await recordVoiceProviderEvent(db,runtime,{rawBody:raw,headers:request.headers});
-    if(!result.accepted)return json({error:result.reason},result.status);
-    return json({ok:true,...result},result.status);
-  }catch(error){return authError(error,"Unable to process voice provider callback");}
+ try{
+  const{env}=await import("cloudflare:workers");const runtime=env as unknown as Record<string,unknown>;
+  let raw:string;try{raw=await readBoundedRequestText(request,MAX_CALLBACK_BYTES);}catch(error){if(error instanceof VoiceFetchRefused)return json({error:"Provider callback payload is too large"},413);throw error;}
+  const payload=fields(raw),action=text(payload.pawspace_action||payload.PawSpaceAction).toLowerCase();
+  const db=await database();
+  if(action.startsWith("inbound_ai_")){
+   const provider=selectTelephonyProvider(runtime),verified=await provider.verifyWebhook({rawBody:raw,headers:request.headers});
+   if(!verified.verified)return json({error:verified.reason||"Inbound voice callback signature refused"},401);
+   if(action==="inbound_ai_start"){
+    const providerCallId=text(payload.providerCallId||payload.CallSid||payload.callsid||payload.sid),caller=text(payload.caller||payload.From||payload.from);
+    if(!providerCallId||!caller)return json({error:"providerCallId and caller are required"},400);
+    return json({ok:true,data:await startInboundAiVoiceSession(db,{providerCallId,caller,language:text(payload.language)||null})},201);
+   }
+   if(action==="inbound_ai_turn"){
+    const sessionId=text(payload.sessionId),audioRef=text(payload.audioRef);if(!sessionId||!audioRef)return json({error:"sessionId and audioRef are required"},400);
+    const data=await runInboundAiVoiceTurn(db,runtime,{sessionId,audioRef,bargeIn:String(payload.bargeIn||"").toLowerCase()==="true"});return json({ok:true,data},data.status==="human_handoff"?202:200);
+   }
+   if(action==="inbound_ai_end"){
+    const sessionId=text(payload.sessionId);if(!sessionId)return json({error:"sessionId is required"},400);return json({ok:true,data:await endInboundAiVoiceSession(db,{sessionId,outcome:text(payload.outcome)||undefined})});
+   }
+   return json({error:"Unsupported inbound AI voice action"},400);
+  }
+  const result=await recordVoiceProviderEvent(db,runtime,{rawBody:raw,headers:request.headers});if(!result.accepted)return json({error:result.reason},result.status);return json({ok:true,...result},result.status);
+ }catch(error){return authError(error,"Unable to process voice provider callback");}
 }
