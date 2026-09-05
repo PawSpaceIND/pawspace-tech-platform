@@ -1,0 +1,116 @@
+name: P0 Meta Subscription Closure
+
+on:
+  push:
+    branches:
+      - remediation/p0-pilot-gates-b379631
+    paths:
+      - .github/workflows/p0-meta-subscription-closure.yml
+
+permissions:
+  contents: read
+
+jobs:
+  close-meta-subscription:
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 20
+    env:
+      STAGING_URL: https://pawspace-staging.karthik-fce.workers.dev
+      CALLBACK_URL: https://pawspace-staging.karthik-fce.workers.dev/api/whatsapp/meta-webhook
+      P0_PROVIDER_EVIDENCE: p0-provider-evidence.json
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Rotate staging-only Meta verify token
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERIFY_TOKEN="$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")"
+          echo "::add-mask::$VERIFY_TOKEN"
+          echo "UAT_VERIFY_TOKEN=$VERIFY_TOKEN" >> "$GITHUB_ENV"
+          printf '%s' "$VERIFY_TOKEN" | npx wrangler secret put META_WHATSAPP_VERIFY_TOKEN --name pawspace-staging >/dev/null
+          echo 'Fresh staging-only Meta verify token installed; value withheld.'
+
+      - name: Baseline subscribe app to UAT WABA, then apply JSON callback override
+        env:
+          META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
+          UAT_WABA_ID: ${{ vars.META_WHATSAPP_WABA_ID_UAT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const token=String(process.env.META_WHATSAPP_UAT_ACCESS_TOKEN||'').trim();
+          const waba=String(process.env.UAT_WABA_ID||'').trim();
+          const callback=String(process.env.CALLBACK_URL||'').trim();
+          const verify=String(process.env.UAT_VERIFY_TOKEN||'').trim();
+          if(!token||!waba||!callback||!verify) throw new Error('Required UAT subscription inputs unavailable');
+          const endpoint=`https://graph.facebook.com/v23.0/${encodeURIComponent(waba)}/subscribed_apps`;
+          const headers={authorization:`Bearer ${token}`};
+
+          const baseline=await fetch(endpoint,{method:'POST',headers,signal:AbortSignal.timeout(30000)});
+          let baselineBody={}; try{baselineBody=await baseline.json()}catch{}
+          if(!baseline.ok){const e=baselineBody?.error||{};throw new Error(`Meta baseline WABA subscribe HTTP ${baseline.status} code=${Number(e.code||0)} subcode=${Number(e.error_subcode||0)}`);}
+          if(baselineBody?.success!==true && !Array.isArray(baselineBody?.data)) throw new Error('Meta did not confirm baseline WABA subscription');
+          console.log('meta_baseline_waba_subscription=confirmed');
+
+          const override=await fetch(endpoint,{method:'POST',headers:{...headers,'content-type':'application/json'},body:JSON.stringify({override_callback_uri:callback,verify_token:verify}),signal:AbortSignal.timeout(30000)});
+          let overrideBody={}; try{overrideBody=await override.json()}catch{}
+          if(!override.ok){const e=overrideBody?.error||{};throw new Error(`Meta callback override HTTP ${override.status} code=${Number(e.code||0)} subcode=${Number(e.error_subcode||0)}`);}
+          if(overrideBody?.success!==true && !Array.isArray(overrideBody?.data)) throw new Error('Meta did not confirm callback override');
+          console.log('meta_callback_override=confirmed');
+
+          const check=await fetch(endpoint,{headers,signal:AbortSignal.timeout(30000)});
+          const checkBody=await check.json();
+          if(!check.ok) throw new Error(`Meta WABA subscription query HTTP ${check.status}`);
+          const rows=Array.isArray(checkBody?.data)?checkBody.data:[];
+          if(!rows.length) throw new Error('No subscribed app visible for UAT WABA after update');
+          const hasOverride=rows.some(row=>String(row?.override_callback_uri||'')===callback);
+          if(!hasOverride) throw new Error('Meta subscription exists but staging callback override is not visible');
+          console.log(`meta_waba_subscription=verified subscribed_app_count=${rows.length} staging_override=true`);
+          NODE
+
+      - name: Verify public staging route reaches Meta verifier, not staging login
+        shell: bash
+        run: |
+          set -euo pipefail
+          GET_BODY="$RUNNER_TEMP/meta-get.json"
+          POST_BODY="$RUNNER_TEMP/meta-post.json"
+          GET_CODE="$(curl --silent --show-error --output "$GET_BODY" --write-out '%{http_code}' "$CALLBACK_URL")"
+          [ "$GET_CODE" = "403" ] || { echo "Unsigned verifier GET HTTP=$GET_CODE; expected 403." >&2; cat "$GET_BODY" >&2; exit 1; }
+          POST_CODE="$(curl --silent --show-error --output "$POST_BODY" --write-out '%{http_code}' -X POST -H 'content-type: application/json' -H 'x-hub-signature-256: sha256=invalid' --data '{}' "$CALLBACK_URL")"
+          [ "$POST_CODE" = "401" ] || { echo "Invalid signature POST HTTP=$POST_CODE; expected 401." >&2; cat "$POST_BODY" >&2; exit 1; }
+          if grep -q 'sign_in_required' "$POST_BODY"; then echo 'Staging login still intercepts Meta webhook.' >&2; exit 1; fi
+          grep -qi 'Invalid Meta webhook signature' "$POST_BODY" || { echo 'Request did not reach Meta signature verifier.' >&2; cat "$POST_BODY" >&2; exit 1; }
+          rm -f "$GET_BODY" "$POST_BODY"
+          echo 'meta_webhook_gateway=pass signature_gate=pass staging_login_bypass=pass'
+
+      - name: Execute full hosted provider certification
+        env:
+          P0_STAGING_BASE_URL: ${{ env.STAGING_URL }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
+          META_WHATSAPP_APP_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET_UAT || secrets.META_WHATSAPP_APP_SECRET }}
+          META_WHATSAPP_UAT_ALLOWLIST: ${{ secrets.META_WHATSAPP_UAT_ALLOWLIST }}
+          META_WHATSAPP_PHONE_NUMBER_ID: ${{ vars.META_WHATSAPP_PHONE_NUMBER_ID_UAT }}
+          META_WHATSAPP_WABA_ID: ${{ vars.META_WHATSAPP_WABA_ID_UAT }}
+          META_WHATSAPP_TEMPLATE_ALLOWLIST: ${{ vars.META_WHATSAPP_TEMPLATE_ALLOWLIST }}
+          META_WHATSAPP_GRAPH_VERSION: v23.0
+          GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
+        run: node scripts/p0-hosted-provider-sandbox.mjs
+
+      - name: Upload closure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p0-meta-subscription-closure-${{ github.sha }}
+          path: p0-provider-evidence.json
+          if-no-files-found: warn
