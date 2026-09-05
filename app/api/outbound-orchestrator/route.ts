@@ -1,7 +1,7 @@
 import { authError, authorize, database, requirePermission, securityAudit } from "../../../lib/server-auth";
 import { runOutboundOrchestrationSweep, outboundQueueStats } from "../../../lib/outbound-orchestrator";
 import { claimAndDialNextHuman, currentEmployeePowerCall, dispositionEmployeePowerCall, releaseEmployeePowerDialler } from "../../../lib/employee-power-dialler";
-import { runOutboundAiDispatchSweep } from "../../../lib/outbound-ai-dispatch";
+import { dispatchOutboundAiQueue } from "../../../lib/outbound-ai-dispatch";
 import { POWER_DIALLER_DISPOSITIONS, type PowerDiallerDispositionCode } from "../../../lib/power-dialler-policy";
 
 type Body = Record<string, unknown>;
@@ -35,7 +35,7 @@ export async function POST(request: Request) {
     }
     if (action === "release") return json({ data: await releaseEmployeePowerDialler(db, { actorId: actor.email }) });
     if (action === "refresh_routing") { const data = await runOutboundOrchestrationSweep(db, { batchSize: Number(body.batchSize || 50) }); await securityAudit(db, actor, "outbound.routing.refresh", "outbound_orchestrator", "customer_cursor", "completed", data); return json({ data }); }
-    if (action === "dispatch_ai") { const data = await runOutboundAiDispatchSweep(db, env, { actorId: actor.email, limit: Number(body.limit || 20) }); await securityAudit(db, actor, "outbound.ai.dispatch", "outbound_orchestrator", "ai_queue", "completed", { dispatched: data.dispatched, blocked: data.blocked, failed: data.failed }); return json({ data }); }
+    if (action === "dispatch_ai") { const data = await dispatchOutboundAiQueue(db, env, { actorId: actor.email, limit: Number(body.limit || 20) }); await securityAudit(db, actor, "outbound.ai.dispatch", "outbound_orchestrator", "ai_queue", "completed", { dispatched: data.dispatched, blocked: data.blocked, failed: data.failed }); return json({ data }); }
     return json({ error: `Unsupported outbound action: ${action}` }, 400);
   } catch (error) { return authError(error, "Unable to process outbound orchestrator action"); }
 }
