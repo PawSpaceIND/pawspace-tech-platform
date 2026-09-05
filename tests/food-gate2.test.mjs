@@ -1,18 +1,136 @@
-import test from"node:test";
-import assert from"node:assert/strict";
-import{readFile}from"node:fs/promises";
-const read=path=>readFile(new URL(`../${path}`,import.meta.url),"utf8");
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  freshFoodWorld,
+  createFoodOrderFixture,
+  mutateFoodFulfilment,
+  fulfilTo,
+  DOG_LOT,
+  expectResponse,
+} from "./helpers/food-gate-harness.mjs";
 
-test("Food Gate 2 owns idempotent fulfilment lifecycle",async()=>{const source=await read("lib/food-fulfilment-governance.ts");assert.match(source,/food_fulfilment_action_keys/);for(const action of["accept_order","pick_order","pack_order","dispatch_order","confirm_delivery","report_stock_issue"])assert.match(source,new RegExp(`\\"${action}\\"`));assert.match(source,/duplicatePrevented:true/);});
+test("Food Gate 2 executes the canonical fulfilment lifecycle and consumes stock exactly at pack", async () => {
+  const world = freshFoodWorld();
+  const fixture = await createFoodOrderFixture(world, { quantity: 2, idempotencyKey: "gate2-order" });
 
-test("Food Gate 2 picks the exact UAT SKU lot without production traceability claims",async()=>{const source=await read("lib/food-fulfilment-governance.ts");assert.match(source,/food_uat_lots/);assert.match(source,/production_lot_verified INTEGER NOT NULL DEFAULT 0/);assert.match(source,/exact ordered SKU and zone/);assert.match(source,/productionLotVerified:false/);assert.doesNotMatch(source,/substitution_allowed INTEGER NOT NULL DEFAULT 1/);});
+  const accepted = await mutateFoodFulfilment(world.db, {
+    orderId: fixture.orderId,
+    action: "accept_order",
+    actorId: "ops@example.in",
+    idempotencyKey: "gate2-accept",
+  });
+  assert.equal(accepted.status, "accepted");
+  let inventory = world.sqlite.prepare("SELECT available_units,reserved_units FROM food_inventory_uat WHERE sku=? AND zone_id=?").get(fixture.sku, fixture.zoneId);
+  assert.deepEqual(inventory, { available_units: 30, reserved_units: 2 });
 
-test("Food Gate 2 consumes inventory reservation exactly at pack",async()=>{const source=await read("lib/food-fulfilment-governance.ts");assert.match(source,/available_units=available_units-\?/);assert.match(source,/reserved_units=reserved_units-\?/);assert.match(source,/UPDATE food_inventory_reservations SET status='consumed'/);assert.match(source,/UAT Food inventory reservation is no longer packable/);});
+  const picked = await mutateFoodFulfilment(world.db, {
+    orderId: fixture.orderId,
+    action: "pick_order",
+    actorId: "ops@example.in",
+    idempotencyKey: "gate2-pick",
+    lotId: DOG_LOT,
+  });
+  assert.equal(picked.status, "picked");
+  assert.equal(picked.productionLotVerified, false);
 
-test("Food Gate 2 dispatch is sandbox-only and delivery creates payment due",async()=>{const source=await read("lib/food-fulfilment-governance.ts");assert.match(source,/delivery_adapter_status TEXT NOT NULL DEFAULT 'not_connected'/);assert.match(source,/opaque UAT dispatch reference/);assert.match(source,/deliveryAdapterConnected:false/);assert.match(source,/food_order_payment_events/);assert.match(source,/canonical_food_uat_delivery/);assert.match(source,/status='due'/);assert.match(source,/liveMoney:false/);assert.match(source,/otpConnected:false/);});
+  const packed = await mutateFoodFulfilment(world.db, {
+    orderId: fixture.orderId,
+    action: "pack_order",
+    actorId: "ops@example.in",
+    idempotencyKey: "gate2-pack",
+  });
+  assert.equal(packed.status, "packed");
+  inventory = world.sqlite.prepare("SELECT available_units,reserved_units FROM food_inventory_uat WHERE sku=? AND zone_id=?").get(fixture.sku, fixture.zoneId);
+  assert.deepEqual(inventory, { available_units: 28, reserved_units: 0 });
+  assert.equal(world.sqlite.prepare("SELECT status FROM food_inventory_reservations WHERE order_id=?").get(fixture.orderId).status, "consumed");
 
-test("Food Gate 2 stock recovery preserves order and forbids silent substitution or repricing",async()=>{const source=await read("lib/food-fulfilment-governance.ts");assert.match(source,/food_stock_recovery_cases/);assert.match(source,/substitution_allowed INTEGER NOT NULL DEFAULT 0/);assert.match(source,/substitutionAllowed:false/);assert.match(source,/priceChangeAllowed:false/);assert.match(source,/orderPreserved:true/);});
+  const replay = await mutateFoodFulfilment(world.db, {
+    orderId: fixture.orderId,
+    action: "pack_order",
+    actorId: "ops@example.in",
+    idempotencyKey: "gate2-pack",
+  });
+  assert.equal(replay.duplicatePrevented, true);
+  inventory = world.sqlite.prepare("SELECT available_units,reserved_units FROM food_inventory_uat WHERE sku=? AND zone_id=?").get(fixture.sku, fixture.zoneId);
+  assert.deepEqual(inventory, { available_units: 28, reserved_units: 0 });
+});
 
-test("Food fulfilment API separates customer read from staff mutations",async()=>{const api=await read("app/api/food-fulfilment/route.ts");assert.match(api,/scope===\"customer\"/);assert.match(api,/requireCustomerOwnership/);assert.match(api,/requirePermission\(actor,\"bookings\.view\"\)/);assert.match(api,/requirePermission\(actor,\"bookings\.manage\"\)/);assert.match(api,/securityAudit/);});
+test("Food Gate 2 keeps dispatch sandbox-only and creates the delivery payment-due ledger", async () => {
+  const world = freshFoodWorld();
+  const fixture = await createFoodOrderFixture(world, { idempotencyKey: "gate2-delivery-order" });
+  const results = await fulfilTo(world, fixture, "delivered");
+  const delivered = results.at(-1);
+  assert.equal(delivered.status, "delivered");
+  assert.equal(delivered.otpConnected, false);
+  assert.equal(delivered.liveMoney, false);
+  assert.equal(delivered.paymentStatus, "due");
 
-test("Food fulfilment workspace executes canonical UAT actions without fake logistics",async()=>{const page=await read("app/team/operations/food/fulfilment/page.tsx");assert.match(page,/loadFoodFulfilment/);assert.match(page,/updateFoodFulfilment/);for(const action of["accept_order","pick_order","pack_order","dispatch_order","confirm_delivery","report_stock_issue"])assert.match(page,new RegExp(`\\"${action}\\"`));assert.match(page,/No SKU substitution or price change/);assert.match(page,/Live courier, OTP, production lot traceability and live payment remain disconnected/);});
+  const fulfilment = world.sqlite.prepare("SELECT status,delivery_adapter_status,handover_status,dispatch_reference FROM food_order_fulfilment WHERE order_id=?").get(fixture.orderId);
+  assert.equal(fulfilment.status, "delivered");
+  assert.equal(fulfilment.delivery_adapter_status, "not_connected");
+  assert.equal(fulfilment.handover_status, "uat_confirmed");
+  assert.ok(fulfilment.dispatch_reference);
+  const payment = world.sqlite.prepare("SELECT amount,status,gateway FROM food_order_payment_events WHERE order_id=?").get(fixture.orderId);
+  assert.equal(payment.amount, fixture.quote.totalAmount);
+  assert.equal(payment.status, "due");
+  assert.equal(payment.gateway, "uat_sandbox");
+});
+
+test("Food Gate 2 refuses wrong lots and non-opaque dispatch references", async () => {
+  const world = freshFoodWorld();
+  const fixture = await createFoodOrderFixture(world, { idempotencyKey: "gate2-refusal-order" });
+  await mutateFoodFulfilment(world.db, {
+    orderId: fixture.orderId,
+    action: "accept_order",
+    actorId: "ops@example.in",
+    idempotencyKey: "gate2-refusal-accept",
+  });
+  await expectResponse(mutateFoodFulfilment(world.db, {
+    orderId: fixture.orderId,
+    action: "pick_order",
+    actorId: "ops@example.in",
+    idempotencyKey: "gate2-wrong-lot",
+    lotId: "FLOT-CAT-A-01",
+  }), 409, /exact ordered SKU and zone/i);
+
+  await mutateFoodFulfilment(world.db, {
+    orderId: fixture.orderId,
+    action: "pick_order",
+    actorId: "ops@example.in",
+    idempotencyKey: "gate2-good-lot",
+    lotId: DOG_LOT,
+  });
+  await mutateFoodFulfilment(world.db, {
+    orderId: fixture.orderId,
+    action: "pack_order",
+    actorId: "ops@example.in",
+    idempotencyKey: "gate2-pack-good",
+  });
+  await expectResponse(mutateFoodFulfilment(world.db, {
+    orderId: fixture.orderId,
+    action: "dispatch_order",
+    actorId: "ops@example.in",
+    idempotencyKey: "gate2-public-url",
+    dispatchReference: "https://courier.example/track/123",
+  }), 400, /opaque UAT dispatch reference/i);
+});
+
+test("Food Gate 2 stock recovery preserves the order and forbids substitution or repricing", async () => {
+  const world = freshFoodWorld();
+  const fixture = await createFoodOrderFixture(world, { idempotencyKey: "gate2-stock-order" });
+  const recovery = await mutateFoodFulfilment(world.db, {
+    orderId: fixture.orderId,
+    action: "report_stock_issue",
+    actorId: "ops@example.in",
+    idempotencyKey: "gate2-stock-report",
+    reason: "Exact ordered SKU unavailable at pick station",
+  });
+  assert.equal(recovery.status, "stock_recovery_required");
+  assert.equal(recovery.orderPreserved, true);
+  assert.equal(recovery.substitutionAllowed, false);
+  assert.equal(recovery.priceChangeAllowed, false);
+  const row = world.sqlite.prepare("SELECT id,status,total_amount FROM food_orders WHERE id=?").get(fixture.orderId);
+  assert.equal(row.id, fixture.orderId);
+  assert.equal(row.status, "stock_recovery_required");
+  assert.equal(row.total_amount, fixture.quote.totalAmount);
+});
