@@ -1,0 +1,66 @@
+name: P0 Dependency Remediation
+
+on:
+  push:
+    branches:
+      - remediation/p0-pilot-gates-b379631
+    paths:
+      - .github/workflows/p0-dependency-remediate.yml
+
+permissions:
+  contents: write
+
+jobs:
+  remediate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: remediation/p0-pilot-gates-b379631
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Patch root production dependencies
+        run: |
+          set -euo pipefail
+          npm install --save-exact next@16.3.4
+          npm install --save-dev --save-exact eslint-config-next@16.3.4 react-server-dom-webpack@19.2.8
+          npm audit fix --package-lock-only
+      - name: Patch backend transitive dependencies
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          npm audit fix --package-lock-only
+      - name: Prove no production high or critical advisories remain
+        run: |
+          set -euo pipefail
+          npm audit --omit=dev --audit-level=high
+          npm --prefix backend audit --omit=dev --audit-level=high
+      - name: Validate root build and typecheck
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run typecheck
+          npm run build
+      - name: Validate backend
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run typecheck
+          npm test
+      - name: Commit validated dependency remediation
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- package.json package-lock.json backend/package.json backend/package-lock.json; then
+            echo 'No dependency changes required.'
+            exit 0
+          fi
+          git config user.name 'pawspace-p0-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add package.json package-lock.json backend/package.json backend/package-lock.json
+          git commit -m 'fix(p0): patch production dependency advisories'
+          git push origin HEAD:remediation/p0-pilot-gates-b379631
