@@ -1,8 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { installWorkersHooks } from "./helpers/module-hooks.mjs";
+import "./helpers/register-hooks.mjs";
 import { makeD1, freshSqlite } from "./helpers/voice-harness.mjs";
-installWorkersHooks("__OUTBOUND_DB__", "__OUTBOUND_ENV__");
 const routing=await import("../lib/outbound-routing-policy.ts");
 const outbound=await import("../lib/outbound-orchestrator.ts");
 const nextBest=await import("../lib/outbound-next-best-service.ts");
