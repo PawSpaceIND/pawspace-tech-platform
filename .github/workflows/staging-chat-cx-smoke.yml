@@ -1,10 +1,14 @@
-# Freshness probe: verify the live staging inbox remains healthy after deployment.
+# On-demand freshness probe: check that the CURRENTLY DEPLOYED staging inbox is healthy.
+#
+# This no longer runs on push. The post-deployment probe now lives in the `smoke` job of
+# deploy-staging-cx-hotfix.yml, gated on `needs: [deploy]`, because a push-triggered run here
+# started at the same instant as the deploy and finished about a minute before it -- so it always
+# measured the previous Worker build and reported a fixed route as broken. What remains here is a
+# manual probe of whatever is live right now, which cannot race anything because nothing is
+# deploying when a human asks for it.
 name: Staging chat and CX smoke
 
 on:
-  push:
-    branches:
-      - hotfix/staging-chat-cx-runtime
   workflow_dispatch:
 
 permissions:
