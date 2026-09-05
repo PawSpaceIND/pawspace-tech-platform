@@ -5,21 +5,28 @@ import { readFileSync, writeFileSync } from "node:fs";
 
 const path = "dist/server/wrangler.json";
 const cfg = JSON.parse(readFileSync(path, "utf8"));
-const callback = String(process.env.PAWSPACE_VOICE_STATUS_CALLBACK_URL_UAT || "").trim();
-const streamUrl = String(process.env.PAWSPACE_VOICE_STREAM_URL_UAT || "").trim();
+const pick = (...names) => {
+  for (const name of names) {
+    const v = String(process.env[name] || "").trim();
+    if (v) return v;
+  }
+  return "";
+};
+const callback = pick("EXOTEL_CALLBACK_URL", "PAWSPACE_VOICE_STATUS_CALLBACK_URL_UAT");
+const streamUrl = pick("EXOTEL_AGENTSTREAM_WSS_URL", "PAWSPACE_VOICE_STREAM_URL_UAT");
 const approved = String(process.env.PAWSPACE_VOICE_UAT_APPROVED || "").trim().toLowerCase() === "true";
-const customerId = String(process.env.PAWSPACE_VOICE_UAT_CUSTOMER_ID || "").trim();
-const bookingId = String(process.env.PAWSPACE_VOICE_UAT_BOOKING_ID || "").trim();
-const cityId = String(process.env.PAWSPACE_VOICE_UAT_CITY_ID || "").trim();
-const consentSource = String(process.env.PAWSPACE_VOICE_UAT_CONSENT_SOURCE || "").trim();
+const customerId = pick("UAT_CUSTOMER_ID", "PAWSPACE_VOICE_UAT_CUSTOMER_ID");
+const bookingId = pick("UAT_BOOKING_ID", "PAWSPACE_VOICE_UAT_BOOKING_ID");
+const cityId = pick("UAT_CITY_ID", "PAWSPACE_VOICE_UAT_CITY_ID");
+const consentSource = pick("UAT_CONSENT_SOURCE_REF", "PAWSPACE_VOICE_UAT_CONSENT_SOURCE");
 
 const problems = [];
 if (cfg.name !== "pawspace-staging" || cfg.vars?.PAWSPACE_DEPLOYMENT_ENV !== "staging") problems.push("base config is not the isolated pawspace-staging profile");
 if (!approved) problems.push("PAWSPACE_VOICE_UAT_APPROVED must be exactly true for this explicit workflow");
-try { if (!callback || new URL(callback).protocol !== "https:") problems.push("PAWSPACE_VOICE_STATUS_CALLBACK_URL_UAT must be an absolute https URL"); } catch { problems.push("PAWSPACE_VOICE_STATUS_CALLBACK_URL_UAT is malformed"); }
-try { if (!streamUrl || new URL(streamUrl).protocol !== "wss:") problems.push("PAWSPACE_VOICE_STREAM_URL_UAT must be an absolute wss URL"); } catch { problems.push("PAWSPACE_VOICE_STREAM_URL_UAT is malformed"); }
-if (!customerId || !bookingId || !cityId) problems.push("voice UAT customer, booking and city IDs must be configured");
-if (consentSource.length < 4) problems.push("PAWSPACE_VOICE_UAT_CONSENT_SOURCE must identify the real consent evidence source");
+try { if (!callback || new URL(callback).protocol !== "https:") problems.push("EXOTEL_CALLBACK_URL must be an absolute https URL"); } catch { problems.push("EXOTEL_CALLBACK_URL is malformed"); }
+try { if (!streamUrl || new URL(streamUrl).protocol !== "wss:") problems.push("EXOTEL_AGENTSTREAM_WSS_URL must be an absolute wss URL"); } catch { problems.push("EXOTEL_AGENTSTREAM_WSS_URL is malformed"); }
+if (!customerId || !bookingId || !cityId) problems.push("UAT customer, booking and city IDs must be configured");
+if (consentSource.length < 4) problems.push("UAT_CONSENT_SOURCE_REF must identify the real consent evidence source");
 if (problems.length) {
   console.error("Refusing to activate voice UAT:");
   for (const problem of problems) console.error(`  - ${problem}`);
@@ -48,7 +55,7 @@ cfg.ai = { binding: "AI" };
 
 for (const secretName of [
   "PAWSPACE_VOICE_UAT_ALLOWLIST", "PAWSPACE_VOICE_UAT_TEST_NUMBER",
-  "EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_SID", "EXOTEL_CALLER_ID",
+  "EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_SID", "EXOTEL_ACCOUNT_SID", "EXOTEL_CALLER_ID",
   "EXOTEL_VOICE_APP_ID", "EXOTEL_WEBHOOK_SECRET",
 ]) delete cfg.vars[secretName];
 
