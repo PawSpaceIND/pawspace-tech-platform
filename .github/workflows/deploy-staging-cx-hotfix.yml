@@ -51,17 +51,23 @@ jobs:
         run: |
           set -euo pipefail
           npx wrangler deploy --message "staging-cx-hotfix $GITHUB_SHA"
-      - name: Verify deployed version and public routes
+      - name: Verify deployed version and browser route repeatedly
         shell: bash
         run: |
           set -euo pipefail
           base='https://pawspace-staging.karthik-fce.workers.dev'
           sleep 3
-          chat_status="$(curl -sS -L -o /tmp/chat.html -w '%{http_code}' "$base/chat")"
-          cx_status="$(curl -sS -L -o /tmp/cx.html -w '%{http_code}' "$base/team/customer-experience")"
-          ai_status="$(curl -sS -o /tmp/ai.json -w '%{http_code}' -X POST "$base/api/ai-web-chat" -H 'content-type: application/json' -H "origin: $base" --data '{"mode":"public","query":"dog grooming in Bangalore"}')"
-          printf 'chat=%s\ncx=%s\nai=%s\n' "$chat_status" "$cx_status" "$ai_status"
-          test "$chat_status" = '200'
-          test "$cx_status" = '200'
-          test "$ai_status" -ge 200
-          test "$ai_status" -lt 500
+          for attempt in 1 2 3; do
+            chat_status="$(curl -sS -L -o /tmp/chat.html -w '%{http_code}' "$base/chat")"
+            cx_status="$(curl -sS -L -o /tmp/cx.html -w '%{http_code}' "$base/team/customer-experience" -H 'User-Agent: Mozilla/5.0')"
+            rsc_status="$(curl -sS -o /tmp/cx-rsc.txt -w '%{http_code}' "$base/team/customer-experience" -H 'RSC: 1' -H 'Accept: text/x-component')"
+            ai_status="$(curl -sS -o /tmp/ai.json -w '%{http_code}' -X POST "$base/api/ai-web-chat" -H 'content-type: application/json' -H "origin: $base" --data '{"mode":"public","query":"dog grooming in Bangalore"}')"
+            printf 'attempt=%s chat=%s cx=%s rsc=%s ai=%s\n' "$attempt" "$chat_status" "$cx_status" "$rsc_status" "$ai_status"
+            test "$chat_status" = '200'
+            test "$cx_status" = '200'
+            test "$rsc_status" -ge 200
+            test "$rsc_status" -lt 500
+            test "$ai_status" -ge 200
+            test "$ai_status" -lt 500
+            sleep 8
+          done
