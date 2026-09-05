@@ -15,7 +15,7 @@ import {runRazorpaySettlementReconciliationSweep} from "../lib/razorpay-settleme
 import {runSubscriptionBillingSweep} from "../lib/subscription-billing";
 import {runSubscriptionScheduledMaintenance} from "../lib/subscription-scheduled";
 import {runEliteScheduledHooks,runEliteWebhookHooks} from "../lib/services/elite-runtime";
-import {runMarketingConnectorScheduler} from "../lib/marketing-ad-connectors";
+import {runMarketingConnectorScheduler} from "../lib/google-ads-conversion-consent";
 
 interface Env {
   ASSETS: Fetcher;
