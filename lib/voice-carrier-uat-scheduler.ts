@@ -63,9 +63,9 @@ export async function runDueVoiceCarrierUat(db: D1Database, env: Env, asOf = Dat
       actorPermissions: ["communications.call", "customers.manage"],
       asOf,
     });
-    const status = result.dialled ? "completed" : "failed";
-    await db.prepare("UPDATE voice_carrier_uat_queue SET status=?,call_id=?,last_state=?,failure_class=?,finished_at=?,updated_at=? WHERE id=?").bind(status, result.callId || null, result.state || null, result.dialled ? null : result.state || "policy_block", Date.now(), Date.now(), RUN_ID).run();
-    return { status, callId: result.callId, state: result.state, dialled: result.dialled };
+    const status = result.dialed ? "completed" : "failed";
+    await db.prepare("UPDATE voice_carrier_uat_queue SET status=?,call_id=?,last_state=?,failure_class=?,finished_at=?,updated_at=? WHERE id=?").bind(status, result.callId || null, result.state || null, result.dialed ? null : result.state || "policy_block", Date.now(), Date.now(), RUN_ID).run();
+    return { status, callId: result.callId, state: result.state, dialed: result.dialed };
   } catch (error) {
     await db.prepare("UPDATE voice_carrier_uat_queue SET status='failed',failure_class='execution_exception',finished_at=?,updated_at=? WHERE id=?").bind(Date.now(), Date.now(), RUN_ID).run();
     throw error;
