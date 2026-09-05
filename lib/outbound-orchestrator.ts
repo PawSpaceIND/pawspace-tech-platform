@@ -2,7 +2,7 @@ export { decideOutboundRoute,OUTBOUND_POLICY_VERSION } from "./outbound-routing-
 export { ensureOutboundOrchestratorTables } from "./outbound-schema";
 export { runOutboundOrchestrationSweep } from "./outbound-sweep";
 export { detectAiOutboundEscalation,enqueueHumanEscalation } from "./outbound-escalation";
-export { claimNextHumanQueue,releaseHumanQueueClaim,recordPowerDiallerDisposition } from "./outbound-human-queue";
+export { claimNextHumanQueue,releaseHumanQueueClaim,recordPowerDiallerDisposition,type PowerDiallerDisposition } from "./outbound-human-queue";
 import { ensureOutboundOrchestratorTables } from "./outbound-schema";
 type Db=D1Database;type Row=Record<string,unknown>;const text=(v:unknown)=>String(v??"").trim();
 async function all(db:Db,sql:string,b:unknown[]=[]){try{let q=db.prepare(sql);if(b.length)q=q.bind(...b);return(await q.all<Row>()).results||[]}catch{return[]}}
