@@ -46,6 +46,22 @@ jobs:
           node --test tests/voice-operator-console.test.mjs tests/voice-outbound-policy.test.mjs tests/voice-provider-webhook.test.mjs tests/ai-channels-hardening.test.mjs tests/voice-audio-bot-source-contract.test.mjs tests/exotel-agentstream-source-contract.test.mjs
       - name: Build
         run: npm run build
+      - name: Validate seven-parameter UAT preflight
+        env:
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_ACCOUNT_SID: ${{ secrets.EXOTEL_ACCOUNT_SID || secrets.EXOTEL_SID }}
+          EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
+          EXOTEL_VOICE_APP_ID: ${{ secrets.EXOTEL_VOICE_APP_ID }}
+          EXOTEL_WEBHOOK_SECRET: ${{ secrets.EXOTEL_WEBHOOK_SECRET }}
+          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
+          EXOTEL_CALLBACK_URL: ${{ vars.EXOTEL_CALLBACK_URL || vars.PAWSPACE_VOICE_STATUS_CALLBACK_URL_UAT }}
+          EXOTEL_AGENTSTREAM_WSS_URL: ${{ vars.EXOTEL_AGENTSTREAM_WSS_URL || vars.PAWSPACE_VOICE_STREAM_URL_UAT }}
+          UAT_CUSTOMER_ID: ${{ vars.UAT_CUSTOMER_ID || vars.PAWSPACE_VOICE_UAT_CUSTOMER_ID }}
+          UAT_BOOKING_ID: ${{ vars.UAT_BOOKING_ID || vars.PAWSPACE_VOICE_UAT_BOOKING_ID }}
+          UAT_CITY_ID: ${{ vars.UAT_CITY_ID || vars.PAWSPACE_VOICE_UAT_CITY_ID }}
+          UAT_CONSENT_SOURCE_REF: ${{ vars.UAT_CONSENT_SOURCE_REF || vars.PAWSPACE_VOICE_UAT_CONSENT_SOURCE }}
+        run: node scripts/voice-uat-preflight.mjs
       - name: Configure isolated staging base
         env:
           STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
@@ -57,35 +73,13 @@ jobs:
       - name: Apply voice UAT overlay
         env:
           PAWSPACE_VOICE_UAT_APPROVED: 'true'
-          PAWSPACE_VOICE_STATUS_CALLBACK_URL_UAT: ${{ vars.PAWSPACE_VOICE_STATUS_CALLBACK_URL_UAT }}
-          PAWSPACE_VOICE_STREAM_URL_UAT: ${{ vars.PAWSPACE_VOICE_STREAM_URL_UAT }}
-          PAWSPACE_VOICE_UAT_CUSTOMER_ID: ${{ vars.PAWSPACE_VOICE_UAT_CUSTOMER_ID }}
-          PAWSPACE_VOICE_UAT_BOOKING_ID: ${{ vars.PAWSPACE_VOICE_UAT_BOOKING_ID }}
-          PAWSPACE_VOICE_UAT_CITY_ID: ${{ vars.PAWSPACE_VOICE_UAT_CITY_ID }}
-          PAWSPACE_VOICE_UAT_CONSENT_SOURCE: ${{ vars.PAWSPACE_VOICE_UAT_CONSENT_SOURCE }}
+          EXOTEL_CALLBACK_URL: ${{ vars.EXOTEL_CALLBACK_URL || vars.PAWSPACE_VOICE_STATUS_CALLBACK_URL_UAT }}
+          EXOTEL_AGENTSTREAM_WSS_URL: ${{ vars.EXOTEL_AGENTSTREAM_WSS_URL || vars.PAWSPACE_VOICE_STREAM_URL_UAT }}
+          UAT_CUSTOMER_ID: ${{ vars.UAT_CUSTOMER_ID || vars.PAWSPACE_VOICE_UAT_CUSTOMER_ID }}
+          UAT_BOOKING_ID: ${{ vars.UAT_BOOKING_ID || vars.PAWSPACE_VOICE_UAT_BOOKING_ID }}
+          UAT_CITY_ID: ${{ vars.UAT_CITY_ID || vars.PAWSPACE_VOICE_UAT_CITY_ID }}
+          UAT_CONSENT_SOURCE_REF: ${{ vars.UAT_CONSENT_SOURCE_REF || vars.PAWSPACE_VOICE_UAT_CONSENT_SOURCE }}
         run: node scripts/stage-voice-uat-config.mjs
-      - name: Validate required voice secrets without printing values
-        env:
-          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
-          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
-          EXOTEL_SID: ${{ secrets.EXOTEL_SID || secrets.EXOTEL_ACCOUNT_SID }}
-          EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
-          EXOTEL_VOICE_APP_ID: ${{ secrets.EXOTEL_VOICE_APP_ID }}
-          EXOTEL_WEBHOOK_SECRET: ${{ secrets.EXOTEL_WEBHOOK_SECRET }}
-          PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
-          PAWSPACE_VOICE_UAT_TEST_NUMBER: ${{ secrets.PAWSPACE_VOICE_UAT_TEST_NUMBER }}
-        run: |
-          set -euo pipefail
-          for name in EXOTEL_API_KEY EXOTEL_API_TOKEN EXOTEL_SID EXOTEL_CALLER_ID EXOTEL_VOICE_APP_ID EXOTEL_WEBHOOK_SECRET PAWSPACE_VOICE_UAT_ALLOWLIST PAWSPACE_VOICE_UAT_TEST_NUMBER; do
-            [ -n "${!name:-}" ] || { echo "Required voice UAT secret $name is missing." >&2; exit 1; }
-          done
-          node --input-type=module -e '
-            const key=v=>String(v||"").replace(/\D/g,"").slice(-10);
-            const allow=[...new Set(String(process.env.PAWSPACE_VOICE_UAT_ALLOWLIST||"").split(/[\s,;]+/).map(key).filter(Boolean))];
-            const test=key(process.env.PAWSPACE_VOICE_UAT_TEST_NUMBER);
-            if(allow.length!==1||!test||allow[0]!==test)throw new Error("carrier autorun requires exactly one allowlisted UAT test number");
-          '
-          echo "Required voice UAT secret names and single-recipient constraint are satisfied; values withheld."
       - name: Deploy voice-enabled isolated staging
         id: deploy
         env:
@@ -101,7 +95,6 @@ jobs:
           EXOTEL_VOICE_APP_ID: ${{ secrets.EXOTEL_VOICE_APP_ID }}
           EXOTEL_WEBHOOK_SECRET: ${{ secrets.EXOTEL_WEBHOOK_SECRET }}
           PAWSPACE_VOICE_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_VOICE_UAT_ALLOWLIST }}
-          PAWSPACE_VOICE_UAT_TEST_NUMBER: ${{ secrets.PAWSPACE_VOICE_UAT_TEST_NUMBER }}
         run: |
           set -euo pipefail
           SECRETS_FILE="$RUNNER_TEMP/pawspace-voice-uat-secrets.json"
@@ -109,7 +102,7 @@ jobs:
           trap 'rm -f "$SECRETS_FILE"' EXIT
           node --input-type=module -e '
             import { writeFileSync } from "node:fs";
-            const names=["PAWSPACE_UAT_ACCESS_CODE","PAWSPACE_UAT_SIGNING_KEY","PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT","EXOTEL_API_KEY","EXOTEL_API_TOKEN","EXOTEL_SID","EXOTEL_CALLER_ID","EXOTEL_VOICE_APP_ID","EXOTEL_WEBHOOK_SECRET","PAWSPACE_VOICE_UAT_ALLOWLIST","PAWSPACE_VOICE_UAT_TEST_NUMBER"];
+            const names=["PAWSPACE_UAT_ACCESS_CODE","PAWSPACE_UAT_SIGNING_KEY","PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT","EXOTEL_API_KEY","EXOTEL_API_TOKEN","EXOTEL_SID","EXOTEL_CALLER_ID","EXOTEL_VOICE_APP_ID","EXOTEL_WEBHOOK_SECRET","PAWSPACE_VOICE_UAT_ALLOWLIST"];
             const values=Object.fromEntries(names.map(name=>[name,process.env[name]||""]));
             if(Object.values(values).some(value=>!value))throw new Error("required voice UAT secret missing");
             writeFileSync(process.env.SECRETS_FILE,JSON.stringify(values),{mode:0o600});
@@ -140,7 +133,8 @@ jobs:
             echo '- carrier TTS: @cf/deepgram/aura-2-en (linear16)'
             echo '- Exotel secret names populated: yes'
             echo '- account SID accepted from EXOTEL_SID or EXOTEL_ACCOUNT_SID alias: yes'
-            echo '- single allow-listed test recipient validated: yes'
+            echo '- seven-parameter UAT preflight: passed'
+            echo '- single allow-listed E.164 test recipient validated: yes'
             echo '- AgentStream wss endpoint configured: yes'
             echo '- one-shot dispatch target: 2026-09-06 08:00 IST'
             echo '- real call placed by this workflow: no'
