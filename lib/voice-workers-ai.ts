@@ -2,15 +2,6 @@
  * First-party voice engine on Cloudflare Workers AI - speech-to-text (Whisper) and text-to-speech,
  * running inside PawSpace's own Cloudflare stack. No external voice vendor: the audio is converted by
  * models on the `env.AI` binding, data stays in-stack.
- *
- * These implement the same VoiceSttProvider / VoiceTtsProvider interfaces the AI voice harness already
- * consumes (lib/ai-voice-uat.ts), so the rest of the bot - orchestrator, knowledge, guardrails, staff-
- * first rollout - is unchanged. Fail-closed: if the `env.AI` binding isn't present, resolve* returns the
- * shared disconnected stubs and nothing pretends to transcribe or synthesise.
- *
- * Channel note: this is the in-app voice path (device mic/speaker carry the audio - zero telecom). The
- * transport stays pluggable (VoiceTransportProvider), so real phone calls can be added later by wiring a
- * carrier for the LINE only, with this speech engine and the whole brain untouched.
  */
 
 import { type VoiceSttProvider, type VoiceTtsProvider, disconnectedStt, disconnectedTts } from "./ai-voice-uat";
@@ -18,7 +9,7 @@ import { assertSafeVoiceUrl, decodeInlineAudio, isInlineAudioReference, safeVoic
 import { asSpeechFailure, DEFAULT_SPEECH_TIMEOUT_MS, VoiceSpeechError, withSpeechDeadline } from "./voice-speech-failures";
 
 type Env = Record<string, unknown>;
-type AiBinding = { run: (model: string, input: Record<string, unknown>) => Promise<unknown> };
+type AiBinding = { run: (model: string, input: Record<string, unknown>, options?: Record<string, unknown>) => Promise<unknown> };
 const val = (env: Env, key: string) => String(env?.[key] ?? "").trim();
 
 export function speechTimeoutMs(env: Env): number {
@@ -66,8 +57,10 @@ async function workersAiTtsBase64(result: unknown): Promise<string> {
     if (typeof audio === "string" && audio.trim()) return audio.trim();
   }
   let bytes: Uint8Array | null = null;
-  if (result instanceof Response) bytes = new Uint8Array(await result.arrayBuffer());
-  else if (result instanceof ReadableStream) bytes = new Uint8Array(await new Response(result).arrayBuffer());
+  if (result instanceof Response) {
+    if (!result.ok) throw new VoiceSpeechError("tts", "provider_failure", `TTS provider returned HTTP ${result.status}`);
+    bytes = new Uint8Array(await result.arrayBuffer());
+  } else if (result instanceof ReadableStream) bytes = new Uint8Array(await new Response(result).arrayBuffer());
   else if (result instanceof ArrayBuffer) bytes = new Uint8Array(result);
   else if (ArrayBuffer.isView(result)) bytes = new Uint8Array(result.buffer, result.byteOffset, result.byteLength);
   if (!bytes || bytes.byteLength === 0) throw new VoiceSpeechError("tts", "empty_output", "TTS model returned no audio");
@@ -110,8 +103,13 @@ export function resolveWorkersAiTts(env: Env): VoiceTtsProvider {
       const startedAt = Date.now();
       if (!String(input.text ?? "").trim()) throw new VoiceSpeechError("tts", "malformed_output", "Nothing to synthesise");
       let result: unknown;
-      try { result = await withSpeechDeadline("tts", ai.run(model, { prompt: input.text, lang: input.language || "en" }), timeoutMs); }
-      catch (error) { throw asSpeechFailure("tts", error); }
+      try {
+        result = await withSpeechDeadline(
+          "tts",
+          ai.run(model, { prompt: input.text, lang: input.language || "en" }, { returnRawResponse: true }),
+          timeoutMs,
+        );
+      } catch (error) { throw asSpeechFailure("tts", error); }
       const base64 = await workersAiTtsBase64(result);
       const audioRef = `data:audio/mpeg;base64,${base64}`;
       try { decodeInlineAudio(audioRef); }
