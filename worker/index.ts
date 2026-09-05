@@ -19,6 +19,7 @@ import {runMarketingConnectorScheduler} from "../lib/google-ads-conversion-conse
 import {runDiamondCrmScheduledSweep} from "../lib/diamond-crm-scheduler";
 import {EXOTEL_AGENTSTREAM_PATH,handleExotelAgentStream} from "../lib/exotel-agentstream";
 import {runVoiceCarrierUatScheduler} from "../lib/voice-carrier-uat-scheduler";
+import {handleAiVoiceSelfTestStream} from "../lib/voice-ai-self-test";
 
 interface Env {
   ASSETS: Fetcher;
@@ -53,6 +54,9 @@ const worker = {
     const url = new URL(request.url);
 
     if(url.pathname===EXOTEL_AGENTSTREAM_PATH)return handleExotelAgentStream(request,env,ctx);
+    // Provider-authenticated websocket lane. Exotel cannot carry a PawSpace staff cookie, so this path
+    // authenticates with the short-lived HMAC in lib/voice-ai-self-test and is UAT-only/allow-list-only.
+    if(url.pathname==="/voice/ai-self-test")return handleAiVoiceSelfTestStream(request,env as unknown as Record<string,unknown>);
 
     if (url.pathname.startsWith("/api/")) {
       if(url.pathname==="/api/identity-session")return secureApiResponse(await handler.fetch(request,env,ctx));
