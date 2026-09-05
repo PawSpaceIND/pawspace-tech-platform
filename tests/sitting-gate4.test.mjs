@@ -32,7 +32,7 @@ test("Sitting Gate 4 executes private opaque media-grant creation", async () => 
   assert.equal(result.upload.mode, "sandbox_contract");
   assert.equal(result.proofReady, false);
   const asset = sqlite.prepare("SELECT booking_id,provider_id,scan_status,access_status,synthetic FROM service_media_assets WHERE id=?").get(result.mediaId);
-  assert.deepEqual(asset, { booking_id: "BK-SG4", provider_id: "PRV-SG4", scan_status: "pending", access_status: "pending_upload", synthetic: 0 });
+  assert.deepEqual({ ...asset }, { booking_id: "BK-SG4", provider_id: "PRV-SG4", scan_status: "pending", access_status: "pending_upload", synthetic: 0 });
   const grant = sqlite.prepare("SELECT status,expires_at FROM sitting_media_upload_grants WHERE media_id=?").get(result.mediaId);
   assert.equal(grant.status, "issued");
   assert.ok(Number(grant.expires_at) > Date.now());
