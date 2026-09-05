@@ -30,9 +30,19 @@ jobs:
           : > /tmp/tail.log
           npx --yes wrangler@4.92.0 tail pawspace-staging --format pretty > /tmp/tail.log 2>&1 &
           pid=$!
-          sleep 6
+          ready=0
+          for i in $(seq 1 30); do
+            if grep -q 'Connected to pawspace-staging' /tmp/tail.log; then ready=1; break; fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            echo 'Worker tail did not connect in time.'
+            cat /tmp/tail.log
+            kill "$pid" 2>/dev/null || true
+            exit 1
+          fi
           curl -sS -o /dev/null 'https://pawspace-staging.karthik-fce.workers.dev/team/customer-experience' || true
-          sleep 6
+          sleep 5
           kill "$pid" 2>/dev/null || true
           sleep 1
-          grep -E -A8 -B3 'exception|Error|error|customer-experience' /tmp/tail.log | head -n 160 || cat /tmp/tail.log | tail -n 120
+          grep -E -A10 -B4 'exception|Error|error|customer-experience' /tmp/tail.log | head -n 220 || cat /tmp/tail.log | tail -n 160
