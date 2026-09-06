@@ -11,24 +11,30 @@ export async function withD1WriteRetry<T>(work:()=>Promise<T>,options:D1WriteRet
 
 const rawStatements=new WeakMap<object,D1PreparedStatement>();
 const statementQueries=new WeakMap<object,string>();
-function retryingStatement(statement:D1PreparedStatement,query:string):D1PreparedStatement{const proxy=new Proxy(statement,{get(target,property,receiver){if(property==="bind")return(...values:unknown[])=>retryingStatement(target.bind(...values),query);if(property==="run")return()=>withD1WriteRetry(()=>target.run());const value=Reflect.get(target,property,receiver);return typeof value==="function"?value.bind(target):value;}})as D1PreparedStatement;rawStatements.set(proxy as object,statement);statementQueries.set(proxy as object,query);return proxy;}
-
 const retryingDatabases=new WeakMap<object,D1Database>();
 let managedStagingPromise:Promise<boolean>|undefined;
 async function managedStaging(){managedStagingPromise??=import("cloudflare:workers").then(({env})=>String((env as unknown as Record<string,unknown>).PAWSPACE_DEPLOYMENT_ENV||"").trim().toLowerCase()==="staging").catch(()=>false);return managedStagingPromise;}
+
 const DDL=/^\s*(?:CREATE\s+(?:TABLE|INDEX|UNIQUE\s+INDEX|TRIGGER)|ALTER\s+TABLE)\b/i;
 const SCHEDULING_SCHEMA=/(?:scheduling_|provider_capacity_|provider_unavailability|provider_assignment_|provider_recovery_|provider_performance_|provider_home_base|provider_verification|provider_onboarding)/i;
+const PREFLIGHTED_STAGING_SEED=/^\s*INSERT\s+OR\s+IGNORE\s+INTO\s+(?:provider_capacity_profiles|service_policy_configs)\b[\s\S]*\bfounder_seed\b/i;
 function preflightedSchedulingDdl(statements:D1PreparedStatement[]){if(!statements.length)return false;const queries=statements.map(statement=>statementQueries.get(statement as object)||"");return queries.every(query=>DDL.test(query)&&SCHEDULING_SCHEMA.test(query));}
-function skippedDdlResult(){return{success:true,meta:{changes:0,rows_written:0}} as unknown as D1Result<unknown>;}
+function preflightedStagingSeed(statement:D1PreparedStatement){return PREFLIGHTED_STAGING_SEED.test(statementQueries.get(statement as object)||"");}
+function preflightedStagingSeedBatch(statements:D1PreparedStatement[]){return statements.length>0&&statements.every(preflightedStagingSeed);}
+function skippedResult(){return{success:true,meta:{changes:0,rows_written:0}} as unknown as D1Result<unknown>;}
+
+function retryingStatement(statement:D1PreparedStatement,query:string):D1PreparedStatement{const proxy=new Proxy(statement,{get(target,property,receiver){if(property==="bind")return(...values:unknown[])=>retryingStatement(target.bind(...values),query);if(property==="run")return async()=>{if(PREFLIGHTED_STAGING_SEED.test(query)&&await managedStaging())return skippedResult();return withD1WriteRetry(()=>target.run());};const value=Reflect.get(target,property,receiver);return typeof value==="function"?value.bind(target):value;}})as D1PreparedStatement;rawStatements.set(proxy as object,statement);statementQueries.set(proxy as object,query);return proxy;}
 
 /**
  * Wrap a D1 binding so writes get the same bounded SQLITE_BUSY retry policy.
  *
  * The wrapper is stable per raw binding so helper WeakMap/WeakSet caches work. On the deployed staging
- * Worker, scheduling/provider schema is prepared before concurrent pilot traffic. Schema-only batches
- * for those known tables are therefore treated as already satisfied instead of re-entering D1's
- * single-writer lane on every customer request. This optimization is deliberately limited to
- * PAWSPACE_DEPLOYMENT_ENV=staging and to scheduling/provider DDL; production, local tests and ordinary
- * data writes retain their original behavior.
+ * Worker, scheduling/provider schema and deterministic UAT seed rows are prepared before concurrent
+ * pilot traffic. Known schema DDL and the two founder-seed INSERT OR IGNORE families are therefore
+ * treated as already satisfied instead of re-entering D1's single-writer lane on every customer
+ * request. The bypass is deliberately narrow: only PAWSPACE_DEPLOYMENT_ENV=staging, only scheduling /
+ * provider DDL, and only provider_capacity_profiles / service_policy_configs founder seeds. Production,
+ * local tests, operator writes, availability writes, reservations, offers and all ordinary data writes
+ * retain their original behavior and retry policy.
  */
-export function withRetryingD1Writes(db:D1Database):D1Database{const existing=retryingDatabases.get(db as object);if(existing)return existing;const proxy=new Proxy(db,{get(target,property,receiver){if(property==="prepare")return(query:string)=>retryingStatement(target.prepare(query),query);if(property==="batch")return async(statements:D1PreparedStatement[])=>{if(preflightedSchedulingDdl(statements)&&await managedStaging())return statements.map(()=>skippedDdlResult());return withD1WriteRetry(()=>target.batch(statements.map(statement=>rawStatements.get(statement as object)??statement)));};if(property==="exec")return(query:string)=>withD1WriteRetry(()=>target.exec(query));const value=Reflect.get(target,property,receiver);return typeof value==="function"?value.bind(target):value;}})as D1Database;retryingDatabases.set(db as object,proxy);return proxy;}
+export function withRetryingD1Writes(db:D1Database):D1Database{const existing=retryingDatabases.get(db as object);if(existing)return existing;const proxy=new Proxy(db,{get(target,property,receiver){if(property==="prepare")return(query:string)=>retryingStatement(target.prepare(query),query);if(property==="batch")return async(statements:D1PreparedStatement[])=>{if((preflightedSchedulingDdl(statements)||preflightedStagingSeedBatch(statements))&&await managedStaging())return statements.map(()=>skippedResult());return withD1WriteRetry(()=>target.batch(statements.map(statement=>rawStatements.get(statement as object)??statement)));};if(property==="exec")return(query:string)=>withD1WriteRetry(()=>target.exec(query));const value=Reflect.get(target,property,receiver);return typeof value==="function"?value.bind(target):value;}})as D1Database;retryingDatabases.set(db as object,proxy);return proxy;}
