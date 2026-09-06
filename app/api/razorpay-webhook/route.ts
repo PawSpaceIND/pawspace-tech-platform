@@ -1,6 +1,7 @@
 import{authError,database}from"../../../lib/server-auth";
 import{ensurePaymentReconciliationTables,processGatewayEvent,type GatewayEvent}from"../../../lib/grooming-payment-reconciliation";
 import{resolvePaymentWebhookGate}from"../../../lib/payment-webhook-gate";
+import{enforcePilotBooking}from"../../../lib/payment-pilot-guard";
 import{acceptRazorpayWebhook,advancePaymentState,type PaymentState}from"../../../lib/financial-lifecycle";
 import{captureEffectsOutboxForEvent,commitRazorpayCaptureAtomic,executeRazorpayCapturePostCommit,RazorpayCaptureAmountMismatchError}from"../../../lib/razorpay-capture-atomic";
 import{isPawSpaceSubscriptionPayload,processSubscriptionProviderEvent}from"../../../lib/subscription-billing";
@@ -91,6 +92,7 @@ export async function POST(request:Request){
     const payload=(accepted.duplicate?JSON.parse(String(accepted.row.raw_payload||"{}")):accepted.event) as RazorPayload;
     const eventType=String(payload.event||"").trim();
     if(!eventType){await markInbox(db,accepted.row,"REJECTED",undefined,"missing_event_type");return json({error:"Webhook event type is required"},400);}
+    if(gate.environment==="live"){const pilotEvent=extract(payload,eventId,String(accepted.row.payload_sha256),gate.environment);const linked=pilotEvent.bookingId?{bookingId:pilotEvent.bookingId}:await linkedPayment(db,pilotEvent);const pilot=enforcePilotBooking(runtime,"live",linked?.bookingId);if(!pilot.ok){await markInbox(db,accepted.row,"REJECTED",eventType,"outside_payment_pilot");return json({error:pilot.reason,code:"outside_payment_pilot"},403);}}
     /*
      * NO TIMESTAMP CHECK HERE. Replay is bounded by IDENTITY, not by age: acceptRazorpayWebhook
      * recognises a body it has already accepted by the digest of the signature-verified payload, so a

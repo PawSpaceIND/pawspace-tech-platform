@@ -51,9 +51,13 @@ async function loadModules() {
   }).outputText;
   const paymentEnvironmentSource = await readFile(new URL("lib/payment-environment.ts", repoRoot), "utf8");
   await writeFile(path.join(tempDir, "payment-environment.mjs"), transpile(paymentEnvironmentSource));
+  const paymentPilotGuardSource = await readFile(new URL("lib/payment-pilot-guard.ts", repoRoot), "utf8");
+  await writeFile(path.join(tempDir, "payment-pilot-guard.mjs"), transpile(paymentPilotGuardSource));
   const razorSource = (await readFile(new URL("lib/razorpay-client.ts", repoRoot), "utf8"))
     .replace('from"./payment-environment"', 'from"./payment-environment.mjs"')
-    .replace('from "./payment-environment"', 'from "./payment-environment.mjs"');
+    .replace('from "./payment-environment"', 'from "./payment-environment.mjs"')
+    .replace('from"./payment-pilot-guard"', 'from"./payment-pilot-guard.mjs"')
+    .replace('from "./payment-pilot-guard"', 'from "./payment-pilot-guard.mjs"');
   await writeFile(path.join(tempDir, "razorpay-client.mjs"), transpile(razorSource));
   const financeSource = (await readFile(new URL("lib/financial-lifecycle.ts", repoRoot), "utf8"))
     .replace('from "./razorpay-client"', 'from "./razorpay-client.mjs"');

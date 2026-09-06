@@ -3,6 +3,7 @@
  * path. All provider-bound money is converted to integer paise before the HTTP boundary.
  */
 import{parsePaymentEnvironment,type PaymentEnvironment}from"./payment-environment";
+import{enforcePilotBooking}from"./payment-pilot-guard";
 export type{PaymentEnvironment}from"./payment-environment";
 
 type RazorEnv = Record<string, unknown>;
@@ -120,6 +121,7 @@ export async function createPaymentOrderPaise(env: RazorEnv, input: { bookingId:
   if (!resolved.declared) return { connected: false, environment: "unconfigured", reason: resolved.reason };
   const { environment, keyId, keySecret } = resolved;
   if (environment === "live" && env?.PAWSPACE_PAYMENT_LIVE_APPROVED !== "true") return { connected: false, environment, reason: "Live Razorpay order creation is not approved (PAWSPACE_PAYMENT_LIVE_APPROVED must equal \"true\")" };
+  const pilot=enforcePilotBooking(env,environment,input.bookingId);if(!pilot.ok)return{connected:false,environment,reason:pilot.reason};
   if (!keyId || !keySecret) return { connected: false, environment, reason: `Razorpay ${environment} API credentials are not configured - online payment is not connected yet` };
   let amountPaise: number;
   try { amountPaise = assertPositivePaise(input.amountPaise); } catch (error) { return { connected: false, environment, reason: error instanceof Error ? error.message : String(error) }; }
