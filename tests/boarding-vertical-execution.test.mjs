@@ -495,7 +495,7 @@ test("BRD-10 check-out: blocked until every stay day has a meal, play and real m
   stage("Check-out", "PASS", "refused naming each missing milestone; completes only with meal + play + scanned media; capacity released");
 });
 
-test("BRD-11 completion finance: no approved commercial term means no completion, and the journal must balance", async () => {
+test("BRD-11 completion finance: a failed completion is retryable, and the retry balances without double-paying", async () => {
   /* Checking out is not just a status change - it accrues the host payout, the platform fee, GST and
    * TCS into the ledger. lib/service-completion-finance.ts refuses to complete a stay it has no
    * approved commercial basis to price, and refuses again if the entries it built do not balance
@@ -530,59 +530,43 @@ test("BRD-11 completion finance: no approved commercial term means no completion
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM boarding_stay_events WHERE stay_id=? AND event_type='checked_out'").get(stayId).n, 0,
     "a refused completion must not log a checkout event");
 
-  /* DEFECT, recorded rather than asserted, so this test does not have to be rewritten when it is
-   * fixed and cannot silently hide it either.
+  /* FIXED, and now asserted so it cannot regress.
    *
-   * lib/boarding-stay-lifecycle.ts check_out writes boarding_stays.status='completed' and
-   * canonical_bookings.status='completed' and only THEN calls resolveServiceCompletionFinance().
-   * D1 has no interactive transactions, so when the finance step throws - a missing or expired
-   * commercial term, an unbalanced journal, an unresolvable place of supply, or any transient
-   * error - both status rows are already committed. The stay is permanently `completed` with no
-   * ledger journal, no payout accrual and no checkout event, the host's capacity lock is never
-   * released, and the operator cannot repair it: retrying answers "Only a checked-in active stay
-   * can be checked out".
+   * check_out used to write boarding_stays.status='completed' and canonical_bookings.status=
+   * 'completed' and only THEN resolve finance. D1 has no interactive transactions, so any failure
+   * in the finance step - a missing or expired commercial term, an unbalanced journal, an
+   * unresolvable place of supply, a transient error - left both rows permanently `completed` with
+   * no journal, no payout accrual and no checked_out event, the host's capacity lock still active,
+   * and no way back: the retry answered "Only a checked-in active stay can be checked out".
    *
-   * postJournal is already idempotent on its groupKey (lib/finance-accounts.ts returns
-   * duplicatePrevented for an existing SERVICE-COMPLETION-<bookingId> group), so resolving finance
-   * BEFORE the two status writes is safe and makes the failure retryable. */
-  const after = sqlite.prepare("SELECT status FROM boarding_stays WHERE id=?").get(stayId).status;
-  const bookingAfter = sqlite.prepare("SELECT status FROM canonical_bookings WHERE id=?").get(BOOKING).status;
-  const lock = sqlite.prepare("SELECT status FROM boarding_capacity_locks WHERE stay_id=?").get(stayId)?.status ?? "none";
-  if (after === "completed") {
-    stage("Completion atomicity", "GAP",
-      `check_out commits status BEFORE finance: stay=${after}, booking=${bookingAfter}, capacity lock=${lock}, 0 ledger entries, retry refused as "not a checked-in active stay"`);
-  } else {
-    stage("Completion atomicity", "PASS", `a failed finance step leaves the stay at ${after} and retryable`);
-  }
+   * lib/boarding-stay-lifecycle.ts now resolves finance FIRST, so a finance failure is retryable. */
+  assert.equal(sqlite.prepare("SELECT status FROM boarding_stays WHERE id=?").get(stayId).status, "in_progress",
+    "a failed completion must leave the stay open, not half-closed");
+  assert.equal(sqlite.prepare("SELECT check_out_status FROM boarding_stays WHERE id=?").get(stayId).check_out_status, "pending");
+  assert.equal(sqlite.prepare("SELECT status FROM canonical_bookings WHERE id=?").get(BOOKING).status, "in_progress",
+    "a failed completion must not close the canonical booking either");
 
   await seedCommercialTerm(db);
-  /* The first stay cannot be retried (see the GAP above), so the priced path is proven on a clean
-   * stay in a fresh world - which is also what a correctly configured city actually looks like. */
-  const w2 = await checkedInWorld();
-  await seedCommercialTerm(w2.db);
-  for (const [type, key] of [["meal", "brd-cf2-meal"], ["play", "brd-cf2-play"]]) {
-    await life.mutateBoardingStay(w2.db, {
-      stayId: w2.stayId, action: "care_event", actorId: HOST, idempotencyKey: key,
-      careEventType: type, detail: { stayDate: w2.stayDay },
-    });
-  }
-  const media2 = await cleanMedia(w2.db, w2.stayId, proof);
-  await proof.mutateBoardingProof(w2.db, {
-    stayId: w2.stayId, action: "record_daily_update", actorId: HOST, idempotencyKey: "brd-cf2-update",
-    mediaRef: media2.mediaRef, note: "settled in well",
-  });
-  const done = await attempt(() => life.mutateBoardingStay(w2.db, {
-    stayId: w2.stayId, action: "check_out", actorId: HOST, idempotencyKey: "brd-cf2-out",
+  /* The operator configures the term and retries THE SAME stay - the recovery that was impossible
+   * before. It must complete, and it must not pay the host twice for retrying. */
+  const done = await attempt(() => life.mutateBoardingStay(db, {
+    stayId, action: "check_out", actorId: HOST, idempotencyKey: "brd-cf-out-2",
   }));
-  assert.equal(done.ok, true, `completion must succeed once priced: ${String(done.body ?? "").slice(0, 220)}`);
+  assert.equal(done.ok, true, `the same stay must complete on retry once priced: ${String(done.body ?? "").slice(0, 220)}`);
+  assert.equal(sqlite.prepare("SELECT status FROM boarding_stays WHERE id=?").get(stayId).status, "completed");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM provider_payout_computations WHERE booking_id=?").get(BOOKING).n, 1,
+    "a retried completion must accrue ONE host payout, never two");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM boarding_stay_events WHERE stay_id=? AND event_type='checked_out'").get(stayId).n, 1);
+  const lockAfter = sqlite.prepare("SELECT status FROM boarding_capacity_locks WHERE stay_id=?").all(stayId);
+  assert.ok(lockAfter.every((l) => l.status === "released"), "the recovered completion must still free the host's capacity");
 
-  const entries = w2.sqlite.prepare("SELECT account_code,debit,credit,vertical FROM finance_journal_entries WHERE source_id=? AND source_type='service_completion'").all(BOOKING);
+  const entries = sqlite.prepare("SELECT account_code,debit,credit,vertical FROM finance_journal_entries WHERE source_id=? AND source_type='service_completion'").all(BOOKING);
   assert.ok(entries.length >= 2, `completion must post a double-entry journal, got ${entries.length} entries`);
   assert.ok(entries.every((e) => e.vertical === "boarding"), "every completion entry must be attributed to boarding");
   const debits = entries.reduce((n, e) => n + Number(e.debit || 0), 0);
   const credits = entries.reduce((n, e) => n + Number(e.credit || 0), 0);
   assert.ok(Math.abs(debits - credits) < 0.01, `the completion journal must balance: debits ${debits} vs credits ${credits}`);
-  stage("Completion finance", "PASS", `refused without a commercial term, no payout accrued; with one, ${entries.length} balanced ledger entries at Rs ${debits.toFixed(2)}`);
+  stage("Completion finance", "PASS", `refused without a term and fully retryable; the retry posts ${entries.length} balanced entries at Rs ${debits.toFixed(2)} and exactly one payout`);
 });
 
 // --- 6. CANCELLATION + REFUND -----------------------------------------------
