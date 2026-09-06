@@ -415,6 +415,59 @@ test("E2E-600 ledger is operational: schema present AND a journal actually posts
   });
 });
 
+test("E2E-700 refunds, cancellation and money-out safety", async () => {
+  await probe("grooming-payment-reconciliation", "refund overage detection", async () => {
+    const m = await import("../lib/grooming-payment-reconciliation.ts");
+    await m.ensurePaymentReconciliationTables(db);
+    sqlite.exec("CREATE TABLE IF NOT EXISTS booking_refund_cases (id TEXT PRIMARY KEY,booking_id TEXT NOT NULL,payment_id TEXT,amount REAL NOT NULL DEFAULT 0,reason TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'requested',requested_by TEXT NOT NULL,approved_by TEXT,gateway_reference TEXT,created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL)");
+    // Billed 4000, only 1000 ever captured, full refund requested.
+    sqlite.prepare("INSERT OR REPLACE INTO booking_payments VALUES ('E2E-PAY-OV','E2E-BK-OV','E2E-CUS-0001',4000,4000,'INR','card','prepaid','captured','razorpay','idem-ov','{}',?,?)").run(NOW, NOW);
+    sqlite.prepare("INSERT OR REPLACE INTO payment_reconciliation_records (payment_id,booking_id,gateway,environment,expected_amount,captured_amount,refunded_amount,currency,gateway_status,reconciliation_status,variance_amount,updated_at) VALUES ('E2E-PAY-OV','E2E-BK-OV','razorpay','sandbox',4000,1000,0,'INR','captured','matched',0,?)").run(NOW);
+    sqlite.prepare("INSERT OR REPLACE INTO booking_refund_cases VALUES ('E2E-RFD-OV','E2E-BK-OV','E2E-PAY-OV',4000,'customer cancelled','approved','e2e:ops','e2e:finance',NULL,?,?)").run(NOW, NOW);
+    await m.processGatewayEvent(db, { provider: "razorpay", environment: "sandbox", eventId: "e2e-ov-refund",
+      eventType: "refund.processed", bookingId: "E2E-BK-OV", amountSubunits: 400000,
+      gatewayRefundId: "rfnd_ov", payloadHash: "sha256:ov", signatureVerified: true });
+    const row = sqlite.prepare("SELECT reconciliation_status,variance_amount FROM payment_reconciliation_records WHERE payment_id='E2E-PAY-OV'").get();
+    if (row.reconciliation_status !== "refund_overage") throw new Error(`refunding 4000 against 1000 captured was certified '${row.reconciliation_status}'`);
+    return `overage detected, variance ${Math.round(Number(row.variance_amount))}`;
+  });
+
+  await probe("sitting-finance-governance", "delivered stay cannot be refunded", async () => {
+    const m = await import("../lib/sitting-finance-governance.ts");
+    await m.ensureSittingFinanceTables(db);
+    sqlite.prepare("INSERT OR REPLACE INTO canonical_bookings (id,customer_id,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at) VALUES ('E2E-BK-DLV','E2E-CUS-0002','blr','z1','pet_sitting','pkg','S','E2E-SG-DLV','E2E-PRV-01','2026-09-02T04:00:00.000Z','2026-09-03T04:00:00.000Z','completed','customer_app',4000,'INR','{}','e2e',?,?)").run(NOW, NOW);
+    try {
+      await m.mutateSittingFinance(db, { action: "approve_cancel", bookingId: "E2E-BK-DLV", reason: "e2e delivered-stay probe", actorId: "e2e:ops", idempotencyKey: "e2e-cancel-dlv-1" });
+    } catch (error) {
+      if (error instanceof Response && error.status === 409) return "delivered stay correctly refused (409)";
+      throw error;
+    }
+    throw new Error("a COMPLETED stay was cancelled and refunded - money-out defect");
+  });
+});
+
+test("E2E-800 lead journey and automation closure", async () => {
+  await probe("lead-assignment-governance", "assign leads", async () => {
+    const m = await import("../lib/lead-assignment-governance.ts");
+    for (const k of Object.keys(m)) if (/^ensure/.test(k)) await m[k](db);
+    return `entry points: ${Object.keys(m).filter((k) => /^(assign|ensure)/.test(k)).slice(0, 5).join(",")}`;
+  });
+
+  await probe("background-scheduler", "full sweep", async () => {
+    const m = await import("../lib/background-scheduler.ts");
+    const out = await m.runBackgroundScheduler(db, { actorId: "e2e:scheduler", asOf: NOW, cron: "*/5 * * * *" });
+    const errs = Array.isArray(out?.errors) ? out.errors : [];
+    return `ran; ${errs.length} sweep error(s)${errs.length ? ": " + errs.slice(0, 2).join(" | ").slice(0, 140) : ""}`;
+  });
+
+  await probe("communication-engine", "governed enqueue", async () => {
+    const m = await import("../lib/communication-engine.ts");
+    for (const k of Object.keys(m)) if (/^ensure/.test(k)) await m[k](db);
+    if (typeof m.enqueueCommunication !== "function") throw new Error("enqueueCommunication is not a function");
+    return "communication engine reachable";
+  });
+});
+
 // --- final matrix ----------------------------------------------------------
 test("E2E-999 result matrix", () => {
   const by = (s) => RESULTS.filter((r) => r.status === s);
