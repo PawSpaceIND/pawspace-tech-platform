@@ -73,6 +73,10 @@ const NOW = Date.UTC(2026, 8, 6, 4, 30);      // 2026-09-06 10:00 IST
 const DAY = 86400000;
 const CITY = "blr";
 const SERVICES = ["pet_grooming", "pet_boarding", "pet_sitting", "dog_walking", "pet_taxi", "pet_training"];
+/* Real Bengaluru operating zones, not one synthetic "z1". Zone is the axis auto-assignment and
+ * geo-fencing rank on, so a single-zone fixture cannot tell a working zone filter from a missing one. */
+const ZONES = ["blr-indiranagar", "blr-koramangala", "blr-whitefield", "blr-jayanagar", "blr-hebbal"];
+const PINCODES = ["560038", "560034", "560066", "560041", "560024"];
 
 const sqlite = new DatabaseSync(":memory:");
 const db = makeD1(sqlite);
@@ -101,7 +105,7 @@ function seedCore() {
     sqlite.prepare("INSERT INTO canonical_pets VALUES (?,?,?,?,?,?,?)")
       .run(`E2E-PET-${i}`, cust(i), `Pet${i}`, i % 5 === 0 ? "cat" : "dog", "indie", 8 + (i % 20), now);
     sqlite.prepare("INSERT INTO customer_addresses VALUES (?,?,?,?,?,?,?,?,?)")
-      .run(`E2E-ADR-${i}`, cust(i), `${i} Test Road`, "Indiranagar", "Bengaluru", "560038", 12.97 + i / 10000, 77.64 + i / 10000, now);
+      .run(`E2E-ADR-${i}`, cust(i), `${i} Test Road`, ZONES[i % ZONES.length], "Bengaluru", PINCODES[i % PINCODES.length], 12.97 + i / 10000, 77.64 + i / 10000, now);
   }
   for (let p = 1; p <= PROVIDERS; p++) {
     sqlite.prepare("INSERT INTO canonical_providers VALUES (?,?,?,?,'active',?,?,?)")
@@ -162,14 +166,16 @@ test("E2E-200 customer journey: booking -> payment -> capture -> ledger", async 
     for (let i = 1; i <= CUSTOMERS; i++) {
       const start = NOW + (2 + (i % 20)) * DAY;
       sqlite.prepare(`INSERT INTO canonical_bookings (id,customer_id,city_id,zone_id,service_code,package_code,package_name,schedule_group_id,provider_id,scheduled_start,scheduled_end,status,channel,total_amount,currency,pricing_json,created_by,created_at,updated_at)
-        VALUES (?,?,?,'z1',?,'pkg-std','Standard',?,?,?,?,?,'customer_app',?,'INR','{}','e2e',?,?)`)
-        .run(bkg(i), cust(i), CITY, SERVICES[i % SERVICES.length], `E2E-SG-${i}`,
+        VALUES (?,?,?,?,?,'pkg-std','Standard',?,?,?,?,?,'customer_app',?,'INR','{}','e2e',?,?)`)
+        .run(bkg(i), cust(i), CITY, ZONES[i % ZONES.length], SERVICES[i % SERVICES.length], `E2E-SG-${i}`,
              prov((i % PROVIDERS) + 1), iso(start), iso(start + 2 * 3600000),
              i <= 400 ? "completed" : "confirmed", 1500 + (i % 10) * 250, now, now);
     }
     const n = sqlite.prepare("SELECT COUNT(*) n FROM canonical_bookings").get().n;
     if (n !== CUSTOMERS) throw new Error(`expected ${CUSTOMERS} bookings, got ${n}`);
-    return `${n} bookings across ${SERVICES.length} verticals`;
+    const zones = sqlite.prepare("SELECT zone_id,COUNT(*) n FROM canonical_bookings GROUP BY zone_id").all();
+    if (zones.length !== ZONES.length) throw new Error(`expected ${ZONES.length} zones, got ${zones.length}`);
+    return `${n} bookings across ${SERVICES.length} verticals and ${zones.length} Bengaluru zones`;
   });
 
   // Payments for every booking, captured.
@@ -393,6 +399,14 @@ test("E2E-400 finance: GST, TDS, TCS, filing, journals", async () => {
     return JSON.stringify(out).slice(0, 90);
   });
 
+  await probe("gst-returns", "GSTR-3B generation", async () => {
+    const m = await import("../lib/gst-returns.ts");
+    await m.ensureGstReturnTables(db);
+    const out = await m.generateGstr3b(db, { entityId: "E2E-ENTITY", registrationId: "E2E-REG", periodCode: "2026-09" }, "e2e:finance");
+    if (String(out?.returnType || "") !== "GSTR-3B") throw new Error(`unexpected return type ${out?.returnType}`);
+    return JSON.stringify(out).slice(0, 90);
+  });
+
   await probe("financial-lifecycle", "balanced journal", async () => {
     const m = await import("../lib/financial-lifecycle.ts");
     await m.ensureFinancialLifecycleTables(db);
@@ -425,6 +439,14 @@ test("E2E-500 intelligence: analytics, reports, marketing, AI, automation", asyn
     await m.ensureAiAnalytics(db);
     const out = await m.buildAiAnalytics(db, {});
     return `keys: ${Object.keys(out || {}).slice(0, 8).join(",")}`;
+  });
+
+  await probe("pnl-reporting", "P&L over the pilot period", async () => {
+    const m = await import("../lib/pnl-reporting.ts");
+    const out = await m.generatePnlReport(db, { fromMonth: "2026-09", toMonth: "2026-09" });
+    const revenue = Number(out?.totals?.revenue ?? out?.revenueTotal ?? 0);
+    if (!out || typeof out !== "object") throw new Error("no P&L report returned");
+    return `P&L keys: ${Object.keys(out).slice(0, 6).join(",")}${revenue ? `, revenue ${revenue}` : ""}`;
   });
 
   await probe("report-export-runtime", "export tables", async () => {
@@ -707,6 +729,129 @@ test("E2E-950 financial parity: collections, commissions, tax and double-entry d
     catch { blocked = true; }
     if (!blocked) throw new Error("a posted journal entry was mutated - the immutability trigger did not fire");
     return "posted journal entries cannot be altered";
+  });
+});
+
+/*
+ * Conflict-free auto-scheduling. The matrix previously drove assignment through a fixture
+ * round-robin and never touched the scheduling module, so the thing that actually prevents two
+ * customers taking one provider's slot was unproven. That thing is a PARTIAL unique index created by
+ * lib/scheduling-reservation-leases.ts:
+ *   uq_scheduling_reservations_active_provider_window ON (provider_id,scheduled_start,scheduled_end)
+ *   WHERE status!='cancelled' AND service_code!='boarding' AND care_mode IS NOT 'overnight'
+ * Both the guarantee and the deliberate holes in it are pinned below.
+ */
+test("E2E-960 conflict-free scheduling: one provider, one window, one reservation", async () => {
+  const leases = await import("../lib/scheduling-reservation-leases.ts");
+
+  await probe("scheduling-reservation-leases", "governance installs the active-slot index", async () => {
+    sqlite.exec(`CREATE TABLE IF NOT EXISTS scheduling_reservations (id TEXT PRIMARY KEY,group_id TEXT NOT NULL,provider_id TEXT NOT NULL,service_code TEXT NOT NULL,city_id TEXT NOT NULL,zone_id TEXT NOT NULL,customer_id TEXT NOT NULL,pet_ids_json TEXT NOT NULL,scheduled_start TEXT NOT NULL,scheduled_end TEXT NOT NULL,capacity_units INTEGER NOT NULL DEFAULT 1,occurrence_number INTEGER NOT NULL DEFAULT 1,care_mode TEXT,status TEXT NOT NULL,explanation_json TEXT NOT NULL DEFAULT '{}',created_at INTEGER NOT NULL,lease_expires_at INTEGER,customer_session_id TEXT,attempt_id TEXT)`);
+    const installed = await leases.ensureSchedulingReservationLeaseGovernance(db);
+    if (!installed) throw new Error("lease governance refused to install");
+    const idx = sqlite.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='uq_scheduling_reservations_active_provider_window'").get();
+    if (!idx) throw new Error("the active-slot unique index was not created");
+    return "uq_scheduling_reservations_active_provider_window present";
+  });
+
+  const reserve = (id, providerId, start, end, service = "pet_grooming", careMode = null, status = "held") =>
+    sqlite.prepare(`INSERT INTO scheduling_reservations
+      (id,group_id,provider_id,service_code,city_id,zone_id,customer_id,pet_ids_json,scheduled_start,scheduled_end,care_mode,status,created_at)
+      VALUES (?,?,?,?,?,?,?,'[]',?,?,?,?,?)`)
+      .run(id, `SG-${id}`, providerId, service, CITY, ZONES[0], cust(1), start, end, careMode, status, NOW);
+
+  await probe("scheduling-reservation-leases", "500 racers, one slot, one winner", async () => {
+    const start = iso(NOW + 10 * DAY), end = iso(NOW + 10 * DAY + 3600000);
+    let accepted = 0, refused = 0;
+    await Promise.all(Array.from({ length: 500 }, async (_, i) => {
+      try { reserve(`E2E-RACE-${i}`, prov(1), start, end); accepted += 1; } catch { refused += 1; }
+    }));
+    const held = sqlite.prepare(`SELECT COUNT(*) n FROM scheduling_reservations
+      WHERE provider_id=? AND scheduled_start=? AND status!='cancelled'`).get(prov(1), start).n;
+    if (held !== 1) throw new Error(`DOUBLE BOOKING: ${held} active reservations on one provider window`);
+    if (accepted !== 1) throw new Error(`${accepted} of 500 racers were accepted, expected 1`);
+    return `500 concurrent reservations on one window -> 1 held, ${refused} refused`;
+  });
+
+  await probe("scheduling-reservation-leases", "a cancelled slot is releasable, not permanently burned", async () => {
+    const start = iso(NOW + 11 * DAY), end = iso(NOW + 11 * DAY + 3600000);
+    reserve("E2E-REL-1", prov(2), start, end);
+    sqlite.prepare("UPDATE scheduling_reservations SET status='cancelled' WHERE id='E2E-REL-1'").run();
+    reserve("E2E-REL-2", prov(2), start, end);   // must succeed: the predicate excludes cancelled
+    const active = sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservations WHERE provider_id=? AND scheduled_start=? AND status!='cancelled'").get(prov(2), start).n;
+    if (active !== 1) throw new Error(`expected exactly 1 active reservation after release, got ${active}`);
+    return "cancelling frees the window for the next customer";
+  });
+
+  await probe("scheduling-reservation-leases", "different windows and providers do not collide", async () => {
+    const start = iso(NOW + 12 * DAY), end = iso(NOW + 12 * DAY + 3600000);
+    reserve("E2E-SEP-1", prov(3), start, end);
+    reserve("E2E-SEP-2", prov(4), start, end);                                    // other provider
+    reserve("E2E-SEP-3", prov(3), iso(NOW + 12 * DAY + 7200000), iso(NOW + 12 * DAY + 10800000)); // other window
+    const n = sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservations WHERE id LIKE 'E2E-SEP-%' AND status!='cancelled'").get().n;
+    if (n !== 3) throw new Error(`the index over-blocked: expected 3 reservations, got ${n}`);
+    return "the guard is scoped to one provider and one window, not global";
+  });
+
+  /* Boarding and overnight care are EXCLUDED from the predicate on purpose - a host takes several
+   * pets in one window. Pinned so the exclusion is a decision on record rather than a silent hole,
+   * and so a future widening of the index has to change this test deliberately. */
+  await probe("scheduling-reservation-leases", "boarding and overnight are deliberately outside the guard", async () => {
+    const start = iso(NOW + 13 * DAY), end = iso(NOW + 14 * DAY);
+    reserve("E2E-BRD-1", prov(5), start, end, "boarding");
+    reserve("E2E-BRD-2", prov(5), start, end, "boarding");
+    const boarding = sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservations WHERE id LIKE 'E2E-BRD-%'").get().n;
+    if (boarding !== 2) throw new Error(`boarding was blocked by the slot guard: ${boarding} of 2 written`);
+    reserve("E2E-ONT-1", prov(6), start, end, "pet_sitting", "overnight");
+    reserve("E2E-ONT-2", prov(6), start, end, "pet_sitting", "overnight");
+    const overnight = sqlite.prepare("SELECT COUNT(*) n FROM scheduling_reservations WHERE id LIKE 'E2E-ONT-%'").get().n;
+    if (overnight !== 2) throw new Error(`overnight sitting was blocked by the slot guard: ${overnight} of 2 written`);
+    return "boarding and overnight multi-pet windows remain allowed, as designed";
+  });
+});
+
+/*
+ * Partner identity boundary. /api/identity-session is what binds a partner's phone-verified
+ * identity to a platform session, and nothing in this matrix touched it. These probes drive the
+ * REAL route handlers and pin its three refusals - an unauthenticated read, a cross-origin write,
+ * and a write with no assertion - because each is a way in if it regresses.
+ */
+test("E2E-970 partner identity: session binding refuses what it must", async () => {
+  const route = await import("../app/api/identity-session/route.ts");
+  const ORIGIN = "https://app.pawspace.test";
+
+  await probe("identity-session", "an unauthenticated read is refused", async () => {
+    const res = await route.GET(new Request(`${ORIGIN}/api/identity-session`));
+    if (res.status !== 401) throw new Error(`expected 401 without a session, got ${res.status}`);
+    const body = await res.json();
+    if (!String(body?.error || "").length) throw new Error("401 carried no reason");
+    return `401 ${String(body.error).slice(0, 48)}`;
+  });
+
+  await probe("identity-session", "a cross-origin write is blocked", async () => {
+    const res = await route.POST(new Request(`${ORIGIN}/api/identity-session`, {
+      method: "POST", headers: { origin: "https://evil.example", "content-type": "application/json" },
+      body: JSON.stringify({ assertion: "anything" }),
+    }));
+    if (res.status !== 403) throw new Error(`a cross-origin session write returned ${res.status}, expected 403`);
+    return "403 on cross-origin write";
+  });
+
+  await probe("identity-session", "a write with no assertion is refused before any lookup", async () => {
+    const res = await route.POST(new Request(`${ORIGIN}/api/identity-session`, {
+      method: "POST", headers: { origin: ORIGIN, "content-type": "application/json" }, body: JSON.stringify({}),
+    }));
+    if (res.status !== 400) throw new Error(`expected 400 with no assertion, got ${res.status}`);
+    return "400 without a verified identity assertion";
+  });
+
+  await probe("identity-session", "a forged assertion cannot mint a session", async () => {
+    const res = await route.POST(new Request(`${ORIGIN}/api/identity-session`, {
+      method: "POST", headers: { origin: ORIGIN, "content-type": "application/json" },
+      body: JSON.stringify({ assertion: "eyJmYWtlIjoidHJ1ZSJ9.not-a-real-signature" }),
+    }));
+    if (res.status === 200) throw new Error("A FORGED ASSERTION MINTED A SESSION");
+    if (res.headers.get("set-cookie")) throw new Error("a refused identity write still set a session cookie");
+    return `forged assertion refused with ${res.status}, no cookie issued`;
   });
 });
 
