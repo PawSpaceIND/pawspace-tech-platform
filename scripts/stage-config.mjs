@@ -54,18 +54,12 @@ if (problems.length) {
 }
 
 /**
- * The Worker this build deploys to. Defaults to the shared staging Worker, so every existing caller is
- * unchanged. A dedicated lane (the voice UAT Worker, say) sets PAWSPACE_STAGE_WORKER_NAME and gets its
- * own Worker without a forked copy of the deploy workflow - which is what a branch reaching for its own
- * lane did last time, by gutting the shared workflow and taking six deployment-contract tests with it.
- *
- * The D1 binding deliberately still points at the SAME staging database: a separate Worker is about
- * not overwriting someone else's build, not about a separate dataset.
+ * This script configures the single certified staging Worker. The deploy workflow, rollback lookup,
+ * isolation checks and staging-certification harness all target `pawspace-staging`; accepting a custom
+ * name here would create a Worker those controls do not verify. Dedicated lanes need their own complete
+ * deployment/certification contract rather than an unverified name override.
  */
-const WORKER_NAME = String(process.env.PAWSPACE_STAGE_WORKER_NAME || "").trim() || "pawspace-staging";
-if (!/^[a-z0-9][a-z0-9-]{0,60}$/.test(WORKER_NAME)) {
-  problems.push(`PAWSPACE_STAGE_WORKER_NAME is not a valid Worker name: ${WORKER_NAME}`);
-}
+const WORKER_NAME = "pawspace-staging";
 cfg.name = WORKER_NAME;
 cfg.topLevelName = WORKER_NAME;
 cfg.d1_databases = [{ binding: "DB", database_name: "pawspace-staging", database_id: d1Id }];
