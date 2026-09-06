@@ -3,7 +3,8 @@ import{hasPermission}from"../../../lib/platform-security";
 import{getStayPaymentSchedule,payStayBalance,sweepOverdueStayBalances}from"../../../lib/stay-split-payments";
 
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
-async function database(){const{env}=await import("cloudflare:workers");return env.DB;}
+async function runtime(){const{env}=await import("cloudflare:workers");return env as unknown as Record<string,unknown>;}
+async function database(){return (await runtime()).DB as D1Database;}
 
 // 50/50 split payment balance surface. Gateway maps this route to "scheduling.book" (customer
 // role has it); staff with bookings.manage may read/settle any booking. Per-record ownership for
@@ -22,7 +23,7 @@ export async function GET(request:Request){try{
 
 export async function POST(request:Request){try{
   const body=await request.json() as{action?:string;bookingId?:string;idempotencyKey?:string};
-  const db=await database(),actor=await resolveActor(request);
+  const env=await runtime(),db=env.DB as D1Database,actor=await resolveActor(request);
   const action=String(body.action||"pay_balance");
   if(action==="sweep_overdue"){
     // Ops/cron surface: mark past-due balances overdue so alerts can act on them.
@@ -32,6 +33,7 @@ export async function POST(request:Request){try{
     return json({data:{marked:result.marked,overdue:result.overdue}});
   }
   if(action!=="pay_balance")return json({error:"Unsupported stay balance action"},400);
+  if(String(env.PAWSPACE_PAYMENT_ENV??"").trim().toLowerCase()==="production")throw new Response("Self-paid stay balance settlement is disabled in production",{status:503});
   requirePermission(actor,"scheduling.book");
   const bookingId=String(body.bookingId||"").trim(),idempotencyKey=String(body.idempotencyKey||"").trim();
   if(!bookingId||!idempotencyKey)return json({error:"bookingId and idempotencyKey are required"},400);
