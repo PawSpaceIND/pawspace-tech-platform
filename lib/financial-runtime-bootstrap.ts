@@ -1,5 +1,5 @@
 import { ensureFinancialLifecycleTables } from "./financial-lifecycle";
-import { ensureFinancialRuntimeSupportTables } from "./financial-runtime-schema";
+import { ensureFinancialRuntimeTables as ensureFinancialRuntimeSupportTables } from "./financial-runtime-schema";
 
 type Db = D1Database;
 
