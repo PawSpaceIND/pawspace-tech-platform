@@ -18,6 +18,7 @@ const DIRECT_SAMPLE_RATE = 16000;
 const DIRECT_TICKET_TTL_MS = 2 * 60_000;
 const DIRECT_SESSION_LIMIT_MS = 5 * 60_000;
 const MAX_TURNS = 12;
+const MAX_PENDING_AUDIO_BYTES = DIRECT_SAMPLE_RATE * 2 * 3;
 const encoder = new TextEncoder();
 
 const text = (value: unknown) => String(value ?? "").trim();
@@ -275,10 +276,15 @@ export async function handleDirectBrowserVoiceHarnessStream(
   server.accept({ allowHalfOpen: true });
 
   let flux: WorkerSocket | null = null;
+  let fluxInit: Promise<WorkerSocket> | null = null;
   let started = false;
   let closed = false;
   let turnCount = 0;
   let queue = Promise.resolve();
+  let pendingAudioBytes = 0;
+  let audioFramesSent = 0;
+  let audioBytesSent = 0;
+  const pendingAudio: ArrayBuffer[] = [];
   const history: ChatMessage[] = [];
 
   const sendJson = (payload: Record<string, unknown>) => {
@@ -347,14 +353,47 @@ export async function handleDirectBrowserVoiceHarnessStream(
       try {
         payload = JSON.parse(event.data) as Record<string, unknown>;
       } catch {
+        sendJson({ type: "status", stage: "stt_unparsed_event", purpose: "non-JSON Flux event" });
         return;
       }
-      const kind = text(payload.event || payload.type);
+
+      const messageType = text(payload.type);
+      const kind = text(payload.event);
+      const transcript = text(payload.transcript);
+      if (messageType === "Connected") {
+        sendJson({ type: "status", stage: "stt_connected", purpose: "Flux upstream connected" });
+      }
+      if (messageType === "Warning") {
+        sendJson({
+          type: "status",
+          stage: "stt_warning",
+          purpose: text(payload.code || payload.description || "Flux warning"),
+        });
+      }
+      if (messageType === "Error") {
+        sendJson({
+          type: "error",
+          stage: "stt",
+          message: text(payload.description || payload.message || payload.code || "Workers AI Flux error"),
+        });
+        return;
+      }
+      if (kind === "Update" && transcript) {
+        sendJson({ type: "status", stage: "stt_update", purpose: transcript.slice(0, 160) });
+      }
       if (kind === "StartOfTurn") {
-        sendJson({ type: "status", stage: "speech_detected" });
+        sendJson({
+          type: "status",
+          stage: "speech_detected",
+          purpose: transcript ? transcript.slice(0, 160) : "Flux detected speech",
+        });
       }
       if (kind === "EndOfTurn") {
-        const transcript = text(payload.transcript);
+        sendJson({
+          type: "status",
+          stage: "end_of_turn",
+          purpose: transcript ? transcript.slice(0, 160) : "Flux ended an empty turn",
+        });
         if (transcript) processQuestion(transcript);
       }
     });
@@ -362,34 +401,99 @@ export async function handleDirectBrowserVoiceHarnessStream(
       sendJson({ type: "error", stage: "stt", message: "Workers AI Flux failed" });
     });
     socket.addEventListener("close", () => {
-      flux = null;
-      sendJson({ type: "status", stage: "stt_closed" });
+      if (flux === socket) flux = null;
+      sendJson({ type: "status", stage: "stt_closed", purpose: "Flux upstream closed" });
     });
   };
 
-  const initializeFlux = async () => {
-    if (flux && flux.readyState === WebSocket.OPEN) return;
-    sendJson({ type: "status", stage: "stt_connecting", sampleRate: DIRECT_SAMPLE_RATE });
-    const fluxResponse = (await ai.run(
-      "@cf/deepgram/flux",
-      {
-        encoding: "linear16",
-        sample_rate: String(DIRECT_SAMPLE_RATE),
-        eot_threshold: "0.65",
-        eot_timeout_ms: "1200",
-        mip_opt_out: "true",
-        tag: "pawspace-uat-browser-voice-harness",
-      },
-      { websocket: true },
-    )) as Response & { webSocket?: WorkerSocket };
-    const socket = fluxResponse.webSocket;
-    if (!socket) {
-      throw new Error("Workers AI Flux did not open a WebSocket");
+  const noteAudioSent = (bytes: number) => {
+    audioFramesSent += 1;
+    audioBytesSent += bytes;
+    if (audioFramesSent === 1 || audioFramesSent % 20 === 0) {
+      sendJson({
+        type: "status",
+        stage: "stt_audio_flowing",
+        purpose: `${audioFramesSent} frames · ${audioBytesSent} PCM bytes sent to Flux`,
+      });
     }
-    socket.accept({ allowHalfOpen: true });
-    flux = socket;
-    attachFlux(socket);
-    sendJson({ type: "status", stage: "stt_ready", sampleRate: DIRECT_SAMPLE_RATE });
+  };
+
+  const sendFluxAudio = (socket: WorkerSocket, audio: ArrayBuffer) => {
+    socket.send(audio);
+    noteAudioSent(audio.byteLength);
+  };
+
+  const bufferAudio = (audio: ArrayBuffer) => {
+    const copy = audio.slice(0);
+    pendingAudio.push(copy);
+    pendingAudioBytes += copy.byteLength;
+    while (pendingAudioBytes > MAX_PENDING_AUDIO_BYTES && pendingAudio.length > 1) {
+      const dropped = pendingAudio.shift();
+      if (dropped) pendingAudioBytes -= dropped.byteLength;
+    }
+  };
+
+  const flushPendingAudio = (socket: WorkerSocket) => {
+    const bufferedFrames = pendingAudio.length;
+    const bufferedBytes = pendingAudioBytes;
+    while (pendingAudio.length && socket.readyState === WebSocket.OPEN) {
+      const audio = pendingAudio.shift();
+      if (!audio) break;
+      pendingAudioBytes -= audio.byteLength;
+      sendFluxAudio(socket, audio);
+    }
+    if (bufferedFrames > 0) {
+      sendJson({
+        type: "status",
+        stage: "stt_buffer_flushed",
+        purpose: `${bufferedFrames} buffered frames · ${bufferedBytes} bytes`,
+      });
+    }
+  };
+
+  const initializeFlux = (): Promise<WorkerSocket> => {
+    if (flux && flux.readyState === WebSocket.OPEN) return Promise.resolve(flux);
+    if (fluxInit) return fluxInit;
+
+    sendJson({ type: "status", stage: "stt_connecting", sampleRate: DIRECT_SAMPLE_RATE });
+    const pending = (async () => {
+      const fluxResponse = (await ai.run(
+        "@cf/deepgram/flux",
+        {
+          encoding: "linear16",
+          sample_rate: String(DIRECT_SAMPLE_RATE),
+          eot_threshold: "0.65",
+          eot_timeout_ms: "1200",
+          mip_opt_out: "true",
+          tag: "pawspace-uat-browser-voice-harness",
+        },
+        { websocket: true },
+      )) as Response & { webSocket?: WorkerSocket };
+      const socket = fluxResponse.webSocket;
+      if (!socket) {
+        throw new Error("Workers AI Flux did not open a WebSocket");
+      }
+      socket.accept({ allowHalfOpen: true });
+      flux = socket;
+      attachFlux(socket);
+      sendJson({ type: "status", stage: "stt_ready", sampleRate: DIRECT_SAMPLE_RATE });
+      flushPendingAudio(socket);
+      return socket;
+    })();
+
+    fluxInit = pending;
+    void pending
+      .catch((error) => {
+        sendJson({
+          type: "error",
+          stage: "stt_init",
+          message: error instanceof Error ? error.message : "Unable to initialize Flux",
+        });
+      })
+      .finally(() => {
+        if (fluxInit === pending) fluxInit = null;
+      });
+    return pending;
   };
 
   const sessionTimer = setTimeout(() => {
@@ -421,13 +525,7 @@ export async function handleDirectBrowserVoiceHarnessStream(
         if (type === "start" && !started) {
           started = true;
           sendJson({ type: "status", stage: "started", sampleRate: DIRECT_SAMPLE_RATE });
-          void initializeFlux().catch((error) => {
-            sendJson({
-              type: "error",
-              stage: "stt_init",
-              message: error instanceof Error ? error.message : "Unable to initialize Flux",
-            });
-          });
+          void initializeFlux();
           await sendSpeech("Hello, this is the PawSpace voice UAT test.", "opening");
           return;
         }
@@ -440,15 +538,11 @@ export async function handleDirectBrowserVoiceHarnessStream(
       if (!started || !(event.data instanceof ArrayBuffer) || event.data.byteLength < 2) return;
       const audio = event.data;
       if (!flux || flux.readyState !== WebSocket.OPEN) {
-        try {
-          await initializeFlux();
-        } catch {
-          return;
-        }
+        bufferAudio(audio);
+        void initializeFlux();
+        return;
       }
-      if (flux?.readyState === WebSocket.OPEN) {
-        flux.send(audio);
-      }
+      sendFluxAudio(flux, audio);
     })().catch((error) => {
       sendJson({
         type: "error",
@@ -461,6 +555,8 @@ export async function handleDirectBrowserVoiceHarnessStream(
   server.addEventListener("close", () => {
     closed = true;
     clearTimeout(sessionTimer);
+    pendingAudio.length = 0;
+    pendingAudioBytes = 0;
     try {
       flux?.close(1000, "browser harness closed");
     } catch {
