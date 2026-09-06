@@ -1,3 +1,4 @@
+type Db = D1Database;
 type Env = Record<string, unknown>;
 type AiBinding = {
   run(
@@ -31,6 +32,17 @@ function aiBinding(env: Env): AiBinding | null {
 
 function signingSecret(env: Env) {
   return text(env.PAWSPACE_UAT_SIGNING_KEY);
+}
+
+async function ensureDirectBrowserVoiceTables(db: Db) {
+  await db.batch([
+    db.prepare(
+      "CREATE TABLE IF NOT EXISTS ai_browser_voice_tickets (id TEXT PRIMARY KEY,expires_at INTEGER NOT NULL,used_at INTEGER,created_at INTEGER NOT NULL)",
+    ),
+    db.prepare(
+      "CREATE INDEX IF NOT EXISTS idx_ai_browser_voice_tickets_expiry ON ai_browser_voice_tickets(expires_at)",
+    ),
+  ]);
 }
 
 function hex(bytes: ArrayBuffer) {
@@ -114,7 +126,7 @@ export function directBrowserVoiceReadiness(env: Env): DirectBrowserVoiceReadine
   };
 }
 
-export async function issueDirectBrowserVoiceTicket(env: Env, publicOrigin: string) {
+export async function issueDirectBrowserVoiceTicket(db: Db, env: Env, publicOrigin: string) {
   const readiness = directBrowserVoiceReadiness(env);
   if (!readiness.enabled) {
     return { ok: false as const, status: 409, reason: readiness.reason, readiness };
@@ -140,8 +152,20 @@ export async function issueDirectBrowserVoiceTicket(env: Env, publicOrigin: stri
     };
   }
 
+  await ensureDirectBrowserVoiceTables(db);
+  const createdAt = Date.now();
   const ticketId = `AIVB-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
-  const expiresAt = Date.now() + DIRECT_TICKET_TTL_MS;
+  const expiresAt = createdAt + DIRECT_TICKET_TTL_MS;
+  await db
+    .prepare("DELETE FROM ai_browser_voice_tickets WHERE expires_at<?")
+    .bind(createdAt - DIRECT_TICKET_TTL_MS)
+    .run();
+  await db
+    .prepare(
+      "INSERT INTO ai_browser_voice_tickets (id,expires_at,created_at) VALUES (?,?,?)",
+    )
+    .bind(ticketId, expiresAt, createdAt)
+    .run();
   const signature = await hmac(
     signingSecret(env),
     `ai-browser:${ticketId}:${expiresAt}:${DIRECT_SAMPLE_RATE}`,
@@ -264,6 +288,21 @@ export async function handleDirectBrowserVoiceHarnessStream(
   const ticket = await verifyDirectTicket(request, env);
   if (!ticket.ok) {
     return new Response("Unauthorized browser voice harness ticket", { status: 401 });
+  }
+  const db = env.DB as Db | undefined;
+  if (!db) {
+    return new Response("Browser voice ticket store is unavailable", { status: 503 });
+  }
+  await ensureDirectBrowserVoiceTables(db);
+  const claimedAt = Date.now();
+  const claim = await db
+    .prepare(
+      "UPDATE ai_browser_voice_tickets SET used_at=? WHERE id=? AND used_at IS NULL AND expires_at>=?",
+    )
+    .bind(claimedAt, ticket.ticketId, claimedAt)
+    .run();
+  if (Number(claim.meta?.changes || 0) !== 1) {
+    return new Response("Browser voice harness ticket is expired or already used", { status: 409 });
   }
   const ai = aiBinding(env);
   if (!ai) {
