@@ -42,15 +42,13 @@ test("customer and provider sessions are scoped before reaching self-service API
   assert.match(worker,/url\.pathname==="\/api\/identity-session"/);
 });
 
-test("the central API gateway honours customer/provider platform sessions, not just staff identities",async()=>{
-  // Regression: OTP-verified customers hold a platform session cookie but no staff header identity;
-  // without this the gateway 401s them on gated self-service reads (e.g. GET
-  // /api/boarding-stays?scope=customer) before the route's own resolveActor ever runs.
+test("the central API gateway honours authenticated sessions and rejects caller-controlled staff identity headers",async()=>{
   const gateway=await source("lib/api-gateway.ts");
   assert.match(gateway,/import \{ resolvePlatformSession \} from "\.\/platform-session"/);
   const authorize=gateway.slice(gateway.indexOf("export async function authorizeApiRequest"));
+  assert.match(authorize,/resolveUatStaffActor\(request,env as unknown as Record<string,unknown>\)/);
   assert.match(authorize,/resolvePlatformSession\(env\.DB,request\)/);
-  const uatIndex=authorize.indexOf("resolveUatStaffActor"),sessionIndex=authorize.indexOf("resolvePlatformSession"),headerIndex=authorize.indexOf("oai-authenticated-user-email");
-  assert.ok(uatIndex>=0&&sessionIndex>uatIndex&&headerIndex>sessionIndex,"session check must sit between the UAT cookie and the staff header identity");
+  assert.doesNotMatch(authorize,/oai-authenticated-user-email/);
+  assert.doesNotMatch(authorize,/FOUNDER_EMAIL/);
   assert.match(authorize,/session\.permissions,permission/);
 });
