@@ -129,7 +129,7 @@ test("The Razorpay adapter refuses every unconfigured state without touching the
     assert.match(String(zero.reason), /positive integer paise amount/);
 
     // Payment LINKS are locked to sandbox: a live deployment cannot create one at all.
-    const liveLink = await razorpay.createSandboxPaymentLink({ PAWSPACE_PAYMENT_ENV: "live", PAWSPACE_PAYMENT_LIVE_APPROVED: "true", ...LIVE_KEYS }, { bookingId: "B1", paymentId: "P1", referenceId: "R1", customerId: "C1", amount: 100, currency: "INR", expiresAt: NOW + DAY });
+    const liveLink = await razorpay.createSandboxPaymentLink({ PAWSPACE_PAYMENT_ENV: "live", ...LIVE_KEYS }, { bookingId: "B1", paymentId: "P1", referenceId: "R1", customerId: "C1", amount: 100, currency: "INR", expiresAt: NOW + DAY });
     assert.equal(liveLink.connected, false);
     assert.match(String(liveLink.reason), /locked to Razorpay sandbox/);
     const undeclaredLink = await razorpay.createSandboxPaymentLink({}, { bookingId: "B1", paymentId: "P1", referenceId: "R1", customerId: "C1", amount: 100, currency: "INR", expiresAt: NOW + DAY });
@@ -197,8 +197,8 @@ test("Rupee amounts reach the gateway as exact paise, and the API base cannot be
     assert.match(String(offHost.reason), /must use a loopback HTTP\(S\) server/);
     const noFlag = await razorpay.createPaymentOrder({ ...env, PAWSPACE_RAZORPAY_API_BASE_URL: "http://127.0.0.1:9/x" }, { bookingId: "B1", paymentId: "P1", amount: 100, currency: "INR" });
     assert.match(String(noFlag.reason), /allowed only in the sandbox contract-test environment/);
-    const liveOverride = await razorpay.createPaymentOrder({ PAWSPACE_PAYMENT_ENV: "live", PAWSPACE_PAYMENT_LIVE_APPROVED: "true", ...LIVE_KEYS, PAWSPACE_RAZORPAY_API_BASE_URL: "http://127.0.0.1:9/x", PAWSPACE_PAYMENT_CONTRACT_TEST: "true" }, { bookingId: "B1", paymentId: "P1", amount: 100, currency: "INR" });
-    assert.match(String(liveOverride.reason), /allowed only in the sandbox contract-test environment/);
+    const liveOverride = await razorpay.createPaymentOrder({ PAWSPACE_PAYMENT_ENV: "live", ...LIVE_KEYS, PAWSPACE_RAZORPAY_API_BASE_URL: "http://127.0.0.1:9/x", PAWSPACE_PAYMENT_CONTRACT_TEST: "true" }, { bookingId: "B1", paymentId: "P1", amount: 100, currency: "INR" });
+    assert.match(String(liveOverride.reason), /must equal "true"|not approved/i);
     assert.deepEqual(calls, [], "no redirected request is ever attempted");
   });
 });

@@ -25,7 +25,7 @@ export function runWithWorkersDb(db, callback) {
   return workersDbAls.run(db, callback);
 }
 
-// Loaded lazily and cached: only a suite that actually imports a .tsx pays for TypeScript's compiler.
+// Loaded lazily and cached: only a suite that actually imports TypeScript pays for the compiler.
 let cachedTs = null;
 function typescript() {
   if (!cachedTs) cachedTs = nodeModule.createRequire(import.meta.url)("typescript");
@@ -74,6 +74,12 @@ function splitSpecifierSuffix(specifier) {
     pathname: specifier.slice(0, suffixIndex),
     suffix: specifier.slice(suffixIndex),
   };
+}
+
+function isRegisterHooksTypeScriptSpecifier(specifier) {
+  const { pathname } = splitSpecifierSuffix(specifier);
+  const lowerPathname = pathname.toLowerCase();
+  return lowerPathname.endsWith(".ts") || lowerPathname.endsWith(".tsx");
 }
 
 function extensionlessTypeScriptCandidates(specifier) {
@@ -156,7 +162,7 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
         load(url, context, nextLoad) {
           const { pathname, parsed } = normalizedFileUrl(url);
           if (pathname.endsWith(".css")) return { format: "module", source: cssStub(), shortCircuit: true };
-          if (!pathname.endsWith(".tsx")) return nextLoad(url, context);
+          if (!isRegisterHooksTypeScriptSpecifier(pathname)) return nextLoad(url, context);
           const path = fileURLToPath(parsed);
           return { format: "module", source: transpileTsx(readFileSync(path, "utf8"), path), shortCircuit: true };
         },
