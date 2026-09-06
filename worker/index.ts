@@ -94,8 +94,11 @@ const worker = {
   },
   async scheduled(controller:ScheduledControllerLike,env:Env,ctx:ExecutionContext){
     ctx.waitUntil((async()=>{
-      const templateSync=await syncSubmittedMetaTemplateStatuses(env.DB,env as unknown as Record<string,unknown>,{actorId:"system:scheduled-worker",limit:50});
-      if(templateSync.failed&&templateSync.processed)throw new Error(`blocked before dispatch: whatsapp template sync: ${templateSync.failed} verification exception(s)`);
+      let templateSyncError:string|null=null;
+      try{
+        const templateSync=await syncSubmittedMetaTemplateStatuses(env.DB,env as unknown as Record<string,unknown>,{actorId:"system:scheduled-worker",limit:50});
+        if(templateSync.failed&&templateSync.processed)templateSyncError=`whatsapp template sync: ${templateSync.failed} verification exception(s)`;
+      }catch(error){templateSyncError=`whatsapp template sync: ${error instanceof Error?error.message:String(error)}`;}
       const marketingHour=Number(new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Kolkata",hour:"2-digit",hour12:false}).format(new Date(controller.scheduledTime)));
       const marketingTask=marketingHour>=6
         ?runMarketingConnectorScheduler(env.DB,{asOf:controller.scheduledTime,runtime:env as unknown as Record<string,unknown>}).then(result=>{const failedSync=Array.isArray(result.sync)?result.sync.filter(item=>String((item as Record<string,unknown>).status)==="failed"):[];const offline=result.offlineConversions as Record<string,unknown>;if(failedSync.length||String(offline?.status||"")==="failed")throw new Error(`provider sync/upload failure: ${JSON.stringify({failedSync,offline})}`);return result;})
@@ -117,6 +120,7 @@ const worker = {
         runTrustSafetySweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
       ]);
       const errors:string[]=[];
+      if(templateSyncError)errors.push(templateSyncError);
       if(cleanup.status==="rejected")errors.push(`reservation cleanup: ${cleanup.reason instanceof Error?cleanup.reason.message:String(cleanup.reason)}`);
       if(scheduler.status==="rejected")errors.push(`background scheduler: ${scheduler.reason instanceof Error?scheduler.reason.message:String(scheduler.reason)}`);else if(Array.isArray(scheduler.value.errors)&&scheduler.value.errors.length)errors.push(...scheduler.value.errors);
       if(outboxDispatch.status==="rejected")errors.push(`communication outbox dispatcher: ${outboxDispatch.reason instanceof Error?outboxDispatch.reason.message:String(outboxDispatch.reason)}`);else if(outboxDispatch.value.errors.length)errors.push(...outboxDispatch.value.errors.map(error=>`communication outbox dispatcher: ${error}`));

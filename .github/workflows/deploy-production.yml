@@ -139,6 +139,8 @@ jobs:
           EXOTEL_WEBHOOK_SECRET: ${{ secrets.EXOTEL_WEBHOOK_SECRET }}
           INTERAKT_API_KEY: ${{ secrets.INTERAKT_API_KEY }}
           INTERAKT_WEBHOOK_SECRET: ${{ secrets.INTERAKT_WEBHOOK_SECRET }}
+          FAST2SMS_API_KEY: ${{ secrets.FAST2SMS_API_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET }}
         run: |
           set -euo pipefail
           SECRETS_FILE="$RUNNER_TEMP/pawspace-production-secrets.json"
@@ -149,10 +151,12 @@ jobs:
             const requiredNames = [
               "EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_SID", "EXOTEL_CALLER_ID",
               "EXOTEL_VOICE_APP_ID", "EXOTEL_WEBHOOK_SECRET",
-              "INTERAKT_API_KEY", "INTERAKT_WEBHOOK_SECRET"
+              "INTERAKT_API_KEY", "INTERAKT_WEBHOOK_SECRET",
+              "FAST2SMS_API_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET"
             ];
             const values = Object.fromEntries(requiredNames.map(name => [name, process.env[name] || ""]));
-            if (Object.values(values).some(value => !value)) throw new Error("a required production communication secret is missing");
+            if (Object.values(values).some(value => !value)) throw new Error("a required production communication or identity secret is missing");
+            if ((values.PAWSPACE_IDENTITY_ASSERTION_SECRET || "").length < 32) throw new Error("PAWSPACE_IDENTITY_ASSERTION_SECRET must be at least 32 characters");
             writeFileSync(process.env.SECRETS_FILE, JSON.stringify(values), { mode: 0o600 });
           '
           npx wrangler deploy --message "production ${{ github.event.inputs.expected_sha }}" --secrets-file "$SECRETS_FILE"

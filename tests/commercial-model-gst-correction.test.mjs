@@ -55,6 +55,9 @@ async function payoutWorld() {
   const terms = await import("../lib/provider-commercial-terms.ts");
   await terms.ensureCommercialTermsTables(db);
   sqlite.exec("CREATE TABLE IF NOT EXISTS canonical_bookings (id TEXT PRIMARY KEY,service_code TEXT,provider_id TEXT,total_amount REAL,scheduled_start TEXT,status TEXT)");
+  // C3 deliberately treats an unreadable statutory source as a hard failure before replacement DELETEs.
+  // These empty source tables make this fixture an explicit successful statutory read, not a missing-table error.
+  sqlite.exec("CREATE TABLE IF NOT EXISTS payroll_runs (id TEXT PRIMARY KEY,period_start INTEGER,period_end INTEGER,status TEXT); CREATE TABLE IF NOT EXISTS employee_payroll_results (id TEXT PRIMARY KEY,run_id TEXT,employee_id TEXT,gross_earnings REAL); CREATE TABLE IF NOT EXISTS boarding_host_settlement_ledger (booking_id TEXT,provider_id TEXT,payout_amount REAL,eligible_at INTEGER)");
   return { sqlite, db, terms };
 }
 async function activate(terms, db, { serviceCode, model, share }) {

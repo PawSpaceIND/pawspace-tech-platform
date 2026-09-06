@@ -59,7 +59,6 @@ function monthWindow(period:string):{startMs:number;endMs:number}{
  return{startMs,endMs};
 }
 
-/** Indian FY months for the FY containing `period`, up to and including it. */
 function fyMonthsThrough(period:string):string[]{
  const[year,month]=period.split("-").map(Number);
  const fyStartYear=month>=4?year:year-1;
@@ -75,34 +74,28 @@ function fyMonthsThrough(period:string):string[]{
 async function safeAll(db:Db,sql:string,bindings:unknown[]=[]){
  try{let statement=db.prepare(sql);if(bindings.length)statement=statement.bind(...bindings);return((await statement.all<Row>()).results||[]);}catch{return[] as Row[];}
 }
+async function requiredAll(db:Db,sql:string,bindings:unknown[]=[]){let statement=db.prepare(sql);if(bindings.length)statement=statement.bind(...bindings);return((await statement.all<Row>()).results||[]);}
 
 export type TdsComputation={period:string;sections:Record<string,{base:number;tds:number;deductees:number}>;totalTds:number;issues:string[];depositDueDate:string};
 
-/** Compute (and idempotently persist) the month's TDS from real payroll + payout data.
- *  Recomputation replaces the period's engine-computed rows, so it is safe to re-run. */
 export async function computeMonthlyTds(db:Db,input:{period:string;actorId:string;asOf?:number}):Promise<TdsComputation>{
  await ensureTdsTables(db);
  const{startMs,endMs}=monthWindow(input.period),now=input.asOf??Date.now(),issues:string[]=[];
- await db.prepare("DELETE FROM tds_deductions WHERE period=?").bind(input.period).run();
  const rows:Array<{section:string;deducteeType:string;deducteeId:string;deducteeName:string;base:number;rate:number;tds:number;sourceType:string;sourceRef:string}>=[];
 
- // s192 salaries: payroll results whose run period overlaps this month.
- const payroll=await safeAll(db,"SELECT r.id result_id,r.employee_id,r.gross_earnings,p.id run_id FROM employee_payroll_results r JOIN payroll_runs p ON p.id=r.run_id WHERE p.period_start<? AND p.period_end>?",[endMs,startMs]);
+ // Required statutory source reads happen before the destructive period refresh. Any read failure
+ // therefore preserves the last computed deductions instead of silently converting the month to zero.
+ const payroll=await requiredAll(db,"SELECT r.id result_id,r.employee_id,r.gross_earnings,p.id run_id FROM employee_payroll_results r JOIN payroll_runs p ON p.id=r.run_id WHERE p.period_start<? AND p.period_end>?",[endMs,startMs]);
  for(const row of payroll){
   const gross=Number(row.gross_earnings||0);if(gross<=0)continue;
   const tds=monthlySalaryTds(gross);
   if(tds>0)rows.push({section:"192",deducteeType:"employee",deducteeId:String(row.employee_id),deducteeName:String(row.employee_id),base:gross,rate:0,tds,sourceType:"payroll_run",sourceRef:String(row.run_id)});
  }
 
- // 194H (commission) / 194J (professional): payouts classified by the engagement model on the
- // governing commercial term. FY-aggregate thresholds compare against the FY-TO-DATE cumulative
- // read from the SOURCE tables (below-threshold months leave no deduction rows, so deduction
- // history alone cannot see earlier payouts); the untaxed portion is cumulative minus base
- // already taxed in prior months' deduction rows.
  const[year,monthNum]=input.period.split("-").map(Number);
  const fyStartMs=Date.UTC(monthNum>=4?year:year-1,3,1)-(330*60_000);
- const fyPayouts=await safeAll(db,"SELECT c.booking_id,c.provider_id,c.provider_net_payout,c.computed_at,t.engagement_model FROM provider_payout_computations c JOIN provider_commercial_terms t ON t.id=c.term_id WHERE c.computed_at>=? AND c.computed_at<?",[fyStartMs,endMs]);
- const fySettlements=await safeAll(db,"SELECT booking_id,provider_id,payout_amount,eligible_at FROM boarding_host_settlement_ledger WHERE payout_amount IS NOT NULL AND eligible_at>=? AND eligible_at<?",[fyStartMs,endMs]);
+ const fyPayouts=await requiredAll(db,"SELECT c.booking_id,c.provider_id,c.provider_net_payout,c.computed_at,t.engagement_model FROM provider_payout_computations c JOIN provider_commercial_terms t ON t.id=c.term_id WHERE c.computed_at>=? AND c.computed_at<?",[fyStartMs,endMs]);
+ const fySettlements=await requiredAll(db,"SELECT booking_id,provider_id,payout_amount,eligible_at FROM boarding_host_settlement_ledger WHERE payout_amount IS NOT NULL AND eligible_at>=? AND eligible_at<?",[fyStartMs,endMs]);
  type ProviderAgg={section:"194H"|"194J";fyCumulative:number;monthAmount:number;monthRefs:string[]};
  const providerAgg=new Map<string,ProviderAgg>();
  const accumulate=(section:"194H"|"194J",providerId:string,amount:number,at:number,ref:string)=>{
@@ -112,17 +105,10 @@ export async function computeMonthlyTds(db:Db,input:{period:string;actorId:strin
   if(at>=startMs&&at<endMs){entry.monthAmount+=amount;entry.monthRefs.push(ref);}
   providerAgg.set(key,entry);
  };
- // The payout engine writes engagement_model values commission_groomer / commission_standard /
- // direct_employee (lib/provider-commercial-terms.ts) - classify on that real vocabulary, then let
- // the provider's workforce engagement (service_providers.engagement_type, the same source the
- // partner workspace renders from) promote contract-engaged professionals to 194J.
  const directModels=new Set(["direct","direct_employee"]),contractModels=new Set(["contract","contractor","contract_provider"]);
  const workforceKindCache=new Map<string,string>();
  const workforceKind=async(providerId:string)=>{
   if(!workforceKindCache.has(providerId)){
-   // Same provider registries the partner workspace classifies from: service_providers when present,
-   // else provider_capacity_profiles.provider_model / provider_compensation_profiles.engagement_model
-   // (full_time = contract-engaged professional -> 194J; commission -> 194H).
    const fromServiceProviders=await safeAll(db,"SELECT engagement_type FROM service_providers WHERE id=?",[providerId]);
    let kind=String(fromServiceProviders[0]?.engagement_type??"").trim().toLowerCase();
    if(!kind){
@@ -137,7 +123,7 @@ export async function computeMonthlyTds(db:Db,input:{period:string;actorId:strin
  };
  for(const row of fyPayouts){
   const model=String(row.engagement_model).trim().toLowerCase();
-  if(directModels.has(model))continue; // salaried delivery is taxed under s192, never provider TDS
+  if(directModels.has(model))continue;
   const providerId=String(row.provider_id);
   const section=contractModels.has(model)||contractModels.has(await workforceKind(providerId))?"194J":"194H";
   accumulate(section,providerId,Number(row.provider_net_payout||0),Number(row.computed_at||0),String(row.booking_id));
@@ -145,19 +131,20 @@ export async function computeMonthlyTds(db:Db,input:{period:string;actorId:strin
  for(const row of fySettlements)accumulate("194H",String(row.provider_id),Number(row.payout_amount||0),Number(row.eligible_at||0),String(row.booking_id));
  const fyMonths=fyMonthsThrough(input.period).filter(month=>month!==input.period);
  for(const[key,entry]of providerAgg){
-  if(entry.monthAmount<=0)continue; // no activity this month - nothing new to deduct
+  if(entry.monthAmount<=0)continue;
   const providerId=key.split(":")[1];
   const threshold=entry.section==="194H"?TDS_THRESHOLDS_FY.commission194H:TDS_THRESHOLDS_FY.professional194J;
   const rate=entry.section==="194H"?TDS_RATES.commission194H:TDS_RATES.professional194J;
-  if(entry.fyCumulative<threshold)continue; // FY aggregate threshold not crossed yet
-  const prior=fyMonths.length?await safeAll(db,`SELECT COALESCE(SUM(base_amount),0) prior_base FROM tds_deductions WHERE section=? AND deductee_id=? AND period IN (${fyMonths.map(()=>"?").join(",")})`,[entry.section,providerId,...fyMonths]):[{prior_base:0}];
+  if(entry.fyCumulative<threshold)continue;
+  const prior=fyMonths.length?await requiredAll(db,`SELECT COALESCE(SUM(base_amount),0) prior_base FROM tds_deductions WHERE section=? AND deductee_id=? AND period IN (${fyMonths.map(()=>"?").join(",")})`,[entry.section,providerId,...fyMonths]):[{prior_base:0}];
   const priorTaxedBase=Number(prior[0]?.prior_base||0);
-  const base=round2(entry.fyCumulative-priorTaxedBase); // full untaxed cumulative at first crossing, month amount afterwards
+  const base=round2(entry.fyCumulative-priorTaxedBase);
   const tds=round2(base*rate);
   if(tds<=0)continue;
   rows.push({section:entry.section,deducteeType:"provider",deducteeId:providerId,deducteeName:providerId,base,rate:rate*100,tds,sourceType:"provider_payouts",sourceRef:entry.monthRefs.sort().join(",").slice(0,180)});
  }
 
+ await db.prepare("DELETE FROM tds_deductions WHERE period=?").bind(input.period).run();
  const statements=rows.map(row=>db.prepare("INSERT OR REPLACE INTO tds_deductions (id,period,section,deductee_type,deductee_id,deductee_name,pan_status,base_amount,rate_pct,tds_amount,source_type,source_ref,computed_at) VALUES (?,?,?,?,?,?,'pending_verification',?,?,?,?,?,?)")
   .bind(`TDS-${crypto.randomUUID().slice(0,10).toUpperCase()}`,input.period,row.section,row.deducteeType,row.deducteeId,row.deducteeName,row.base,row.rate,row.tds,row.sourceType,row.sourceRef,now));
  if(statements.length)await db.batch(statements);
@@ -179,7 +166,7 @@ export async function recordTdsDeposit(db:Db,input:{period:string;challanReferen
  const computed=await db.prepare("SELECT COALESCE(SUM(tds_amount),0) total FROM tds_deductions WHERE period=?").bind(input.period).first<Row>();
  const liability=round2(Number(computed?.total||0));
  if(Math.abs(liability-round2(Number(input.amount)))>0.01)throw new Response(`Deposit must equal the computed liability of ${liability} for ${input.period}`,{status:409});
- monthWindow(input.period); // validates period format
+ monthWindow(input.period);
  const[year,month]=input.period.split("-").map(Number);
  const dueDate=month===3?`${year}-04-30`:month===12?`${year+1}-01-07`:`${year}-${String(month+1).padStart(2,"0")}-07`;
  const now=input.asOf??Date.now();
@@ -190,7 +177,6 @@ export async function recordTdsDeposit(db:Db,input:{period:string;challanReferen
  return{period:input.period,amount:liability,challanReference:challan,dueDate,duplicatePrevented:false};
 }
 
-/** Prepare a quarterly return (24Q salaries / 26Q non-salary) from recorded deductions + deposits. */
 export async function prepareTdsQuarterlyReturn(db:Db,input:{fyLabel:string;quarter:1|2|3|4;form:"24Q"|"26Q";actorId:string;asOf?:number}){
  await ensureTdsTables(db);
  const startYear=Number(input.fyLabel.replace(/^FY/,"").split("-")[0]);
