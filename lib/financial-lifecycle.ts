@@ -1,3 +1,4 @@
+import { ensureFinancialRuntimeTables } from "./financial-runtime-schema";
 import { createPaymentOrderPaise, paymentEnvironment } from "./razorpay-client";
 
 type Db = D1Database;
@@ -38,62 +39,11 @@ export function paiseToRupeesDisplay(amountPaise: number) {
 }
 
 /**
- * payment_intents and financial_outbox are declared ONLY in drizzle/*.sql, and nothing applies those
- * migrations to a deployed environment. `wrangler d1 migrations apply` reads ./migrations, there is no
- * ./migrations directory and no migrations_dir in wrangler.toml — so deploy-release-preview's
- * `if [ -d migrations ]` guard takes its else branch, and deploy-staging/deploy-production have no
- * migration step at all. Every sibling table on this path (payment_reconciliation_records,
- * payment_reconciliation_exceptions, payment_gateway_events, payment_gateway_links) already creates
- * itself at runtime; these two were the exceptions, so the first real payment write in staging failed
- * on "no such table" for a reason that had nothing to do with the flow being tested.
- *
- * Transcribed from drizzle/*.sql including every CHECK and UNIQUE, so a database created here and one
- * created by the migration are the same shape. This is a floor, not a replacement for the migration
- * pipeline: it stops a missing table masquerading as a payments defect. Fixing the pipeline itself is
- * a separate change and is deliberately not smuggled in here.
+ * Runtime schema floor for finance paths that can execute before deploy-time migrations have run.
+ * The canonical definitions live in financial-runtime-schema.ts and mirror the final Drizzle shapes.
  */
 export async function ensureFinancialLifecycleTables(db: Db) {
-  await db.batch([
-    db.prepare(`CREATE TABLE IF NOT EXISTS payment_intents (
-      id TEXT PRIMARY KEY, booking_id TEXT NOT NULL, customer_id TEXT NOT NULL, payment_id TEXT NOT NULL,
-      provider TEXT NOT NULL DEFAULT 'razorpay',
-      environment TEXT NOT NULL CHECK (environment IN ('sandbox','live')),
-      idempotency_key TEXT NOT NULL,
-      amount_paise INTEGER NOT NULL CHECK (amount_paise > 0),
-      currency TEXT NOT NULL DEFAULT 'INR',
-      state TEXT NOT NULL DEFAULT 'CREATED' CHECK (state IN ('CREATED','AUTHORIZED','CAPTURED','SETTLED','FAILED','CANCELLED')),
-      order_request_state TEXT NOT NULL DEFAULT 'PAYMENT_ORDER_REQUESTED' CHECK (order_request_state IN ('PAYMENT_ORDER_REQUESTED','PROCESSING','ORDER_CREATED','RECONCILIATION_REQUIRED','FAILED')),
-      gateway_order_id TEXT, gateway_payment_id TEXT, gateway_settlement_id TEXT,
-      gross_service_value_paise INTEGER NOT NULL CHECK (gross_service_value_paise >= 0),
-      platform_fee_paise INTEGER NOT NULL CHECK (platform_fee_paise >= 0),
-      partner_earning_paise INTEGER NOT NULL CHECK (partner_earning_paise >= 0),
-      tds_paise INTEGER NOT NULL DEFAULT 0 CHECK (tds_paise >= 0),
-      gst_paise INTEGER NOT NULL DEFAULT 0 CHECK (gst_paise >= 0),
-      commission_rate_bps INTEGER NOT NULL DEFAULT 0 CHECK (commission_rate_bps BETWEEN 0 AND 10000),
-      commission_rate_version TEXT NOT NULL, tax_rule_version TEXT NOT NULL,
-      commercial_snapshot_json TEXT NOT NULL DEFAULT '{}',
-      version INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-      UNIQUE(customer_id, booking_id, idempotency_key), UNIQUE(gateway_order_id),
-      UNIQUE(gateway_payment_id), UNIQUE(gateway_settlement_id))`),
-    db.prepare(`CREATE TABLE IF NOT EXISTS financial_outbox (
-      id TEXT PRIMARY KEY, aggregate_type TEXT NOT NULL, aggregate_id TEXT NOT NULL,
-      event_type TEXT NOT NULL, dedupe_key TEXT NOT NULL UNIQUE, payload_json TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','PROCESSING','SUCCEEDED','RETRY','RECONCILIATION_REQUIRED','FAILED')),
-      attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-      lease_owner TEXT, lease_expires_at INTEGER, next_attempt_at INTEGER NOT NULL,
-      request_json TEXT, response_json TEXT, last_error TEXT,
-      created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`),
-    // The migrations also index payment_intents, and a fallback-created table without them makes
-    // reconciliation and payment lookups scan the whole table. Both are taken from the FINAL state
-    // after replaying drizzle in order, not from the first file that mentions them: 0017 created
-    // idx_payment_intents_payment_id as UNIQUE and 0018 ("split intents") deliberately dropped and
-    // recreated it NON-unique, because one payment may now own several intents. Copying 0017 alone
-    // would have re-imposed a constraint a later migration removed on purpose - a worse defect than
-    // the missing index, since it would reject legitimate writes.
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_payment_intents_payment_id ON payment_intents(payment_id)"),
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_payment_intents_booking ON payment_intents(booking_id)"),
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_financial_outbox_due ON financial_outbox(status,next_attempt_at,lease_expires_at)"),
-  ]);
+  await ensureFinancialRuntimeTables(db);
 }
 
 export async function claimPaymentIntent(db: Db, input: {
@@ -114,7 +64,7 @@ export async function claimPaymentIntent(db: Db, input: {
   commercialSnapshot?: Record<string, unknown>;
   environment: "sandbox" | "live";
 }) {
-  await ensureFinancialLifecycleTables(db);
+  await ensureFinancialRuntimeTables(db);
   const bookingId = input.bookingId.trim(), customerId = input.customerId.trim(), paymentId = input.paymentId.trim(), idempotencyKey = input.idempotencyKey.trim();
   if (!bookingId || !customerId || !paymentId || !idempotencyKey) throw new Error("Payment intent identity is incomplete");
   if (!Number.isSafeInteger(input.amountPaise) || input.amountPaise <= 0) throw new Error("Payment intent amount must be positive integer paise");
@@ -144,9 +94,8 @@ export async function claimPaymentIntent(db: Db, input: {
 }
 
 export async function claimOutboxWork(db: Db, input: { outboxId: string; workerId: string; leaseMs?: number }) {
+  await ensureFinancialRuntimeTables(db);
   const now = Date.now(), leaseUntil = now + Math.max(5_000, Math.min(input.leaseMs || 30_000, 120_000));
-  // A lease that expired while PROCESSING is an ambiguous provider outcome: the worker may have
-  // created the Razorpay order and crashed before persisting its id. Never auto-reinvoke Razorpay.
   const stale = await db.prepare(`UPDATE financial_outbox SET status='RECONCILIATION_REQUIRED',last_error=COALESCE(last_error,'stale_processing_lease_requires_reconciliation'),lease_owner=NULL,lease_expires_at=NULL,updated_at=?
     WHERE id=? AND event_type='CREATE_RAZORPAY_ORDER' AND status='PROCESSING' AND lease_expires_at IS NOT NULL AND lease_expires_at<?`)
     .bind(now, input.outboxId, now).run();
@@ -166,6 +115,7 @@ export async function claimOutboxWork(db: Db, input: { outboxId: string; workerI
 }
 
 export async function executeRazorpayOrderOutbox(db: Db, env: Record<string, unknown>, input: { outboxId: string; workerId: string }) {
+  await ensureFinancialRuntimeTables(db);
   const work = await claimOutboxWork(db, input);
   if (!work) return { claimed: false as const };
   if (String(work.status || "") === "RECONCILIATION_REQUIRED") {
@@ -223,41 +173,14 @@ export async function acceptRazorpayWebhook(db: Db, input: {
   eventId: string;
   environment: "sandbox" | "live";
 }) {
+  await ensureFinancialRuntimeTables(db);
   if (!(await verifyRazorpayRawBody(input.rawBody, input.signature, input.webhookSecret))) throw new Error("Invalid Razorpay webhook signature");
   const eventId = input.eventId.trim();
   if (!eventId) throw new Error("Razorpay webhook event id is required");
   const payloadHash = await sha256Hex(input.rawBody), id = `GWE-${crypto.randomUUID()}`, now = Date.now();
-
-  /*
-   * IDEMPOTENCY ON THE SIGNED PAYLOAD, checked BEFORE the event-id insert.
-   *
-   * The problem this closes: the HMAC covers the BODY, but the replay key was the
-   * `x-razorpay-event-id` HEADER - and both idempotency layers keyed on it. A header is not signed, so
-   * anyone holding one captured (body, signature) pair could mint unlimited "new" events from it just by
-   * changing that header, and each one created a fresh inbox row and a fresh payment_gateway_events row.
-   * The money survived (capture and refund idempotency match on the gateway payment/order/refund ids,
-   * which ARE inside the signed body) but every side effect keyed on the event id re-ran, and the
-   * evidence log was inflatable at will.
-   *
-   * WHY THE HASH AND NOT AN ID FROM THE BODY. Razorpay does not put the event id in the payload - it is
-   * delivered in that header and nowhere else, so there is no signed id to read. What there IS is the
-   * payload digest, already computed here and already stored, and it is derived entirely from bytes the
-   * signature covers. For a webhook that is the same thing: two deliveries with identical signed bodies
-   * ARE the same event. A genuinely different event carries a different payment/refund/order id or a
-   * different created_at, so it hashes differently and is admitted normally.
-   *
-   * SCOPED TO PROVIDER + ENVIRONMENT so a sandbox body can never be mistaken for a live one.
-   *
-   * THE RETRY CASE IS THE SAME CASE. Razorpay retries a failed delivery for up to 24 hours with the same
-   * body. That retry is recognised here as a redelivery of the original event and returned as a
-   * duplicate against the ORIGINAL row - which is what lets the existing repair path in
-   * processGatewayEvent complete a transition a transient failure rolled back. Nothing is dropped and
-   * nothing is double-counted, with no clock and no tolerance to tune.
-   */
   const alreadyAccepted = await db.prepare("SELECT * FROM gateway_webhook_events WHERE provider='razorpay' AND environment=? AND payload_sha256=?")
     .bind(input.environment, payloadHash).first<Row>();
   if (alreadyAccepted) return { duplicate: true as const, row: alreadyAccepted };
-
   const result = await db.prepare(`INSERT INTO gateway_webhook_events
     (id,provider,environment,event_id,raw_payload,payload_sha256,signature,processing_status,received_at)
     VALUES (?,'razorpay',?,?,?,?,?,'RECEIVED',?) ON CONFLICT(provider,event_id) DO NOTHING`)
@@ -265,9 +188,6 @@ export async function acceptRazorpayWebhook(db: Db, input: {
   const inserted = Number(result.meta?.changes || 0) === 1;
   const row = await db.prepare("SELECT * FROM gateway_webhook_events WHERE provider='razorpay' AND event_id=?").bind(eventId).first<Row>();
   if (!row) throw new Error("Webhook inbox persistence failed");
-  // Reached only when the hash lookup above found nothing, so a row under this event id with a
-  // DIFFERENT digest means one event id is being used for two distinct payloads. Refusing keeps an
-  // accepted event's recorded meaning immutable.
   if (String(row.payload_sha256) !== payloadHash) throw new Error("Razorpay event id was replayed with a different payload");
   if (!inserted) return { duplicate: true as const, row };
   let event: Record<string, unknown>;
@@ -279,6 +199,7 @@ export async function acceptRazorpayWebhook(db: Db, input: {
 }
 
 export async function advancePaymentState(db: Db, input: { intentId: string; target: PaymentState; gatewayPaymentId?: string; gatewaySettlementId?: string }) {
+  await ensureFinancialRuntimeTables(db);
   const current = await db.prepare("SELECT state,version FROM payment_intents WHERE id=?").bind(input.intentId).first<Row>();
   if (!current) throw new Error("Payment intent was not found");
   const from = String(current.state) as PaymentState;
@@ -301,6 +222,7 @@ export async function postBalancedJournal(db: Db, input: {
   currency?: string;
   entries: Array<{ accountCode: string; direction: "DEBIT" | "CREDIT"; amountPaise: number; bookingId?: string; partnerId?: string }>;
 }) {
+  await ensureFinancialRuntimeTables(db);
   if (input.entries.length < 2) throw new Error("A journal requires at least two entries");
   let debits = BigInt(0), credits = BigInt(0);
   for (const entry of input.entries) {
@@ -330,6 +252,7 @@ export async function postBalancedJournal(db: Db, input: {
 }
 
 export async function releasePartnerEarning(db: Db, input: { bookingId: string; releaseType: string }) {
+  await ensureFinancialRuntimeTables(db);
   const now = Date.now(), id = `PPR-${crypto.randomUUID()}`;
   const earning = await db.prepare(`SELECT e.*,b.status booking_status FROM partner_earning_pending e
     JOIN canonical_bookings b ON b.id=e.booking_id WHERE e.booking_id=?`).bind(input.bookingId).first<Row>();

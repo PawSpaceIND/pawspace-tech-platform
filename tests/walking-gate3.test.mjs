@@ -332,7 +332,7 @@ test("Dog Walking reconciliation exposes paid, unpaid, refund and settlement tru
   assert.equal(settled.settlementState, "not_ready");
   assert.equal(settled.status, "attention_required", "unapproved settlement and unconfigured tax still need attention");
 
-  const stored = await db.prepare("SELECT booking_total,paid_total,unpaid_completed_total,net_paid_total,settlement_amount,detail_json,checked_by FROM walking_finance_reconciliation WHERE booking_id=? ORDER BY created_at DESC LIMIT 1").bind(booking.bookingId).first();
+  const stored = await db.prepare("SELECT booking_total,paid_total,unpaid_completed_total,net_paid_total,settlement_amount,detail_json,checked_by FROM walking_finance_reconciliation WHERE id=?").bind(settled.reconciliationId).first();
   assert.equal(Number(stored.booking_total), booking.perWalkAmount * 2);
   assert.equal(Number(stored.paid_total), booking.perWalkAmount * 2);
   assert.equal(Number(stored.unpaid_completed_total), 0);
