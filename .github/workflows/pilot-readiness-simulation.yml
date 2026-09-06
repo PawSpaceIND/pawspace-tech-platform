@@ -1,0 +1,132 @@
+name: Pilot Readiness 50-Actor Simulation
+
+on:
+  push:
+    branches:
+      - test/e2e-pilot-readiness-simulation
+    paths:
+      - tests/e2e-pilot-simulation.test.mjs
+      - .github/workflows/pilot-readiness-simulation.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pawspace-pilot-readiness-staging
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+      EXOTEL_WEBHOOK_SECRET: ${{ secrets.EXOTEL_WEBHOOK_SECRET }}
+      PAWSPACE_PILOT_SIMULATION: '1'
+      APP_ENV: staging
+      NODE_ENV: test
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install
+        run: npm run install:ci
+
+      - name: Resolve isolated staging origin
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] || [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            echo "Cloudflare staging credentials are missing." >&2
+            exit 1
+          fi
+          RESPONSE="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/subdomain")"
+          SUBDOMAIN="$(node -e 'const x=JSON.parse(process.argv[1]); if(!x.success||!x.result?.subdomain) process.exit(2); process.stdout.write(x.result.subdomain)' "$RESPONSE")"
+          URL="https://pawspace-staging.${SUBDOMAIN}.workers.dev"
+          case "$URL" in
+            https://pawspace-staging.*.workers.dev) ;;
+            *) echo "Refusing unexpected staging origin: $URL" >&2; exit 1 ;;
+          esac
+          echo "STAGING_URL=$URL" >> "$GITHUB_ENV"
+          echo "Resolved isolated pawspace-staging workers.dev origin."
+
+      - name: Staging isolation preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${STAGING_URL:-}"
+          curl --fail --silent --show-error "$STAGING_URL/healthz" >/dev/null
+          npx wrangler d1 execute pawspace-staging --remote --json --command "SELECT 1 AS staging_probe" >/tmp/pawspace-staging-probe.json
+          node -e 'const x=require("/tmp/pawspace-staging-probe.json"); const e=Array.isArray(x)?x[0]:x; if(e?.success===false) process.exit(1)'
+
+      - name: Executed lifecycle and concurrency suites
+        id: lifecycle
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p artifacts/pilot-readiness
+          node --experimental-strip-types --test --test-concurrency=1 \
+            tests/training-session-lifecycle.test.mjs \
+            tests/grooming-lifecycle.test.mjs \
+            tests/boarding-gate2.test.mjs \
+            tests/taxi-gate2.test.mjs \
+            tests/walking-gate2.test.mjs \
+            tests/ptja-w3a-voice-callback-verification.test.mjs \
+            2>&1 | tee artifacts/pilot-readiness/behavioral-tests.log
+
+      - name: Run 50-actor live staging simulation
+        id: simulation
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          node --experimental-strip-types --test --test-concurrency=1 tests/e2e-pilot-simulation.test.mjs \
+            2>&1 | tee artifacts/pilot-readiness/simulation.log
+
+      - name: Write execution summary
+        if: always()
+        shell: bash
+        env:
+          LIFECYCLE_OUTCOME: ${{ steps.lifecycle.outcome }}
+          SIMULATION_OUTCOME: ${{ steps.simulation.outcome }}
+        run: |
+          mkdir -p artifacts/pilot-readiness
+          {
+            echo ""
+            echo "## CI execution evidence"
+            echo ""
+            echo "- Executed lifecycle/concurrency suites: **${LIFECYCLE_OUTCOME}**"
+            echo "- 50-actor staging simulation: **${SIMULATION_OUTCOME}**"
+            echo "- Commit: \`${GITHUB_SHA}\`"
+          } >> artifacts/pilot-readiness/report.md
+
+      - name: Upload pilot readiness evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pilot-readiness-50-actor-evidence
+          path: artifacts/pilot-readiness/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Enforce mandatory gates
+        if: always()
+        shell: bash
+        env:
+          LIFECYCLE_OUTCOME: ${{ steps.lifecycle.outcome }}
+          SIMULATION_OUTCOME: ${{ steps.simulation.outcome }}
+        run: |
+          if [ "$LIFECYCLE_OUTCOME" != "success" ] || [ "$SIMULATION_OUTCOME" != "success" ]; then
+            echo "Pilot readiness remains blocked. Evidence artifact was uploaded." >&2
+            exit 1
+          fi
+          echo "All mandatory pilot-readiness gates passed."
