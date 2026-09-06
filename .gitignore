@@ -80,3 +80,7 @@ repomix-output.xml
 # `npm test`. Build output, not source: p95Ms changes each run, so tracking them dirties the tree
 # after any test run. Publish them from CI as workflow artifacts if they are needed as evidence.
 artifacts/
+# Browser E2E local artefacts
+/test-results/
+/playwright-report/
+/dist/server/.wrangler/
