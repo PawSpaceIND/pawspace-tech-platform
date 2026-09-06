@@ -53,10 +53,10 @@ test("employee power dialler keeps Exotel callback authentication and secret-saf
 
 test("employee power dialler remains a three-second governed auto-advance flow", () => {
   const runtime = read("lib/employee-power-dialler.ts");
-  const orchestrator = read("lib/outbound-dialler-orchestrator.ts");
+  const policy = read("lib/power-dialler-policy.ts");
 
-  assert.match(runtime, /3000/);
-  assert.match(orchestrator, /3000/);
+  assert.match(policy, /POWER_DIALLER_AUTO_ADVANCE_MS\s*=\s*3000/);
+  assert.match(runtime, /POWER_DIALLER_AUTO_ADVANCE_MS/);
   assert.match(runtime, /quiet/i);
-  assert.match(runtime, /consent|opt.?out/i);
+  assert.match(runtime, /opt.?out/i);
 });
