@@ -28,8 +28,6 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-
-          # P0-3: CSPRNG OTP generation and zero OTP disclosure in HTTP responses.
           path=Path('lib/customer-otp.ts')
           source=path.read_text()
           marker='const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;\n'
@@ -49,7 +47,6 @@ jobs:
           source=source.replace(old,new,1)
           path.write_text(source)
 
-          # P0-1: remove all authorization based on caller-controlled OAI identity headers.
           path=Path('lib/server-auth.ts')
           source=path.read_text()
           start=source.find('function forwardedIdentity(request:Request){')
@@ -60,8 +57,7 @@ jobs:
           end_marker='  return {email:identity.email,name:String(user.name||identity.name),roleCode:String(user.role_code),permissions:parsePermissions(role.permissions_json),developmentPreview:false,identitySource:"workspace",principalType:"email",principalKey:identity.email};\n'
           end=source.find(end_marker,start)
           if start < 0 or end < 0: raise SystemExit('server-auth forwarded identity authorization block not found')
-          replacement='  throw markGovernedHttpError(signInRequiredResponse(uatEnv as unknown as Record<string,unknown>));\n'
-          source=source[:start]+replacement+source[end+len(end_marker):]
+          source=source[:start]+'  throw markGovernedHttpError(signInRequiredResponse(uatEnv as unknown as Record<string,unknown>));\n'+source[end+len(end_marker):]
           path.write_text(source)
 
           path=Path('lib/api-gateway.ts')
@@ -70,11 +66,9 @@ jobs:
           end_marker='  const actor={email,roleCode:String(user.role_code),permissions,preview:false};if(!hasPermission(permissions,permission)){await audit(env,actor,request,"denied",{permission});return Response.json({error:"Permission denied"},{status:403});}return {actor,permission};}\n'
           end=source.find(end_marker,start)
           if start < 0 or end < 0: raise SystemExit('api-gateway trusted-header authorization block not found')
-          replacement='  return uatLoginEnabled(env as unknown as Record<string,unknown>)?signInRequiredResponse(env as unknown as Record<string,unknown>):Response.json({error:"Authentication required"},{status:401});}\n'
-          source=source[:start]+replacement+source[end+len(end_marker):]
+          source=source[:start]+'  return uatLoginEnabled(env as unknown as Record<string,unknown>)?signInRequiredResponse(env as unknown as Record<string,unknown>):Response.json({error:"Authentication required"},{status:401});}\n'+source[end+len(end_marker):]
           path.write_text(source)
 
-          # Remove local client assumptions that the raw OTP is returned over HTTP.
           path=Path('app/mobile-app/customer-login.tsx')
           source=path.read_text()
           source=source.replace('  sandboxCode: string;\n','')
@@ -89,7 +83,6 @@ jobs:
           source=source.replace('                  setSandboxCode("");\n','')
           path.write_text(source)
 
-          # Keep verification execution coverage without relying on an HTTP OTP leak.
           path=Path('tests/backend-otp-hardening.test.mjs')
           source=path.read_text()
           source=source.replace('assert.equal(body.data?.liveSmsDelivered,false);assert.match(String(body.data?.sandboxCode),/^\\d{6}$/);','assert.equal(body.data?.liveSmsDelivered,false);assert.equal(Object.prototype.hasOwnProperty.call(body.data||{},"sandboxCode"),false);')
@@ -121,7 +114,20 @@ jobs:
         run: npm run typecheck
 
       - name: Full test suite
-        run: npm test
+        run: |
+          set +e
+          npm test > /tmp/npm-test.log 2>&1
+          status=$?
+          cat /tmp/npm-test.log
+          if [ "$status" -ne 0 ]; then
+            tail -n 2000 /tmp/npm-test.log > .github/auditparts/test-failure.log
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/auditparts/test-failure.log
+            git commit -m "ci: capture P0 remediation test failure"
+            git push origin HEAD:fix/audit-p1-remediation
+            exit "$status"
+          fi
 
       - name: Commit validated security remediation
         env:
