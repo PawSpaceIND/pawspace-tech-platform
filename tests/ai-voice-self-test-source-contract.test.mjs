@@ -156,8 +156,17 @@ test("browser direct pipeline exercises Flux, LLM and Aura at 16 kHz Linear16", 
   has(flatBrowser, 'encoding:"linear16"');
   has(flatBrowser, 'sample_rate:DIRECT_SAMPLE_RATE');
   has(flatBrowser, '"Hello,thisisthePawSpacevoiceUATtest."');
-  assert.ok(flatBrowserCode.includes("flux.send(audio)"), "browser PCM must reach Flux");
+  assert.ok(flatBrowserCode.includes("sendFluxAudio(socket,audio)"), "browser PCM must be routed through the Flux sender");
+  assert.ok(flatBrowserCode.includes("socket.send(audio)"), "browser PCM must reach the Flux WebSocket");
   assert.ok(flatBrowserCode.includes("server.send(payload)"), "Aura PCM must return as binary WebSocket audio");
+});
+
+test("browser STT startup is serialized and preserves early microphone audio", () => {
+  assert.ok(flatBrowserCode.includes("if(fluxInit)returnfluxInit"), "only one Flux initialization may be active");
+  assert.ok(flatBrowserCode.includes("bufferAudio(audio)"), "mic frames must be buffered before Flux is ready");
+  assert.ok(flatBrowserCode.includes("flushPendingAudio(socket)"), "buffered mic frames must flush after Flux connects");
+  assert.ok(flatBrowser.includes('stage:"stt_audio_flowing"'), "browser diagnostics must prove PCM reaches Flux");
+  assert.ok(flatBrowser.includes('stage:"end_of_turn"'), "browser diagnostics must expose Flux turn completion");
 });
 
 test("browser page captures mic PCM, resamples to 16-bit and plays raw PCM replies", () => {
