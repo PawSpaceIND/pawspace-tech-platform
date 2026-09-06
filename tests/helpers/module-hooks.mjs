@@ -87,8 +87,7 @@ export function installWorkersHooks(globalName, envName = `${globalName}_ENV`) {
   const shim = `export const env = new Proxy({}, { get: (_, key) => { const als = globalThis[${JSON.stringify(WORKERS_DB_ALS_KEY)}]; const scoped = als && typeof als.getStore === "function" ? als.getStore() : undefined; if (key === "DB") { const raw = scoped || globalThis[${JSON.stringify(globalName)}]; const wrap = globalThis.__PAWSPACE_WRAP_SCOPED_TEST_DB__; return typeof wrap === "function" ? wrap(raw) : raw; } return (globalThis[${JSON.stringify(envName)}] ?? {})[key]; } });`;
   const workersUrl = `data:text/javascript,${encodeURIComponent(shim)}`;
 
-  const forceLoader = process.env.PAWSPACE_FORCE_LOADER_HOOK === "1";
-  if (!forceLoader && typeof nodeModule.registerHooks === "function") {
+  if (typeof nodeModule.registerHooks === "function") {
     try {
       nodeModule.registerHooks({
         resolve(specifier, context, nextResolve) {
