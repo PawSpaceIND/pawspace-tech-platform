@@ -54,11 +54,9 @@ const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
-    // Finance is a platform invariant, not a route-local assumption. Before any API or voice path can
-    // mutate bookings/payments, prove the journal/earning/settlement support schema exists. The helper
-    // is cached per Worker isolate and retries after transient D1 failures.
-    if(url.pathname.startsWith("/api/")||url.pathname===EXOTEL_AGENTSTREAM_PATH)await ensureFinancialRuntimeSchema(env.DB);
-
+    // Carrier traffic is authenticated by the AgentStream handler itself and must remain outside the
+    // PawSpace browser-session gateway. It also must not cause unrelated finance schema writes before
+    // carrier identity has been validated.
     if(url.pathname===EXOTEL_AGENTSTREAM_PATH)return handleExotelAgentStream(request,env,ctx);
 
     if (url.pathname.startsWith("/api/")) {
@@ -81,6 +79,10 @@ const worker = {
       if (access instanceof Response) return access;
       const serviceBlock=await blockDisabledServiceRequest(inspectionRequest,env.DB);
       if(serviceBlock){ctx.waitUntil(auditApiResponse(env,access.actor,access.permission,inspectionRequest,serviceBlock.clone()));return secureApiResponse(serviceBlock);}
+
+      // Only an accepted application request is allowed to establish the finance schema invariant.
+      // This prevents anonymous/denied requests from performing D1 DDL before the security boundary.
+      await ensureFinancialRuntimeSchema(env.DB);
       const response = await handler.fetch(request, env, ctx);
       if(isMetaWebhook&&eliteRequest)ctx.waitUntil(runEliteWebhookHooks(env.DB,env as unknown as Record<string,unknown>,eliteRequest,response.clone()).catch(()=>undefined));
       ctx.waitUntil(auditApiResponse(env, access.actor, access.permission, inspectionRequest, response.clone()));
@@ -103,7 +105,7 @@ const worker = {
   async scheduled(controller:ScheduledControllerLike,env:Env,ctx:ExecutionContext){
     ctx.waitUntil((async()=>{
       // Scheduled money work can be the first invocation after a deploy, so it must establish the same
-      // schema invariant as HTTP/voice paths before launching any concurrent sweep.
+      // schema invariant as authenticated HTTP money paths before launching any concurrent sweep.
       await ensureFinancialRuntimeSchema(env.DB);
       /* SCOPED, not global. This guard used to `throw` sequentially BEFORE the Promise.allSettled below,
        * so a WhatsApp template verification exception stopped every one of the sweeps that follow from
