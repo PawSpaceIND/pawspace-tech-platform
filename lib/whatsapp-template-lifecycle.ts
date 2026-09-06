@@ -100,10 +100,15 @@ export async function submitWhatsAppTemplate(db: D1Database, input: { templateKe
   if (!["draft", "rejected"].includes(current)) responseError("Only draft or rejected templates may be submitted", 409);
   normalizeDraft({ templateKey: key, displayName: text(row.display_name), category: text(row.category), language: text(row.approved_language), body: text(row.body), sampleValues: parse<unknown[]>(row.sample_values_json, []) });
   const now = Date.now();
-  await db.batch([
-    db.prepare("UPDATE whatsapp_uat_templates SET status='submitted',updated_by=?,updated_at=? WHERE template_key=?").bind(input.actorEmail, now, key),
-    db.prepare("UPDATE whatsapp_template_lifecycle SET meta_reconciliation_status='awaiting_meta_reconciliation',meta_reference=NULL,reconciliation_note='',submitted_at=?,approved_at=NULL,rejected_at=NULL,paused_at=NULL,updated_by=?,updated_at=? WHERE template_key=?").bind(now, input.actorEmail, now, key),
+  // [AUDIT-2026-09-06 ①] Compare-and-swap the authoritative status instead of a blind update: the prior
+  // status is pinned in the WHERE clause and exactly one changed row is asserted, so two operators racing
+  // the same transition cannot both write. The companion lifecycle projection runs first, gated on the same
+  // prior status, so a losing racer's batch is a no-op (both statements match zero rows) before the 409.
+  const results = await db.batch([
+    db.prepare("UPDATE whatsapp_template_lifecycle SET meta_reconciliation_status='awaiting_meta_reconciliation',meta_reference=NULL,reconciliation_note='',submitted_at=?,approved_at=NULL,rejected_at=NULL,paused_at=NULL,updated_by=?,updated_at=? WHERE template_key=? AND EXISTS (SELECT 1 FROM whatsapp_uat_templates WHERE template_key=? AND status IN ('draft','rejected'))").bind(now, input.actorEmail, now, key, key),
+    db.prepare("UPDATE whatsapp_uat_templates SET status='submitted',updated_by=?,updated_at=? WHERE template_key=? AND status IN ('draft','rejected')").bind(input.actorEmail, now, key),
   ]);
+  if (Number(results[1]?.meta?.changes || 0) !== 1) responseError("Template state changed before submission; refresh and retry", 409);
   await addEvent(db, { templateKey: key, fromStatus: current, toStatus: "submitted", eventType: "submitted_for_meta_reconciliation", actorEmail: input.actorEmail, reason, detail: { externalMetaMutation: false, reconciliationRequired: true, productionDelivery: false }, createdAt: now });
   return { ...(await templateRow(db, key)), productionDelivery: false, externalMetaMutation: false, environment: "uat" };
 }
@@ -122,11 +127,14 @@ export async function reconcileWhatsAppTemplate(db: D1Database, input: { templat
   if (current !== "submitted") responseError("Only submitted templates may be reconciled", 409);
   const now = Date.now();
   const approved = input.outcome === "approved";
-  await db.batch([
-    db.prepare("UPDATE whatsapp_uat_templates SET status=?,updated_by=?,updated_at=? WHERE template_key=?").bind(input.outcome, input.actorEmail, now, key),
-    db.prepare("UPDATE whatsapp_template_lifecycle SET meta_reconciliation_status=?,meta_reference=?,reconciliation_note=?,approved_at=?,rejected_at=?,updated_by=?,updated_at=? WHERE template_key=?")
-      .bind(input.outcome, metaReference, reason, approved ? now : null, approved ? null : now, input.actorEmail, now, key),
+  // [AUDIT-2026-09-06 ①] CAS on the authoritative status (see submitWhatsAppTemplate). Only a template
+  // still in 'submitted' may be reconciled; a concurrent reconcile/pause loses the swap and gets a 409.
+  const results = await db.batch([
+    db.prepare("UPDATE whatsapp_template_lifecycle SET meta_reconciliation_status=?,meta_reference=?,reconciliation_note=?,approved_at=?,rejected_at=?,updated_by=?,updated_at=? WHERE template_key=? AND EXISTS (SELECT 1 FROM whatsapp_uat_templates WHERE template_key=? AND status='submitted')")
+      .bind(input.outcome, metaReference, reason, approved ? now : null, approved ? null : now, input.actorEmail, now, key, key),
+    db.prepare("UPDATE whatsapp_uat_templates SET status=?,updated_by=?,updated_at=? WHERE template_key=? AND status='submitted'").bind(input.outcome, input.actorEmail, now, key),
   ]);
+  if (Number(results[1]?.meta?.changes || 0) !== 1) responseError("Template state changed before reconciliation; refresh and retry", 409);
   await addEvent(db, { templateKey: key, fromStatus: current, toStatus: input.outcome, eventType: `meta_${input.outcome}_reconciled`, actorEmail: input.actorEmail, reason, detail: { metaReference, externalMetaMutation: false, productionDelivery: false }, createdAt: now });
   return { ...(await templateRow(db, key)), productionDelivery: false, externalMetaMutation: false, environment: "uat" };
 }
@@ -141,10 +149,13 @@ export async function pauseWhatsAppTemplate(db: D1Database, input: { templateKey
   const current = statusOf(row);
   if (current !== "approved") responseError("Only approved templates may be paused", 409);
   const now = Date.now();
-  await db.batch([
-    db.prepare("UPDATE whatsapp_uat_templates SET status='paused',updated_by=?,updated_at=? WHERE template_key=?").bind(input.actorEmail, now, key),
-    db.prepare("UPDATE whatsapp_template_lifecycle SET meta_reconciliation_status='paused',paused_at=?,reconciliation_note=?,updated_by=?,updated_at=? WHERE template_key=?").bind(now, reason, input.actorEmail, now, key),
+  // [AUDIT-2026-09-06 ①] CAS on the authoritative status (see submitWhatsAppTemplate). Only an 'approved'
+  // template may be paused; a racing transition loses the swap and gets a 409.
+  const results = await db.batch([
+    db.prepare("UPDATE whatsapp_template_lifecycle SET meta_reconciliation_status='paused',paused_at=?,reconciliation_note=?,updated_by=?,updated_at=? WHERE template_key=? AND EXISTS (SELECT 1 FROM whatsapp_uat_templates WHERE template_key=? AND status='approved')").bind(now, reason, input.actorEmail, now, key, key),
+    db.prepare("UPDATE whatsapp_uat_templates SET status='paused',updated_by=?,updated_at=? WHERE template_key=? AND status='approved'").bind(input.actorEmail, now, key),
   ]);
+  if (Number(results[1]?.meta?.changes || 0) !== 1) responseError("Template state changed before pause; refresh and retry", 409);
   await addEvent(db, { templateKey: key, fromStatus: current, toStatus: "paused", eventType: "template_paused", actorEmail: input.actorEmail, reason, detail: { productionDelivery: false }, createdAt: now });
   return { ...(await templateRow(db, key)), productionDelivery: false, environment: "uat" };
 }

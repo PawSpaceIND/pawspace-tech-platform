@@ -1,4 +1,5 @@
 export const PAWSPACE_SMS_TEST_MESSAGE="PawSpace SMS API test successful. No action is required.";
+const FAST2SMS_TIMEOUT_MS=4000;
 
 type Fetcher=(input:string|URL|Request,init?:RequestInit)=>Promise<Response>;
 type Fast2SmsPayload={return?:boolean;request_id?:string;message?:string[]|string;status_code?:string|number};
@@ -36,11 +37,17 @@ export async function sendFast2SmsMessage({apiKey,phone,message,udf1="pawspace-l
   const url="https://www.fast2sms.com/dev/bulkV2";
   const requestBody=new URLSearchParams({route:"q",message:safeMessage,numbers:normalized,sms_details:"1",udf1:safeUdf}).toString();
 
+  // [AUDIT-2026-09-06 ②] Bound the outbound Fast2SMS call so a hung gateway connection cannot stall the
+  // OTP request path indefinitely. An abort surfaces as a transport-class provider error, fail-safe.
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),FAST2SMS_TIMEOUT_MS);
   let response:Response;
   try{
-    response=await fetcher(url,{method:"POST",headers:{Authorization:apiKey.trim(),accept:"application/json","content-type":"application/x-www-form-urlencoded;charset=UTF-8"},body:requestBody});
+    response=await fetcher(url,{method:"POST",headers:{Authorization:apiKey.trim(),accept:"application/json","content-type":"application/x-www-form-urlencoded;charset=UTF-8"},body:requestBody,signal:controller.signal});
   }catch{
     throw new Fast2SmsProviderError(null,"transport");
+  }finally{
+    clearTimeout(timeout);
   }
   let payload:Fast2SmsPayload|null=null;
   try{payload=await response.json() as Fast2SmsPayload;}catch{}

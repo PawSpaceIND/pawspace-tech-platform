@@ -1,5 +1,5 @@
 import { groomingCatalogue } from "../../../lib/grooming-governance";
-import { database, requirePermission, resolveActor, securityAudit } from "../../../lib/server-auth";
+import { authError, database, requirePermission, resolveActor, securityAudit } from "../../../lib/server-auth";
 
 type PetInput={sourceId:string;name:string;species?:"dog"|"cat"|"other";breed?:string;vaccinationStatus?:string};
 type Input={
@@ -47,7 +47,7 @@ export async function GET(request:Request){try{
   const actor=requirePermission(await resolveActor(request),"scheduling.book");if(!staffRoles.has(actor.roleCode))return json({error:"Assisted Orders is staff-only"},403);
   const packages=groomingCatalogue.filter(row=>row.active&&row.offerType!=="subscription").map(row=>({code:row.code,name:row.name,eligiblePetTypes:row.eligiblePetTypes,singlePrice:row.singlePrice,multiPetPrice:row.multiPetPrice??row.singlePrice,version:row.version}));
   return json({data:{environment:"UAT",testOnly:true,liveMoney:false,serviceCode:"grooming",customers:fixtureCustomers,packages}});
-}catch(error){if(error instanceof Response)return error;return json({error:error instanceof Error?error.message:"Unable to load Assisted Orders UAT"},500);}}
+}catch(error){if(error instanceof Response)return error;return authError(error,"Unable to load Assisted Orders UAT");}}
 
 export async function POST(request:Request){try{
   sameOrigin(request);const actor=requirePermission(await resolveActor(request),"scheduling.book");if(!staffRoles.has(actor.roleCode))return json({error:"Assisted Orders is staff-only"},403);
@@ -67,4 +67,4 @@ export async function POST(request:Request){try{
   ]);
   await securityAudit(db,actor,"assisted_order.create","booking",bookingId,"completed",{assistedOrderId,customerId:input.customer.id,packageCode:item.code,totalAmount:total,channel:"assisted_staff",testOnly:true,liveMoney:false});
   return json({data:{assistedOrderId,bookingId,customerId:input.customer.id,scheduleGroupId:groupId,provider,totalAmount:total,amountDueNow:0,status:"confirmed",duplicatePrevented:false,testOnly:true,liveMoney:false}},201);
-}catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);return json({error:error instanceof Error?error.message:"Unable to create Assisted Order UAT"},500);}}
+}catch(error){if(error instanceof Response)return json({error:await error.text()},error.status);return authError(error,"Unable to create Assisted Order UAT");}}
