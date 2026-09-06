@@ -1,12 +1,19 @@
 name: Voice UAT staging activation
 
-# Branch-limited automatic activation plus explicit manual replay. Both paths target only the protected
-# pawspace-staging environment. Deployment itself never dials; the staged Worker queue remains subject
-# to stored consent, the one-recipient allowlist and the ordinary outbound safety gate at 08:00 IST.
+# CI verifies deterministic synthetic UAT configuration without contacting a live provider. Real staging
+# activation is manual-only and remains fail-closed on genuine staging variables/secrets.
 on:
   push:
     branches:
       - fix/audio-bot-exotel-uat-closure-20260905
+      - fix/uat-config-stubs
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/voice-uat-staging.yml'
+      - 'scripts/voice-uat-preflight.mjs'
+      - 'scripts/stage-voice-uat-config.mjs'
   workflow_dispatch:
     inputs:
       confirm:
@@ -19,13 +26,43 @@ on:
         default: ''
 
 jobs:
+  ci-config:
+    name: Voice UAT CI-only configuration
+    if: ${{ github.event_name != 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    env:
+      EXOTEL_CALLBACK_URL: https://callback.uat-ci.invalid/exotel/status
+      EXOTEL_AGENTSTREAM_WSS_URL: wss://stream.uat-ci.invalid/agentstream
+      UAT_CUSTOMER_ID: uat-ci-customer
+      UAT_BOOKING_ID: uat-ci-booking
+      UAT_CITY_ID: uat-ci-city
+      UAT_CONSENT_SOURCE_REF: ci-synthetic-consent-evidence
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify deterministic CI-only UAT stubs
+        run: |
+          set -euo pipefail
+          node --input-type=module -e '
+            const required=["EXOTEL_CALLBACK_URL","EXOTEL_AGENTSTREAM_WSS_URL","UAT_CUSTOMER_ID","UAT_BOOKING_ID","UAT_CITY_ID","UAT_CONSENT_SOURCE_REF"];
+            for(const name of required){if(!String(process.env[name]||"").trim())throw new Error(`${name} missing`);}
+            const callback=new URL(process.env.EXOTEL_CALLBACK_URL);
+            const stream=new URL(process.env.EXOTEL_AGENTSTREAM_WSS_URL);
+            if(callback.protocol!=="https:"||!callback.hostname.endsWith(".invalid"))throw new Error("CI callback must be an https .invalid URL");
+            if(stream.protocol!=="wss:"||!stream.hostname.endsWith(".invalid"))throw new Error("CI stream must be a wss .invalid URL");
+            for(const name of ["UAT_CUSTOMER_ID","UAT_BOOKING_ID","UAT_CITY_ID","UAT_CONSENT_SOURCE_REF"]){if(!process.env[name].startsWith("uat-ci-")&&!process.env[name].startsWith("ci-synthetic-"))throw new Error(`${name} must remain explicitly synthetic`);}
+            console.log("CI-only voice UAT stubs are deterministic, synthetic, and non-routable.");
+          '
+
   activate:
-    if: ${{ github.event_name == 'push' || github.event.inputs.confirm == 'voice-uat' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.confirm == 'voice-uat' }}
     runs-on: ubuntu-latest
     environment: pawspace-staging
     concurrency: pawspace-staging-deploy
     env:
-      DEPLOY_SHA: ${{ github.event_name == 'push' && github.sha || github.event.inputs.expected_sha }}
+      DEPLOY_SHA: ${{ github.event.inputs.expected_sha }}
     steps:
       - uses: actions/checkout@v4
         with:
