@@ -21,12 +21,41 @@ async function sandboxLogin(page: import("@playwright/test").Page) {
   await expect(page.getByPlaceholder("6-digit code")).toBeHidden();
 }
 
+async function ensureCustomerPet(page: import("@playwright/test").Page) {
+  const accountResponse = await page.context().request.get("/api/customer-account");
+  expect(accountResponse.ok(), `customer account must resolve after sandbox OTP (${accountResponse.status()})`).toBeTruthy();
+  const account = await accountResponse.json().catch(() => ({})) as { data?: { pets?: Array<{ name?: string }> } };
+  if (account.data?.pets?.length) return;
+
+  const create = await page.context().request.post("/api/customer-account", {
+    data: {
+      action: "upsert_pet",
+      idempotencyKey: `browser-e2e:customer-pet:${phone}`,
+      pet: {
+        name: "Buddy",
+        species: "dog",
+        breed: "Labrador Retriever",
+        vaccinationStatus: "not_provided",
+      },
+    },
+  });
+  if (!create.ok()) throw new Error(`authenticated customer pet seed failed (${create.status()}): ${await create.text()}`);
+
+  await expect.poll(async () => {
+    const response = await page.context().request.get("/api/customer-account");
+    if (!response.ok()) return false;
+    const body = await response.json().catch(() => ({})) as { data?: { pets?: Array<{ name?: string }> } };
+    return Boolean(body.data?.pets?.some(pet => pet.name === "Buddy"));
+  }).toBe(true);
+}
+
 function serviceCard(page: import("@playwright/test").Page, name: string) {
   return page.getByRole("region", { name: "Care services" }).getByRole("article").filter({ hasText: name }).first();
 }
 
 test("customer: discovery -> location -> grooming package -> slot/checkout surface", async ({ page }) => {
   await sandboxLogin(page);
+  await ensureCustomerPet(page);
   await page.goto("/mobile-app");
 
   const home = page.locator("nav").getByRole("button", { name: /home/i }).last();
@@ -53,12 +82,10 @@ test("customer: discovery -> location -> grooming package -> slot/checkout surfa
 
   await grooming.getByRole("button", { name: /book now/i }).click();
   await expect(page.getByText("Who needs grooming?", { exact: false })).toBeVisible();
+  await expect(page.getByText("Buddy", { exact: true }).first()).toBeVisible();
 
   const choosePackage = page.getByRole("button", { name: /Choose a package/i });
-  if (await choosePackage.isEnabled().catch(() => false)) {
-    await choosePackage.click();
-    await expect(page.getByText(/Essential Bath|Bath & Basic|Complete Makeover|Just Trim/i).first()).toBeVisible();
-  } else {
-    test.info().annotations.push({ type: "setup", description: "No reusable pet in this isolated browser DB; pet creation is covered by scripts/customer-ui-acceptance-v2.mjs." });
-  }
+  await expect(choosePackage).toBeEnabled();
+  await choosePackage.click();
+  await expect(page.getByText(/Essential Bath|Bath & Basic|Complete Makeover|Just Trim/i).first()).toBeVisible();
 });
