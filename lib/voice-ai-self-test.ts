@@ -31,6 +31,7 @@ const SELF_TEST_NEGOTIATE_PATH = "/voice/ai-self-test/negotiate";
 const EXOTEL_PSTN_SAMPLE_RATE = 8000;
 const MAX_CALL_SECONDS = 300;
 const MAX_TURNS = 12;
+const STREAM_TOKEN_TTL_MS = 2 * 60_000;
 const DAILY_CAP_DEFAULT = 3;
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
 const encoder = new TextEncoder();
@@ -69,6 +70,7 @@ function missingTelephony(env: Env) {
     "EXOTEL_API_TOKEN",
     "EXOTEL_SID",
     "EXOTEL_CALLER_ID",
+    "EXOTEL_VOICE_APP_ID",
     "EXOTEL_WEBHOOK_SECRET",
   ].filter((name) => !text(env[name]));
 }
@@ -117,7 +119,17 @@ export async function ensureAiVoiceSelfTestTables(db: Db) {
     db.prepare(
       "CREATE INDEX IF NOT EXISTS idx_ai_voice_self_tests_created ON ai_voice_self_tests(created_at)",
     ),
+    db.prepare(
+      "CREATE TABLE IF NOT EXISTS ai_voice_self_test_active_guard (slot INTEGER PRIMARY KEY CHECK(slot=1),call_id TEXT NOT NULL UNIQUE,claimed_at INTEGER NOT NULL)",
+    ),
   ]);
+}
+
+async function releaseActiveGuard(db: Db, callId: string) {
+  await db
+    .prepare("DELETE FROM ai_voice_self_test_active_guard WHERE slot=1 AND call_id=?")
+    .bind(callId)
+    .run();
 }
 
 function hex(bytes: ArrayBuffer) {
@@ -174,7 +186,7 @@ async function signedStreamUrl(env: Env, callId: string, publicOrigin: string) {
     throw new Error("AI voice self-test requires an https staging origin");
   }
 
-  const exp = Date.now() + 10 * 60_000;
+  const exp = Date.now() + STREAM_TOKEN_TTL_MS;
   const sig = await hmac(
     text(env.EXOTEL_WEBHOOK_SECRET),
     `ai-self-test:${callId}:${exp}`,
@@ -197,7 +209,7 @@ async function verifyStreamRequest(request: Request, env: Env) {
   const exp = Number(url.searchParams.get("exp"));
   const sig = text(url.searchParams.get("sig")).toLowerCase();
   if (!callId || !Number.isFinite(exp) || !sig) return { ok: false as const };
-  if (Date.now() > exp || exp - Date.now() > 10 * 60_000) {
+  if (Date.now() > exp || exp - Date.now() > STREAM_TOKEN_TTL_MS) {
     return { ok: false as const };
   }
   const expected = await hmac(
@@ -385,6 +397,29 @@ export async function requestAiVoiceSelfTest(
   }
 
   const now = Date.now();
+  const callId = `AIVST-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
+
+  // Serialize self-test admission in D1. The prior read-then-insert check let concurrent requests both
+  // observe "no active call" and dial. The singleton guard makes the claim atomic across Worker isolates.
+  await db
+    .prepare("DELETE FROM ai_voice_self_test_active_guard WHERE claimed_at<=?")
+    .bind(now - 10 * 60_000)
+    .run();
+  const guardClaim = await db
+    .prepare(
+      "INSERT INTO ai_voice_self_test_active_guard (slot,call_id,claimed_at) VALUES (1,?,?) ON CONFLICT(slot) DO NOTHING",
+    )
+    .bind(callId, now)
+    .run();
+  if (Number(guardClaim.meta?.changes || 0) !== 1) {
+    return {
+      ok: false as const,
+      status: 409,
+      reason: "An AI voice self-test is already active",
+      readiness,
+    };
+  }
+
   const recent = await db
     .prepare(
       "SELECT COUNT(*) n FROM ai_voice_self_tests WHERE created_at>=? AND provider_call_id IS NOT NULL",
@@ -392,6 +427,7 @@ export async function requestAiVoiceSelfTest(
     .bind(todayIstStart(now))
     .first<Row>();
   if (Number(recent?.n || 0) >= dailyCap(env)) {
+    await releaseActiveGuard(db, callId);
     return {
       ok: false as const,
       status: 429,
@@ -402,11 +438,12 @@ export async function requestAiVoiceSelfTest(
 
   const active = await db
     .prepare(
-      "SELECT id FROM ai_voice_self_tests WHERE state IN ('dialing','streaming') AND created_at>? ORDER BY created_at DESC LIMIT 1",
+      "SELECT id FROM ai_voice_self_tests WHERE state IN ('dialing','negotiated','stream_claimed','streaming') AND created_at>? ORDER BY created_at DESC LIMIT 1",
     )
     .bind(now - 10 * 60_000)
     .first<Row>();
   if (active) {
+    await releaseActiveGuard(db, callId);
     return {
       ok: false as const,
       status: 409,
@@ -418,6 +455,7 @@ export async function requestAiVoiceSelfTest(
   const phoneKey = voiceAllowlist(env)[0];
   const dialNumber = canonicalDialNumber(env, phoneKey);
   if (!dialNumber) {
+    await releaseActiveGuard(db, callId);
     return {
       ok: false as const,
       status: 409,
@@ -426,7 +464,6 @@ export async function requestAiVoiceSelfTest(
     };
   }
 
-  const callId = `AIVST-${crypto.randomUUID().slice(0, 12).toUpperCase()}`;
   const override = await requestQuietHoursOverride(db, {
     actor: {
       email: actor.email,
@@ -442,6 +479,7 @@ export async function requestAiVoiceSelfTest(
     at: now,
   });
   if (!override.allowed) {
+    await releaseActiveGuard(db, callId);
     return {
       ok: false as const,
       status: 409,
@@ -450,20 +488,25 @@ export async function requestAiVoiceSelfTest(
     };
   }
 
-  await db
-    .prepare(
-      "INSERT INTO ai_voice_self_tests (id,phone_key,phone_last4,state,requested_by,quiet_hours_bypassed,created_at,updated_at) VALUES (?,?,?,'dialing',?,?,?,?)",
-    )
-    .bind(
-      callId,
-      phoneKey,
-      phoneKey.slice(-4),
-      actor.email,
-      override.overrideUsed ? 1 : 0,
-      now,
-      now,
-    )
-    .run();
+  try {
+    await db
+      .prepare(
+        "INSERT INTO ai_voice_self_tests (id,phone_key,phone_last4,state,requested_by,quiet_hours_bypassed,created_at,updated_at) VALUES (?,?,?,'dialing',?,?,?,?)",
+      )
+      .bind(
+        callId,
+        phoneKey,
+        phoneKey.slice(-4),
+        actor.email,
+        override.overrideUsed ? 1 : 0,
+        now,
+        now,
+      )
+      .run();
+  } catch (error) {
+    await releaseActiveGuard(db, callId);
+    throw error;
+  }
 
   let streamUrl: string;
   try {
@@ -477,6 +520,7 @@ export async function requestAiVoiceSelfTest(
       )
       .bind(reason, now, now, callId)
       .run();
+    await releaseActiveGuard(db, callId);
     return { ok: false as const, status: 409, reason, readiness };
   }
 
@@ -493,6 +537,7 @@ export async function requestAiVoiceSelfTest(
       )
       .bind(dial.reason, failedAt, failedAt, callId)
       .run();
+    await releaseActiveGuard(db, callId);
     return {
       ok: false as const,
       status: dial.status,
@@ -584,6 +629,7 @@ async function sendPcm(
   streamSid: string,
   audio: Uint8Array,
   sampleRate: number,
+  shouldContinue: () => boolean = () => true,
 ) {
   // 100 ms per frame, computed from the NEGOTIATED rate: bytes = rate * 2 (16-bit mono) * 0.1.
   // At Exotel's 8 kHz that is 1600 bytes; the previous hardcoded 3200 was a 200 ms frame at 8 kHz,
@@ -591,6 +637,7 @@ async function sendPcm(
   const frameMs = 100;
   const frameBytes = Math.max(2, Math.round(sampleRate * 2 * (frameMs / 1000)));
   for (let offset = 0; offset < audio.length; offset += frameBytes) {
+    if (!shouldContinue()) return false;
     const part = audio.subarray(offset, Math.min(offset + frameBytes, audio.length));
     if (part.length < 2) break;
     let chunk = part;
@@ -601,6 +648,7 @@ async function sendPcm(
       padded.set(chunk);
       chunk = padded;
     }
+    if (!shouldContinue()) return false;
     socket.send(
       JSON.stringify({
         event: "media",
@@ -610,6 +658,7 @@ async function sendPcm(
     );
     await sleep(frameMs);
   }
+  return shouldContinue();
 }
 
 function supportedSampleRate(value: unknown) {
@@ -686,8 +735,8 @@ export async function handleAiVoiceSelfTestNegotiate(
       headers: { "content-type": "application/json" },
     });
   }
-  if (["ended", "failed"].includes(text(row.state))) {
-    return new Response(JSON.stringify({ error: "Self-test is no longer active" }), {
+  if (text(row.state) !== "dialing") {
+    return new Response(JSON.stringify({ error: "Self-test stream was already negotiated or closed" }), {
       status: 409,
       headers: { "content-type": "application/json" },
     });
@@ -695,12 +744,18 @@ export async function handleAiVoiceSelfTestNegotiate(
 
   const streamUrl = await signedStreamUrl(env, callId, url.origin);
   const now = Date.now();
-  await db
+  const negotiated = await db
     .prepare(
-      "UPDATE ai_voice_self_tests SET state=CASE WHEN state='dialing' THEN 'negotiated' ELSE state END,updated_at=? WHERE id=?",
+      "UPDATE ai_voice_self_tests SET state='negotiated',updated_at=? WHERE id=? AND state='dialing'",
     )
     .bind(now, callId)
     .run();
+  if (Number(negotiated.meta?.changes || 0) !== 1) {
+    return new Response(JSON.stringify({ error: "Self-test stream was already negotiated" }), {
+      status: 409,
+      headers: { "content-type": "application/json" },
+    });
+  }
 
   return new Response(JSON.stringify({ url: streamUrl }), {
     status: 200,
@@ -728,6 +783,17 @@ export async function handleAiVoiceSelfTestStream(
   if (!readiness.enabled || !db || !ai) {
     return new Response("AI voice self-test is disabled", { status: 503 });
   }
+  await ensureAiVoiceSelfTestTables(db);
+  const claimedAt = Date.now();
+  const streamClaim = await db
+    .prepare(
+      "UPDATE ai_voice_self_tests SET state='stream_claimed',updated_at=? WHERE id=? AND state='negotiated'",
+    )
+    .bind(claimedAt, token.callId)
+    .run();
+  if (Number(streamClaim.meta?.changes || 0) !== 1) {
+    return new Response("AgentStream token is already used or call is not negotiated", { status: 409 });
+  }
 
   const pair = createWebSocketPair();
   const client = pair[0];
@@ -736,6 +802,7 @@ export async function handleAiVoiceSelfTestStream(
 
   let streamSid = "";
   let speaking = false;
+  let playbackGeneration = 0;
   let turnCount = 0;
   let queue = Promise.resolve();
   let flux: WorkerSocket | null = null;
@@ -769,9 +836,14 @@ export async function handleAiVoiceSelfTestStream(
       )
       .run()
       .catch(() => undefined);
+    if (state === "ended" || state === "failed" || extra.ended) {
+      await releaseActiveGuard(db, token.callId).catch(() => undefined);
+    }
   };
 
   const sendClear = () => {
+    playbackGeneration += 1;
+    speaking = false;
     if (!streamSid) return;
     server.send(JSON.stringify({ event: "clear", stream_sid: streamSid }));
   };
@@ -863,7 +935,7 @@ export async function handleAiVoiceSelfTestStream(
         .prepare("SELECT id,state FROM ai_voice_self_tests WHERE id=?")
         .bind(token.callId)
         .first<Row>();
-      if (!call || !["dialing", "streaming"].includes(text(call.state))) {
+      if (!call || !["stream_claimed", "streaming"].includes(text(call.state))) {
         throw new Error("Unknown or closed AI voice self-test");
       }
 
@@ -915,10 +987,19 @@ export async function handleAiVoiceSelfTestStream(
 
   const speak = async (message: string, mark: string) => {
     if (!streamSid || !message.trim()) return;
+    const generation = ++playbackGeneration;
     speaking = true;
     try {
       const audio = await ttsPcm(ai, message.trim(), sampleRate);
-      await sendPcm(server, streamSid, audio, sampleRate);
+      if (playbackGeneration !== generation) return;
+      const completed = await sendPcm(
+        server,
+        streamSid,
+        audio,
+        sampleRate,
+        () => playbackGeneration === generation,
+      );
+      if (!completed || playbackGeneration !== generation) return;
       server.send(
         JSON.stringify({
           event: "mark",
