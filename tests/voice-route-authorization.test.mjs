@@ -85,10 +85,11 @@ test("the gateway maps every voice path explicitly, not through the dashboard.vi
     assert.ok(access instanceof Response, `${path} must not admit an auditor`);
     assert.equal(access.status, 403, path);
   }
-  // The provider callback is allowlisted (a carrier has no session) and is verified by signature instead.
+  // The provider callback is allowlisted because a carrier has no session. Its handler treats CallSid as
+  // trigger-only, proves D1 ownership, then fetches authoritative status from Exotel before mutation.
   const webhook = await probe("/api/voice-provider-webhook");
   assert.ok(!(webhook instanceof Response));
-  assert.equal(webhook.permission, null, "the callback path is public at the gateway and signature-gated in the handler");
+  assert.equal(webhook.permission, null, "the callback path is public at the gateway and reconciliation-gated in the handler");
 });
 
 test("the gateway admits only an identity that holds the mapped permission", async () => {
@@ -226,11 +227,11 @@ test("the readiness surface is legible to an authorised operator and names no se
   for (const secret of ["test-key", "test-token", "test-sid", "test-webhook-secret"]) assert.ok(!serialised.includes(secret), secret);
 });
 
-test("the provider callback route refuses an unsigned or oversized payload", async () => {
+test("the provider callback route treats an unknown CallSid as inert and refuses an oversized payload", async () => {
   await fresh();
   const route = await import("../app/api/voice-provider-webhook/route.ts");
-  const unsigned = await route.POST(new Request(`${HOST}/api/voice-provider-webhook`, { method: "POST", body: "CallSid=EX-1&CustomField=VCALL-1&CallStatus=completed" }));
-  assert.equal(unsigned.status, 401);
+  const unknown = await route.POST(new Request(`${HOST}/api/voice-provider-webhook`, { method: "POST", body: "CallSid=EX-1&CustomField=VCALL-1&CallStatus=completed" }));
+  assert.equal(unknown.status, 202, "an unowned CallSid is acknowledged inertly and must not trigger provider lookup or mutation");
   const oversized = await route.POST(new Request(`${HOST}/api/voice-provider-webhook`, { method: "POST", body: "x".repeat(70_000) }));
   assert.equal(oversized.status, 413, "an oversized provider body is refused before it is parsed");
 });
