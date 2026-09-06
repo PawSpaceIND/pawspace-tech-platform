@@ -12,8 +12,7 @@ async function ensureGatewayTables(env:GatewayEnv){const now=Date.now();await en
   env.DB.prepare("CREATE TABLE IF NOT EXISTS security_audit_events (id TEXT PRIMARY KEY, actor_email TEXT NOT NULL, actor_role TEXT NOT NULL, action TEXT NOT NULL, resource_type TEXT NOT NULL, resource_id TEXT, outcome TEXT NOT NULL, detail_json TEXT NOT NULL, created_at INTEGER NOT NULL)"),
 ]);for(const role of defaultRoles)await env.DB.prepare("INSERT OR IGNORE INTO role_definitions (code,name,description,permissions_json,system_role,updated_at) VALUES (?,?,?,?,?,?)").bind(role.code,role.name,role.description,JSON.stringify(role.permissions),1,now).run();}
 
-async function requiredPermission(request:Request):Promise<Permission|null>{const url=new URL(request.url),method=request.method.toUpperCase();if(url.pathname==="/api/pricing-quote"||url.pathname==="/api/training-commercial"||url.pathname==="/api/training-trainers"||url.pathname==="/api/boarding-commercial"||url.pathname==="/api/sitting-commercial"||url.pathname==="/api/taxi-commercial"||url.pathname==="/api/food-commercial"||url.pathname==="/api/walking-commercial"||url.pathname==="/api/razorpay-webhook"||url.pathname==="/api/voice-provider-webhook"||url.pathname==="/api/webhooks/exotel/call-event"||url.pathname==="/api/provider-verification-callback"||url.pathname==="/api/communication-provider-callback"||url.pathname==="/api/haptik"||url.pathname==="/api/whatsapp-uat-webhook"||url.pathname==="/api/whatsapp/meta-webhook"||url.pathname==="/api/email-provider-webhook"||url.pathname==="/api/identity-session"||url.pathname==="/api/service-availability"||url.pathname==="/api/public-contact"||url.pathname==="/api/inquiries"||url.pathname==="/api/provider-public-profile"||url.pathname==="/api/staging-login"||url.pathname==="/api/partner-otp"||url.pathname==="/api/pet-passport-public"
-    ||url.pathname==="/api/host-profile"||url.pathname==="/api/customer-otp"||url.pathname==="/api/customer-profile"||url.pathname==="/api/customer-account"||url.pathname==="/api/booking-rating"||url.pathname==="/api/customer-support-case"||url.pathname==="/api/live-price-quote"||url.pathname==="/api/training-requirements"||url.pathname==="/api/host-trust"||url.pathname==="/api/service-zone")return null;
+async function requiredPermission(request:Request):Promise<Permission|null>{const url=new URL(request.url),method=request.method.toUpperCase();if(url.pathname==="/api/pricing-quote"||url.pathname==="/api/training-commercial"||url.pathname==="/api/training-trainers"||url.pathname==="/api/boarding-commercial"||url.pathname==="/api/sitting-commercial"||url.pathname==="/api/taxi-commercial"||url.pathname==="/api/food-commercial"||url.pathname==="/api/walking-commercial"||url.pathname==="/api/razorpay-webhook"||url.pathname==="/api/voice-provider-webhook"||url.pathname==="/api/webhooks/exotel/call-event"||url.pathname==="/api/provider-verification-callback"||url.pathname==="/api/communication-provider-callback"||url.pathname==="/api/haptik"||url.pathname==="/api/whatsapp-uat-webhook"||url.pathname==="/api/whatsapp/meta-webhook"||url.pathname==="/api/email-provider-webhook"||url.pathname==="/api/identity-session"||url.pathname==="/api/service-availability"||url.pathname==="/api/public-contact"||url.pathname==="/api/inquiries"||url.pathname==="/api/provider-public-profile"||url.pathname==="/api/staging-login"||url.pathname==="/api/partner-otp"||url.pathname==="/api/pet-passport-public"||url.pathname==="/api/host-profile"||url.pathname==="/api/customer-otp"||url.pathname==="/api/customer-profile"||url.pathname==="/api/customer-account"||url.pathname==="/api/booking-rating"||url.pathname==="/api/customer-support-case"||url.pathname==="/api/live-price-quote"||url.pathname==="/api/training-requirements"||url.pathname==="/api/host-trust"||url.pathname==="/api/service-zone")return null;
   if(url.pathname==="/api/customer-offers")return "scheduling.book";
   if(url.pathname==="/api/pawspace-wallet"){if(method==="GET")return "scheduling.book";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="credit"?"finance.manage":"scheduling.book";}
   if(url.pathname==="/api/paw-points"){if(method==="GET")return "scheduling.book";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["grant_goodwill","grant_winback"].includes(String(body.action||""))?"marketing.manage":"scheduling.book";}
@@ -27,9 +26,6 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/control-tower")return "audit.view";
   if(url.pathname==="/api/stay-balance")return "scheduling.book";
   if(url.pathname==="/api/partner-job-feed")return "bookings.view";
-  // This is the pre-session UAT login boundary. The route is production-dead unless the UAT gate is enabled,
-  // and its POST authenticates with the governed access code before minting the provider session. Requiring
-  // bookings.view here made the first session impossible and hid both the invalid-code and production-dead paths.
   if(url.pathname==="/api/uat-provider-switch")return null;
   if(url.pathname==="/api/provider-lms"){if(method==="GET")return "bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action||"")==="complete_module"?"bookings.view":"settings.manage";}
   if(url.pathname==="/api/me"||url.pathname==="/api/leaderboard"||url.pathname==="/api/provider-workspace")return "self_service.view";
@@ -37,49 +33,18 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/funeral-manual-order")return method==="GET"?"finance.view":"finance.manage";
   if(url.pathname==="/api/platform-governance"){if(method==="GET")return "dashboard.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="save_role"?"roles.manage":"users.manage";}
   if(url.pathname==="/api/identity-bindings")return "users.manage";
-  // This route serves two narrowly scoped principal types with different role permissions: customer and
-  // service_provider. The route resolves a real session and enforces booking ownership itself; mapping it
-  // to a broad gateway permission would either lock customers out or admit unrelated staff identities.
   if(url.pathname==="/api/communications/voice/bridge")return null;
-  // communications.message is deliberately narrow: it lets providers report/contact through routes
-  // that enforce booking/provider ownership. The system-wide ledger, queue, dispatch and assignment
-  // surfaces require communications.manage so a service provider cannot read or mutate another customer.
   if(url.pathname==="/api/communications"){if(method==="GET")return "communications.manage";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"enqueue");if(action==="adapter_readiness"||action==="policy_update")return "settings.manage";if(action==="preference")return "customers.manage";return "communications.manage";}
   if(url.pathname==="/api/conversations"||url.pathname==="/api/ai-human-handoff")return "communications.manage";
-  // The web-chat surface deliberately has two security modes. Public knowledge/lead capture is
-  // anonymous and is constrained inside the route (public-only knowledge, no customer/tool access,
-  // same-origin writes). Authenticated mode is customer self-service and then enforces the exact
-  // customer binding in runAuthenticatedAiWebChat(). Falling through to dashboard.view blocked both
-  // intended audiences and let an unrelated staff permission define who could converse.
-  if(url.pathname==="/api/ai-web-chat"){
-    if(method==="GET")return null;
-    const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;
-    return String(body.mode||"public")==="authenticated"?"scheduling.book":null;
-  }
-  // Voice. The fail-closed fallback at the end of this function would have mapped these to
-  // dashboard.view, which auditor and finance hold - so a read-only compliance identity could start an
-  // AI voice call. Mapped explicitly: conversing needs communications.call, and launching an automated
-  // outbound dialler additionally needs customers.manage (which service_provider and associate lack).
+  if(url.pathname==="/api/ai-web-chat"){if(method==="GET")return null;const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.mode||"public")==="authenticated"?"scheduling.book":null;}
   if(url.pathname==="/api/voice-outbound")return "customers.manage";
   if(url.pathname==="/api/ai-voice-uat"||url.pathname==="/api/voice-speech")return "communications.call";
   if(url.pathname==="/api/voice-providers")return "settings.manage";
-  // Haptik outbound is an internal marketing surface. Reads expose campaign/audience readiness and
-  // writes can launch governed outreach, so do not let the generic dashboard.view fallback decide it.
   if(url.pathname==="/api/haptik-outbound")return method==="GET"?"marketing.view":"marketing.manage";
-  if(url.pathname==="/api/bot-call-outcomes"){if(method==="GET")return "customers.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;// PTJA W2-B4-M03: a `record` writes a permanent do-not-call and closes the lead - the same rows the
-    // HUMAN path writes through /api/revenue-crm, which requires customers.manage. This asked only for
-    // communications.call, a default service_provider permission, so a provider with no relationship to
-    // the lead could opt out any customer by lead id while the identical intent through the human path
-    // was refused 403. The two paths now agree.
-    return "customers.manage";}
-  // Customer 360 contact can target any imported customer, so it is a system-wide administrative action.
-  // Booking-scoped provider communication remains on routes that enforce assignment and ownership.
+  if(url.pathname==="/api/bot-call-outcomes")return "customers.manage";
   if(url.pathname==="/api/customer-contact")return "communications.manage";
   if(url.pathname==="/api/subscription-customers")return method==="GET"?"customers.view":"data.import";
   if(url.pathname==="/api/subscription-wallet"){if(method==="GET")return url.searchParams.get("customerId")?"customers.view":"scheduling.book";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["reserve","pause","resume"].includes(String(body.action))?"scheduling.book":"bookings.manage";}
-  // Subscription billing belongs in the gateway's canonical permission map. The worker must not alias
-  // these requests onto unrelated routes: ownership stays in the customer route, while pricing/finance
-  // role separation remains duplicated at the admin route as a second gate.
   if(url.pathname==="/api/subscription-billing")return "scheduling.book";
   if(url.pathname==="/api/subscription-billing-admin"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");return ["save_plan","approve_plan"].includes(action)?"pricing.manage":"finance.manage";}
   if(url.pathname==="/api/crm")return method==="GET"?"customers.view":"customers.manage";
@@ -95,12 +60,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/revenue-leadership-reporting")return method==="GET"?"reports.view":"customers.manage";
   if(url.pathname==="/api/prelaunch-booking-swarm")return method==="GET"?"launch.view":"launch.manage";
   if(url.pathname==="/api/crm-automation"){if(method==="GET")return "customers.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="save_policy"?"settings.manage":"customers.manage";}
-  // The Unified Case Center is a platform-wide internal directory, not an assigned-booking view.
   if(url.pathname==="/api/unified-cases")return "bookings.manage";
-  // Sweeping raises alerts platform-wide and stays a manager action. Acknowledge/resolve only needs
-  // identity here: authority over an individual alert belongs to the team that owns it and is decided
-  // per alert in lib/staff-alert-authority.ts. Gating them on customers.manage locked Finance out of
-  // its own payment-failure alerts while letting any Manager close them.
   if(url.pathname==="/api/staff-alerts"){if(method==="GET")return "reports.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="sweep"?"customers.manage":"reports.view";}
   if(url.pathname==="/api/staff-alert-runner")return "settings.manage";
   if(url.pathname==="/api/finance-control")return method==="GET"?"finance.view":"finance.manage";
@@ -111,8 +71,6 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/unit-economics")return "reports.view";
   if(url.pathname==="/api/ai-intelligence")return method==="GET"?"reports.view":"customers.manage";
   if(url.pathname==="/api/training-finance")return method==="GET"?"finance.view":"finance.manage";
-  // Training sandbox capture is a customer checkout action. dashboard.view rejected the customer while
-  // admitting dashboard-only staff such as Finance; scheduling.book matches the canonical booking boundary.
   if(url.pathname==="/api/training-payment-sandbox")return "scheduling.book";
   if(url.pathname==="/api/training-cancellation"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return String(body.action)==="request"?"scheduling.book":"finance.manage";}
   if(url.pathname==="/api/training-customer-session-change")return "scheduling.book";
@@ -121,22 +79,12 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/training-reconciliation")return "reports.view";
   if(url.pathname==="/api/marketing-control")return method==="GET"?"marketing.view":"marketing.manage";
   if(url.pathname==="/api/pricing-control")return method==="GET"?"pricing.view":"pricing.manage";
-  // Business policy by vertical and city. Reading is for every Control Center operator; writing is
-  // settings.manage, which only founder and superuser hold. The handler names the same pair as its
-  // second gate, and resolves the domain first so each domain's own manage permission applies.
   if(url.pathname==="/api/service-policy-control")return method==="GET"?"launch.view":"settings.manage";
-  // Post-start cancellation cases. bookings.view is the floor for both reading and deciding; who may
-  // actually stop a job or approve a refund is policy, applied against the actor's real permissions
-  // inside lib/cancellation-case-governance.ts.
   if(url.pathname==="/api/booking-cancellation-case")return "bookings.view";
   if(url.pathname==="/api/customer-data-reveal")return "customers.view";
   if(url.pathname==="/api/coupon-governance"){if(method==="GET")return "pricing.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>,action=String(body.action||"");if(action==="quote")return "scheduling.book";if(action==="save_campaign")return "pricing.manage";if(action==="consume")return "bookings.manage";return "dashboard.view";}
   if(url.pathname==="/api/grooming-subscription-plans")return method==="GET"?"pricing.view":"pricing.manage";
   if(url.pathname==="/api/grooming-commercial-policy")return method==="GET"?"pricing.view":"pricing.manage";
-  // The capacity CONTROL console, read and write alike (PTJA W2-17-F01). Mapping the GET to
-  // scheduling.view admitted every service_provider session - the role holds that permission - to the
-  // whole city's provider roster, quality scores, complaint notes, recovery cases and change audit.
-  // Nothing in app/** calls this GET, so there is no provider-facing consumer to preserve.
   if(url.pathname==="/api/provider-capacity-control")return "scheduling.manage";
   if(url.pathname==="/api/provider-assignment-recovery"){const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return ["accept","decline"].includes(String(body.action))?"bookings.view":"bookings.manage";}
   if(url.pathname==="/api/assisted-orders")return "scheduling.book";
@@ -190,15 +138,7 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
   if(url.pathname==="/api/grooming-booking-change")return "scheduling.book";
   if(url.pathname==="/api/grooming-finance")return "finance.view";
   if(url.pathname==="/api/grooming-payment-sandbox")return "payments.manage";
-  if(url.pathname==="/api/grooming-lifecycle"){
-    if(method==="GET")return "bookings.view";
-    const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;
-    return body.action==="mark_paid"?"payments.manage":"bookings.view";
-  }
-  // Reporting what happened on a job is a communications act; changing what the customer owes is not.
-  // `package_upgrade` only records a request now - the money moves through `apply_package_upgrade`,
-  // which is a pricing decision. The route enforces the same mapping itself, so a path the gateway
-  // does not recognise cannot get a weaker answer than this one.
+  if(url.pathname==="/api/grooming-lifecycle"){if(method==="GET")return "bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;return body.action==="mark_paid"?"payments.manage":"bookings.view";}
   if(url.pathname==="/api/booking-operations"){if(method==="GET")return "bookings.view";const body=await request.clone().json().catch(()=>({})) as Record<string,unknown>;if(body.action==="refund_status")return "payments.manage";if(body.action==="apply_package_upgrade")return "pricing.manage";return ["package_upgrade","service_overrun","running_late","vehicle_issue","rebook_requested","refund_requested"].includes(String(body.action))?"communications.message":"bookings.manage";}
   if(url.pathname==="/api/meet-and-greet")return method==="POST"?null:"bookings.manage";
   return "dashboard.view";
@@ -207,22 +147,15 @@ async function requiredPermission(request:Request):Promise<Permission|null>{cons
 async function audit(env:GatewayEnv,actor:GatewayActor,request:Request,outcome:string,detail:unknown){await env.DB.prepare("INSERT INTO security_audit_events (id,actor_email,actor_role,action,resource_type,resource_id,outcome,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),actor.email,actor.roleCode,request.method,new URL(request.url).pathname,null,outcome,JSON.stringify(detail),Date.now()).run();}
 
 export async function authorizeApiRequest(request:Request,env:GatewayEnv):Promise<{actor:GatewayActor;permission:Permission|null}|Response>{const url=new URL(request.url);if(!url.pathname.startsWith("/api/"))return {actor:{email:"",roleCode:"public",permissions:[],preview:false},permission:null};const permission=await requiredPermission(request);if(permission===null)return {actor:{email:"",roleCode:"public",permissions:[],preview:false},permission:null};
-  if(!["GET","HEAD","OPTIONS"].includes(request.method)){const origin=request.headers.get("origin");if(origin&&origin!==url.origin)return Response.json({error:"Cross-origin write blocked"},{status:403});}
+  if(!["GET","HEAD","OPTIONS"].includes(request.method)){const origin=request.headers.get("origin");if(origin&&origin!==url.origin)return Response.json({error:"Cross-origin write blocked",code:"cross_origin_write_blocked"},{status:403});}
   if(isDevelopmentPreviewRequest(request))return {actor:{email:"preview@pawspace.test",roleCode:"superuser",permissions:["*"],preview:true},permission};
-  // Staging-only UAT sign-in: honour the signed UAT cookie when enabled (a no-op in production, where
-  // PAWSPACE_UAT_LOGIN is unset, so this falls straight through to the real header-based identity check).
   const uat=await resolveUatStaffActor(env.DB,request,env as unknown as Record<string,unknown>);
-  if(uat){const actor={email:uat.email,roleCode:uat.roleCode,permissions:uat.permissions,preview:false};if(!hasPermission(uat.permissions,permission)){await audit(env,actor,request,"denied",{permission});return Response.json({error:"Permission denied"},{status:403});}return {actor,permission};}
-  // Customer/provider OTP identities hold a platform session cookie, not a staff header identity.
-  // Without this check the gateway 401s them on gated self-service endpoints (e.g. GET
-  // /api/boarding-stays?scope=customer) even though the route's own resolveActor supports the
-  // session; per-record ownership is still enforced by the route via requireCustomerOwnership/
-  // requireProviderOwnership - the gateway only maps the session to its limited role permissions.
+  if(uat){const actor={email:uat.email,roleCode:uat.roleCode,permissions:uat.permissions,preview:false};if(!hasPermission(uat.permissions,permission)){await audit(env,actor,request,"denied",{permission});return Response.json({error:"Permission denied",code:"permission_denied"},{status:403});}return {actor,permission};}
   const session=await resolvePlatformSession(env.DB,request).catch(()=>null);
-  if(session){const actor={email:session.auditId,roleCode:session.roleCode,permissions:session.permissions,preview:false};if(!hasPermission(session.permissions,permission)){await audit(env,actor,request,"denied",{permission});return Response.json({error:"Permission denied"},{status:403});}return {actor,permission};}
-  const email=(request.headers.get("oai-authenticated-user-email")||"").trim().toLowerCase();if(!email)return uatLoginEnabled(env as unknown as Record<string,unknown>)?signInRequiredResponse(env as unknown as Record<string,unknown>):Response.json({error:"Authentication required"},{status:401});await ensureGatewayTables(env);
-  let user=await env.DB.prepare("SELECT name,role_code,status FROM app_users WHERE email=?").bind(email).first<Record<string,unknown>>();if(!user&&email===String(env.FOUNDER_EMAIL||"").trim().toLowerCase()){const now=Date.now();await env.DB.prepare("INSERT INTO app_users (id,email,name,role_code,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?)").bind(crypto.randomUUID(),email,email.split("@")[0],"founder","active",now,now).run();user={role_code:"founder",status:"active"};}
-  if(!user||user.status!=="active")return Response.json({error:"Access has not been provisioned or is disabled"},{status:403});const role=await env.DB.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(String(user.role_code)).first<{permissions_json:string}>();let permissions:string[]=[];try{permissions=JSON.parse(role?.permissions_json||"[]") as string[]}catch{}
-  const actor={email,roleCode:String(user.role_code),permissions,preview:false};if(!hasPermission(permissions,permission)){await audit(env,actor,request,"denied",{permission});return Response.json({error:"Permission denied"},{status:403});}return {actor,permission};}
+  if(session){const actor={email:session.auditId,roleCode:session.roleCode,permissions:session.permissions,preview:false};if(!hasPermission(session.permissions,permission)){await audit(env,actor,request,"denied",{permission});return Response.json({error:"Permission denied",code:"permission_denied"},{status:403});}return {actor,permission};}
+  const email=(request.headers.get("oai-authenticated-user-email")||"").trim().toLowerCase();if(!email)return uatLoginEnabled(env as unknown as Record<string,unknown>)?signInRequiredResponse(env as unknown as Record<string,unknown>):Response.json({error:"Authentication required",code:"authentication_required"},{status:401});await ensureGatewayTables(env);
+  const user=await env.DB.prepare("SELECT name,role_code,status FROM app_users WHERE email=?").bind(email).first<Record<string,unknown>>();
+  if(!user||user.status!=="active")return Response.json({error:"Access has not been provisioned or is disabled",code:!user?"identity_not_provisioned":"identity_disabled"},{status:403});const role=await env.DB.prepare("SELECT permissions_json FROM role_definitions WHERE code=?").bind(String(user.role_code)).first<{permissions_json:string}>();let permissions:string[]=[];try{permissions=JSON.parse(role?.permissions_json||"[]") as string[]}catch{}
+  const actor={email,roleCode:String(user.role_code),permissions,preview:false};if(!hasPermission(permissions,permission)){await audit(env,actor,request,"denied",{permission});return Response.json({error:"Permission denied",code:"permission_denied"},{status:403});}return {actor,permission};}
 
 export async function auditApiResponse(env:GatewayEnv,actor:GatewayActor,permission:Permission|null,request:Request,response:Response){if(!permission||actor.roleCode==="public")return;await audit(env,actor,request,response.ok?"allowed":"failed",{permission,status:response.status});}
