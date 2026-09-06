@@ -42,6 +42,7 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf .p04-d1 artifacts/p04-concurrency
+          mkdir -p artifacts/p04-concurrency
           npx wrangler dev --config wrangler.p04-concurrency.jsonc --persist-to .p04-d1 --port 8794 > /tmp/p04-worker.log 2>&1 &
           echo $! > /tmp/p04-worker.pid
           ready=0
