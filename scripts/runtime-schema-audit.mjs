@@ -4,6 +4,7 @@ import path from "node:path";
 const SOURCE_ROOTS = ["lib", "app", "worker"];
 const SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs"]);
 const INTERNAL_TABLES = new Set(["sqlite_master", "sqlite_schema", "pragma_table_info", "pragma_index_list", "json_each", "json_tree"]);
+const NON_TABLE_TOKENS = new Set(["set", "where", "on", "of"]);
 
 function walk(root, relative) {
   const start = path.join(root, relative);
@@ -46,7 +47,12 @@ function referencedTables(sql) {
   const pattern = /\b(?:DELETE\s+FROM|REPLACE\s+INTO|INSERT\s+INTO|FROM|JOIN|UPDATE)\s+[`"\[]?([A-Za-z_][A-Za-z0-9_]*)/gi;
   for (const match of sql.matchAll(pattern)) {
     const name = match[1].toLowerCase();
-    if (!ctes.has(name) && !INTERNAL_TABLES.has(name)) names.push(name);
+    // SQL snippets can include trigger grammar (`UPDATE OF`, `UPDATE ... SET`) and CTE aliases.
+    // Those tokens are not schema objects. Single-letter identifiers are aliases in this repository,
+    // not physical table names, so excluding them avoids turning ordinary `FROM ... r` CTE patterns
+    // into fake missing-table findings.
+    if (name.length === 1 || ctes.has(name) || INTERNAL_TABLES.has(name) || NON_TABLE_TOKENS.has(name)) continue;
+    names.push(name);
   }
   return names;
 }
