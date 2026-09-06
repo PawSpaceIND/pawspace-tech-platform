@@ -7,7 +7,9 @@ on:
     paths:
       - app/api/haptik/route.ts
       - app/api/training-sessions/route.ts
+      - app/api/pilot-finance-reconcile/route.ts
       - lib/d1-write-retry.ts
+      - lib/provider-assignment-eligibility.ts
       - lib/scheduling-roster-authority.ts
       - scripts/pilot-staging-scheduling-preflight.sql
       - scripts/pilot-staging-baseline-cleanup.sql
@@ -86,14 +88,24 @@ jobs:
           npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --json --command "SELECT CASE WHEN c.id IS NULL THEN 'missing_customer' WHEN w.booking_id IS NULL THEN 'missing_work_order' WHEN p.booking_id IS NULL THEN 'missing_payment' ELSE 'linked' END class,COUNT(*) n FROM canonical_bookings b LEFT JOIN canonical_customers c ON c.id=b.customer_id LEFT JOIN provider_work_orders w ON w.booking_id=b.id LEFT JOIN booking_payments p ON p.booking_id=b.id GROUP BY class; SELECT COUNT(*) completed_missing_journal FROM canonical_bookings b WHERE b.status='completed' AND NOT EXISTS(SELECT 1 FROM finance_journal_entries f WHERE f.booking_id=b.id AND f.posted=1);" > artifacts/pilot-readiness/precleanup-classification.json
       - name: Archive and clean incomplete staging canonical baseline
         run: npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --file=scripts/pilot-staging-baseline-cleanup.sql
-      - name: Verify cleaned staging baseline
+      - name: Reconcile intact completed bookings through canonical finance hook
         shell: bash
         run: |
           set -euo pipefail
-          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --json --command "SELECT COUNT(*) orphaned FROM canonical_bookings b LEFT JOIN canonical_customers c ON c.id=b.customer_id LEFT JOIN provider_work_orders w ON w.booking_id=b.id LEFT JOIN booking_payments p ON p.booking_id=b.id WHERE c.id IS NULL OR w.booking_id IS NULL OR p.booking_id IS NULL; SELECT COUNT(*) archived FROM pilot_staging_orphan_booking_archive; SELECT COUNT(*) completed, SUM(CASE WHEN EXISTS(SELECT 1 FROM finance_journal_entries f WHERE f.booking_id=b.id AND f.posted=1) THEN 1 ELSE 0 END) journalized FROM canonical_bookings b WHERE b.status='completed';" > artifacts/pilot-readiness/postcleanup-baseline.json
+          CODE_JSON="$(node -e 'process.stdout.write(JSON.stringify(process.env.PAWSPACE_UAT_ACCESS_CODE||""))')"
+          curl --fail-with-body --silent --show-error -X POST "$STAGING_URL/api/pilot-finance-reconcile" \
+            -H 'content-type: application/json' \
+            --data "{\"code\":${CODE_JSON}}" \
+            > artifacts/pilot-readiness/finance-reconcile.json
+      - name: Verify cleaned and journalized staging baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --json --command "SELECT COUNT(*) orphaned FROM canonical_bookings b LEFT JOIN canonical_customers c ON c.id=b.customer_id LEFT JOIN provider_work_orders w ON w.booking_id=b.id LEFT JOIN booking_payments p ON p.booking_id=b.id WHERE c.id IS NULL OR w.booking_id IS NULL OR p.booking_id IS NULL; SELECT COUNT(*) archived FROM pilot_staging_orphan_booking_archive; SELECT COUNT(*) completed, SUM(CASE WHEN EXISTS(SELECT 1 FROM finance_journal_entries f WHERE f.booking_id=b.id AND f.posted=1) THEN 1 ELSE 0 END) journalized FROM canonical_bookings b WHERE b.status='completed'; SELECT COUNT(*) unbalanced FROM (SELECT booking_id,source_type,source_id,narration,created_at FROM finance_journal_entries WHERE posted=1 GROUP BY booking_id,source_type,source_id,narration,created_at HAVING ABS(SUM(COALESCE(debit,0))-SUM(COALESCE(credit,0)))>0.01);" > artifacts/pilot-readiness/postcleanup-baseline.json
           node - <<'NODE'
-          const fs=require('fs');const x=JSON.parse(fs.readFileSync('artifacts/pilot-readiness/postcleanup-baseline.json','utf8'));
-          const first=Array.isArray(x)?x[0]:x;const orphan=Number(first?.results?.[0]?.orphaned||0);if(orphan!==0){console.error(`staging orphan baseline remains ${orphan}`);process.exit(1)}
+          const fs=require('fs');const x=JSON.parse(fs.readFileSync('artifacts/pilot-readiness/postcleanup-baseline.json','utf8'));const groups=Array.isArray(x)?x:[x];
+          const orphan=Number(groups[0]?.results?.[0]?.orphaned||0),completed=Number(groups[2]?.results?.[0]?.completed||0),journalized=Number(groups[2]?.results?.[0]?.journalized||0),unbalanced=Number(groups[3]?.results?.[0]?.unbalanced||0);
+          if(orphan!==0||completed!==journalized||unbalanced!==0){console.error({orphan,completed,journalized,unbalanced});process.exit(1)}
           NODE
       - name: Executed lifecycle, finance and Haptik security suites
         id: behavioral
