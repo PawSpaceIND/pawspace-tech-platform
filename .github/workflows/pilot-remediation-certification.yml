@@ -7,6 +7,7 @@ on:
     paths:
       - app/api/haptik/route.ts
       - app/api/training-sessions/route.ts
+      - lib/d1-write-retry.ts
       - lib/scheduling-roster-authority.ts
       - scripts/pilot-staging-scheduling-preflight.sql
       - tests/e2e-pilot-simulation.test.mjs
@@ -83,7 +84,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/pilot-readiness
-          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --json --command "SELECT service_code,status,COUNT(*) n FROM canonical_bookings GROUP BY service_code,status ORDER BY service_code,status; SELECT CASE WHEN c.id IS NULL THEN 'missing_customer' WHEN w.booking_id IS NULL THEN 'missing_work_order' WHEN p.booking_id IS NULL THEN 'missing_payment' ELSE 'linked' END class,COUNT(*) n FROM canonical_bookings b LEFT JOIN canonical_customers c ON c.id=b.customer_id LEFT JOIN provider_work_orders w ON w.booking_id=b.id LEFT JOIN booking_payments p ON p.booking_id=b.id GROUP BY class; SELECT b.service_code,COUNT(*) n FROM canonical_bookings b WHERE b.status='completed' AND NOT EXISTS(SELECT 1 FROM finance_journal_entries f WHERE f.booking_id=b.id AND f.posted=1) GROUP BY b.service_code;" > artifacts/pilot-readiness/preload-d1-classification.json
+          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --json --command "SELECT service_code,status,COUNT(*) n FROM canonical_bookings GROUP BY service_code,status ORDER BY service_code,status; SELECT CASE WHEN c.id IS NULL THEN 'missing_customer' WHEN w.booking_id IS NULL THEN 'missing_work_order' WHEN p.booking_id IS NULL THEN 'missing_payment' ELSE 'linked' END class,COUNT(*) n FROM canonical_bookings b LEFT JOIN canonical_customers c ON c.id=b.customer_id LEFT JOIN provider_work_orders w ON w.booking_id=b.id LEFT JOIN booking_payments p ON p.booking_id=b.id GROUP BY class; SELECT b.service_code,CASE WHEN c.id IS NULL THEN 'missing_customer' WHEN w.booking_id IS NULL THEN 'missing_work_order' WHEN p.booking_id IS NULL THEN 'missing_payment' ELSE 'linked' END class,COUNT(*) n FROM canonical_bookings b LEFT JOIN canonical_customers c ON c.id=b.customer_id LEFT JOIN provider_work_orders w ON w.booking_id=b.id LEFT JOIN booking_payments p ON p.booking_id=b.id WHERE b.status='completed' AND NOT EXISTS(SELECT 1 FROM finance_journal_entries f WHERE f.booking_id=b.id AND f.posted=1) GROUP BY b.service_code,class ORDER BY b.service_code,class;" > artifacts/pilot-readiness/preload-d1-classification.json
       - name: Executed lifecycle, finance and Haptik security suites
         id: behavioral
         continue-on-error: true
@@ -106,6 +107,16 @@ jobs:
         run: |
           set -o pipefail
           node --experimental-strip-types --test --test-concurrency=1 tests/e2e-pilot-simulation.test.mjs 2>&1 | tee artifacts/pilot-readiness/simulation.log
+      - name: Capture post-load scheduling durability
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f artifacts/pilot-readiness/metrics.json ]; then
+            RUN_ID="$(node -e 'const x=require("./artifacts/pilot-readiness/metrics.json");process.stdout.write(String(x.runId||""))')"
+            case "$RUN_ID" in PILOT-*) ;; *) echo "No valid pilot run id" >&2; exit 0;; esac
+            npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --json --command "SELECT status,COUNT(*) n FROM scheduling_assignment_decisions WHERE group_id LIKE '${RUN_ID}-SG-%' GROUP BY status; SELECT status,COUNT(*) n FROM scheduling_reservations WHERE group_id LIKE '${RUN_ID}-SG-%' GROUP BY status;" > artifacts/pilot-readiness/postload-scheduling.json
+          fi
       - name: Upload pilot remediation evidence
         if: always()
         uses: actions/upload-artifact@v4
