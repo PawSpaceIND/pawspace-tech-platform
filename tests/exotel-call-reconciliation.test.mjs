@@ -32,13 +32,13 @@ function exotelDetailsSequence(items){
   const parsed=new URL(String(url));
   assert.equal(parsed.protocol,"https:");
   assert.equal(parsed.hostname,"api.exotel.com");
-  assert.equal(parsed.pathname,"/v1/Accounts/test-sid/Calls.json");
-  assert.equal(parsed.searchParams.get("Sid"),EXOTEL_CALL_SID);
-  assert.equal(parsed.searchParams.get("details"),"true");
+  assert.equal(parsed.pathname,`/v1/Accounts/test-sid/Calls/${EXOTEL_CALL_SID}.json`);
+  assert.equal(parsed.search,"","single-call details must not fall back to the bulk Calls search API");
   assert.equal(String(init.method||"GET"),"GET");
   assert.equal(new Headers(init.headers).get("authorization"),`Basic ${btoa("test-key:test-token")}`);
+  assert.equal(new Headers(init.headers).get("accept"),"application/json");
   const item=items[Math.min(index++,items.length-1)];
-  return Response.json({Calls:[{Sid:EXOTEL_CALL_SID,...item}]});
+  return Response.json({Call:{Sid:EXOTEL_CALL_SID,...item}});
  };
  return()=>calls;
 }
@@ -65,6 +65,14 @@ test("unsigned Exotel callbacks are trigger-only and authoritative Call Details 
  assert.ok(trail.includes("connected"));assert.ok(trail.includes("completed"));
 });
 
+test("single-call details accepts a lower-case provider envelope but still requires the exact owned Sid",async()=>{
+ const{sqlite,call}=await fresh();
+ globalThis.fetch=async()=>Response.json({call:{sid:EXOTEL_CALL_SID,status:"completed",duration:22}});
+ const response=await post(new URLSearchParams({CallSid:EXOTEL_CALL_SID,CallStatus:"ringing"}).toString());
+ assert.equal(response.status,200);assert.equal(state(sqlite,call.callId).state,"completed");
+ assert.equal(events(sqlite)[0].provider_status,"completed");
+});
+
 test("an unknown CallSid is acknowledged without using PawSpace as an Exotel API proxy",async()=>{
  const{sqlite}=await fresh();
  let fetched=false;globalThis.fetch=async()=>{fetched=true;throw new Error("must not fetch")};
@@ -74,7 +82,7 @@ test("an unknown CallSid is acknowledged without using PawSpace as an Exotel API
 
 test("Call Details must return the exact ledger-owned CallSid before any lifecycle mutation",async()=>{
  const{sqlite,call}=await fresh();
- globalThis.fetch=async()=>Response.json({Calls:[{Sid:"different-provider-call",Status:"completed",Duration:18}]});
+ globalThis.fetch=async()=>Response.json({Call:{Sid:"different-provider-call",Status:"completed",Duration:18}});
  const response=await post(new URLSearchParams({CallSid:EXOTEL_CALL_SID,CallStatus:"completed"}).toString());
  assert.equal(response.status,503);assert.equal(state(sqlite,call.callId).state,"dialing");assert.equal(events(sqlite).length,0);
 });
