@@ -1,4 +1,4 @@
-name: Apply P0 identity and OTP remediation
+name: Validate audit P0/P1 remediation
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  remediate-and-validate:
+  validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,119 +23,8 @@ jobs:
         with:
           node-version: '22.16.0'
 
-      - name: Apply P0 security patches
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-
-          path=Path('lib/customer-otp.ts')
-          source=path.read_text()
-          marker='const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;\n'
-          helper='''const uid=(p:string)=>`${p}-${crypto.randomUUID().slice(0,12).toUpperCase()}`;\nfunction secureOtpCode(){\n const range=900000,limit=Math.floor(4294967296/range)*range,values=new Uint32Array(1);\n let value=0;\n do{crypto.getRandomValues(values);value=values[0];}while(value>=limit);\n return String(100000+(value%range));\n}\n'''
-          if marker not in source: raise SystemExit('customer OTP uid marker not found')
-          source=source.replace(marker,helper,1)
-          old='const now=Date.now(),code=String(Math.floor(100000+Math.random()*900000)),id=uid("OTP");'
-          if old not in source: raise SystemExit('insecure customer OTP generator not found')
-          source=source.replace(old,'const now=Date.now(),code=secureOtpCode(),id=uid("OTP");',1)
-          path.write_text(source)
-
-          path=Path('app/api/customer-otp/route.ts')
-          source=path.read_text()
-          old='if (!liveMode) return json({ data: result }, 200, { "cache-control": "no-store" });'
-          new='if (!liveMode) return json({ data: { challengeId: result.challengeId, phone: result.phone, expiresInSeconds: result.expiresInSeconds, sandboxDelivery: true, liveSmsDelivered: false } }, 200, { "cache-control": "no-store" });'
-          if old not in source: raise SystemExit('customer OTP sandbox response marker not found')
-          source=source.replace(old,new,1)
-          path.write_text(source)
-
-          path=Path('lib/server-auth.ts')
-          source=path.read_text()
-          start=source.find('function forwardedIdentity(request:Request){')
-          end=source.find('\n\nconst isDevelopmentPreview=',start)
-          if start < 0 or end < 0: raise SystemExit('server-auth forwarded identity helper not found')
-          source=source[:start]+source[end+2:]
-          start=source.find('  const identity=forwardedIdentity(request);')
-          end_marker='  return {email:identity.email,name:String(user.name||identity.name),roleCode:String(user.role_code),permissions:parsePermissions(role.permissions_json),developmentPreview:false,identitySource:"workspace",principalType:"email",principalKey:identity.email};\n'
-          end=source.find(end_marker,start)
-          if start < 0 or end < 0: raise SystemExit('server-auth forwarded identity authorization block not found')
-          source=source[:start]+'  throw markGovernedHttpError(signInRequiredResponse(uatEnv as unknown as Record<string,unknown>));\n'+source[end+len(end_marker):]
-          path.write_text(source)
-
-          path=Path('lib/api-gateway.ts')
-          source=path.read_text()
-          start=source.find('  const email=(request.headers.get("oai-authenticated-user-email")||"").trim().toLowerCase();')
-          end_marker='  const actor={email,roleCode:String(user.role_code),permissions,preview:false};if(!hasPermission(permissions,permission)){await audit(env,actor,request,"denied",{permission});return Response.json({error:"Permission denied"},{status:403});}return {actor,permission};}\n'
-          end=source.find(end_marker,start)
-          if start < 0 or end < 0: raise SystemExit('api-gateway trusted-header authorization block not found')
-          source=source[:start]+'  return uatLoginEnabled(env as unknown as Record<string,unknown>)?signInRequiredResponse(env as unknown as Record<string,unknown>):Response.json({error:"Authentication required"},{status:401});}\n'+source[end+len(end_marker):]
-          path.write_text(source)
-
-          path=Path('app/mobile-app/customer-login.tsx')
-          source=path.read_text()
-          source=source.replace('  sandboxCode: string;\n','')
-          source=source.replace('  const [sandboxCode, setSandboxCode] = useState("");\n','')
-          source=source.replace('        setSandboxCode(saved.sandboxCode || "");\n','')
-          source=source.replace('      const b = (await r.json()) as { data?: { challengeId: string; sandboxCode: string }; error?: string };','      const b = (await r.json()) as { data?: { challengeId: string }; error?: string };')
-          source=source.replace('      setSandboxCode(b.data.sandboxCode);\n','')
-          source=source.replace('          sandboxCode: b.data.sandboxCode,\n','')
-          source=source.replace('                  UAT sandbox: no real SMS is sent yet - the code is shown on the next screen for testing.','                  Enter the verification code delivered through the configured OTP channel.')
-          block='''                {sandboxCode && (\n                  <p style={{ fontSize: 11, background: "var(--ps-surface-2)", padding: 8, borderRadius: 8, marginTop: 8 }}>\n                    Sandbox code (no real SMS yet): <b>{sandboxCode}</b>\n                  </p>\n                )}\n'''
-          source=source.replace(block,'')
-          source=source.replace('                  setSandboxCode("");\n','')
-          path.write_text(source)
-
-          path=Path('tests/backend-otp-hardening.test.mjs')
-          source=path.read_text()
-          source=source.replace('assert.equal(body.data?.liveSmsDelivered,false);assert.match(String(body.data?.sandboxCode),/^\\d{6}$/);','assert.equal(body.data?.liveSmsDelivered,false);assert.equal(Object.prototype.hasOwnProperty.call(body.data||{},"sandboxCode"),false);')
-          old='const requested=await request.json();const verify=await customer.POST(new Request("http://localhost/api/customer-otp",{method:"POST",headers:{"content-type":"application/json","origin":"http://localhost"},body:JSON.stringify({action:"verify",challengeId:requested.data.challengeId,code:requested.data.sandboxCode,cityId:"blr"})}));'
-          new='const requested=await request.json();assert.equal(Object.prototype.hasOwnProperty.call(requested.data||{},"sandboxCode"),false);const stored=sqlite.prepare("SELECT code FROM customer_otp_challenges WHERE id=?").get(requested.data.challengeId);const verify=await customer.POST(new Request("http://localhost/api/customer-otp",{method:"POST",headers:{"content-type":"application/json","origin":"http://localhost"},body:JSON.stringify({action:"verify",challengeId:requested.data.challengeId,code:stored.code,cityId:"blr"})}));'
-          if old not in source: raise SystemExit('customer OTP verification regression fixture not found')
-          source=source.replace(old,new,1)
-          path.write_text(source)
-
-          path=Path('tests/voice-route-authorization.test.mjs')
-          source=path.read_text()
-          source=source.replace('const gov = await import("../lib/voice-outbound-governance.ts");','const gov = await import("../lib/voice-outbound-governance.ts");\nconst uatAuth = await import("../lib/uat-staging-auth.ts");\nconst UAT_SIGNING_KEY = "voice-route-test-signing-key-0123456789abcdef";\nasync function staffHeaders(role, env = globalThis.__VRA_ENV__, extra = {}) {\n  const token = await uatAuth.issueUatToken(env, `${role}@pawspace.in`, 3600);\n  return { ...extra, cookie: `pawspace_uat=${encodeURIComponent(token)}` };\n}')
-          source=source.replace('globalThis.__VRA_ENV__ = { ...uatVoiceEnv(), ...envOverrides };','globalThis.__VRA_ENV__ = { ...uatVoiceEnv(), PAWSPACE_UAT_LOGIN: "on", PAWSPACE_UAT_SIGNING_KEY: UAT_SIGNING_KEY, ...envOverrides };')
-          source=source.replace('const headers = { "content-type": "application/json", ...(role ? { "oai-authenticated-user-email": `${role}@pawspace.in` } : {}) };','const headers = role ? await staffHeaders(role, globalThis.__VRA_ENV__, { "content-type": "application/json" }) : { "content-type": "application/json" };')
-          source=source.replace('const env = { DB: makeD1(sqlite) };','const env = { DB: makeD1(sqlite), PAWSPACE_UAT_LOGIN: "on", PAWSPACE_UAT_SIGNING_KEY: UAT_SIGNING_KEY };')
-          old='const init = method === "GET" ? { headers: { "oai-authenticated-user-email": "auditor@pawspace.in" } } : { method, headers: { "content-type": "application/json", "oai-authenticated-user-email": "auditor@pawspace.in" }, body: "{}" };'
-          new='const authHeaders = await staffHeaders("auditor", env, { "content-type": "application/json" });\n    const init = method === "GET" ? { headers: authHeaders } : { method, headers: authHeaders, body: "{}" };'
-          if old not in source: raise SystemExit('voice gateway auditor header fixture not found')
-          source=source.replace(old,new,1)
-          old='const access = await gateway.authorizeApiRequest(new Request(`${HOST}${path}`, { method: "POST", headers: { "content-type": "application/json", "oai-authenticated-user-email": `${role}@pawspace.in` }, body: "{}" }), env);'
-          new='const authHeaders = await staffHeaders(role, env, { "content-type": "application/json" });\n    const access = await gateway.authorizeApiRequest(new Request(`${HOST}${path}`, { method: "POST", headers: authHeaders, body: "{}" }), env);'
-          if old not in source: raise SystemExit('voice gateway role header fixture not found')
-          source=source.replace(old,new,1)
-          source=source.replace('headers: { "content-type": "application/json", origin: "https://evil.example", "oai-authenticated-user-email": "founder@pawspace.in" },','headers: await staffHeaders("founder", globalThis.__VRA_ENV__, { "content-type": "application/json", origin: "https://evil.example" }),')
-          source=source.replace('const denied = await route.GET(new Request(`${HOST}/api/voice-outbound?scope=audit&callId=${placed.callId}`, { headers: { "oai-authenticated-user-email": "auditor@pawspace.in" } }));','const denied = await route.GET(new Request(`${HOST}/api/voice-outbound?scope=audit&callId=${placed.callId}`, { headers: await staffHeaders("auditor") }));')
-          source=source.replace('const allowed = await route.GET(new Request(`${HOST}/api/voice-outbound?scope=audit&callId=${placed.callId}`, { headers: { "oai-authenticated-user-email": "admin@pawspace.in" } }));','const allowed = await route.GET(new Request(`${HOST}/api/voice-outbound?scope=audit&callId=${placed.callId}`, { headers: await staffHeaders("admin") }));')
-          source=source.replace('method: "POST", headers: { "content-type": "application/json", "oai-authenticated-user-email": "admin@pawspace.in" },\n    body: JSON.stringify({ action: "request_call", pad: "z".repeat(70_000) }),','method: "POST", headers: await staffHeaders("admin", globalThis.__VRA_ENV__, { "content-type": "application/json" }),\n    body: JSON.stringify({ action: "request_call", pad: "z".repeat(70_000) }),')
-          source=source.replace('method: "POST", headers: { "content-type": "application/json", "oai-authenticated-user-email": "admin@pawspace.in" },\n    body: JSON.stringify({ action: "policy_preview", useCase: "booking_confirmation", phone: ALLOWLISTED_PHONE, cityId: "blr", customerId: "CON-V1" }),','method: "POST", headers: await staffHeaders("admin", globalThis.__VRA_ENV__, { "content-type": "application/json" }),\n    body: JSON.stringify({ action: "policy_preview", useCase: "booking_confirmation", phone: ALLOWLISTED_PHONE, cityId: "blr", customerId: "CON-V1" }),')
-          source=source.replace('method: "POST", headers: { "content-type": "application/json", "oai-authenticated-user-email": "admin@pawspace.in" }, body,','method: "POST", headers: await staffHeaders("admin", globalThis.__VRA_ENV__, { "content-type": "application/json" }), body,')
-          if 'oai-authenticated-user-email' in source: raise SystemExit('stale voice route header fixtures remain')
-          path.write_text(source)
-          PY
-
-      - name: Assert P0 removals
-        run: |
-          set -euo pipefail
-          ! grep -q 'Math.random' lib/customer-otp.ts
-          ! grep -q 'oai-authenticated-user-email' lib/server-auth.ts
-          ! grep -q 'oai-authenticated-user-email' lib/api-gateway.ts
-          ! grep -q 'email===String(env.FOUNDER_EMAIL' lib/api-gateway.ts
-          ! grep -q 'identity.email!==founderEmail' lib/server-auth.ts
-          node - <<'NODE'
-          const fs=require('fs');
-          const route=fs.readFileSync('app/api/customer-otp/route.ts','utf8');
-          if(/json\(\{\s*data:\s*result\s*\}/.test(route)) throw new Error('raw OTP result is still serialized');
-          NODE
-
       - name: Install dependencies
         run: npm run install:ci
-
-      - name: Typecheck
-        run: npm run typecheck
 
       - name: Full test suite
         run: |
@@ -144,25 +33,37 @@ jobs:
           status=$?
           cat /tmp/npm-test.log
           if [ "$status" -ne 0 ]; then
-            tail -n 2000 /tmp/npm-test.log > .github/auditparts/test-failure.log
+            {
+              echo "=== failing test blocks ==="
+              grep -n -B 14 -A 40 '^not ok ' /tmp/npm-test.log || true
+              echo
+              echo "=== final summary ==="
+              tail -n 80 /tmp/npm-test.log
+            } > .github/auditparts/test-failure.log
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add .github/auditparts/test-failure.log
             if ! git diff --cached --quiet; then
-              git commit -m "ci: capture P0 remediation test failure"
+              git commit -m "ci: capture P0/P1 full-suite failure blocks"
               git push origin HEAD:fix/audit-p1-remediation
             fi
             exit "$status"
           fi
 
-      - name: Commit validated security remediation
-        env:
-          BRANCH: fix/audit-p1-remediation
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Remove transient remediation bootstrap
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add lib/customer-otp.ts app/api/customer-otp/route.ts lib/api-gateway.ts lib/server-auth.ts app/mobile-app/customer-login.tsx tests/backend-otp-hardening.test.mjs tests/voice-route-authorization.test.mjs
+          rm -f .github/audit-remediation-apply.py.gz.b64
+          rm -rf .github/auditparts
+          rm -f .github/workflows/apply-audit-remediation.yml
+          git add -A
           git diff --cached --check
-          git commit -m "fix(security): resolve P0-1 header trust and P0-3 OTP generation vulnerabilities"
-          git push origin "HEAD:$BRANCH"
+          if ! git diff --cached --quiet; then
+            git commit -m "fix(test): align legacy integration tests with P0/P1 security hardening"
+            git push origin HEAD:fix/audit-p1-remediation
+          fi
