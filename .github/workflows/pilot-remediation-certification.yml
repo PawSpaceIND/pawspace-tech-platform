@@ -1,0 +1,127 @@
+name: Pilot Remediation Certification
+
+on:
+  push:
+    branches:
+      - fix/pilot-readiness-remediation
+    paths:
+      - app/api/haptik/route.ts
+      - app/api/training-sessions/route.ts
+      - lib/scheduling-roster-authority.ts
+      - scripts/pilot-staging-scheduling-preflight.sql
+      - tests/e2e-pilot-simulation.test.mjs
+      - tests/haptik-integration.test.mjs
+      - .github/workflows/pilot-remediation-certification.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pawspace-pilot-remediation-staging
+  cancel-in-progress: false
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+      PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+      PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+      STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+      STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
+      PAWSPACE_PILOT_SIMULATION: '1'
+      APP_ENV: staging
+      NODE_ENV: test
+      FORBID_PRODUCTION: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        run: npm run install:ci
+      - name: Build isolated staging artifact
+        run: npm run build
+      - name: Configure isolated staging artifact
+        run: node scripts/stage-config.mjs
+      - name: Deploy exact remediation SHA to pawspace-staging
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${CLOUDFLARE_API_TOKEN:-}"
+          test -n "${CLOUDFLARE_ACCOUNT_ID:-}"
+          SECRETS_FILE="$RUNNER_TEMP/pawspace-pilot-remediation-secrets.json"
+          export SECRETS_FILE
+          trap 'rm -f "$SECRETS_FILE"' EXIT
+          node --input-type=module -e '
+            import { writeFileSync } from "node:fs";
+            const names=["PAWSPACE_UAT_ACCESS_CODE","PAWSPACE_UAT_SIGNING_KEY","PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT"];
+            const values=Object.fromEntries(names.map(name=>[name,process.env[name]||""]));
+            if(Object.values(values).some(v=>!v))throw new Error("required staging UAT secret missing");
+            values.PAWSPACE_STAGING_LIVE_CUSTOMER_OTP="false";
+            writeFileSync(process.env.SECRETS_FILE,JSON.stringify(values),{mode:0o600});
+          '
+          npx wrangler deploy --message "pilot-remediation ${GITHUB_SHA}" --secrets-file "$SECRETS_FILE" 2>&1 | tee /tmp/pilot-deployment.txt
+          URL="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' /tmp/pilot-deployment.txt | tail -n 1 || true)"
+          case "$URL" in https://pawspace-staging.*.workers.dev) ;; *) echo "Refusing unexpected deployment origin: $URL" >&2; exit 1;; esac
+          echo "STAGING_URL=$URL" >> "$GITHUB_ENV"
+      - name: Staging isolation and health preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error "$STAGING_URL/healthz" >/dev/null
+          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --json --command "SELECT 1 AS staging_probe" >/tmp/staging-probe.json
+          node -e 'const x=require("/tmp/staging-probe.json");const e=Array.isArray(x)?x[0]:x;if(e?.success===false)process.exit(1)'
+      - name: Prepare provider roster once outside customer request path
+        run: npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --file=scripts/pilot-staging-scheduling-preflight.sql
+      - name: Capture staging finance/orphan classification before load
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/pilot-readiness
+          npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --json --command "SELECT service_code,status,COUNT(*) n FROM canonical_bookings GROUP BY service_code,status ORDER BY service_code,status; SELECT CASE WHEN c.id IS NULL THEN 'missing_customer' WHEN w.booking_id IS NULL THEN 'missing_work_order' WHEN p.booking_id IS NULL THEN 'missing_payment' ELSE 'linked' END class,COUNT(*) n FROM canonical_bookings b LEFT JOIN canonical_customers c ON c.id=b.customer_id LEFT JOIN provider_work_orders w ON w.booking_id=b.id LEFT JOIN booking_payments p ON p.booking_id=b.id GROUP BY class; SELECT b.service_code,COUNT(*) n FROM canonical_bookings b WHERE b.status='completed' AND NOT EXISTS(SELECT 1 FROM finance_journal_entries f WHERE f.booking_id=b.id AND f.posted=1) GROUP BY b.service_code;" > artifacts/pilot-readiness/preload-d1-classification.json
+      - name: Executed lifecycle, finance and Haptik security suites
+        id: behavioral
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          node --experimental-strip-types --test --test-concurrency=1 \
+            tests/training-session-lifecycle.test.mjs \
+            tests/grooming-lifecycle.test.mjs \
+            tests/boarding-gate2.test.mjs \
+            tests/taxi-gate2.test.mjs \
+            tests/walking-gate2.test.mjs \
+            tests/ptja-w3a-voice-callback-verification.test.mjs \
+            tests/haptik-integration.test.mjs \
+            2>&1 | tee artifacts/pilot-readiness/behavioral-tests.log
+      - name: Run 50-actor live staging simulation
+        id: simulation
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          node --experimental-strip-types --test --test-concurrency=1 tests/e2e-pilot-simulation.test.mjs 2>&1 | tee artifacts/pilot-readiness/simulation.log
+      - name: Upload pilot remediation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pilot-remediation-evidence-${{ github.sha }}
+          path: artifacts/pilot-readiness/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Enforce mandatory gates
+        if: always()
+        env:
+          BEHAVIORAL: ${{ steps.behavioral.outcome }}
+          SIMULATION: ${{ steps.simulation.outcome }}
+        run: |
+          if [ "$BEHAVIORAL" != "success" ] || [ "$SIMULATION" != "success" ]; then
+            echo "Pilot remediation certification is not green." >&2
+            exit 1
+          fi
+          echo "Pilot remediation certification is green."
