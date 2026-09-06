@@ -1,0 +1,77 @@
+name: P0-4 Adversarial Concurrency Proof
+
+on:
+  push:
+    branches:
+      - test/p04-adversarial-concurrency-proof
+    paths:
+      - lib/sitting-lifecycle.ts
+      - app/api/sitting-lifecycle/route.ts
+      - app/api/staging-login/route.ts
+      - lib/uat-staging-auth.ts
+      - tests/adversarial-p04-concurrency-worker.ts
+      - tests/adversarial-p04-concurrency.test.mjs
+      - wrangler.p04-concurrency.jsonc
+      - .github/workflows/p04-adversarial-concurrency-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    name: Prove one-winner one-409 invariant
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NODE_ENV: test
+      APP_ENV: staging
+      FORBID_PRODUCTION: 'true'
+      P04_BASE_URL: http://127.0.0.1:8794
+      P04_UAT_ACCESS_CODE: p04-local-proof-access-code
+      P04_ARTIFACT_DIR: artifacts/p04-concurrency
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.16.0'
+          cache: npm
+      - run: npm ci
+      - name: Start isolated workerd + D1 harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .p04-d1 artifacts/p04-concurrency
+          npx wrangler dev --config wrangler.p04-concurrency.jsonc --persist-to .p04-d1 --port 8794 > /tmp/p04-worker.log 2>&1 &
+          echo $! > /tmp/p04-worker.pid
+          ready=0
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8794/health >/dev/null; then ready=1; break; fi
+            sleep 1
+          done
+          if [ "$ready" != 1 ]; then cat /tmp/p04-worker.log; exit 1; fi
+      - name: Execute authenticated adversarial race
+        id: race
+        shell: bash
+        run: |
+          set -o pipefail
+          node --experimental-strip-types --test tests/adversarial-p04-concurrency.test.mjs 2>&1 | tee artifacts/p04-concurrency/test.log
+      - name: Print evidence summary
+        if: always()
+        shell: bash
+        run: |
+          test -f artifacts/p04-concurrency/report.md && cat artifacts/p04-concurrency/report.md || true
+          test -f /tmp/p04-worker.log && tail -n 200 /tmp/p04-worker.log || true
+      - name: Stop isolated harness
+        if: always()
+        shell: bash
+        run: |
+          if [ -f /tmp/p04-worker.pid ]; then kill "$(cat /tmp/p04-worker.pid)" 2>/dev/null || true; fi
+      - name: Upload P0-4 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p04-adversarial-concurrency-${{ github.sha }}
+          path: artifacts/p04-concurrency/
+          if-no-files-found: warn
+          retention-days: 30
