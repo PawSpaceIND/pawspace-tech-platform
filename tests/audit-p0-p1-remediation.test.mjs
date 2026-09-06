@@ -16,7 +16,7 @@ const deploy=read(".github/workflows/deploy-production.yml");
 
 const founderAutoprovisionSafe=(source)=>!source.includes("email===String(env.FOUNDER_EMAIL")&&!/if\s*\(\s*!user[^)]*FOUNDER_EMAIL[\s\S]{0,500}INSERT INTO app_users/.test(source);
 const destructiveRefreshAfterRead=(source,deleteNeedle,readNeedle)=>source.indexOf(readNeedle)>=0&&source.indexOf(deleteNeedle)>source.indexOf(readNeedle);
-const templateSyncIsolated=(source)=>{const sync=source.indexOf("syncSubmittedMetaTemplateStatuses"),fanout=source.indexOf("Promise.allSettled",sync),catchIndex=source.indexOf("catch(error)",sync);return sync>=0&&catchIndex>sync&&fanout>catchIndex&&!source.slice(sync,fanout).includes("blocked before dispatch");};
+const templateSyncIsolated=(source)=>{const scheduled=source.indexOf("async scheduled"),sync=source.indexOf("syncSubmittedMetaTemplateStatuses",scheduled),fanout=source.indexOf("Promise.allSettled",sync),catchIndex=source.indexOf("catch(error){templateSyncError=",sync);return scheduled>=0&&sync>=0&&catchIndex>sync&&fanout>catchIndex&&!source.slice(sync,fanout).includes("blocked before dispatch");};
 const restoreIsCollisionSafe=(source)=>source.includes("SCHEDULING_RESERVATION_ACTIVE_SLOT_PREDICATE")&&source.includes("restoreAssignmentRows")&&source.includes("AND NOT EXISTS (SELECT 1 FROM scheduling_reservations AS conflict")&&!source.includes('previousRows.results.map(row=>db.prepare("UPDATE scheduling_reservations SET status=? WHERE id=?")');
 
 test("C4 production OTP requires the production artifact plus Fast2SMS and both routes deliver out-of-band",()=>{
