@@ -1,5 +1,5 @@
 import{authError,database}from"../../../lib/server-auth";
-import{recordVoiceProviderEvent}from"../../../lib/voice-outbound-governance";
+import{recordVoiceProviderEventFromExotelReconciliation}from"../../../lib/exotel-call-reconciliation";
 import{selectTelephonyProvider}from"../../../lib/voice-telephony-provider";
 import{startInboundAiVoiceSession,runInboundAiVoiceTurn,endInboundAiVoiceSession}from"../../../lib/inbound-ai-telephony";
 import{readBoundedRequestText,VoiceFetchRefused}from"../../../lib/voice-safe-fetch";
@@ -11,9 +11,14 @@ function fields(raw:string){const value=raw.trim();if(value.startsWith("{")){try
 
 /**
  * Single carrier boundary for outbound status callbacks and inbound AI voice sessions.
- * Every request is bounded before buffering. Existing outbound callbacks continue through
- * recordVoiceProviderEvent. Inbound start/turn/end actions are accepted only after the exact same
- * provider shared-secret verification used by outbound callbacks; there is no cookie/session path.
+ *
+ * Outbound Exotel callbacks are deliberately trigger-only. The unverified POST contributes only a
+ * CallSid; PawSpace first proves that Sid belongs to an existing Exotel call in D1 and then retrieves
+ * the current status from Exotel's authenticated Call Details API. Only that server-to-server response
+ * can advance the lifecycle, so a forged CallStatus/CustomField in the public POST has no authority.
+ *
+ * Inbound AI start/turn/end actions are different: they carry live conversational input and therefore
+ * still require the existing provider shared-secret verification before any AI session mutation.
  */
 export async function POST(request:Request){
  try{
@@ -38,6 +43,8 @@ export async function POST(request:Request){
    }
    return json({error:"Unsupported inbound AI voice action"},400);
   }
-  const result=await recordVoiceProviderEvent(db,runtime,{rawBody:raw,headers:request.headers});if(!result.accepted)return json({error:result.reason},result.status);return json({ok:true,...result},result.status);
+  const result=await recordVoiceProviderEventFromExotelReconciliation(db,runtime,raw);
+  if(!result.accepted)return json({error:result.reason},result.status);
+  return json({ok:true,...result},result.status);
  }catch(error){return authError(error,"Unable to process voice provider callback");}
 }
