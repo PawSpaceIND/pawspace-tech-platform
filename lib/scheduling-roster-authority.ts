@@ -28,6 +28,12 @@
  *      This does not depend on rule 1 and is the load-bearing half: a synthetic row seeded before Ops
  *      narrowed the day would otherwise keep widening it forever, and turning seeding off cannot
  *      retract rows already in the table.
+ *
+ * Pilot remediation adds a third, performance-only rule: on the deployed staging Worker the customer
+ * reserve path must not fan out hundreds of INSERT OR IGNORE writes. Staging roster preparation happens
+ * once in a controlled preflight. The legacy local-UAT behavior is preserved for executable fixtures,
+ * while a real staging deployment requires the explicit PAWSPACE_UAT_RUNTIME_ROSTER_SEED escape hatch
+ * to re-enable request-time seeding. Absence therefore means no runtime roster writes.
  */
 
 /** The sources backend/src/domain.ts declares for ProviderAvailability. Nothing else is evidence. */
@@ -44,10 +50,27 @@ type RosterDb={prepare(sql:string):{bind(...values:unknown[]):{all<T>():Promise<
 export function declaredSchedulingEnvironment(env:SchedulingEnv){return String(env?.PAWSPACE_SCHEDULING_ENV??"").trim().toLowerCase();}
 
 /**
- * Whether the UAT roster seeder may write synthetic availability. True only for an explicit `uat`
- * declaration; an absent or empty variable is not a declaration and unlocks nothing.
+ * Whether synthetic UAT availability is allowed at all. This retains the original security contract:
+ * only an explicit UAT declaration may unlock synthetic roster data.
  */
 export function uatRosterSeedingEnabled(env:SchedulingEnv){return declaredSchedulingEnvironment(env)==="uat";}
+
+function enabled(value:unknown){return["1","true","yes","on","enabled"].includes(String(value??"").trim().toLowerCase());}
+
+/**
+ * Whether a CUSTOMER REQUEST may perform the synthetic roster fan-out.
+ *
+ * Local/unit UAT fixtures have no deployment declaration and keep the old deterministic behavior.
+ * The deployed staging Worker declares PAWSPACE_DEPLOYMENT_ENV=staging; there the fan-out is disabled
+ * unless an operator deliberately opts into the emergency compatibility flag. The normal pilot path
+ * pre-seeds availability once before traffic instead.
+ */
+export function requestTimeUatRosterSeedingEnabled(env:SchedulingEnv){
+  if(!uatRosterSeedingEnabled(env))return false;
+  const deployment=String(env?.PAWSPACE_DEPLOYMENT_ENV??"").trim().toLowerCase();
+  if(deployment!=="staging")return true;
+  return enabled(env?.PAWSPACE_UAT_RUNTIME_ROSTER_SEED);
+}
 
 /**
  * Every availability row the eligibility engine is entitled to believe for one provider on one date.
