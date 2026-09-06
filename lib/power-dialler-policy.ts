@@ -1,4 +1,4 @@
-export const POWER_DIALLER_AUTO_ADVANCE_MS = 2500;
+export const POWER_DIALLER_AUTO_ADVANCE_MS = 3000;
 export const POWER_DIALLER_MAX_NO_ANSWER_ATTEMPTS = 3;
 export const POWER_DIALLER_NO_ANSWER_RETRY_MS = 2 * 60 * 60_000;
 export const POWER_DIALLER_NOT_INTERESTED_COOLDOWN_MS = 30 * 86_400_000;
@@ -14,7 +14,12 @@ export const POWER_DIALLER_DISPOSITIONS = [
 ] as const;
 
 export type PowerDiallerDispositionCode = typeof POWER_DIALLER_DISPOSITIONS[number];
+export type PowerDiallerTimer = (callback: () => void, delayMs: number) => unknown;
 
 export function shouldAutoAdvance(disposition: string) {
   return (POWER_DIALLER_DISPOSITIONS as readonly string[]).includes(disposition);
+}
+
+export function schedulePowerDiallerAdvance(callback: () => void, timer: PowerDiallerTimer = setTimeout) {
+  return timer(callback, POWER_DIALLER_AUTO_ADVANCE_MS);
 }
