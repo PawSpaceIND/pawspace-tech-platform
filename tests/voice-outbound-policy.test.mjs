@@ -710,3 +710,65 @@ test("different status callbacks on one call are all applied; only identical one
   assert.equal((await gov.recordVoiceProviderEvent(db, env, { rawBody: replay, headers: await sign(replay) })).duplicate, true);
   assert.equal(sqlite.prepare("SELECT COUNT(*) c FROM voice_call_state_transitions WHERE call_id=? AND to_state='completed'").get(call.callId).c, 1);
 });
+
+
+test("controlled carrier UAT bypasses only historical recipient frequency while public calls stay capped", async () => {
+  const { sqlite, db, env } = await fresh({ PAWSPACE_VOICE_UAT_AUTORUN: "true", PAWSPACE_VOICE_UAT_CONSENT_CONFIRMED: "true" });
+  await gov.recordVoiceConsent(db, { phone: ALLOWLISTED_PHONE, subjectType: "customer", subjectId: "CON-V1", granted: true, source: "controlled_uat_consent", actorId: "uat-test", asOf: DAYTIME });
+
+  const first = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "bounded-normal-1" }));
+  const second = await gov.requestOutboundVoiceCall(db, env, callInput({ idempotencyKey: "bounded-normal-2" }));
+  assert.equal(first.dialled, true);
+  assert.equal(second.dialled, true);
+
+  const spoofed = await gov.requestOutboundVoiceCall(db, env, callInput({
+    idempotencyKey: "voice-carrier-uat:spoofed-public-call",
+    actorId: "system:voice-uat-scheduler",
+  }));
+  assert.equal(spoofed.dialled, false, "public request data cannot forge the module-private exception");
+  assert.equal(spoofed.state, "blocked_frequency_cap");
+
+  const controlledInput = {
+    idempotencyKey: "voice-carrier-uat:bounded-once",
+    useCase: "booking_confirmation",
+    phone: ALLOWLISTED_PHONE,
+    cityId: "blr",
+    customerId: "CON-V1",
+    bookingId: "BKG-V1",
+    asOf: DAYTIME,
+  };
+  const controlled = await gov.requestControlledCarrierUatCall(db, env, controlledInput);
+  assert.equal(controlled.dialled, true, "the explicit one-shot UAT path ignores only historical recipient frequency");
+  const decision = sqlite.prepare("SELECT passed,detail FROM voice_call_policy_decisions WHERE call_id=? AND check_code='frequency_cap'").get(controlled.callId);
+  assert.equal(decision.passed, 1);
+  assert.match(decision.detail, /isolated from historical recipient frequency/);
+
+  const replay = await gov.requestControlledCarrierUatCall(db, env, controlledInput);
+  assert.equal(replay.duplicatePrevented, true, "the same controlled idempotency key cannot create a second external retry");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM voice_call_orders WHERE dialed_at IS NOT NULL").get().n, 3, "two ordinary dials plus exactly one controlled dial");
+});
+
+test("controlled carrier UAT helper fails closed outside approvals, allowlist and dedicated key", async () => {
+  const { db, env } = await fresh({ PAWSPACE_VOICE_UAT_AUTORUN: "true", PAWSPACE_VOICE_UAT_CONSENT_CONFIRMED: "true" });
+  const controlledInput = {
+    idempotencyKey: "voice-carrier-uat:guard-test",
+    useCase: "booking_confirmation",
+    phone: ALLOWLISTED_PHONE,
+    cityId: "blr",
+    customerId: "CON-V1",
+    bookingId: "BKG-V1",
+    asOf: DAYTIME,
+  };
+  await assert.rejects(
+    () => gov.requestControlledCarrierUatCall(db, { ...env, PAWSPACE_VOICE_UAT_AUTORUN: "false" }, controlledInput),
+    /explicitly approved UAT autorun/,
+  );
+  await assert.rejects(
+    () => gov.requestControlledCarrierUatCall(db, env, { ...controlledInput, idempotencyKey: "voice-carrier-uat:wrong-target", phone: OTHER_PHONE }),
+    /single approved allowlisted recipient/,
+  );
+  await assert.rejects(
+    () => gov.requestControlledCarrierUatCall(db, env, { ...controlledInput, idempotencyKey: "not-dedicated" }),
+    /dedicated voice-carrier-uat idempotency key/,
+  );
+});
