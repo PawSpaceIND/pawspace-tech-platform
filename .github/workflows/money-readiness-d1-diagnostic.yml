@@ -26,6 +26,7 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PRODUCTION_D1_ID: ${{ secrets.PRODUCTION_D1_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -39,14 +40,21 @@ jobs:
           RAW="$RUNNER_TEMP/money-readiness-${{ matrix.environment }}"
           mkdir -p "$RAW"
           CONFIG="$RUNNER_TEMP/money-readiness-${{ matrix.environment }}-wrangler.json"
-          SETTINGS="$RAW/worker-settings.json"
-          HTTP="$(curl --silent --show-error --output "$SETTINGS" --write-out '%{http_code}' --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" --header 'Accept: application/json' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/${{ matrix.worker }}/settings")"
-          if [ "$HTTP" != "200" ]; then echo "Protected Worker settings could not be read; response is intentionally suppressed." >&2; exit 1; fi
-          CONFIG="$CONFIG" SETTINGS="$SETTINGS" node -e '
-            const fs=require("node:fs"),payload=JSON.parse(fs.readFileSync(process.env.SETTINGS,"utf8")),bindings=Array.isArray(payload?.result?.bindings)?payload.result.bindings:[];
-            const matches=bindings.filter((item)=>String(item?.name||"")==="DB"&&String(item?.type||"")==="d1"),id=String(matches[0]?.id||matches[0]?.database_id||"");
-            if(matches.length!==1||!id){console.error("Expected exactly one D1 binding on the protected Worker.");process.exit(1);}
-            fs.writeFileSync(process.env.CONFIG,JSON.stringify({name:"money-readiness-read-only-diagnostic",compatibility_date:"2026-09-06",d1_databases:[{binding:"DB",database_name:"money-readiness-protected-target",database_id:id}]}));'
+          if [ "${{ matrix.environment }}" = "production" ]; then
+            if [ -z "$PRODUCTION_D1_ID" ]; then echo "Protected production D1 secret is not configured." >&2; exit 1; fi
+            CONFIG="$CONFIG" node -e '
+              const fs=require("node:fs"),id=String(process.env.PRODUCTION_D1_ID||"");
+              fs.writeFileSync(process.env.CONFIG,JSON.stringify({name:"money-readiness-read-only-diagnostic",compatibility_date:"2026-09-06",d1_databases:[{binding:"DB",database_name:"money-readiness-protected-target",database_id:id}]}));'
+          else
+            SETTINGS="$RAW/worker-settings.json"
+            HTTP="$(curl --silent --show-error --output "$SETTINGS" --write-out '%{http_code}' --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" --header 'Accept: application/json' "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/${{ matrix.worker }}/settings")"
+            if [ "$HTTP" != "200" ]; then echo "Protected Worker settings could not be read; response is intentionally suppressed." >&2; exit 1; fi
+            CONFIG="$CONFIG" SETTINGS="$SETTINGS" node -e '
+              const fs=require("node:fs"),payload=JSON.parse(fs.readFileSync(process.env.SETTINGS,"utf8")),bindings=Array.isArray(payload?.result?.bindings)?payload.result.bindings:[];
+              const matches=bindings.filter((item)=>String(item?.name||"")==="DB"&&String(item?.type||"")==="d1"),id=String(matches[0]?.id||matches[0]?.database_id||"");
+              if(matches.length!==1||!id){console.error("Expected exactly one D1 binding on the protected Worker.");process.exit(1);}
+              fs.writeFileSync(process.env.CONFIG,JSON.stringify({name:"money-readiness-read-only-diagnostic",compatibility_date:"2026-09-06",d1_databases:[{binding:"DB",database_name:"money-readiness-protected-target",database_id:id}]}));'
+          fi
           if ! npx --yes wrangler@4 d1 execute DB --config "$CONFIG" --remote --command "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;" --json > "$RAW/tables.json" 2> "$RAW/tables.err"; then
             echo "Read-only table-map query failed; raw provider output is intentionally suppressed." >&2
             exit 1
