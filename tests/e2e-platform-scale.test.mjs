@@ -1,7 +1,7 @@
 /*
  * PawSpace end-to-end platform test at pilot scale.
  *
- * 520 customers, 10 service providers. Drives the REAL lib modules and route handlers against a
+ * 520 customers, 100 service providers. Drives the REAL lib modules and route handlers against a
  * node:sqlite database behind the repo's D1 shim - no mocked business logic. Where a module cannot
  * be reached, that is recorded as a GAP rather than skipped silently, because the point of this run
  * is to find out where the build actually stands before a human tester touches it.
@@ -68,7 +68,7 @@ function makeD1(sqlite) {
 
 // --- scale fixture ---------------------------------------------------------
 const CUSTOMERS = 520;
-const PROVIDERS = 10;
+const PROVIDERS = 100;
 const NOW = Date.UTC(2026, 8, 6, 4, 30);      // 2026-09-06 10:00 IST
 const DAY = 86400000;
 const CITY = "blr";
@@ -111,7 +111,7 @@ function seedCore() {
 
 seedCore();
 
-test("E2E-000 scale fixture: 520 customers and 10 providers seeded", () => {
+test("E2E-000 scale fixture: 520 customers and 100 providers seeded", () => {
   const c = sqlite.prepare("SELECT COUNT(*) n FROM canonical_customers").get().n;
   const p = sqlite.prepare("SELECT COUNT(*) n FROM canonical_providers").get().n;
   assert.equal(c, CUSTOMERS);
@@ -273,12 +273,12 @@ test("E2E-400 finance: GST, TDS, TCS, filing, journals", async () => {
     throw new Error("invoiced with NO tax policy configured - fail-open");
   });
 
-  /* HARNESS LIMIT, not a build defect. Constructing a valid invoice payload needs an entity,
-   * registration, policy version, per-service classification, document series AND correctly shaped
-   * line snapshots. This fixture gets as far as the line-snapshot shape and stops. Recorded as
-   * HARNESS so it is not mistaken for a product failure - what IS established is the fail-closed
-   * behaviour probed above, and that lib/gst-accounting.ts is never executed by its own test file. */
-  await probeHarness("gst-accounting", "issue invoice (configured)", async () => {
+  /* Full configured invoicing path: entity, registration, policy version, per-service
+   * classification, document series and canonical line snapshots. tax_component_json entries are
+   * {code,rate} - the shape lib/gst-accounting.ts:76 and lib/gst-returns.ts both read. Writing
+   * {component,rate} instead binds undefined into finance_tax_ledger.component and fails with an
+   * opaque SQLite error rather than a governed ConfigurationRequired; see the readiness report. */
+  await probe("gst-accounting", "issue invoice (configured)", async () => {
     const m = await import("../lib/gst-accounting.ts");
     await m.ensureGstAccountingTables(db);
     const now = NOW;
@@ -287,13 +287,13 @@ test("E2E-400 finance: GST, TDS, TCS, filing, journals", async () => {
     sqlite.prepare("INSERT OR REPLACE INTO tax_policy_versions VALUES ('E2E-POL','E2E-ENTITY',1,'active','2026-04-01',NULL,?,'BOARD-2026-01','e2e:approver',?,?,?)")
       .run(JSON.stringify({ regime: "gst_in", roundingMode: "line" }), now, now, now);
     sqlite.prepare("INSERT OR REPLACE INTO tax_classifications VALUES ('E2E-CLS','E2E-POL','pet_grooming','SAC998729',?,'location_of_service','eligible',?)")
-      .run(JSON.stringify([{ component: "CGST", rate: 9 }, { component: "SGST", rate: 9 }]), now);
+      .run(JSON.stringify([{ code: "CGST", rate: 9 }, { code: "SGST", rate: 9 }]), now);
     sqlite.prepare("INSERT OR REPLACE INTO finance_document_series VALUES ('E2E-SER','E2E-ENTITY','invoice','E2E/26-27/',1,6,'E2E-POL','active',?)").run(now);
     const out = await m.issueInvoice(db, {
       entityId: "E2E-ENTITY", issueDate: "2026-09-06", sourceEventKey: "e2e-inv-configured",
       placeOfSupply: "KA", customerId: cust(1), bookingId: bkg(1),
       sourceType: "booking", sourceId: bkg(1), registrationId: "E2E-REG", currency: "INR",
-      lines: [{ serviceCode: "pet_grooming", amount: 1500, quantity: 1, taxableValue: 1500 }],
+      lines: [{ lineKey: "e2e-line-1", description: "Full groom, medium dog", serviceCode: "pet_grooming", amount: 1500, quantity: 1, taxableAmount: 1500, taxableValue: 1500 }],
     }, "e2e:finance");
     const inv = sqlite.prepare("SELECT COUNT(*) n FROM finance_invoices").get().n;
     if (!inv) throw new Error("issueInvoice returned but wrote no finance_invoices row");
@@ -319,13 +319,18 @@ test("E2E-400 finance: GST, TDS, TCS, filing, journals", async () => {
   await probeHarness("gst-returns", "GSTR generation", async () => {
     const m = await import("../lib/gst-returns.ts");
     await m.ensureGstReturnTables(db);
-    const out = await m.generateGstr1(db, { period: "2026-09", entityId: "E2E-ENTITY", actorId: "e2e:finance" });
+    const out = await m.generateGstr1(db, { entityId: "E2E-ENTITY", registrationId: "E2E-REG", periodCode: "2026-09" }, "e2e:finance");
     return JSON.stringify(out).slice(0, 90);
   });
 
   await probe("financial-lifecycle", "balanced journal", async () => {
     const m = await import("../lib/financial-lifecycle.ts");
     await m.ensureFinancialLifecycleTables(db);
+    // journal_transactions/journal_entries belong to the worker bootstrap, not to any lib ensure*.
+    // In the Worker both the fetch and scheduled paths run it before any handler; do the same here.
+    const boot = await import("../lib/financial-runtime-bootstrap.ts");
+    boot.resetFinancialRuntimeSchemaForTests?.();
+    await boot.ensureFinancialRuntimeSchema(db);
     const out = await m.postBalancedJournal(db, {
       sourceType: "booking_payment", sourceId: bkg(1), sourceEventId: "e2e-journal-1",
       narration: "E2E captured booking revenue", currency: "INR",
@@ -373,11 +378,19 @@ test("E2E-600 ledger schema reachability (drizzle-only tables)", async () => {
   await grp.ensurePaymentReconciliationTables(db);
   try { const s = await import("../lib/razorpay-settlement-reconciliation.ts"); for (const k of Object.keys(s)) if (/^ensure/.test(k)) await s[k](db); } catch {}
 
+  /* The journal / partner-earning / settlement objects are NOT created by any lib-level ensure*.
+   * They are created by the worker's own bootstrap, which worker/index.ts invokes on BOTH the fetch
+   * path (line 90) and the scheduled path (line 114). An earlier version of this probe only called
+   * the lib ensures and therefore reported four false GAPs. Drive the real bootstrap instead. */
+  const boot = await import("../lib/financial-runtime-bootstrap.ts");
+  boot.resetFinancialRuntimeSchemaForTests?.();
+  await boot.ensureFinancialRuntimeSchema(db);
+
   const SIX = ["payment_intents", "financial_outbox", "journal_entries", "journal_transactions",
                "partner_earning_pending", "payment_settlement_reconciliations"];
   for (const t of SIX) {
     const exists = sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(t);
-    record("schema", t, exists ? "PASS" : "GAP", exists ? "created at runtime" : "NO runtime creator - drizzle-only, never migrated");
+    record("schema", t, exists ? "PASS" : "GAP", exists ? "created at runtime (worker bootstrap)" : "NOT created by worker bootstrap either - genuinely unreachable");
   }
   assert.ok(true);
 });
@@ -436,6 +449,78 @@ test("E2E-800 lead journey and automation closure", async () => {
 });
 
 // --- final matrix ----------------------------------------------------------
+/*
+ * Concurrency and CAS. The scale probes above drive volume; this one drives CONTENTION.
+ * Every claim here goes through the real production entry points, so a lost update, a double
+ * capture or two workers holding one lease would show up as a wrong count, not a wrong opinion.
+ */
+test("E2E-900 concurrency: distributed locking, CAS and double-booking safety", async () => {
+  const fl = await import("../lib/financial-lifecycle.ts");
+  await fl.ensureFinancialLifecycleTables(db);
+
+  // 500 concurrent capture attempts on ONE booking with ONE idempotency key.
+  // ON CONFLICT(customer_id,booking_id,idempotency_key) DO NOTHING must collapse them to one intent.
+  await probe("financial-lifecycle", "500-way concurrent capture on one idempotency key", async () => {
+    const settled = await Promise.allSettled(Array.from({ length: 500 }, () =>
+      fl.claimPaymentIntent(db, {
+        bookingId: bkg(1), customerId: cust(1), paymentId: "pay_E2E_CAS",
+        idempotencyKey: "e2e-cas-single", amountPaise: 150000, currency: "INR", environment: "sandbox",
+      })));
+    const rejected = settled.filter((r) => r.status === "rejected");
+    if (rejected.length) throw new Error(`${rejected.length} claim(s) threw: ${String(rejected[0].reason?.message).slice(0,80)}`);
+    const ids = new Set(settled.map((r) => String(r.value.id)));
+    const rows = sqlite.prepare("SELECT COUNT(*) n FROM payment_intents WHERE booking_id=? AND idempotency_key='e2e-cas-single'").get(bkg(1)).n;
+    if (rows !== 1) throw new Error(`DUPLICATE CAPTURE: ${rows} payment_intents rows for one idempotency key`);
+    if (ids.size !== 1) throw new Error(`${ids.size} distinct intent ids returned to 500 concurrent callers`);
+    return `500 concurrent claims -> exactly 1 intent, 1 id returned to all callers`;
+  });
+
+  // 500 distinct bookings claimed concurrently: every one must land exactly once.
+  await probe("financial-lifecycle", "500 distinct concurrent claims each land once", async () => {
+    const settled = await Promise.allSettled(Array.from({ length: 500 }, (_, i) =>
+      fl.claimPaymentIntent(db, {
+        bookingId: bkg(i + 1), customerId: cust(i + 1), paymentId: `pay_E2E_${i}`,
+        idempotencyKey: `e2e-cas-multi-${i}`, amountPaise: 100000 + i, currency: "INR", environment: "sandbox",
+      })));
+    const rejected = settled.filter((r) => r.status === "rejected");
+    if (rejected.length) throw new Error(`${rejected.length}/500 rejected: ${String(rejected[0].reason?.message).slice(0,90)}`);
+    const n = sqlite.prepare("SELECT COUNT(*) n FROM payment_intents WHERE idempotency_key LIKE 'e2e-cas-multi-%'").get().n;
+    if (n !== 500) throw new Error(`expected 500 intents, found ${n}`);
+    return `500/500 distinct claims landed exactly once`;
+  });
+
+  // Distributed lock: many workers race for one outbox row; the CAS UPDATE must admit exactly one.
+  await probe("financial-lifecycle", "outbox lease admits exactly one worker", async () => {
+    const row = sqlite.prepare("SELECT id FROM financial_outbox WHERE status='PENDING' LIMIT 1").get();
+    if (!row) throw new Error("no PENDING outbox row to contend for");
+    const settled = await Promise.allSettled(Array.from({ length: 100 }, (_, w) =>
+      fl.claimOutboxWork(db, { outboxId: String(row.id), workerId: `e2e-worker-${w}` })));
+    const winners = settled.filter((r) => r.status === "fulfilled" && r.value);
+    if (winners.length !== 1) throw new Error(`LOCK COLLISION: ${winners.length} of 100 workers claimed the same lease`);
+    return `100 workers contended, exactly 1 lease granted`;
+  });
+
+  // Double-booking: provider_work_orders.booking_id is UNIQUE. Concurrent dispatch of one booking
+  // to many providers must leave exactly one work order.
+  await probe("provider_work_orders", "concurrent dispatch cannot double-book a booking", async () => {
+    const target = bkg(7);
+    sqlite.prepare("DELETE FROM provider_work_orders WHERE booking_id=?").run(target);
+    let accepted = 0, rejected = 0;
+    await Promise.all(Array.from({ length: PROVIDERS }, async (_, p) => {
+      try {
+        await db.prepare("INSERT INTO provider_work_orders VALUES (?,?,?,?,?,?,?,?,?,1,'assigned',?,?)")
+          .bind(`E2E-WO-RACE-${p}`, target, `SG-${target}`, prov(p + 1), `E2E Provider ${p + 1}`,
+                "commission_standard", "pet_grooming", iso(NOW), iso(NOW + 3600000), NOW, NOW).run();
+        accepted += 1;
+      } catch { rejected += 1; }
+    }));
+    const n = sqlite.prepare("SELECT COUNT(*) n FROM provider_work_orders WHERE booking_id=?").get(target).n;
+    if (n !== 1) throw new Error(`DOUBLE BOOKING: ${n} work orders for booking ${target}`);
+    if (accepted !== 1) throw new Error(`${accepted} concurrent dispatches were accepted, expected 1`);
+    return `${PROVIDERS} providers raced one booking -> 1 accepted, ${rejected} refused, 0 double-bookings`;
+  });
+});
+
 test("E2E-999 result matrix", () => {
   const by = (s) => RESULTS.filter((r) => r.status === s);
   const lines = RESULTS.map((r) => `  ${r.status.padEnd(4)} ${r.module}/${r.area}${r.detail ? ` - ${r.detail}` : ""}`);
