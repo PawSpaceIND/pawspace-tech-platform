@@ -1,0 +1,136 @@
+name: Voice UAT runtime evidence
+
+on:
+  push:
+    branches:
+      - diag/voice-uat-runtime-evidence-20260906
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    name: Read sanitized staging carrier state
+    runs-on: ubuntu-latest
+    environment: pawspace-staging
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      UAT_CUSTOMER_ID: ${{ vars.UAT_CUSTOMER_ID || vars.PAWSPACE_VOICE_UAT_CUSTOMER_ID }}
+      UAT_BOOKING_ID: ${{ vars.UAT_BOOKING_ID || vars.PAWSPACE_VOICE_UAT_BOOKING_ID }}
+      UAT_CITY_ID: ${{ vars.UAT_CITY_ID || vars.PAWSPACE_VOICE_UAT_CITY_ID }}
+      UAT_CONSENT_SOURCE_REF: ${{ vars.UAT_CONSENT_SOURCE_REF || vars.PAWSPACE_VOICE_UAT_CONSENT_SOURCE }}
+    steps:
+      - name: Query read-only UAT evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const { execFileSync } = require('node:child_process');
+
+          const sqlEscape = (value) => String(value || '').replaceAll("'", "''");
+          const looksPlaceholder = (value) => {
+            const text = String(value || '').trim();
+            return !text || /^<[^>]+>$/.test(text) || /valid-(customer|booking|city|consent)/i.test(text);
+          };
+          const execute = (sql) => {
+            const output = execFileSync('npx', ['--yes', 'wrangler@4', 'd1', 'execute', 'pawspace-staging', '--remote', '--json', '--command', sql], {
+              encoding: 'utf8',
+              env: process.env,
+              maxBuffer: 8 * 1024 * 1024,
+              stdio: ['ignore', 'pipe', 'pipe'],
+            });
+            const firstArray = output.indexOf('[');
+            const firstObject = output.indexOf('{');
+            const starts = [firstArray, firstObject].filter((n) => n >= 0);
+            if (!starts.length) throw new Error('Wrangler returned no JSON payload');
+            return JSON.parse(output.slice(Math.min(...starts)));
+          };
+          const rows = (payload) => {
+            const blocks = Array.isArray(payload) ? payload : [payload];
+            return blocks.flatMap((block) => Array.isArray(block?.results) ? block.results : []);
+          };
+          const tableExists = (name) => {
+            const result = rows(execute(`SELECT COUNT(*) AS c FROM sqlite_master WHERE type='table' AND name='${sqlEscape(name)}'`));
+            return Number(result[0]?.c || 0) > 0;
+          };
+
+          const config = {
+            customerConfigured: Boolean(String(process.env.UAT_CUSTOMER_ID || '').trim()),
+            bookingConfigured: Boolean(String(process.env.UAT_BOOKING_ID || '').trim()),
+            cityConfigured: Boolean(String(process.env.UAT_CITY_ID || '').trim()),
+            consentSourceConfigured: Boolean(String(process.env.UAT_CONSENT_SOURCE_REF || '').trim()),
+            customerLooksPlaceholder: looksPlaceholder(process.env.UAT_CUSTOMER_ID),
+            bookingLooksPlaceholder: looksPlaceholder(process.env.UAT_BOOKING_ID),
+            cityLooksPlaceholder: looksPlaceholder(process.env.UAT_CITY_ID),
+            consentSourceLooksPlaceholder: looksPlaceholder(process.env.UAT_CONSENT_SOURCE_REF),
+          };
+
+          let canonical = { customerMatches: null, bookingMatches: null };
+          try {
+            const customerId = sqlEscape(process.env.UAT_CUSTOMER_ID);
+            const bookingId = sqlEscape(process.env.UAT_BOOKING_ID);
+            const result = rows(execute(`SELECT (SELECT COUNT(*) FROM canonical_customers WHERE id='${customerId}') AS customer_matches,(SELECT COUNT(*) FROM canonical_bookings WHERE id='${bookingId}' AND customer_id='${customerId}') AS booking_matches`));
+            canonical = {
+              customerMatches: Number(result[0]?.customer_matches || 0),
+              bookingMatches: Number(result[0]?.booking_matches || 0),
+            };
+          } catch {
+            canonical = { customerMatches: null, bookingMatches: null, queryUnavailable: true };
+          }
+
+          const queueTableExists = tableExists('voice_carrier_uat_queue');
+          let queue = null;
+          let agentStream = { tablePresent: false, startedEvents: 0, transcriptSegments: 0 };
+
+          if (queueTableExists) {
+            const result = rows(execute(`
+              SELECT q.id AS run_id,q.status AS queue_status,
+                     CASE WHEN q.call_id IS NULL OR q.call_id='' THEN 0 ELSE 1 END AS call_id_present,
+                     q.last_state,q.failure_class,q.scheduled_for,q.prepared_at,q.started_at,q.finished_at,q.updated_at,
+                     o.state AS call_state,o.mode,o.provider,o.production_call,
+                     CASE WHEN o.provider_call_id IS NULL OR o.provider_call_id='' THEN 0 ELSE 1 END AS provider_call_assigned,
+                     CASE WHEN o.ai_call_id IS NULL OR o.ai_call_id='' THEN 0 ELSE 1 END AS ai_session_bound,
+                     o.ai_call_id AS _ai_call_id,o.failure_reason_class,o.requested_at,o.dialed_at,o.connected_at,o.ended_at,
+                     (SELECT COUNT(*) FROM voice_call_provider_events e WHERE e.call_id=o.id) AS provider_event_count,
+                     (SELECT provider_status FROM voice_call_provider_events e WHERE e.call_id=o.id ORDER BY created_at DESC LIMIT 1) AS latest_provider_status,
+                     (SELECT COUNT(*) FROM voice_call_state_transitions t WHERE t.call_id=o.id) AS transition_count
+              FROM voice_carrier_uat_queue q
+              LEFT JOIN voice_call_orders o ON o.id=q.call_id
+              WHERE q.id='VOICE-UAT-20260906-0800-IST'
+              LIMIT 1
+            `));
+            queue = result[0] || null;
+
+            if (queue?._ai_call_id) {
+              const aiCallId = sqlEscape(queue._ai_call_id);
+              const eventsPresent = tableExists('ai_voice_events');
+              const segmentsPresent = tableExists('ai_voice_segments');
+              let startedEvents = 0;
+              let transcriptSegments = 0;
+              if (eventsPresent) {
+                const eventRows = rows(execute(`SELECT COUNT(*) AS c FROM ai_voice_events WHERE call_id='${aiCallId}' AND event_type='agentstream_started'`));
+                startedEvents = Number(eventRows[0]?.c || 0);
+              }
+              if (segmentsPresent) {
+                const segmentRows = rows(execute(`SELECT COUNT(*) AS c FROM ai_voice_segments WHERE call_id='${aiCallId}'`));
+                transcriptSegments = Number(segmentRows[0]?.c || 0);
+              }
+              agentStream = { tablePresent: eventsPresent, startedEvents, transcriptSegments };
+            }
+            if (queue) delete queue._ai_call_id;
+          }
+
+          const evidence = {
+            worker: 'pawspace-staging',
+            queueTableExists,
+            configShape: config,
+            canonicalBinding: canonical,
+            queue,
+            agentStream,
+            secretValuesPrinted: false,
+            recipientPrinted: false,
+          };
+          console.log(JSON.stringify(evidence, null, 2));
+          NODE
