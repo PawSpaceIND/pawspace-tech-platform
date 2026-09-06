@@ -1,4 +1,5 @@
 import{authError,requirePermission,requireProviderOwnership,resolveActor}from"../../../lib/server-auth";
+import{sanitizeProviderDetail}from"../../../lib/provider-pii-sanitizer";
 
 type Db=Awaited<ReturnType<typeof database>>;
 type Row=Record<string,unknown>;
@@ -61,7 +62,7 @@ export async function GET(request:Request){
         safetyRequirements,
         proof:proof?{beforePhotoRef:proof.before_photo_ref?String(proof.before_photo_ref):null,afterPhotoRef:proof.after_photo_ref?String(proof.after_photo_ref):null,checklist:parseJson<string[]>(proof.checklist_json,[]),completionNotes:proof.completion_notes?String(proof.completion_notes):null,updatedAt:Number(proof.updated_at||0)}:null,
         invoice:invoice?{invoiceNumber:String(invoice.invoice_number),status:String(invoice.status),netAmount:Number(invoice.net_amount||0),issuedAt:Number(invoice.issued_at||0)}:null,
-        events:events.results.map(item=>({eventType:String(item.event_type),entityType:String(item.entity_type),actorId:String(item.actor_id),detail:parseJson<Record<string,unknown>>(item.detail_json,{}),occurredAt:Number(item.occurred_at||0)})),
+        events:events.results.map(item=>({eventType:String(item.event_type),entityType:String(item.entity_type),actorId:String(item.actor_id),detail:sanitizeProviderDetail(parseJson<Record<string,unknown>>(item.detail_json,{})),occurredAt:Number(item.occurred_at||0)})),
       });
     }
     return json({source:"canonical UAT provider work orders",providerId,jobs});
