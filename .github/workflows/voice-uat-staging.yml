@@ -144,7 +144,7 @@ jobs:
             if(Object.values(values).some(value=>!value))throw new Error("required voice UAT secret missing");
             writeFileSync(process.env.SECRETS_FILE,JSON.stringify(values),{mode:0o600});
           '
-          npx wrangler deploy --message "voice-uat $DEPLOY_SHA" --secrets-file "$SECRETS_FILE" 2>&1 | tee deployment.txt
+          npx wrangler deploy --message "staging $DEPLOY_SHA" --secrets-file "$SECRETS_FILE" 2>&1 | tee deployment.txt
           URL="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' deployment.txt | tail -n 1 || true)"
           [ -n "$URL" ] || { echo "No staging URL reported; refusing guessed origin." >&2; exit 1; }
           echo "staging_url=$URL" >> "$GITHUB_OUTPUT"
