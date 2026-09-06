@@ -19,6 +19,7 @@ import {runMarketingConnectorScheduler} from "../lib/google-ads-conversion-conse
 import {runDiamondCrmScheduledSweep} from "../lib/diamond-crm-scheduler";
 import {EXOTEL_AGENTSTREAM_PATH,handleExotelAgentStream} from "../lib/exotel-agentstream";
 import {runVoiceCarrierUatScheduler} from "../lib/voice-carrier-uat-scheduler";
+import {runTrustSafetySweep} from "../lib/trust-safety-governance";
 
 interface Env {
   ASSETS: Fetcher;
@@ -59,6 +60,8 @@ const worker = {
       const isMetaWebhook=url.pathname==="/api/whatsapp/meta-webhook";
       const isEmailWebhook=url.pathname==="/api/email-provider-webhook";
       const isProviderWebhook=isMetaWebhook||isEmailWebhook;
+      // Provider webhooks are authenticated inside their route by HMAC/challenge verification, not by
+      // a PawSpace user session. Meta additionally feeds the Elite observer after its response.
       const eliteRequest=isMetaWebhook?request.clone():null;
       if(request.method==="POST"&&(url.pathname==="/api/uat-scheduling"||url.pathname==="/api/canonical-bookings"))await cleanupExpiredReservationLeases(env.DB);
       const inspectionRequest=request.clone();
@@ -100,7 +103,7 @@ const worker = {
       const marketingTask=marketingHour>=6
         ?runMarketingConnectorScheduler(env.DB,{asOf:controller.scheduledTime,runtime:env as unknown as Record<string,unknown>}).then(result=>{const failedSync=Array.isArray(result.sync)?result.sync.filter(item=>String((item as Record<string,unknown>).status)==="failed"):[];const offline=result.offlineConversions as Record<string,unknown>;if(failedSync.length||String(offline?.status||"")==="failed")throw new Error(`provider sync/upload failure: ${JSON.stringify({failedSync,offline})}`);return result;})
         :Promise.resolve({status:"not_due_before_06_ist"});
-      const [cleanup,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat]=await Promise.allSettled([
+      const [cleanup,scheduler,outboxDispatch,voiceRecovery,whatsappRecovery,whatsappOutbox,razorpayOrderOutbox,settlementRecon,subscriptionMaintenance,marketingConnector,eliteRuntime,diamondCrm,voiceCarrierUat,trustSafety]=await Promise.allSettled([
         cleanupExpiredReservationLeases(env.DB,controller.scheduledTime),
         runBackgroundScheduler(env.DB,{actorId:"system:scheduled-worker",asOf:controller.scheduledTime,cron:controller.cron}),
         runCommunicationOutboxDispatcher(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
@@ -114,6 +117,7 @@ const worker = {
         runEliteScheduledHooks(env.DB,{asOf:controller.scheduledTime}),
         runDiamondCrmScheduledSweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime,actorId:"system:scheduled-worker"}),
         runVoiceCarrierUatScheduler(env.DB,env as unknown as Record<string,unknown>,controller.scheduledTime),
+        runTrustSafetySweep(env.DB,env as unknown as Record<string,unknown>,{asOf:controller.scheduledTime}),
       ]);
       const errors:string[]=[];
       if(templateSyncError)errors.push(templateSyncError);
@@ -130,6 +134,7 @@ const worker = {
       if(eliteRuntime.status==="rejected")errors.push(`elite runtime: ${eliteRuntime.reason instanceof Error?eliteRuntime.reason.message:String(eliteRuntime.reason)}`);else if(Number(eliteRuntime.value.failed||0)>0)errors.push(`elite runtime: ${eliteRuntime.value.failed} churn scoring exception(s)`);
       if(diamondCrm.status==="rejected")errors.push(`diamond crm: ${diamondCrm.reason instanceof Error?diamondCrm.reason.message:String(diamondCrm.reason)}`);
       if(voiceCarrierUat.status==="rejected")errors.push(`voice carrier UAT: ${voiceCarrierUat.reason instanceof Error?voiceCarrierUat.reason.message:String(voiceCarrierUat.reason)}`);
+      if(trustSafety.status==="rejected")errors.push(`trust safety: ${trustSafety.reason instanceof Error?trustSafety.reason.message:String(trustSafety.reason)}`);
       if(errors.length)throw new Error(`Background scheduler partial failure: ${errors.join(" | ")}`);
     })());
   },
