@@ -7,9 +7,19 @@ import{classifyCrmInquiry,queueForCrmInquiry,recommendGroomingPackage}from"../..
 const json=(value:unknown,status=200)=>Response.json(value,{status,headers:{"cache-control":"no-store"}});
 async function runtime(){const {env}=await import("cloudflare:workers");return env as unknown as Record<string,unknown>;}
 async function database(){const {env}=await import("cloudflare:workers");return (env as unknown as {DB:D1Database}).DB;}
-function assertHaptik(env:Record<string,unknown>,request:Request){const key=String(env.HAPTIK_API_KEY||"").trim();if(!key)throw new Response(JSON.stringify({error:"Haptik integration is not connected (HAPTIK_API_KEY not configured)"}),{status:503});const provided=String(request.headers.get("x-haptik-key")||request.headers.get("authorization")||"").replace(/^Bearer\s+/i,"").trim();if(provided!==key)throw new Response(JSON.stringify({error:"Invalid Haptik credentials"}),{status:401});}
+function hex(bytes:Uint8Array){return Array.from(bytes,b=>b.toString(16).padStart(2,"0")).join("");}
+function constantTimeEqual(left:string,right:string){const a=left.toLowerCase(),b=right.toLowerCase(),length=Math.max(a.length,b.length);let diff=a.length^b.length;for(let i=0;i<length;i++)diff|=(a.charCodeAt(i)||0)^(b.charCodeAt(i)||0);return diff===0;}
+async function expectedHaptikSignature(secret:string,rawBody:string){const key=await crypto.subtle.importKey("raw",new TextEncoder().encode(secret),{name:"HMAC",hash:"SHA-1"},false,["sign"]);return hex(new Uint8Array(await crypto.subtle.sign("HMAC",key,new TextEncoder().encode(rawBody))));}
+async function assertHaptik(env:Record<string,unknown>,request:Request,rawBody:string){
+ const secret=String(env.HAPTIK_WEBHOOK_SECRET||env.HAPTIK_API_KEY||"").trim();
+ if(!secret)throw new Response(JSON.stringify({error:"Haptik integration is not connected (webhook secret not configured)"}),{status:503});
+ const supplied=String(request.headers.get("x-haptik-signature")||"").trim().replace(/^sha1=/i,"");
+ if(!/^[a-f0-9]{40}$/i.test(supplied))throw new Response(JSON.stringify({error:"Invalid Haptik webhook signature"}),{status:401});
+ const expected=await expectedHaptikSignature(secret,rawBody);
+ if(!constantTimeEqual(supplied,expected))throw new Response(JSON.stringify({error:"Invalid Haptik webhook signature"}),{status:401});
+}
 
-export async function POST(request:Request){try{const env=await runtime();assertHaptik(env,request);const db=await database();let body:Record<string,unknown>;try{body=await request.json()as Record<string,unknown>}catch{return json({error:"Malformed Haptik request body"},400)}const action=String(body.action||"").trim(),actorId="haptik_voice";
+export async function POST(request:Request){try{const env=await runtime();const rawBody=await request.text();await assertHaptik(env,request,rawBody);const db=await database();let body:Record<string,unknown>;try{body=JSON.parse(rawBody)as Record<string,unknown>}catch{return json({error:"Malformed Haptik request body"},400)}const action=String(body.action||"").trim(),actorId="haptik_voice";
  if(action==="classify_inquiry"){const category=classifyCrmInquiry({service:body.service,message:body.message});return json({data:{category,handoffQueue:queueForCrmInquiry(category)}});}
  if(action==="recommend_grooming_package")return json({data:recommendGroomingPackage({species:body.species,size:body.size,coat:body.coat,lastGroomingDays:body.lastGroomingDays,shedding:body.shedding,skinSensitivity:body.skinSensitivity,matting:body.matting,requestedService:body.requestedService})});
  if(action==="capture_lead"){const category=classifyCrmInquiry({service:body.service,message:body.message});return json({data:{...(await captureHaptikLead(db,{idempotencyKey:String(body.idempotencyKey||""),phone:String(body.phone||""),name:body.name as string,service:category,city:body.city as string,source:body.source as string,qualification:{...(body.qualification as Record<string,unknown>||{}),inquiryCategory:category,handoffQueue:queueForCrmInquiry(category)},actorId})),inquiryCategory:category,handoffQueue:queueForCrmInquiry(category)}},201);}
