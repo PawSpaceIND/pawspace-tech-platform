@@ -75,6 +75,17 @@ test("payment tables that only migrations declare are created at runtime", () =>
   assert.match(lifecycle, /amount_paise INTEGER NOT NULL CHECK \(amount_paise > 0\)/);
   assert.match(lifecycle, /dedupe_key TEXT NOT NULL UNIQUE/);
   assert.match(lifecycle, /UNIQUE\(customer_id, booking_id, idempotency_key\)/);
+
+  // A fallback table without the migration's indexes makes every reconciliation and payment lookup a
+  // full scan. Both must be NON-unique: 0017 created payment_id UNIQUE, 0018 dropped and recreated it
+  // plain for split intents, so the final replayed state is what a runtime creator has to match.
+  assert.match(lifecycle, /CREATE INDEX IF NOT EXISTS idx_payment_intents_payment_id/);
+  assert.match(lifecycle, /CREATE INDEX IF NOT EXISTS idx_payment_intents_booking/);
+  assert.doesNotMatch(
+    lifecycle,
+    /CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_intents_payment_id/,
+    "0018 removed that uniqueness on purpose; re-imposing it would reject legitimate split intents",
+  );
 });
 
 test("customer screens keep honest disclosures and drop internal vocabulary", () => {

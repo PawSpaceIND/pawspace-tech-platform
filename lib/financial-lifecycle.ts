@@ -83,6 +83,15 @@ export async function ensureFinancialLifecycleTables(db: Db) {
       lease_owner TEXT, lease_expires_at INTEGER, next_attempt_at INTEGER NOT NULL,
       request_json TEXT, response_json TEXT, last_error TEXT,
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)`),
+    // The migrations also index payment_intents, and a fallback-created table without them makes
+    // reconciliation and payment lookups scan the whole table. Both are taken from the FINAL state
+    // after replaying drizzle in order, not from the first file that mentions them: 0017 created
+    // idx_payment_intents_payment_id as UNIQUE and 0018 ("split intents") deliberately dropped and
+    // recreated it NON-unique, because one payment may now own several intents. Copying 0017 alone
+    // would have re-imposed a constraint a later migration removed on purpose - a worse defect than
+    // the missing index, since it would reject legitimate writes.
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_payment_intents_payment_id ON payment_intents(payment_id)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_payment_intents_booking ON payment_intents(booking_id)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_financial_outbox_due ON financial_outbox(status,next_attempt_at,lease_expires_at)"),
   ]);
 }
