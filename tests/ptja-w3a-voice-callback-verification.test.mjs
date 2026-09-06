@@ -1,15 +1,13 @@
 /**
- * WAVE 3 TIER A - adversarial verification of W2-B4-M-R01. [PTJA-W3A]
+ * WAVE 3 TIER A - adversarial verification of the Exotel callback trust boundary. [PTJA-W3A]
  *
- * THE REFUTATION UNDER TEST: "the voice provider callback does NOT act on an unsigned, wrongly-signed,
- * stale or replayed payload, and an absent secret refuses rather than unlocks".
+ * Exotel outbound callbacks are trigger-only: the public POST contributes only a provider CallSid.
+ * PawSpace must prove that Sid is already owned by its D1 voice ledger and then fetch authoritative
+ * state from Exotel's authenticated single-call details API before any lifecycle mutation. Mutable
+ * callback fields, signatures and timestamps on the public trigger are not authoritative.
  *
- * This is the sharpest of the nine to leave untested. The route is deliberately gateway-allowlisted -
- * a carrier has no cookie - so it is reachable by ANY anonymous caller on the internet. The only thing
- * between an anonymous POST and the call state machine is this shared-secret check. The hunter probed it
- * and threw the probe away.
- *
- * Every refusal case asserts the state machine did NOT move, not merely that a 401 came back.
+ * Inbound AI callbacks still carry conversational input, so the shared-secret verifier remains covered
+ * directly at the end of this suite for that separate trust boundary.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -41,14 +39,14 @@ function makeD1(sqlite) {
 }
 
 const SECRET = "w3a-voice-webhook-secret";
-// Every name selectTelephonyProvider requires; a partial set must degrade to the disconnected adapter.
 const CONNECTED_ENV = {
   EXOTEL_API_KEY: "k", EXOTEL_API_TOKEN: "t", EXOTEL_SID: "s",
   EXOTEL_CALLER_ID: "+918000000000", EXOTEL_VOICE_APP_ID: "app", EXOTEL_WEBHOOK_SECRET: SECRET,
   PAWSPACE_VOICE_MODE: "uat",
 };
-
+const CALL_SID = "SIMCALL-1";
 let sqlite;
+
 async function voiceWorld(env = CONNECTED_ENV) {
   sqlite = new DatabaseSync(":memory:");
   const db = makeD1(sqlite);
@@ -63,30 +61,33 @@ async function voiceWorld(env = CONNECTED_ENV) {
 }
 
 const route = await import("../app/api/voice-provider-webhook/route.ts");
+const originalFetch = globalThis.fetch;
+test.afterEach(() => { globalThis.fetch = originalFetch; });
 
-const BODY = { CallSid: "SIMCALL-1", CustomField: "VCALL-1", CallStatus: "completed", EventType: "terminal", ConversationDuration: 42 };
-
-const hex = (bytes) => Array.from(new Uint8Array(bytes)).map(b => b.toString(16).padStart(2, "0")).join("");
-async function hmac(secret, message) {
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  return hex(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message)));
-}
-
-async function callback(raw, headers = {}) {
+async function callback(body, headers = {}) {
+  const raw = typeof body === "string" ? body : new URLSearchParams(body).toString();
   const response = await route.POST(new Request("https://uat.pawspace.in/api/voice-provider-webhook", {
-    method: "POST", headers: { "content-type": "application/json", ...headers }, body: raw,
+    method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", ...headers }, body: raw,
   }));
   let parsed = null;
   try { parsed = await response.clone().json(); } catch { /* non-JSON */ }
   return { status: response.status, body: parsed };
 }
 
-async function signedCallback({ secret = SECRET, timestamp = Date.now(), body = BODY } = {}) {
-  const raw = JSON.stringify(body);
-  return callback(raw, {
-    "x-pawspace-voice-signature": await hmac(secret, `${timestamp}.${raw}`),
-    "x-pawspace-voice-timestamp": String(timestamp),
-  });
+function authoritativeDetails(value = { Status: "completed", Duration: 42 }) {
+  let calls = 0;
+  globalThis.fetch = async (url, init = {}) => {
+    calls += 1;
+    const parsed = new URL(String(url));
+    assert.equal(parsed.protocol, "https:");
+    assert.equal(parsed.hostname, "api.exotel.com");
+    assert.equal(parsed.pathname, `/v1/Accounts/s/Calls/${CALL_SID}.json`);
+    assert.equal(String(init.method || "GET"), "GET");
+    assert.equal(new Headers(init.headers).get("authorization"), `Basic ${btoa("k:t")}`);
+    assert.equal(new Headers(init.headers).get("accept"), "application/json");
+    return Response.json({ Call: { Sid: CALL_SID, ...value } });
+  };
+  return () => calls;
 }
 
 const callState = () => sqlite.prepare("SELECT state FROM voice_call_orders WHERE id='VCALL-1'").get()?.state;
@@ -94,165 +95,148 @@ const eventCount = () => {
   try { return Number(sqlite.prepare("SELECT COUNT(*) c FROM voice_call_provider_events").get().c); } catch { return 0; }
 };
 
-test("MR01-06 (non-vacuity): a correctly signed, fresh callback IS applied and moves the state", async () => {
-  // First. If the receiver rejects everything, every refusal below is worthless.
+const forgedTrigger = (overrides = {}) => ({
+  CallSid: CALL_SID,
+  CallStatus: "failed",
+  CustomField: "VCALL-ATTACKER",
+  CallDuration: "9999",
+  RecordingUrl: "https://attacker.invalid/fake.mp3",
+  ...overrides,
+});
+
+test("MR01-06 (non-vacuity): an owned unsigned CallSid is applied only after authoritative Exotel reconciliation", async () => {
   await voiceWorld();
+  const fetchCount = authoritativeDetails({ Status: "completed", Duration: 18 });
   assert.equal(callState(), "dialing", "precondition");
-  const res = await signedCallback();
-  assert.equal(res.status, 200, `a valid signed callback must be accepted: ${JSON.stringify(res.body)}`);
-  assert.equal(res.body?.applied, true, "and must be applied");
-  assert.equal(callState(), "completed", "and must move the call state machine");
+  const res = await callback(forgedTrigger());
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.equal(res.body?.applied, true, "the authoritative provider result must be applied");
+  assert.equal(callState(), "completed", "the Exotel result, not the forged trigger status, drives state");
+  assert.equal(fetchCount(), 1, "each owned trigger is reconciled server-to-server");
+  assert.equal(eventCount(), 1);
 });
 
-test("MR01-01: an UNSIGNED callback is refused and the state machine does not move", async () => {
+test("MR01-01: an unknown unsigned CallSid is inert and never turns the callback route into an Exotel API proxy", async () => {
   await voiceWorld();
-  const res = await callback(JSON.stringify(BODY));
-  assert.equal(res.status, 401, "no signature and no Basic credentials must be refused");
-  assert.equal(callState(), "dialing", "an unsigned callback must not advance the call");
-  assert.equal(eventCount(), 0, "and must not record a provider event");
+  let fetched = false;
+  globalThis.fetch = async () => { fetched = true; throw new Error("must not fetch"); };
+  const res = await callback({ CallSid: "UNKNOWN-CALL", CallStatus: "completed", CustomField: "VCALL-1" });
+  assert.equal(res.status, 202);
+  assert.equal(res.body?.applied, false);
+  assert.equal(fetched, false, "unknown provider ids must be rejected before any Exotel request");
+  assert.equal(callState(), "dialing");
+  assert.equal(eventCount(), 0);
 });
 
-test("MR01-02: a WRONGLY signed callback is refused and the state machine does not move", async () => {
+test("MR01-02: Exotel must return the exact ledger-owned CallSid before any lifecycle mutation", async () => {
   await voiceWorld();
-  const raw = JSON.stringify(BODY);
-  const res = await callback(raw, { "x-pawspace-voice-signature": "deadbeef".repeat(8), "x-pawspace-voice-timestamp": String(Date.now()) });
-  assert.equal(res.status, 401, "a wrong signature must be refused");
-  assert.equal(callState(), "dialing", "and must not advance the call");
-  assert.equal(eventCount(), 0, "and must not record a provider event");
+  globalThis.fetch = async () => Response.json({ Call: { Sid: "DIFFERENT-CALL", Status: "completed", Duration: 18 } });
+  const res = await callback(forgedTrigger());
+  assert.equal(res.status, 503);
+  assert.match(String(res.body?.error ?? ""), /requested CallSid/i);
+  assert.equal(callState(), "dialing");
+  assert.equal(eventCount(), 0);
 });
 
-test("MR01-03: a STALE but correctly signed callback is refused (replay outside the window)", async () => {
+test("MR01-03: provider rejection fails closed and leaves the D1 lifecycle unchanged for retry", async () => {
   await voiceWorld();
-  const res = await signedCallback({ timestamp: Date.now() - 600_000 });
-  assert.equal(res.status, 401, "a signature older than the freshness window must be refused");
-  assert.match(String(res.body?.error ?? ""), /freshness|timestamp/i);
-  assert.equal(callState(), "dialing", "a stale callback must not advance the call");
+  globalThis.fetch = async () => Response.json({ error: "temporary" }, { status: 503 });
+  const res = await callback(forgedTrigger());
+  assert.equal(res.status, 503);
+  assert.equal(callState(), "dialing");
+  assert.equal(eventCount(), 0);
 });
 
-test("MR01-04: a byte-identical REPLAY of a valid callback is inert", async () => {
+test("MR01-04: a byte-identical provider result is replay-safe", async () => {
   await voiceWorld();
-  const raw = JSON.stringify(BODY);
-  const timestamp = Date.now();
-  const headers = { "x-pawspace-voice-signature": await hmac(SECRET, `${timestamp}.${raw}`), "x-pawspace-voice-timestamp": String(timestamp) };
-
-  const first = await callback(raw, headers);
-  assert.equal(first.body?.applied, true, "the first delivery is applied");
-  const stateAfterFirst = callState();
-
-  const replay = await callback(raw, headers);
-  assert.equal(replay.status, 200, "a replay is answered 200 so the carrier stops retrying");
-  assert.equal(replay.body?.applied, false, "but it must NOT be applied");
-  assert.equal(replay.body?.duplicate, true, "and must be reported as a duplicate");
-  assert.equal(callState(), stateAfterFirst, "and must not move the state machine a second time");
-  assert.equal(eventCount(), 1, "and must not record a second provider event");
+  authoritativeDetails({ Status: "completed", Duration: 18 });
+  const first = await callback(forgedTrigger());
+  assert.equal(first.status, 200);
+  assert.equal(first.body?.applied, true);
+  const replay = await callback(forgedTrigger());
+  assert.equal(replay.status, 200, "duplicates are acknowledged so the carrier can stop retrying");
+  assert.equal(replay.body?.applied, false);
+  assert.equal(replay.body?.duplicate, true);
+  assert.equal(callState(), "completed");
+  assert.equal(eventCount(), 1, "a replay must not create a second provider event");
 });
 
-test("MR01-05: with NO telephony secrets configured the receiver refuses rather than unlocking", async () => {
-  // The defect class this whole audit hunts: absent treated as satisfied. An empty secret must not
-  // validate an HMAC computed with the empty secret.
+test("MR01-05: missing Exotel Call Details credentials fail closed for an owned CallSid", async () => {
   await voiceWorld({});
-  const raw = JSON.stringify(BODY);
-  const timestamp = Date.now();
-  // An attacker cannot HMAC with an empty key (WebCrypto refuses to import one), so the real attack
-  // against an unconfigured receiver is an arbitrary signature - and a guessed one, in case the code
-  // ever compared against a default.
-  for (const guess of ["deadbeef".repeat(8), await hmac("guessed", `${timestamp}.${raw}`)]) {
-    const res = await callback(raw, { "x-pawspace-voice-signature": guess, "x-pawspace-voice-timestamp": String(timestamp) });
-    assert.equal(res.status, 401, "an unconfigured receiver must refuse every signature");
-    // Named, because this refusal comes from the CONNECTEDNESS layer, not the secret layer - see
-    // MR01-10. Asserting only the 401 would let this case pass with signature verification removed.
-    assert.match(String(res.body?.error ?? ""), /not connected/i,
-      "the unconfigured refusal is the disconnected-adapter layer");
-    assert.equal(callState(), "dialing", "and must not advance the call");
+  globalThis.fetch = async () => { throw new Error("must not fetch without credentials"); };
+  const res = await callback(forgedTrigger());
+  assert.equal(res.status, 503);
+  assert.match(String(res.body?.error ?? ""), /credentials are not configured/i);
+  assert.equal(callState(), "dialing");
+  assert.equal(eventCount(), 0);
+});
+
+test("MR01-07: missing or malformed CallSid is refused before any provider lookup", async () => {
+  await voiceWorld();
+  let fetched = false;
+  globalThis.fetch = async () => { fetched = true; throw new Error("must not fetch"); };
+  for (const body of [{ CallStatus: "completed" }, { CallSid: "bad sid with spaces", CallStatus: "completed" }]) {
+    const res = await callback(body);
+    assert.equal(res.status, 400);
+    assert.equal(callState(), "dialing");
   }
-
-  const basic = await callback(JSON.stringify(BODY), { authorization: `Basic ${btoa("user:")}` });
-  assert.equal(basic.status, 401, "an empty Basic password must not match an absent secret either");
-  assert.equal(callState(), "dialing", "and must not advance the call");
+  assert.equal(fetched, false);
+  assert.equal(eventCount(), 0);
 });
 
-test("MR01-07: a signature over a DIFFERENT body does not carry to a swapped body", async () => {
+test("MR01-08: forged mutable callback fields have zero authority", async () => {
   await voiceWorld();
-  const timestamp = Date.now();
-  const honest = JSON.stringify(BODY);
-  const swapped = JSON.stringify({ ...BODY, CallStatus: "failed", EventType: "terminal" });
-  const res = await callback(swapped, {
-    "x-pawspace-voice-signature": await hmac(SECRET, `${timestamp}.${honest}`),
-    "x-pawspace-voice-timestamp": String(timestamp),
-  });
-  assert.equal(res.status, 401, "the signature is over the body, so a swap must not validate");
-  assert.equal(callState(), "dialing", "and must not advance the call");
+  authoritativeDetails({ Status: "in-progress", Duration: 7 });
+  const res = await callback(forgedTrigger({ CallStatus: "completed", CustomField: "OTHER", CallDuration: "9999" }));
+  assert.equal(res.status, 200);
+  assert.equal(callState(), "connected", "authoritative in-progress must win over forged completed");
+  const stored = sqlite.prepare("SELECT provider_status,signature_mechanism FROM voice_call_provider_events").get();
+  assert.equal(stored.provider_status, "in-progress");
+  assert.equal(stored.signature_mechanism, "exotel_call_details_api");
 });
 
-test("MR01-08: the timestamp is part of the signed material, so it cannot be freshened", async () => {
-  // Take a valid old signature and present it with a fresh timestamp header.
+test("MR01-09: Exotel responses with no authoritative status are refused", async () => {
   await voiceWorld();
-  const raw = JSON.stringify(BODY);
-  const oldStamp = Date.now() - 600_000;
-  const res = await callback(raw, {
-    "x-pawspace-voice-signature": await hmac(SECRET, `${oldStamp}.${raw}`),
-    "x-pawspace-voice-timestamp": String(Date.now()),
-  });
-  assert.equal(res.status, 401, "rewriting the timestamp header must invalidate the signature");
-  assert.equal(callState(), "dialing", "and must not advance the call");
+  globalThis.fetch = async () => Response.json({ Call: { Sid: CALL_SID } });
+  const res = await callback(forgedTrigger());
+  assert.equal(res.status, 503);
+  assert.match(String(res.body?.error ?? ""), /no authoritative status/i);
+  assert.equal(callState(), "dialing");
+  assert.equal(eventCount(), 0);
 });
 
-test("MR01-09: a malformed or absent timestamp is refused, not treated as now", async () => {
-  await voiceWorld();
-  const raw = JSON.stringify(BODY);
-  const sig = await hmac(SECRET, `not-a-number.${raw}`);
-  const res = await callback(raw, { "x-pawspace-voice-signature": sig, "x-pawspace-voice-timestamp": "not-a-number" });
-  assert.equal(res.status, 401, "a malformed timestamp must be refused");
-  assert.equal(callState(), "dialing", "and must not advance the call");
+const hex = (bytes) => Array.from(new Uint8Array(bytes)).map(b => b.toString(16).padStart(2, "0")).join("");
+async function hmac(secret, message) {
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return hex(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message)));
+}
 
-  const noStamp = await callback(raw, { "x-pawspace-voice-signature": await hmac(SECRET, `.${raw}`) });
-  assert.equal(noStamp.status, 401, "an absent timestamp must be refused, never defaulted to now");
-  assert.equal(callState(), "dialing", "and must not advance the call");
-});
-
-test("MR01-10: an absent webhook secret refuses at the verifier itself, not merely upstream", async () => {
-  // MR01-05 was SHADOWED and is recorded as such. EXOTEL_WEBHOOK_SECRET is one of the six names in
-  // VOICE_TELEPHONY_SECRET_NAMES, so removing it also makes selectTelephonyProvider return the
-  // disconnected adapter - and the route answers "Telephony provider is not connected" BEFORE any
-  // signature work. That is a real second layer, but it means the route can never exercise the
-  // absent-secret branch, and a route-level test of it proves nothing: the sabotage that makes an empty
-  // secret VERIFY leaves MR01-05 green.
-  //
-  // So the claim "an absent secret refuses rather than unlocks" is tested where it actually lives.
+test("MR01-10: the shared-secret verifier used by inbound AI refuses an absent secret", async () => {
   const { verifyVoiceWebhookSignature } = await import("../lib/voice-telephony-provider.ts");
-  const raw = JSON.stringify(BODY);
+  const raw = JSON.stringify({ pawspace_action: "inbound_ai_start", CallSid: CALL_SID });
   const timestamp = Date.now();
   const headers = new Headers({
     "x-pawspace-voice-signature": await hmac("anything", `${timestamp}.${raw}`),
     "x-pawspace-voice-timestamp": String(timestamp),
   });
-
   const absent = await verifyVoiceWebhookSignature("", raw, headers);
-  assert.equal(absent.verified, false, "an absent secret must never verify");
-  assert.match(String(absent.reason ?? ""), /not configured/i, "and must say why");
+  assert.equal(absent.verified, false);
+  assert.match(String(absent.reason ?? ""), /not configured/i);
 
-  const blank = await verifyVoiceWebhookSignature("   ".trim(), raw, headers);
-  assert.equal(blank.verified, false, "a whitespace-only secret trims to absent and must not verify");
-
-  // Non-vacuity for this unit: the same verifier DOES accept a correct signature.
   const good = new Headers({
     "x-pawspace-voice-signature": await hmac(SECRET, `${timestamp}.${raw}`),
     "x-pawspace-voice-timestamp": String(timestamp),
   });
-  const ok = await verifyVoiceWebhookSignature(SECRET, raw, good);
-  assert.equal(ok.verified, true, "a correct signature against a configured secret must verify");
+  assert.equal((await verifyVoiceWebhookSignature(SECRET, raw, good)).verified, true, "non-vacuity");
 });
 
-test("MR01-11: an absent secret does not accept Basic credentials either", async () => {
+test("MR01-11: inbound-AI Basic verification also refuses an absent secret", async () => {
   const { verifyVoiceWebhookSignature } = await import("../lib/voice-telephony-provider.ts");
-  const raw = JSON.stringify(BODY);
+  const raw = JSON.stringify({ pawspace_action: "inbound_ai_start", CallSid: CALL_SID });
   for (const password of ["", "guessed", "   "]) {
-    const headers = new Headers({ authorization: `Basic ${btoa(`user:${password}`)}` });
-    const result = await verifyVoiceWebhookSignature("", raw, headers);
-    assert.equal(result.verified, false, `an absent secret must not match Basic password ${JSON.stringify(password)}`);
+    const result = await verifyVoiceWebhookSignature("", raw, new Headers({ authorization: `Basic ${btoa(`user:${password}`)}` }));
+    assert.equal(result.verified, false);
   }
-  // Non-vacuity: Basic DOES work when a secret is configured and matches.
-  const headers = new Headers({ authorization: `Basic ${btoa(`user:${SECRET}`)}` });
-  const ok = await verifyVoiceWebhookSignature(SECRET, raw, headers);
-  assert.equal(ok.verified, true, "the Basic mechanism must still be usable, or MR01-11 proves nothing");
+  const ok = await verifyVoiceWebhookSignature(SECRET, raw, new Headers({ authorization: `Basic ${btoa(`user:${SECRET}`)}` }));
+  assert.equal(ok.verified, true, "non-vacuity");
 });
