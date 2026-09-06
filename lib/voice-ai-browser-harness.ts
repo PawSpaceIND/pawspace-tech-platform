@@ -244,10 +244,6 @@ async function ttsPcm(ai: AiBinding, message: string) {
   throw new Error("Workers AI TTS returned no raw audio response");
 }
 
-function arrayBufferFromView(view: ArrayBufferView) {
-  return view.buffer.slice(view.byteOffset, view.byteOffset + view.byteLength);
-}
-
 export async function handleDirectBrowserVoiceHarnessStream(
   request: Request,
   env: Env,
@@ -284,7 +280,6 @@ export async function handleDirectBrowserVoiceHarnessStream(
   let turnCount = 0;
   let queue = Promise.resolve();
   const history: ChatMessage[] = [];
-  const openedAt = Date.now();
 
   const sendJson = (payload: Record<string, unknown>) => {
     if (!closed && server.readyState === WebSocket.OPEN) {
@@ -442,14 +437,8 @@ export async function handleDirectBrowserVoiceHarnessStream(
         return;
       }
 
-      if (!started) return;
-      let audio: ArrayBuffer | null = null;
-      if (event.data instanceof ArrayBuffer) {
-        audio = event.data;
-      } else if (ArrayBuffer.isView(event.data)) {
-        audio = arrayBufferFromView(event.data);
-      }
-      if (!audio || audio.byteLength < 2) return;
+      if (!started || !(event.data instanceof ArrayBuffer) || event.data.byteLength < 2) return;
+      const audio = event.data;
       if (!flux || flux.readyState !== WebSocket.OPEN) {
         try {
           await initializeFlux();
