@@ -58,7 +58,8 @@ const worker = {
       if(url.pathname==="/api/identity-session")return secureApiResponse(await handler.fetch(request,env,ctx));
       const isMetaWebhook=url.pathname==="/api/whatsapp/meta-webhook";
       const isEmailWebhook=url.pathname==="/api/email-provider-webhook";
-      const isProviderWebhook=isMetaWebhook||isEmailWebhook;
+      const isDiallerWebhook=url.pathname==="/api/dialler/callback";
+      const isProviderWebhook=isMetaWebhook||isEmailWebhook||isDiallerWebhook;
       // Provider webhooks are authenticated inside their route by HMAC/challenge verification, not by
       // a PawSpace user session. Meta additionally feeds the Elite observer after its response.
       const eliteRequest=isMetaWebhook?request.clone():null;
@@ -66,8 +67,9 @@ const worker = {
       const inspectionRequest=request.clone();
       const sessionAccess=await authorizePlatformSessionRequest(inspectionRequest,env.DB);
       if(sessionAccess instanceof Response)return sessionAccess;
+      const providerEmail=isMetaWebhook?"meta-webhook@provider":isEmailWebhook?"email-webhook@provider":"dialler-webhook@provider";
       const access=isProviderWebhook
-        ?{actor:{email:isMetaWebhook?"meta-webhook@provider":"email-webhook@provider",roleCode:"provider_webhook",permissions:[],preview:false},permission:null}
+        ?{actor:{email:providerEmail,roleCode:"provider_webhook",permissions:[],preview:false},permission:null}
         :sessionAccess??await authorizeApiRequest(inspectionRequest, env);
       if (access instanceof Response) return access;
       const serviceBlock=await blockDisabledServiceRequest(inspectionRequest,env.DB);
