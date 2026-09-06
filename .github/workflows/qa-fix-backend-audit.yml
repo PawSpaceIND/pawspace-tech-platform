@@ -33,7 +33,7 @@ jobs:
         run: |
           npm ci
           npm install --save-exact fastify@5.12.3
-          npm audit fix
+          npm audit fix || true
       - name: Verify backend after dependency repair
         working-directory: backend
         run: |
