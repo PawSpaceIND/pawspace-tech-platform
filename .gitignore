@@ -84,3 +84,6 @@ artifacts/
 /test-results/
 /playwright-report/
 /dist/server/.wrangler/
+
+# Generated runtime artifacts (test/e2e evidence, local reports)
+artifacts/
