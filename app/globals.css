@@ -333,7 +333,12 @@ main[style*="font-family"] dd { margin: 2px 0 0; font-weight: 700; font-variant-
    media-query fallback below keeps the button reachable on anything older. */
 body:has(.checkout-bar) .ps-order-fab { bottom: 104px; }
 @supports not selector(body:has(.checkout-bar)) {
-  @media (max-width: 950px) {
+  /* The overlap range is wider than the bar's own 920px cap. The bar is centred, so its right edge is
+     vw/2 + W/2 with W = min(920, vw - 30); the FAB occupies [vw-70, vw-18]. They collide while
+     W > vw - 140 — which is EVERY viewport below 1060px, not just the ones where the bar is still
+     fluid. Below 950px W = vw-30 and the overlap is unconditional; between 950 and 1060 the bar is
+     pinned at 920 and still reaches under the FAB. */
+  @media (max-width: 1059px) {
     .checkout-bar { padding-right: 78px; }
   }
 }

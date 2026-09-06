@@ -57,6 +57,10 @@ test("the notifications FAB does not cover the booking call to action", () => {
     /className="ps-order-fab"/,
     "the FAB needs a stable hook for that rule",
   );
+  // The no-:has() fallback must cover the real overlap range. Bar right edge is vw/2 + W/2 with
+  // W = min(920, vw-30); the FAB occupies [vw-70, vw-18]; they collide while W > vw-140, i.e. every
+  // viewport below 1060px. A 950px breakpoint left 950-1059 uncovered on older engines.
+  assert.match(css, /max-width:\s*1059px/, "the fallback must cover viewports up to 1059px");
 });
 
 test("payment tables that only migrations declare are created at runtime", () => {
