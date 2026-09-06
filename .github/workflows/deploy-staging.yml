@@ -1,20 +1,409 @@
 name: Deploy staging
 
-# SAFETY GUARD: this feature branch previously deployed to the shared pawspace-staging Worker and
-# overwrote the WATI/CX UAT build. Shared staging is owned by the canonical staging lane; this branch
-# must use a dedicated voice-UAT Worker before deployment is re-enabled here.
+# One-click ISOLATED STAGING deploy for human UAT. Manual only (workflow_dispatch) — never auto-runs,
+# never touches production. Deploys the vinext build output (dist/server) as worker "pawspace-staging"
+# bound to a dedicated staging D1.
+#
+# Required repo config (added once by ops — never pasted in chat, never committed):
+#   Secrets:   CLOUDFLARE_API_TOKEN (Workers Scripts: Edit, D1: Edit)
+#              CLOUDFLARE_ACCOUNT_ID
+#              PAWSPACE_UAT_ACCESS_CODE                (>=32 chars) tester code for /staging-login
+#              PAWSPACE_UAT_SIGNING_KEY                (>=32 chars) signs the UAT session cookie
+#              PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT  (>=32 chars) signs OTP identity assertions
+#              EXOTEL_API_KEY, EXOTEL_API_TOKEN, EXOTEL_SID, EXOTEL_CALLER_ID,
+#              EXOTEL_VOICE_APP_ID, EXOTEL_WEBHOOK_SECRET
+#              FAST2SMS_API_KEY                         optional; required only for approved SMS/live-OTP staging
+#              PAWSPACE_SMS_TEST_NUMBERS                optional; comma-separated approved Indian test numbers
+#   Variables: STAGING_D1_ID           (from `npx wrangler d1 create pawspace-staging`)
+#              PRODUCTION_D1_ID        optional; when set, certification refuses to run if the deploy
+#                                      is bound to it
+#              PRODUCTION_WORKER_NAME  optional; same, for the worker name
+#              STAGING_R2_BUCKET_NAME  optional private UAT media bucket
+#              PAWSPACE_SMS_TEST_ENABLED optional fallback; the explicit sms_smoke=approved input
+#                                         enables the existing certified transport smoke before live OTP activation
+#
+# The deploy is CERTIFIED before it is handed to testers. tests/e2e/staging-certification.mjs proves,
+# against the deployed origin and the deployed configuration: isolation (the staging worker and its own
+# D1, never production), the exact deployed sha, sandbox mode with no live or approval flag, that no UAT
+# credential is serialized into the config, that the advertised staff identities exist AND can really
+# sign in, that the smoke routes answer for a session and refuse without one, and that a rollback
+# reference was captured before the deploy. A required check that could not be run fails. The job fails
+# if any check fails, and the sanitized evidence artifact is uploaded either way.
+#
+# Generate each credential fresh — `openssl rand -hex 32` — and never reuse a value that has appeared
+# in this repository, a chat, or a build log. The deploy refuses to run without all three, refuses a
+# value shorter than its minimum, and refuses the specific values that were once committed here.
+
 on:
   workflow_dispatch:
-
-permissions:
-  contents: read
+    inputs:
+      confirm:
+        description: 'Type "staging" to confirm this is the isolated staging deploy'
+        required: true
+        default: ''
+      expected_sha:
+        description: 'Exact 40-character commit sha to deploy and certify'
+        required: true
+        default: ''
+      sms_smoke:
+        description: 'Use disabled for normal sandbox certification; choose approved only for the second-stage Fast2SMS smoke + live customer OTP activation'
+        required: true
+        default: 'disabled'
+        type: choice
+        options:
+          - disabled
+          - approved
 
 jobs:
-  blocked:
+  deploy:
+    if: ${{ github.event.inputs.confirm == 'staging' }}
     runs-on: ubuntu-latest
+    concurrency: pawspace-staging-deploy
     steps:
-      - name: Refuse shared-staging overwrite
+      # Checked out AT the requested sha. Before this the workflow deployed whatever the default
+      # branch happened to be, so "the staging deploy of <sha>" was an assumption nobody could check
+      # afterwards - and a merge landing during the run silently changed what testers were testing.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.expected_sha }}
+      - name: Verify the checkout is exactly the requested sha and is clean
+        env:
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
         run: |
-          echo "Blocked: feat/uat-ai-voice-self-test-20260905 may not deploy to the shared pawspace-staging Worker."
-          echo "Create/use a dedicated voice-UAT Worker before re-enabling this workflow on this branch."
-          exit 1
+          set -euo pipefail
+          case "$EXPECTED_SHA" in
+            *[!0-9a-f]* | "" ) echo "expected_sha must be an exact 40-character commit sha." >&2; exit 1 ;;
+          esac
+          if [ "${#EXPECTED_SHA}" -ne 40 ]; then
+            echo "expected_sha must be an exact 40-character commit sha (a branch name or short sha does not identify a build)." >&2
+            exit 1
+          fi
+          ACTUAL="$(git rev-parse HEAD)"
+          if [ "$ACTUAL" != "$EXPECTED_SHA" ]; then
+            echo "checkout is at $ACTUAL, not the requested $EXPECTED_SHA - refusing to deploy." >&2
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "working tree is dirty - refusing to deploy a modified artifact." >&2
+            exit 1
+          fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        run: npm run install:ci
+      - name: Build (vinext)
+        run: npm run build
+      # The three UAT credentials come from repository SECRETS. They previously came from committed
+      # fallbacks in stage-config.mjs, because this step passed only STAGING_D1_ID — so every deploy
+      # shipped credentials that were readable in a public repository. The script now fails closed if
+      # any is missing, too short, or equal to one of the values that was committed.
+      - name: Configure staging (name + D1 + sandbox)
+        env:
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          STAGING_R2_BUCKET_NAME: ${{ vars.STAGING_R2_BUCKET_NAME }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+        run: node scripts/stage-config.mjs
+      # Captured BEFORE the deploy, so a rollback target exists even when this deploy is the bad one.
+      # Certification requires it: a deploy with no recorded predecessor has no way back, and the moment
+      # that matters is after it has already gone wrong.
+      - name: Record the currently deployed staging version (rollback reference)
+        id: rollback
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          if npx wrangler deployments list --name pawspace-staging > rollback-reference.txt 2>&1; then
+            REFERENCE="$(grep -Eo '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' rollback-reference.txt | tail -n 1 || true)"
+          else
+            REFERENCE=""
+          fi
+          if [ -z "$REFERENCE" ]; then REFERENCE="first-staging-deploy"; fi
+          # Only the marker is exported. The listing itself can carry account detail and is not uploaded.
+          echo "reference=$REFERENCE" >> "$GITHUB_OUTPUT"
+          echo "Rollback target recorded."
+
+      - name: Deploy to staging
+        id: deploy
+        # Deploy from the repo ROOT: the @cloudflare/vite-plugin build writes a redirect at
+        # .wrangler/deploy/config.json pointing wrangler to dist/server/wrangler.json. Running from
+        # dist/server instead makes wrangler find BOTH that redirect and the local wrangler.json and
+        # refuse ("Found both a user configuration file ... and a deploy configuration file").
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          RAZORPAY_KEY_ID_SANDBOX: ${{ secrets.RAZORPAY_KEY_ID_SANDBOX }}
+          RAZORPAY_KEY_SECRET_SANDBOX: ${{ secrets.RAZORPAY_KEY_SECRET_SANDBOX }}
+          RAZORPAY_WEBHOOK_SECRET_SANDBOX: ${{ secrets.RAZORPAY_WEBHOOK_SECRET_SANDBOX }}
+          GOOGLE_MAPS_SERVER_API_KEY_UAT: ${{ secrets.GOOGLE_MAPS_SERVER_API_KEY_UAT }}
+          PAWSPACE_AI_PROVIDER_API_KEY: ${{ secrets.PAWSPACE_AI_PROVIDER_API_KEY }}
+          EXOTEL_API_KEY: ${{ secrets.EXOTEL_API_KEY }}
+          EXOTEL_API_TOKEN: ${{ secrets.EXOTEL_API_TOKEN }}
+          EXOTEL_SID: ${{ secrets.EXOTEL_SID }}
+          EXOTEL_CALLER_ID: ${{ secrets.EXOTEL_CALLER_ID }}
+          EXOTEL_VOICE_APP_ID: ${{ secrets.EXOTEL_VOICE_APP_ID }}
+          EXOTEL_WEBHOOK_SECRET: ${{ secrets.EXOTEL_WEBHOOK_SECRET }}
+          META_WHATSAPP_UAT_ACCESS_TOKEN: ${{ secrets.META_WHATSAPP_UAT_ACCESS_TOKEN }}
+          META_WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.META_WHATSAPP_PHONE_NUMBER_ID }}
+          META_WHATSAPP_WABA_ID: ${{ secrets.META_WHATSAPP_WABA_ID }}
+          META_WHATSAPP_APP_SECRET: ${{ secrets.META_WHATSAPP_APP_SECRET }}
+          META_WHATSAPP_VERIFY_TOKEN: ${{ secrets.META_WHATSAPP_VERIFY_TOKEN }}
+          META_WHATSAPP_UAT_ALLOWLIST: ${{ secrets.META_WHATSAPP_UAT_ALLOWLIST }}
+          META_WHATSAPP_TEMPLATE_ALLOWLIST: ${{ secrets.META_WHATSAPP_TEMPLATE_ALLOWLIST }}
+          PAWSPACE_COMMUNICATION_PROVIDER_URL: ${{ secrets.PAWSPACE_COMMUNICATION_PROVIDER_URL }}
+          PAWSPACE_COMMUNICATION_PROVIDER_TOKEN: ${{ secrets.PAWSPACE_COMMUNICATION_PROVIDER_TOKEN }}
+          PAWSPACE_COMMUNICATION_WEBHOOK_SECRET: ${{ secrets.PAWSPACE_COMMUNICATION_WEBHOOK_SECRET }}
+          PAWSPACE_COMMUNICATION_UAT_ALLOWLIST: ${{ secrets.PAWSPACE_COMMUNICATION_UAT_ALLOWLIST }}
+          PAWSPACE_SMS_TEST_ENABLED: ${{ github.event.inputs.sms_smoke == 'approved' && 'true' || vars.PAWSPACE_SMS_TEST_ENABLED }}
+          PAWSPACE_SMS_TEST_NUMBERS: ${{ secrets.PAWSPACE_SMS_TEST_NUMBERS }}
+          FAST2SMS_API_KEY: ${{ secrets.FAST2SMS_API_KEY }}
+        # --message is what makes the DEPLOYED version attributable to a sha: `wrangler versions list`
+        # exposes it, and certification requires an exact match. Without it, "which build is live?" has
+        # no answer that does not rely on trusting this log.
+        run: |
+          set -euo pipefail
+          SECRETS_FILE="$RUNNER_TEMP/pawspace-staging-secrets.json"
+          export SECRETS_FILE
+          trap 'rm -f "$SECRETS_FILE"' EXIT
+          node --input-type=module -e '
+            import { writeFileSync } from "node:fs";
+            const requiredNames = [
+              "PAWSPACE_UAT_ACCESS_CODE", "PAWSPACE_UAT_SIGNING_KEY", "PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT",
+              "EXOTEL_API_KEY", "EXOTEL_API_TOKEN", "EXOTEL_SID", "EXOTEL_CALLER_ID",
+              "EXOTEL_VOICE_APP_ID", "EXOTEL_WEBHOOK_SECRET"
+            ];
+            const optionalNames = [
+              "RAZORPAY_KEY_ID_SANDBOX", "RAZORPAY_KEY_SECRET_SANDBOX", "RAZORPAY_WEBHOOK_SECRET_SANDBOX",
+              "GOOGLE_MAPS_SERVER_API_KEY_UAT", "PAWSPACE_AI_PROVIDER_API_KEY",
+              "META_WHATSAPP_UAT_ACCESS_TOKEN", "META_WHATSAPP_PHONE_NUMBER_ID", "META_WHATSAPP_WABA_ID",
+              "META_WHATSAPP_APP_SECRET", "META_WHATSAPP_VERIFY_TOKEN", "META_WHATSAPP_UAT_ALLOWLIST",
+              "META_WHATSAPP_TEMPLATE_ALLOWLIST", "PAWSPACE_COMMUNICATION_PROVIDER_URL",
+              "PAWSPACE_COMMUNICATION_PROVIDER_TOKEN", "PAWSPACE_COMMUNICATION_WEBHOOK_SECRET",
+              "PAWSPACE_COMMUNICATION_UAT_ALLOWLIST", "PAWSPACE_SMS_TEST_ENABLED",
+              "PAWSPACE_SMS_TEST_NUMBERS", "FAST2SMS_API_KEY"
+            ];
+            const required = Object.fromEntries(requiredNames.map(name => [name, process.env[name] || ""]));
+            if (Object.values(required).some(value => !value)) throw new Error("a required staging secret is missing");
+            const optional = Object.fromEntries(optionalNames.filter(name => process.env[name]).map(name => [name, process.env[name]]));
+            const values = { ...required, ...optional, PAWSPACE_STAGING_LIVE_CUSTOMER_OTP: "false" };
+            writeFileSync(process.env.SECRETS_FILE, JSON.stringify(values), { mode: 0o600 });
+          '
+          # Cloudflare preserves secrets that are absent from --secrets-file. Always writing the live-OTP
+          # flag as false here makes every normal staging deploy an explicit teardown of prior live activation.
+          npx wrangler deploy --message "staging ${{ github.event.inputs.expected_sha }}" --secrets-file "$SECRETS_FILE" 2>&1 | tee deployment.txt
+          URL="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' deployment.txt | tail -n 1 || true)"
+          if [ -z "$URL" ]; then
+            echo "The successful deploy did not report its workers.dev URL; refusing to certify a guessed origin." >&2
+            exit 1
+          fi
+          echo "staging_url=$URL" >> "$GITHUB_OUTPUT"
+      # Read-only and deliberately before employee seeding. It resolves the
+      # one active version, requires it to serve 100% of traffic, and checks that version's actual D1
+      # binding and sandbox vars. No command below may write staging data until this has passed.
+      - name: Certify deployed isolation before any D1 write
+        timeout-minutes: 3
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
+        run: node tests/e2e/staging-certification.mjs --isolation-only
+      # The staff directory is loaded HERE rather than being left to a separate manual workflow, because
+      # certification requires the advertised staff identities to be able to sign in and UAT sign-in
+      # refuses any email that is not an active app_users row. Idempotent: every seed is INSERT OR IGNORE.
+      - name: Load the staff directory into the staging D1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        # `d1 execute` resolves a name or binding, not a raw UUID. The generated config binds DB to
+        # the staging id that the preceding isolation check already verified against the live Worker.
+        run: npx wrangler d1 execute DB --config dist/server/wrangler.json --remote --file=scripts/employee-seed.sql
+
+      # Certification. Proves the eight facts a human UAT round depends on against the DEPLOYED origin
+      # and the DEPLOYED configuration: isolation, the exact deployed sha, sandbox mode with no live
+      # flag, no credential in the serialized config, the seeded staff identities, that each one can
+      # really sign in, that the smoke routes answer for a session and refuse without one, and that a
+      # rollback reference exists. A required check that could not be run fails.
+      - name: Certify the staging deploy
+        timeout-minutes: 10
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+          STAGING_URL: ${{ steps.deploy.outputs.staging_url }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          ROLLBACK_REFERENCE: ${{ steps.rollback.outputs.reference }}
+          EVIDENCE_PATH: staging-certification.json
+        run: node tests/e2e/staging-certification.mjs
+
+      # Only an explicit manual approval enables this step. It signs in as the disposable founder UAT
+      # persona, sends the fixed route-defined message to the FIRST allowlisted number, and records only
+      # provider/request-id/last-four evidence. No API key, access code, cookie or full phone is logged.
+      - name: Send one approved Fast2SMS smoke
+        if: ${{ github.event.inputs.sms_smoke == 'approved' }}
+        timeout-minutes: 2
+        env:
+          STAGING_URL: ${{ steps.deploy.outputs.staging_url }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_SMS_TEST_NUMBERS: ${{ secrets.PAWSPACE_SMS_TEST_NUMBERS }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from "node:fs";
+          const base = String(process.env.STAGING_URL || "").replace(/\/$/, "");
+          const accessCode = String(process.env.PAWSPACE_UAT_ACCESS_CODE || "").trim();
+          const rawNumber = String(process.env.PAWSPACE_SMS_TEST_NUMBERS || "").split(",")[0]?.trim() || "";
+          const digits = rawNumber.replace(/\D/g, "");
+          const phone = digits.length === 12 && digits.startsWith("91") ? digits.slice(2) : digits;
+          if (!base || !accessCode || !/^[6-9]\d{9}$/.test(phone)) throw new Error("SMS smoke prerequisites are not configured");
+
+          const login = await fetch(`${base}/api/staging-login`, {
+            method: "POST",
+            headers: { "content-type": "application/json", origin: base },
+            body: JSON.stringify({ action: "login", code: accessCode, email: "founder@pawspace.in" }),
+            signal: AbortSignal.timeout(15000),
+          });
+          const cookie = String(login.headers.get("set-cookie") || "").split(";")[0];
+          if (!(login.status >= 200 && login.status < 400 && cookie)) throw new Error(`staging founder sign-in failed (${login.status})`);
+
+          const response = await fetch(`${base}/api/sms-test`, {
+            method: "POST",
+            headers: { "content-type": "application/json", origin: base, cookie },
+            body: JSON.stringify({ phone }),
+            signal: AbortSignal.timeout(30000),
+          });
+          let payload = null;
+          try { payload = await response.json(); } catch {}
+          if (!(response.ok && payload?.ok === true && payload?.provider === "fast2sms")) {
+            const reason = typeof payload?.error === "string" ? payload.error : `HTTP ${response.status}`;
+            throw new Error(`Fast2SMS smoke failed: ${reason}`);
+          }
+          const evidence = {
+            ok: true,
+            provider: "fast2sms",
+            requestId: typeof payload.requestId === "string" ? payload.requestId : null,
+            recipientSuffix: phone.slice(-4),
+          };
+          writeFileSync("sms-smoke-evidence.json", JSON.stringify(evidence, null, 2));
+          console.log(JSON.stringify(evidence));
+          NODE
+
+      - name: Validate live customer OTP prerequisites without printing them
+        if: ${{ github.event.inputs.sms_smoke == 'approved' }}
+        env:
+          FAST2SMS_API_KEY: ${{ secrets.FAST2SMS_API_KEY }}
+          PAWSPACE_SMS_TEST_NUMBERS: ${{ secrets.PAWSPACE_SMS_TEST_NUMBERS }}
+        run: |
+          node --input-type=module <<'NODE'
+          const key=String(process.env.FAST2SMS_API_KEY||"").trim();
+          const first=String(process.env.PAWSPACE_SMS_TEST_NUMBERS||"").split(",")[0]?.replace(/\D/g,"")||"";
+          const phone=first.length===12&&first.startsWith("91")?first.slice(2):first;
+          if(!key||!/^[6-9]\d{9}$/.test(phone))throw new Error("live staging OTP prerequisites are not configured");
+          console.log("Live staging OTP prerequisites validated; values withheld.");
+          NODE
+
+      - name: Redeploy exact SHA with encrypted live customer OTP activation
+        if: ${{ github.event.inputs.sms_smoke == 'approved' }}
+        id: live_otp_deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PAWSPACE_UAT_ACCESS_CODE: ${{ secrets.PAWSPACE_UAT_ACCESS_CODE }}
+          PAWSPACE_UAT_SIGNING_KEY: ${{ secrets.PAWSPACE_UAT_SIGNING_KEY }}
+          PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT: ${{ secrets.PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT }}
+          FAST2SMS_API_KEY: ${{ secrets.FAST2SMS_API_KEY }}
+          PAWSPACE_SMS_TEST_NUMBERS: ${{ secrets.PAWSPACE_SMS_TEST_NUMBERS }}
+        run: |
+          set -euo pipefail
+          SECRETS_FILE="$RUNNER_TEMP/pawspace-live-customer-otp-secrets.json"
+          export SECRETS_FILE
+          trap 'rm -f "$SECRETS_FILE"' EXIT
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from "node:fs";
+          const names=["PAWSPACE_UAT_ACCESS_CODE","PAWSPACE_UAT_SIGNING_KEY","PAWSPACE_IDENTITY_ASSERTION_SECRET_UAT","FAST2SMS_API_KEY","PAWSPACE_SMS_TEST_NUMBERS"];
+          const values=Object.fromEntries(names.map(name=>[name,String(process.env[name]||"")]));
+          if(Object.values(values).some(value=>!value))throw new Error("required staging secret is missing");
+          values.PAWSPACE_STAGING_LIVE_CUSTOMER_OTP="true";
+          writeFileSync(process.env.SECRETS_FILE,JSON.stringify(values),{mode:0o600});
+          NODE
+          npx wrangler deploy --message "staging ${{ github.event.inputs.expected_sha }}" --secrets-file "$SECRETS_FILE" 2>&1 | tee live-otp-deployment.txt
+          URL="$(grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' live-otp-deployment.txt | tail -n 1 || true)"
+          [ -n "$URL" ] || { echo "deploy did not report a staging URL" >&2; exit 1; }
+          echo "staging_url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Re-certify exact SHA and isolated D1 after live activation
+        if: ${{ github.event.inputs.sms_smoke == 'approved' }}
+        timeout-minutes: 3
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+          STAGING_D1_ID: ${{ vars.STAGING_D1_ID }}
+          PRODUCTION_D1_ID: ${{ vars.PRODUCTION_D1_ID }}
+          PRODUCTION_WORKER_NAME: ${{ vars.PRODUCTION_WORKER_NAME }}
+        run: node tests/e2e/staging-certification.mjs --isolation-only
+
+      - name: Certify live OTP guard without sending an SMS
+        if: ${{ github.event.inputs.sms_smoke == 'approved' }}
+        timeout-minutes: 2
+        env:
+          STAGING_URL: ${{ steps.live_otp_deploy.outputs.staging_url }}
+          PAWSPACE_SMS_TEST_NUMBERS: ${{ secrets.PAWSPACE_SMS_TEST_NUMBERS }}
+          EVIDENCE_PATH: staging-live-customer-otp-certification.json
+        run: node tests/e2e/staging-live-customer-otp-certification.mjs
+
+      # Uploaded whether or not certification passed: a failed run's report is the thing worth reading.
+      # The artifact is sanitized inside the gate and refused outright if a known sensitive value
+      # survives into it.
+      - name: Upload the sanitized certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-certification-${{ github.event.inputs.expected_sha }}
+          path: staging-certification.json
+          if-no-files-found: warn
+
+      - name: Upload sanitized SMS smoke evidence
+        if: ${{ always() && github.event.inputs.sms_smoke == 'approved' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sms-smoke-${{ github.event.inputs.expected_sha }}
+          path: sms-smoke-evidence.json
+          if-no-files-found: warn
+
+      - name: Upload sanitized live customer OTP evidence
+        if: ${{ always() && github.event.inputs.sms_smoke == 'approved' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-live-customer-otp-${{ github.event.inputs.expected_sha }}
+          path: staging-live-customer-otp-certification.json
+          if-no-files-found: warn
+
+      - name: Live customer OTP human checkpoint
+        if: ${{ github.event.inputs.sms_smoke == 'approved' }}
+        env:
+          STAGING_URL: ${{ steps.live_otp_deploy.outputs.staging_url }}
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+        run: |
+          echo "Live customer OTP is activated only on isolated staging for exact SHA $EXPECTED_SHA."
+          echo "Continue the grooming journey at $STAGING_URL. Enter the received OTP directly in the staging UI; do not put it in logs or chat."
+          echo "After the human journey is verified, rerun Deploy staging for this exact SHA with sms_smoke=disabled to return staging to sandbox OTP mode."
+
+      - name: Where to test
+        env:
+          STAGING_URL: ${{ steps.deploy.outputs.staging_url }}
+          EXPECTED_SHA: ${{ github.event.inputs.expected_sha }}
+        run: |
+          echo "Certified staging deploy of $EXPECTED_SHA at $STAGING_URL"
+          echo "Append the module paths from docs/STAGING_DEPLOY.md. Sign in at /staging-login with the seeded staff identities in docs/UAT-TESTER-GUIDE.md."

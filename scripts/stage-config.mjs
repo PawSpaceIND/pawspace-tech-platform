@@ -53,8 +53,21 @@ if (problems.length) {
   process.exit(1);
 }
 
-cfg.name = "pawspace-staging";
-cfg.topLevelName = "pawspace-staging";
+/**
+ * The Worker this build deploys to. Defaults to the shared staging Worker, so every existing caller is
+ * unchanged. A dedicated lane (the voice UAT Worker, say) sets PAWSPACE_STAGE_WORKER_NAME and gets its
+ * own Worker without a forked copy of the deploy workflow - which is what a branch reaching for its own
+ * lane did last time, by gutting the shared workflow and taking six deployment-contract tests with it.
+ *
+ * The D1 binding deliberately still points at the SAME staging database: a separate Worker is about
+ * not overwriting someone else's build, not about a separate dataset.
+ */
+const WORKER_NAME = String(process.env.PAWSPACE_STAGE_WORKER_NAME || "").trim() || "pawspace-staging";
+if (!/^[a-z0-9][a-z0-9-]{0,60}$/.test(WORKER_NAME)) {
+  problems.push(`PAWSPACE_STAGE_WORKER_NAME is not a valid Worker name: ${WORKER_NAME}`);
+}
+cfg.name = WORKER_NAME;
+cfg.topLevelName = WORKER_NAME;
 cfg.d1_databases = [{ binding: "DB", database_name: "pawspace-staging", database_id: d1Id }];
 cfg.ai = { binding: "AI" };
 
